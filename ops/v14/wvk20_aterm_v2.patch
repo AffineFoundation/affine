@@ -1,0 +1,362 @@
+diff -ru '--exclude=.git' '--exclude=__pycache__' /tmp/boxtree2b/home/const/subnet120/affine/affine/config.py /tmp/boxtree2/home/const/subnet120/affine/affine/config.py
+--- /tmp/boxtree2b/home/const/subnet120/affine/affine/config.py	2026-09-16 11:14:30.000000000 +0000
++++ /tmp/boxtree2/home/const/subnet120/affine/affine/config.py	2026-09-16 13:12:58.286773008 +0000
+@@ -206,6 +206,13 @@
+     # max(k_sigma·SE_pooled, δ)) before it crowns; a failed confirmation is
+     # a loss ("confirmation_failed"). False = pre-wvk-19 (crown at once).
+     confirmation_required: bool = False
++    # wvk 20 (staged 2026-09-16): additive A term, turn = min(R,G) +
++    # a_term_w·(A_match − pair) on valid turns. 0.0 = off (pre-wvk-20).
++    a_term_w: float = 0.0
++    # v2: dialects that never earn A credit, and the published generic-action
++    # list ({kind: {exact: [...], heads: [...]}}) that earns none either.
++    a_term_exclude_kinds: tuple[str, ...] = ("terminus_json",)
++    a_term_generic_file: str = ""
+     # v6 (2026-09-04): per-turn score for a side with no parseable action.
+     # None = legacy (turn dropped from pairing). Contract knob: changing it
+     # is a weight_version_key event.
+@@ -551,6 +558,9 @@
+         ref_max_tokens=_ref_max_tokens(d),
+         text_fallback_at_tool_turns=bool(d.get("text_fallback_at_tool_turns", False)),
+         confirmation_required=bool(d.get("confirmation_required", False)),
++        a_term_w=float(d.get("a_term_w", 0.0)),
++        a_term_exclude_kinds=tuple(str(k) for k in (d.get("a_term_exclude_kinds") or ["terminus_json"])),
++        a_term_generic_file=str(d.get("a_term_generic_file") or ""),
+         concurrency=int(d["concurrency"]), timeout_s=int(d["timeout_s"]),
+         score_bank=bool(d.get("score_bank", False)),
+         reason_only=bool(d.get("reason_only", True)),
+diff -ru '--exclude=.git' '--exclude=__pycache__' /tmp/boxtree2b/home/const/subnet120/affine/affine/score.py /tmp/boxtree2/home/const/subnet120/affine/affine/score.py
+--- /tmp/boxtree2b/home/const/subnet120/affine/affine/score.py	2026-09-12 16:43:18.000000000 +0000
++++ /tmp/boxtree2/home/const/subnet120/affine/affine/score.py	2026-09-16 13:12:58.282772999 +0000
+@@ -534,6 +534,53 @@
+     return turn_reason(pairs, tau)
+ 
+ 
++DEFAULT_A_TERM_W = 0.0
++DEFAULT_A_TERM_EXCLUDE_KINDS: tuple[str, ...] = ("terminus_json",)
++# v2 generic filter (2026-09-16): {kind: {"exact": set[str], "heads": set[str]}}
++# and the excluded dialects; set by evalsrv from [duel].a_term_generic_file /
++# a_term_exclude_kinds before scoring (configure_a_term). Empty = no filter.
++A_TERM_GENERIC: dict[str, dict[str, set[str]]] = {}
++A_TERM_EXCLUDE: tuple[str, ...] = DEFAULT_A_TERM_EXCLUDE_KINDS
++
++
++def configure_a_term(exclude_kinds, generic_json: dict | None) -> None:
++    """Install the v2 exclusions / generic list (from the published JSON:
++    {"generic": {kind: [{"action":…}, …]}, "heads": {kind: [{"head":…}, …]}})."""
++    global A_TERM_EXCLUDE, A_TERM_GENERIC
++    A_TERM_EXCLUDE = tuple(exclude_kinds or ())
++    g: dict[str, dict[str, set[str]]] = {}
++    for kind, items in ((generic_json or {}).get("generic") or {}).items():
++        g.setdefault(kind, {"exact": set(), "heads": set()})["exact"] = {i["action"] for i in items}
++    for kind, items in ((generic_json or {}).get("heads") or {}).items():
++        g.setdefault(kind, {"exact": set(), "heads": set()})["heads"] = {i["head"] for i in items}
++    A_TERM_GENERIC = g
++
++
++def a_term(row: dict, w: float = DEFAULT_A_TERM_W,
++           exclude_kinds: tuple[str, ...] | None = None,
++           generic: dict | None = None) -> float:
++    """w·(A_match − pair) for one VALID turn row; 0 when the term is off,
++    undefined (no normal form — `text` — or no valid refs), the turn's
++    dialect is excluded (Terminus), or the side's normalised action / its
++    command head is on the published generic list for that dialect.
++    A_match / ref_pair / action_kind / a_norm / a_head are the per-turn
++    fields evalsrv stamps (evalsrv/amatch.py). Never called on a forfeit."""
++    if w <= 0:
++        return 0.0
++    a, p = row.get("a_match"), row.get("ref_pair")
++    if not isinstance(a, (int, float)) or not isinstance(p, (int, float)):
++        return 0.0
++    kind = row.get("action_kind") or "bash"
++    if kind in (exclude_kinds if exclude_kinds is not None else A_TERM_EXCLUDE):
++        return 0.0
++    g = (generic if generic is not None else A_TERM_GENERIC).get(kind) or {}
++    if row.get("a_norm") and row["a_norm"] in g.get("exact", ()):
++        return 0.0
++    if row.get("a_head") and row["a_head"] in g.get("heads", ()):
++        return 0.0
++    return float(w) * (float(a) - float(p))
++
++
+ def is_forfeit(row: dict) -> bool:
+     """A row the miner forfeited: no parseable action against a valid ref.
+ 
+@@ -550,16 +597,18 @@
+                     band_c: float = DEFAULT_BAND_C,
+                     band_floor: float = DEFAULT_BAND_FLOOR,
+                     forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE,
+-                    action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
++                    action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES,
++                    a_term_w: float = DEFAULT_A_TERM_W
+                     ) -> float | None:
+-    """One side's score on one turn: the turn rule, or the forfeit floor.
++    """One side's score on one turn: the turn rule (+ the wvk-20 A term when
++    a_term_w > 0), or the forfeit floor.
+ 
+     None when the side forfeited and the contract has no floor (legacy:
+-    the turn is dropped)."""
++    the turn is dropped). A forfeit never earns A credit."""
+     if is_forfeit(row):
+         return forfeit_turn_score
+     return turn_score(row["pairs"], tau, score_mode, band_c, band_floor,
+-                      action_norm_bytes)
++                      action_norm_bytes) + a_term(row, a_term_w)
+ 
+ 
+ def l1_lift(pair: dict) -> float | None:
+@@ -661,7 +710,8 @@
+                 band_c: float = DEFAULT_BAND_C,
+                 band_floor: float = DEFAULT_BAND_FLOOR,
+                 forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE,
+-                action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
++                action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES,
++                a_term_w: float = DEFAULT_A_TERM_W
+                 ) -> MinerScore:
+     """Score one miner: mean per-turn score + telemetry.
+ 
+@@ -719,7 +769,7 @@
+                 g_bind_frac = st.mean(1.0 if g < r else 0.0 for r, g, _ in have)
+     turn_scores = [turn_score(r["pairs"], tau, score_mode, band_c, band_floor,
+                               action_norm_bytes)
+-                   for r in valid]
++                   + a_term(r, a_term_w) for r in valid]
+     if forfeit_turn_score is not None:
+         turn_scores += [forfeit_turn_score] * len(forfeits)
+     return MinerScore(
+@@ -790,7 +840,8 @@
+          band_floor: float = DEFAULT_BAND_FLOOR,
+          forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE,
+          action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES,
+-         min_z: float = DEFAULT_MIN_Z
++         min_z: float = DEFAULT_MIN_Z,
++         a_term_w: float = DEFAULT_A_TERM_W
+          ) -> DuelResult:
+     """Paired duel on the per-turn score: wins iff
+     mean > max(k_sigma·SE, min_margin) AND the challenger's median stripped
+@@ -821,21 +872,23 @@
+                      score_mode=score_mode, band_c=band_c,
+                      band_floor=band_floor,
+                      forfeit_turn_score=forfeit_turn_score,
+-                     action_norm_bytes=action_norm_bytes)
++                     action_norm_bytes=action_norm_bytes,
++                     a_term_w=a_term_w)
+     ks = score_miner(king_rows, king_bank_frac, tau=tau,
+                      score_mode=score_mode, band_c=band_c,
+                      band_floor=band_floor,
+                      forfeit_turn_score=forfeit_turn_score,
+-                     action_norm_bytes=action_norm_bytes)
++                     action_norm_bytes=action_norm_bytes,
++                     a_term_w=a_term_w)
+     c_by = {r["turn_id"]: r for r in challenger_rows}
+     k_by = {r["turn_id"]: r for r in king_rows}
+     diffs = []
+     n_forfeit_turns = 0
+     for tid in sorted(set(c_by) & set(k_by)):
+         rc = side_turn_score(c_by[tid], tau, score_mode, band_c, band_floor,
+-                             forfeit_turn_score, action_norm_bytes)
++                             forfeit_turn_score, action_norm_bytes, a_term_w)
+         rk = side_turn_score(k_by[tid], tau, score_mode, band_c, band_floor,
+-                             forfeit_turn_score, action_norm_bytes)
++                             forfeit_turn_score, action_norm_bytes, a_term_w)
+         if rc is None or rk is None:
+             continue  # legacy: a forfeit drops the turn from pairing
+         if is_forfeit(c_by[tid]) or is_forfeit(k_by[tid]):
+@@ -850,7 +903,8 @@
+                           band_floor=band_floor,
+                           forfeit_turn_score=forfeit_turn_score,
+                           n_forfeit_turns=n_forfeit_turns,
+-                          action_norm_bytes=action_norm_bytes)
++                          action_norm_bytes=action_norm_bytes,
++                     a_term_w=a_term_w)
+     mean = st.mean(diffs)
+     se = st.stdev(diffs) / math.sqrt(n)
+     z = mean / se if se > 0 else (math.inf if mean > 0 else 0.0)
+diff -ru '--exclude=.git' '--exclude=__pycache__' /tmp/boxtree2b/home/const/subnet120/affine/evalsrv/amatch.py /tmp/boxtree2/home/const/subnet120/affine/evalsrv/amatch.py
+--- /tmp/boxtree2b/home/const/subnet120/affine/evalsrv/amatch.py	2026-09-14 19:26:17.000000000 +0000
++++ /tmp/boxtree2/home/const/subnet120/affine/evalsrv/amatch.py	2026-09-16 13:12:58.282772999 +0000
+@@ -140,6 +140,55 @@
+     return sum(1 for r in refs if r == mine) / len(refs), pair
+ 
+ 
++HEAD_TWO_WORD = ("git", "docker", "npm", "pip", "pip3", "cargo", "go", "make")
++BASH_TOOL_NAMES = ("bash", "execute_bash", "run_command", "shell", "Bash")
++
++
++def command_of(norm: str, kind: str) -> str | None:
++    """The shell command inside a normalised action: the bash command itself,
++    or the command argument of a single bash-like tool call; None otherwise."""
++    if kind == "bash":
++        return norm
++    if kind == "tool_call":
++        try:
++            calls = json.loads(norm)
++        except (json.JSONDecodeError, TypeError):
++            return None
++        if len(calls) == 1 and calls[0][0] in BASH_TOOL_NAMES:
++            args = calls[0][1] or {}
++            return args.get("command") or args.get("cmd") or next(iter(args.values()), None)
++    return None
++
++
++def head_of(norm: str | None, kind: str) -> str | None:
++    """Command head for the generic filter (wvk 20 v2): the first word of a
++    shell command (two words for git / docker / npm / pip / cargo / go /
++    make, `python -m <mod>` for module runs; a leading `cd X &&` is
++    skipped); for a non-shell tool call the tool name as `tool:<name>`."""
++    if not norm:
++        return None
++    cmd = command_of(norm, kind)
++    if cmd is None:
++        if kind == "tool_call":
++            try:
++                calls = json.loads(norm)
++            except (json.JSONDecodeError, TypeError):
++                return None
++            return f"tool:{calls[0][0]}" if calls else None
++        return None
++    toks = cmd.strip().split()
++    if toks and toks[0] == "cd" and "&&" in toks:
++        toks = toks[toks.index("&&") + 1:]
++    if not toks:
++        return None
++    head = toks[0]
++    if head in HEAD_TWO_WORD and len(toks) > 1:
++        head += " " + toks[1]
++    elif head in ("python", "python3") and len(toks) > 2 and toks[1] == "-m":
++        head += " -m " + toks[2]
++    return head
++
++
+ def summarize(rows: list[dict]) -> dict:
+     """Side-level means from per-turn rows carrying `a_match` / `ref_pair`."""
+     a = [r["a_match"] for r in rows if r.get("a_match") is not None]
+diff -ru '--exclude=.git' '--exclude=__pycache__' /tmp/boxtree2b/home/const/subnet120/affine/evalsrv/dueling.py /tmp/boxtree2/home/const/subnet120/affine/evalsrv/dueling.py
+--- /tmp/boxtree2b/home/const/subnet120/affine/evalsrv/dueling.py	2026-09-16 11:14:30.000000000 +0000
++++ /tmp/boxtree2/home/const/subnet120/affine/evalsrv/dueling.py	2026-09-16 13:12:58.282772999 +0000
+@@ -46,6 +46,7 @@
+     from .corpus import CorpusSync
+ 
+ from affine import dialects
++from affine import score as score_module
+ from affine.corpus.materialize import stratum_key
+ from affine.score import (
+     DEFAULT_NEAR_MISS_HIGH,
+@@ -554,6 +555,11 @@
+         y_side = miner_rollouts[0][1] if (t.get("valid") and miner_rollouts) else None
+         t["a_match"], t["ref_pair"] = amatch.turn_agreement(
+             y_side, [r["y"] for r in ref], action_kind)
++        # wvk 20 v2: the side's normalised action and its command head, so
++        # the generic filter in score.a_term can look them up.
++        t["action_kind"] = action_kind or dialects.DEFAULT_KIND
++        t["a_norm"] = amatch.norm_action(y_side, action_kind) if y_side else None
++        t["a_head"] = amatch.head_of(t["a_norm"], t["action_kind"]) if t["a_norm"] else None
+         rows.append(t)
+         done += 1
+         on_progress(miner.cfg.name, done, total)
+@@ -571,13 +577,15 @@
+                    score_mode: str = "reason",
+                    band_c: float = 2.0, band_floor: float = 0.002,
+                    forfeit_turn_score: float | None = None,
+-                   action_norm_bytes: float | None = None) -> dict:
++                   action_norm_bytes: float | None = None,
++                   a_term_w: float = 0.0) -> dict:
+     """Per-side summary: the score (reason) plus measured-not-scored telemetry."""
+     s = score_miner(rows, bank_frac=_mean_bank(rows), tau=tau,
+                     score_mode=score_mode, band_c=band_c,
+                     band_floor=band_floor,
+                     forfeit_turn_score=forfeit_turn_score,
+-                    action_norm_bytes=action_norm_bytes)
++                    action_norm_bytes=action_norm_bytes,
++                    a_term_w=a_term_w)
+     out = {
+         "reason": s.reason if math.isfinite(s.reason) else None,
+         "n_turns": s.n_turns, "n_pairs": s.n_pairs,
+@@ -612,7 +620,8 @@
+                 tau: float | None, score_mode: str,
+                 band_c: float, band_floor: float,
+                 forfeit_turn_score: float | None = None,
+-                action_norm_bytes: float | None = None) -> dict[str, dict]:
++                action_norm_bytes: float | None = None,
++                a_term_w: float = 0.0) -> dict[str, dict]:
+     """Per-action_kind telemetry for one side (wvk 11 dialect watch item).
+ 
+     ``parse_rate`` is the share of this dialect's turns where the side
+@@ -629,7 +638,8 @@
+         s = score_miner(grp, tau=tau, score_mode=score_mode,
+                         band_c=band_c, band_floor=band_floor,
+                         forfeit_turn_score=forfeit_turn_score,
+-                        action_norm_bytes=action_norm_bytes)
++                        action_norm_bytes=action_norm_bytes,
++                        a_term_w=a_term_w)
+         n_valid = sum(1 for r in grp if r.get("valid") and "pairs" in r)
+         out[kind] = {
+             "n_turns": len(grp), "n_valid": n_valid,
+@@ -882,6 +892,13 @@
+         score_mode = str(duel_cfg.get("score_mode", "reason"))
+         band_c = float(duel_cfg.get("band_c", 2.0))
+         band_floor = float(duel_cfg.get("band_floor", 0.002))
++        # wvk 20: additive A term w·(A_match − pair); 0 = off (pre-wvk-20).
++        a_term_w = float(duel_cfg.get("a_term_w", 0.0))
++        if a_term_w > 0:
++            gfile = str(duel_cfg.get("a_term_generic_file") or "")
++            gjson = json.loads(Path(gfile).read_text()) if gfile else None
++            score_module.configure_a_term(
++                duel_cfg.get("a_term_exclude_kinds") or ["terminus_json"], gjson)
+         # v6 forfeit floor: absent/None keeps the legacy drop-from-pairing rule.
+         _ff = duel_cfg.get("forfeit_turn_score")
+         forfeit_turn_score = float(_ff) if _ff is not None else None
+@@ -898,6 +915,7 @@
+             effective margin for this duel (`margin_stamp`)."""
+             return score_duel(
+                 c_rows, k_rows,
++                a_term_w=a_term_w,
+                 k_sigma=float(duel_cfg["k_sigma"]),
+                 min_margin=float(duel_cfg.get("min_margin", 0.0)),
+                 min_thought_chars=min_thought,
+@@ -994,9 +1012,9 @@
+         slice_info["n_pooled"] = len(turn_ids)
+ 
+     king_sum = _miner_summary(king_rows, tau, score_mode, band_c, band_floor,
+-                              forfeit_turn_score, action_norm_bytes)
++                              forfeit_turn_score, action_norm_bytes, a_term_w)
+     chall_sum = _miner_summary(chall_rows, tau, score_mode, band_c, band_floor,
+-                               forfeit_turn_score, action_norm_bytes)
++                               forfeit_turn_score, action_norm_bytes, a_term_w)
+     teacher_sum = _teacher_lengths(refs_used)
+     _len_deltas(king_sum, teacher_sum)
+     _len_deltas(chall_sum, teacher_sum)
+@@ -1016,10 +1034,10 @@
+                    for rec in turns}
+     king_sum["by_dialect"] = _by_dialect(
+         king_rows, kind_by_tid, tau, score_mode, band_c, band_floor,
+-        forfeit_turn_score, action_norm_bytes)
++        forfeit_turn_score, action_norm_bytes, a_term_w)
+     chall_sum["by_dialect"] = _by_dialect(
+         chall_rows, kind_by_tid, tau, score_mode, band_c, band_floor,
+-        forfeit_turn_score, action_norm_bytes)
++        forfeit_turn_score, action_norm_bytes, a_term_w)
+     teacher_sum["by_dialect"] = _teacher_by_dialect(turns, refs_used)
+     # Overall teacher self-agreement = turn-weighted mean over the dialects
+     # that have a normal form (A_match telemetry, 2026-09-14).
+@@ -1054,6 +1072,11 @@
+             "Reason(turn) = tau·log(mean_i exp((lpC(y_i|z_A) − lpC(y_i|∅))/tau))")
+     else:
+         ranking_formula = "Reason = lpC(y_C|z_A) − lpC(y_C|∅)"
++    if a_term_w > 0:
++        ranking_formula += (
++            f" + {a_term_w:g}·(A_match − pair) on valid turns, A_match = share of the k "
++            f"reference actions equal to the side's action (dialect-normalised), "
++            f"pair = the refs' own pairwise agreement; 0 where undefined (text)")
+     if forfeit_turn_score is not None:
+         ranking_formula += (
+             f"; forfeit (no parseable action) scores {forfeit_turn_score:g}")
+@@ -1143,6 +1166,8 @@
+             "text_fallback_at_tool_turns": text_fallback,
+             # wvk 19: a first-slice pass needs a confirmation slice to crown.
+             "confirmation_required": bool(duel_cfg.get("confirmation_required", False)),
++            # wvk 20: additive A term weight (0 = off).
++            "a_term_w": a_term_w,
+             # Teacher-only reference budget (wvk 17); None = shared cap.
+             "ref_max_tokens": (int(duel_cfg["ref_max_tokens"])
+                                if duel_cfg.get("ref_max_tokens") is not None else None),
