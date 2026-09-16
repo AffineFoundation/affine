@@ -66,6 +66,14 @@
           el("small", {}, `${num(st.counts.king)} king · ${num(st.counts.teacher)} teacher`)),
         el("div", { class: "small muted" }, `${num(st.manifest && st.manifest.n_chunks)} chunks · stats ${ago(st.generated_ts)}`)),
     ];
+    if (st.spend && st.spend.windows) {
+      const w = st.spend.windows, d = w["24h"], wk = w["7d"];
+      const mtok = (x) => (x / 1e6).toFixed(1) + "M";
+      cards.push(el("div", { class: "card" },
+        el("div", { class: "k" }, "teacher API spend (Engy) 24 h"),
+        el("div", { class: "v" }, `$${d.usd.toFixed(2)}`, el("small", {}, `${num(d.rollouts)} rollouts · ${mtok(d.prompt_tokens)} in / ${mtok(d.completion_tokens)} out`)),
+        el("div", { class: "small muted" }, `7 d $${wk.usd.toFixed(2)} · all time $${w.all.usd.toFixed(2)} · list price in ${st.spend.prices_per_m.in} / out ${st.spend.prices_per_m.out} $/M`)));
+    }
     if (reign) {
       const t = reign.total;
       const bt = reign.by_temp || {};

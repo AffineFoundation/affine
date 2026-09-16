@@ -143,7 +143,13 @@ CLEAN_STOP_CONDITIONS = {"agent_completed", TURN_CAP_STOP,
 REFUSAL_STOPS = {TURN_CAP_STOP, LOOP_GUARD_STOP}
 PRIMARY_REWARD_KEYS = ("solved", "correct", "passed_fraction")
 # Bump when a row's derivation changes: every chunk is re-read on mismatch.
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
+# Engy list prices, $ per 1M tokens (https://engy.ai/pricing, 2026-09-16; the
+# same table as rollouts/policies.toml [pricing.engy]). Used only for rows
+# whose envelope carries no `policy.cost_usd` (rollouts stored before the
+# datagen stamp landed), so the spend line has history.
+ENGY_PRICE = {"in": 0.045, "out": 0.32, "cached_in": 0.015}
+PRICED_ENDPOINTS = {"engy": ENGY_PRICE}
 GREEDY = "greedy"      # policy.temperature == 0 (king_*_greedy)
 SAMPLED = "sampled"    # T > 0, or unstamped rows (all sampled at 0.8 before 2026-09-13)
 
@@ -263,7 +269,8 @@ CREATE TABLE IF NOT EXISTS rollouts (
     ts REAL, stored_at TEXT,
     outcome TEXT, score REAL, stop TEXT, n_calls INTEGER,
     error_type TEXT, wall_s REAL, timeout INTEGER, temperature REAL,
-    backfill INTEGER DEFAULT 0
+    backfill INTEGER DEFAULT 0,
+    prompt_tokens INTEGER, completion_tokens INTEGER, cost_usd REAL
 );
 CREATE INDEX IF NOT EXISTS rollouts_seat_ts ON rollouts (seat, ts);
 CREATE INDEX IF NOT EXISTS rollouts_digest ON rollouts (digest12);
@@ -447,6 +454,7 @@ def envelope_row(env: dict, chunk_key: str, groups: dict[str, str]) -> tuple:
         if ends and timing.get("start"):
             wall = max(ends) - float(timing["start"])
     outcome, score = rollout_outcome(trace)
+    tokens = usage_tokens(trace)
     stop = trace.get("stop_condition")
     timeout = int(is_timeout(trace, wall))
     policy_id = policy.get("id") or ""
@@ -463,10 +471,36 @@ def envelope_row(env: dict, chunk_key: str, groups: dict[str, str]) -> tuple:
         outcome, score, stop, len(trace.get("calls") or []),
         error_type(trace), wall, timeout, temperature_of(policy),
         int(policy_id.startswith(BACKFILL_PREFIX)),
+        tokens["prompt"], tokens["completion"], rollout_cost(policy, tokens),
     )
 
 
-ROW_WIDTH = 25   # columns of the rollouts table / envelope_row tuple
+ROW_WIDTH = 28   # columns of the rollouts table / envelope_row tuple
+
+
+def usage_tokens(trace: dict) -> dict:
+    p = c = cached = 0
+    for call in trace.get("calls") or []:
+        u = call.get("usage") or {}
+        p += int(u.get("prompt_tokens") or 0)
+        c += int(u.get("completion_tokens") or 0)
+        cached += int(u.get("cached_input_tokens") or 0)
+    return {"prompt": p, "completion": c, "cached": min(cached, p)}
+
+
+def rollout_cost(policy: dict, tokens: dict) -> float | None:
+    """$ for the rollout: the datagen stamp (`policy.cost_usd`, since
+    2026-09-16) when present, else the list price of a priced endpoint
+    (engy) applied to the trace's token counts; None for our own boxes."""
+    stamped = policy.get("cost_usd")
+    if isinstance(stamped, (int, float)) and not isinstance(stamped, bool) and stamped > 0:
+        return float(stamped)
+    price = PRICED_ENDPOINTS.get(str(policy.get("endpoint") or ""))
+    if not price:
+        return None
+    return round(((tokens["prompt"] - tokens["cached"]) * price["in"]
+                  + tokens["cached"] * price["cached_in"]
+                  + tokens["completion"] * price["out"]) / 1e6, 6)
 
 
 def parse_chunk(blob: bytes, chunk_key: str, groups: dict[str, str]) -> list[tuple]:
@@ -488,6 +522,9 @@ def migrate(conn: sqlite3.Connection) -> None:
     with conn:
         if "temperature" not in cols:
             conn.execute("ALTER TABLE rollouts ADD COLUMN temperature REAL")
+        for col, typ in (("prompt_tokens", "INTEGER"), ("completion_tokens", "INTEGER"), ("cost_usd", "REAL")):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE rollouts ADD COLUMN {col} {typ}")
         if "backfill" not in cols:
             # no backfill rollout existed before the column: 0 for every stored row is exact
             conn.execute("ALTER TABLE rollouts ADD COLUMN backfill INTEGER DEFAULT 0")
@@ -723,6 +760,21 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
     per_king: dict[str, dict] = {}
     stops: dict[str, int] = {}
     recent = {"king_1h": 0, "king_24h": 0, "all_1h": 0, "all_24h": 0}
+    # Priced API spend (teacher side runs on Engy): $ and tokens over the
+    # last 24 h / 7 d / all time, from `cost_usd` per rollout.
+    spend = {w: {"usd": 0.0, "rollouts": 0, "prompt_tokens": 0, "completion_tokens": 0}
+             for w in ("24h", "7d", "all")}
+    for cost, ts, pt, ct in conn.execute(
+            "SELECT cost_usd, ts, prompt_tokens, completion_tokens FROM rollouts "
+            "WHERE cost_usd IS NOT NULL AND cost_usd > 0"):
+        age = now - (ts or 0.0)
+        for w, lim in (("24h", 86400), ("7d", 7 * 86400), ("all", None)):
+            if lim is None or age <= lim:
+                s = spend[w]
+                s["usd"] += cost; s["rollouts"] += 1
+                s["prompt_tokens"] += int(pt or 0); s["completion_tokens"] += int(ct or 0)
+    for s in spend.values():
+        s["usd"] = round(s["usd"], 2)
     # per source x seat: every rollout (any outcome), all time and last 24 h
     seat_counts: dict[str, dict[str, dict[str, int]]] = {}
     # per source: rollouts (king + teacher seats) carrying a numeric grade vs
@@ -877,6 +929,8 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
         "counts": {"rollouts": len(rows), "king": n_king, "teacher": n_teacher,
                    "backfill": n_backfill},
         "recent": recent,
+        "spend": {"windows": spend, "priced_endpoints": sorted(PRICED_ENDPOINTS),
+                  "prices_per_m": ENGY_PRICE},
         "king": current,
         "kings": kings,
         "revoked_kings": revoked,
@@ -915,6 +969,10 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
             "turns": "model calls in the trace (trace.calls)",
             "teacher": "policies teacher_* (Qwen/Qwen3.8-27B), all time; the old glm_* seat is not a baseline",
             "time": "rollout stored_at (when the finished rollout landed in the trace store)",
+            "spend": "API $ of the priced endpoints (engy = the teacher seat) from the envelope's policy.cost_usd "
+                     "(datagen stamp since 2026-09-16) or, for older rows, engy list prices x the trace's token "
+                     "counts (in 0.045 / cached-in 0.015 / out 0.32 $ per 1M). Our own king boxes are rented per "
+                     "hour and are not in this number",
             "trend": f"{TREND_BUCKETS} rolling 24 h buckets ending at generated_at",
         },
     }
