@@ -65,6 +65,18 @@ class Endpoint:
     # whose env vars are unset is simply unavailable, like a missing key.
     model_env: str = ""
     base_url_env: str = ""
+    # Ledger prices in $ per 1M tokens (policies.toml [pricing.<endpoint
+    # name>]; 0 = untracked). The harness reports no cost for OpenAI-
+    # compatible routes, so every Engy teacher rollout carried cost_usd 0
+    # until 2026-09-16; with prices set, priced_cost() fills it from the
+    # trace usage (prompt / cached-prompt / completion tokens).
+    price_in_per_m: float = 0.0
+    price_out_per_m: float = 0.0
+    price_cached_per_m: float = 0.0
+
+    @property
+    def priced(self) -> bool:
+        return self.price_in_per_m > 0 or self.price_out_per_m > 0
 
     def resolve(self, env: dict) -> "Endpoint | None":
         """Concrete endpoint for this env, or None when a required var is
@@ -200,6 +212,20 @@ def trace_stats(trace: dict) -> dict:
     return {"prompt_tokens": p, "completion_tokens": c,
             "cached_tokens": cache, "n_calls": calls,
             "cost_usd": round(cost, 5), "agent_wall_s": wall}
+
+
+def priced_cost(stats: dict, endpoint) -> float | None:
+    """$ for one rollout from its token counts and the endpoint's list
+    prices (per 1M): (prompt - cached) x in + cached x cached + completion x
+    out. None when the endpoint carries no prices."""
+    if endpoint is None or not endpoint.priced:
+        return None
+    prompt = int(stats.get("prompt_tokens") or 0)
+    cached = min(int(stats.get("cached_tokens") or 0), prompt)
+    completion = int(stats.get("completion_tokens") or 0)
+    return round(((prompt - cached) * endpoint.price_in_per_m
+                  + cached * endpoint.price_cached_per_m
+                  + completion * endpoint.price_out_per_m) / 1e6, 6)
 
 
 # The env's primary grade, first key present — the same tuple the fold reads

@@ -35,6 +35,7 @@ from rollouts.schema import (
     PolicyStamp,
     trace_error_type,
     trace_reward_score,
+    priced_cost,
     trace_stats,
 )
 
@@ -252,17 +253,27 @@ def reap_all_verifiers_containers() -> None:
         log.warning("container reap failed", exc_info=True)
 
 
-def _per_task_rows(envelopes: list[dict]) -> list[dict]:
+def _per_task_rows(envelopes: list[dict], endpoint=None) -> list[dict]:
+    """One state row per envelope. With a priced endpoint the row's
+    cost_usd is filled from the token counts when the harness reported none,
+    and the same figure is stamped on the envelope (`policy.cost_usd`,
+    additive) so the kingboard can sum spend from the trace store."""
     rows = []
     for env in envelopes:
         trace = env["trace"]
         score = trace_reward_score(trace)
+        stats = trace_stats(trace)
+        if not stats.get("cost_usd"):
+            priced = priced_cost(stats, endpoint)
+            if priced is not None:
+                stats["cost_usd"] = priced
+                env.setdefault("policy", {})["cost_usd"] = priced
         rows.append({
             "uid": env["task"]["uid"],
             "resolved": score,
             "stop": trace.get("stop_condition"),
             "error": trace_error_type(trace),
-            **trace_stats(trace),
+            **stats,
         })
     return rows
 
@@ -375,7 +386,7 @@ class VerifiersRunner:
                 if n_silent:
                     log.info("%d rollout(s) finished without a visible reply "
                              "-> stop_condition=%s", n_silent, NO_VISIBLE_REPLY_STOP)
-            per_task = _per_task_rows(envelopes)
+            per_task = _per_task_rows(envelopes, endpoint)
             # Only the tail is read for provider signatures: the eval prints
             # its config first, and a crash's exception sits on the last lines.
             verdict = classify_batch(code, out[-1500:], per_task,

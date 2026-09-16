@@ -105,6 +105,10 @@ class Registry:
 
 def _load_policies(path: Path) -> dict[str, Policy]:
     raw = tomllib.loads(path.read_text())
+    # [pricing.<endpoint name>] in_per_m / out_per_m / cached_in_per_m ($ per
+    # 1M tokens) is attached to every endpoint of that name (one table for
+    # the 17 engy blocks).
+    pricing = {name: p for name, p in (raw.get("pricing") or {}).items() if isinstance(p, dict)}
     policies: dict[str, Policy] = {}
     for pid, cfg in raw.get("policy", {}).items():
         endpoints = []
@@ -117,10 +121,14 @@ def _load_policies(path: Path) -> dict[str, Policy]:
             if not (e.get("base_url") or base_url_env):
                 raise ValueError(f"policy {pid!r} endpoint {e.get('name')!r}: "
                                  "needs `base_url` or `base_url_env`")
+            price = pricing.get(e["name"], {})
             endpoints.append(Endpoint(
                 name=e["name"], model=str(e.get("model", "")),
                 base_url=str(e.get("base_url", "")), key_env=e["key_env"],
                 litellm_model=e.get("litellm_model", ""),
+                price_in_per_m=float(price.get("in_per_m", 0.0)),
+                price_out_per_m=float(price.get("out_per_m", 0.0)),
+                price_cached_per_m=float(price.get("cached_in_per_m", 0.0)),
                 model_env=model_env, base_url_env=base_url_env))
         endpoints = tuple(endpoints)
         if not endpoints:

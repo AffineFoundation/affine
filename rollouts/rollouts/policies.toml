@@ -8,6 +8,18 @@
 # endpoint is missing its key env is skipped (fail-open to the others,
 # fail-closed when none remain).
 
+# Ledger prices, $ per 1M tokens, attached to every endpoint block of that
+# name at load (rollouts.registry). Engy: https://engy.ai/pricing, read
+# 2026-09-16 (qwen3.8-27b: in 0.045 / out 0.32 / cached in 0.015; the site
+# says /v1/models reports the same numbers). The harness reports no cost for
+# OpenAI-compatible routes, so teacher rollouts carried cost_usd 0 before.
+# The king box is our own Lium rental (priced per hour by kingctl), so no
+# per-token price here.
+[pricing.engy]
+in_per_m = 0.045
+out_per_m = 0.32
+cached_in_per_m = 0.015
+
 [policy.glm_textbased]
 harness = "mini_swe_textbased"
 share = 1.0
