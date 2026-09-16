@@ -66,7 +66,11 @@ KING_POLICY_PREFIX = "king_"
 KING_SEAT_PREFIX = "king:"
 # Guaranteed fraction of picks that go to the king seat while it is served
 # (ROLLOUTS_KING_BATCH_SHARE overrides; 0 disables the guarantee).
-KING_BATCH_SHARE = float(os.environ.get("ROLLOUTS_KING_BATCH_SHARE", "0.4"))
+# 0.4 -> 0.5 on 2026-09-16 (phase 10, Jacob: "sample more from steps where the
+# teacher stops but the king doesn't"): king_done needs ~120 and
+# king_divergence ~340 more states, both come from king rollouts on tasks the
+# teacher solved (see UnifiedState.teacher_solved / Scheduler.pending).
+KING_BATCH_SHARE = float(os.environ.get("ROLLOUTS_KING_BATCH_SHARE", "0.5"))
 # Window over which a source's king_rollouts_per_hour floor is measured. A
 # batch is 16-48 rollouts, larger than any floor, so a 1 h window would fire
 # one batch every hour whatever the floor says; over 6 h the floor sets how
@@ -136,6 +140,13 @@ class UnifiedState:
         # for the per-source king floor (king_rollouts_per_hour).
         self.kept_by_seat: dict[tuple[str, str], int] = {}
         self.king_times: dict[tuple[str, str], list[float]] = {}
+        # source -> tasks some TEACHER-side seat solved (outcome resolved):
+        # the king's first picks (phase 10, 2026-09-16). A king that keeps
+        # going after the point where the teacher stopped, or calls a tool
+        # where the teacher answered, or fails where the teacher solved, is
+        # the stop-state material (king_done / king_divergence / king_tooluse)
+        # and it exists only on tasks the teacher finished.
+        self.teacher_solved: dict[str, set[str]] = {}
         if path.exists():
             for line in open(path, encoding="utf-8"):
                 if not line.strip():
@@ -153,6 +164,9 @@ class UnifiedState:
         self.done.setdefault((source, seat), set()).add(uid)
         if is_king_seat(seat) and harness:
             self.king_done.setdefault((source, harness), set()).add(uid)
+        elif not is_king_seat(seat) and rec.get("outcome") == "resolved" \
+                and not pid.startswith("backfill_"):
+            self.teacher_solved.setdefault(source, set()).add(uid)
         n = int(rec.get("n_turns") or 0)
         self.kept_by_source[source] = self.kept_by_source.get(source, 0) + n
         pid = rec.get("policy_id") or ""
@@ -381,7 +395,13 @@ class Scheduler:
         done = self.state.done_for(source, policy_seat(policy, self.env))
         todo = [r for r in rows if r["uid"] not in done]
         if policy.id.startswith(KING_POLICY_PREFIX):
-            return todo
+            # Teacher-solved tasks first (phase 10): the king's stop-state
+            # failures need a teacher that finished the same task.
+            solved = self.state.teacher_solved.get(source, set())
+            if not solved:
+                return todo
+            return ([r for r in todo if r["uid"] in solved]
+                    + [r for r in todo if r["uid"] not in solved])
         king_first = self.state.king_done.get((source, policy.harness), set())
         if not king_first:
             return todo
