@@ -131,6 +131,13 @@ def process_batch(cfg: RolloutsConfig, source, policy, batch: list[dict],
         if rid:
             kept_by_rollout[rid] = kept_by_rollout.get(rid, 0) + 1
 
+    # Phase 10 stamp (additive, king policies only): did some teacher-side
+    # seat solve this task before the king rolled it? The king_divergence
+    # side-table job and the stop-state rules select on exactly that set.
+    if policy.id.startswith("king_"):
+        solved = state.teacher_solved.get(source.name, set())
+        for env in result.envelopes:
+            env["task"]["teacher_solved"] = env["task"].get("uid") in solved
     # System of record + index, then (and only then) mark state.
     chunk_key = store.append_batch(result.envelopes, tag)
     if chunk_key:
