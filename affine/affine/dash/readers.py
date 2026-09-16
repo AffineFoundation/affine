@@ -317,6 +317,8 @@ def history_row_from_raw(r: dict) -> dict:
         "revoked_reason": r.get("revoked_reason"),
         "revoked_code": r.get("revoked_code"),
         "revoked_by": r.get("revoked_by"),
+        # wvk 19: the confirmation slice of a first-slice crown pass.
+        "confirmation": v.get("confirmation"),
     }
 
 

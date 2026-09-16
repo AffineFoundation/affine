@@ -2038,6 +2038,16 @@ function duelPageHtml(duel, series, logLines) {
         chR != null && kgR != null ? passCls(Number(chR) >= Number(kgR)) : "")}
       ${card("king Reason", esc(fine(kgR)), "same slice, same teacher")}
       ${(() => {
+        // wvk 19: a first-slice pass must be confirmed on a second slice.
+        const c = duel.confirmation;
+        if (!c || c.rule !== "per_duel") return "";
+        const ok = Boolean(c.passed);
+        return card("confirmation slice", esc(fine(c.margin)),
+          `z = ${esc(fmtZ(c.z))} · ${esc(String(c.n ?? "—"))} paired turns · must be > 0`, passCls(c.margin != null ? Number(c.margin) > 0 : null))
+          + card("pooled (both slices)", esc(fine(c.pooled_margin)),
+            `z = ${esc(fmtZ(c.pooled_z))} · bar max(${esc(String(c.k_sigma ?? 2))}·SE, δ) = ${esc(fine(c.bar))} · ${ok ? "confirmed" : "not confirmed"}`, passCls(ok));
+      })()}
+      ${(() => {
         // A_match telemetry (2026-09-14, not scored): share of the teacher's
         // k reference actions equal to the side's action after dialect
         // normalisation; `pair` = the refs' own agreement. Rendered only

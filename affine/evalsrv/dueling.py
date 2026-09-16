@@ -226,8 +226,10 @@ def confirmation_stamp(confirm: dict, slice_info: dict, result: DuelResult) -> d
            "rejection_reason": (
                "thought_too_short" if result.thought_floor_blocked
                else "causality_fail" if result.causality_blocked else None)}
+    rule = str(confirm.get("rule") or "window_best")
     stamp = {"challenge_id": confirm.get("challenge_id"),
              "slice_index": int(confirm.get("slice_index", 1)),
+             "rule": rule,
              "base": {"n": n1, "margin": m1, "se": se1},
              "slice": own, "pooled": None, "passed": False}
     ok = (n1 > 0 and isinstance(m1, (int, float)) and isinstance(se1, (int, float))
@@ -239,7 +241,17 @@ def confirmation_stamp(confirm: dict, slice_info: dict, result: DuelResult) -> d
                                           result.se)
         stamp["pooled"] = {"n": N, "margin": M, "se": se,
                            "z": z if math.isfinite(z) else None}
-        stamp["passed"] = bool(M > 0.0)
+        if rule == "per_duel":
+            # wvk 19 (2026-09-16): a crown must win twice — this slice's own
+            # margin > 0 AND the pooled margin clears the same bar the first
+            # slice cleared, max(k_sigma·SE_pooled, δ).
+            k_sigma = float(confirm.get("k_sigma", 2.0))
+            delta = float(confirm.get("min_margin", 0.0))
+            bar = max(k_sigma * se, delta)
+            stamp["bar"] = bar
+            stamp["passed"] = bool(result.margin > 0.0 and M > bar)
+        else:
+            stamp["passed"] = bool(M > 0.0)
     return stamp
 
 
@@ -1129,6 +1141,8 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "max_action_tokens": int(duel_cfg["max_action_tokens"]),
             # wvk 18: prose reply at a tool_call turn = `text` action.
             "text_fallback_at_tool_turns": text_fallback,
+            # wvk 19: a first-slice pass needs a confirmation slice to crown.
+            "confirmation_required": bool(duel_cfg.get("confirmation_required", False)),
             # Teacher-only reference budget (wvk 17); None = shared cap.
             "ref_max_tokens": (int(duel_cfg["ref_max_tokens"])
                                if duel_cfg.get("ref_max_tokens") is not None else None),

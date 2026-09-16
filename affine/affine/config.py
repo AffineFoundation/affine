@@ -201,6 +201,11 @@ class DuelCfg:
     # tool call but a non-empty visible reply is a `text` action (teacher
     # reference and miner alike). False = pre-wvk-18 (dropped / forfeit).
     text_fallback_at_tool_turns: bool = False
+    # wvk 19 (2026-09-16): a duel that clears the crown bar is confirmed on a
+    # second independent n_turns slice (own margin > 0 AND pooled margin >
+    # max(k_sigma·SE_pooled, δ)) before it crowns; a failed confirmation is
+    # a loss ("confirmation_failed"). False = pre-wvk-19 (crown at once).
+    confirmation_required: bool = False
     # v6 (2026-09-04): per-turn score for a side with no parseable action.
     # None = legacy (turn dropped from pairing). Contract knob: changing it
     # is a weight_version_key event.
@@ -545,6 +550,7 @@ def _duel(raw: dict) -> DuelCfg:
         max_action_tokens=int(d["max_action_tokens"]),
         ref_max_tokens=_ref_max_tokens(d),
         text_fallback_at_tool_turns=bool(d.get("text_fallback_at_tool_turns", False)),
+        confirmation_required=bool(d.get("confirmation_required", False)),
         concurrency=int(d["concurrency"]), timeout_s=int(d["timeout_s"]),
         score_bank=bool(d.get("score_bank", False)),
         reason_only=bool(d.get("reason_only", True)),

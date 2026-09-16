@@ -130,6 +130,21 @@ min_submission_block = 8938619
 # reign chain are unchanged; wvk ≤ 17 verdicts replay through their
 # stamped caps and the knob's false default. Forward-only; reign 13
 # stands; min_submission_block unchanged.
+# 18→19 confirmation slice for crowns (2026-09-16): explicit dated operator
+# directive 2026-09-16 11:10 UTC ("lets do B"). The per-duel rule stays
+# (paired margin > max(k_sigma·SE, δ), k_sigma 2.0, δ 0.002, thought-length
+# floor, B gate) but a pass no longer crowns: the validator runs a second
+# independent 1,300-turn slice (fresh seed from the reveal hash, fresh
+# teacher refs, same warm engines, ~40 min) and crowns only if that
+# slice's margin is > 0 AND the pooled margin over both slices clears
+# max(k_sigma·SE_pooled, δ); else confirmation_failed = a loss, king
+# stands. Why: every one of the 15 crowns since the wvk-10 reset rested
+# on one slice; the two crowns that did get a second slice (wvk-15
+# window rule; both later revoked) had it come back ≤ 0. Noise crowns
+# fall from ≈0.5% to ≈0.009% per attempt at today's SE; an honest
+# improver waits ~40 min. min(R,G) math, caps, gates, reign chain
+# unchanged; wvk ≤ 18 verdicts replay through the knob's false default.
+# Forward-only; reign 13 stands; min_submission_block unchanged.
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -137,7 +152,7 @@ min_submission_block = 8938619
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 18
+weight_version_key = 19
 
 [wallet]
 name = "default"
@@ -647,6 +662,25 @@ crown_window_blocks = 3600
 crown_confirm_slice = true
 crown_confirm_max = 2
 crown_one_entry_per_hotkey = true
+# 2026-09-16 (weight_version_key 18→19, explicit dated operator directive
+# 2026-09-16 11:10 UTC "lets do B"): a crown must win twice. A duel that
+# clears max(k_sigma·SE, δ) + gates is a candidate, not a king: the
+# validator scores ONE more independent n_turns slice against the same
+# king (seed blake2b(block_hash ‖ hotkey ‖ "|slice1"), turns disjoint from
+# the first slice, fresh teacher references, warm engines, ~40 min) and
+# crowns only if that slice's own paired margin is > 0 AND the pooled
+# margin over both slices clears max(k_sigma·SE_pooled, δ). Otherwise the
+# verdict is a loss (rejection_reason confirmation_failed): king stands,
+# slot consumed, nothing re-queued. Evidence: all 15 crowns since the
+# wvk-10 reset were single-slice passes (3.4% of 447 scored verdicts);
+# the only two with a stored second slice (the revoked window crowns
+# chal-00454 / chal-00461) fail this test. A null challenger crowns by
+# noise on ≈0.5% of attempts today (δ ≈ 2.6·SE) → ≈0.009% with the
+# confirmation (Monte Carlo at SE 0.00078). Verdicts stamp
+# duel_params.confirmation_required and verdict.confirmation {seed, n,
+# margin, se, z, pooled_margin, pooled_se, pooled_z, bar, passed}.
+# false = pre-wvk-19 replay (crown on the first slice).
+confirmation_required = true
 # Median stripped thought length, in characters (2026-08-13, wvk=5).
 # Invalid challenger cannot crown. 80 sits above live cue phrases
 # ("Next command:" = 13, "Next bash command:" = 18) and below guass (~290)
