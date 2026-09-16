@@ -147,7 +147,8 @@ mode = "shadow"
 weights_path = "ops/curriculum/out/groups.json"   # the fold's hook reads this (group vector + manifest block)
 rule_version = 1
 share_unit = "slice_keys"   # Σw over the phase-9 slice keys (operator 2026-09-15 00:39 UTC); base_strata = the plan's original sum, kept as share_raw_base_strata
-counted_rule = "v1.2"   # coordinator decision 2026-09-15 01:05 UTC (lever 2): v1.2 counted from shadow fold 2; v1 | v1.1 stay published
+counted_rule = "v2"   # Jacob's intent, coordinator decision 2026-09-16 17:04 UTC: v2 (divergence rule) counted; v1.2 stays published
+auto_apply_on_pass = true   # the 15:20 UTC job flips mode -> apply when the decision table says APPLY (two counting shadow folds)
 half_life_verdicts = 60
 n_0 = 8
 gamma = 1.0
