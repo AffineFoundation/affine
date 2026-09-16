@@ -45,8 +45,15 @@
 # >= 40 % (they land at ~58 % because the king groups are supply-limited).
 # Within the block the shares follow the measured deficit: the |d| >= 0.018
 # groups draw 3 turns per task, king_done / king_tooluse / completion 2.
-coding = 0.34   # 0.36 -> 0.34: king_coached 0.02 (2026-09-15)
-terminal = 0.22
+# 2026-09-16 phase 10 (Jacob 16:35 UTC, after the divergence analysis: "this
+# could be heavily solved by sampling more from steps where the teacher stops
+# but the king doesn't"). The stop-state classes -- king_done, king_tooluse,
+# completion_pre, completion, king_divergence -- become the dominant king-
+# derived mass: >= 25 % of every slice (16.8 % at epoch 44), taken from the
+# coding / terminal teacher-trajectory turns (floor 40 % kept: buckets 6030 /
+# 3700 -> 4000 / 2600), k = 3 sub-strata on every stop-state group.
+coding = 0.28   # 0.36 -> 0.34 (king_coached) -> 0.28 (phase 10)
+terminal = 0.18 # 0.22 -> 0.18 (phase 10)
 nl2repo = 0.01
 math = 0.02
 tool_use = 0.02
@@ -66,13 +73,13 @@ tool_use = 0.02
 # `text`), completion 0.03 -> 0.05, + completion_pre 0.01 (the 1-2 teacher
 # turns before a solved stop). The 0.05 comes from coding and terminal
 # proportionally (0.4276/0.2624 -> 0.3966/0.2434).
-king_fail = 0.09
+king_fail = 0.08   # 0.09 -> 0.08 (phase 10)
 king_loop_onset = 0.04
 king_pivot = 0.02
 king_recoverable = 0.02
-king_done = 0.01
-king_tooluse = 0.02   # phase 9b: ~540 When2Call candidates/day + persist states from five tool feeders
-completion = 0.10
+king_done = 0.03   # 0.01 -> 0.03 (phase 10, stop state)
+king_tooluse = 0.03   # 0.02 -> 0.03 (phase 10, stop state); ~540 When2Call candidates/day + persist states from five tool feeders
+completion = 0.15  # 0.10 -> 0.15 (phase 10, stop state)
 completion_pre = 0.02
 general = 0.05
 # 2026-09-15 (Jacob, lever 1/2): + king_coached 0.02 out of coding -- the
@@ -80,6 +87,21 @@ general = 0.05
 # (docs/coached-recovery.md). Small today (11 strict-decisive states / 24
 # solved continuations), grows with the coach loop.
 king_coached = 0.02
+king_divergence = 0.03   # phase 10: the king's first out-of-reference action (side-table, improvement-loop worker)
+
+[king_divergence]
+# Phase 10 (Jacob 2026-09-16): the king's FIRST out-of-reference action --
+# the step where the teacher's references stop or go elsewhere and the king
+# keeps going its own way. Side-table from the improvement-loop worker
+# (one JSON row per (rollout_id, turn_idx), `admit` true unless the row
+# says otherwise) dropped into side_table_dir. Precedence: below king_done
+# and king_recoverable, above king_tooluse / king_pivot / king_loop_onset;
+# published rows of those lower groups are retired and readmitted here
+# (readmit_published). Inherits [king_common] (leak rule waived, source
+# excludes); teacher-probe gate applies; k = 3 sub-strata.
+strata_buckets = 4000
+side_table_dir = "affine/state/king_divergence"
+readmit_published = true
 
 [king_coached]
 # Coached-teacher recovery (docs/coached-recovery.md; Jacob 2026-09-15,
@@ -166,6 +188,13 @@ recurrence_turn_cap = 0.20
 counterfactual_verdicts = 20
 near_king_z = 5.0
 first_challenge = "chal-00367"
+# Phase 10 (2026-09-16): the stop-state block (groups below) must keep at
+# least stop_state_floor of the slice under any applied vector -- the rule
+# (v1.2 counted, bc-e6baf26c) gives these groups an explicit stop-state
+# deficit bonus; the fold rescales an applied vector up to the floor as the
+# belt-and-braces (ops/corpus_build.py STOP_STATE_GROUPS).
+stop_state_groups = ["king_done", "king_tooluse", "completion_pre", "completion", "king_divergence"]
+stop_state_floor = 0.25
 
 [strata_budget]
 # Phase 9 (2026-09-14). The duel slicer draws one turn per stratum uniformly
@@ -183,8 +212,8 @@ first_challenge = "chal-00367"
 enabled = true
 
 [strata_budget.buckets]
-coding = 6030
-terminal = 3700
+coding = 3800     # 6030 -> 3800 (phase 10, 2026-09-16; sized so the stop-state block clears 25 %)
+terminal = 2400   # 3700 -> 2400 (phase 10)
 general = 830
 tool_use = 332
 
@@ -195,9 +224,10 @@ king_pivot = 3
 king_recoverable = 3
 completion_pre = 3
 king_coached = 3
-king_done = 2
-king_tooluse = 2
-completion = 2
+king_divergence = 3   # phase 10
+king_done = 3         # 2 -> 3 (phase 10)
+king_tooluse = 3      # 2 -> 3 (phase 10)
+completion = 3        # 2 -> 3 (phase 10)
 
 [king_common]
 # Rules every king_* group inherits (king-data spec §3.1, 2026-09-13).
@@ -474,7 +504,7 @@ cap_chars = 7000
 enabled = true
 side_table = "affine/state/teacher_probe/probes.jsonl"
 pending = "affine/state/teacher_probe/pending.jsonl"
-groups = ["king_fail", "king_done", "king_recoverable", "king_tooluse", "king_pivot", "king_loop_onset", "completion_pre", "king_coached"]
+groups = ["king_fail", "king_done", "king_recoverable", "king_tooluse", "king_pivot", "king_loop_onset", "completion_pre", "king_coached", "king_divergence"]
 min_valid = 2
 require_distinct = true
 # Jacob's rule (2026-09-14): when >= min_valid teacher samples are prose with

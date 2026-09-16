@@ -1708,15 +1708,20 @@ aggressively: king-derived groups (`king_fail`, `king_loop_onset`, \
 `king_pivot`, `king_done`, `king_tooluse`, `king_recoverable`, \
 `completion_pre`) plus `completion` hold ~33 % of the strata (was ~12 %); \
 coding + terminal ~57 % (floor 40 %); general 5 %, tool_use 2 %, math 2 %, \
-nl2repo 1 %. Mechanism (`[strata_budget]` in `rollouts/sources.toml`, applied \
+nl2repo 1 %. **Since epoch 45 (2026-09-16, phase 10)** the stop-state classes \
+— the steps where the teacher stops but the king does not: `completion`, \
+`king_done`, `king_tooluse`, `completion_pre`, `king_divergence` — are the \
+dominant king-derived mass at ≥ 25 % of every slice (25.3 % at epoch 45: \
+completion 17.0, king_tooluse 3.3, completion_pre 2.4, king_done 2.1, \
+king_divergence 0.5), taken from coding + terminal (43.4 %, floor 40 %); \
+every stop-state group draws up to 3 turns per task. Mechanism (`[strata_budget]` in `rollouts/sources.toml`, applied \
 by the fold to the index only -- no turn left D, chunks and old manifests are \
 unchanged): teacher-trajectory groups are merged into fixed strata buckets \
 (`coding:b<n>`, `terminal:b<n>`, `general:b<n>`, `tool_use:b<n>` = \
 `sha256(original stratum) % N`), and supply-limited king groups split each \
 task stratum into up to 3 sub-strata by turn (`king_fail:0552#2` = \
-`<stratum>#<sha256(turn_id) % k>`; k = 3 for king_fail / king_loop_onset / \
-king_pivot / king_recoverable / completion_pre, 2 for king_done / \
-king_tooluse / completion), so one duel may draw up to k different turns of \
+`<stratum>#<sha256(turn_id) % k>`; k = 3 for every king group and for \
+completion since phase 10), so one duel may draw up to k different turns of \
 the same task. The original key is kept in the index column `stratum_src`. \
 Trade-off (RT-6): a king task recurs across duels k times as often -- \
 simulated per-duel overlap between two seeded slices rose from 0.9 % to \
@@ -2129,7 +2134,15 @@ declared itself done (`agent_completed`) and the env graded the run failed. \
 Reference kind `text`. 246 / 1.7%.
 - `completion` — the final reply that ended a SOLVED rollout on purpose \
 (teacher or king): a `submit`, a finish tool call, `task_complete`, or the \
-prose final report (`text`). 1,738 / 11.7%.
+prose final report (`text`). 2,315 / 17.0% (epoch 45).
+- `king_divergence` (since epoch 45, 2026-09-16) — the king's FIRST \
+out-of-reference action in a failed rollout: the first turn where its action \
+is outside the three teacher references sampled at that very prefix (the \
+improvement-loop worker's divergence side-table, regenerated per king; \
+`ref_n_valid ≥ 2`, references not all identical — so the probe gate is met by \
+construction). Where 2 or more references STOP (a finish or a prose report) \
+and the king acted, the turn is scored as `text`; otherwise the harness \
+dialect. 74 states / 0.5% at epoch 45, growing per king.
 - `king_coached` (since epoch 41, 2026-09-15) — the TEACHER's hint-free \
 continuation from a king failure state where a coach was decisive: a coached \
 teacher solved the task while the plain teacher solved 0 of at least 6 \
