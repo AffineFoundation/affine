@@ -328,3 +328,14 @@ class BlockFloorTests(unittest.TestCase):
                                block_floors={"stop_state": block})
         self.assertTrue(fc["ok"])
         self.assertTrue(fc["block_floors"]["stop_state"]["ok"])
+
+
+class RestoreBlockFloorTests(unittest.TestCase):
+    def test_lifts_other_members_after_a_guard_cut(self):
+        shares = {"coding": 0.40, "terminal": 0.20, "completion": 0.20, "king_divergence": 0.01, "king_fail": 0.19}
+        block = {"stop_state": (("completion", "king_divergence"), 0.25)}
+        out = rule.restore_block_floors(shares, block, fixed={"king_divergence"}, floor={g: 0.0 for g in shares},
+                                        cap=0.60, current=shares, max_shift=0.10)
+        self.assertAlmostEqual(out["king_divergence"], 0.01)            # guard-cut group untouched
+        self.assertAlmostEqual(out["completion"] + out["king_divergence"], 0.25)
+        self.assertAlmostEqual(sum(out.values()), 1.0)
