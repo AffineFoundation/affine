@@ -370,7 +370,8 @@ share_unit = "slice_keys"
 # Which rule's weights drive the published shares: v1 (counted until fold 3),
 # v1.1 (S~ as a gate), v1.2 (king forfeit rate + scaled positive challenger
 # gap). The others are published next to it. Switch = coordinator decision.
-counted_rule = "v1.2"   # coordinator decision 2026-09-15 01:05 UTC (lever 2): v1.2 counted from shadow fold 2
+counted_rule = "v2"   # Jacob's intent, coordinator decision 2026-09-16 17:04 UTC: v2 (divergence rule) counted; v1.2 stays published
+auto_apply_on_pass = true   # the 15:20 UTC job flips mode -> apply when the decision table says APPLY (two counting shadow folds)
 half_life_verdicts = 60
 n_0 = 8
 gamma = 1.0
