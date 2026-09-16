@@ -37,7 +37,7 @@ PRIVATE_DISCORD_CHANNEL = "1510910974498967613"
 NO_CACHE = "no-cache"
 SNAPSHOT_FILES = ("rule.json", "weights.parquet", "groups.json", "recurrence.json",
                   "deficit_by_source.json", "counterfactual.json", "criterion.json", "diff.md",
-                  "ledger.json", "top10_cards.md", "teacher_probe.jsonl.gz", "latest.json", "fold_vector.json", "criterion_by_rule.json")
+                  "ledger.json", "top10_cards.md", "teacher_probe.jsonl.gz", "latest.json", "fold_vector.json", "criterion_by_rule.json", "forgetting_check.json", "apply_notice.md")
 CONTENT_TYPES = {".json": "application/json", ".parquet": "application/vnd.apache.parquet",
                  ".md": "text/markdown; charset=utf-8", ".gz": "application/gzip"}
 

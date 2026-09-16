@@ -18,8 +18,11 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
 import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from argparse import Namespace
 from datetime import datetime, timezone
@@ -308,17 +311,31 @@ DECISION_ITEMS = ("1_rebuild_sha_matches", "2_turn_join_ge_95pct", "3_counterfac
 
 
 def shadow_fold_history(counted_rule: str) -> list[dict]:
-    """Previous runs that COUNT as shadow folds for this counted rule (>= min_new_verdicts new verdicts)."""
+    """Previous runs that COUNT as shadow folds for this counted rule
+    (>= min_new_verdicts new verdicts). Two kinds of operator records may
+    follow in the same file: {"amends": <computed_at>, "items": {...},
+    "reason": ...} overrides items of an earlier run (e.g. a FAIL that was a
+    tooling artefact), and {"override_count": true, ...} declares a run a
+    counting fold. Both are printed in the decision table."""
     if not CRITERION_HISTORY.is_file():
         return []
-    out = []
+    rows: list[dict] = []
+    amend: list[dict] = []
     for line in CRITERION_HISTORY.read_text().splitlines():
         if not line.strip():
             continue
         r = json.loads(line)
-        if r.get("counts_as_shadow_fold") and r.get("counted_rule", "v1") == counted_rule:
-            out.append(r)
-    return out
+        (amend if r.get("amends") else rows).append(r)
+    for a in amend:
+        for r in rows:
+            if r.get("computed_at") == a["amends"]:
+                r["items"].update(a.get("items") or {})
+                r.setdefault("amendments", []).append(a.get("reason") or "")
+                if "counted_rule" in a:
+                    r["counted_rule"] = a["counted_rule"]
+                if "counts_as_shadow_fold" in a:
+                    r["counts_as_shadow_fold"] = a["counts_as_shadow_fold"]
+    return [r for r in rows if r.get("counts_as_shadow_fold") and r.get("counted_rule", "v1") == counted_rule]
 
 
 def decision_table(crit: dict) -> str:
@@ -343,7 +360,54 @@ def decision_table(crit: dict) -> str:
         verdict = ("APPLY (pending item 7 hand read)" if auto_ok and not all(h is True for h in hand)
                    else "APPLY" if auto_ok else "RETRY/HOLD -- an automatic item failed on one of the two folds")
     lines.append(f"  verdict: {verdict}")
+    for r in prev:
+        for a in r.get("amendments") or []:
+            lines.append(f"  amendment on {r['computed_at'][:16]}: {a}")
     return "\n".join(lines)
+
+
+APPLY_NOTICE = """Dataset sampling update (data event, no scoring change, no weight_version_key change).
+
+Since {date} the share of each part of D in every 1,300-turn duel slice follows a published rule instead of a hand-set table. Rule v2 ("the divergence rule"): for every stratum of D we measure, from the duel records we already publish under evals/, how far the sitting king is from the teacher on the turns it was duelled on -- action disagreement (1 - soft A_match, token-Jaccard of the normalised actions), the king's forfeit rate, the score deficit max(0, teacher own-action lift - king B), and the gap a near-king challenger opens on the same turns (Dbar+) -- each divided by its corpus mean and averaged. A stratum's draw weight is w = 0.20/N + 0.80 * D / sum D: 20 % of the mass is spread uniformly over ALL strata so every turn keeps a non-zero chance of being drawn (nothing can be forgotten -- a stratum the king solved and later regresses on rises again), 80 % follows the divergence. Coding + terminal stay >= 40 % of every slice; no group moves more than 5 points per fold; a stratum is drawn at most 3 times per duel and at most 0.18 expected draws per turn per duel per group.
+
+Everything is auditable: https://data.affine.io/curriculum/{epoch}/ has the rule (rule.json), the per-stratum weights (weights.parquet), the group shares with the reason for every floor / clamp (groups.json), the recurrence stats, the counterfactual check and a one-page diff per fold; the ledger rebuilds byte-for-byte from evals/ + history (ops/curriculum/ledger.py --check <sha>). Verdicts stamp slice.curriculum_version. Details: https://affine.io/llms.txt -> "Adaptive curriculum".
+
+Slices stay seeded by your reveal block hash and teacher references stay fresh per duel. The upweighted strata are public on purpose: they are the states where the king diverges most from the teacher, labelled by the teacher at duel time.
+"""
+
+
+def flip_mode_to_apply(apply_date: str, wsha: str) -> None:
+    """Mechanical apply (coordinator 2026-09-16 17:04 UTC): set
+    `[curriculum].mode = "apply"` in sources.toml as a ONE-LINE patch on git
+    HEAD (other workers keep uncommitted edits in that file), update the
+    llms.txt builder to the apply wording, rebuild llms.txt, commit."""
+    toml_path = REPO / "rollouts" / "rollouts" / "sources.toml"
+    live = toml_path.read_text()
+    if re.search(r'^mode = "apply"', live, re.M):
+        return
+    live_new = re.sub(r'^mode = "shadow".*$', f'mode = "apply"   # curriculum apply fold {apply_date}, weights {wsha[:12]} (mechanical, criterion passed twice)',
+                      live, count=1, flags=re.M)
+    toml_path.write_text(live_new)
+    head = subprocess.run(["git", "show", "HEAD:rollouts/rollouts/sources.toml"], cwd=REPO, capture_output=True,
+                          text=True, check=True).stdout
+    head_new = re.sub(r'^mode = "shadow".*$', f'mode = "apply"   # curriculum apply fold {apply_date}, weights {wsha[:12]} (mechanical, criterion passed twice)',
+                      head, count=1, flags=re.M)
+    with tempfile.TemporaryDirectory() as td:
+        a, b = Path(td) / "a", Path(td) / "b"
+        a.write_text(head), b.write_text(head_new)
+        diff = subprocess.run(["git", "diff", "--no-index", "--", str(a), str(b)], cwd=REPO, capture_output=True, text=True).stdout
+        # the --no-index header is `--- a/<tmp>/a`: keep the a/ b/ prefixes git strips
+        diff = diff.replace(str(a), "/rollouts/rollouts/sources.toml").replace(str(b), "/rollouts/rollouts/sources.toml")
+        subprocess.run(["git", "apply", "--cached", "--recount", "-"], cwd=REPO, input=diff, text=True, check=True)
+    subprocess.run([sys.executable, str(REPO / "ops" / "curriculum" / "llms_edits.py"), "--mode", "apply",
+                    "--apply-date", apply_date], cwd=REPO, check=True)
+    subprocess.run([sys.executable, "scripts/build_llms_txt.py"], cwd=REPO / "affine", check=True)
+    subprocess.run(["git", "add", "affine/scripts/build_llms_txt.py"], cwd=REPO, check=True)
+    subprocess.run(["git", "commit", "-q", "-m",
+                    f"curriculum: mode shadow -> apply ({apply_date}; weights {wsha[:12]}; criterion passed on two counting "
+                    f"shadow folds -- mechanical apply per coordinator decision 2026-09-16 17:04 UTC); llms.txt apply wording"],
+                   cwd=REPO, check=True)
+    log(f"[run] APPLY: [curriculum].mode = apply committed on HEAD; llms.txt rebuilt")
 
 
 def previous_snapshot() -> tuple[dict | None, Path | None]:
@@ -446,6 +510,33 @@ def main() -> None:
                     f"→ re-weighted above the uniform floor {forget['uniform_floor_per_stratum']:.2e}. Examples: {ex}. Loop: {forget['loop']}\n")
 
     for_epoch = int(rule_doc["corpus_epoch"]) + 1
+    verdict_line = crit["decision_table"].splitlines()
+    verdict = next((l for l in verdict_line if l.strip().startswith("verdict:")), "")
+    if (cfg.get("auto_apply_on_pass") and rule_doc["mode"] == "shadow" and "APPLY" in verdict
+            and not args.no_publish):
+        apply_date = crit["computed_at"][:10]
+        flip_mode_to_apply(apply_date, wsha)
+        # recompute the same weights in apply mode (share_applied / m_applied), same sha inputs
+        shutil.rmtree(wdir, ignore_errors=True)
+        rule_doc = weights.compute(Namespace(**{**vars(wargs), "mode": "apply"}))
+        wsha = rule_doc["weights_sha256"]
+        old_snapshot, snapshot = snapshot, SNAPSHOT_DIR / wsha
+        if snapshot.exists():
+            shutil.rmtree(snapshot)
+        shutil.copytree(wdir, snapshot)
+        for name in ("ledger.json", "counterfactual.json", "top10_cards.md", "criterion_by_rule.json",
+                     "forgetting_check.json"):
+            if (old_snapshot / name).is_file():
+                shutil.copyfile(old_snapshot / name, snapshot / name)
+        groups = json.loads((snapshot / "groups.json").read_text())
+        rec = json.loads((snapshot / "recurrence.json").read_text())
+        shares = {g: r["share_after_clamp"] for g, r in groups["groups"].items()}
+        crit["weights_sha256"] = wsha
+        crit["applied"] = {"date": apply_date, "weights_sha256": wsha}
+        write_json(crit, snapshot / "criterion.json")
+        (snapshot / "diff.md").write_text(build_diff(snapshot, prev_dir), encoding="utf-8")
+        (snapshot / "apply_notice.md").write_text(APPLY_NOTICE.format(date=apply_date, epoch=for_epoch), encoding="utf-8")
+        log(f"[run] APPLY: weights recomputed in apply mode -> {wsha}")
     latest = {
         "rule_version": int(rule_doc["rule_version"]), "mode": rule_doc["mode"],
         "ledger_sha256": lsha, "weights_sha256": wsha, "manifest_sha256": rule_doc["manifest_sha256"],
