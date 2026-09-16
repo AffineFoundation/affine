@@ -65,7 +65,10 @@ CURRICULUM_DEFAULTS: dict = {
     "weights_path": "ops/curriculum/out/groups.json",
     "rule_version": 1,
     "share_unit": "slice_keys",
-    "counted_rule": "v1",          # v1 | v1.1 | v1.2 -- which rule's weights drive the published shares
+    "counted_rule": "v1",          # v1 | v1.1 | v1.2 | v2 -- which rule's weights drive the published shares
+    "v2_eps": 0.20,                # uniform floor mass over ALL strata (no-forgetting guarantee)
+    "v2_gamma": 1.0,
+    "v2_component_weights": {"action": 0.25, "forfeit": 0.25, "score": 0.25, "gap": 0.25},
     "v11_s_gate": 0.5,
     "half_life_verdicts": 60,
     "n_0": 8,

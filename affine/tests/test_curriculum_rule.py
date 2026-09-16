@@ -277,3 +277,24 @@ class RecurrenceGuardTests(unittest.TestCase):
         self.assertTrue(r["ok"])
         self.assertTrue(any(a.startswith("share g") for a in r["actions"]))
 
+
+
+class RuleV2Tests(unittest.TestCase):
+    def test_divergence_normalises_and_drops_missing(self):
+        means = {"action": 0.5, "forfeit": 0.04, "score": 0.01, "gap": 0.006}
+        w = {"action": 0.25, "forfeit": 0.25, "score": 0.25, "gap": 0.25}
+        # every component at its corpus mean -> D = 1
+        self.assertAlmostEqual(rule.divergence_v2({"action": 0.5, "forfeit": 0.04, "score": 0.01, "gap": 0.006}, means, w), 1.0)
+        # action undefined (text turn): the other three renormalise, still 1
+        self.assertAlmostEqual(rule.divergence_v2({"action": None, "forfeit": 0.04, "score": 0.01, "gap": 0.006}, means, w), 1.0)
+        # twice the forfeit rate -> +0.25
+        self.assertAlmostEqual(rule.divergence_v2({"action": 0.5, "forfeit": 0.08, "score": 0.01, "gap": 0.006}, means, w), 1.25)
+
+    def test_uniform_floor_keeps_every_stratum_positive(self):
+        strata = {"a": {"D_v2": 0.0}, "b": {"D_v2": 0.0}, "c": {"D_v2": 4.0}}
+        rule.weights_v2(strata, eps=0.2, gamma=1.0)
+        self.assertAlmostEqual(sum(r["w_v2"] for r in strata.values()), 1.0)
+        self.assertAlmostEqual(strata["a"]["w_v2"], 0.2 / 3)          # floor only
+        self.assertAlmostEqual(strata["c"]["w_v2"], 0.2 / 3 + 0.8)    # all the divergence mass
+        rule.weights_v2(strata, eps=1.0, gamma=1.0)
+        self.assertAlmostEqual(strata["c"]["w_v2"], 1 / 3)            # eps = 1 -> uniform

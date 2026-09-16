@@ -132,14 +132,18 @@ def build_diff(new: Path, prev: Path | None) -> str:
                    f"{_pct(r.get('share_m_only_after_clamp'))} | v1.1 gate {_pct(r.get('share_v11_after_clamp'))} "
                    f"({r.get('v11_eligible_strata')}/{r.get('n_strata')} eligible) | v1.2 F~ {_f(r.get('mean_F_t_slice_keys'), 3)} + "
                    f"Dbar+~ {_f(r.get('mean_Dp_t_slice_keys'), 4)} → M12~ {_f(r.get('mean_M12_t_slice_keys'), 3)} → "
-                   f"{_pct(r.get('share_v12_after_clamp'))} [{r.get('v12_reason')}] | floors-only {_pct(r.get('share_floors_only'))}")
+                   f"{_pct(r.get('share_v12_after_clamp'))} [{r.get('v12_reason')}] | v2 D {_f(r.get('mean_D_v2_slice_keys'), 2)} "
+                   f"(act {_f(r.get('mean_div_action_t_slice_keys'), 2)}, score {_f(r.get('mean_div_score_t_slice_keys'), 4)}) → "
+                   f"{_pct(r.get('share_v2_after_clamp'))} [{r.get('v2_reason')}] | floors-only {_pct(r.get('share_floors_only'))}")
     v11 = grp_n.get("v11") or {}
     v12 = grp_n.get("v12") or {}
     lines.append("9. **Decomposition per group** (means over slice keys; shares after floors + clamp; v1 counted, "
                  f"M~-only = same rule with S~ = 1, v1.1 = S~ as a gate ≥ {v11.get('s_gate', 0.5)} then weight = M~, "
                  f"v1.2 = king forfeit rate F~ + {_f(v12.get('dplus_scale'), 2)} × mean positive challenger gap Dbar+~ "
                  f"(scale = corpus forfeit {_f(v12.get('corpus_mean_forfeit'), 3)} / corpus Dbar+ {_f(v12.get('corpus_mean_Dbar_plus'), 4)}), "
-                 "S~ gate — both informational, not counted; floors-only = live share with only the plan's floors): "
+                 "S~ gate; v2 = divergence rule (Jacob 2026-09-16): D = mean of {1 − soft A_match, forfeit, "
+                 "teacher-own-lift − king B, Dbar+} each / corpus mean, w = 0.20/N + 0.80 · D / Σ D — counted rule marked in line 11; "
+                 "floors-only = live share with only the plan's floors): "
                  + "; ".join(dec) + ".")
     # 10 the king's miss rate per group, raw from the ledger
     km = []

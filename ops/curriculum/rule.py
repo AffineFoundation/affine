@@ -86,6 +86,36 @@ def stratum_weight_v12(f_t: float, dplus_t: float, s_t: float, *, dplus_scale: f
     return m12, ((m12 + eps) ** gamma if s_t >= s_gate else 0.0)
 
 
+def divergence_v2(comps: dict[str, float | None], corpus_means: dict[str, float],
+                  weights: dict[str, float]) -> float:
+    """Rule v2 divergence D_s: weighted mix of the king-vs-teacher distances,
+    each divided by its corpus mean so no unit dominates. A component
+    without a value (e.g. action divergence on `text` turns) is dropped and
+    the remaining weights renormalised."""
+    num = 0.0
+    wsum = 0.0
+    for k, w in weights.items():
+        v = comps.get(k)
+        mean = corpus_means.get(k) or 0.0
+        if v is None or mean <= 0:
+            continue
+        num += w * max(float(v), 0.0) / mean
+        wsum += w
+    return num / wsum if wsum > 0 else 0.0
+
+
+def weights_v2(strata: dict[str, dict], *, eps: float, gamma: float, field_d: str = "D_v2",
+               out: str = "w_v2") -> None:
+    """w_s = eps / N + (1 − eps) · D_s^gamma / Σ D^gamma over ALL strata: the
+    uniform floor keeps every turn's draw probability non-zero (nothing can
+    be forgotten); the rest follows divergence."""
+    n = len(strata) or 1
+    pw = {s: max(float(r.get(field_d) or 0.0), 0.0) ** gamma for s, r in strata.items()}
+    tot = sum(pw.values())
+    for s, r in strata.items():
+        r[out] = eps / n + ((1.0 - eps) * pw[s] / tot if tot > 0 else (1.0 - eps) / n)
+
+
 def stratum_weight(m_t: float, s_t: float, *, eps: float, gamma: float) -> float:
     return (max(m_t, 0.0) + eps) ** gamma * max(s_t, 0.0)
 
@@ -351,7 +381,8 @@ def recurrence_guard(strata: dict[str, dict], shares: dict[str, float], *, group
         for g in rest:
             shares[g] = shares[g] * (1.0 - tot_fixed) / rest_tot
     proj = recurrence_projection(strata, shares, slice_n=slice_n)
-    return {"shares": shares, "actions": actions,
+    cut = sorted({a.split()[1] for a in actions if a.startswith("share ")})
+    return {"shares": shares, "actions": actions, "groups_cut": cut,
             "max_turn_draws_per_duel": proj["max_turn_draws_per_duel"],
             "max_group_draws": max((d["expected_draws_per_turn_per_duel"] for d in proj["groups"].values()), default=0.0),
             "ok": proj["max_turn_draws_per_duel"] <= turn_cap + 1e-12
@@ -360,16 +391,21 @@ def recurrence_guard(strata: dict[str, dict], shares: dict[str, float], *, group
 
 def check_floors(shares: dict[str, float], static: dict[str, float], *, floor_frac: float,
                  floor_ct: float, cap: float, supply: dict[str, bool] | None = None,
-                 tol: float = 1e-6) -> dict:
-    """Stage-3 item 6: floors and cap hold on a published vector."""
+                 guard_cut: set[str] | frozenset[str] = frozenset(), tol: float = 1e-6) -> dict:
+    """Stage-3 item 6: floors and cap hold on a published vector. A group
+    whose share the recurrence guard lowered (`guard_cut`) is exempt from
+    its floor -- the recurrence cap is the harder of the two safety items
+    (coordinator amendment 2026-09-15) -- and is listed separately."""
     supply = supply or {g: True for g in shares}
     bad_floor = [g for g in shares if supply.get(g, True) and static.get(g, 0) > 0
+                 and g not in guard_cut and shares[g] < floor_frac * static[g] - tol]
+    cut_below = [g for g in shares if g in guard_cut and static.get(g, 0) > 0
                  and shares[g] < floor_frac * static[g] - tol]
     bad_cap = [g for g in shares if shares[g] > cap + tol]
     ct = shares.get("coding", 0.0) + shares.get("terminal", 0.0)
     return {"ok": not bad_floor and not bad_cap and ct >= floor_ct - tol,
             "below_floor": bad_floor, "above_cap": bad_cap, "coding_plus_terminal": ct,
-            "sum": sum(shares.values())}
+            "below_floor_by_recurrence_guard": cut_below, "sum": sum(shares.values())}
 
 
 def is_close_sum_one(shares: dict[str, float], tol: float = 1e-6) -> bool:
