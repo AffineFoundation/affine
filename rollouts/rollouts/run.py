@@ -330,11 +330,13 @@ def main() -> None:
                 teacher_only=not scheduler.king_cycle and not args.source)
         pending = scheduler.pending(name, pools[name], policy)
         batch = pending[: min(cfg.batch_size, source.max_batch or cfg.batch_size)]
+        n_teacher_solved = sum(1 for r in batch
+                               if r["uid"] in state.teacher_solved.get(name, ()))
         log.info("cycle: source=%s policy=%s seat=%s picks=%d/%d batch=%d "
-                 "seat_pending=%d remaining=%s", name, policy.id,
-                 "king" if scheduler.king_cycle else "teacher",
+                 "teacher_solved_in_batch=%d seat_pending=%d remaining=%s", name,
+                 policy.id, "king" if scheduler.king_cycle else "teacher",
                  scheduler.picks_king, scheduler.picks_total, len(batch),
-                 len(pending), remaining)
+                 n_teacher_solved, len(pending), remaining)
         if not health.preflight(policy, env):
             # A dynamic endpoint (the king seat) does not answer: struck, so
             # the scheduler prefers another policy while it cools. Not a
