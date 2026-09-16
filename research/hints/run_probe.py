@@ -84,11 +84,16 @@ ARMS = {
     # teacher saw it in the decisive continuation (level "note").
     "H0_4096": {"hints": None, "max_tokens": 4096, "think": True, "heldout": True},
     "coached_4096": {"hints": [("coached", "note")], "max_tokens": 4096, "think": True, "heldout": True},
+    # oversampled twins: 7 draws, first 3 valid = refs, the other 4 = held-out
+    # miners (deep states forfeit ~50% of draws at 4,096; k=3 valid refs need it)
+    "H0_4096x": {"hints": None, "max_tokens": 4096, "think": True, "heldout": True, "draws": 7},
+    "coached_4096x": {"hints": [("coached", "note")], "max_tokens": 4096, "think": True, "heldout": True, "draws": 7},
 }
 for _name, _gl in CONDITIONS.items():
     if _gl is not None:
         ARMS.setdefault(_name, {"hints": [_gl], "max_tokens": MAX_TOKENS, "think": True, "heldout": False})
 NOTHINK_SUFFIX = "\n</think>\n\n"
+KING_DRAWS = 1  # set from --king-draws
 
 
 def log(msg: str) -> None:
@@ -191,7 +196,7 @@ async def score_miner(box: Box, prefix: list[dict], miner: dict,
 
 
 async def run_turn(turn: dict, box: Box, king: Box | None, hints, cond_names: list[str],
-                   seed: int) -> dict:
+                   seed: int, king_draws: int = 1) -> dict:
     t0 = time.time()
     prefix = turn["prefix"]
     kind = turn["action_kind"]
@@ -215,9 +220,11 @@ async def run_turn(turn: dict, box: Box, king: Box | None, hints, cond_names: li
 
     async def sample_arm(cname, arm, per_ref):
         # refs may carry different hints (mix3): sample each ref's prefix separately.
-        n_extra = 1 if arm["heldout"] else 0
+        # `draws` (oversampling, coached A-term probe): sample N draws, the first
+        # K_REFS valid ones become the refs, every other draw a held-out miner.
+        n_draws = arm.get("draws") or (K_REFS + (1 if arm["heldout"] else 0))
         groups = []
-        for i in range(K_REFS + n_extra):
+        for i in range(n_draws):
             h = per_ref[i % K_REFS]
             groups.append(sample_side(box, with_hint(prefix, h["text"] if h else None), 1,
                                       action_kind=kind, require_think_close=False,
@@ -228,26 +235,44 @@ async def run_turn(turn: dict, box: Box, king: Box | None, hints, cond_names: li
     samples = await asyncio.gather(*[sample_arm(c, a, pr) for c, a, pr in cond_specs])
     heldout = None
     for (cname, arm, per_ref), sm in zip(cond_specs, samples):
-        extra = None
-        if arm["heldout"]:
-            extra, sm = sm[K_REFS], sm[:K_REFS]
-        if cname == "H0" and extra is not None:
-            # The unhinted held-out is the round-1 positive control; it must
-            # satisfy the miner rule (closed </think>).
-            z, y = split_rollout(extra["raw"], kind, require_think_close=True)
-            heldout = {"source": "teacher_heldout", "raw": extra["raw"], "z": z, "y": y,
-                       "valid": bool(y), "think_closed": extra["think_closed"]}
-        elif extra is not None:
-            # Coached held-out: the teacher + coach as the ideal miner. Under
-            # think=False there is no </think> to close, so validity = parsed action.
-            if arm["think"]:
+        extras = []
+        if arm.get("draws"):
+            # oversampled arm: first K_REFS valid draws are the refs (in draw
+            # order), the rest are held-out miners; yield is recorded on all draws.
+            all_draws = sm
+            refs_sel, rest = [], []
+            for d in all_draws:
+                (refs_sel if (d["valid"] and len(refs_sel) < K_REFS) else rest).append(d)
+            sm = refs_sel
+            extras = rest
+            row.setdefault("draw_yield", {})[cname] = {
+                "n_draws": len(all_draws), "n_valid": sum(1 for d in all_draws if d["valid"]),
+                "n_cap": sum(1 for d in all_draws if d.get("think_closed") is False)}
+        elif arm["heldout"]:
+            extras, sm = [sm[K_REFS]], sm[:K_REFS]
+        for j, extra in enumerate(extras):
+            suffix = "" if j == 0 else str(j + 1)
+            if arm["hints"] is None:
+                # The unhinted held-out is the round-1 positive control; it must
+                # satisfy the miner rule (closed </think>).
                 z, y = split_rollout(extra["raw"], kind, require_think_close=True)
+                rec = {"source": "teacher_heldout", "raw": extra["raw"], "z": z, "y": y,
+                       "valid": bool(y), "think_closed": extra["think_closed"], "arm": cname}
+                if j == 0 and heldout is None:
+                    heldout = rec
+                else:
+                    row.setdefault("heldouts", {})[f"teacher_heldout{suffix or '_' + cname}"] = rec
             else:
-                z, y = extra["z"], extra["y"]
-            row.setdefault("coached", {})[cname] = {
-                "source": f"coached_{cname}", "raw": extra["raw"], "z": z, "y": y,
-                "valid": bool(y), "think_closed": extra["think_closed"],
-                "hint_id": per_ref[0].get("hint_id") if per_ref[0] else None}
+                # Coached held-out: the teacher + coach as the ideal miner. Under
+                # think=False there is no </think> to close, so validity = parsed action.
+                if arm["think"]:
+                    z, y = split_rollout(extra["raw"], kind, require_think_close=True)
+                else:
+                    z, y = extra["z"], extra["y"]
+                row.setdefault("coached", {})[cname + ("" if j == 0 else f"_{j + 1}")] = {
+                    "source": f"coached_{cname}", "raw": extra["raw"], "z": z, "y": y,
+                    "valid": bool(y), "think_closed": extra["think_closed"],
+                    "hint_id": per_ref[0].get("hint_id") if per_ref[0] else None}
         h0 = per_ref[0]
         row["conditions"][cname] = {
             "hint_id": h0.get("hint_id") if h0 else None,
@@ -266,6 +291,8 @@ async def run_turn(turn: dict, box: Box, king: Box | None, hints, cond_names: li
     miners: dict[str, dict] = {}
     if heldout:
         miners["teacher_heldout"] = heldout
+    for name, m in (row.pop("heldouts", {}) or {}).items():
+        miners[name] = m
     for cname, m in (row.get("coached") or {}).items():
         miners[f"coached_{cname}"] = m
     row.pop("coached", None)
@@ -282,9 +309,10 @@ async def run_turn(turn: dict, box: Box, king: Box | None, hints, cond_names: li
                             **{k: m[k] for k in ("solved", "hinted_first") if k in m}}
     if king is not None:
         try:
-            ks = (await sample_side(king, prefix, 1, action_kind=kind, require_think_close=True))[0]
-            ks["source"] = "king_live"
-            miners["king_live"] = ks
+            kss = await sample_side(king, prefix, king_draws, action_kind=kind, require_think_close=True)
+            for j, ks in enumerate(kss):
+                ks["source"] = "king_live"
+                miners["king_live" if j == 0 else f"king_live{j + 1}"] = ks
         except Exception as e:  # noqa: BLE001 — the king box is best-effort, low rate
             row["errors"].append(f"king_live: {type(e).__name__}: {str(e)[:200]}")
     await asyncio.gather(*[score_miner(box, prefix, m, row["conditions"])
@@ -302,7 +330,7 @@ async def worker(box: Box, queue: asyncio.Queue, out, hints, cond_names, king, s
             queue.task_done()
             return
         try:
-            row = await asyncio.wait_for(run_turn(turn, box, king, hints, cond_names, seed),
+            row = await asyncio.wait_for(run_turn(turn, box, king, hints, cond_names, seed, KING_DRAWS),
                                          timeout=TURN_TIMEOUT_S)
         except Exception as e:  # noqa: BLE001 — record, continue with the next turn
             row = {"turn_id": turn["turn_id"], "group": turn["group"], "box": box.name,
@@ -383,12 +411,15 @@ def main() -> None:
     ap.add_argument("--turn-conc", type=int, default=6, help="turns in flight per box")
     ap.add_argument("--box-conc", type=int, default=64, help="max concurrent requests per box")
     ap.add_argument("--king", action="store_true", help="also sample the live king (KING_* env)")
+    ap.add_argument("--king-draws", type=int, default=1, help="live king samples per turn (king_live, king_live2, ...)")
     ap.add_argument("--king-tok-dir", default=os.environ.get("HINTS_KING_TOK", "/tmp/hints-data/king_tok"))
     ap.add_argument("--pods-state", default=os.environ.get("HINTS_PODS_STATE", "/tmp/hints-secrets/pods.json"))
     ap.add_argument("--retry-failed", action="store_true")
     ap.add_argument("--shard", default="", help="i/n: take every n-th turn (sorted by id) starting at i")
     ap.add_argument("--boxes", default="", help="comma list of pod names to use (default: all ready)")
     args = ap.parse_args()
+    global KING_DRAWS
+    KING_DRAWS = args.king_draws
     asyncio.run(main_async(args))
 
 

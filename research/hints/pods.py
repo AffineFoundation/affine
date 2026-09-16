@@ -171,6 +171,15 @@ def cmd_rent(args) -> None:
         raise SystemExit(f"no {plan.name} stock under ${plan.max_price}/h")
     pubkey = Path(str(POD_KEY) + ".pub").read_text().strip()
     name = args.name or f"{POD_PREFIX}{plan.name}-{secrets.token_hex(2)}"
+    if getattr(args, "executor", None):
+        cands = [c for c in cands if str(c["id"]).startswith(args.executor)]
+        if not cands:
+            raise SystemExit(f"executor {args.executor} not in {plan.name} stock")
+    if getattr(args, "min_down_mbps", 0):
+        # a 27B teacher is ~54 GB of weights plus vLLM: skip slow-network hosts
+        cands = [c for c in cands if ((c.get("specs") or {}).get("network") or {}).get("download_speed", 0) >= args.min_down_mbps]
+        if not cands:
+            raise SystemExit(f"no {plan.name} stock with download ≥ {args.min_down_mbps} Mbps")
     for cand in cands:
         price = (cand.get("price_per_gpu") or 0) * plan.gpu_count
         if spend + price > BUDGET_USD_HR:
@@ -407,6 +416,8 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("rent")
     r.add_argument("--type", required=True, choices=sorted(TYPES))
+    r.add_argument("--executor", default="", help="executor id prefix to rent (default: cheapest)")
+    r.add_argument("--min-down-mbps", type=float, default=0.0, help="skip hosts below this download speed")
     r.add_argument("--name")
     r.add_argument("--raw", action="store_true", help="rent only; no vLLM bootstrap")
     sub.add_parser("bootstrap")
