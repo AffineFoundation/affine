@@ -2240,8 +2240,25 @@ makes the corpus mean of Dbar⁺ equal the corpus mean forfeit rate, S~ a gate \
 ≥ 0.5; same shrinkage, floors, cap and clamp. Reason: on the king's own \
 failure states min(R, G) compresses to 0, so a global bottom-quartile θ on \
 the king's score cannot see them; challengers on the same turns can. \
-`[curriculum].counted_rule` names the rule whose weights are published as \
-`share`; the others stay in the file.
+**v2 — the divergence rule (operator direction 2026-09-16: "sample more where \
+the divergence between king and teacher is greatest, ranked intelligently, \
+with a non-zero chance of visiting every turn so nothing can be forgotten"; \
+candidate for the apply):** per stratum `D_s` = the mean of four king-vs- \
+teacher distances, each divided by its corpus mean — action disagreement \
+`1 − soft A_match` (token-Jaccard between the king's normalised action and \
+each reference action), the king's forfeit rate, the score deficit \
+`max(0, teacher own-action lift − king B)`, and the challenger gap `Dbar⁺` — \
+shrunk stratum → cell → group → corpus with n_0 = 8; then \
+`w_s = ε/N + (1 − ε) · D_s^γ / Σ D^γ` with ε = 0.20 spread over ALL strata (so \
+every turn keeps a non-zero draw probability — the no-forgetting guarantee; \
+at the slice-key level that floor reproduces the live share vector, so v2 = \
+0.2 · live + 0.8 · divergence-driven), γ = 1; group shares ∝ Σ w over slice \
+keys; same floors, cap, clamp and recurrence guard. Component weights and \
+corpus means are in `rule.json.v2`. The loop it closes: the floor keeps \
+drawing "solved" strata, so a stratum on which the king's score falls again \
+raises its D and is re-weighted (shown per fold in `forgetting_check.json` on \
+the coding group). `[curriculum].counted_rule` names the rule whose weights \
+are published as `share`; the others stay in the file.
 - **Mode.** `shadow` = weights published, the static `[mix]` still decides the \
 slice. `apply` = the fold uses `share_after_clamp` and `m_applied`. Any \
 rebuild mismatch or guard trip falls back to the static mix; `off` is the \

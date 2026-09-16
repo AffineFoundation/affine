@@ -16,6 +16,7 @@ the vector.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import shutil
 import sys
@@ -89,7 +90,73 @@ def top10_cards(snapshot: Path, rows_path: Path) -> None:
     (snapshot / "top10_cards.md").write_text("".join(out), encoding="utf-8")
 
 
-RULE_SHARE_KEYS = {"v1": "share_v1_after_clamp", "v1.1": "share_v11_after_clamp", "v1.2": "share_v12_after_clamp"}
+RULE_SHARE_KEYS = {"v1": "share_v1_after_clamp", "v1.1": "share_v11_after_clamp", "v1.2": "share_v12_after_clamp",
+                   "v2": "share_v2_after_clamp"}
+
+
+def forgetting_check(rows_path: Path, snapshot: Path, group: str = "coding") -> dict:
+    """Rule v2's no-forgetting loop, shown on the ledger for one group: the
+    uniform floor keeps visiting "solved" strata; when the king's score on
+    a stratum falls again its divergence D rises and the rule re-weights it.
+    Split the window's verdicts in two halves; per stratum with king
+    observations in both, compare mean turn score and a per-row divergence
+    proxy (the v2 components each divided by its corpus mean)."""
+    rule_doc = json.loads((snapshot / "rule.json").read_text())
+    means = (rule_doc.get("v2") or {}).get("corpus_means") or {}
+    wtab = {r["stratum"]: r for r in pq.read_table(snapshot / "weights.parquet",
+                                                    columns=["stratum", "w_v2", "D_v2", "n_obs"]).to_pylist()}
+    floor = (rule_doc.get("v2") or {}).get("uniform_floor_per_stratum") or 0.0
+    t = pq.read_table(rows_path, columns=["challenge_id", "group", "base_stratum", "is_king_row", "scored",
+                                          "side", "turn_score", "forfeit", "div_action", "div_score", "d",
+                                          "gated_near_king"])
+    rows = [r for r in t.to_pylist() if r["group"] == group and r["scored"]]
+    cids = sorted({r["challenge_id"] for r in rows})
+    if len(cids) < 4:
+        return {"group": group, "n_verdicts": len(cids), "note": "too few verdicts"}
+    mid = cids[len(cids) // 2]
+    per: dict[str, dict] = {}
+    for r in rows:
+        if not (r["is_king_row"] and r["side"] == "king"):
+            continue
+        half = "early" if r["challenge_id"] < mid else "late"
+        comps = []
+        if means.get("forfeit"):
+            comps.append((1.0 if r["forfeit"] else 0.0) / means["forfeit"])
+        if r["div_action"] is not None and means.get("action"):
+            comps.append(r["div_action"] / means["action"])
+        if r["div_score"] is not None and means.get("score"):
+            comps.append(r["div_score"] / means["score"])
+        dprox = sum(comps) / len(comps) if comps else None
+        slot = per.setdefault(r["base_stratum"], {"early": [], "late": []})
+        slot[half].append((float(r["turn_score"]), dprox))
+    both = {s: v for s, v in per.items() if v["early"] and v["late"]}
+    fell, reweighted, examples = 0, 0, []
+    for s, v in sorted(both.items()):
+        se = sum(x for x, _ in v["early"]) / len(v["early"])
+        sl = sum(x for x, _ in v["late"]) / len(v["late"])
+        de = [d for _, d in v["early"] if d is not None]
+        dl = [d for _, d in v["late"] if d is not None]
+        if not de or not dl:
+            continue
+        de, dl = sum(de) / len(de), sum(dl) / len(dl)
+        if sl < se - 0.002:
+            fell += 1
+            if dl > de:
+                reweighted += 1
+                w = wtab.get(s) or {}
+                examples.append({"stratum": s, "score_early": clean_float(se), "score_late": clean_float(sl),
+                                 "D_early": clean_float(de), "D_late": clean_float(dl),
+                                 "w_v2": clean_float(w.get("w_v2")), "w_v2_over_floor": clean_float((w.get("w_v2") or 0) / floor) if floor else None,
+                                 "n_obs": w.get("n_obs")})
+    examples.sort(key=lambda e: -((e["D_late"] or 0) - (e["D_early"] or 0)))
+    doc = {"group": group, "n_verdicts": len(cids), "split_at": mid, "n_strata_both_halves": len(both),
+           "n_score_fell": fell, "n_fell_and_D_rose": reweighted,
+           "share_fell_and_D_rose": clean_float(reweighted / fell) if fell else None,
+           "uniform_floor_per_stratum": clean_float(floor), "examples_top": examples[:8],
+           "loop": "floor keeps drawing solved strata -> a fall in the king's score raises forfeit / action / score "
+                   "divergence -> D_s rises -> w_s rises above the floor next fold"}
+    write_json(doc, snapshot / "forgetting_check.json")
+    return doc
 
 
 def per_rule_criterion(*, cfg: dict, groups: dict, prev_groups: dict | None, rows_path: Path,
@@ -101,13 +168,20 @@ def per_rule_criterion(*, cfg: dict, groups: dict, prev_groups: dict | None, row
         shares = {g: (r.get(key) or 0.0) for g, r in groups["groups"].items()}
         if sum(shares.values()) <= 0:
             continue
+        # every rule is judged as it would be applied: after the recurrence
+        # guard (k before share), on its own copy of the multiplicities
+        sm = copy.deepcopy(strata_m)
+        guard = rule.recurrence_guard(sm, shares, group_cap=float(cfg["recurrence_group_cap"]),
+                                      turn_cap=float(cfg["recurrence_turn_cap"]))
+        shares = guard["shares"]
         cf = counterfactual.run(rows_path, shares, int(cfg["counterfactual_verdicts"]))
-        proj = rule.recurrence_projection(strata_m, shares)
+        proj = rule.recurrence_projection(sm, shares)
         over_g = {g: d["expected_draws_per_turn_per_duel"] for g, d in proj["groups"].items()
-                  if d["expected_draws_per_turn_per_duel"] > cfg["recurrence_group_cap"]}
+                  if d["expected_draws_per_turn_per_duel"] > cfg["recurrence_group_cap"] + 1e-9}
         fc = rule.check_floors(shares, static, floor_frac=float(cfg["floor_frac_of_static"]),
                                floor_ct=float(cfg["floor_coding_terminal"]), cap=float(cfg["group_cap"]),
-                               supply={g: (groups["groups"][g].get("n_strata") or 0) > 0 for g in shares})
+                               supply={g: (groups["groups"][g].get("n_strata") or 0) > 0 for g in shares},
+                               guard_cut=set(guard["groups_cut"]))
         stab = None
         if prev_groups:
             deltas = {g: abs(shares.get(g, 0.0) - (prev_groups["groups"].get(g, {}).get(key) or 0.0))
@@ -121,10 +195,11 @@ def per_rule_criterion(*, cfg: dict, groups: dict, prev_groups: dict | None, row
             "3a_counterfactual_original_plan": {"pass": bool(cf["pass"])},
             "3b_counterfactual_variant": {"pass": bool(cf["pass_variant"])},
             "4_stable_vs_previous": stab if stab else {"pass": None},
-            "5_recurrence": {"pass": not over_g and proj["max_turn_draws_per_duel"] <= cfg["recurrence_turn_cap"],
+            "5_recurrence": {"pass": not over_g and proj["max_turn_draws_per_duel"] <= cfg["recurrence_turn_cap"] + 1e-9,
                              "max_turn_draws_per_duel": clean_float(proj["max_turn_draws_per_duel"]),
                              "groups_over_cap": over_g},
             "6_floors_and_cap": {"pass": bool(fc["ok"]), "coding_plus_terminal": clean_float(fc["coding_plus_terminal"])},
+            "recurrence_guard_actions": len(guard["actions"]),
         }
     return out
 
@@ -161,8 +236,8 @@ def criterion(*, cfg: dict, ledger_doc: dict, rebuild_ok: bool | None, groups: d
         items["4_shadow_vector_stable"] = {"pass": None, "detail": "first snapshot; needs a previous fold"}
     ps = rec["projected_shadow"]
     over_g = {g: d["expected_draws_per_turn_per_duel"] for g, d in ps["groups"].items()
-              if d["expected_draws_per_turn_per_duel"] > cfg["recurrence_group_cap"]}
-    items["5_recurrence_within_cap"] = {"pass": not over_g and ps["max_turn_draws_per_duel"] <= cfg["recurrence_turn_cap"],
+              if d["expected_draws_per_turn_per_duel"] > cfg["recurrence_group_cap"] + 1e-9}
+    items["5_recurrence_within_cap"] = {"pass": not over_g and ps["max_turn_draws_per_duel"] <= cfg["recurrence_turn_cap"] + 1e-9,
                                         "groups_over_cap": over_g, "max_turn_draws_per_duel": ps["max_turn_draws_per_duel"],
                                         "max_turn_stratum": ps["max_turn_stratum"]}
     fc = groups["floors_check"]
@@ -205,6 +280,7 @@ def write_fold_vector(cfg: dict, latest: dict, groups: dict, snapshot: Path) -> 
         row = {"share": r["share_after_clamp"], "share_shadow": r["share_after_clamp"],
                "share_v11_informational": r.get("share_v11_after_clamp"),
                "share_v12_informational": r.get("share_v12_after_clamp"),
+               "share_v2_informational": r.get("share_v2_after_clamp"),
                "share_raw": r["share_raw"], "share_current": r["share_current"],
                "share_static": r["share_static"], "reason": r["reason"], "m": med if n else 1,
                "m_hist_shadow": r.get("m_hist_shadow"), "n_strata": r["n_strata"]}
@@ -352,6 +428,7 @@ def main() -> None:
                          "item 4 measured v1.2-vs-v1.2 across folds 2 and 3; recurrence over cap lowers k before share")
     crit["decision_table"] = decision_table(crit)
     write_json(crit["by_rule"], snapshot / "criterion_by_rule.json")
+    forget = forgetting_check(LEDGER_DIR / f"{lsha}.rows.parquet", snapshot)
     crit["weights_sha256"] = wsha
     crit["ledger_sha256"] = lsha
     crit["computed_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -360,6 +437,13 @@ def main() -> None:
     with open(snapshot / "diff.md", "a", encoding="utf-8") as f:
         f.write("\n12. **Fold-3 decision table** (coordinator amendment 2026-09-15 01:05 UTC):\n\n```\n"
                 + crit["decision_table"] + "\n```\n")
+        if forget.get("n_strata_both_halves"):
+            ex = "; ".join(f"`{e['stratum']}` score {e['score_early']:.4f}→{e['score_late']:.4f}, D {e['D_early']:.2f}→{e['D_late']:.2f}, "
+                           f"w_v2 {e['w_v2_over_floor']:.1f}× floor" for e in forget["examples_top"][:4])
+            f.write(f"\n13. **Forgetting feedback (rule v2, {forget['group']}):** of {forget['n_strata_both_halves']} strata the king "
+                    f"was drawn on in both halves of the window (split at {forget['split_at']}), {forget['n_score_fell']} fell in score "
+                    f"and {forget['n_fell_and_D_rose']} of those ({100 * (forget['share_fell_and_D_rose'] or 0):.0f} %) rose in divergence "
+                    f"→ re-weighted above the uniform floor {forget['uniform_floor_per_stratum']:.2e}. Examples: {ex}. Loop: {forget['loop']}\n")
 
     for_epoch = int(rule_doc["corpus_epoch"]) + 1
     latest = {
