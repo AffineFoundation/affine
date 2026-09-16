@@ -66,6 +66,7 @@ from .terms import (
     score_teacher_rollouts,
 )
 from . import amatch
+from .chat import get_tokenizer
 from .protocol_probe import probe_settings, rejection_detail, run_probe
 from .vllm_client import EngineUnreachableError, ModelPool, Served, VllmModel
 
@@ -499,6 +500,17 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
     score_mode = str(duel_cfg.get("score_mode", "reason"))
     thought_echo = score_mode in ("min_rg", "min_rga")
     action_echo = score_mode == "min_rga"
+    # wvk 20 (2026-09-16): teacher-relative miner thought cap. 0 = fixed cap.
+    thought_cap_ratio = float(duel_cfg.get("thought_cap_ratio", 0.0))
+    teacher_tok = (get_tokenizer(teacher.cfg.repo, teacher.cfg.revision)
+                   if thought_cap_ratio > 0 else None)
+
+    def teacher_cap(raw_refs: list[tuple[str, str]], fixed: int) -> tuple[int, int]:
+        """(cap_T, L_T): L_T = longest valid reference thought in teacher
+        tokens; cap_T = max(fixed, floor(ratio·L_T))."""
+        lt = max((len(teacher_tok.encode(z or "", add_special_tokens=False))
+                  for z, _ in raw_refs), default=0)
+        return max(int(fixed), int(thought_cap_ratio * lt)), lt
 
     async def one(rec: dict) -> None:
         nonlocal done
@@ -509,26 +521,43 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
         action_kind = rec.get("action_kind")
         max_thought, max_action = caps(action_kind)
         ref_thought, ref_action = ref_caps(action_kind)
+        cap_tokens, ref_lt = max_thought, None
         async with turn_sem:
             if abort_event is not None and abort_event.is_set():
                 raise DuelAborted("superseded by a new duel request")
-            # Miner only needs the prefix x. Teacher refs (z_C, y_C) are
-            # independent. Running them in series left miner GPUs idle at
-            # duel start (chal-00076: all 8 at 0% while 64 turns sat in
-            # ensure_raw). Same calls, overlapped. No sticky_key on the
-            # miner sample: n_miner=1 cannot reuse a prefix cache, and
-            # hash-pinning left one copy idle.
-            raw, miner_rollouts = await asyncio.gather(
-                refs.ensure_raw(
+            if thought_cap_ratio > 0:
+                # wvk 20: the miner's thought cap depends on the teacher's
+                # references, so they come first; both sides read the same
+                # RefCache entry and therefore the same cap_T. The miner
+                # engines stay busy on the other turns in flight.
+                raw = await refs.ensure_raw(
                     tid, teacher, prefix, n_teacher, temperature,
-                    ref_thought, ref_action, action_kind),
-                sample_miner_rollouts(
+                    ref_thought, ref_action, action_kind)
+                if not raw:
+                    done += 1
+                    return
+                cap_tokens, ref_lt = teacher_cap(raw, max_thought)
+                miner_rollouts = await sample_miner_rollouts(
                     miner, prefix, n_miner, temperature,
-                    max_thought, max_action, action_kind=action_kind),
-            )
-            if not raw:
-                done += 1
-                return
+                    cap_tokens, max_action, action_kind=action_kind)
+            else:
+                # Miner only needs the prefix x. Teacher refs (z_C, y_C) are
+                # independent. Running them in series left miner GPUs idle at
+                # duel start (chal-00076: all 8 at 0% while 64 turns sat in
+                # ensure_raw). Same calls, overlapped. No sticky_key on the
+                # miner sample: n_miner=1 cannot reuse a prefix cache, and
+                # hash-pinning left one copy idle.
+                raw, miner_rollouts = await asyncio.gather(
+                    refs.ensure_raw(
+                        tid, teacher, prefix, n_teacher, temperature,
+                        ref_thought, ref_action, action_kind),
+                    sample_miner_rollouts(
+                        miner, prefix, n_miner, temperature,
+                        max_thought, max_action, action_kind=action_kind),
+                )
+                if not raw:
+                    done += 1
+                    return
         # Teacher-only from here: ref echoes, then Reason/B/grounding.
         # Holding turn_sem through these left miner GPUs idle (chal-00075).
         if abort_event is not None and abort_event.is_set():
@@ -539,14 +568,17 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
             return
         t = await miner_terms(
             teacher, miner, prefix, ref, n_miner, temperature,
-            max_thought, max_action,
+            cap_tokens, max_action,
             score_bank=score_bank, reason_only=reason_only,
             causality_gate=causality_gate,
             thought_echo=thought_echo,
             action_echo=action_echo,
             sticky_key=tid, action_kind=action_kind,
             rollouts=miner_rollouts)
-        t.update({"turn_id": tid, "miner": miner.cfg.name})
+        t.update({"turn_id": tid, "miner": miner.cfg.name,
+                  # wvk 20: the thought cap this side sampled under and the
+                  # longest reference thought (teacher tokens) behind it.
+                  "cap_tokens": cap_tokens, "ref_thought_tokens": ref_lt})
         # A_match telemetry (2026-09-14, not scored): does the side's
         # action literally match the teacher's reference actions, and how
         # often do the refs agree with each other. Forfeit rows (no
@@ -605,6 +637,12 @@ def _miner_summary(rows: list[dict], tau: float | None,
     # A_match telemetry (2026-09-14): share of reference actions equal to
     # the side's action, and the same minus the refs' own agreement.
     out.update(amatch.summarize(rows))
+    # wvk 20: teacher-relative thought cap telemetry.
+    caps_ = [r.get("cap_tokens") for r in rows if isinstance(r.get("cap_tokens"), int)]
+    fixed = min(caps_) if caps_ else None
+    out["n_turns_cap_raised"] = (sum(1 for c in caps_ if c > fixed) if caps_ else 0)
+    out["mean_cap_tokens"] = (sum(caps_) / len(caps_)) if caps_ else None
+    out["max_cap_tokens"] = max(caps_) if caps_ else None
     return out
 
 
@@ -1143,6 +1181,12 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "text_fallback_at_tool_turns": text_fallback,
             # wvk 19: a first-slice pass needs a confirmation slice to crown.
             "confirmation_required": bool(duel_cfg.get("confirmation_required", False)),
+            # wvk 20: teacher-relative miner thought cap (0 = fixed cap).
+            "thought_cap_ratio": float(duel_cfg.get("thought_cap_ratio", 0.0)),
+            "thought_cap_rule": (f"max(fixed, {float(duel_cfg.get('thought_cap_ratio', 0.0)):g}*L_T)"
+                                 if float(duel_cfg.get("thought_cap_ratio", 0.0)) > 0 else "fixed"),
+            "thought_cap_tokenizer": (teacher[0].repo if isinstance(teacher, list) else teacher.repo)
+                                     if float(duel_cfg.get("thought_cap_ratio", 0.0)) > 0 else None,
             # Teacher-only reference budget (wvk 17); None = shared cap.
             "ref_max_tokens": (int(duel_cfg["ref_max_tokens"])
                                if duel_cfg.get("ref_max_tokens") is not None else None),

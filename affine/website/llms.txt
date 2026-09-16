@@ -22,6 +22,7 @@ Everything the project publishes, in one index. All URLs are on this site's root
 - Serving stack — how your checkpoint is loaded; pre-flight before you burn the slot
 - min(R, G) — the one score you optimize (and the telemetry published around it)
 - Sequential near-miss (2026-09-11, no fork; OFF since wvk 16) — a first-slice margin in the near-miss window drew a second seeded slice; one seeded slice decides again
+- **Fork history: wvk 20 — teacher-relative thought cap (effective 2026-09-16)** — per turn you may think up to 2048 tokens or 1.25× the teacher's longest reference thought on that turn, whichever is larger; nothing else changes
 - **Fork history: wvk 19 — a crown must win twice (effective 2026-09-16)** — a duel that clears the bar is confirmed on a second independent 1,300-turn slice (own margin > 0, pooled margin over the bar) before it crowns; a failed confirmation is a loss; noise crowns fall from ≈0.5% to ≈0.01% per attempt; honest improvers wait ~40 min more
 - **Fork history: wvk 18 — miner thought cap 2,048 + prose answers at tool turns (effective 2026-09-15)** — you may think up to 2048 tokens (was 1024; action cap 768 unchanged); at a tool-call turn a visible prose reply with no tool call is scored as a `text` action instead of forfeiting — for the teacher's references too
 - **Fork history: wvk 17 — wider grounding band + teacher reference cap (effective 2026-09-14)** — `band_c` 2 → 4 (the k = 3 band was so tight the teacher's own thought fell outside it 25% of the time); the teacher's references may run to 4096 tokens (miners stayed at 1792); nothing changes in what miners emit
@@ -328,6 +329,20 @@ Frozen numeric knobs live in `affine.toml` `[duel]` (linked under `code/`). Scor
 **Why.** The crown bar is `max(2·SE, δ)`; at the live noise scale (`2·SE ≈ 0.0010–0.0018`) δ = 0.002 is the binding term. Across 349 stored duels (2026-08-27 → 2026-09-10) twelve challengers cleared the 2σ test (z 2.0–3.8) with margins 0.0014–0.0019 and were blocked by δ alone — and on the advisory bench those near-miss losers score like kings. A true +δ improver lands below δ on half of all 1300-turn slices; only more turns can separate "just below δ by noise" from "just below δ for real". δ stays where the 2026-08-22 winner's-curse decision put it; the estimate it is compared against gets √2 sharper on the ~10% of duels where the two are within noise of each other (35/349 historical margins fell in the window: the 12 near-miss losers, 6 crowns at 0.0022–0.0028, 17 sub-2σ losers).
 
 **What you see.** `verdict.margin / se / z / n_paired_turns` are the deciding (pooled) numbers. `verdict.near_miss = {enabled, low, high, extra_slices, triggered, slices: [{index, seed, n, digest, n_paired_turns, n_forfeit_turns, margin, se, z, challenger_wins}, …], pooled: {…} | null}` shows what each slice said on its own. `verdict.slice` keeps the first slice's `seed` / `digest` as always and adds `extra_slices` + `n_pooled` when the rule fired. The published artifact's `turn_ids` covers every scored turn in slice order and `slices[i].turn_ids` splits them per draw. Knobs: `[duel] near_miss_enabled / near_miss_low / near_miss_high / near_miss_extra_slices` in `code/affine.toml`; the decision helper is `near_miss_triggered` in `code/affine/score.py`; the draw is `duel_seed(block_hash, hotkey, slice_index)` in `code/evalsrv/dueling.py`.
+
+---
+
+## Fork history: wvk 20 — teacher-relative thought cap (effective 2026-09-16)
+
+**Effective 2026-09-16 at the first duel dispatched after the eval pod redeploy (explicit dated operator directive, 2026-09-16 14:31 UTC).** `weight_version_key = 20`; new `[duel].thought_cap_ratio = 1.25`. `max_thought_tokens = 2048`, `max_action_tokens = 768`, the teacher's `ref_max_tokens = 4096`, the score min(R, G), the crown bar, the confirmation slice and the reign chain are unchanged.
+
+**What changes.** Until now your reply was cut at a fixed `2048 + 768` tokens on every turn. From wvk 20 the thought budget follows the teacher: on each turn the validator first samples the teacher's k = 3 reference rollouts (as before), measures the **longest valid reference thought** L_T in tokens of the teacher's own tokenizer (`Qwen/Qwen3.8-27B`; a reference with no parseable action does not count), and sets your thought cap for that turn to **`cap_T = max(2048, floor(1.25 × L_T))`**. In words: you may think up to 2048 tokens, or 1.25× as long as the teacher's longest reference thought on that turn, whichever is larger. The action cap (768) is unchanged. King and challenger read the same references, so both sides get the same cap on every turn.
+
+**Why.** The fixed cap cuts exactly where the task is hard enough that the teacher itself thinks long. On the stored wvk-18 duels the rule relaxes the cap on ~11% of turns (those where the teacher thinks > 1,640 tokens) and there frees 45–47% of the remaining forfeits; it never lowers the cap. Re-scoring those duels: 0 decision flips, the largest margin move +0.0003. The largest possible cap is `floor(1.25 × 4096)` tokens, which fits the serving window with the 110k-token prefix cap.
+
+**What you see.** `duel_params.thought_cap_rule = "max(fixed, 1.25*L_T)"`, `duel_params.thought_cap_ratio`, `duel_params.thought_cap_tokenizer`; every turn row in the duel record carries `cap_tokens` (the cap that side sampled under) and `ref_thought_tokens` (L_T), so a replay is exact; per side `n_turns_cap_raised`, `mean_cap_tokens`, `max_cap_tokens`. Pre-wvk-20 verdicts have no `thought_cap_ratio` (= fixed cap) and replay unchanged.
+
+**What changes for you.** You may think longer where the teacher does. Nothing else. Forward-only: reign 13 stands; no re-verdicts; `min_submission_block` unchanged.
 
 ---
 

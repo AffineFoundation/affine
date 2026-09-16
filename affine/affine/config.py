@@ -206,6 +206,11 @@ class DuelCfg:
     # max(k_sigma·SE_pooled, δ)) before it crowns; a failed confirmation is
     # a loss ("confirmation_failed"). False = pre-wvk-19 (crown at once).
     confirmation_required: bool = False
+    # wvk 20 (2026-09-16): per turn the miner may think up to
+    # max(max_thought_tokens, floor(thought_cap_ratio × L_T)) tokens, L_T = the
+    # longest valid teacher reference thought on the turn (teacher tokens).
+    # 0.0 = fixed cap (pre-wvk-20).
+    thought_cap_ratio: float = 0.0
     # v6 (2026-09-04): per-turn score for a side with no parseable action.
     # None = legacy (turn dropped from pairing). Contract knob: changing it
     # is a weight_version_key event.
@@ -551,6 +556,7 @@ def _duel(raw: dict) -> DuelCfg:
         ref_max_tokens=_ref_max_tokens(d),
         text_fallback_at_tool_turns=bool(d.get("text_fallback_at_tool_turns", False)),
         confirmation_required=bool(d.get("confirmation_required", False)),
+        thought_cap_ratio=float(d.get("thought_cap_ratio", 0.0)),
         concurrency=int(d["concurrency"]), timeout_s=int(d["timeout_s"]),
         score_bank=bool(d.get("score_bank", False)),
         reason_only=bool(d.get("reason_only", True)),

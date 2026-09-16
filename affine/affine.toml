@@ -145,6 +145,18 @@ min_submission_block = 8938619
 # improver waits ~40 min. min(R,G) math, caps, gates, reign chain
 # unchanged; wvk ≤ 18 verdicts replay through the knob's false default.
 # Forward-only; reign 13 stands; min_submission_block unchanged.
+# 19→20 teacher-relative miner thought cap (2026-09-16): explicit dated
+# operator directive 2026-09-16 14:31 UTC. thought_cap_ratio = 1.25: per
+# turn the miner may think up to max(2048, floor(1.25 × L_T)) tokens, L_T
+# = the longest valid teacher reference thought on the turn in teacher
+# tokens; refs are sampled before the miner, both sides share them, so
+# the cap is identical for king and challenger. Relaxes the fixed cap only
+# where the teacher itself thinks > 1,640 tokens (~11% of turns) and there
+# frees 45–47% of the remaining forfeits; 0 decision flips, max margin
+# move +0.0003 on the stored wvk-18 duels. Action cap 768, ref cap 4096,
+# min(R,G) math, the crown bar and the confirmation slice unchanged; wvk
+# ≤ 19 verdicts replay under their stamped fixed cap. Forward-only; reign
+# 13 stands; min_submission_block unchanged.
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -152,7 +164,7 @@ min_submission_block = 8938619
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 19
+weight_version_key = 20
 
 [wallet]
 name = "default"
@@ -823,6 +835,21 @@ temperature = 0.8
 # (110k-token prefix cap + 2048 + 768 < 131072).
 max_thought_tokens = 2048
 max_action_tokens = 768
+# 2026-09-16 (weight_version_key 19→20, explicit dated operator directive
+# 2026-09-16 14:31 UTC): teacher-relative thought cap. Per turn the miner
+# may think up to cap_T = max(max_thought_tokens, floor(thought_cap_ratio ×
+# L_T)) tokens, L_T = the longest VALID teacher reference thought on that
+# turn, counted with the teacher's tokenizer (the references are sampled
+# first; both sides read the same references, so cap_T is the same for
+# king and challenger). It only relaxes the fixed cap on the ~11% of turns
+# where the teacher itself thinks > 1,640 tokens, and there it frees 45–47%
+# of the remaining forfeits (docs/teacher-gated-cap.md: 0 decision flips,
+# max margin move +0.0003 on the 12 stored wvk-18 duels). Action cap and
+# ref_max_tokens unchanged; serving window 110k + 5,120 + 768 < 131,072.
+# Verdicts stamp duel_params.thought_cap_rule / thought_cap_ratio /
+# thought_cap_tokenizer and per-row cap_tokens + ref_thought_tokens.
+# 0 = fixed cap (pre-wvk-20 replay path).
+thought_cap_ratio = 1.25
 # Teacher-only reference budget (thought + action tokens) for the k
 # reference rollouts. 2026-09-14 (weight_version_key 16→17, same directive):
 # 1792 (the miners' shared cap) → 4096. At 1792 the teacher's own
