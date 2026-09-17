@@ -29,6 +29,7 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -58,11 +59,20 @@ def git_commit(repo: Path) -> str:
                           capture_output=True, text=True).stdout.strip()
 
 
+
+def uv_bin() -> str:
+    """`uv` as install_eval_env.sh leaves it: on PATH for a login shell, but
+    the pass runs `lock.py check` over a non-interactive ssh whose PATH has no
+    ~/.local/bin, so every pod check since 2026-09-15 20:50 UTC died with
+    FileNotFoundError('uv') -> exit 10 (six passes of the coverage queue,
+    four agentic passes). Resolve it explicitly."""
+    return shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
+
 def pip_versions(venv_python: Path) -> dict:
     out = subprocess.run([str(venv_python), "-m", "pip", "list", "--format=json"],
                          capture_output=True, text=True)
     if out.returncode != 0:
-        out = subprocess.run(["uv", "pip", "list", "--format=json", "--python", str(venv_python)],
+        out = subprocess.run([uv_bin(), "pip", "list", "--format=json", "--python", str(venv_python)],
                              capture_output=True, text=True)
     pkgs = {p["name"].lower().replace("_", "-"): p["version"] for p in json.loads(out.stdout or "[]")}
     return {k: pkgs.get(k) for k in PY_PACKAGES}
@@ -71,7 +81,7 @@ def pip_versions(venv_python: Path) -> dict:
 def side_venv_versions(venv_python: Path, pkgs: list[str]) -> dict | None:
     if not venv_python.exists():
         return None
-    out = subprocess.run(["uv", "pip", "list", "--format=json", "--python", str(venv_python)],
+    out = subprocess.run([uv_bin(), "pip", "list", "--format=json", "--python", str(venv_python)],
                          capture_output=True, text=True)
     have = {p["name"].lower().replace("_", "-"): p["version"] for p in json.loads(out.stdout or "[]")}
     return {k: have.get(k) for k in pkgs}

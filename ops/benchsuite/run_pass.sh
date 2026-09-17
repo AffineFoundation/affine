@@ -194,6 +194,18 @@ remote_suite() {  # models policy sandbox_runtime user@host port key known_hosts
   "${SSH[@]}" "${SUDO}usermod -aG docker \$USER 2>/dev/null; true"
   dockerhub_login "$SUDO"
   "${SSH[@]}" "${SUDO}docker pull -q python:3.11-slim >/dev/null 2>&1; true"
+  # docker preflight (2026-09-17): the Genesis sandbox pass burnt 3 h and published
+  # 0.0 for SWE-bench after `docker run` failed on every task ("error creating
+  # overlay mount ... function not implemented" on that executor); the Occamy pass
+  # lost SWE-bench to "toomanyrequests" on the first pull. Fail here, fast, with a
+  # named cause, instead of erroring 500 rollouts at 0 tokens.
+  local DOCK; DOCK=$("${SSH[@]}" "${SUDO}docker run --rm python:3.11-slim true >/dev/null 2>&1 && echo RUN_OK || echo RUN_FAIL; ${SUDO}docker system info 2>/dev/null | grep -q 'Username:' && echo AUTH_OK || echo AUTH_ANON" 2>/dev/null | tr '\n' ' ')
+  if [[ "$DOCK" != *RUN_OK* ]]; then
+    log "DOCKER PREFLIGHT FAILED: this executor cannot run containers ($DOCK) — striking it and giving the pod back"
+    [ -n "${POD_ID:-}" ] && "$PY" "$HERE/kingpod.py" release "$POD_ID" --strike docker_cannot_run >/dev/null 2>&1 && trap - EXIT
+    finish 7
+  fi
+  [[ "$DOCK" == *AUTH_ANON* ]] && log "WARNING: docker hub login did not stick ($DOCK); pulls are anonymous (100/h per IP)"
   # the lock: the pod's env must match suite.lock.json (code commits, patches, grader packages, serving)
   # BENCHSUITE_LOCK_WRITE=1 is the deliberate way to re-pin (new env, new patch):
   # the pod writes suite.lock.json from what install_eval_env.sh produced and the
@@ -263,7 +275,36 @@ PY
     if [ "$SB_RUNTIME" = "docker" ]; then
       # Lium: docker on the pod for the public-image sets, Prime sandboxes for the Lean set.
       log "sandbox sets ($TRIGGER): docker on the pod for $(toml modes.lium_docker_sandbox_envs); Prime sandboxes for $(toml modes.lium_prime_sandbox_envs)"
-      "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" docker "$(toml modes.lium_docker_sandbox_envs)" primary 48 manifest-sandbox.json 1)" || log "docker sandbox suite returned non-zero; continuing"
+      local SB_ENV SB_FAIL=""
+      for SB_ENV in $(toml modes.lium_docker_sandbox_envs | tr "," " "); do
+        "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" docker "$SB_ENV" primary 48 manifest-sandbox.json 1)" || log "docker sandbox cell $SB_ENV returned non-zero; continuing"
+        # fail fast: a cell whose rollouts ALL errored is an infrastructure failure
+        # (docker cannot run / Docker Hub rate limit); the remaining docker cells
+        # would burn the same way, so stop here and let the queue retry later.
+        local VERDICT; VERDICT=$("${SSH[@]}" "$PYR - <<'PY'
+import json, glob, collections
+paths = glob.glob('$RHOME/benchsuite/runs/$RUN_ID/king/${SB_ENV}__t0/summary.json')
+if not paths:
+    print('nosummary'); raise SystemExit
+s = json.load(open(paths[0])); n = int(s.get('n') or 0); e = int(s.get('n_errored') or 0)
+kind = 'ok'
+if n and e >= n:
+    kind = 'allerrored'
+    try:
+        c = collections.Counter()
+        for line in open(paths[0].replace('summary.json', 'traces.jsonl')):
+            t = json.loads(line); tr = t.get('trace') or t
+            for err in (tr.get('errors') or [])[:1]:
+                m = err.get('message', '')
+                c['ratelimit' if 'toomanyrequests' in m else 'overlay' if 'overlay mount' in m else 'other'] += 1
+        kind += ':' + (c.most_common(1)[0][0] if c else 'unknown')
+    except Exception:
+        kind += ':unknown'
+print(kind, n, e)
+PY" 2>/dev/null)
+        log "docker cell $SB_ENV verdict: $VERDICT"
+        if [[ "$VERDICT" == allerrored* ]]; then SB_FAIL="$VERDICT"; log "ABORTING the remaining docker sandbox cells: $SB_ENV failed as a run ($VERDICT)"; break; fi
+      done
       "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" prime "$(toml modes.lium_prime_sandbox_envs)" primary 32 manifest-sandbox-prime.json)" || log "prime sandbox suite returned non-zero; continuing"
     else
       log "sandbox sets ($TRIGGER) on Prime sandboxes"
@@ -278,6 +319,10 @@ PY
   "${SSH[@]}" "$REMOTE_ENV && $PYR push_evals.py --run-dir $RHOME/benchsuite/runs/$RUN_ID --models king" || log "push_evals returned non-zero; continuing"
   pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"
   if [ -n "${BENCHSUITE_MERGE_INTO:-}" ]; then merge_into_card; else "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" || finish 8; fi
+  if [ -n "${SB_FAIL:-}" ]; then
+    log "pass published with failed docker cells ($SB_FAIL): exiting 12 so the queue reruns them"
+    finish 12
+  fi
 }
 
 # Copy this run's king cells into another run's card (as king or teacher cells)
@@ -290,11 +335,15 @@ merge_into_card() {
     [ -f "$d/summary.json" ] || continue
     local cell; cell=$(basename "$d")
     rm -rf "$INTO/$AS/$cell"; mkdir -p "$INTO/$AS"; cp -r "$d" "$INTO/$AS/$cell"
-    "$PY" - "$INTO/$AS/$cell/summary.json" "$RUN_ID" "$(toml modes.lium_plan)" <<'PY'
+    "$PY" - "$INTO/$AS/$cell/summary.json" "$RUN_ID" "$(toml modes.lium_plan)" "$AS" <<'PY'
 import json, sys
 p, run_id, plan = sys.argv[1:]
 s = json.load(open(p))
 s["where"] = {"note": f"cell from agentic pass {run_id} (Lium {plan}, same lock)", "run_id": run_id, "provider": "Lium (our fleet, TAO)"}
+# the pass ran the model as "king"; the card side it lands on is the merge target (2026-09-17: the
+# teacher's agentic cells published as King 11's because publish.py keys cells by summary["model"])
+if len(sys.argv) > 4:
+    s["model"] = sys.argv[4]
 json.dump(s, open(p, "w"), indent=1)
 PY
     CELLS="${CELLS:+$CELLS,}$AS/$cell"
@@ -324,7 +373,7 @@ attach_lium() {
   local PYR="$RHOME/benchsuite/verifiers/.venv/bin/python"
   log "attached to $POD ($HOST:$PORT) for $RUN_ID; waiting for the pod's run_suite processes"
   while :; do
-    local N; N=$("${SSH[@]}" "pgrep -fc 'run_suite.py run --run-id $RUN_ID' || true" 2>/dev/null || echo "ssh")
+    local N; N=$("${SSH[@]}" "pgrep -fc '[r]un_suite.py run --run-id $RUN_ID' || true" 2>/dev/null || echo "ssh")
     [ "$N" = "ssh" ] && { log "ssh to the pod failed; retrying in 5 min"; sleep 300; continue; }
     [ "${N:-0}" -eq 0 ] && break
     pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"

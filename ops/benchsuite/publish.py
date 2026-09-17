@@ -22,6 +22,8 @@ import shutil
 import sys
 import time
 import tomllib
+
+FAILED_CELL_ERROR_SHARE = 0.90   # >= this share errored -> the cell is a failed run, score null
 from pathlib import Path
 
 import boto3
@@ -90,6 +92,33 @@ def scorecard(run_dir: Path) -> dict:
         s = {k: v for k, v in s.items() if k != "rollouts"}
         cells.setdefault(s["env"], {}).setdefault(f"t{s['temperature']:g}", {})[s["model"]] = s
     by_id = {e["id"]: e for e in SUITE["envs"]}
+
+    def side(x: dict | None, teacher: bool = False) -> dict | None:
+        """Card cell for one model side. A cell whose rollouts (nearly) all
+        errored is a run failure — infrastructure, not the model — and must
+        never publish as a score (2026-09-17: Genesis SWE-bench showed 0.0 on
+        affine.io after docker never started on the pod: 500/500 errored, 0
+        tokens). `score` is null and `status` = "failed"; the numbers stay for
+        the record so the gap check can retry the cell."""
+        if not x:
+            return None
+        n = int(x.get("n") or 0)
+        n_err = int(x.get("n_errored") or 0)
+        failed = n == 0 or n_err >= n or (n and n_err / n >= FAILED_CELL_ERROR_SHARE)
+        out = {"score": None if failed else x["score"], "ci95": None if failed else x["ci95"], "n": x["n"],
+               "n_errored": x["n_errored"], "n_timeout": x.get("n_timeout"), "n_context_overflow": x.get("n_context_overflow"),
+               "finished_only": None if failed else x.get("finished_only"), "completion_tokens": x["completion_tokens"],
+               "prompt_tokens": x["prompt_tokens"], "wall_seconds": x.get("wall_seconds"),
+               "finish_length_frac": x.get("finish_length_frac"),
+               "by_class": x.get("by_class") or None,
+               "status": "failed" if failed else "ok"}
+        if failed:
+            out["raw_score"] = x["score"]
+            out["failure"] = f"{n_err}/{n} rollouts errored (run failure, not a model score)"
+        if teacher:
+            out["reused_from"] = x.get("reused_from")
+        return out
+
     rows = []
     for env_id, temps in cells.items():
         e = by_id.get(env_id, {})
@@ -102,18 +131,10 @@ def scorecard(run_dir: Path) -> dict:
                 "graded": e.get("graded", "deterministic"),   # "llm_judge" = advisory, never in the score
                 "judge": e.get("judge"),
                 "n": (k or t or {}).get("n"),
-                "king": None if not k else {"score": k["score"], "ci95": k["ci95"], "n": k["n"],
-                                            "n_errored": k["n_errored"], "n_timeout": k.get("n_timeout"), "n_context_overflow": k.get("n_context_overflow"), "finished_only": k.get("finished_only"), "completion_tokens": k["completion_tokens"],
-                                            "prompt_tokens": k["prompt_tokens"], "wall_seconds": k.get("wall_seconds"),
-                                            "finish_length_frac": k.get("finish_length_frac"),
-                                            "by_class": k.get("by_class") or None},
-                "teacher": None if not t else {"score": t["score"], "ci95": t["ci95"], "n": t["n"],
-                                               "n_errored": t["n_errored"], "n_timeout": t.get("n_timeout"), "n_context_overflow": t.get("n_context_overflow"), "finished_only": t.get("finished_only"), "completion_tokens": t["completion_tokens"],
-                                               "prompt_tokens": t["prompt_tokens"], "wall_seconds": t.get("wall_seconds"),
-                                               "finish_length_frac": t.get("finish_length_frac"),
-                                               "by_class": t.get("by_class") or None,
-                                               "reused_from": t.get("reused_from")},
-                "delta": None if not (k and t) else round(k["score"] - t["score"], 4),
+                "king": side(k),
+                "teacher": side(t, teacher=True),
+                "delta": None if not (k and t and side(k)["score"] is not None and side(t)["score"] is not None)
+                else round(k["score"] - t["score"], 4),
                 "prime_eval_url": {m: s.get("prime_eval_url") for m, s in models.items() if s.get("prime_eval_url")} or None,
                 "cost": (manifest.get("cells", {}).get(f"{env_id}__{tkey}") or {}),
             })
