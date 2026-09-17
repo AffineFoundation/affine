@@ -67,7 +67,9 @@ match = "RTX PRO 6000 Blackwell Server"
 gpu_count = 8
 tp = 2
 replicas = 4
-target = 0
+# 2026-09-17: target 0 -> 1 as the second box while b200-8x is out of stock
+# (stock at $9.52/h). Revert to 0 with the h200-8x note above.
+target = 1
 max_price = 15.0
 est_tps = 0.6               # measured duel-real c12 (2xTP4 layout)
 
@@ -168,8 +170,15 @@ match = "H200"
 gpu_count = 8
 tp = 2
 replicas = 4
-target = 0
-max_price = 27.0
+# 2026-09-17 10:16 UTC: the only b200-8x hit its 48 h Lium TTL and no B200 x8
+# existed on the market; the fallback path could not rent because Lium began
+# rejecting `size=2000` on /executors (422) and lium_api.executors() returned
+# []. target 0 -> 1 and cap 27 -> 36 (stock at $33.20) so the teacher serves
+# while B200 is out; operator directive "raise the cap temporarily (up to
+# $70/h), running duels matter more". Revert to target 0 / cap 27 once
+# b200-8x is healthy again.
+target = 1
+max_price = 36.0
 est_tps = 2.4
 adopt = ["affine-teacher2"]
 
