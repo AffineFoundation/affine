@@ -807,6 +807,49 @@ FOLD_STATS_PATH = STATE_DIR / "fold_stats.json"
 FOLD_STATS_KEY = "corpus/fold_stats.json"
 
 
+def load_floors() -> dict[str, tuple[float, tuple[str, ...]]]:
+    """Published slice-share floors, one place: `[curriculum].<name>_floor`
+    with `[curriculum].<name>_groups` (MiMo item 3; the stop-state floor from
+    phase 10 is the first). Enforced in apply mode by rescaling the vector;
+    reported (`floor_status`) every fold."""
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("curriculum") or {}
+    out: dict[str, tuple[float, tuple[str, ...]]] = {}
+    for k, v in raw.items():
+        if k.endswith("_floor") and isinstance(v, (int, float)) and k not in ("floor_coding_terminal",):
+            name = k[:-len("_floor")]
+            groups = raw.get(f"{name}_groups")
+            if isinstance(groups, list) and groups:
+                out[name] = (float(v), tuple(str(g) for g in groups))
+    return out
+
+
+def floor_status(after: dict[str, int], floors: dict) -> dict[str, dict]:
+    tot = sum(after.values()) or 1
+    return {name: {"floor": fl, "groups": list(groups),
+                   "share": round(sum(after.get(g, 0) for g in groups) / tot, 4),
+                   "ok": sum(after.get(g, 0) for g in groups) / tot >= fl}
+            for name, (fl, groups) in floors.items()}
+
+
+def apply_floors(mix: dict[str, float], floors: dict) -> dict[str, float]:
+    """Rescale a group-share vector so every floor block holds (iterate: a
+    lift of one block dilutes the others a little)."""
+    mix = dict(mix)
+    for _ in range(5):
+        moved = False
+        for name, (fl, groups) in floors.items():
+            block = sum(mix.get(g, 0.0) for g in groups)
+            if 0 < block < fl:
+                up = fl / block
+                down = (1 - fl) / max(1e-9, 1 - block)
+                mix = {g: v * (up if g in groups else down) for g, v in mix.items()}
+                log(f"curriculum apply: {name} block {block:.3f} < floor {fl:.2f}; rescaled")
+                moved = True
+        if not moved:
+            break
+    return mix
+
+
 def load_curriculum() -> dict:
     """[curriculum] (adaptive curriculum, docs/adaptive-curriculum-plan.md;
     hook spec internal/curriculum/hooks-for-fold.md). mode: off | shadow |
@@ -933,10 +976,32 @@ def source_draws(rows: list[tuple[str, str, str]], n_strata: int, n: int = 1300)
     return out
 
 
+def yield_report(after: dict[str, int], mix: dict[str, float], group_turns: dict[str, int],
+                 src2grp: dict[str, str]) -> dict:
+    """MiMo item 3 -- per source: envelopes seen, accepted (records / turns
+    at derive), top-3 drop reasons; per group: accepted turns this fold,
+    strata now vs target strata (mix share x total), accepted / target."""
+    tot = sum(after.values()) or 1
+    groups = {}
+    for g in sorted(set(after) | set(mix)):
+        target = mix.get(g, 0.0) * tot
+        groups[g] = {"strata": after.get(g, 0), "target_strata": round(target, 1),
+                     "strata_over_target": round(after.get(g, 0) / target, 3) if target else None,
+                     "accepted_turns_this_fold": group_turns.get(g, 0)}
+    sources = {}
+    for src, y in sorted(YIELD.items()):
+        top = sorted(y["drops"].items(), key=lambda kv: -kv[1])[:3]
+        sources[src] = {"group": src2grp.get(src, DEFAULT_GROUP), "seen": y["seen"], "records": y["records"],
+                        "accepted_turns": y["accepted_turns"],
+                        "accepted_per_seen": round(y["records"] / y["seen"], 3) if y["seen"] else None,
+                        "top_drops": [{"reason": k, "n": v} for k, v in top]}
+    return {"groups": groups, "sources": sources}
+
+
 def write_fold_stats(epoch: int, after: dict[str, int], turns_by_group: dict[str, int],
                      recurrence: dict | None, cur: dict | None, mix: dict[str, float],
                      n_turns: int, publisher, sim_rows: list[tuple[str, str, str]] | None = None,
-                     src2grp: dict[str, str] | None = None) -> None:
+                     src2grp: dict[str, str] | None = None, extra: dict | None = None) -> None:
     """Per-group / per-source draw statistics for the curriculum job and the
     dataset table (published next to the manifest as corpus/fold_stats.json):
     strata, turns, slice share, expected draws per 1,300-turn duel, draws per
@@ -966,6 +1031,7 @@ def write_fold_stats(epoch: int, after: dict[str, int], turns_by_group: dict[str
            "groups": groups,
            "sources": source_draws(sim_rows, tot) if sim_rows else None,
            "recurrence": recurrence,
+           **(extra or {}),
            "curriculum": {"mode": cur["mode"], "error": cur.get("error"), "groups": cur.get("groups"),
                           "m": cur.get("m"), "meta": cur.get("meta")} if cur else None}
     FOLD_STATS_PATH.write_text(json.dumps(doc, indent=1, sort_keys=True))
@@ -1375,10 +1441,30 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             COMPLETION_PRE_GROUP: completion_pre}
     common = (king_fail_cfg or {}).get("common") or load_king_common()
     out: list[dict] = []
+    _prev: tuple | None = None      # (source, drops snapshot, len(out)) of the previous envelope
+
+    def _settle(prev):
+        if prev is None:
+            return
+        src0, snap, n0 = prev
+        y = YIELD.setdefault(src0, {"seen": 0, "accepted_turns": 0, "records": 0, "drops": {}})
+        for k, v in drops.items():
+            d = v - snap.get(k, 0)
+            if d > 0:
+                y["drops"][k] = y["drops"].get(k, 0) + d
+        for r in out[n0:]:
+            y["records"] += 1
+            y["accepted_turns"] += len(r["turns"])
+
     for env in iter_jsonl_gz(path):
+        _settle(_prev)
+        _prev = None
         if is_backfill(env, chunk_key):
             _count(drops, "backfill_excluded")
             continue
+        _src = str(env.get("source") or "")
+        YIELD.setdefault(_src, {"seen": 0, "accepted_turns": 0, "records": 0, "drops": {}})["seen"] += 1
+        _prev = (_src, dict(drops), len(out))
         convs = None
         route: dict[int, str] = {}          # turn_idx -> group (final)
         extra: dict[int, dict] = {}         # turn_idx -> meta fields to stamp
@@ -1690,6 +1776,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             grec["fold_group"] = g
             grec["stratum"] = group_stratum(grec, cfgs[g])
             out.append(grec)
+    _settle(_prev)
     return out
 
 
@@ -2150,6 +2237,201 @@ def derive_coached(cfg: dict, baker: ToolBaker, panel, allowed_kinds, published:
     return out
 
 
+# -- two-sided admission gate (MiMo item 1, Jacob 2026-09-17 09:08 UTC) ---------
+# A king-derived state enters D only if (a) the king failed there AND (b) the
+# teacher recovers it. (b) from the signals we already have, cheapest first:
+#   state level -- the recoverable pipeline's continuations at the exact
+#                  state (majority of 3 solved = recovers; proxy rows are
+#                  task-level and fall through);
+#   task level  -- `task.teacher_solved` stamped on the envelope, else the
+#                  traces: any teacher_* rollout solved the task (cached per
+#                  traces manifest).
+# A state with neither signal is HELD (deferred, `gate_unverified`), not
+# admitted. Dead-reference drop: turns whose teacher references were dead in
+# stored verdicts (curriculum ledger rows: < 2 valid refs or all identical)
+# are dropped / retired. Groups listed in `apply_groups` are enforced; the
+# others are measured and reported only (the operator's per-group ok).
+TEACHER_SOLVED_CACHE = CACHE_DIR / "teacher_solved_tasks.json"
+YIELD: dict[str, dict] = {}     # per source: envelopes seen, records / turns accepted at derive, drop reasons
+
+
+def load_admission_gate() -> dict:
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("admission_gate") or {}
+    if not raw or not raw.get("enabled", False):
+        return {}
+    return {"raw": raw,
+            "groups": tuple(str(g) for g in (raw.get("groups") or KING_GROUPS)),
+            "apply_groups": frozenset(str(g) for g in (raw.get("apply_groups") or [])),
+            "failed_exempt": frozenset(str(g) for g in (raw.get("king_failed_exempt") or [KING_DONE_GROUP])),
+            "state_dir": REPO / str(raw.get("state_table_dir") or "affine/state/recoverable"),
+            "majority_min": int(raw.get("majority_min_solved", 2) or 2),
+            "majority_n": int(raw.get("majority_min_continuations", 3) or 3),
+            "task_signal": bool(raw.get("task_teacher_solved", True)),
+            "dead_refs": bool(raw.get("dead_refs", True)),
+            "ledger_dir": REPO / str(raw.get("ledger_dir") or "affine/state/curriculum/ledger"),
+            "min_refs_valid": int(raw.get("min_refs_valid", 2) or 2)}
+
+
+def load_state_recovery(cfg: dict) -> dict[tuple[str, int], bool]:
+    """(rollout_id, turn_idx) -> the teacher recovers (majority of >= n
+    continuations solved). Proxy (same-task) rows are not state evidence."""
+    out: dict[tuple[str, int], bool] = {}
+    if not cfg["state_dir"].is_dir():
+        return out
+    for path in sorted(cfg["state_dir"].glob("*.jsonl")):
+        for line in path.read_text().split("\n"):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row.get("proxy"):
+                continue
+            conts = [c for c in (row.get("continuations") or []) if c.get("status") == "ok"]
+            n = len(conts) if conts else int(row.get("n_continuations") or 0)
+            if n < cfg["majority_n"]:
+                continue
+            solved = sum(1 for c in conts if c.get("solved")) if conts else int(row.get("n_solved") or 0)
+            out[(str(row["rollout_id"]), int(row["turn_idx"]))] = solved >= cfg["majority_min"]
+    return out
+
+
+def teacher_solved_tasks(pub: PublicCorpus, traces_manifest: dict) -> tuple[set[str], set[str]]:
+    """(solved instance ids, seen instance ids) from every teacher_* rollout
+    in the traces; cached per traces manifest."""
+    key = hashlib.sha256(json.dumps([c["key"] for c in traces_manifest["chunks"]]).encode()).hexdigest()[:16]
+    if TEACHER_SOLVED_CACHE.exists():
+        try:
+            c = json.loads(TEACHER_SOLVED_CACHE.read_text())
+            if c.get("key") == key:
+                return set(c["solved"]), set(c["seen"])
+        except (OSError, ValueError):
+            pass
+    solved: set[str] = set()
+    seen: set[str] = set()
+    for c in traces_manifest["chunks"]:
+        path = pub.cached(c["key"], c["sha256"], gz_sha=True)
+        for env in iter_jsonl_gz(path):
+            pid = str((env.get("policy") or {}).get("id") or "")
+            if not pid.startswith("teacher_"):
+                continue
+            sid = str((env.get("task") or {}).get("sid") or "")
+            if not sid:
+                continue
+            seen.add(sid)
+            if rollout_outcome(env["trace"]) == "solved":
+                solved.add(sid)
+    TEACHER_SOLVED_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    TEACHER_SOLVED_CACHE.write_text(json.dumps({"key": key, "solved": sorted(solved), "seen": sorted(seen)}))
+    return solved, seen
+
+
+def dead_reference_turns(cfg: dict) -> set[str]:
+    """Turn ids whose teacher references were dead in a stored verdict."""
+    out: set[str] = set()
+    if not cfg["dead_refs"] or not cfg["ledger_dir"].is_dir():
+        return out
+    files = sorted(cfg["ledger_dir"].glob("*.rows.parquet"))
+    if not files:
+        return out
+    t = pq.read_table(files[-1], columns=["turn_id", "n_refs_valid", "refs_identical"])
+    for tid, nv, ident in zip(t.column("turn_id").to_pylist(), t.column("n_refs_valid").to_pylist(),
+                              t.column("refs_identical").to_pylist()):
+        if (nv is not None and int(nv) < cfg["min_refs_valid"]) or bool(ident):
+            out.add(str(tid))
+    return out
+
+
+def gate_turn(rec: dict, m: dict, g: str, cfg: dict, state_rec: dict, task_solved: set[str],
+              task_seen: set[str], dead: set[str]) -> str:
+    """admit | king_not_failed | not_recovered | dead_refs | unverified"""
+    tid = f"{rec['traj_id']}:{m['turn_idx']}"
+    if tid in dead:
+        return "dead_refs"
+    if g not in cfg["failed_exempt"] and str(rec.get("outcome") or "") != "failed" \
+            and str((rec.get("policy") or {}).get("id") or "").startswith("king_"):
+        return "king_not_failed"
+    st = state_rec.get((str(rec.get("rollout_id")), int(m["turn_idx"])))
+    if st is not None:
+        return "admit" if st else "not_recovered"
+    task = (rec.get("task") or {})
+    ts = task.get("teacher_solved") if isinstance(task, dict) else None
+    if ts is None and cfg["task_signal"]:
+        sid = str(rec.get("instance_id") or "")
+        if sid in task_solved:
+            ts = True
+        elif sid in task_seen:
+            ts = False
+    if ts is None:
+        return "unverified"
+    return "admit" if ts else "not_recovered"
+
+
+def admission_gate(records: list[dict], cfg: dict, src2grp, mix, state_rec, task_solved, task_seen, dead,
+                   drops: dict[str, int]) -> tuple[list[dict], list[dict], dict[str, dict[str, int]]]:
+    """(ready, held, per-group tally). Enforced only for `apply_groups`; the
+    tally covers every gated group so the dry run reports the shadow."""
+    ready: list[dict] = []
+    held: list[dict] = []
+    tally: dict[str, dict[str, int]] = {}
+    for rec in records:
+        g = group_of(rec, src2grp, mix)
+        if g not in cfg["groups"]:
+            ready.append(rec)
+            continue
+        keep, pending = [], []
+        for m in rec["turns"]:
+            v = gate_turn(rec, m, g, cfg, state_rec, task_solved, task_seen, dead)
+            tally.setdefault(g, {})[v] = tally.setdefault(g, {}).get(v, 0) + 1
+            if g not in cfg["apply_groups"] or v == "admit":
+                keep.append(m)
+            elif v == "unverified":
+                pending.append(m)
+            else:
+                _count(drops, f"gate_{v}")
+                _count(drops, f"gate_{v}_{g}")
+        if pending:
+            rec["turns"] = keep + pending
+            held.append(rec)
+        elif keep:
+            rec["turns"] = keep
+            ready.append(rec)
+        else:
+            _count(drops, f"gate_emptied_{g}")
+    return ready, held, tally
+
+
+def gate_published(pub: PublicCorpus, live: dict | None, cfg: dict, state_rec, task_solved, task_seen,
+                   dead, src2grp) -> tuple[dict[str, list[str]], dict[str, dict[str, int]]]:
+    """Published rows of the gated groups: ({group: turn ids to retire},
+    per-group tally). Task-level signal via the traj_id's sha8 of the
+    instance id; unverified rows stay."""
+    if not live or not live.get("index"):
+        return {}, {}
+    sha8_solved = {hashlib.sha256(s.encode()).hexdigest()[:8] for s in task_solved}
+    sha8_seen = {hashlib.sha256(s.encode()).hexdigest()[:8] for s in task_seen}
+    t = index_table(pub, live, ["turn_id", "traj_id", "rollout_id", "turn_idx", "stratum", "source"])
+    retire: dict[str, list[str]] = {}
+    tally: dict[str, dict[str, int]] = {}
+    for tid, traj, rid, ti, st, src in zip(*(t.column(c).to_pylist() for c in
+                                             ("turn_id", "traj_id", "rollout_id", "turn_idx", "stratum", "source"))):
+        g = group_from_row(str(st), str(src), src2grp)
+        if g not in cfg["groups"]:
+            continue
+        if tid in dead:
+            v = "dead_refs"
+        else:
+            s_ = state_rec.get((str(rid), int(ti)))
+            if s_ is not None:
+                v = "admit" if s_ else "not_recovered"
+            else:
+                parts = str(traj).split(".")
+                sha8 = parts[1] if len(parts) > 2 else ""
+                v = "admit" if sha8 in sha8_solved else ("not_recovered" if sha8 in sha8_seen else "unverified")
+        tally.setdefault(g, {})[v] = tally.setdefault(g, {}).get(v, 0) + 1
+        if g in cfg["apply_groups"] and v in ("dead_refs", "not_recovered"):
+            retire.setdefault(g, []).append(tid)
+    return retire, tally
+
+
 # -- teacher probe gate (improvement loop P4, 2026-09-14) -----------------------
 # ~25 % of king-group strata were dead for every miner: the teacher itself
 # gave <= 1 parseable reference or forfeited there. The gate: a turn of a
@@ -2388,6 +2670,17 @@ def publish_pending(state: dict, publisher: CorpusPublisher,
     extra["n_turns"] = int(pack.n_turns)
     extra["n_strata"] = int(pending.get("n_strata_after") or 0) or None
     extra["published_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if pending.get("floors"):
+        extra["floors"] = pending["floors"]
+    if pending.get("yield_groups"):
+        extra["yield"] = {"groups": pending["yield_groups"],
+                          "sources": {k: {kk: vv for kk, vv in v.items() if kk != "top_drops"} | {
+                              "top_drops": v["top_drops"]} for k, v in (pending.get("yield_sources") or {}).items()}}
+    if pending.get("admission_gate"):
+        ag = pending["admission_gate"]
+        extra["admission_gate"] = {"apply_groups": ag.get("apply_groups"), "retired": ag.get("retired"),
+                                   "published_tally": ag.get("published"), "signals": ag.get("signals"),
+                                   "rule": "admit iff king failed AND teacher recovers (state majority-of-3, else task teacher_solved); dead-reference turns dropped; unverified held"}
     if pending.get("curriculum_block"):
         # Adaptive curriculum stamp (plan §2.3 / §3.4; evalsrv reads it into
         # slice.curriculum_version). manifest_sha256 = the manifest the
@@ -2426,6 +2719,9 @@ def finalize(state: dict, manifest: dict, mhash: str) -> None:
         "strata_raw_before_budget": pending.get("strata_raw_before_budget"),
         "recurrence_before_budget": pending.get("recurrence_before_budget"),
         "curriculum_line": pending.get("curriculum_line"),
+        "floors": pending.get("floors"),
+        "yield_groups": pending.get("yield_groups"),
+        "admission_gate": pending.get("admission_gate"),
     }
     if pending.get("coached_folded") is not None:
         state["coached_folded"] = pending["coached_folded"]
@@ -2464,6 +2760,35 @@ def budget_note(info: dict) -> str:
     return out
 
 
+def floors_line(info: dict) -> str:
+    f = info.get("floors")
+    if not f:
+        return ""
+    return "Floors: " + ", ".join(f"{k} {100 * v['share']:.1f}%{'' if v['ok'] else ' BELOW'} (>= {100 * v['floor']:.1f}%)"
+                                  for k, v in f.items()) + ".\n"
+
+
+def yield_line(info: dict) -> str:
+    y = info.get("yield_groups")
+    if not y:
+        return ""
+    short = sorted(((g, v) for g, v in y.items() if v.get("strata_over_target") is not None),
+                   key=lambda kv: kv[1]["strata_over_target"])[:6]
+    return "Yield (strata / target): " + ", ".join(
+        f"{g} {v['strata']}/{v['target_strata']:.0f} ({v['strata_over_target']:.2f})" for g, v in short) + \
+        "; full per-source table in corpus/fold_stats.json.\n"
+
+
+def gate_line(info: dict) -> str:
+    ag = info.get("admission_gate")
+    if not ag:
+        return ""
+    ret = ag.get("retired") or {}
+    return ("Admission gate (king failed AND teacher recovers; dead refs out): enforced on "
+            f"{', '.join(ag.get('apply_groups') or []) or 'none (shadow)'}"
+            + (f"; retired {sum(ret.values())} rows" if ret else "") + ".\n")
+
+
 def announce(state: dict, public_base: str) -> None:
     info = state["unannounced"]
     epoch = info["epoch"]
@@ -2491,6 +2816,7 @@ def announce(state: dict, public_base: str) -> None:
            if info.get("n_backfill_excluded") else "")
         + budget_note(info)
         + (f"{info['curriculum_line']}\n" if info.get("curriculum_line") else "")
+        + floors_line(info) + yield_line(info) + gate_line(info)
         + "\n"
         f"- corpus_epoch: **{epoch}**\n"
         f"- schema_version: **3** (view `{VIEW_SPEC}`: one record per rollout "
@@ -3019,16 +3345,10 @@ def main() -> None:
         # The published vector becomes the group targets; `m` the sub-strata
         # count (changes the budget signature -> re-key + --allow-shift).
         mix = {g: float(v) for g, v in curriculum["groups"].items() if float(v) > 0}
-        # Phase 10 floor: the stop-state block keeps >= stop_state_floor of the
-        # vector however the rule re-weights (belt-and-braces next to the
-        # rule's own stop-state bonus; the excess is taken from the others).
-        floor = float((curriculum.get("raw") or {}).get("stop_state_floor", 0.25) or 0)
-        block = sum(mix.get(g, 0.0) for g in STOP_STATE_GROUPS)
-        if floor and 0 < block < floor:
-            up = floor / block
-            down = (1 - floor) / max(1e-9, 1 - block)
-            mix = {g: v * (up if g in STOP_STATE_GROUPS else down) for g, v in mix.items()}
-            log(f"curriculum apply: stop-state block {block:.3f} < floor {floor:.2f}; rescaled to the floor")
+        # Published floors ([curriculum].<name>_floor / _groups: stop_state,
+        # notool, chat, ...) hold under any applied vector -- belt-and-braces
+        # next to the rule's own bonuses; the excess comes from the others.
+        mix = apply_floors(mix, load_floors())
         if curriculum["m"] and budget_cfg:
             budget_cfg["sub_strata"].update({g: k for g, k in curriculum["m"].items() if k > 1})
             budget_cfg["signature"] = json.dumps({"base": budget_cfg["signature"], "m": curriculum["m"]}, sort_keys=True)
@@ -3074,6 +3394,32 @@ def main() -> None:
                     log(f"GUARD (dry run): {msg}")
                 else:
                     fatal(msg)
+    gate = load_admission_gate()
+    gate_report: dict = {}
+    gate_held: list[dict] = []
+    if gate:
+        state_rec = load_state_recovery(gate)
+        task_solved, task_seen = teacher_solved_tasks(pub, traces_manifest) if gate["task_signal"] else (set(), set())
+        dead = dead_reference_turns(gate)
+        log(f"admission gate: {len(state_rec)} state-level recovery rows "
+            f"({sum(state_rec.values())} recover), {len(task_solved)} teacher-solved tasks of {len(task_seen)} seen, "
+            f"{len(dead)} dead-reference turn ids; enforced on {sorted(gate['apply_groups']) or 'none (shadow)'}")
+        candidates, gate_held, cand_tally = admission_gate(
+            candidates, gate, src2grp, mix, state_rec, task_solved, task_seen, dead, drops)
+        pub_retire, pub_tally = gate_published(pub, live, gate, state_rec, task_solved, task_seen, dead, src2grp)
+        for g, ids in pub_retire.items():
+            extra_retire.setdefault(g, set()).update(ids)
+            retire_surviving[g] = strata_after_retire(pub, live, g, extra_retire[g])
+        if pub_retire:
+            pivot_retire = sorted(set().union(*extra_retire.values()))
+        gate_report = {"candidates": cand_tally, "published": pub_tally,
+                       "apply_groups": sorted(gate["apply_groups"]),
+                       "retired": {g: len(v) for g, v in pub_retire.items()},
+                       "signals": {"state_rows": len(state_rec), "teacher_solved_tasks": len(task_solved),
+                                   "teacher_seen_tasks": len(task_seen), "dead_ref_turns": len(dead)}}
+        for g in sorted(set(cand_tally) | set(pub_tally)):
+            log(f"admission gate [{g}]{' ENFORCED' if g in gate['apply_groups'] else ' shadow'}: "
+                f"published {pub_tally.get(g, {})}; candidates {cand_tally.get(g, {})}")
     probe = load_teacher_probe()
     probe_held: list[dict] = []
     if probe:
@@ -3158,7 +3504,7 @@ def main() -> None:
     selected, deferred, group_added = cap_fill(
         candidates, lambda r: group_of(r, src2grp, mix), have_groups, mix,
         anchor_min_target=ANCHOR_MIN_TARGET, max_new=budgets)
-    deferred += lang_deferred + probe_held
+    deferred += lang_deferred + probe_held + gate_held
     log(f"mix: selected {len(selected)} rollouts (+{ {g: len(v) for g, v in group_added.items()} } "
         f"strata), deferred {len(deferred)}")
     # Language strata credited only for coding rollouts that made it through
@@ -3233,9 +3579,18 @@ def main() -> None:
         for r in selected:
             g = group_of(r, src2grp, mix)
             turns_by_group[g] = turns_by_group.get(g, 0) + len(r["turns"])
+        floors = load_floors()
+        fstat = floor_status(after, floors)
+        yrep = yield_report(after, mix, group_turns, src2grp)
+        log("floors: " + "; ".join(f"{k} {100 * v['share']:.1f}% {'>=' if v['ok'] else '<'} {100 * v['floor']:.1f}%"
+                                   for k, v in fstat.items()))
+        log("yield (accepted turns this fold / strata over target): " + ", ".join(
+            f"{g} {v['accepted_turns_this_fold']}/{v['strata_over_target']}" for g, v in yrep["groups"].items()
+            if v["accepted_turns_this_fold"] or (v["strata_over_target"] or 0) < 1))
         write_fold_stats((int(live["corpus_epoch"]) if live else 0) + 1, after, turns_by_group, recurrence,
                          curriculum, mix, sum(turns_by_group.values()), None if args.no_publish else publisher,
-                         sim_rows=sim_rows_src, src2grp=src2grp)
+                         sim_rows=sim_rows_src, src2grp=src2grp,
+                         extra={"floors": fstat, "yield": yrep, "admission_gate": gate_report or None})
 
     n_new = sum(len(r["turns"]) for r in selected)
     stale = False
@@ -3279,6 +3634,10 @@ def main() -> None:
         "src_override": dict(SRC_OVERRIDE),
         "n_strata_after": int(sum(after.values())),
         "n_backfill_excluded": int(drops.get("backfill_excluded", 0)),
+        "floors": fstat if STRATA_BUDGET else None,
+        "yield_groups": yrep["groups"] if STRATA_BUDGET else None,
+        "yield_sources": yrep["sources"] if STRATA_BUDGET else None,
+        "admission_gate": gate_report or None,
         "budget_signature": budget_cfg.get("signature") if budget_cfg else None,
         "budget_migrated": budget_migrated,
         "strata_raw_before_budget": state.get("group_strata_raw_before_budget") if budget_migrated else None,

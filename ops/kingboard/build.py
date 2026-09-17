@@ -1762,6 +1762,12 @@ def build_dataset_table(stats: dict, matrix: dict, fold: dict | None, curriculum
     return {
         "generated_at": datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds"),
         "generated_ts": now,
+        # Fold worker (2026-09-17, MiMo items 1 + 3): passthrough of the fold's
+        # published yield line, floors and admission-gate decisions so the
+        # table can render them (corpus/fold_stats.json).
+        "yield": fold.get("yield"),
+        "floors": fold.get("floors"),
+        "admission_gate": fold.get("admission_gate"),
         "header": {
             "n_turns": fold.get("n_turns") or (index_stats or {}).get("n_turns"),
             "n_strata": fold.get("n_strata"),
