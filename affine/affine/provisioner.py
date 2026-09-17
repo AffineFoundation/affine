@@ -185,20 +185,66 @@ class LiumProvider(Provider):
     # that happens we rm and rent the next cheapest under the cap.
     MAX_EXECUTOR_ATTEMPTS = 3
 
+    # A struck executor stays excluded this long. Persisted under state/ so a
+    # validator restart does not re-try it: 2026-09-17 the restart at 11:21
+    # and the one at 14:21 each re-rented the same two partial-host boxes
+    # (4/8 and 5/8 GPUs free) and burned ~5 min per box on the GPU-count check.
+    BLACKLIST_TTL_S = 24 * 3600
+
     def __init__(self, cfg, em, repo_root: Path, pod_name: str):
         super().__init__(cfg, em, repo_root, pod_name)
-        # Executors that failed up/ssh/bootstrap this process lifetime — never
-        # re-rent them until the validator restarts.
-        self._bad_executors: set[str] = set()
+        # executor id -> {"at": epoch, "reason": str}; live entries only.
+        self._bad_executors: dict[str, dict] = {}
+        self._load_blacklist()
+
+    @property
+    def _blacklist_path(self) -> Path:
+        return Path(self.cfg.state_dir) / f"executor_blacklist_{self.pod_name}.json"
+
+    def _load_blacklist(self) -> None:
+        try:
+            raw = json.loads(self._blacklist_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            raw = {}
+        now = time.time()
+        self._bad_executors = {
+            str(k): v for k, v in raw.items()
+            if isinstance(v, dict) and now - float(v.get("at", 0)) < self.BLACKLIST_TTL_S}
+        if self._bad_executors:
+            log.info("lium: %d blacklisted executor(s) loaded for %s",
+                     len(self._bad_executors), self.pod_name)
+
+    def _save_blacklist(self) -> None:
+        try:
+            self._blacklist_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._blacklist_path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(self._bad_executors, indent=1))
+            tmp.replace(self._blacklist_path)
+        except OSError:
+            log.warning("lium: could not persist executor blacklist", exc_info=True)
+
+    def _blacklist(self, executor: str, reason: str) -> None:
+        self._bad_executors[str(executor)] = {"at": time.time(), "reason": reason[:200]}
+        self._save_blacklist()
+
+    def _live_blacklist(self) -> set[str]:
+        now = time.time()
+        expired = [k for k, v in self._bad_executors.items()
+                   if now - float(v.get("at", 0)) >= self.BLACKLIST_TTL_S]
+        for k in expired:
+            self._bad_executors.pop(k, None)
+        if expired:
+            self._save_blacklist()
+        return set(self._bad_executors)
 
     def remember_bad(self, machine: dict) -> None:
         ex = machine.get("executor")
         if ex:
-            self._bad_executors.add(str(ex))
+            self._blacklist(str(ex), "failed in service / up / ssh / bootstrap")
             log.info("lium: blacklisting executor %s after failure", ex)
 
     def provision(self) -> dict | None:
-        skipped: set[str] = set(self._bad_executors)
+        skipped: set[str] = self._live_blacklist()
         for attempt in range(self.MAX_EXECUTOR_ATTEMPTS):
             pick = self._cheapest_executor_under_cap(exclude=skipped)
             if pick is None:
@@ -208,7 +254,7 @@ class LiumProvider(Provider):
             machine = self._rent(huid, price, gpu)
             if machine is not None:
                 return machine
-            self._bad_executors.add(huid)
+            self._blacklist(huid, "rent/up/gpu-count check failed")
             log.warning("lium executor %s unusable; trying another machine (%d/%d)",
                         huid, attempt + 1, self.MAX_EXECUTOR_ATTEMPTS)
         return None
@@ -709,6 +755,8 @@ class MachineManager:
         self._last_check = 0.0
         self._last_check_ok = False
         self._last_health_reason = ""
+        # Set by _healthy when ok=false is only the remote teacher being down.
+        self._degraded_upstream = False
         self._provision_thread: threading.Thread | None = None
         self._provision_failures = 0
         self._next_provision_at = 0.0
@@ -777,6 +825,16 @@ class MachineManager:
             return True
 
         self._last_check_ok = False
+        if self._degraded_upstream:
+            # The pod is fine; its REMOTE teacher (swarm router) is down.
+            # Do not dispatch (return False) and do not strike: terminating
+            # the pod cannot fix the swarm, and re-renting costs 40 min plus
+            # both model downloads (2026-09-17: a 58-min swarm outage cost
+            # the eval pod and left no whole-host 8x box on the market).
+            self._degraded_upstream = False
+            log.warning("%s machine degraded (remote teacher not ready); "
+                        "waiting, not striking", self.label)
+            return False
         self._unhealthy += 1
         log.warning("%s machine unhealthy (%d/%d): %s",
                     self.label, self._unhealthy, self.em.unhealthy_threshold,
@@ -784,6 +842,15 @@ class MachineManager:
         if self._unhealthy >= self.em.unhealthy_threshold:
             log.error("%s machine failed %d consecutive health checks; reprovisioning",
                       self.label, self._unhealthy)
+            # A host that died IN SERVICE is as bad as one that never came
+            # up: exclude its executor from the re-rent, or the cheapest
+            # listing can hand us the same dead box (2026-09-11: two eval
+            # pods from one provider died under load within 3.5 h; only
+            # up/ssh/bootstrap failures were being blacklisted).
+            machine = self._get_machine()
+            provider = self._provider_for(machine) if machine else None
+            if machine and provider is not None and hasattr(provider, "remember_bad"):
+                provider.remember_bad(machine)
             self._terminate()
             self._unhealthy = 0
             self._start_provisioning()
@@ -880,6 +947,9 @@ class MachineManager:
             body = r.json()
             if not body.get("ok", False):
                 self._last_health_reason = f"ok=false: {json.dumps(body)[:200]}"
+                teacher = (body.get("engine") or {}).get("teacher") or {}
+                self._degraded_upstream = bool(
+                    body.get("teacher_remote") and teacher.get("ready") is False)
                 return False
             # Role mismatch means we hit the wrong pod through a stale tunnel.
             role = body.get("role")

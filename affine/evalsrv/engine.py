@@ -326,6 +326,28 @@ def _purge_broken_flashinfer_moe_cache() -> None:
                             exc_info=True)
 
 
+def _min_gpu_memory_gb(gpus: str) -> float | None:
+    """Smallest total memory (GB) among the slot's GPUs via nvidia-smi;
+    None when it cannot be determined (then no small-GPU adjustment)."""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    want = {g.strip() for g in str(gpus).split(",") if g.strip()}
+    sizes = []
+    for line in out.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) >= 2 and (not want or parts[0] in want):
+            try:
+                sizes.append(float(parts[1]) / 1024.0)
+            except ValueError:
+                continue
+    return min(sizes) if sizes else None
+
+
 def _vllm_log_tail(slot_label: str, max_chars: int = 1200) -> str:
     """Last chunk of a slot's vllm log — used to surface load-failure cause."""
     path = LOG_DIR / f"vllm_{slot_label}.log"
@@ -347,6 +369,46 @@ def _vllm_log_tail(slot_label: str, max_chars: int = 1200) -> str:
     return text.strip()
 
 
+# A vLLM launch whose log shows one of these has already lost its engine
+# core or a TP worker. The API server process usually stays alive anyway
+# (observed 2026-09-11: warmup CUDA assert on vLLM 0.29.0 killed both TP
+# workers, the leader idled, and `_wait_ready` sat out the full 3600 s
+# before failing the duel). Match on the text written AFTER this launch
+# started — the per-slot log is append-only across launches.
+VLLM_FATAL_MARKERS = (
+    "EngineCore failed to start",
+    "Engine core initialization failed",
+    "WorkerProc failed to start",
+    "WorkerProc hit an exception",
+    "device-side assert triggered",
+    "CUDA out of memory",
+    "flashinfer-cubin version",
+)
+
+
+def _vllm_log_fatal(slot_label: str, since_offset: int) -> str:
+    """First fatal marker written to the slot's log since `since_offset`,
+    with a little context; '' when none."""
+    path = LOG_DIR / f"vllm_{slot_label}.log"
+    try:
+        with path.open("rb") as fh:
+            fh.seek(max(0, since_offset))
+            data = fh.read()
+    except OSError:
+        return ""
+    if not data:
+        return ""
+    text = data.decode("utf-8", errors="replace")
+    best = None
+    for needle in VLLM_FATAL_MARKERS:
+        idx = text.find(needle)
+        if idx >= 0 and (best is None or idx < best):
+            best = idx
+    if best is None:
+        return ""
+    return text[max(0, best - 80):best + 400].strip()
+
+
 @dataclass
 class Slot:
     label: str
@@ -361,6 +423,10 @@ class Slot:
     # from `proc` so orphaned workers can still be reaped after the leader
     # process has already crashed (proc.poll() is not None ⇒ getpgid fails).
     pgid: int | None = None
+    # Byte offset of the slot's append-only vllm log when this launch
+    # started; fatal-marker scans (`_vllm_log_fatal`) read from here so an
+    # earlier launch's crash cannot fail the current one.
+    log_offset: int = 0
 
 
 @dataclass
@@ -477,6 +543,19 @@ class Engine:
         batched_tokens = int(ms["max_num_batched_tokens"])
         gpu_util = ms["gpu_memory_utilization"]
         max_len = int(ms["max_model_len"])
+        # Small-VRAM miner slots (RTX PRO 6000, 96 GB): the fp32 logits
+        # spike of an 8192-token chunk (~7.3 GB for the 248k vocab) lives
+        # outside vLLM's budget and OOM'd the challenger engine mid-duel on
+        # 2026-09-17 (free 4.7 GB of 102 GB). Halving the chunk halves the
+        # spike; sampling is unchanged, only prefill batching.
+        small_gb = float(ms.get("small_gpu_threshold_gb", 110))
+        gpu_gb = _min_gpu_memory_gb(slot.gpus)
+        if (gpu_gb is not None and gpu_gb < small_gb
+                and not slot.label.startswith("teacher")):
+            small_tokens = int(ms.get("small_gpu_max_num_batched_tokens", 4096))
+            log.info("%s: %.0f GB GPUs < %.0f GB — max-num-batched-tokens %d -> %d",
+                     slot.label, gpu_gb, small_gb, batched_tokens, small_tokens)
+            batched_tokens = min(batched_tokens, small_tokens)
         if slot.label.startswith("teacher"):
             # Teachers absorb nearly all echo traffic, so they get bigger
             # chunks — but the fp32 log_softmax spike lives OUTSIDE vLLM's
@@ -687,6 +766,7 @@ class Engine:
                 # /collective_rpc + /reset_prefix_cache for weight swaps.
                 env["VLLM_SERVER_DEV_MODE"] = "1"
             logf = open(LOG_DIR / f"vllm_{slot.label}.log", "a")
+            slot.log_offset = logf.tell()
             log.info("launching %s: %s (gpus=%s)", slot.label, repo, slot.gpus)
             slot.proc = subprocess.Popen(
                 self._vllm_cmd(slot, repo, revision), env=env,
@@ -871,13 +951,27 @@ class Engine:
         except httpx.HTTPError:
             return False
 
+    def _launch_dead(self, slot: Slot) -> str:
+        """Non-empty when this launch can no longer become ready: the leader
+        exited, or its log shows a fatal engine/worker marker while the
+        leader idles. The lingering leader is killed so the GPUs free up."""
+        if slot.proc is not None and slot.proc.poll() is not None:
+            return f"vllm process exited with {slot.proc.returncode}"
+        fatal = _vllm_log_fatal(slot.label, slot.log_offset)
+        if fatal:
+            log.error("%s: fatal vllm marker while leader alive; killing: %s",
+                      slot.label, fatal[:300])
+            self._kill(slot)
+            return f"vllm engine died during startup: {fatal[:400]}"
+        return ""
+
     def _wait_ready(self, slot: Slot, timeout_s: int = 3600,
                     *, required: bool = True) -> bool:
         t0 = time.time()
         while time.time() - t0 < timeout_s:
-            if slot.proc is not None and slot.proc.poll() is not None:
-                return self._fail_load(
-                    slot, f"vllm process exited with {slot.proc.returncode}")
+            dead = self._launch_dead(slot)
+            if dead:
+                return self._fail_load(slot, dead)
             if self._probe_http_ready(slot):
                 log.info("%s ready in %.0fs", slot.label, time.time() - t0)
                 return True
@@ -908,10 +1002,10 @@ class Engine:
                     log.info("%s ready in %.0fs (first copy)",
                              slot.label, time.time() - t0)
                     return True
-            if all(s.proc is None or s.proc.poll() is not None for s in live):
+            dead = {s.label: self._launch_dead(s) for s in live}
+            if all(dead.values()):
                 for slot in live:
-                    rc = None if slot.proc is None else slot.proc.returncode
-                    self._fail_load(slot, f"vllm process exited with {rc}")
+                    self._fail_load(slot, dead[slot.label])
                 return False
             time.sleep(10)
         for slot in live:

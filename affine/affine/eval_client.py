@@ -269,6 +269,17 @@ class EvalClient:
             if job.get("state") == "completed" and job.get("verdict"):
                 log.info("recovered verdict for %s via job poll", job_id)
                 return job["verdict"]
+            if job.get("state") == "failed":
+                # The pod already recorded the failure; without this the poll
+                # returned None until the 2 h duel timeout (chal-00569,
+                # 2026-09-17: challenger engine OOM at 13:12, validator still
+                # "scoring" at 14:17). Same mapping as the SSE error event.
+                err = job.get("error") or "?"
+                code = job.get("error_code")
+                if code in INFRA_FAULT_CODES:
+                    raise InfraFaultError(
+                        f"eval server infra fault [{code}]: {err}", code)
+                raise TransientEvalError(f"eval server error: {err}")
         except TransientEvalError:
             raise
         except httpx.HTTPError:

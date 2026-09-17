@@ -79,6 +79,12 @@ _abort_bench = threading.Event()
 _abort_duel = threading.Event()
 _corpus_kick = threading.Event()
 _teacher_ready = False
+
+
+def _teacher_is_remote() -> bool:
+    """[teacher].base_url set ⇒ the teacher is the swarm router, not a
+    local vLLM slot on this pod."""
+    return bool(str((_engine.cfg.get("teacher") or {}).get("base_url") or "").strip())
 _ROLE = os.environ.get("AFFINE_ROLE", "duel")
 _JOBS_RETENTION = _cfg.validator.jobs_retention
 
@@ -153,6 +159,21 @@ def _startup():
 
     def _warm():
         global _teacher_ready
+        if _teacher_is_remote():
+            # A remote teacher (the swarm router) can be down for reasons
+            # that have nothing to do with this pod. 2026-09-17: the swarm
+            # had 0 replicas for 58 min; evalsrv self-killed on every
+            # relaunch, /health flapped between unreachable and ok=false,
+            # and the validator terminated a healthy eval pod after 12
+            # strikes — then found no whole-host GPU box to replace it.
+            # Keep polling instead; /health reports teacher_remote so the
+            # provisioner can tell "degraded upstream" from "dead pod".
+            while True:
+                _teacher_ready = _engine.ensure_teacher()
+                if _teacher_ready:
+                    return
+                log.warning("remote teacher not ready; retrying in 30s")
+                time.sleep(30)
         _teacher_ready = _engine.ensure_teacher()
         if not _teacher_ready:
             _schedule_self_kill("teacher failed to start")
@@ -201,6 +222,10 @@ def health(_: None = Depends(_require_token)):
     docker_err = swerunner.docker_probe() if _ROLE == "bench" else None
     return {
         "ok": _teacher_ready and docker_err is None,
+        # True when [teacher].base_url points at the swarm router: an
+        # ok=false with teacher.ready=false is then an upstream outage, not
+        # a broken pod (the provisioner must not reprovision on it).
+        "teacher_remote": _teacher_is_remote(),
         "docker": ({"ok": docker_err is None, "error": docker_err}
                    if _ROLE == "bench" else None),
         "role": _ROLE,
