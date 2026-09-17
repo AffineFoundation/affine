@@ -149,9 +149,14 @@ def scorecard(run_dir: Path) -> dict:
             })
     unfinished = sorted(str(d.relative_to(run_dir)) for d in run_dir.glob("*/*")
                         if d.is_dir() and (d / "cmd.txt").exists() and not (d / "summary.json").exists())
+    done_cells = sorted(str(d.relative_to(run_dir)) for d in run_dir.glob("*/*") if d.is_dir() and (d / "summary.json").exists())
+    partial = bool(unfinished or PARTIAL)
     return {
         "run_id": manifest.get("run_id"),
-        "status": "partial" if (unfinished or PARTIAL) else "complete",
+        "status": "partial" if partial else "complete",
+        "running": partial,   # cells publish as they finish; the card fills in until the final publish
+        "progress": {"done": len(done_cells), "total": len(done_cells) + len(unfinished), "remaining": unfinished,
+                     "as_of": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
         "unfinished_cells": unfinished,
         "king": manifest.get("king"), "teacher": manifest.get("teacher"),
         "where": manifest.get("where"), "code": manifest.get("code"),

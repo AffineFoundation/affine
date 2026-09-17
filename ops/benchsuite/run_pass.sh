@@ -273,7 +273,18 @@ PY
   [ "$MODELS" = "king,teacher" ] && MODEL_FLAGS="$MODEL_FLAGS --teacher-url $TEACHER_URL --teacher-model $TEACHER_MODEL" || MODEL_FLAGS="$MODEL_FLAGS --teacher-from $TEACHER_FROM"
   local REMOTE_ENV="export BENCH_API_KEY='$API_KEY' PRIME_API_KEY='${PRIME_API_KEY:-}' HF_TOKEN='${HF_TOKEN:-}' BENCHSUITE_CHAT_IMAGE=affine-bench-chat:py311; cd $RHOME/affine/ops/benchsuite && echo '$META' > meta.json"
   local PYR="$RHOME/benchsuite/verifiers/.venv/bin/python"
-  "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" docker "$CHAT_ENVS" primary,secondary 64 manifest.json)" || log "chat suite returned non-zero; continuing"
+  # cells publish as they finish (Jacob 2026-09-17): while the chat suite runs on the pod,
+  # pull the light files (summaries, manifests, cmd.txt — no traces) every 10 min and
+  # republish the partial card; the final publish at the end is the same operation.
+  "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" docker "$CHAT_ENVS" primary,secondary 64 manifest.json)" > "$RUN_DIR/chat-suite.log" 2>&1 &
+  local CHAT_PID=$!
+  while kill -0 "$CHAT_PID" 2>/dev/null; do
+    sleep 600
+    kill -0 "$CHAT_PID" 2>/dev/null || break
+    pull_light "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME" && [ -z "${BENCHSUITE_MERGE_INTO:-}" ] && { "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" --only-state --partial >/dev/null 2>&1 || true; }
+  done
+  wait "$CHAT_PID" || log "chat suite returned non-zero; continuing"
+  cat "$RUN_DIR/chat-suite.log"
   pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"
   # PARTIAL card now (chat cells): the attribution job watches affine/state/benchsuite/*.json
   local PARTIAL_FLAG=""; [ "$SANDBOX_POLICY" != "never" ] && PARTIAL_FLAG="--partial"
@@ -341,6 +352,7 @@ if n and e >= n:
 print(kind, n, e)
 PY" 2>/dev/null)
         log "docker cell $SB_ENV verdict: $VERDICT"
+        pull_light "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME" && [ -z "${BENCHSUITE_MERGE_INTO:-}" ] && { "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" --only-state --partial >/dev/null 2>&1 || true; }
         if [[ "$VERDICT" == allerrored* ]]; then SB_FAIL="$VERDICT"; log "ABORTING the remaining docker sandbox cells: $SB_ENV failed as a run ($VERDICT)"; break; fi
       done
       "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" prime "$(toml modes.lium_prime_sandbox_envs)" primary 32 manifest-sandbox-prime.json)" || log "prime sandbox suite returned non-zero; continuing"
@@ -425,6 +437,11 @@ attach_lium() {
   pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"
   "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" || finish 8
   finish 0
+}
+
+pull_light() {  # user@host port key known_hosts remote_home — summaries + manifests only (per-cell publish)
+  tar_cmd="cd $5/benchsuite/runs && tar czf - --exclude='*/logs' --exclude='*/traces.jsonl*' --exclude='*/eval.log' --exclude='*/harbor' $RUN_ID"
+  ssh -i "$3" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$4" -o LogLevel=ERROR -o ConnectTimeout=20 -p "$2" "$1" "$tar_cmd" 2>/dev/null | tar xzf - -C "$BENCH_HOME/runs" 2>/dev/null
 }
 
 pull_run() {  # user@host port key known_hosts remote_home
