@@ -62,7 +62,11 @@ BUDGET_USD = float(os.environ.get("COVERAGE_BENCH_BUDGET_USD", "400"))
 # run_pass.sh exit codes worth a retry: 2 = rent failed (no stock), 3 = pod never
 # became ready, 10 = suite.lock.json did not match the pod (the benchsuite worker
 # is re-pinning the lock after a suite change; nothing wrong with the model)
-RETRY_BACKOFF_S = {2: 15 * 60, 3: 15 * 60, 10: 30 * 60}
+# 7 = docker preflight failed on the executor (struck; another one next time),
+# 12 = a docker sandbox cell failed as a run (Docker Hub rate limit / overlay):
+#      the pass published its good cells; autofill re-queues the failed ones
+RETRY_BACKOFF_S = {2: 15 * 60, 3: 15 * 60, 7: 5 * 60, 10: 30 * 60}
+SWE_ENV = "swebench-verified"    # at most ONE pass pulling the 500 SWE-bench images at a time (Docker Hub 200 pulls/h)
 RETRY_EXITS = set(RETRY_BACKOFF_S)
 SUITE_TOML = REPO / "ops" / "benchsuite" / "suite.toml"
 SUITE_LOCK = REPO / "ops" / "benchsuite" / "suite.lock.json"
@@ -355,6 +359,12 @@ def tick(q: list[dict]) -> None:
         if code == 0:
             e["status"] = "done"
             log(f"{e['run_id']} done (${e.get('pod_usd', '?')} pod, {e.get('wall_h', '?')} h)")
+        elif code == 12:
+            e["status"] = "done"
+            e["note"] = (e.get("note", "") + " | exit 12: a docker sandbox cell failed as a run; autofill re-queues it").strip(" |")
+            log(f"{e['run_id']} published with failed docker cells (exit 12); running autofill")
+            subprocess.Popen([sys.executable, str(HERE / "autofill.py")], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, cwd=str(HERE))
         elif code in RETRY_EXITS and e.get("attempts", 0) < MAX_ATTEMPTS:
             back = RETRY_BACKOFF_S[code]
             e.update(status="pending", not_before=time.time() + back)
@@ -376,6 +386,11 @@ def tick(q: list[dict]) -> None:
         if time.time() - float(meta.get("lock_warned_at") or 0) > 1800:
             log(f"launches held: {why} (waiting for the benchsuite worker to re-pin suite.lock.json)")
             meta["lock_warned_at"] = time.time()
+    def carries_swe(e: dict) -> bool:
+        envs = set((e.get("chat_envs") or "").split(","))
+        return SWE_ENV in envs or (e.get("mode") == "lium" and e.get("sandbox", True))
+
+    swe_running = any(e.get("status") == "running" and carries_swe(e) for e in q)
     for e in q:
         if not in_sync or running >= MAX_PARALLEL:
             break
@@ -383,10 +398,14 @@ def tick(q: list[dict]) -> None:
             continue
         if time.time() < float(e.get("not_before") or 0):
             break
+        if carries_swe(e) and swe_running:
+            continue                      # serialize the SWE-bench image pulls; other entries may pass
         try:
             launch(e)
             running += 1
             launched += 1
+            if carries_swe(e):
+                swe_running = True
         except OSError as ex:
             e.update(status="failed", note=f"launch failed: {ex}")
             log(f"launch failed for {e['label']}: {ex}")

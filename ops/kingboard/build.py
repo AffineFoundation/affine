@@ -1098,9 +1098,31 @@ def is_model_card(card: dict) -> bool:
             and not (card.get("king") or {}).get("duel"))
 
 
+BENCH_FAILED_ERROR_SHARE = 0.90   # >= this share of a cell's rollouts errored -> a failed run, never a score
+
+
+def bench_failed(side: dict) -> str | None:
+    """Reason string when a card cell is a run failure (nothing scored, or
+    nearly every rollout errored), else None. Guards cards written before the
+    publisher learned to null such cells (2026-09-17: Genesis SWE-bench 0.0)."""
+    if side.get("status") == "failed":
+        return side.get("failure") or "run failed"
+    n = int(side.get("n") or 0)
+    n_err = int(side.get("n_errored") or 0)
+    if side.get("n_scored") == 0 or n == 0 or n_err >= n or (n and n_err / n >= BENCH_FAILED_ERROR_SHARE):
+        return f"run failed: {n_err}/{n} rollouts errored (infrastructure, not the model)"
+    return None
+
+
 def bench_value(side: dict | None, env: str) -> dict | None:
     """Score 0-100 + Wilson interval for one card cell (T=0 row)."""
-    if not side or side.get("score") is None:
+    if not side:
+        return None
+    why = bench_failed(side)
+    if why:
+        return {"score": None, "n": side.get("n"), "metric": "score", "failed": True, "reason": why,
+                "raw_score": side.get("raw_score", side.get("score"))}
+    if side.get("score") is None:
         return None
     src = side
     metric = "score"
@@ -1141,6 +1163,10 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
                 continue
             val.update(run_id=card.get("run_id"), mode=card.get("mode"),
                        created_at=card.get("created_at"), kind="bench")
+            if val.get("failed"):
+                # remember the failure, but let a later card with a real value win the env
+                out.setdefault(f"__failed__{env}", val)
+                continue
             if row.get("graded") == "llm_judge":
                 # advisory: an LLM judge graded the rollouts; never part of the score
                 val["judge"] = row.get("judge") or {}
@@ -1148,6 +1174,11 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
             if side == "teacher" and (row.get("teacher") or {}).get("reused_from"):
                 val["reused_from"] = row["teacher"]["reused_from"]
             out[env] = val
+    for k in [k for k in out if k.startswith("__failed__")]:
+        env = k[len("__failed__"):]
+        failed = out.pop(k)
+        if env not in out:
+            out[env] = failed        # score None + reason: renders blank, tooltip says the run failed
     return out
 
 
