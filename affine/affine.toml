@@ -350,6 +350,11 @@ challenger_gpus = "4,5"
 challenger_replica_port = 8004
 challenger_replica_gpus = "6,7"
 tp = 2
+# Small-VRAM miner GPUs (RTX PRO 6000, 96 GB; 2026-09-17): miner slots on GPUs
+# below the threshold use the smaller prefill chunk so the fp32 logits spike
+# (~7.3 GB at 8192 tokens for the 248k vocab) fits. Sampling is unchanged.
+small_gpu_threshold_gb = 110
+small_gpu_max_num_batched_tokens = 4096
 # Was 32768; corpus prefixes routinely hit ~31k tokens, and sample() asks for
 # max_thought+max_action=1792 more → vLLM 400 "maximum context length" mid-duel
 # (observed 2026-08-09/10, burned as eval_infra_exhausted). 65536 clears the
