@@ -22,7 +22,8 @@ import subprocess
 import threading
 import time
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -83,6 +84,13 @@ class TypePlan:
     advertise: bool = True
     # Extra `vllm serve` argv, space-separated. Empty = stock flags.
     vllm_extra: str = ""
+    # Stand-in: this type is wanted (target, standin_max_price) only while
+    # `standin_for` has no healthy replica; once that type has been healthy
+    # for standin_release_min the effective target drops to 0 and the boxes
+    # are released as "over target". Replaces hand-editing targets/caps
+    # during a B200 x8 drought (2026-09-17) and undoing them by hand later.
+    standin_for: str = ""
+    standin_max_price: float = 0.0
 
 
 @dataclass
@@ -106,6 +114,13 @@ class Config:
     # teacher_unservable). A fallback pod is released once the primary type
     # is healthy again.
     fallback_types: list[str] = field(default_factory=list)
+    # Rent a same-type replacement this long before a pod's Lium
+    # `removal_scheduled_at` (48 h TTL), admit it, then release the old box:
+    # zero-gap rotation (kingctl does the same for the king seat). 0 = off.
+    # 2026-09-17: the only teacher box expired on its TTL at 10:16 UTC and
+    # the market had no replacement — 58 min at 0 replicas.
+    rotate_before_ttl_hours: float = 0.0
+    standin_release_min: float = 15.0
     types: dict[str, TypePlan] = field(default_factory=dict)
 
 
@@ -123,6 +138,8 @@ def load_config() -> Config:
         gpu_memory_utilization=float(s["gpu_memory_utilization"]),
         max_num_batched_tokens=int(s["max_num_batched_tokens"]),
         fallback_types=[str(x) for x in (s.get("fallback_types") or [])],
+        rotate_before_ttl_hours=float(s.get("rotate_before_ttl_hours", 0) or 0),
+        standin_release_min=float(s.get("standin_release_min", 15) or 15),
     )
     for name, t in raw.get("types", {}).items():
         cfg.types[name] = TypePlan(
@@ -136,6 +153,8 @@ def load_config() -> Config:
             adopt=[str(x) for x in (t.get("adopt") or [])],
             advertise=bool(t.get("advertise", True)),
             vllm_extra=str(t.get("vllm_extra", "")),
+            standin_for=str(t.get("standin_for") or ""),
+            standin_max_price=float(t.get("standin_max_price", 0) or 0),
         )
     return cfg
 
@@ -224,6 +243,126 @@ class Manager:
                            ).read_text().strip()
         except OSError:
             self.pubkey = ""
+        # Optional Discord line sink (main wires Alerter.post); rotations and
+        # stand-in releases are reported through it.
+        self.notify = lambda text: None
+        # type -> epoch when its backends were first seen healthy in the
+        # current healthy streak (stand-in release hysteresis).
+        self.type_healthy_since: dict[str, float] = {}
+
+    # ---- stand-ins / rotation -------------------------------------------
+    def effective_plan(self, plan: TypePlan, healthy_types: set[str],
+                       now: float) -> TypePlan:
+        """The plan as it applies this cycle: a stand-in type wants its
+        boxes only while the covered type has not been healthy for
+        standin_release_min; its price cap is the stand-in cap meanwhile."""
+        if not plan.standin_for:
+            return plan
+        since = self.type_healthy_since.get(plan.standin_for)
+        covered_ok = (since is not None
+                      and now - since >= self.cfg.standin_release_min * 60)
+        if covered_ok:
+            return replace(plan, target=0)
+        cap = plan.standin_max_price or plan.max_price
+        return replace(plan, max_price=cap)
+
+    @staticmethod
+    def removal_epoch(pod: dict) -> float | None:
+        """Lium `removal_scheduled_at` (naive ISO, UTC) -> epoch, or None."""
+        raw = pod.get("removal_scheduled_at")
+        if not raw:
+            return None
+        try:
+            return (datetime.fromisoformat(str(raw).replace("Z", ""))
+                    .replace(tzinfo=timezone.utc).timestamp())
+        except ValueError:
+            return None
+
+    def rotate_expiring(self, swarm_pods: list[dict], backends: list[dict],
+                        healthy_types: set[str], names_seen: set[str],
+                        spend: float, stock: list[dict] | None,
+                        now: float) -> tuple[float, list[dict] | None]:
+        """Early TTL rotation. For every serving pod inside the rotation
+        window rent one same-type replacement (marked `replaces`); once the
+        replacement serves, release the old box. Returns updated spend/stock."""
+        cfg = self.cfg
+        if cfg.rotate_before_ttl_hours <= 0:
+            return spend, stock
+        window = cfg.rotate_before_ttl_hours * 3600
+        healthy_pods = {b["pod"] for b in backends}
+        live_names = {lium_api.pod_name(p) for p in swarm_pods}
+        for pod in swarm_pods:
+            name = lium_api.pod_name(pod)
+            m = self.mem.get(name) or {}
+            plan = self.plan_of(pod)
+            if plan is None or not name.startswith(cfg.pod_prefix):
+                continue
+            # Old box whose replacement now serves: release it.
+            repl = m.get("rotating_to")
+            if repl:
+                if repl in healthy_pods:
+                    self.remove_pod(pod, f"ttl rotation complete -> {repl}")
+                    self.notify(f"rotation: {name} released, {repl} serving "
+                                f"({plan.name})")
+                    # The replacement keeps its `replaces` marker until the
+                    # old box has left the listing: this cycle's shrink step
+                    # still counts both and must not drop the newer one.
+                    self.mem.pop(name, None)
+                elif repl not in live_names and repl not in self.mem:
+                    m.pop("rotating_to", None)  # replacement vanished; retry
+                continue
+            if m.get("replaces"):
+                if m["replaces"] not in live_names:
+                    m.pop("replaces", None)  # old box gone; ordinary member now
+                continue  # a replacement never rotates itself this cycle
+            exp = self.removal_epoch(pod)
+            if exp is None or exp - now > window or name not in healthy_pods:
+                continue
+            # Inside the window and serving: rent the replacement (one try
+            # per cycle; a market with no stock retries until the TTL hits).
+            if stock is None:
+                stock = lium_api.executors(self.sess)
+            eplan = self.effective_plan(plan, healthy_types, now)
+            if eplan.target <= 0:
+                continue  # stand-in no longer wanted; let the TTL take it
+            cands = self.match_stock(stock, eplan)
+            if not cands:
+                if now - float(m.get("rotate_attempt_logged", 0)) > 3600:
+                    m["rotate_attempt_logged"] = now
+                    msg = (f"rotation: {name} expires in "
+                           f"{(exp - now) / 60:.0f} min and no {plan.name} "
+                           f"stock under ${eplan.max_price:.0f}/h — will run to TTL")
+                    log(msg)
+                    self.notify(msg)
+                continue
+            cand = cands[0]
+            price = (cand.get("price_per_gpu") or 0) * plan.gpu_count
+            if spend + price > cfg.budget_usd_hr:
+                log(f"rotation: budget ${spend:.2f}+${price:.2f} > "
+                    f"${cfg.budget_usd_hr} — {name} runs to TTL")
+                continue
+            new = self.new_name(plan, names_seen)
+            pod_id = lium_api.rent(self.sess, str(cand["id"]), new,
+                                   plan.gpu_count, cfg.template_id,
+                                   cfg.ttl_hours, self.pubkey)
+            if not pod_id or pod_id == "RATE_LIMITED":
+                log(f"rotation: rent failed for {name} ({pod_id})")
+                continue
+            names_seen.add(new)
+            spend += price
+            self.mem[new] = {
+                "type": plan.name, "executor_id": str(cand["id"]),
+                "rented_at": now, "phase": "renting",
+                "bootstrap_started": 0, "last_seen": now,
+                "last_healthy": 0, "replaces": name}
+            m["rotating_to"] = new
+            msg = (f"rotation: {name} expires in {(exp - now) / 60:.0f} min — "
+                   f"rented {new} ({cand.get('machine_name')} ${price:.2f}/h); "
+                   f"old box released once it serves")
+            log(msg)
+            self.notify(msg)
+            time.sleep(2.0)
+        return spend, stock
 
     # ---- naming -------------------------------------------------------
     def new_name(self, plan: TypePlan, existing: set[str]) -> str:
@@ -322,15 +461,30 @@ class Manager:
         ip = lium_api.pod_ip(pod)
         out: dict[int, bool] = {}
         headers = {"Authorization": f"Bearer {self.env['SWARM_KEY']}"}
-        canary = self.mem.setdefault(name, {}).setdefault("canary", {})
+        m = self.mem.setdefault(name, {})
+        canary = m.setdefault("canary", {})
+        misses = m.setdefault("probe_misses", {})
         for internal, _gpus, _tp in specs:
             ext = ports[internal]
             base = f"http://{ip}:{ext}/v1"
             try:
-                r = httpx.get(f"{base}/models", headers=headers, timeout=6.0)
+                # 6 s was too tight under duel load: a replica busy with
+                # 192-way echo traffic missed it while serving fine (H200
+                # replicas, 2026-09-17: zero vLLM errors all day, yet the
+                # router saw 6-8 of 8 healthy all afternoon). One missed
+                # probe on an admitted replica is tolerated; two in a row
+                # drop it.
+                r = httpx.get(f"{base}/models", headers=headers, timeout=20.0)
                 ok = r.status_code == 200
             except httpx.HTTPError:
                 ok = False
+            if ok:
+                misses[str(ext)] = 0
+            elif canary.get(str(ext)):
+                misses[str(ext)] = int(misses.get(str(ext), 0)) + 1
+                if misses[str(ext)] < 2:
+                    log(f"{name}:{ext} probe miss 1/2 — keeping")
+                    ok = True
             if ok and not canary.get(str(ext)):
                 ok = self.canary_ok(base, headers)
                 if ok:
@@ -546,8 +700,24 @@ class Manager:
         spend = self.spend_usd_hr(live_pods)
         stock = None
         healthy_types = {b["type"] for b in backends}
+        for t in list(self.type_healthy_since):
+            if t not in healthy_types:
+                del self.type_healthy_since[t]
+        # Hysteresis applies to transitions, not to a manager (re)start: a
+        # type already healthy on the first cycle counts as long-healthy, or
+        # every restart would rent the stand-ins for standin_release_min.
+        seed = now - cfg.standin_release_min * 60 if not self.type_healthy_since             and not getattr(self, "_seen_cycle", False) else now
+        self._seen_cycle = True
+        for t in healthy_types:
+            self.type_healthy_since.setdefault(t, seed)
+        spend, stock = self.rotate_expiring(swarm_pods, backends, healthy_types,
+                                            names_seen, spend, stock, now)
         unfilled: list[str] = []
-        for tname, plan in cfg.types.items():
+        for tname, cplan in cfg.types.items():
+            plan = self.effective_plan(cplan, healthy_types, now)
+            if (cplan.standin_for and cplan.target > 0 and plan.target == 0
+                    and by_type[tname]):
+                log(f"{tname}: stand-in released — {cplan.standin_for} healthy")
             have = len(by_type[tname])
             if have > plan.target:
                 # Shrink: drop the newest boxes first (least sunk warmup). A
@@ -558,12 +728,20 @@ class Manager:
                                       .get("rented_at", 0),
                     reverse=True)[: have - plan.target]
                 for pod in extra:
-                    covering = self.mem.get(lium_api.pod_name(pod), {}
-                                            ).get("fallback_for")
+                    pm = self.mem.get(lium_api.pod_name(pod), {})
+                    covering = pm.get("fallback_for")
                     if covering and covering not in healthy_types:
                         continue
-                    self.remove_pod(pod, "over target"
-                                    + (f" ({covering} healthy again)" if covering else ""))
+                    if plan.target > 0 and (pm.get("replaces") or pm.get("rotating_to")):
+                        continue  # ttl rotation pair; rotate_expiring owns it
+                    why = "over target"
+                    if covering:
+                        why += f" ({covering} healthy again)"
+                    elif cplan.standin_for and cplan.target > 0 and plan.target == 0:
+                        why += f" (stand-in for {cplan.standin_for}, now healthy)"
+                        self.notify(f"stand-in released: {lium_api.pod_name(pod)} "
+                                    f"({tname}) — {cplan.standin_for} healthy again")
+                    self.remove_pod(pod, why)
                 continue
             missing = plan.target - have
             if missing <= 0:
@@ -734,19 +912,104 @@ class Manager:
         self.mem.pop(name, None)
 
 
+class Alerter:
+    """One Discord line to the private ops channel when the swarm has served
+    zero healthy replicas for `after_min` minutes, repeated every
+    `repeat_min` while it lasts, and one line when it recovers.
+
+    2026-09-17: the only b200-8x hit its 48 h TTL at 10:16 UTC, Lium had no
+    B200 x8 in stock, and a Lium API change (422 on ?size=2000) made the
+    fallback path see "0 executors" — 0 replicas for 50 min, every duel
+    requeued teacher_unservable, and nothing paged anyone. Never raises."""
+
+    def __init__(self, raw: dict):
+        a = raw.get("alerts") or {}
+        self.enabled = bool(a.get("enabled", False))
+        self.channel = str(a.get("channel_id") or "")
+        self.token_env = str(a.get("token_env") or "DISCORD_BOT_TOKEN_ARBOS_BITTENSOR")
+        self.after_s = float(a.get("zero_replicas_after_min", 5)) * 60
+        self.repeat_s = float(a.get("repeat_min", 60)) * 60
+        self.zero_since: float | None = None
+        self.last_sent = 0.0
+        self.alerting = False
+
+    def _token(self) -> str:
+        import os
+        if os.environ.get(self.token_env):
+            return os.environ[self.token_env]
+        for path in (ENV_FILE, HERE.parents[1] / ".env"):
+            if not path.exists():
+                continue
+            for line in path.read_text().splitlines():
+                line = line.strip().removeprefix("export ").strip()
+                if line.startswith(f"{self.token_env}="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+        return ""
+
+    def post(self, text: str) -> None:
+        log(f"alert: {text}")
+        if not (self.enabled and self.channel):
+            return
+        token = self._token()
+        if not token:
+            log("alert: no discord token resolvable; not posted")
+            return
+        try:
+            r = httpx.post(
+                f"https://discord.com/api/v10/channels/{self.channel}/messages",
+                headers={"Authorization": f"Bot {token}"},
+                json={"content": f"[teacher swarm] {text}"[:1900]}, timeout=20)
+            if r.status_code >= 300:
+                log(f"alert: discord HTTP {r.status_code}")
+        except httpx.HTTPError as e:
+            log(f"alert: discord post failed: {e!r}")
+
+    def observe(self, state: dict) -> None:
+        now = time.time()
+        healthy = len(state.get("backends") or [])
+        # The manager's memory keeps months of removed pods; only boxes seen
+        # on Lium in the last hour are relevant to the alert text.
+        pods = {n: m for n, m in (state.get("pods") or {}).items()
+                if float((m or {}).get("last_seen") or 0) > now - 3600}
+        if healthy > 0:
+            if self.alerting:
+                self.post(f"recovered: {healthy} healthy replicas on "
+                          f"{len(pods)} pod(s), ${state.get('spend_usd_hr')}/h")
+            self.alerting = False
+            self.zero_since = None
+            return
+        if self.zero_since is None:
+            self.zero_since = now
+            return
+        if now - self.zero_since < self.after_s:
+            return
+        if self.alerting and now - self.last_sent < self.repeat_s:
+            return
+        phases = ", ".join(f"{n}:{m.get('phase')}" for n, m in pods.items()) or "no pods"
+        mins = int((now - self.zero_since) / 60)
+        self.post(f"0 healthy teacher replicas for {mins} min — every duel is "
+                  f"requeuing teacher_unservable. Pods: {phases}. "
+                  f"Check ops/teacher-swarm/state/manager.pm2.log (stock / caps / Lium API).")
+        self.alerting = True
+        self.last_sent = now
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--interval", type=float, default=30.0)
     args = ap.parse_args()
     mgr = Manager(load_config())
+    alerter = Alerter(tomllib.loads((HERE / "swarm.toml").read_text()))
+    mgr.notify = alerter.post
     if args.once:
         mgr.reconcile()
         return 0
     log("daemon start")
     while True:
         try:
-            mgr.reconcile()
+            state = mgr.reconcile()
+            alerter.observe(state)
         except Exception as e:  # noqa: BLE001 — daemon must not die
             log(f"reconcile error: {e!r}")
         time.sleep(args.interval)

@@ -64,8 +64,17 @@ def get_json(sess: requests.Session, path: str, params: dict | None = None,
 
 
 def executors(sess: requests.Session) -> list[dict]:
-    data = get_json(sess, "/executors", params={"size": 2000})
+    # 2026-09-17: Lium started answering `size=2000` with HTTP 422 (validation
+    # error); the dict came back here, this returned [] and the manager logged
+    # "0 executors" for every type for 45 min with zero teacher replicas. The
+    # unparameterized listing is complete (~105 rows); try the paginated form
+    # first and fall back to it, and never mistake an error body for "empty".
+    data = get_json(sess, "/executors", params={"page_size": 2000})
     if not isinstance(data, list):
+        data = get_json(sess, "/executors")
+    if not isinstance(data, list):
+        print(f"[lium_api] /executors did not return a list: {str(data)[:200]}",
+              flush=True)
         return []
     return [n for n in data
             if isinstance(n, dict) and n.get("id")
