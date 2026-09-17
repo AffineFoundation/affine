@@ -24,7 +24,11 @@ import sys
 import time
 import tomllib
 
-FAILED_CELL_ERROR_SHARE = 0.90   # >= this share errored -> the cell is a failed run, score null
+# >= this share of rollouts errored (infrastructure) -> the cell is a failed run: score null,
+# status "failed", nothing quotable. 0.90 let King 14's SWE-bench cell through with 406/500
+# docker pulls failed ("Unable to find image", Docker Hub cap) and a 70.4 finished-only over
+# 54 tasks on the board (2026-09-17 18:18 UTC); half the tasks missing is not a score.
+FAILED_CELL_ERROR_SHARE = 0.50
 from pathlib import Path
 
 import boto3
