@@ -14,6 +14,7 @@ DATA_R2_ENDPOINT (the corpus fold's affine-data-only key) or the repo .env.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import gzip
 import hashlib
 import json
@@ -114,7 +115,7 @@ def scorecard(run_dir: Path) -> dict:
                "status": "failed" if failed else "ok"}
         # cloud-sandbox / harness-change provenance (harbor_cell.py cells): the kingboard
         # flags a cell whose harness differs from the card's default for that env
-        for key in ("sandbox", "harness", "harness_change", "harness_note", "budget"):
+        for key in ("sandbox", "harness", "harness_change", "harness_note", "budget", "served_by"):
             if x.get(key) is not None:
                 out[key] = x[key]
         if failed:
@@ -207,8 +208,8 @@ def main() -> int:
         if not p.is_file():
             continue
         rel = p.relative_to(run_dir).as_posix()
-        if only and not (any(rel.startswith(c + "/") for c in only) or "/" not in rel):
-            continue      # partial publish: the named cells + the run's top-level manifests
+        if only and not (any(fnmatch.fnmatch(rel, c + "/*") for c in only) or "/" not in rel):
+            continue      # partial publish: the named cells (globs ok, e.g. king/*) + the run's top-level manifests
         if rel.endswith("traces.jsonl"):
             gz = p.with_suffix(".jsonl.gz")
             if not gz.exists() or gz.stat().st_mtime < p.stat().st_mtime:

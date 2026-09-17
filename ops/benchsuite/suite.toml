@@ -97,6 +97,10 @@ tool_call_parser = "qwen3_xml"
 [sandbox_daytona]
 enabled = true
 concurrency = 100
+# pods for a Daytona pass above 50 in flight: two TP1 replicas behind nginx (whichever has stock),
+# then the normal plan list. One replica saturates at ~50 agents (prefill-bound), and the
+# whole point of the mode is wall time.
+pod_plans = ["h200-2x", "b200-2x"]
 harbor_version = "0.21.0"
 key_env = "DAYTONA_API_KEY"          # Arbos vault item "Daytona Arbos" (op://Arbos/fywmj6vtq5delybw5c7a53l2qa)
 envs = ["swebench-verified", "terminal-bench-2", "swebench-pro"]

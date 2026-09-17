@@ -277,7 +277,9 @@ PY
   pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"
   # PARTIAL card now (chat cells): the attribution job watches affine/state/benchsuite/*.json
   local PARTIAL_FLAG=""; [ "$SANDBOX_POLICY" != "never" ] && PARTIAL_FLAG="--partial"
-  [ -z "${BENCHSUITE_MERGE_INTO:-}" ] && { "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" --only-state $PARTIAL_FLAG || log "partial publish failed; continuing"; }
+  # the chat cells go to R2 right here (traces included), not only at the end of the pass:
+  # a driver that dies later must not leave them box-only (reign 13, 2026-09-15..17)
+  [ -z "${BENCHSUITE_MERGE_INTO:-}" ] && { "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" --only-cells "king/*,teacher/*" $PARTIAL_FLAG || log "partial publish failed; continuing"; }
   local TRIGGER="always"
   [ "$SANDBOX_POLICY" = "gated" ] && TRIGGER=$(sandbox_trigger)
   [ "$SANDBOX_POLICY" = "never" ] && TRIGGER="never"
@@ -474,7 +476,13 @@ run_lium() {  # $1 = sandbox policy (gated|never)
   else
     # shellcheck disable=SC2086
     POD=""
-    for PLAN in $(toml modes.lium_plan) $(toml modes.lium_plan_fallbacks | tr "," " "); do
+    local PLANS; PLANS="$(toml modes.lium_plan) $(toml modes.lium_plan_fallbacks | tr "," " ")"
+    if [ "${BENCHSUITE_SANDBOX:-}" = "daytona" ] && [ "$(toml sandbox_daytona.concurrency)" -gt 50 ]; then
+      # the sandboxes are never the limit; above ~50 in flight one replica is (2026-09-17: 64
+      # running + 34 queued on a B200) -> two-replica pods first, so wall time is what the mode buys
+      PLANS="$(toml sandbox_daytona.pod_plans | tr "," " ") $PLANS"
+    fi
+    for PLAN in $PLANS; do
       POD=$("$PY" "$HERE/kingpod.py" rent --plan "$PLAN" --digest "$DIGEST" $R2FLAG | tail -1) && [ -n "$POD" ] && break
       log "no pod on plan $PLAN; trying the next plan"; POD=""
     done
