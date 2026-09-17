@@ -2252,6 +2252,7 @@ def derive_coached(cfg: dict, baker: ToolBaker, panel, allowed_kinds, published:
 # are dropped / retired. Groups listed in `apply_groups` are enforced; the
 # others are measured and reported only (the operator's per-group ok).
 TEACHER_SOLVED_CACHE = CACHE_DIR / "teacher_solved_tasks.json"
+GATE_SHADOW_RETIRE: dict[str, list[str]] = {}   # rows a shadow group WOULD retire under the recovery rule
 YIELD: dict[str, dict] = {}     # per source: envelopes seen, records / turns accepted at derive, drop reasons
 
 
@@ -2269,7 +2270,14 @@ def load_admission_gate() -> dict:
             "task_signal": bool(raw.get("task_teacher_solved", True)),
             "dead_refs": bool(raw.get("dead_refs", True)),
             "ledger_dir": REPO / str(raw.get("ledger_dir") or "affine/state/curriculum/ledger"),
-            "min_refs_valid": int(raw.get("min_refs_valid", 2) or 2)}
+            "min_refs_valid": int(raw.get("min_refs_valid", 2) or 2),
+            # 2026-09-17 09:51 UTC decision: dead-reference drop on EVERY gated
+            # group; the recovery condition enforced on `apply_groups` + the
+            # groups the fold auto-promoted (post-gate strata >= quota, never
+            # flips back); `recovery_exempt` groups (king_coached: the coached
+            # teacher IS the recovery) get the dead-reference drop only.
+            "recovery_exempt": frozenset(str(g) for g in (raw.get("recovery_exempt") or [KING_COACHED_GROUP])),
+            "auto_promote": bool(raw.get("auto_promote", True))}
 
 
 def load_state_recovery(cfg: dict) -> dict[tuple[str, int], bool]:
@@ -2378,10 +2386,13 @@ def admission_gate(records: list[dict], cfg: dict, src2grp, mix, state_rec, task
             ready.append(rec)
             continue
         keep, pending = [], []
+        enforced = g in cfg["apply_groups"]
         for m in rec["turns"]:
             v = gate_turn(rec, m, g, cfg, state_rec, task_solved, task_seen, dead)
             tally.setdefault(g, {})[v] = tally.setdefault(g, {}).get(v, 0) + 1
-            if g not in cfg["apply_groups"] or v == "admit":
+            if v == "dead_refs":                       # every gated group
+                _count(drops, "gate_dead_refs"); _count(drops, f"gate_dead_refs_{g}")
+            elif v == "admit" or not enforced or g in cfg["recovery_exempt"]:
                 keep.append(m)
             elif v == "unverified":
                 pending.append(m)
@@ -2411,6 +2422,8 @@ def gate_published(pub: PublicCorpus, live: dict | None, cfg: dict, state_rec, t
     t = index_table(pub, live, ["turn_id", "traj_id", "rollout_id", "turn_idx", "stratum", "source"])
     retire: dict[str, list[str]] = {}
     tally: dict[str, dict[str, int]] = {}
+    shadow_retire = GATE_SHADOW_RETIRE
+    shadow_retire.clear()
     for tid, traj, rid, ti, st, src in zip(*(t.column(c).to_pylist() for c in
                                              ("turn_id", "traj_id", "rollout_id", "turn_idx", "stratum", "source"))):
         g = group_from_row(str(st), str(src), src2grp)
@@ -2427,8 +2440,12 @@ def gate_published(pub: PublicCorpus, live: dict | None, cfg: dict, state_rec, t
                 sha8 = parts[1] if len(parts) > 2 else ""
                 v = "admit" if sha8 in sha8_solved else ("not_recovered" if sha8 in sha8_seen else "unverified")
         tally.setdefault(g, {})[v] = tally.setdefault(g, {}).get(v, 0) + 1
-        if g in cfg["apply_groups"] and v in ("dead_refs", "not_recovered"):
+        if v == "dead_refs":
             retire.setdefault(g, []).append(tid)
+        elif v == "not_recovered" and g in cfg["apply_groups"] and g not in cfg["recovery_exempt"]:
+            retire.setdefault(g, []).append(tid)
+        elif v == "not_recovered":
+            shadow_retire.setdefault(g, []).append(tid)
     return retire, tally
 
 
@@ -2679,6 +2696,8 @@ def publish_pending(state: dict, publisher: CorpusPublisher,
     if pending.get("admission_gate"):
         ag = pending["admission_gate"]
         extra["admission_gate"] = {"apply_groups": ag.get("apply_groups"), "retired": ag.get("retired"),
+                                   "gate_state": ag.get("gate_state"), "gate_reason": ag.get("gate_reason"),
+                                   "flips_this_fold": ag.get("flips_this_fold"), "projection": ag.get("projection"),
                                    "published_tally": ag.get("published"), "signals": ag.get("signals"),
                                    "rule": "admit iff king failed AND teacher recovers (state majority-of-3, else task teacher_solved); dead-reference turns dropped; unverified held"}
     if pending.get("curriculum_block"):
@@ -2725,6 +2744,8 @@ def finalize(state: dict, manifest: dict, mhash: str) -> None:
     }
     if pending.get("coached_folded") is not None:
         state["coached_folded"] = pending["coached_folded"]
+    if pending.get("gate_enforced") is not None:
+        state["gate_enforced"] = sorted(set(state.get("gate_enforced") or []) | set(pending["gate_enforced"]))
     if pending.get("budget_signature"):
         state["strata_budget_signature"] = pending["budget_signature"]
         state.pop("group_strata_raw_before_budget", None)
@@ -2784,8 +2805,12 @@ def gate_line(info: dict) -> str:
     if not ag:
         return ""
     ret = ag.get("retired") or {}
-    return ("Admission gate (king failed AND teacher recovers; dead refs out): enforced on "
-            f"{', '.join(ag.get('apply_groups') or []) or 'none (shadow)'}"
+    st = ag.get("gate_state") or {}
+    return ("Admission gate (dead refs out everywhere; recovery rule): enforced "
+            f"{sorted(g for g, v in st.items() if v == 'enforced')}, shadow "
+            f"{sorted(g for g, v in st.items() if v == 'shadow')}, exempt "
+            f"{sorted(g for g, v in st.items() if v == 'exempt')}"
+            + (f"; PROMOTED this fold: {ag['flips_this_fold']}" if ag.get("flips_this_fold") else "")
             + (f"; retired {sum(ret.values())} rows" if ret else "") + ".\n")
 
 
@@ -3397,7 +3422,10 @@ def main() -> None:
     gate = load_admission_gate()
     gate_report: dict = {}
     gate_held: list[dict] = []
+    gate_flips: list[str] = []
     if gate:
+        # enforced = toml apply_groups + earlier auto-promotions (sticky)
+        gate["apply_groups"] = frozenset(gate["apply_groups"]) | frozenset(state.get("gate_enforced") or [])
         state_rec = load_state_recovery(gate)
         task_solved, task_seen = teacher_solved_tasks(pub, traces_manifest) if gate["task_signal"] else (set(), set())
         dead = dead_reference_turns(gate)
@@ -3412,8 +3440,67 @@ def main() -> None:
             retire_surviving[g] = strata_after_retire(pub, live, g, extra_retire[g])
         if pub_retire:
             pivot_retire = sorted(set().union(*extra_retire.values()))
+        # Auto-promote: a shadow group whose post-gate strata (published rows
+        # minus what the recovery rule would retire, plus this fold's admitted
+        # candidates) reach its quota flips to enforced -- for this fold too.
+        if gate["auto_promote"]:
+            live_rows_g = live_rows_for_budget(pub, live)
+            strata_by_g: dict[str, set[str]] = {}
+            would = {g: set(v) for g, v in GATE_SHADOW_RETIRE.items()}
+            dead_rows = {g: set(v) for g, v in pub_retire.items()}
+            for tid, s0, src in live_rows_g:
+                g0 = group_from_row(s0, src, src2grp)
+                if g0 in gate["groups"] and tid not in would.get(g0, set()) and tid not in dead_rows.get(g0, set()):
+                    strata_by_g.setdefault(g0, set()).add(budget_stratum(g0, s0, tid))
+            for rec in candidates:
+                g0 = group_of(rec, src2grp, mix)
+                if g0 in gate["groups"]:
+                    for m in rec["turns"]:
+                        if gate_turn(rec, m, g0, gate, state_rec, task_solved, task_seen, dead) == "admit":
+                            base = stratum_key({"stratum": m.get("stratum") or rec.get("stratum"), "traj_id": rec["traj_id"]})
+                            strata_by_g.setdefault(g0, set()).add(budget_stratum(g0, base, f"{rec['traj_id']}:{m['turn_idx']}"))
+            tot_now = sum(len(v) for v in (state.get("group_strata") or {}).values()) or 1
+            gate_projection: dict[str, dict] = {}
+            for g0 in gate["groups"]:
+                if g0 in gate["recovery_exempt"]:
+                    continue
+                post = len(strata_by_g.get(g0, ()))
+                quota = mix.get(g0, 0.0) * tot_now
+                admits_fold = cand_tally.get(g0, {}).get("admit", 0)
+                gate_projection[g0] = {"post_gate_strata": post, "quota_strata": round(quota),
+                                       "admits_this_fold": admits_fold,
+                                       "folds_to_quota": (0 if post >= quota else
+                                                          (round((quota - post) / admits_fold, 1) if admits_fold else None))}
+                if g0 not in gate["apply_groups"] and post >= quota and quota > 0:
+                    gate_flips.append(g0)
+            if gate_flips:
+                gate["apply_groups"] = gate["apply_groups"] | frozenset(gate_flips)
+                log(f"admission gate: auto-promoted {gate_flips} (post-gate strata >= quota); re-running the gate enforced")
+                # rows the shadow rule would have retired now retire; candidates re-gated
+                for g0 in gate_flips:
+                    ids = GATE_SHADOW_RETIRE.get(g0) or []
+                    if ids:
+                        pub_retire.setdefault(g0, []).extend(ids)
+                candidates, held2, cand_tally = admission_gate(
+                    candidates, gate, src2grp, mix, state_rec, task_solved, task_seen, dead, drops)
+                gate_held.extend(held2)
+                for g0, ids in pub_retire.items():
+                    extra_retire.setdefault(g0, set()).update(ids)
+                    retire_surviving[g0] = strata_after_retire(pub, live, g0, extra_retire[g0])
+                pivot_retire = sorted(set().union(*extra_retire.values()))
+        else:
+            gate_projection = {}
+        gate_state = {g0: ("exempt" if g0 in gate["recovery_exempt"] else
+                           "enforced" if g0 in gate["apply_groups"] else "shadow")
+                      for g0 in gate["groups"]}
+        gate_reason = {g0: ("dead-reference drop only: the coached teacher is the recovery signal" if st == "exempt"
+                            else "recovery rule enforced (toml or auto-promoted at quota)" if st == "enforced"
+                            else "recovery rule measured only; auto-promotes when post-gate strata >= quota")
+                       for g0, st in gate_state.items()}
         gate_report = {"candidates": cand_tally, "published": pub_tally,
                        "apply_groups": sorted(gate["apply_groups"]),
+                       "gate_state": gate_state, "gate_reason": gate_reason,
+                       "flips_this_fold": gate_flips, "projection": gate_projection,
                        "retired": {g: len(v) for g, v in pub_retire.items()},
                        "signals": {"state_rows": len(state_rec), "teacher_solved_tasks": len(task_solved),
                                    "teacher_seen_tasks": len(task_seen), "dead_ref_turns": len(dead)}}
@@ -3590,7 +3677,10 @@ def main() -> None:
         write_fold_stats((int(live["corpus_epoch"]) if live else 0) + 1, after, turns_by_group, recurrence,
                          curriculum, mix, sum(turns_by_group.values()), None if args.no_publish else publisher,
                          sim_rows=sim_rows_src, src2grp=src2grp,
-                         extra={"floors": fstat, "yield": yrep, "admission_gate": gate_report or None})
+                         extra={"floors": fstat,
+                                "yield": {**yrep, "gate_state": (gate_report or {}).get("gate_state"),
+                                          "gate_reason": (gate_report or {}).get("gate_reason")},
+                                "admission_gate": gate_report or None})
 
     n_new = sum(len(r["turns"]) for r in selected)
     stale = False
@@ -3638,6 +3728,7 @@ def main() -> None:
         "yield_groups": yrep["groups"] if STRATA_BUDGET else None,
         "yield_sources": yrep["sources"] if STRATA_BUDGET else None,
         "admission_gate": gate_report or None,
+        "gate_enforced": sorted(gate["apply_groups"]) if gate else None,
         "budget_signature": budget_cfg.get("signature") if budget_cfg else None,
         "budget_migrated": budget_migrated,
         "strata_raw_before_budget": state.get("group_strata_raw_before_budget") if budget_migrated else None,
