@@ -157,6 +157,21 @@ min_submission_block = 8938619
 # min(R,G) math, the crown bar and the confirmation slice unchanged; wvk
 # ≤ 19 verdicts replay under their stamped fixed cap. Forward-only; reign
 # 13 stands; min_submission_block unchanged.
+# 20→21 confirmation slice removed (2026-09-17): explicit dated operator
+# directive 2026-09-17 10:07 UTC — "Remove the double eval on kings. This
+# is too difficult. Lets crown if any model passes 2 sigma like before.
+# Make the change and in llms.txt the update makes things too hard. Feel
+# free to crown the last model which passed but failed the crown."
+# confirmation_required → false: a challenger crowns iff its paired
+# margin over ONE 1,300-turn slice clears max(k_sigma·SE, min_margin) =
+# max(2·SE, 0.002) plus the thought-length floor and B gate — the rule of
+# wvk 3–18. The teacher-relative thought cap (wvk 20), caps, min(R,G)
+# math and the reign chain are unchanged; near_miss stays off. Retroactive
+# crown: chal-00556 (uid 175, 0f4029fd…), whose slice 1 cleared the bar
+# (+0.0022, z 3.13) and whose confirmation slice fell short (pooled
+# +0.0014 < δ), is crowned from its stored slice-1 verdict — the only
+# confirmation-only rejection since wvk 19. Forward-only otherwise;
+# min_submission_block unchanged.
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -164,7 +179,7 @@ min_submission_block = 8938619
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 20
+weight_version_key = 21
 
 [wallet]
 name = "default"
@@ -692,7 +707,15 @@ crown_one_entry_per_hotkey = true
 # duel_params.confirmation_required and verdict.confirmation {seed, n,
 # margin, se, z, pooled_margin, pooled_se, pooled_z, bar, passed}.
 # false = pre-wvk-19 replay (crown on the first slice).
-confirmation_required = true
+# 2026-09-17 (weight_version_key 20→21, explicit dated operator directive
+# 2026-09-17 10:07 UTC: "Remove the double eval on kings. This is too
+# difficult. Lets crown if any model passes 2 sigma like before"): OFF.
+# One 1,300-turn slice decides again — margin > max(k_sigma·SE, δ) +
+# gates crowns at once. The one confirmation that ran live (chal-00556,
+# 2026-09-16: slice 1 +0.0022 z 3.13, slice 2 +0.0007 z 1.03, pooled
+# +0.0014 < δ) is reversed by the same directive: chal-00556 crowned
+# retroactively from its stored slice-1 verdict. Code kept for replay.
+confirmation_required = false
 # Median stripped thought length, in characters (2026-08-13, wvk=5).
 # Invalid challenger cannot crown. 80 sits above live cue phrases
 # ("Next command:" = 13, "Next bash command:" = 18) and below guass (~290)
