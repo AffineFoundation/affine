@@ -15,7 +15,7 @@ king_env_path = "/root/rollouts/.king_env"   # on the datagen pods
 template_id = "345273fa-4818-46f7-a8fa-32f0e331713c"  # Pytorch (Cuda+DinD) cu13.0.2 — same as the swarm
 ttl_hours = 72                               # per-pod safety-net TTL at rent time (Lium kills the pod)
 rotate_before_ttl_hours = 2                  # rent the replacement this long before the TTL (zero-gap rotation)
-bootstrap_timeout_min = 45                   # venv + 70 GB pull + engine warmup
+bootstrap_timeout_min = 120                  # venv + 70 GB pull + engine warmup; 45 timed out twice on 2026-09-14 (slow executors pull models.affine.io at ~16 MB/s = ~75 min for the 50 GB model)
 unreachable_grace_min = 20                   # a box dark this long after READY is replaced
 canary_every_min = 10                        # real completion probe cadence after READY (3 misses = dark)
 pod_forget_ticks = 5                         # consecutive Lium-listing misses before a pod is forgotten
@@ -39,7 +39,7 @@ max_num_seqs = 32
 # recovered / datagen supervisor relaunched). One line each, never a secret.
 [discord]
 enabled = true
-channel_id = "1381987595881414656"           # same ops channel as corpus_build / exploit-audit
+channel_id = "1510910974498967613"           # private Arbos ops channel (operator directive 2026-09-12: no automated posts in the public SN120 channel)
 token_env = "DISCORD_BOT_TOKEN_ARBOS_BITTENSOR"  # read from ~/.affine-validator.env or the repo .env
 
 # Box types, in PREFERENCE order: the first type with stock under its price

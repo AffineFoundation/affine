@@ -44,6 +44,9 @@ echo "== [3/5] rsync SRC -> DST (code, venv, caches, catalogs, state seed)"
 # -H keeps uv's hardlinked environments hardlinked (else the env cache
 # balloons); --delete is deliberately absent (never trim a live pod).
 # -R (relative) recreates each source's full path under DST:/ — without it
+# /root/.cache/affine holds the tmax sparse checkout (task Dockerfiles the
+# runner builds from) and the Spider databases; without it the first tmax
+# batch on a clone fails "missing image/Dockerfile" (datagen-5, 2026-09-12).
 # rsync drops the last path component into the destination, so
 # /root/.cache/huggingface landed at /root/huggingface on pods 2/3
 # (2026-09-02) and every terminal_lego catalog path was dead until a
@@ -59,7 +62,7 @@ src "rsync -aHR --info=progress2 --human-readable \
   --exclude='/root/.ssh/' \
   --exclude='/root/.bash_history' \
   /root/affine /root/rollouts /root/prime-pilot /root/prime-lane /root/venv \
-  /root/.local /root/.cache/uv /root/.cache/harbor /root/.cache/huggingface \
+  /root/.local /root/.cache/uv /root/.cache/harbor /root/.cache/huggingface /root/.cache/affine \
   /root/hf /root/rollouts-data \
   root@$DST_HOST:/"
 
