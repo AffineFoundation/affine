@@ -85,6 +85,29 @@ tool_call_parser = "qwen3_xml"
 # The bench pod (AFFINE_ROLE=bench) was checked as a host and rejected:
 # evalsrv loads the miner per bench job and unloads it in `finally`, holds one
 # busy lock per pod, and its vLLM port is not tunnelled.
+# ------------------------------------------------------- cloud sandboxes
+# sandbox = "daytona" (2026-09-17, Jacob): the sandbox-heavy Harbor-able cells
+# (SWE-bench Verified / Pro, Terminal-Bench 2) run through `harbor run -e daytona`
+# from the box while the GPU pod only serves the model. Org quota (region us,
+# container class): 500 vCPU / 1000 GB RAM / 5 TB disk / 10 GPU, 30 snapshots —
+# no sandbox-count cap; SWE tasks are 1 vCPU / 4 GB, so ~250 fit; we run 100.
+# tau2 / tau3 need no sandbox (their tools run in the orchestrator); GraphWalks /
+# Oolong / MRCR / miniF2F are verifiers tasksets without a Harbor dataset and
+# stay on the pod's docker / Prime sandboxes.
+[sandbox_daytona]
+enabled = true
+concurrency = 100
+harbor_version = "0.21.0"
+key_env = "DAYTONA_API_KEY"          # Arbos vault item "Daytona Arbos" (op://Arbos/fywmj6vtq5delybw5c7a53l2qa)
+envs = ["swebench-verified", "terminal-bench-2", "swebench-pro"]
+# budgets: default = the card's 1 h; "4h250" = Albedo's setting (4 h wall, 250 model calls)
+[sandbox_daytona.budgets.default]
+agent_timeout_s = 3600
+step_limit = 0
+[sandbox_daytona.budgets.4h250]
+agent_timeout_s = 14400
+step_limit = 250
+
 [modes]
 default = "lium"            # operator decision 2026-09-13 (later the same day): in-house GPUs paid in TAO
 lium_plan = "h200-1x"       # [pods.plans.*]: 1x H200 = one TP1 replica, ~$3/h; the whole pass runs on that pod
@@ -453,6 +476,9 @@ max_turns = 300
 rollout_timeout = 3600      # fixed budget: same for every reign
 concurrency = 48            # fixed: 48 tasks in flight, run alone on the pod (parallel_envs 1 in the sandbox phase)
 note = "SWE-bench Verified, all 500, mini-swe-agent harness, prebuilt swebench/sweb.eval images; the task's own hidden tests grade."
+# sandbox = "daytona" route (harbor_cell.py): same 500 tasks from the Harbor registry, containers on
+# Daytona, Harbor's mini-swe-agent adapter (upstream mini-swe-agent v2 in the sandbox) = harness change.
+harbor = { dataset = "swebench-verified@1.0", agent = "mini-swe-agent", task_agent_timeout_s = 3000 }
 
 # ------------------------------------------------------------ agentic set
 # Added 2026-09-15 (Jacob: "kings comparable to public agentic releases",
@@ -476,6 +502,7 @@ max_turns = 200
 rollout_timeout = 3600
 concurrency = 16
 note = "Terminal-Bench 2.0, all 89 tasks (Harbor dataset terminal-bench/terminal-bench-2, alexgshaw/* Docker Hub images), Terminus 2 harness = the public leaderboard's reference agent; each task's hidden verifier grades pass/fail. Fixed 1 h budget per task. Occamy reports 'Terminal-Bench 2.1' (same task set, harness release 2.1)."
+harbor = { dataset = "terminal-bench@2.0", agent = "terminus-2", task_agent_timeout_s = 3600 }
 
 [[envs]]
 id = "swebench-pro"
@@ -492,6 +519,7 @@ max_turns = 300
 rollout_timeout = 3600
 concurrency = 48
 note = "SWE-bench Pro public split, all 731 (Harbor dataset scale-ai/swe-bench-pro, SWEAP jefzda/* images), mini-swe-agent harness like our SWE-bench Verified row (the public leaderboard uses SWE-agent; not directly comparable). ~16 h on one H200; read finished-only next to the full score."
+harbor = { dataset = "swebenchpro@1.0", agent = "mini-swe-agent", task_agent_timeout_s = 3000 }
 
 [[envs]]
 id = "tau2-airline"

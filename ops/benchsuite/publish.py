@@ -112,6 +112,11 @@ def scorecard(run_dir: Path) -> dict:
                "finish_length_frac": x.get("finish_length_frac"),
                "by_class": x.get("by_class") or None,
                "status": "failed" if failed else "ok"}
+        # cloud-sandbox / harness-change provenance (harbor_cell.py cells): the kingboard
+        # flags a cell whose harness differs from the card's default for that env
+        for key in ("sandbox", "harness", "harness_change", "harness_note", "budget"):
+            if x.get(key) is not None:
+                out[key] = x[key]
         if failed:
             out["raw_score"] = x["score"]
             out["failure"] = f"{n_err}/{n} rollouts errored (run failure, not a model score)"
@@ -121,11 +126,14 @@ def scorecard(run_dir: Path) -> dict:
 
     rows = []
     for env_id, temps in cells.items():
-        e = by_id.get(env_id, {})
+        # "<env>@<budget tag>" = the same env at a non-default budget (a separate column)
+        base_env, _, budget_tag = env_id.partition("@")
+        e = by_id.get(base_env, {})
         for tkey, models in temps.items():
             k, t = models.get("king"), models.get("teacher")
             rows.append({
-                "env": env_id, "group": e.get("group"), "temperature": float(tkey[1:]),
+                "env": env_id, "base_env": base_env, "budget_tag": budget_tag or None,
+                "group": e.get("group"), "temperature": float(tkey[1:]),
                 "note": e.get("note"),
                 "show_classes": e.get("show_classes"),
                 "graded": e.get("graded", "deterministic"),   # "llm_judge" = advisory, never in the score
