@@ -76,6 +76,7 @@ WVK17_EFFECTIVE = "2026-09-14"
 WVK18_EFFECTIVE = "2026-09-15"
 WVK19_EFFECTIVE = "2026-09-16"
 WVK20_EFFECTIVE = "2026-09-16"
+WVK21_EFFECTIVE = "2026-09-17"
 
 
 def _payout_subs() -> dict[str, str]:
@@ -198,6 +199,7 @@ def _margin_subs() -> dict[str, str]:
         "{WVK18_EFFECTIVE}": WVK18_EFFECTIVE,
         "{WVK19_EFFECTIVE}": WVK19_EFFECTIVE,
         "{WVK20_EFFECTIVE}": WVK20_EFFECTIVE,
+        "{WVK21_EFFECTIVE}": WVK21_EFFECTIVE,
         "{CAP_RATIO}": f"{float(d.get('thought_cap_ratio', 0.0)):g}",
         "{CAP_RULE}": (f" Per turn the thought cap is `max({int(d['max_thought_tokens'])}, "
                        f"floor({float(d.get('thought_cap_ratio', 0.0)):g} × L_T))`, L_T = the longest "
@@ -381,12 +383,17 @@ around it)
 - Sequential near-miss (2026-09-11, no fork; OFF since wvk 16) — a \
 first-slice margin in the near-miss window drew a second seeded slice; one \
 seeded slice decides again
+- **Fork history: wvk 21 — double evaluation removed (effective \
+{WVK21_EFFECTIVE})** — the wvk-19 confirmation slice is gone: a challenger \
+crowns on ONE 1,300-turn slice when its margin clears `max(2·SE, 0.002)`, as \
+under wvk 3–18; `chal-00556`, which passed that bar but failed the \
+confirmation, was crowned retroactively
 - **Fork history: wvk 20 — teacher-relative thought cap (effective \
 {WVK20_EFFECTIVE})** — per turn you may think up to {MAX_THOUGHT} tokens or \
 {CAP_RATIO}× the teacher's longest reference thought on that turn, whichever \
 is larger; nothing else changes
-- **Fork history: wvk 19 — a crown must win twice (effective \
-{WVK19_EFFECTIVE})** — a duel that clears the bar is confirmed on a second \
+- Fork history: wvk 19 — a crown must win twice (effective \
+{WVK19_EFFECTIVE}, **retired {WVK21_EFFECTIVE}**) — a duel that cleared the bar was confirmed on a second \
 independent 1,300-turn slice (own margin > 0, pooled margin over the bar) \
 before it crowns; a failed confirmation is a loss; noise crowns fall from \
 ≈0.5% to ≈0.01% per attempt; honest improvers wait ~40 min more
@@ -1063,6 +1070,38 @@ near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
 
 ---
 
+## Fork history: wvk 21 — double evaluation removed (effective {WVK21_EFFECTIVE})
+
+**Effective {WVK21_EFFECTIVE} at the first duel dispatched after the eval \
+pod redeploy (explicit dated operator directive, 2026-09-17 10:07 UTC: \
+"Remove the double eval on kings. This is too difficult. Lets crown if any \
+model passes 2 sigma like before.").** `weight_version_key = 21`; \
+`[duel].confirmation_required = false`.
+
+**What changes.** The confirmation slice introduced by wvk 19 is removed \
+because it made crowning too hard. The crown rule is again the one of \
+wvk 3–18: you dethrone the king when your paired margin `mean(turn_c − \
+turn_k)` over **one** 1,300-turn slice clears **`max(k_sigma·SE, δ) = \
+max(2·SE, 0.002)`**, plus the thought-length floor and the B gate. No second \
+slice, no pooled test. Everything from wvk 20 stays: the teacher-relative \
+thought cap, the caps, min(R, G), the reign chain.
+
+**Retroactive crown.** One duel was rejected by the confirmation slice alone: \
+`chal-00556` (uid 175), whose first slice cleared the bar (margin +0.0022, \
+z 3.13) and whose confirmation slice fell short (pooled +0.0014 < δ). Under \
+the same directive it is crowned from its stored slice-1 verdict — no \
+re-duel — as the next reign, with its payout window starting at the crown. \
+The original `verdict` row stays in the history; the `crowned` row carries \
+`via = "retroactive_wvk21"` and the confirmation numbers for audit. No other \
+verdict since wvk 19 was rejected on the confirmation alone.
+
+**What you see.** `duel_params.confirmation_required = false`; `challenger_wins` \
+decides the crown again on the first slice. Forward-only otherwise; \
+`min_submission_block` unchanged; wvk-19/20 verdicts keep their stamps and \
+replay unchanged.
+
+---
+
 ## Fork history: wvk 20 — teacher-relative thought cap (effective {WVK20_EFFECTIVE})
 
 **Effective {WVK20_EFFECTIVE} at the first duel dispatched after the eval \
@@ -1106,7 +1145,7 @@ unchanged.
 
 ---
 
-## Fork history: wvk 19 — a crown must win twice (effective {WVK19_EFFECTIVE})
+## Fork history: wvk 19 — a crown must win twice (effective {WVK19_EFFECTIVE}, retired {WVK21_EFFECTIVE})
 
 **Effective {WVK19_EFFECTIVE} at the first duel dispatched after the eval \
 pod redeploy (explicit dated operator directive, 2026-09-16 11:10 UTC).** \
@@ -2189,13 +2228,17 @@ admitted, until probed. Turns whose teacher references were dead in a stored \
 verdict (fewer than 2 valid references, or all identical — the public \
 curriculum ledger) are dropped and, where published, retired. `king_done` is \
 exempt from (a): "kept going after done" is the failure whatever the grade. \
-Enforced today on `king_fail` (1,526 → 1,220 strata) and `king_divergence` \
-(its side-table rows recover by construction); the other king groups are \
-measured under the same rule and published in shadow (the operator oks each \
-group separately, because the gate would push them below quota — e.g. \
-king_loop_onset 644 → 304 strata, king_pivot 329 → 101). Every fold publishes \
-the decisions: manifest `admission_gate` block, `corpus/fold_stats.json` \
-`admission_gate`, one line in the announce.
+Per-group state (published every fold as `gate_state` in the manifest \
+`admission_gate` block, `corpus/fold_stats.json` `yield.gate_state` and one \
+announce line): the dead-reference drop applies to EVERY king-derived group; \
+the recovery rule is **enforced** on `king_fail` (1,526 → 1,220 strata at \
+epoch 46) and `king_divergence` (its rows recover by construction), **shadow** \
+on king_loop_onset, king_pivot, king_tooluse, completion_pre, \
+king_recoverable and king_done — measured under the same rule, and \
+auto-promoted to enforced at the first fold where the group's post-gate \
+strata reach its quota (never flipping back; the flip is announced) — and \
+**exempt** for `king_coached` (the coached teacher is the recovery signal; \
+dead-reference drop only).
 
 **Published floors (hard non-zero quotas, one place: `[curriculum].*_floor` \
 in `rollouts/sources.toml`).** Slice-share floors that hold under the static \

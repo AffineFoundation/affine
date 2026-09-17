@@ -234,7 +234,16 @@ groups = ["king_fail", "king_loop_onset", "king_pivot", "king_done", "king_toolu
 # completion_pre 322 -> 207, recoverable 208 -> 133, done 293 -> 226,
 # coached 24 -> 15) and stay in shadow until the operator oks each.
 apply_groups = ["king_fail", "king_divergence"]
+# 2026-09-17 09:51 UTC decision: (a) the dead-reference drop applies to EVERY
+# group above whatever its state; (b) the recovery rule stays shadow for the
+# six starving groups and AUTO-PROMOTES: a group flips to enforced at the
+# first fold where its post-gate strata >= its quota (mix share x total) and
+# never flips back on its own (state.gate_enforced; published in the
+# announce / manifest / fold_stats.yield.gate_state); (c) king_coached is
+# exempt from the recovery rule -- the coached teacher is the recovery.
 king_failed_exempt = ["king_done"]
+recovery_exempt = ["king_coached"]
+auto_promote = true
 state_table_dir = "affine/state/recoverable"
 majority_min_solved = 2
 majority_min_continuations = 3
