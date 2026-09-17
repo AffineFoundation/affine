@@ -42,7 +42,7 @@ EMPTY_GRACE_S = 120.0  # empty backend list must persist this long to take effec
 SAMPLE_TIMEOUT_S = 600.0
 # Replicas slower than the fastest by more than this factor are spill-only
 # (see Router.ranked). 0 disables the filter.
-FAST_RATIO = float(os.environ.get("SWARM_FAST_RATIO", "2.0"))
+FAST_RATIO = float(os.environ.get("SWARM_FAST_RATIO", "0"))  # 2026-09-17: measured 2.0 = 4171 s vs 3287-4040 baseline; off
 AFFINITY_KEY_CHARS = 2048  # chat/completions fallback: leading chars hashed
 # Completions (the duel path): the key is the rendered prompt up to the final
 # assistant turn — i.e. exactly the turn prefix x that every sample and echo
