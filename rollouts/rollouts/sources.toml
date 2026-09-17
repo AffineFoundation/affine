@@ -165,7 +165,7 @@ verdict_table = "affine/state/king_coached/p1_verdict.json"
 # Kill switch = mode = "off". Stage 3 (apply) needs the seven-item criterion
 # (plan §7.3) on two shadow folds; a fold counts only with >= min_new_verdicts
 # new verdicts in the ledger. Data event, no scoring change, no wvk.
-mode = "shadow"
+mode = "apply"   # curriculum apply fold 2026-09-17, weights 6b9643361e6a (mechanical, criterion passed twice)
 weights_path = "ops/curriculum/out/groups.json"   # the fold's hook reads this (group vector + manifest block)
 rule_version = 1
 share_unit = "slice_keys"   # Σw over the phase-9 slice keys (operator 2026-09-15 00:39 UTC); base_strata = the plan's original sum, kept as share_raw_base_strata

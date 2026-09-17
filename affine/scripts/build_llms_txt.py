@@ -2280,7 +2280,7 @@ gate/logprob diagnostics from `pairs`.
 
 ---
 
-## Adaptive curriculum (data event, no wvk — shadow since 2026-09-15: weights published, static mix still applied)
+## Adaptive curriculum (data event, no wvk — shadow since 2026-09-15, applied since 2026-09-17)
 
 How often each stratum of D is drawn is now set by a published rule, not by \
 hand. Nothing in the scoring rule changes; this is the sampling side of D.
