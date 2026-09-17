@@ -21,6 +21,12 @@ except Exception:
 ") || { echo "$(date -u +%FT%TZ) no eval machine in state; retry in 30s" >&2; sleep 30; continue; }
   EVAL_HOST=${addr% *}
   EVAL_PORT=${addr#* }
+  # Host-key churn: the provisioner re-rents the same executor (same
+  # host:port) with a fresh host key. accept-new then refuses forever
+  # ("Host key verification failed", 2026-09-17 14:31-14:50: the new eval pod
+  # had no teacher for 20 min). Drop the stale entry for this host:port
+  # before dialing; the pods trust the box key, so accept-new is enough.
+  ssh-keygen -q -f state/known_hosts -R "[$EVAL_HOST]:$EVAL_PORT" >/dev/null 2>&1 || true
   ssh -N \
     -o StrictHostKeyChecking=accept-new \
     -o UserKnownHostsFile=state/known_hosts \
