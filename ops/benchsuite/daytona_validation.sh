@@ -40,14 +40,14 @@ teacher() {
   "$PY" "$HERE/harbor_cell.py" run --env swebench-verified --budget-tag "$TAG" --agent-timeout-s "$TIMEOUT_S" --step-limit "$STEPS" \
       --concurrency "$CONC" --model qwen3.8-27b --model-label teacher --model-url https://api.engy.ai/v1 --model-key-env ENGY \
       --out "$BENCH_HOME/runs/$TEACHER_RUN/teacher"
-  "$PY" - "$BENCH_HOME/runs/$TEACHER_RUN/teacher/swebench-verified@$TAG__t0/summary.json" <<'PY'
+  "$PY" - "$BENCH_HOME/runs/$TEACHER_RUN/teacher/swebench-verified@${TAG}__t0/summary.json" <<'PY'
 import json, sys
 p = sys.argv[1]; s = json.load(open(p))
 s["served_by"] = {"provider": "Engy (hosted)", "base_url": "https://api.engy.ai/v1", "model": "qwen3.8-27b",
                   "note": "hosted serving stack (parsers / context / batching not ours); the 1-h teacher cell was served by our vLLM 0.28.0 stack"}
 json.dump(s, open(p, "w"), indent=1)
 PY
-  "$PY" "$HERE/publish.py" --run-dir "$BENCH_HOME/runs/$TEACHER_RUN" --only-cells "teacher/swebench-verified@$TAG__t0" || log "teacher publish failed"
+  "$PY" "$HERE/publish.py" --run-dir "$BENCH_HOME/runs/$TEACHER_RUN" --only-cells "teacher/swebench-verified@${TAG}__t0" || log "teacher publish failed"
 }
 
 king() {
@@ -69,7 +69,7 @@ king() {
   "$PY" "$HERE/harbor_cell.py" run --env swebench-verified --budget-tag "$TAG" --agent-timeout-s "$TIMEOUT_S" --step-limit "$STEPS" \
       --concurrency "$CONC" --model "$SERVED" --model-label king --model-url "$URL" --model-key-env BENCH_API_KEY \
       --out "$BENCH_HOME/runs/$R13_RUN/king"
-  "$PY" - "$BENCH_HOME/runs/$R13_RUN/king/swebench-verified@$TAG__t0/summary.json" "$POD" "$HERE/state/pods.json" <<'PY'
+  "$PY" - "$BENCH_HOME/runs/$R13_RUN/king/swebench-verified@${TAG}__t0/summary.json" "$POD" "$HERE/state/pods.json" <<'PY'
 import json, sys
 p, pod, pods_path = sys.argv[1:]; s = json.load(open(p))
 m = json.load(open(pods_path)).get(pod, {})
@@ -77,7 +77,7 @@ s["where"] = {"provider": "Lium (our fleet, TAO)", "pod_id": pod, "gpu": m.get("
               "usd_per_hour": m.get("price"), "note": "pod serves the model only; task containers on Daytona"}
 json.dump(s, open(p, "w"), indent=1)
 PY
-  "$PY" "$HERE/publish.py" --run-dir "$BENCH_HOME/runs/$R13_RUN" --only-cells "king/swebench-verified@$TAG__t0" || log "king publish failed"
+  "$PY" "$HERE/publish.py" --run-dir "$BENCH_HOME/runs/$R13_RUN" --only-cells "king/swebench-verified@${TAG}__t0" || log "king publish failed"
 }
 
 case "$WHAT" in

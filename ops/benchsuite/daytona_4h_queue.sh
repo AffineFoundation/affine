@@ -29,7 +29,7 @@ CONC=$(toml sandbox_daytona.concurrency)
 PLANS="$(toml sandbox_daytona.pod_plans | tr "," " ") b200-1x h200-1x pro6000-1x"
 
 # wait for reign 13's cell (the validation run) to be final
-R13_CELL="$BENCH_HOME/runs/20260915T0753Z-6d0ee567e33e/king/swebench-verified@$TAG__t0/summary.json"
+R13_CELL="$BENCH_HOME/runs/20260915T0753Z-6d0ee567e33e/king/swebench-verified@${TAG}__t0/summary.json"
 until [ -f "$R13_CELL" ] && [ "$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["n"])' "$R13_CELL")" -ge 490 ]; do
   log "waiting for reign 13's @$TAG cell"; sleep 900
 done
@@ -41,7 +41,7 @@ latest_run_dir() {  # <digest12 or label> -> newest non-agentic run dir under ru
 one() {  # <ref (digest|hf://)> <label> <run_dir> [hf flag]
   local REF="$1" LABEL="$2" INTO="$3" HFFLAG="${4:-}" POD=""
   [ -d "$INTO" ] || { log "$LABEL: no card run dir ($INTO); skip"; return 1; }
-  [ -f "$INTO/king/swebench-verified@$TAG__t0/summary.json" ] && { log "$LABEL: @$TAG cell present; skip"; return 0; }
+  [ -f "$INTO/king/swebench-verified@${TAG}__t0/summary.json" ] && { log "$LABEL: @$TAG cell present; skip"; return 0; }
   local DIGEST="$REF"
   if [[ "$REF" == hf://* ]]; then local SPEC="${REF#hf://}"; DIGEST="hf-$(echo "${SPEC#*@}" | cut -c1-10)"; HFFLAG="--hf $SPEC"; fi
   for PLAN in $PLANS; do
@@ -59,14 +59,14 @@ one() {  # <ref (digest|hf://)> <label> <run_dir> [hf flag]
   log "$LABEL: $POD ($URL) serving; SWE-bench Verified @$TAG on Daytona, $CONC in flight -> $INTO"
   "$PY" "$HERE/harbor_cell.py" run --env swebench-verified --budget-tag "$TAG" --agent-timeout-s "$TIMEOUT_S" --step-limit "$STEPS" \
       --concurrency "$CONC" --model "$SERVED" --model-label king --model-url "$URL" --model-key-env BENCH_API_KEY --out "$INTO/king"
-  "$PY" - "$INTO/king/swebench-verified@$TAG__t0/summary.json" "$POD" "$HERE/state/pods.json" <<'PY'
+  "$PY" - "$INTO/king/swebench-verified@${TAG}__t0/summary.json" "$POD" "$HERE/state/pods.json" <<'PY'
 import json, sys
 p, pod, pods_path = sys.argv[1:]; s = json.load(open(p)); m = json.load(open(pods_path)).get(pod, {})
 s["where"] = {"provider": "Lium (our fleet, TAO)", "pod_id": pod, "gpu": m.get("machine"), "plan": (m.get("plan") or {}).get("name"),
               "usd_per_hour": m.get("price"), "note": "pod serves the model only; task containers on Daytona"}
 json.dump(s, open(p, "w"), indent=1)
 PY
-  "$PY" "$HERE/publish.py" --run-dir "$INTO" --only-cells "king/swebench-verified@$TAG__t0" || log "$LABEL: publish failed"
+  "$PY" "$HERE/publish.py" --run-dir "$INTO" --only-cells "king/swebench-verified@${TAG}__t0" || log "$LABEL: publish failed"
   log "$LABEL: releasing $POD"; "$PY" "$HERE/kingpod.py" release "$POD" || true
 }
 
