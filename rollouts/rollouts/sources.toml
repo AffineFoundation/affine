@@ -195,6 +195,53 @@ first_challenge = "chal-00367"
 # belt-and-braces (ops/corpus_build.py STOP_STATE_GROUPS).
 stop_state_groups = ["king_done", "king_tooluse", "completion_pre", "completion", "king_divergence"]
 stop_state_floor = 0.25
+# MiMo item 3 (Jacob 2026-09-17 09:08 UTC): hard non-zero quotas, one place.
+# Every `<name>_floor` + `<name>_groups` pair here is a published slice-share
+# floor (ops/corpus_build.py load_floors): reported every fold
+# (fold_stats.floors, manifest `floors`, announce), enforced by rescaling
+# in curriculum apply mode; the static [mix] above and the strata budget
+# are sized so the floors hold today. Values from the current supply and
+# the MiMo reference (chat 3 %, general 12 % in an agentic run):
+#   notool -- "do not act" states: the king called a tool where the teacher
+#             answers / asks / refuses (king_tooluse, king_divergence;
+#             When2Call feeds king_tooluse). 3.8 % today -> floor 3.5 %.
+#   chat   -- prose-answer turns: the `general` group (QA / reasoning /
+#             structured-output envs answered in prose or text). 5.9 %
+#             today -> floor 6 % (general buckets 830 -> 900).
+notool_groups = ["king_tooluse", "king_divergence"]
+notool_floor = 0.035
+chat_groups = ["general"]
+chat_floor = 0.06
+
+[admission_gate]
+# MiMo item 1 (Jacob 2026-09-17 09:08 UTC): two-sided gate on every king-
+# derived group -- admit a state only if (a) the king failed there AND (b)
+# the teacher recovers it. (b): state-level recoverable continuations
+# (majority of >= 3 solved) where they exist, else task-level
+# `task.teacher_solved` (envelope stamp, else any teacher_* rollout solved
+# the task in the traces). Neither signal -> the state is HELD
+# (`gate_unverified`), not admitted. Dead references (curriculum ledger:
+# < 2 valid refs or all identical in a stored verdict) are dropped /
+# retired. `apply_groups` = enforced; every other listed group is measured
+# and reported (shadow) until the operator oks it. king_done is exempt from
+# (a): "kept going after done" is the failure, whatever the grade.
+enabled = true
+groups = ["king_fail", "king_loop_onset", "king_pivot", "king_done", "king_tooluse", "king_divergence", "king_coached", "king_recoverable", "completion_pre"]
+# 2026-09-17 dry run (epoch 45 index): enforced everywhere, only king_fail
+# stays above its quota (1,526 -> 1,220 strata vs 993); king_divergence is
+# unchanged (its side-table rows recover by construction). The other groups
+# fall below quota (onset 644 -> 304, pivot 329 -> 101, tooluse 452 -> 303,
+# completion_pre 322 -> 207, recoverable 208 -> 133, done 293 -> 226,
+# coached 24 -> 15) and stay in shadow until the operator oks each.
+apply_groups = ["king_fail", "king_divergence"]
+king_failed_exempt = ["king_done"]
+state_table_dir = "affine/state/recoverable"
+majority_min_solved = 2
+majority_min_continuations = 3
+task_teacher_solved = true
+dead_refs = true
+ledger_dir = "affine/state/curriculum/ledger"
+min_refs_valid = 2
 
 [strata_budget]
 # Phase 9 (2026-09-14). The duel slicer draws one turn per stratum uniformly
@@ -214,7 +261,7 @@ enabled = true
 [strata_budget.buckets]
 coding = 3800     # 6030 -> 3800 (phase 10, 2026-09-16; sized so the stop-state block clears 25 %)
 terminal = 2400   # 3700 -> 2400 (phase 10)
-general = 830
+general = 900     # 830 -> 900 (2026-09-17, chat floor 6 %)
 tool_use = 332
 
 [strata_budget.sub_strata]

@@ -2178,6 +2178,44 @@ problems need at least 2 in-cap boxed teacher answers in the traces. Pass \
 rates at the first pass: king_fail 76%, king_loop_onset 44%, king_pivot 62%, \
 king_recoverable 72%, king_done 85%, king_tooluse 86%, completion_pre 84%.
 
+**Two-sided admission gate on king-derived groups (data event, since epoch \
+46, 2026-09-17).** A king-derived state enters D only if (a) the king failed \
+there AND (b) the teacher recovers it. (b) is read from signals that already \
+exist, cheapest first: the recoverable pipeline's continuations at the exact \
+state (majority of 3 solved = recovers) where they exist, else the task-level \
+`teacher_solved` signal (the envelope stamp, else any teacher rollout solved \
+the task in the published traces). A state with neither signal is held, not \
+admitted, until probed. Turns whose teacher references were dead in a stored \
+verdict (fewer than 2 valid references, or all identical — the public \
+curriculum ledger) are dropped and, where published, retired. `king_done` is \
+exempt from (a): "kept going after done" is the failure whatever the grade. \
+Enforced today on `king_fail` (1,526 → 1,220 strata) and `king_divergence` \
+(its side-table rows recover by construction); the other king groups are \
+measured under the same rule and published in shadow (the operator oks each \
+group separately, because the gate would push them below quota — e.g. \
+king_loop_onset 644 → 304 strata, king_pivot 329 → 101). Every fold publishes \
+the decisions: manifest `admission_gate` block, `corpus/fold_stats.json` \
+`admission_gate`, one line in the announce.
+
+**Published floors (hard non-zero quotas, one place: `[curriculum].*_floor` \
+in `rollouts/sources.toml`).** Slice-share floors that hold under the static \
+mix and under any applied curriculum vector (the fold rescales the vector to \
+the floors; the rule carries a matching bonus): `stop_state` ≥ 25 % \
+(completion, king_done, king_tooluse, completion_pre, king_divergence — the \
+steps where the teacher stops but the king does not), `notool` ≥ 3.5 % \
+(king_tooluse + king_divergence: the king acted where the teacher answers, \
+asks or refuses), `chat` ≥ 6 % (the `general` prose-answer group; MiMo's \
+agentic run keeps chat 3 % / general 12 %). Current shares and the floor \
+status are in every announce, in `corpus/fold_stats.json` (`floors`) and in \
+the manifest (`floors`).
+
+**Yield line.** Every fold publishes, per source, the envelopes seen, the \
+records / turns accepted at derivation and the top-3 drop reasons, and per \
+fold group the strata held against the target (`strata / target`, target = \
+mix share × total strata) — `corpus/fold_stats.json` `yield`, the manifest \
+`yield` block, one line in the announce, and `api/v1/dataset_table` on the \
+dashboard.
+
 **New sources since 2026-09-13** (all teacher + king seats; live mix by \
 source at `{DASH}/api/v1/dataset`): tool_use — `affine_when2call` (NVIDIA \
 When2Call train split, CC-BY-4.0) and `affine_notool` (knowledge questions \
