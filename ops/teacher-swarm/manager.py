@@ -734,19 +734,100 @@ class Manager:
         self.mem.pop(name, None)
 
 
+class Alerter:
+    """One Discord line to the private ops channel when the swarm has served
+    zero healthy replicas for `after_min` minutes, repeated every
+    `repeat_min` while it lasts, and one line when it recovers.
+
+    2026-09-17: the only b200-8x hit its 48 h TTL at 10:16 UTC, Lium had no
+    B200 x8 in stock, and a Lium API change (422 on ?size=2000) made the
+    fallback path see "0 executors" — 0 replicas for 50 min, every duel
+    requeued teacher_unservable, and nothing paged anyone. Never raises."""
+
+    def __init__(self, raw: dict):
+        a = raw.get("alerts") or {}
+        self.enabled = bool(a.get("enabled", False))
+        self.channel = str(a.get("channel_id") or "")
+        self.token_env = str(a.get("token_env") or "DISCORD_BOT_TOKEN_ARBOS_BITTENSOR")
+        self.after_s = float(a.get("zero_replicas_after_min", 5)) * 60
+        self.repeat_s = float(a.get("repeat_min", 60)) * 60
+        self.zero_since: float | None = None
+        self.last_sent = 0.0
+        self.alerting = False
+
+    def _token(self) -> str:
+        import os
+        if os.environ.get(self.token_env):
+            return os.environ[self.token_env]
+        for path in (ENV_FILE, HERE.parents[1] / ".env"):
+            if not path.exists():
+                continue
+            for line in path.read_text().splitlines():
+                line = line.strip().removeprefix("export ").strip()
+                if line.startswith(f"{self.token_env}="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+        return ""
+
+    def post(self, text: str) -> None:
+        log(f"alert: {text}")
+        if not (self.enabled and self.channel):
+            return
+        token = self._token()
+        if not token:
+            log("alert: no discord token resolvable; not posted")
+            return
+        try:
+            r = httpx.post(
+                f"https://discord.com/api/v10/channels/{self.channel}/messages",
+                headers={"Authorization": f"Bot {token}"},
+                json={"content": f"[teacher swarm] {text}"[:1900]}, timeout=20)
+            if r.status_code >= 300:
+                log(f"alert: discord HTTP {r.status_code}")
+        except httpx.HTTPError as e:
+            log(f"alert: discord post failed: {e!r}")
+
+    def observe(self, state: dict) -> None:
+        now = time.time()
+        healthy = len(state.get("backends") or [])
+        pods = state.get("pods") or {}
+        if healthy > 0:
+            if self.alerting:
+                self.post(f"recovered: {healthy} healthy replicas on "
+                          f"{len(pods)} pod(s), ${state.get('spend_usd_hr')}/h")
+            self.alerting = False
+            self.zero_since = None
+            return
+        if self.zero_since is None:
+            self.zero_since = now
+            return
+        if now - self.zero_since < self.after_s:
+            return
+        if self.alerting and now - self.last_sent < self.repeat_s:
+            return
+        phases = ", ".join(f"{n}:{m.get('phase')}" for n, m in pods.items()) or "no pods"
+        mins = int((now - self.zero_since) / 60)
+        self.post(f"0 healthy teacher replicas for {mins} min — every duel is "
+                  f"requeuing teacher_unservable. Pods: {phases}. "
+                  f"Check ops/teacher-swarm/state/manager.pm2.log (stock / caps / Lium API).")
+        self.alerting = True
+        self.last_sent = now
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--interval", type=float, default=30.0)
     args = ap.parse_args()
     mgr = Manager(load_config())
+    alerter = Alerter(tomllib.loads((HERE / "swarm.toml").read_text()))
     if args.once:
         mgr.reconcile()
         return 0
     log("daemon start")
     while True:
         try:
-            mgr.reconcile()
+            state = mgr.reconcile()
+            alerter.observe(state)
         except Exception as e:  # noqa: BLE001 — daemon must not die
             log(f"reconcile error: {e!r}")
         time.sleep(args.interval)
