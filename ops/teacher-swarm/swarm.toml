@@ -29,6 +29,12 @@ pod_prefix = "swarm-t-"          # manager only ever touches pods with this pref
 template_id = "345273fa-4818-46f7-a8fa-32f0e331713c"  # Pytorch (Cuda+DinD) cu13.0.2
 budget_usd_hr = 240.0            # hard cap on aggregate swarm $/hr
 ttl_hours = 48                   # per-pod safety-net TTL at rent time
+# Zero-gap TTL rotation (2026-09-17): rent the same-type replacement this
+# many hours before Lium removes a box, admit it, then release the old one.
+rotate_before_ttl_hours = 2.0
+# A stand-in type (types.*.standin_for) is released once the covered type
+# has served for this many minutes (hysteresis against a flapping box).
+standin_release_min = 15
 bootstrap_timeout_min = 50       # venv + model pull + engine warmup (slow pipes)
 unreachable_grace_min = 25   # dark grace after healthy: covers a supervisor engine relaunch
 min_balance_usd = 10000.0        # refuse to rent below this Lium balance
@@ -69,10 +75,11 @@ match = "RTX PRO 6000 Blackwell Server"
 gpu_count = 8
 tp = 2
 replicas = 4
-# 2026-09-17: target 0 -> 1 as the second box while b200-8x is out of stock
-# (stock at $9.52/h). Revert to 0 with the h200-8x note above.
+# Stand-in for b200-8x (2026-09-17, see h200-8x): second box while B200 x8
+# is out of stock, released automatically when it is back.
 target = 1
 max_price = 15.0
+standin_for = "b200-8x"
 est_tps = 0.6               # measured duel-real c12 (2xTP4 layout)
 
 [types.pro6000-4x]           # 384 GB/box: 2 replicas TP2
@@ -172,15 +179,15 @@ match = "H200"
 gpu_count = 8
 tp = 2
 replicas = 4
-# 2026-09-17 10:16 UTC: the only b200-8x hit its 48 h Lium TTL and no B200 x8
-# existed on the market; the fallback path could not rent because Lium began
-# rejecting `size=2000` on /executors (422) and lium_api.executors() returned
-# []. target 0 -> 1 and cap 27 -> 36 (stock at $33.20) so the teacher serves
-# while B200 is out; operator directive "raise the cap temporarily (up to
-# $70/h), running duels matter more". Revert to target 0 / cap 27 once
-# b200-8x is healthy again.
+# Stand-in for b200-8x (2026-09-17): wanted (1 box, cap $36 — stock sat at
+# $33.20 during the B200 x8 drought) only while b200-8x has no healthy
+# replica; released automatically once b200-8x has served for
+# standin_release_min. Operator directive: running duels matter more than
+# $10-15/h, but the swarm must never double.
 target = 1
-max_price = 36.0
+max_price = 27.0
+standin_for = "b200-8x"
+standin_max_price = 36.0
 est_tps = 2.4
 adopt = ["affine-teacher2"]
 
