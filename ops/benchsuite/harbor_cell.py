@@ -234,6 +234,66 @@ def cmd_run(a: argparse.Namespace) -> int:
     return 0 if p.returncode == 0 else 1
 
 
+def cmd_resume(a: argparse.Namespace) -> int:
+    """Resume an interrupted Harbor job in place (`harbor job resume`): finished
+    trials stay, unfinished ones rerun. Harbor masks secrets in the saved
+    config (MSWEA_API_KEY -> 'sk-e****'), so the masked entries are rewritten to
+    ${VAR} references and the real values exported. Never kill a running harbor
+    with SIGKILL / by closing its tmux pane: its sandboxes stay up on Daytona
+    (2026-09-17: 107 orphans, deleted by hand); SIGINT lets it clean up."""
+    env = env_by_id(a.env)
+    cell = f"{a.env}@{a.budget_tag}" if a.budget_tag else a.env
+    d = Path(a.out).expanduser() / f"{cell}__t{a.temperature:g}"
+    job_dir = d / "harbor"
+    cfg_path = job_dir / "config.json"
+    cfg = json.loads(cfg_path.read_text())
+    key = os.environ.get(a.model_key_env, "")
+    os.environ["OPENAI_API_KEY"] = key
+    os.environ["MSWEA_API_KEY"] = key
+    n_conc = int(a.concurrency) if a.concurrency else int(cfg.get("n_concurrent_trials") or 0)
+
+    def patch(o) -> bool:
+        # harbor refuses to resume unless job config, job lock and every trial's
+        # config/lock agree, so the same rewrite goes into all of them
+        changed = False
+        if isinstance(o, dict):
+            for k, v in list(o.items()):
+                if k in ("OPENAI_API_KEY", "MSWEA_API_KEY") and isinstance(v, str) and v != "${" + k + "}":
+                    o[k] = "${" + k + "}"; changed = True
+                elif k == "n_concurrent_trials" and n_conc and o[k] != n_conc:
+                    o[k] = n_conc; changed = True
+                else:
+                    changed |= patch(v)
+        elif isinstance(o, list):
+            for v in o:
+                changed |= patch(v)
+        return changed
+
+    n_patched = 0
+    for fp in [cfg_path, job_dir / "lock.json", *job_dir.glob("*/config.json"), *job_dir.glob("*/lock.json")]:
+        try:
+            c = json.loads(fp.read_text())
+        except (OSError, ValueError):
+            continue
+        if patch(c):
+            fp.write_text(json.dumps(c, indent=2)); n_patched += 1
+    cfg = json.loads(cfg_path.read_text())
+    log(f"resume: {n_patched} config/lock files rewritten (secret refs, n_concurrent_trials={cfg.get('n_concurrent_trials')})")
+    cmd = [str(HARBOR_BIN), "job", "resume", "-p", str(job_dir)]
+    log(f"resume {a.model_label}/{cell}: {' '.join(cmd)} (n_concurrent_trials={cfg.get('n_concurrent_trials')})")
+    t0 = time.time()
+    with (d / "harbor.log").open("a") as fh:
+        p = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, env=os.environ.copy())
+    prev = json.loads((d / "summary.json").read_text()) if (d / "summary.json").exists() else {}
+    wall = float(prev.get("wall_seconds") or 0) + time.time() - t0
+    summ = summarize(job_dir, env, a, wall, p.returncode)
+    summ["resumed"] = int(prev.get("resumed") or 0) + 1
+    (d / "summary.json").write_text(json.dumps(summ, indent=1))
+    log(f"done {a.model_label}/{cell}: n={summ['n']} score={summ['score']} ci={summ['ci95']} "
+        f"finished-only={summ['finished_only']['score']} (n={summ['finished_only']['n']}) timeouts={summ['n_timeout']} infra={summ['n_errored']} exit={p.returncode}")
+    return 0 if p.returncode == 0 else 1
+
+
 def cmd_resummarize(a: argparse.Namespace) -> int:
     env = env_by_id(a.env)
     cell = f"{a.env}@{a.budget_tag}" if a.budget_tag else a.env
@@ -248,7 +308,7 @@ def cmd_resummarize(a: argparse.Namespace) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name, fn in (("run", cmd_run), ("resummarize", cmd_resummarize)):
+    for name, fn in (("run", cmd_run), ("resume", cmd_resume), ("resummarize", cmd_resummarize)):
         s = sub.add_parser(name)
         s.set_defaults(fn=fn)
         s.add_argument("--env", required=True)
@@ -257,7 +317,7 @@ def main() -> int:
         s.add_argument("--model-label", default="king")
         s.add_argument("--model-url", default="")
         s.add_argument("--model-key-env", default="BENCH_API_KEY")
-        s.add_argument("--concurrency", type=int, default=int(SUITE.get("sandbox_daytona", {}).get("concurrency", 100)))
+        s.add_argument("--concurrency", type=int, default=None, help="in-flight trials (default: suite.toml sandbox_daytona.concurrency; resume: keep the job's)")
         s.add_argument("--temperature", type=float, default=float(SUITE["sampling"]["primary_temperature"]))
         s.add_argument("--top-p", type=float, default=None)
         s.add_argument("--budget-tag", default="", help="e.g. 4h250: the cell becomes <env>@<tag>")
@@ -267,6 +327,8 @@ def main() -> int:
         s.add_argument("--max-retries", type=int, default=1)
         s.add_argument("--force", action="store_true")
     a = ap.parse_args()
+    if a.concurrency is None and a.cmd != "resume":
+        a.concurrency = int(SUITE.get("sandbox_daytona", {}).get("concurrency", 100))
     return a.fn(a)
 
 
