@@ -789,7 +789,10 @@ class Alerter:
     def observe(self, state: dict) -> None:
         now = time.time()
         healthy = len(state.get("backends") or [])
-        pods = state.get("pods") or {}
+        # The manager's memory keeps months of removed pods; only boxes seen
+        # on Lium in the last hour are relevant to the alert text.
+        pods = {n: m for n, m in (state.get("pods") or {}).items()
+                if float((m or {}).get("last_seen") or 0) > now - 3600}
         if healthy > 0:
             if self.alerting:
                 self.post(f"recovered: {healthy} healthy replicas on "
