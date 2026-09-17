@@ -95,15 +95,21 @@ def save_queue(q: list[dict]) -> None:
     tmp.replace(QUEUE_PATH)
 
 
-def digest12_of_ref(ref: str) -> str:
+def digest12_of_ref(ref: str, env: dict | None = None) -> str:
     if ref.startswith("hf://"):
         return ref.rsplit("@", 1)[-1][:12]
+    if ref.startswith("r2://"):
+        # private challenger ref: the model digest travels in CHALLENGER_REVISION (benchsuite
+        # worker 2026-09-17: the raw prefix put a slash into the run id and every launch failed)
+        rev = (env or {}).get("CHALLENGER_REVISION") or ""
+        return rev[:12] if rev else re.sub(r"[^0-9a-f]", "", ref.rsplit("/registrations/", 1)[-1])[:12]
     return ref[:12]
 
 
-def run_id_for(ref: str, label: str, mode: str = "lium") -> str:
+def run_id_for(ref: str, label: str, mode: str = "lium", env: dict | None = None) -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")   # seconds: two entries for one model in one tick
-    base = f"{stamp}-{digest12_of_ref(ref)}" if label != "genesis" else f"{stamp}-genesis-{digest12_of_ref(ref)}"
+    d12 = digest12_of_ref(ref, env)
+    base = f"{stamp}-{d12}" if label != "genesis" else f"{stamp}-genesis-{d12}"
     rid = base if mode == "lium" else f"{base}-{mode}"
     # two entries for one model may launch in the same tick: never reuse a run id
     n = 2
@@ -157,7 +163,7 @@ def pod_cost(run_id: str) -> dict:
 
 
 def launch(entry: dict) -> None:
-    run_id = run_id_for(entry["ref"], entry["label"], entry.get("mode", "lium"))
+    run_id = run_id_for(entry["ref"], entry["label"], entry.get("mode", "lium"), entry.get("env"))
     entry["run_id"] = run_id
     entry.setdefault("run_ids", []).append(run_id)
     log_path = BENCH_STATE / f"pass-{run_id}.log"
