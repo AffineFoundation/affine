@@ -709,6 +709,8 @@ class MachineManager:
         self._last_check = 0.0
         self._last_check_ok = False
         self._last_health_reason = ""
+        # Set by _healthy when ok=false is only the remote teacher being down.
+        self._degraded_upstream = False
         self._provision_thread: threading.Thread | None = None
         self._provision_failures = 0
         self._next_provision_at = 0.0
@@ -777,6 +779,16 @@ class MachineManager:
             return True
 
         self._last_check_ok = False
+        if self._degraded_upstream:
+            # The pod is fine; its REMOTE teacher (swarm router) is down.
+            # Do not dispatch (return False) and do not strike: terminating
+            # the pod cannot fix the swarm, and re-renting costs 40 min plus
+            # both model downloads (2026-09-17: a 58-min swarm outage cost
+            # the eval pod and left no whole-host 8x box on the market).
+            self._degraded_upstream = False
+            log.warning("%s machine degraded (remote teacher not ready); "
+                        "waiting, not striking", self.label)
+            return False
         self._unhealthy += 1
         log.warning("%s machine unhealthy (%d/%d): %s",
                     self.label, self._unhealthy, self.em.unhealthy_threshold,
@@ -889,6 +901,9 @@ class MachineManager:
             body = r.json()
             if not body.get("ok", False):
                 self._last_health_reason = f"ok=false: {json.dumps(body)[:200]}"
+                teacher = (body.get("engine") or {}).get("teacher") or {}
+                self._degraded_upstream = bool(
+                    body.get("teacher_remote") and teacher.get("ready") is False)
                 return False
             # Role mismatch means we hit the wrong pod through a stale tunnel.
             role = body.get("role")
