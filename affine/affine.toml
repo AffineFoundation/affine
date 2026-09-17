@@ -992,8 +992,13 @@ max_tokens = 1024
 # reprovisions automatically on sustained health failure.
 provider_order = ["lium", "targon"]
 # Preference order: B300 (fastest / most VRAM) → B200 → H200. First match
-# under the price cap wins.
-gpu_types = ["B300", "B200", "H200"]
+# under the price cap wins. RTXPRO6000 (8x96 GB Blackwell, ~$10-15/h) added
+# 2026-09-17 as the last resort: with the teacher swarm down the pod health
+# check failed 12x, the pod was terminated, and no whole-host B300/B200/H200
+# x8 was left on Lium ("all providers failed"). The king-datagen box already
+# serves this model family on that GPU with the same vLLM. Ops knob, not the
+# contract; weight_version_key untouched.
+gpu_types = ["B300", "B200", "H200", "RTXPRO6000"]
 gpu_type = "B300"   # legacy single-type field; gpu_types takes precedence
 gpu_count = 8
 # Hard price cap for the whole pod ($/hr). B300 8× sits ~$56–64.
