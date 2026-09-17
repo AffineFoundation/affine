@@ -54,7 +54,7 @@ king() {
   local POD=""
   cleanup() { [ -n "$POD" ] && { log "releasing $POD"; "$PY" "$HERE/kingpod.py" release "$POD" || true; }; }
   trap cleanup EXIT
-  for PLAN in b200-1x h200-1x pro6000-1x; do
+  for PLAN in $(toml sandbox_daytona.pod_plans | tr "," " ") b200-1x h200-1x pro6000-1x; do
     POD=$("$PY" "$HERE/kingpod.py" rent --plan "$PLAN" --digest "$R13" | tail -1) && [ -n "$POD" ] && break
     log "no pod on $PLAN"; POD=""
   done
