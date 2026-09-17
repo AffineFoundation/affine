@@ -77,7 +77,10 @@ tp = 2
 replicas = 4
 # Stand-in for b200-8x (2026-09-17, see h200-8x): second box while B200 x8
 # is out of stock, released automatically when it is back.
-target = 1
+# 18:33 UTC experiment: target 1 -> 0 to measure a duel without the four
+# 0.15 turns/s TP2 replicas (do they gate the duel tail?). Restore to 1 if
+# the duel is not faster.
+target = 0
 max_price = 15.0
 standin_for = "b200-8x"
 est_tps = 0.6               # measured duel-real c12 (2xTP4 layout)

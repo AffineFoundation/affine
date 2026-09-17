@@ -700,7 +700,8 @@ class Manager:
         unfilled: list[str] = []
         for tname, cplan in cfg.types.items():
             plan = self.effective_plan(cplan, healthy_types, now)
-            if cplan.standin_for and plan.target == 0 and by_type[tname]:
+            if (cplan.standin_for and cplan.target > 0 and plan.target == 0
+                    and by_type[tname]):
                 log(f"{tname}: stand-in released — {cplan.standin_for} healthy")
             have = len(by_type[tname])
             if have > plan.target:
@@ -721,7 +722,7 @@ class Manager:
                     why = "over target"
                     if covering:
                         why += f" ({covering} healthy again)"
-                    elif cplan.standin_for and plan.target == 0:
+                    elif cplan.standin_for and cplan.target > 0 and plan.target == 0:
                         why += f" (stand-in for {cplan.standin_for}, now healthy)"
                         self.notify(f"stand-in released: {lium_api.pod_name(pod)} "
                                     f"({tname}) — {cplan.standin_for} healthy again")
