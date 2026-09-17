@@ -22,7 +22,8 @@ import subprocess
 import threading
 import time
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -83,6 +84,13 @@ class TypePlan:
     advertise: bool = True
     # Extra `vllm serve` argv, space-separated. Empty = stock flags.
     vllm_extra: str = ""
+    # Stand-in: this type is wanted (target, standin_max_price) only while
+    # `standin_for` has no healthy replica; once that type has been healthy
+    # for standin_release_min the effective target drops to 0 and the boxes
+    # are released as "over target". Replaces hand-editing targets/caps
+    # during a B200 x8 drought (2026-09-17) and undoing them by hand later.
+    standin_for: str = ""
+    standin_max_price: float = 0.0
 
 
 @dataclass
@@ -106,6 +114,13 @@ class Config:
     # teacher_unservable). A fallback pod is released once the primary type
     # is healthy again.
     fallback_types: list[str] = field(default_factory=list)
+    # Rent a same-type replacement this long before a pod's Lium
+    # `removal_scheduled_at` (48 h TTL), admit it, then release the old box:
+    # zero-gap rotation (kingctl does the same for the king seat). 0 = off.
+    # 2026-09-17: the only teacher box expired on its TTL at 10:16 UTC and
+    # the market had no replacement — 58 min at 0 replicas.
+    rotate_before_ttl_hours: float = 0.0
+    standin_release_min: float = 15.0
     types: dict[str, TypePlan] = field(default_factory=dict)
 
 
@@ -123,6 +138,8 @@ def load_config() -> Config:
         gpu_memory_utilization=float(s["gpu_memory_utilization"]),
         max_num_batched_tokens=int(s["max_num_batched_tokens"]),
         fallback_types=[str(x) for x in (s.get("fallback_types") or [])],
+        rotate_before_ttl_hours=float(s.get("rotate_before_ttl_hours", 0) or 0),
+        standin_release_min=float(s.get("standin_release_min", 15) or 15),
     )
     for name, t in raw.get("types", {}).items():
         cfg.types[name] = TypePlan(
@@ -136,6 +153,8 @@ def load_config() -> Config:
             adopt=[str(x) for x in (t.get("adopt") or [])],
             advertise=bool(t.get("advertise", True)),
             vllm_extra=str(t.get("vllm_extra", "")),
+            standin_for=str(t.get("standin_for") or ""),
+            standin_max_price=float(t.get("standin_max_price", 0) or 0),
         )
     return cfg
 
@@ -224,6 +243,126 @@ class Manager:
                            ).read_text().strip()
         except OSError:
             self.pubkey = ""
+        # Optional Discord line sink (main wires Alerter.post); rotations and
+        # stand-in releases are reported through it.
+        self.notify = lambda text: None
+        # type -> epoch when its backends were first seen healthy in the
+        # current healthy streak (stand-in release hysteresis).
+        self.type_healthy_since: dict[str, float] = {}
+
+    # ---- stand-ins / rotation -------------------------------------------
+    def effective_plan(self, plan: TypePlan, healthy_types: set[str],
+                       now: float) -> TypePlan:
+        """The plan as it applies this cycle: a stand-in type wants its
+        boxes only while the covered type has not been healthy for
+        standin_release_min; its price cap is the stand-in cap meanwhile."""
+        if not plan.standin_for:
+            return plan
+        since = self.type_healthy_since.get(plan.standin_for)
+        covered_ok = (since is not None
+                      and now - since >= self.cfg.standin_release_min * 60)
+        if covered_ok:
+            return replace(plan, target=0)
+        cap = plan.standin_max_price or plan.max_price
+        return replace(plan, max_price=cap)
+
+    @staticmethod
+    def removal_epoch(pod: dict) -> float | None:
+        """Lium `removal_scheduled_at` (naive ISO, UTC) -> epoch, or None."""
+        raw = pod.get("removal_scheduled_at")
+        if not raw:
+            return None
+        try:
+            return (datetime.fromisoformat(str(raw).replace("Z", ""))
+                    .replace(tzinfo=timezone.utc).timestamp())
+        except ValueError:
+            return None
+
+    def rotate_expiring(self, swarm_pods: list[dict], backends: list[dict],
+                        healthy_types: set[str], names_seen: set[str],
+                        spend: float, stock: list[dict] | None,
+                        now: float) -> tuple[float, list[dict] | None]:
+        """Early TTL rotation. For every serving pod inside the rotation
+        window rent one same-type replacement (marked `replaces`); once the
+        replacement serves, release the old box. Returns updated spend/stock."""
+        cfg = self.cfg
+        if cfg.rotate_before_ttl_hours <= 0:
+            return spend, stock
+        window = cfg.rotate_before_ttl_hours * 3600
+        healthy_pods = {b["pod"] for b in backends}
+        live_names = {lium_api.pod_name(p) for p in swarm_pods}
+        for pod in swarm_pods:
+            name = lium_api.pod_name(pod)
+            m = self.mem.get(name) or {}
+            plan = self.plan_of(pod)
+            if plan is None or not name.startswith(cfg.pod_prefix):
+                continue
+            # Old box whose replacement now serves: release it.
+            repl = m.get("rotating_to")
+            if repl:
+                if repl in healthy_pods:
+                    self.remove_pod(pod, f"ttl rotation complete -> {repl}")
+                    self.notify(f"rotation: {name} released, {repl} serving "
+                                f"({plan.name})")
+                    # The replacement keeps its `replaces` marker until the
+                    # old box has left the listing: this cycle's shrink step
+                    # still counts both and must not drop the newer one.
+                    self.mem.pop(name, None)
+                elif repl not in live_names and repl not in self.mem:
+                    m.pop("rotating_to", None)  # replacement vanished; retry
+                continue
+            if m.get("replaces"):
+                if m["replaces"] not in live_names:
+                    m.pop("replaces", None)  # old box gone; ordinary member now
+                continue  # a replacement never rotates itself this cycle
+            exp = self.removal_epoch(pod)
+            if exp is None or exp - now > window or name not in healthy_pods:
+                continue
+            # Inside the window and serving: rent the replacement (one try
+            # per cycle; a market with no stock retries until the TTL hits).
+            if stock is None:
+                stock = lium_api.executors(self.sess)
+            eplan = self.effective_plan(plan, healthy_types, now)
+            if eplan.target <= 0:
+                continue  # stand-in no longer wanted; let the TTL take it
+            cands = self.match_stock(stock, eplan)
+            if not cands:
+                if now - float(m.get("rotate_attempt_logged", 0)) > 3600:
+                    m["rotate_attempt_logged"] = now
+                    msg = (f"rotation: {name} expires in "
+                           f"{(exp - now) / 60:.0f} min and no {plan.name} "
+                           f"stock under ${eplan.max_price:.0f}/h — will run to TTL")
+                    log(msg)
+                    self.notify(msg)
+                continue
+            cand = cands[0]
+            price = (cand.get("price_per_gpu") or 0) * plan.gpu_count
+            if spend + price > cfg.budget_usd_hr:
+                log(f"rotation: budget ${spend:.2f}+${price:.2f} > "
+                    f"${cfg.budget_usd_hr} — {name} runs to TTL")
+                continue
+            new = self.new_name(plan, names_seen)
+            pod_id = lium_api.rent(self.sess, str(cand["id"]), new,
+                                   plan.gpu_count, cfg.template_id,
+                                   cfg.ttl_hours, self.pubkey)
+            if not pod_id or pod_id == "RATE_LIMITED":
+                log(f"rotation: rent failed for {name} ({pod_id})")
+                continue
+            names_seen.add(new)
+            spend += price
+            self.mem[new] = {
+                "type": plan.name, "executor_id": str(cand["id"]),
+                "rented_at": now, "phase": "renting",
+                "bootstrap_started": 0, "last_seen": now,
+                "last_healthy": 0, "replaces": name}
+            m["rotating_to"] = new
+            msg = (f"rotation: {name} expires in {(exp - now) / 60:.0f} min — "
+                   f"rented {new} ({cand.get('machine_name')} ${price:.2f}/h); "
+                   f"old box released once it serves")
+            log(msg)
+            self.notify(msg)
+            time.sleep(2.0)
+        return spend, stock
 
     # ---- naming -------------------------------------------------------
     def new_name(self, plan: TypePlan, existing: set[str]) -> str:
@@ -546,8 +685,23 @@ class Manager:
         spend = self.spend_usd_hr(live_pods)
         stock = None
         healthy_types = {b["type"] for b in backends}
+        for t in list(self.type_healthy_since):
+            if t not in healthy_types:
+                del self.type_healthy_since[t]
+        # Hysteresis applies to transitions, not to a manager (re)start: a
+        # type already healthy on the first cycle counts as long-healthy, or
+        # every restart would rent the stand-ins for standin_release_min.
+        seed = now - cfg.standin_release_min * 60 if not self.type_healthy_since             and not getattr(self, "_seen_cycle", False) else now
+        self._seen_cycle = True
+        for t in healthy_types:
+            self.type_healthy_since.setdefault(t, seed)
+        spend, stock = self.rotate_expiring(swarm_pods, backends, healthy_types,
+                                            names_seen, spend, stock, now)
         unfilled: list[str] = []
-        for tname, plan in cfg.types.items():
+        for tname, cplan in cfg.types.items():
+            plan = self.effective_plan(cplan, healthy_types, now)
+            if cplan.standin_for and plan.target == 0 and by_type[tname]:
+                log(f"{tname}: stand-in released — {cplan.standin_for} healthy")
             have = len(by_type[tname])
             if have > plan.target:
                 # Shrink: drop the newest boxes first (least sunk warmup). A
@@ -558,12 +712,20 @@ class Manager:
                                       .get("rented_at", 0),
                     reverse=True)[: have - plan.target]
                 for pod in extra:
-                    covering = self.mem.get(lium_api.pod_name(pod), {}
-                                            ).get("fallback_for")
+                    pm = self.mem.get(lium_api.pod_name(pod), {})
+                    covering = pm.get("fallback_for")
                     if covering and covering not in healthy_types:
                         continue
-                    self.remove_pod(pod, "over target"
-                                    + (f" ({covering} healthy again)" if covering else ""))
+                    if plan.target > 0 and (pm.get("replaces") or pm.get("rotating_to")):
+                        continue  # ttl rotation pair; rotate_expiring owns it
+                    why = "over target"
+                    if covering:
+                        why += f" ({covering} healthy again)"
+                    elif cplan.standin_for and plan.target == 0:
+                        why += f" (stand-in for {cplan.standin_for}, now healthy)"
+                        self.notify(f"stand-in released: {lium_api.pod_name(pod)} "
+                                    f"({tname}) — {cplan.standin_for} healthy again")
+                    self.remove_pod(pod, why)
                 continue
             missing = plan.target - have
             if missing <= 0:
@@ -823,6 +985,7 @@ def main() -> int:
     args = ap.parse_args()
     mgr = Manager(load_config())
     alerter = Alerter(tomllib.loads((HERE / "swarm.toml").read_text()))
+    mgr.notify = alerter.post
     if args.once:
         mgr.reconcile()
         return 0
