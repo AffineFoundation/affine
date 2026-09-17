@@ -55,7 +55,10 @@ PASS_SH = REPO / "ops" / "benchsuite" / "pass.sh"
 # Operator 2026-09-15 18:16 UTC: "scale as needed, scale down when caught up".
 # Each pass rents its own pod; the Docker Hub pull-cap login (200 pulls/h for the
 # one account) is the practical ceiling for concurrent SWE-bench passes.
-MAX_PARALLEL = int(os.environ.get("COVERAGE_BENCH_PARALLEL", "5"))
+MAX_PARALLEL = int(os.environ.get("COVERAGE_BENCH_PARALLEL", "8"))
+# Operator 2026-09-17 00:21 UTC: cap for this fill; no launch once the recorded
+# pod spend (+ Prime estimate) reaches it.
+BUDGET_USD = float(os.environ.get("COVERAGE_BENCH_BUDGET_USD", "400"))
 # run_pass.sh exit codes worth a retry: 2 = rent failed (no stock), 3 = pod never
 # became ready, 10 = suite.lock.json did not match the pod (the benchsuite worker
 # is re-pinning the lock after a suite change; nothing wrong with the model)
@@ -94,9 +97,16 @@ def digest12_of_ref(ref: str) -> str:
     return ref[:12]
 
 
-def run_id_for(ref: str, label: str) -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%MZ")
-    return f"{stamp}-{digest12_of_ref(ref)}" if label != "genesis" else f"{stamp}-genesis-{digest12_of_ref(ref)}"
+def run_id_for(ref: str, label: str, mode: str = "lium") -> str:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")   # seconds: two entries for one model in one tick
+    base = f"{stamp}-{digest12_of_ref(ref)}" if label != "genesis" else f"{stamp}-genesis-{digest12_of_ref(ref)}"
+    rid = base if mode == "lium" else f"{base}-{mode}"
+    # two entries for one model may launch in the same tick: never reuse a run id
+    n = 2
+    while (BENCH_STATE / f"pass-{rid}.log").exists():
+        rid = f"{base}-{mode}-{n}" if mode != "lium" else f"{base}-{n}"
+        n += 1
+    return rid
 
 
 def pid_alive(pid: int | None) -> bool:
@@ -143,13 +153,16 @@ def pod_cost(run_id: str) -> dict:
 
 
 def launch(entry: dict) -> None:
-    run_id = run_id_for(entry["ref"], entry["label"])
+    run_id = run_id_for(entry["ref"], entry["label"], entry.get("mode", "lium"))
     entry["run_id"] = run_id
+    entry.setdefault("run_ids", []).append(run_id)
     log_path = BENCH_STATE / f"pass-{run_id}.log"
     env = dict(os.environ)
     env["BENCHSUITE_FORCE_SANDBOX"] = "1" if entry.get("sandbox", True) else "0"
     if entry.get("chat_envs"):
         env["BENCHSUITE_CHAT_ENVS"] = entry["chat_envs"]
+    for k, v in (entry.get("env") or {}).items():
+        env[k] = v
     BENCH_STATE.mkdir(parents=True, exist_ok=True)
     with log_path.open("ab") as fh:
         # setsid: the pass must outlive this process (pm2 restarts kill the tree)
@@ -204,16 +217,24 @@ def pod_of(run_id: str) -> str | None:
 RELEASE_LINE = re.compile(r"released=\w+ after ([\d.]+)h . \$([\d.]+)")
 
 
+def entry_run_ids(e: dict) -> list[str]:
+    ids = list(e.get("run_ids") or [])
+    if e.get("run_id") and e["run_id"] not in ids:
+        ids.append(e["run_id"])
+    return ids
+
+
 def spend(q: list[dict]) -> dict:
-    """Pod $ for every attempt of every queue entry (each pass log carries
+    """Pod $ for every attempt this queue launched (each pass log carries
     kingpod's release line with the actual hours x price), plus a running
     estimate for pods not released yet, plus the Prime miniF2F fee per pass
-    that reached the sandbox sets."""
-    pod_usd = 0.0
+    that reached the sandbox sets, plus `spend_before_usd` from the meta
+    (attempts before run_ids were recorded: $39.89, 2026-09-15/16)."""
+    pod_usd = float(load_meta().get("spend_before_usd") or 0.0)
     prime = 0.0
     for e in q:
-        tag = f"-genesis-{digest12_of_ref(e['ref'])}" if e["label"] == "genesis" else f"-{digest12_of_ref(e['ref'])}"
-        for f in BENCH_STATE.glob(f"pass-*{tag}.log"):
+        for rid in entry_run_ids(e):
+            f = BENCH_STATE / f"pass-{rid}.log"
             try:
                 text = f.read_text(errors="replace")
             except OSError:
@@ -221,9 +242,9 @@ def spend(q: list[dict]) -> dict:
             rel = RELEASE_LINE.findall(text)
             if rel:
                 pod_usd += sum(float(usd) for _, usd in rel)
-            elif e.get("status") == "running" and e.get("run_id") and f.stem.endswith(e["run_id"]):
-                c = pod_cost(e["run_id"])
-                if c.get("usd_per_hour") and e.get("started_at"):
+            elif e.get("status") == "running" and rid == e.get("run_id") and e.get("started_at"):
+                c = pod_cost(rid)
+                if c.get("usd_per_hour"):
                     t0 = datetime.fromisoformat(e["started_at"]).timestamp()
                     pod_usd += c["usd_per_hour"] * (time.time() - t0) / 3600
             if "sandbox sets (" in text and e.get("sandbox", True):
@@ -348,6 +369,9 @@ def tick(q: list[dict]) -> None:
     running = sum(1 for e in q if e.get("status") == "running")
     launched = 0
     in_sync, why = lock_in_sync()
+    sp = spend(q)
+    if sp["total_usd"] >= BUDGET_USD:
+        in_sync, why = False, f"budget reached: ${sp['total_usd']} >= ${BUDGET_USD} (COVERAGE_BENCH_BUDGET_USD)"
     if not in_sync:
         if time.time() - float(meta.get("lock_warned_at") or 0) > 1800:
             log(f"launches held: {why} (waiting for the benchsuite worker to re-pin suite.lock.json)")
@@ -389,7 +413,8 @@ def cmd_add(args: argparse.Namespace) -> int:
     q = load_queue()
     q.append({"ref": args.ref, "label": args.label, "mode": args.mode, "sandbox": not args.no_sandbox,
               "chat_envs": args.chat_envs, "status": "pending", "added_at": now_iso(), "attempts": 0,
-              "priority": args.priority, "note": args.note})
+              "priority": args.priority, "note": args.note,
+              "env": dict(kv.split("=", 1) for kv in args.env if "=" in kv)})
     q.sort(key=lambda e: (e.get("priority", 100), e.get("added_at", "")))
     save_queue(q)
     print(f"queued {args.label} {args.ref}")
@@ -423,6 +448,28 @@ def cmd_scale_down(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cancel(args: argparse.Namespace) -> int:
+    """Cancel every pending / running entry with this label: SIGTERM the whole
+    process group of the pass (setsid -> pgid = pid), so run_pass.sh's EXIT
+    trap releases the pod. Killing only the wrapper pid leaves the bash child
+    and its pod alive (2026-09-17 00:37 UTC: three K13 pods)."""
+    with (STATE_DIR / "bench_queue.lock").open("w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        q = load_queue()
+        for e in q:
+            if e.get("label") != args.label or e.get("status") not in ("pending", "running"):
+                continue
+            if e.get("pid"):
+                try:
+                    os.killpg(int(e["pid"]), 15)
+                    log(f"cancel {e.get('run_id')}: SIGTERM to process group {e['pid']}")
+                except OSError as ex:
+                    log(f"cancel {e.get('run_id')}: {ex}")
+            e.update(status="cancelled", note=(e.get("note", "") + f" | cancelled {now_iso()}").strip(" |"))
+        save_queue(q)
+    return 0
+
+
 def cmd_tick(_: argparse.Namespace) -> int:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     with (STATE_DIR / "bench_queue.lock").open("w") as lk:
@@ -450,8 +497,13 @@ def main() -> int:
     a.add_argument("--chat-envs", default="", help="comma list to restrict the chat cells (BENCHSUITE_CHAT_ENVS)")
     a.add_argument("--priority", type=int, default=100, help="lower runs first")
     a.add_argument("--note", default="")
+    a.add_argument("--env", action="append", default=[], metavar="KEY=VAL",
+                   help="extra environment for run_pass.sh (e.g. BENCHSUITE_MERGE_INTO=<run_id>)")
     a.set_defaults(fn=cmd_add)
     sub.add_parser("status").set_defaults(fn=cmd_status)
+    c = sub.add_parser("cancel", help="cancel + kill the passes of one label (process group; the pod is released by the pass trap)")
+    c.add_argument("label")
+    c.set_defaults(fn=cmd_cancel)
     sub.add_parser("scale-down", help="release every pod this queue rented that Lium still lists (manual sweep)").set_defaults(fn=cmd_scale_down)
     sub.add_parser("tick").set_defaults(fn=cmd_tick)
     lp = sub.add_parser("loop")

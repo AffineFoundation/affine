@@ -324,7 +324,7 @@ attach_lium() {
   local PYR="$RHOME/benchsuite/verifiers/.venv/bin/python"
   log "attached to $POD ($HOST:$PORT) for $RUN_ID; waiting for the pod's run_suite processes"
   while :; do
-    local N; N=$("${SSH[@]}" "pgrep -fc 'run_suite.py run --run-id $RUN_ID' || true" 2>/dev/null || echo "ssh")
+    local N; N=$("${SSH[@]}" "pgrep -fc '[r]un_suite.py run --run-id $RUN_ID' || true" 2>/dev/null || echo "ssh")
     [ "$N" = "ssh" ] && { log "ssh to the pod failed; retrying in 5 min"; sleep 300; continue; }
     [ "${N:-0}" -eq 0 ] && break
     pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"

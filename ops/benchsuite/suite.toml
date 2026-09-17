@@ -88,7 +88,11 @@ tool_call_parser = "qwen3_xml"
 [modes]
 default = "lium"            # operator decision 2026-09-13 (later the same day): in-house GPUs paid in TAO
 lium_plan = "h200-1x"       # [pods.plans.*]: 1x H200 = one TP1 replica, ~$3/h; the whole pass runs on that pod
-lium_plan_fallbacks = ["b200-1x"]   # tried in order when the primary plan has no stock
+# tried in order when the primary plan has no stock (operator 2026-09-15 18:16 / 2026-09-17 00:21 UTC:
+# "scale as needed"; hardware is within noise per the Lium-parity check, the lock pins everything
+# else; the card's where.gpu / where.plan record what served the pass). RTX PRO 6000 96 GB is the
+# cheap plentiful one ($1.2-1.5/h, 5-7 listed); B200 1x $5.5.
+lium_plan_fallbacks = ["pro6000-1x", "b200-1x", "h200-2x", "h100-2x", "b200-2x"]
 # Sandbox sets on Lium: the pod's docker runs SWE-bench Verified (public Docker Hub
 # images; a Docker Hub login lifts the anonymous pull cap), GraphWalks, Oolong, MRCR.
 # miniF2F's Lean image lives in Prime's private Docker Hub org and pulls only through
@@ -171,6 +175,34 @@ max_price = 5.0
 match = "B200"
 gpu_count = 1
 tp = 1
+replicas = 1
+max_price = 8.0
+
+[pods.plans.pro6000-1x]       # RTX PRO 6000 Blackwell 96 GB: ~70 GB weights + KV at 131k
+match = "RTX PRO 6000"
+gpu_count = 1
+tp = 1
+replicas = 1
+max_price = 4.0
+
+[pods.plans.h200-2x]          # two TP1 replicas behind nginx (same serving knobs per replica)
+match = "H200"
+gpu_count = 2
+tp = 1
+replicas = 2
+max_price = 10.0
+
+[pods.plans.b200-2x]
+match = "B200"
+gpu_count = 2
+tp = 1
+replicas = 2
+max_price = 16.0
+
+[pods.plans.h100-2x]          # 80 GB each: one TP2 replica
+match = "H100"
+gpu_count = 2
+tp = 2
 replicas = 1
 max_price = 8.0
 
