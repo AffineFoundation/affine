@@ -461,15 +461,30 @@ class Manager:
         ip = lium_api.pod_ip(pod)
         out: dict[int, bool] = {}
         headers = {"Authorization": f"Bearer {self.env['SWARM_KEY']}"}
-        canary = self.mem.setdefault(name, {}).setdefault("canary", {})
+        m = self.mem.setdefault(name, {})
+        canary = m.setdefault("canary", {})
+        misses = m.setdefault("probe_misses", {})
         for internal, _gpus, _tp in specs:
             ext = ports[internal]
             base = f"http://{ip}:{ext}/v1"
             try:
-                r = httpx.get(f"{base}/models", headers=headers, timeout=6.0)
+                # 6 s was too tight under duel load: a replica busy with
+                # 192-way echo traffic missed it while serving fine (H200
+                # replicas, 2026-09-17: zero vLLM errors all day, yet the
+                # router saw 6-8 of 8 healthy all afternoon). One missed
+                # probe on an admitted replica is tolerated; two in a row
+                # drop it.
+                r = httpx.get(f"{base}/models", headers=headers, timeout=20.0)
                 ok = r.status_code == 200
             except httpx.HTTPError:
                 ok = False
+            if ok:
+                misses[str(ext)] = 0
+            elif canary.get(str(ext)):
+                misses[str(ext)] = int(misses.get(str(ext), 0)) + 1
+                if misses[str(ext)] < 2:
+                    log(f"{name}:{ext} probe miss 1/2 — keeping")
+                    ok = True
             if ok and not canary.get(str(ext)):
                 ok = self.canary_ok(base, headers)
                 if ok:
