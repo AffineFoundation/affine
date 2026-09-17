@@ -143,7 +143,13 @@ CLEAN_STOP_CONDITIONS = {"agent_completed", TURN_CAP_STOP,
 REFUSAL_STOPS = {TURN_CAP_STOP, LOOP_GUARD_STOP}
 PRIMARY_REWARD_KEYS = ("solved", "correct", "passed_fraction")
 # Bump when a row's derivation changes: every chunk is re-read on mismatch.
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
+# Engy list prices, $ per 1M tokens (https://engy.ai/pricing, 2026-09-16; the
+# same table as rollouts/policies.toml [pricing.engy]). Used only for rows
+# whose envelope carries no `policy.cost_usd` (rollouts stored before the
+# datagen stamp landed), so the spend line has history.
+ENGY_PRICE = {"in": 0.045, "out": 0.32, "cached_in": 0.015}
+PRICED_ENDPOINTS = {"engy": ENGY_PRICE}
 GREEDY = "greedy"      # policy.temperature == 0 (king_*_greedy)
 SAMPLED = "sampled"    # T > 0, or unstamped rows (all sampled at 0.8 before 2026-09-13)
 
@@ -162,6 +168,12 @@ HARNESS_LABELS = {
 # -- matrix (api/matrix) -----------------------------------------------------------
 TEACHER_MODEL = "Qwen/Qwen3.8-27B"
 GENESIS_MODEL = "Qwen/Qwen3.6-35B-A3B"
+# Reference models: open checkpoints of the genesis family benchmarked for
+# comparison (cards with king.label and no reign / duel; not kings, never
+# paid). Rendered as a reference row just above Genesis. Notes per label.
+REFERENCE_NOTES = {
+    "occamy-1.0": "Accio-Lab/occamy-1.0 — Alibaba, Qwen3.6-35B-A3B post-train, admissible reference; not a king",
+}
 GENESIS_DIGEST12 = "995ad96eacd9"     # HF revision 995ad96e… = reign 0 (seed)
 # Held-out benchmarks in display order (benchsuite `[[envs]].id` -> label).
 # Cards may carry more ids; unknown ones are appended in card order.
@@ -172,15 +184,24 @@ BENCH_COLUMNS = [
     ("bfcl-v3", "BFCL v3"), ("when2call", "When2Call"),
     ("swebench-verified", "SWE-bench Verified"), ("minif2f", "miniF2F"),
     ("graphwalks", "GraphWalks"), ("mrcr-v2", "MRCR"), ("oolong-synth", "Oolong"),
+    # agentic set (benchsuite docs §11, 2026-09-15): its own column group, last
+    ("terminal-bench-2", "Terminal-Bench 2"), ("tau2-airline", "τ²-bench airline"),
+    ("tau2-retail", "τ²-bench retail"), ("tau2-telecom", "τ²-bench telecom"),
+    ("tau3-banking", "τ³-bench banking"), ("swebench-pro", "SWE-bench Pro"),
 ]
 # Benchmarks scored on the rollouts that finished inside the time / context
 # budget (card `finished_only`), per the 2026-09-15 directive.
-BENCH_FINISHED_ONLY = {"swebench-verified"}
+BENCH_FINISHED_ONLY = {"swebench-verified", "swebench-pro"}
+BENCH_AGENTIC_GROUP = "agentic"
+CAP_BOUND_FRAC = 0.20            # share of replies cut at the completion cap that flags a cell
 BENCH_TEMPERATURE = 0.0          # the primary (greedy) card row
 # Card modes that are not a king / genesis / teacher measurement.
 BENCH_SKIP_MODES = {"challenger", "comparables"}
 BENCH_SKIP_STATUS = {"skipped_identical_weights"}
 MATRIX_MIN_GRADED = 5            # datagen env cell needs this many graded rollouts
+# Kings before this reign are never rows (operator 2026-09-15 20:31 UTC:
+# Affine-XI and older are not backfilled); they are listed under `hidden`.
+MATRIX_MIN_REIGN = 11
 MATRIX_LOW_N = 30                # below this the cell is flagged `low_n` (operator 2026-09-15: an inconsistency)
 # Environments scored on the SAMPLED rollouts only (T = 0.8, the standard
 # king-seat / teacher sampling). The teacher seat never runs greedy, so a
@@ -196,6 +217,8 @@ BENCH_ABBR = {
     "mmlu-pro": "MMLU", "math500": "M500", "gpqa-diamond": "GPQA", "aime25": "AIME",
     "ifbench": "IFB", "ifeval": "IFE", "humaneval": "HE", "livecodebench": "LCB",
     "bfcl-v3": "BFCL", "when2call": "W2C", "swebench-verified": "SWE", "minif2f": "F2F",
+    "terminal-bench-2": "TB2", "tau2-airline": "T2A", "tau2-retail": "T2R", "tau2-telecom": "T2T",
+    "tau3-banking": "T3B", "swebench-pro": "SWEP",
     "graphwalks": "GW", "mrcr-v2": "MRCR", "oolong-synth": "OOL",
 }
 # Horizontal header labels for the benchmark table (<= 10 chars).
@@ -204,6 +227,8 @@ BENCH_SHORT = {
     "ifbench": "IFBench", "ifeval": "IFEval", "humaneval": "HumanEval", "livecodebench": "LCB",
     "bfcl-v3": "BFCL v3", "when2call": "When2Call", "swebench-verified": "SWE-bench",
     "minif2f": "miniF2F", "graphwalks": "GraphWalks", "mrcr-v2": "MRCR", "oolong-synth": "Oolong",
+    "terminal-bench-2": "TB2", "tau2-airline": "τ² airline", "tau2-retail": "τ² retail",
+    "tau2-telecom": "τ² telecom", "tau3-banking": "τ³ banking", "swebench-pro": "SWE-Pro",
 }
 GROUP_ABBR = {"coding": "code", "terminal": "term", "math": "math", "tool_use": "tool",
               "nl2repo": "nl2r", "general": "gen", "agent": "agent", "other": "other"}
@@ -244,7 +269,8 @@ CREATE TABLE IF NOT EXISTS rollouts (
     ts REAL, stored_at TEXT,
     outcome TEXT, score REAL, stop TEXT, n_calls INTEGER,
     error_type TEXT, wall_s REAL, timeout INTEGER, temperature REAL,
-    backfill INTEGER DEFAULT 0
+    backfill INTEGER DEFAULT 0,
+    prompt_tokens INTEGER, completion_tokens INTEGER, cost_usd REAL
 );
 CREATE INDEX IF NOT EXISTS rollouts_seat_ts ON rollouts (seat, ts);
 CREATE INDEX IF NOT EXISTS rollouts_digest ON rollouts (digest12);
@@ -428,6 +454,7 @@ def envelope_row(env: dict, chunk_key: str, groups: dict[str, str]) -> tuple:
         if ends and timing.get("start"):
             wall = max(ends) - float(timing["start"])
     outcome, score = rollout_outcome(trace)
+    tokens = usage_tokens(trace)
     stop = trace.get("stop_condition")
     timeout = int(is_timeout(trace, wall))
     policy_id = policy.get("id") or ""
@@ -444,10 +471,36 @@ def envelope_row(env: dict, chunk_key: str, groups: dict[str, str]) -> tuple:
         outcome, score, stop, len(trace.get("calls") or []),
         error_type(trace), wall, timeout, temperature_of(policy),
         int(policy_id.startswith(BACKFILL_PREFIX)),
+        tokens["prompt"], tokens["completion"], rollout_cost(policy, tokens),
     )
 
 
-ROW_WIDTH = 25   # columns of the rollouts table / envelope_row tuple
+ROW_WIDTH = 28   # columns of the rollouts table / envelope_row tuple
+
+
+def usage_tokens(trace: dict) -> dict:
+    p = c = cached = 0
+    for call in trace.get("calls") or []:
+        u = call.get("usage") or {}
+        p += int(u.get("prompt_tokens") or 0)
+        c += int(u.get("completion_tokens") or 0)
+        cached += int(u.get("cached_input_tokens") or 0)
+    return {"prompt": p, "completion": c, "cached": min(cached, p)}
+
+
+def rollout_cost(policy: dict, tokens: dict) -> float | None:
+    """$ for the rollout: the datagen stamp (`policy.cost_usd`, since
+    2026-09-16) when present, else the list price of a priced endpoint
+    (engy) applied to the trace's token counts; None for our own boxes."""
+    stamped = policy.get("cost_usd")
+    if isinstance(stamped, (int, float)) and not isinstance(stamped, bool) and stamped > 0:
+        return float(stamped)
+    price = PRICED_ENDPOINTS.get(str(policy.get("endpoint") or ""))
+    if not price:
+        return None
+    return round(((tokens["prompt"] - tokens["cached"]) * price["in"]
+                  + tokens["cached"] * price["cached_in"]
+                  + tokens["completion"] * price["out"]) / 1e6, 6)
 
 
 def parse_chunk(blob: bytes, chunk_key: str, groups: dict[str, str]) -> list[tuple]:
@@ -469,6 +522,9 @@ def migrate(conn: sqlite3.Connection) -> None:
     with conn:
         if "temperature" not in cols:
             conn.execute("ALTER TABLE rollouts ADD COLUMN temperature REAL")
+        for col, typ in (("prompt_tokens", "INTEGER"), ("completion_tokens", "INTEGER"), ("cost_usd", "REAL")):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE rollouts ADD COLUMN {col} {typ}")
         if "backfill" not in cols:
             # no backfill rollout existed before the column: 0 for every stored row is exact
             conn.execute("ALTER TABLE rollouts ADD COLUMN backfill INTEGER DEFAULT 0")
@@ -704,6 +760,21 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
     per_king: dict[str, dict] = {}
     stops: dict[str, int] = {}
     recent = {"king_1h": 0, "king_24h": 0, "all_1h": 0, "all_24h": 0}
+    # Priced API spend (teacher side runs on Engy): $ and tokens over the
+    # last 24 h / 7 d / all time, from `cost_usd` per rollout.
+    spend = {w: {"usd": 0.0, "rollouts": 0, "prompt_tokens": 0, "completion_tokens": 0}
+             for w in ("24h", "7d", "all")}
+    for cost, ts, pt, ct in conn.execute(
+            "SELECT cost_usd, ts, prompt_tokens, completion_tokens FROM rollouts "
+            "WHERE cost_usd IS NOT NULL AND cost_usd > 0"):
+        age = now - (ts or 0.0)
+        for w, lim in (("24h", 86400), ("7d", 7 * 86400), ("all", None)):
+            if lim is None or age <= lim:
+                s = spend[w]
+                s["usd"] += cost; s["rollouts"] += 1
+                s["prompt_tokens"] += int(pt or 0); s["completion_tokens"] += int(ct or 0)
+    for s in spend.values():
+        s["usd"] = round(s["usd"], 2)
     # per source x seat: every rollout (any outcome), all time and last 24 h
     seat_counts: dict[str, dict[str, dict[str, int]]] = {}
     # per source: rollouts (king + teacher seats) carrying a numeric grade vs
@@ -858,6 +929,8 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
         "counts": {"rollouts": len(rows), "king": n_king, "teacher": n_teacher,
                    "backfill": n_backfill},
         "recent": recent,
+        "spend": {"windows": spend, "priced_endpoints": sorted(PRICED_ENDPOINTS),
+                  "prices_per_m": ENGY_PRICE},
         "king": current,
         "kings": kings,
         "revoked_kings": revoked,
@@ -896,6 +969,10 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
             "turns": "model calls in the trace (trace.calls)",
             "teacher": "policies teacher_* (Qwen/Qwen3.8-27B), all time; the old glm_* seat is not a baseline",
             "time": "rollout stored_at (when the finished rollout landed in the trace store)",
+            "spend": "API $ of the priced endpoints (engy = the teacher seat) from the envelope's policy.cost_usd "
+                     "(datagen stamp since 2026-09-16) or, for older rows, engy list prices x the trace's token "
+                     "counts (in 0.045 / cached-in 0.015 / out 0.32 $ per 1M). Our own king boxes are rented per "
+                     "hour and are not in this number",
             "trend": f"{TREND_BUCKETS} rolling 24 h buckets ending at generated_at",
         },
     }
@@ -1021,9 +1098,31 @@ def is_model_card(card: dict) -> bool:
             and not (card.get("king") or {}).get("duel"))
 
 
+BENCH_FAILED_ERROR_SHARE = 0.90   # >= this share of a cell's rollouts errored -> a failed run, never a score
+
+
+def bench_failed(side: dict) -> str | None:
+    """Reason string when a card cell is a run failure (nothing scored, or
+    nearly every rollout errored), else None. Guards cards written before the
+    publisher learned to null such cells (2026-09-17: Genesis SWE-bench 0.0)."""
+    if side.get("status") == "failed":
+        return side.get("failure") or "run failed"
+    n = int(side.get("n") or 0)
+    n_err = int(side.get("n_errored") or 0)
+    if side.get("n_scored") == 0 or n == 0 or n_err >= n or (n and n_err / n >= BENCH_FAILED_ERROR_SHARE):
+        return f"run failed: {n_err}/{n} rollouts errored (infrastructure, not the model)"
+    return None
+
+
 def bench_value(side: dict | None, env: str) -> dict | None:
     """Score 0-100 + Wilson interval for one card cell (T=0 row)."""
-    if not side or side.get("score") is None:
+    if not side:
+        return None
+    why = bench_failed(side)
+    if why:
+        return {"score": None, "n": side.get("n"), "metric": "score", "failed": True, "reason": why,
+                "raw_score": side.get("raw_score", side.get("score"))}
+    if side.get("score") is None:
         return None
     src = side
     metric = "score"
@@ -1031,6 +1130,8 @@ def bench_value(side: dict | None, env: str) -> dict | None:
         src = side["finished_only"]
         metric = "finished_only"
     ci = src.get("ci95") or [None, None]
+    cap = side.get("finish_length_frac")
+    cap = float(cap) if isinstance(cap, (int, float)) and not isinstance(cap, bool) else None
     return {
         "score": round(100.0 * float(src["score"]), 2),
         "lo": None if ci[0] is None else round(100.0 * float(ci[0]), 2),
@@ -1039,6 +1140,10 @@ def bench_value(side: dict | None, env: str) -> dict | None:
         "metric": metric,
         "all_rollouts": (round(100.0 * float(side["score"]), 2)
                          if metric == "finished_only" else None),
+        # share of the model's replies cut at the completion cap (scored 0):
+        # above CAP_BOUND_FRAC the number is a lower bound, not a measure
+        "cap_frac": None if cap is None else round(cap, 4),
+        "cap_bound": bool(cap is not None and cap > CAP_BOUND_FRAC),
     }
 
 
@@ -1058,9 +1163,22 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
                 continue
             val.update(run_id=card.get("run_id"), mode=card.get("mode"),
                        created_at=card.get("created_at"), kind="bench")
+            if val.get("failed"):
+                # remember the failure, but let a later card with a real value win the env
+                out.setdefault(f"__failed__{env}", val)
+                continue
+            if row.get("graded") == "llm_judge":
+                # advisory: an LLM judge graded the rollouts; never part of the score
+                val["judge"] = row.get("judge") or {}
+                val["graded"] = "llm_judge"
             if side == "teacher" and (row.get("teacher") or {}).get("reused_from"):
                 val["reused_from"] = row["teacher"]["reused_from"]
             out[env] = val
+    for k in [k for k in out if k.startswith("__failed__")]:
+        env = k[len("__failed__"):]
+        failed = out.pop(k)
+        if env not in out:
+            out[env] = failed        # score None + reason: renders blank, tooltip says the run failed
     return out
 
 
@@ -1183,14 +1301,22 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
     rank = lambda c: (-len({r.get("env") for r in c.get("rows") or []}), c.get("created_at") or "")
     by_digest: dict[str, list[dict]] = {}
     genesis_cards: list[dict] = []
+    known_digests = {k.get("digest12") for k in [*(stats.get("kings") or []), *(stats.get("revoked_kings") or [])]}
+    reference_cards: dict[str, list[dict]] = {}     # label -> cards (fullest first)
     for c in model_cards:
         if is_genesis_card(c):
             genesis_cards.append(c)
             continue
+        kb = c.get("king") or {}
         d12 = card_digest12(c)
+        if kb.get("label") and kb.get("reign") is None and d12 not in known_digests:
+            reference_cards.setdefault(str(kb["label"]), []).append(c)
+            continue
         if d12:
             by_digest.setdefault(d12, []).append(c)
     for lst in by_digest.values():
+        lst.sort(key=rank)
+    for lst in reference_cards.values():
         lst.sort(key=rank)
     genesis_cards.sort(key=rank)
     # teacher: a card whose teacher cells were measured (not copied) first
@@ -1208,9 +1334,17 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
     for c in cards:
         for r in c.get("rows") or []:
             if r.get("env") and r["env"] not in bench_notes:
-                bench_notes[r["env"]] = {"group": r.get("group"), "note": r.get("note"), "n": r.get("n")}
-    ordered_bench = [e for e, _ in BENCH_COLUMNS if e in bench_envs_seen] + \
-        [e for e in bench_envs_seen if e not in {b for b, _ in BENCH_COLUMNS}]
+                bench_notes[r["env"]] = {"group": r.get("group"), "note": r.get("note"), "n": r.get("n"),
+                                         "graded": r.get("graded"), "judge": r.get("judge")}
+    known = {b for b, _ in BENCH_COLUMNS}
+    is_agentic = lambda e: (bench_notes.get(e, {}).get("group") == BENCH_AGENTIC_GROUP)
+    # known order first; unknown card envs appended in card order; the agentic
+    # group always forms the last block (cards gain agentic rows by merge, so
+    # the column set is re-read on every refresh)
+    ordered_bench = [e for e, _ in BENCH_COLUMNS if e in bench_envs_seen and not is_agentic(e)] \
+        + [e for e in bench_envs_seen if e not in known and not is_agentic(e)] \
+        + [e for e, _ in BENCH_COLUMNS if e in bench_envs_seen and is_agentic(e)] \
+        + [e for e in bench_envs_seen if e not in known and is_agentic(e)]
     labels = dict(BENCH_COLUMNS)
     columns = [{"key": "total", "label": "total", "abbr": "total", "kind": "total",
                 "note": "unweighted mean of the row's available benchmark and environment cells (0-100)"}]
@@ -1222,6 +1356,9 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
             "kind": "bench", "env": e,
             "group": meta.get("group"), "n": meta.get("n"), "note": meta.get("note"),
             "metric": "finished_only" if e in BENCH_FINISHED_ONLY else "score",
+            "graded": meta.get("graded") or "deterministic",
+            "judge": meta.get("judge") if meta.get("graded") == "llm_judge" else None,
+            "advisory": meta.get("graded") == "llm_judge",
         })
     env_groups = {e["source"]: e.get("group") or "other" for e in stats.get("envs") or []}
     env_ids = {e["source"]: e.get("env_id") or "" for e in stats.get("envs") or []}
@@ -1262,6 +1399,18 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
     reign_envs = {r["digest12"]: {e["source"]: e for e in r.get("envs") or []}
                   for r in stats.get("reigns") or []}
     rows = matrix_rows_meta(stats)
+    for i, (label, lst) in enumerate(sorted(reference_cards.items())):
+        kb = lst[0].get("king") or {}
+        rev = str(kb.get("hf_revision") or "")
+        rows.append({
+            "key": f"ref:{label}", "kind": "reference", "label": label[:1].upper() + label[1:],
+            "model": kb.get("hf_repo") or kb.get("repo") or label, "hf_revision": rev,
+            "digest12": card_digest12(lst[0]),
+            "sub": f"{kb.get('hf_repo') or label}{' @ ' + rev[:8] if rev else ''}",
+            "tip": REFERENCE_NOTES.get(label, f"{kb.get('hf_repo') or label} — reference model (open checkpoint "
+                                              "of the genesis family, benchmarked for comparison); not a king, never paid"),
+            "order": 1000 + i,
+        })
     for row in rows:
         cells: dict[str, dict] = {}
         if row["kind"] == "teacher":
@@ -1270,6 +1419,9 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
         elif row["kind"] == "genesis":
             bench = card_cells(genesis_cards, "king")
             env_aggs = reign_envs.get(GENESIS_DIGEST12, {})
+        elif row["kind"] == "reference":
+            bench = card_cells(reference_cards.get(row["key"][len("ref:"):], []), "king")
+            env_aggs = reign_envs.get(row.get("digest12") or "", {})   # blank unless a backfill ran it
         else:
             bench = card_cells(by_digest.get(row["digest12"], []), "king")
             env_aggs = reign_envs.get(row["digest12"], {})
@@ -1300,7 +1452,8 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
     # benchmark passes in flight: planned-but-missing cells render as "running"
     for p in inflight:
         target = next((r for r in rows if (r["kind"] == "genesis" and p["genesis"])
-                       or (r["kind"] == "king" and p["digest12"] and r["digest12"] == p["digest12"])), None)
+                       or (r["kind"] == "king" and p["digest12"] and r["digest12"] == p["digest12"])
+                       or (r["kind"] == "reference" and p["label"] and r["key"] == f"ref:{p['label']}")), None)
         if target is None:
             continue
         eta_iso = (datetime.fromtimestamp(p["eta_ts"], timezone.utc).isoformat(timespec="minutes")
@@ -1316,15 +1469,16 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                                                   else "finished, card not published yet" if e in p["done"]
                                                   else "queued in this pass"),
                                         "reason": f"benchmark pass {p['run_id']} in progress"}
-    # Row set (operator 2026-09-15 20:27 UTC): teacher, then kings newest first,
-    # genesis as the bottom row. Kings with no measurement at all (and not the
-    # current king) are not backfilled and leave the table -> `hidden`.
-    hidden = [r for r in rows if r["kind"] == "king" and not r["current"] and r["n_cells"] == 0
-              and not any(v.get("running") for v in r["cells"].values())]
+    # Row set (operator 2026-09-15 20:27 / 20:31 UTC): teacher, then kings newest
+    # first, genesis as the bottom row. Kings before MATRIX_MIN_REIGN are never
+    # rows, whatever cards or passes exist -> `hidden`.
+    hidden = [r for r in rows if r["kind"] == "king" and int(r.get("reign") or 0) < MATRIX_MIN_REIGN
+              and not r["current"]]
     rows = [r for r in rows if r not in hidden]
     genesis_row = next((r for r in rows if r["kind"] == "genesis"), None)
-    if genesis_row:
-        rows = [r for r in rows if r is not genesis_row] + [genesis_row]
+    refs = [r for r in rows if r["kind"] == "reference"]
+    rows = [r for r in rows if r["kind"] != "reference" and r is not genesis_row] + refs \
+        + ([genesis_row] if genesis_row else [])
     for i, r in enumerate(rows):
         r["order"] = i
     # delta vs the teacher row, per cell. The total compares against the
@@ -1365,8 +1519,10 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                   for c in cards],
         "definitions": {
             "rows": "the teacher, then the crowned kings newest first, then the genesis seed (reign 0) "
-                    "as the bottom row. Kings without any measurement (no benchmark card, no king-seat "
-                    "rollouts; never backfilled) are listed under `hidden`, not rows; reigns the operator "
+                    "as the bottom row, with reference models (open checkpoints of the genesis family "
+                    "benchmarked for comparison; not kings, never paid) just above it. "
+                    f"Kings before reign {MATRIX_MIN_REIGN} (Affine-XI and older, not "
+                    "backfilled) are listed under `hidden`, never rows; reigns the operator "
                     "revoked after the crown (history.jsonl crown_revoked) are under `removed`",
             "value": "average score 0-100 per cell. Benchmarks: the card's greedy (T=0) row, "
                      "score = share of tasks passed; SWE-bench Verified uses the finished-only score "
@@ -1385,6 +1541,9 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                      "for the model is running and this cell is planned (ops/benchsuite pass log)",
             "colour": "cell tint = score minus the teacher's score in the same column: green above, "
                       "red below, stronger with the gap",
+            "markers": f"‡ = cap-bound: more than {int(CAP_BOUND_FRAC * 100)}% of the model's replies hit the "
+                       "completion cap and scored 0, so the number is a lower bound; ⚖ = judge-graded "
+                       "(graded = llm_judge): an LLM judge graded the rollouts — advisory, never part of the score",
             "ci": "95% interval: Wilson on graded rollouts (environments) or the card's ci95 "
                   "(benchmarks), shown in the tooltip",
             "cards": "benchmark scorecards from affine/state/benchsuite/ (ops/benchsuite); when a "

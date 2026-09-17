@@ -48,7 +48,7 @@ VALIDATOR_STATE = REPO / "affine" / "state" / "state.json"
 PY = str(REPO / ".venv" / "bin" / "python")
 TEACHER_REF = os.environ.get("COVERAGE_TEACHER_REF", "hf://Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0")
 GENESIS_REF = "hf://Qwen/Qwen3.6-35B-A3B@995ad96eacd98c81ed38be0c5b274b04031597b0"
-FULL_SANDBOX_TRIGGERS = {"swebench-verified", "minif2f"}
+FULL_SANDBOX_TRIGGERS = {"minif2f"}   # only the Prime-sandbox set needs the full sandbox phase; docker sets run as cells
 ENV_MAX_LIVE = int(os.environ.get("COVERAGE_ENV_MAX_LIVE", "5"))   # serving boxes (not the driver pod)
 ENV_CONTAINERS = int(os.environ.get("COVERAGE_ENV_CONTAINERS", "12"))
 
@@ -170,9 +170,9 @@ def main() -> int:
             groups.append(("lium", sorted(missing & chat), False, "chat sets"))
         sb = missing & sandbox
         if sb & FULL_SANDBOX_TRIGGERS:
-            groups.append(("lium", ["humaneval"], True, "sandbox sets (SWE-bench / miniF2F need the full sandbox phase)"))
+            groups.append(("lium", ["humaneval"], True, "sandbox sets (miniF2F needs the full sandbox phase)"))
         elif sb:
-            groups.append(("agentic", sorted(sb), False, "long-context sandbox cells as docker cells"))
+            groups.append(("agentic", sorted(sb), False, "docker sandbox cells (SWE-bench / long-context) as cells"))
         ag = missing & agentic
         if ag:
             groups.append(("agentic", sorted(ag), False, "agentic sets"))
