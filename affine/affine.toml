@@ -172,6 +172,25 @@ min_submission_block = 8938619
 # +0.0014 < δ), is crowned from its stored slice-1 verdict — the only
 # confirmation-only rejection since wvk 19. Forward-only otherwise;
 # min_submission_block unchanged.
+# 21→22 sd-meter + 1,000-turn slices (2026-09-18): explicit dated operator
+# directive 2026-09-18 (10:04 UTC "I like it. And I want to ship it";
+# 10:25 UTC "lets reduce the turns to 1000 for scoring speed"; go to flip
+# relayed by the coordinator). score_mode min_rg → sd_min_rga: turn =
+# min(z_R, typ_c, z_A) — the largest standardised deviation of the reply
+# from the teacher's own samples across thought typicality (content
+# tokens, |prefix lift| > 1 nat), thought→action and action←thought, in
+# teacher-sd units (LOO anchors per turn, σ pooled per dialect). Thoughts
+# rendered AS GENERATED for every echo (thought_rendering, directive 19:40
+# UTC "fold it in": the canonical body could not tell the teacher's own
+# reply from a reasoning-only king; as generated it can, G z 1.2 → 8.7).
+# n_turns 1300 → 1000. δ = 0.2 sd, k_sigma 2.0, forfeit -12 sd
+# (calibrated on the as-generated re-echo of 225 stored turns + the three
+# (a) shadow duels: δ = 0.082·sd_diff, floor under p1 of the kings' valid
+# turns). band_c / band_floor / min_margin /
+# forfeit_turn_score kept for wvk ≤ 21 replay, unused by the new rule.
+# Forward-only: reign 14 stands, no re-verdicts, min_submission_block
+# unchanged. Notice: llms.txt "Upcoming change: wvk 22" + Discord
+# 2026-09-18 10:46 UTC; shadow read since 10:41 UTC.
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -179,7 +198,7 @@ min_submission_block = 8938619
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 21
+weight_version_key = 22
 
 [wallet]
 name = "default"
@@ -510,7 +529,10 @@ allowed_action_kinds = ["bash", "tool_call", "boxed", "text", "terminus_json"]
 # Sample budget: k=3 refs per turn; v5 adds k ref-thought echoes (shared by
 # both sides via the per-duel ref cache) + 1 miner-thought echo per side —
 # ~+40% teacher echo work, all sharing the turn-prefix KV via sticky routing.
-n_turns = 1300
+# 2026-09-18 (wvk 21→22, same directive, 10:25 UTC "lets reduce the turns to
+# 1000 for scoring speed"): 1300 → 1000. SE × 1.14; δ_sd is set against
+# the measured SE so the crown bar keeps its ratio.
+n_turns = 1000
 # Crown bar: k=2 (2026-08-11). False-crown under Gaussian null ≈ 2.28%/duel
 # (~1 in 44). Was 3.0 (~0.13%/duel) under the Reason v3 launch default.
 k_sigma = 2.0
@@ -742,7 +764,11 @@ tau = 0.03
 # Turn-score rule (v5, 2026-08-27, weight_version_key=10). "min_rg" scores
 # each turn min(centered R, banded G); "reason" is the wvk<=9 tempered
 # Reason, kept as the replay path for pre-fork verdicts.
-score_mode = "min_rg"
+# 2026-09-18 (weight_version_key 21→22, explicit dated operator directive
+# 2026-09-18 10:04 UTC "I like it. And I want to ship it"): the sd-meter.
+# turn = min(z_R, typ_c, z_A) in teacher-sd units — see [duel.sd_meter]
+# for the definition and knobs. min_rg stays replayable for wvk 10–21.
+score_mode = "sd_min_rga"
 # wvk 22 knob (2026-09-18, explicit operator directive 19:40 UTC "fold it in"):
 # how a thought is rendered into the teacher's assistant body for EVERY echo
 # (G / typicality, R's injection, B, the A leg, the content-mask ∅ echo).
@@ -758,7 +784,9 @@ score_mode = "min_rg"
 # generated), so the meter could not tell the teacher's held-out reply from a
 # reasoning-only king (G control z 1.2 → 8.7 as generated; content typicality
 # ref − king +0.20 → +2.40 sd). Same function for refs and both sides.
-thought_rendering = "canonical"
+# 2026-09-18 (wvk 21→22, explicit dated operator directive 19:40 UTC "fold it
+# in"): thoughts scored as generated for every echo — see above.
+thought_rendering = "as_generated"
 # Grounding band half-width: w = max(band_c·stdev(t_i), band_floor) around
 # mu = mean(t_i), t_i = lpC(z_C^i|x) per byte. band_c=2.0 validated across
 # a 1x-4x sweep (honest beats the live filler suffix on 97-100% of turns at
@@ -954,9 +982,9 @@ content_lift_nats = 1.0
 content_min_tokens = 10
 typicality_width = 2.0
 a_norm_bytes = 1.0
-forfeit_sd = -2.4
+forfeit_sd = -12
 k_sigma = 2.0
-min_margin_sd = 0.0
+min_margin_sd = 0.2
 
 # Frozen per-dialect anchors (phase-2 slice, 1,287 turns, teacher
 # Qwen/Qwen3.8-27B, leave-one-out over k = 3 refs; god/out/sigma_gpu.csv).

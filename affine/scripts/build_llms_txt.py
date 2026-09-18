@@ -78,6 +78,7 @@ WVK19_EFFECTIVE = "2026-09-16"
 WVK20_EFFECTIVE = "2026-09-16"
 WVK21_EFFECTIVE = "2026-09-17"
 WVK22_NOTICE = "2026-09-18"
+WVK22_EFFECTIVE = "2026-09-18"
 
 
 def _payout_subs() -> dict[str, str]:
@@ -202,6 +203,7 @@ def _margin_subs() -> dict[str, str]:
         "{WVK20_EFFECTIVE}": WVK20_EFFECTIVE,
         "{WVK21_EFFECTIVE}": WVK21_EFFECTIVE,
         "{WVK22_NOTICE}": WVK22_NOTICE,
+        "{WVK22_EFFECTIVE}": WVK22_EFFECTIVE,
         "{CAP_RATIO}": f"{float(d.get('thought_cap_ratio', 0.0)):g}",
         "{CAP_RULE}": (f" Per turn the thought cap is `max({int(d['max_thought_tokens'])}, "
                        f"floor({float(d.get('thought_cap_ratio', 0.0)):g} × L_T))`, L_T = the longest "
@@ -385,10 +387,8 @@ around it)
 - Sequential near-miss (2026-09-11, no fork; OFF since wvk 16) — a \
 first-slice margin in the near-miss window drew a second seeded slice; one \
 seeded slice decides again
-- **Upcoming change: wvk 22 — the sd-meter `min(z_R, typ_c, z_A)` + 1,000-turn \
-slices (notice {WVK22_NOTICE}; go given 15:11 UTC; effective after the queue \
-as of 15:11 UTC — through `chal-00588` — has been judged under wvk 21, and no \
-later than the first duel boundary after 23:11 UTC; projected ≈ 23:45 UTC)** — the turn score \
+- **Fork history: wvk 22 — the sd-meter `min(z_R, typ_c, z_A)` + 1,000-turn \
+slices (notice {WVK22_NOTICE}, effective {WVK22_EFFECTIVE})** — the turn score \
 becomes minus the largest standardised deviation of your reply from the \
 teacher's own samples across the three factors of the teacher's joint \
 (thought typicality on content tokens, thought→action, action←thought), in \
@@ -1081,19 +1081,42 @@ near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
 
 ---
 
-## Upcoming change: wvk 22 — the sd-meter `min(z_R, typ_c, z_A)` + 1,000-turn slices (notice {WVK22_NOTICE})
+## Fork history: wvk 22 — the sd-meter `min(z_R, typ_c, z_A)` + 1,000-turn slices (effective {WVK22_EFFECTIVE})
 
-**Notice {WVK22_NOTICE} (explicit operator directive, 2026-09-18 10:04 / 10:25 / \
-10:40 UTC; go 15:11 UTC with the condition "only when the current queued \
-models have run"). Effective at the duel boundary right after the last entry \
-queued as of 15:11 UTC — `chal-00582` … `chal-00588` — has been judged under \
-wvk 21, and no later than the first duel boundary at or after 23:11 UTC (15:11 + \
-8 h, Jacob 15:18 UTC; a cutoff entry still queued then is judged under wvk 22, \
-the in-flight duel finishes under wvk 21). Projected ≈ 23:45 UTC. Submissions after 15:11 UTC are judged under \
-wvk 22. Reign 15 (`chal-00581`, crowned 14:59 UTC under wvk 21) stands.** `weight_version_key` \
-21 → 22 at the flip; forward-only — reign 14 stands, no re-verdicts, \
-`min_submission_block` unchanged. This section becomes "Fork history: wvk 22" \
-with the final stamped numbers when the flip lands.
+**Effective {WVK22_EFFECTIVE} at the first duel dispatched after the eval pod \
+redeploy (notice {WVK22_NOTICE} 10:46 UTC; explicit dated operator directive \
+2026-09-18 10:04 / 10:25 UTC; go 15:11 UTC "only when the current queued models \
+have run" — the queue as of 15:11, `chal-00582` … `chal-00588`, was judged under \
+wvk 21 first). Reign 15 (`chal-00581`, crowned 14:59 UTC under wvk 21) stands.** \
+`weight_version_key = 22`; `[duel].score_mode = "sd_min_rga"`, `n_turns = 1000`; \
+`[duel.sd_meter]`: `min_margin_sd = 0.2` (δ, teacher-sd), `k_sigma = 2.0`, \
+`forfeit_sd = -12`, `content_lift_nats = 1.0`, `content_min_tokens = 10`, \
+`typicality_width = 2.0`, `a_norm_bytes = 1.0`, `anchor = "loo"`. Forward-only — \
+reign 15 stands, no re-verdicts, `min_submission_block` unchanged. Every \
+verdict stamps these under `duel_params.sd_meter`; the deciding numbers are \
+the verdict's `margin / se / z` (now in sd units) with the full breakdown \
+under `shadow.sd_meter` (`role = "rule"`).
+
+**Thoughts are scored as generated (folded into wvk 22, explicit operator \
+directive 2026-09-18 19:40 UTC "fold it in").** `[duel].thought_rendering = \
+"as_generated"`: for EVERY echo — typicality / grounding, Reason's injection, \
+the B licence, the action leg, the content-mask ∅ echo — a thought is rendered \
+the way the model produced it, `<think>{latent}\n</think>\n\n{visible}\n\n{y}`, \
+and the latent and visible spans are scored (the separator is not); the \
+visible text is taken verbatim, no `THOUGHT:` label added or stripped. The old \
+canonical body `</think>\nTHOUGHT: {z}\n\n{y}` (wvk ≤ 21, kept for replay) put \
+the model's reasoning AFTER `</think>` as prose. Why: under that body the \
+teacher's own visible sentence scored −0.18 nats/byte (as generated: −0.06), so \
+the meter could not tell the teacher's held-out reply from a reasoning-only \
+king (grounding control z 1.2; as generated z 8.7; content typicality ref − \
+king +0.20 → +2.40 sd), and the population drifted to the shape the convention \
+favoured: every king since reign 11 writes nothing visible before the action. \
+Same function for the teacher references and both sides. **What you must do:** \
+reason inside `<think>…</think>`, then write a visible thought (a sentence or \
+two, as the teacher does), then the action. A reasoning-only reply is now \
+atypical on most turns; pasting the reasoning again after `</think>` does not \
+help (two-sided typicality — checked with a pad-after-`</think>` arm before the \
+flip).
 
 **Definition (exchangeability).** The teacher's joint over a turn has three \
 factors: how the teacher writes a **thought** for this task (thought \
@@ -1134,9 +1157,11 @@ over the slice; crown iff the paired mean `turn_c − turn_k` > \
 `n_turns` **1,300 → 1,000** (verdicts ~25 % faster; SE × 1.14). The grounding \
 band (`band_c`, `band_floor`) is retired — typicality on content tokens \
 replaces it. δ, `k_sigma` and the forfeit floor are re-expressed in sd \
-units — values calibrated to reproduce the current crown rate (last 40 \
-verdicts: δ ≈ 1.5× the 2σ bar; the live −0.1 forfeit floor sits ≈ 2.4 sd \
-below the mean valid turn) — **final numbers are stamped here at the flip**. \
+units — **δ = 0.2 sd, k_sigma = 2.0, forfeit = -12 sd**, calibrated on the \
+as-generated re-echo of 225 stored turns and the three shadow duels to keep \
+today's crown-bar ratio (δ = 0.082 × the per-turn diff sd, ≈ 1.25–1.5× the 2σ \
+bar at n = 1,000) and the forfeit floor under the 1st percentile of the kings' \
+valid turn scores (a 2 % forfeit gap ≈ one δ, the wvk-12 rule). \
 Everything else stays: `</think>` required, prose answers at tool turns, \
 teacher-relative thought cap, reference cap, protocol probe, admission rules.
 
@@ -1155,10 +1180,9 @@ skeleton, thinking-off) and ranks the teacher's own held-out replies first — \
 but it is a better distillation meter, **not** a benchmark of coding or chat \
 ability. On the carded models it still ranks kings by teacher-likeness.
 
-**Shadow first.** Since {WVK22_NOTICE} ~10:45 UTC every verdict carries \
-`verdict.shadow.sd_meter` (the new score computed next to the live one: per \
-side mean, margin, SE, z, bind fractions, would-crown, echo cost) — read \
-them to see where you stand before the flip.
+**Shadow read.** From {WVK22_NOTICE} 10:41 UTC to the flip every verdict carried \
+`verdict.shadow.sd_meter` (`role = "shadow"`); from the flip the same block \
+carries `role = "rule"` and is the deciding score.
 
 ---
 
