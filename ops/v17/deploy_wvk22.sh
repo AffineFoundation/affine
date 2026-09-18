@@ -95,6 +95,12 @@ inflight() { python3 -c 'import json;print(json.load(open("affine/state/state.js
 # even if post-cutoff entries were dispatched (the one in flight at the stop
 # has no verdict, State.load requeues it, it is judged under wvk 22).
 CUTOFF=(chal-00582 chal-00583 chal-00584 chal-00585 chal-00586 chal-00587 chal-00588)
+# Max timer (Jacob 15:18 UTC: "put a max timer on this flip at 8 hours"): at
+# 15:11 + 8 h the cutoff wait ends whatever is left; the flip then happens at
+# the NEXT normal duel boundary (the in-flight duel finishes under wvk 21, no
+# mid-duel abort; still-queued cutoff entries are judged under wvk 22).
+FLIP_DEADLINE_UTC=${FLIP_DEADLINE_UTC:-2026-09-18T23:11:00Z}
+deadline_epoch=$(date -u -d "$FLIP_DEADLINE_UTC" +%s)
 cutoff_pending() { python3 - "${CUTOFF[@]}" <<'PY'
 import json, sys
 ids = set(sys.argv[1:])
@@ -107,13 +113,15 @@ missing = [c for c in ids if c not in pending and c not in hist]   # neither act
 print(json.dumps({"pending": sorted(pending), "in_flight": fid, "queue": q, "missing": sorted(missing)}))
 PY
 }
-echo "$(ts) waiting for the cutoff set to finish under wvk 21: ${CUTOFF[*]}"
+echo "$(ts) waiting for the cutoff set to finish under wvk 21: ${CUTOFF[*]} (deadline $FLIP_DEADLINE_UTC)"
 flagged=0
+deadline_hit=0
 for i in $(seq 1 4320); do   # up to 36 h at 30 s
   st=$(cutoff_pending)
   pend=$(python3 -c 'import json,sys;print(len(json.loads(sys.argv[1])["pending"]))' "$st")
   fid=$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["in_flight"] or "")' "$st")
   if [[ "$pend" == 0 ]]; then echo "$(ts) cutoff set done: $st"; break; fi
+  if (( $(date -u +%s) >= deadline_epoch )); then deadline_hit=1; echo "$(ts) DEADLINE $FLIP_DEADLINE_UTC reached with cutoff entries still pending: $st -> flip at the next normal duel boundary"; break; fi
   if [[ -n "$fid" && "$flagged" == 0 ]] && ! printf '%s\n' "${CUTOFF[@]}" | grep -qx "$fid"; then
     echo "$(ts) FLAG: non-cutoff entry $fid is in flight while cutoff entries are still pending ($st) — it runs under wvk 21 (deferred cutoff entry?); tell the coordinator"
     flagged=1
@@ -121,10 +129,12 @@ for i in $(seq 1 4320); do   # up to 36 h at 30 s
   (( i % 20 == 0 )) && echo "$(ts)   cutoff pending: $st"
   sleep 30
 done
-[[ "$pend" == 0 ]] || { echo "$(ts) cutoff set still pending after 36 h; abort (nothing changed)"; exit 1; }
-# The last cutoff verdict IS the boundary: stop now. A post-cutoff duel that
-# was dispatched in the meantime has no verdict and is requeued (wvk 22).
-FORCE_BOUNDARY=1
+[[ "$pend" == 0 || "$deadline_hit" == 1 ]] || { echo "$(ts) cutoff set still pending after 36 h; abort (nothing changed)"; exit 1; }
+if [[ "$deadline_hit" == 0 ]]; then
+  # The last cutoff verdict IS the boundary: stop now. A post-cutoff duel that
+  # was dispatched in the meantime has no verdict and is requeued (wvk 22).
+  FORCE_BOUNDARY=1
+fi
 
 # --- 2. keepalive ralph off
 KEEPALIVE_WAS_ON=0
@@ -149,7 +159,7 @@ START_CID=$(cur_cid)
 echo "$(ts) boundary check (current in_flight: ${START_CID:-none})"
 reached=0
 if [[ "${FORCE_BOUNDARY:-0}" == 1 ]]; then reached=1; echo "$(ts) FORCE_BOUNDARY=1: pod busy=$(busy_of "$(health)"), in_flight=$(cur_cid) (post-cutoff; requeued on restart, judged under wvk 22)"; fi
-for i in $(seq 1 2400); do
+for i in $(seq 1 4200); do   # up to 140 min: one full duel incl. load
   [[ "$reached" == 1 ]] && break
   cid=$(cur_cid); h=$(health); busy=$(busy_of "$h")
   if [[ -z "$cid" && "$busy" == "False" ]]; then reached=1; break; fi
@@ -158,7 +168,7 @@ for i in $(seq 1 2400); do
   (( i % 60 == 0 )) && echo "$(ts)   busy=$busy in_flight=${cid:-none}"
   sleep 2
 done
-[[ "$reached" == 1 ]] || { echo "$(ts) no boundary in 80 min; abort (nothing changed)"; exit 1; }
+[[ "$reached" == 1 ]] || { echo "$(ts) no boundary in 140 min; abort (nothing changed)"; exit 1; }
 echo "$(ts) boundary reached (in_flight now: $(cur_cid), pod busy=$(busy_of "$(health)")) -> pause deadman, pm2 stop affine-validator"
 mkdir -p "$(dirname "$PAUSE")" && touch "$PAUSE"
 unpause() { rm -f "$PAUSE"; echo "$(ts) deadman pause removed"; }

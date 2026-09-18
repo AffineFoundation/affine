@@ -12,7 +12,7 @@
 +# from the teacher's own samples across thought typicality (content
 +# tokens, |prefix lift| > 1 nat), thought→action and action←thought, in
 +# teacher-sd units (LOO anchors per turn, σ pooled per dialect). n_turns
-+# 1300 → 1000. δ = 0.1 sd, k_sigma 2.0, forfeit -2.4 sd (calibrated
++# 1300 → 1000. δ = 0.07 sd, k_sigma 2.0, forfeit -4.5 sd (calibrated
 +# on the shadow read to keep today's crown rate: δ ≈ 1.5× the 2σ bar,
 +# floor ≈ the live −0.1's sd position). band_c / band_floor / min_margin /
 +# forfeit_turn_score kept for wvk ≤ 21 replay, unused by the new rule.
@@ -56,12 +56,15 @@
  # Grounding band half-width: w = max(band_c·stdev(t_i), band_floor) around
  # mu = mean(t_i), t_i = lpC(z_C^i|x) per byte. band_c=2.0 validated across
  # a 1x-4x sweep (honest beats the live filler suffix on 97-100% of turns at
-@@ -940,7 +962,7 @@
+@@ -938,9 +960,9 @@
+ content_min_tokens = 10
+ typicality_width = 2.0
  a_norm_bytes = 1.0
- forfeit_sd = -2.4
+-forfeit_sd = -2.4
++forfeit_sd = -4.5
  k_sigma = 2.0
 -min_margin_sd = 0.0
-+min_margin_sd = 0.1
++min_margin_sd = 0.07
  
  # Frozen per-dialect anchors (phase-2 slice, 1,287 turns, teacher
  # Qwen/Qwen3.8-27B, leave-one-out over k = 3 refs; god/out/sigma_gpu.csv).
