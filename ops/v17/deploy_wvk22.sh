@@ -8,6 +8,9 @@
 # Order inside the stop window: toml flip -> llms.txt (Upcoming -> Fork
 # history) -> pod redeploy -> validator start. Discord "live" line is NOT
 # posted here (after the first wvk-22 verdict stamps).
+# Rollback rule (docs/wvk22-plan.md §3, Jacob 15:11 UTC): first 3 wvk-22 verdicts —
+# SE > 2x shadow expectation, teacher-vs-king z <= -2, any leg binds > 80 %,
+# or a leg dropped on > 5 % of valid turns -> bash ops/v17/rollback_wvk22.sh.
 # Run on the box:
 #   EXPECT_KING_HOTKEY=5FptWRWY4TM69QQTDdrMkc4L1ZdiFxm6krXELR14VybDnbxD DELTA_SD=0.07 FORFEIT_SD=-4.5 bash ops/v17/deploy_wvk22.sh
 #   (FORCE_BOUNDARY=1 to skip the boundary wait; eval pod only — bench/chat pods untouched)
@@ -84,6 +87,44 @@ try: print(json.loads(sys.argv[1]).get("busy"))
 except Exception: print("?")' "$1"; }
 inflight() { python3 -c 'import json;print(json.load(open("affine/state/state.json")).get("in_flight") or "")'; }
 
+# --- 3a. Jacob's condition (go 2026-09-18 15:11 UTC: "We go on the new scoring
+# but only when the current queued models have run"): every entry queued as of
+# 15:11 UTC is judged under wvk 21. The flip boundary is the verdict of the
+# LAST of them — not earlier, even if the queue empties faster; not later,
+# even if post-cutoff entries were dispatched (the one in flight at the stop
+# has no verdict, State.load requeues it, it is judged under wvk 22).
+CUTOFF=(chal-00582 chal-00583 chal-00584 chal-00585 chal-00586 chal-00587 chal-00588)
+cutoff_pending() { python3 - "${CUTOFF[@]}" <<'PY'
+import json, sys
+ids = set(sys.argv[1:])
+s = json.load(open("affine/state/state.json"))
+f = s.get("in_flight"); fid = (f or {}).get("challenge_id") if isinstance(f, dict) else f
+q = [e.get("challenge_id") for e in s.get("queue", [])]
+pending = [c for c in ids if c == fid or c in q]
+hist = {json.loads(l).get("challenge_id") for l in open("affine/state/history.jsonl") if l.strip()}
+missing = [c for c in ids if c not in pending and c not in hist]   # neither active nor decided (should not happen)
+print(json.dumps({"pending": sorted(pending), "in_flight": fid, "queue": q, "missing": sorted(missing)}))
+PY
+}
+echo "$(ts) waiting for the cutoff set to finish under wvk 21: ${CUTOFF[*]}"
+flagged=0
+for i in $(seq 1 4320); do   # up to 36 h at 30 s
+  st=$(cutoff_pending)
+  pend=$(python3 -c 'import json,sys;print(len(json.loads(sys.argv[1])["pending"]))' "$st")
+  fid=$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["in_flight"] or "")' "$st")
+  if [[ "$pend" == 0 ]]; then echo "$(ts) cutoff set done: $st"; break; fi
+  if [[ -n "$fid" && "$flagged" == 0 ]] && ! printf '%s\n' "${CUTOFF[@]}" | grep -qx "$fid"; then
+    echo "$(ts) FLAG: non-cutoff entry $fid is in flight while cutoff entries are still pending ($st) — it runs under wvk 21 (deferred cutoff entry?); tell the coordinator"
+    flagged=1
+  fi
+  (( i % 20 == 0 )) && echo "$(ts)   cutoff pending: $st"
+  sleep 30
+done
+[[ "$pend" == 0 ]] || { echo "$(ts) cutoff set still pending after 36 h; abort (nothing changed)"; exit 1; }
+# The last cutoff verdict IS the boundary: stop now. A post-cutoff duel that
+# was dispatched in the meantime has no verdict and is requeued (wvk 22).
+FORCE_BOUNDARY=1
+
 # --- 2. keepalive ralph off
 KEEPALIVE_WAS_ON=0
 if ./ralphs/ralphctl.sh keepalive status 2>/dev/null | head -1 | grep -q '^ON'; then KEEPALIVE_WAS_ON=1; fi
@@ -93,7 +134,7 @@ echo "$(ts) keepalive ralph: was_on=$KEEPALIVE_WAS_ON, now off"
 reenable() { if [[ "$KEEPALIVE_WAS_ON" == 1 ]]; then ./ralphs/ralphctl.sh keepalive on >/dev/null 2>&1 && echo "$(ts) keepalive ralph re-enabled"; fi; }
 trap reenable EXIT
 
-# --- 3. duel boundary (same rule as the wvk-21 deploy)
+# --- 3b. duel boundary (kept for the FORCE_BOUNDARY-less path)
 has_verdict() { python3 - "$1" <<'PY'
 import json, sys
 cid = sys.argv[1]
@@ -104,9 +145,9 @@ PY
 }
 cur_cid() { python3 -c 'import json;f=json.load(open("affine/state/state.json")).get("in_flight");print((f or {}).get("challenge_id","") if isinstance(f,dict) else (f or ""))'; }
 START_CID=$(cur_cid)
-echo "$(ts) waiting for duel boundary (current in_flight: ${START_CID:-none})"
+echo "$(ts) boundary check (current in_flight: ${START_CID:-none})"
 reached=0
-if [[ "${FORCE_BOUNDARY:-0}" == 1 ]]; then reached=1; echo "$(ts) FORCE_BOUNDARY=1: pod busy=$(busy_of "$(health)"), in_flight=$(cur_cid)"; fi
+if [[ "${FORCE_BOUNDARY:-0}" == 1 ]]; then reached=1; echo "$(ts) FORCE_BOUNDARY=1: pod busy=$(busy_of "$(health)"), in_flight=$(cur_cid) (post-cutoff; requeued on restart, judged under wvk 22)"; fi
 for i in $(seq 1 2400); do
   [[ "$reached" == 1 ]] && break
   cid=$(cur_cid); h=$(health); busy=$(busy_of "$h")
