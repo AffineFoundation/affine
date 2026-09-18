@@ -40,9 +40,9 @@ def main() -> int:
   models have run"; 19:40 "fold it in" + "release wvk 22 right now"): **the
   sd-meter is the rule and thoughts are scored as generated** — `score_mode =
   "sd_min_rga"`, `thought_rendering = "as_generated"` (every echo renders
-  `<think>{latent}\n</think>\n\n{visible}\n\n{y}`, latent + visible spans
+  `<think>{{latent}}\n</think>\n\n{{visible}}\n\n{{y}}`, latent + visible spans
   scored, visible verbatim; `canonical` = the wvk ≤ 21 body
-  `</think>\nTHOUGHT: {z}`, kept for replay — `evalsrv/chat.py`
+  `</think>\nTHOUGHT: {{z}}`, kept for replay — `evalsrv/chat.py`
   `thought_body` / `split_z`, two-span `_echo_span`), `n_turns = 1000`,
   `[duel.sd_meter]` `min_margin_sd = 0.20`,
   `k_sigma = 2.0`, `forfeit_sd = -12`, `content_lift_nats = 1.0`,
