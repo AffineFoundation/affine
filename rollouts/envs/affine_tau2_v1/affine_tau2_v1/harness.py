@@ -154,7 +154,7 @@ def with_example_values(doc: str, examples: dict[str, str] = TELECOM_EXAMPLES) -
     for line in doc.splitlines():
         stripped = line.strip()
         name, sep, rest = stripped.partition(":")
-        if sep and name in examples and rest.strip() and "such as" not in rest and line.startswith(" "):
+        if sep and name in examples and rest.strip() and "such as" not in rest and "e.g." not in rest and line.startswith(" "):
             line = line.rstrip().rstrip(".") + f", such as '{examples[name]}'."
         out.append(line)
     return "\n".join(out)

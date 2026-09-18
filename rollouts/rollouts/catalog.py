@@ -1437,6 +1437,51 @@ os._exit(0)
 """
 
 
+# -- tau2-synth (env wave 4b, 2026-09-18): ten synthetic customer-service
+# domains of mikasenghaas/tau2-synth @ 798589e, every task usable (no card
+# runs these domains). Names `tau2s-<domain>-<τ² id>`; stratum from the
+# task's own hash (issue combination × persona × variant).
+TAU2_SYNTH_LIST = r"""
+import json, os, sys
+from affine_tau2_synth_v1.taskset import AffineTau2SynthTaskset, AffineTau2SynthConfig, split_name
+tasks = AffineTau2SynthTaskset(AffineTau2SynthConfig()).load()
+out = []
+for t in tasks:
+    domain, tid = split_name(t.data.name)
+    persona = ""
+    if "[PERSONA:" in tid:
+        persona = tid.split("[PERSONA:", 1)[1].split("]", 1)[0]
+    out.append({"uid": t.data.name, "domain": domain, "persona": persona})
+json.dump(out, sys.stdout); sys.stdout.flush()
+os._exit(0)
+"""
+
+
+def build_tau2_synth_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    rows = _verifiers_listing(cfg, TAU2_SYNTH_LIST, what="tau2_synth")
+    kept: list[dict] = []
+    seen: set[str] = set()
+    for r in rows:
+        uid = r["uid"]
+        if uid in seen:
+            continue
+        seen.add(uid)
+        _, num = _text_uid("tau2s", uid)
+        domain = re.sub(r"[^a-z0-9]+", "_", str(r.get("domain") or "synth").lower()).strip("_")
+        kept.append(_bucketed(src, {
+            "uid": uid,
+            "sid": f"tau2s_{domain}-{num}",
+            "repo": f"tau2-synth/{domain}",
+            "language": "tool",
+            "intent": domain,
+            "persona": r.get("persona") or "",
+        }))
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": "mikasenghaas/tau2-synth@798589e, 10 domains",
+        "total": len(rows), "kept": len(kept), "panel_excluded": 0,
+        "unusable": len(rows) - len(kept)})
+
+
 def build_tau2_catalog(cfg: RolloutsConfig, src: Source) -> dict:
     rows = _verifiers_listing(cfg, TAU2_LIST, what="tau2")
     kept: list[dict] = []
@@ -1464,6 +1509,7 @@ def build_tau2_catalog(cfg: RolloutsConfig, src: Source) -> dict:
 BUILDERS = {
     "hf": build_hf_catalog,
     "tau2": build_tau2_catalog,
+    "tau2_synth": build_tau2_synth_catalog,
     "rgym": build_rgym_catalog,
     "when2call": build_when2call_catalog,
     "rcore": build_rcore_catalog,
