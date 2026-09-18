@@ -534,6 +534,20 @@ class Controller:
         ]
         if king["kind"] == "r2":
             lines.append(f'DIGEST="{king["digest"]}"')
+            # A king crowned seconds ago still lives in the PRIVATE bucket
+            # (the validator promotes it to models.affine.io in the
+            # background, ~13 min for 70 GB). Fetch it from there with the
+            # eval pods' read-only key so the seat swap keys off the crown,
+            # not the promote (same path benchsuite/kingpod.py uses).
+            repo = str(king.get("repo") or "")
+            if repo.startswith("r2://affine-private-models/"):
+                lines += [
+                    f'KING_R2="{repo}"',
+                    f'AFFINE_EVAL_R2_ENDPOINT="{env_file_value("AFFINE_EVAL_R2_ENDPOINT") or env_file_value("R2_ENDPOINT")}"',
+                    f'AFFINE_EVAL_R2_ACCESS_KEY_ID="{env_file_value("AFFINE_EVAL_R2_ACCESS_KEY_ID")}"',
+                    f'AFFINE_EVAL_R2_SECRET_ACCESS_KEY="{env_file_value("AFFINE_EVAL_R2_SECRET_ACCESS_KEY")}"',
+                ]
+                log(f"{name}: king {king['digest'][:12]} is still private — fetching via KING_R2")
         else:
             lines += [f'HF_MODEL="{king["hf_model"]}"', f'HF_REV="{king["hf_rev"]}"',
                       f'HF_TOKEN="{env_file_value("HF_TOKEN")}"']
