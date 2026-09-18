@@ -527,6 +527,13 @@ def turn_score(pairs: list[dict],
                action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
                ) -> float:
     """Dispatch the per-turn score by contract score_mode."""
+    if score_mode == "sd_min_rga":
+        # Teacher-sd units need per-turn anchors and per-dialect σ over the
+        # whole slice — a two-pass rule that lives in evalsrv.sdmeter. The
+        # live legs of such a verdict are summarised through "min_rg".
+        raise ValueError(
+            "sd_min_rga is scored by evalsrv.sdmeter.shadow_verdict over the "
+            "slice; summarise per-turn legs with score_mode='min_rg'")
     if score_mode == "min_rga":
         return turn_min_rga(pairs, tau, band_c, band_floor, action_norm_bytes)
     if score_mode == "min_rg":
