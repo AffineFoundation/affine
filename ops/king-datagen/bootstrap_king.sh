@@ -87,8 +87,23 @@ def fetch(f):
     if os.path.exists(dst) and os.path.getsize(dst) == size:
         return "cached " + path
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    subprocess.run(["curl", "-sSL", "--http1.1", "--retry", "8", "--retry-all-errors",
-                    "-C", "-", "-o", dst, base + path], check=True)
+    # One curl per attempt, resumed from the file's CURRENT size: curl's own
+    # --retry re-sends the original request (offset fixed when it started)
+    # and truncates the file, so a "transfer closed with N bytes remaining"
+    # from the CDN threw away 30-45 GB each time (2026-09-14, two boxes timed
+    # out on the 50 GB shard). Errors are expected mid-file; only a stall
+    # (no growth across an attempt) counts against the budget.
+    stalls = 0
+    while not (os.path.exists(dst) and os.path.getsize(dst) >= size):
+        before = os.path.getsize(dst) if os.path.exists(dst) else 0
+        subprocess.run(["curl", "-sSL", "--http1.1", "-C", "-", "-o", dst, base + path])
+        after = os.path.getsize(dst) if os.path.exists(dst) else 0
+        stalls = 0 if after > before else stalls + 1
+        if stalls >= 8:
+            raise SystemExit(f"download stalled {path} at {after} of {size} bytes")
+    if os.path.getsize(dst) != size:
+        os.remove(dst)
+        raise SystemExit(f"size mismatch {path}")
     if sha:
         h = hashlib.sha256()
         with open(dst, "rb") as fh:

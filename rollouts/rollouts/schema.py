@@ -65,6 +65,18 @@ class Endpoint:
     # whose env vars are unset is simply unavailable, like a missing key.
     model_env: str = ""
     base_url_env: str = ""
+    # Ledger prices in $ per 1M tokens (policies.toml [pricing.<endpoint
+    # name>]; 0 = untracked). The harness reports no cost for OpenAI-
+    # compatible routes, so every Engy teacher rollout carried cost_usd 0
+    # until 2026-09-16; with prices set, priced_cost() fills it from the
+    # trace usage (prompt / cached-prompt / completion tokens).
+    price_in_per_m: float = 0.0
+    price_out_per_m: float = 0.0
+    price_cached_per_m: float = 0.0
+
+    @property
+    def priced(self) -> bool:
+        return self.price_in_per_m > 0 or self.price_out_per_m > 0
 
     def resolve(self, env: dict) -> "Endpoint | None":
         """Concrete endpoint for this env, or None when a required var is
@@ -112,6 +124,11 @@ class Policy:
     # shell-agent default. A harness that emits <tool_call> blocks or
     # \boxed{} answers declares it here, else its turns slice to nothing.
     action_kind: str = "bash"
+    # Loop guard (rollouts.loopguard): end the rollout with stop_condition
+    # `loop_guard` once the same action repeats this many times in a row
+    # with the same observation. 0 = off. The registry defaults it to 6 for
+    # `king_*` policies (the king loops; the teacher does not).
+    loop_guard_repeats: int = 0
 
     def available_endpoints(self, env: dict) -> list[Endpoint]:
         """Keyed endpoints, in chain order, with dynamic routes resolved
@@ -133,11 +150,19 @@ class PolicyStamp:
     harness: str
     endpoint: str     # endpoint name, e.g. "engy"
     action_kind: str = "bash"
+    # Sampling temperature the policy declared (None = the harness default).
+    # Additive envelope key (2026-09-13): the greedy king variants
+    # (`king_*_greedy`, T = 0) share the sampled king's seat and strata, so
+    # this is how telemetry tells the two apart.
+    temperature: float | None = None
 
     def to_dict(self) -> dict:
-        return {"id": self.policy_id, "model": self.model,
-                "harness": self.harness, "endpoint": self.endpoint,
-                "action_kind": self.action_kind}
+        out = {"id": self.policy_id, "model": self.model,
+               "harness": self.harness, "endpoint": self.endpoint,
+               "action_kind": self.action_kind}
+        if self.temperature is not None:
+            out["temperature"] = self.temperature
+        return out
 
 
 def utc_now_iso() -> str:
@@ -189,14 +214,38 @@ def trace_stats(trace: dict) -> dict:
             "cost_usd": round(cost, 5), "agent_wall_s": wall}
 
 
+def priced_cost(stats: dict, endpoint) -> float | None:
+    """$ for one rollout from its token counts and the endpoint's list
+    prices (per 1M): (prompt - cached) x in + cached x cached + completion x
+    out. None when the endpoint carries no prices."""
+    if endpoint is None or not endpoint.priced:
+        return None
+    prompt = int(stats.get("prompt_tokens") or 0)
+    cached = min(int(stats.get("cached_tokens") or 0), prompt)
+    completion = int(stats.get("completion_tokens") or 0)
+    return round(((prompt - cached) * endpoint.price_in_per_m
+                  + cached * endpoint.price_cached_per_m
+                  + completion * endpoint.price_out_per_m) / 1e6, 6)
+
+
+# The env's primary grade, first key present — the same tuple the fold reads
+# (affine.corpus.view.PRIMARY_REWARD_KEYS): `solved` (SWE / terminal / agent /
+# prolog / wikispeedia), `correct` (math, logic, science, trivia, ifeval,
+# unscramble, needle), `passed_fraction` (nl2repo).
+PRIMARY_REWARD_KEYS = ("solved", "correct", "passed_fraction")
+
+
 def trace_reward_score(trace: dict) -> float | None:
-    """Primary scalar outcome as telemetry: `solved` if the env publishes
-    it, else `passed_fraction`. None when the env scored nothing."""
+    """Primary scalar outcome as telemetry (state rows, batch health).
+    None when the env scored nothing. Until 2026-09-11 this read `solved` /
+    `passed_fraction` only, so every `correct`-graded rollout (affine_math)
+    was logged unresolved."""
     rewards = trace.get("rewards") or {}
-    score = (rewards.get("solved") or {}).get("score")
-    if score is None:
-        score = (rewards.get("passed_fraction") or {}).get("score")
-    return score
+    for key in PRIMARY_REWARD_KEYS:
+        score = (rewards.get(key) or {}).get("score")
+        if score is not None:
+            return score
+    return None
 
 
 def trace_task_name(trace: dict) -> str:
