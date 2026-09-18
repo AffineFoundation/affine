@@ -760,3 +760,44 @@ name = "king"
 model_env = "KING_MODEL"
 base_url_env = "KING_BASE_URL"
 key_env = "KING_KEY"
+
+# -- tau2-synth (env wave 4b, 2026-09-18): the same trio on harness `affine-tau2-synth-v1`.
+
+[policy.teacher_tau2_synth]
+harness = "affine-tau2-synth-v1"
+action_kind = "tool_call"
+share = 2.0
+[policy.teacher_tau2_synth.sampling]
+temperature = 0.8
+max_tokens = 8192
+[[policy.teacher_tau2_synth.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+[policy.king_tau2_synth]
+harness = "affine-tau2-synth-v1"
+action_kind = "tool_call"
+share = 2.0
+[policy.king_tau2_synth.sampling]
+temperature = 0.8
+max_tokens = 8192
+[[policy.king_tau2_synth.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_tau2_synth_greedy]
+harness = "affine-tau2-synth-v1"
+action_kind = "tool_call"
+share = 1.0
+[policy.king_tau2_synth_greedy.sampling]
+temperature = 0.0
+max_tokens = 8192
+[[policy.king_tau2_synth_greedy.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
