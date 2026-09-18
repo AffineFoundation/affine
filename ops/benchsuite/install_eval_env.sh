@@ -82,7 +82,7 @@ mapfile -t INSTALLS < <($PY - "$HERE/suite.toml" <<'PY'
 import sys, tomllib
 d = tomllib.load(open(sys.argv[1], "rb"))
 for e in d["envs"]:
-    if not e.get("venv"):          # side-venv tasksets are installed below
+    if not e.get("venv") and not e.get("runner"):   # side-venv tasksets below; runner-based envs (ARE) are not verifiers tasksets
         print(e["install"])
 PY
 )

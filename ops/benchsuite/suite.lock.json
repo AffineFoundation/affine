@@ -95,7 +95,8 @@
    },
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "math500": {
    "taskset": "math500",
@@ -123,7 +124,8 @@
    },
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "gpqa-diamond": {
    "taskset": "gpqa-strict",
@@ -148,7 +150,8 @@
    "datasets": {},
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "mmlu-pro": {
    "taskset": "mmlu-pro",
@@ -176,7 +179,8 @@
    },
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "ifbench": {
    "taskset": "ifbench",
@@ -203,7 +207,8 @@
    },
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "ifeval": {
    "taskset": "ifeval",
@@ -229,7 +234,8 @@
    },
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "humaneval": {
    "taskset": "humaneval",
@@ -255,7 +261,8 @@
    },
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "livecodebench": {
    "taskset": "livecodebench",
@@ -281,7 +288,8 @@
    },
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "bfcl-v3": {
    "taskset": "bfcl-v3",
@@ -305,7 +313,8 @@
    "datasets": {},
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "when2call": {
    "taskset": "when2call-mcq",
@@ -339,7 +348,8 @@
    },
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "minif2f": {
    "taskset": "minif2f",
@@ -363,7 +373,8 @@
    "datasets": {},
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "oolong-synth": {
    "taskset": "oolong-synth",
@@ -391,7 +402,8 @@
    },
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "mrcr-v2": {
    "taskset": "mrcr-v2",
@@ -418,7 +430,8 @@
    "datasets": {},
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "graphwalks": {
    "taskset": "graphwalks",
@@ -445,7 +458,8 @@
    },
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "swebench-verified": {
    "taskset": "swebench-verified",
@@ -469,7 +483,8 @@
    "datasets": {},
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "terminal-bench-2": {
    "taskset": "terminal-bench-2",
@@ -493,7 +508,8 @@
    "datasets": {},
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "swebench-pro": {
    "taskset": "swebench-pro",
@@ -517,7 +533,8 @@
    "datasets": {},
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "tau2-airline": {
    "taskset": "tau2-bench",
@@ -543,7 +560,8 @@
    "datasets": {},
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "tau2-retail": {
    "taskset": "tau2-bench",
@@ -569,7 +587,8 @@
    "datasets": {},
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "tau2-telecom": {
    "taskset": "tau2-bench",
@@ -595,7 +614,8 @@
    "datasets": {},
    "venv": null,
    "graded": "deterministic",
-   "judge": null
+   "judge": null,
+   "runner": null
   },
   "tau3-banking": {
    "taskset": "tau3-bench",
@@ -625,8 +645,49 @@
     "temperature": 0,
     "role": "NL-assertion judge; the same model simulates the user",
     "pinned_by": "tau3-bench 0.3.0 harness.py (evaluator_nl_assertions.DEFAULT_LLM_NL_ASSERTIONS)"
+   },
+   "runner": null
+  },
+  "gaia2-ambiguity": {
+   "taskset": "are:gaia2/ambiguity",
+   "package_version": null,
+   "install": "envs/none",
+   "harness": "are:default_agent",
+   "runtime": "in-process",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 16384,
+   "reward": "gaia2_success",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": 1800,
+   "concurrency": 16,
+   "datasets": null,
+   "venv": null,
+   "graded": "llm_judge",
+   "judge": {
+    "model": "openai/gpt-4.1",
+    "via": "Prime Inference (api.pinference.ai)",
+    "role": "ARE GraphPerEventJudge soft checker (free-text tool arguments); hard checks rule-based",
+    "pinned_by": "gaia2_cell.py JUDGE_MODEL"
+   },
+   "runner": {
+    "kind": "are-benchmark",
+    "package": "meta-agents-research-environments",
+    "version": "1.2.0",
+    "agent": "default",
+    "hf_dataset": "meta-agents-research-environments/gaia2",
+    "hf_config": "ambiguity",
+    "hf_split": "validation",
+    "hf_revision": "78ea3bdbdeec2bdcd6afa5420915d8a22f23ed99",
+    "filesystem": "meta-agents-research-environments/gaia2_filesystem (demo_filesystem mirrored locally, DEMO_FS_PATH)"
    }
   }
  },
- "lock_sha256": "b7181cbda070d9ff"
+ "lock_sha256": "309ec21a0298df4d"
 }
