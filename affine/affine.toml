@@ -743,6 +743,22 @@ tau = 0.03
 # each turn min(centered R, banded G); "reason" is the wvk<=9 tempered
 # Reason, kept as the replay path for pre-fork verdicts.
 score_mode = "min_rg"
+# wvk 22 knob (2026-09-18, explicit operator directive 19:40 UTC "fold it in"):
+# how a thought is rendered into the teacher's assistant body for EVERY echo
+# (G / typicality, R's injection, B, the A leg, the content-mask ∅ echo).
+#   "canonical"    = the wvk <= 21 body "</think>\nTHOUGHT: {z}\n\n{y}" (z =
+#                    latent + "\n" + visible as one prose string)
+#   "as_generated" = the reply as the model produced it:
+#                    "<think>{latent}\n</think>\n\n{visible}\n\n{y}" — latent
+#                    scored inside the think block, visible text scored after
+#                    the real </think>, verbatim (no THOUGHT: label added or
+#                    stripped); the separator is rendered, not scored.
+# Why (docs/g-rendering-claim.md §8): the canonical body scored the teacher's
+# own visible sentence as prose glued to its latent (−0.18/byte vs −0.06 as
+# generated), so the meter could not tell the teacher's held-out reply from a
+# reasoning-only king (G control z 1.2 → 8.7 as generated; content typicality
+# ref − king +0.20 → +2.40 sd). Same function for refs and both sides.
+thought_rendering = "canonical"
 # Grounding band half-width: w = max(band_c·stdev(t_i), band_floor) around
 # mu = mean(t_i), t_i = lpC(z_C^i|x) per byte. band_c=2.0 validated across
 # a 1x-4x sweep (honest beats the live filler suffix on 97-100% of turns at

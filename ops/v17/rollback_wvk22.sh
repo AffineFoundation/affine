@@ -121,8 +121,8 @@ fi
 
 # --- 5. revert (toml + website mirror), llms.txt
 python ops/v17/wvk22_toml_edits.py --revert "$DIRECTIVE_DATE"
-grep -E '^(weight_version_key|score_mode|n_turns) ' affine/affine.toml
-python -c "from affine.config import load_config; c=load_config(); d=c.duel; assert c.weight_version_key==21 and d.score_mode=='min_rg' and d.n_turns==1300; print('config ok: wvk', c.weight_version_key, d.score_mode, 'n_turns', d.n_turns)"
+grep -E '^(weight_version_key|score_mode|thought_rendering|n_turns) ' affine/affine.toml
+python -c "from affine.config import load_config; c=load_config(); d=c.duel; assert c.weight_version_key==21 and d.score_mode=='min_rg' and d.n_turns==1300 and d.thought_rendering=='canonical'; print('config ok: wvk', c.weight_version_key, d.score_mode, d.thought_rendering, 'n_turns', d.n_turns)"
 python ops/v17/llms_wvk22_flip_edits.py --rollback "$DIRECTIVE_DATE"
 python affine/scripts/build_llms_txt.py | tail -1
 

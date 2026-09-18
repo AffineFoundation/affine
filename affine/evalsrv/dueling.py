@@ -67,7 +67,7 @@ from .terms import (
     score_teacher_rollouts,
 )
 from . import amatch, sdmeter
-from .chat import get_tokenizer
+from .chat import THOUGHT_RENDERINGS, get_tokenizer, set_thought_rendering
 from .protocol_probe import probe_settings, rejection_detail, run_probe
 from .vllm_client import EngineUnreachableError, ModelPool, Served, VllmModel
 
@@ -790,6 +790,14 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     pod's own toml δ, stamped as mode "fixed".
     """
     duel_cfg = dict(engine_cfg["duel"])
+    # wvk 22: how thoughts are rendered for every echo (canonical = the
+    # wvk <= 21 "</think>\nTHOUGHT: z" body; as_generated = latent inside
+    # <think>…</think>, visible text after it, verbatim). Process-wide, set
+    # before any sampling or echo of this duel.
+    thought_rendering = str(duel_cfg.get("thought_rendering", "canonical"))
+    if thought_rendering not in THOUGHT_RENDERINGS:
+        raise ValueError(f"[duel] thought_rendering must be one of {THOUGHT_RENDERINGS}")
+    set_thought_rendering(thought_rendering)
     margin_stamp = margin_stamp_for(duel_cfg, margin)
     duel_cfg["min_margin"] = margin_stamp["min_margin_effective"]
     started = time.monotonic()
@@ -1187,6 +1195,10 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             f"; forfeit (no parseable action) scores {forfeit_turn_score:g}")
     if require_think_close:
         ranking_formula += "; a rollout without </think> is a forfeit"
+    if thought_rendering == "as_generated":
+        ranking_formula += ("; thoughts rendered as generated for every echo: "
+                            "<think>{latent}\n</think>\n\n{visible}\n\n{y} (latent + visible "
+                            "spans scored, verbatim, no label)")
     if near_miss["enabled"]:
         if near_miss["window_mode"] == "bar":
             ranking_formula += (
@@ -1264,6 +1276,8 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "forfeit_turn_score": forfeit_turn_score,
             "action_norm_bytes": action_norm_bytes,
             "require_think_close": require_think_close,
+            # wvk 22: thought rendering for every echo (see chat.thought_body).
+            "thought_rendering": thought_rendering,
             "allowed_action_kinds": allowed_kinds,
             "max_thought_tokens": int(duel_cfg["max_thought_tokens"]),
             "max_action_tokens": int(duel_cfg["max_action_tokens"]),

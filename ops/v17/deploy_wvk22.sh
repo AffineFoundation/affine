@@ -32,7 +32,9 @@ echo "$(ts) === deploy_wvk22.sh start (wvk 21 -> 22, δ_sd=$DELTA_SD forfeit_sd=
 # --- 0. preflight (nothing changes yet)
 grep -q '^weight_version_key = 21$' affine/affine.toml || { echo "$(ts) toml is not at wvk 21; abort"; exit 1; }
 grep -q '^score_mode = "min_rg"$' affine/affine.toml || { echo "$(ts) score_mode is not min_rg; abort"; exit 1; }
+grep -q '^thought_rendering = "canonical"$' affine/affine.toml || { echo "$(ts) thought_rendering is not canonical; abort"; exit 1; }
 grep -q '^\[duel.sd_meter\]$' affine/affine.toml || { echo "$(ts) [duel.sd_meter] missing; abort"; exit 1; }
+python -c 'import sys; sys.path.insert(0,"affine"); from evalsrv import chat; chat.set_thought_rendering("as_generated"); z,y=chat.split_rollout("lat\n</think>\nTHOUGHT: vis\n\n```bash\nls\n```","bash",require_think_close=True); b,sp=chat.thought_body(z); assert b=="lat\n</think>\n\nTHOUGHT: vis" and [b[a:e] for a,e in sp]==["lat","THOUGHT: vis"], (b,sp); chat.set_thought_rendering("canonical"); print("rendering self-test ok")'
 python ops/v17/wvk22_toml_edits.py --preview --delta-sd "$DELTA_SD" --forfeit-sd "$FORFEIT_SD" >/dev/null
 python -c "import ast; ast.parse(open('affine/scripts/build_llms_txt.py').read())"
 grep -q 'WVK22_NOTICE' affine/scripts/build_llms_txt.py || { echo "$(ts) llms notice section missing; abort"; exit 1; }
@@ -113,10 +115,16 @@ missing = [c for c in ids if c not in pending and c not in hist]   # neither act
 print(json.dumps({"pending": sorted(pending), "in_flight": fid, "queue": q, "missing": sorted(missing)}))
 PY
 }
+# 19:40 UTC directive ("release wvk 22 right now instead of waiting"):
+# SKIP_CUTOFF_WAIT=1 skips the cutoff wait — the flip happens at the NEXT
+# normal duel boundary (in-flight duel finishes under wvk 21, everything
+# queued is judged under wvk 22).
+if [[ "${SKIP_CUTOFF_WAIT:-0}" == 1 ]]; then deadline_hit=1; echo "$(ts) SKIP_CUTOFF_WAIT=1: flipping at the next duel boundary (directive 19:40 UTC)"; fi
 echo "$(ts) waiting for the cutoff set to finish under wvk 21: ${CUTOFF[*]} (deadline $FLIP_DEADLINE_UTC)"
 flagged=0
-deadline_hit=0
+deadline_hit=${deadline_hit:-0}
 for i in $(seq 1 4320); do   # up to 36 h at 30 s
+  [[ "$deadline_hit" == 1 ]] && { pend=1; break; }
   st=$(cutoff_pending)
   pend=$(python3 -c 'import json,sys;print(len(json.loads(sys.argv[1])["pending"]))' "$st")
   fid=$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["in_flight"] or "")' "$st")
@@ -191,8 +199,8 @@ fi
 
 # --- 5. contract flip (toml + website mirror), llms.txt
 python ops/v17/wvk22_toml_edits.py --apply "$DIRECTIVE_DATE" --wvk-to 22 --delta-sd "$DELTA_SD" --forfeit-sd "$FORFEIT_SD"
-grep -E '^(weight_version_key|score_mode|n_turns|min_margin_sd|forfeit_sd|k_sigma) ' affine/affine.toml
-python -c "from affine.config import load_config; c=load_config(); d=c.duel; assert c.weight_version_key==22 and d.score_mode=='sd_min_rga' and d.n_turns==1000; print('config ok: wvk', c.weight_version_key, d.score_mode, 'n_turns', d.n_turns, 'delta_sd', d.sd_meter['min_margin_sd'], 'forfeit_sd', d.sd_meter['forfeit_sd'])"
+grep -E '^(weight_version_key|score_mode|thought_rendering|n_turns|min_margin_sd|forfeit_sd|k_sigma) ' affine/affine.toml
+python -c "from affine.config import load_config; c=load_config(); d=c.duel; assert c.weight_version_key==22 and d.score_mode=='sd_min_rga' and d.n_turns==1000 and d.thought_rendering=='as_generated'; print('config ok: wvk', c.weight_version_key, d.score_mode, d.thought_rendering, 'n_turns', d.n_turns, 'delta_sd', d.sd_meter['min_margin_sd'], 'forfeit_sd', d.sd_meter['forfeit_sd'])"
 python ops/v17/llms_wvk22_flip_edits.py --date "$DIRECTIVE_DATE" --delta-sd "$DELTA_SD" --forfeit-sd "$FORFEIT_SD"
 python affine/scripts/build_llms_txt.py | tail -1
 grep -q "^## Fork history: wvk 22" affine/website/llms.txt && echo "$(ts) llms.txt has Fork history: wvk 22"
@@ -202,7 +210,7 @@ grep -q "^## Fork history: wvk 22" affine/website/llms.txt && echo "$(ts) llms.t
 # the king seat (pm2 affine-king-datagen / kingctl) reads state.json and is not restarted.
 cd affine && python scripts/redeploy_pods.py --role eval && cd "$REPO"
 echo "$(ts) redeploy_pods done"
-"${POD_SSH[@]}" 'grep -E "^(weight_version_key|score_mode|n_turns|min_margin_sd|forfeit_sd) " /root/affine/affine.toml' || echo "$(ts) WARNING pod verify ssh failed"
+"${POD_SSH[@]}" 'grep -E "^(weight_version_key|score_mode|thought_rendering|n_turns|min_margin_sd|forfeit_sd) " /root/affine/affine.toml; grep -c "thought_body" /root/affine/evalsrv/chat.py' || echo "$(ts) WARNING pod verify ssh failed"
 
 # --- 6. validator back
 pm2 start affine-validator >/dev/null

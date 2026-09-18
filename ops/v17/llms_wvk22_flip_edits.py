@@ -93,13 +93,38 @@ verdict stamps these under `duel_params.sd_meter`; the deciding numbers are \\
 the verdict's `margin / se / z` (now in sd units) with the full breakdown \\
 under `shadow.sd_meter` (`role = "rule"`).
 """)
+    s = sub(s, """**Definition (exchangeability).** The teacher's joint over a turn has three \\
+""", """**Thoughts are scored as generated (folded into wvk 22, explicit operator \\
+directive 2026-09-18 19:40 UTC "fold it in").** `[duel].thought_rendering = \\
+"as_generated"`: for EVERY echo — typicality / grounding, Reason's injection, \\
+the B licence, the action leg, the content-mask ∅ echo — a thought is rendered \\
+the way the model produced it, `<think>{latent}\\n</think>\\n\\n{visible}\\n\\n{y}`, \\
+and the latent and visible spans are scored (the separator is not); the \\
+visible text is taken verbatim, no `THOUGHT:` label added or stripped. The old \\
+canonical body `</think>\\nTHOUGHT: {z}\\n\\n{y}` (wvk ≤ 21, kept for replay) put \\
+the model's reasoning AFTER `</think>` as prose. Why: under that body the \\
+teacher's own visible sentence scored −0.18 nats/byte (as generated: −0.06), so \\
+the meter could not tell the teacher's held-out reply from a reasoning-only \\
+king (grounding control z 1.2; as generated z 8.7; content typicality ref − \\
+king +0.20 → +2.40 sd), and the population drifted to the shape the convention \\
+favoured: every king since reign 11 writes nothing visible before the action. \\
+Same function for the teacher references and both sides. **What you must do:** \\
+reason inside `<think>…</think>`, then write a visible thought (a sentence or \\
+two, as the teacher does), then the action. A reasoning-only reply is now \\
+atypical on most turns; pasting the reasoning again after `</think>` does not \\
+help (two-sided typicality — checked with a pad-after-`</think>` arm before the \\
+flip).
+
+**Definition (exchangeability).** The teacher's joint over a turn has three \\
+""")
     s = sub(s, """units — values calibrated to reproduce the current crown rate (last 40 \\
 verdicts: δ ≈ 1.5× the 2σ bar; the live −0.1 forfeit floor sits ≈ 2.4 sd \\
 below the mean valid turn) — **final numbers are stamped here at the flip**. \\
 """, f"""units — **δ = {d} sd, k_sigma = 2.0, forfeit = {f} sd**, calibrated on the \\
-shadow read to reproduce the current crown rate (last 40 verdicts: δ ≈ 1.5× \\
-the 2σ bar; the live −0.1 forfeit floor sits ≈ 2.4 sd below the mean valid \\
-turn). \\
+as-generated re-echo of 225 stored turns and the three shadow duels to keep \\
+today's crown-bar ratio (δ = 0.082 × the per-turn diff sd, ≈ 1.25–1.5× the 2σ \\
+bar at n = 1,000) and the forfeit floor under the 1st percentile of the kings' \\
+valid turn scores (a 2 % forfeit gap ≈ one δ, the wvk-12 rule). \\
 """)
     s = sub(s, """**Shadow first.** Since {WVK22_NOTICE} ~10:45 UTC every verdict carries \\
 `verdict.shadow.sd_meter` (the new score computed next to the live one: per \\
