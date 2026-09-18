@@ -50,7 +50,7 @@ ENV_PKGS=(affine_when2call_v1 affine_notool_v1 affine_logic_v1 affine_trivia_v1 
           affine_autobench_v1 affine_uuidctf_v1
           affine_i3code_v1 affine_i3math_v1 affine_deshuffle_v1 affine_rgym_v1 affine_rcore_v1
           affine_pydantic_v1 affine_verbatim_v1 affine_oolong_v1
-          affine_tau2_v1)
+          affine_tau2_v1 affine_tau2_synth_v1)
 # Env wave 3: prime-envs tasksets the pods' pinned checkout lacks are vendored
 # under rollouts/vendor/prime-envs (see its README) and installed from there.
 VENDOR_ENVS=(deshuffle_papers)
@@ -93,6 +93,12 @@ ENV_GIT_DEPS=("longcot @ git+https://github.com/LongHorizonReasoning/longcot.git
 # it is installed WITH deps, constrained - litellm / pandas / sklearn are
 # already present and must stay at their pinned versions.
 ENV_CONSTRAINED_GIT_DEPS=("tau2 @ git+https://github.com/sierra-research/tau2-bench.git@337326e62d8e0ca74c353b004a9c5d748e0ba914")
+# tau2-synth (env wave 4b): mikasenghaas/tau2-synth is sierra's τ² (337326e
+# is an ancestor) + ten synthetic domains, published under the SAME package
+# name `tau2`, so it replaces the sierra install (--no-deps: the dependency
+# set is the sierra one, already resolved above; the fork's extra `textual`
+# is its TUI, never imported by the registry). Installed LAST on purpose.
+ENV_REPLACE_GIT_DEPS=("tau2 @ git+https://github.com/mikasenghaas/tau2-synth.git@798589e02ca91ea61e85557eb672be0a915592eb")
 # EnterpriseOps-Gym service images (digest-pinned, Docker Hub) are pulled once
 # so the first rollouts do not pay for them; python:3.12-slim is the sql
 # sandbox; projectnumina/kimina-lean-server:2.0.0 (2.9 GB compressed) is the
@@ -154,6 +160,8 @@ uv pip install --python .venv/bin/python -q --no-deps "${wrap[@]}" || exit 1
 uv pip install --python .venv/bin/python -q -c /tmp/venv-constraints.txt '"${ENV_EXTRA_DEPS[*]}"' || exit 1
 uv pip install --python .venv/bin/python -q --no-deps '"$(printf "%q " "${ENV_GIT_DEPS[@]}")"' || exit 1
 uv pip install --python .venv/bin/python -q -c /tmp/venv-constraints.txt '"$(printf "%q " "${ENV_CONSTRAINED_GIT_DEPS[@]}")"' || exit 1
+uv pip install --python .venv/bin/python -q --no-deps '"$(printf "%q " "${ENV_REPLACE_GIT_DEPS[@]}")"' || exit 1
+.venv/bin/python -c "from tau2.registry import registry; d = registry.get_info().model_dump()["domains"]; assert "library" in d and "telecom" in d, d; print("TAU2_FORK_OK", len(d), "domains")" || exit 1
 uv pip install --python .venv/bin/python -q --no-deps '"${RCORE_NODEPS[*]}"' || exit 1
 .venv/bin/python -c "import '"$(IFS=,; echo "${ENV_PKGS[*]}")"'; import verifiers; assert verifiers.__file__.startswith(\"/root/prime-pilot/verifiers/\"), verifiers.__file__; print(\"ENV_IMPORT_OK\")" || exit 1
 for img in '"${ENV_IMAGES[*]}"'; do docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null || echo "WARNING: pull failed $img"; done' \
