@@ -19,6 +19,7 @@ bootstrap_timeout_min = 120                  # venv + 70 GB pull + engine warmup
 unreachable_grace_min = 20                   # a box dark this long after READY is replaced
 canary_every_min = 10                        # real completion probe cadence after READY (3 misses = dark)
 pod_forget_ticks = 5                         # consecutive Lium-listing misses before a pod is forgotten
+seat_empty_alert_min = 60                    # page the ops channel when the king has had no serving box this long (then hourly)
 state_stale_min = 30                         # keep the last known king this long if state.json is unreadable
 watchdog_every_min = 5                       # datagen-pod supervisor liveness check cadence
 watchdog_relaunch_min = 10                   # supervisor + bootstrap loop both gone this long -> relaunch

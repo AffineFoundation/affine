@@ -118,6 +118,7 @@ class Config:
     unreachable_grace_min: int
     canary_every_min: int
     pod_forget_ticks: int
+    seat_empty_alert_min: int
     state_stale_min: int
     watchdog_every_min: int
     watchdog_relaunch_min: int
@@ -157,6 +158,7 @@ def load_config(path: Path = HERE / "king.toml") -> Config:
         rotate_before_ttl_hours=float(k.get("rotate_before_ttl_hours", 2)),
         bootstrap_timeout_min=int(k["bootstrap_timeout_min"]),
         unreachable_grace_min=int(k["unreachable_grace_min"]),
+        seat_empty_alert_min=int(k.get("seat_empty_alert_min", 60)),
         canary_every_min=int(k.get("canary_every_min", 10)),
         pod_forget_ticks=int(k.get("pod_forget_ticks", 5)),
         state_stale_min=int(k.get("state_stale_min", 30)),
@@ -496,6 +498,8 @@ class Controller:
                 self.notify(f"rented {name} ({plan.name}, ${price:.2f}/h) for "
                             f"{king['served']} reign {king.get('reign')} — {why}")
                 return
+        self.state["last_rent_failure"] = (f"no stock under price caps for any type "
+                                           f"({len(stock)} executors listed)")
         log(f"rent {name}: no stock under price caps for any type "
             f"({len(stock)} executors listed)")
 
@@ -866,6 +870,7 @@ class Controller:
 
         ident = king["ident"]
         pub = self.state.get("published") or {}
+        self.seat_empty_alert(king, pub, now)
         # Advance every box of the current king; note which ones serve.
         serving: list[str] = []
         for name in self.boxes_for(ident, mine):
@@ -940,6 +945,32 @@ class Controller:
 
         self.datagen_watchdog(datagen, now)
         save_state(self.state)
+
+    def seat_empty_alert(self, king: dict, pub: dict, now: float) -> None:
+        """Page the ops channel when the current king has had no published
+        box for more than seat_empty_alert_min, and every hour after that,
+        with the last rent failure. 2026-09-17/18: reign 14 sat unserved for
+        25 h because Lium's /executors started answering 422 and the running
+        controller (old module in memory) logged "0 executors listed" once a
+        minute, to the log only — nobody was paged."""
+        cfg = self.cfg
+        if pub.get("ident") == king["ident"] and pub.get("pod"):
+            self.state.pop("seat_empty_since", None)
+            self.state.pop("seat_empty_alerted_at", None)
+            return
+        since = self.state.setdefault("seat_empty_since", now)
+        empty_min = int((now - since) / 60)
+        if empty_min < cfg.seat_empty_alert_min:
+            return
+        if now - self.state.get("seat_empty_alerted_at", 0) < 3600:
+            return
+        self.state["seat_empty_alerted_at"] = now
+        boxes = [n for n, m in self.state["pods"].items()
+                 if (m.get("king") or {}).get("ident") == king["ident"]]
+        self.notify(f"KING SEAT EMPTY {empty_min} min: {king['served']} reign "
+                    f"{king.get('reign')} has no serving box on any datagen pod; "
+                    f"boxes of this king: {boxes or 'none'}; last rent failure: "
+                    f"{self.state.get('last_rent_failure') or 'none logged'}")
 
     def status(self) -> None:
         king = read_king(self.cfg)
