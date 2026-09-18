@@ -350,6 +350,11 @@ challenger_gpus = "4,5"
 challenger_replica_port = 8004
 challenger_replica_gpus = "6,7"
 tp = 2
+# Small-VRAM miner GPUs (RTX PRO 6000, 96 GB; 2026-09-17): miner slots on GPUs
+# below the threshold use the smaller prefill chunk so the fp32 logits spike
+# (~7.3 GB at 8192 tokens for the 248k vocab) fits. Sampling is unchanged.
+small_gpu_threshold_gb = 110
+small_gpu_max_num_batched_tokens = 4096
 # Was 32768; corpus prefixes routinely hit ~31k tokens, and sample() asks for
 # max_thought+max_action=1792 more → vLLM 400 "maximum context length" mid-duel
 # (observed 2026-08-09/10, burned as eval_infra_exhausted). 65536 clears the
@@ -899,6 +904,76 @@ concurrency = 192
 # classifies the eval as a transient failure and requeues.
 timeout_s = 7200
 
+# sd-meter — min(z_R, typ_c, z_A) in teacher-sd units (docs: god-equation
+# finalist; staged as a SHADOW 2026-09-18 on Jacob's directive "I like it
+# and I want to ship it" — computed on every duel next to min(R,G),
+# published under verdict.shadow.sd_meter, NOT scored). It becomes the rule
+# only with score_mode = "sd_min_rga" + a weight_version_key bump (planned
+# wvk 22, together with n_turns 1300 -> 1000; see docs/wvk22-plan.md).
+#   z_R  = (R − μ_R)/σ_R           R = the live centred Reason
+#   z_A  = (A − μ_A)/σ_A           A = τ·log mean_i exp(b_i/τ),
+#                                  b_i = Σ_bytes[lpC(y_A|z_C^i) − lpC(y_A|∅)] / a_norm_bytes
+#   typ_c = typicality_width − |m_c − μ_c|/σ_c
+#          m_c = mean lpC(tok|x) over the thought's tokens with
+#          |lpC(tok|x) − lpC(tok|∅)| > content_lift_nats (the content mask)
+#   turn = min(z_R, typ_c, z_A); forfeit = forfeit_sd; fewer than
+#          content_min_tokens content tokens -> typ_c = forfeit_sd
+# μ per turn = mean of the k refs' leave-one-out values (anchor = "loo";
+# needs the k(k−1) = 6 cross echoes lpC(y_C^i|z_C^j), tail-only through the
+# echo prefix cache, shared by both sides) or per-dialect constants
+# (anchor = "frozen", zero extra echoes; [duel.sd_meter.frozen.<dialect>]).
+# σ = pooled within-turn sd of those k values per dialect over the duel.
+# Both anchors are stamped on every shadow verdict; `anchor` names the one
+# whose decision is headlined. forfeit_sd: the live −0.1 floor sits 2.4 sd
+# below the mean valid turn score (phase-2 panel); every verdict stamps the
+# live floor's sd position on its own rows (live_floor_calibration).
+# min_margin_sd (δ in sd units): 0 while shadow = telemetry; the wvk-22
+# value is set from the shadow's measured per-turn diff sd so δ keeps its
+# live ratio to the 2σ bar (last 40 verdicts: δ = 0.082·sd_diff, ≈1.5× 2·SE).
+[duel.sd_meter]
+shadow = true
+anchor = "loo"
+cross_echo = true
+content_lift_nats = 1.0
+content_min_tokens = 10
+typicality_width = 2.0
+a_norm_bytes = 1.0
+forfeit_sd = -2.4
+k_sigma = 2.0
+min_margin_sd = 0.0
+
+# Frozen per-dialect anchors (phase-2 slice, 1,287 turns, teacher
+# Qwen/Qwen3.8-27B, leave-one-out over k = 3 refs; god/out/sigma_gpu.csv).
+# R in per-byte nats, A in summed nats (a_norm_bytes = 1). Mc (content-
+# masked thought logprob) has no phase-2 constant: the frozen anchor pools
+# it from the duel's own refs until ops/sd-meter/refresh_frozen.py writes
+# one from published verdicts.
+[duel.sd_meter.frozen.bash]
+R_mu = 0.008603
+R_sigma = 0.015706
+A_mu = 0.2629
+A_sigma = 5.1284
+[duel.sd_meter.frozen.tool_call]
+R_mu = 0.002992
+R_sigma = 0.005816
+A_mu = 1.0062
+A_sigma = 4.9910
+[duel.sd_meter.frozen.text]
+R_mu = 0.006460
+R_sigma = 0.037136
+A_mu = -2.5697
+A_sigma = 21.2643
+[duel.sd_meter.frozen.boxed]
+R_mu = 0.050065
+R_sigma = 0.096892
+A_mu = 11.4032
+A_sigma = 4.1996
+[duel.sd_meter.frozen.terminus_json]
+R_mu = 0.001374
+R_sigma = 0.004794
+A_mu = 0.018072
+A_sigma = 11.1698
+
 [seed_king]
 # Genesis checkpoint crowned when the validator boots with empty state.
 # min(R,G) era genesis (2026-08-27, wvk 10): untouched Qwen3.6-35B-A3B —
@@ -992,8 +1067,13 @@ max_tokens = 1024
 # reprovisions automatically on sustained health failure.
 provider_order = ["lium", "targon"]
 # Preference order: B300 (fastest / most VRAM) → B200 → H200. First match
-# under the price cap wins.
-gpu_types = ["B300", "B200", "H200"]
+# under the price cap wins. RTXPRO6000 (8x96 GB Blackwell, ~$10-15/h) added
+# 2026-09-17 as the last resort: with the teacher swarm down the pod health
+# check failed 12x, the pod was terminated, and no whole-host B300/B200/H200
+# x8 was left on Lium ("all providers failed"). The king-datagen box already
+# serves this model family on that GPU with the same vLLM. Ops knob, not the
+# contract; weight_version_key untouched.
+gpu_types = ["B300", "B200", "H200", "RTXPRO6000"]
 gpu_type = "B300"   # legacy single-type field; gpu_types takes precedence
 gpu_count = 8
 # Hard price cap for the whole pod ($/hr). B300 8× sits ~$56–64.
