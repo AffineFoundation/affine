@@ -350,6 +350,11 @@ challenger_gpus = "4,5"
 challenger_replica_port = 8004
 challenger_replica_gpus = "6,7"
 tp = 2
+# Small-VRAM miner GPUs (RTX PRO 6000, 96 GB; 2026-09-17): miner slots on GPUs
+# below the threshold use the smaller prefill chunk so the fp32 logits spike
+# (~7.3 GB at 8192 tokens for the 248k vocab) fits. Sampling is unchanged.
+small_gpu_threshold_gb = 110
+small_gpu_max_num_batched_tokens = 4096
 # Was 32768; corpus prefixes routinely hit ~31k tokens, and sample() asks for
 # max_thought+max_action=1792 more → vLLM 400 "maximum context length" mid-duel
 # (observed 2026-08-09/10, burned as eval_infra_exhausted). 65536 clears the
@@ -992,8 +997,13 @@ max_tokens = 1024
 # reprovisions automatically on sustained health failure.
 provider_order = ["lium", "targon"]
 # Preference order: B300 (fastest / most VRAM) → B200 → H200. First match
-# under the price cap wins.
-gpu_types = ["B300", "B200", "H200"]
+# under the price cap wins. RTXPRO6000 (8x96 GB Blackwell, ~$10-15/h) added
+# 2026-09-17 as the last resort: with the teacher swarm down the pod health
+# check failed 12x, the pod was terminated, and no whole-host B300/B200/H200
+# x8 was left on Lium ("all providers failed"). The king-datagen box already
+# serves this model family on that GPU with the same vLLM. Ops knob, not the
+# contract; weight_version_key untouched.
+gpu_types = ["B300", "B200", "H200", "RTXPRO6000"]
 gpu_type = "B300"   # legacy single-type field; gpu_types takes precedence
 gpu_count = 8
 # Hard price cap for the whole pod ($/hr). B300 8× sits ~$56–64.
