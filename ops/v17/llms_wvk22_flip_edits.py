@@ -29,8 +29,11 @@ def main() -> int:
     g.add_argument("--rollback", metavar="DATE")
     ap.add_argument("--delta-sd", type=float)
     ap.add_argument("--forfeit-sd", type=float)
+    ap.add_argument("--builder", type=Path, default=BUILDER,
+                    help="patch this copy instead (preflight dry run)")
     a = ap.parse_args()
-    s = BUILDER.read_text()
+    builder = a.builder
+    s = builder.read_text()
     if a.rollback:
         if "WVK22_ROLLED_BACK" in s:
             print("already patched (rollback)")
@@ -41,8 +44,8 @@ def main() -> int:
                 '        "{WVK22_NOTICE}": WVK22_NOTICE,\n        "{WVK22_ROLLED_BACK}": WVK22_ROLLED_BACK,\n')
         s = sub(s, "## Fork history: wvk 22 — the sd-meter `min(z_R, typ_c, z_A)` + 1,000-turn slices (effective {WVK22_EFFECTIVE})\n",
                 "## Fork history: wvk 22 — the sd-meter `min(z_R, typ_c, z_A)` + 1,000-turn slices (effective {WVK22_EFFECTIVE}, **ROLLED BACK {WVK22_ROLLED_BACK}** to the wvk-21 rule: min(R, G), 1,300 turns; wvk-22 verdicts stand)\n")
-        BUILDER.write_text(s)
-        print("patched (rollback)", BUILDER)
+        builder.write_text(s)
+        print("patched (rollback)", builder)
         return 0
     if "WVK22_EFFECTIVE" in s:
         print("already patched")
@@ -56,8 +59,9 @@ def main() -> int:
             '        "{WVK22_NOTICE}": WVK22_NOTICE,\n        "{WVK22_EFFECTIVE}": WVK22_EFFECTIVE,\n')
     # TOC bullet
     s = sub(s, """- **Upcoming change: wvk 22 — the sd-meter `min(z_R, typ_c, z_A)` + 1,000-turn \\
-slices (notice {WVK22_NOTICE}; effective at the first duel boundary after \\
-today's shadow validation, projected within ~2–4 h)** — the turn score \\
+slices (notice {WVK22_NOTICE}; go given 15:11 UTC; effective after the queue \\
+as of 15:11 UTC — through `chal-00588` — has been judged under wvk 21, \\
+projected ~23:00 UTC)** — the turn score \\
 """, """- **Fork history: wvk 22 — the sd-meter `min(z_R, typ_c, z_A)` + 1,000-turn \\
 slices (notice {WVK22_NOTICE}, effective {WVK22_EFFECTIVE})** — the turn score \\
 """)
@@ -65,21 +69,24 @@ slices (notice {WVK22_NOTICE}, effective {WVK22_EFFECTIVE})** — the turn score
     s = sub(s, "## Upcoming change: wvk 22 — the sd-meter `min(z_R, typ_c, z_A)` + 1,000-turn slices (notice {WVK22_NOTICE})\n",
             "## Fork history: wvk 22 — the sd-meter `min(z_R, typ_c, z_A)` + 1,000-turn slices (effective {WVK22_EFFECTIVE})\n")
     s = sub(s, """**Notice {WVK22_NOTICE} (explicit operator directive, 2026-09-18 10:04 / 10:25 / \\
-10:40 UTC). Effective at the first duel boundary after today's shadow \\
-validation — projected within ~2–4 h of this notice. The queue is empty, so \\
-no submitted model is affected mid-flight; a model submitted from now on is \\
-judged under the rule in force when its duel runs.** `weight_version_key` \\
+10:40 UTC; go 15:11 UTC with the condition "only when the current queued \\
+models have run"). Effective at the duel boundary right after the last entry \\
+queued as of 15:11 UTC — `chal-00582` … `chal-00588` — has been judged under \\
+wvk 21 (projected ~23:00 UTC). Submissions after 15:11 UTC are judged under \\
+wvk 22. Reign 15 (`chal-00581`, crowned 14:59 UTC under wvk 21) stands.** `weight_version_key` \\
 21 → 22 at the flip; forward-only — reign 14 stands, no re-verdicts, \\
 `min_submission_block` unchanged. This section becomes "Fork history: wvk 22" \\
 with the final stamped numbers when the flip lands.
 """, f"""**Effective {{WVK22_EFFECTIVE}} at the first duel dispatched after the eval pod \\
 redeploy (notice {{WVK22_NOTICE}} 10:46 UTC; explicit dated operator directive \\
-2026-09-18 10:04 / 10:25 UTC, go to flip relayed by the coordinator).** \\
+2026-09-18 10:04 / 10:25 UTC; go 15:11 UTC "only when the current queued models \\
+have run" — the queue as of 15:11, `chal-00582` … `chal-00588`, was judged under \\
+wvk 21 first). Reign 15 (`chal-00581`, crowned 14:59 UTC under wvk 21) stands.** \\
 `weight_version_key = 22`; `[duel].score_mode = "sd_min_rga"`, `n_turns = 1000`; \\
 `[duel.sd_meter]`: `min_margin_sd = {d}` (δ, teacher-sd), `k_sigma = 2.0`, \\
 `forfeit_sd = {f}`, `content_lift_nats = 1.0`, `content_min_tokens = 10`, \\
 `typicality_width = 2.0`, `a_norm_bytes = 1.0`, `anchor = "loo"`. Forward-only — \\
-reign 14 stands, no re-verdicts, `min_submission_block` unchanged. Every \\
+reign 15 stands, no re-verdicts, `min_submission_block` unchanged. Every \\
 verdict stamps these under `duel_params.sd_meter`; the deciding numbers are \\
 the verdict's `margin / se / z` (now in sd units) with the full breakdown \\
 under `shadow.sd_meter` (`role = "rule"`).
@@ -100,8 +107,8 @@ them to see where you stand before the flip.
 `verdict.shadow.sd_meter` (`role = "shadow"`); from the flip the same block \\
 carries `role = "rule"` and is the deciding score.
 """)
-    BUILDER.write_text(s)
-    print("patched", BUILDER)
+    builder.write_text(s)
+    print("patched", builder)
     return 0
 
 
