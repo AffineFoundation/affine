@@ -157,11 +157,14 @@ uv pip install --python .venv/bin/python -q --no-deps "${wrap[@]}" || exit 1
 # frozen from the venv itself, so nothing already installed (verifiers, the
 # prime-* packages, pydantic, ...) can change version.
 .venv/bin/python -m pip freeze --exclude-editable 2>/dev/null > /tmp/venv-constraints.txt || uv pip freeze --python .venv/bin/python | grep -v "^-e" > /tmp/venv-constraints.txt
+# tau2 is pinned by URL below (sierra, then the tau2-synth fork under the same
+# name); a frozen URL line would conflict with whichever is not installed.
+sed -i "/^tau2 @/d;/^tau2==/d" /tmp/venv-constraints.txt
 uv pip install --python .venv/bin/python -q -c /tmp/venv-constraints.txt '"${ENV_EXTRA_DEPS[*]}"' || exit 1
 uv pip install --python .venv/bin/python -q --no-deps '"$(printf "%q " "${ENV_GIT_DEPS[@]}")"' || exit 1
 uv pip install --python .venv/bin/python -q -c /tmp/venv-constraints.txt '"$(printf "%q " "${ENV_CONSTRAINED_GIT_DEPS[@]}")"' || exit 1
 uv pip install --python .venv/bin/python -q --no-deps '"$(printf "%q " "${ENV_REPLACE_GIT_DEPS[@]}")"' || exit 1
-.venv/bin/python -c "from tau2.registry import registry; d = registry.get_info().model_dump()["domains"]; assert "library" in d and "telecom" in d, d; print("TAU2_FORK_OK", len(d), "domains")" || exit 1
+.venv/bin/python -c "from tau2.registry import registry; d = registry.get_info().domains; assert len(d) >= 15, d; print(\"TAU2_FORK_OK\", len(d))" || exit 1
 uv pip install --python .venv/bin/python -q --no-deps '"${RCORE_NODEPS[*]}"' || exit 1
 .venv/bin/python -c "import '"$(IFS=,; echo "${ENV_PKGS[*]}")"'; import verifiers; assert verifiers.__file__.startswith(\"/root/prime-pilot/verifiers/\"), verifiers.__file__; print(\"ENV_IMPORT_OK\")" || exit 1
 for img in '"${ENV_IMAGES[*]}"'; do docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null || echo "WARNING: pull failed $img"; done' \
