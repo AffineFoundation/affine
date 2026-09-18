@@ -386,7 +386,8 @@ class VllmModel:
         return extract_action(d["choices"][0]["text"], action_kind)
 
     async def _echo_span(self, full: str, span_start: int,
-                         span_bytes: int, *, tokens: bool = False) -> dict:
+                         span_bytes: int, *, tokens: bool = False,
+                         spans: list[tuple[int, int]] | None = None) -> dict:
         """Teacher-force echo: mean logprob per byte of full[span_start:].
 
         echo=True + logprobs, span located with the tokenizer's offset
@@ -399,6 +400,14 @@ class VllmModel:
         conditioned and unconditioned echoes of the same thought. The
         request is identical either way (the engine always returns
         per-token logprobs; only what is kept changes).
+
+        spans: when given, the scored tokens are those whose start offset
+        falls inside any [start, end) of `spans` (absolute offsets into
+        `full`; span_start must equal spans[0][0]). Used by the as_generated
+        thought rendering, where the latent and the visible thought are two
+        spans separated by an unscored newline + </think> + newline. None =
+        one span from span_start to the end of `full` (canonical; bit-
+        identical to the pre-wvk-22 behaviour).
         """
         stat = self._echo_stats[ECHO_TAG.get()]
         t0 = time.monotonic()
@@ -450,6 +459,12 @@ class VllmModel:
             d = await self._post(payload)
             lp = d["choices"][0]["logprobs"]["token_logprobs"]
             raw_span = lp[n_prompt:-1]
+        span_offsets = offsets[n_prompt:]
+        if spans is not None:
+            # Keep only the tokens that start inside a scored span (the
+            # separator between latent and visible is rendered, not scored).
+            keep = [any(a <= st < b for a, b in spans) for st, _ in span_offsets]
+            raw_span = [x if k else None for x, k in zip(raw_span, keep)]
         span = [x for x in raw_span if x is not None]
         # Positions the engine actually computed (cached prefix rows come
         # back as the plugin's +1.0 marker or None): the measured recompute.
@@ -462,7 +477,6 @@ class VllmModel:
             "lp_per_byte": sum(span) / n_bytes if span else 0.0,
         }
         if tokens:
-            span_offsets = offsets[n_prompt:]
             out["tokens"] = [
                 (s - span_start, e - span_start, x)
                 for (s, e), x in zip(span_offsets, raw_span) if x is not None]
@@ -491,10 +505,24 @@ class VllmModel:
         keeps the per-token logprobs (sd-meter content mask); same request.
         """
         del sticky_key
-        full = thought_text(self.cfg.repo, self.cfg.revision, prefix_messages,
-                            thoughts)
-        return await self._echo_span(full, len(full) - len(thoughts),
-                                     len(thoughts.encode()), tokens=tokens)
+        full, spans = thought_text(self.cfg.repo, self.cfg.revision,
+                                   prefix_messages, thoughts)
+        return await self._echo_thought(full, spans, tokens)
+
+    async def _echo_thought(self, full: str, spans: list[tuple[int, int]],
+                            tokens: bool) -> dict:
+        """Echo the thought span(s) of a rendered thought text. Canonical
+        rendering = one span to the end of the text (the pre-wvk-22 call, bit
+        for bit); as_generated = latent + visible spans, separator unscored.
+        Bytes = the scored spans' bytes."""
+        if not spans:                     # empty thought: nothing to score
+            return {"sum_lp": 0.0, "n_tokens": 0, "n_bytes": 1, "lp_per_byte": 0.0,
+                    **({"tokens": []} if tokens else {})}
+        n_bytes = sum(len(full[a:b].encode()) for a, b in spans)
+        if len(spans) == 1 and spans[0][1] == len(full):
+            return await self._echo_span(full, spans[0][0], n_bytes, tokens=tokens)
+        return await self._echo_span(full, spans[0][0], n_bytes, tokens=tokens,
+                                     spans=spans)
 
     async def score_thought_uncond(self, thoughts: str, *,
                                    sticky_key: str | None = None) -> dict:
@@ -505,7 +533,6 @@ class VllmModel:
         and score_thought's. Short prompt (header + thought), no turn prefix
         to cache — the cost is the thought's own tokens once."""
         del sticky_key
-        full = thought_text(self.cfg.repo, self.cfg.revision, UNCOND_PREFIX,
-                            thoughts)
-        return await self._echo_span(full, len(full) - len(thoughts),
-                                     len(thoughts.encode()), tokens=True)
+        full, spans = thought_text(self.cfg.repo, self.cfg.revision,
+                                   UNCOND_PREFIX, thoughts)
+        return await self._echo_thought(full, spans, True)

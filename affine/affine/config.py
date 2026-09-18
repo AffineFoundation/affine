@@ -215,6 +215,12 @@ class DuelCfg:
     # None = legacy (turn dropped from pairing). Contract knob: changing it
     # is a weight_version_key event.
     forfeit_turn_score: float | None = None
+    # wvk 22 (2026-09-18, operator directive 19:40 UTC "fold it in"): how a
+    # thought is rendered into the teacher's assistant body for EVERY echo.
+    # "canonical" = the wvk <= 21 body "</think>\nTHOUGHT: {z}"; "as_generated"
+    # = "<think>{latent}\n</think>\n\n{visible}", latent and visible spans
+    # scored, visible verbatim. Contract knob: changing it is a wvk event.
+    thought_rendering: str = "canonical"
     # sd-meter (2026-09-18): ``[duel.sd_meter]`` — min(z_R, typ_c, z_A) in
     # teacher-sd units. ``shadow = true`` computes and publishes it on every
     # duel (telemetry only); it is THE rule when score_mode = "sd_min_rga"
@@ -563,6 +569,9 @@ def _duel(raw: dict) -> DuelCfg:
             raise ValueError("[duel.sd_meter] forfeit_sd must be <= 0")
         if "min_margin_sd" in sd_meter and float(sd_meter["min_margin_sd"]) < 0:
             raise ValueError("[duel.sd_meter] min_margin_sd must be >= 0")
+    thought_rendering = str(d.get("thought_rendering", "canonical"))
+    if thought_rendering not in ("canonical", "as_generated"):
+        raise ValueError(f"[duel] thought_rendering {thought_rendering!r} unknown")
     score_mode = str(d.get("score_mode", "reason"))
     if score_mode not in ("reason", "min_rg", "min_rga", "sd_min_rga"):
         raise ValueError(f"[duel] score_mode {score_mode!r} unknown")
@@ -594,6 +603,7 @@ def _duel(raw: dict) -> DuelCfg:
         forfeit_turn_score=(float(d["forfeit_turn_score"])
                             if d.get("forfeit_turn_score") is not None else None),
         sd_meter=sd_meter,
+        thought_rendering=thought_rendering,
         action_norm_bytes=(float(d["action_norm_bytes"])
                            if d.get("action_norm_bytes") is not None else None),
         require_think_close=bool(d.get("require_think_close", False)),

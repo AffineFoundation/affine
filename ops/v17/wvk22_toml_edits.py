@@ -7,6 +7,7 @@ scoring speed"; the go to flip is relayed by the coordinator and MUST be
 given before --apply is run).
 
 What flips (--apply DATE --wvk-to 22 --delta-sd X --forfeit-sd Y):
+  thought_rendering   "canonical" -> "as_generated"   (directive 19:40 UTC "fold it in")
   score_mode          "min_rg" -> "sd_min_rga"
   n_turns             1300 -> 1000
   sd_meter.min_margin_sd   0.0 -> X      (δ in teacher-sd units)
@@ -64,6 +65,10 @@ N_NEW = (
     "# 1000 for scoring speed\"): 1300 → 1000. SE × 1.14; δ_sd is set against\n"
     "# the measured SE so the crown bar keeps its ratio.\n"
     "n_turns = 1000\n")
+REND_OLD = 'thought_rendering = "canonical"\n'
+REND_NEW = ('# {date} (wvk {a}→{b}, explicit dated operator directive 19:40 UTC "fold it\n'
+            '# in"): thoughts scored as generated for every echo — see above.\n'
+            'thought_rendering = "as_generated"\n')
 DELTA_OLD = "min_margin_sd = 0.0\n"
 FORFEIT_OLD = "forfeit_sd = -2.4\n"
 
@@ -76,10 +81,14 @@ HISTORY = (
     "# min(z_R, typ_c, z_A) — the largest standardised deviation of the reply\n"
     "# from the teacher's own samples across thought typicality (content\n"
     "# tokens, |prefix lift| > 1 nat), thought→action and action←thought, in\n"
-    "# teacher-sd units (LOO anchors per turn, σ pooled per dialect). n_turns\n"
-    "# 1300 → 1000. δ = {delta} sd, k_sigma 2.0, forfeit {forfeit} sd (calibrated\n"
-    "# on the shadow read to keep today's crown rate: δ ≈ 1.5× the 2σ bar,\n"
-    "# floor ≈ the live −0.1's sd position). band_c / band_floor / min_margin /\n"
+    "# teacher-sd units (LOO anchors per turn, σ pooled per dialect). Thoughts\n"
+    "# rendered AS GENERATED for every echo (thought_rendering, directive 19:40\n"
+    "# UTC \"fold it in\": the canonical body could not tell the teacher's own\n"
+    "# reply from a reasoning-only king; as generated it can, G z 1.2 → 8.7).\n"
+    "# n_turns 1300 → 1000. δ = {delta} sd, k_sigma 2.0, forfeit {forfeit} sd\n"
+    "# (calibrated on the as-generated re-echo of 225 stored turns + the three\n"
+    "# (a) shadow duels: δ = 0.082·sd_diff, floor under p1 of the kings' valid\n"
+    "# turns). band_c / band_floor / min_margin /\n"
     "# forfeit_turn_score kept for wvk ≤ 21 replay, unused by the new rule.\n"
     "# Forward-only: reign 14 stands, no re-verdicts, min_submission_block\n"
     "# unchanged. Notice: llms.txt \"Upcoming change: wvk 22\" + Discord\n"
@@ -88,7 +97,8 @@ REVERT_HISTORY = (
     "# {a}→{b} ROLLBACK to the wvk-21 settings ({date}): explicit operator-\n"
     "# directed revert under the rule of docs/wvk22-plan.md §3 (first wvk-22\n"
     "# verdicts failed the sanity criteria). score_mode sd_min_rga → min_rg,\n"
-    "# n_turns 1000 → 1300; [duel.sd_meter] stays as shadow telemetry.\n"
+    "# n_turns 1000 → 1300, thought_rendering as_generated → canonical;\n"
+    "# [duel.sd_meter] stays as shadow telemetry.\n"
     "# Verdicts judged under wvk 22 in between stand (forward-only both ways).\n")
 
 
@@ -104,9 +114,10 @@ def render(src: str, date: str, wvk_to: int, delta: float, forfeit: float) -> st
         _check(src, line)
     if src.count("k_sigma = 2.0\n") != 2:      # [duel] and [duel.sd_meter]
         raise SystemExit("anchor 'k_sigma = 2.0': expected twice ([duel] + [duel.sd_meter])")
-    for line in (SCORE_OLD, N_OLD, DELTA_OLD, FORFEIT_OLD, f"weight_version_key = {a}\n"):
+    for line in (SCORE_OLD, N_OLD, DELTA_OLD, FORFEIT_OLD, REND_OLD, f"weight_version_key = {a}\n"):
         _check(src, line)
     out = src.replace(SCORE_OLD, SCORE_NEW.format(**fmt))
+    out = out.replace(REND_OLD, REND_NEW.format(**fmt))
     out = out.replace(N_OLD, N_NEW.format(**fmt))
     out = out.replace(DELTA_OLD, f"min_margin_sd = {delta:g}\n")
     out = out.replace(FORFEIT_OLD, f"forfeit_sd = {forfeit:g}\n")
@@ -118,7 +129,9 @@ def render_revert(src: str, date: str) -> str:
     _check(src, 'score_mode = "sd_min_rga"\n')
     _check(src, "n_turns = 1000\n")
     _check(src, "weight_version_key = 22\n")
+    _check(src, 'thought_rendering = "as_generated"\n')
     out = src.replace('score_mode = "sd_min_rga"\n', 'score_mode = "min_rg"\n')
+    out = out.replace('thought_rendering = "as_generated"\n', 'thought_rendering = "canonical"\n')
     out = out.replace("n_turns = 1000\n", "n_turns = 1300\n")
     out = out.replace("weight_version_key = 22\n", "weight_version_key = 21\n")
     return _history(out, REVERT_HISTORY.format(date=date, a=22, b=21))
