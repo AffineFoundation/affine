@@ -32,7 +32,6 @@ import logging
 import os
 import threading
 import time
-from dataclasses import replace
 from pathlib import Path
 
 import bittensor as bt
@@ -144,6 +143,9 @@ class Validator:
         # One slot: at most one prefetch fires per duel. Held so the event
         # loop (which references tasks weakly) can never GC it mid-flight.
         self._prefetch_task: asyncio.Task | None = None
+        # Background public-bucket promotions of crowned private refs (one
+        # per crown; held so the event loop cannot GC them mid-copy).
+        self._promote_tasks: set[asyncio.Task] = set()
         self._last_heartbeat = 0.0
 
     # A suite that failed this many recorded runs for the same revision is
@@ -610,21 +612,25 @@ class Validator:
         accepted = bool(verdict.get("challenger_wins"))
         crowned_entry = entry
         if accepted and is_r2_ref(entry.repo):
-            # "Public on crown": copy the private prefix to the public bucket
-            # and crown THAT ref, so the king row, weights probe and pods all
-            # point at the published copy. A failed copy still crowns the
-            # private ref (pods read both buckets); promotion is retried by
-            # the operator, never by burning the miner.
-            public_ref = await asyncio.to_thread(self._promote_or_none, entry)
-            if public_ref:
-                crowned_entry = replace(entry, repo=public_ref)
-                verdict["private_repo"] = entry.repo
+            # Crown the PRIVATE ref now and copy it to the public bucket in
+            # the background. Until 2026-09-18 the ~70 GB server-side copy
+            # ran inline here (chal-00581: 12 min 40 s between the pod's
+            # verdict and the crown) and held the queue. Every consumer
+            # tolerates a private-ref king: eval/bench pods read both
+            # buckets, kingctl passes KING_R2 for a private bucket, the
+            # weight sweep re-promotes until the public copy lands
+            # (_repromote_if_private), and rewrite_king_repo repoints the
+            # lineage once it does.
+            verdict["private_repo"] = entry.repo
+            verdict["promotion"] = "background"
         # One history row per duel: a winning verdict crowns inside
         # record_verdict, so the crowned row carries the full verdict payload.
         self.state.record_verdict(crowned_entry, verdict,
                                   **self._history_meta(entry, t0))
         log.info("verdict %s: challenger_wins=%s z=%s reason=%s", cid, accepted,
                  verdict.get("z"), verdict.get("rejection_reason"))
+        if accepted and is_r2_ref(entry.repo):
+            self._schedule_promotion(entry)
         await self._publish_eval_artifact(entry, verdict)
 
         if accepted:
@@ -652,6 +658,61 @@ class Validator:
                 member["hotkey"], member["revision"], public_ref):
             log.warning("late promotion: %s → %s", member["repo"], public_ref)
             member["repo"] = public_ref
+
+    def _schedule_promotion(self, entry: QueueEntry) -> None:
+        task = asyncio.create_task(self._promote_background(entry),
+                                   name=f"promote-{entry.challenge_id}")
+        self._promote_tasks.add(task)
+        task.add_done_callback(self._promote_tasks.discard)
+
+    async def _promote_background(self, entry: QueueEntry) -> None:
+        """Copy a crowned private prefix to the public bucket and repoint the
+        lineage row. Failure is logged and paged; the weight sweep keeps
+        retrying (_repromote_if_private) until the public copy lands."""
+        t0 = time.monotonic()
+        try:
+            public_ref = await asyncio.to_thread(self._promote_or_none, entry)
+        except Exception as e:  # _promote_or_none swallows, but be safe
+            public_ref, err = None, repr(e)
+        else:
+            err = "see log" if public_ref is None else ""
+        if public_ref:
+            self.state.rewrite_king_repo(entry.hotkey, entry.revision, public_ref)
+            log.info("background promotion of %s done in %.0fs → %s",
+                     entry.challenge_id, time.monotonic() - t0, public_ref)
+            return
+        msg = (f"public-bucket promotion of {entry.challenge_id} "
+               f"({entry.revision[:12]}) failed after {time.monotonic() - t0:.0f}s: "
+               f"{err}. King stays on the private ref; the weight sweep retries "
+               f"every {self.cfg.validator.weight_interval_s}s.")
+        log.error(msg)
+        self._page(msg)
+
+    def _page(self, text: str) -> None:
+        """One Discord line to the private ops channel. Never raises."""
+        channel = os.environ.get("AFFINE_OPS_DISCORD_CHANNEL", "1510910974498967613")
+        token = os.environ.get("DISCORD_BOT_TOKEN_ARBOS_BITTENSOR", "")
+        if not token:
+            env_file = Path(__file__).resolve().parents[2] / ".env"
+            try:
+                for line in env_file.read_text().splitlines():
+                    line = line.strip().removeprefix("export ").strip()
+                    if line.startswith("DISCORD_BOT_TOKEN_ARBOS_BITTENSOR="):
+                        token = line.split("=", 1)[1].strip().strip('"').strip("'")
+            except OSError:
+                pass
+        if not token or not channel:
+            log.warning("page (no discord token): %s", text)
+            return
+        try:
+            import httpx
+            r = httpx.post(f"https://discord.com/api/v10/channels/{channel}/messages",
+                           headers={"Authorization": f"Bot {token}"},
+                           json={"content": f"[validator] {text}"[:1900]}, timeout=20)
+            if r.status_code >= 300:
+                log.warning("page: discord HTTP %s", r.status_code)
+        except Exception:
+            log.warning("page: discord post failed", exc_info=True)
 
     def _promote_or_none(self, entry: QueueEntry) -> str | None:
         if self.registrations is None:
