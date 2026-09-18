@@ -111,6 +111,18 @@ def build_cmd(env: dict, a: argparse.Namespace, job_dir: Path, cfg_path: Path | 
     return cmd
 
 
+def agent_log_has(trial_dir: Path, needle: str) -> bool:
+    for name in ("agent/mini-swe-agent.txt", "agent/terminus-2.txt", "trial.log"):
+        p = trial_dir / name
+        if p.exists():
+            try:
+                if needle in p.read_text(errors="replace")[-20000:]:
+                    return True
+            except OSError:
+                pass
+    return False
+
+
 def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit_code: int) -> dict:
     rows = []
     for rp in sorted(job_dir.glob("*/result.json")):
@@ -136,13 +148,16 @@ def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit
         # exhaustion is a 0, infrastructure is excluded from n and retried
         if "Timeout" in etype and "Agent" in etype:
             err_class = "timeout"
-        elif etype and ("Verifier" in etype or "Environment" in etype or "Build" in etype or "Sandbox" in etype or "Daytona" in etype):
-            err_class = "infra"
+        elif etype == "NonZeroAgentExitCodeError" and agent_log_has(rp.parent, "ContextWindowExceeded"):
+            # mini-swe-agent exits 1 when the conversation outgrows the model's context:
+            # the MODEL's failure (our verifiers cells call it context_overflow, score 0),
+            # not infrastructure (reign 13 @4h: 110 of 500)
+            err_class = "context_overflow"
         elif etype:
             err_class = "infra"
         else:
             err_class = None
-        if score is None and err_class == "timeout":
+        if score is None and err_class in ("timeout", "context_overflow"):
             score = 0.0
         rows.append({
             "task_key": r.get("task_name"), "trial": r.get("trial_name"),
@@ -163,7 +178,7 @@ def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit
         "n": len(rows), "n_scored": len(scored),
         "n_errored": sum(1 for r in rows if r["error_class"] == "infra"),
         "n_timeout": sum(1 for r in rows if r["error_class"] == "timeout"),
-        "n_context_overflow": 0,
+        "n_context_overflow": sum(1 for r in rows if r["error_class"] == "context_overflow"),
         "score": round(k / len(scored), 4) if scored else 0.0, "ci95": [round(lo, 4), round(hi, 4)],
         "finished_only": {"n": len(fin), "score": round(fk / len(fin), 4) if fin else 0.0, "ci95": [round(flo, 4), round(fhi, 4)]},
         "binary": True,
