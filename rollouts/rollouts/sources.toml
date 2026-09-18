@@ -433,8 +433,10 @@ lift_exclude = ["affine_agent", "affine_wikispeedia"]
 strata_buckets = 4000   # 2000 -> 4000 (2026-09-14 phase 9b: When2Call + tool-feeder persist supply)
 inherit_exclude = false
 one_reply_ok = true
-prose_sources = ["affine_when2call", "affine_notool"]   # datagen P1 sources (2026-09-14); when2call rows carry repo = when2call/<label> -- only request_for_info / cannot_answer items are no-tool prompts
-tool_sources = ["affine_agent", "affine_wikispeedia", "affine_sql", "affine_eog", "affine_autobench"]
+prose_sources = ["affine_when2call", "affine_notool",
+                 "affine_tau2"]   # datagen P1 sources (2026-09-14); when2call rows carry repo = when2call/<label> -- only request_for_info / cannot_answer items are no-tool prompts; affine_tau2 (2026-09-18): the king opens with a tool call where the teacher asks the customer (turn 1, 24/24 in the probe)
+tool_sources = ["affine_agent", "affine_wikispeedia", "affine_sql", "affine_eog", "affine_autobench",
+                "affine_tau2"]   # + τ² telecom (2026-09-17): the king re-calls get_customer_by_phone with invented numbers after every error
 # When2Call stamps repo = when2call/<label>; on tool_call items the king's
 # first-reply call is correct, so rule (a) skips them (route only the
 # request_for_info / cannot_answer rows where the king called a tool).
@@ -958,6 +960,59 @@ strata_offset = 1200
 # the fold's gates.
 share = 2.0
 king_rollouts_per_hour = 16
+
+[source.affine_tau2]
+# τ²-bench telecom with an LLM USER SIMULATOR (env wave 4, 2026-09-17/18;
+# Jacob's standing directive on king failure classes + Alan's τ² note +
+# docs/tau2-airline-failures.md: the king's thought says "ask the user", its
+# action calls a tool with an invented argument - 1,140 / 1,140 telecom
+# tool-call nodes, 45-47 / 50 airline tasks dead at TURN 1 with the schema's
+# example id `sara_doe_496`; D had no state where the teacher has anyone to
+# ask). rollouts/envs/affine_tau2_v1 = taskset + harness over prime-envs
+# tau2_bench_v1: τ²'s own orchestrator runs as a subprocess (no container),
+# the AGENT is the policy's model through the interception endpoint, the
+# CUSTOMER is DeepSeek V4.1 Flash on Engy at T 0 (`--env.agent.harness.
+# user-model` to change), the domain tools mutate a database and Sierra's
+# evaluation grades the final state + required communication -> `solved`.
+# The telecom tool schemas get airline-style EXAMPLE VALUES on their
+# identifier parameters ("such as '555-123-4567'", 'C1234', 'L5678'; the
+# harness patches the docstrings before the tools are built) - the bait the
+# kings fall for; do not sanitise them away (`example-values false` = upstream).
+# POOL = telecom `full` \ `base` = 2,171 generated tasks. `base` (114) is what
+# the benchsuite runs as tau2-telecom; τ²'s `train` split is inside `base`;
+# airline / retail `base` = every task of those domains -> not offered.
+# Overlap check at τ² revision 337326e: full 2,285 ∩ base 114 = 114 -> 2,171
+# disjoint.
+# interactive = true: the fold admits the agent's mid-trajectory prose
+# replies (the message to the customer, followed by the customer's answer)
+# as `text` turns - the "ask" states. Probe 2026-09-17/18 (datagen-2, 24 + 24
+# + 2): teacher 17/26 solved, 26/26 turn-1 replies prose ("I'll need your
+# phone number"), 295 prose / 470 replies (0.63), 0 invented phone numbers;
+# king (reign 13) 0/24, 0 messages to the customer in 221 replies, 24/24
+# turn-1 tool calls with an invented or '?' phone number, 221/221 tool-call
+# thoughts say "ask the user". Fold simulation with the interactive rule:
+# teacher 460 turns / 26 rollouts (314 text incl. 26 turn-1 + 288 deeper
+# asks, 146 tool_call, 7 prose dropped by leak/format); king turn-1 ->
+# king_tooluse one-shot 24/24 (prose_sources), repeats -> persist
+# (tool_sources). tool_use buckets 1430-1659 (when2call owns 1200-1429).
+group = "tool_use"
+runner = "verifiers_chat"                 # harness in a subprocess; τ² needs no sandbox
+taskset_id = "affine-tau2-v1"
+catalog = "tau2"                          # τ² task ids via the verifiers env
+select = "tasks"
+pass_dataset = false
+interactive = true
+policies = ["teacher_tau2", "king_tau2", "king_tau2_greedy"]
+strata_buckets = 230
+strata_offset = 1430
+max_batch = 16
+max_concurrency = 8
+# Share 2.0 + king floor like when2call: ~150 strata within two folds needs
+# ~150 rollouts (one turn per stratum per duel; a rollout gives 6-18 turns
+# over its own task -> one stratum), i.e. ~50 teacher + ~100 king rollouts
+# per day fleet-wide at ~10 min per teacher rollout.
+share = 2.0
+king_rollouts_per_hour = 8
 
 # -- general (env wave 1, 2026-09-11; data plan W3 "environment breadth") ---------
 #

@@ -714,3 +714,49 @@ name = "king"
 model_env = "KING_MODEL"
 base_url_env = "KING_BASE_URL"
 key_env = "KING_KEY"
+
+# -- τ² customer-service loop (env wave 4, 2026-09-17) ---------------------------
+# Harness `affine-tau2-v1` (rollouts/envs/affine_tau2_v1/harness.py): τ²'s
+# orchestrator with an Engy DeepSeek customer. Same trio as when2call: the
+# teacher, the king at the duel temperature, the king greedy. tool_call
+# dialect for the agent's calls; the prose turns to the customer are `text`
+# (fold admission pending, see the wave-4 report). max_tokens 8192: a τ²
+# reply is a short message or one tool call.
+[policy.teacher_tau2]
+harness = "affine-tau2-v1"
+action_kind = "tool_call"
+share = 2.0
+[policy.teacher_tau2.sampling]
+temperature = 0.8
+max_tokens = 8192
+[[policy.teacher_tau2.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+[policy.king_tau2]
+harness = "affine-tau2-v1"
+action_kind = "tool_call"
+share = 2.0
+[policy.king_tau2.sampling]
+temperature = 0.8
+max_tokens = 8192
+[[policy.king_tau2.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_tau2_greedy]
+harness = "affine-tau2-v1"
+action_kind = "tool_call"
+share = 1.0
+[policy.king_tau2_greedy.sampling]
+temperature = 0.0
+max_tokens = 8192
+[[policy.king_tau2_greedy.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
