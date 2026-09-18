@@ -441,6 +441,75 @@ def load_king_divergence() -> dict:
     return out
 
 
+_EXAMPLE_RE = re.compile(r"""(?:such as|e\.g\.|for example|example[s]?:?)\s*['"`]([^'"`\s]{3,64})['"`]""", re.I)
+
+
+def schema_example_values(trace: dict, prefix_text: str = "") -> set[str]:
+    """String values a tool schema offers as EXAMPLES (`example` /
+    `examples` / `default` fields, and "such as 'sara_doe_496'" in
+    descriptions), from the trace's tool schemas and the baked prefix."""
+    out: set[str] = set()
+
+    def walk(x):
+        if isinstance(x, dict):
+            for k, v in x.items():
+                if k in ("example", "examples", "default") and isinstance(v, str) and 3 <= len(v) <= 64:
+                    out.add(v)
+                elif k in ("example", "examples") and isinstance(v, list):
+                    out.update(str(e) for e in v if isinstance(e, (str, int)) and 3 <= len(str(e)) <= 64)
+                elif k == "description" and isinstance(v, str):
+                    out.update(_EXAMPLE_RE.findall(v))
+                else:
+                    walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+
+    walk(trace.get("tools") or [])
+    if prefix_text:
+        out.update(_EXAMPLE_RE.findall(prefix_text))
+    return out
+
+
+def action_string_args(action: str) -> set[str]:
+    """String argument values of a normalised tool-call action (JSON list of
+    {name, arguments}) or of a raw <tool_call> body."""
+    vals: set[str] = set()
+    try:
+        calls = json.loads(action)
+    except (ValueError, TypeError):
+        calls = None
+    if isinstance(calls, list):
+        for c in calls:
+            args = c.get("arguments") if isinstance(c, dict) else None
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except (ValueError, TypeError):
+                    args = None
+            if isinstance(args, dict):
+                vals.update(str(v) for v in args.values() if isinstance(v, (str, int)))
+        return vals
+    vals.update(re.findall(r"<parameter=[^>]+>\s*([^<\n]{3,64}?)\s*</parameter>", action))
+    return vals
+
+
+def divergence_sublabel(row: dict, env: dict, prefix_text: str = "") -> str | None:
+    """`schema_example_where_teacher_asked`: at least one teacher reference
+    stopped with a question and the king's action carries an identifier
+    that is an example value from the tool schema (tau2-airline read
+    2026-09-18: `get_user_details(user_id="sara_doe_496")`)."""
+    refs = row.get("refs") or []
+    asked = any(r.get("stop") and "?" in str(r.get("visible") or "") for r in refs)
+    if not asked:
+        return None
+    examples = schema_example_values(env.get("trace") or {}, prefix_text)
+    if not examples:
+        return None
+    args = action_string_args(str(row.get("king_action") or ""))
+    return "schema_example_where_teacher_asked" if args & examples else None
+
+
 def load_king_done() -> dict:
     """[king_done] (king-data spec §2.2, 2026-09-13): done-blind states.
     The king's reply at turn k-1 was completion-eligible by the harness
@@ -995,7 +1064,14 @@ def yield_report(after: dict[str, int], mix: dict[str, float], group_turns: dict
                         "accepted_turns": y["accepted_turns"],
                         "accepted_per_seen": round(y["records"] / y["seen"], 3) if y["seen"] else None,
                         "top_drops": [{"reason": k, "n": v} for k, v in top]}
-    return {"groups": groups, "sources": sources}
+    subl = {k[len("king_divergence_sublabel_"):]: v for k, v in (NOTES_GLOBAL or {}).items()
+            if k.startswith("king_divergence_sublabel_")}
+    return {"groups": groups, "sources": sources,
+            # tau2-airline read (2026-09-18): "acted with a schema example value
+            # where the teacher asked", per fold and per king digest, so the
+            # rate can be tracked reign over reign.
+            "divergence_sublabels": subl,
+            "interactive_prose_turns": int((NOTES_GLOBAL or {}).get("interactive_prose_turns", 0))}
 
 
 def write_fold_stats(epoch: int, after: dict[str, int], turns_by_group: dict[str, int],
@@ -1488,7 +1564,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         one_reply_king = (is_king_fail and not king_multi_turn(env, king_fail_cfg))
         escapes: set[int] = set()
         want_completion = bool(completion) and completion_candidate(env, completion)
-        if want_loop or want_completion or want_done or want_tooluse or want_pre:
+        interactive = str(env.get("source") or "") in INTERACTIVE_SOURCES
+        if want_loop or want_completion or want_done or want_tooluse or want_pre or interactive:
             try:
                 convs = trace_conversations(env["trace"], baker)
             except (ToolParityError, TraceShapeError) as e:
@@ -1591,9 +1668,24 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                 extra[i] = {"divergence": {k: row.get(k) for k in (
                     "divergence_kind", "stop_eligible", "ref_stop", "king_stop", "ref_n_valid",
                     "ref_unanimous", "king", "probed_at") if k in row}}
+                sub = divergence_sublabel(row, env)
+                if sub:
+                    extra[i]["divergence"]["sublabel"] = sub
+                    _count(notes, f"king_divergence_sublabel_{sub}")
+                    _count(notes, f"king_divergence_sublabel_{sub}_{row.get('king') or 'king'}")
                 if row.get("_kind"):
                     divergence_text[i] = row["_kind"]
         kind_stamp: dict[int, str] = dict(divergence_text)     # turn -> duel-time action_kind
+        if interactive and convs and kind != dialects.TEXT_KIND:
+            # Mid-trajectory prose replies of an interactive harness are
+            # scorable `text` turns (the teacher asks the user, then acts).
+            d_pol = dialects.get(kind)
+            for i in main:
+                reply = convs[i][-1]["content"] if convs[i] and convs[i][-1]["role"] == "assistant" else ""
+                if reply.strip() and not d_pol.actions(reply) and not dialects.get("tool_call").actions(reply):
+                    if i not in route:
+                        kind_stamp.setdefault(i, dialects.TEXT_KIND)
+                        _count(notes, "interactive_prose_turns")
         if want_tooluse and convs and main:
             src = str(env.get("source") or "")
             # (a) one-shot on a prose-answer prompt set: the king opened with a tool call.
@@ -1687,10 +1779,10 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                 prefix = [{"role": nd["role"], "content": nd["content"]}
                           for nd in node_path(rec["nodes"], int(m["node_id"]))[:-1]]
                 if not dialects.get(k_new).mandate_ok(prefix):
-                    _count(notes, f"{route[m['turn_idx']]}_kind_kept_{m['action_kind']}")
+                    _count(notes, f"{route.get(m['turn_idx'], 'interactive')}_kind_kept_{m['action_kind']}")
                     continue
                 m["action_kind"] = k_new
-                _count(notes, f"{route[m['turn_idx']]}_kind_{k_new}")
+                _count(notes, f"{route.get(m['turn_idx'], 'interactive')}_kind_{k_new}")
         turns = view_turns(rec)
         present = {t["turn_idx"] for t in turns}
         if route and convs:
@@ -2254,6 +2346,19 @@ def derive_coached(cfg: dict, baker: ToolBaker, panel, allowed_kinds, published:
 TEACHER_SOLVED_CACHE = CACHE_DIR / "teacher_solved_tasks.json"
 GATE_SHADOW_RETIRE: dict[str, list[str]] = {}   # rows a shadow group WOULD retire under the recovery rule
 YIELD: dict[str, dict] = {}     # per source: envelopes seen, records / turns accepted at derive, drop reasons
+NOTES_GLOBAL: dict[str, int] = {}   # the fold's `notes` counters, for the yield report
+# Sources whose harness talks to a (simulated) user mid-trajectory
+# (`[source.<name>] interactive = true`, tau2-airline read 2026-09-18): a
+# prose reply with no action ("Could you provide your user ID?") is a real,
+# scorable turn there, not only at the end of the rollout. The fold admits
+# those replies with kind `text`. Every other source keeps the final-reply
+# rule, so existing records do not change.
+INTERACTIVE_SOURCES: frozenset[str] = frozenset()
+
+
+def load_interactive_sources() -> frozenset[str]:
+    raw = tomllib.loads(SOURCES_TOML.read_text())
+    return frozenset(name for name, cfg in (raw.get("source") or {}).items() if cfg.get("interactive"))
 
 
 def load_admission_gate() -> dict:
@@ -2740,6 +2845,7 @@ def finalize(state: dict, manifest: dict, mhash: str) -> None:
         "curriculum_line": pending.get("curriculum_line"),
         "floors": pending.get("floors"),
         "yield_groups": pending.get("yield_groups"),
+        "yield_extra": pending.get("yield_extra"),
         "admission_gate": pending.get("admission_gate"),
     }
     if pending.get("coached_folded") is not None:
@@ -2800,6 +2906,17 @@ def yield_line(info: dict) -> str:
         "; full per-source table in corpus/fold_stats.json.\n"
 
 
+def sublabel_line(info: dict) -> str:
+    y = info.get("yield_extra") or {}
+    subl = y.get("divergence_sublabels") or {}
+    parts = []
+    if subl:
+        parts.append("king_divergence sub-labels this fold: " + ", ".join(f"{k} {v}" for k, v in sorted(subl.items())))
+    if y.get("interactive_prose_turns"):
+        parts.append(f"interactive prose turns admitted as text: {y['interactive_prose_turns']}")
+    return ("; ".join(parts) + ".\n") if parts else ""
+
+
 def gate_line(info: dict) -> str:
     ag = info.get("admission_gate")
     if not ag:
@@ -2841,7 +2958,7 @@ def announce(state: dict, public_base: str) -> None:
            if info.get("n_backfill_excluded") else "")
         + budget_note(info)
         + (f"{info['curriculum_line']}\n" if info.get("curriculum_line") else "")
-        + floors_line(info) + yield_line(info) + gate_line(info)
+        + floors_line(info) + yield_line(info) + gate_line(info) + sublabel_line(info)
         + "\n"
         f"- corpus_epoch: **{epoch}**\n"
         f"- schema_version: **3** (view `{VIEW_SPEC}`: one record per rollout "
@@ -3058,6 +3175,10 @@ def main() -> None:
             f"{sum(len(r['turns']) for r in legacy)} turns from v2 epochs")
 
     mix, src2grp, lang_mix, buckets = load_mix(ignore_fold_mix=args.ignore_fold_mix)
+    global INTERACTIVE_SOURCES
+    INTERACTIVE_SOURCES = load_interactive_sources()      # before any derive_chunk call
+    if INTERACTIVE_SOURCES:
+        log(f"interactive sources (mid-trajectory prose replies admitted as text): {sorted(INTERACTIVE_SOURCES)}")
     routed = {KING_LOOP_GROUP: load_king_loop_onset(),
               KING_PIVOT_GROUP: load_king_pivot(),
               KING_RECOVERABLE_GROUP: load_king_recoverable(),
@@ -3130,7 +3251,8 @@ def main() -> None:
     baker = ToolBaker.from_pretrained()
     panel = panel_keys()
     drops: dict[str, int] = {}
-    notes: dict[str, int] = {}
+    notes: dict[str, int] = NOTES_GLOBAL
+    notes.clear()
     candidates: list[dict] = list(carryover)
     for i, c in enumerate(unfolded, 1):
         path = pub.cached(c["key"], c["sha256"], gz_sha=True)
@@ -3375,9 +3497,16 @@ def main() -> None:
         # next to the rule's own bonuses; the excess comes from the others.
         mix = apply_floors(mix, load_floors())
         if curriculum["m"] and budget_cfg:
-            budget_cfg["sub_strata"].update({g: k for g, k in curriculum["m"].items() if k > 1})
-            budget_cfg["signature"] = json.dumps({"base": budget_cfg["signature"], "m": curriculum["m"]}, sort_keys=True)
-            STRATA_BUDGET.clear(); STRATA_BUDGET.update(budget_cfg)
+            # The rule's m only RAISES a group's sub-strata k: the static k
+            # (phase 9/10, the floors' supply lever) is the lower bound, and
+            # bucketed groups keep their buckets (m is moot there).
+            raised = {g: k for g, k in curriculum["m"].items()
+                      if k > budget_cfg["sub_strata"].get(g, 1) and g not in budget_cfg["buckets"]}
+            if raised:
+                budget_cfg["sub_strata"].update(raised)
+                budget_cfg["signature"] = json.dumps({**json.loads(budget_cfg["signature"]), "m": raised}, sort_keys=True)
+                STRATA_BUDGET.clear(); STRATA_BUDGET.update(budget_cfg)
+                log(f"curriculum apply: sub-strata raised by the rule {raised}")
     budget_migrated = False
     rename_only = False
     if budget_cfg and state.get("strata_budget_signature") != budget_cfg["signature"]:
@@ -3385,8 +3514,10 @@ def main() -> None:
         # the index without moving any share: no guard, no announce note.
         try:
             old_sig = json.loads(state.get("strata_budget_signature") or "null")
+            new_sig = json.loads(budget_cfg["signature"])
             old_raw = old_sig.get("raw", old_sig) if isinstance(old_sig, dict) else None
-            rename_only = old_raw is not None and old_raw == json.loads(budget_cfg["signature"])["raw"]
+            rename_only = (old_raw is not None and old_raw == new_sig.get("raw")
+                           and (old_sig.get("m") if isinstance(old_sig, dict) else None) == new_sig.get("m"))
         except (ValueError, TypeError):
             rename_only = False
         # First fold under this budget: re-key the mix state from the live
@@ -3726,6 +3857,8 @@ def main() -> None:
         "n_backfill_excluded": int(drops.get("backfill_excluded", 0)),
         "floors": fstat if STRATA_BUDGET else None,
         "yield_groups": yrep["groups"] if STRATA_BUDGET else None,
+        "yield_extra": {"divergence_sublabels": yrep.get("divergence_sublabels"),
+                        "interactive_prose_turns": yrep.get("interactive_prose_turns")} if STRATA_BUDGET else None,
         "yield_sources": yrep["sources"] if STRATA_BUDGET else None,
         "admission_gate": gate_report or None,
         "gate_enforced": sorted(gate["apply_groups"]) if gate else None,

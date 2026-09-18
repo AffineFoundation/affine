@@ -89,6 +89,14 @@ general = 0.05
 king_coached = 0.02
 king_divergence = 0.03   # phase 10: the king's first out-of-reference action (side-table, improvement-loop worker)
 
+# Per-source flag `interactive = true` (tau2-airline read, 2026-09-18): the
+# harness talks to a simulated user mid-trajectory, so a teacher reply that
+# is PROSE with no tool call ("Could you provide your user ID?") followed by
+# more tool turns is a real, scorable turn. The fold admits those replies
+# with kind `text` (ops/corpus_build.py INTERACTIVE_SOURCES); every other
+# source keeps the final-reply-only text rule, so existing records do not
+# change. Set it on the user-interactive sources when they land (e.g.
+# `[source.affine_tau2_airline] interactive = true`).
 [king_divergence]
 # Phase 10 (Jacob 2026-09-16): the king's FIRST out-of-reference action --
 # the step where the teacher's references stop or go elsewhere and the king
