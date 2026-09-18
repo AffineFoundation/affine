@@ -36,6 +36,7 @@ grep -q '^\[duel.sd_meter\]$' affine/affine.toml || { echo "$(ts) [duel.sd_meter
 python ops/v17/wvk22_toml_edits.py --preview --delta-sd "$DELTA_SD" --forfeit-sd "$FORFEIT_SD" >/dev/null
 python -c "import ast; ast.parse(open('affine/scripts/build_llms_txt.py').read())"
 grep -q 'WVK22_NOTICE' affine/scripts/build_llms_txt.py || { echo "$(ts) llms notice section missing; abort"; exit 1; }
+cp affine/scripts/build_llms_txt.py /tmp/wvk22_builder_check.py && python ops/v17/llms_wvk22_flip_edits.py --date "$DIRECTIVE_DATE" --delta-sd "$DELTA_SD" --forfeit-sd "$FORFEIT_SD" --builder /tmp/wvk22_builder_check.py >/dev/null && python -c "import ast; ast.parse(open('/tmp/wvk22_builder_check.py').read())" && echo "$(ts) llms flip edit dry run ok"
 python -c 'import sys; sys.path.insert(0,"affine"); from evalsrv import sdmeter, dueling; print("evalsrv imports ok")'
 # at least one shadow verdict must exist and be sane (gate of docs/wvk22-plan.md §2)
 python3 - <<'PY'
