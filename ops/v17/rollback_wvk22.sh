@@ -28,6 +28,11 @@ echo "$(ts) === rollback_wvk22.sh start (wvk 22 -> 21 settings: min_rg, 1300 tur
 grep -q '^weight_version_key = 22$' affine/affine.toml || { echo "$(ts) toml is not at wvk 22; abort"; exit 1; }
 grep -q '^score_mode = "sd_min_rga"$' affine/affine.toml || { echo "$(ts) score_mode is not sd_min_rga; abort"; exit 1; }
 python -c "import ast; ast.parse(open('affine/scripts/build_llms_txt.py').read())"
+# king pin: the flip must not disturb the standing king (reign 15, chal-00581, uid 222)
+KING_HK_BEFORE=$(python3 -c 'import json;print(json.load(open("affine/state/state.json"))["king"]["hotkey"])')
+KING_REPO_BEFORE=$(python3 -c 'import json;print(json.load(open("affine/state/state.json"))["king"]["repo"])')
+echo "$(ts) king before: $KING_HK_BEFORE $KING_REPO_BEFORE"
+[[ "$KING_HK_BEFORE" == "${EXPECT_KING_HOTKEY:-$KING_HK_BEFORE}" ]] || { echo "$(ts) king hotkey differs from EXPECT_KING_HOTKEY; abort"; exit 1; }
 echo "$(ts) preflight ok"
 
 POD_SSH_STR=$(python3 -c 'import json;print(json.load(open("affine/state/state.json"))["eval_machine"]["ssh"])')
@@ -122,7 +127,9 @@ python ops/v17/llms_wvk22_flip_edits.py --rollback "$DIRECTIVE_DATE"
 python affine/scripts/build_llms_txt.py | tail -1
 
 # --- 5b. pods: reverted toml
-cd affine && python scripts/redeploy_pods.py --all && cd "$REPO"
+# eval pod ONLY: the bench pod (reign 15's card pass) and the chat pod are not touched;
+# the king seat (pm2 affine-king-datagen / kingctl) reads state.json and is not restarted.
+cd affine && python scripts/redeploy_pods.py --role eval && cd "$REPO"
 echo "$(ts) redeploy_pods done"
 "${POD_SSH[@]}" 'grep -E "^(weight_version_key|score_mode|n_turns) " /root/affine/affine.toml' || echo "$(ts) WARNING pod verify ssh failed"
 
@@ -132,6 +139,9 @@ sleep 5
 pm2 ls | grep affine-validator || true
 for i in $(seq 1 60); do h=$(health); [[ -n "$h" ]] && { echo "$(ts) pod health: $h"; break; }; sleep 5; done
 pm2 restart affine-dash >/dev/null 2>&1 && echo "$(ts) affine-dash restarted" || true
+KING_HK_AFTER=$(python3 -c 'import json;print(json.load(open("affine/state/state.json"))["king"]["hotkey"])')
+[[ "$KING_HK_AFTER" == "$KING_HK_BEFORE" ]] && echo "$(ts) king unchanged: $KING_HK_AFTER" || echo "$(ts) WARNING king changed across the restart: $KING_HK_BEFORE -> $KING_HK_AFTER"
+python ops/king-datagen/kingctl.py status 2>/dev/null | head -3 || true
 git add affine/affine.toml affine/website/code/affine.toml affine/scripts/build_llms_txt.py affine/website/llms.txt && git commit -q -m "contract: ROLLBACK wvk 22 -> 21 settings (min_rg, 1300 turns) per docs/wvk22-plan.md §3 (operator-directed, $DIRECTIVE_DATE)" && echo "$(ts) committed $(git rev-parse --short HEAD)"
 echo "$(ts) rollback done. Next: first verdict must stamp score_mode=min_rg, n_turns 1300 (shadow.sd_meter stays as telemetry); Discord + AGENTS.md note."
 echo DONE
