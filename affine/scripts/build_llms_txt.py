@@ -392,8 +392,10 @@ slices (notice {WVK22_NOTICE}, effective {WVK22_EFFECTIVE})** — the turn score
 becomes minus the largest standardised deviation of your reply from the \
 teacher's own samples across the three factors of the teacher's joint \
 (thought typicality on content tokens, thought→action, action←thought), in \
-teacher-sd units; δ, k_sigma and the forfeit floor re-expressed in sd \
-units; band_c/band_floor retired; forward-only, reign 14 stands
+teacher-sd units, with thoughts scored as generated (`<think>` reasoning, \
+then a visible thought, then the action); δ, k_sigma and the forfeit floor \
+re-expressed in sd units; band_c/band_floor retired; forward-only, reign 15 \
+(uid 222) stands
 - **Fork history: wvk 21 — double evaluation removed (effective \
 {WVK21_EFFECTIVE})** — the wvk-19 confirmation slice is gone: a challenger \
 crowns on ONE 1,300-turn slice when its margin clears `max(2·SE, 0.002)`, as \
@@ -1085,9 +1087,10 @@ near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
 
 **Effective {WVK22_EFFECTIVE} at the first duel dispatched after the eval pod \
 redeploy (notice {WVK22_NOTICE} 10:46 UTC; explicit dated operator directive \
-2026-09-18 10:04 / 10:25 UTC; go 15:11 UTC "only when the current queued models \
-have run" — the queue as of 15:11, `chal-00582` … `chal-00588`, was judged under \
-wvk 21 first). Reign 15 (`chal-00581`, crowned 14:59 UTC under wvk 21) stands.** \
+2026-09-18 10:04 / 10:25 UTC; go 15:11 UTC; 19:40 UTC "fold it in" + "release \
+wvk 22 right now" — flipped at the duel boundary after `chal-00586`, 20:41 UTC: \
+duels through `chal-00586` were judged under wvk 21, `chal-00587` onward under \
+wvk 22). Reign 15 (`chal-00581`, uid 222, crowned 14:59 UTC under wvk 21) stands.** \
 `weight_version_key = 22`; `[duel].score_mode = "sd_min_rga"`, `n_turns = 1000`; \
 `[duel.sd_meter]`: `min_margin_sd = 0.2` (δ, teacher-sd), `k_sigma = 2.0`, \
 `forfeit_sd = -12`, `content_lift_nats = 1.0`, `content_min_tokens = 10`, \
@@ -1101,10 +1104,10 @@ under `shadow.sd_meter` (`role = "rule"`).
 directive 2026-09-18 19:40 UTC "fold it in").** `[duel].thought_rendering = \
 "as_generated"`: for EVERY echo — typicality / grounding, Reason's injection, \
 the B licence, the action leg, the content-mask ∅ echo — a thought is rendered \
-the way the model produced it, `<think>{latent}\n</think>\n\n{visible}\n\n{y}`, \
+the way the model produced it, `<think>{latent}\\n</think>\\n\\n{visible}\\n\\n{y}`, \
 and the latent and visible spans are scored (the separator is not); the \
 visible text is taken verbatim, no `THOUGHT:` label added or stripped. The old \
-canonical body `</think>\nTHOUGHT: {z}\n\n{y}` (wvk ≤ 21, kept for replay) put \
+canonical body `</think>\\nTHOUGHT: {z}\\n\\n{y}` (wvk ≤ 21, kept for replay) put \
 the model's reasoning AFTER `</think>` as prose. Why: under that body the \
 teacher's own visible sentence scored −0.18 nats/byte (as generated: −0.06), so \
 the meter could not tell the teacher's held-out reply from a reasoning-only \

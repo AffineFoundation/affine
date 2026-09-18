@@ -31,7 +31,16 @@ evalsrv package under `affine/`.
 
 ---
 
-## 2. Frozen production scoring — min(R,G) v5: centered Reason + banded Grounding + δ + length floor + B gate (2026-08-27, `weight_version_key = 10`, genesis reset)
+## 2. Frozen production scoring — sd-meter min(z_R, typ_c, z_A) since wvk 22 (2026-09-18); min(R,G) v5 below is the wvk 10–21 rule
+
+**Live rule since wvk 22 (2026-09-18):** `score_mode = "sd_min_rga"`, `n_turns =
+1000` — turn = min(z_R, typ_c, z_A) in teacher-sd units (definition, knobs and
+calibration in §4 under `weight_version_key = 22`; module
+`affine/evalsrv/sdmeter.py`). R below is still the R leg; G (the band) is
+replaced by content-token typicality; the A leg (summed) is live. Gates
+(thought-length floor, B licence, protocol probe) unchanged.
+
+### History — min(R,G) v5 (wvk 10–21): centered Reason + banded Grounding + δ + length floor + B gate (2026-08-27, `weight_version_key = 10`, genesis reset)
 
 Implemented in `affine/affine/score.py` (research twin `research/harness/score.py`,
 which also keeps v4 under `turn_reason` / `score_mode="reason"` and v2 under
@@ -673,7 +682,65 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
-- `weight_version_key = 21` (2026-09-17 10:52 UTC, explicit dated operator
+- `weight_version_key = 22` (2026-09-18 20:41 UTC, explicit dated operator
+  directive 2026-09-18 10:04 UTC "I like it. And I want to ship it" / 10:25
+  "lets reduce the turns to 1000" / go 15:11 "only when the current queued
+  models have run"; 19:40 "fold it in" + "release wvk 22 right now"): **the
+  sd-meter is the rule and thoughts are scored as generated** — `score_mode =
+  "sd_min_rga"`, `thought_rendering = "as_generated"` (every echo renders
+  `<think>{latent}
+</think>
+
+{visible}
+
+{y}`, latent + visible spans
+  scored, visible verbatim; `canonical` = the wvk ≤ 21 body
+  `</think>
+THOUGHT: {z}`, kept for replay — `evalsrv/chat.py`
+  `thought_body` / `split_z`, two-span `_echo_span`), `n_turns = 1000`,
+  `[duel.sd_meter]` `min_margin_sd = 0.20`,
+  `k_sigma = 2.0`, `forfeit_sd = -12`, `content_lift_nats = 1.0`,
+  `content_min_tokens = 10`, `typicality_width = 2.0`, `a_norm_bytes = 1.0`,
+  `anchor = "loo"`. turn = min(z_R, typ_c, z_A): the largest standardised
+  deviation of the reply from the teacher's own k = 3 samples across thought
+  typicality on content tokens (|lpC(tok|x) − lpC(tok|∅)| > 1 nat),
+  thought→action (the live centred R) and action←thought (summed A leg), in
+  teacher-sd units — μ per turn from the refs' leave-one-out values (6 cross
+  echoes, shared), σ pooled per dialect over the duel. `band_c` /
+  `band_floor` / `min_margin` / `forfeit_turn_score` stay in the toml for
+  wvk ≤ 21 replay only. Code: `affine/evalsrv/sdmeter.py` (+ `terms.py` /
+  `vllm_client.py` cache-aware echoes with per-tag cost accounting,
+  `dueling.py` `sd_min_rga` decide path), `affine/affine/config.py` /
+  `score.py`; ops `ops/v17/` (shadow deploy, notice, flip, rollback,
+  `ops/sd-meter/refresh_frozen.py`). Shadow read 10:41–23:xx UTC on every
+  verdict (`verdict.shadow.sd_meter`, both anchors): 3 duels all sane — LOO
+  and frozen agreed 3/3 with the live decision, positive control teacher vs
+  king z +3.4 / +5.9 / +3.6, no leg bound > 45 %, σ per dialect within 1.2× of
+  phase-2; cost +80 % echo requests / +57 % prompt tokens / +60–63 % computed
+  tokens, wall +15–19 % at n = 1300. Why as generated (project store
+  `docs/g-rendering-claim.md` §8 + `internal/g-rendering/HANDOVER.md`): the
+  canonical body scored the teacher's own visible sentence at −0.18/byte (as
+  generated −0.06), so the meter could not tell the teacher's held-out reply
+  from a reasoning-only king (G control z 1.2 → 8.7; content typicality
+  ref − king +0.20 → +2.40 sd); every king since reign 11 is latent-only.
+  Calibration under the new rendering (225 stored turns re-echoed + the 3
+  shadow duels): kings' typ_c mean ≈ −1.2, sd 2.9, p1 −12, 59 % of turns
+  outside 2σ; paired sd_diff ≈ 2.4–3.1 → δ = 0.082·sd_diff ≈ 0.20; floor
+  under p1 and "2 % forfeit ≈ one δ" both ≈ −12. Pad-after-`</think>` arm
+  (75 turns, live swarm, new code, `ops/v17/pad_arm/`): repeat / tail /
+  generic visible text scores −1.3 / −1.2 / −2.1 typ_c BELOW the honest
+  reasoning-only reply — the lever does not pay. Frozen anchors are (a)-
+  calibrated: `anchor = "loo"` only. Cutoff plan (queue as of 15:11 UTC
+  under wvk 21 first, 8 h max timer) was superseded by the 19:40 directive:
+  flip at the next boundary, queued entries judged under wvk 22. Reign 15
+  (`chal-00581`, crowned 14:59 UTC under wvk 21, sd-meter agreed: +0.139 sd,
+  z 4.73) stands; forward-only. First wvk-22 verdict `chal-00587`:
+  margin -0.028 sd, SE 0.056, z -0.51, 3108 s.
+  Rollback rule (first 3 verdicts; `ops/v17/rollback_wvk22.sh`): SE > 2× the
+  shadow's, teacher-vs-king z ≤ −2, any leg binds > 80 %, a leg dropped on
+  > 5 % of valid turns. Public claim unchanged: a better distillation meter,
+  not benchmark alignment. Plan + status: project store `docs/wvk22-plan.md`.
+  21 = 2026-09-17 10:52 UTC, explicit dated operator
   directive 10:07 UTC "Remove the double eval on kings. This is too difficult.
   Lets crown if any model passes 2 sigma like before … Feel free to crown the
   last model which passed but failed the crown": `confirmation_required = false`
@@ -1167,6 +1234,14 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 
 ## 12. One-paragraph resume
 
+> **Since wvk 22 (2026-09-18) the live rule is the sd-meter:** turn =
+> min(z_R, typ_c, z_A) — the largest standardised deviation of the reply from
+> the teacher's own three samples across content-token thought typicality,
+> thought→action (centred R) and action←thought (summed A), in teacher-sd
+> units (leave-one-out μ per turn, σ pooled per dialect); 1,000-turn slices;
+> crown iff paired mean > max(2·SE, 0.07 sd) + gates; forfeit −4.5 sd. The
+> paragraph below describes the wvk 10–21 rule it replaced.
+>
 > Affine SN120: teacher-anchored thought-injection duels. Since 2026-08-27
 > (`weight_version_key=15` since the 2026-09-12 window-best crown fork —
 > crown decided per 12 h window, best positive margin, confirmed on a
