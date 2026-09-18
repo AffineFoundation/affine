@@ -1416,8 +1416,54 @@ def build_oolong_catalog(cfg: RolloutsConfig, src: Source) -> dict:
         "total": len(rows), "kept": len(kept), "panel_excluded": 0, "unusable": 0})
 
 
+# -- τ² telecom (env wave 4, 2026-09-17): the disjoint pool = `full` minus the
+# benchmarked `base` split, listed through the verifiers env (τ²'s own task
+# loader; the data dir bootstraps on first use). Names are τ² task ids.
+TAU2_LIST = r"""
+import json, os, sys
+os.environ.setdefault("TAU2_DATA_DIR", os.path.expanduser("~/.cache/tau2-bench-v1/data"))
+from affine_tau2_v1.taskset import AffineTau2Taskset, AffineTau2Config
+tasks = AffineTau2Taskset(AffineTau2Config()).load()
+out = []
+for t in tasks:
+    scen = t.data.model_dump(mode="json").get("user_scenario") or {}
+    persona = (scen.get("persona") or {}) if isinstance(scen, dict) else {}
+    name = t.data.name
+    raw = name.split("-", 1)[1] if "-" in name else name     # "tau2-[intent]..." -> τ² id
+    intent = raw.split("]", 1)[0].strip("[") if raw.startswith("[") else "telecom"
+    out.append({"uid": name, "intent": intent})
+json.dump(out, sys.stdout); sys.stdout.flush()
+os._exit(0)
+"""
+
+
+def build_tau2_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    rows = _verifiers_listing(cfg, TAU2_LIST, what="tau2")
+    kept: list[dict] = []
+    seen: set[str] = set()
+    for r in rows:
+        uid = r["uid"]
+        if uid in seen:
+            continue
+        seen.add(uid)
+        _, num = _text_uid("tau2", uid)
+        intent = re.sub(r"[^a-z0-9]+", "_", str(r.get("intent") or "telecom").lower()).strip("_")
+        kept.append(_bucketed(src, {
+            "uid": uid,
+            "sid": f"tau2_{intent}-{num}",
+            "repo": f"tau2/{intent}",
+            "language": "tool",
+            "intent": intent,
+        }))
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": "tau2-bench@337326e telecom full\\base",
+        "total": len(rows), "kept": len(kept), "panel_excluded": 0,
+        "unusable": len(rows) - len(kept)})
+
+
 BUILDERS = {
     "hf": build_hf_catalog,
+    "tau2": build_tau2_catalog,
     "rgym": build_rgym_catalog,
     "when2call": build_when2call_catalog,
     "rcore": build_rcore_catalog,
