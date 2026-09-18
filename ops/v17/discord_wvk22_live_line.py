@@ -44,16 +44,17 @@ def main() -> int:
         ap.add_argument(k, required=True)
     a = ap.parse_args()
     public = (f"**wvk 22 is live ({a.flip_time}).** The scoring rule is now the sd-meter "
-              f"`min(z_R, typ_c, z_A)` in teacher-sd units on **1,000-turn** slices: δ = **0.07 sd**, "
-              f"k_sigma = 2, forfeit floor = **−4.5 sd** (calibrated on the shadow read to keep today's crown "
-              f"rate: δ ≈ 1.25–1.5× the 2σ bar; the old −0.1 floor sat 4.7–5.3 sd below the mean valid turn). "
-              f"The queue as of 15:11 UTC (through `chal-00588`) was judged under wvk 21 first; **reign 15 stands**; "
+              f"`min(z_R, typ_c, z_A)` in teacher-sd units on **1,000-turn** slices, with thoughts **scored as generated** "
+              f"(`<think>reasoning</think>` + visible thought + action, for the teacher references and both sides): δ = **0.20 sd**, "
+              f"k_sigma = 2, forfeit floor = **−12 sd** (calibrated on the as-generated re-echo of 225 stored turns: δ = 0.082 × the "
+              f"per-turn diff sd; floor under the 1st percentile of the kings' valid turns). "
+              f"Duels through `chal-00586` were judged under wvk 21; everything from `chal-00587` on under wvk 22. **Reign 15 stands**; "
               f"forward-only, no re-verdicts. First wvk-22 verdict `{a.first}`: margin {a.margin} sd, SE {a.se}, "
               f"z {a.z}, {a.seconds} s. Every verdict's `margin / se / z` are now in sd units; the leg breakdown "
               f"(z_R, typ_c, z_A, bind fractions, teacher control) is under `shadow.sd_meter` with `role = \"rule\"`. "
               f"Full definition + knobs: https://affine.io/llms.txt → \"Fork history: wvk 22\".")
-    private = (f"wvk 22 live {a.flip_time}: score_mode sd_min_rga, n_turns 1000, δ_sd 0.07, k_sigma 2, forfeit −4.5 sd; "
-               f"box `{a.box_commit}`, PR #36. Cutoff set chal-00582..00588 judged under wvk 21; reign 15 stands. "
+    private = (f"wvk 22 live {a.flip_time}: score_mode sd_min_rga, thought_rendering as_generated, n_turns 1000, δ_sd 0.20, k_sigma 2, forfeit −12 sd; "
+               f"box `{a.box_commit}`, PR #36. Duels through chal-00586 judged under wvk 21; reign 15 stands. "
                f"First verdict `{a.first}`: margin {a.margin} sd / SE {a.se} / z {a.z} / {a.seconds} s. Rollback rule "
                f"on the first 3 verdicts (SE > 2× shadow, teacher-vs-king z ≤ −2, leg binds > 80 %, leg dropped > 5 %): "
                f"`bash ops/v17/rollback_wvk22.sh`.")

@@ -37,9 +37,15 @@ def main() -> int:
         f"""- `weight_version_key = 22` ({a.flip_time}, explicit dated operator
   directive 2026-09-18 10:04 UTC "I like it. And I want to ship it" / 10:25
   "lets reduce the turns to 1000" / go 15:11 "only when the current queued
-  models have run"): **the sd-meter is the rule** — `score_mode =
-  "sd_min_rga"`, `n_turns = 1000`, `[duel.sd_meter]` `min_margin_sd = 0.07`,
-  `k_sigma = 2.0`, `forfeit_sd = -4.5`, `content_lift_nats = 1.0`,
+  models have run"; 19:40 "fold it in" + "release wvk 22 right now"): **the
+  sd-meter is the rule and thoughts are scored as generated** — `score_mode =
+  "sd_min_rga"`, `thought_rendering = "as_generated"` (every echo renders
+  `<think>{{latent}}\n</think>\n\n{{visible}}\n\n{{y}}`, latent + visible spans
+  scored, visible verbatim; `canonical` = the wvk ≤ 21 body
+  `</think>\nTHOUGHT: {{z}}`, kept for replay — `evalsrv/chat.py`
+  `thought_body` / `split_z`, two-span `_echo_span`), `n_turns = 1000`,
+  `[duel.sd_meter]` `min_margin_sd = 0.20`,
+  `k_sigma = 2.0`, `forfeit_sd = -12`, `content_lift_nats = 1.0`,
   `content_min_tokens = 10`, `typicality_width = 2.0`, `a_norm_bytes = 1.0`,
   `anchor = "loo"`. turn = min(z_R, typ_c, z_A): the largest standardised
   deviation of the reply from the teacher's own k = 3 samples across thought
@@ -57,11 +63,22 @@ def main() -> int:
   and frozen agreed 3/3 with the live decision, positive control teacher vs
   king z +3.4 / +5.9 / +3.6, no leg bound > 45 %, σ per dialect within 1.2× of
   phase-2; cost +80 % echo requests / +57 % prompt tokens / +60–63 % computed
-  tokens, wall +15–19 % at n = 1300. Calibration: δ = 0.082·sd_diff (last 40
-  live verdicts) × measured sd_diff 0.89 → 0.07; the live −0.1 floor sat at
-  −4.7…−5.3 sd of live valid turns (the phase-2 −2.4 was a wider panel) → −4.5
-  (a 2 % forfeit gap ≈ one δ, as under wvk 12). Cutoff: the queue as of
-  15:11 UTC (`chal-00582`…`00588`) ran under wvk 21 first; reign 15
+  tokens, wall +15–19 % at n = 1300. Why as generated (project store
+  `docs/g-rendering-claim.md` §8 + `internal/g-rendering/HANDOVER.md`): the
+  canonical body scored the teacher's own visible sentence at −0.18/byte (as
+  generated −0.06), so the meter could not tell the teacher's held-out reply
+  from a reasoning-only king (G control z 1.2 → 8.7; content typicality
+  ref − king +0.20 → +2.40 sd); every king since reign 11 is latent-only.
+  Calibration under the new rendering (225 stored turns re-echoed + the 3
+  shadow duels): kings' typ_c mean ≈ −1.2, sd 2.9, p1 −12, 59 % of turns
+  outside 2σ; paired sd_diff ≈ 2.4–3.1 → δ = 0.082·sd_diff ≈ 0.20; floor
+  under p1 and "2 % forfeit ≈ one δ" both ≈ −12. Pad-after-`</think>` arm
+  (75 turns, live swarm, new code, `ops/v17/pad_arm/`): repeat / tail /
+  generic visible text scores −1.3 / −1.2 / −2.1 typ_c BELOW the honest
+  reasoning-only reply — the lever does not pay. Frozen anchors are (a)-
+  calibrated: `anchor = "loo"` only. Cutoff plan (queue as of 15:11 UTC
+  under wvk 21 first, 8 h max timer) was superseded by the 19:40 directive:
+  flip at the next boundary, queued entries judged under wvk 22. Reign 15
   (`chal-00581`, crowned 14:59 UTC under wvk 21, sd-meter agreed: +0.139 sd,
   z 4.73) stands; forward-only. First wvk-22 verdict `{a.first_verdict}`:
   margin {a.first_margin} sd, SE {a.first_se}, z {a.first_z}, {a.first_seconds} s.
