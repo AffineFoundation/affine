@@ -139,6 +139,7 @@ def build(bench_home: Path) -> dict:
             "rollout_timeout_s": e.get("rollout_timeout"), "concurrency": e.get("concurrency"),
             "datasets": dataset_pins(tdir) if tdir.exists() else None,
             "venv": e.get("venv"), "graded": e.get("graded", "deterministic"), "judge": e.get("judge"),
+            "runner": e.get("runner"),   # non-verifiers runners (ARE / Gaia2): package + version + dataset revision
         }
     lock = {
         "lock_version": 1,

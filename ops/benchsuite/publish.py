@@ -14,6 +14,7 @@ DATA_R2_ENDPOINT (the corpus fold's affine-data-only key) or the repo .env.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import gzip
 import hashlib
 import json
@@ -23,7 +24,11 @@ import sys
 import time
 import tomllib
 
-FAILED_CELL_ERROR_SHARE = 0.90   # >= this share errored -> the cell is a failed run, score null
+# >= this share of rollouts errored (infrastructure) -> the cell is a failed run: score null,
+# status "failed", nothing quotable. 0.90 let King 14's SWE-bench cell through with 406/500
+# docker pulls failed ("Unable to find image", Docker Hub cap) and a 70.4 finished-only over
+# 54 tasks on the board (2026-09-17 18:18 UTC); half the tasks missing is not a score.
+FAILED_CELL_ERROR_SHARE = 0.50
 from pathlib import Path
 
 import boto3
@@ -112,6 +117,11 @@ def scorecard(run_dir: Path) -> dict:
                "finish_length_frac": x.get("finish_length_frac"),
                "by_class": x.get("by_class") or None,
                "status": "failed" if failed else "ok"}
+        # cloud-sandbox / harness-change provenance (harbor_cell.py cells): the kingboard
+        # flags a cell whose harness differs from the card's default for that env
+        for key in ("sandbox", "harness", "harness_change", "harness_note", "budget", "served_by"):
+            if x.get(key) is not None:
+                out[key] = x[key]
         if failed:
             out["raw_score"] = x["score"]
             out["failure"] = f"{n_err}/{n} rollouts errored (run failure, not a model score)"
@@ -121,11 +131,14 @@ def scorecard(run_dir: Path) -> dict:
 
     rows = []
     for env_id, temps in cells.items():
-        e = by_id.get(env_id, {})
+        # "<env>@<budget tag>" = the same env at a non-default budget (a separate column)
+        base_env, _, budget_tag = env_id.partition("@")
+        e = by_id.get(base_env, {})
         for tkey, models in temps.items():
             k, t = models.get("king"), models.get("teacher")
             rows.append({
-                "env": env_id, "group": e.get("group"), "temperature": float(tkey[1:]),
+                "env": env_id, "base_env": base_env, "budget_tag": budget_tag or None,
+                "group": e.get("group"), "temperature": float(tkey[1:]),
                 "note": e.get("note"),
                 "show_classes": e.get("show_classes"),
                 "graded": e.get("graded", "deterministic"),   # "llm_judge" = advisory, never in the score
@@ -140,9 +153,14 @@ def scorecard(run_dir: Path) -> dict:
             })
     unfinished = sorted(str(d.relative_to(run_dir)) for d in run_dir.glob("*/*")
                         if d.is_dir() and (d / "cmd.txt").exists() and not (d / "summary.json").exists())
+    done_cells = sorted(str(d.relative_to(run_dir)) for d in run_dir.glob("*/*") if d.is_dir() and (d / "summary.json").exists())
+    partial = bool(unfinished or PARTIAL)
     return {
         "run_id": manifest.get("run_id"),
-        "status": "partial" if (unfinished or PARTIAL) else "complete",
+        "status": "partial" if partial else "complete",
+        "running": partial,   # cells publish as they finish; the card fills in until the final publish
+        "progress": {"done": len(done_cells), "total": len(done_cells) + len(unfinished), "remaining": unfinished,
+                     "as_of": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
         "unfinished_cells": unfinished,
         "king": manifest.get("king"), "teacher": manifest.get("teacher"),
         "where": manifest.get("where"), "code": manifest.get("code"),
@@ -199,8 +217,8 @@ def main() -> int:
         if not p.is_file():
             continue
         rel = p.relative_to(run_dir).as_posix()
-        if only and not (any(rel.startswith(c + "/") for c in only) or "/" not in rel):
-            continue      # partial publish: the named cells + the run's top-level manifests
+        if only and not (any(fnmatch.fnmatch(rel, c + "/*") for c in only) or "/" not in rel):
+            continue      # partial publish: the named cells (globs ok, e.g. king/*) + the run's top-level manifests
         if rel.endswith("traces.jsonl"):
             gz = p.with_suffix(".jsonl.gz")
             if not gz.exists() or gz.stat().st_mtime < p.stat().st_mtime:

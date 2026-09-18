@@ -85,6 +85,33 @@ tool_call_parser = "qwen3_xml"
 # The bench pod (AFFINE_ROLE=bench) was checked as a host and rejected:
 # evalsrv loads the miner per bench job and unloads it in `finally`, holds one
 # busy lock per pod, and its vLLM port is not tunnelled.
+# ------------------------------------------------------- cloud sandboxes
+# sandbox = "daytona" (2026-09-17, Jacob): the sandbox-heavy Harbor-able cells
+# (SWE-bench Verified / Pro, Terminal-Bench 2) run through `harbor run -e daytona`
+# from the box while the GPU pod only serves the model. Org quota (region us,
+# container class): 500 vCPU / 1000 GB RAM / 5 TB disk / 10 GPU, 30 snapshots —
+# no sandbox-count cap; SWE tasks are 1 vCPU / 4 GB, so ~250 fit; we run 100.
+# tau2 / tau3 need no sandbox (their tools run in the orchestrator); GraphWalks /
+# Oolong / MRCR / miniF2F are verifiers tasksets without a Harbor dataset and
+# stay on the pod's docker / Prime sandboxes.
+[sandbox_daytona]
+enabled = true
+concurrency = 100
+# pods for a Daytona pass above 50 in flight: two TP1 replicas behind nginx (whichever has stock),
+# then the normal plan list. One replica saturates at ~50 agents (prefill-bound), and the
+# whole point of the mode is wall time.
+pod_plans = ["h200-2x", "b200-2x"]
+harbor_version = "0.21.0"
+key_env = "DAYTONA_API_KEY"          # Arbos vault item "Daytona Arbos" (op://Arbos/fywmj6vtq5delybw5c7a53l2qa)
+envs = ["swebench-verified", "terminal-bench-2", "swebench-pro"]
+# budgets: default = the card's 1 h; "4h250" = Albedo's setting (4 h wall, 250 model calls)
+[sandbox_daytona.budgets.default]
+agent_timeout_s = 3600
+step_limit = 0
+[sandbox_daytona.budgets.4h250]
+agent_timeout_s = 14400
+step_limit = 250
+
 [modes]
 default = "lium"            # operator decision 2026-09-13 (later the same day): in-house GPUs paid in TAO
 lium_plan = "h200-1x"       # [pods.plans.*]: 1x H200 = one TP1 replica, ~$3/h; the whole pass runs on that pod
@@ -105,7 +132,8 @@ sandbox_envs = ["swebench-verified", "minif2f", "graphwalks", "oolong-synth", "m
 # `agentic` pass mode (own pod, king only, merged into the king's card): docker
 # on the pod for the Harbor sets, the tau2 orchestrator as a subprocess on the pod.
 agentic_envs = ["terminal-bench-2", "tau2-airline", "tau2-retail", "tau2-telecom", "tau3-banking", "swebench-pro"]
-agentic_std_envs = ["terminal-bench-2", "tau2-airline", "tau2-retail", "tau2-telecom", "tau3-banking"]   # every model that gets agentic cells (operator 2026-09-15); swebench-pro is queued separately
+agentic_std_envs = ["terminal-bench-2", "tau2-airline", "tau2-retail", "tau2-telecom", "tau3-banking"]
+ask_envs = ["gaia2-ambiguity"]   # the ask-hole set (gaia2_cell.py; UserBench-test / ITSMBench staged, see docs/benchsuite.md §13)   # every model that gets agentic cells (operator 2026-09-15); swebench-pro is queued separately
 prime_king_replicas = "31001:0,1:2;31002:2,3:2;31003:4,5:2;31004:6,7:2"   # king-only pod layout
 cheap_plan = "h200-1x"
 
@@ -362,7 +390,7 @@ max_tokens = 4096
 reward = "correct"
 secondary = false
 class_field = "category"
-show_classes = ["irrelevance", "live_irrelevance", "live_relevance"]
+show_classes = ["irrelevance", "live_irrelevance", "live_relevance", "multi_turn_miss_param"]   # miss_param = "did it ask for the missing argument" (ask-hole column, 2026-09-18)
 note = "BFCL v3, every scoring category (single-turn AST/relevance + multi-turn); official bfcl_eval checkers; tools served as MCP."
 
 [[envs]]
@@ -453,6 +481,9 @@ max_turns = 300
 rollout_timeout = 3600      # fixed budget: same for every reign
 concurrency = 48            # fixed: 48 tasks in flight, run alone on the pod (parallel_envs 1 in the sandbox phase)
 note = "SWE-bench Verified, all 500, mini-swe-agent harness, prebuilt swebench/sweb.eval images; the task's own hidden tests grade."
+# sandbox = "daytona" route (harbor_cell.py): same 500 tasks from the Harbor registry, containers on
+# Daytona, Harbor's mini-swe-agent adapter (upstream mini-swe-agent v2 in the sandbox) = harness change.
+harbor = { dataset = "swebench-verified@1.0", agent = "mini-swe-agent", task_agent_timeout_s = 3000 }
 
 # ------------------------------------------------------------ agentic set
 # Added 2026-09-15 (Jacob: "kings comparable to public agentic releases",
@@ -476,6 +507,7 @@ max_turns = 200
 rollout_timeout = 3600
 concurrency = 16
 note = "Terminal-Bench 2.0, all 89 tasks (Harbor dataset terminal-bench/terminal-bench-2, alexgshaw/* Docker Hub images), Terminus 2 harness = the public leaderboard's reference agent; each task's hidden verifier grades pass/fail. Fixed 1 h budget per task. Occamy reports 'Terminal-Bench 2.1' (same task set, harness release 2.1)."
+harbor = { dataset = "terminal-bench@2.0", agent = "terminus-2", task_agent_timeout_s = 3600 }
 
 [[envs]]
 id = "swebench-pro"
@@ -492,6 +524,7 @@ max_turns = 300
 rollout_timeout = 3600
 concurrency = 48
 note = "SWE-bench Pro public split, all 731 (Harbor dataset scale-ai/swe-bench-pro, SWEAP jefzda/* images), mini-swe-agent harness like our SWE-bench Verified row (the public leaderboard uses SWE-agent; not directly comparable). ~16 h on one H200; read finished-only next to the full score."
+harbor = { dataset = "swebenchpro@1.0", agent = "mini-swe-agent", task_agent_timeout_s = 3000 }
 
 [[envs]]
 id = "tau2-airline"
@@ -558,5 +591,28 @@ concurrency = 8
 graded = "llm_judge"          # ADVISORY ONLY (operator 2026-09-15): the card and the column tooltip mark it
 judge = { model = "openai/gpt-4.1", via = "Prime Inference (api.pinference.ai)", temperature = 0, role = "NL-assertion judge; the same model simulates the user", pinned_by = "tau3-bench 0.3.0 harness.py (evaluator_nl_assertions.DEFAULT_LLM_NL_ASSERTIONS)" }
 note = "tau3-bench banking_knowledge (97 tasks, Sierra tau2-bench@58e5e1a), the row Occamy reports as 'tau3-Bench (Banking)'. Official reward: DB state + NL assertions judged by gpt-4.1 (T=0, Prime Inference) — the suite's only judge-graded cell; advisory, never in the score."
+
+# ---------------------------------------------------------- ask-hole set (2026-09-18)
+# Meta ARE / Gaia2 `ambiguity`: run by gaia2_cell.py through Meta's own runner (are-benchmark),
+# not a verifiers taskset: scripted user, ARE's GraphPerEventJudge (rule-based per-event checks +
+# an LLM soft checker for free-text arguments -> graded = llm_judge, advisory). Eval-only by
+# license (CC-BY-4.0 "benchmarking purposes only"); never in D.
+[[envs]]
+id = "gaia2-ambiguity"
+taskset = "are:gaia2/ambiguity"
+install = "envs/none"
+runner = { kind = "are-benchmark", package = "meta-agents-research-environments", version = "1.2.0", agent = "default", hf_dataset = "meta-agents-research-environments/gaia2", hf_config = "ambiguity", hf_split = "validation", hf_revision = "78ea3bdbdeec2bdcd6afa5420915d8a22f23ed99", filesystem = "meta-agents-research-environments/gaia2_filesystem (demo_filesystem mirrored locally, DEMO_FS_PATH)" }
+group = "agentic"
+n = -1
+harness = "are:default_agent"
+runtime = "in-process"
+max_tokens = 16384
+reward = "gaia2_success"
+secondary = false
+rollout_timeout = 1800
+concurrency = 16
+graded = "llm_judge"
+judge = { model = "openai/gpt-4.1", via = "Prime Inference (api.pinference.ai)", role = "ARE GraphPerEventJudge soft checker (free-text tool arguments); hard checks rule-based", pinned_by = "gaia2_cell.py JUDGE_MODEL" }
+note = "Gaia2 ambiguity split, 160 scenarios (validation), Meta ARE default agent, scripted user, one run per scenario (Meta's leaderboard: 3). Pass = the agent asks / stops on the under-specified or impossible request instead of acting. Temperature: ARE's engine sends none -> the endpoint's served default (a forced difference vs our T=0 cells, flagged on the card)."
 
 # Skipped by rule (no judge in the suite): HLE (judge-only reward).

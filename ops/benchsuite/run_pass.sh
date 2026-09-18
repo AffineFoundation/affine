@@ -180,6 +180,17 @@ EOF
 # Install the eval env on a remote pod, copy the teacher baseline, run the chat cells,
 # apply the sandbox gate, run the sandbox cells (runtime $3: prime|docker), retry infra
 # errors, pull the run back and publish. Used by the Prime and the Lium paths.
+# Daytona (Harbor cloud sandboxes): key from the env or the Arbos vault item "Daytona Arbos".
+DAYTONA_OP_ITEM="${DAYTONA_OP_ITEM:-op://Arbos/fywmj6vtq5delybw5c7a53l2qa/notesPlain}"
+daytona_key() {
+  if [ -z "${DAYTONA_API_KEY:-}" ] && [ -n "${OP_SERVICE_ACCOUNT_TOKEN:-}" ] && command -v op >/dev/null 2>&1; then
+    DAYTONA_API_KEY=$(op read --no-newline "$DAYTONA_OP_ITEM" 2>/dev/null | grep -o 'dtn_[A-Za-z0-9_-]*' | head -1) || DAYTONA_API_KEY=""
+    export DAYTONA_API_KEY
+    [ -n "$DAYTONA_API_KEY" ] && log "daytona key read from the vault"
+  fi
+  [ -n "${DAYTONA_API_KEY:-}" ] && [ -x "${HARBOR_BIN:-$HOME/benchsuite/harborenv/bin/harbor}" ]
+}
+
 remote_suite() {  # models policy sandbox_runtime user@host port key known_hosts api_key usd_hr pod_id king_url king_model teacher_url teacher_model provider
   local MODELS="$1" SANDBOX_POLICY="$2" SB_RUNTIME="$3" USER_HOST="$4" PORT="$5" SSH_KEY="$6" KH="$7"
   local API_KEY="$8" USD_HR="$9" POD_ID="${10}" KING_URL="${11}" KING_MODEL="${12}" TEACHER_URL="${13}" TEACHER_MODEL="${14}" PROVIDER="${15}"
@@ -262,11 +273,24 @@ PY
   [ "$MODELS" = "king,teacher" ] && MODEL_FLAGS="$MODEL_FLAGS --teacher-url $TEACHER_URL --teacher-model $TEACHER_MODEL" || MODEL_FLAGS="$MODEL_FLAGS --teacher-from $TEACHER_FROM"
   local REMOTE_ENV="export BENCH_API_KEY='$API_KEY' PRIME_API_KEY='${PRIME_API_KEY:-}' HF_TOKEN='${HF_TOKEN:-}' BENCHSUITE_CHAT_IMAGE=affine-bench-chat:py311; cd $RHOME/affine/ops/benchsuite && echo '$META' > meta.json"
   local PYR="$RHOME/benchsuite/verifiers/.venv/bin/python"
-  "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" docker "$CHAT_ENVS" primary,secondary 64 manifest.json)" || log "chat suite returned non-zero; continuing"
+  # cells publish as they finish (Jacob 2026-09-17): while the chat suite runs on the pod,
+  # pull the light files (summaries, manifests, cmd.txt — no traces) every 10 min and
+  # republish the partial card; the final publish at the end is the same operation.
+  "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" docker "$CHAT_ENVS" primary,secondary 64 manifest.json)" > "$RUN_DIR/chat-suite.log" 2>&1 &
+  local CHAT_PID=$!
+  while kill -0 "$CHAT_PID" 2>/dev/null; do
+    sleep 600
+    kill -0 "$CHAT_PID" 2>/dev/null || break
+    pull_light "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME" && [ -z "${BENCHSUITE_MERGE_INTO:-}" ] && { "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" --only-state --partial >/dev/null 2>&1 || true; }
+  done
+  wait "$CHAT_PID" || log "chat suite returned non-zero; continuing"
+  cat "$RUN_DIR/chat-suite.log"
   pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"
   # PARTIAL card now (chat cells): the attribution job watches affine/state/benchsuite/*.json
   local PARTIAL_FLAG=""; [ "$SANDBOX_POLICY" != "never" ] && PARTIAL_FLAG="--partial"
-  [ -z "${BENCHSUITE_MERGE_INTO:-}" ] && { "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" --only-state $PARTIAL_FLAG || log "partial publish failed; continuing"; }
+  # the chat cells go to R2 right here (traces included), not only at the end of the pass:
+  # a driver that dies later must not leave them box-only (reign 13, 2026-09-15..17)
+  [ -z "${BENCHSUITE_MERGE_INTO:-}" ] && { "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" --only-cells "king/*,teacher/*" $PARTIAL_FLAG || log "partial publish failed; continuing"; }
   local TRIGGER="always"
   [ "$SANDBOX_POLICY" = "gated" ] && TRIGGER=$(sandbox_trigger)
   [ "$SANDBOX_POLICY" = "never" ] && TRIGGER="never"
@@ -274,9 +298,34 @@ PY
   if [ "$TRIGGER" != "none" ] && [ "$TRIGGER" != "never" ]; then
     if [ "$SB_RUNTIME" = "docker" ]; then
       # Lium: docker on the pod for the public-image sets, Prime sandboxes for the Lean set.
-      log "sandbox sets ($TRIGGER): docker on the pod for $(toml modes.lium_docker_sandbox_envs); Prime sandboxes for $(toml modes.lium_prime_sandbox_envs)"
+      # BENCHSUITE_SANDBOX=daytona (2026-09-17): the Harbor-able sets (sandbox_daytona.envs)
+      # run through Harbor on Daytona from the BOX against the pod's public endpoint, in
+      # parallel with the pod's remaining docker cells; the pod only serves the model.
+      local DOCKER_SB_ENVS; DOCKER_SB_ENVS=$(toml modes.lium_docker_sandbox_envs | tr "," " ")
+      local DAYTONA_PID=""
+      if [ "${BENCHSUITE_SANDBOX:-}" = "daytona" ]; then
+        local DT_ENVS; DT_ENVS=$(toml sandbox_daytona.envs | tr "," " ")
+        local DT_RUN=""; DOCKER_SB_ENVS=""
+        for SB_ENV in $(toml modes.lium_docker_sandbox_envs | tr "," " "); do
+          if [[ " $DT_ENVS " == *" $SB_ENV "* ]]; then DT_RUN="$DT_RUN $SB_ENV"; else DOCKER_SB_ENVS="$DOCKER_SB_ENVS $SB_ENV"; fi
+        done
+        local EXT_URL; EXT_URL=$("$PY" -c 'import json; print(json.load(open("'"$HERE"'/state/pods.json"))["'"$POD_ID"'"]["base_url"])' 2>/dev/null || echo "")
+        if [ -n "$DT_RUN" ] && [ -n "$EXT_URL" ] && daytona_key; then
+          log "sandbox sets ($TRIGGER): Harbor on Daytona from the box for [$DT_RUN] (pod endpoint $EXT_URL); docker on the pod for [$DOCKER_SB_ENVS]"
+          ( export BENCH_API_KEY="$API_KEY"
+            for DT_ENV in $DT_RUN; do
+              "$PY" "$HERE/harbor_cell.py" run --env "$DT_ENV" --model "$KING_MODEL" --model-label king --model-url "$EXT_URL" --model-key-env BENCH_API_KEY \
+                --out "$RUN_DIR/king" --concurrency "$(toml sandbox_daytona.concurrency)" --agent-timeout-s "$(toml sandbox_daytona.budgets.default.agent_timeout_s)" \
+                --step-limit "$(toml sandbox_daytona.budgets.default.step_limit)" || log "daytona cell $DT_ENV returned non-zero; continuing"
+            done ) > "$RUN_DIR/daytona.log" 2>&1 &
+          DAYTONA_PID=$!
+        else
+          log "BENCHSUITE_SANDBOX=daytona but no Daytona key / pod url / Harbor-able env; falling back to docker on the pod"; DOCKER_SB_ENVS=$(toml modes.lium_docker_sandbox_envs | tr "," " ")
+        fi
+      fi
+      log "sandbox sets ($TRIGGER): docker on the pod for [$DOCKER_SB_ENVS]; Prime sandboxes for $(toml modes.lium_prime_sandbox_envs)"
       local SB_ENV SB_FAIL=""
-      for SB_ENV in $(toml modes.lium_docker_sandbox_envs | tr "," " "); do
+      for SB_ENV in $DOCKER_SB_ENVS; do
         "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" docker "$SB_ENV" primary 48 manifest-sandbox.json 1)" || log "docker sandbox cell $SB_ENV returned non-zero; continuing"
         # fail fast: a cell whose rollouts ALL errored is an infrastructure failure
         # (docker cannot run / Docker Hub rate limit); the remaining docker cells
@@ -303,9 +352,11 @@ if n and e >= n:
 print(kind, n, e)
 PY" 2>/dev/null)
         log "docker cell $SB_ENV verdict: $VERDICT"
+        pull_light "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME" && [ -z "${BENCHSUITE_MERGE_INTO:-}" ] && { "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" --only-state --partial >/dev/null 2>&1 || true; }
         if [[ "$VERDICT" == allerrored* ]]; then SB_FAIL="$VERDICT"; log "ABORTING the remaining docker sandbox cells: $SB_ENV failed as a run ($VERDICT)"; break; fi
       done
       "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" prime "$(toml modes.lium_prime_sandbox_envs)" primary 32 manifest-sandbox-prime.json)" || log "prime sandbox suite returned non-zero; continuing"
+      if [ -n "$DAYTONA_PID" ]; then log "waiting for the Daytona cells (pid $DAYTONA_PID)"; wait "$DAYTONA_PID" || true; tail -3 "$RUN_DIR/daytona.log"; fi
     else
       log "sandbox sets ($TRIGGER) on Prime sandboxes"
       "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" prime "$SANDBOX_ENVS" primary 48 manifest-sandbox.json 1)" || log "sandbox suite returned non-zero; continuing"
@@ -388,6 +439,11 @@ attach_lium() {
   finish 0
 }
 
+pull_light() {  # user@host port key known_hosts remote_home — summaries + manifests only (per-cell publish)
+  tar_cmd="cd $5/benchsuite/runs && tar czf - --exclude='*/logs' --exclude='*/traces.jsonl*' --exclude='*/eval.log' --exclude='*/harbor' $RUN_ID"
+  ssh -i "$3" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$4" -o LogLevel=ERROR -o ConnectTimeout=20 -p "$2" "$1" "$tar_cmd" 2>/dev/null | tar xzf - -C "$BENCH_HOME/runs" 2>/dev/null
+}
+
 pull_run() {  # user@host port key known_hosts remote_home
   tar_cmd="cd $5/benchsuite/runs && tar czf - --exclude='*/logs/attempt_*' $RUN_ID"
   ssh -i "$3" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$4" -o LogLevel=ERROR -p "$2" "$1" "$tar_cmd" | tar xzf - -C "$BENCH_HOME/runs" || log "pull failed (will retry at the end)"
@@ -437,7 +493,13 @@ run_lium() {  # $1 = sandbox policy (gated|never)
   else
     # shellcheck disable=SC2086
     POD=""
-    for PLAN in $(toml modes.lium_plan) $(toml modes.lium_plan_fallbacks | tr "," " "); do
+    local PLANS; PLANS="$(toml modes.lium_plan) $(toml modes.lium_plan_fallbacks | tr "," " ")"
+    if [ "${BENCHSUITE_SANDBOX:-}" = "daytona" ] && [ "$(toml sandbox_daytona.concurrency)" -gt 50 ]; then
+      # the sandboxes are never the limit; above ~50 in flight one replica is (2026-09-17: 64
+      # running + 34 queued on a B200) -> two-replica pods first, so wall time is what the mode buys
+      PLANS="$(toml sandbox_daytona.pod_plans | tr "," " ") $PLANS"
+    fi
+    for PLAN in $PLANS; do
       POD=$("$PY" "$HERE/kingpod.py" rent --plan "$PLAN" --digest "$DIGEST" $R2FLAG | tail -1) && [ -n "$POD" ] && break
       log "no pod on plan $PLAN; trying the next plan"; POD=""
     done

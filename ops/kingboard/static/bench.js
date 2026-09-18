@@ -102,7 +102,8 @@
     if (!r) { $("#bench-meta").textContent = "no benchmark runs published yet"; return; }
     const w = r.where || {};
     const ident = r.identical_to ? `IDENTICAL WEIGHTS — same weights as reign ${r.identical_to.reign} (${r.identical_to.run_id}; ${r.identical_to.how || (r.identical_to.n_tensors + " tensors")}); numbers shown are that run's, no new pass · ` : "";
-    $("#bench-meta").textContent = `${r.rows.length} rows · ${ident}${r.status === "partial" ? "PARTIAL (still running) · " : ""}run created ${(r.created_at || "").replace("T", " ")} · ` +
+    const prog = r.progress || {};
+    $("#bench-meta").textContent = `${r.rows.length} rows · ${ident}${r.status === "partial" ? `RUNNING — ${prog.done ?? "?"}/${prog.total ?? "?"} cells done${(prog.remaining || []).length ? ", next: " + prog.remaining.slice(0, 3).map((c) => c.split("/").pop()).join(", ") : ""} (as of ${(prog.as_of || "").slice(11, 16)} UTC) · ` : ""}run created ${(r.created_at || "").replace("T", " ")} · ` +
       `${w.provider || ""} ${w.gpu || ""} · teacher ${(r.teacher || {}).hf_repo || ""}` +
       (r.prime_spent_usd !== undefined && r.prime_spent_usd !== null ? ` · pod cost ≈ $${r.prime_spent_usd}` : "");
     const rows = [...r.rows].sort((a, b) => (a.group || "").localeCompare(b.group || "") || a.env.localeCompare(b.env) || a.temperature - b.temperature);
@@ -123,7 +124,10 @@
         el("td", { class: "num" }, row.temperature === 0 ? "0" : String(row.temperature)),
         el("td", { class: "num" }, k ? k.n : (t ? t.n : "–")),
         el("td", { class: "num king-col" }, k ? pct(k.score) + ci(k) : "–", capMark(k)),
-        el("td", { class: "num teacher-col" }, t ? pct(t.score) + ci(t) : "–", capMark(t)),
+        el("td", { class: "num teacher-col", title: t && t.served_by ? `teacher served by ${t.served_by.provider} (${t.served_by.model}) — not our vLLM stack` : "" },
+          t ? pct(t.score) + ci(t) : "–", capMark(t),
+          t && t.served_by ? el("span", { class: "judge-mark" }, ` (${(t.served_by.provider || "").split(" ")[0]})`) : "",
+          row.budget_tag ? el("span", { class: "judge-mark", title: `budget ${row.budget_tag}: ${JSON.stringify((k && k.budget) || (t && t.budget) || {})}` }, "") : ""),
         el("td", { class: "num " + dcls }, d === null || d === undefined ? "–" : (d > 0 ? "+" : "") + (100 * d).toFixed(1) + " pt"),
         el("td", { class: "num muted", title: "score over rollouts that finished inside the time/context budget" },
           k && k.finished_only ? `${pct(k.finished_only.score)} (n=${k.finished_only.n})` : "–"),
