@@ -158,6 +158,9 @@ m = {"run_id": os.path.basename(os.path.dirname(out)), "created_at": time.strfti
 json.dump(m, open(out, "w"), indent=1)
 PY
 [ -d "$BENCH_HOME/runs/$TEACHER_FROM/teacher" ] && rsync -a --exclude 'traces.jsonl*' --exclude 'logs' --exclude 'eval.log' --exclude 'harbor' --exclude 'are' "$BENCH_HOME/runs/$TEACHER_FROM/teacher/" "$RUN_DIR/teacher/"
+# a teacher cell still running in the reference run (cap backfill) has cmd.txt and no summary:
+# do not carry it — it would keep this card "partial" forever
+for d in "$RUN_DIR"/teacher/*/; do [ -d "$d" ] && [ ! -f "$d/summary.json" ] && rm -rf "$d"; done
 
 pod_env() {  # role -> exports for a pod-side run
   local pod="${POD[$1]}"; echo "export BENCH_API_KEY='$(podf "$pod" key)' PRIME_API_KEY='${PRIME_API_KEY:-}' HF_TOKEN='${HF_TOKEN:-}' BENCHSUITE_CHAT_IMAGE=affine-bench-chat:py311 BENCHSUITE_SETTINGS_JSON='$SETTINGS_JSON'; cd /root/affine/ops/benchsuite"
