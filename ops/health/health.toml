@@ -55,6 +55,30 @@ bench_pm2_name = "affine-coverage-bench"
 reaper_pm2_name = "affine-pod-reaper"
 validator_pm2_name = "affine-validator"
 
+# Guard hooks that live inside OTHER teams' files. A colleague's edit that
+# drops one of these silently disarms a guard (happened 2026-09-19 17:13:
+# the fold worker's corpus_build.py copy removed the FROZEN hook). Page when
+# the file no longer contains the marker.
+[[integrity]]
+file = "ops/corpus_build.py"
+must_contain = "FROZEN.json"
+why = "curriculum freeze hook in load_curriculum (contract_compat)"
+
+[[integrity]]
+file = "ops/teacher-swarm/lium_api.py"
+must_contain = "_pod_registry"
+why = "pod registry auto-register / auto-release on every rent / rm"
+
+[[integrity]]
+file = "ops/king-datagen/kingctl.py"
+must_contain = "pod_registry.register"
+why = "king seat boxes register purpose / owner / lifetime"
+
+[[integrity]]
+file = "ops/teacher-swarm/manager.py"
+must_contain = "pod_registry.register"
+why = "teacher swarm boxes register purpose / owner / lifetime"
+
 [discord]
 enabled = true
 channel_id = "1510910974498967613"

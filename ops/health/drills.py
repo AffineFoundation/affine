@@ -128,6 +128,8 @@ class Sandbox:
                                        .replace('freeze_file = "affine/state/curriculum/FROZEN.json"',
                                                 f'freeze_file = "{self.state_dir}/curriculum/FROZEN.json"'))
         toml = (HERE / "health.toml").read_text()
+        # the integrity hooks point at real repo files; not part of the drills
+        toml = re.sub(r"\[\[integrity\]\].*?(?=\n\[discord\])", "", toml, flags=re.S)
         for key, rel in (("state_dir", "affine/state"), ("kingctl_state", "ops/king-datagen/state/state.json"),
                          ("fold_last_run", "affine/state/fold/last_run.json"),
                          ("curriculum_latest", "affine/state/curriculum/latest.json"),
