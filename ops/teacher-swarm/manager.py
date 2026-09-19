@@ -19,6 +19,7 @@ import argparse
 import concurrent.futures
 import json
 import subprocess
+import sys
 import threading
 import time
 import tomllib
@@ -28,6 +29,9 @@ from pathlib import Path
 import httpx
 
 import lium_api
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pods"))
+import registry as pod_registry  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 STATE_DIR = HERE / "state"
@@ -603,6 +607,10 @@ class Manager:
                         "rented_at": now, "phase": "renting",
                         "bootstrap_started": 0, "last_seen": now,
                         "last_healthy": 0}
+                    pod_registry.register(
+                        name, purpose="teacher_swarm", owner="pm2:affine-swarm-manager",
+                        expected_hours=float(cfg.ttl_hours) + 1, price_usd_h=price,
+                        ttl_hours=cfg.ttl_hours, meta={"type": self.mem[name].get("type")})
                 else:
                     log(f"rent failed on {str(cand['id'])[:12]}")
                 time.sleep(2.0)  # Lium cap: 3 requests / 5 s
@@ -638,6 +646,10 @@ class Manager:
                         "rented_at": now, "phase": "renting",
                         "bootstrap_started": 0, "last_seen": now,
                         "last_healthy": 0, "fallback_for": unfilled[0]}
+                    pod_registry.register(
+                        name, purpose="teacher_swarm", owner="pm2:affine-swarm-manager",
+                        expected_hours=float(cfg.ttl_hours) + 1, price_usd_h=price,
+                        ttl_hours=cfg.ttl_hours, meta={"type": self.mem[name].get("type")})
                     break
                 log(f"fallback rent failed on {str(cand['id'])[:12]} ({pod_id})")
                 time.sleep(2.0)

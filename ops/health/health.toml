@@ -1,0 +1,100 @@
+# affine-pipeline-health — the data pipeline's standing monitor.
+# Read-only against production (state files, pm2, the router's /health,
+# the public corpus manifest, git). Writes: affine/state/pipeline_health.json,
+# its own state, the curriculum FROZEN sentinel (via contract_compat), and
+# `pm2 restart` of the processes listed in code_watch.toml with action =
+# "restart". One Discord line per condition per dedupe window, one hourly
+# summary (all-clear or the active alerts).
+
+[watch]
+interval_s = 300
+alert_dedupe_h = 6
+undeclared_dedupe_h = 24
+summary_every_min = 60
+# a paged condition that clears posts one "recovered" line
+recovery_lines = true
+
+[thresholds]
+corpus_epoch_max_age_h = 8.0        # (a)/(b): a fold must publish at least this often
+fold_overdue_slack_h = 1.0          # cron interval + this = overdue
+fold_running_max_h = 2.0            # a fold still "running" longer than this
+curriculum_max_age_h = 30.0         # (c): vector older than this (daily job + slack)
+king_seat_empty_max_min = 60        # (d): no published box for the current king
+king_box_last_ok_max_min = 20       # kingctl's canary must have passed within this
+teacher_replicas_min = 4            # swarm router healthy backends
+verdict_max_age_h = 2.5             # while queue or in_flight is non-empty
+bench_held_max_min = 60             # (e): launches held by budget / lock this long
+pods_report_max_age_min = 45        # the reaper must have reported within this
+pod_max_age_no_driver_h = 14        # (f): surfaced from the reaper's report
+sources_dirty_max_min = 30          # (g): uncommitted rollouts/sources.toml this long
+weights_max_age_h = 2.0             # validator set_weights (evalwatch has it too; belt and braces)
+# chat.affine.io (king chat box; stuck `state: loading` 09-18 14:57 -> 09-19 17:15:
+# orphaned vLLM EngineCore + disk full of old king snapshots after 3 crowns)
+chat_crown_grace_min = 60           # served digest may lag a crown this long
+chat_loading_max_min = 60           # state != serving longer than this = page
+chat_disk_min_gb = 30               # free space on the pod's model volume
+chat_snapshots_max = 2              # king snapshots on disk beyond the current one -> warn
+
+[paths]
+state_dir = "../../affine/state"
+kingctl_state = "../king-datagen/state/state.json"
+king_toml = "../king-datagen/king.toml"
+fold_last_run = "../../affine/state/fold/last_run.json"
+curriculum_latest = "../../affine/state/curriculum/latest.json"
+curriculum_frozen = "../../affine/state/curriculum/FROZEN.json"
+sources_toml = "../../rollouts/rollouts/sources.toml"
+bench_queue_meta = "../coverage/state/bench_queue_meta.json"
+bench_budget = "../coverage/state/budget.json"
+reaper_report = "../../affine/state/pods/reaper.json"
+corpus_manifest_local = "../../affine/state/corpus_cache/current_manifest.json"
+out_json = "../../affine/state/pipeline_health.json"
+own_state = "state/health_state.json"
+code_watch = "code_watch.toml"
+consumers = "consumers.toml"
+
+[sources]
+corpus_manifest_url = "https://data.affine.io/corpus/manifest.json"
+router_health_url = "http://127.0.0.1:9100/health"
+fold_pm2_name = "affine-corpus-refresh"
+kingctl_pm2_name = "affine-king-datagen"
+bench_pm2_name = "affine-coverage-bench"
+reaper_pm2_name = "affine-pod-reaper"
+validator_pm2_name = "affine-validator"
+# the validator's ssh -L forward to the chat pod's chatsrv (ops/king-chat/chatbox.env CHATBOX_LOCAL_PORT)
+chat_health_url = "http://127.0.0.1:9002/health"
+chat_models_url = "http://127.0.0.1:9002/v1/models"
+chat_token_env = "AFFINE_EVAL_TOKEN"
+chat_pod_state_key = "chat_machine"        # state.json record with the pod's `ssh`
+chat_pod_model_dirs = ["/root/hf/hub", "/root"]   # df is taken on the first that exists
+chat_ssh_timeout_s = 25
+
+# Guard hooks that live inside OTHER teams' files. A colleague's edit that
+# drops one of these silently disarms a guard (happened 2026-09-19 17:13:
+# the fold worker's corpus_build.py copy removed the FROZEN hook). Page when
+# the file no longer contains the marker.
+[[integrity]]
+file = "ops/corpus_build.py"
+must_contain = "FROZEN.json"
+why = "curriculum freeze hook in load_curriculum (contract_compat)"
+repair = "ops/fold/ensure_frozen_hook.py"    # idempotent re-insert; the page still fires
+
+[[integrity]]
+file = "ops/teacher-swarm/lium_api.py"
+must_contain = "_pod_registry"
+why = "pod registry auto-register / auto-release on every rent / rm"
+
+[[integrity]]
+file = "ops/king-datagen/kingctl.py"
+must_contain = "pod_registry.register"
+why = "king seat boxes register purpose / owner / lifetime"
+
+[[integrity]]
+file = "ops/teacher-swarm/manager.py"
+must_contain = "pod_registry.register"
+why = "teacher swarm boxes register purpose / owner / lifetime"
+
+[discord]
+enabled = true
+channel_id = "1510910974498967613"
+token_env = "DISCORD_BOT_TOKEN_ARBOS_BITTENSOR"
+prefix = "[pipeline-health]"
