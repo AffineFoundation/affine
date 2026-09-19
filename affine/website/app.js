@@ -84,6 +84,7 @@ function liveCrownShort(contract) {
   if (wvk != null) bits.push(`wvk ${wvk}`);
   if (sd) bits.push("turn = min(z_R, typ_c, z_A) in teacher sd");
   else if (duel.score_mode === "min_rg") bits.push("turn = min(R, G) in nats/byte");
+  if (duel.thought_rendering === "as_generated") bits.push("thoughts scored as generated");
   if (duel.n_turns != null) bits.push(`one slice of ${duel.n_turns} turns`);
   if (delta != null && Number(delta) > 0) {
     bits.push(`margin > max(${k}·SE, δ = ${sd ? Number(delta).toFixed(2) : fmtScore(delta)}${unit})`);
