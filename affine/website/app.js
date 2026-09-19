@@ -4,7 +4,6 @@ import {
   duelTurnUrl,
   fetchAudit,
   fetchAudits,
-  fetchBenchmarks,
   fetchDataset,
   fetchDatasetTurn,
   fetchDatasetTurns,
@@ -18,10 +17,13 @@ import {
   fetchSnapshot,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=67";
+} from "./api.js?v=69";
+import { initMatrix } from "./matrix.js?v=12";
 import {
+  ERAS,
   GATE_METRICS,
   HERO_CHARTS,
+  deltaOf,
   drawDeltaBars,
   drawDuelMargin,
   drawDuelScores,
@@ -29,7 +31,9 @@ import {
   drawGateMetric,
   drawRegPrice,
   drawSideScatter,
+  eraOf,
   esc,
+  fmtUnit,
   gatePoints,
   fmtAge,
   fmtAlpha,
@@ -45,32 +49,45 @@ import {
   resolveReign,
   setReignLookup,
   short,
-} from "./charts.js?v=73";
+  sideScoreOf,
+} from "./charts.js?v=75";
 
 const $ = (id) => document.getElementById(id);
 
 let filter = "";
-let cache = { dashboard: null, benchmarks: null, history: null, regHistory: null, contract: null, audits: null };
-let fps = { dashboard: "", benchmarks: "", history: "", hero: "", reg: "", gates: "", audits: "" };
+let cache = { dashboard: null, history: null, regHistory: null, contract: null, audits: null };
+let fps = { dashboard: "", history: "", hero: "", reg: "", gates: "", audits: "" };
 let closeWatch = null;
 
 // Public bucket root — audit workspaces live under audits/reign_NNNN/ and are
 // byte-identical to what the dash API serves (see MANIFEST_URL nearby).
 const BUCKET_BASE = "https://s3.hippius.com/affine-sn120";
 
+/**
+ * The live crown rule from the contract, in the units of the live scoring
+ * mode. Under `sd_min_rga` (wvk ≥ 22) the turn score and δ are in teacher-sd
+ * units and live under [duel.sd_meter]; `min_margin = 0.002` in the same
+ * block is the wvk ≤ 21 per-byte floor kept for replay, not the live one.
+ */
 function liveCrownShort(contract) {
   const subnet = contract?.subnet || {};
   const duel = contract?.duel || {};
   const wvk = subnet.weight_version_key;
-  const k = duel.k_sigma ?? 2;
-  const delta = duel.min_margin;
+  const sd = duel.score_mode === "sd_min_rga";
+  const sdm = duel.sd_meter || {};
+  const k = (sd ? sdm.k_sigma : null) ?? duel.k_sigma ?? 2;
+  const delta = sd ? (sdm.min_margin_sd ?? ERAS.sd.delta) : duel.min_margin;
+  const unit = sd ? " sd" : "";
   const thought = duel.min_thought_chars;
   const bOn = Boolean(duel.causality_gate) || Number(duel.causality_gamma || 0) > 0;
   const bits = [];
   if (wvk != null) bits.push(`wvk ${wvk}`);
-  if (duel.score_mode === "min_rg") bits.push("turn = min(R, G)");
+  if (sd) bits.push("turn = min(z_R, typ_c, z_A) in teacher sd");
+  else if (duel.score_mode === "min_rg") bits.push("turn = min(R, G) in nats/byte");
+  if (duel.thought_rendering === "as_generated") bits.push("thoughts scored as generated");
+  if (duel.n_turns != null) bits.push(`one slice of ${duel.n_turns} turns`);
   if (delta != null && Number(delta) > 0) {
-    bits.push(`margin > max(${k}·SE, δ=${fmtScore(delta)})`);
+    bits.push(`margin > max(${k}·SE, δ = ${sd ? Number(delta).toFixed(2) : fmtScore(delta)}${unit})`);
   } else {
     bits.push(`margin > ${k}·SE`);
   }
@@ -195,52 +212,14 @@ function renderMarketBar(d) {
 
 /* ---------- sections ---------- */
 
-// Advisory bench references shown as deltas in the reign table. As of the
-// min(R,G) era (wvk 10, 2026-08-27) the genesis IS the stock Qwen base, so
-// baseline and genesis coincide. Matched by label (repo as fallback).
-const BENCH_BASELINE = { label: "baseline", repo: "Qwen/Qwen3.6-35B-A3B" };
-const BENCH_GENESIS = {
-  label: "reign-0",
-  repo: "Qwen/Qwen3.6-35B-A3B",
-};
-// The frozen teacher C (affine.toml [teacher]). min(R,G) has its fixed point
-// at the teacher, so this is the ceiling the current mechanism can reach;
-// benched 2026-09-07 via scripts/bench_run.py (label "teacher").
-const BENCH_TEACHER = { label: "teacher", repo: "Qwen/Qwen3.8-27B" };
+// Genesis (reign 0 → Affine-I) is the stock Qwen base since the min(R,G)
+// era (wvk 10, 2026-08-27). Held-out benchmark scores per reign live in the
+// "Kings vs teacher" matrix (#kings, api/v1/matrix), not in this table.
+const GENESIS_REPO = "Qwen/Qwen3.6-35B-A3B";
 
-// Genesis (reign 0 → Affine-I) is known statically; the rest of the reign
-// lookup arrives with the first snapshot (see applySnapshot).
-setReignLookup([], BENCH_GENESIS.repo);
-
-function benchInfo(b) {
-  const suite = (Array.isArray(b?.suites) && b.suites[0]) || "swe_rebench_lite";
-  const scores = new Map();
-  for (const m of b?.models || []) {
-    const s = m?.suites?.[suite]?.score;
-    if (s != null && Number.isFinite(Number(s))) {
-      scores.set(m.model_repo, Number(s));
-    }
-  }
-  const refScore = (ref) => {
-    const hit = (b?.models || []).find(
-      (m) => m.label === ref.label || m.model_repo === ref.repo);
-    const s = hit?.suites?.[suite]?.score;
-    return s != null && Number.isFinite(Number(s)) ? Number(s) : null;
-  };
-  return { suite, scores, qwen: refScore(BENCH_BASELINE), genesis: refScore(BENCH_GENESIS),
-           teacher: refScore(BENCH_TEACHER) };
-}
-
-function deltaCell(score, ref) {
-  if (score == null || ref == null) return `<td class="r dim">—</td>`;
-  const d = score - ref;
-  const cls = d > 0 ? "delta-up" : d < 0 ? "delta-down" : "dim";
-  return `<td class="r ${cls}">${esc(fmtPctDelta(d))}</td>`;
-}
-
-// swe-rebench scores are fractions of 1; display as percentages.
-const fmtPct = (v) => (v == null ? "—" : `${(Number(v) * 100).toFixed(1)}%`);
-const fmtPctDelta = (d) => `${d > 0 ? "+" : ""}${(d * 100).toFixed(1)}%`;
+// Genesis is known statically; the rest of the reign lookup arrives with
+// the first snapshot (see applySnapshot).
+setReignLookup([], GENESIS_REPO);
 
 function renderReign(d) {
   const members = reignMembers(d);
@@ -249,75 +228,42 @@ function renderReign(d) {
     $("reign-wrap").innerHTML = `<div class="empty">no weight holders — emissions burn</div>`;
     return;
   }
-  const bench = benchInfo(cache.benchmarks);
   const earners = members.filter((m) => m.earning || (m.weight_bps || 0) > 0);
   const pct = earners.length
     ? ((earners[0].weight_bps || 0) / 100).toFixed(0)
     : "0";
-  const benchBits = [];
-  if (bench.qwen != null) benchBits.push(`qwen ${fmtPct(bench.qwen)}`);
-  if (bench.genesis != null) benchBits.push(`Affine-I ${fmtPct(bench.genesis)}`);
-  if (bench.teacher != null) benchBits.push(`teacher ${fmtPct(bench.teacher)}`);
+  const windowH = d?.reign?.payout_window_hours ?? d?.payout?.window_hours;
+  const windowTxt = windowH != null ? `${Number(windowH).toFixed(0)} h payout window` : "payout window";
   $("reign-meta").textContent =
-    `${members.length} kings · ${earners.length} earning · ${pct}% each`
-    + (benchBits.length ? ` · swe: ${benchBits.join(" / ")}` : "");
-  // swe delta vs the previous king in the reign chain (reign 0 = genesis).
-  const sweOf = (m) => (bench.scores.has(m.repo) ? bench.scores.get(m.repo) : null);
-  const sweByReign = new Map(members
-    .filter((m) => m.reign_number != null)
-    .map((m) => [Number(m.reign_number), sweOf(m)]));
-  if (!sweByReign.has(0) && bench.genesis != null) sweByReign.set(0, bench.genesis);
-  const prevDelta = (m) => {
-    const rn = m.reign_number;
-    const swe = sweOf(m);
-    const prev = rn != null && rn > 0 ? sweByReign.get(Number(rn) - 1) : null;
-    return swe != null && prev != null ? swe - prev : null;
-  };
-  const maxAbsPrev = Math.max(
-    ...members.map((m) => Math.abs(prevDelta(m) ?? 0)), 1e-9);
-  const prevCell = (m) => {
-    const dd = prevDelta(m);
-    if (dd == null) return `<td class="r dim">—</td>`;
-    const cls = dd > 0 ? "delta-up" : dd < 0 ? "delta-down" : "dim";
-    const w = Math.min(Math.abs(dd) / maxAbsPrev, 1) * 50;
-    const left = dd >= 0 ? 50 : 50 - w;
-    const color = dd > 0 ? "#7fb98a" : "#c98080";
-    return `<td class="r ${cls}" title="swe vs previous king"><span class="pm-cell">${esc(fmtPctDelta(dd))}
-      <span class="pm-bar"><i style="left:${left}%;width:${w}%;background:${color}"></i></span></span></td>`;
-  };
+    `${members.length} reigns · ${earners.length ? `${earners.length} paid · ${pct}% each` : "none paid · emissions burn"} · ${windowTxt}`;
   $("reign-wrap").innerHTML = `<table class="data-table">
     <thead><tr>
       <th>reign</th><th>crowned</th><th>uid</th><th>model</th><th>hotkey</th>
-      <th class="r">swe</th><th class="r" title="swe vs the king it dethroned">vs prev</th>
-      <th class="r">vs qwen</th><th class="r">vs Affine-I</th>
-      <th class="r" title="swe vs the frozen teacher Qwen3.8-27B — the ceiling of min(R,G)">vs teacher</th>
-      <th class="r">Reason</th><th class="r">α/day</th><th class="r">$/day</th><th class="r">weight</th>
+      <th class="r" title="the king's mean per-turn score recorded at its crowning duel — per-byte min(R, G) telemetry (nats/byte) in every era; the wvk-22 sd-meter margin that crowned it is on the duel page">score (nats/byte)</th><th class="r">α/day</th><th class="r">$/day</th>
+      <th class="r" title="each crown is paid one equal share until crowned_at + payout window; then it earns nothing even while it holds the throne">weight</th>
     </tr></thead>
     <tbody>${members.map((m) => {
       const earning = m.earning || (m.weight_bps || 0) > 0;
       const wPct = ((m.weight_bps || 0) / 100).toFixed(0);
+      const until = m.paid_until ? fmtTime(m.paid_until) : "";
       const alpha = earning ? fmtAlpha(m.alpha_per_day) : "—";
       const usd = earning ? fmtUsd(m.usd_per_day) : "—";
-      const swe = bench.scores.has(m.repo) ? bench.scores.get(m.repo) : null;
       return `<tr class="${m.current ? "current" : ""}">
         <td class="${m.current ? "gold" : "dim"}">${m.reign_number != null ? `#${esc(m.reign_number)}` : "prior"}</td>
         <td class="when">${m.crowned_at ? esc(fmtTime(m.crowned_at)) : "—"}</td>
         <td class="dim">${m.uid != null ? esc(m.uid) : "—"}</td>
         <td>${modelLink(m.repo, m.hotkey, m.reign_number)}</td>
         <td>${hotkeyLink(m.hotkey)}</td>
-        <td class="r ${swe != null ? "" : "dim"}">${esc(fmtPct(swe))}</td>
-        ${prevCell(m)}
-        ${deltaCell(swe, bench.qwen)}
-        ${deltaCell(swe, bench.genesis)}
-        ${deltaCell(swe, bench.teacher)}
         <td class="r ${m.current ? "gold" : ""}">${esc(fmtScore(m.score))}</td>
         <td class="r ${earning ? "gold" : "dim"}">${esc(alpha)}</td>
         <td class="r ${earning ? "" : "dim"}">${esc(usd)}</td>
         <td class="r">${earning
-          ? `<span class="weight-cell">${esc(wPct)}% <span class="bar"><i style="width:${esc(wPct)}%"></i></span></span>`
+          ? `<span class="weight-cell" title="paid until ${esc(until)}">${esc(wPct)}% <span class="bar"><i style="width:${esc(wPct)}%"></i></span></span>`
           : m.inaccessible
-            ? `<span class="bad" title="model repo gone/gated on HF — forfeits payout while dark">gated</span>`
-            : `<span class="dim">—</span>`}</td>
+            ? `<span class="bad" title="model repo gone/gated — forfeits payout while dark">gated</span>`
+            : m.expired
+              ? `<span class="dim" title="payout window closed ${esc(until)}">expired</span>`
+              : `<span class="dim">—</span>`}</td>
       </tr>`;
     }).join("")}</tbody>
   </table>`;
@@ -402,22 +348,25 @@ const DUEL_CHART_SPECS = [
   {
     id: "duel-delta",
     title: "ΔReason per turn",
-    caption: "challenger − king, slice order · gold = challenger won the turn",
+    caption: "challenger − king per-byte Reason, slice order · gold = challenger ahead · nats/byte (legacy telemetry since wvk 22)",
     detail: `<p>Each bar is one turn of the seeded slice:
       <code>ΔReason = Reason_challenger − Reason_king</code> on that turn,
-      averaged over the turn's scored pairs. Gold bars are turns the
-      challenger won, red bars turns the king won.</p>
-      <p>The dashed line is the mean of these bars — exactly the duel's
-      <code>margin</code>. The crown rule asks that this mean clear
-      <code>k·SE</code> of its own spread, so a duel is won by consistent
-      per-turn advantage, not a few outlier turns.</p>`,
+      averaged over the turn's scored pairs, in per-byte nats. Gold bars are
+      turns the challenger was ahead on this quantity, red bars turns the
+      king was.</p>
+      <p>Until wvk 21 the dashed mean of these bars is exactly the duel's
+      <code>margin</code>. <strong>Since wvk 22 the duel is decided by the
+      sd-meter</strong> (<code>min(z_R, typ_c, z_A)</code> in teacher sd), whose
+      per-turn values are not in the published series yet — this pane is
+      then per-byte telemetry, and the verdict cards above carry the deciding
+      numbers.</p>`,
     render: (svg, width) =>
       drawDeltaBars(svg, duelPage.series?.paired || [], { width, height: 440 }),
   },
   {
     id: "duel-sides",
     title: "challenger vs king",
-    caption: "per-turn Reason · above the dashed diagonal = challenger better",
+    caption: "per-turn per-byte Reason (nats/byte; legacy telemetry since wvk 22) · above the dashed diagonal = challenger better",
     detail: `<p>Every dot is one paired turn, placed at (king Reason,
       challenger Reason). The dashed diagonal is parity: dots above it are
       turns where the challenger's score beat the king's on the same prompt
@@ -603,7 +552,7 @@ function renderQueue(d) {
 function opponentKing(r) {
   const members = reignMembers(cache.dashboard || {})
     .filter((m) => m.reign_number != null && m.repo);
-  const genesis = { repo: BENCH_GENESIS.repo, hotkey: "", reign_number: 0 };
+  const genesis = { repo: GENESIS_REPO, hotkey: "", reign_number: 0 };
   if (r.event === "crowned" && r.reign_number != null) {
     const prevReign = Number(r.reign_number) - 1;
     return members.find((m) => m.reign_number === prevReign)
@@ -622,17 +571,50 @@ function opponentKing(r) {
   return best;
 }
 
+// wvk 15 (2026-09-12 17:01 -> 2026-09-13 13:01 UTC) crowned per 12 h window;
+// retired by wvk 16. Its rows stay in the history as audit trail and are
+// labelled so they do not read as a live rule.
+const RETIRED_WINDOW_TAG = "retired rule (wvk 15)";
+function isRetiredWindowRow(r) {
+  return r.crown_mode === "window_best" || r.event === "window_close"
+    || r.via === "window_best";
+}
+function retiredTag(title) {
+  return ` <span class="dim" title="${esc(title)}">${esc(RETIRED_WINDOW_TAG)}</span>`;
+}
+
 function outcomeBadge(r) {
-  if (r.event === "crowned") return badge("crowned", `crowned #${r.reign_number ?? "?"}`);
+  if (r.event === "crowned") {
+    return badge("crowned", `crowned #${r.reign_number ?? "?"}`)
+      + (isRetiredWindowRow(r) ? retiredTag("crowned by the 12 h window rule, retired 2026-09-13 13:01 UTC (wvk 16)") : "");
+  }
+  if (r.event === "crown_revoked") {
+    const code = r.revoked_code || String(r.revoked_reason || "").split(":")[0] || "revoked";
+    const label = code.replace(/^revoked_/, "").replace(/_/g, " ");
+    const tag = isRetiredWindowRow(r) ? retiredTag(r.revoked_reason || "crown revoked")
+      : ` <span class="dim" title="${esc(r.revoked_reason || "")}">${esc(r.revoked_by || "operator decision")}</span>`;
+    return badge("failed", `crown revoked #${r.reign_number ?? "?"} - ${label}`) + tag;
+  }
+  if (r.event === "window_close") {
+    return badge("queued", `window ${r.window_id ?? "?"} closed - ${r.outcome || "-"}`)
+      + retiredTag("12 h window rule: every window close wrote one row. Retired 2026-09-13 13:01 UTC (wvk 16); no window runs now.");
+  }
   if (r.event === "failed") return badge("failed", r.error_code || "failed");
   if (r.accepted) return badge("accepted", "accepted");
-  if (r.accepted === false) return badge("rejected", "rejected");
+  if (r.accepted === false) {
+    return badge("rejected", "rejected")
+      + (isRetiredWindowRow(r) ? retiredTag("judged as a window candidate under the 12 h window rule (wvk 15), retired 2026-09-13 13:01 UTC") : "");
+  }
   return badge("queued", r.event || "event");
 }
 
 function renderHistory(h) {
   const rows = (h || [])
     .filter((r) => r.event !== "failed")
+    // The retired 12 h window rule (wvk 15, 2026-09-12/13) wrote one
+    // "window closed" row per window; they are bookkeeping, not duels, and
+    // stay out of the table (still in api/v1/history for audit).
+    .filter((r) => r.event !== "window_close")
     .filter((r) => {
       if (!filter) return true;
       const hay = [r.event, r.repo, r.hotkey, r.error_code,
@@ -650,10 +632,14 @@ function renderHistory(h) {
   const rule = liveCrownShort(cache.contract);
   const meta = $("history-meta");
   const shown = rows.length + audits.length;
-  meta.textContent = rule
-    ? `${rule} · ${shown} shown`
-    : `${shown} shown`;
+  const retired = rows.some(isRetiredWindowRow);
+  meta.textContent = (rule ? `${rule} · ${shown} shown` : `${shown} shown`)
+    + " · margin, SE and per-side scores are in each row's own units: nats/byte until wvk 21, teacher sd since wvk 22 (2026-09-18 20:41 UTC); z is unit-free"
+    + (retired ? ` · rows tagged "${RETIRED_WINDOW_TAG}" were judged under the 12 h window rule (2026-09-12 17:01 -> 2026-09-13 13:01 UTC), kept for audit; no window runs now` : "");
   if (rule) meta.title = rule;
+  // the line itself is hidden (boilerplate); the rule sits in the header's ⓘ tooltip
+  const info = $("history-info");
+  if (info) info.title = meta.textContent;
   if (!shown) {
     $("history-wrap").innerHTML = `<div class="empty">empty</div>`;
     return;
@@ -677,11 +663,11 @@ function renderHistory(h) {
     <thead><tr>
       <th>when</th><th>age</th><th class="r">duration</th>
       <th>challenger</th><th>king</th><th>outcome</th>
-      <th class="r" title="challenger mean Reason">chal reason</th>
-      <th class="r" title="king mean Reason on the same slice">king reason</th>
-      <th class="r" title="margin / SE — green = cleared the k·SE half of the crown rule">z</th>
-      <th class="r" title="paired mean(Reason_c − Reason_k) · green = cleared max(k·SE, δ)">margin</th>
-      <th class="r" title="margin − max(k·SE, δ) — distance to the crown bar">delta</th>
+      <th class="r" title="challenger mean turn score — nats/byte (min(R, G)) until wvk 21, teacher sd (sd-meter) since wvk 22">chal score</th>
+      <th class="r" title="king mean turn score on the same slice, same units">king score</th>
+      <th class="r" title="margin / SE — unit-free — green = cleared the k·SE half of the crown rule">z</th>
+      <th class="r" title="paired mean(turn_c − turn_k) in the row's units · green = cleared max(k·SE, δ); hover a cell for the unit and the bar">margin</th>
+      <th class="r" title="margin − max(k·SE, δ) — distance to the crown bar, same units">delta</th>
       <th class="r" title="margin ÷ max(k·SE, δ) — ≥1× clears the crown bar">factor</th>
       <th class="r" title="challenger teacher-side B pass rate — crown needs ≥ γ of pairs with B ≥ 0.02">B pass</th>
     </tr></thead>
@@ -695,27 +681,33 @@ function renderHistory(h) {
       // Crown-rule coloring: green = cleared the crown bar, red = lost.
       // The bar is max(k·SE, δ); pre-δ rows stamp min_margin 0.
       const params = r.duel_params || r.gates || {};
+      const era = eraOf(r);
+      const unit = ERAS[era].unit;
       const k = Number(r.k_sigma ?? params.k_sigma ?? 2);
-      const dFloor = Number(r.min_margin ?? params.min_margin ?? 0);
+      // δ in the row's own units: 0.002 nats/byte (wvk ≤ 21; pre-δ rows
+      // stamp 0), 0.20 teacher sd (wvk ≥ 22, [duel.sd_meter].min_margin_sd).
+      const dFloor = era === "sd" ? deltaOf(r) : Number(r.min_margin ?? params.min_margin ?? 0);
       const bar = r.se != null ? Math.max(k * Number(r.se), dFloor) : dFloor;
-      const barDesc = `bar = max(${k}·SE, δ=${Number(dFloor).toFixed(4)})`;
+      // Per-era precision: nats live at ~0.003 (3 decimals = mush), sd at ~0.3.
+      const fmt4 = ERAS[era].fmt;
+      const barDesc = `bar = max(${k}·SE, δ = ${fmt4(dFloor)} ${unit})`;
       const m = r.margin != null ? Number(r.margin) : null;
       // Green = cleared the crown bar max(k·SE, δ); red = below it.
       const marginClass = m == null ? ""
         : m > bar ? "delta-up" : m >= 0 ? "dim" : "delta-down";
       const dBar = m != null && r.se != null ? m - bar : null;
       const dBarClass = dBar == null ? "" : dBar > 0 ? "delta-up" : "delta-down";
-      // Margin-scale numbers live at ~0.003; 3 decimals rounds them to mush.
-      const fmt4 = (v) => (v == null || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(4));
       const dBarText = dBar == null ? "—" : `${dBar > 0 ? "+" : ""}${fmt4(dBar)}`;
+      const chScore = sideScoreOf(r, "challenger") ?? (era === "nats" ? r.score : null);
+      const kgScore = sideScoreOf(r, "king") ?? (era === "nats" ? r.score_king : null);
       const factor = m != null && r.se != null && bar > 0 ? m / bar : null;
       const factorClass = factor == null ? "" : factor >= 1 ? "delta-up" : "delta-down";
       const factorText = factor == null ? "—" : `${factor.toFixed(2)}×`;
       const zv = r.z != null ? Number(r.z) : null;
       const zClass = zv == null ? "" : zv > k ? "delta-up" : zv >= 0 ? "dim" : "delta-down";
-      const reasonClass = r.score == null || r.score_king == null
+      const reasonClass = chScore == null || kgScore == null
         ? ""
-        : Number(r.score) >= Number(r.score_king) ? "delta-up" : "delta-down";
+        : Number(chScore) >= Number(kgScore) ? "delta-up" : "delta-down";
       // Teacher-side B license (wvk=6). Pre-B rows have no field → "—".
       const bRate = r.challenger?.b_gate_pass_rate;
       const bOn = Boolean(params.causality_gate) || Number(params.causality_gamma || 0) > 0;
@@ -734,12 +726,12 @@ function renderHistory(h) {
         <td>${modelLink(r.repo, r.hotkey, r.reign_number)}</td>
         <td>${opp ? modelLink(opp.repo, opp.hotkey, opp.reign_number) : "—"}</td>
         <td>${outcomeBadge(r)}</td>
-        <td class="r ${reasonClass}">${esc(fmt4(r.score))}</td>
-        <td class="r dim">${esc(fmt4(r.score_king))}</td>
-        <td class="r ${zClass}" title="${zv == null ? "" : esc(`crown needs z > ${k}`)}">${esc(fmtZ(r.z))}</td>
-        <td class="r ${marginClass}" title="${m == null ? "" : esc(`${barDesc} ≈ ${fmt4(bar)}`)}">${esc(fmt4(r.margin))}</td>
-        <td class="r ${dBarClass}" title="${dBar == null ? "" : esc(`margin − bar (${barDesc})`)}">${esc(dBarText)}</td>
-        <td class="r ${factorClass}" title="${factor == null ? "" : esc(`margin ÷ bar (bar ≈ ${fmt4(bar)}) — ≥1× crowns`)}">${esc(factorText)}</td>
+        <td class="r ${reasonClass}" title="${esc(`challenger mean turn score, ${unit}`)}">${esc(fmt4(chScore))}</td>
+        <td class="r dim" title="${esc(`king mean turn score, ${unit}`)}">${esc(fmt4(kgScore))}</td>
+        <td class="r ${zClass}" title="${zv == null ? "" : esc(`margin / SE (unit-free) · crown needs z > ${k}`)}">${esc(fmtZ(r.z))}</td>
+        <td class="r ${marginClass}" title="${m == null ? "" : esc(`${fmtUnit(m, era)} · SE ${fmt4(r.se)} · ${barDesc} ≈ ${fmt4(bar)}`)}">${esc(fmt4(r.margin))}</td>
+        <td class="r ${dBarClass}" title="${dBar == null ? "" : esc(`margin − bar, ${unit} (${barDesc})`)}">${esc(dBarText)}</td>
+        <td class="r ${factorClass}" title="${factor == null ? "" : esc(`margin ÷ bar (bar ≈ ${fmt4(bar)} ${unit}) — ≥1× crowns`)}">${esc(factorText)}</td>
         <td class="r ${bClass}" title="${esc(bTip)}">${esc(bText)}</td>
       </tr>`;
   }
@@ -1490,7 +1482,9 @@ async function sendChatMessage() {
             continue;
           }
           const delta = j.choices?.[0]?.delta || {};
-          if (delta.reasoning_content) reply.rc = (reply.rc || "") + delta.reasoning_content;
+          // vLLM < 0.11 named the field reasoning_content; 0.28 says reasoning.
+          const rc = delta.reasoning_content || delta.reasoning;
+          if (rc) reply.rc = (reply.rc || "") + rc;
           if (delta.content) reply.raw = (reply.raw || "") + delta.content;
           // Kings trained for thought-duels emit reasoning inline, closed by
           // </think> — fold it into the collapsible thought block so the
@@ -1515,6 +1509,10 @@ async function sendChatMessage() {
     if (!reply.content && !reply.reasoning && !reply.error) {
       reply.error = true;
       reply.content = "the king returned nothing — try rephrasing";
+    } else if (!reply.content && !reply.error) {
+      // Thought right up to the reply cap and never answered — a real king
+      // failure mode worth seeing, not a transport error.
+      reply.content = "(the king used its whole reply budget thinking and never answered — try again or rephrase)";
     }
   } catch {
     reply.error = true;
@@ -1715,36 +1713,45 @@ function crownExtras(params) {
   return bits;
 }
 
-function crownRuleShort(params, pre) {
-  const k = params.k_sigma ?? 2;
+/** δ and k for a stamped duel, in the duel's own units (see ERAS). */
+function crownFloor(duel, params) {
+  const sd = params.score_mode === "sd_min_rga";
+  const k = Number((sd ? params.sd_meter?.k_sigma : null) ?? params.k_sigma ?? 2);
+  const delta = sd
+    ? deltaOf(duel || { duel_params: params })
+    : (params.min_margin != null && Number(params.min_margin) > 0
+      ? Number(params.min_margin) : null);
+  return { sd, k, delta, unit: sd ? "sd" : "nats/byte", fmt: sd ? ERAS.sd.fmt : fmtScore };
+}
+
+function crownRuleShort(params, pre, duel = null) {
+  const { sd, k, delta, unit, fmt } = crownFloor(duel, params);
   if (pre) {
     return `crown rule (pre-fork S* v2): z > ${k} AND margin > δ, both sides gate-valid`;
   }
-  const delta = params.min_margin != null && Number(params.min_margin) > 0
-    ? Number(params.min_margin) : null;
+  const turn = sd ? "turn = min(z_R, typ_c, z_A) in teacher sd · " : "";
   const margin = delta != null
-    ? `margin > max(${k}·SE, δ = ${fmtScore(delta)})`
+    ? `margin > max(${k}·SE, δ = ${fmt(delta)} ${unit})`
     : `margin > ${k}·SE`;
   const extra = crownExtras(params);
-  return extra.length ? `crown rule: ${margin} and ${extra.join(" and ")}` : `crown rule: ${margin}`;
+  return extra.length ? `crown rule: ${turn}${margin} and ${extra.join(" and ")}` : `crown rule: ${turn}${margin}`;
 }
 
 function verdictSummary(duel) {
   const params = duelParams(duel);
-  const k = Number(params.k_sigma ?? 2);
   // δ floor: pre-fork S* v2 had one (0.02), weight_version_key=3 dropped it,
-  // v4 (2026-08-12) reintroduced min_margin=0.002. Trust the stamped value.
-  const delta = params.min_margin != null && Number(params.min_margin) > 0
-    ? Number(params.min_margin) : null;
+  // v4 (2026-08-12) reintroduced min_margin=0.002 nats/byte; since wvk 22
+  // it is [duel.sd_meter].min_margin_sd = 0.20 teacher sd. Trust the stamp.
+  const { k, delta, unit, fmt } = crownFloor(duel, params);
   const bar = duel.se != null ? k * Number(duel.se) : null;
   const name = modelDisplayName(duel.repo, duel.hotkey, duel.reign_number);
   if (isFailureDuel(duel) && duel.z == null && duel.margin == null) {
     return `${name} never reached a paired verdict — the duel failed with `
       + `“${failureDetail(duel).code}” before scoring completed.`;
   }
-  const m = duel.margin != null ? fmtScore(duel.margin) : "—";
-  const need = [bar != null ? `${k}·SE ≈ ${fmtScore(bar)}` : `${k}·SE`,
-    delta != null ? `δ = ${fmtScore(delta)}` : null].filter(Boolean).join(" and ");
+  const m = duel.margin != null ? `${fmt(duel.margin)} ${unit}` : "—";
+  const need = [bar != null ? `${k}·SE ≈ ${fmt(bar)}` : `${k}·SE`,
+    delta != null ? `δ = ${fmt(delta)} ${unit}` : null].filter(Boolean).join(" and ");
   if (duel.event === "crowned" || duel.challenger_wins) {
     return `${name} beat the king: paired score margin ${m} cleared ${need} `
       + `(z = ${fmtZ(duel.z)})${duel.event === "crowned" ? ` — crowned reign #${duel.reign_number ?? "?"}` : ""}.`;
@@ -1797,14 +1804,50 @@ function sidesTableHtml(duel) {
   // on 2026-08-11) — never as a wall of "—".
   const has = (...vals) => vals.some((v) => v != null);
   const tau = Number(params.tau || 0);
-  const minRg = params.score_mode === "min_rg";
+  const sdRule = params.score_mode === "sd_min_rga";
+  // Under the sd-meter the legacy per-byte min(R, G) is still published per
+  // side but is telemetry; the score is the sd-meter mean in teacher sd.
+  const minRg = params.score_mode === "min_rg" || sdRule;
+  const sdC = duel.sd_meter?.challenger || {};
+  const sdK = duel.sd_meter?.king || {};
+  const f2 = (v) => (v == null ? "—" : Number(v).toFixed(2));
+  const f3 = ERAS.sd.fmt;
+  const bindPct = (b, leg) => (b?.[leg] == null ? "—" : `${Math.round(Number(b[leg]) * 100)}%`);
   const rows = [
-    sideRow(minRg ? "min(R, G)" : "Reason", minRg
+    sdRule
+      ? sideRow("sd-meter score", `the score (wvk ≥ 22): mean per-turn min(z_R, typ_c, z_A) in teacher-sd units over k=${params.n_teacher_samples ?? 3} teacher samples; forfeits at ${params.sd_meter?.forfeit_sd ?? -12} sd included`,
+          sdC.mean, sdK.mean, "higher wins · sd", null, null, f3)
+      : "",
+    sdRule && has(sdC.mean_z_R, sdK.mean_z_R)
+      ? sideRow("z_R (thought→action)", "mean standardised R leg: does the thought help the teacher predict its own action",
+          sdC.mean_z_R, sdK.mean_z_R, "telemetry · sd", null, null, f2)
+      : "",
+    sdRule && has(sdC.mean_typ_c, sdK.mean_typ_c)
+      ? sideRow("typ_c (thought typicality)", "2 − |m_c − μ_c|/σ_c over content tokens (|lpC(tok|x) − lpC(tok|∅)| > 1 nat): filler and parroting both fall",
+          sdC.mean_typ_c, sdK.mean_typ_c, "telemetry · sd", null, null, f2)
+      : "",
+    sdRule && has(sdC.mean_z_A, sdK.mean_z_A)
+      ? sideRow("z_A (action←thought)", "mean standardised summed A leg: would the teacher, thinking its own thought, take this action",
+          sdC.mean_z_A, sdK.mean_z_A, "telemetry · sd", null, null, f2)
+      : "",
+    sdRule && (sdC.bind_frac || sdK.bind_frac)
+      ? sideRow("binding leg", "share of valid turns decided by z_R / typ_c / z_A (the turn pays its lowest leg)",
+          sdC.bind_frac ? `${bindPct(sdC.bind_frac, "R")} / ${bindPct(sdC.bind_frac, "Gc")} / ${bindPct(sdC.bind_frac, "A")}` : null,
+          sdK.bind_frac ? `${bindPct(sdK.bind_frac, "R")} / ${bindPct(sdK.bind_frac, "Gc")} / ${bindPct(sdK.bind_frac, "A")}` : null,
+          "z_R / typ_c / z_A", null, null, String)
+      : "",
+    sdRule && has(sdC.n_valid, sdK.n_valid)
+      ? sideRow("valid turns (sd)", "turns with all three legs computed; forfeits and unscorable turns listed separately",
+          sdC.n_valid, sdK.n_valid, "", null, null, String)
+      : "",
+    sideRow(sdRule ? "min(R, G) (legacy)" : (minRg ? "min(R, G)" : "Reason"), sdRule
+      ? `per-byte min(R, G) as scored until wvk 21 — still measured, telemetry only since wvk 22 (nats/byte)`
+      : minRg
       ? `the score: mean per-turn min(centered Reason, banded Grounding) over k=${params.n_teacher_samples ?? 3} teacher refs (τ=${tau}, band_c=${params.band_c ?? 2})`
       : tau > 0
       ? `the score: mean per-turn τ·log-mean-exp of lpC(y_i|z_A) − lpC(y_i|∅) over k=${params.n_teacher_samples ?? 3} teacher refs (τ=${tau})`
       : "the score: mean lpC(y_C|z_A) − lpC(y_C|∅)",
-      chReason, kgReason, "higher wins"),
+      chReason, kgReason, sdRule ? "telemetry · nats/byte" : "higher wins · nats/byte", null, null, ERAS.nats.fmt),
     minRg && has(ch.mean_r_leg, kg.mean_r_leg)
       ? sideRow("R leg (centered)", "mean per-turn centered tempered Reason",
           ch.mean_r_leg, kg.mean_r_leg, "telemetry")
@@ -2027,22 +2070,31 @@ function duelPageHtml(duel, series, logLines) {
       <div class="kv"><span class="k">revision</span><span class="v mono">${esc(short(revision || "—", 14))}${copyBtn(revision)}</span></div>
       <div class="kv"><span class="k">when</span><span class="v" title="${esc(fmtTime(duel.at))}">${esc(fmtTime(duel.at))} · ${esc(fmtAge(duel.at))}</span></div>
       <div class="kv"><span class="k">duration</span><span class="v">${esc(fmtDuration(duel.duration_s))}</span></div>
-      <div class="kv"><span class="k">paired turns</span><span class="v">${esc(duel.n_paired_turns ?? paired.length ?? "—")}</span></div>
+      <div class="kv"><span class="k">paired turns</span><span class="v">${esc(duel.n_paired_turns ?? paired.length ?? "—")}${
+        duel.near_miss?.triggered ? ` <span class="dim" title="sequential near-miss: the first slice's margin fell inside the near-miss window, so a second seeded slice was scored and the crown decided on the pooled turns">· pooled over ${esc(String((duel.near_miss.slices || []).length))} slices</span>` : ""
+      }</span></div>
       <div class="kv"><span class="k">artifact</span><span class="v">${artifactLink}${duel.challenge_id ? copyBtn(hippiusEvalUrl(duel.challenge_id)) : ""}</span></div>
     </div>`;
 
   const params = duelParams(duel);
   const pre = isPreFork(duel);
-  const k = Number(params.k_sigma ?? 2);
+  // Units: nats/byte until wvk 21, teacher sd since wvk 22. δ, k and the
+  // per-side score all come from the row's own era.
+  const era = eraOf(duel);
+  const unit = ERAS[era].unit;
+  const sdRule = era === "sd";
+  const k = Number((sdRule ? params.sd_meter?.k_sigma : null) ?? params.k_sigma ?? 2);
   const kSE = duel.se != null ? k * Number(duel.se) : null;
-  const deltaFloor = params.min_margin != null && Number(params.min_margin) > 0
-    ? Number(params.min_margin) : null;
+  const deltaFloor = sdRule
+    ? deltaOf(duel)
+    : (params.min_margin != null && Number(params.min_margin) > 0
+      ? Number(params.min_margin) : null);
   const bar = kSE != null ? Math.max(kSE, deltaFloor ?? 0) : deltaFloor;
   const marginOk = duel.margin != null && bar != null
     ? Number(duel.margin) > bar : null;
   const zOk = duel.z != null ? Number(duel.z) > k : null;
-  const chR = duel.challenger?.reason ?? duel.challenger?.mean_lambda2 ?? duel.score;
-  const kgR = duel.king?.reason ?? duel.king?.mean_lambda2 ?? duel.score_king;
+  const chR = sideScoreOf(duel, "challenger") ?? (sdRule ? null : duel.score);
+  const kgR = sideScoreOf(duel, "king") ?? (sdRule ? null : duel.score_king);
   const card = (label, value, sub, cls = "") => `
     <div class="stat-card">
       <span class="stat-label">${label}</span>
@@ -2050,24 +2102,81 @@ function duelPageHtml(duel, series, logLines) {
       ${sub ? `<span class="stat-sub">${sub}</span>` : ""}
     </div>`;
   const passCls = (ok) => (ok == null ? "" : ok ? "delta-up" : "delta-down");
-  // Margin and the bar it must clear routinely differ in the 4th decimal —
-  // fmtScore's 3 decimals would render a cleared bar as a tie.
-  const fine = (v) => (v == null || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(4));
+  // Margin and the bar it must clear routinely differ in the 4th decimal in
+  // nats (fmtScore's 3 decimals would render a cleared bar as a tie); sd
+  // values sit at ~0.3 and read fine at 3.
+  const fine = ERAS[era].fmt;
+  const scoreName = sdRule ? "sd-meter score" : (params.score_mode === "min_rg" ? "min(R, G)" : "Reason");
   const verdict = `
     <p class="duel-verdict-line">${esc(verdictSummary(duel))}</p>
     <div class="stat-cards">
-      ${card("margin", esc(fine(duel.margin)),
-        "mean(Reason_chall − Reason_king) over paired turns", passCls(marginOk))}
-      ${card("bar to beat", esc(fine(bar)),
+      ${card("margin", `${esc(fine(duel.margin))} <span class="dim">${esc(unit)}</span>`,
+        `mean(turn_chall − turn_king) over paired turns · ${esc(unit)}${duel.se != null ? ` · SE ${esc(fine(duel.se))}` : ""}`, passCls(marginOk))}
+      ${card("bar to beat", `${esc(fine(bar))} <span class="dim">${esc(unit)}</span>`,
         [
           kSE != null ? `${k}·SE = ${fine(kSE)}` : null,
-          deltaFloor != null ? `δ floor = ${fine(deltaFloor)}` : null,
+          deltaFloor != null ? `δ floor = ${fine(deltaFloor)} ${unit}` : null,
         ].filter(Boolean).map(esc).join(" · ") || "margin must clear this")}
       ${card("z", esc(fmtZ(duel.z)),
-        `margin ÷ SE · crown needs &gt; ${esc(String(k))}`, passCls(zOk))}
-      ${card("challenger Reason", esc(fine(chR)), "mean over the slice",
+        `margin ÷ SE · unit-free · crown needs &gt; ${esc(String(k))}`, passCls(zOk))}
+      ${card(`challenger ${esc(scoreName)}`, `${esc(fine(chR))} <span class="dim">${esc(unit)}</span>`, "mean over the slice",
         chR != null && kgR != null ? passCls(Number(chR) >= Number(kgR)) : "")}
-      ${card("king Reason", esc(fine(kgR)), "same slice, same teacher")}
+      ${card(`king ${esc(scoreName)}`, `${esc(fine(kgR))} <span class="dim">${esc(unit)}</span>`, "same slice, same teacher")}
+      ${(() => {
+        // wvk 22 sd-meter legs: which of z_R / typ_c / z_A carried the
+        // challenger's score and how often each one bound.
+        const sd = duel.sd_meter;
+        const c = sd?.challenger;
+        if (!sdRule || !c) return "";
+        const f2 = (v) => (v == null ? "—" : Number(v).toFixed(2));
+        const b = c.bind_frac || {};
+        const pctB = (v) => (v == null ? "—" : `${Math.round(Number(v) * 100)}%`);
+        return card("legs (challenger)",
+          esc(`z_R ${f2(c.mean_z_R)} · typ_c ${f2(c.mean_typ_c)} · z_A ${f2(c.mean_z_A)}`),
+          `mean per leg, teacher sd · binds: z_R ${esc(pctB(b.R))} · typ_c ${esc(pctB(b.Gc))} · z_A ${esc(pctB(b.A))}`
+            + (sd.sd_diff != null ? ` · paired sd ${esc(f2(sd.sd_diff))}` : ""));
+      })()}
+      ${(() => {
+        // wvk 19: a first-slice pass must be confirmed on a second slice.
+        const c = duel.confirmation;
+        if (!c || c.rule !== "per_duel") return "";
+        const ok = Boolean(c.passed);
+        return card("confirmation slice", esc(fine(c.margin)),
+          `z = ${esc(fmtZ(c.z))} · ${esc(String(c.n ?? "—"))} paired turns · must be > 0`, passCls(c.margin != null ? Number(c.margin) > 0 : null))
+          + card("pooled (both slices)", esc(fine(c.pooled_margin)),
+            `z = ${esc(fmtZ(c.pooled_z))} · bar max(${esc(String(c.k_sigma ?? 2))}·SE, δ) = ${esc(fine(c.bar))} · ${ok ? "confirmed" : "not confirmed"}`, passCls(ok));
+      })()}
+      ${(() => {
+        // A_match telemetry (2026-09-14, not scored): share of the teacher's
+        // k reference actions equal to the side's action after dialect
+        // normalisation; `pair` = the refs' own agreement. Rendered only
+        // on verdicts that carry it.
+        const am = duel.challenger?.a_match, ak = duel.king?.a_match;
+        if (am == null && ak == null) return "";
+        const pct = (v) => (v == null ? "—" : `${Math.round(Number(v) * 100)}%`);
+        const pair = duel.teacher?.ref_pair_agreement;
+        const sub = `share of the teacher's reference actions equal to the side's action (dialect-normalised) · telemetry, not scored`
+          + (pair != null ? ` · refs agree with each other ${pct(pair)}` : "");
+        return card("A_match chall / king", `${esc(pct(am))} / ${esc(pct(ak))}`, esc(sub),
+          am != null && ak != null ? passCls(Number(am) >= Number(ak)) : "")
+          + (duel.challenger?.a_match_centered != null
+            ? card("A_match − pair", `${esc(fine(duel.challenger.a_match_centered))} / ${esc(fine(duel.king?.a_match_centered))}`,
+              "chall / king · per-turn A_match minus the refs' own agreement, averaged") : "");
+      })()}
+      ${(() => {
+        // Sequential near-miss (2026-09-11): one card per extra slice the
+        // rule drew, showing what each slice said on its own. Rendered only
+        // when the rule fired — single-slice verdicts look as before.
+        const nm = duel.near_miss;
+        if (!nm || !nm.triggered || !Array.isArray(nm.slices)) return "";
+        return nm.slices.map((s) => card(
+          `slice ${esc(String(s.index))} alone`,
+          esc(fine(s.margin)),
+          `z = ${esc(fmtZ(s.z))} · ${esc(String(s.n_paired_turns ?? "—"))} paired turns · seed ${esc(short(String(s.seed ?? ""), 10))}`,
+          s.challenger_wins == null ? "" : passCls(Boolean(s.challenger_wins)))).join("")
+          + card("near-miss window", `(${esc(fine(nm.low))}, ${esc(fine(nm.high))})`,
+            `first-slice margin inside → ${esc(String(nm.extra_slices))} extra slice(s), decided on the pool`);
+      })()}
       ${(() => {
         // The two non-margin crown conditions (wvk=5/6). Render only when the
         // duel recorded them — pre-fork rows have neither.
@@ -2156,17 +2265,30 @@ function duelPageHtml(duel, series, logLines) {
           <li><strong>The math is replayable.</strong> Teacher-force the pinned
             teacher (see the contract) over the published texts to reproduce
             the logprobs, then recompute
-            ${Number(params.tau || 0) > 0
+            ${params.score_mode === "sd_min_rga"
+              ? `the three legs against the teacher's own k=${esc(String(params.n_teacher_samples ?? 3))} samples —
+            <code>z_R = (R − μ_R)/σ_R</code>, <code>typ_c = 2 − |m_c − μ_c|/σ_c</code>,
+            <code>z_A = (A − μ_A)/σ_A</code> (μ per turn from the refs' leave-one-out
+            values, σ pooled per dialect over the duel; thoughts scored as generated) —
+            the turn score <code>min(z_R, typ_c, z_A)</code> in teacher sd
+            (${esc(String(params.sd_meter?.forfeit_sd ?? -12))} sd on a forfeit)`
+              : params.score_mode === "min_rg"
+              ? `<code>a_i = lpC(y_i|z_A) − lpC(y_i|∅)</code> per teacher ref,
+            <code>R = τ·log(mean_i exp(a_i/τ)) − mean_i a_i</code> (τ = ${esc(String(params.tau))}),
+            <code>G</code> from the thought's own teacher likelihood against the band of
+            the teacher's reference thoughts, the turn score <code>min(R, G)</code> in nats/byte
+            (${esc(String(params.forfeit_turn_score ?? "dropped"))} on a forfeit)`
+              : Number(params.tau || 0) > 0
               ? `<code>a_i = lpC(y_i|z_A) − lpC(y_i|∅)</code> per teacher ref,
             the turn score <code>τ·log(mean_i exp(a_i/τ))</code> (τ = ${esc(String(params.tau))})`
               : `<code>Reason = lpC(y_C|z_A) − lpC(y_C|∅)</code>`} and the paired
-            <code>z = mean(Reason_c − Reason_k) / SE</code>. The exact scoring
+            <code>z = mean(turn_c − turn_k) / SE</code>. The exact scoring
             code ships in the repo — see <a href="/llms.txt" target="_blank" rel="noopener">llms.txt</a>
             → <code>code/affine/score.py</code>.</li>
           <li><strong>The verdict follows mechanically.</strong> Crown iff
             ${pre
               ? `margin &gt; ${esc(String(params.k_sigma ?? 2))}·SE (this pre-fork duel additionally required margin &gt; δ = ${esc(fmtScore(params.min_margin))} and every S* v2 gate)`
-              : `${esc(crownRuleShort(params, false).replace(/^crown rule: /, ""))}`}. No judge, no discretion.</li>
+              : `${esc(crownRuleShort(params, false, duel).replace(/^crown rule: /, ""))}`}. No judge, no discretion.</li>
         </ol>
       </div>
     </div>`;
@@ -2175,7 +2297,7 @@ function duelPageHtml(duel, series, logLines) {
     ${overview}
     <div class="duel-block">
       <div class="section-head"><h3 class="section-title">verdict</h3>
-        <span class="section-right note">${esc(crownRuleShort(params, pre))}</span></div>
+        <span class="section-right note">${esc(crownRuleShort(params, pre, duel))}</span></div>
       ${verdict}
     </div>
     ${failBlock}
@@ -2186,7 +2308,7 @@ function duelPageHtml(duel, series, logLines) {
     </div>
     <div class="duel-block">
       <div class="section-head"><h3 class="section-title">samples</h3>
-        <span class="section-right note">${esc(String(paired.length))} paired turns from the seeded slice</span></div>
+        <span class="section-right note">${esc(String(paired.length))} paired turns from the seeded slice${sdRule ? " · per-byte Reason telemetry — the wvk-22 sd-meter per-turn scores are not published in the series yet" : ""}</span></div>
       ${charts}
     </div>
     <div class="duel-block">
@@ -2216,7 +2338,7 @@ function applySnapshot(snap) {
   if (fp === fps.dashboard) return;
   fps.dashboard = fp;
   cache.dashboard = snap;
-  setReignLookup(reignMembers(snap), BENCH_GENESIS.repo);
+  setReignLookup(reignMembers(snap), GENESIS_REPO);
   const navKing = $("nav-king");
   if (navKing && snap.king?.repo) {
     navKing.textContent =
@@ -2232,10 +2354,9 @@ function applySnapshot(snap) {
   renderFails(cache.history);
 }
 
-async function refreshHistoryAndBench() {
-  const [h, b, reg] = await Promise.all([
+async function refreshHistory() {
+  const [h, reg] = await Promise.all([
     fetchHistory({ limit: 100, q: filter }),
-    fetchBenchmarks(),
     fetchRegHistory(),
   ]);
   const hfp = fingerprint(h);
@@ -2248,13 +2369,6 @@ async function refreshHistoryAndBench() {
     renderHistory(cache.history);
     renderFails(cache.history);
     drawOpenChart();
-  }
-  const bfp = fingerprint(b);
-  if (b && bfp !== fps.benchmarks) {
-    fps.benchmarks = bfp;
-    cache.benchmarks = b;
-    // Bench scores render inside the reign table now.
-    if (cache.dashboard) renderReign(cache.dashboard);
   }
   if (reg?.points?.length) {
     const rfp = fingerprint({
@@ -2273,7 +2387,7 @@ async function refreshHistoryAndBench() {
 function wire() {
   $("filter-input")?.addEventListener("input", (e) => {
     filter = e.target.value.trim().toLowerCase();
-    refreshHistoryAndBench();
+    refreshHistory();
   });
   window.addEventListener("resize", () => {
     fps.hero = "";
@@ -2354,10 +2468,11 @@ function wire() {
 async function boot() {
   wire();
   wireChartTip();
+  initMatrix();
   route(); // deep link straight to a duel page (#duel/<cid>)
   cache.contract = await fetchContract().catch(() => null);
   renderLiveContract();
-  await Promise.all([refreshHistoryAndBench(), refreshAudits()]);
+  await Promise.all([refreshHistory(), refreshAudits()]);
   route(); // retry the duel render now that history is cached (static mode)
   closeWatch = watchSnapshot(applySnapshot, {
     onStatus: (s) => {
@@ -2366,7 +2481,7 @@ async function boot() {
     },
   });
   // History grows slower than live snapshot — refresh on an interval.
-  setInterval(refreshHistoryAndBench, 15000);
+  setInterval(refreshHistory, 15000);
   setInterval(refreshAudits, 30000);
 }
 

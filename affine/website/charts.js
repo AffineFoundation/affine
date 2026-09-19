@@ -137,6 +137,8 @@ export function fmtZ(z) {
 export function reignMembers(d) {
   const fromReign = d?.reign?.members;
   if (Array.isArray(fromReign) && fromReign.length) return fromReign;
+  // Fallback for snapshots without `reign.members`: every hotkey in
+  // `reign_chain` is a paid crown (equal shares); no expiry is known here.
   const chain = d?.reign_chain || [];
   const king = d?.king;
   if (!king && !chain.length) return [];
@@ -166,10 +168,131 @@ export function duelPoints(history) {
     .reverse();
 }
 
+/* ---------- scoring eras (units) ---------- */
+
+/**
+ * Two eras share one history. Until wvk 21 a turn scored min(R, G) in
+ * per-byte nats (margins ~0.002, δ = 0.002, forfeit −0.1). Since wvk 22
+ * (2026-09-18 20:41 UTC) a turn is min(z_R, typ_c, z_A) in teacher-sd
+ * units (margins ~0.2–0.6 sd, δ = 0.20 sd, forfeit −12 sd). margin, SE and
+ * the per-side score carry the era's unit; z = margin / SE is unit-free.
+ * Every chart that shows a unit-bearing quantity splits its x-axis at the
+ * era boundary and scales each segment on its own.
+ */
+export const ERAS = {
+  nats: {
+    key: "nats",
+    unit: "nats/byte",
+    label: "wvk ≤ 21 · min(R, G) · nats/byte",
+    delta: 0.002,
+    fmt: (v) => (v == null || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(4)),
+  },
+  sd: {
+    key: "sd",
+    unit: "sd",
+    label: "wvk ≥ 22 · min(z_R, typ_c, z_A) · teacher sd",
+    delta: 0.20,
+    fmt: (v) => (v == null || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(3)),
+  },
+};
+
+export function eraOf(p) {
+  const params = p?.duel_params || {};
+  if (params.score_mode === "sd_min_rga" || p?.sd_meter?.role === "rule") return "sd";
+  return "nats";
+}
+
+/** The δ crown floor in the row's own units. */
+export function deltaOf(p) {
+  if (eraOf(p) === "sd") {
+    const v = p?.duel_params?.sd_meter?.min_margin_sd ?? p?.sd_meter?.knobs?.min_margin_sd;
+    return v != null && Number.isFinite(Number(v)) ? Number(v) : ERAS.sd.delta;
+  }
+  const v = p?.min_margin ?? p?.duel_params?.min_margin;
+  return v != null && Number.isFinite(Number(v)) ? Number(v) : ERAS.nats.delta;
+}
+
+/** Value + unit, formatted for the era ("0.2511 sd", "0.0023 nats/byte"). */
+export function fmtUnit(v, era) {
+  const e = ERAS[era] || ERAS.nats;
+  return v == null ? "—" : `${e.fmt(v)} ${e.unit}`;
+}
+
+/** Contiguous runs of one era over points ordered oldest → newest. */
+export function eraRuns(points) {
+  const runs = [];
+  points.forEach((p, i) => {
+    const era = eraOf(p);
+    const last = runs[runs.length - 1];
+    if (last && last.era === era) last.i1 = i;
+    else runs.push({ era, i0: i, i1: i });
+  });
+  return runs;
+}
+
+/**
+ * One continuous x axis for both eras (operator decision 2026-09-19 14:45
+ * UTC: "just put a single dotted line, don't split the chart"). Every duel
+ * gets the same slot; the wvk-22 boundary is one dotted vertical line.
+ */
+export function eraLayout(points, x0, x1) {
+  const runs = eraRuns(points);
+  const n = Math.max(points.length, 1);
+  const slot = (x1 - x0) / n;
+  runs.forEach((r) => {
+    r.x0 = x0 + slot * r.i0;
+    r.x1 = x0 + slot * (r.i1 + 1);
+    r.count = r.i1 - r.i0 + 1;
+    r.slot = slot;
+  });
+  const runOf = (i) => runs.find((r) => i >= r.i0 && i <= r.i1) || runs[runs.length - 1] || null;
+  const xAt = (i) => x0 + slot * (i + 0.5);
+  return { runs, xAt, runOf, slot };
+}
+
+/** The dotted wvk-22 boundary: drawn between the last nats row and the first
+ * sd row, labelled at the top. Nothing when the history is one era. */
+function eraBoundary(runs, xAt, padT, yBottom) {
+  const sd = runs.find((r) => r.era === "sd" && r.i0 > 0);
+  if (!sd) return "";
+  const x = (xAt(sd.i0 - 1) + xAt(sd.i0)) / 2;
+  return `<g>
+    <line x1="${x}" x2="${x}" y1="${padT - 6}" y2="${yBottom}"
+      stroke="rgba(243,196,73,0.55)" stroke-width="1" stroke-dasharray="2 4"/>
+    <text x="${x + 4}" y="${padT - 10}" fill="rgba(243,196,73,0.85)"
+      font-family="${MONO}" font-size="9">wvk 22</text>
+  </g>`;
+}
+
+/**
+ * Per-era z-score of a per-duel value: (v − mean_era) / sd_era over the rows
+ * of that era, so nats/byte and teacher-sd values share one unit-free axis.
+ * Returns {z, mean, sd} accessors; rows whose era has < 2 values get z = 0.
+ */
+export function eraZScorer(points, get) {
+  const stats = {};
+  for (const era of Object.keys(ERAS)) {
+    const vals = points.filter((p) => eraOf(p) === era).map(get).filter((v) => v != null && Number.isFinite(v));
+    const n = vals.length;
+    const mean = n ? vals.reduce((a, b) => a + b, 0) / n : 0;
+    const sd = n > 1 ? Math.sqrt(vals.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1)) : 0;
+    stats[era] = { mean, sd, n };
+  }
+  return {
+    stats,
+    z: (p, v) => {
+      const st = stats[eraOf(p)];
+      return v == null || !st || !(st.sd > 0) ? (v == null ? null : 0) : (v - st.mean) / st.sd;
+    },
+  };
+}
+
 /** Tooltip name: display name plus the real repo string for hover discovery. */
 function duelTipName(p) {
   const name = modelDisplayName(p?.repo, p?.hotkey, p?.reign_number);
-  return p?.repo && p.repo !== name ? `${name} (${p.repo})` : name;
+  const reign = p?.event === "crowned" && p?.reign_number != null
+    ? `${name} = reign #${p.reign_number}` : name;
+  return p?.repo && p.repo !== name ? `${reign} (${p.repo})` : reign;
 }
 
 /** Marks with a challenge id navigate to the duel page on click. */
@@ -202,7 +325,11 @@ function duelAxisMarks(points, xAt, yBase, width) {
       return `<line x1="${x}" x2="${x}" y1="${yBase}" y2="${yBase + 4}"
         stroke="rgba(229,229,229,0.22)" stroke-width="1"/>`;
     }
-    const label = p.reign_number != null ? romanNumeral(p.reign_number + 1) : "#?";
+    // Reign number, as the API, Discord and the history badges say it
+    // ("crowned #19"). The roman king name (Affine-XX = reign 19) is one
+    // off the reign number by construction and misread as "reign 20" on
+    // the axis; it stays in the tooltip.
+    const label = p.reign_number != null ? `#${p.reign_number}` : "#?";
     const w = CALLOUT_ELBOW + 3 + label.length * CALLOUT_CHAR_W;
     // Flip the elbow leftward when the label would run off the right edge.
     const flip = width != null && x + w > width - 4;
@@ -286,11 +413,16 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
   const padR = 24;
   const padT = 28;
   const padB = CROWN_AXIS_PAD;
-  const n = Math.max(points.length, 1);
-  const slot = (width - padL - padR) / n;
+  // z is unit-free, so both eras share one axis; the layout still splits
+  // the x range at the wvk-22 boundary so the segments line up with the
+  // unit-bearing charts next to it.
+  const { runs, xAt, runOf } = eraLayout(points, padL, width - padR);
   // Scale bars down with the slot so dense histories keep a visible gap
   // (a fixed 10px floor fused bars into a block past ~60 duels).
-  const barW = Math.max(1.5, Math.min(slot * 0.6, 64, slot - 1.5));
+  const barWAt = (i) => {
+    const slot = runOf(i)?.slot || (width - padL - padR);
+    return Math.max(1.5, Math.min(slot * 0.6, 64, slot - 1.5));
+  };
 
   const zs = points.map((p) =>
     p.event === "crowned" ? Math.max(Number(p.z) || 0, 3) : Number(p.z) || 0);
@@ -301,7 +433,6 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
   const { min, max } = clipDomain(rawMin, rawMax, -8, -2);
   const innerH = height - padT - padB;
   const yAt = (v) => padT + ((max - v) / (max - min || 1)) * innerH;
-  const xAt = (i) => padL + slot * (i + 0.5);
 
   const ticks = niceTicks(min, max, tickBudget(innerH));
   if (!ticks.some((v) => Math.abs(v) < 1e-9)) ticks.push(0);
@@ -313,6 +444,7 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
 
   // Crown threshold in z-units = k_sigma (contract: 2.0 since 2026-08-11).
   const kCrown = 2;
+  const headers = eraBoundary(runs, xAt, padT, height - padB);
   const grid = ticks.filter((v) => v !== kCrown).map((v) => {
     const y = yAt(v);
     return `<g>
@@ -334,6 +466,7 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
 
   const columns = points.map((p, i) => {
     const z = zs[i];
+    const barW = barWAt(i);
     const shown = Math.min(max, Math.max(min, z));
     const x = xAt(i);
     const y0 = yAt(0);
@@ -344,7 +477,9 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
     const fill = crowned ? gold : (z >= 0 ? bar : "rgba(255,71,71,0.55)");
     const zLabel = fmtZ(p.event === "crowned" && p.z == null ? kCrown : p.z);
     const clipped = z < min - 1e-9;
-    const tip = `${duelTipName(p)} · ${p.event} · z=${zLabel}${clipped ? " (clipped)" : ""} · ${fmtTime(p.at)}`;
+    const era = eraOf(p);
+    const marginTxt = p.margin != null ? ` · margin ${fmtUnit(p.margin, era)} (δ ${fmtUnit(deltaOf(p), era)})` : "";
+    const tip = `${duelTipName(p)} · ${p.event} · z=${zLabel}${clipped ? " (clipped)" : ""}${marginTxt} · ${fmtTime(p.at)}`;
     const hatch = clipped
       ? `<line x1="${x - barW / 2 + 0.5}" x2="${x + barW / 2 - 0.5}" y1="${top + h - 3}" y2="${top + h - 3}"
            stroke="rgba(0,0,0,0.4)" stroke-width="1"/>
@@ -361,23 +496,16 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
   svg.setAttribute("width", String(width));
   svg.setAttribute("height", String(height));
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.innerHTML = `${grid}${crownLine}${columns}${axis}`;
+  svg.innerHTML = `${grid}${crownLine}${headers}${columns}${axis}`;
 }
 
-/** Contract δ crown floor (min_margin, weight_version_key=4, 2026-08-12).
- * Verdicts stamp it per duel; this is the fallback for pre-δ rows. */
-const DELTA_FLOOR = 0.002;
-
-/** Latest stamped min_margin in the history, else the contract default. */
-function deltaFloorOf(points) {
-  for (let i = points.length - 1; i >= 0; i--) {
-    const v = points[i]?.min_margin ?? points[i]?.duel_params?.min_margin;
-    if (v != null && Number.isFinite(Number(v))) return Number(v);
-  }
-  return DELTA_FLOOR;
-}
-
-/** Absolute paired margin per duel, with the δ crown floor drawn in. */
+/**
+ * Paired margin per duel normalised to its era's δ crown floor (margin / δ):
+ * 0.002 nats/byte until wvk 21 and 0.20 teacher sd since wvk 22 cannot share
+ * a linear axis, and margin/SE is already the chart next to this one, so the
+ * unit-free form here is "how many δ". The dashed line at 1 is the floor in
+ * both eras; the tooltip carries the raw margin with its unit.
+ */
 export function drawDuelMargin(svg, history, { width: widthOpt, height: heightOpt } = {}) {
   const points = duelPoints(history);
   const width = Math.max(widthOpt || chartWidth(), 280);
@@ -387,31 +515,28 @@ export function drawDuelMargin(svg, history, { width: widthOpt, height: heightOp
   const padR = 24;
   const padT = 28;
   const padB = CROWN_AXIS_PAD;
-  const n = Math.max(points.length, 1);
-  const slot = (width - padL - padR) / n;
-  const barW = Math.max(1.5, Math.min(slot * 0.6, 64, slot - 1.5));
-
-  const delta = deltaFloorOf(points);
-  const margins = points.map((p) => {
-    const v = Number(p.margin);
-    return p.margin != null && Number.isFinite(v) ? v : null;
-  });
-  const have = margins.filter((v) => v != null);
-  const rawMin = Math.min(0, ...have);
-  const rawMax = Math.max(delta * 1.8, ...have);
-  // Same idea as the σ chart: a −0.16 wipeout must not hide δ = 0.002.
-  const { min: clippedMin, max: clippedMax } = clipDomain(
-    rawMin, rawMax, -0.02, -delta);
-  const pad = Math.max((clippedMax - clippedMin) * 0.08, Math.abs(clippedMax) * 0.1, 0.0005);
-  const min = rawMin < clippedMin ? clippedMin : clippedMin - pad;
-  const max = clippedMax + pad;
   const innerH = height - padT - padB;
-  const yAt = (v) => padT + ((max - v) / (max - min || 1)) * innerH;
-  const xAt = (i) => padL + slot * (i + 0.5);
+  const { runs, xAt, slot } = eraLayout(points, padL, width - padR);
+  const barW = Math.max(1.5, Math.min(slot * 0.6, 64, slot - 1.5));
 
   const gold = "#f3c449";
   const bar = "#c6bda8";
   const mono = "IBM Plex Mono, monospace";
+
+  const ratios = points.map((p) => {
+    const v = Number(p.margin);
+    const d = deltaOf(p);
+    return p.margin != null && Number.isFinite(v) && d > 0 ? v / d : null;
+  });
+  const have = ratios.filter((v) => v != null);
+  const rawMin = Math.min(0, ...have);
+  const rawMax = Math.max(1.8, ...have);
+  // A −10δ wipeout must not flatten the crown band around 1δ.
+  const { min: clippedMin, max: clippedMax } = clipDomain(rawMin, rawMax, -10, -1);
+  const pad = Math.max((clippedMax - clippedMin) * 0.08, 0.25);
+  const min = rawMin < clippedMin ? clippedMin : clippedMin - pad;
+  const max = clippedMax + pad;
+  const yAt = (v) => padT + ((max - v) / (max - min || 1)) * innerH;
 
   const ticks = niceTicks(min, max, tickBudget(innerH));
   const grid = ticks.map((v) => {
@@ -420,33 +545,34 @@ export function drawDuelMargin(svg, history, { width: widthOpt, height: heightOp
       <line x1="${padL}" x2="${width - padR}" y1="${y}" y2="${y}"
         stroke="rgba(255,255,255,0.03)" stroke-width="1" stroke-dasharray="2 4"/>
       <text x="${padL - 10}" y="${y + 3}" fill="rgba(229,229,229,0.45)"
-        font-family="${mono}" font-size="10" text-anchor="end">${fmtScore(v)}</text>
+        font-family="${mono}" font-size="10" text-anchor="end">${v.toFixed(Math.abs(v) < 1 && v !== 0 ? 1 : 0)}δ</text>
     </g>`;
   }).join("");
   const zeroLine = `<line x1="${padL}" x2="${width - padR}" y1="${yAt(0)}" y2="${yAt(0)}"
     stroke="rgba(255,255,255,0.08)" stroke-width="1"/>`;
-
-  const yDelta = yAt(delta);
+  const yDelta = yAt(1);
   const deltaLine = `<g>
     <line x1="${padL}" x2="${width - padR}" y1="${yDelta}" y2="${yDelta}"
       stroke="${gold}" stroke-width="1" stroke-dasharray="2 5" opacity="0.7"/>
     <text x="${width - padR}" y="${yDelta - 5}" fill="${gold}" font-family="${mono}"
-      font-size="10" text-anchor="end">δ ${fmtScore(delta)}</text>
+      font-size="10" text-anchor="end">δ = 1 (0.002 nats/byte · 0.20 sd)</text>
   </g>`;
 
   const columns = points.map((p, i) => {
-    const m = margins[i];
-    if (m == null) return "";
-    const shown = Math.min(max, Math.max(min, m));
+    const r = ratios[i];
+    if (r == null) return "";
+    const era = eraOf(p);
+    const shown = Math.min(max, Math.max(min, r));
     const x = xAt(i);
     const y0 = yAt(0);
     const y1 = yAt(shown);
     const top = Math.min(y0, y1);
     const h = Math.max(Math.abs(y0 - y1), 2);
     const crowned = p.event === "crowned";
-    const fill = crowned ? gold : (m >= 0 ? bar : "rgba(255,71,71,0.55)");
-    const clipped = m < min - 1e-12;
-    const tip = `${duelTipName(p)} · ${p.event} · margin=${fmtScore(m)}${clipped ? " (clipped)" : ""} · ${fmtTime(p.at)}`;
+    const fill = crowned ? gold : (r >= 0 ? bar : "rgba(255,71,71,0.55)");
+    const clipped = r < min - 1e-12;
+    const se = p.se != null ? ` · SE ${ERAS[era].fmt(p.se)}` : "";
+    const tip = `${duelTipName(p)} · ${p.event} · margin ${fmtUnit(p.margin, era)} = ${r.toFixed(2)}δ (δ ${fmtUnit(deltaOf(p), era)})${clipped ? " (clipped)" : ""}${se} · ${fmtTime(p.at)}`;
     const hatch = clipped
       ? `<line x1="${x - barW / 2 + 0.5}" x2="${x + barW / 2 - 0.5}" y1="${top + h - 3}" y2="${top + h - 3}"
            stroke="rgba(0,0,0,0.4)" stroke-width="1"/>
@@ -458,17 +584,33 @@ export function drawDuelMargin(svg, history, { width: widthOpt, height: heightOp
         opacity="${crowned ? 1 : 0.92}"/>${hatch}
     </g>`;
   }).join("");
+  const boundary = eraBoundary(runs, xAt, padT, height - padB);
   const axis = duelAxisMarks(points, xAt, height - padB, width - padR + 12);
 
   svg.setAttribute("width", String(width));
   svg.setAttribute("height", String(height));
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.innerHTML = `${grid}${zeroLine}${deltaLine}${columns}${axis}`;
+  svg.innerHTML = `${grid}${zeroLine}${deltaLine}${boundary}${columns}${axis}`;
 }
 
+/** Per-side score in the row's own era: min(R, G) mean (nats/byte) until
+ * wvk 21 — v3 rows publish `reason`, pre-fork rows the identical quantity as
+ * `mean_lambda2` — and the sd-meter mean (teacher sd) since wvk 22. */
+export function sideScoreOf(p, side) {
+  if (eraOf(p) === "sd") {
+    const v = p?.sd_meter?.[side]?.mean;
+    return v != null && Number.isFinite(Number(v)) ? Number(v) : null;
+  }
+  return reasonOf(p, side);
+}
+
+/**
+ * Best per-side score per duel (max of king and challenger), z-scored within
+ * its era ((v − mean_era) / sd_era) so nats/byte and teacher-sd values share
+ * one axis; the tooltip carries the raw value with its unit.
+ */
 export function drawDuelScores(svg, history,
                                { width: widthOpt, height: heightOpt } = {}) {
-  // Best absolute Reason per duel — max(king, challenger), reg-price style.
   const points = (history || [])
     .filter((r) => r.event !== "failed")
     .filter((r) =>
@@ -482,101 +624,101 @@ export function drawDuelScores(svg, history,
   const padR = 24;
   const padT = 28;
   const padB = CROWN_AXIS_PAD;
-  const n = Math.max(points.length, 1);
-  const slot = (width - padL - padR) / n;
-  const xAt = (i) => padL + slot * (i + 0.5);
+  const innerH = height - padT - padB;
   const gold = "#f3c449";
   const mono = "IBM Plex Mono, monospace";
+  const { runs, xAt } = eraLayout(points, padL, width - padR);
 
   const scoreOf = (p, key) => {
     const v = p[key];
     return v != null && Number.isFinite(Number(v)) ? Number(v) : null;
   };
-  // Per-side mean Reason, same accessor as the sides pane: v3 rows publish
-  // `reason`, pre-fork rows carried the identical quantity as `mean_lambda2`.
-  // The top-level `score`/`score_king` fields are a last resort only — on
-  // pre-fork rows they hold the retired S* mix, not Reason.
+  // The top-level `score`/`score_king` fields are a last resort for the
+  // nats era only — on pre-fork rows they hold the retired S* mix, and on
+  // sd-era rows they still carry the legacy per-byte telemetry, not the score.
+  const sides = (p) => {
+    const nats = eraOf(p) === "nats";
+    return {
+      challenger: sideScoreOf(p, "challenger") ?? (nats ? scoreOf(p, "score") : null),
+      king: sideScoreOf(p, "king") ?? (nats ? scoreOf(p, "score_king") : null),
+    };
+  };
   const bestScore = (p) => {
-    const vals = [
-      reasonOf(p, "challenger") ?? scoreOf(p, "score"),
-      reasonOf(p, "king") ?? scoreOf(p, "score_king"),
-    ].filter((v) => v != null);
+    const s = sides(p);
+    const vals = [s.challenger, s.king].filter((v) => v != null);
     return vals.length ? Math.max(...vals) : null;
   };
-
-  const series = points.map((p, i) => ({ p, i, v: bestScore(p) }))
-    .filter((pt) => pt.v != null);
-  const scores = series.map((pt) => pt.v);
+  const scorer = eraZScorer(points, bestScore);
+  const series = points.map((p, i) => ({ p, i, raw: bestScore(p) }))
+    .filter((pt) => pt.raw != null)
+    .map((pt) => ({ ...pt, v: scorer.z(pt.p, pt.raw) }));
 
   svg.setAttribute("width", String(width));
   svg.setAttribute("height", String(height));
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
-  if (!scores.length) {
+  if (!series.length) {
     svg.innerHTML = `<text x="${width / 2}" y="${height / 2}" text-anchor="middle"
-      fill="rgba(229,229,229,0.35)" font-family="${mono}" font-size="12">no Reason recorded yet</text>`;
+      fill="rgba(229,229,229,0.35)" font-family="${mono}" font-size="12">no score recorded yet</text>`;
     return;
   }
 
-  let lo = Math.min(...scores);
-  let hi = Math.max(...scores);
-  if (hi === lo) {
-    lo -= Math.abs(lo) * 0.2 || 0.02;
-    hi += Math.abs(hi) * 0.2 || 0.02;
-  } else {
-    const pad = (hi - lo) * 0.18;
-    lo -= pad;
-    hi += pad;
-  }
+  const zs = series.map((pt) => pt.v);
+  let lo = Math.min(-1, ...zs);
+  let hi = Math.max(1, ...zs);
+  const padY = (hi - lo) * 0.12;
+  lo -= padY;
+  hi += padY;
   const span = hi - lo || 1;
-  const yAt = (v) => padT + ((hi - v) / span) * (height - padT - padB);
+  const yAt = (v) => padT + ((hi - v) / span) * innerH;
   const yFloor = height - padB;
 
-  const ticks = Array.from({ length: 5 }, (_, i) => lo + (span * i) / 4);
+  const ticks = niceTicks(lo, hi, tickBudget(innerH));
   const grid = ticks.map((v) => {
     const y = yAt(v);
+    const zero = Math.abs(v) < 1e-9;
     return `<g>
       <line x1="${padL}" x2="${width - padR}" y1="${y}" y2="${y}"
-        stroke="rgba(255,255,255,0.04)" stroke-dasharray="2 4"/>
+        stroke="${zero ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.04)"}" ${zero ? "" : 'stroke-dasharray="2 4"'}/>
       <text x="${padL - 10}" y="${y + 3}" text-anchor="end" fill="rgba(229,229,229,0.45)"
-        font-family="${mono}" font-size="10">${fmtScore(v)}</text>
+        font-family="${mono}" font-size="10">${v > 0 ? "+" : ""}${v.toFixed(Math.abs(v) < 1 && !zero ? 1 : 0)}σ</text>
     </g>`;
   }).join("");
 
-  const line = series.map((pt, k) =>
-    `${k ? "L" : "M"} ${xAt(pt.i)} ${yAt(pt.v)}`).join(" ");
-  const area = series.length >= 2
-    ? `${line} L ${xAt(series[series.length - 1].i)} ${yFloor} L ${xAt(series[0].i)} ${yFloor} Z`
-    : "";
-
+  // Break the line at the era boundary: the two sides are z-scored against
+  // different means, so a segment across the divider would draw a change
+  // that is not there.
+  let d = "";
+  let lastEra = null;
+  for (const pt of series) {
+    const era = eraOf(pt.p);
+    d += `${lastEra === era ? " L" : " M"} ${xAt(pt.i)} ${yAt(pt.v)}`;
+    lastEra = era;
+  }
   const last = series[series.length - 1];
-  const tip = last
-    ? `<circle cx="${xAt(last.i)}" cy="${yAt(last.v)}" r="3.5" fill="${gold}"/>
-       <text x="${xAt(last.i) - 8}" y="${yAt(last.v) - 10}" text-anchor="end"
-         fill="${gold}" font-family="${mono}" font-size="11">${esc(fmtScore(last.v))}</text>`
-    : "";
-
-  const labels = points.map((p, i) => {
+  const lastTip = `<circle cx="${xAt(last.i)}" cy="${yAt(last.v)}" r="3.5" fill="${gold}"/>
+     <text x="${xAt(last.i) - 8}" y="${yAt(last.v) - 10}" text-anchor="end"
+       fill="${gold}" font-family="${mono}" font-size="11">${esc(fmtUnit(last.raw, eraOf(last.p)))}</text>`;
+  const dots = series.map(({ p, i, v, raw }) => {
     const crowned = p.event === "crowned";
-    const v = bestScore(p);
-    if (v == null) return "";
     const x = xAt(i);
-    const chall = scoreOf(p, "score");
-    const king = scoreOf(p, "score_king");
-    const who = (chall != null && (king == null || chall >= king)) ? "challenger" : "king";
-    const tip = `${duelTipName(p)} · best=${fmtScore(v)} (${who}) · ${fmtTime(p.at)}`;
+    const era = eraOf(p);
+    const sd = sides(p);
+    const who = (sd.challenger != null && (sd.king == null || sd.challenger >= sd.king)) ? "challenger" : "king";
+    const st = scorer.stats[era];
+    const tip = `${duelTipName(p)} · best ${fmtUnit(raw, era)} (${who}) = ${v >= 0 ? "+" : ""}${v.toFixed(2)}σ vs this era's mean ${ERAS[era].fmt(st.mean)} · challenger ${ERAS[era].fmt(sd.challenger)} · king ${ERAS[era].fmt(sd.king)} · ${fmtTime(p.at)}`;
     return `<g class="duel-hit" data-tip="${esc(tip)}"${duelCidAttr(p)}>
       <circle cx="${x}" cy="${yAt(v)}" r="9" fill="transparent"/>
       <circle cx="${x}" cy="${yAt(v)}" r="${crowned ? 4.5 : 2.5}"
         fill="${gold}" opacity="${crowned ? 1 : 0.85}"/>
     </g>`;
   }).join("");
+  const boundary = eraBoundary(runs, xAt, padT, yFloor);
   const axis = duelAxisMarks(points, xAt, height - padB, width - padR + 12);
 
   svg.innerHTML = `${grid}
-    ${area ? `<path d="${area}" fill="rgba(243,196,73,0.08)"/>` : ""}
-    <path d="${line}" fill="none" stroke="${gold}" stroke-width="1.75"/>
-    ${labels}${tip}${axis}`;
+    <path d="${d.trim()}" fill="none" stroke="${gold}" stroke-width="1.75"/>
+    ${dots}${lastTip}${boundary}${axis}`;
 }
 
 /* ---------- per-duel gate grid ---------- */
@@ -621,29 +763,104 @@ const reasonOf = (p, side) =>
 const TELEMETRY_NOTE = `<p><em>Telemetry: measured and published in every
   verdict for study — it does not affect the score or the crown.</em></p>`;
 
+const sdSide = (p, side, key) => num((p?.sd_meter?.[side] || {})[key]);
+const sdBind = (p, side, leg) => num(((p?.sd_meter?.[side] || {}).bind_frac || {})[leg]);
+const pctFmt = (v) => (v == null ? "—" : `${Math.round(Number(v) * 100)}%`);
+
 export const GATE_METRICS = [
   {
     id: "reason",
-    title: "Reason (sides)",
-    caption: "per-side mean tempered Reason over k=3 teacher refs — the score",
-    detail: `<p><code>a_i = lpC(y_i|z_A) − lpC(y_i|∅)</code> per teacher
-      reference, then per turn
-      <code>Reason = τ·log(mean_i exp(a_i/τ))</code> (k=3, τ=0.03, since
-      2026-08-17): how much the miner's thought helps <em>the teacher</em>
-      predict its own action, credited against the best-matching of three
-      fresh teacher rollouts. The teacher is the anchor — the miner is never
-      judged by another model's opinion of its prose, only by whether its
-      reasoning measurably transfers into the teacher.</p>
-      <p>This is the whole score. The tempered log-mean-exp means committing
-      to one valid teacher mode is not punished when the other references
-      land elsewhere — filler earns ≈ 0 and loses duels. Positive means the
-      thought carried real information about what to do next. The hero chart
-      shows the best side per duel; this pane shows both sides.</p>`,
-    fmt: fmtScore,
+    title: "score (sides)",
+    caption: "per-side mean turn score, z-scored within its era (nats/byte until wvk 21, teacher sd since wvk 22) · hover for the raw value",
+    zScoreByEra: true,
+    detail: `<p>Each side's mean per-turn score on the shared slice.
+      <strong>Until wvk 21</strong> (per-byte nats): <code>min(R, G)</code> —
+      the centered tempered Reason
+      <code>R = τ·log(mean_i exp(a_i/τ)) − mean_i a_i</code> over k=3 fresh
+      teacher references (<code>a_i = lpC(y_i|z_A) − lpC(y_i|∅)</code>) and
+      the banded Grounding <code>G</code> of the thought's own teacher
+      likelihood. <strong>Since wvk 22</strong> (2026-09-18 20:41 UTC,
+      teacher-sd units): <code>min(z_R, typ_c, z_A)</code> — the thought→action
+      leg <code>z_R</code>, the content-token typicality of the thought
+      <code>typ_c</code>, and the action←thought leg <code>z_A</code>, each
+      standardised against the teacher's own k=3 samples (μ from their
+      leave-one-out values, σ pooled per dialect over the duel). The teacher
+      is the anchor in both eras — the miner is never judged by another
+      model's opinion of its prose.</p>
+      <p>The two units cannot share a linear axis, so each value is drawn as
+      a z-score against the mean and sd of its own era's duels; the dotted
+      vertical line is the wvk-22 boundary and the tooltip carries the raw
+      value with its unit. The hero chart shows the best side per duel; this
+      pane shows both sides.</p>`,
+    fmt: (v) => (v == null ? "—" : `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(1)}σ`),
+    rawFmt: (p, v) => fmtUnit(v, eraOf(p)),
     lines: [{ label: "", at: () => 0, faint: true }],
     series: [
-      { label: "challenger", color: GOLD, get: (p) => reasonOf(p, "challenger") },
-      { label: "king", color: BONE, get: (p) => reasonOf(p, "king") },
+      { label: "challenger", color: GOLD, get: (p) => sideScoreOf(p, "challenger") },
+      { label: "king", color: BONE, get: (p) => sideScoreOf(p, "king") },
+    ],
+  },
+  {
+    id: "sd-legs",
+    title: "sd-meter legs",
+    caption: "wvk ≥ 22 · per-side mean z_R / typ_c / z_A (teacher sd) · solid = challenger · dashed = king",
+    detail: `<p>The three legs of the wvk-22 turn score
+      <code>min(z_R, typ_c, z_A)</code>, averaged per side over the slice, in
+      teacher-sd units. <code>z_R</code>: does the thought help the teacher
+      predict its own action (the centered R leg, standardised).
+      <code>typ_c</code>: is the thought's content typical of what the teacher
+      writes here — <code>2 − |m_c − μ_c| / σ_c</code> over the tokens whose
+      teacher log-probability the task moves by more than 1 nat, so filler
+      and parroting both fall. <code>z_A</code>: would the teacher, thinking
+      its own thought, take the miner's action (the summed A leg,
+      standardised). A turn scores its <em>lowest</em> leg; the next pane
+      shows how often each one binds.</p>
+      <p>Empty before wvk 22: those verdicts carry no sd-meter block.</p>`,
+    fmt: (v) => (v == null ? "—" : Number(v).toFixed(2)),
+    lines: [{ label: "", at: () => 0, faint: true }],
+    series: [
+      { label: "chall z_R", color: GOLD, get: (p) => sdSide(p, "challenger", "mean_z_R") },
+      { label: "chall typ_c", color: "#5ac8fa", get: (p) => sdSide(p, "challenger", "mean_typ_c") },
+      { label: "chall z_A", color: "#c98cff", get: (p) => sdSide(p, "challenger", "mean_z_A") },
+      { label: "king z_R", color: GOLD, dash: true, get: (p) => sdSide(p, "king", "mean_z_R") },
+      { label: "king typ_c", color: "#5ac8fa", dash: true, get: (p) => sdSide(p, "king", "mean_typ_c") },
+      { label: "king z_A", color: "#c98cff", dash: true, get: (p) => sdSide(p, "king", "mean_z_A") },
+    ],
+  },
+  {
+    id: "sd-binds",
+    title: "which leg binds",
+    caption: "wvk ≥ 22 · share of the challenger's turns decided by z_R / typ_c / z_A",
+    detail: `<p>For every scored turn the sd-meter pays the lowest of the
+      three legs. This pane is the share of the challenger's valid turns on
+      which each leg was that minimum. A leg binding on most turns means the
+      model is weakest there; the contract's rollback rule watches for any
+      leg binding on more than 80% of turns.</p>${TELEMETRY_NOTE}`,
+    fmt: pctFmt,
+    domain: [0, 1],
+    lines: [],
+    series: [
+      { label: "z_R binds", color: GOLD, get: (p) => sdBind(p, "challenger", "R") },
+      { label: "typ_c binds", color: "#5ac8fa", get: (p) => sdBind(p, "challenger", "Gc") },
+      { label: "z_A binds", color: "#c98cff", get: (p) => sdBind(p, "challenger", "A") },
+    ],
+  },
+  {
+    id: "forfeits",
+    title: "forfeits",
+    caption: "share of each side's turns with no action in the dialect or no </think> · floor −0.1 nats/byte (wvk 12–21), −12 sd (wvk ≥ 22)",
+    detail: `<p>A turn where a side emits no parseable action in the turn's
+      dialect (wvk 12) or never closes <code>&lt;/think&gt;</code> (wvk 13)
+      scores the forfeit floor instead of being dropped: <code>−0.1</code>
+      nats/byte until wvk 21, <code>−12</code> teacher sd since wvk 22
+      (both sit under the 1st percentile of honest turn scores, so a 2%
+      forfeit rate costs about one δ). Both sides forfeiting is a tie at
+      the floor and still counts in n.</p>${TELEMETRY_NOTE}`,
+    fmt: (v) => (v == null ? "—" : `${(Number(v) * 100).toFixed(1)}%`),
+    lines: [],
+    series: [
+      { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "forfeit_rate") },
+      { label: "king", color: BONE, get: (p) => sideVal(p, "king", "forfeit_rate") },
     ],
   },
   {
@@ -672,17 +889,22 @@ export const GATE_METRICS = [
   {
     id: "se",
     title: "paired SE",
-    caption: "spread of the per-turn Reason difference",
-    detail: `<p>Standard error of the per-turn <code>Reason_c − Reason_k</code>
+    caption: "spread of the per-turn score difference, as a multiple of the era's δ (SE/δ) · dashed = 0.5 (2·SE meets the floor) · hover for the raw SE",
+    normByDelta: true,
+    detail: `<p>Standard error of the per-turn <code>turn_c − turn_k</code>
       differences, i.e. how much the slice disagreed with itself. The crown
       bar is <code>max(k·SE, δ)</code>, so the noisier the diffs, the larger
       the margin a challenger needs.</p>
-      <p>SE itself has no floor (the pre-fork <code>min_se = 0.005</code> is
-      retired) — but the crown bar cannot drop below <code>δ = 0.002</code>
-      however small SE gets, which is what caps low-variance copies and
-      SE-compression strategies.</p>`,
-    fmt: fmtScore,
-    lines: [],
+      <p>SE is in the era's units (nats/byte until wvk 21, teacher sd since
+      wvk 22), so it is drawn as <code>SE / δ</code> with δ = 0.002 nats/byte
+      or 0.20 sd; the tooltip has the raw SE. SE itself has no floor — but
+      the crown bar cannot drop below δ however small SE gets, which is what
+      caps low-variance copies and SE-compression strategies. The dashed line
+      is 0.5 δ: below it δ is the binding term of the bar, above it the
+      z-test is.</p>`,
+    fmt: (v) => (v == null ? "—" : `${Number(v).toFixed(2)}δ`),
+    rawFmt: (p, v) => fmtUnit(v, eraOf(p)),
+    lines: [{ label: "δ/2", at: () => 0.5 }],
     series: [{ label: "SE", color: GOLD, get: (p) => num(p.se) }],
   },
   {
@@ -837,57 +1059,72 @@ export const GATE_METRICS = [
 export const HERO_CHARTS = [
   {
     id: "hero-score",
-    title: "Reason",
-    caption: "best of king and challenger each duel",
-    detail: `<p>The higher of the two sides' mean <code>Reason</code> in each
-      duel, oldest to newest. It is the level the subnet is currently
-      distilling at: it steps up when a stronger model takes the crown and
-      drifts with slice difficulty in between.</p>
-      <p>Since 2026-08-17 (v4): <code>a_i = lpC(y_i|z_A) − lpC(y_i|∅)</code>
-      against each of k=3 fresh teacher references, aggregated per turn as
-      <code>τ·log(mean_i exp(a_i/τ))</code> with τ=0.03 — credit flows from
-      the best-matching reference, so committing to one valid teacher mode is
-      rewarded instead of punished. The miner's own weights never enter the
-      ranked quantity. This single term is the entire score — raw Λ2 tracked
-      swe-rebench as well as the retired mix on the research panel (Spearman
-      <code>+0.847</code> vs <code>+0.844</code> @ 15).</p>`,
+    title: "Score",
+    caption: "best side per duel, z-scored within its era · dotted line = wvk 22 · hover for the raw value and unit",
+    detail: `<p>The higher of the two sides' mean turn score in each duel,
+      oldest to newest. The two eras use different units (per-byte nats until
+      wvk 21, teacher sd since wvk 22) that cannot share a linear axis, so
+      each value is drawn as a z-score against the mean and sd of its own
+      era's duels — the dotted vertical line is the boundary, the line breaks
+      there, and the tooltip carries the raw value with its unit.</p>
+      <p><strong>wvk 10–21 (per-byte nats):</strong> <code>min(R, G)</code>.
+      <code>a_i = lpC(y_i|z_A) − lpC(y_i|∅)</code> against each of k=3 fresh
+      teacher references; <code>R = τ·log(mean_i exp(a_i/τ)) − mean_i a_i</code>
+      (τ=0.03, centered so a flat lift cancels) and <code>G</code> the
+      thought's own teacher likelihood inside the band of the teacher's
+      reference thoughts.</p>
+      <p><strong>Since wvk 22 (2026-09-18 20:41 UTC, teacher-sd units):</strong>
+      <code>min(z_R, typ_c, z_A)</code> — thought→action (<code>z_R</code>),
+      content-token typicality of the thought (<code>typ_c</code>) and
+      action←thought (<code>z_A</code>), each standardised against the
+      teacher's own k=3 samples (μ from their leave-one-out values, σ pooled
+      per dialect over the duel). Thoughts are scored as generated
+      (<code>&lt;think&gt;</code> latent + visible text). The miner's own
+      weights never enter the ranked quantity in either era.</p>`,
     draw: (svg, history, opts) => drawDuelScores(svg, history, opts),
   },
   {
     id: "hero-margin",
     title: "Margin (σ)",
-    caption: "paired z vs king · dashed = 2σ · losses below −8σ clipped",
+    caption: "paired z vs king · dashed = 2σ · unit-free in both eras · dotted line = wvk 22 · losses below −8σ clipped",
     detail: `<p>The duel in units of its own noise: each bar is
-      <code>z = mean(Reason_c − Reason_k) / SE</code> against the reigning
-      king. Because the mean is paired per turn, turn difficulty cancels — a
-      hard slice hurts both sides equally. Gold bars are crownings, bone is a
-      challenger that scored above the king without clearing the bar, red is
-      a loss.</p>
+      <code>z = mean(turn_c − turn_k) / SE</code> against the reigning king.
+      Because the mean is paired per turn, turn difficulty cancels — a hard
+      slice hurts both sides equally — and because z divides by SE it is
+      unit-free, so the two scoring eras share this axis (the dotted vertical
+      line marks wvk 22). Gold bars are
+      crownings, bone is a challenger that scored above the king without
+      clearing the bar, red is a loss.</p>
       <p>The dotted line is the crown bar <code>k_sigma = 2</code>: crossing
-      it is the z-test half of the crown rule (the other halves are the
-      absolute δ floor, next chart; median stripped <code>|z| ≥ 80</code>;
-      and teacher-side B pass ≥ 0.30). Under the Gaussian null that is a
-      ~2.3% false-crown rate per duel for a genuinely distinct zero-edge
-      model.</p>`,
+      it is the z-test half of the crown rule. The other halves are the
+      absolute δ floor (next chart; <code>0.002</code> nats/byte until wvk 21,
+      <code>0.20</code> teacher sd since wvk 22), median stripped
+      <code>|z| ≥ 80</code> chars, and teacher-side B pass ≥ 0.30. One
+      <code>n_turns</code> slice decides (1,300 turns until wvk 21, 1,000
+      since wvk 22; no confirmation slice since wvk 21).</p>`,
     draw: (svg, history, opts) => drawDuelZ(svg, history, opts),
   },
   {
     id: "hero-margin-abs",
     title: "Margin (abs)",
-    caption: "mean(Reason_c − Reason_k) per duel · dashed = δ = 0.002 crown floor",
-    detail: `<p>The same duels as Margin (σ), but in absolute Reason units:
-      each bar is the paired mean <code>Reason_c − Reason_k</code> itself.
-      Gold bars are crownings, bone is a positive margin that didn't crown,
-      red is a loss.</p>
-      <p>The dotted gold line is <code>δ = 0.002</code>, the absolute crown
-      floor (2026-08-12, weight_version_key=4): a challenger must beat
-      <code>max(k·SE, δ)</code>. The z-test alone is relative to the
-      challenger's <em>own</em> noise, so a near-copy of the king — whose
-      per-duel spread is ~6× smaller than a distinct model's — crowns on a
-      ±0.0006 noise fluctuation as easily as anyone else. The floor turns
-      that into ~z = 6.7 (≈1-in-10<sup>10</sup>) while sitting safely below
-      the live honest bar 2·SE ≈ 0.0035. Calibrated from 148 archived duels
-      (<code>research/results/delta_calibration.json</code>).</p>`,
+    caption: "paired mean margin per duel as a multiple of its era's δ (margin/δ) · dashed = δ · dotted line = wvk 22 · hover for the raw margin",
+    detail: `<p>The same duels as Margin (σ), against the absolute crown
+      floor: each bar is the paired mean <code>turn_c − turn_k</code> divided
+      by its era's δ — 0.002 nats/byte until wvk 21, 0.20 teacher sd since
+      wvk 22 — because a margin of 0.25 sd and a margin of 0.0025 nats/byte
+      cannot share a linear axis, and margin/SE is already the chart to the
+      right. The tooltip carries the raw margin with its unit. Gold bars are
+      crownings, bone is a positive margin that did not crown, red is a
+      loss.</p>
+      <p>The dashed gold line at 1 is δ, the absolute crown floor, in both
+      eras: a challenger must beat <code>max(k·SE, δ)</code>.
+      The z-test alone is relative to the challenger's <em>own</em> noise, so
+      a near-copy of the king — whose per-duel spread is far smaller than a
+      distinct model's — could crown on a noise fluctuation; the floor turns
+      that into a ~z ≥ 6 bar. <code>δ = 0.002</code> nats/byte was calibrated
+      from 148 archived duels (2026-08-12); <code>δ = 0.20</code> sd is
+      0.082 × the paired sd of the sd-meter difference (≈ 2.4–3.1), the same
+      ratio, recalibrated for wvk 22.</p>`,
     draw: (svg, history, opts) => drawDuelMargin(svg, history, opts),
   },
 ];
@@ -906,7 +1143,6 @@ export function drawGateMetric(svg, points, metric,
   const height = heightOpt || 168;
   const padL = 46;
   const padR = 12;
-  const padT = 12;
   const padB = CROWN_AXIS_PAD;
 
   svg.setAttribute("width", String(width));
@@ -918,8 +1154,23 @@ export function drawGateMetric(svg, points, metric,
     return;
   }
 
+  const { runs, xAt } = eraLayout(points, padL, width - padR);
+  const multi = runs.length > 1;
+  const padT = multi ? 20 : 12;
   const gates = lastGates(points);
-  const cols = metric.series.map((s) => points.map((p) => s.get(p)));
+  // Raw per-side values, then the unit-free transform the pane asked for:
+  // z-score within each era, or division by the era's δ.
+  const raw = metric.series.map((s) => points.map((p) => s.get(p)));
+  let cols = raw;
+  if (metric.zScoreByEra) {
+    const scorers = metric.series.map((s) => eraZScorer(points, s.get));
+    cols = raw.map((col, si) => col.map((v, i) => (v == null ? null : scorers[si].z(points[i], v))));
+  } else if (metric.normByDelta) {
+    cols = raw.map((col) => col.map((v, i) => {
+      const d = deltaOf(points[i]);
+      return v == null || !(d > 0) ? null : v / d;
+    }));
+  }
   const lines = (metric.lines || [])
     .map((l) => ({ ...l, v: num(l.at(gates)) }))
     .filter((l) => l.v != null);
@@ -938,9 +1189,6 @@ export function drawGateMetric(svg, points, metric,
     lo -= pad;
     hi += pad;
   }
-  const n = points.length;
-  const slot = (width - padL - padR) / n;
-  const xAt = (i) => padL + slot * (i + 0.5);
   const yAt = (v) => padT + ((hi - v) / ((hi - lo) || 1)) * (height - padT - padB);
   const inView = (v) => v >= lo && v <= hi;
 
@@ -973,15 +1221,20 @@ export function drawGateMetric(svg, points, metric,
         stroke="${GOLD}" stroke-width="1" opacity="0.18"/>`
     : "")).join("");
 
+  const clampY = (v) => yAt(Math.min(Math.max(v, lo), hi));
+  const breakAtBoundary = Boolean(metric.zScoreByEra);
   const paths = metric.series.map((s, si) => {
     let d = "";
     let open = false;
+    let lastEra = null;
     cols[si].forEach((v, i) => {
-      if (v == null) {
-        open = false;
-        return;
-      }
-      d += `${open ? " L" : " M"} ${xAt(i)} ${yAt(Math.min(Math.max(v, lo), hi))}`;
+      const era = eraOf(points[i]);
+      // A per-era z-score has a different mean on each side of wvk 22, so
+      // the line does not cross the boundary; everything else is continuous.
+      if (v == null || (breakAtBoundary && lastEra && era !== lastEra)) open = false;
+      lastEra = era;
+      if (v == null) return;
+      d += `${open ? " L" : " M"} ${xAt(i)} ${clampY(v)}`;
       open = true;
     });
     return d
@@ -993,8 +1246,9 @@ export function drawGateMetric(svg, points, metric,
   const dots = metric.series.map((s, si) => cols[si].map((v, i) => {
     if (v == null || s.dash) return "";
     const p = points[i];
-    const tip = `${duelTipName(p)} · ${s.label} ${metric.fmt(v)} · ${fmtTime(p.at)}`;
-    const cy = yAt(Math.min(Math.max(v, lo), hi));
+    const rawTxt = metric.rawFmt ? ` (${metric.rawFmt(p, raw[si][i])})` : "";
+    const tip = `${duelTipName(p)} · ${s.label} ${metric.fmt(v)}${rawTxt} · ${fmtTime(p.at)}`;
+    const cy = clampY(v);
     return `<g class="duel-hit" data-tip="${esc(tip)}"${duelCidAttr(p)}>
       <circle cx="${xAt(i)}" cy="${cy}" r="8" fill="transparent"/>
       <circle cx="${xAt(i)}" cy="${cy}"
@@ -1002,9 +1256,10 @@ export function drawGateMetric(svg, points, metric,
     </g>`;
   }).join("")).join("");
 
+  const boundary = eraBoundary(runs, xAt, padT, height - padB);
   const axis = duelAxisMarks(points, xAt, height - padB, width - padR + 12);
 
-  svg.innerHTML = `${grid}${crowns}${thresholds}${paths}${dots}${axis}`;
+  svg.innerHTML = `${grid}${crowns}${thresholds}${boundary}${paths}${dots}${axis}`;
 }
 
 /* ---------- duel page charts (per-turn samples of one duel) ---------- */
