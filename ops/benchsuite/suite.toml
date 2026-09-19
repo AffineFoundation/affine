@@ -1,0 +1,648 @@
+# Affine benchmark suite (data-only plan W7): a per-reign evaluation
+# scorecard of the king against the teacher on standard, held-out
+# benchmarks. MONITORING ONLY — nothing here feeds the duel, the fold, D,
+# affine.toml or weight_version_key. Benchmark rollouts are written to
+# R2 `research/benchsuite/<run_id>/` (affine-data bucket), never to
+# `traces/` or any prefix the fold reads.
+#
+# Every env is a Prime Intellect research-environments v1 taskset run with
+# `uv run eval` (verifiers). Fixed task order per env: the taskset's own
+# order (`n = -1` = every task) or a `--shuffle` view under verifiers' fixed
+# seed 0 for a fixed-size subset, so reigns are comparable. Greedy decoding
+# (temperature 0) is the primary row; temperature 0.8 is a secondary row on
+# the cheap chat sets only.
+
+[suite]
+name = "affine-benchsuite"
+version = 2
+# Pinned upstream code; recorded in every run manifest.
+verifiers_repo = "https://github.com/PrimeIntellect-ai/verifiers.git"
+verifiers_commit = "a32cc09"
+research_envs_repo = "https://github.com/PrimeIntellect-ai/research-environments.git"
+research_envs_commit = "c4d04df"
+# Prime Evals: every cell is pushed to the Prime Intellect Evaluations tab of this
+# account (username set 2026-09-13; without it every push fails).
+prime_evals_username = "arbos"
+prime_evals_account_id = "cmjormgul003e1pl9z71whoka"
+# R2 destination (affine-data bucket). Read back publicly at
+# https://data.affine.io/research/benchsuite/<run_id>/.
+r2_bucket = "affine-data"
+r2_prefix = "research/benchsuite/"
+# Local scorecard summaries the kingboard reads.
+state_dir = "affine/state/benchsuite"
+
+[teacher]
+hf_repo = "Qwen/Qwen3.8-27B"
+served_name = "teacher"
+
+[serving]
+# vLLM flags shared by the king and the teacher: the chat-box stack.
+vllm_version = "0.28.0"
+max_model_len = 131072
+gpu_memory_utilization = 0.90
+max_num_batched_tokens = 16384
+max_num_seqs = 64
+reasoning_parser = "qwen3"
+tool_call_parser = "qwen3_xml"
+
+# ------------------------------------------------------------------ modes
+# Where a pass runs (run_pass.sh <digest|ref> <reign|label> <run_id> [MODE]).
+# Operator decisions 2026-09-13: first "all on Prime" (consistency), then
+# "in-house on Lium, paid in TAO" for the standing per-reign runs. The design
+# centre is the fixed serving stack + pinned versions (suite.lock.json), so a
+# Lium run and a Prime run of the same king are comparable; the parity check
+# (docs/benchsuite.md §9) measures the residual hardware effect.
+#
+#   lium    DEFAULT. King on a Lium pod from our fleet (kingpod.py ->
+#           ops/king-datagen/bootstrap_king.sh: vLLM 0.28.0, qwen3 parsers,
+#           same layout as the king seat), eval driver on the same pod (Lium
+#           DinD templates ship docker), teacher reused from `teacher_from`,
+#           same cells/seeds/caps as Prime. Chat sets always; sandbox sets
+#           under docker on the pod when a chat cell moved (or the flag).
+#
+#   prime   DEFAULT. King only, served on a Prime pod ([prime]; 4 TP2 replicas
+#           on 8 GPUs), teacher baseline copied forward from `teacher_from`
+#           (frozen teacher + fixed tasks + T=0 => it does not change until
+#           the suite version does). Chat sets always (docker on the pod).
+#           Sandbox sets (SWE-bench Verified, miniF2F, long-context) on Prime
+#           sandboxes ONLY when a king chat cell moves outside the previous
+#           published run's 95% interval (run_suite.py compare) or
+#           BENCHSUITE_FORCE_SANDBOX=1. Pod terminated after.
+#   full    The reference pass: king + teacher served side by side (2 TP2
+#           replicas each), every env; used once per suite version to refresh
+#           the teacher baseline (first run: reign 11, 2026-09-12).
+#   comparables  A model Prime Inference already hosts ([comparables].models),
+#           chat sets only (sandbox sets bill ~4 B prompt tokens per model at
+#           API prices), eval driver on this box, no pod. Puts kings next to
+#           frontier / open models at inference prices.
+#   challenger   A losing challenger (private R2 ref), chat sets only, on a
+#           Prime pod; watch.py runs the top-k losers with margin > 0 per day
+#           ([challenger]) so duel margin vs benchmark score can be tested.
+#   cheap   Fallback only (not used by watch): king on a Lium 1x H200 from
+#           our fleet, chat sets, teacher reused; sandbox sets on Prime only
+#           when a chat cell moves. Kept for a Prime outage.
+#
+# The bench pod (AFFINE_ROLE=bench) was checked as a host and rejected:
+# evalsrv loads the miner per bench job and unloads it in `finally`, holds one
+# busy lock per pod, and its vLLM port is not tunnelled.
+# ------------------------------------------------------- cloud sandboxes
+# sandbox = "daytona" (2026-09-17, Jacob): the sandbox-heavy Harbor-able cells
+# (SWE-bench Verified / Pro, Terminal-Bench 2) run through `harbor run -e daytona`
+# from the box while the GPU pod only serves the model. Org quota (region us,
+# container class): 500 vCPU / 1000 GB RAM / 5 TB disk / 10 GPU, 30 snapshots —
+# no sandbox-count cap; SWE tasks are 1 vCPU / 4 GB, so ~250 fit; we run 100.
+# tau2 / tau3 need no sandbox (their tools run in the orchestrator); GraphWalks /
+# Oolong / MRCR / miniF2F are verifiers tasksets without a Harbor dataset and
+# stay on the pod's docker / Prime sandboxes.
+[sandbox_daytona]
+enabled = true
+concurrency = 100
+# pods for a Daytona pass above 50 in flight: two TP1 replicas behind nginx (whichever has stock),
+# then the normal plan list. One replica saturates at ~50 agents (prefill-bound), and the
+# whole point of the mode is wall time.
+pod_plans = ["h200-2x", "b200-2x"]
+harbor_version = "0.21.0"
+key_env = "DAYTONA_API_KEY"          # Arbos vault item "Daytona Arbos" (op://Arbos/fywmj6vtq5delybw5c7a53l2qa)
+envs = ["swebench-verified", "terminal-bench-2", "swebench-pro"]
+# budgets: default = the card's 1 h; "4h250" = Albedo's setting (4 h wall, 250 model calls)
+[sandbox_daytona.budgets.default]
+agent_timeout_s = 3600
+step_limit = 0
+[sandbox_daytona.budgets.4h250]
+agent_timeout_s = 14400
+step_limit = 250
+
+# ------------------------------------------------------------- fast pass
+# Jacob 2026-09-19: wall-clock-minimal card per crown (target <= 2.5 h crown -> full card,
+# speed-up budget <= $600 this weekend). fast_pass.sh rents the pods below IN PARALLEL,
+# installs them in parallel and runs every group at once; every finished cell publishes.
+#   chat shards  3 pods, one vLLM each, the chat suite split by measured cell wall time
+#                (reign 13: bfcl 92 min, lcb 37, mmlu 35, when2call 32, ifbench 2x15, aime 2x15, ...)
+#   agentic pod  tau2 x3 + tau3 on the pod (subprocess); TB2 (Harbor/Daytona) and Gaia2 (ARE)
+#                from the box against the same pod
+#   swe pod      two-replica server (h200-2x / b200-2x) for SWE-bench Verified on Daytona at
+#                swe_in_flight; the pod does nothing else
+#   long-context docker cells run on the chat pods after their shard; miniF2F on Prime from shard 3
+# Daytona quota (us, container): 500 vCPU / 1000 GB. SWE task = 1 vCPU / 4 GB, TB2 task = 1 / 2 ->
+# 200 SWE + 89 TB2 = 289 vCPU / 978 GB: at the memory ceiling; ask Daytona for more before going higher.
+[fast]
+chat_shards = [
+  ["bfcl-v3", "when2call"],
+  ["livecodebench", "mmlu-pro", "ifbench", "humaneval"],
+  ["aime25", "math500", "gpqa-diamond", "ifeval"],
+]
+shard_after = [["graphwalks"], ["oolong-synth", "mrcr-v2"], ["minif2f"]]   # after each shard: docker long-context cells (prime for minif2f)
+chat_plans = ["h200-1x", "pro6000-1x", "b200-1x"]
+agentic_envs_on_pod = ["tau2-airline", "tau2-retail", "tau2-telecom", "tau3-banking"]
+agentic_plans = ["h200-1x", "b200-1x", "pro6000-1x"]
+swe_plans = ["h200-2x", "b200-2x", "b200-1x", "h200-1x"]
+swe_in_flight = 200
+tb2_in_flight = 89
+gaia2_in_flight = 24
+max_pods = 5
+poll_s = 300
+
+[modes]
+default = "fast"            # 2026-09-19 (Jacob): parallel topology, <= 2.5 h crown -> card; "lium" = the one-pod pass (still used by the coverage queue)
+lium_plan = "h200-1x"       # [pods.plans.*]: 1x H200 = one TP1 replica, ~$3/h; the whole pass runs on that pod
+# tried in order when the primary plan has no stock (operator 2026-09-15 18:16 / 2026-09-17 00:21 UTC:
+# "scale as needed"; hardware is within noise per the Lium-parity check, the lock pins everything
+# else; the card's where.gpu / where.plan record what served the pass). RTX PRO 6000 96 GB is the
+# cheap plentiful one ($1.2-1.5/h, 5-7 listed); B200 1x $5.5.
+lium_plan_fallbacks = ["pro6000-1x", "b200-1x", "h200-2x", "h100-2x", "b200-2x"]
+# Sandbox sets on Lium: the pod's docker runs SWE-bench Verified (public Docker Hub
+# images; a Docker Hub login lifts the anonymous pull cap), GraphWalks, Oolong, MRCR.
+# miniF2F's Lean image lives in Prime's private Docker Hub org and pulls only through
+# Prime sandboxes, so it stays on Prime (sandbox fee only, no Prime pod).
+lium_docker_sandbox_envs = ["swebench-verified", "graphwalks", "oolong-synth", "mrcr-v2"]
+lium_prime_sandbox_envs = ["minif2f"]
+teacher_from = "20260912T1455Z-0ce59769300c"   # reference run whose teacher cells are reused
+chat_envs = ["aime25", "math500", "gpqa-diamond", "mmlu-pro", "ifbench", "ifeval", "humaneval", "livecodebench", "bfcl-v3", "when2call"]
+sandbox_envs = ["swebench-verified", "minif2f", "graphwalks", "oolong-synth", "mrcr-v2"]
+# `agentic` pass mode (own pod, king only, merged into the king's card): docker
+# on the pod for the Harbor sets, the tau2 orchestrator as a subprocess on the pod.
+agentic_envs = ["terminal-bench-2", "tau2-airline", "tau2-retail", "tau2-telecom", "tau3-banking", "swebench-pro"]
+agentic_std_envs = ["terminal-bench-2", "tau2-airline", "tau2-retail", "tau2-telecom", "tau3-banking"]
+ask_envs = ["gaia2-ambiguity"]   # the ask-hole set (gaia2_cell.py; UserBench-test / ITSMBench staged, see docs/benchsuite.md §13)   # every model that gets agentic cells (operator 2026-09-15); swebench-pro is queued separately
+prime_king_replicas = "31001:0,1:2;31002:2,3:2;31003:4,5:2;31004:6,7:2"   # king-only pod layout
+cheap_plan = "h200-1x"
+
+[comparables]
+# Prime Inference model ids (checked 2026-09-13; Qwen/Qwen3.8-27B is NOT hosted,
+# Qwen3.6-35B-A3B — the genesis/king base — is). Prices USD per M tokens.
+inference_url = "https://api.pinference.ai/api/v1"
+key_env = "PRIME_API_KEY"
+models = [
+  { id = "qwen/qwen3.6-35b-a3b", label = "Qwen3.6-35B-A3B (genesis base)", input = 0.25, output = 1.25 },
+  { id = "qwen/qwen3.6-27b", label = "Qwen3.6-27B", input = 0.6, output = 3.6 },
+  { id = "qwen/qwen3.8-max", label = "Qwen3.8-Max", input = 2.0, output = 6.0 },
+  { id = "deepseek/deepseek-v4-flash", label = "DeepSeek V4 Flash", input = 0.44, output = 1.32 },
+  { id = "deepseek/deepseek-v4-pro", label = "DeepSeek V4 Pro", input = 1.91, output = 3.83 },
+  { id = "moonshotai/kimi-k2.6", label = "Kimi K2.6", input = 0.95, output = 4.0 },
+  { id = "minimax/minimax-m3", label = "MiniMax M3", input = 0.3, output = 1.2 },
+  { id = "openai/gpt-5.4-mini", label = "GPT-5.4 mini", input = 0.75, output = 4.5 },
+  { id = "anthropic/claude-sonnet-5", label = "Claude Sonnet 5", input = 2.0, output = 10.0 },
+  { id = "google/gemini-3.8-flash", label = "Gemini 3.8 Flash", input = 0.75, output = 3.75 },
+]
+
+[challenger]
+# watch.py: once per UTC day, the top-k LOSING challengers of the last
+# `window_hours` by duel margin (margin > 0 = the near-misses) get a chat-only
+# card on a Lium 1x H200 (~$15 each), published under the kingboard
+# "Challengers" tab next to their duel margin. Enabled 2026-09-14 (operator).
+per_day = 2
+window_hours = 24
+enabled = true
+
+# ---------------------------------------------------------------- Prime path
+# Prime Intellect pod that serves both models (pod_bootstrap.sh) and runs
+# the eval driver. Chosen 2026-09-12 from live availability: no H200/B200
+# on Prime that day; 8x A100 80GB gives 2 TP2 replicas per model.
+[prime]
+gpu_type = "A100_80GB"
+gpu_count = 8
+cloud_id = "gpu_8x_a100_80gb_sxm4"
+image = "ubuntu_22_cuda_12"
+king_replicas = "31001:0,1:2;31002:2,3:2"
+teacher_replicas = "32001:4,5:2;32002:6,7:2"
+king_url = "http://127.0.0.1:8001/v1"
+teacher_url = "http://127.0.0.1:8002/v1"
+# Hard stops (USD). The runner refuses to start a new env past either.
+max_total_usd = 1200.0
+
+# ------------------------------------------------------- Lium fallback path
+# kingpod.py: our own rented box serving the king only (teacher via Engy).
+[pods]
+template_id = "345273fa-4818-46f7-a8fa-32f0e331713c"   # Pytorch (Cuda+DinD) cu13.0.2, same as the swarm
+ttl_hours = 48
+bootstrap_timeout_min = 60
+vllm_version = "0.28.0"
+max_model_len = 131072
+gpu_memory_utilization = 0.90
+max_num_batched_tokens = 16384
+max_num_seqs = 64
+
+[pods.plans.h200-1x]
+match = "H200"
+gpu_count = 1
+tp = 1
+replicas = 1
+max_price = 5.0
+
+[pods.plans.b200-1x]          # fallback when no 1x H200 is listed (2026-09-15: three of ours held the stock)
+match = "B200"
+gpu_count = 1
+tp = 1
+replicas = 1
+max_price = 8.0
+
+[pods.plans.pro6000-1x]       # RTX PRO 6000 Blackwell 96 GB: ~70 GB weights + KV at 131k
+match = "RTX PRO 6000"
+gpu_count = 1
+tp = 1
+replicas = 1
+max_price = 4.0
+
+[pods.plans.h200-2x]          # two TP1 replicas behind nginx (same serving knobs per replica)
+match = "H200"
+gpu_count = 2
+tp = 1
+replicas = 2
+max_price = 10.0
+
+[pods.plans.b200-2x]
+match = "B200"
+gpu_count = 2
+tp = 1
+replicas = 2
+max_price = 16.0
+
+[pods.plans.h100-2x]          # 80 GB each: one TP2 replica
+match = "H100"
+gpu_count = 2
+tp = 2
+replicas = 1
+max_price = 8.0
+
+[pods.plans.h200-8x]
+match = "H200"
+gpu_count = 8
+tp = 2
+replicas = 4
+max_price = 50.0
+
+[pods.plans.b200-8x]
+match = "B200"
+gpu_count = 8
+tp = 1
+replicas = 8
+max_price = 60.0
+
+# ------------------------------------------------------------------ sampling
+[sampling]
+primary_temperature = 0.0
+secondary_temperature = 0.8
+
+# ------------------------------------------------------------------ envs
+# Fields:
+#   id        row name on the scorecard
+#   taskset   verifiers taskset id (`uv run eval <taskset>`)
+#   install   research-environments path (or local `envs/<pkg>` for our wrappers)
+#   group     scorecard group
+#   n         -1 = every task; N>0 = the first N of the seed-0 shuffled view
+#   harness   verifiers harness id
+#   runtime   "none" (single-turn chat; still a container per task because the
+#             tasksets carry a network policy), "sandbox" (agent in a box)
+#   sandbox_vm  Prime runtime only: micro-VM sandbox (needed when the task
+#             restricts egress); container sandbox otherwise
+#   taskset_config  typed taskset knobs, passed as a TOML overlay
+#   concurrency  fixed tasks-in-flight for the env (overrides the run's -c); with
+#             rollout_timeout it is the env's budget, identical for every reign
+#   max_tokens completion cap per model call
+#   reward    the reward name that is the headline score
+#   secondary  also run the temperature-0.8 row (cheap chat sets only)
+#   args      extra `--env.taskset.*` flags
+
+[[envs]]
+id = "aime25"
+taskset = "aime25"
+install = "math/aime25"
+group = "math"
+n = -1
+harness = "null"
+runtime = "none"
+max_tokens = 32768
+reward = "correct"
+secondary = true
+secondary_rollouts = 4
+note = "AIME 2025 I+II, 30 problems; math-verify on the boxed integer."
+
+[[envs]]
+id = "math500"
+taskset = "math500"
+install = "math/math500"
+group = "math"
+n = -1
+harness = "null"
+runtime = "none"
+max_tokens = 16384
+reward = "correct"
+secondary = true
+note = "MATH-500; math-verify on the boxed answer."
+
+[[envs]]
+id = "gpqa-diamond"
+taskset = "gpqa-strict"
+install = "envs/gpqa_strict"
+group = "knowledge"
+n = -1
+harness = "null"
+runtime = "none"
+max_tokens = 16384
+reward = "correct"
+secondary = true
+note = "GPQA diamond (198). Deterministic letter extraction only; upstream's LLM-judge fallback is removed (no judge anywhere in the suite)."
+
+[[envs]]
+id = "mmlu-pro"
+taskset = "mmlu-pro"
+install = "knowledge/mmlu_pro"
+group = "knowledge"
+n = 2000
+harness = "null"
+runtime = "none"
+max_tokens = 8192
+reward = "correct"
+secondary = false
+note = "MMLU-Pro test, fixed 2,000-question subset (verifiers shuffle, seed 0, uniform over the 12,032 test rows so categories keep their natural shares), 0-shot, boxed letter. Full 12,032 was started on the first pass and cut for time (king pace ~20 questions/min under load)."
+
+[[envs]]
+id = "ifbench"
+taskset = "ifbench"
+install = "if/ifbench"
+group = "instruction-following"
+n = -1
+harness = "null"
+runtime = "none"
+max_tokens = 8192
+reward = "followed_instructions"
+secondary = true
+note = "IFBench test (300), loose mode (upstream default); reward = all constraints met."
+
+[[envs]]
+id = "ifeval"
+taskset = "ifeval"
+install = "if/ifeval"
+group = "instruction-following"
+n = -1
+harness = "null"
+runtime = "none"
+max_tokens = 8192
+reward = "followed_instructions"
+secondary = false
+note = "Google IFEval (541), strict mode (upstream default)."
+
+[[envs]]
+id = "humaneval"
+taskset = "humaneval"
+install = "code/humaneval"
+group = "coding"
+n = -1
+harness = "null"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "passed"
+secondary = false
+note = "HumanEval (164), simple-evals prompt; tests run in the sandbox."
+
+[[envs]]
+id = "livecodebench"
+taskset = "livecodebench"
+install = "code/livecodebench"
+group = "coding"
+n = -1
+harness = "null"
+runtime = "sandbox"
+max_tokens = 16384
+reward = "passed"
+secondary = false
+note = "LiveCodeBench code_generation_lite v6, official window 2024-08-01..2025-05-01; hidden tests run in the sandbox."
+
+[[envs]]
+id = "bfcl-v3"
+taskset = "bfcl-v3"
+install = "tool_use/bfcl_v3"
+group = "tool-use"
+n = -1
+harness = "null"
+runtime = "sandbox"
+max_tokens = 4096
+reward = "correct"
+secondary = false
+class_field = "category"
+show_classes = ["irrelevance", "live_irrelevance", "live_relevance", "multi_turn_miss_param"]   # miss_param = "did it ask for the missing argument" (ask-hole column, 2026-09-18)
+note = "BFCL v3, every scoring category (single-turn AST/relevance + multi-turn); official bfcl_eval checkers; tools served as MCP."
+
+[[envs]]
+id = "when2call"
+taskset = "when2call-mcq"
+install = "envs/when2call_mcq"
+group = "tool-use"
+n = -1
+harness = "null"
+runtime = "none"
+max_tokens = 8192
+reward = "correct"
+secondary = false
+class_field = "correct_class"
+show_classes = ["tool_call", "request_for_info", "cannot_answer", "direct"]
+note = "NVIDIA When2Call TEST split (3,652 rows; gold: tool_call 1,295 / cannot_answer 1,295 / request_for_info 1,062 / direct 0), generative 4-way MCQ: pick the best reply — call the tool, answer, ask, or say cannot. Per-class accuracy + 'answered with the tool call' rate per class. TRAIN split is a D source (datagen P1); this env reads only test/ at a pinned revision and checks its sha256 (splits in suite.lock.json). Letter choice, not the paper's log-likelihood MCQ."
+
+[[envs]]
+id = "minif2f"
+taskset = "minif2f"
+install = "lean/minif2f"
+group = "formal-math"
+n = -1
+harness = "bash"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "lean_compiled"
+secondary = false
+sandbox_vm = true
+note = "miniF2F Lean 4 test (244), agentic proving in the Mathlib image; needs the Prime registry image."
+
+[[envs]]
+id = "oolong-synth"
+taskset = "oolong-synth"
+install = "long_context/oolong_synth"
+group = "long-context"
+n = -1
+harness = "bash"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "correct"
+secondary = false
+sandbox_vm = true
+taskset_config = { context_len = 65536 }
+note = "Oolong synth validation split at the 64K context bucket; agent reads /workspace/context.txt from a shell; deterministic Oolong rules (judge off)."
+
+[[envs]]
+id = "mrcr-v2"
+taskset = "mrcr-v2"
+install = "long_context/mrcr_v2"
+group = "long-context"
+n = -1
+harness = "bash"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "correct"
+secondary = false
+sandbox_vm = true
+taskset_config = { needle_count = 8, context_range = "64k-128k" }
+note = "MRCR v2, 8 needles, 64k-128k bucket; SequenceMatcher ratio gated on the hash prefix."
+
+[[envs]]
+id = "graphwalks"
+taskset = "graphwalks"
+install = "long_context/graphwalks"
+group = "long-context"
+n = 500
+harness = "bash"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "correct"
+secondary = false
+sandbox_vm = true
+note = "GraphWalks (openai/graphwalks), 500 seed-0 tasks; exact set match."
+
+[[envs]]
+id = "swebench-verified"
+taskset = "swebench-verified"
+install = "swe/swebench_verified"
+group = "coding-agent"
+n = -1
+harness = "mini_swe_agent"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "solved"
+secondary = false
+max_turns = 300
+rollout_timeout = 3600      # fixed budget: same for every reign
+concurrency = 48            # fixed: 48 tasks in flight, run alone on the pod (parallel_envs 1 in the sandbox phase)
+note = "SWE-bench Verified, all 500, mini-swe-agent harness, prebuilt swebench/sweb.eval images; the task's own hidden tests grade."
+# sandbox = "daytona" route (harbor_cell.py): same 500 tasks from the Harbor registry, containers on
+# Daytona, Harbor's mini-swe-agent adapter (upstream mini-swe-agent v2 in the sandbox) = harness change.
+harbor = { dataset = "swebench-verified@1.0", agent = "mini-swe-agent", task_agent_timeout_s = 3000 }
+
+# ------------------------------------------------------------ agentic set
+# Added 2026-09-15 (Jacob: "kings comparable to public agentic releases",
+# Occamy-1.0 reports Terminal-Bench 2.1, tau3 Banking, BFCL v4, IFEval, ...).
+# Run by the `agentic` pass mode on its own Lium pod (modes.agentic_envs) and
+# merged into the king's card (BENCHSUITE_MERGE_INTO); the teacher gets the
+# same cells from a teacher pod (hf://Qwen/Qwen3.8-27B). Group "agentic" is
+# what the affine.io table groups the columns by.
+[[envs]]
+id = "terminal-bench-2"
+taskset = "terminal-bench-2"
+install = "terminal/terminal_bench_2"
+group = "agentic"
+n = -1
+harness = "terminus_2"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "solved"
+secondary = false
+max_turns = 200
+rollout_timeout = 3600
+concurrency = 16
+note = "Terminal-Bench 2.0, all 89 tasks (Harbor dataset terminal-bench/terminal-bench-2, alexgshaw/* Docker Hub images), Terminus 2 harness = the public leaderboard's reference agent; each task's hidden verifier grades pass/fail. Fixed 1 h budget per task. Occamy reports 'Terminal-Bench 2.1' (same task set, harness release 2.1)."
+harbor = { dataset = "terminal-bench@2.0", agent = "terminus-2", task_agent_timeout_s = 3600 }
+
+[[envs]]
+id = "swebench-pro"
+taskset = "swebench-pro"
+install = "swe/swebench_pro"
+group = "agentic"
+n = -1
+harness = "mini_swe_agent"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "solved"
+secondary = false
+max_turns = 300
+rollout_timeout = 3600
+concurrency = 48
+note = "SWE-bench Pro public split, all 731 (Harbor dataset scale-ai/swe-bench-pro, SWEAP jefzda/* images), mini-swe-agent harness like our SWE-bench Verified row (the public leaderboard uses SWE-agent; not directly comparable). ~16 h on one H200; read finished-only next to the full score."
+harbor = { dataset = "swebenchpro@1.0", agent = "mini-swe-agent", task_agent_timeout_s = 3000 }
+
+[[envs]]
+id = "tau2-airline"
+taskset = "tau2-bench"
+install = "tool_use/tau2_bench"
+group = "agentic"
+n = -1
+harness = "tau2-bench"
+runtime = "subprocess"
+max_tokens = 8192
+reward = "tau2_reward"
+secondary = false
+rollout_timeout = 3600
+concurrency = 8
+taskset_config = { domain = "airline" }
+note = "tau2-bench airline (50 tasks, base split), Sierra's official simulation and DB-state scoring; the USER is simulated by gpt-4.1 at T=0 through Prime Inference (the benchmark's standard user model) — the only external LLM in the suite; it is a simulated customer, not a judge. Pass^1, one trial."
+
+[[envs]]
+id = "tau2-retail"
+taskset = "tau2-bench"
+install = "tool_use/tau2_bench"
+group = "agentic"
+n = -1
+harness = "tau2-bench"
+runtime = "subprocess"
+max_tokens = 8192
+reward = "tau2_reward"
+secondary = false
+rollout_timeout = 3600
+concurrency = 8
+taskset_config = { domain = "retail" }
+note = "tau2-bench retail (114 tasks); see tau2-airline."
+
+[[envs]]
+id = "tau2-telecom"
+taskset = "tau2-bench"
+install = "tool_use/tau2_bench"
+group = "agentic"
+n = -1
+harness = "tau2-bench"
+runtime = "subprocess"
+max_tokens = 8192
+reward = "tau2_reward"
+secondary = false
+rollout_timeout = 3600
+concurrency = 8
+taskset_config = { domain = "telecom" }
+note = "tau2-bench telecom (114 tasks, manual troubleshooting policy); see tau2-airline."
+
+[[envs]]
+id = "tau3-banking"
+taskset = "tau3-bench"
+install = "tool_use/tau3_bench"
+venv = "tau3"                 # tau3-bench pins tau2[knowledge]@58e5e1a, tau2-bench pins tau2@337326e: separate venv
+group = "agentic"
+n = -1
+harness = "tau3-bench"
+runtime = "subprocess"
+max_tokens = 8192
+reward = "tau3_reward"
+secondary = false
+rollout_timeout = 3600
+concurrency = 8
+graded = "llm_judge"          # ADVISORY ONLY (operator 2026-09-15): the card and the column tooltip mark it
+judge = { model = "openai/gpt-4.1", via = "Prime Inference (api.pinference.ai)", temperature = 0, role = "NL-assertion judge; the same model simulates the user", pinned_by = "tau3-bench 0.3.0 harness.py (evaluator_nl_assertions.DEFAULT_LLM_NL_ASSERTIONS)" }
+note = "tau3-bench banking_knowledge (97 tasks, Sierra tau2-bench@58e5e1a), the row Occamy reports as 'tau3-Bench (Banking)'. Official reward: DB state + NL assertions judged by gpt-4.1 (T=0, Prime Inference) — the suite's only judge-graded cell; advisory, never in the score."
+
+# ---------------------------------------------------------- ask-hole set (2026-09-18)
+# Meta ARE / Gaia2 `ambiguity`: run by gaia2_cell.py through Meta's own runner (are-benchmark),
+# not a verifiers taskset: scripted user, ARE's GraphPerEventJudge (rule-based per-event checks +
+# an LLM soft checker for free-text arguments -> graded = llm_judge, advisory). Eval-only by
+# license (CC-BY-4.0 "benchmarking purposes only"); never in D.
+[[envs]]
+id = "gaia2-ambiguity"
+taskset = "are:gaia2/ambiguity"
+install = "envs/none"
+runner = { kind = "are-benchmark", package = "meta-agents-research-environments", version = "1.2.0", agent = "default", hf_dataset = "meta-agents-research-environments/gaia2", hf_config = "ambiguity", hf_split = "validation", hf_revision = "78ea3bdbdeec2bdcd6afa5420915d8a22f23ed99", filesystem = "meta-agents-research-environments/gaia2_filesystem (demo_filesystem mirrored locally, DEMO_FS_PATH)" }
+group = "agentic"
+n = -1
+harness = "are:default_agent"
+runtime = "in-process"
+max_tokens = 16384
+reward = "gaia2_success"
+secondary = false
+rollout_timeout = 1800
+concurrency = 16
+graded = "llm_judge"
+judge = { model = "openai/gpt-4.1", via = "Prime Inference (api.pinference.ai)", role = "ARE GraphPerEventJudge soft checker (free-text tool arguments); hard checks rule-based", pinned_by = "gaia2_cell.py JUDGE_MODEL" }
+note = "Gaia2 ambiguity split, 160 scenarios (validation), Meta ARE default agent, scripted user, one run per scenario (Meta's leaderboard: 3). Pass = the agent asks / stops on the under-specified or impossible request instead of acting. Temperature: ARE's engine sends none -> the endpoint's served default (a forced difference vs our T=0 cells, flagged on the card)."
+
+# Skipped by rule (no judge in the suite): HLE (judge-only reward).
