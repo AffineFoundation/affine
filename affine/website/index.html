@@ -111,8 +111,10 @@
        the price of a seat at the table. Two scoring eras share the history:
        per-byte nats (min(R, G), δ = 0.002) until wvk 21 and teacher-sd units
        (min(z_R, typ_c, z_A), δ = 0.20 sd) since wvk 22 (2026-09-18 20:41 UTC);
-       every unit-bearing chart splits its x axis at that boundary and scales
-       each segment on its own (charts.js ERAS / eraLayout). -->
+       every chart keeps ONE continuous x axis with a dotted line at that
+       boundary and plots a unit-free quantity (z, per-era z-score, or
+       margin/δ) so both eras share the y scale; raw values + units live in
+       the tooltips (charts.js ERAS / eraZScorer / eraBoundary). -->
 
   <section class="hero" id="evolution">
     <div class="hero-inner">
@@ -120,18 +122,18 @@
         <div class="hero-pane">
           <div class="hero-pane-head">
             <h2 class="hero-pane-title">Score</h2>
-            <p class="hero-caption">best side per duel · nats/byte (wvk ≤ 21) · teacher sd (wvk ≥ 22)</p>
+            <p class="hero-caption">best side per duel · z-scored within its era · dotted line = wvk 22</p>
             <button type="button" class="expand-btn" data-chart="hero-score"
               title="expand score" aria-label="Expand score chart">⤢</button>
           </div>
           <div class="hero-scroll">
-            <svg id="hero-chart-score" role="img" aria-label="Best per-side turn score per duel, one segment per scoring era"></svg>
+            <svg id="hero-chart-score" role="img" aria-label="Best per-side turn score per duel, z-scored within its era"></svg>
           </div>
         </div>
         <div class="hero-pane">
           <div class="hero-pane-head">
             <h2 class="hero-pane-title">Margin (σ)</h2>
-            <p class="hero-caption">paired z vs king · dashed = 2σ · unit-free, both eras · losses below −8σ clipped</p>
+            <p class="hero-caption">paired z vs king · dashed = 2σ · dotted line = wvk 22 · losses below −8σ clipped</p>
             <button type="button" class="expand-btn" data-chart="hero-margin"
               title="expand Margin (σ)" aria-label="Expand Margin (σ) chart">⤢</button>
           </div>
@@ -142,12 +144,12 @@
         <div class="hero-pane">
           <div class="hero-pane-head">
             <h2 class="hero-pane-title">Margin (abs)</h2>
-            <p class="hero-caption">paired mean margin per duel · dashed = δ per era (0.002 nats/byte · 0.20 sd)</p>
+            <p class="hero-caption">paired margin ÷ its era's δ (0.002 nats/byte · 0.20 sd) · dashed = δ · dotted line = wvk 22</p>
             <button type="button" class="expand-btn" data-chart="hero-margin-abs"
               title="expand Margin (abs)" aria-label="Expand Margin (abs) chart">⤢</button>
           </div>
           <div class="hero-scroll">
-            <svg id="hero-chart-margin-abs" role="img" aria-label="Absolute paired margin per duel vs the δ crown floor, one segment per scoring era"></svg>
+            <svg id="hero-chart-margin-abs" role="img" aria-label="Paired margin per duel as a multiple of its era's δ crown floor"></svg>
           </div>
         </div>
         <div class="hero-pane">
@@ -376,6 +378,6 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=93"></script>
+  <script type="module" src="app.js?v=94"></script>
 </body>
 </html>

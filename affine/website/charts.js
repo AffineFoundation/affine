@@ -230,68 +230,61 @@ export function eraRuns(points) {
   return runs;
 }
 
-const ERA_GAP = 54;        // px between segments — room for the second y axis
-const ERA_MIN_FRAC = 0.30; // no era shrinks below this share of the plot width
-
 /**
- * Horizontal layout of the era segments inside [x0, x1]. Width follows the
- * duel count with a floor, so 17 sd-era duels next to 450 nats-era duels
- * still get a readable segment. Returns runs with x0/x1 and an xAt(i).
+ * One continuous x axis for both eras (operator decision 2026-09-19 14:45
+ * UTC: "just put a single dotted line, don't split the chart"). Every duel
+ * gets the same slot; the wvk-22 boundary is one dotted vertical line.
  */
 export function eraLayout(points, x0, x1) {
   const runs = eraRuns(points);
-  if (!runs.length) return { runs: [], xAt: () => x0, runOf: () => null };
   const n = Math.max(points.length, 1);
-  const gaps = ERA_GAP * (runs.length - 1);
-  const avail = Math.max(x1 - x0 - gaps, 40 * runs.length);
-  let fracs = runs.map((r) => Math.max(ERA_MIN_FRAC, (r.i1 - r.i0 + 1) / n));
-  const sum = fracs.reduce((a, b) => a + b, 0);
-  fracs = fracs.map((f) => f / sum);
-  let cursor = x0;
-  runs.forEach((r, k) => {
-    r.x0 = cursor;
-    r.x1 = cursor + avail * fracs[k];
+  const slot = (x1 - x0) / n;
+  runs.forEach((r) => {
+    r.x0 = x0 + slot * r.i0;
+    r.x1 = x0 + slot * (r.i1 + 1);
     r.count = r.i1 - r.i0 + 1;
-    r.slot = (r.x1 - r.x0) / r.count;
-    cursor = r.x1 + ERA_GAP;
+    r.slot = slot;
   });
-  const runOf = (i) => runs.find((r) => i >= r.i0 && i <= r.i1) || runs[runs.length - 1];
-  const xAt = (i) => {
-    const r = runOf(i);
-    return r.x0 + r.slot * (i - r.i0 + 0.5);
+  const runOf = (i) => runs.find((r) => i >= r.i0 && i <= r.i1) || runs[runs.length - 1] || null;
+  const xAt = (i) => x0 + slot * (i + 0.5);
+  return { runs, xAt, runOf, slot };
+}
+
+/** The dotted wvk-22 boundary: drawn between the last nats row and the first
+ * sd row, labelled at the top. Nothing when the history is one era. */
+function eraBoundary(runs, xAt, padT, yBottom) {
+  const sd = runs.find((r) => r.era === "sd" && r.i0 > 0);
+  if (!sd) return "";
+  const x = (xAt(sd.i0 - 1) + xAt(sd.i0)) / 2;
+  return `<g>
+    <line x1="${x}" x2="${x}" y1="${padT - 6}" y2="${yBottom}"
+      stroke="rgba(243,196,73,0.55)" stroke-width="1" stroke-dasharray="2 4"/>
+    <text x="${x + 4}" y="${padT - 10}" fill="rgba(243,196,73,0.85)"
+      font-family="${MONO}" font-size="9">wvk 22</text>
+  </g>`;
+}
+
+/**
+ * Per-era z-score of a per-duel value: (v − mean_era) / sd_era over the rows
+ * of that era, so nats/byte and teacher-sd values share one unit-free axis.
+ * Returns {z, mean, sd} accessors; rows whose era has < 2 values get z = 0.
+ */
+export function eraZScorer(points, get) {
+  const stats = {};
+  for (const era of Object.keys(ERAS)) {
+    const vals = points.filter((p) => eraOf(p) === era).map(get).filter((v) => v != null && Number.isFinite(v));
+    const n = vals.length;
+    const mean = n ? vals.reduce((a, b) => a + b, 0) / n : 0;
+    const sd = n > 1 ? Math.sqrt(vals.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1)) : 0;
+    stats[era] = { mean, sd, n };
+  }
+  return {
+    stats,
+    z: (p, v) => {
+      const st = stats[eraOf(p)];
+      return v == null || !st || !(st.sd > 0) ? (v == null ? null : 0) : (v - st.mean) / st.sd;
+    },
   };
-  return { runs, xAt, runOf };
-}
-
-/** Header label + divider for each era segment (shared by every chart). */
-function eraHeaders(runs, padT, yBottom, { dividers = true, short: shortLabels = false, units = true } = {}) {
-  if (runs.length <= 1) return "";
-  return runs.map((r, k) => {
-    const e = ERAS[r.era];
-    const wvk = r.era === "sd" ? "wvk ≥ 22" : "wvk ≤ 21";
-    const label = shortLabels ? (units && e ? `${wvk} · ${e.unit}` : wvk) : (e?.label || r.era);
-    const div = dividers && k > 0
-      ? `<line x1="${r.x0 - ERA_GAP / 2}" x2="${r.x0 - ERA_GAP / 2}" y1="${padT - 4}" y2="${yBottom}"
-          stroke="rgba(243,196,73,0.35)" stroke-width="1" stroke-dasharray="3 4"/>`
-      : "";
-    return `${div}<text x="${r.x0}" y="${padT - 10}" fill="rgba(229,229,229,0.55)"
-      font-family="${MONO}" font-size="9">${esc(label)}</text>`;
-  }).join("");
-}
-
-/** y-axis tick labels at the left edge of one segment. */
-function eraTicks(run, ticks, yAt, fmt, { width, padR, highlightZero = false } = {}) {
-  return ticks.map((v) => {
-    const y = yAt(v);
-    const zero = Math.abs(v) < 1e-12;
-    return `<g>
-      <line x1="${run.x0}" x2="${run.x1}" y1="${y}" y2="${y}"
-        stroke="${zero && highlightZero ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.03)"}"
-        stroke-width="1" ${zero && highlightZero ? "" : 'stroke-dasharray="2 4"'}/>
-      <text x="${run.x0 - 8}" y="${y + 3}" fill="rgba(229,229,229,0.45)"
-        font-family="${MONO}" font-size="10" text-anchor="end">${esc(fmt(v))}</text>
-    </g>`;
-  }).join("");
 }
 
 /** Tooltip name: display name plus the real repo string for hover discovery. */
@@ -451,7 +444,7 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
 
   // Crown threshold in z-units = k_sigma (contract: 2.0 since 2026-08-11).
   const kCrown = 2;
-  const headers = eraHeaders(runs, padT, height - padB);
+  const headers = eraBoundary(runs, xAt, padT, height - padB);
   const grid = ticks.filter((v) => v !== kCrown).map((v) => {
     const y = yAt(v);
     return `<g>
@@ -507,9 +500,11 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
 }
 
 /**
- * Absolute paired margin per duel, with the δ crown floor drawn in — one
- * segment per scoring era, each on its own y scale and unit (nats/byte until
- * wvk 21, teacher sd since wvk 22), with δ drawn and labelled per era.
+ * Paired margin per duel normalised to its era's δ crown floor (margin / δ):
+ * 0.002 nats/byte until wvk 21 and 0.20 teacher sd since wvk 22 cannot share
+ * a linear axis, and margin/SE is already the chart next to this one, so the
+ * unit-free form here is "how many δ". The dashed line at 1 is the floor in
+ * both eras; the tooltip carries the raw margin with its unit.
  */
 export function drawDuelMargin(svg, history, { width: widthOpt, height: heightOpt } = {}) {
   const points = duelPoints(history);
@@ -521,85 +516,81 @@ export function drawDuelMargin(svg, history, { width: widthOpt, height: heightOp
   const padT = 28;
   const padB = CROWN_AXIS_PAD;
   const innerH = height - padT - padB;
-  const { runs, xAt } = eraLayout(points, padL, width - padR);
+  const { runs, xAt, slot } = eraLayout(points, padL, width - padR);
+  const barW = Math.max(1.5, Math.min(slot * 0.6, 64, slot - 1.5));
 
   const gold = "#f3c449";
   const bar = "#c6bda8";
   const mono = "IBM Plex Mono, monospace";
 
-  // Per-era scale: domain from that era's margins and δ; hard floors keep
-  // one blow-out from flattening the crown band (−0.02 nats/byte ≈ −2.5 sd).
-  const HARD_FLOOR = { nats: -0.02, sd: -2.5 };
-  const segs = runs.map((r) => {
-    const pts = points.slice(r.i0, r.i1 + 1);
-    const delta = deltaOf(pts[pts.length - 1]);
-    const margins = pts.map((p) => {
-      const v = Number(p.margin);
-      return p.margin != null && Number.isFinite(v) ? v : null;
-    });
-    const have = margins.filter((v) => v != null);
-    const rawMin = Math.min(0, ...have);
-    const rawMax = Math.max(delta * 1.8, ...have);
-    const { min: clippedMin, max: clippedMax } = clipDomain(
-      rawMin, rawMax, HARD_FLOOR[r.era] ?? -0.02, -delta);
-    const pad = Math.max((clippedMax - clippedMin) * 0.08, Math.abs(clippedMax) * 0.1, delta * 0.25);
-    const min = rawMin < clippedMin ? clippedMin : clippedMin - pad;
-    const max = clippedMax + pad;
-    const yAt = (v) => padT + ((max - v) / (max - min || 1)) * innerH;
-    const barW = Math.max(1.5, Math.min(r.slot * 0.6, 64, r.slot - 1.5));
-    return { run: r, pts, margins, delta, min, max, yAt, barW, era: ERAS[r.era] };
+  const ratios = points.map((p) => {
+    const v = Number(p.margin);
+    const d = deltaOf(p);
+    return p.margin != null && Number.isFinite(v) && d > 0 ? v / d : null;
   });
+  const have = ratios.filter((v) => v != null);
+  const rawMin = Math.min(0, ...have);
+  const rawMax = Math.max(1.8, ...have);
+  // A −10δ wipeout must not flatten the crown band around 1δ.
+  const { min: clippedMin, max: clippedMax } = clipDomain(rawMin, rawMax, -10, -1);
+  const pad = Math.max((clippedMax - clippedMin) * 0.08, 0.25);
+  const min = rawMin < clippedMin ? clippedMin : clippedMin - pad;
+  const max = clippedMax + pad;
+  const yAt = (v) => padT + ((max - v) / (max - min || 1)) * innerH;
 
-  const grid = segs.map((s) => {
-    const ticks = niceTicks(s.min, s.max, tickBudget(innerH));
-    return eraTicks(s.run, ticks, s.yAt, s.era.fmt)
-      + `<line x1="${s.run.x0}" x2="${s.run.x1}" y1="${s.yAt(0)}" y2="${s.yAt(0)}"
-          stroke="rgba(255,255,255,0.08)" stroke-width="1"/>`;
-  }).join("");
-
-  const deltaLines = segs.map((s) => {
-    const y = s.yAt(s.delta);
+  const ticks = niceTicks(min, max, tickBudget(innerH));
+  const grid = ticks.map((v) => {
+    const y = yAt(v);
     return `<g>
-      <line x1="${s.run.x0}" x2="${s.run.x1}" y1="${y}" y2="${y}"
-        stroke="${gold}" stroke-width="1" stroke-dasharray="2 5" opacity="0.7"/>
-      <text x="${s.run.x1}" y="${y - 5}" fill="${gold}" font-family="${mono}"
-        font-size="10" text-anchor="end">δ ${esc(fmtUnit(s.delta, s.run.era))}</text>
+      <line x1="${padL}" x2="${width - padR}" y1="${y}" y2="${y}"
+        stroke="rgba(255,255,255,0.03)" stroke-width="1" stroke-dasharray="2 4"/>
+      <text x="${padL - 10}" y="${y + 3}" fill="rgba(229,229,229,0.45)"
+        font-family="${mono}" font-size="10" text-anchor="end">${v.toFixed(Math.abs(v) < 1 && v !== 0 ? 1 : 0)}δ</text>
     </g>`;
   }).join("");
+  const zeroLine = `<line x1="${padL}" x2="${width - padR}" y1="${yAt(0)}" y2="${yAt(0)}"
+    stroke="rgba(255,255,255,0.08)" stroke-width="1"/>`;
+  const yDelta = yAt(1);
+  const deltaLine = `<g>
+    <line x1="${padL}" x2="${width - padR}" y1="${yDelta}" y2="${yDelta}"
+      stroke="${gold}" stroke-width="1" stroke-dasharray="2 5" opacity="0.7"/>
+    <text x="${width - padR}" y="${yDelta - 5}" fill="${gold}" font-family="${mono}"
+      font-size="10" text-anchor="end">δ = 1 (0.002 nats/byte · 0.20 sd)</text>
+  </g>`;
 
-  const columns = segs.map((s) => s.pts.map((p, j) => {
-    const i = s.run.i0 + j;
-    const m = s.margins[j];
-    if (m == null) return "";
-    const shown = Math.min(s.max, Math.max(s.min, m));
+  const columns = points.map((p, i) => {
+    const r = ratios[i];
+    if (r == null) return "";
+    const era = eraOf(p);
+    const shown = Math.min(max, Math.max(min, r));
     const x = xAt(i);
-    const y0 = s.yAt(0);
-    const y1 = s.yAt(shown);
+    const y0 = yAt(0);
+    const y1 = yAt(shown);
     const top = Math.min(y0, y1);
     const h = Math.max(Math.abs(y0 - y1), 2);
     const crowned = p.event === "crowned";
-    const fill = crowned ? gold : (m >= 0 ? bar : "rgba(255,71,71,0.55)");
-    const clipped = m < s.min - 1e-12;
-    const se = p.se != null ? ` · SE ${s.era.fmt(p.se)}` : "";
-    const tip = `${duelTipName(p)} · ${p.event} · margin ${fmtUnit(m, s.run.era)}${clipped ? " (clipped)" : ""}${se} · δ ${fmtUnit(s.delta, s.run.era)} · ${fmtTime(p.at)}`;
+    const fill = crowned ? gold : (r >= 0 ? bar : "rgba(255,71,71,0.55)");
+    const clipped = r < min - 1e-12;
+    const se = p.se != null ? ` · SE ${ERAS[era].fmt(p.se)}` : "";
+    const tip = `${duelTipName(p)} · ${p.event} · margin ${fmtUnit(p.margin, era)} = ${r.toFixed(2)}δ (δ ${fmtUnit(deltaOf(p), era)})${clipped ? " (clipped)" : ""}${se} · ${fmtTime(p.at)}`;
     const hatch = clipped
-      ? `<line x1="${x - s.barW / 2 + 0.5}" x2="${x + s.barW / 2 - 0.5}" y1="${top + h - 3}" y2="${top + h - 3}"
+      ? `<line x1="${x - barW / 2 + 0.5}" x2="${x + barW / 2 - 0.5}" y1="${top + h - 3}" y2="${top + h - 3}"
            stroke="rgba(0,0,0,0.4)" stroke-width="1"/>
-         <line x1="${x - s.barW / 2 + 0.5}" x2="${x + s.barW / 2 - 0.5}" y1="${top + h - 1.5}" y2="${top + h - 1.5}"
+         <line x1="${x - barW / 2 + 0.5}" x2="${x + barW / 2 - 0.5}" y1="${top + h - 1.5}" y2="${top + h - 1.5}"
            stroke="rgba(0,0,0,0.4)" stroke-width="1"/>`
       : "";
     return `<g class="duel-hit" data-tip="${esc(tip)}"${duelCidAttr(p)}>
-      <rect x="${x - s.barW / 2}" y="${top}" width="${s.barW}" height="${h}" rx="1" fill="${fill}"
+      <rect x="${x - barW / 2}" y="${top}" width="${barW}" height="${h}" rx="1" fill="${fill}"
         opacity="${crowned ? 1 : 0.92}"/>${hatch}
     </g>`;
-  }).join("")).join("");
-  const headers = eraHeaders(runs, padT, height - padB);
+  }).join("");
+  const boundary = eraBoundary(runs, xAt, padT, height - padB);
   const axis = duelAxisMarks(points, xAt, height - padB, width - padR + 12);
 
   svg.setAttribute("width", String(width));
   svg.setAttribute("height", String(height));
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.innerHTML = `${grid}${deltaLines}${headers}${columns}${axis}`;
+  svg.innerHTML = `${grid}${zeroLine}${deltaLine}${boundary}${columns}${axis}`;
 }
 
 /** Per-side score in the row's own era: min(R, G) mean (nats/byte) until
@@ -614,8 +605,9 @@ export function sideScoreOf(p, side) {
 }
 
 /**
- * Best per-side score per duel (max of king and challenger), one segment
- * per scoring era with its own scale and unit.
+ * Best per-side score per duel (max of king and challenger), z-scored within
+ * its era ((v − mean_era) / sd_era) so nats/byte and teacher-sd values share
+ * one axis; the tooltip carries the raw value with its unit.
  */
 export function drawDuelScores(svg, history,
                                { width: widthOpt, height: heightOpt } = {}) {
@@ -656,77 +648,77 @@ export function drawDuelScores(svg, history,
     const vals = [s.challenger, s.king].filter((v) => v != null);
     return vals.length ? Math.max(...vals) : null;
   };
+  const scorer = eraZScorer(points, bestScore);
+  const series = points.map((p, i) => ({ p, i, raw: bestScore(p) }))
+    .filter((pt) => pt.raw != null)
+    .map((pt) => ({ ...pt, v: scorer.z(pt.p, pt.raw) }));
 
   svg.setAttribute("width", String(width));
   svg.setAttribute("height", String(height));
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
-  const segs = runs.map((r) => {
-    const series = [];
-    for (let i = r.i0; i <= r.i1; i++) {
-      const v = bestScore(points[i]);
-      if (v != null) series.push({ p: points[i], i, v });
-    }
-    const scores = series.map((pt) => pt.v);
-    let lo = scores.length ? Math.min(...scores) : 0;
-    let hi = scores.length ? Math.max(...scores) : 1;
-    if (hi === lo) {
-      lo -= Math.abs(lo) * 0.2 || 0.02;
-      hi += Math.abs(hi) * 0.2 || 0.02;
-    } else {
-      const pad = (hi - lo) * 0.18;
-      lo -= pad;
-      hi += pad;
-    }
-    const span = hi - lo || 1;
-    const yAt = (v) => padT + ((hi - v) / span) * innerH;
-    return { run: r, series, lo, hi, yAt, era: ERAS[r.era] };
-  });
-
-  if (!segs.some((s) => s.series.length)) {
+  if (!series.length) {
     svg.innerHTML = `<text x="${width / 2}" y="${height / 2}" text-anchor="middle"
       fill="rgba(229,229,229,0.35)" font-family="${mono}" font-size="12">no score recorded yet</text>`;
     return;
   }
 
+  const zs = series.map((pt) => pt.v);
+  let lo = Math.min(-1, ...zs);
+  let hi = Math.max(1, ...zs);
+  const padY = (hi - lo) * 0.12;
+  lo -= padY;
+  hi += padY;
+  const span = hi - lo || 1;
+  const yAt = (v) => padT + ((hi - v) / span) * innerH;
   const yFloor = height - padB;
-  const body = segs.map((s) => {
-    if (!s.series.length) {
-      return `<text x="${(s.run.x0 + s.run.x1) / 2}" y="${(padT + yFloor) / 2}" text-anchor="middle"
-        fill="rgba(229,229,229,0.35)" font-family="${mono}" font-size="10">no per-side ${esc(s.era.unit)} score published</text>`;
-    }
-    const ticks = Array.from({ length: 5 }, (_, k) => s.lo + ((s.hi - s.lo) * k) / 4);
-    const grid = eraTicks(s.run, ticks, s.yAt, s.era.fmt);
-    const line = s.series.map((pt, k) =>
-      `${k ? "L" : "M"} ${xAt(pt.i)} ${s.yAt(pt.v)}`).join(" ");
-    const area = s.series.length >= 2
-      ? `${line} L ${xAt(s.series[s.series.length - 1].i)} ${yFloor} L ${xAt(s.series[0].i)} ${yFloor} Z`
-      : "";
-    const last = s.series[s.series.length - 1];
-    const lastTip = `<circle cx="${xAt(last.i)}" cy="${s.yAt(last.v)}" r="3.5" fill="${gold}"/>
-       <text x="${xAt(last.i) - 8}" y="${s.yAt(last.v) - 10}" text-anchor="end"
-         fill="${gold}" font-family="${mono}" font-size="11">${esc(fmtUnit(last.v, s.run.era))}</text>`;
-    const dots = s.series.map(({ p, i, v }) => {
-      const crowned = p.event === "crowned";
-      const x = xAt(i);
-      const sd = sides(p);
-      const who = (sd.challenger != null && (sd.king == null || sd.challenger >= sd.king)) ? "challenger" : "king";
-      const tip = `${duelTipName(p)} · best ${fmtUnit(v, s.run.era)} (${who}) · challenger ${s.era.fmt(sd.challenger)} · king ${s.era.fmt(sd.king)} · ${fmtTime(p.at)}`;
-      return `<g class="duel-hit" data-tip="${esc(tip)}"${duelCidAttr(p)}>
-        <circle cx="${x}" cy="${s.yAt(v)}" r="9" fill="transparent"/>
-        <circle cx="${x}" cy="${s.yAt(v)}" r="${crowned ? 4.5 : 2.5}"
-          fill="${gold}" opacity="${crowned ? 1 : 0.85}"/>
-      </g>`;
-    }).join("");
-    return `${grid}
-      ${area ? `<path d="${area}" fill="rgba(243,196,73,0.08)"/>` : ""}
-      <path d="${line}" fill="none" stroke="${gold}" stroke-width="1.75"/>
-      ${dots}${lastTip}`;
+
+  const ticks = niceTicks(lo, hi, tickBudget(innerH));
+  const grid = ticks.map((v) => {
+    const y = yAt(v);
+    const zero = Math.abs(v) < 1e-9;
+    return `<g>
+      <line x1="${padL}" x2="${width - padR}" y1="${y}" y2="${y}"
+        stroke="${zero ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.04)"}" ${zero ? "" : 'stroke-dasharray="2 4"'}/>
+      <text x="${padL - 10}" y="${y + 3}" text-anchor="end" fill="rgba(229,229,229,0.45)"
+        font-family="${mono}" font-size="10">${v > 0 ? "+" : ""}${v.toFixed(Math.abs(v) < 1 && !zero ? 1 : 0)}σ</text>
+    </g>`;
   }).join("");
-  const headers = eraHeaders(runs, padT, yFloor);
+
+  // Break the line at the era boundary: the two sides are z-scored against
+  // different means, so a segment across the divider would draw a change
+  // that is not there.
+  let d = "";
+  let lastEra = null;
+  for (const pt of series) {
+    const era = eraOf(pt.p);
+    d += `${lastEra === era ? " L" : " M"} ${xAt(pt.i)} ${yAt(pt.v)}`;
+    lastEra = era;
+  }
+  const last = series[series.length - 1];
+  const lastTip = `<circle cx="${xAt(last.i)}" cy="${yAt(last.v)}" r="3.5" fill="${gold}"/>
+     <text x="${xAt(last.i) - 8}" y="${yAt(last.v) - 10}" text-anchor="end"
+       fill="${gold}" font-family="${mono}" font-size="11">${esc(fmtUnit(last.raw, eraOf(last.p)))}</text>`;
+  const dots = series.map(({ p, i, v, raw }) => {
+    const crowned = p.event === "crowned";
+    const x = xAt(i);
+    const era = eraOf(p);
+    const sd = sides(p);
+    const who = (sd.challenger != null && (sd.king == null || sd.challenger >= sd.king)) ? "challenger" : "king";
+    const st = scorer.stats[era];
+    const tip = `${duelTipName(p)} · best ${fmtUnit(raw, era)} (${who}) = ${v >= 0 ? "+" : ""}${v.toFixed(2)}σ vs this era's mean ${ERAS[era].fmt(st.mean)} · challenger ${ERAS[era].fmt(sd.challenger)} · king ${ERAS[era].fmt(sd.king)} · ${fmtTime(p.at)}`;
+    return `<g class="duel-hit" data-tip="${esc(tip)}"${duelCidAttr(p)}>
+      <circle cx="${x}" cy="${yAt(v)}" r="9" fill="transparent"/>
+      <circle cx="${x}" cy="${yAt(v)}" r="${crowned ? 4.5 : 2.5}"
+        fill="${gold}" opacity="${crowned ? 1 : 0.85}"/>
+    </g>`;
+  }).join("");
+  const boundary = eraBoundary(runs, xAt, padT, yFloor);
   const axis = duelAxisMarks(points, xAt, height - padB, width - padR + 12);
 
-  svg.innerHTML = `${body}${headers}${axis}`;
+  svg.innerHTML = `${grid}
+    <path d="${d.trim()}" fill="none" stroke="${gold}" stroke-width="1.75"/>
+    ${dots}${lastTip}${boundary}${axis}`;
 }
 
 /* ---------- per-duel gate grid ---------- */
@@ -779,11 +771,11 @@ export const GATE_METRICS = [
   {
     id: "reason",
     title: "score (sides)",
-    caption: "per-side mean turn score — nats/byte until wvk 21, teacher sd since wvk 22",
-    splitEras: true,
-    detail: `<p>Each side's mean per-turn score on the shared slice, in the
-      units of its era. <strong>Until wvk 21</strong> (per-byte nats):
-      <code>min(R, G)</code> — the centered tempered Reason
+    caption: "per-side mean turn score, z-scored within its era (nats/byte until wvk 21, teacher sd since wvk 22) · hover for the raw value",
+    zScoreByEra: true,
+    detail: `<p>Each side's mean per-turn score on the shared slice.
+      <strong>Until wvk 21</strong> (per-byte nats): <code>min(R, G)</code> —
+      the centered tempered Reason
       <code>R = τ·log(mean_i exp(a_i/τ)) − mean_i a_i</code> over k=3 fresh
       teacher references (<code>a_i = lpC(y_i|z_A) − lpC(y_i|∅)</code>) and
       the banded Grounding <code>G</code> of the thought's own teacher
@@ -795,11 +787,13 @@ export const GATE_METRICS = [
       leave-one-out values, σ pooled per dialect over the duel). The teacher
       is the anchor in both eras — the miner is never judged by another
       model's opinion of its prose.</p>
-      <p>The two eras are drawn as separate segments with their own y scale;
-      the numbers are not comparable across the divider. The hero chart shows
-      the best side per duel; this pane shows both sides.</p>`,
-    fmt: fmtScore,
-    fmtByEra: (era) => ERAS[era].fmt,
+      <p>The two units cannot share a linear axis, so each value is drawn as
+      a z-score against the mean and sd of its own era's duels; the dotted
+      vertical line is the wvk-22 boundary and the tooltip carries the raw
+      value with its unit. The hero chart shows the best side per duel; this
+      pane shows both sides.</p>`,
+    fmt: (v) => (v == null ? "—" : `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(1)}σ`),
+    rawFmt: (p, v) => fmtUnit(v, eraOf(p)),
     lines: [{ label: "", at: () => 0, faint: true }],
     series: [
       { label: "challenger", color: GOLD, get: (p) => sideScoreOf(p, "challenger") },
@@ -895,22 +889,22 @@ export const GATE_METRICS = [
   {
     id: "se",
     title: "paired SE",
-    caption: "spread of the per-turn score difference · era units · dashed = δ/2 (the SE where 2·SE meets the floor)",
-    splitEras: true,
+    caption: "spread of the per-turn score difference, as a multiple of the era's δ (SE/δ) · dashed = 0.5 (2·SE meets the floor) · hover for the raw SE",
+    normByDelta: true,
     detail: `<p>Standard error of the per-turn <code>turn_c − turn_k</code>
-      differences, i.e. how much the slice disagreed with itself, in the
-      units of the era (nats/byte until wvk 21, teacher sd since wvk 22).
-      The crown bar is <code>max(k·SE, δ)</code>, so the noisier the diffs,
-      the larger the margin a challenger needs.</p>
-      <p>SE itself has no floor — but the crown bar cannot drop below δ
-      (<code>0.002</code> nats/byte, <code>0.20</code> sd) however small SE
-      gets, which is what caps low-variance copies and SE-compression
-      strategies. The dashed line is δ/2: below it δ is the binding term of
-      the bar, above it the z-test is.</p>`,
-    fmt: fmtScore,
-    fmtByEra: (era) => ERAS[era].fmt,
-    linesByEra: (era) => [{ label: "δ/2", at: () => ERAS[era].delta / 2 }],
-    lines: [],
+      differences, i.e. how much the slice disagreed with itself. The crown
+      bar is <code>max(k·SE, δ)</code>, so the noisier the diffs, the larger
+      the margin a challenger needs.</p>
+      <p>SE is in the era's units (nats/byte until wvk 21, teacher sd since
+      wvk 22), so it is drawn as <code>SE / δ</code> with δ = 0.002 nats/byte
+      or 0.20 sd; the tooltip has the raw SE. SE itself has no floor — but
+      the crown bar cannot drop below δ however small SE gets, which is what
+      caps low-variance copies and SE-compression strategies. The dashed line
+      is 0.5 δ: below it δ is the binding term of the bar, above it the
+      z-test is.</p>`,
+    fmt: (v) => (v == null ? "—" : `${Number(v).toFixed(2)}δ`),
+    rawFmt: (p, v) => fmtUnit(v, eraOf(p)),
+    lines: [{ label: "δ/2", at: () => 0.5 }],
     series: [{ label: "SE", color: GOLD, get: (p) => num(p.se) }],
   },
   {
@@ -1066,11 +1060,13 @@ export const HERO_CHARTS = [
   {
     id: "hero-score",
     title: "Score",
-    caption: "best of king and challenger each duel · nats/byte until wvk 21 · teacher sd since wvk 22",
+    caption: "best side per duel, z-scored within its era · dotted line = wvk 22 · hover for the raw value and unit",
     detail: `<p>The higher of the two sides' mean turn score in each duel,
-      oldest to newest, drawn as one segment per scoring era with its own
-      scale — the numbers left and right of the divider are in different
-      units and are not comparable.</p>
+      oldest to newest. The two eras use different units (per-byte nats until
+      wvk 21, teacher sd since wvk 22) that cannot share a linear axis, so
+      each value is drawn as a z-score against the mean and sd of its own
+      era's duels — the dotted vertical line is the boundary, the line breaks
+      there, and the tooltip carries the raw value with its unit.</p>
       <p><strong>wvk 10–21 (per-byte nats):</strong> <code>min(R, G)</code>.
       <code>a_i = lpC(y_i|z_A) − lpC(y_i|∅)</code> against each of k=3 fresh
       teacher references; <code>R = τ·log(mean_i exp(a_i/τ)) − mean_i a_i</code>
@@ -1090,12 +1086,13 @@ export const HERO_CHARTS = [
   {
     id: "hero-margin",
     title: "Margin (σ)",
-    caption: "paired z vs king · dashed = 2σ · unit-free, both eras · losses below −8σ clipped",
+    caption: "paired z vs king · dashed = 2σ · unit-free in both eras · dotted line = wvk 22 · losses below −8σ clipped",
     detail: `<p>The duel in units of its own noise: each bar is
       <code>z = mean(turn_c − turn_k) / SE</code> against the reigning king.
       Because the mean is paired per turn, turn difficulty cancels — a hard
       slice hurts both sides equally — and because z divides by SE it is
-      unit-free, so the two scoring eras share this axis. Gold bars are
+      unit-free, so the two scoring eras share this axis (the dotted vertical
+      line marks wvk 22). Gold bars are
       crownings, bone is a challenger that scored above the king without
       clearing the bar, red is a loss.</p>
       <p>The dotted line is the crown bar <code>k_sigma = 2</code>: crossing
@@ -1110,15 +1107,17 @@ export const HERO_CHARTS = [
   {
     id: "hero-margin-abs",
     title: "Margin (abs)",
-    caption: "paired mean margin per duel · dashed = δ per era: 0.002 nats/byte (wvk ≤ 21) · 0.20 sd (wvk ≥ 22)",
-    detail: `<p>The same duels as Margin (σ), in the absolute units of each
-      era: each bar is the paired mean <code>turn_c − turn_k</code> itself.
-      The x axis splits at the wvk-22 boundary and each segment has its own
-      y scale, because a margin of 0.25 teacher-sd and a margin of 0.0025
-      nats/byte are different quantities. Gold bars are crownings, bone is a
-      positive margin that did not crown, red is a loss.</p>
-      <p>The dotted gold line is δ, the absolute crown floor, drawn and
-      labelled per era: a challenger must beat <code>max(k·SE, δ)</code>.
+    caption: "paired mean margin per duel as a multiple of its era's δ (margin/δ) · dashed = δ · dotted line = wvk 22 · hover for the raw margin",
+    detail: `<p>The same duels as Margin (σ), against the absolute crown
+      floor: each bar is the paired mean <code>turn_c − turn_k</code> divided
+      by its era's δ — 0.002 nats/byte until wvk 21, 0.20 teacher sd since
+      wvk 22 — because a margin of 0.25 sd and a margin of 0.0025 nats/byte
+      cannot share a linear axis, and margin/SE is already the chart to the
+      right. The tooltip carries the raw margin with its unit. Gold bars are
+      crownings, bone is a positive margin that did not crown, red is a
+      loss.</p>
+      <p>The dashed gold line at 1 is δ, the absolute crown floor, in both
+      eras: a challenger must beat <code>max(k·SE, δ)</code>.
       The z-test alone is relative to the challenger's <em>own</em> noise, so
       a near-copy of the king — whose per-duel spread is far smaller than a
       distinct model's — could crown on a noise fluctuation; the floor turns
@@ -1155,78 +1154,64 @@ export function drawGateMetric(svg, points, metric,
     return;
   }
 
-  // Unit-bearing metrics (`splitEras`) get one y scale per scoring era;
-  // everything else shares one scale but keeps the era divider so the
-  // panes line up with the heroes.
-  const { runs, xAt, runOf } = eraLayout(points, padL, width - padR);
+  const { runs, xAt } = eraLayout(points, padL, width - padR);
   const multi = runs.length > 1;
-  const padT = multi ? 22 : 12;
+  const padT = multi ? 20 : 12;
   const gates = lastGates(points);
-  const cols = metric.series.map((s) => points.map((p) => s.get(p)));
-  const innerH = height - padT - padB;
+  // Raw per-side values, then the unit-free transform the pane asked for:
+  // z-score within each era, or division by the era's δ.
+  const raw = metric.series.map((s) => points.map((p) => s.get(p)));
+  let cols = raw;
+  if (metric.zScoreByEra) {
+    const scorers = metric.series.map((s) => eraZScorer(points, s.get));
+    cols = raw.map((col, si) => col.map((v, i) => (v == null ? null : scorers[si].z(points[i], v))));
+  } else if (metric.normByDelta) {
+    cols = raw.map((col) => col.map((v, i) => {
+      const d = deltaOf(points[i]);
+      return v == null || !(d > 0) ? null : v / d;
+    }));
+  }
+  const lines = (metric.lines || [])
+    .map((l) => ({ ...l, v: num(l.at(gates)) }))
+    .filter((l) => l.v != null);
 
-  const scaleFor = (idx) => {
-    const lines = ((metric.splitEras && metric.linesByEra)
-      ? metric.linesByEra(runs[idx]?.era || "nats") : (metric.lines || []))
-      .map((l) => ({ ...l, v: num(l.at(gates)) }))
-      .filter((l) => l.v != null);
-    const vals = metric.splitEras && multi
-      ? cols.map((c) => c.slice(runs[idx].i0, runs[idx].i1 + 1)).flat().filter((v) => v != null)
-      : cols.flat().filter((v) => v != null);
-    let lo;
-    let hi;
-    if (metric.domain) {
-      [lo, hi] = metric.domain;
-    } else {
-      const anchors = lines.filter((l) => l.keep !== false).map((l) => l.v);
-      const all = vals.concat(anchors);
-      lo = all.length ? Math.min(...all) : 0;
-      hi = all.length ? Math.max(...all) : 1;
-      const pad = (hi - lo) * 0.15 || Math.abs(hi) * 0.2 || 1;
-      lo -= pad;
-      hi += pad;
-    }
-    const yAt = (v) => padT + ((hi - v) / ((hi - lo) || 1)) * innerH;
-    const fmt = metric.fmtByEra ? metric.fmtByEra(runs[idx]?.era || "nats") : metric.fmt;
-    return { lo, hi, yAt, lines, fmt, inView: (v) => v >= lo && v <= hi };
-  };
-  // One scale per run when splitting, else the shared scale everywhere.
-  const shared = metric.splitEras && multi ? null : scaleFor(0);
-  const scales = runs.map((_, k) => shared || scaleFor(k));
-  const scaleOf = (i) => scales[Math.max(0, runs.indexOf(runOf(i)))] || scales[0];
+  const vals = cols.flat().filter((v) => v != null);
+  let lo;
+  let hi;
+  if (metric.domain) {
+    [lo, hi] = metric.domain;
+  } else {
+    const anchors = lines.filter((l) => l.keep !== false).map((l) => l.v);
+    const all = vals.concat(anchors);
+    lo = all.length ? Math.min(...all) : 0;
+    hi = all.length ? Math.max(...all) : 1;
+    const pad = (hi - lo) * 0.15 || Math.abs(hi) * 0.2 || 1;
+    lo -= pad;
+    hi += pad;
+  }
+  const yAt = (v) => padT + ((hi - v) / ((hi - lo) || 1)) * (height - padT - padB);
+  const inView = (v) => v >= lo && v <= hi;
 
-  const grid = runs.map((r, k) => {
-    const sc = scales[k];
-    const ticks = [sc.hi, (sc.hi + sc.lo) / 2, sc.lo];
-    // Shared scale: labels once, at the far left; split: per segment.
-    if (shared && k > 0) return "";
-    const run = shared ? { x0: padL, x1: width - padR } : r;
-    return ticks.map((v) => {
-      const y = sc.yAt(v);
-      return `<g>
-        <line x1="${run.x0}" x2="${run.x1}" y1="${y}" y2="${y}"
-          stroke="rgba(255,255,255,0.04)" stroke-width="1" stroke-dasharray="2 4"/>
-        <text x="${run.x0 - 6}" y="${y + 3}" text-anchor="end" fill="rgba(229,229,229,0.4)"
-          font-family="${MONO}" font-size="9">${esc(sc.fmt(v))}</text>
-      </g>`;
-    }).join("");
+  const grid = [hi, (hi + lo) / 2, lo].map((v) => {
+    const y = yAt(v);
+    return `<g>
+      <line x1="${padL}" x2="${width - padR}" y1="${y}" y2="${y}"
+        stroke="rgba(255,255,255,0.04)" stroke-width="1" stroke-dasharray="2 4"/>
+      <text x="${padL - 6}" y="${y + 3}" text-anchor="end" fill="rgba(229,229,229,0.4)"
+        font-family="${MONO}" font-size="9">${esc(metric.fmt(v))}</text>
+    </g>`;
   }).join("");
 
-  const thresholds = runs.map((r, k) => {
-    const sc = scales[k];
-    if (shared && k > 0) return "";
-    const run = shared ? { x0: padL, x1: width - padR } : r;
-    return sc.lines.filter((l) => sc.inView(l.v)).map((l) => {
-      const y = sc.yAt(l.v);
-      const color = l.faint ? "rgba(229,229,229,0.18)" : GOLD;
-      return `<g>
-        <line x1="${run.x0}" x2="${run.x1}" y1="${y}" y2="${y}"
-          stroke="${color}" stroke-width="1" stroke-dasharray="2 5"
-          opacity="${l.faint ? 1 : 0.75}"/>
-        ${l.label ? `<text x="${run.x1}" y="${y - 4}" text-anchor="end" fill="${GOLD}"
-          font-family="${MONO}" font-size="9" opacity="0.8">${esc(l.label)}</text>` : ""}
-      </g>`;
-    }).join("");
+  const thresholds = lines.filter((l) => inView(l.v)).map((l) => {
+    const y = yAt(l.v);
+    const color = l.faint ? "rgba(229,229,229,0.18)" : GOLD;
+    return `<g>
+      <line x1="${padL}" x2="${width - padR}" y1="${y}" y2="${y}"
+        stroke="${color}" stroke-width="1" stroke-dasharray="2 5"
+        opacity="${l.faint ? 1 : 0.75}"/>
+      ${l.label ? `<text x="${width - padR}" y="${y - 4}" text-anchor="end" fill="${GOLD}"
+        font-family="${MONO}" font-size="9" opacity="0.8">${esc(l.label)}</text>` : ""}
+    </g>`;
   }).join("");
 
   // Crownings get a full-height hairline so every pane reads against the
@@ -1236,20 +1221,20 @@ export function drawGateMetric(svg, points, metric,
         stroke="${GOLD}" stroke-width="1" opacity="0.18"/>`
     : "")).join("");
 
-  const clampY = (v, i) => {
-    const sc = scaleOf(i);
-    return sc.yAt(Math.min(Math.max(v, sc.lo), sc.hi));
-  };
+  const clampY = (v) => yAt(Math.min(Math.max(v, lo), hi));
+  const breakAtBoundary = Boolean(metric.zScoreByEra);
   const paths = metric.series.map((s, si) => {
     let d = "";
     let open = false;
-    let lastRun = null;
+    let lastEra = null;
     cols[si].forEach((v, i) => {
-      const run = runOf(i);
-      if (v == null || (lastRun && run !== lastRun)) open = false; // never draw across the divider
-      lastRun = run;
+      const era = eraOf(points[i]);
+      // A per-era z-score has a different mean on each side of wvk 22, so
+      // the line does not cross the boundary; everything else is continuous.
+      if (v == null || (breakAtBoundary && lastEra && era !== lastEra)) open = false;
+      lastEra = era;
       if (v == null) return;
-      d += `${open ? " L" : " M"} ${xAt(i)} ${clampY(v, i)}`;
+      d += `${open ? " L" : " M"} ${xAt(i)} ${clampY(v)}`;
       open = true;
     });
     return d
@@ -1261,10 +1246,9 @@ export function drawGateMetric(svg, points, metric,
   const dots = metric.series.map((s, si) => cols[si].map((v, i) => {
     if (v == null || s.dash) return "";
     const p = points[i];
-    const sc = scaleOf(i);
-    const unit = metric.splitEras ? ` ${ERAS[eraOf(p)].unit}` : "";
-    const tip = `${duelTipName(p)} · ${s.label} ${sc.fmt(v)}${unit} · ${fmtTime(p.at)}`;
-    const cy = clampY(v, i);
+    const rawTxt = metric.rawFmt ? ` (${metric.rawFmt(p, raw[si][i])})` : "";
+    const tip = `${duelTipName(p)} · ${s.label} ${metric.fmt(v)}${rawTxt} · ${fmtTime(p.at)}`;
+    const cy = clampY(v);
     return `<g class="duel-hit" data-tip="${esc(tip)}"${duelCidAttr(p)}>
       <circle cx="${xAt(i)}" cy="${cy}" r="8" fill="transparent"/>
       <circle cx="${xAt(i)}" cy="${cy}"
@@ -1272,13 +1256,11 @@ export function drawGateMetric(svg, points, metric,
     </g>`;
   }).join("")).join("");
 
-  // Unit-less panes (chars, %, counts) label the eras without a unit.
-  const headers = eraHeaders(runs, padT, height - padB, { short: true, units: Boolean(metric.splitEras) });
+  const boundary = eraBoundary(runs, xAt, padT, height - padB);
   const axis = duelAxisMarks(points, xAt, height - padB, width - padR + 12);
 
-  svg.innerHTML = `${grid}${crowns}${thresholds}${headers}${paths}${dots}${axis}`;
+  svg.innerHTML = `${grid}${crowns}${thresholds}${boundary}${paths}${dots}${axis}`;
 }
-
 
 /* ---------- duel page charts (per-turn samples of one duel) ---------- */
 

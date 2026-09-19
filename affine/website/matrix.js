@@ -9,7 +9,7 @@
  */
 
 import { fetchDatasetTable, fetchMatrix } from "./api.js?v=69";
-import { kingName } from "./charts.js?v=74";
+import { kingName } from "./charts.js?v=75";
 
 const REFRESH_MS = 300000;
 const TINT_FULL_PT = 40;      // |Δ| in points where the tint saturates
