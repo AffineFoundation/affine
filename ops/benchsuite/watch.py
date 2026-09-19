@@ -212,32 +212,41 @@ def tick(a: argparse.Namespace) -> None:
     if king is None:
         log("no king in state.json; nothing to do")
         return
-    running = [p for p in w["passes"] if p.get("state") == "running"]
-    if running:
-        p = running[0]
+    # Reap finished passes. A running pass blocks the watcher ONLY when it is for the
+    # sitting king: until 2026-09-19 any running pass did, and reign 15's one-pod
+    # `lium` pass (26 h, long SWE / long-context tail) kept reign 19 without a card
+    # for 5 h after its crown. Passes for earlier kings, challengers and weekly
+    # re-runs keep their pods and finish on their own.
+    for p in [p for p in w["passes"] if p.get("state") == "running"]:
         if p.get("pid") is None and p.get("pidfile") and Path(p["pidfile"]).exists():
             p["pid"] = int(Path(p["pidfile"]).read_text().strip() or 0) or None
             save_watch(w)
         if a.dry_run or p.get("pid") is None:
             log(f"pass {p['run_id']} marked running")
-            return
+            continue
         rc = subprocess.run(["kill", "-0", str(p["pid"])], capture_output=True).returncode
         if rc == 0:
-            log(f"pass {p['run_id']} still running (pid {p['pid']})")
-            return
+            continue
         done_marker = Path(p["log"]).with_suffix(".exit")
         code = int(done_marker.read_text().strip()) if done_marker.exists() else -1
         p.update(state="done" if code == 0 else "failed", exit_code=code,
                  finished_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         save_watch(w)
         log(f"pass {p['run_id']} finished exit={code}")
+    running = [p for p in w["passes"] if p.get("state") == "running"]
+    mine = [p for p in running if p.get("digest") == king["digest"]]
+    if mine:
+        log(f"pass {mine[0]['run_id']} for the sitting king still running (pid {mine[0].get('pid')})")
+        return
+    if running:
+        log(f"{len(running)} other pass(es) running ({', '.join(p['run_id'] for p in running)}); not blocking the king")
     # An operator-driven pass for this king (e.g. the reference full pass on a
     # Prime pod) is marked by state/inflight-<digest12>; the watcher stands down
     # for that king until the marker is removed (publish.py removes it).
     if (STATE_DIR / f"inflight-{king['digest'][:12]}").exists():
         log(f"pass for {king['digest'][:12]} in flight elsewhere (inflight marker); standing down")
         return
-    if start_challenger_if_due(w, a):
+    if not running and start_challenger_if_due(w, a):   # challenger cards wait for a quiet watcher; a crown does not
         return
     card = latest_card_for(king["digest"])
     why = None

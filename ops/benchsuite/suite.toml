@@ -112,8 +112,40 @@ step_limit = 0
 agent_timeout_s = 14400
 step_limit = 250
 
+# ------------------------------------------------------------- fast pass
+# Jacob 2026-09-19: wall-clock-minimal card per crown (target <= 2.5 h crown -> full card,
+# speed-up budget <= $600 this weekend). fast_pass.sh rents the pods below IN PARALLEL,
+# installs them in parallel and runs every group at once; every finished cell publishes.
+#   chat shards  3 pods, one vLLM each, the chat suite split by measured cell wall time
+#                (reign 13: bfcl 92 min, lcb 37, mmlu 35, when2call 32, ifbench 2x15, aime 2x15, ...)
+#   agentic pod  tau2 x3 + tau3 on the pod (subprocess); TB2 (Harbor/Daytona) and Gaia2 (ARE)
+#                from the box against the same pod
+#   swe pod      two-replica server (h200-2x / b200-2x) for SWE-bench Verified on Daytona at
+#                swe_in_flight; the pod does nothing else
+#   long-context docker cells run on the chat pods after their shard; miniF2F on Prime from shard 3
+# Daytona quota (us, container): 500 vCPU / 1000 GB. SWE task = 1 vCPU / 4 GB, TB2 task = 1 / 2 ->
+# 200 SWE + 89 TB2 = 289 vCPU / 978 GB: at the memory ceiling; ask Daytona for more before going higher.
+[fast]
+# 2026-09-19 caps: MMLU-Pro (2,000 rows to 32k) and LiveCodeBench (454 rows to 64k) are the two long
+# cells, so they sit on different pods; bfcl + when2call are short and share MMLU-Pro's pod.
+chat_shards = [
+  ["bfcl-v3", "when2call", "mmlu-pro"],
+  ["livecodebench", "ifbench", "humaneval", "ifeval"],
+  ["aime25", "math500", "gpqa-diamond"],
+]
+shard_after = [["graphwalks"], ["oolong-synth", "mrcr-v2"], ["minif2f"]]   # after each shard: docker long-context cells (prime for minif2f)
+chat_plans = ["h200-1x", "pro6000-1x", "b200-1x"]
+agentic_envs_on_pod = ["tau2-airline", "tau2-retail", "tau2-telecom", "tau3-banking"]
+agentic_plans = ["h200-1x", "b200-1x", "pro6000-1x"]
+swe_plans = ["h200-2x", "b200-2x", "b200-1x", "h200-1x"]
+swe_in_flight = 200
+tb2_in_flight = 89
+gaia2_in_flight = 24
+max_pods = 5
+poll_s = 300
+
 [modes]
-default = "lium"            # operator decision 2026-09-13 (later the same day): in-house GPUs paid in TAO
+default = "fast"            # 2026-09-19 (Jacob): parallel topology, <= 2.5 h crown -> card; "lium" = the one-pod pass (still used by the coverage queue)
 lium_plan = "h200-1x"       # [pods.plans.*]: 1x H200 = one TP1 replica, ~$3/h; the whole pass runs on that pod
 # tried in order when the primary plan has no stock (operator 2026-09-15 18:16 / 2026-09-17 00:21 UTC:
 # "scale as needed"; hardware is within noise per the Lium-parity check, the lock pins everything
@@ -268,7 +300,14 @@ secondary_temperature = 0.8
 #   taskset_config  typed taskset knobs, passed as a TOML overlay
 #   concurrency  fixed tasks-in-flight for the env (overrides the run's -c); with
 #             rollout_timeout it is the env's budget, identical for every reign
-#   max_tokens completion cap per model call
+#   max_tokens completion cap per model call. Completion caps (2026-09-19, Alan's check of the
+#             17:00 digest): at the old caps most rows of the reasoning cells were CUT at the cap and
+#             scored 0 (MMLU-Pro 50 % of rows at 8k, GPQA 49 % at 16k, LiveCodeBench 82 % at 16k), so
+#             those cells measured the cap, not the model (Genesis MMLU-Pro 46 vs the vendor card's 85).
+#             New defaults: 32k for MMLU-Pro / GPQA / MATH-500 (AIME was 32k already), 64k for
+#             LiveCodeBench; T stays 0. Cells run at an old cap are kept as <env>@<cap>k (recap.py)
+#             so the history stays visible; the plain column is the new cap everywhere.
+#   cap_history  earlier max_tokens values of this env (the budget tags of the kept old cells)
 #   reward    the reward name that is the headline score
 #   secondary  also run the temperature-0.8 row (cheap chat sets only)
 #   args      extra `--env.taskset.*` flags
@@ -295,10 +334,11 @@ group = "math"
 n = -1
 harness = "null"
 runtime = "none"
-max_tokens = 16384
+max_tokens = 32768   # 16384 until 2026-09-19 (cap-bound: see "Completion caps" above); old cells live on as math500@16k
 reward = "correct"
 secondary = true
 note = "MATH-500; math-verify on the boxed answer."
+cap_history = [16384]
 
 [[envs]]
 id = "gpqa-diamond"
@@ -308,10 +348,11 @@ group = "knowledge"
 n = -1
 harness = "null"
 runtime = "none"
-max_tokens = 16384
+max_tokens = 32768   # 16384 until 2026-09-19 (cap-bound: see "Completion caps" above); old cells live on as gpqa-diamond@16k
 reward = "correct"
 secondary = true
 note = "GPQA diamond (198). Deterministic letter extraction only; upstream's LLM-judge fallback is removed (no judge anywhere in the suite)."
+cap_history = [16384]
 
 [[envs]]
 id = "mmlu-pro"
@@ -321,10 +362,11 @@ group = "knowledge"
 n = 2000
 harness = "null"
 runtime = "none"
-max_tokens = 8192
+max_tokens = 32768   # 8192 until 2026-09-19 (cap-bound: see "Completion caps" above); old cells live on as mmlu-pro@8k
 reward = "correct"
 secondary = false
 note = "MMLU-Pro test, fixed 2,000-question subset (verifiers shuffle, seed 0, uniform over the 12,032 test rows so categories keep their natural shares), 0-shot, boxed letter. Full 12,032 was started on the first pass and cut for time (king pace ~20 questions/min under load)."
+cap_history = [8192]
 
 [[envs]]
 id = "ifbench"
@@ -373,10 +415,11 @@ group = "coding"
 n = -1
 harness = "null"
 runtime = "sandbox"
-max_tokens = 16384
+max_tokens = 65536   # 16384 until 2026-09-19 (cap-bound: see "Completion caps" above); old cells live on as livecodebench@16k
 reward = "passed"
 secondary = false
 note = "LiveCodeBench code_generation_lite v6, official window 2024-08-01..2025-05-01; hidden tests run in the sandbox."
+cap_history = [16384]
 
 [[envs]]
 id = "bfcl-v3"

@@ -109,7 +109,7 @@
     0.8
    ],
    "secondary_rollouts": 1,
-   "max_tokens": 16384,
+   "max_tokens": 32768,
    "reward": "correct",
    "subset": {
     "n": "all"
@@ -138,7 +138,7 @@
     0.8
    ],
    "secondary_rollouts": 1,
-   "max_tokens": 16384,
+   "max_tokens": 32768,
    "reward": "correct",
    "subset": {
     "n": "all"
@@ -163,7 +163,7 @@
     0.0
    ],
    "secondary_rollouts": null,
-   "max_tokens": 8192,
+   "max_tokens": 32768,
    "reward": "correct",
    "subset": {
     "n": 2000,
@@ -274,7 +274,7 @@
     0.0
    ],
    "secondary_rollouts": null,
-   "max_tokens": 16384,
+   "max_tokens": 65536,
    "reward": "passed",
    "subset": {
     "n": "all"
@@ -689,5 +689,5 @@
    }
   }
  },
- "lock_sha256": "309ec21a0298df4d"
+ "lock_sha256": "815d5a6a236b0c17"
 }

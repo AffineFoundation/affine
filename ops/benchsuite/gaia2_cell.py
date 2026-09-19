@@ -97,9 +97,10 @@ def summarize(out_dir: Path, a: argparse.Namespace, wall: float, exit_code: int)
         exc = bool(md.get("has_exception"))
         score = r.get("score")
         calls = None
-        tp = out_dir / Path(r.get("trace_id") or "").name
+        tname = Path(r.get("trace_id") or "").name
+        tp = out_dir / tname if tname else None
         prompt_toks = compl_toks = 0
-        if tp.exists():
+        if tp is not None and tp.is_file():
             try:
                 t = json.loads(tp.read_text())
                 u = list((t.get("per_agent_llm_usage_stats") or {}).values())
@@ -115,7 +116,7 @@ def summarize(out_dir: Path, a: argparse.Namespace, wall: float, exit_code: int)
             "error_messages": [(md.get("rationale") or "")[:160]] if exc else [],
             "status": status, "rationale": (md.get("rationale") or "")[:300],
             "n_calls": calls, "prompt_tokens": prompt_toks, "completion_tokens": compl_toks,
-            "trace": tp.name if tp.exists() else None,
+            "trace": tp.name if (tp is not None and tp.is_file()) else None,
         })
     scored = [r["score"] for r in rows if r["score"] is not None]
     k = int(sum(1 for s in scored if s >= 1.0))
@@ -199,10 +200,24 @@ def cmd_run(a: argparse.Namespace) -> int:
     return 0 if p.returncode == 0 else 1
 
 
+def cmd_resummarize(a: argparse.Namespace) -> int:
+    d = Path(a.out).expanduser() / f"{ENV_ID}__t{a.temperature:g}"
+    prev = json.loads((d / "summary.json").read_text()) if (d / "summary.json").exists() else {}
+    summ = summarize(d / "are", a, float(prev.get("wall_seconds") or 0), int(prev.get("exit_code") or 0))
+    (d / "summary.json").write_text(json.dumps(summ, indent=1))
+    log(f"{a.model_label}/{ENV_ID}: n={summ['n']} score={summ['score']} ci={summ['ci95']} infra={summ['n_errored']}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
+    rs = sub.add_parser("resummarize")
+    rs.add_argument("--out", required=True); rs.add_argument("--model-label", default="king"); rs.add_argument("--temperature", type=float, default=0.0)
+    rs.add_argument("--n-tasks", type=int, default=0); rs.add_argument("--hf-revision", default="")
+    rs.set_defaults(fn=cmd_resummarize)
     s = sub.add_parser("run")
+    s.set_defaults(fn=cmd_run)
     s.add_argument("--out", required=True)
     s.add_argument("--model", required=True)
     s.add_argument("--model-label", default="king")
@@ -215,7 +230,7 @@ def main() -> int:
     s.add_argument("--hf-revision", default="")
     s.add_argument("--force", action="store_true")
     a = ap.parse_args()
-    return cmd_run(a)
+    return a.fn(a)
 
 
 if __name__ == "__main__":

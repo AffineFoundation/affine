@@ -106,9 +106,27 @@ def build_cmd(env: dict, a: argparse.Namespace, job_dir: Path, cfg_path: Path | 
             cmd += ["--ak", f"max_turns={int(a.step_limit)}"]
     if a.n_tasks and a.n_tasks > 0:
         cmd += ["-l", str(a.n_tasks)]
+    if a.attempts and a.attempts > 1:
+        cmd += ["-k", str(a.attempts)]              # n attempts per task; rows per attempt, score = mean
+    if a.sandbox_cpus:
+        cmd += ["--override-cpus", str(a.sandbox_cpus)]
+    if a.sandbox_mem_mb:
+        cmd += ["--override-memory-mb", str(a.sandbox_mem_mb)]
     for x in hb.get("extra_args") or []:
         cmd.append(str(x))
     return cmd
+
+
+def agent_log_has(trial_dir: Path, needle: str) -> bool:
+    for name in ("agent/mini-swe-agent.txt", "agent/terminus-2.txt", "trial.log"):
+        p = trial_dir / name
+        if p.exists():
+            try:
+                if needle in p.read_text(errors="replace")[-20000:]:
+                    return True
+            except OSError:
+                pass
+    return False
 
 
 def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit_code: int) -> dict:
@@ -136,13 +154,16 @@ def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit
         # exhaustion is a 0, infrastructure is excluded from n and retried
         if "Timeout" in etype and "Agent" in etype:
             err_class = "timeout"
-        elif etype and ("Verifier" in etype or "Environment" in etype or "Build" in etype or "Sandbox" in etype or "Daytona" in etype):
-            err_class = "infra"
+        elif etype == "NonZeroAgentExitCodeError" and agent_log_has(rp.parent, "ContextWindowExceeded"):
+            # mini-swe-agent exits 1 when the conversation outgrows the model's context:
+            # the MODEL's failure (our verifiers cells call it context_overflow, score 0),
+            # not infrastructure (reign 13 @4h: 110 of 500)
+            err_class = "context_overflow"
         elif etype:
             err_class = "infra"
         else:
             err_class = None
-        if score is None and err_class == "timeout":
+        if score is None and err_class in ("timeout", "context_overflow"):
             score = 0.0
         rows.append({
             "task_key": r.get("task_name"), "trial": r.get("trial_name"),
@@ -163,7 +184,7 @@ def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit
         "n": len(rows), "n_scored": len(scored),
         "n_errored": sum(1 for r in rows if r["error_class"] == "infra"),
         "n_timeout": sum(1 for r in rows if r["error_class"] == "timeout"),
-        "n_context_overflow": 0,
+        "n_context_overflow": sum(1 for r in rows if r["error_class"] == "context_overflow"),
         "score": round(k / len(scored), 4) if scored else 0.0, "ci95": [round(lo, 4), round(hi, 4)],
         "finished_only": {"n": len(fin), "score": round(fk / len(fin), 4) if fin else 0.0, "ci95": [round(flo, 4), round(fhi, 4)]},
         "binary": True,
@@ -181,7 +202,8 @@ def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit
         "sandbox": "daytona", "runtime": "harbor/daytona",
         "budget": {"tag": a.budget_tag or "default", "agent_timeout_s": a.agent_timeout_s,
                    "step_limit": a.step_limit, "max_tokens": int(env["max_tokens"]),
-                   "temperature": a.temperature, "top_p": a.top_p, "concurrency": a.concurrency},
+                   "temperature": a.temperature, "top_p": a.top_p, "concurrency": a.concurrency,
+                   "attempts": a.attempts, "sandbox_cpus": a.sandbox_cpus or None, "sandbox_mem_mb": a.sandbox_mem_mb or None},
         "max_tokens": int(env["max_tokens"]), "reward": env["reward"],
         "wall_seconds": round(wall, 1), "exit_code": exit_code,
         "task_subset": {"n": int(a.n_tasks)} if a.n_tasks and a.n_tasks > 0 else {"n": "all"},
@@ -325,6 +347,9 @@ def main() -> int:
         s.add_argument("--step-limit", type=int, default=0, help="mini-swe-agent step_limit / terminus max_episodes (0 = env default)")
         s.add_argument("--n-tasks", type=int, default=0)
         s.add_argument("--max-retries", type=int, default=1)
+        s.add_argument("--attempts", type=int, default=1, help="attempts per task (vendor rows average >= 2)")
+        s.add_argument("--sandbox-cpus", type=int, default=0, help="override the task's sandbox vCPUs")
+        s.add_argument("--sandbox-mem-mb", type=int, default=0, help="override the task's sandbox memory (MB)")
         s.add_argument("--force", action="store_true")
     a = ap.parse_args()
     if a.concurrency is None and a.cmd != "resume":

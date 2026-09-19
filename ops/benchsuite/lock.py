@@ -7,6 +7,7 @@ comparable — or visibly not.
   python lock.py write  --bench-home ~/benchsuite     # (re)generate from suite.toml + the installed env
   python lock.py check  --bench-home ~/benchsuite     # exit 1 if the installed env differs from the lock
   python lock.py show
+  python lock.py repin                                  # suite.toml knob changed (caps, shares): re-pin without a pod
 
 What is pinned:
   code      verifiers commit, research-environments commit, the local patches (sha256 of each patched file)
@@ -167,6 +168,35 @@ def load_lock() -> dict:
     return json.loads(LOCK_PATH.read_text()) if LOCK_PATH.exists() else {}
 
 
+# env fields that come from the installed tasksets (only `write` on a pod can refresh them)
+INSTALL_DERIVED = ("package_version", "datasets")
+
+
+def repin(locked: dict) -> dict:
+    """Re-pin the suite.toml-derived part of an existing lock on the box, with no
+    pod install: `envs` (everything but the install-derived fields), `suite` and
+    `serving`. Used when a suite.toml knob changes (2026-09-19: completion caps)
+    so the lock ships in the same commit and the next pod's `check` passes; a new
+    env or a package change still needs `write` on an installed pod."""
+    cur = build(Path("/nonexistent"))   # install-derived fields come out None and are ignored below
+    new = json.loads(json.dumps(locked))
+    envs = new.setdefault("envs", {})
+    for eid, e in cur["envs"].items():
+        old = envs.get(eid)
+        if old is None:
+            raise SystemExit(f"env {eid} is not in the lock: run `lock.py write` on an installed pod")
+        for k, v in e.items():
+            if k not in INSTALL_DERIVED:
+                old[k] = v
+    for eid in [k for k in envs if k not in cur["envs"]]:
+        del envs[eid]
+    new["suite"] = cur["suite"]
+    new["serving"] = cur["serving"]
+    new.pop("lock_sha256", None)
+    new["lock_sha256"] = hashlib.sha256(json.dumps(new, sort_keys=True).encode()).hexdigest()[:16]
+    return new
+
+
 def diff(a: dict, b: dict, path: str = "") -> list[str]:
     out = []
     for k in sorted(set(a) | set(b)):
@@ -181,12 +211,23 @@ def diff(a: dict, b: dict, path: str = "") -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["write", "check", "show"])
+    ap.add_argument("cmd", choices=["write", "check", "show", "repin"])
     ap.add_argument("--bench-home", default=str(Path.home() / "benchsuite"))
     a = ap.parse_args()
     home = Path(a.bench_home).expanduser()
     if a.cmd == "show":
         print(json.dumps(load_lock(), indent=1))
+        return 0
+    if a.cmd == "repin":
+        locked = load_lock()
+        if not locked:
+            print("no lockfile; run `lock.py write` first")
+            return 1
+        new = repin(locked)
+        for line in diff({k: locked.get(k) for k in ("suite", "serving", "envs")}, {k: new.get(k) for k in ("suite", "serving", "envs")}):
+            print("  " + line.replace("installed=", "now="))
+        LOCK_PATH.write_text(json.dumps(new, indent=1))
+        print(f"re-pinned {LOCK_PATH} (lock_sha256 {locked.get('lock_sha256')} -> {new['lock_sha256']})")
         return 0
     cur = build(home)
     if a.cmd == "write":

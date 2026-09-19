@@ -42,6 +42,12 @@ from pathlib import Path
 import httpx
 
 HERE = Path(__file__).resolve().parent
+# Vendor-settings row (2026-09-19): a whole pass at the model card's sampling instead of the
+# suite's fixed budget. BENCHSUITE_SETTINGS_JSON = {"temperature": 1.0, "max_tokens": 81920,
+# "top_p": 0.95, "top_k": 20, "presence_penalty": 1.5}; temperature replaces the primary
+# temperature (cells become __t1), max_tokens replaces every env's cap, the rest go to the
+# eval as a typed [sampling] overlay (provider pass-through keys must keep their types).
+SETTINGS_OVERRIDE = json.loads(os.environ.get("BENCHSUITE_SETTINGS_JSON") or "{}")
 SUITE = tomllib.loads((HERE / "suite.toml").read_text())
 PRIME_API = "https://api.primeintellect.ai/api/v1"
 
@@ -247,7 +253,7 @@ def build_cmd(env: dict, model: str, url: str, key_env: str, temp: float,
         "--client.api-key-var", key_env,
         "--env.agent.harness.id", env["harness"],
         "--sampling.temperature", str(temp),
-        "--sampling.max-tokens", str(env["max_tokens"]),
+        "--sampling.max-tokens", str(SETTINGS_OVERRIDE.get("max_tokens", env["max_tokens"])),
         "-r", str(rollouts),
         "-c", str(concurrency),
         "--no-rich",
@@ -283,14 +289,21 @@ def build_cmd(env: dict, model: str, url: str, key_env: str, temp: float,
         # of an image as a VM builds it once on Prime's side (~10 min).
         cmd += ["--env.agent.runtime.vm", "true" if env.get("sandbox_vm") else "false"]
     cmd += list(env.get("args") or [])
-    if env.get("taskset_config"):
-        # Typed taskset knobs (Literal ints etc.) do not parse from CLI strings;
-        # pass them as a TOML overlay, which keeps native types.
+    extra_sampling = {k: v for k, v in SETTINGS_OVERRIDE.items() if k not in ("temperature", "max_tokens")}
+    if env.get("taskset_config") or extra_sampling:
+        # Typed knobs (Literal ints, provider pass-through sampling keys) do not parse from
+        # CLI strings; pass them as a TOML overlay, which keeps native types.
         overlay = out / dirname / "taskset.toml"
         overlay.parent.mkdir(parents=True, exist_ok=True)
-        lines = ["[env.taskset]"]
-        for k, v in env["taskset_config"].items():
-            lines.append(f"{k} = {json.dumps(v)}")
+        lines = []
+        if env.get("taskset_config"):
+            lines.append("[env.taskset]")
+            for k, v in env["taskset_config"].items():
+                lines.append(f"{k} = {json.dumps(v)}")
+        if extra_sampling:
+            lines.append("[sampling]")
+            for k, v in extra_sampling.items():
+                lines.append(f"{k} = {json.dumps(v)}")
         overlay.write_text("\n".join(lines) + "\n")
         # `@ file` must not follow a bare boolean flag (the parser would take
         # `@` as that flag's value), so it goes right after the taskset id.
@@ -360,7 +373,7 @@ def run_cell(env: dict, model_label: str, model: str, url: str, key_env: str,
 def temps_of(a: argparse.Namespace) -> list[float]:
     out = []
     if "primary" in a.temps.split(","):
-        out.append(float(SUITE["sampling"]["primary_temperature"]))
+        out.append(float(SETTINGS_OVERRIDE.get("temperature", SUITE["sampling"]["primary_temperature"])))
     if "secondary" in a.temps.split(","):
         out.append(float(SUITE["sampling"]["secondary_temperature"]))
     return out
@@ -373,7 +386,7 @@ def copy_teacher_cells(src_run: Path, dst_run: Path, envs: list[dict], temps: li
     n = 0
     for env in envs:
         for temp in temps:
-            if temp != float(SUITE["sampling"]["primary_temperature"]) and not env.get("secondary"):
+            if temp != float(SETTINGS_OVERRIDE.get("temperature", SUITE["sampling"]["primary_temperature"])) and not env.get("secondary"):
                 continue
             src = cell_dir(src_run, "teacher", env["id"], temp) / "summary.json"
             dst = cell_dir(dst_run, "teacher", env["id"], temp) / "summary.json"
@@ -450,7 +463,7 @@ def cmd_run(a: argparse.Namespace) -> int:
         log(f"teacher baseline: {n_copied} cells reused from run {a.teacher_from}")
     temps = []
     if "primary" in a.temps.split(","):
-        temps.append(("primary", float(SUITE["sampling"]["primary_temperature"])))
+        temps.append(("primary", float(SETTINGS_OVERRIDE.get("temperature", SUITE["sampling"]["primary_temperature"]))))
     if "secondary" in a.temps.split(","):
         temps.append(("secondary", float(SUITE["sampling"]["secondary_temperature"])))
     prime_key = os.environ.get("PRIME_API_KEY")
