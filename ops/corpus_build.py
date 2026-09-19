@@ -972,8 +972,9 @@ def load_curriculum() -> dict:
         if str(data.get("mode") or mode) != mode:
             out["error"] = f"mode mismatch (vector {data.get('mode')} vs toml {mode})"
         age_h = (datetime.now(timezone.utc) - datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)).total_seconds() / 3600
-        if age_h > 24:
-            out["error"] = f"vector older than 24 h ({age_h:.0f} h)"
+        max_age = float(raw.get("max_vector_age_h", 24) or 24)
+        if age_h > max_age:
+            out["error"] = f"vector older than {max_age:.0f} h ({age_h:.0f} h)"
         out["meta"] = {k: data.get(k) for k in ("epoch", "ledger_sha256", "weights_sha256", "rule_version", "generated_at")
                        if isinstance(data, dict) and k in data}
         tot = sum(out["groups"].values())
@@ -1066,7 +1067,7 @@ def yield_report(after: dict[str, int], mix: dict[str, float], group_turns: dict
                         "top_drops": [{"reason": k, "n": v} for k, v in top]}
     subl = {k[len("king_divergence_sublabel_"):]: v for k, v in (NOTES_GLOBAL or {}).items()
             if k.startswith("king_divergence_sublabel_")}
-    return {"groups": groups, "sources": sources,
+    return {"groups": groups, "sources": sources, "by_king": dict(YIELD_BY_KING),
             # tau2-airline read (2026-09-18): "acted with a schema example value
             # where the teacher asked", per fold and per king digest, so the
             # rate can be tracked reign over reign.
@@ -1531,6 +1532,14 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         for r in out[n0:]:
             y["records"] += 1
             y["accepted_turns"] += len(r["turns"])
+            pid = str((r.get("policy") or {}).get("id") or "")
+            if pid.startswith("king_"):
+                kd = r.get("king_digest") or str((r.get("policy") or {}).get("model") or "").rsplit("king-", 1)[-1][:12] or "unknown"
+                ky = YIELD_BY_KING.setdefault(kd, {"seen": 0, "records": 0, "turns": 0, "groups": {}, "sources": {}})
+                ky["records"] += 1
+                ky["turns"] += len(r["turns"])
+                g0 = r.get("fold_group") or "king_fail?"
+                ky["groups"][g0] = ky["groups"].get(g0, 0) + len(r["turns"])
 
     for env in iter_jsonl_gz(path):
         _settle(_prev)
@@ -1540,6 +1549,12 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             continue
         _src = str(env.get("source") or "")
         YIELD.setdefault(_src, {"seen": 0, "accepted_turns": 0, "records": 0, "drops": {}})["seen"] += 1
+        _pid = str((env.get("policy") or {}).get("id") or "")
+        if _pid.startswith("king_"):
+            _kd = str((env.get("policy") or {}).get("model") or "").rsplit("king-", 1)[-1][:12] or "unknown"
+            _ky = YIELD_BY_KING.setdefault(_kd, {"seen": 0, "records": 0, "turns": 0, "groups": {}, "sources": {}})
+            _ky["seen"] += 1
+            _ky["sources"][_src] = _ky["sources"].get(_src, 0) + 1
         _prev = (_src, dict(drops), len(out))
         convs = None
         route: dict[int, str] = {}          # turn_idx -> group (final)
@@ -1766,6 +1781,11 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                 _count_leaked(route, convs, kind, leak_exempt, notes)
             _count(drops, "no_scorable_turn")
             continue
+        _pid0 = str((env.get("policy") or {}).get("id") or "")
+        if _pid0.startswith("king_"):
+            # Served king digest (policy.model `king/king-<digest12>`) on the
+            # record, so admissions can be reported per king (2026-09-19).
+            rec["king_digest"] = str((env.get("policy") or {}).get("model") or "").rsplit("king-", 1)[-1][:12] or None
         if kind_stamp:
             # Duel-time kind per routed turn (Jacob 2026-09-13: whatever keeps
             # the teacher's references parseable at the state). Stamped on
@@ -2346,6 +2366,7 @@ def derive_coached(cfg: dict, baker: ToolBaker, panel, allowed_kinds, published:
 TEACHER_SOLVED_CACHE = CACHE_DIR / "teacher_solved_tasks.json"
 GATE_SHADOW_RETIRE: dict[str, list[str]] = {}   # rows a shadow group WOULD retire under the recovery rule
 YIELD: dict[str, dict] = {}     # per source: envelopes seen, records / turns accepted at derive, drop reasons
+YIELD_BY_KING: dict[str, dict] = {}   # per served king digest: king rollouts seen, records / turns at derive, by routed group / source
 NOTES_GLOBAL: dict[str, int] = {}   # the fold's `notes` counters, for the yield report
 # Sources whose harness talks to a (simulated) user mid-trajectory
 # (`[source.<name>] interactive = true`, tau2-airline read 2026-09-18): a
@@ -2682,6 +2703,12 @@ def failed_published(pub: PublicCorpus, live: dict | None, cfg: dict) -> dict[st
 
 # -- composition guard ----------------------------------------------------------
 MAX_SHARE_SHIFT = 0.05
+# docs/auto-research-loop.md §2: with folds every 6 h the per-fold guard
+# alone allows a 30-point daily swing, so any group's slice share may move
+# at most DAILY_SHIFT_CAP points against its share 24 h ago (state
+# `share_history`: one snapshot per published epoch).
+DAILY_SHIFT_CAP = 0.10
+DAILY_WINDOW_S = 24 * 3600
 
 
 def composition_table(before: dict[str, int], after: dict[str, int]) -> list[tuple]:
@@ -2829,6 +2856,13 @@ def finalize(state: dict, manifest: dict, mhash: str) -> None:
     for bucket, keys in (pending.get("lang_strata_added") or {}).items():
         state["lang_strata"][bucket] = sorted(
             set(state["lang_strata"].get(bucket, [])) | set(keys))
+    tot_s = sum(len(v) for v in state["group_strata"].values()) or 1
+    hist = [h for h in (state.get("share_history") or [])
+            if datetime.now(timezone.utc).timestamp() - float(h["at"]) <= 3 * DAILY_WINDOW_S]
+    hist.append({"epoch": int(pending["epoch"]), "at": datetime.now(timezone.utc).timestamp(),
+                 "iso": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                 "shares": {g: round(len(v) / tot_s, 5) for g, v in state["group_strata"].items()}})
+    state["share_history"] = hist
     state["unannounced"] = {
         "epoch": int(pending["epoch"]), "n_added": int(pending["n_turns"]),
         "total": int(manifest["index"]["n_turns"]), "manifest_sha256": mhash,
@@ -2914,6 +2948,10 @@ def sublabel_line(info: dict) -> str:
         parts.append("king_divergence sub-labels this fold: " + ", ".join(f"{k} {v}" for k, v in sorted(subl.items())))
     if y.get("interactive_prose_turns"):
         parts.append(f"interactive prose turns admitted as text: {y['interactive_prose_turns']}")
+    bk = y.get("by_king") or {}
+    if bk:
+        parts.append("king candidates by digest: " + ", ".join(
+            f"{d} {v['seen']} rollouts/{v['turns']} turns" for d, v in sorted(bk.items(), key=lambda kv: -kv[1]['seen'])[:5]))
     return ("; ".join(parts) + ".\n") if parts else ""
 
 
@@ -3765,6 +3803,26 @@ def main() -> None:
             log(f"GUARD (dry run): {msg}")
         else:
             fatal(msg)
+    # 24 h cumulative cap: compare against the oldest snapshot inside the window
+    # (or the newest before it) so six 5-point steps cannot add up to thirty.
+    now_ts = datetime.now(timezone.utc).timestamp()
+    hist = [h for h in (state.get("share_history") or []) if now_ts - float(h["at"]) <= DAILY_WINDOW_S]
+    older = [h for h in (state.get("share_history") or []) if now_ts - float(h["at"]) > DAILY_WINDOW_S]
+    base = (hist[0] if hist else (older[-1] if older else None))
+    if base:
+        ta = sum(after.values()) or 1
+        daily = [(g, after.get(g, 0) / ta - float(base["shares"].get(g, 0.0)))
+                 for g in set(after) | set(base["shares"])]
+        over = [(g, round(d, 3)) for g, d in daily if abs(d) > DAILY_SHIFT_CAP]
+        if over and not args.allow_shift:
+            msg = (f"24 h cumulative slice-share move of {over} exceeds {DAILY_SHIFT_CAP:.0%} "
+                   f"(baseline epoch {base.get('epoch')} at {base.get('iso')}); rerun with --allow-shift")
+            if args.no_publish:
+                log(f"GUARD (dry run): {msg}")
+            else:
+                fatal(msg)
+        log(f"24 h shift cap: max |move| {max((abs(d) for _, d in daily), default=0):.3f} vs "
+            f"baseline epoch {base.get('epoch')} ({len(hist)} snapshots in window)")
 
     recurrence = None
     if STRATA_BUDGET:
@@ -3858,7 +3916,8 @@ def main() -> None:
         "floors": fstat if STRATA_BUDGET else None,
         "yield_groups": yrep["groups"] if STRATA_BUDGET else None,
         "yield_extra": {"divergence_sublabels": yrep.get("divergence_sublabels"),
-                        "interactive_prose_turns": yrep.get("interactive_prose_turns")} if STRATA_BUDGET else None,
+                        "interactive_prose_turns": yrep.get("interactive_prose_turns"),
+                        "by_king": yrep.get("by_king")} if STRATA_BUDGET else None,
         "yield_sources": yrep["sources"] if STRATA_BUDGET else None,
         "admission_gate": gate_report or None,
         "gate_enforced": sorted(gate["apply_groups"]) if gate else None,
