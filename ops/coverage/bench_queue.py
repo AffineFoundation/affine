@@ -60,6 +60,16 @@ MAX_PARALLEL = int(os.environ.get("COVERAGE_BENCH_PARALLEL", "8"))
 # pass rents 5 pods in parallel, every other mode one.
 POD_WEIGHT = {"fast": 5}
 MAX_PODS = int(os.environ.get("COVERAGE_BENCH_MAX_PODS", "6"))
+# Shared pod budget with the benchsuite worker (Jacob 2026-09-19 21:35 UTC: our own pods
+# emptied Lium 17:55-19:40): at most SHARED_MAX_PODS bench/backfill pods on Lium across
+# BOTH queues (ground truth = the Lium listing, prefix bench-king-*), and the sitting
+# king's crown-triggered pass always has KING_RESERVE pods available: this queue does
+# not launch into that reserve and yields its single-pod items if the king's pass is
+# short of pods.
+SHARED_MAX_PODS = int(os.environ.get("COVERAGE_SHARED_MAX_PODS", "10"))
+KING_RESERVE = 5
+BENCH_POD_GLOB = "bench-king-"
+VALIDATOR_STATE = REPO / "affine" / "state" / "state.json"
 BUDGET_PATH = STATE_DIR / "budget.json"     # cap + buckets + actuals (the ledger of approved money)
 # Operator 2026-09-17 00:21 UTC: cap for this fill; no launch once the recorded
 # pod spend (+ Prime estimate) reaches it.
@@ -193,15 +203,21 @@ def launch(entry: dict) -> None:
     for k, v in (entry.get("env") or {}).items():
         env[k] = v
     BENCH_STATE.mkdir(parents=True, exist_ok=True)
-    with log_path.open("ab") as fh:
-        # start_new_session: the pass must outlive this process (pm2 restarts kill the
-        # tree) and pid == pgid so `cancel` can kill the whole pass. (The `setsid` binary
-        # forks when it is already a session leader, so the recorded pid was a dead
-        # wrapper and cancels missed the live bash — 2026-09-17/19.)
-        proc = subprocess.Popen(
-            ["bash", str(PASS_SH), entry["ref"], entry["label"], run_id, entry.get("mode", "lium")],
-            stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env,
-            cwd=str(REPO), start_new_session=True)
+    # Double-fork through a transient shell: `setsid` there is not a session leader, so it
+    # execs in place (pid == pgid == $!), and the pass is reparented to init when the shell
+    # exits -> pm2's tree-kill on a queue restart cannot reach it (2026-09-19 21:2x: the
+    # fast-15 pass launched with start_new_session only died with the restart), while
+    # `cancel` can still kill the whole pass by process group.
+    launcher = 'setsid bash "$@" >> "$COVERAGE_PASS_LOG" 2>&1 < /dev/null & echo $!'
+    env["COVERAGE_PASS_LOG"] = str(log_path)
+    out = subprocess.run(["bash", "-c", launcher, "_", str(PASS_SH), entry["ref"], entry["label"], run_id,
+                          entry.get("mode", "lium")], env=env, cwd=str(REPO), capture_output=True, text=True)
+    pid = int((out.stdout or "0").strip().splitlines()[-1] or 0)
+
+    class _P:  # minimal stand-in for the Popen handle the caller records
+        pass
+    proc = _P()
+    proc.pid = pid
     entry.update(status="running", pid=proc.pid, started_at=now_iso(),
                  attempts=int(entry.get("attempts") or 0) + 1)
     log(f"launched {run_id} ({entry['label']}, {entry['ref'][:40]}…) pid {proc.pid} attempt {entry['attempts']}")
@@ -338,6 +354,46 @@ def listed_backfill_pods(pods_seen: list[str]) -> list[str]:
     return sorted(n for n in pods_seen if n in listing and n not in theirs)
 
 
+def shared_pod_view() -> dict:
+    """What Lium lists right now: every bench/backfill pod (both queues), the
+    sitting king's digest12 and how many pods serve it, and whether a crown
+    pass for it is in flight (benchsuite inflight marker or its pods exist)."""
+    sess = lium_api.session()
+    names = [lium_api.pod_name(p) for p in (lium_api.pods(sess) or [])]
+    bench = [n for n in names if n.startswith(BENCH_POD_GLOB)]
+    try:
+        king = str((json.loads(VALIDATOR_STATE.read_text()).get("king") or {}).get("revision") or "")[:12]
+    except (OSError, ValueError):
+        king = ""
+    king_pods = [n for n in bench if king and king in n]
+    inflight = bool(king) and (BENCH_STATE / f"inflight-{king}").exists()
+    return {"bench_total": len(bench), "king": king, "king_pods": len(king_pods),
+            "king_pass": inflight or bool(king_pods), "names": bench}
+
+
+def yield_to_king(q: list[dict], view: dict) -> int:
+    """The king's pass is short of pods and the shared cap is full: cancel this
+    queue's running SINGLE-pod items (newest first) until KING_RESERVE fit.
+    Fast passes are never cut (5 pods of sunk work); they simply wait."""
+    need = max(0, KING_RESERVE - view["king_pods"]) - max(0, SHARED_MAX_PODS - view["bench_total"])
+    cut = 0
+    if need <= 0 or not view["king_pass"]:
+        return 0
+    for e in sorted([e for e in q if e.get("status") == "running" and POD_WEIGHT.get(e.get("mode", "lium"), 1) == 1],
+                    key=lambda e: e.get("started_at") or "", reverse=True):
+        if cut >= need:
+            break
+        try:
+            os.killpg(int(e["pid"]), 15)
+        except (OSError, TypeError, ValueError):
+            pass
+        e.update(status="pending", not_before=time.time() + 1800, pid=None,
+                 note=(e.get("note", "") + f" | yielded to the king's pass {now_iso()[:16]}").strip(" |"))
+        log(f"yield: {e.get('run_id')} cancelled so the king's pass ({view['king']}) gets its pods; requeued")
+        cut += 1
+    return cut
+
+
 def scale_down(q: list[dict], meta: dict) -> None:
     """Queue empty: release every pod the passes rented, verify against the
     Lium listing, post one line with the spend, idle. Runs on every tick
@@ -433,6 +489,21 @@ def tick(q: list[dict]) -> None:
     running_pods = sum(POD_WEIGHT.get(e.get("mode", "lium"), 1) for e in q if e.get("status") == "running")
     launched = 0
     in_sync, why = lock_in_sync()
+    # shared pod budget: what both queues hold on Lium right now
+    try:
+        view = shared_pod_view()
+    except Exception as ex:                      # Lium listing down: be conservative
+        view = {"bench_total": SHARED_MAX_PODS, "king": "", "king_pods": 0, "king_pass": False, "names": []}
+        log(f"Lium listing failed ({ex}); assuming the shared cap is full this tick")
+    if view["king_pass"]:
+        yield_to_king(q, view)
+    reserve = max(0, KING_RESERVE - view["king_pods"]) if view["king_pass"] else 0
+    room = SHARED_MAX_PODS - view["bench_total"] - reserve
+    if in_sync and room <= 0:
+        if time.time() - float(meta.get("shared_warned_at") or 0) > 1800:
+            log(f"launches held: shared pod cap — {view['bench_total']} bench pods listed, king reserve {reserve} "
+                f"(king {view['king']} has {view['king_pods']}), cap {SHARED_MAX_PODS}")
+            meta["shared_warned_at"] = time.time()
     sp = spend(q)
     if sp["total_usd"] >= BUDGET_USD:
         in_sync, why = False, f"budget reached: ${sp['total_usd']} >= ${BUDGET_USD} (COVERAGE_BENCH_BUDGET_USD)"
@@ -457,7 +528,7 @@ def tick(q: list[dict]) -> None:
         if time.time() < float(e.get("not_before") or 0):
             break
         w = POD_WEIGHT.get(e.get("mode", "lium"), 1)
-        if (carries_swe(e) and swe_running) or running_pods + w > MAX_PODS:
+        if (carries_swe(e) and swe_running) or running_pods + w > MAX_PODS or w > room:
             # strict priority: while the head of the queue waits for the Daytona slot or
             # for pod room, nothing behind it starts (else 1-pod items starve a 5-pod fast pass)
             break
@@ -465,6 +536,7 @@ def tick(q: list[dict]) -> None:
             launch(e)
             running += 1
             running_pods += w
+            room -= w
             launched += 1
             if carries_swe(e):
                 swe_running = True

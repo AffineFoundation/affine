@@ -1126,7 +1126,7 @@ def bench_value(side: dict | None, env: str) -> dict | None:
         return None
     src = side
     metric = "score"
-    if env in BENCH_FINISHED_ONLY and (side.get("finished_only") or {}).get("score") is not None:
+    if env.split("@", 1)[0] in BENCH_FINISHED_ONLY and (side.get("finished_only") or {}).get("score") is not None:
         src = side["finished_only"]
         metric = "finished_only"
     ci = src.get("ci95") or [None, None]
@@ -1341,21 +1341,44 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
     # known order first; unknown card envs appended in card order; the agentic
     # group always forms the last block (cards gain agentic rows by merge, so
     # the column set is re-read on every refresh)
-    ordered_bench = [e for e, _ in BENCH_COLUMNS if e in bench_envs_seen and not is_agentic(e)] \
-        + [e for e in bench_envs_seen if e not in known and not is_agentic(e)] \
-        + [e for e, _ in BENCH_COLUMNS if e in bench_envs_seen and is_agentic(e)] \
-        + [e for e in bench_envs_seen if e not in known and is_agentic(e)]
+    # `<env>@<tag>` rows (2026-09-19: `mmlu-pro@8k`, `swebench-verified@4h250`, ...) are
+    # variants of a base column — an older completion cap or a sandbox budget — kept for
+    # continuity. They sit right after their base column as their own sub-column.
+    def base_of(e: str) -> str:
+        return e.split("@", 1)[0]
+
+    def tag_of(e: str) -> str | None:
+        return e.split("@", 1)[1] if "@" in e else None
+
+    plain_seen = [e for e in bench_envs_seen if "@" not in e]
+    ordered_plain = [e for e, _ in BENCH_COLUMNS if e in plain_seen and not is_agentic(e)] \
+        + [e for e in plain_seen if e not in known and not is_agentic(e)] \
+        + [e for e, _ in BENCH_COLUMNS if e in plain_seen and is_agentic(e)] \
+        + [e for e in plain_seen if e not in known and is_agentic(e)]
+    # a tagged variant whose base never appears on any card still gets a column (after everything)
+    orphans = sorted({base_of(e) for e in bench_envs_seen if "@" in e} - set(ordered_plain))
+    ordered_bench = []
+    for b in ordered_plain + orphans:
+        if b in bench_envs_seen:
+            ordered_bench.append(b)
+        ordered_bench += sorted(e for e in bench_envs_seen if "@" in e and base_of(e) == b)
     labels = dict(BENCH_COLUMNS)
     columns = [{"key": "total", "label": "total", "abbr": "total", "kind": "total",
                 "note": "unweighted mean of the row's available benchmark and environment cells (0-100)"}]
     for e in ordered_bench:
         meta = bench_notes.get(e, {})
+        b, tag = base_of(e), tag_of(e)
+        label = labels.get(e) or (f"{labels.get(b, b)} @{tag}" if tag else e)
         columns.append({
-            "key": f"bench:{e}", "label": labels.get(e, e), "abbr": BENCH_ABBR.get(e, e[:4].upper()),
-            "short": BENCH_SHORT.get(e, labels.get(e, e)[:10]),
+            "key": f"bench:{e}", "label": label,
+            "abbr": BENCH_ABBR.get(e) or (f"{BENCH_ABBR.get(b, b[:4].upper())}@{tag}" if tag else e[:4].upper()),
+            "short": BENCH_SHORT.get(e) or (f"{BENCH_SHORT.get(b, labels.get(b, b)[:10])} @{tag}" if tag else labels.get(e, e)[:10]),
+            "base_env": b, "budget_tag": tag,
+            "variant_note": (f"{tag}: the cell's completion cap / sandbox budget before 2026-09-19 (kept for continuity; "
+                             f"the plain {labels.get(b, b)} column is the current cap)") if tag else None,
             "kind": "bench", "env": e,
             "group": meta.get("group"), "n": meta.get("n"), "note": meta.get("note"),
-            "metric": "finished_only" if e in BENCH_FINISHED_ONLY else "score",
+            "metric": "finished_only" if b in BENCH_FINISHED_ONLY else "score",
             "graded": meta.get("graded") or "deterministic",
             "judge": meta.get("judge") if meta.get("graded") == "llm_judge" else None,
             "advisory": meta.get("graded") == "llm_judge",
@@ -1762,6 +1785,12 @@ def build_dataset_table(stats: dict, matrix: dict, fold: dict | None, curriculum
     return {
         "generated_at": datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds"),
         "generated_ts": now,
+        # Fold worker (2026-09-17, MiMo items 1 + 3): passthrough of the fold's
+        # published yield line, floors and admission-gate decisions so the
+        # table can render them (corpus/fold_stats.json).
+        "yield": fold.get("yield"),
+        "floors": fold.get("floors"),
+        "admission_gate": fold.get("admission_gate"),
         "header": {
             "n_turns": fold.get("n_turns") or (index_stats or {}).get("n_turns"),
             "n_strata": fold.get("n_strata"),
