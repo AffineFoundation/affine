@@ -111,6 +111,9 @@ WORKER_EXTENSION = "evalsrv.vllm_ext.WeightTools"
 # Fixed served-model alias for the challenger slots so requests keep
 # resolving across swaps (the repo name is added too, for logs).
 CHALLENGER_ALIAS = "challenger"
+# Stable public model id on the chat pod (chatsrv.KING_ALIAS): clients keep
+# `model = "affine-king"` across crowns.
+CHAT_ALIAS = "affine-king"
 SWAP_CONFIG_IGNORE_KEYS = ("_name_or_path", "transformers_version")
 # generation_config.json keys vLLM turns into request defaults (see
 # ModelConfig.get_diff_sampling_param) plus the stop-token set. Anything
@@ -493,13 +496,16 @@ class Engine:
             # 65k is sized for corpus prefixes, not for 300-step agent runs.
             max_len = int(bs.get("max_model_len", max_len))
         if self.role == "chat":
-            # Chat serves short interactive contexts, not 64k corpus prefixes:
-            # a smaller KV pool leaves the 2-GPU pod headroom, and no echo
-            # traffic means the higher util + big chunks are safe.
+            # No echo traffic on the chat pod, so the higher util + big
+            # chunks are safe. Context: [chat].max_model_len, or the pod's
+            # AFFINE_CHAT_MAX_MODEL_LEN override (.chat_env, pushed by
+            # ops/king-chat/chatbox.sh) — IDE agent clients (Cursor) send
+            # 20-60k-token prompts, far past the website chat's 16k.
             cs = self.cfg.get("chat") or {}
             batched_tokens = int(cs.get("max_num_batched_tokens", 16384))
             gpu_util = cs.get("gpu_memory_utilization", gpu_util)
-            max_len = int(cs.get("max_model_len", max_len))
+            max_len = int(os.environ.get("AFFINE_CHAT_MAX_MODEL_LEN")
+                          or cs.get("max_model_len", max_len))
         # r2 refs are served from their verified local snapshot; the model is
         # still *named* by the ref so client requests (model=<ref>) match.
         cmd = [
@@ -543,13 +549,23 @@ class Engine:
         # effect. Not used on remote teacher.
         if not slot.label.startswith("teacher"):
             cmd += ["--safetensors-load-strategy", "prefetch"]
-        if self.role == "chat":
-            # The chat pod's wire plane serves agent clients (arbos, Cursor)
-            # that drive tool loops over /v1/chat/completions. Qwen-family
-            # kings emit hermes-style <tool_call> blocks. Never set on duel/
-            # bench pods — scoring must see raw completions.
-            cmd += ["--enable-auto-tool-choice", "--tool-call-parser", "hermes"]
         served_names = [repo] if r2store.is_r2(repo) else []
+        if self.role == "chat":
+            # The chat pod's wire plane serves agent clients (Cursor, arbos)
+            # that drive tool loops over /v1/chat/completions. The Qwen3.6
+            # template emits <tool_call><function=NAME><parameter=K>V…
+            # (XML-ish), which the hermes (JSON) parser passes through as
+            # plain text — qwen3_xml is the matching parser (same as the
+            # king-datagen box). The qwen3 reasoning parser files the
+            # <think> block under `reasoning` so IDE clients get a clean
+            # visible answer; since wvk 13 every king closes </think>.
+            # Never set on duel/bench pods — scoring must see raw text.
+            cmd += ["--enable-auto-tool-choice", "--tool-call-parser", "qwen3_xml",
+                    "--reasoning-parser", "qwen3"]
+            # --served-model-name replaces the default id; vLLM echoes the
+            # FIRST name in every response, so the alias leads and the repo
+            # id stays listed (HF kings included) for clients that send it.
+            served_names = [CHAT_ALIAS, repo]
         if not r2store.is_r2(repo) and revision:
             cmd += ["--revision", revision]
         if self._warm_swap_slot(slot):
@@ -631,6 +647,34 @@ class Engine:
         except Exception:
             log.warning("gpu orphan sweep failed for %s", slot.label,
                         exc_info=True)
+        if self.role == "chat":
+            self._sweep_orphan_engine_cores(slot)
+
+    def _sweep_orphan_engine_cores(self, slot: Slot) -> None:
+        """Kill VLLM::EngineCore / resource_tracker processes that belong to
+        no live slot. The nvidia-smi sweep above sees HOST pids; inside a Lium
+        container they do not match ours, so an EngineCore whose API-server
+        leader died keeps its 129 GB and every later launch fails with "free
+        memory … less than desired" (chat pod, 2026-09-18 14:57 → 09-19).
+        Chat role only: one slot, so anything outside its pgid is an orphan."""
+        keep_pgids = {s.pgid for s in self._slots()
+                      if s is not slot and s.pgid is not None}
+        try:
+            out = subprocess.run(
+                ["pgrep", "-f", "VLLM::EngineCore|multiprocessing.resource_tracker"],
+                capture_output=True, text=True, timeout=15).stdout
+        except Exception:
+            return
+        for pid_s in out.split():
+            try:
+                pid = int(pid_s)
+                if pid == os.getpid() or os.getpgid(pid) in keep_pgids:
+                    continue
+                os.kill(pid, signal.SIGKILL)
+                log.warning("killed orphan engine process %d (%s slot launch)",
+                            pid, slot.label)
+            except (ProcessLookupError, ValueError, PermissionError):
+                continue
 
     def _kill_port_listener(self, slot: Slot) -> None:
         """SIGKILL whatever still listens on the slot's port.
@@ -1664,6 +1708,12 @@ class Engine:
             if keep_repo and keep_revision and r2store.snapshot_ready(
                     keep_repo, keep_revision, HF_HOME):
                 keep.add(keep_repo)
+            elif (keep_repo and keep_revision and self.role == "chat"
+                  and r2store.snapshot_dir(keep_repo, keep_revision, HF_HOME).exists()):
+                # Chat pod: a half-downloaded snapshot of the incoming king
+                # resumes (r2store ranged parts); pruning it on every retry
+                # re-fetched 70 GB from scratch (2026-09-19, 56 GB lost).
+                keep.add(keep_repo)
             hub = Path(HF_HOME) / "hub"
             if not hub.exists():
                 return
@@ -1673,9 +1723,14 @@ class Engine:
             # multi-GB tree takes long enough to stall launches otherwise.
             doomed: list[Path] = list(hub.glob("*.pruning"))
             for d in hub.iterdir():
+                # Crowned-king snapshots are kept on the duel pod (25 TB; a
+                # re-download before the next duel costs an hour). The chat
+                # pod has ~200 GB and only ever serves the current king: three
+                # crowns in a day filled it (2026-09-19, the reign-19 fetch
+                # stalled at 56/70 GB), so there old kings are pruned too.
                 if (d.is_dir() and d.name.startswith("models--")
                         and d.name not in keep_dirs
-                        and not _is_public_king_cache(d)):
+                        and not (self.role != "chat" and _is_public_king_cache(d))):
                     log.info("pruning cached model %s", d.name)
                     target = hub / f"{d.name}.pruning"
                     try:
