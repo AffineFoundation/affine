@@ -86,10 +86,10 @@ echo "== [4/5] shard env + import smoke on DST"
 # packages (seen 2026-09-02), so uv must never touch it on a clone.
 dst "set -e
   cd /root/rollouts
-  sed -i '/^export ROLLOUTS_SHARD=/d; /^export UV_NO_SYNC=/d; /^# fleet member (clone_datagen_pod.sh/d; /^# clone: uv must not re-sync/d; /^# env-backfill driver (clone_datagen_pod.sh/d; /^export ROLLOUTS_R2_PREFIX=/d; /^export ROLLOUTS_HF_TRACE_MIRROR=/d; /^export ROLLOUTS_SEED=/d; /^export ROLLOUTS_BATCH_SIZE=/d; /^export ROLLOUTS_MAX_CONTAINERS=/d' .rollouts_env
+  sed -i '/^export ROLLOUTS_SHARD=/d; /^export UV_NO_SYNC=/d; /^# fleet member (clone_datagen_pod.sh/d; /^# clone: uv must not re-sync/d; /^# env-backfill driver (clone_datagen_pod.sh/d; /^export ROLLOUTS_R2_PREFIX=/d; /^export ROLLOUTS_HF_TRACE_MIRROR=/d; /^export ROLLOUTS_SEED=/d; /^export ROLLOUTS_BATCH_SIZE=/d; /^export ROLLOUTS_MAX_CONTAINERS=/d; /^export ROLLOUTS_CATALOG_DIR=/d; /^# per-model drivers (own ROLLOUTS_DATA_DIR)/d' .rollouts_env
   printf '\n# fleet member (clone_datagen_pod.sh %s): owns tasks with blake2b(uid) %% N == i\nexport ROLLOUTS_SHARD=%s\n# clone: uv must not re-sync the copied verifiers env (loses editable tasksets)\nexport UV_NO_SYNC=1\n' \"\$(date -u +%FT%TZ)\" '$SHARD' >> .rollouts_env
   if [ '$ROLE' = backfill ]; then
-    printf '# env-backfill driver (clone_datagen_pod.sh CLONE_ROLE=backfill): traces go to the backfill prefix, never to D\nexport ROLLOUTS_R2_PREFIX=traces-backfill/\nexport ROLLOUTS_HF_TRACE_MIRROR=0\nexport ROLLOUTS_SEED=120\nexport ROLLOUTS_BATCH_SIZE=24\nexport ROLLOUTS_MAX_CONTAINERS=24\n' >> .rollouts_env
+    printf '# env-backfill driver (clone_datagen_pod.sh CLONE_ROLE=backfill): traces go to the backfill prefix, never to D\nexport ROLLOUTS_R2_PREFIX=traces-backfill/\nexport ROLLOUTS_HF_TRACE_MIRROR=0\nexport ROLLOUTS_SEED=120\nexport ROLLOUTS_BATCH_SIZE=24\nexport ROLLOUTS_MAX_CONTAINERS=24\n# per-model drivers (own ROLLOUTS_DATA_DIR) read the catalogs cloned from the fleet: some cannot be rebuilt here\nexport ROLLOUTS_CATALOG_DIR=/root/rollouts-data/catalogs\n' >> .rollouts_env
     rm -f /root/rollouts/.king_env
     hostname > /root/rollouts/.pod_name 2>/dev/null || true
   fi
