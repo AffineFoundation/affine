@@ -64,6 +64,9 @@ sys.path.insert(0, str(HERE.parent / "teacher-swarm"))
 
 import lium_api  # noqa: E402
 
+sys.path.insert(0, str(HERE.parent / "pods"))
+import registry as pod_registry  # noqa: E402
+
 STATE_DIR = HERE / "state"
 STATE_JSON = STATE_DIR / "state.json"
 KNOWN_HOSTS = STATE_DIR / "known_hosts"
@@ -491,6 +494,12 @@ class Controller:
                     "rented_at": time.time(), "key": secrets.token_hex(24),
                     "missing_ticks": 0,
                 }
+                pod_registry.register(
+                    name, purpose="king_seat", owner="pm2:affine-king-datagen",
+                    expected_hours=float(self.cfg.ttl_hours) + 1, price_usd_h=price,
+                    ttl_hours=self.cfg.ttl_hours,
+                    meta={"king": king.get("served"), "reign": king.get("reign"),
+                          "type": plan.name})
                 log(f"rented {name}: {plan.name} {cand.get('machine_name')} "
                     f"${price:.2f}/h executor={str(cand['id'])[:12]} ({why})")
                 self.notify(f"rented {name} ({plan.name}, ${price:.2f}/h) for "
