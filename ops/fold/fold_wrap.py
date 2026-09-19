@@ -47,6 +47,7 @@ RUNS_DIR = FOLD_DIR / "runs"
 SOURCES_TOML = REPO / "rollouts" / "rollouts" / "sources.toml"
 CORPUS_BUILD = REPO / "ops" / "corpus_build.py"
 PM2_NAME = "affine-corpus-refresh"
+SKIP_NEXT = HERE / "SKIP_NEXT"
 TAG = "fold-wrap"
 
 TRANSIENT_RE = re.compile(
@@ -134,6 +135,12 @@ def main() -> int:
 
     FOLD_DIR.mkdir(parents=True, exist_ok=True)
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    if SKIP_NEXT.exists():
+        # `pm2 start` runs the script at once as well as on the cron; the
+        # re-point helper sets this flag so that first run is a no-op.
+        SKIP_NEXT.unlink()
+        log("SKIP_NEXT flag present: skipping this run (pm2 start after re-point); next cron run folds")
+        return 0
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     log_path = RUNS_DIR / f"{stamp}.log"
     started = time.time()
