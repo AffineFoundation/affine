@@ -504,10 +504,11 @@ class Monitor:
             window = self.cfg.undeclared_dedupe_s if c.key.startswith("contract_undeclared") else self.cfg.dedupe_s
             if c.level == "warn" and not c.key.startswith(("contract_", "stale_code", "sources_toml", "fold_pm2")):
                 continue  # warnings are in the JSON / summary only
-            last = sent.get(c.key)
+            dk = f"{c.level}:{c.key}"   # a warn that escalates to a page posts again
+            last = sent.get(dk)
             if last is not None and now - float(last) < window:
                 continue
-            sent[c.key] = now
+            sent[dk] = now
             new_lines.append(f"{'PAGE' if c.level == 'page' else 'warn'} {c.key}: {c.detail}")
         # recovered
         active_prev = set(self.own["active"])
