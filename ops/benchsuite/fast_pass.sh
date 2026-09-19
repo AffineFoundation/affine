@@ -190,8 +190,12 @@ if [ -n "${POD[agentic]:-}" ]; then
   fi
 fi
 if [ -n "${POD[swe]:-}" ] && [ -n "${DAYTONA_API_KEY:-}" ]; then
+  # in flight = 64 per served replica (reign 18: 200 agents on ONE B200 replica spent the
+  # 1-h budget queueing -> 454/500 timeouts); [fast].swe_in_flight is the cap for a 2x+ pod
+  SWE_REPLICAS=$("$PY" -c 'import json; m=json.load(open("'"$HERE"'/state/pods.json"))["'"${POD[swe]}"'"]; print(int((m.get("plan") or {}).get("replicas") or 1))')
+  SWE_INFLIGHT=$(( 64 * SWE_REPLICAS )); [ "$SWE_INFLIGHT" -gt "$(toml fast.swe_in_flight)" ] && SWE_INFLIGHT=$(toml fast.swe_in_flight)
   ( export BENCH_API_KEY="$(podf "${POD[swe]}" key)"
-    "$PY" "$HERE/harbor_cell.py" run --env swebench-verified --model "$(podf "${POD[swe]}" served)" --model-label king --model-url "$(podf "${POD[swe]}" base_url)" --model-key-env BENCH_API_KEY --out "$RUN_DIR/king" --concurrency "$(toml fast.swe_in_flight)" --agent-timeout-s "$(toml sandbox_daytona.budgets.default.agent_timeout_s)" ) > "$RUN_DIR/swe-box.log" 2>&1 &
+    "$PY" "$HERE/harbor_cell.py" run --env swebench-verified --model "$(podf "${POD[swe]}" served)" --model-label king --model-url "$(podf "${POD[swe]}" base_url)" --model-key-env BENCH_API_KEY --out "$RUN_DIR/king" --concurrency "$SWE_INFLIGHT" --agent-timeout-s "$(toml sandbox_daytona.budgets.default.agent_timeout_s)" ) > "$RUN_DIR/swe-box.log" 2>&1 &
   PIDS+=($!)
 fi
 log "launched ${#PIDS[@]} groups; polling every $(toml fast.poll_s) s"
