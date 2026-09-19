@@ -53,7 +53,23 @@ WVK_FORKS: list[tuple[str, int]] = [
     ("2026-09-12T17:01:00+00:00", 15),
     ("2026-09-13T13:01:00+00:00", 16),
     ("2026-09-14T10:41:00+00:00", 17),
+    ("2026-09-15T21:12:00+00:00", 18),   # miner thought cap 2048 + prose fallback (flip 21:12, state.before_inflight_clear)
+    ("2026-09-16T11:54:00+00:00", 19),   # confirmation slice for crowns
+    ("2026-09-16T14:55:00+00:00", 20),   # teacher-relative thought cap
+    ("2026-09-17T10:58:00+00:00", 21),   # confirmation slice removed (commit e988f84 10:57 UTC)
+    ("2026-09-18T20:41:00+00:00", 22),   # sd-meter min(z_R, typ_c, z_A), teacher-sd units, n_turns 1000
 ]
+
+# What the ledger / weights compute in, declared on every published vector for
+# ops/health/contract_compat (2026-09-19): every era's per-turn legs are
+# re-scored per byte with min_rg from the stored pairs, so the inputs are one
+# unit across score modes.
+INPUT_UNITS = "nats_per_byte_rescored"
+FITTED_SCORE_MODES = ["min_rg", "min_rga", "sd_min_rga"]
+RESCORING_METHOD = ("per-turn legs R = centered tempered LME of a_i = lpC(y_i|z_A) - lpC(y_i|empty), G = banded "
+                    "lpC(z_A|x) vs the k reference thoughts, turn = min(R, G) per byte from the verdict's stored pairs "
+                    "with its own tau / band_c / band_floor, forfeit = forfeit_turn_score; identical for min_rg, "
+                    "min_rga (A leg not used) and sd_min_rga (the sd meter standardises these same legs over the slice)")
 
 DEPTH_BINS: list[tuple[int, str]] = [
     (5_000, "d0_lt5k"), (20_000, "d1_5-20k"), (50_000, "d2_20-50k"),

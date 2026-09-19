@@ -86,13 +86,18 @@ def run(rows_path: Path, shares: dict[str, float], n_last: int, tol_z: float = 0
                     "z_realized": clean_float(real["z"]), "se_realized": clean_float(real["se"]),
                     "z_shadow": clean_float(shad["z"]), "se_shadow": clean_float(shad["se"]),
                     "margin_shadow": clean_float(shad["margin"])})
-    with_z = [p for p in per if p["z_stored"] is not None and p["z_shadow"] is not None]
-    mean_abs_stored = sum(abs(p["z_stored"]) for p in with_z) / len(with_z) if with_z else None
+    # Baseline = the REALIZED re-score (same per-byte turn legs as the shadow
+    # re-score). Since wvk 22 the stored z is in teacher-sd units, so the
+    # stored z is reported but no longer the comparator (2026-09-19).
+    with_z = [p for p in per if p["z_realized"] is not None and p["z_shadow"] is not None]
+    mean_abs_stored = sum(abs(p["z_realized"]) for p in with_z) / len(with_z) if with_z else None
     mean_abs_shadow = sum(abs(p["z_shadow"]) for p in with_z) / len(with_z) if with_z else None
     shift = (mean_abs_shadow / mean_abs_stored - 1.0) if mean_abs_stored else None
     flips_strong = [p["challenge_id"] for p in with_z
-                    if abs(p["z_stored"]) >= 2 and (p["z_stored"] > 0) != (p["z_shadow"] > 0)]
-    flips_any = [p["challenge_id"] for p in with_z if (p["z_stored"] > 0) != (p["z_shadow"] > 0)]
+                    if abs(p["z_realized"]) >= 2 and (p["z_realized"] > 0) != (p["z_shadow"] > 0)]
+    flips_any = [p["challenge_id"] for p in with_z if (p["z_realized"] > 0) != (p["z_shadow"] > 0)]
+    mean_abs_z_stored_units = (sum(abs(p["z_stored"]) for p in per if p["z_stored"] is not None)
+                               / max(1, sum(1 for p in per if p["z_stored"] is not None)))
     se_s = sorted(p["se_realized"] for p in per if p["se_realized"])
     se_h = sorted(p["se_shadow"] for p in per if p["se_shadow"])
     med = lambda xs: xs[len(xs) // 2] if xs else None  # noqa: E731
@@ -100,7 +105,9 @@ def run(rows_path: Path, shares: dict[str, float], n_last: int, tol_z: float = 0
         "n_verdicts": len(per), "first_challenge_id": per[0]["challenge_id"] if per else None,
         "last_challenge_id": per[-1]["challenge_id"] if per else None,
         "shares": {g: clean_float(x) for g, x in sorted(shares.items())},
+        "baseline": "z_realized (per-byte re-score of the stored turns; stored z is in the verdict's own units)",
         "mean_abs_z_stored": clean_float(mean_abs_stored), "mean_abs_z_shadow": clean_float(mean_abs_shadow),
+        "mean_abs_z_stored_verdict_units": clean_float(mean_abs_z_stored_units),
         "mean_abs_z_shift": clean_float(shift),
         "median_se_realized": clean_float(med(se_s)), "median_se_shadow": clean_float(med(se_h)),
         "median_se_shift": clean_float(med(se_h) / med(se_s) - 1.0) if med(se_s) and med(se_h) else None,
