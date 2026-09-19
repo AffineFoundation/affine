@@ -149,6 +149,23 @@ def api_benchsuite() -> JSONResponse:
                         headers={"Cache-Control": "no-store"})
 
 
+PIPELINE_HEALTH_PATH = Path(os.environ.get("PIPELINE_HEALTH_JSON",
+                                           HERE.parents[1] / "affine" / "state" / "pipeline_health.json"))
+
+
+@app.get("/api/pipeline_health.json")
+def api_pipeline_health() -> Response:
+    """The pipeline health monitor's last tick (ops/health/health.py):
+    corpus epoch age, fold status, curriculum units, king seat, teacher
+    replicas, verdict cadence, bench queue, pods, sources.toml drift."""
+    try:
+        body = PIPELINE_HEALTH_PATH.read_bytes()
+    except OSError:
+        return JSONResponse({"ok": None, "error": "no report yet"}, status_code=503,
+                            headers={"Cache-Control": "no-store"})
+    return Response(body, media_type="application/json", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/health")
 def api_health() -> JSONResponse:
     body = stats_bytes()

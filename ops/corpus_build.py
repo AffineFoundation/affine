@@ -933,6 +933,19 @@ def load_curriculum() -> dict:
     out = {"mode": mode, "raw": raw, "groups": {}, "m": {}, "path": None, "error": None}
     if mode == "off":
         return out
+    # Contract guard (ops/health/contract_compat.py, 2026-09-19): while the
+    # curriculum is FROZEN (its inputs' units no longer match the live
+    # score_mode, or an operator froze it) the fold falls back to the static
+    # [mix] exactly like a missing vector, and the announce line says why.
+    frozen_path = REPO / "affine" / "state" / "curriculum" / "FROZEN.json"
+    if frozen_path.exists():
+        try:
+            fz = json.loads(frozen_path.read_text())
+        except (OSError, ValueError):
+            fz = {}
+        out["error"] = f"frozen since {fz.get('frozen_at', '?')} by {fz.get('by', '?')}: {fz.get('reason', 'no reason recorded')}"
+        out["frozen"] = True
+        return out
     path = REPO / str(raw.get("weights_path") or "ops/curriculum/out/groups.json")
     out["path"] = str(path)
     if not path.exists():

@@ -9,12 +9,25 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 import requests
 
 BASE = os.environ.get("LIUM_BASE_URL", "https://lium.io/api")
+
+# Every rent / rm through this module is recorded in the pod registry
+# (ops/pods/registry.py) so the reaper knows the pod's owner and lifetime.
+# The registry is optional at import time: a missing module never breaks a
+# rent (the reaper then treats the pod as unregistered and pages).
+_OPS_PODS = Path(__file__).resolve().parents[1] / "pods"
+if str(_OPS_PODS) not in sys.path:
+    sys.path.insert(0, str(_OPS_PODS))
+try:
+    import registry as _pod_registry
+except ImportError:  # pragma: no cover - registry not deployed next to us
+    _pod_registry = None
 
 
 def _api_key() -> str:
@@ -117,6 +130,9 @@ def rent(sess: requests.Session, executor_id: str, pod_name: str,
               flush=True)
         return None
     # 2xx means the pod is being created even when the body carries no id.
+    if _pod_registry is not None:
+        _pod_registry.auto_register_rent(pod_name, ttl_hours=ttl_hours,
+                                         gpu_count=gpu_count, executor_id=executor_id)
     try:
         data = r.json()
         return data.get("id") or (data.get("pod") or {}).get("id") or "?"
@@ -130,6 +146,8 @@ def remove(pod_name: str, prefix: str) -> bool:
         raise ValueError(f"refuse to rm non-swarm pod {pod_name!r}")
     p = subprocess.run(["lium", "rm", pod_name, "-y"],
                        capture_output=True, text=True, timeout=180)
+    if _pod_registry is not None:
+        _pod_registry.auto_release(pod_name, p.returncode == 0)
     return p.returncode == 0
 
 

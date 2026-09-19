@@ -30,6 +30,11 @@ ts() { date -u +%FT%TZ; }
 echo "$(ts) === deploy_wvk22.sh start (wvk 21 -> 22, δ_sd=$DELTA_SD forfeit_sd=$FORFEIT_SD) (HEAD $(git rev-parse --short HEAD))"
 
 # --- 0. preflight (nothing changes yet)
+# 0a. contract / units guard (ops/health/flip_preflight.sh): every consumer of
+# verdict numbers must declare the NEW score_mode's units, or be frozen;
+# a block-level consumer that does not -> abort. Added 2026-09-19 after the
+# curriculum kept applying a per-byte vector to sd-unit verdicts.
+bash "$REPO/ops/health/flip_preflight.sh" --score-mode sd_min_rga --wvk 22 || { echo "$(ts) contract preflight BLOCKED; abort"; exit 1; }
 grep -q '^weight_version_key = 21$' affine/affine.toml || { echo "$(ts) toml is not at wvk 21; abort"; exit 1; }
 grep -q '^score_mode = "min_rg"$' affine/affine.toml || { echo "$(ts) score_mode is not min_rg; abort"; exit 1; }
 grep -q '^thought_rendering = "canonical"$' affine/affine.toml || { echo "$(ts) thought_rendering is not canonical; abort"; exit 1; }

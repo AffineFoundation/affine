@@ -39,6 +39,9 @@ sys.path.insert(0, str(REPO / "ops" / "teacher-swarm"))
 
 import lium_api  # noqa: E402
 
+sys.path.insert(0, str(REPO / "ops" / "pods"))
+import registry as pod_registry  # noqa: E402
+
 STATE_DIR = HERE / "state"
 PODS_JSON = STATE_DIR / "pods.json"
 KNOWN_HOSTS = STATE_DIR / "known_hosts"
@@ -183,6 +186,11 @@ def cmd_rent(args: argparse.Namespace) -> int:
         update_pod(name, digest=digest, served=f"king-{digest[:12]}", plan=plan, r2=args.r2 or "", hf=args.hf or "",
                    executor_id=str(cand["id"]), machine=cand.get("machine_name"), price=price,
                    rented_at=time.time(), key=secrets.token_hex(24), state="rented")
+        # coverage audit 2026-09-19: a bench box lives <= 14 h; the pass log that
+        # names it (or a live process) is its owner, the reaper releases the rest
+        pod_registry.register(name, purpose="bench", owner="passlog:ops/benchsuite/state",
+                              expected_hours=14, price_usd_h=price, ttl_hours=int(cfg["ttl_hours"]),
+                              meta={"digest": digest[:12], "plan": plan["name"], "r2": bool(args.r2), "hf": bool(args.hf)})
         log(f"rented {name}: {plan['name']} {cand.get('machine_name')} "
             f"${price:.2f}/h executor={str(cand['id'])[:12]}")
         print(name)
@@ -303,10 +311,15 @@ def cmd_wait(args: argparse.Namespace) -> int:
             if pod is not None:
                 ssh = lium_api.parse_ssh(pod)
                 if ssh:
-                    p = ssh_run(ssh[0], ssh[1],
-                                "cat /root/king/bootstrap.failed 2>/dev/null; "
-                                "tail -n 1 /root/king/bootstrap.log 2>/dev/null",
-                                timeout=30)
+                    try:
+                        p = ssh_run(ssh[0], ssh[1],
+                                    "cat /root/king/bootstrap.failed 2>/dev/null; "
+                                    "tail -n 1 /root/king/bootstrap.log 2>/dev/null",
+                                    timeout=30)
+                    except subprocess.SubprocessError as e:   # a slow ssh is not a failed pod (2026-09-19: two serving pods marked "never served")
+                        log(f"{args.name}: bootstrap log unreadable ({type(e).__name__}); keep waiting")
+                        time.sleep(30)
+                        continue
                     tail = p.stdout.strip().splitlines()
                     if tail:
                         log(f"{args.name}: {tail[-1][:160]}")
