@@ -194,9 +194,12 @@ def launch(entry: dict) -> None:
         env[k] = v
     BENCH_STATE.mkdir(parents=True, exist_ok=True)
     with log_path.open("ab") as fh:
-        # setsid: the pass must outlive this process (pm2 restarts kill the tree)
+        # start_new_session: the pass must outlive this process (pm2 restarts kill the
+        # tree) and pid == pgid so `cancel` can kill the whole pass. (The `setsid` binary
+        # forks when it is already a session leader, so the recorded pid was a dead
+        # wrapper and cancels missed the live bash — 2026-09-17/19.)
         proc = subprocess.Popen(
-            ["setsid", "bash", str(PASS_SH), entry["ref"], entry["label"], run_id, entry.get("mode", "lium")],
+            ["bash", str(PASS_SH), entry["ref"], entry["label"], run_id, entry.get("mode", "lium")],
             stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env,
             cwd=str(REPO), start_new_session=True)
     entry.update(status="running", pid=proc.pid, started_at=now_iso(),
