@@ -156,9 +156,13 @@ if [ -n "${POD[agentic]:-}" ]; then
   ( suite_on_pod agentic "$(toml fast.agentic_envs_on_pod)" docker primary 8 manifest-agentic.json 4 ) > "$RUN_DIR/agentic.log" 2>&1 &
   PIDS+=($!)
   AURL="$(podf "${POD[agentic]}" base_url)"; ASERVED="$(podf "${POD[agentic]}" served)"
+  # TB2 (Daytona) and Gaia2 (ARE) run CONCURRENTLY against the agentic pod (the first run
+  # chained them and Gaia2 only started after TB2's long tail)
   ( export BENCH_API_KEY="$(podf "${POD[agentic]}" key)"
-    [ -n "${DAYTONA_API_KEY:-}" ] && "$PY" "$HERE/harbor_cell.py" run --env terminal-bench-2 --model "$ASERVED" --model-label king --model-url "$AURL" --model-key-env BENCH_API_KEY --out "$RUN_DIR/king" --concurrency "$(toml fast.tb2_in_flight)" --agent-timeout-s 3600
-    [ -n "${PRIME_API_KEY:-}" ] && "$PY" "$HERE/gaia2_cell.py" run --model "$ASERVED" --model-label king --model-url "$AURL" --model-key-env BENCH_API_KEY --judge-key-env PRIME_API_KEY --concurrency "$(toml fast.gaia2_in_flight)" --out "$RUN_DIR/king" ) > "$RUN_DIR/agentic-box.log" 2>&1 &
+    [ -n "${DAYTONA_API_KEY:-}" ] && "$PY" "$HERE/harbor_cell.py" run --env terminal-bench-2 --model "$ASERVED" --model-label king --model-url "$AURL" --model-key-env BENCH_API_KEY --out "$RUN_DIR/king" --concurrency "$(toml fast.tb2_in_flight)" --agent-timeout-s 3600 ) > "$RUN_DIR/agentic-box.log" 2>&1 &
+  PIDS+=($!)
+  ( export BENCH_API_KEY="$(podf "${POD[agentic]}" key)"
+    [ -n "${PRIME_API_KEY:-}" ] && "$PY" "$HERE/gaia2_cell.py" run --model "$ASERVED" --model-label king --model-url "$AURL" --model-key-env BENCH_API_KEY --judge-key-env PRIME_API_KEY --concurrency "$(toml fast.gaia2_in_flight)" --out "$RUN_DIR/king" ) > "$RUN_DIR/gaia2-box.log" 2>&1 &
   PIDS+=($!)
 fi
 if [ -n "${POD[swe]:-}" ] && [ -n "${DAYTONA_API_KEY:-}" ]; then

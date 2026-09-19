@@ -41,6 +41,7 @@ FORBIDDEN_PREFIXES = ("traces/", "views/", "corpus/", "turns/")
 PARTIAL = False
 ETA = False
 STATE_DIR_FOR_ETA = ""
+ETA_CAP_S = 150 * 60   # fast topology: no cell should outlive ~2.5 h (SWE/TB2 on Daytona, shards in parallel)
 
 
 def reference_walls(state_dir: Path) -> dict:
@@ -182,7 +183,7 @@ def scorecard(run_dir: Path) -> dict:
         "progress": {"done": len(done_cells), "total": len(done_cells) + len(unfinished), "remaining": unfinished,
                      "as_of": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                      **({"eta": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + max(
-                         [reference_walls(Path(STATE_DIR_FOR_ETA)).get(c.split("/")[-1], 2700.0) for c in unfinished] or [0.0])))}
+                         [min(reference_walls(Path(STATE_DIR_FOR_ETA)).get(c.split("/")[-1], 2700.0), ETA_CAP_S) for c in unfinished] or [0.0])))}
                         if (ETA and unfinished) else {})},
         "unfinished_cells": unfinished,
         "king": manifest.get("king"), "teacher": manifest.get("teacher"),
