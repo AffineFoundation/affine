@@ -7,7 +7,7 @@
 # re-attaches nothing: a driver that died with the container is restarted by
 # the coverage queue's own release/retry logic.
 mkdir -p /root/logs
-if pgrep -f "backfill_health.py" >/dev/null 2>&1; then
+if pgrep -f "^python3 /root/rollouts/scripts/backfill_health.py" >/dev/null 2>&1; then
   echo "[post_start] $(date -u) backfill health endpoint already running" >> /root/logs/backfill_health.log
   exit 0
 fi
