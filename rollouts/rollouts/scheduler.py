@@ -71,6 +71,9 @@ KING_SEAT_PREFIX = "king:"
 # king_divergence ~340 more states, both come from king rollouts on tasks the
 # teacher solved (see UnifiedState.teacher_solved / Scheduler.pending).
 KING_BATCH_SHARE = float(os.environ.get("ROLLOUTS_KING_BATCH_SHARE", "0.5"))
+# While kingctl signals a burst (.king_env KING_BURST=1: a second king box
+# is up so the row fills fast after a crown) the king takes this share.
+KING_BURST_SHARE = float(os.environ.get("ROLLOUTS_KING_BURST_SHARE", "0.7"))
 # Window over which a source's king_rollouts_per_hour floor is measured. A
 # batch is 16-48 rollouts, larger than any floor, so a 1 h window would fire
 # one batch every hour whatever the floor says; over 6 h the floor sets how
@@ -246,7 +249,8 @@ class Scheduler:
         K T K T T ... = 40 % king cycles exactly."""
         if self.king_share <= 0:
             return False
-        return self.picks_king / (self.picks_total + 1) < self.king_share
+        share = KING_BURST_SHARE if self.env.get("KING_BURST") == "1" else self.king_share
+        return self.picks_king / (self.picks_total + 1) < share
 
     def pick_source(self, remaining: dict[str, int],
                     king_remaining: dict[str, int] | None = None) -> str | None:
