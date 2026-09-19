@@ -56,6 +56,33 @@ class Capture:
         return True
 
 
+class FakeResponse:
+    def __init__(self, body, status=200):
+        self._body, self.status_code = body, status
+
+    def json(self):
+        return self._body
+
+
+class FakeRequests:
+    """Stands in for `requests` inside health.py: only .get is used there."""
+
+    class RequestException(Exception):
+        pass
+
+    def __init__(self, chat_health, chat_models):
+        self.chat_health, self.chat_models = chat_health, chat_models
+
+    def get(self, url, **kw):
+        if url.endswith("/health") and "9002" in url:
+            if self.chat_health is None:
+                raise FakeRequests.RequestException("down")
+            return FakeResponse(self.chat_health)
+        if url.endswith("/v1/models"):
+            return FakeResponse(self.chat_models)
+        raise FakeRequests.RequestException("unexpected url " + url)
+
+
 def write(path: Path, obj) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     if isinstance(obj, (dict, list)):
@@ -93,10 +120,15 @@ class Sandbox:
         self.manifest = {"corpus_epoch": 51, "published_at": common.iso(NOW - 1 * H), "n_turns": 1, "n_strata": 1}
         self.router = {"reachable": True, "ok": True, "healthy": 16, "backends": 16}
         self.dirty = False
+        self.chat_health = {"ok": True, "state": "serving", "king": {"revision": "f82deda2ffbd" + "0" * 52}}
+        self.chat_models = {"data": [{"id": "affine-king"}]}
+        self.chat_probe = {"ok": True, "free_gb": 121, "size_gb": 205, "df_path": "/root", "n_engines": 1,
+                           "orphans": [], "snapshots": ["/root/hf/hub/models--r2--x/snapshots/f82deda2ffbd" + "0" * 52]}
         # healthy defaults for every file
         write(self.state_dir / "state.json", {
             "king": {"revision": "f82deda2ffbd" + "0" * 52, "reign_number": 19},
-            "queue": [], "in_flight": None, "last_weights_at": common.iso(NOW - 600)})
+            "queue": [], "in_flight": None, "last_weights_at": common.iso(NOW - 600),
+            "chat_machine": {"id": "affine-chat", "provider": "lium", "ssh": "root@10.0.0.1 -p 20299"}})
         (self.state_dir / "history.jsonl").write_text(
             json.dumps({"event": "verdict", "challenge_id": "chal-00610", "at": common.iso(NOW - 1800),
                         "verdict": {"duel_params": {"score_mode": "sd_min_rga"}}}) + "\n")
@@ -158,6 +190,8 @@ class Sandbox:
         health.fetch_manifest = lambda cfg: (self.manifest, "fixture")
         health.router_health = lambda cfg: dict(self.router)
         health.git_dirty = lambda path: self.dirty
+        health.requests = FakeRequests(self.chat_health, self.chat_models)
+        health.chat_pod_probe = lambda ssh, dirs, timeout: dict(self.chat_probe)
         return mon, cap
 
 
@@ -370,6 +404,41 @@ def drill_x(sb: Sandbox) -> tuple[bool, str]:
     return ok, f"inflight_stale page={'yes' if ok else 'NO'}"
 
 
+def drill_h(sb: Sandbox) -> tuple[bool, str]:
+    """chat.affine.io stuck in state=loading 26 h; disk 12 GB; orphan EngineCore; then served digest != king past grace."""
+    sb.chat_health = {"ok": True, "state": "loading", "king": {"revision": "73dd5bbcf1f7" + "0" * 52}}
+    sb.chat_probe = {"ok": True, "free_gb": 12, "size_gb": 205, "df_path": "/root", "n_engines": 3,
+                     "orphans": [{"pid": 4111, "ppid": 1, "args": "VLLM::EngineCore"},
+                                 {"pid": 4222, "ppid": 1, "args": "VLLM::EngineCore"}],
+                     "snapshots": [f"/root/hf/hub/models--r2--x/snapshots/{d}" + "0" * 52
+                                   for d in ("73dd5bbcf1f7", "6ea86b6e1868", "e416aab8599d")]}
+    mon, cap = sb.monitor(since={"chat_not_serving": NOW - 26 * H})
+    out = mon.tick()
+    k = keys(out)
+    ok1 = {"chat_endpoint", "chat_disk", "chat_orphan_engines"} <= k \
+        and any("NOT serving" in l and "state=loading" in l for l in cap.lines) \
+        and any("free 12 GB" in l for l in cap.lines) and any("2 orphan VLLM::EngineCore" in l for l in cap.lines) \
+        and any("chat_snapshots" in l and "3 not the current king" in l for l in cap.lines)
+    # crown 30 min ago, pod still serving the previous king -> grace, warn only
+    st = json.loads((sb.state_dir / "state.json").read_text())
+    st["king"]["crowned_at"] = common.iso(NOW - 30 * 60)
+    write(sb.state_dir / "state.json", st)
+    sb.chat_health = {"ok": True, "state": "serving", "king": {"revision": "73dd5bbcf1f7" + "0" * 52}}
+    sb.chat_probe = dict(sb.chat_probe, free_gb=121, orphans=[], n_engines=1)
+    mon2, cap2 = sb.monitor(since={"chat_not_serving": NOW - 30 * 60})
+    out2 = mon2.tick()
+    ok2 = out2["checks"]["chat_endpoint"]["level"] == "warn" and "grace" in out2["checks"]["chat_endpoint"]["detail"]
+    # crown 3 h ago, still the old king -> page
+    st["king"]["crowned_at"] = common.iso(NOW - 3 * H)
+    write(sb.state_dir / "state.json", st)
+    mon3, cap3 = sb.monitor(since={"chat_not_serving": NOW - 3 * H})
+    out3 = mon3.tick()
+    ok3 = out3["checks"]["chat_endpoint"]["level"] == "page" and "serves 73dd5bbcf1f7 not the king f82deda2ffbd" in \
+        out3["checks"]["chat_endpoint"]["detail"]
+    return ok1 and ok2 and ok3, (f"loading+disk+orphans page={'yes' if ok1 else 'NO'} "
+                                 f"grace-warn={'yes' if ok2 else 'NO'} stale-digest-page={'yes' if ok3 else 'NO'}")
+
+
 DRILLS = [("a", "fold died on KeyError, published nothing", drill_a),
           ("b", "no fold for 23 h after the fork", drill_b),
           ("c", "curriculum units vs live score_mode (+freeze, preflight block, unfreeze)", drill_c),
@@ -377,6 +446,7 @@ DRILLS = [("a", "fold died on KeyError, published nothing", drill_a),
           ("e", "bench queue budget-held after a pm2 restart", drill_e),
           ("f", "env boxes idle 40 h, driver dead ($ saved) + unregistered pod", drill_f),
           ("g", "fold on a stale sources.toml", drill_g),
+          ("h", "chat.affine.io stuck loading / disk / orphan EngineCore / stale digest", drill_h),
           ("x", "in_flight stale vs history", drill_x)]
 
 

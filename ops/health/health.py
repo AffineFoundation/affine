@@ -106,6 +106,58 @@ def router_health(cfg: Config) -> dict:
         return {"reachable": False, "ok": False, "healthy": 0, "backends": 0}
 
 
+CHAT_POD_SCRIPT = r'''
+for d in __DIRS__; do [ -d "$d" ] && { echo "DF $(df -BG --output=avail,size "$d" | tail -1 | tr -s " ") $d"; break; }; done
+echo "PS_BEGIN"; ps -eo pid=,ppid=,args= | grep -E "EngineCore|vllm serve|evalsrv.chatsrv" | grep -v grep; echo "PS_END"
+echo "SNAP_BEGIN"; ls -d /root/hf/hub/models--*/snapshots/* 2>/dev/null; echo "SNAP_END"
+'''
+
+
+def chat_pod_probe(ssh_str: str, dirs: list[str], timeout_s: int) -> dict:
+    """One ssh round trip to the chat pod: free GB on the model volume, the
+    vLLM / EngineCore process table, the king snapshots on disk. Returns
+    {"ok": False, "error": ...} when ssh fails."""
+    parts = ssh_str.split()
+    if not parts or "-p" not in parts:
+        return {"ok": False, "error": f"bad ssh string {ssh_str!r}"}
+    userhost, port = parts[0], parts[parts.index("-p") + 1]
+    script = CHAT_POD_SCRIPT.replace("__DIRS__", " ".join(dirs))
+    cmd = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+           "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR",
+           "-o", f"ConnectTimeout={min(15, timeout_s)}", "-p", port, userhost, "bash -s"]
+    try:
+        r = subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=timeout_s)
+    except (subprocess.SubprocessError, OSError) as e:
+        return {"ok": False, "error": repr(e)[:120]}
+    if r.returncode != 0 and "DF " not in r.stdout:
+        return {"ok": False, "error": (r.stderr.strip() or f"exit {r.returncode}")[:160]}
+    out: dict = {"ok": True, "free_gb": None, "size_gb": None, "df_path": None,
+                 "procs": [], "snapshots": []}
+    section = None
+    for line in r.stdout.splitlines():
+        if line.startswith("DF "):
+            f = line.split()
+            try:
+                out["free_gb"], out["size_gb"], out["df_path"] = int(f[1].rstrip("G")), int(f[2].rstrip("G")), f[3]
+            except (IndexError, ValueError):
+                pass
+        elif line in ("PS_BEGIN", "SNAP_BEGIN"):
+            section = line
+        elif line in ("PS_END", "SNAP_END"):
+            section = None
+        elif section == "PS_BEGIN":
+            f = line.split(None, 2)
+            if len(f) == 3:
+                out["procs"].append({"pid": int(f[0]), "ppid": int(f[1]), "args": f[2][:120]})
+        elif section == "SNAP_BEGIN" and line.strip():
+            out["snapshots"].append(line.strip())
+    # an EngineCore whose parent is not a live `vllm serve` is an orphan
+    serve_pids = {p["pid"] for p in out["procs"] if "vllm serve" in p["args"]}
+    out["orphans"] = [p for p in out["procs"] if "EngineCore" in p["args"] and p["ppid"] not in serve_pids]
+    out["n_engines"] = sum(1 for p in out["procs"] if "EngineCore" in p["args"])
+    return out
+
+
 def git_dirty(path: Path) -> bool | None:
     try:
         r = subprocess.run(["git", "-C", str(REPO), "diff", "--quiet", "HEAD", "--",
@@ -312,6 +364,9 @@ class Monitor:
                                 f"{ident}): {why}; last_rent_failure={((ks or {}).get('last_rent_failure') or '')[:120]}",
                                 ident=ident, empty_min=round((empty_for or 0) / 60)))
 
+        # chat.affine.io: endpoint, served digest vs king, disk, orphan engines
+        checks.extend(self.chat_checks(state, king, now))
+
         # teacher swarm replicas
         rh = router_health(cfg)
         lvl = "page" if (not rh["reachable"] or rh["healthy"] < t["teacher_replicas_min"]) else "ok"
@@ -438,6 +493,86 @@ class Monitor:
         checks.extend(self.code_watch(procs, now))
         return checks
 
+    # ---- chat box
+    def chat_checks(self, state: dict | None, king: dict, now: float) -> list[Check]:
+        cfg, t, s = self.cfg, self.cfg.t, self.cfg.sources
+        out: list[Check] = []
+        king_rev = str(king.get("revision") or "")
+        crowned = common.parse_iso(king.get("crowned_at"))
+        since_crown = (now - crowned) if crowned else None
+        in_grace = since_crown is not None and since_crown < t["chat_crown_grace_min"] * 60
+
+        # 1. /health + /v1/models through the validator's forward
+        health: dict | None = None
+        models_ok = False
+        try:
+            r = requests.get(s["chat_health_url"], timeout=10)
+            health = r.json() if r.status_code == 200 else {"state": f"http {r.status_code}"}
+        except (requests.RequestException, ValueError):
+            health = None
+        token = common.env_file_value(s.get("chat_token_env", "AFFINE_EVAL_TOKEN"))
+        try:
+            r = requests.get(s["chat_models_url"], timeout=10,
+                             headers={"Authorization": f"Bearer {token}"} if token else {})
+            models_ok = r.status_code == 200 and any(
+                m.get("id") == "affine-king" for m in (r.json().get("data") or []))
+        except (requests.RequestException, ValueError, AttributeError):
+            models_ok = False
+        st = (health or {}).get("state") or "unreachable"
+        served = str(((health or {}).get("king") or {}).get("revision") or "")
+        serving = st == "serving" and models_ok and served == king_rev
+        not_serving_for = self.since("chat_not_serving", not serving, now)
+        if serving:
+            out.append(Check("chat_endpoint", "ok",
+                             f"chat.affine.io serving reign {king.get('reign_number')} ({king_rev[:12]}), /v1/models ok",
+                             state=st, served=served[:12]))
+        else:
+            why = ("/health unreachable" if health is None else
+                   f"state={st}" if st != "serving" else
+                   "/v1/models does not list affine-king" if not models_ok else
+                   f"serves {served[:12] or '?'} not the king {king_rev[:12]}")
+            over = (not_serving_for or 0) > t["chat_loading_max_min"] * 60
+            lvl = "page" if over and not (in_grace and served != king_rev and st == "serving") else "warn"
+            out.append(Check("chat_endpoint", lvl,
+                             f"chat.affine.io NOT serving the king for {common.fmt_age(not_serving_for)}: {why}"
+                             + (f" (crown {common.fmt_age(since_crown)} ago, inside the {t['chat_crown_grace_min']}-min grace)" if in_grace else "")
+                             + (f"; error={str((health or {}).get('error') or '')[:120]}" if (health or {}).get("error") else ""),
+                             state=st, served=served[:12], king=king_rev[:12],
+                             not_serving_min=round((not_serving_for or 0) / 60)))
+
+        # 2. on the pod: disk, orphan EngineCore, stale snapshots (one ssh)
+        ssh_str = ((state or {}).get(s.get("chat_pod_state_key", "chat_machine")) or {}).get("ssh") or ""
+        if not ssh_str:
+            out.append(Check("chat_pod", "warn", "no chat pod in state.json (chat_machine.ssh empty)"))
+            return out
+        probe = chat_pod_probe(ssh_str, list(s.get("chat_pod_model_dirs", ["/root"])), int(s.get("chat_ssh_timeout_s", 25)))
+        if not probe.get("ok"):
+            fail_for = self.since("chat_pod_ssh_fail", True, now)
+            out.append(Check("chat_pod_ssh", "page" if (fail_for or 0) > 1800 else "warn",
+                             f"chat pod {ssh_str} ssh failed for {common.fmt_age(fail_for)}: {probe.get('error')}"))
+            return out
+        self.since("chat_pod_ssh_fail", False, now)
+        free = probe.get("free_gb")
+        lvl = "page" if free is None or free < t["chat_disk_min_gb"] else "ok"
+        out.append(Check("chat_disk", lvl,
+                         f"chat pod {probe.get('df_path')} free {free} GB of {probe.get('size_gb')} GB"
+                         + (f" < {t['chat_disk_min_gb']} GB" if lvl == "page" else ""),
+                         free_gb=free, size_gb=probe.get("size_gb"), path=probe.get("df_path")))
+        orphans = probe.get("orphans") or []
+        out.append(Check("chat_orphan_engines", "page" if orphans else "ok",
+                         (f"{len(orphans)} orphan VLLM::EngineCore on the chat pod (parent not a live vllm serve): "
+                          + ", ".join(f"pid {p['pid']} ppid {p['ppid']}" for p in orphans)
+                          + " — they hold GPU memory; kill them") if orphans
+                         else f"{probe.get('n_engines')} EngineCore, all owned by vllm serve",
+                         orphans=orphans, n_engines=probe.get("n_engines")))
+        snaps = probe.get("snapshots") or []
+        stale = [p for p in snaps if king_rev and king_rev not in p]
+        out.append(Check("chat_snapshots", "warn" if len(stale) >= t["chat_snapshots_max"] else "ok",
+                         f"{len(snaps)} king snapshot(s) on disk, {len(stale)} not the current king"
+                         + (" — prune before the disk fills" if len(stale) >= t["chat_snapshots_max"] else ""),
+                         snapshots=[p.rsplit('/', 1)[-1][:12] for p in snaps], stale=len(stale)))
+        return out
+
     # ---- process hygiene
     def code_watch(self, procs: list[dict] | None, now: float) -> list[Check]:
         cw = self.cfg.code_watch
@@ -516,7 +651,7 @@ class Monitor:
         new_lines = []
         for c in pages + warns:
             window = self.cfg.undeclared_dedupe_s if c.key.startswith("contract_undeclared") else self.cfg.dedupe_s
-            if c.level == "warn" and not c.key.startswith(("contract_", "stale_code", "sources_toml", "fold_pm2")):
+            if c.level == "warn" and not c.key.startswith(("contract_", "stale_code", "sources_toml", "fold_pm2", "chat_")):
                 continue  # warnings are in the JSON / summary only
             dk = f"{c.level}:{c.key}"   # a warn that escalates to a page posts again
             last = sent.get(dk)
@@ -560,6 +695,7 @@ class Monitor:
         vc = v.get("verdict_cadence", {})
         bq = v.get("bench_queue") or v.get("bench_queue_held") or {}
         pd = v.get("pods", {})
+        ch = v.get("chat_endpoint", {})
         parts = [
             f"epoch {ce.get('epoch')} {ce.get('age_h', '?')}h",
             f"curriculum {cu.get('mode')} {cu.get('age_h', '?')}h{' FROZEN' if cu.get('frozen') else ''}",
@@ -568,6 +704,7 @@ class Monitor:
             f"verdict {vc.get('age_h', '?')}h q{vc.get('queue', '?')}",
             f"bench ${bq.get('spent_usd', '?')}/{bq.get('cap_usd', '?')}",
             f"pods {pd.get('n_ours', '?')} ${pd.get('ours_usd_h', '?')}/h",
+            f"chat {'ok' if ch.get('state') == 'serving' and 'not_serving_min' not in ch else 'NOT serving ' + str(ch.get('state'))}",
         ]
         head = "all clear" if not pages else f"{len(pages)} ALERT(S): " + "; ".join(c.key for c in pages)
         line = f"{head} — " + ", ".join(parts)
