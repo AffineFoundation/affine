@@ -110,6 +110,11 @@ PY"
 
 if [ "$ROLE" = backfill ]; then
   echo "== [5/5] backfill driver: no supervisor; health endpoint on port 20000"
+  # The driver-pod scripts live in this repo, not on the SRC fleet pod the
+  # rsync copied from: ship them from here.
+  HERE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  scp "${SSH_OPTS[@]}" -P "$DST_PORT" "$HERE_DIR/run_backfill.sh" "$HERE_DIR/backfill_health.py" \
+      "$HERE_DIR/backfill_post_start.sh" "root@$DST_HOST:/root/rollouts/scripts/"
   dst 'set -e
     pkill -f "^bash /root/rollouts/bootstrap.sh$" 2>/dev/null || true
     pkill -f "^/root/venv/bin/python -m rollouts.run" 2>/dev/null || true
