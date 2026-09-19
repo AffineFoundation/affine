@@ -33,6 +33,60 @@ THINK_OPEN = "<think>"
 THINK_CLOSE = "</think>"
 THOUGHT_LABEL_RE = re.compile(r"^\s*THOUGHT:\s*")
 
+# [duel].thought_rendering (wvk 22, 2026-09-18, explicit operator directive
+# 19:40 UTC "fold it in"): how a thought z is rendered into the teacher's
+# assistant body for EVERY echo (G / typicality, R's injection, B, the A leg,
+# the content-mask unconditioned echo) and how split_rollout composes z.
+#   "canonical"    (wvk <= 21)  body = "</think>\nTHOUGHT: " + z [+ "\n\n" + y]
+#                               z = latent + "\n" + visible (one prose string)
+#   "as_generated" (wvk >= 22)  body = latent + "\n</think>" [+ "\n\n" + visible] [+ "\n\n" + y]
+#                               z = latent + "\n</think>\n" + visible  (marker kept
+#                               inside z so the split survives as a string;
+#                               visible verbatim — no label stripped or added)
+# Under "as_generated" the latent is scored inside <think>…</think>, where the
+# model produced it, and the visible thought after the real </think> with NO
+# added label (decision 2026-09-18: the model's own visible text, as generated;
+# split_rollout still strips a literal "THOUGHT:" label the prompt asked for).
+# The scored spans are the latent bytes and the visible bytes; the
+# "\n</think>\n\n" separator between them is rendered but not scored (parity
+# with the 2026-09-18 rendering study, HANDOVER.md §1). Token rule unchanged: a
+# token is scored iff its start offset lies inside a span (so the first latent
+# token — after the "<think>\n" newline token — IS scored; under canonical the
+# first z token, merged with "THOUGHT: ", is not, exactly as before).
+# Process-wide setting: run_duel sets it from the toml before any echo;
+# research replays default to canonical.
+THOUGHT_RENDERINGS = ("canonical", "as_generated")
+_THOUGHT_RENDERING = "canonical"
+Z_SPLIT = "\n" + THINK_CLOSE + "\n"
+
+
+def set_thought_rendering(mode: str) -> None:
+    global _THOUGHT_RENDERING
+    if mode not in THOUGHT_RENDERINGS:
+        raise ValueError(f"thought_rendering must be one of {THOUGHT_RENDERINGS}, got {mode!r}")
+    _THOUGHT_RENDERING = mode
+
+
+def thought_rendering() -> str:
+    return _THOUGHT_RENDERING
+
+
+def split_z(z: str) -> tuple[str, str]:
+    """(latent, visible) of a z composed under as_generated; a z without the
+    marker is latent-only (the kings' shape, and every canonical z)."""
+    if Z_SPLIT in z:
+        latent, _, visible = z.partition(Z_SPLIT)
+        return latent, visible
+    if z.startswith(THINK_CLOSE + "\n"):        # latent empty, visible only
+        return "", z[len(THINK_CLOSE) + 1:]
+    return z, ""
+
+
+def thought_chars(z: str) -> int:
+    """Characters of thought text in z (marker excluded) — the length floor."""
+    latent, visible = split_z(z)
+    return len(latent.strip()) + len(visible.strip())
+
 
 @lru_cache(maxsize=8)
 def get_tokenizer(repo: str, revision: str | None = None):
@@ -71,13 +125,36 @@ def chat_prompt(repo: str, revision: str | None, messages: list[dict],
     return p
 
 
+def thought_body(thoughts: str) -> tuple[str, list[tuple[int, int]]]:
+    """Assistant body for a thought under the active rendering, plus the
+    scored spans as (start, end) character offsets INTO THE BODY.
+
+    canonical:    "</think>\nTHOUGHT: " + z            span = z
+    as_generated: latent + "\n</think>"                span = latent
+                  [+ "\n" + visible]                   [+ span = visible]
+    An empty thought renders as "</think>" (as_generated) so the body still
+    closes the think block the template opened.
+    """
+    if _THOUGHT_RENDERING == "canonical":
+        head = THINK_CLOSE + "\nTHOUGHT: "
+        return head + thoughts, [(len(head), len(head) + len(thoughts))]
+    latent, visible = split_z(thoughts)
+    # The model always generates "…latent\n</think>\n\n…"; an empty latent
+    # renders as the template's own thinking-off form "<think>\n\n</think>".
+    body = latent + "\n" + THINK_CLOSE
+    spans = [(0, len(latent))] if latent else []
+    if visible:
+        body += "\n\n"
+        spans.append((len(body), len(body) + len(visible)))
+        body += visible
+    return body, spans
+
+
 def inject_prompt(repo: str, revision: str | None,
                   prefix_messages: list[dict], thoughts: str) -> str:
     """Prompt where `thoughts` are planted as the full reasoning channel."""
-    return (
-        gen_prompt(repo, revision, prefix_messages)
-        + THINK_CLOSE + "\nTHOUGHT: " + thoughts + "\n\n"
-    )
+    body, _ = thought_body(thoughts)
+    return gen_prompt(repo, revision, prefix_messages) + body + "\n\n"
 
 
 def force_text(repo: str, revision: str | None, prefix_messages: list[dict],
@@ -87,17 +164,18 @@ def force_text(repo: str, revision: str | None, prefix_messages: list[dict],
 
 
 def thought_text(repo: str, revision: str | None,
-                 prefix_messages: list[dict], thoughts: str) -> str:
-    """Full text whose THOUGHT span we score via echo+logprobs.
+                 prefix_messages: list[dict], thoughts: str
+                 ) -> tuple[str, list[tuple[int, int]]]:
+    """Full text whose THOUGHT span(s) we score via echo+logprobs, and the
+    absolute (start, end) offsets of those spans in it.
 
-    Same canonical rendering as inject_prompt but WITHOUT the trailing
-    separator, so the scored span is exactly the thought bytes. Used for the
-    grounding leg of min(R, G): m = lpC(z_A|x) and t_i = lpC(z_C^i|x).
+    Same rendering as inject_prompt but WITHOUT the trailing separator, so
+    the scored bytes are exactly the thought bytes. Used for the grounding /
+    typicality echoes: m = lpC(z_A|x), t_i = lpC(z_C^i|x), and lpC(z|∅).
     """
-    return (
-        gen_prompt(repo, revision, prefix_messages)
-        + THINK_CLOSE + "\nTHOUGHT: " + thoughts
-    )
+    gp = gen_prompt(repo, revision, prefix_messages)
+    body, spans = thought_body(thoughts)
+    return gp + body, [(len(gp) + a, len(gp) + b) for a, b in spans]
 
 
 def think_closed(text: str) -> bool:
@@ -154,6 +232,16 @@ def split_rollout(text: str, action_kind: str | None = dialects.DEFAULT_KIND,
     if not y:
         return "", ""
     visible = THOUGHT_LABEL_RE.sub("", before.strip())
+    if _THOUGHT_RENDERING == "as_generated":
+        # Visible part VERBATIM (outer whitespace only): no label stripped,
+        # none added — harness-neutral (mini-swe replies carry "THOUGHT:",
+        # tool / pi / terminus / text replies never do). Keep the
+        # latent/visible split inside z (see thought_body); a latent-only
+        # reply is z = latent, exactly as before.
+        lat, vis = latent.strip(), before.strip()
+        if vis:
+            return (lat + Z_SPLIT + vis) if lat else (THINK_CLOSE + "\n" + vis), y
+        return lat, y
     z = "\n".join(s for s in (latent.strip(), visible.strip()) if s)
     return z, y
 

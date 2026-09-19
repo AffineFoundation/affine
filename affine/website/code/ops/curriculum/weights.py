@@ -46,7 +46,8 @@ WEIGHTS_SCHEMA = pa.schema([
     ("prior_M", pa.float64()), ("prior_S", pa.float64()), ("probe_yield", pa.float64()),
     ("w", pa.float64()), ("w_counted", pa.float64()), ("w_m_only", pa.float64()), ("w_v11", pa.float64()),
     ("F_t", pa.float64()), ("Dp_t", pa.float64()), ("M12_t", pa.float64()), ("w_v12", pa.float64()),
-    ("Dbar_plus", pa.float64()),
+    ("Dbar_plus", pa.float64()), ("div_action", pa.float64()), ("div_action_t", pa.float64()),
+    ("div_score", pa.float64()), ("div_score_t", pa.float64()), ("D_v2", pa.float64()), ("w_v2", pa.float64()),
     ("rank_pct", pa.float64()), ("m_shadow", pa.int32()),
     ("m_applied", pa.int32()), ("draws_50", pa.int64()), ("distinct_turns_50", pa.int64()),
     ("max_turn_draws_50", pa.int64()), ("Dbar", pa.float64()),
@@ -160,6 +161,8 @@ def compute(args) -> dict:
                     "M": r.get("M"), "S": r.get("S"), "Dbar": r.get("Dbar"),
                     "forfeit_rate": r.get("forfeit_rate"), "Dbar_plus": r.get("Dbar_plus"),
                     "n_d_w": float(r.get("n_d_w") or 0.0),
+                    "div_action": r.get("div_action"), "n_act_w": float(r.get("n_act_w") or 0.0),
+                    "div_score": r.get("div_score"), "n_sc_w": float(r.get("n_sc_w") or 0.0),
                     # share of the king's misses that were forfeits ("cannot
                     # answer") rather than live turns under theta ("answers badly")
                     "forfeit_share": (float(r["forfeit_rate"]) / float(r["M"])
@@ -168,7 +171,7 @@ def compute(args) -> dict:
                     "distinct_turns_50": int(r.get("distinct_turns_50") or 0),
                     "max_turn_draws_50": int(r.get("max_turn_draws_50") or 0),
                     "probe_yield": probes.get(s)})
-    keep = ("n_w", "M", "S", "forfeit_rate", "Dbar_plus", "n_d_w")
+    keep = ("n_w", "M", "S", "forfeit_rate", "Dbar_plus", "n_d_w", "div_action", "n_act_w", "div_score", "n_sc_w")
     cells = {c: {"group": r["group"], **{k: r.get(k) for k in keep}} for c, r in roll["cell"].items()}
     grp_stats = {g: {k: r.get(k) for k in keep} for g, r in roll["group"].items()}
     tot_w = sum(float(r["n_w"] or 0) for r in roll["group"].values())
@@ -199,11 +202,35 @@ def compute(args) -> dict:
         rec["w_m_only"] = rule.stratum_weight(rec["M_t"], 1.0, eps=float(cfg["eps"]), gamma=float(cfg["gamma"]))
         rec["w_v11"] = rule.stratum_weight_v11(rec["M_t"], rec["S_t"], eps=float(cfg["eps"]),
                                                gamma=float(cfg["gamma"]), s_gate=s_gate)
+    # ---- rule v2 (Jacob 2026-09-16 16:38 UTC, "sample more where the divergence
+    # between king and teacher is greatest, ranked intelligently, with a non-zero
+    # chance of visiting every turn"): D_s = weighted mix of four king-vs-teacher
+    # distances, each shrunk stratum -> cell -> group -> corpus and divided by
+    # its corpus mean; w_s = eps/N + (1-eps) * D^gamma / sum D^gamma.
+    v2_w = dict(cfg.get("v2_component_weights") or {"action": 0.25, "forfeit": 0.25, "score": 0.25, "gap": 0.25})
+    v2_eps = float(cfg.get("v2_eps", 0.20))
+    v2_gamma = float(cfg.get("v2_gamma", 1.0))
+
+    def corpus_mean(field: str, n_field: str) -> float:
+        tw = sum(float(r.get(n_field) or 0) for r in roll["group"].values())
+        return (sum(float(r.get(n_field) or 0) * float(r.get(field) or 0) for r in roll["group"].values()) / tw
+                if tw > 0 else 0.0)
+    v2_means = {"action": corpus_mean("div_action", "n_act_w"), "forfeit": corpus_f,
+                "score": corpus_mean("div_score", "n_sc_w"), "gap": corpus_dp}
+    rule.shrink_field(strata, cells, grp_stats, field="div_action", n_field="n_act_w", out="div_action_t",
+                      corpus_prior=v2_means["action"], n0=n0)
+    rule.shrink_field(strata, cells, grp_stats, field="div_score", n_field="n_sc_w", out="div_score_t",
+                      corpus_prior=v2_means["score"], n0=n0)
+    for rec in strata.values():
+        rec["D_v2"] = rule.divergence_v2({"action": rec["div_action_t"], "forfeit": rec["F_t"],
+                                          "score": rec["div_score_t"], "gap": rec["Dp_t"]}, v2_means, v2_w)
+    rule.weights_v2(strata, eps=v2_eps, gamma=v2_gamma)
+
     # The COUNTED rule ([curriculum].counted_rule, default v1): its weight
     # drives the published shares and the multiplicity; the others are
     # published next to it. Switching rules at fold 3 = one toml line.
     counted = str(cfg.get("counted_rule") or "v1")
-    counted_field = {"v1": "w", "v1.1": "w_v11", "v1.2": "w_v12"}[counted]
+    counted_field = {"v1": "w", "v1.1": "w_v11", "v1.2": "w_v12", "v2": "w_v2"}[counted]
     for rec in strata.values():
         rec["w_counted"] = rec[counted_field]
     rule.multiplicity(strata, m_max=int(cfg["m_max"]), field="w_counted")
@@ -220,11 +247,16 @@ def compute(args) -> dict:
     raw_slicekeys = rule.shares_by_slice_key(strata, index_rows, "w_counted")
     share_unit = str(cfg.get("share_unit") or "slice_keys")
     raw_shares = raw_slicekeys if share_unit == "slice_keys" else raw_base
+    # Phase 10 (fold worker, 2026-09-16): the stop-state block keeps >= stop_state_floor of
+    # the slice; the rule honours it as a constraint so the published vector already does.
+    ss_groups = tuple(cfg.get("stop_state_groups") or ())
+    block_floors = ({"stop_state": (ss_groups, float(cfg.get("stop_state_floor") or 0.0))}
+                    if ss_groups and float(cfg.get("stop_state_floor") or 0) > 0 else {})
     vec = rule.group_vector(raw_shares, static, current, floor_frac=float(cfg["floor_frac_of_static"]),
                             floor_ct=float(cfg["floor_coding_terminal"]), cap=float(cfg["group_cap"]),
-                            max_shift=float(cfg["max_share_shift"]))
+                            max_shift=float(cfg["max_share_shift"]), block_floors=block_floors)
     fill_kw = dict(floor_frac=float(cfg["floor_frac_of_static"]), floor_ct=float(cfg["floor_coding_terminal"]),
-                   cap=float(cfg["group_cap"]), max_shift=float(cfg["max_share_shift"]))
+                   cap=float(cfg["group_cap"]), max_shift=float(cfg["max_share_shift"]), block_floors=block_floors)
     # Decomposition (coordinator 2026-09-15 00:46 UTC): what drives the vector.
     #   m_only     -- the same rule with S~ = 1 (king miss rate alone)
     #   v1.1       -- S~ as a GATE (live share >= s_gate -> eligible), weight = miss rate; informational
@@ -233,18 +265,25 @@ def compute(args) -> dict:
     vec_v11 = rule.group_vector(rule.shares_by_slice_key(strata, index_rows, "w_v11"), static, current, **fill_kw)
     vec_v12 = rule.group_vector(rule.shares_by_slice_key(strata, index_rows, "w_v12"), static, current, **fill_kw)
     vec_v1 = rule.group_vector(rule.shares_by_slice_key(strata, index_rows, "w"), static, current, **fill_kw)
+    vec_v2 = rule.group_vector(rule.shares_by_slice_key(strata, index_rows, "w_v2"), static, current, **fill_kw)
     all_groups = sorted(set(current) | groups)
     floors_only = rule.constrained_fill(
         {g: current.get(g, 0.0) for g in all_groups},
         {g: (fill_kw["floor_frac"] * static.get(g, 0.0) if current.get(g, 0.0) > 0 else 0.0) for g in all_groups},
         {g: (fill_kw["cap"] if current.get(g, 0.0) > 0 else 0.0) for g in all_groups})
-    means = rule.group_means_by_slice_key(strata, index_rows, ("M_t", "S_t", "w", "w_v11", "F_t", "Dp_t", "M12_t", "w_v12"))
+    means = rule.group_means_by_slice_key(strata, index_rows, ("M_t", "S_t", "w", "w_v11", "F_t", "Dp_t", "M12_t", "w_v12",
+                                                              "div_action_t", "div_score_t", "D_v2", "w_v2"))
     # recurrence guard on the counted vector: lower k before share (hard cap)
     guard = rule.recurrence_guard(strata, vec["after_clamp"], group_cap=float(cfg["recurrence_group_cap"]),
                                   turn_cap=float(cfg["recurrence_turn_cap"]))
     if guard["actions"]:
         log(f"weights: recurrence guard -- {len(guard['actions'])} actions, e.g. {guard['actions'][:3]}")
-    vec["after_clamp"] = guard["shares"]
+    vec["after_clamp"] = rule.restore_block_floors(
+        guard["shares"], block_floors, fixed=set(guard["groups_cut"]), floor=vec["floor"], cap=float(cfg["group_cap"]),
+        current=current, max_shift=float(cfg["max_share_shift"]))
+    if guard["actions"]:
+        vec["blocks"] = {name: {**b, "after_guard": sum(vec["after_clamp"].get(g, 0.0) for g in b["members"])}
+                         for name, b in vec["blocks"].items()}
     applied = vec["after_clamp"] if mode == "apply" else current
     proj_shadow = rule.recurrence_projection(strata, vec["after_clamp"])
     proj_applied = rule.recurrence_projection(strata, applied)
@@ -260,15 +299,20 @@ def compute(args) -> dict:
         wrows.append({f.name: rec.get(f.name) for f in WEIGHTS_SCHEMA})
         for k in ("n_w", "M", "S", "forfeit_rate", "forfeit_share", "M_t", "S_t", "prior_M", "prior_S",
                   "probe_yield", "w", "w_counted", "w_m_only", "w_v11", "F_t", "Dp_t", "M12_t", "w_v12", "Dbar_plus",
-                  "rank_pct", "Dbar"):
+                  "div_action", "div_action_t", "div_score", "div_score_t", "D_v2", "w_v2", "rank_pct", "Dbar"):
             wrows[-1][k] = clean_float(wrows[-1][k])
     knobs = {k: cfg[k] for k in ("rule_version", "half_life_verdicts", "n_0", "gamma", "eps", "theta_pct",
                                  "m_max", "floor_coding_terminal", "floor_frac_of_static", "group_cap",
                                  "max_share_shift", "min_new_verdicts")}
     knobs["share_unit"] = share_unit
     knobs["counted_rule"] = counted
+    knobs["stop_state_groups"] = list(ss_groups)
+    knobs["stop_state_floor"] = cfg.get("stop_state_floor")
     hashed = {"rule_version": int(cfg["rule_version"]), "knobs": knobs, "ledger_sha256": lsha,
               "manifest_sha256": msha, "theta": ledger_doc.get("theta"), "probes_sha256": probes_sha,
+              # the group vector is an output of the rule too: a share change (guard, block floor)
+              # with an unchanged strata table must still be a new snapshot
+              "shares_after_clamp": {g: clean_float(v) for g, v in sorted(vec["after_clamp"].items())},
               "strata": wrows}
     wsha = sha256_bytes(canonical_json(hashed))
 
@@ -323,6 +367,16 @@ def compute(args) -> dict:
             "share_v12_after_floor": clean_float(vec_v12["after_floor"].get(g, 0.0)),
             "share_v12_after_clamp": clean_float(vec_v12["after_clamp"].get(g, 0.0)),
             "v12_reason": vec_v12["reasons"].get(g, "no_supply"),
+            # v2: divergence rule (informational unless counted)
+            "mean_div_action_t_slice_keys": clean_float((means.get(g) or {}).get("div_action_t")),
+            "mean_div_score_t_slice_keys": clean_float((means.get(g) or {}).get("div_score_t")),
+            "mean_D_v2_slice_keys": clean_float((means.get(g) or {}).get("D_v2")),
+            "share_v2_raw": clean_float(vec_v2["raw"].get(g, 0.0)),
+            "share_v2_after_floor": clean_float(vec_v2["after_floor"].get(g, 0.0)),
+            "share_v2_after_clamp": clean_float(vec_v2["after_clamp"].get(g, 0.0)),
+            "v2_reason": vec_v2["reasons"].get(g, "no_supply"),
+            "king_div_action": clean_float(gr.get("div_action")), "king_div_action_exact": clean_float(gr.get("div_action_exact")),
+            "king_div_score": clean_float(gr.get("div_score")),
             "king_Dbar": clean_float(gr.get("Dbar")), "king_Dbar_plus": clean_float(gr.get("Dbar_plus")),
             "king_n_d": int(gr.get("n_d") or 0),
             # the king's miss rate, raw from the ledger (decayed means over king rows)
@@ -344,7 +398,17 @@ def compute(args) -> dict:
                                                "share to recurrence_group_cap * n_turns / 1300 -- k before share"},
                   "v11": {"informational": True, "rule": "w = (M~ + eps)^gamma if S~ >= s_gate else 0",
                           "s_gate": s_gate, "counted": False},
-                  "v12": {"informational": True, "counted": False, "s_gate": s_gate,
+                  "v2": {"informational": counted != "v2", "counted": counted == "v2", "eps": v2_eps, "gamma": v2_gamma,
+                         "component_weights": v2_w, "corpus_means": {k: clean_float(v) for k, v in v2_means.items()},
+                         "rule": "D_s = Σ_k ω_k · comp_k~ / corpus_mean_k over comps {action: 1 − soft A_match (token-Jaccard), "
+                                 "forfeit: king forfeit rate, score: max(0, teacher own-action lift − king B), gap: Dbar+}; "
+                                 "w_s = eps/N + (1 − eps) · D_s^gamma / Σ D^gamma (uniform floor = no forgetting); "
+                                 "group share ∝ Σ w over slice keys; floors, cap, clamp, recurrence guard as v1",
+                         "floor_property": "at the slice-key level the eps mass reproduces the LIVE share vector, so "
+                                           "v2 = eps · live + (1 − eps) · divergence-driven",
+                         "decision": "pending -- Jacob 2026-09-16 16:38 UTC: v2 becomes the counted rule for the fold-3 apply "
+                                     "if it passes on today's and tomorrow's fold; otherwise v1.2 stays"},
+                  "v12": {"informational": counted != "v1.2", "counted": counted == "v1.2", "s_gate": s_gate,
                           "rule": "M12~ = F~ + dplus_scale * Dbar+~; w = (M12~ + eps)^gamma if S~ >= s_gate else 0; "
                                   "F = king forfeit rate, Dbar+ = mean max(0, challenger - king) on gated near-king "
                                   "verdicts; both shrunk stratum -> cell -> group -> corpus",
@@ -355,11 +419,13 @@ def compute(args) -> dict:
                   "ledger_sha256": lsha, "manifest_sha256": msha, "corpus_epoch": epoch,
                   "joint_floor_applied": vec["joint_floor_applied"], "corpus_prior_M": rule.CORPUS_PRIOR_M,
                   "corpus_prior_S": clean_float(corpus_s), "groups": g_rows,
-                  "floors_check": rule.check_floors(vec["after_clamp"], static,
+                  "block_floors": vec["blocks"],
+                  "floors_check": rule.check_floors(vec["after_clamp"], static, block_floors=block_floors,
                                                     floor_frac=float(cfg["floor_frac_of_static"]),
                                                     floor_ct=float(cfg["floor_coding_terminal"]),
                                                     cap=float(cfg["group_cap"]),
-                                                    supply={g: vec["reasons"].get(g) != "no_supply" for g in g_rows})}
+                                                    supply={g: vec["reasons"].get(g) != "no_supply" for g in g_rows},
+                                                    guard_cut=set(guard["groups_cut"]))}
     write_json(groups_doc, out / "groups.json")
 
     rec_doc = {
@@ -418,6 +484,9 @@ def compute(args) -> dict:
         "probes_sha256": probes_sha, "n_probe_rows": probe_bytes.count(b"\n"),
         "v12": {"dplus_scale": clean_float(dplus_scale), "corpus_mean_forfeit": clean_float(corpus_f),
                 "corpus_mean_Dbar_plus": clean_float(corpus_dp), "s_gate": s_gate},
+        "v2": {"eps": v2_eps, "gamma": v2_gamma, "component_weights": v2_w,
+               "corpus_means": {k: clean_float(v) for k, v in v2_means.items()},
+               "uniform_floor_per_stratum": clean_float(v2_eps / max(1, len(strata)))},
         "corpus_prior_S": clean_float(corpus_s),
         "recompute": "python ops/curriculum/weights.py --ledger-json <ledger>.json --manifest-sha <manifest_sha256> "
                      "--probes teacher_probe.jsonl.gz --out <dir>  # prints weights_sha256",

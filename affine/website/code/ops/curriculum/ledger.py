@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import re
 import gzip
 import hashlib
 import json
@@ -51,9 +52,35 @@ from common import (  # noqa: E402
 )
 
 from affine import score as S  # noqa: E402
+from evalsrv import amatch  # noqa: E402
+
+TOKEN_RE = re.compile(r"[A-Za-z0-9_./-]+")
+
+
+def token_jaccard(a: str, b: str) -> float:
+    ta, tb = set(TOKEN_RE.findall(a)), set(TOKEN_RE.findall(b))
+    if not ta and not tb:
+        return 1.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def action_divergence(y_side: str | None, ref_ys: list[str], kind: str | None
+                      ) -> tuple[float | None, float | None]:
+    """(1 − soft A_match, 1 − exact A_match) for one side on one turn. Soft =
+    mean token-Jaccard between the side's normalised action and each valid
+    reference action (exact agreement is ≈ 0 on bash/tool turns, so the
+    soft form carries the signal). None when the dialect has no normal
+    form (`text`) or nothing parses."""
+    refs = [n for n in (amatch.norm_action(y, kind) for y in ref_ys) if n is not None]
+    mine = amatch.norm_action(y_side, kind)
+    if mine is None or not refs:
+        return None, None
+    soft = sum(token_jaccard(mine, r) for r in refs) / len(refs)
+    exact = sum(1 for r in refs if r == mine) / len(refs)
+    return 1.0 - soft, 1.0 - exact
 
 ROW_SORT = ("challenge_id", "side", "turn_id")
-LEDGER_VERSION = 3   # 2: rollup + M_live / q25_live_score; 3: + Dbar_plus / n_d_w (rule v1.2). Rows unchanged.
+LEDGER_VERSION = 4   # 4 (2026-09-16, rule v2): rows gain div_action / div_action_exact / div_score / b_lift / teacher_own_lift (ROWS CHANGE -> new ledger sha); rollup + div_* means
 
 
 # -- history --------------------------------------------------------------------
@@ -160,7 +187,8 @@ def side_terms(row: dict | None, dp: dict) -> dict:
     the teacher produced zero references there; both sides lose the slot)."""
     if row is None:
         return {"scored": False, "forfeit": None, "turn_score": None, "r_leg": None,
-                "g_leg": None, "b_pass": None, "thought_chars": None}
+                "g_leg": None, "b_pass": None, "thought_chars": None,
+                "b_king_lift": None, "y_side": None}
     tau = dp.get("tau", 0.03)
     band_c = dp.get("band_c", 2.0)
     band_floor = dp.get("band_floor", 0.002)
@@ -169,14 +197,16 @@ def side_terms(row: dict | None, dp: dict) -> dict:
     norm = dp.get("action_norm_bytes", None)
     if S.is_forfeit(row):
         return {"scored": floor is not None, "forfeit": True, "turn_score": floor,
-                "r_leg": None, "g_leg": None, "b_pass": None, "thought_chars": None}
+                "r_leg": None, "g_leg": None, "b_pass": None, "thought_chars": None,
+                "b_king_lift": None, "y_side": None}
     pairs = row["pairs"]
     score = S.side_turn_score(row, tau, mode, band_c, band_floor, floor, norm)
     r = S.centered_reason(pairs, tau)
     g = S.grounding(pairs, band_c, band_floor)
     bp = S.b_gate_pass(pairs[0])
     return {"scored": True, "forfeit": False, "turn_score": score, "r_leg": r, "g_leg": g,
-            "b_pass": bp, "thought_chars": len((pairs[0].get("z_a") or "").strip())}
+            "b_pass": bp, "thought_chars": len((pairs[0].get("z_a") or "").strip()),
+            "b_king_lift": S.teacher_causality(pairs[0]), "y_side": pairs[0].get("y_a")}
 
 
 # -- build ----------------------------------------------------------------------
@@ -298,6 +328,11 @@ def build_rows(history_rows: list[dict], evals: str, *, since: str, until: str,
                              str(m.get("action_kind") or ""), dbin]) if m else ""
             kt = side_terms(k_rows.get(tid), dp)
             ct = side_terms(c_rows.get(tid), dp)
+            own = [r["lp_own"] - r["lp_empty"] for r in ref
+                   if r.get("lp_own") is not None and r.get("lp_empty") is not None]
+            t_own = (sum(own) / len(own)) if own else None
+            kind = str(m.get("action_kind") or "") or None
+            ref_ys = [r.get("y") or "" for r in ref]
             d = (ct["turn_score"] - kt["turn_score"]) if (kt["scored"] and ct["scored"]) else None
             turn_common = {
                 "turn_id": tid, "joined": m != {}, "stratum": stratum, "base_stratum": base_s,
@@ -310,7 +345,18 @@ def build_rows(history_rows: list[dict], evals: str, *, since: str, until: str,
             }
             for side, terms, is_king in (("king", kt, not reign.get("revoked", False)),
                                          ("challenger", ct, chal_becomes_king and not crowning.get("revoked", False))):
+                div_soft, div_exact = (action_divergence(terms["y_side"], ref_ys, kind)
+                                       if terms["scored"] and not terms["forfeit"] else (None, None))
+                b_lift = terms["b_king_lift"]
+                # (c) reference-implied score deficit: the teacher's own thought
+                # explains its own action (lp_own − lp_empty, per byte) more than
+                # the side's thought explains the side's action (B); ≥ 0
+                div_score = (max(0.0, t_own - b_lift) if (t_own is not None and b_lift is not None
+                                                          and terms["scored"] and not terms["forfeit"]) else None)
                 rows.append({**common, **turn_common, "side": side, "is_king_row": bool(is_king),
+                             "div_action": clean_float(div_soft), "div_action_exact": clean_float(div_exact),
+                             "div_score": clean_float(div_score), "b_lift": clean_float(b_lift),
+                             "teacher_own_lift": clean_float(t_own),
                              "scored": bool(terms["scored"]), "forfeit": terms["forfeit"],
                              "turn_score": clean_float(terms["turn_score"]),
                              "r_leg": clean_float(terms["r_leg"]), "g_leg": clean_float(terms["g_leg"]),
@@ -373,7 +419,8 @@ def rollup(rows: list[dict], scored_cids: list[str], cfg: dict) -> list[dict]:
             acc[k] = {"level": level, "key": key, "n_obs": 0, "n_w": 0.0, "miss_w": 0.0,
                       "live_w": 0.0, "forfeit_w": 0.0, "score_w": 0.0, "n_d": 0, "d_w": 0.0,
                       "livevalid_w": 0.0, "livemiss_w": 0.0, "livescore_w": 0.0, "live_scores": [],
-                      "dplus_sum": 0.0,
+                      "dplus_sum": 0.0, "act_w": 0.0, "act_sum": 0.0, "act_exact_sum": 0.0,
+                      "sc_w": 0.0, "sc_sum": 0.0,
                       "dw_sum": 0.0, "draws_50": 0, "turns_50": defaultdict(int),
                       "n_draws_total": 0, "turns_all": set(), "group": "", "cell": ""}
         return acc[k]
@@ -402,6 +449,13 @@ def rollup(rows: list[dict], scored_cids: list[str], cfg: dict) -> list[dict]:
                 s["live_w"] += a * (1.0 if r["live"] else 0.0)
                 s["forfeit_w"] += a * (1.0 if r["forfeit"] else 0.0)
                 s["score_w"] += a * float(r["turn_score"])
+                if r["div_action"] is not None:
+                    s["act_w"] += a
+                    s["act_sum"] += a * float(r["div_action"])
+                    s["act_exact_sum"] += a * float(r["div_action_exact"] or 0.0)
+                if r["div_score"] is not None:
+                    s["sc_w"] += a
+                    s["sc_sum"] += a * float(r["div_score"])
                 if r["live"] and not r["forfeit"]:
                     # "answers badly": live turn, answered, scored under theta
                     s["livevalid_w"] += a
@@ -426,6 +480,11 @@ def rollup(rows: list[dict], scored_cids: list[str], cfg: dict) -> list[dict]:
             "n_d": s["n_d"], "n_d_w": clean_float(s["d_w"]),
             "Dbar": clean_float(s["dw_sum"] / s["d_w"]) if s["d_w"] > 0 else None,
             "Dbar_plus": clean_float(s["dplus_sum"] / s["d_w"]) if s["d_w"] > 0 else None,
+            "n_act_w": clean_float(s["act_w"]),
+            "div_action": clean_float(s["act_sum"] / s["act_w"]) if s["act_w"] > 0 else None,
+            "div_action_exact": clean_float(s["act_exact_sum"] / s["act_w"]) if s["act_w"] > 0 else None,
+            "n_sc_w": clean_float(s["sc_w"]),
+            "div_score": clean_float(s["sc_sum"] / s["sc_w"]) if s["sc_w"] > 0 else None,
             "M_live": clean_float(s["livemiss_w"] / s["livevalid_w"]) if s["livevalid_w"] > 0 else None,
             "mean_live_score": clean_float(s["livescore_w"] / s["livevalid_w"]) if s["livevalid_w"] > 0 else None,
             "q25_live_score": clean_float(float(np.percentile(np.array(sorted(s["live_scores"])), 25)))
@@ -453,14 +512,17 @@ ROW_SCHEMA = pa.schema([
     ("live", pa.bool_()), ("scored", pa.bool_()), ("forfeit", pa.bool_()),
     ("turn_score", pa.float64()), ("r_leg", pa.float64()), ("g_leg", pa.float64()),
     ("b_pass", pa.bool_()), ("thought_chars", pa.int64()), ("miss", pa.bool_()),
-    ("d", pa.float64()),
+    ("d", pa.float64()), ("div_action", pa.float64()), ("div_action_exact", pa.float64()),
+    ("div_score", pa.float64()), ("b_lift", pa.float64()), ("teacher_own_lift", pa.float64()),
 ])
 
 ROLLUP_SCHEMA = pa.schema([
     ("level", pa.string()), ("key", pa.string()), ("group", pa.string()), ("cell", pa.string()),
     ("n_obs", pa.int64()), ("n_w", pa.float64()), ("M", pa.float64()), ("S", pa.float64()),
     ("forfeit_rate", pa.float64()), ("mean_score", pa.float64()), ("n_d", pa.int64()),
-    ("n_d_w", pa.float64()), ("Dbar", pa.float64()), ("Dbar_plus", pa.float64()), ("M_live", pa.float64()), ("mean_live_score", pa.float64()),
+    ("n_d_w", pa.float64()), ("Dbar", pa.float64()), ("Dbar_plus", pa.float64()),
+    ("n_act_w", pa.float64()), ("div_action", pa.float64()), ("div_action_exact", pa.float64()),
+    ("n_sc_w", pa.float64()), ("div_score", pa.float64()), ("M_live", pa.float64()), ("mean_live_score", pa.float64()),
     ("q25_live_score", pa.float64()), ("n_live_answered", pa.int64()),
     ("draws_50", pa.int64()), ("distinct_turns_50", pa.int64()),
     ("max_turn_draws_50", pa.int64()), ("n_draws_total", pa.int64()),
@@ -552,6 +614,8 @@ def build(args) -> dict:
             "d": "challenger turn_score - king turn_score on the same turn (both sides scored)",
             "gated_near_king": "verdict had no rejection_reason and |z| < near_king_z",
             "rollup.n_w": "sum over king rows of 0.5^(age_in_verdicts / half_life_verdicts)",
+            "div_action": "1 - mean token-Jaccard between the side's normalised action and each valid reference action (evalsrv.amatch normal form; None for text)",
+            "div_score": "max(0, mean_i(lp_own_i - lp_empty_i) - B_side): the teacher's thought explains its own action more than the side's thought explains the side's action (per byte)",
             "rollup.Dbar_plus": "decayed mean over gated near-king challenger rows of max(0, challenger - king turn score): 'a challenger can do better here'",
             "rollup.M_live": "miss rate among live, answered king rows (score < theta): 'answers badly'; M - M_live*S_answered ~ forfeits",
             "rollup.q25_live_score": "unweighted 25th percentile of live answered king scores in the key (compare with the global theta)",

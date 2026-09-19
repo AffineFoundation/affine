@@ -57,6 +57,7 @@ from affine.score import (
     near_miss_window,
     pooled_margin_stats,
     score_miner,
+    turn_score as turn_score_live,
 )
 
 from .terms import (
@@ -65,8 +66,8 @@ from .terms import (
     sample_teacher_rollouts,
     score_teacher_rollouts,
 )
-from . import amatch
-from .chat import get_tokenizer
+from . import amatch, sdmeter
+from .chat import THOUGHT_RENDERINGS, get_tokenizer, set_thought_rendering
 from .protocol_probe import probe_settings, rejection_detail, run_probe
 from .vllm_client import EngineUnreachableError, ModelPool, Served, VllmModel
 
@@ -451,10 +452,15 @@ class RefCache:
 
     async def ensure_scored(self, tid: str, teacher: VllmModel | ModelPool,
                             prefix: list[dict],
-                            thought_echo: bool = False) -> list[dict]:
+                            thought_echo: bool = False, *,
+                            cross_echo: bool = False,
+                            content_echo: bool = False,
+                            content_lift_nats: float = 1.0) -> list[dict]:
         """lp_own / lp_empty (+ lp_thought under min(R,G)) for the turn's
         raw teacher rollouts. The grounding band echoes are cached here so
-        both sides share them — k thought echoes per turn per duel."""
+        both sides share them — k thought echoes per turn per duel. The
+        sd-meter's shared echoes (cross / unconditioned thought) ride along
+        the same way: once per turn per duel."""
         if tid in self.cache:
             return self.cache[tid]
         async with self._locks[tid]:
@@ -463,7 +469,8 @@ class RefCache:
             raw = self._raw.get(tid) or []
             ref = await score_teacher_rollouts(
                 teacher, prefix, raw, thought_echo=thought_echo,
-                sticky_key=tid)
+                cross_echo=cross_echo, content_echo=content_echo,
+                content_lift_nats=content_lift_nats, sticky_key=tid)
             self.cache[tid] = ref
             return ref
 
@@ -498,8 +505,16 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
     # min(R,G) v5: grounding echoes (t_i on refs, m per miner rollout).
     # min(R,G,A) v6 adds the action echoes lpC(y_A|z_C^i) per pair.
     score_mode = str(duel_cfg.get("score_mode", "reason"))
-    thought_echo = score_mode in ("min_rg", "min_rga")
+    thought_echo = score_mode in ("min_rg", "min_rga", "sd_min_rga")
     action_echo = score_mode == "min_rga"
+    # sd-meter (shadow 2026-09-18 / rule under score_mode="sd_min_rga"):
+    # A echoes on the miner side, cross + unconditioned thought echoes on
+    # the shared ref side. Off unless the shadow knob or the mode asks.
+    sd = sdmeter.settings(duel_cfg)
+    sd_on = sd["shadow"] or score_mode == "sd_min_rga"
+    sd_cross = sd_on and (sd["cross_echo"] or sd["anchor"] == "loo")
+    sd_content = sd_on
+    sd_action = sd_on and not action_echo
     # wvk 20 (2026-09-16): teacher-relative miner thought cap. 0 = fixed cap.
     thought_cap_ratio = float(duel_cfg.get("thought_cap_ratio", 0.0))
     teacher_tok = (get_tokenizer(teacher.cfg.repo, teacher.cfg.revision)
@@ -562,7 +577,10 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
         # Holding turn_sem through these left miner GPUs idle (chal-00075).
         if abort_event is not None and abort_event.is_set():
             raise DuelAborted("superseded by a new duel request")
-        ref = await refs.ensure_scored(tid, teacher, prefix, thought_echo)
+        ref = await refs.ensure_scored(
+            tid, teacher, prefix, thought_echo,
+            cross_echo=sd_cross, content_echo=sd_content,
+            content_lift_nats=sd["content_lift_nats"])
         if not ref:
             done += 1
             return
@@ -573,6 +591,9 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
             causality_gate=causality_gate,
             thought_echo=thought_echo,
             action_echo=action_echo,
+            content_echo=sd_content,
+            content_lift_nats=sd["content_lift_nats"],
+            shadow_action_echo=sd_action,
             sticky_key=tid, action_kind=action_kind,
             rollouts=miner_rollouts)
         t.update({"turn_id": tid, "miner": miner.cfg.name,
@@ -769,6 +790,14 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     pod's own toml δ, stamped as mode "fixed".
     """
     duel_cfg = dict(engine_cfg["duel"])
+    # wvk 22: how thoughts are rendered for every echo (canonical = the
+    # wvk <= 21 "</think>\nTHOUGHT: z" body; as_generated = latent inside
+    # <think>…</think>, visible text after it, verbatim). Process-wide, set
+    # before any sampling or echo of this duel.
+    thought_rendering = str(duel_cfg.get("thought_rendering", "canonical"))
+    if thought_rendering not in THOUGHT_RENDERINGS:
+        raise ValueError(f"[duel] thought_rendering must be one of {THOUGHT_RENDERINGS}")
+    set_thought_rendering(thought_rendering)
     margin_stamp = margin_stamp_for(duel_cfg, margin)
     duel_cfg["min_margin"] = margin_stamp["min_margin_effective"]
     started = time.monotonic()
@@ -929,12 +958,24 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         action_norm_bytes = float(_anb) if _anb is not None else None
         # Minimum z safeguard (staged 2026-09-12; 0 = off).
         min_z = float(duel_cfg.get("min_z", 0.0) or 0.0)
+        # sd-meter (2026-09-18): shadow on every duel when [duel.sd_meter]
+        # shadow = true; THE rule when score_mode = "sd_min_rga". The live
+        # legs (R, G, B, lengths) are still summarised through min_rg so the
+        # telemetry stays comparable across the fork.
+        sd = sdmeter.settings(duel_cfg)
+        sd_rule = score_mode == "sd_min_rga"
+        legs_mode = "min_rg" if sd_rule else score_mode
+        last_shadow: dict = {}
+
+        def kinds() -> dict[str, str]:
+            return {turn_id(rec): rec.get("action_kind") or dialects.DEFAULT_KIND
+                    for rec in turns}
 
         def decide(c_rows: list[dict], k_rows: list[dict]) -> DuelResult:
             """The crown rule on a set of paired rows — one slice or the
             pool of all slices, the same call either way. δ is the
             effective margin for this duel (`margin_stamp`)."""
-            return score_duel(
+            live = score_duel(
                 c_rows, k_rows,
                 k_sigma=float(duel_cfg["k_sigma"]),
                 min_margin=float(duel_cfg.get("min_margin", 0.0)),
@@ -943,10 +984,44 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
                 challenger_bank_frac=_mean_bank(c_rows),
                 king_bank_frac=_mean_bank(k_rows),
                 tau=tau,
-                score_mode=score_mode, band_c=band_c, band_floor=band_floor,
+                score_mode=legs_mode, band_c=band_c, band_floor=band_floor,
                 forfeit_turn_score=forfeit_turn_score,
                 action_norm_bytes=action_norm_bytes,
                 min_z=min_z)
+            if not sd_rule:
+                return live
+            # The sd-meter decides; the live call above supplies the gates
+            # (thought floor, B licence) and the min(R,G) telemetry.
+            gates_ok = not (live.thought_floor_blocked or live.causality_blocked)
+            shadow = sdmeter.shadow_verdict(
+                c_rows, k_rows, {tid: refs.cache[tid] for tid in refs.cache},
+                kinds(), tau, sd, live_gates_pass=gates_ok)
+            last_shadow.clear()
+            last_shadow.update(shadow)
+            head = shadow["by_anchor"].get(sd["anchor"]) or {}
+            if not head.get("available"):
+                raise RuntimeError(
+                    f"sd_min_rga: anchor {sd['anchor']!r} unavailable: {head.get('reason')}")
+            se = head["se"] if head["se"] is not None else float("inf")
+            wins = bool(head["would_crown_rule_only"]) and gates_ok
+            z = head["z"] if head["z"] is not None else 0.0
+            if min_z > 0 and wins and z < min_z:
+                wins = False
+            return DuelResult(
+                challenger=live.challenger, king=live.king,
+                margin=head["margin"] if head["margin"] is not None else 0.0,
+                se=se, z=z, k_sigma=sd["k_sigma"], challenger_wins=wins,
+                n_paired_turns=head["n_paired_turns"],
+                min_margin=sd["min_margin_sd"], min_thought_chars=min_thought,
+                thought_floor_blocked=live.thought_floor_blocked,
+                causality_gamma=causality_gamma,
+                causality_blocked=live.causality_blocked,
+                tau=tau, score_mode=score_mode, band_c=band_c, band_floor=band_floor,
+                forfeit_turn_score=sd["forfeit_sd"],
+                n_forfeit_turns=head["n_forfeit_turns"],
+                action_norm_bytes=sd["a_norm_bytes"], min_z=min_z,
+                min_z_blocked=(min_z > 0 and bool(head["would_crown_rule_only"])
+                               and gates_ok and z < min_z))
 
         # Fresh teacher references every duel (see RefCache docstring): the
         # cache lives and dies inside this call.
@@ -1031,9 +1106,9 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             for s in slices[1:]]
         slice_info["n_pooled"] = len(turn_ids)
 
-    king_sum = _miner_summary(king_rows, tau, score_mode, band_c, band_floor,
+    king_sum = _miner_summary(king_rows, tau, legs_mode, band_c, band_floor,
                               forfeit_turn_score, action_norm_bytes)
-    chall_sum = _miner_summary(chall_rows, tau, score_mode, band_c, band_floor,
+    chall_sum = _miner_summary(chall_rows, tau, legs_mode, band_c, band_floor,
                                forfeit_turn_score, action_norm_bytes)
     teacher_sum = _teacher_lengths(refs_used)
     _len_deltas(king_sum, teacher_sum)
@@ -1053,10 +1128,10 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     kind_by_tid = {turn_id(rec): rec.get("action_kind") or dialects.DEFAULT_KIND
                    for rec in turns}
     king_sum["by_dialect"] = _by_dialect(
-        king_rows, kind_by_tid, tau, score_mode, band_c, band_floor,
+        king_rows, kind_by_tid, tau, legs_mode, band_c, band_floor,
         forfeit_turn_score, action_norm_bytes)
     chall_sum["by_dialect"] = _by_dialect(
-        chall_rows, kind_by_tid, tau, score_mode, band_c, band_floor,
+        chall_rows, kind_by_tid, tau, legs_mode, band_c, band_floor,
         forfeit_turn_score, action_norm_bytes)
     teacher_sum["by_dialect"] = _teacher_by_dialect(turns, refs_used)
     # Overall teacher self-agreement = turn-weighted mean over the dialects
@@ -1078,7 +1153,30 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         " G = min(m − (mu − w), (mu + w) − m),"
         " m = lpC(z_A|x), mu/sd over lpC(z_C^i|x),"
         " w = max(band_c·sd, band_floor)")
-    if score_mode == "min_rga":
+    # sd-meter block: the shadow (every duel while [duel.sd_meter].shadow is
+    # on) or the deciding numbers (score_mode = "sd_min_rga"). Computed on
+    # the pooled rows with the same refs; the live min(R,G) numbers stay in
+    # king/challenger telemetry either way.
+    sd_block = None
+    if sd["shadow"] or sd_rule:
+        gates_ok = not (result.thought_floor_blocked or result.causality_blocked)
+        if sd_rule and last_shadow:
+            sd_block = dict(last_shadow)
+        else:
+            sd_block = sdmeter.shadow_verdict(
+                chall_rows, king_rows, refs_used, kind_by_tid, tau, sd,
+                live_gates_pass=gates_ok,
+                live_turn_score=lambda pairs: turn_score_live(
+                    pairs, tau, legs_mode, band_c, band_floor, action_norm_bytes),
+                forfeit_turn_score=forfeit_turn_score)
+        sd_block["cost"] = sdmeter.cost_block(
+            teacher_m.echo_stats() if hasattr(teacher_m, "echo_stats") else {},
+            time.monotonic() - started)
+        sd_block["role"] = "rule" if sd_rule else "shadow"
+
+    if sd_rule:
+        ranking_formula = (sd_block or {}).get("formula") or "turn = min(z_R, typ_c, z_A)"
+    elif score_mode == "min_rga":
         ranking_formula = (
             "turn = min(R, G, A); " + _rg_formula +
             "; A = tau·log(mean_i exp(b_i/tau)),"
@@ -1092,11 +1190,15 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "Reason(turn) = tau·log(mean_i exp((lpC(y_i|z_A) − lpC(y_i|∅))/tau))")
     else:
         ranking_formula = "Reason = lpC(y_C|z_A) − lpC(y_C|∅)"
-    if forfeit_turn_score is not None:
+    if forfeit_turn_score is not None and not sd_rule:
         ranking_formula += (
             f"; forfeit (no parseable action) scores {forfeit_turn_score:g}")
     if require_think_close:
         ranking_formula += "; a rollout without </think> is a forfeit"
+    if thought_rendering == "as_generated":
+        ranking_formula += ("; thoughts rendered as generated for every echo: "
+                            "<think>{latent}\n</think>\n\n{visible}\n\n{y} (latent + visible "
+                            "spans scored, verbatim, no label)")
     if near_miss["enabled"]:
         if near_miss["window_mode"] == "bar":
             ranking_formula += (
@@ -1174,6 +1276,8 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "forfeit_turn_score": forfeit_turn_score,
             "action_norm_bytes": action_norm_bytes,
             "require_think_close": require_think_close,
+            # wvk 22: thought rendering for every echo (see chat.thought_body).
+            "thought_rendering": thought_rendering,
             "allowed_action_kinds": allowed_kinds,
             "max_thought_tokens": int(duel_cfg["max_thought_tokens"]),
             "max_action_tokens": int(duel_cfg["max_action_tokens"]),
@@ -1210,6 +1314,10 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         "duel_seconds": time.monotonic() - started,
         "slice": slice_info,
     }
+    if sd_block is not None:
+        verdict["shadow"] = {"sd_meter": sd_block}
+        verdict["duel_params"]["sd_meter"] = {
+            "role": sd_block["role"], "anchor": sd["anchor"], **sd_block["knobs"]}
     if protocol is not None:
         verdict["protocol_probe"] = _probe_public(protocol)
     if confirm:

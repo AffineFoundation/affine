@@ -24,7 +24,8 @@ import asyncio
 from affine.priors import PRIOR_BANK
 from affine.score import eta
 
-from .vllm_client import ModelPool, VllmModel
+from . import sdmeter
+from .vllm_client import ModelPool, VllmModel, echo_tag
 
 TeacherClient = VllmModel | ModelPool
 MinerClient = VllmModel | ModelPool
@@ -81,6 +82,9 @@ async def score_teacher_rollouts(
         teacher: TeacherClient, prefix: list[dict],
         rollouts: list[tuple[str, str]], *,
         thought_echo: bool = False,
+        cross_echo: bool = False,
+        content_echo: bool = False,
+        content_lift_nats: float = 1.0,
         sticky_key: str | None = None) -> list[dict]:
     """lpC(y|z_C) and lpC(y|∅) for already-sampled teacher rollouts.
 
@@ -88,11 +92,23 @@ async def score_teacher_rollouts(
     thought t_i = lpC(z_C^i|x), stamped as ``lp_thought``. The band the
     miner's thought is judged against is built from these — shared by both
     sides via the RefCache, so it costs k echoes per turn per duel.
+
+    sd-meter (shadow 2026-09-18), both shared by the two sides:
+    cross_echo — the leave-one-out anchor's k(k−1) cross echoes
+    lpC(y_C^i | z_C^j), i ≠ j, stamped as ``lp_cross`` (list over j, None at
+    j == i). They run in a SECOND phase, after the own echoes: the prompt
+    x + z_C^j + y_C^i shares x + z_C^j with ref j's own echo, so with the
+    ref echo already in the prefix cache only the y_C^i tail is recomputed.
+    content_echo — the unconditioned per-token echo lpC(z_C^i | ∅) next to
+    a per-token version of t_i; the content-masked statistic (mean logprob
+    over tokens the task moves by > content_lift_nats) is stamped as
+    ``mc_thought`` with its token counts. ``n_bytes_y`` (action bytes) is
+    stamped whenever cross_echo is on (the summed A leg needs it).
     """
     if not rollouts:
         return []
     thought_tasks = ([
-        teacher.score_thought(prefix, z, sticky_key=sticky_key)
+        teacher.score_thought(prefix, z, sticky_key=sticky_key, tokens=content_echo)
         for z, _ in rollouts
     ] if thought_echo else [])
     scored = await asyncio.gather(*[
@@ -110,7 +126,39 @@ async def score_teacher_rollouts(
                "lp_empty": scored[k + i]["lp_per_byte"]}
         if thought_echo:
             rec["lp_thought"] = scored[2 * k + i]["lp_per_byte"]
+        if cross_echo:
+            rec["n_bytes_y"] = scored[i]["n_bytes"]
         out.append(rec)
+    if not (cross_echo or content_echo):
+        return out
+    # Phase 2 (shadow-only echoes, booked under their own tag): the own
+    # echoes above are in the prefix cache now, so the cross echoes are
+    # tail-only; the unconditioned thought echoes have no turn prefix.
+    with echo_tag("sd_meter"):
+        cross_idx = ([(i, j) for i in range(k) for j in range(k) if i != j]
+                     if cross_echo and k >= 2 else [])
+        uncond = ([teacher.score_thought_uncond(z, sticky_key=sticky_key)
+                   for z, _ in rollouts] if (content_echo and thought_echo) else [])
+        res = await asyncio.gather(*[
+            teacher.score_action(prefix, rollouts[j][0], rollouts[i][1],
+                                 sticky_key=sticky_key)
+            for i, j in cross_idx
+        ], *uncond)
+    if cross_idx:
+        for rec in out:
+            rec["lp_cross"] = [None] * k
+        for t, (i, j) in enumerate(cross_idx):
+            out[i]["lp_cross"][j] = res[t]["lp_per_byte"]
+    if uncond:
+        base = len(cross_idx)
+        for i in range(k):
+            tok_x = scored[2 * k + i].get("tokens") or []
+            stats = sdmeter.content_stats(tok_x, res[base + i].get("tokens") or [],
+                                          content_lift_nats)
+            out[i]["lp_thought_e"] = res[base + i]["lp_per_byte"]
+            out[i]["mc_thought"] = stats["mc"]
+            out[i]["n_content_thought"] = stats["n_content"]
+            out[i]["n_tokens_thought"] = stats["n_tokens"]
     return out
 
 
@@ -118,6 +166,9 @@ async def teacher_reference(teacher: TeacherClient, prefix: list[dict], n: int,
                             temperature: float, max_thought: int,
                             max_action: int, *,
                             thought_echo: bool = False,
+                            cross_echo: bool = False,
+                            content_echo: bool = False,
+                            content_lift_nats: float = 1.0,
                             sticky_key: str | None = None,
                             action_kind: str | None = None) -> list[dict]:
     """Sample teacher rollouts once per turn; reused across all miners.
@@ -131,7 +182,8 @@ async def teacher_reference(teacher: TeacherClient, prefix: list[dict], n: int,
         sticky_key=sticky_key, action_kind=action_kind)
     return await score_teacher_rollouts(
         teacher, prefix, rollouts, thought_echo=thought_echo,
-        sticky_key=sticky_key)
+        cross_echo=cross_echo, content_echo=content_echo,
+        content_lift_nats=content_lift_nats, sticky_key=sticky_key)
 
 
 async def sample_miner_rollouts(
@@ -168,6 +220,9 @@ async def miner_terms(teacher: TeacherClient, miner: MinerClient, prefix: list[d
                       causality_gate: bool = False,
                       thought_echo: bool = False, *,
                       action_echo: bool = False,
+                      content_echo: bool = False,
+                      content_lift_nats: float = 1.0,
+                      shadow_action_echo: bool = False,
                       sticky_key: str | None = None,
                       action_kind: str | None = None,
                       rollouts: list[tuple[str, str]] | None = None) -> dict:
@@ -198,6 +253,11 @@ async def miner_terms(teacher: TeacherClient, miner: MinerClient, prefix: list[d
     if not rollouts or not ref:
         return {"valid": False}
 
+    # Shadow-only A echoes (sd-meter, 2026-09-18): the live rule does not
+    # need lpC(y_A|z_C^i) but the shadow score does. Same echo as the v6
+    # action leg, booked under the "sd_meter" tag; tail-only through the
+    # prefix cache (x + z_C^i is cached by the ref's own echo).
+    shadow_a = bool(shadow_action_echo and reason_only and not action_echo)
     if reason_only:
         # v4 pairing: keep all k refs; cycle miner rollouts across them
         # (with the production 1 miner sample, every ref shares one z_A/y_A).
@@ -224,18 +284,33 @@ async def miner_terms(teacher: TeacherClient, miner: MinerClient, prefix: list[d
     # B echoes once per distinct miner rollout (ref-independent). The action
     # leg reuses the lpC(y_A|∅) baseline from this pair of echoes.
     b_rollouts = (sorted(set(midx))
-                  if (reason_only and (causality_gate or action_echo)) else [])
+                  if (reason_only and (causality_gate or action_echo or shadow_a)) else [])
     for j in b_rollouts:
         tasks.append(teacher.score_action(
             prefix, rollouts[j][0], rollouts[j][1], sticky_key=sticky_key))
         tasks.append(teacher.score_action(
             prefix, EMPTY_THOUGHTS, rollouts[j][1], sticky_key=sticky_key))
-    # Grounding echo m = lpC(z_A|x) once per distinct miner rollout.
+    # Grounding echo m = lpC(z_A|x) once per distinct miner rollout
+    # (per-token when the content mask needs it — same request).
     g_rollouts = sorted(set(midx)) if thought_echo else []
     for j in g_rollouts:
         tasks.append(teacher.score_thought(
-            prefix, rollouts[j][0], sticky_key=sticky_key))
-    res = await asyncio.gather(*tasks)
+            prefix, rollouts[j][0], sticky_key=sticky_key, tokens=content_echo))
+    tasks = [asyncio.ensure_future(t) for t in tasks]
+    # Shadow echoes, created under their own tag so the cost accounting can
+    # separate them; they run in the same gather (concurrent with the base
+    # echoes — every prefix they extend is already cached).
+    shadow_tasks = []
+    with echo_tag("sd_meter"):
+        if shadow_a:
+            for i in range(n_pairs):
+                shadow_tasks.append(asyncio.ensure_future(teacher.score_action(
+                    prefix, ref[i]["z"], rollouts[midx[i]][1], sticky_key=sticky_key)))
+        u_rollouts = g_rollouts if content_echo else []
+        for j in u_rollouts:
+            shadow_tasks.append(asyncio.ensure_future(
+                teacher.score_thought_uncond(rollouts[j][0], sticky_key=sticky_key)))
+    res = await asyncio.gather(*tasks, *shadow_tasks)
 
     b_by_rollout: dict[int, dict[str, float]] = {}
     base = n_pairs * len(calls)
@@ -252,6 +327,22 @@ async def miner_terms(teacher: TeacherClient, miner: MinerClient, prefix: list[d
     g_base = base + 2 * len(b_rollouts)
     for t, j in enumerate(g_rollouts):
         m_by_rollout[j] = res[g_base + t]["lp_per_byte"]
+    s_base = len(tasks)
+    a_shadow: dict[int, float] = {}
+    if shadow_a:
+        for i in range(n_pairs):
+            a_shadow[i] = res[s_base + i]["lp_per_byte"]
+        s_base += n_pairs
+    c_by_rollout: dict[int, dict] = {}
+    for t, j in enumerate(u_rollouts):
+        tok_x = res[g_base + g_rollouts.index(j)].get("tokens") or []
+        stats = sdmeter.content_stats(tok_x, res[s_base + t].get("tokens") or [],
+                                      content_lift_nats)
+        c_by_rollout[j] = {
+            "lpC_za_e": res[s_base + t]["lp_per_byte"],
+            "mc_za": stats["mc"], "n_content_za": stats["n_content"],
+            "n_tokens_za": stats["n_tokens"], "mean_lift_za": stats["mean_lift"],
+        }
 
     bank_vals = None
     if score_bank:
@@ -271,6 +362,14 @@ async def miner_terms(teacher: TeacherClient, miner: MinerClient, prefix: list[d
         if thought_echo:
             lp["lpC_za_x"] = m_by_rollout.get(midx[i])
             lp["lpC_zc_x"] = ref[i].get("lp_thought")
+        if shadow_a:
+            # Shadow A leg: same key the v6 action leg uses, so
+            # affine.score.action_lift reads it unchanged.
+            lp["lpC_ya_zc"] = a_shadow[i]
+        if c_by_rollout:
+            lp.update(c_by_rollout.get(midx[i], {}))
+            lp["mc_zc"] = ref[i].get("mc_thought")
+            lp["n_content_zc"] = ref[i].get("n_content_thought")
         lp["z_a"] = rollouts[midx[i]][0]
         lp["y_a"] = rollouts[midx[i]][1]
         lp["eta"] = eta(lp)

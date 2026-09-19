@@ -86,6 +86,36 @@ def stratum_weight_v12(f_t: float, dplus_t: float, s_t: float, *, dplus_scale: f
     return m12, ((m12 + eps) ** gamma if s_t >= s_gate else 0.0)
 
 
+def divergence_v2(comps: dict[str, float | None], corpus_means: dict[str, float],
+                  weights: dict[str, float]) -> float:
+    """Rule v2 divergence D_s: weighted mix of the king-vs-teacher distances,
+    each divided by its corpus mean so no unit dominates. A component
+    without a value (e.g. action divergence on `text` turns) is dropped and
+    the remaining weights renormalised."""
+    num = 0.0
+    wsum = 0.0
+    for k, w in weights.items():
+        v = comps.get(k)
+        mean = corpus_means.get(k) or 0.0
+        if v is None or mean <= 0:
+            continue
+        num += w * max(float(v), 0.0) / mean
+        wsum += w
+    return num / wsum if wsum > 0 else 0.0
+
+
+def weights_v2(strata: dict[str, dict], *, eps: float, gamma: float, field_d: str = "D_v2",
+               out: str = "w_v2") -> None:
+    """w_s = eps / N + (1 − eps) · D_s^gamma / Σ D^gamma over ALL strata: the
+    uniform floor keeps every turn's draw probability non-zero (nothing can
+    be forgotten); the rest follows divergence."""
+    n = len(strata) or 1
+    pw = {s: max(float(r.get(field_d) or 0.0), 0.0) ** gamma for s, r in strata.items()}
+    tot = sum(pw.values())
+    for s, r in strata.items():
+        r[out] = eps / n + ((1.0 - eps) * pw[s] / tot if tot > 0 else (1.0 - eps) / n)
+
+
 def stratum_weight(m_t: float, s_t: float, *, eps: float, gamma: float) -> float:
     return (max(m_t, 0.0) + eps) ** gamma * max(s_t, 0.0)
 
@@ -195,12 +225,18 @@ def constrained_fill(target: dict[str, float], lo: dict[str, float], hi: dict[st
 
 def group_vector(raw: dict[str, float], static: dict[str, float], current: dict[str, float],
                  *, floor_frac: float, floor_ct: float, cap: float, max_shift: float,
-                 ct_groups: tuple[str, str] = ("coding", "terminal")) -> dict:
+                 ct_groups: tuple[str, str] = ("coding", "terminal"),
+                 block_floors: dict[str, tuple[tuple[str, ...], float]] | None = None) -> dict:
     """raw -> after_floor -> after_clamp, with a reason code per group.
 
     static: the [mix] table (floor reference); current: the live slice share
     (strata share of the live index; clamp reference). A group with no
-    supply in the live index (current == 0 and raw == 0) stays at 0."""
+    supply in the live index (current == 0 and raw == 0) stays at 0.
+    Block floors: `coding + terminal >= floor_ct` (always) plus any named
+    block in `block_floors` (phase 10: the stop-state groups >= 0.25) --
+    when a block sums under its floor, its members' lower bounds are raised
+    proportionally so the block lands on the floor; the same bounds hold
+    through the clamp stage, so the published vector satisfies them."""
     keys = sorted(set(raw) | set(static) | set(current))
     raw = {g: float(raw.get(g, 0.0)) for g in keys}
     static = {g: float(static.get(g, 0.0)) for g in keys}
@@ -209,21 +245,30 @@ def group_vector(raw: dict[str, float], static: dict[str, float], current: dict[
     floor = {g: (floor_frac * static[g] if supply[g] else 0.0) for g in keys}
     lo_f = dict(floor)
     hi_f = {g: (cap if supply[g] else 0.0) for g in keys}
+    blocks = {"coding_terminal": (tuple(ct_groups), float(floor_ct))}
+    blocks.update({k: (tuple(v[0]), float(v[1])) for k, v in (block_floors or {}).items()})
     after_floor = constrained_fill(raw, lo_f, hi_f)
-    joint = False
-    ct = sum(after_floor.get(g, 0.0) for g in ct_groups if supply.get(g))
-    if 0 < ct < floor_ct:
-        # raise the two floors proportionally so the pair sums to floor_ct
-        for g in ct_groups:
-            if supply.get(g):
-                lo_f[g] = max(lo_f[g], after_floor[g] * floor_ct / ct)
+    block_hits: dict[str, bool] = {}
+    for _ in range(4):
+        changed = False
+        for name, (members, bfloor) in blocks.items():
+            live = [g for g in members if supply.get(g)]
+            tot = sum(after_floor.get(g, 0.0) for g in live)
+            if live and 0 < tot < bfloor - EPS_SUM:
+                for g in live:
+                    lo_f[g] = max(lo_f[g], after_floor[g] * bfloor / tot)
+                block_hits[name] = True
+                changed = True
+        if not changed:
+            break
         after_floor = constrained_fill(raw, lo_f, hi_f)
-        joint = True
+    joint = bool(block_hits.get("coding_terminal"))
     lo_c = {g: max(lo_f[g], current[g] - max_shift) if supply[g] else 0.0 for g in keys}
     hi_c = {g: min(hi_f[g], current[g] + max_shift) if supply[g] else 0.0 for g in keys}
     for g in keys:
         hi_c[g] = max(hi_c[g], lo_c[g])
     after_clamp = constrained_fill(after_floor, lo_c, hi_c)
+    member_of = {g: name for name, (members, _) in blocks.items() for g in members if block_hits.get(name)}
     reasons: dict[str, str] = {}
     tol = 1e-9
     for g in keys:
@@ -233,18 +278,28 @@ def group_vector(raw: dict[str, float], static: dict[str, float], current: dict[
         elif abs(s - lo_c[g]) < tol and raw[g] < s - tol:
             # the floored target wanted lower: the lower bound is binding
             if lo_f[g] >= current[g] - max_shift - tol:
-                reasons[g] = "joint_floor" if (joint and g in ct_groups and lo_f[g] > floor[g] + tol) else "floor"
+                reasons[g] = (("joint_floor" if member_of.get(g) == "coding_terminal" else f"block_floor:{member_of[g]}")
+                              if g in member_of and lo_f[g] > floor[g] + tol else "floor")
             else:
                 reasons[g] = "clamped_down"
         elif abs(s - hi_c[g]) < tol and raw[g] > s + tol:
             reasons[g] = "capped" if hi_f[g] <= current[g] + max_shift + tol else "clamped_up"
         elif abs(s - lo_f[g]) < tol and lo_f[g] > 0:
-            reasons[g] = "joint_floor" if (joint and g in ct_groups and lo_f[g] > floor[g] + tol) else "floor"
+            reasons[g] = (("joint_floor" if member_of.get(g) == "coding_terminal" else f"block_floor:{member_of[g]}")
+                          if g in member_of and lo_f[g] > floor[g] + tol else "floor")
         else:
             reasons[g] = "free"
+        if reasons[g] == "free" and g in member_of and s > raw[g] + tol:
+            # lifted by a raised block floor (the fill lands a hair above the bound)
+            reasons[g] = "joint_floor" if member_of[g] == "coding_terminal" else f"block_floor:{member_of[g]}"
+    block_sums = {name: {"members": list(members), "floor": bfloor,
+                         "after_floor": sum(after_floor.get(g, 0.0) for g in members),
+                         "after_clamp": sum(after_clamp.get(g, 0.0) for g in members),
+                         "raised": bool(block_hits.get(name))}
+                  for name, (members, bfloor) in blocks.items()}
     return {"raw": raw, "after_floor": after_floor, "after_clamp": after_clamp,
             "floor": floor, "current": current, "static": static, "reasons": reasons,
-            "joint_floor_applied": joint,
+            "joint_floor_applied": joint, "blocks": block_sums,
             "bounds": {"lo": lo_c, "hi": hi_c}}
 
 
@@ -351,25 +406,67 @@ def recurrence_guard(strata: dict[str, dict], shares: dict[str, float], *, group
         for g in rest:
             shares[g] = shares[g] * (1.0 - tot_fixed) / rest_tot
     proj = recurrence_projection(strata, shares, slice_n=slice_n)
-    return {"shares": shares, "actions": actions,
+    cut = sorted({a.split()[1] for a in actions if a.startswith("share ")})
+    return {"shares": shares, "actions": actions, "groups_cut": cut,
             "max_turn_draws_per_duel": proj["max_turn_draws_per_duel"],
             "max_group_draws": max((d["expected_draws_per_turn_per_duel"] for d in proj["groups"].values()), default=0.0),
             "ok": proj["max_turn_draws_per_duel"] <= turn_cap + 1e-12
                   and all(d["expected_draws_per_turn_per_duel"] <= group_cap + 1e-12 for d in proj["groups"].values())}
 
 
+def restore_block_floors(shares: dict[str, float], block_floors: dict[str, tuple[tuple[str, ...], float]],
+                         *, fixed: set[str] | frozenset[str], floor: dict[str, float], cap: float,
+                         current: dict[str, float], max_shift: float) -> dict[str, float]:
+    """After the recurrence guard cut a member's share, a block can sit a
+    hair under its floor. Lift the block's OTHER members proportionally
+    back to the floor (cut groups stay fixed), taking the mass from the
+    groups outside the block, inside the usual per-group bounds."""
+    shares = dict(shares)
+    for members, bfloor in block_floors.values():
+        live = [g for g in members if shares.get(g, 0.0) > 0]
+        tot = sum(shares[g] for g in live)
+        if not live or tot >= bfloor - EPS_SUM:
+            continue
+        movable = [g for g in live if g not in fixed]
+        if not movable:
+            continue
+        need = bfloor - tot
+        base = sum(shares[g] for g in movable) or 1.0
+        lo = {g: shares[g] for g in shares}
+        hi = {g: shares[g] for g in shares}
+        for g in movable:
+            lo[g] = hi[g] = shares[g] + need * shares[g] / base
+        for g in shares:
+            if g in fixed or g in members:
+                continue
+            lo[g] = max(floor.get(g, 0.0), current.get(g, 0.0) - max_shift) if shares[g] > 0 else 0.0
+            hi[g] = max(lo[g], min(cap, current.get(g, 0.0) + max_shift)) if shares[g] > 0 else 0.0
+        shares = constrained_fill(shares, lo, hi)
+    return shares
+
+
 def check_floors(shares: dict[str, float], static: dict[str, float], *, floor_frac: float,
                  floor_ct: float, cap: float, supply: dict[str, bool] | None = None,
-                 tol: float = 1e-6) -> dict:
-    """Stage-3 item 6: floors and cap hold on a published vector."""
+                 guard_cut: set[str] | frozenset[str] = frozenset(), tol: float = 1e-6,
+                 block_floors: dict[str, tuple[tuple[str, ...], float]] | None = None) -> dict:
+    """Stage-3 item 6: floors and cap hold on a published vector. A group
+    whose share the recurrence guard lowered (`guard_cut`) is exempt from
+    its floor -- the recurrence cap is the harder of the two safety items
+    (coordinator amendment 2026-09-15) -- and is listed separately."""
     supply = supply or {g: True for g in shares}
     bad_floor = [g for g in shares if supply.get(g, True) and static.get(g, 0) > 0
+                 and g not in guard_cut and shares[g] < floor_frac * static[g] - tol]
+    cut_below = [g for g in shares if g in guard_cut and static.get(g, 0) > 0
                  and shares[g] < floor_frac * static[g] - tol]
     bad_cap = [g for g in shares if shares[g] > cap + tol]
     ct = shares.get("coding", 0.0) + shares.get("terminal", 0.0)
-    return {"ok": not bad_floor and not bad_cap and ct >= floor_ct - tol,
+    blocks = {}
+    for name, (members, bfloor) in (block_floors or {}).items():
+        tot = sum(shares.get(g, 0.0) for g in members)
+        blocks[name] = {"sum": tot, "floor": bfloor, "ok": tot >= bfloor - tol}
+    return {"ok": not bad_floor and not bad_cap and ct >= floor_ct - tol and all(b["ok"] for b in blocks.values()),
             "below_floor": bad_floor, "above_cap": bad_cap, "coding_plus_terminal": ct,
-            "sum": sum(shares.values())}
+            "below_floor_by_recurrence_guard": cut_below, "block_floors": blocks, "sum": sum(shares.values())}
 
 
 def is_close_sum_one(shares: dict[str, float], tol: float = 1e-6) -> bool:

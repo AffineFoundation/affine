@@ -295,7 +295,11 @@ def history_row_from_raw(r: dict) -> dict:
         "margin": v.get("margin"),
         "se": v.get("se"),
         "n_paired_turns": v.get("n_paired_turns"),
+        "n_forfeit_turns": v.get("n_forfeit_turns"),
         "near_miss": v.get("near_miss"),         # sequential near-miss stamp
+        "protocol_probe": v.get("protocol_probe"),  # admission probe result
+        # wvk 22 sd-meter (teacher-sd units); shadow read on wvk-21 rows.
+        "sd_meter": slim_sd_meter(v),
         "rejection_reason": v.get("rejection_reason"),
         "reign_number": r.get("reign_number"),
         "score": r.get("score", _side_score(v.get("challenger"))),
@@ -328,3 +332,33 @@ def _side_score(side: dict | None) -> float | None:
         return None
     r = side.get("reason")
     return r if r is not None else side.get("S")
+
+
+# The sd-meter block a verdict carries under `shadow.sd_meter` (shadow read
+# from 2026-09-18 10:41 UTC, the rule since wvk 22). Everything the site
+# plots per side, without the formula prose and the cost ledger.
+_SD_TOP_KEYS = ("role", "anchor", "margin", "se", "z", "sd_diff",
+                "n_paired_turns", "n_forfeit_turns", "would_crown",
+                "live_gates_pass", "knobs", "sigma_by_dialect")
+_SD_SIDE_KEYS = ("mean", "mean_valid", "sd_valid", "n_turns", "n_valid",
+                 "n_forfeits", "n_unscorable", "mean_z_R", "mean_typ_c",
+                 "mean_z_A", "bind_frac", "n_leg_dropped",
+                 "mean_content_share", "mean_R", "mean_A", "mean_mc")
+
+
+def slim_sd_meter(verdict: dict | None) -> dict | None:
+    """Per-side sd-meter telemetry (teacher-sd units) for history rows.
+
+    `role = "rule"` (wvk >= 22) means margin / se / z here equal the
+    verdict's own; `role = "shadow"` (wvk 21 shadow read) means the
+    verdict was decided by min(R, G) and this block is what the sd-meter
+    would have said."""
+    sd = ((verdict or {}).get("shadow") or {}).get("sd_meter")
+    if not isinstance(sd, dict):
+        return None
+    out = {k: sd.get(k) for k in _SD_TOP_KEYS if k in sd}
+    for side in ("challenger", "king"):
+        s = sd.get(side)
+        if isinstance(s, dict):
+            out[side] = {k: s.get(k) for k in _SD_SIDE_KEYS if k in s}
+    return out

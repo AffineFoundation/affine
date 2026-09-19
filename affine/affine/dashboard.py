@@ -32,6 +32,7 @@ from pathlib import Path
 
 from . import __version__, payout
 from .config import Config
+from .dash.readers import slim_sd_meter
 from .hippius import Hippius
 from .r2protocol import is_r2_ref, parse_r2_ref, public_model_url
 from .state import State, now_iso
@@ -74,6 +75,8 @@ _SIDE_FIELDS = ("reason", "mean_l1lift", "mean_eta", "mean_len_z",
                 "a_match", "a_match_n", "a_match_centered",
                 # wvk 11 action-dialect telemetry (per action_kind)
                 "by_dialect",
+                # wvk 12 forfeit floor + wvk 13 </think> requirement
+                "n_forfeits", "forfeit_rate", "think_close_rate",
                 # legacy (pre-fork verdicts)
                 "valid", "S", "mean_lambda2", "baseline_band_exceeded")
 
@@ -454,6 +457,11 @@ class Dashboard:
                 "near_miss": v.get("near_miss"),
                 # wvk 19 confirmation slice (flat stamp).
                 "confirmation": v.get("confirmation"),
+                "n_forfeit_turns": v.get("n_forfeit_turns"),
+                # Chat-protocol probe stamp (enforced since 2026-09-09).
+                "protocol_probe": v.get("protocol_probe"),
+                # wvk 22 sd-meter block (teacher-sd units), slimmed.
+                "sd_meter": slim_sd_meter(v),
                 "rejection_reason": v.get("rejection_reason"),
                 "reign_number": r.get("reign_number"),
                 # Absolute score (Reason) for both sides; falls back to the

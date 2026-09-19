@@ -329,6 +329,28 @@ def _purge_broken_flashinfer_moe_cache() -> None:
                             exc_info=True)
 
 
+def _min_gpu_memory_gb(gpus: str) -> float | None:
+    """Smallest total memory (GB) among the slot's GPUs via nvidia-smi;
+    None when it cannot be determined (then no small-GPU adjustment)."""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    want = {g.strip() for g in str(gpus).split(",") if g.strip()}
+    sizes = []
+    for line in out.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) >= 2 and (not want or parts[0] in want):
+            try:
+                sizes.append(float(parts[1]) / 1024.0)
+            except ValueError:
+                continue
+    return min(sizes) if sizes else None
+
+
 def _vllm_log_tail(slot_label: str, max_chars: int = 1200) -> str:
     """Last chunk of a slot's vllm log — used to surface load-failure cause."""
     path = LOG_DIR / f"vllm_{slot_label}.log"
@@ -524,6 +546,19 @@ class Engine:
         batched_tokens = int(ms["max_num_batched_tokens"])
         gpu_util = ms["gpu_memory_utilization"]
         max_len = int(ms["max_model_len"])
+        # Small-VRAM miner slots (RTX PRO 6000, 96 GB): the fp32 logits
+        # spike of an 8192-token chunk (~7.3 GB for the 248k vocab) lives
+        # outside vLLM's budget and OOM'd the challenger engine mid-duel on
+        # 2026-09-17 (free 4.7 GB of 102 GB). Halving the chunk halves the
+        # spike; sampling is unchanged, only prefill batching.
+        small_gb = float(ms.get("small_gpu_threshold_gb", 110))
+        gpu_gb = _min_gpu_memory_gb(slot.gpus)
+        if (gpu_gb is not None and gpu_gb < small_gb
+                and not slot.label.startswith("teacher")):
+            small_tokens = int(ms.get("small_gpu_max_num_batched_tokens", 4096))
+            log.info("%s: %.0f GB GPUs < %.0f GB — max-num-batched-tokens %d -> %d",
+                     slot.label, gpu_gb, small_gb, batched_tokens, small_tokens)
+            batched_tokens = min(batched_tokens, small_tokens)
         if slot.label.startswith("teacher"):
             # Teachers absorb nearly all echo traffic, so they get bigger
             # chunks — but the fp32 log_softmax spike lives OUTSIDE vLLM's
