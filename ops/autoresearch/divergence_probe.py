@@ -19,7 +19,16 @@ from affine import dialects
 from affine.corpus.completion import completion_kind
 from affine.corpus.trace import sampled_paths
 import krlib
-from krlib import parse_rollout, norm_action, load_env_groups
+from krlib import parse_rollout, load_env_groups
+from krlib import norm_action as _norm_action
+
+
+def norm_action(a: str) -> str:
+    try:
+        return _norm_action(a)
+    except Exception:
+        return re.sub(r"\s+", " ", a or "").strip().lower()
+
 
 TRACES = REPO / "affine/state/king_review/traces"
 OUT = Path(os.environ.get("DIV_OUT", str(REPO / "affine/state/king_divergence"))); OUT.mkdir(parents=True, exist_ok=True)
