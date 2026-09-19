@@ -5,11 +5,43 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="Cache-Control" content="no-cache, must-revalidate" />
   <title>Affine</title>
-  <meta name="description" content="Affine subnet 120 dashboard: reigning king, duel evolution, queue, and history." />
+  <meta name="description" content="Affine is Bittensor subnet 120: a king-of-the-hill competition for open-weight language models, scored by teacher-anchored distillation duels instead of an LLM judge. Live validator dashboard: reigning king, duel queue, history, benchmarks." />
+  <link rel="canonical" href="https://affine.io/" />
+  <link rel="me" href="https://x.com/affine_io" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Affine" />
+  <meta property="og:url" content="https://affine.io/" />
+  <meta property="og:title" content="Affine — Bittensor subnet 120" />
+  <meta property="og:description" content="King-of-the-hill subnet for open-weight language models. Miners submit checkpoints; the validator duels each challenger against the reigning king with a teacher-anchored distillation score, never an LLM judge." />
+  <meta property="og:image" content="https://affine.io/affine-mark.png" />
+  <meta property="og:image:width" content="256" />
+  <meta property="og:image:height" content="256" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:site" content="@affine_io" />
+  <meta name="twitter:creator" content="@affine_io" />
+  <meta name="twitter:title" content="Affine — Bittensor subnet 120" />
+  <meta name="twitter:description" content="King-of-the-hill subnet for open-weight language models, scored by teacher-anchored distillation duels. Live validator dashboard." />
+  <meta name="twitter:image" content="https://affine.io/affine-mark.png" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "@id": "https://affine.io/#organization",
+    "name": "Affine",
+    "alternateName": ["Affine SN120", "Bittensor subnet 120"],
+    "url": "https://affine.io/",
+    "logo": "https://affine.io/affine-mark.png",
+    "description": "Affine is Bittensor subnet 120: a king-of-the-hill competition for open-weight language models. Miners submit fine-tuned checkpoints; the Affine validator duels each challenger against the reigning king and scores both with a teacher-anchored distillation metric, never an LLM judge. The crowned model is published and served openly.",
+    "sameAs": [
+      "https://x.com/affine_io",
+      "https://github.com/AffineFoundation/affine"
+    ]
+  }
+  </script>
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
   <link rel="stylesheet" href="fonts/fonts.css?v=20" />
-  <link rel="stylesheet" href="style.css?v=81" />
+  <link rel="stylesheet" href="style.css?v=82" />
 </head>
 <body>
   <header class="top-nav">
@@ -48,7 +80,7 @@
         </a>
         <a class="nav-icon"
            href="https://x.com/affine_io"
-           target="_blank" rel="noopener noreferrer"
+           target="_blank" rel="me noopener noreferrer"
            title="X — @affine_io" aria-label="X (Twitter)">
           <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
             <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231
@@ -124,6 +156,32 @@
   </section>
 
   <main class="page">
+    <!-- Organization block: what Affine is, in plain words, plus the official
+         channels. Kept short so the dashboard stays first. -->
+    <section class="section about" id="about">
+      <div class="section-head">
+        <h2 class="section-title">About Affine</h2>
+        <span class="section-right note">Bittensor subnet 120 · open-weight model competition</span>
+      </div>
+      <div class="about-body">
+        <p>
+          <strong>Affine</strong> is <a href="https://bittensor.com" target="_blank" rel="noopener noreferrer">Bittensor</a>
+          subnet 120 (SN120): a king-of-the-hill competition for open-weight language models.
+          Miners upload fine-tuned checkpoints; the Affine validator duels each challenger against the
+          reigning king on held-out agent trajectories and scores both with one teacher-anchored
+          distillation metric — how well the model's own reasoning predicts a fixed teacher model's next
+          action — never an LLM judge. The winner is crowned king, earns the subnet's emissions, and its
+          weights are published and served openly. This site is the live validator dashboard.
+        </p>
+        <ul class="about-links">
+          <li><a href="./llms.txt">llms.txt — rules, submit path, public data</a></li>
+          <li><a href="https://github.com/AffineFoundation/affine" target="_blank" rel="noopener noreferrer">GitHub — AffineFoundation/affine</a></li>
+          <li><a href="https://x.com/affine_io" target="_blank" rel="me noopener noreferrer">X — @affine_io</a></li>
+          <li><a href="https://discord.com/channels/799672011265015819/1381987595881414656" target="_blank" rel="noopener noreferrer">Discord — SN120 channel (Bittensor server)</a></li>
+          <li><a href="https://chat.affine.io/affine" target="_blank" rel="noopener noreferrer">Chat with the reigning king</a></li>
+        </ul>
+      </div>
+    </section>
     <!-- Kings vs teacher: average score per held-out benchmark and per datagen
          environment group, one row per reign. Data: api/v1/matrix (built by
          ops/kingboard). Monitoring only — never part of the score. -->
@@ -195,6 +253,20 @@
       <div id="audits-wrap"><div class="empty">loading…</div></div>
     </section>
   </main>
+
+  <footer class="site-footer" id="site-footer">
+    <div class="site-footer-inner">
+      <span class="site-footer-brand">Affine · Bittensor subnet 120</span>
+      <nav class="site-footer-links" aria-label="Official channels">
+        <a href="https://x.com/affine_io" target="_blank" rel="me noopener noreferrer">Follow @affine_io on X</a>
+        <a href="https://github.com/AffineFoundation/affine" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="https://discord.com/channels/799672011265015819/1381987595881414656" target="_blank" rel="noopener noreferrer">Discord</a>
+        <a href="./llms.txt">llms.txt</a>
+        <a href="https://chat.affine.io/affine" target="_blank" rel="noopener noreferrer">Chat</a>
+      </nav>
+      <span class="site-footer-copy">© 2026 Affine · <a href="https://affine.io/">affine.io</a></span>
+    </div>
+  </footer>
 
   <div id="chart-modal" class="chart-modal" hidden>
     <div class="chart-modal-backdrop" id="chart-modal-backdrop"></div>
