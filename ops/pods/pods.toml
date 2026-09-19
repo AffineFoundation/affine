@@ -1,0 +1,143 @@
+# ops/pods — registry of every Lium pod we rent, and the reaper that
+# releases what nobody owns any more.
+#
+# Failure this closes (2026-09-17/19): three env boxes idled 40–48 h (~$300)
+# because the release watcher's driver pod hit its TTL and nothing else knew
+# the boxes existed. Rule now: every rent registers (purpose, owner, expected
+# lifetime); the reaper (pm2 `affine-pod-reaper`, 15-min ticks) releases a
+# pod that is unregistered, or past its expected lifetime with no live owner,
+# pages the private channel with the $ saved, and keeps a ledger.
+
+[scope]
+# Only pods whose name matches one of these globs are OURS. Everything else
+# in the shared Lium account (mining-*, arbos-*, official*, …) is foreign:
+# listed in the report, never touched.
+prefixes = ["affine-*", "bench-king-*", "king-dg-*", "swarm-t-*"]
+
+[reaper]
+interval_s = 900
+# `false` = compute + page but never call `lium rm` (also: a file named
+# DRY_RUN in ops/pods/state/ has the same effect).
+enforce = true
+# an unregistered pod of ours: page after this many minutes since the reaper
+# first saw it, release after `unregistered_release_min`
+unregistered_page_min = 30
+unregistered_release_min = 90
+# a registered pod whose owner is dead but whose lifetime has not passed:
+# warn after this many hours (no release — lifetime rules release)
+owner_dead_warn_h = 2.0
+# a pod marked released in the registry but still in the Lium listing after
+# this many minutes: release again + warn (a failed `lium rm` bills on)
+zombie_min = 15
+# $ saved estimate when Lium has no removal_scheduled_at: price x these hours
+assume_hours_left = 24.0
+# one warning line per (key) per this many hours
+warn_dedupe_h = 6.0
+# consecutive listing failures before paging "cannot list pods"
+listing_fail_page_ticks = 3
+
+[paths]
+registry = "state/registry.json"
+ledger = "state/ledger.jsonl"
+own_state = "state/reaper_state.json"
+report = "../../affine/state/pods/reaper.json"
+
+[discord]
+enabled = true
+channel_id = "1510910974498967613"
+token_env = "DISCORD_BOT_TOKEN_ARBOS_BITTENSOR"
+prefix = "[pod-reaper]"
+
+# Defaults per purpose, used when a rent path registers without an explicit
+# expected lifetime (lium_api.rent auto-registers every rent). Names are
+# matched by prefix glob -> purpose.
+[[purposes]]
+glob = "king-dg-*"
+purpose = "king_seat"
+owner = "pm2:affine-king-datagen"
+expected_hours = 73          # kingctl rotates before the 72-h TTL
+
+[[purposes]]
+glob = "swarm-t-*"
+purpose = "teacher_swarm"
+owner = "pm2:affine-swarm-manager"
+expected_hours = 49          # 48-h TTL + rotation slack
+
+[[purposes]]
+glob = "bench-king-*"
+purpose = "bench"
+owner = "passlog:ops/benchsuite/state"
+expected_hours = 14          # coverage audit 2026-09-19: 14-h cap on a bench box
+
+[[purposes]]
+glob = "affine-eval"
+purpose = "eval_pod"
+owner = "pm2:affine-validator"
+expected_hours = 0           # indefinite; the validator manages it
+
+[[purposes]]
+glob = "affine-bench"
+purpose = "advisory_bench_pod"
+owner = "pm2:affine-validator"
+expected_hours = 0
+
+[[purposes]]
+glob = "affine-chat"
+purpose = "chat_pod"
+owner = "pm2:affine-validator"
+expected_hours = 0
+
+[[purposes]]
+glob = "affine-datagen*"
+purpose = "datagen"
+owner = "manual:operator"
+expected_hours = 0           # long-lived, hand-rented; watched by kingctl
+
+# Fallback for a pod of ours that matches no purpose above.
+[default_purpose]
+purpose = "unknown"
+owner = "unknown"
+expected_hours = 14
+
+# Hand-rented, long-lived pods with no controller: registered automatically
+# (source `static`) the first time the reaper sees them. Never reaped
+# (expected_hours 0); only listed. Add a line here BEFORE renting one by hand.
+[[static]]
+glob = "affine-datagen*"
+purpose = "datagen"
+owner = "manual:operator"
+expected_hours = 0
+note = "rollouts fleet; kingctl's watchdog restarts its supervisor; hand-rented 2026-08/09"
+
+# Controllers whose own state files prove a pod is wanted. The reaper adopts
+# these into the registry (source `adopted:<name>`) so pods rented before
+# this existed, or by a rent path that forgot to register, still carry an
+# owner. Explicit registrations always win over adoption.
+[[adopt]]
+name = "validator"
+file = "../../affine/state/state.json"
+kind = "validator_machines"          # eval_machine / bench_machine / chat_machine -> id
+
+[[adopt]]
+name = "kingctl"
+file = "../king-datagen/state/state.json"
+kind = "dict_pods"                    # {"pods": {name: {...}}}
+owner = "pm2:affine-king-datagen"
+purpose = "king_seat"
+expected_hours = 73
+
+[[adopt]]
+name = "swarm"
+file = "../teacher-swarm/state/pods.json"
+kind = "flat_pods"                    # manager memory: {name: {...}}
+owner = "pm2:affine-swarm-manager"
+purpose = "teacher_swarm"
+expected_hours = 49
+
+[[adopt]]
+name = "benchsuite"
+file = "../benchsuite/state/pods.json"
+kind = "kingpod_pods"                 # {name: {"state": rented|ready|released, ...}}
+owner = "passlog:ops/benchsuite/state"
+purpose = "bench"
+expected_hours = 14
