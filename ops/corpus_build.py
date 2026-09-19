@@ -937,6 +937,7 @@ def load_curriculum() -> dict:
     # curriculum is FROZEN (its inputs' units no longer match the live
     # score_mode, or an operator froze it) the fold falls back to the static
     # [mix] exactly like a missing vector, and the announce line says why.
+    # Kept in place by ops/fold/ensure_frozen_hook.py — do not remove.
     frozen_path = REPO / "affine" / "state" / "curriculum" / "FROZEN.json"
     if frozen_path.exists():
         try:
@@ -1547,7 +1548,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             y["accepted_turns"] += len(r["turns"])
             pid = str((r.get("policy") or {}).get("id") or "")
             if pid.startswith("king_"):
-                kd = str((r.get("policy") or {}).get("model") or "").rsplit("king-", 1)[-1][:12] or "unknown"
+                kd = r.get("king_digest") or str((r.get("policy") or {}).get("model") or "").rsplit("king-", 1)[-1][:12] or "unknown"
                 ky = YIELD_BY_KING.setdefault(kd, {"seen": 0, "records": 0, "turns": 0, "groups": {}, "sources": {}})
                 ky["records"] += 1
                 ky["turns"] += len(r["turns"])
@@ -1794,6 +1795,11 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                 _count_leaked(route, convs, kind, leak_exempt, notes)
             _count(drops, "no_scorable_turn")
             continue
+        _pid0 = str((env.get("policy") or {}).get("id") or "")
+        if _pid0.startswith("king_"):
+            # Served king digest (policy.model `king/king-<digest12>`) on the
+            # record, so admissions can be reported per king (2026-09-19).
+            rec["king_digest"] = str((env.get("policy") or {}).get("model") or "").rsplit("king-", 1)[-1][:12] or None
         if kind_stamp:
             # Duel-time kind per routed turn (Jacob 2026-09-13: whatever keeps
             # the teacher's references parseable at the state). Stamped on
