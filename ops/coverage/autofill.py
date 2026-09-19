@@ -48,7 +48,8 @@ VALIDATOR_STATE = REPO / "affine" / "state" / "state.json"
 PY = str(REPO / ".venv" / "bin" / "python")
 TEACHER_REF = os.environ.get("COVERAGE_TEACHER_REF", "hf://Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0")
 GENESIS_REF = "hf://Qwen/Qwen3.6-35B-A3B@995ad96eacd98c81ed38be0c5b274b04031597b0"
-FULL_SANDBOX_TRIGGERS = {"minif2f"}   # only the Prime-sandbox set needs the full sandbox phase; docker sets run as cells
+FULL_SANDBOX_TRIGGERS = {"minif2f"}
+FAST_MIN_MISSING = int(os.environ.get("COVERAGE_FAST_MIN_MISSING", "8"))   # >= this many benchmark cells missing -> one fast pass   # only the Prime-sandbox set needs the full sandbox phase; docker sets run as cells
 ENV_MAX_LIVE = int(os.environ.get("COVERAGE_ENV_MAX_LIVE", "5"))   # serving boxes (not the driver pod)
 ENV_CONTAINERS = int(os.environ.get("COVERAGE_ENV_CONTAINERS", "12"))
 
@@ -120,9 +121,9 @@ def covered_by_queue(q: list[dict], ref: str, envs: set[str]) -> bool:
 
 
 def add(ref: str, label: str, mode: str, envs: list[str], sandbox: bool, merge_into: str | None,
-        merge_as: str, priority: int, note: str, dry: bool) -> None:
+        merge_as: str, priority: int, note: str, dry: bool, bucket: str = "fill") -> None:
     cmd = [PY, str(HERE / "bench_queue.py"), "add", "--ref", ref, "--label", label, "--mode", mode,
-           "--priority", str(priority), "--note", note]
+           "--priority", str(priority), "--note", note, "--bucket", bucket]
     if envs:
         cmd += ["--chat-envs", ",".join(sorted(envs))]
     if not sandbox:
@@ -165,7 +166,22 @@ def main() -> int:
         merge_into = (row.get("cards") or [None])[0]
         merge_as = "teacher" if row["kind"] == "teacher" else "king"
         missing = set(r["missing_bench"])   # running cells are not in missing_bench
+        if row.get("inflight"):
+            # a benchsuite pass (watcher / by hand / fast) is running for this row: its
+            # cells land on their own; queueing them again doubled reign 18 on 09-19
+            print(f"{r['label']}: benchsuite pass {row['inflight'].get('run_id')} in flight; nothing queued")
+            missing = set()
         groups = []
+        # a row with no card yet, or missing most benchmark columns, gets the whole card in
+        # ONE `fast` pass (5 pods in parallel, Daytona for SWE-bench; speed-up budget 2026-09-19)
+        if missing and (not row.get("cards") or len(missing) >= FAST_MIN_MISSING):
+            if covered_by_queue(q, ref, missing) or any(e.get("status") in ("pending", "running") and e.get("ref") == ref
+                                                        and e.get("mode") == "fast" for e in q):
+                print(f"{r['label']}: fast pass already queued / running")
+            else:
+                add(ref, label, "fast", [], False, None, merge_as, 20, f"autofill {r['label']}: whole card (fast, {len(missing)} cells missing)", args.dry_run, bucket="speedup")
+                n_bench += 1
+            missing = set()
         if missing & chat:
             groups.append(("lium", sorted(missing & chat), False, "chat sets"))
         sb = missing & sandbox

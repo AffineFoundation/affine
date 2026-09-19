@@ -56,9 +56,28 @@ PASS_SH = REPO / "ops" / "benchsuite" / "pass.sh"
 # Each pass rents its own pod; the Docker Hub pull-cap login (200 pulls/h for the
 # one account) is the practical ceiling for concurrent SWE-bench passes.
 MAX_PARALLEL = int(os.environ.get("COVERAGE_BENCH_PARALLEL", "8"))
+# Pods, not passes, are what the operator caps (2026-09-19: "<= 6 pods"): a `fast`
+# pass rents 5 pods in parallel, every other mode one.
+POD_WEIGHT = {"fast": 5}
+MAX_PODS = int(os.environ.get("COVERAGE_BENCH_MAX_PODS", "6"))
+BUDGET_PATH = STATE_DIR / "budget.json"     # cap + buckets + actuals (the ledger of approved money)
 # Operator 2026-09-17 00:21 UTC: cap for this fill; no launch once the recorded
 # pod spend (+ Prime estimate) reaches it.
-BUDGET_USD = float(os.environ.get("COVERAGE_BENCH_BUDGET_USD", "400"))
+def load_budget() -> dict:
+    """state/budget.json: {"cap_usd", "buckets": {name: approved}, "actuals": {name: spent}}.
+    COVERAGE_BENCH_BUDGET_USD overrides the cap. Approved so far: pre-fill $39.89
+    (09-15/16 failed attempts), fill $400 (09-17), stoppers $300 (09-17),
+    speed-up $600 (09-19) -> $1,340; cap set to $1,400 per the 09-19 request."""
+    try:
+        b = json.loads(BUDGET_PATH.read_text())
+    except (OSError, ValueError):
+        b = {"cap_usd": 400.0, "buckets": {"fill": 400.0}, "actuals": {}}
+    if os.environ.get("COVERAGE_BENCH_BUDGET_USD"):
+        b["cap_usd"] = float(os.environ["COVERAGE_BENCH_BUDGET_USD"])
+    return b
+
+
+BUDGET_USD = float(load_budget().get("cap_usd") or 400.0)
 # run_pass.sh exit codes worth a retry: 2 = rent failed (no stock), 3 = pod never
 # became ready, 10 = suite.lock.json did not match the pod (the benchsuite worker
 # is re-pinning the lock after a suite change; nothing wrong with the model)
@@ -263,6 +282,31 @@ def spend(q: list[dict]) -> dict:
             "total_usd": round(pod_usd + prime, 2)}
 
 
+def spend_by_bucket(q: list[dict]) -> dict[str, float]:
+    """Actual pod $ per approved bucket (entry.bucket, default fill), from the
+    same release lines spend() reads; pre-fill attempts live in the meta."""
+    out: dict[str, float] = {"pre_fill": round(float(load_meta().get("spend_before_usd") or 0.0), 2)}
+    for e in q:
+        b = e.get("bucket") or "fill"
+        usd = 0.0
+        for rid in entry_run_ids(e):
+            try:
+                text = (BENCH_STATE / f"pass-{rid}.log").read_text(errors="replace")
+            except OSError:
+                continue
+            usd += sum(float(u) for _, u in RELEASE_LINE.findall(text))
+        out[b] = round(out.get(b, 0.0) + usd, 2)
+    return out
+
+
+def write_budget_actuals(q: list[dict]) -> None:
+    b = load_budget()
+    b["actuals"] = spend_by_bucket(q)
+    b["actuals_at"] = now_iso()
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    BUDGET_PATH.write_text(json.dumps(b, indent=1))
+
+
 def ledger_pods() -> list[dict]:
     try:
         return json.loads(LEDGER_PATH.read_text())
@@ -383,6 +427,7 @@ def tick(q: list[dict]) -> None:
     # for anyone), so while the head of the queue waits, nothing behind it
     # jumps ahead — the operator's order (genesis, then kings 10 -> 1) holds.
     running = sum(1 for e in q if e.get("status") == "running")
+    running_pods = sum(POD_WEIGHT.get(e.get("mode", "lium"), 1) for e in q if e.get("status") == "running")
     launched = 0
     in_sync, why = lock_in_sync()
     sp = spend(q)
@@ -393,7 +438,11 @@ def tick(q: list[dict]) -> None:
             log(f"launches held: {why} (waiting for the benchsuite worker to re-pin suite.lock.json)")
             meta["lock_warned_at"] = time.time()
     def carries_swe(e: dict) -> bool:
-        envs = set((e.get("chat_envs") or "").split(","))
+        # one 200/250-sandbox Daytona job at a time (memory quota ~250 sandboxes):
+        # fast passes and every entry naming swebench-verified (incl. the @4h250 spec)
+        if e.get("mode") == "fast":
+            return True
+        envs = (e.get("chat_envs") or "")
         return SWE_ENV in envs or (e.get("mode") == "lium" and e.get("sandbox", True))
 
     swe_running = any(e.get("status") == "running" and carries_swe(e) for e in q)
@@ -404,11 +453,15 @@ def tick(q: list[dict]) -> None:
             continue
         if time.time() < float(e.get("not_before") or 0):
             break
-        if carries_swe(e) and swe_running:
-            continue                      # serialize the SWE-bench image pulls; other entries may pass
+        w = POD_WEIGHT.get(e.get("mode", "lium"), 1)
+        if (carries_swe(e) and swe_running) or running_pods + w > MAX_PODS:
+            # strict priority: while the head of the queue waits for the Daytona slot or
+            # for pod room, nothing behind it starts (else 1-pod items starve a 5-pod fast pass)
+            break
         try:
             launch(e)
             running += 1
+            running_pods += w
             launched += 1
             if carries_swe(e):
                 swe_running = True
@@ -421,7 +474,7 @@ def tick(q: list[dict]) -> None:
         meta["active"] = True
         meta["scaled_up_at"] = now_iso()
         text = (f"kings coverage — scale-UP {now_iso()[:16]}Z: benchmark backfill queue started, "
-                f"{running} pass(es) running, {pending} pending, cap {MAX_PARALLEL} pods "
+                f"{running} pass(es) / {running_pods} pods running, {pending} pending, cap {MAX_PODS} pods "
                 f"(1×H200 first, then B200 / RTX PRO 6000 / 2×H200 / 2×B200 / 2×H100 as stock allows). "
                 f"Spend so far ≈ ${spend(q)['total_usd']}.")
         try:
@@ -432,13 +485,17 @@ def tick(q: list[dict]) -> None:
     if running == 0 and pending == 0 and (meta.get("active") or meta.get("pods_seen")):
         scale_down(q, meta)
     save_meta(meta)
+    try:
+        write_budget_actuals(q)
+    except OSError:
+        pass
 
 
 def cmd_add(args: argparse.Namespace) -> int:
     q = load_queue()
     q.append({"ref": args.ref, "label": args.label, "mode": args.mode, "sandbox": not args.no_sandbox,
               "chat_envs": args.chat_envs, "status": "pending", "added_at": now_iso(), "attempts": 0,
-              "priority": args.priority, "note": args.note,
+              "priority": args.priority, "note": args.note, "bucket": args.bucket,
               "env": dict(kv.split("=", 1) for kv in args.env if "=" in kv)})
     q.sort(key=lambda e: (e.get("priority", 100), e.get("added_at", "")))
     save_queue(q)
@@ -454,9 +511,11 @@ def cmd_status(_: argparse.Namespace) -> int:
               f"{e.get('run_id', '') or '':32} exit={e.get('exit', '')} ${cost if cost is not None else '-'}")
     sp = spend(q)
     meta = load_meta()
+    b = load_budget()
     print(f"spend: pods ${sp['pod_usd']} (running passes estimated) + Prime miniF2F ≈ ${sp['prime_usd_est']} "
-          f"= ≈ ${sp['total_usd']}; scale state: {'ACTIVE' if meta.get('active') else 'idle'}, "
-          f"pods seen {len(meta.get('pods_seen') or [])}, cap {MAX_PARALLEL}")
+          f"= ≈ ${sp['total_usd']} of cap ${b.get('cap_usd')}; by bucket {spend_by_bucket(q)} "
+          f"(approved {b.get('buckets')}); scale state: {'ACTIVE' if meta.get('active') else 'idle'}, "
+          f"pods seen {len(meta.get('pods_seen') or [])}, cap {MAX_PODS} pods")
     return 0
 
 
@@ -522,6 +581,7 @@ def main() -> int:
     a.add_argument("--chat-envs", default="", help="comma list to restrict the chat cells (BENCHSUITE_CHAT_ENVS)")
     a.add_argument("--priority", type=int, default=100, help="lower runs first")
     a.add_argument("--note", default="")
+    a.add_argument("--bucket", default="fill", help="approved budget bucket the pass charges (fill | stoppers | speedup)")
     a.add_argument("--env", action="append", default=[], metavar="KEY=VAL",
                    help="extra environment for run_pass.sh (e.g. BENCHSUITE_MERGE_INTO=<run_id>)")
     a.set_defaults(fn=cmd_add)
