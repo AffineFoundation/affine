@@ -420,6 +420,20 @@ class Monitor:
             checks.append(Check("sources_toml_drift", "ok", "sources.toml matches HEAD" + note,
                                 sha256=cur_sha, last_fold_sha256=fold_sha))
 
+        # guard hooks living in other files must still be there
+        missing = []
+        for it in cfg.raw.get("integrity", []):
+            try:
+                text = (REPO / it["file"]).read_text()
+            except OSError:
+                missing.append(f"{it['file']} unreadable")
+                continue
+            if it["must_contain"] not in text:
+                missing.append(f"{it['file']} lost `{it['must_contain']}` ({it['why']})")
+        checks.append(Check("guard_integrity", "page" if missing else "ok",
+                            "guard hook missing: " + "; ".join(missing) if missing
+                            else f"{len(cfg.raw.get('integrity', []))} guard hooks present", missing=missing))
+
         # (d) processes running stale code
         checks.extend(self.code_watch(procs, now))
         return checks
