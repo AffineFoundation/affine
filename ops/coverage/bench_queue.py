@@ -203,15 +203,21 @@ def launch(entry: dict) -> None:
     for k, v in (entry.get("env") or {}).items():
         env[k] = v
     BENCH_STATE.mkdir(parents=True, exist_ok=True)
-    with log_path.open("ab") as fh:
-        # start_new_session: the pass must outlive this process (pm2 restarts kill the
-        # tree) and pid == pgid so `cancel` can kill the whole pass. (The `setsid` binary
-        # forks when it is already a session leader, so the recorded pid was a dead
-        # wrapper and cancels missed the live bash — 2026-09-17/19.)
-        proc = subprocess.Popen(
-            ["bash", str(PASS_SH), entry["ref"], entry["label"], run_id, entry.get("mode", "lium")],
-            stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env,
-            cwd=str(REPO), start_new_session=True)
+    # Double-fork through a transient shell: `setsid` there is not a session leader, so it
+    # execs in place (pid == pgid == $!), and the pass is reparented to init when the shell
+    # exits -> pm2's tree-kill on a queue restart cannot reach it (2026-09-19 21:2x: the
+    # fast-15 pass launched with start_new_session only died with the restart), while
+    # `cancel` can still kill the whole pass by process group.
+    launcher = 'setsid bash "$@" >> "$COVERAGE_PASS_LOG" 2>&1 < /dev/null & echo $!'
+    env["COVERAGE_PASS_LOG"] = str(log_path)
+    out = subprocess.run(["bash", "-c", launcher, "_", str(PASS_SH), entry["ref"], entry["label"], run_id,
+                          entry.get("mode", "lium")], env=env, cwd=str(REPO), capture_output=True, text=True)
+    pid = int((out.stdout or "0").strip().splitlines()[-1] or 0)
+
+    class _P:  # minimal stand-in for the Popen handle the caller records
+        pass
+    proc = _P()
+    proc.pid = pid
     entry.update(status="running", pid=proc.pid, started_at=now_iso(),
                  attempts=int(entry.get("attempts") or 0) + 1)
     log(f"launched {run_id} ({entry['label']}, {entry['ref'][:40]}…) pid {proc.pid} attempt {entry['attempts']}")
