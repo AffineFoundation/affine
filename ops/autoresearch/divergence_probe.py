@@ -135,7 +135,20 @@ def per_byte_lp(engy, tok, prefix_msgs, thought):
     logprob_start_len at the prefix/thought boundary)."""
     if not thought or not thought.strip():
         return None
-    pre = tok.apply_chat_template(prefix_msgs, tokenize=False, add_generation_prompt=True)
+    msgs = []
+    for m in prefix_msgs:
+        m2 = dict(m)
+        if m2.get("tool_calls"):
+            tcs = []
+            for tc in m2["tool_calls"]:
+                tc = json.loads(json.dumps(tc)); fn = tc.get("function") or {}
+                if isinstance(fn.get("arguments"), str):
+                    try: fn["arguments"] = json.loads(fn["arguments"])
+                    except ValueError: fn["arguments"] = {"raw": fn["arguments"]}
+                tcs.append(tc)
+            m2["tool_calls"] = tcs
+        msgs.append(m2)
+    pre = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
     if not pre.endswith("<think>\n"):
         pre = pre + "<think>\n"
     body = thought.strip() + "\n</think>"
@@ -246,11 +259,14 @@ def probe_rollout(engy, tok, row, env_groups, max_turns, echo_control):
             mu = st.mean(ts); sd = st.pstdev(ts) if len(ts) > 1 else 0.0
             for c in (2.0, 4.0):
                 w = max(c * sd, 0.002); t["echo"][f"G_c{int(c)}"] = min(m - (mu - w), (mu + w) - m)
-    if first_div is not None:
-        do_echo(turns[first_div])
-    if echo_control:
-        ctrl = [t for t in turns if t["agree"] and t["turn_idx"] != first_div]
-        if ctrl: do_echo(random.choice(ctrl))
+    try:
+        if first_div is not None:
+            do_echo(turns[first_div])
+        if echo_control:
+            ctrl = [t for t in turns if t["agree"] and t["turn_idx"] != first_div]
+            if ctrl: do_echo(random.choice(ctrl))
+    except Exception as e:  # noqa: BLE001  (an echo failure must not lose the sampled rollout)
+        log(f"echo failed for {ro.rollout_id}: {e!r}")
     return {"rollout_id": ro.rollout_id, "traj_id": ro.traj_id, "source": ro.source, "cls": row["cls"], "harness": ro.harness, "kind": kind,
             "outcome": ro.outcome, "stop_condition": ro.stop_condition, "n_turns_total": len(ro.turns), "n_probed": len(turns),
             "first_divergence": first_div, "_sys": " ".join((m.get("content") or "")[:20000] for m in (paths[0][:1] if paths else []) if m.get("role") in ("system","user")), "turns": turns}
@@ -286,7 +302,8 @@ def main():
             try:
                 res = fut.result()
             except Exception as e:
-                log(f"rollout failed: {e!r}"); continue
+                import traceback
+                log(f"rollout failed: {e!r} :: {traceback.format_exc().splitlines()[-3]}"); continue
             if res:
                 f.write(json.dumps(res) + "\n"); f.flush(); n += 1
             if n % 10 == 0:
