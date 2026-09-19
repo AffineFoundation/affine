@@ -303,10 +303,15 @@ def cmd_wait(args: argparse.Namespace) -> int:
             if pod is not None:
                 ssh = lium_api.parse_ssh(pod)
                 if ssh:
-                    p = ssh_run(ssh[0], ssh[1],
-                                "cat /root/king/bootstrap.failed 2>/dev/null; "
-                                "tail -n 1 /root/king/bootstrap.log 2>/dev/null",
-                                timeout=30)
+                    try:
+                        p = ssh_run(ssh[0], ssh[1],
+                                    "cat /root/king/bootstrap.failed 2>/dev/null; "
+                                    "tail -n 1 /root/king/bootstrap.log 2>/dev/null",
+                                    timeout=30)
+                    except subprocess.SubprocessError as e:   # a slow ssh is not a failed pod (2026-09-19: two serving pods marked "never served")
+                        log(f"{args.name}: bootstrap log unreadable ({type(e).__name__}); keep waiting")
+                        time.sleep(30)
+                        continue
                     tail = p.stdout.strip().splitlines()
                     if tail:
                         log(f"{args.name}: {tail[-1][:160]}")

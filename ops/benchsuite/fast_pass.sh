@@ -48,6 +48,8 @@ DIGEST="$REF" R2FLAG=""
 if [[ "$REF" == r2://* ]]; then DIGEST="${CHALLENGER_REVISION:?CHALLENGER_REVISION required for an r2:// ref}"; R2FLAG="--r2 $REF"; export AFFINE_EVAL_R2_ENDPOINT="${AFFINE_EVAL_R2_ENDPOINT:-${R2_ENDPOINT:-}}"
 elif [[ "$REF" == hf://* ]]; then SPEC="${REF#hf://}"; DIGEST="hf-$(echo "${SPEC#*@}" | cut -c1-10)"; R2FLAG="--hf $SPEC"; fi
 
+podf() { "$PY" -c 'import json,sys; m=json.load(open("'"$HERE"'/state/pods.json"))[sys.argv[1]]; print(m[sys.argv[2]])' "$1" "$2"; }
+
 # ---- roles: chat1..N, agentic, swe
 ROLES=(); for i in $(seq 1 "$N_SHARDS"); do ROLES+=("chat$i"); done; ROLES+=(agentic swe)
 declare -A POD PLANS
@@ -72,12 +74,18 @@ for r in "${ROLES[@]}"; do rent_role "$r" & done
 wait
 for r in "${ROLES[@]}"; do
   v=$(cat "$HERE/state/fast-$RUN_ID-$r.pod" 2>/dev/null || echo "")
-  case "$v" in FAILED*) POD[$r]="${v#FAILED }"; log "$r: pod never served (${POD[$r]})";; "") log "$r: no stock";; *) POD[$r]="$v";; esac
+  case "$v" in
+    FAILED*) pod="${v#FAILED }"
+             # `wait` gave up, but the pod may serve anyway (a slow ssh tripped it on 2026-09-19): probe once
+             if curl -s -m 15 -H "Authorization: Bearer $(podf "$pod" key)" "$(podf "$pod" base_url)/models" 2>/dev/null | grep -q '"data"'; then POD[$r]="$pod"; log "$r: wait failed but $pod answers; using it"
+             else log "$r: pod never served ($pod); releasing"; "$PY" "$HERE/kingpod.py" release "$pod" >/dev/null 2>&1; fi;;
+    "") log "$r: no stock";;
+    *) POD[$r]="$v";;
+  esac
 done
 [ -n "${POD[chat1]:-}" ] || { log "no chat pod at all; giving up"; finish 2; }
 T_READY=$(date +%s); log "pods ready after $(( (T_READY - T_START) / 60 )) min: $(for r in "${ROLES[@]}"; do echo -n "$r=${POD[$r]:-none} "; done)"
 
-podf() { "$PY" -c 'import json,sys; m=json.load(open("'"$HERE"'/state/pods.json"))[sys.argv[1]]; print(m[sys.argv[2]])' "$1" "$2"; }
 ssh_pod() { local pod="$1"; shift; ssh "${SSHO[@]}" -p "$(podf "$pod" ssh_port)" "root@$(podf "$pod" ssh_host)" "$@"; }
 scp_pod() { local pod="$1" src="$2" dst="$3"; scp "${SSHO[@]}" -P "$(podf "$pod" ssh_port)" "$src" "root@$(podf "$pod" ssh_host):$dst"; }
 
