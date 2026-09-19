@@ -187,6 +187,16 @@ class Monitor:
         last = common.read_json(cfg.paths["fold_last_run"])
         if last is None:
             checks.append(Check("fold_last_run", "warn", "no affine/state/fold/last_run.json yet (fold wrapper never ran)"))
+            # until the wrapper has run once, the manifest's publish time is
+            # the only clock for "is the fold overdue"
+            pub = common.parse_iso((manifest or {}).get("published_at") or (manifest or {}).get("created_at"))
+            if interval and pub:
+                overdue_by = now - pub - interval - t["fold_overdue_slack_h"] * 3600
+                if overdue_by > 0:
+                    checks.append(Check("fold_overdue", "page",
+                                        f"no fold published for {common.fmt_age(now - pub)} "
+                                        f"(cron every {common.fmt_age(interval)} + {t['fold_overdue_slack_h']:.0f} h slack; "
+                                        f"no wrapper record yet)", last_published=(manifest or {}).get("published_at")))
         else:
             started = float(last.get("started_ts") or 0) or common.parse_iso(last.get("started_at")) or 0.0
             if last.get("status") == "running":
