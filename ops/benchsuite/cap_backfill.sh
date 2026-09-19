@@ -51,7 +51,7 @@ POD=""
 cleanup() { [ -n "$POD" ] && { log "releasing $POD"; "$PY" "$HERE/kingpod.py" release "$POD" >/dev/null 2>&1 || true; }; }
 trap cleanup EXIT
 T0=$(date +%s)
-while [ $(( $(date +%s) - T0 )) -lt 3600 ]; do
+while [ $(( $(date +%s) - T0 )) -lt "${CAP_RENT_DEADLINE_S:-14400}" ]; do   # zero Lium stock is normal while a fast pass holds 5 pods: wait up to 4 h
   for plan in $CAP_PLANS; do
     # shellcheck disable=SC2086
     POD=$("$PY" "$HERE/kingpod.py" rent --plan "$plan" --digest "$DIGEST" $R2FLAG 2>>"$RUN_DIR/capfill-rent.log" | tail -1) && [ -n "$POD" ] && break
@@ -64,7 +64,7 @@ while [ $(( $(date +%s) - T0 )) -lt 3600 ]; do
   "$PY" "$HERE/kingpod.py" release "$POD" --strike "never served in 1500s (cap backfill $RUN_ID)" >/dev/null 2>&1 || true
   POD=""
 done
-[ -n "$POD" ] || { log "no serving pod within 60 min; giving up"; finish 3; }
+[ -n "$POD" ] || { log "no serving pod within the rent deadline; giving up"; finish 3; }
 log "pod $POD serves $(podf "$POD" served) after $(( ($(date +%s) - T0) / 60 )) min"
 ssh_pod() { ssh "${SSHO[@]}" -p "$(podf "$POD" ssh_port)" "root@$(podf "$POD" ssh_host)" "$@"; }
 

@@ -81,7 +81,11 @@ def copy_teacher(run_dir: Path, teacher_from: Path) -> list[str]:
                 continue
             dst = run_dir / "teacher" / src.name
             if dst.exists():
-                continue
+                if (dst / "summary.json").exists():
+                    continue
+                # a cmd.txt-only copy: the reference run's cell was still running when this
+                # pass rsynced the teacher dir (fast_pass.sh) — replace it with the finished cell
+                shutil.rmtree(dst)
             shutil.copytree(src, dst, ignore=shutil.ignore_patterns(*LIGHT_EXCLUDE))
             copied.append(src.name)
     return copied
