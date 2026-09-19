@@ -50,7 +50,7 @@ import {
   setReignLookup,
   short,
   sideScoreOf,
-} from "./charts.js?v=74";
+} from "./charts.js?v=75";
 
 const $ = (id) => document.getElementById(id);
 
