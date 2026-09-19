@@ -30,14 +30,15 @@ GRACE_S = 15 * 60   # a pod younger than this may belong to a pass that has not 
 
 def owners() -> tuple[set[str], set[str]]:
     ledger = {r["pod"] for r in json.loads((HERE / "state" / "backfill_pods.json").read_text())}
-    procs = subprocess.run(["pgrep", "-af", "run_pass.sh|kingpod.py"], capture_output=True, text=True).stdout
+    procs = subprocess.run(["pgrep", "-af", "pass.sh|kingpod.py|fast_pass"], capture_output=True, text=True).stdout
     owned = set(re.findall(r"kingpod.py (?:wait|rent) (\S+)", procs))
-    for rid in set(re.findall(r"run_pass.sh \S+ \S+ (\S+) ", procs)):
-        try:
-            owned |= set(re.findall(r"Lium pod (\S+) \(", (BENCH / "state" / f"pass-{rid}.log").read_text(errors="replace")))
-        except OSError:
-            pass
-        # a pass still renting: pods.json rows created after the pass started, same digest, are its
+    # any pass (mine, the watcher's, the benchsuite worker's by-hand / fast passes) that is still
+    # writing its log owns every pod named in it; a log silent for > 3 h with no .exit is dead
+    for log_path in (BENCH / "state").glob("pass-*.log"):
+        if log_path.with_suffix(".exit").exists() or time.time() - log_path.stat().st_mtime > 3 * 3600:
+            continue
+        text = log_path.read_text(errors="replace")
+        owned |= set(re.findall(r"(bench-king-[0-9a-f\-]+)", text))
     return ledger, owned
 
 
