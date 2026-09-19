@@ -530,7 +530,8 @@ case "$MODE" in
   challenger)  run_lium never ;;
   genesis)     run_lium never ;;
   agentic)     run_lium never ;;   # modes.agentic_envs on its own pod; BENCHSUITE_MERGE_INTO merges into a card
-  attach)      attach_lium ;;   # hf://<repo>@<rev> ref, chat sets only, teacher reused; the kingboard's Genesis row
+  attach)      attach_lium ;;
+  fast)        exec bash "$HERE/fast_pass.sh" "$REF" "$LABEL" "$RUN_ID" ;;   # parallel topology (Jacob 2026-09-19); own exit/pid files   # hf://<repo>@<rev> ref, chat sets only, teacher reused; the kingboard's Genesis row
   comparables) run_comparables ;;
   *) log "unknown mode $MODE"; finish 9 ;;
 esac

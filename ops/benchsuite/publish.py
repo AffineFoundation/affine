@@ -39,6 +39,26 @@ REPO = HERE.parents[1]
 SUITE = tomllib.loads((HERE / "suite.toml").read_text())
 FORBIDDEN_PREFIXES = ("traces/", "views/", "corpus/", "turns/")
 PARTIAL = False
+ETA = False
+STATE_DIR_FOR_ETA = ""
+
+
+def reference_walls(state_dir: Path) -> dict:
+    """env -> king wall_seconds from the newest complete king card (for the ETA)."""
+    best, walls = None, {}
+    for p in state_dir.glob("*.json"):
+        try:
+            c = json.loads(p.read_text())
+        except (OSError, ValueError):
+            continue
+        if c.get("status") == "complete" and (c.get("king") or {}).get("reign") is not None:
+            if best is None or (c.get("created_at") or "") > (best.get("created_at") or ""):
+                best = c
+    for r in (best or {}).get("rows", []):
+        w = ((r.get("king") or {}).get("wall_seconds"))
+        if w:
+            walls[f"{r['env']}__t{r['temperature']:g}"] = float(w)
+    return walls
 
 
 
@@ -160,7 +180,10 @@ def scorecard(run_dir: Path) -> dict:
         "status": "partial" if partial else "complete",
         "running": partial,   # cells publish as they finish; the card fills in until the final publish
         "progress": {"done": len(done_cells), "total": len(done_cells) + len(unfinished), "remaining": unfinished,
-                     "as_of": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
+                     "as_of": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                     **({"eta": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + max(
+                         [reference_walls(Path(STATE_DIR_FOR_ETA)).get(c.split("/")[-1], 2700.0) for c in unfinished] or [0.0])))}
+                        if (ETA and unfinished) else {})},
         "unfinished_cells": unfinished,
         "king": manifest.get("king"), "teacher": manifest.get("teacher"),
         "where": manifest.get("where"), "code": manifest.get("code"),
@@ -187,11 +210,14 @@ def main() -> int:
     ap.add_argument("--no-r2", action="store_true")
     ap.add_argument("--only-state", action="store_true", help="write the scorecard JSON only")
     ap.add_argument("--partial", action="store_true", help="mark the card partial (more cells will follow, e.g. the sandbox phase)")
+    ap.add_argument("--eta", action="store_true", help="estimate the card ETA from the remaining cells' reference wall times (fast pass)")
     ap.add_argument("--only-cells", default="", help="comma list of <model>/<env>__t<T>: upload just those "
                     "cell dirs (+ manifests), merge into the existing R2 index (a cell added to a published run)")
     a = ap.parse_args()
-    global PARTIAL
+    global PARTIAL, ETA, STATE_DIR_FOR_ETA
     PARTIAL = a.partial
+    ETA = a.eta
+    STATE_DIR_FOR_ETA = a.state_dir
     run_dir = Path(a.run_dir).expanduser().resolve()
     run_id = run_dir.name
     card = scorecard(run_dir)
