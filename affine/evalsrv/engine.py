@@ -736,6 +736,34 @@ class Engine:
         except Exception:
             log.warning("gpu orphan sweep failed for %s", slot.label,
                         exc_info=True)
+        if self.role == "chat":
+            self._sweep_orphan_engine_cores(slot)
+
+    def _sweep_orphan_engine_cores(self, slot: Slot) -> None:
+        """Kill VLLM::EngineCore / resource_tracker processes that belong to
+        no live slot. The nvidia-smi sweep above sees HOST pids; inside a Lium
+        container they do not match ours, so an EngineCore whose API-server
+        leader died keeps its 129 GB and every later launch fails with "free
+        memory … less than desired" (chat pod, 2026-09-18 14:57 → 09-19).
+        Chat role only: one slot, so anything outside its pgid is an orphan."""
+        keep_pgids = {s.pgid for s in self._slots()
+                      if s is not slot and s.pgid is not None}
+        try:
+            out = subprocess.run(
+                ["pgrep", "-f", "VLLM::EngineCore|multiprocessing.resource_tracker"],
+                capture_output=True, text=True, timeout=15).stdout
+        except Exception:
+            return
+        for pid_s in out.split():
+            try:
+                pid = int(pid_s)
+                if pid == os.getpid() or os.getpgid(pid) in keep_pgids:
+                    continue
+                os.kill(pid, signal.SIGKILL)
+                log.warning("killed orphan engine process %d (%s slot launch)",
+                            pid, slot.label)
+            except (ProcessLookupError, ValueError, PermissionError):
+                continue
 
     def _kill_port_listener(self, slot: Slot) -> None:
         """SIGKILL whatever still listens on the slot's port.
@@ -1808,9 +1836,14 @@ class Engine:
             # multi-GB tree takes long enough to stall launches otherwise.
             doomed: list[Path] = list(hub.glob("*.pruning"))
             for d in hub.iterdir():
+                # Crowned-king snapshots are kept on the duel pod (25 TB; a
+                # re-download before the next duel costs an hour). The chat
+                # pod has ~200 GB and only ever serves the current king: three
+                # crowns in a day filled it (2026-09-19, the reign-19 fetch
+                # stalled at 56/70 GB), so there old kings are pruned too.
                 if (d.is_dir() and d.name.startswith("models--")
                         and d.name not in keep_dirs
-                        and not _is_public_king_cache(d)):
+                        and not (self.role != "chat" and _is_public_king_cache(d))):
                     log.info("pruning cached model %s", d.name)
                     target = hub / f"{d.name}.pruning"
                     try:

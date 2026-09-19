@@ -121,13 +121,16 @@ def _require_token(x_affine_token: str = Header(default=""),
 
 
 def _require_v1_key(x_affine_token: str = Header(default=""),
-                    authorization: str = Header(default="")) -> bool:
+                    authorization: str = Header(default=""),
+                    x_api_key: str = Header(default="")) -> bool:
     """/v1 gate. Returns True when the caller used the PUBLIC key (rate
-    limited), False for the eval token (dash proxy / operator, unlimited)."""
-    if EVAL_TOKEN and (x_affine_token == EVAL_TOKEN
-                       or _bearer(authorization) == EVAL_TOKEN):
+    limited), False for the eval token (dash proxy / operator, unlimited).
+    Anthropic-style clients (Claude Code -> /v1/messages) send the key as
+    x-api-key instead of a Bearer; both spellings are accepted."""
+    presented = {_bearer(authorization), x_api_key.strip()}
+    if EVAL_TOKEN and (x_affine_token == EVAL_TOKEN or EVAL_TOKEN in presented):
         return False
-    if PUBLIC_KEY and _bearer(authorization) == PUBLIC_KEY:
+    if PUBLIC_KEY and PUBLIC_KEY in presented:
         return True
     if not EVAL_TOKEN and not PUBLIC_KEY:
         return False
@@ -397,9 +400,16 @@ async def v1_chat_completions(request: Request,
         raise HTTPException(400, "messages required")
     payload = _shape_v1_payload(payload, st)
 
+    return await _relay(request, "/v1/chat/completions", payload, public)
+
+
+async def _relay(request: Request, path: str, payload: dict, public: bool):
+    """Forward a JSON request to the local vLLM, streaming SSE through when
+    the client asked for it. Holds one public in-flight slot for the
+    duration when the caller used the public key."""
     if public:
         _public_admit(request)
-    url = f"http://localhost:{_engine.chall_slot.port}/v1/chat/completions"
+    url = f"http://localhost:{_engine.chall_slot.port}{path}"
     timeout = httpx.Timeout(UPSTREAM_TIMEOUT_S, connect=10.0)
     if payload.get("stream"):
         async def relay():
@@ -436,6 +446,49 @@ async def v1_chat_completions(request: Request,
     return Response(content=r.content, status_code=r.status_code,
                     media_type=r.headers.get("content-type",
                                              "application/json"))
+
+
+# -- Anthropic Messages wire plane (Claude Code) ------------------------------
+# vLLM >= 0.11 serves /v1/messages natively; we only gate, alias the model,
+# cap max_tokens and pass the body through (system is a top-level field in
+# this API, so no folding is needed).
+
+@app.post("/v1/messages")
+async def v1_messages(request: Request, public: bool = Depends(_require_v1_key)):
+    st = _get_state()
+    if st["state"] != "serving":
+        raise HTTPException(503, detail=json.dumps(
+            {"state": st["state"], "error": st["error"]}))
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(400, "invalid JSON body")
+    if not isinstance(payload, dict) or not payload.get("messages"):
+        raise HTTPException(400, "messages required")
+    payload["model"] = KING_ALIAS
+    max_out = _max_output_tokens()
+    try:
+        req_max = int(payload.get("max_tokens") or max_out)
+    except (TypeError, ValueError):
+        req_max = max_out
+    payload["max_tokens"] = max(1, min(req_max, max_out))
+    return await _relay(request, "/v1/messages", payload, public)
+
+
+@app.post("/v1/messages/count_tokens")
+async def v1_messages_count_tokens(request: Request,
+                                   public: bool = Depends(_require_v1_key)):
+    st = _get_state()
+    if st["state"] != "serving":
+        raise HTTPException(503, detail=json.dumps(
+            {"state": st["state"], "error": st["error"]}))
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(400, "invalid JSON body")
+    payload["model"] = KING_ALIAS
+    payload.pop("stream", None)
+    return await _relay(request, "/v1/messages/count_tokens", payload, False)
 
 
 def main() -> None:
