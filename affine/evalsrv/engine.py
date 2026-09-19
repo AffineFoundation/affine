@@ -1708,6 +1708,12 @@ class Engine:
             if keep_repo and keep_revision and r2store.snapshot_ready(
                     keep_repo, keep_revision, HF_HOME):
                 keep.add(keep_repo)
+            elif (keep_repo and keep_revision and self.role == "chat"
+                  and r2store.snapshot_dir(keep_repo, keep_revision, HF_HOME).exists()):
+                # Chat pod: a half-downloaded snapshot of the incoming king
+                # resumes (r2store ranged parts); pruning it on every retry
+                # re-fetched 70 GB from scratch (2026-09-19, 56 GB lost).
+                keep.add(keep_repo)
             hub = Path(HF_HOME) / "hub"
             if not hub.exists():
                 return
