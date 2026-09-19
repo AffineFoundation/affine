@@ -80,7 +80,7 @@ def action_divergence(y_side: str | None, ref_ys: list[str], kind: str | None
     return 1.0 - soft, 1.0 - exact
 
 ROW_SORT = ("challenge_id", "side", "turn_id")
-LEDGER_VERSION = 4   # 4 (2026-09-16, rule v2): rows gain div_action / div_action_exact / div_score / b_lift / teacher_own_lift (ROWS CHANGE -> new ledger sha); rollup + div_* means
+LEDGER_VERSION = 5   # 5 (2026-09-19, wvk 22 sd meter): rows gain score_mode / leg_mode; legs of sd_min_rga / min_rga verdicts scored per byte with min_rg (one unit across eras); rollup level group_era. 4: divergence columns.
 
 
 # -- history --------------------------------------------------------------------
@@ -193,7 +193,14 @@ def side_terms(row: dict | None, dp: dict) -> dict:
     band_c = dp.get("band_c", 2.0)
     band_floor = dp.get("band_floor", 0.002)
     floor = dp.get("forfeit_turn_score", -0.1)
-    mode = dp.get("score_mode", "min_rg")
+    stamped_mode = dp.get("score_mode", "min_rg")
+    # wvk 22 (2026-09-18): verdicts are decided in teacher-sd units (sd_min_rga, a
+    # slice-level standardisation in evalsrv.sdmeter). The ledger keeps ONE unit
+    # across eras by scoring every turn's legs per byte with min_rg from the same
+    # stored pairs -- theta, d, Dbar+ and the divergence inputs stay comparable
+    # over the 60-verdict half-life. The action leg A of min_rga is not part of
+    # the per-turn ledger score (documented in the ledger json).
+    mode = "min_rg" if stamped_mode in ("sd_min_rga", "min_rga") else stamped_mode
     norm = dp.get("action_norm_bytes", None)
     if S.is_forfeit(row):
         return {"scored": floor is not None, "forfeit": True, "turn_score": floor,
@@ -305,6 +312,8 @@ def build_rows(history_rows: list[dict], evals: str, *, since: str, until: str,
             "king_digest_at_time": king_rev, "reign": reign.get("reign"),
             "reign_revoked": bool(reign.get("revoked", False)),
             "gated_near_king": bool(near_king),
+            "score_mode": str(dp.get("score_mode") or "min_rg"),
+            "leg_mode": "min_rg" if str(dp.get("score_mode") or "") in ("sd_min_rga", "min_rga") else str(dp.get("score_mode") or "min_rg"),
         }
         scored_cids.append(cid)
         for tid in turn_ids:
@@ -428,7 +437,8 @@ def rollup(rows: list[dict], scored_cids: list[str], cfg: dict) -> list[dict]:
     for r in rows:
         if not r["joined"]:
             continue
-        keys = (("stratum", r["base_stratum"]), ("cell", r["cell"]), ("group", r["group"]))
+        keys = (("stratum", r["base_stratum"]), ("cell", r["cell"]), ("group", r["group"]),
+                ("group_era", f"{r['group']}|wvk{r['wvk']}|{r['score_mode']}"))
         age = newest - order[r["challenge_id"]]
         a = 0.5 ** (age / half)
         for level, key in keys:
@@ -503,6 +513,7 @@ ROW_SCHEMA = pa.schema([
     ("at", pa.string()), ("wvk", pa.int32()), ("manifest_sha256", pa.string()),
     ("corpus_epoch", pa.int32()), ("hotkey", pa.string()), ("revision", pa.string()),
     ("z", pa.float64()), ("margin", pa.float64()), ("rejection_reason", pa.string()),
+    ("score_mode", pa.string()), ("leg_mode", pa.string()),
     ("king_digest_at_time", pa.string()), ("reign", pa.int32()), ("reign_revoked", pa.bool_()),
     ("is_king_row", pa.bool_()), ("gated_near_king", pa.bool_()), ("joined", pa.bool_()),
     ("stratum", pa.string()), ("base_stratum", pa.string()), ("cell", pa.string()),
@@ -596,6 +607,8 @@ def build(args) -> dict:
     newest_key = (f"{last['reign']}{'-revoked' if last['reign_revoked'] else ''}") if last else None
     meta = {
         "window": {**extra["stats"], "since": args.since, "until": args.until},
+        "score_modes_in_window": sorted({r["score_mode"] for r in rows}),
+        "input_units": "nats_per_byte_rescored",
         "kings_in_window": {k: len(v) for k, v in sorted(kings.items())},
         "newest_king": ({"reign": last["reign"], "digest": last["king_digest_at_time"],
                          "revoked": last["reign_revoked"], "n_verdicts": len(kings[newest_key])}
@@ -614,6 +627,7 @@ def build(args) -> dict:
             "d": "challenger turn_score - king turn_score on the same turn (both sides scored)",
             "gated_near_king": "verdict had no rejection_reason and |z| < near_king_z",
             "rollup.n_w": "sum over king rows of 0.5^(age_in_verdicts / half_life_verdicts)",
+            "leg_mode": "per-turn legs are scored per byte with min_rg for EVERY era (sd_min_rga verdicts are a slice-level standardisation of the same legs); theta / d / Dbar+ are therefore unit-consistent across wvk 10-22",
             "div_action": "1 - mean token-Jaccard between the side's normalised action and each valid reference action (evalsrv.amatch normal form; None for text)",
             "div_score": "max(0, mean_i(lp_own_i - lp_empty_i) - B_side): the teacher's thought explains its own action more than the side's thought explains the side's action (per byte)",
             "rollup.Dbar_plus": "decayed mean over gated near-king challenger rows of max(0, challenger - king turn score): 'a challenger can do better here'",

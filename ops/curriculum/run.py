@@ -38,8 +38,8 @@ import publish  # noqa: E402
 import rule  # noqa: E402
 import weights  # noqa: E402
 from common import (  # noqa: E402
-    CRITERION_HISTORY, DATA_BASE, EVALS_DIR, HISTORY_PATH, INDEX_CACHE, LATEST_PATH, REPO, SNAPSHOT_DIR,
-    STATE_DIR, clean_float, load_curriculum_cfg, log, write_json,
+    CRITERION_HISTORY, DATA_BASE, EVALS_DIR, FITTED_SCORE_MODES, HISTORY_PATH, INDEX_CACHE, INPUT_UNITS, LATEST_PATH,
+    REPO, RESCORING_METHOD, SNAPSHOT_DIR, STATE_DIR, clean_float, load_curriculum_cfg, log, write_json,
 )
 from diff import build_diff  # noqa: E402
 
@@ -302,6 +302,8 @@ def write_fold_vector(cfg: dict, latest: dict, groups: dict, snapshot: Path) -> 
     doc = {"epoch": latest["for_epoch"], "against_epoch": latest["against_epoch"],
            "generated_at": latest["computed_at"], "rule_version": latest["rule_version"],
            "mode": latest["mode"], "ledger_sha256": latest["ledger_sha256"],
+           "input_units": latest["input_units"], "fitted_score_modes": latest["fitted_score_modes"],
+           "rescoring_method": latest["rescoring_method"],
            "weights_sha256": latest["weights_sha256"], "manifest_sha256": latest["manifest_sha256"],
            "counts_as_shadow_fold": latest["counts_as_shadow_fold"],
            "automatic_items_pass": latest["automatic_items_pass"],
@@ -551,6 +553,10 @@ def main() -> None:
         "ledger_sha256": lsha, "weights_sha256": wsha, "manifest_sha256": rule_doc["manifest_sha256"],
         "against_epoch": int(rule_doc["corpus_epoch"]), "for_epoch": for_epoch,
         "theta": rule_doc["theta"], "knobs": rule_doc["knobs"],
+        # units declaration for ops/health/contract_compat (the live declaration wins over consumers.toml)
+        "input_units": INPUT_UNITS, "fitted_score_modes": list(FITTED_SCORE_MODES),
+        "rescoring_method": RESCORING_METHOD,
+        "score_modes_in_window": sorted({r for r in (ledger_doc.get("score_modes_in_window") or [])}),
         "computed_at": crit["computed_at"], "counts_as_shadow_fold": crit["counts_as_shadow_fold"],
         "automatic_items_pass": crit["automatic_items_pass"],
         "shares_after_clamp": {g: clean_float(v) for g, v in sorted(shares.items())},
@@ -559,7 +565,11 @@ def main() -> None:
         "local_snapshot": str(snapshot),
     }
     latest_body = write_json(latest, snapshot / "latest.json")
-    write_fold_vector(cfg, latest, groups, snapshot)
+    if not args.no_publish:
+        # a dry run must never move what the fold reads
+        write_fold_vector(cfg, latest, groups, snapshot)
+    else:
+        write_json(latest, snapshot / "fold_vector.dry_run.json")
 
     # 4. print the criterion (the fold-3 decision is read off this block)
     print("\n=== stage-3 criterion ===")
@@ -585,6 +595,9 @@ def main() -> None:
         publish.publish_snapshot(pub, snapshot_dir=snapshot, ledger_dir=LEDGER_DIR, ledger_sha=lsha,
                                  weights_sha=wsha, for_epoch=for_epoch, latest_body=latest_body)
         log(f"[run] published curriculum/{for_epoch}/ + curriculum/weights/{wsha[:12]}/ + ledger {lsha[:12]}")
+    if args.no_publish:
+        log("[run] dry run: latest.json, the fold vector and the criterion history are NOT updated")
+        return
     write_json(latest, LATEST_PATH)
     with open(CRITERION_HISTORY, "a", encoding="utf-8") as f:
         f.write(json.dumps({"computed_at": crit["computed_at"], "weights_sha256": wsha, "ledger_sha256": lsha,
