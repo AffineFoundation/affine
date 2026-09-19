@@ -66,16 +66,33 @@ POD[agentic]=""; POD[swe]=""
 cleanup() { for r in "${ROLES[@]}"; do [ -n "${POD[$r]:-}" ] && { log "releasing ${POD[$r]} ($r)"; "$PY" "$HERE/kingpod.py" release "${POD[$r]}" >/dev/null 2>&1 || true; }; done; }
 trap cleanup EXIT
 
+RENT_WAIT_S="${FAST_RENT_WAIT_S:-1500}"     # a pod that does not serve in 25 min is replaced, not waited on for 60
+RENT_DEADLINE_S="${FAST_RENT_DEADLINE_S:-3300}"
 rent_role() {  # role -> writes state/fast-$RUN_ID-$role.pod
-  local role="$1" pod=""
-  for plan in ${PLANS[$role]}; do
-    # shellcheck disable=SC2086
-    pod=$("$PY" "$HERE/kingpod.py" rent --plan "$plan" --digest "$DIGEST" $R2FLAG 2>>"$RUN_DIR/rent-$role.log" | tail -1) && [ -n "$pod" ] && break
+  # Rent, wait, and on a dead executor release + rent the next one until the deadline.
+  # 2026-09-19: reign 18's pass lost 2 of 5 pods and reign 16's all 4 chat/agentic pods to
+  # executors that never served in 60 min (one try each) -> no card. Lium executors fail
+  # independently (~40 % that day), so one retry per role recovers most passes.
+  local role="$1" pod="" t0 plan
+  t0=$(date +%s)
+  while [ $(( $(date +%s) - t0 )) -lt "$RENT_DEADLINE_S" ]; do
     pod=""
+    for plan in ${PLANS[$role]}; do
+      # shellcheck disable=SC2086
+      pod=$("$PY" "$HERE/kingpod.py" rent --plan "$plan" --digest "$DIGEST" $R2FLAG 2>>"$RUN_DIR/rent-$role.log" | tail -1) && [ -n "$pod" ] && break
+      pod=""
+    done
+    [ -n "$pod" ] || { echo "$(date -u +%FT%TZ) $role: no stock on any plan" >> "$RUN_DIR/rent-$role.log"; sleep 120; continue; }
+    echo "$pod" > "$HERE/state/fast-$RUN_ID-$role.pod"
+    if timeout "$RENT_WAIT_S" "$PY" "$HERE/kingpod.py" wait "$pod" >>"$RUN_DIR/rent-$role.log" 2>&1; then return 0; fi
+    # not serving: the pod may still answer (slow ssh tripped `wait` before) — probe once
+    if curl -s -m 15 -H "Authorization: Bearer $(podf "$pod" key 2>/dev/null)" "$(podf "$pod" base_url 2>/dev/null)/models" 2>/dev/null | grep -q '"data"'; then return 0; fi
+    echo "$(date -u +%FT%TZ) $role: $pod never served in ${RENT_WAIT_S}s; releasing with a strike and renting again" >> "$RUN_DIR/rent-$role.log"
+    "$PY" "$HERE/kingpod.py" release "$pod" --strike "never served in ${RENT_WAIT_S}s (fast pass $RUN_ID)" >>"$RUN_DIR/rent-$role.log" 2>&1 || true
+    echo "" > "$HERE/state/fast-$RUN_ID-$role.pod"; pod=""
   done
-  [ -n "$pod" ] || { echo "" > "$HERE/state/fast-$RUN_ID-$role.pod"; return 2; }
-  echo "$pod" > "$HERE/state/fast-$RUN_ID-$role.pod"
-  "$PY" "$HERE/kingpod.py" wait "$pod" >/dev/null 2>>"$RUN_DIR/rent-$role.log" || { echo "FAILED $pod" > "$HERE/state/fast-$RUN_ID-$role.pod"; return 3; }
+  [ -n "$pod" ] && echo "FAILED $pod" > "$HERE/state/fast-$RUN_ID-$role.pod" && return 3
+  echo "" > "$HERE/state/fast-$RUN_ID-$role.pod"; return 2
 }
 log "pass $RUN_ID (fast) ref=$REF label=$LABEL code=$CODE_COMMIT: renting ${#ROLES[@]} pods in parallel"
 for r in "${ROLES[@]}"; do rent_role "$r" & done

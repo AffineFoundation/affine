@@ -126,10 +126,12 @@ step_limit = 250
 # Daytona quota (us, container): 500 vCPU / 1000 GB. SWE task = 1 vCPU / 4 GB, TB2 task = 1 / 2 ->
 # 200 SWE + 89 TB2 = 289 vCPU / 978 GB: at the memory ceiling; ask Daytona for more before going higher.
 [fast]
+# 2026-09-19 caps: MMLU-Pro (2,000 rows to 32k) and LiveCodeBench (454 rows to 64k) are the two long
+# cells, so they sit on different pods; bfcl + when2call are short and share MMLU-Pro's pod.
 chat_shards = [
-  ["bfcl-v3", "when2call"],
-  ["livecodebench", "mmlu-pro", "ifbench", "humaneval"],
-  ["aime25", "math500", "gpqa-diamond", "ifeval"],
+  ["bfcl-v3", "when2call", "mmlu-pro"],
+  ["livecodebench", "ifbench", "humaneval", "ifeval"],
+  ["aime25", "math500", "gpqa-diamond"],
 ]
 shard_after = [["graphwalks"], ["oolong-synth", "mrcr-v2"], ["minif2f"]]   # after each shard: docker long-context cells (prime for minif2f)
 chat_plans = ["h200-1x", "pro6000-1x", "b200-1x"]
@@ -298,7 +300,14 @@ secondary_temperature = 0.8
 #   taskset_config  typed taskset knobs, passed as a TOML overlay
 #   concurrency  fixed tasks-in-flight for the env (overrides the run's -c); with
 #             rollout_timeout it is the env's budget, identical for every reign
-#   max_tokens completion cap per model call
+#   max_tokens completion cap per model call. Completion caps (2026-09-19, Alan's check of the
+#             17:00 digest): at the old caps most rows of the reasoning cells were CUT at the cap and
+#             scored 0 (MMLU-Pro 50 % of rows at 8k, GPQA 49 % at 16k, LiveCodeBench 82 % at 16k), so
+#             those cells measured the cap, not the model (Genesis MMLU-Pro 46 vs the vendor card's 85).
+#             New defaults: 32k for MMLU-Pro / GPQA / MATH-500 (AIME was 32k already), 64k for
+#             LiveCodeBench; T stays 0. Cells run at an old cap are kept as <env>@<cap>k (recap.py)
+#             so the history stays visible; the plain column is the new cap everywhere.
+#   cap_history  earlier max_tokens values of this env (the budget tags of the kept old cells)
 #   reward    the reward name that is the headline score
 #   secondary  also run the temperature-0.8 row (cheap chat sets only)
 #   args      extra `--env.taskset.*` flags
@@ -325,10 +334,11 @@ group = "math"
 n = -1
 harness = "null"
 runtime = "none"
-max_tokens = 16384
+max_tokens = 32768   # 16384 until 2026-09-19 (cap-bound: see "Completion caps" above); old cells live on as math500@16k
 reward = "correct"
 secondary = true
 note = "MATH-500; math-verify on the boxed answer."
+cap_history = [16384]
 
 [[envs]]
 id = "gpqa-diamond"
@@ -338,10 +348,11 @@ group = "knowledge"
 n = -1
 harness = "null"
 runtime = "none"
-max_tokens = 16384
+max_tokens = 32768   # 16384 until 2026-09-19 (cap-bound: see "Completion caps" above); old cells live on as gpqa-diamond@16k
 reward = "correct"
 secondary = true
 note = "GPQA diamond (198). Deterministic letter extraction only; upstream's LLM-judge fallback is removed (no judge anywhere in the suite)."
+cap_history = [16384]
 
 [[envs]]
 id = "mmlu-pro"
@@ -351,10 +362,11 @@ group = "knowledge"
 n = 2000
 harness = "null"
 runtime = "none"
-max_tokens = 8192
+max_tokens = 32768   # 8192 until 2026-09-19 (cap-bound: see "Completion caps" above); old cells live on as mmlu-pro@8k
 reward = "correct"
 secondary = false
 note = "MMLU-Pro test, fixed 2,000-question subset (verifiers shuffle, seed 0, uniform over the 12,032 test rows so categories keep their natural shares), 0-shot, boxed letter. Full 12,032 was started on the first pass and cut for time (king pace ~20 questions/min under load)."
+cap_history = [8192]
 
 [[envs]]
 id = "ifbench"
@@ -403,10 +415,11 @@ group = "coding"
 n = -1
 harness = "null"
 runtime = "sandbox"
-max_tokens = 16384
+max_tokens = 65536   # 16384 until 2026-09-19 (cap-bound: see "Completion caps" above); old cells live on as livecodebench@16k
 reward = "passed"
 secondary = false
 note = "LiveCodeBench code_generation_lite v6, official window 2024-08-01..2025-05-01; hidden tests run in the sandbox."
+cap_history = [16384]
 
 [[envs]]
 id = "bfcl-v3"
