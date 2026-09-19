@@ -484,7 +484,15 @@ class Monitor:
                 missing.append(f"{it['file']} unreadable")
                 continue
             if it["must_contain"] not in text:
-                missing.append(f"{it['file']} lost `{it['must_contain']}` ({it['why']})")
+                note = ""
+                if it.get("repair") and not self.dry_run:
+                    try:
+                        r = subprocess.run([common.python_bin(), str(REPO / it["repair"])], capture_output=True,
+                                           text=True, timeout=60)
+                        note = f" — repair `{it['repair']}`: {(r.stdout or r.stderr).strip()[:80]}"
+                    except (subprocess.SubprocessError, OSError) as e:
+                        note = f" — repair failed: {e!r}"
+                missing.append(f"{it['file']} lost `{it['must_contain']}` ({it['why']}){note}")
         checks.append(Check("guard_integrity", "page" if missing else "ok",
                             "guard hook missing: " + "; ".join(missing) if missing
                             else f"{len(cfg.raw.get('integrity', []))} guard hooks present", missing=missing))

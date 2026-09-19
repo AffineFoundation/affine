@@ -76,6 +76,7 @@ chat_ssh_timeout_s = 25
 file = "ops/corpus_build.py"
 must_contain = "FROZEN.json"
 why = "curriculum freeze hook in load_curriculum (contract_compat)"
+repair = "ops/fold/ensure_frozen_hook.py"    # idempotent re-insert; the page still fires
 
 [[integrity]]
 file = "ops/teacher-swarm/lium_api.py"
