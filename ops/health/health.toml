@@ -28,6 +28,12 @@ pods_report_max_age_min = 45        # the reaper must have reported within this
 pod_max_age_no_driver_h = 14        # (f): surfaced from the reaper's report
 sources_dirty_max_min = 30          # (g): uncommitted rollouts/sources.toml this long
 weights_max_age_h = 2.0             # validator set_weights (evalwatch has it too; belt and braces)
+# chat.affine.io (king chat box; stuck `state: loading` 09-18 14:57 -> 09-19 17:15:
+# orphaned vLLM EngineCore + disk full of old king snapshots after 3 crowns)
+chat_crown_grace_min = 60           # served digest may lag a crown this long
+chat_loading_max_min = 60           # state != serving longer than this = page
+chat_disk_min_gb = 30               # free space on the pod's model volume
+chat_snapshots_max = 2              # king snapshots on disk beyond the current one -> warn
 
 [paths]
 state_dir = "../../affine/state"
@@ -54,6 +60,13 @@ kingctl_pm2_name = "affine-king-datagen"
 bench_pm2_name = "affine-coverage-bench"
 reaper_pm2_name = "affine-pod-reaper"
 validator_pm2_name = "affine-validator"
+# the validator's ssh -L forward to the chat pod's chatsrv (ops/king-chat/chatbox.env CHATBOX_LOCAL_PORT)
+chat_health_url = "http://127.0.0.1:9002/health"
+chat_models_url = "http://127.0.0.1:9002/v1/models"
+chat_token_env = "AFFINE_EVAL_TOKEN"
+chat_pod_state_key = "chat_machine"        # state.json record with the pod's `ssh`
+chat_pod_model_dirs = ["/root/hf/hub", "/root"]   # df is taken on the first that exists
+chat_ssh_timeout_s = 25
 
 # Guard hooks that live inside OTHER teams' files. A colleague's edit that
 # drops one of these silently disarms a guard (happened 2026-09-19 17:13:
