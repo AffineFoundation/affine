@@ -99,6 +99,16 @@ purpose = "unknown"
 owner = "unknown"
 expected_hours = 14
 
+# Hand-rented, long-lived pods with no controller: registered automatically
+# (source `static`) the first time the reaper sees them. Never reaped
+# (expected_hours 0); only listed. Add a line here BEFORE renting one by hand.
+[[static]]
+glob = "affine-datagen*"
+purpose = "datagen"
+owner = "manual:operator"
+expected_hours = 0
+note = "rollouts fleet; kingctl's watchdog restarts its supervisor; hand-rented 2026-08/09"
+
 # Controllers whose own state files prove a pod is wanted. The reaper adopts
 # these into the registry (source `adopted:<name>`) so pods rented before
 # this existed, or by a rent path that forgot to register, still carry an

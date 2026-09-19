@@ -32,6 +32,10 @@ REPO_ENV = REPO / ".env"
 # posts in the public SN120 channel). Same channel as evalwatch / kingctl.
 DISCORD_CHANNEL_DEFAULT = "1510910974498967613"
 DISCORD_TOKEN_ENV = "DISCORD_BOT_TOKEN_ARBOS_BITTENSOR"
+# Discord allows ~5 messages / 5 s per channel; several guards may post in
+# one tick, so space posts out and honour retry_after on 429.
+POST_SPACING_S = 1.1
+_last_post = 0.0
 
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -264,18 +268,33 @@ def discord_post(text: str, *, channel: str = DISCORD_CHANNEL_DEFAULT,
     if not token or not channel:
         log("discord", f"(no token/channel, not posted) {line}")
         return False
-    try:
-        r = requests.post(
-            f"https://discord.com/api/v10/channels/{channel}/messages",
-            headers={"Authorization": f"Bot {token}"},
-            json={"content": line[:1900]}, timeout=20)
+    global _last_post
+    for _attempt in range(3):
+        gap = time.monotonic() - _last_post
+        if gap < POST_SPACING_S:
+            time.sleep(POST_SPACING_S - gap)
+        try:
+            r = requests.post(
+                f"https://discord.com/api/v10/channels/{channel}/messages",
+                headers={"Authorization": f"Bot {token}"},
+                json={"content": line[:1900]}, timeout=20)
+        except requests.RequestException as e:
+            log("discord", f"post failed: {e!r}")
+            return False
+        _last_post = time.monotonic()
+        if r.status_code == 429:
+            try:
+                wait = float((r.json() or {}).get("retry_after", 1.0))
+            except ValueError:
+                wait = 1.0
+            time.sleep(min(wait, 5.0) + 0.3)
+            continue
         if r.status_code >= 300:
             log("discord", f"HTTP {r.status_code}: {r.text[:120]}")
             return False
         return True
-    except requests.RequestException as e:
-        log("discord", f"post failed: {e!r}")
-        return False
+    log("discord", f"rate limited 3x, dropped: {line[:80]}")
+    return False
 
 
 def shell_quote(argv: list[str]) -> str:

@@ -25,6 +25,7 @@ false` or a file ops/pods/state/DRY_RUN keeps the decisions but never calls
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import subprocess
 import sys
@@ -105,6 +106,17 @@ def adopt(cfg: dict, listed: set[str]) -> int:
     claims and that is in the Lium listing. Returns the number adopted."""
     reg = registry.load(cfg)
     n = 0
+    for st in cfg.get("static", []):
+        for name in listed:
+            if not fnmatch.fnmatch(name, st["glob"]):
+                continue
+            rec = reg.get(name)
+            if rec and not rec.get("released_at") and rec.get("source") == "static":
+                continue
+            registry.register(name, purpose=st.get("purpose"), owner=st.get("owner"),
+                              expected_hours=float(st.get("expected_hours", 0) or 0),
+                              meta={"note": st.get("note", "")}, source="static")
+            n += 1
     for a in cfg.get("adopt", []):
         path = (HERE / a["file"]).resolve()
         data = common.read_json(path)
