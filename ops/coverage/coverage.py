@@ -64,6 +64,10 @@ def classify(matrix: dict) -> dict:
             if c["kind"] == "env" and c.get("no_grader"):
                 unfillable.append(c["env"])
                 continue
+            if c.get("budget_tag"):
+                # `<env>@<tag>` = an older cap / budget kept for continuity; not a coverage target
+                totals["cells"] -= 1
+                continue
             if v.get("score") is None:
                 if v.get("running"):
                     running.append(c["env"])

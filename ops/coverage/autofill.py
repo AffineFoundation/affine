@@ -50,7 +50,11 @@ TEACHER_REF = os.environ.get("COVERAGE_TEACHER_REF", "hf://Qwen/Qwen3.8-27B@1d4b
 GENESIS_REF = "hf://Qwen/Qwen3.6-35B-A3B@995ad96eacd98c81ed38be0c5b274b04031597b0"
 FULL_SANDBOX_TRIGGERS = {"minif2f"}
 FAST_MIN_MISSING = int(os.environ.get("COVERAGE_FAST_MIN_MISSING", "8"))   # >= this many benchmark cells missing -> one fast pass   # only the Prime-sandbox set needs the full sandbox phase; docker sets run as cells
-ENV_MAX_LIVE = int(os.environ.get("COVERAGE_ENV_MAX_LIVE", "5"))   # serving boxes (not the driver pod)
+ENV_MAX_LIVE = int(os.environ.get("COVERAGE_ENV_MAX_LIVE", "3"))   # serving boxes (not the driver pod); pro6000 first
+# The env backfill needs the driver pod (rollouts.backfill runs there). It is rented by
+# the datagen worker; when it is gone (72 h TTL took affine-backfill-2 on 2026-09-19)
+# renting serving boxes only burns money: five idle boxes, $35, that afternoon.
+BACKFILL_POD = os.environ.get("COVERAGE_BACKFILL_POD", "root@73.139.34.205:20009")
 ENV_CONTAINERS = int(os.environ.get("COVERAGE_ENV_CONTAINERS", "12"))
 
 
@@ -135,6 +139,14 @@ def add(ref: str, label: str, mode: str, envs: list[str], sandbox: bool, merge_i
         subprocess.run(cmd, check=False, cwd=str(HERE))
 
 
+def driver_pod_reachable() -> bool:
+    host, _, port = BACKFILL_POD.rpartition(":")
+    r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new",
+                        "-p", port, host, "tmux -V >/dev/null 2>&1; test -x /root/rollouts/run_backfill.sh"],
+                       capture_output=True, text=True)
+    return r.returncode == 0
+
+
 def live_env_drivers() -> set[str]:
     """digest12s with an unreleased serving box in the ledger."""
     try:
@@ -155,6 +167,10 @@ def main() -> int:
     kings = king_refs()
     q = queue_entries()
     live = live_env_drivers()
+    driver_ok = args.no_env or driver_pod_reachable()
+    if not driver_ok:
+        print(f"env backfill: driver pod {BACKFILL_POD} unreachable — no serving box is rented "
+              "(ask the datagen worker for a new backfill pod; set COVERAGE_BACKFILL_POD)", file=sys.stderr)
     n_bench = n_env = 0
     for r in rep["rows"]:
         row = matrix_rows[r["key"]]
@@ -208,6 +224,8 @@ def main() -> int:
         if env_gaps and not args.no_env and row["kind"] != "teacher":
             if d12 in live:
                 print(f"{r['label']}: env driver live, {len(env_gaps)} gaps pending")
+            elif not driver_ok:
+                print(f"{r['label']}: env gaps {len(env_gaps)} — deferred, no driver pod")
             elif len(live) >= ENV_MAX_LIVE:
                 print(f"{r['label']}: env backfill deferred ({len(live)} boxes live >= {ENV_MAX_LIVE})")
             else:
