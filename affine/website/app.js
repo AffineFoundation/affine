@@ -1847,7 +1847,7 @@ function sidesTableHtml(duel) {
       : tau > 0
       ? `the score: mean per-turn τ·log-mean-exp of lpC(y_i|z_A) − lpC(y_i|∅) over k=${params.n_teacher_samples ?? 3} teacher refs (τ=${tau})`
       : "the score: mean lpC(y_C|z_A) − lpC(y_C|∅)",
-      chReason, kgReason, sdRule ? "telemetry · nats/byte" : "higher wins · nats/byte"),
+      chReason, kgReason, sdRule ? "telemetry · nats/byte" : "higher wins · nats/byte", null, null, ERAS.nats.fmt),
     minRg && has(ch.mean_r_leg, kg.mean_r_leg)
       ? sideRow("R leg (centered)", "mean per-turn centered tempered Reason",
           ch.mean_r_leg, kg.mean_r_leg, "telemetry")
