@@ -27,8 +27,10 @@ log = logging.getLogger("rollouts.king")
 
 KING_ENV_PATH = Path(os.environ.get("ROLLOUTS_KING_ENV",
                                     "/root/rollouts/.king_env"))
+# KING_BURST=1 (kingctl, 2026-09-19): a second king box is up for the first
+# hours after a crown; the scheduler runs the king seat at KING_BURST_SHARE.
 KING_VARS = ("KING_BASE_URL", "KING_MODEL", "KING_KEY", "KING_DIGEST",
-             "KING_REIGN")
+             "KING_REIGN", "KING_BURST")
 
 
 def read_king_env(path: Path = KING_ENV_PATH) -> dict[str, str]:
@@ -63,8 +65,9 @@ def refresh_king_env(env: dict, path: Path = KING_ENV_PATH) -> bool:
         env.pop(k, None)
     env.update(new)
     if new:
-        log.info("king seat: reign %s digest %s at %s", new.get("KING_REIGN"),
-                 (new.get("KING_DIGEST") or "")[:12], new.get("KING_BASE_URL"))
+        log.info("king seat: reign %s digest %s at %s burst=%s", new.get("KING_REIGN"),
+                 (new.get("KING_DIGEST") or "")[:12], new.get("KING_BASE_URL"),
+                 new.get("KING_BURST", "0"))
     else:
         log.info("king seat: no endpoint (%s missing or incomplete); "
                  "king policies idle", path)

@@ -20,6 +20,11 @@ unreachable_grace_min = 20                   # a box dark this long after READY 
 canary_every_min = 10                        # real completion probe cadence after READY (3 misses = dark)
 pod_forget_ticks = 5                         # consecutive Lium-listing misses before a pod is forgotten
 seat_empty_alert_min = 60                    # page the ops channel when the king has had no serving box this long (then hourly)
+# Previous king's box: released at the latest this long after the new crown,
+# even if the new king's box is not serving yet (2026-09-17/18: the reign-13
+# box ran 25 h for a king nobody scored any more while reign 14 waited on a
+# Lium API bug). Within the cap it stays up so the pods keep rolling a king.
+prev_king_max_min = 120
 state_stale_min = 30                         # keep the last known king this long if state.json is unreadable
 watchdog_every_min = 5                       # datagen-pod supervisor liveness check cadence
 watchdog_relaunch_min = 10                   # supervisor + bootstrap loop both gone this long -> relaunch
@@ -110,3 +115,21 @@ gpu_count = 2
 tp = 2
 replicas = 1
 max_price = 3.0
+
+# Second king box for the first hours after a crown (Jacob 2026-09-19, item
+# 3): the type with stock that adds the most replicas under budget_usd_hr
+# (primary + burst; cheapest among equals — live stock 2026-09-19: pro6000-4x
+# $4.76 = 2 replicas beats pro6000-2x $2.38 = 1 replica next to a $9.52
+# primary), the
+# datagen pods split across the two boxes (.king_env per pod), KING_BURST=1
+# raises the king's share of cycles to rollouts.scheduler.KING_BURST_SHARE.
+# Ends after `hours` or once the kingboard row shows >= min_rollouts_total
+# rollouts with >= min_rollouts_per_env on every env; then the burst box is
+# released and every pod goes back to the primary.
+[burst]
+enabled = true
+hours = 6
+budget_usd_hr = 15
+min_rollouts_per_env = 24
+min_rollouts_total = 200
+stats_url = "https://kings.affine.io/api/stats.json"

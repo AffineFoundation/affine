@@ -119,6 +119,13 @@ class Config:
     canary_every_min: int
     pod_forget_ticks: int
     seat_empty_alert_min: int
+    prev_king_max_min: int
+    burst_enabled: bool
+    burst_hours: float
+    burst_budget_usd_hr: float
+    burst_min_per_env: int
+    burst_min_total: int
+    burst_stats_url: str
     state_stale_min: int
     watchdog_every_min: int
     watchdog_relaunch_min: int
@@ -159,6 +166,13 @@ def load_config(path: Path = HERE / "king.toml") -> Config:
         bootstrap_timeout_min=int(k["bootstrap_timeout_min"]),
         unreachable_grace_min=int(k["unreachable_grace_min"]),
         seat_empty_alert_min=int(k.get("seat_empty_alert_min", 60)),
+        prev_king_max_min=int(k.get("prev_king_max_min", 120)),
+        burst_enabled=bool((raw.get("burst") or {}).get("enabled", False)),
+        burst_hours=float((raw.get("burst") or {}).get("hours", 6)),
+        burst_budget_usd_hr=float((raw.get("burst") or {}).get("budget_usd_hr", 15)),
+        burst_min_per_env=int((raw.get("burst") or {}).get("min_rollouts_per_env", 24)),
+        burst_min_total=int((raw.get("burst") or {}).get("min_rollouts_total", 200)),
+        burst_stats_url=str((raw.get("burst") or {}).get("stats_url", "https://kings.affine.io/api/stats.json")),
         canary_every_min=int(k.get("canary_every_min", 10)),
         pod_forget_ticks=int(k.get("pod_forget_ticks", 5)),
         state_stale_min=int(k.get("state_stale_min", 30)),
@@ -236,7 +250,9 @@ def read_king(cfg: Config) -> dict | None:
     repo, rev = str(k.get("repo") or ""), str(k.get("revision") or "")
     if not repo or not rev:
         return None
-    return king_from_repo(repo, rev, k.get("reign_number"))
+    king = king_from_repo(repo, rev, k.get("reign_number"))
+    king["crowned_at"] = k.get("crowned_at")   # the previous-king cap counts from here
+    return king
 
 
 # -------------------------------------------------------------- ssh helpers
@@ -292,6 +308,18 @@ def blacklist_add(executor_id: str, reason: str) -> None:
 
 
 # --------------------------------------------------------------- controller
+
+def king_crowned_ts(king: dict) -> float | None:
+    """crowned_at of the current king as a unix time (state.json ISO), or None."""
+    raw = king.get("crowned_at")
+    if not raw:
+        return None
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
 class Controller:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -354,7 +382,11 @@ class Controller:
                 and str(p.get("status", "")).upper() in ("RUNNING", "")}
 
     def spend(self, mine: dict[str, dict]) -> float:
-        return sum(lium_api.pod_price(p) for p in mine.values())
+        """$/h of every listed box; the rent-time price from memory when the
+        listing carries none."""
+        return sum(lium_api.pod_price(p)
+                   or float((self.state["pods"].get(n) or {}).get("price") or 0)
+                   for n, p in mine.items())
 
     def boxes_for(self, ident: str, mine: dict[str, dict]) -> list[str]:
         """Names of listed boxes (with memory) serving this king ident."""
@@ -463,7 +495,8 @@ class Controller:
         out.sort(key=lambda n: n.get("price_per_gpu") or 1e9)
         return out
 
-    def rent(self, king: dict, mine: dict[str, dict], why: str) -> None:
+    def rent(self, king: dict, mine: dict[str, dict], why: str, *,
+             burst: bool = False) -> None:
         name = f"{self.cfg.pod_prefix}{king['ident']}-{secrets.token_hex(2)}"
         bal = lium_api.balance_usd()
         if bal is not None and bal < self.cfg.min_balance_usd:
@@ -471,12 +504,30 @@ class Controller:
             return
         spend = self.spend(mine)
         stock = lium_api.executors(self.sess)
-        for plan in self.cfg.types:
-            for cand in self.match_stock(stock, plan):
+        budget = self.cfg.burst_budget_usd_hr if burst else self.cfg.budget_usd_hr
+        # A burst box is the type with stock that adds the MOST replicas
+        # under the burst budget (primary + burst <= burst_budget_usd_hr),
+        # cheapest first among equals; the primary follows the preference
+        # order. Candidates over the remaining budget are skipped below.
+        plans = list(self.cfg.types)
+        if burst:
+            room = budget - spend
+            priced = []
+            for plan in plans:
+                for cand in self.match_stock(stock, plan):
+                    price = (cand.get("price_per_gpu") or 0) * plan.gpu_count
+                    if price <= room:
+                        priced.append((-plan.replicas, price, plan, cand))
+            priced.sort(key=lambda t: (t[0], t[1]))
+            order = [(plan, [cand]) for _, _, plan, cand in priced]
+        else:
+            order = [(plan, self.match_stock(stock, plan)) for plan in plans]
+        for plan, cands in order:
+            for cand in cands:
                 price = (cand.get("price_per_gpu") or 0) * plan.gpu_count
-                if spend + price > self.cfg.budget_usd_hr:
+                if spend + price > budget:
                     log(f"rent {name}: ${spend:.2f}+${price:.2f} > budget "
-                        f"${self.cfg.budget_usd_hr:.2f}; skipping {plan.name}")
+                        f"${budget:.2f}; skipping {plan.name}")
                     continue
                 res = lium_api.rent(self.sess, cand["id"], name, plan.gpu_count,
                                     self.cfg.template_id, self.cfg.ttl_hours,
@@ -491,8 +542,11 @@ class Controller:
                     "king": king, "type": plan.name, "executor_id": str(cand["id"]),
                     "machine": cand.get("machine_name"), "price": price,
                     "rented_at": time.time(), "key": secrets.token_hex(24),
-                    "missing_ticks": 0,
+                    "missing_ticks": 0, "burst": burst,
                 }
+                if burst:
+                    self.state["burst"] = {"ident": king["ident"], "pod": name,
+                                           "started_at": time.time(), "assignment": {}}
                 log(f"rented {name}: {plan.name} {cand.get('machine_name')} "
                     f"${price:.2f}/h executor={str(cand['id'])[:12]} ({why})")
                 self.notify(f"rented {name} ({plan.name}, ${price:.2f}/h) for "
@@ -666,6 +720,7 @@ class Controller:
         """Which serving box the pods should use: the published one while it
         serves (no flapping between two live boxes), unless it is inside
         its rotation window and a fresher box serves; otherwise the newest."""
+        serving = [n for n in serving if not self.state["pods"][n].get("burst")] or serving
         if not serving:
             return None
         cur = pub.get("pod")
@@ -720,20 +775,25 @@ class Controller:
         if mem is None:
             return "# king seat: no king box is serving right now (kingctl)\n"
         k = mem["king"]
+        burst = "1" if (self.state.get("burst") or {}).get("ident") == k["ident"] else "0"
         return (f"# written by ops/king-datagen/kingctl.py {now_iso()}\n"
                 f"KING_BASE_URL={mem['base_url']}\n"
                 f"KING_MODEL={k['served']}\n"
                 f"KING_KEY={mem['key']}\n"
                 f"KING_DIGEST={k.get('digest') or k.get('hf_rev')}\n"
-                f"KING_REIGN={k.get('reign')}\n")
+                f"KING_REIGN={k.get('reign')}\n"
+                f"KING_BURST={burst}\n")
 
     def push_king_env(self, datagen: dict[str, dict], mem: dict | None,
-                      only: set[str] | None = None) -> dict[str, bool]:
-        text = self.king_env_text(mem)
+                      only: set[str] | None = None,
+                      per_pod: dict[str, dict] | None = None) -> dict[str, bool]:
+        """Write .king_env on the datagen pods. `per_pod` maps a pod name to
+        the box memory it should use (the burst split); others get `mem`."""
         out: dict[str, bool] = {}
         for name, pod in sorted(datagen.items()):
             if only is not None and name not in only:
                 continue
+            text = self.king_env_text((per_pod or {}).get(name, mem))
             ssh = lium_api.parse_ssh(pod)
             if not ssh:
                 out[name] = False
@@ -752,13 +812,15 @@ class Controller:
                 out[name] = False
         return out
 
-    def publish(self, datagen: dict[str, dict], pod_name: str, mem: dict) -> None:
-        res = self.push_king_env(datagen, mem)
+    def publish(self, datagen: dict[str, dict], pod_name: str, mem: dict,
+                per_pod: dict[str, dict] | None = None) -> None:
+        res = self.push_king_env(datagen, mem, per_pod=per_pod)
         now = time.time()
         self.state["published"] = {
             "pod": pod_name, "ident": mem["king"]["ident"], "reign": mem["king"].get("reign"),
             "base_url": mem["base_url"], "at": now,
             "datagen": {n: now for n, ok in res.items() if ok},
+            "split": {n: m["base_url"] for n, m in (per_pod or {}).items()},
         }
         log(f"published {mem['king']['served']} (reign {mem['king'].get('reign')}) at "
             f"{mem['base_url']} to {sum(res.values())}/{len(res)} datagen pods "
@@ -884,6 +946,7 @@ class Controller:
 
         ident = king["ident"]
         pub = self.state.get("published") or {}
+        pub_before = dict(pub)      # who the pods used when this tick began
         self.seat_empty_alert(king, pub, now)
         # Advance every box of the current king; note which ones serve.
         serving: list[str] = []
@@ -918,7 +981,8 @@ class Controller:
             else:
                 missing = {n for n in datagen if n not in (pub.get("datagen") or {})}
                 if missing or now - pub.get("at", 0) > REPUBLISH_EVERY_S:
-                    res = self.push_king_env(datagen, mem, only=missing or None)
+                    res = self.push_king_env(datagen, mem, only=missing or None,
+                                             per_pod=self.burst_per_pod())
                     pub.setdefault("datagen", {}).update({n: now for n, ok in res.items() if ok})
                     if not missing:
                         pub["at"] = now
@@ -941,19 +1005,30 @@ class Controller:
             elif pub.get("pod") not in serving:
                 self.unpublish(datagen, "published box not serving")
 
+        self.burst_step(king, mine, datagen, newest, serving, now)
+
         # Retire: boxes of another king (the published one only once the new
-        # king serves; never-published ones at once) and rotated-out boxes.
+        # king serves, or prev_king_max_min after the crown whatever happened;
+        # never-published ones at once) and rotated-out boxes. Burst boxes
+        # are the burst's business.
         pub = self.state.get("published") or {}
+        crowned_at = king_crowned_ts(king)
         for name in list(mine):
             mem = self.state["pods"].get(name)
             if mem is None:
                 continue
             if (mem.get("king") or {}).get("ident") != ident:
-                if name == pub.get("pod"):
+                if name in (pub.get("pod"), pub_before.get("pod")):
                     if newest:
                         self.remove(name, f"superseded by {newest}")
+                    elif crowned_at and now - crowned_at > cfg.prev_king_max_min * 60:
+                        self.remove(name, f"previous king's box {int((now - crowned_at) / 60)} min "
+                                          f"after the crown of {ident} (cap {cfg.prev_king_max_min} min)")
+                        self.unpublish(datagen, "previous king's box released (cap)")
                 else:
                     self.remove(name, f"superseded (never published for king {ident})")
+            elif mem.get("burst"):
+                continue
             elif newest and name != newest and mem.get("ready_at") and name != pub.get("pod"):
                 self.remove(name, f"rotated out; {newest} serves")
 
@@ -985,6 +1060,98 @@ class Controller:
                     f"{king.get('reign')} has no serving box on any datagen pod; "
                     f"boxes of this king: {boxes or 'none'}; last rent failure: "
                     f"{self.state.get('last_rent_failure') or 'none logged'}")
+
+    # ---- burst: a second box for the first hours after a crown -------------------
+    def row_counts(self, ident: str) -> tuple[int, int, int] | None:
+        """(total rollouts, envs in the row, min rollouts over ALL the row's
+        envs — an env the king has not touched counts 0) for the king on the
+        kingboard; None when the board cannot be read."""
+        try:
+            r = httpx.get(self.cfg.burst_stats_url, timeout=30)
+            st = r.json()
+        except Exception as e:  # network / json — the 6 h cap still ends the burst
+            log(f"burst: kingboard unreadable ({e!r})")
+            return None
+        universe = [e.get("source") for e in (st.get("envs") or []) if e.get("source")]
+        for row in st.get("reigns") or []:
+            if row.get("digest12") == ident:
+                have = {e.get("source"): int(e.get("n") or 0) for e in row.get("envs") or []}
+                envs = universe or list(have)
+                return (int(row.get("n_rollouts") or 0), len(envs),
+                        min((have.get(src, 0) for src in envs), default=0))
+        return (0, len(universe), 0)
+
+    def burst_per_pod(self) -> dict[str, dict] | None:
+        """The live burst split (pod name -> box memory), or None."""
+        burst = self.state.get("burst") or {}
+        want = burst.get("assignment") or {}
+        if not want or not all(b in self.state["pods"] for b in want.values()):
+            return None
+        return {n: self.state["pods"][b] for n, b in want.items()}
+
+    def burst_step(self, king: dict, mine: dict[str, dict], datagen: dict[str, dict],
+                   newest: str | None, serving: list[str], now: float) -> None:
+        """Rent a second box when a king's first box starts serving; split the
+        datagen pods across both (pod order alternates primary / burst) with
+        KING_BURST=1 so the scheduler runs the king at KING_BURST_SHARE; end the
+        burst after burst_hours or once the kingboard row has >= min_total
+        rollouts and >= min_per_env on every env; then re-publish the primary."""
+        cfg = self.cfg
+        if not cfg.burst_enabled or not newest:
+            return
+        ident = king["ident"]
+        burst = self.state.get("burst") or {}
+        if burst and burst.get("ident") != ident:
+            # a crown happened mid-burst: the old king's burst box goes with it
+            if burst.get("pod") in self.state["pods"]:
+                self.remove(burst["pod"], f"burst box of previous king {burst.get('ident')}")
+            self.state.pop("burst", None)
+            burst = {}
+        if not burst:
+            if self.state.get("burst_done_for") == ident:
+                return
+            pending_burst = [n for n, m in self.state["pods"].items()
+                             if m.get("burst") and (m.get("king") or {}).get("ident") == ident]
+            if not pending_burst:
+                self.rent(king, mine, "burst: second box for the first hours after the crown", burst=True)
+            return
+        bname = burst["pod"]
+        bmem = self.state["pods"].get(bname)
+        if bmem is None:
+            log("burst: box gone; burst over")
+            self.state.pop("burst", None)
+            self.state["burst_done_for"] = ident
+            self.publish(datagen, newest, self.state["pods"][newest])
+            return
+        age_h = (now - burst["started_at"]) / 3600
+        counts = self.row_counts(ident) if int(now) % 300 < 60 else None
+        full = bool(counts and counts[0] >= cfg.burst_min_total and counts[1] > 0
+                    and counts[2] >= cfg.burst_min_per_env)
+        if age_h > cfg.burst_hours or full:
+            why = (f"row full: {counts[0]} rollouts, min {counts[2]} per env over {counts[1]} envs"
+                   if full else f"{age_h:.1f} h elapsed")
+            self.remove(bname, f"burst over ({why})")
+            self.state.pop("burst", None)
+            self.state["burst_done_for"] = ident
+            self.publish(datagen, newest, self.state["pods"][newest])
+            self.notify(f"burst over for {king['served']} reign {king.get('reign')}: {why}; "
+                        f"pods back on {newest}")
+            return
+        if bname not in serving:
+            return
+        # Both serve: split the pods (alternating) if not already published so.
+        names = sorted(datagen)
+        want = {n: (bname if i % 2 == 1 else newest) for i, n in enumerate(names)}
+        pub = self.state.get("published") or {}
+        if pub.get("split") != {n: self.state["pods"][b]["base_url"] for n, b in want.items()} \
+                or pub.get("ident") != ident:
+            per_pod = {n: self.state["pods"][b] for n, b in want.items()}
+            self.publish(datagen, newest, self.state["pods"][newest], per_pod=per_pod)
+            burst["assignment"] = want
+            self.notify(f"burst: {king['served']} reign {king.get('reign')} on two boxes — "
+                        f"{sum(1 for b in want.values() if b == newest)} pods on {newest}, "
+                        f"{sum(1 for b in want.values() if b == bname)} on {bname} "
+                        f"(${self.state['pods'][bname]['price']:.2f}/h); KING_BURST=1")
 
     def status(self) -> None:
         king = read_king(self.cfg)
