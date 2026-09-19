@@ -106,6 +106,12 @@ def build_cmd(env: dict, a: argparse.Namespace, job_dir: Path, cfg_path: Path | 
             cmd += ["--ak", f"max_turns={int(a.step_limit)}"]
     if a.n_tasks and a.n_tasks > 0:
         cmd += ["-l", str(a.n_tasks)]
+    if a.attempts and a.attempts > 1:
+        cmd += ["-k", str(a.attempts)]              # n attempts per task; rows per attempt, score = mean
+    if a.sandbox_cpus:
+        cmd += ["--override-cpus", str(a.sandbox_cpus)]
+    if a.sandbox_mem_mb:
+        cmd += ["--override-memory-mb", str(a.sandbox_mem_mb)]
     for x in hb.get("extra_args") or []:
         cmd.append(str(x))
     return cmd
@@ -196,7 +202,8 @@ def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit
         "sandbox": "daytona", "runtime": "harbor/daytona",
         "budget": {"tag": a.budget_tag or "default", "agent_timeout_s": a.agent_timeout_s,
                    "step_limit": a.step_limit, "max_tokens": int(env["max_tokens"]),
-                   "temperature": a.temperature, "top_p": a.top_p, "concurrency": a.concurrency},
+                   "temperature": a.temperature, "top_p": a.top_p, "concurrency": a.concurrency,
+                   "attempts": a.attempts, "sandbox_cpus": a.sandbox_cpus or None, "sandbox_mem_mb": a.sandbox_mem_mb or None},
         "max_tokens": int(env["max_tokens"]), "reward": env["reward"],
         "wall_seconds": round(wall, 1), "exit_code": exit_code,
         "task_subset": {"n": int(a.n_tasks)} if a.n_tasks and a.n_tasks > 0 else {"n": "all"},
@@ -340,6 +347,9 @@ def main() -> int:
         s.add_argument("--step-limit", type=int, default=0, help="mini-swe-agent step_limit / terminus max_episodes (0 = env default)")
         s.add_argument("--n-tasks", type=int, default=0)
         s.add_argument("--max-retries", type=int, default=1)
+        s.add_argument("--attempts", type=int, default=1, help="attempts per task (vendor rows average >= 2)")
+        s.add_argument("--sandbox-cpus", type=int, default=0, help="override the task's sandbox vCPUs")
+        s.add_argument("--sandbox-mem-mb", type=int, default=0, help="override the task's sandbox memory (MB)")
         s.add_argument("--force", action="store_true")
     a = ap.parse_args()
     if a.concurrency is None and a.cmd != "resume":

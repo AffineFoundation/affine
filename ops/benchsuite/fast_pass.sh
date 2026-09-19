@@ -30,6 +30,11 @@ CODE_COMMIT=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)
 RUN_DIR="$BENCH_HOME/runs/$RUN_ID"; mkdir -p "$RUN_DIR"
 T_START=$(date +%s)
 TEACHER_FROM=$(toml modes.teacher_from)
+# FAST_GROUPS limits the topology (vendor-settings reference rows run chat + tb2 only);
+# BENCHSUITE_SETTINGS_JSON / FAST_TB2_ARGS carry the model-card settings to the cells.
+FAST_GROUPS="${FAST_GROUPS:-chat,after,agentic,tb2,gaia2,swe}"
+has_group() { [[ ",$FAST_GROUPS," == *",$1,"* ]]; }
+SETTINGS_JSON="${BENCHSUITE_SETTINGS_JSON:-}"
 N_SHARDS=$("$PY" -c 'import tomllib; print(len(tomllib.load(open("'"$HERE"'/suite.toml","rb"))["fast"]["chat_shards"]))')
 SSHO=(-i "$HOME/.ssh/id_ed25519" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$HERE/state/known_hosts" -o ConnectTimeout=20 -o LogLevel=ERROR)
 
@@ -51,10 +56,13 @@ elif [[ "$REF" == hf://* ]]; then SPEC="${REF#hf://}"; DIGEST="hf-$(echo "${SPEC
 podf() { "$PY" -c 'import json,sys; m=json.load(open("'"$HERE"'/state/pods.json"))[sys.argv[1]]; print(m[sys.argv[2]])' "$1" "$2"; }
 
 # ---- roles: chat1..N, agentic, swe
-ROLES=(); for i in $(seq 1 "$N_SHARDS"); do ROLES+=("chat$i"); done; ROLES+=(agentic swe)
+ROLES=(); for i in $(seq 1 "$N_SHARDS"); do ROLES+=("chat$i"); done
+{ has_group agentic || has_group tb2 || has_group gaia2; } && ROLES+=(agentic)
+has_group swe && ROLES+=(swe)
 declare -A POD PLANS
 for i in $(seq 1 "$N_SHARDS"); do PLANS[chat$i]=$(toml fast.chat_plans | tr "," " "); done
 PLANS[agentic]=$(toml fast.agentic_plans | tr "," " "); PLANS[swe]=$(toml fast.swe_plans | tr "," " ")
+POD[agentic]=""; POD[swe]=""
 cleanup() { for r in "${ROLES[@]}"; do [ -n "${POD[$r]:-}" ] && { log "releasing ${POD[$r]} ($r)"; "$PY" "$HERE/kingpod.py" release "${POD[$r]}" >/dev/null 2>&1 || true; }; done; }
 trap cleanup EXIT
 
@@ -116,6 +124,14 @@ elif ref.startswith("hf://"):
 else: king = {"digest": ref}
 if label.isdigit(): king["reign"] = int(label)
 else: king["label"] = label
+if os.environ.get("BENCHSUITE_SETTINGS_JSON"):
+    king["settings"] = json.loads(os.environ["BENCHSUITE_SETTINGS_JSON"]); king["settings_note"] = os.environ.get("BENCHSUITE_SETTINGS_NOTE", "")
+if os.environ.get("BENCHSUITE_REFERENCE_ROW"): king["reference"] = os.environ["BENCHSUITE_REFERENCE_ROW"]
+if os.environ.get("BENCHSUITE_DIGEST_SUFFIX"):
+    # a settings row must not attach to the model's own kingboard row (matched by digest /
+    # hf_revision): suffix the digest and keep the revision under another key
+    king["digest"] = king.get("digest", "") + os.environ["BENCHSUITE_DIGEST_SUFFIX"]
+    if "hf_revision" in king: king["base_hf_revision"] = king.pop("hf_revision")
 duel = {k: os.environ.get(f"CHALLENGER_{k.upper()}") for k in ("margin", "z", "vs_reign", "vs_king_digest", "judged_at", "hotkey")}
 if any(duel.values()): king["duel"] = {k: (float(v) if k in ("margin", "z") and v not in (None, "") else v) for k, v in duel.items()}
 m = {"run_id": os.path.basename(os.path.dirname(out)), "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -127,7 +143,7 @@ PY
 [ -d "$BENCH_HOME/runs/$TEACHER_FROM/teacher" ] && rsync -a --exclude 'traces.jsonl*' --exclude 'logs' --exclude 'eval.log' --exclude 'harbor' --exclude 'are' "$BENCH_HOME/runs/$TEACHER_FROM/teacher/" "$RUN_DIR/teacher/"
 
 pod_env() {  # role -> exports for a pod-side run
-  local pod="${POD[$1]}"; echo "export BENCH_API_KEY='$(podf "$pod" key)' PRIME_API_KEY='${PRIME_API_KEY:-}' HF_TOKEN='${HF_TOKEN:-}' BENCHSUITE_CHAT_IMAGE=affine-bench-chat:py311; cd /root/affine/ops/benchsuite"
+  local pod="${POD[$1]}"; echo "export BENCH_API_KEY='$(podf "$pod" key)' PRIME_API_KEY='${PRIME_API_KEY:-}' HF_TOKEN='${HF_TOKEN:-}' BENCHSUITE_CHAT_IMAGE=affine-bench-chat:py311 BENCHSUITE_SETTINGS_JSON='$SETTINGS_JSON'; cd /root/affine/ops/benchsuite"
 }
 PYR=/root/benchsuite/verifiers/.venv/bin/python
 suite_on_pod() {  # role envs runtime temps concurrency manifest parallel
@@ -146,6 +162,7 @@ for i in $(seq 1 "$N_SHARDS"); do
   r="chat$i"; [ -n "${POD[$r]:-}" ] || { log "$r: no pod; its shard is skipped"; continue; }
   SHARD=$(toml "fast.chat_shards.$((i-1))" | tr -d '[]" ' ); AFTER=$(toml "fast.shard_after.$((i-1))" | tr -d '[]" ')
   ( suite_on_pod "$r" "$SHARD" docker primary,secondary 64 "manifest-$r.json" 2
+    has_group after || AFTER=""
     for e in ${AFTER//,/ }; do
       rt=docker; [ "$e" = minif2f ] && rt=prime
       suite_on_pod "$r" "$e" "$rt" primary 48 "manifest-$r-after.json" 1
@@ -153,17 +170,24 @@ for i in $(seq 1 "$N_SHARDS"); do
   PIDS+=($!)
 done
 if [ -n "${POD[agentic]:-}" ]; then
-  ( suite_on_pod agentic "$(toml fast.agentic_envs_on_pod)" docker primary 8 manifest-agentic.json 4 ) > "$RUN_DIR/agentic.log" 2>&1 &
-  PIDS+=($!)
+  if has_group agentic; then
+    ( suite_on_pod agentic "$(toml fast.agentic_envs_on_pod)" docker primary 8 manifest-agentic.json 4 ) > "$RUN_DIR/agentic.log" 2>&1 &
+    PIDS+=($!)
+  fi
   AURL="$(podf "${POD[agentic]}" base_url)"; ASERVED="$(podf "${POD[agentic]}" served)"
   # TB2 (Daytona) and Gaia2 (ARE) run CONCURRENTLY against the agentic pod (the first run
   # chained them and Gaia2 only started after TB2's long tail)
-  ( export BENCH_API_KEY="$(podf "${POD[agentic]}" key)"
-    [ -n "${DAYTONA_API_KEY:-}" ] && "$PY" "$HERE/harbor_cell.py" run --env terminal-bench-2 --model "$ASERVED" --model-label king --model-url "$AURL" --model-key-env BENCH_API_KEY --out "$RUN_DIR/king" --concurrency "$(toml fast.tb2_in_flight)" --agent-timeout-s 3600 ) > "$RUN_DIR/agentic-box.log" 2>&1 &
-  PIDS+=($!)
-  ( export BENCH_API_KEY="$(podf "${POD[agentic]}" key)"
-    [ -n "${PRIME_API_KEY:-}" ] && "$PY" "$HERE/gaia2_cell.py" run --model "$ASERVED" --model-label king --model-url "$AURL" --model-key-env BENCH_API_KEY --judge-key-env PRIME_API_KEY --concurrency "$(toml fast.gaia2_in_flight)" --out "$RUN_DIR/king" ) > "$RUN_DIR/gaia2-box.log" 2>&1 &
-  PIDS+=($!)
+  if has_group tb2; then
+    # shellcheck disable=SC2086
+    ( export BENCH_API_KEY="$(podf "${POD[agentic]}" key)"
+      [ -n "${DAYTONA_API_KEY:-}" ] && "$PY" "$HERE/harbor_cell.py" run --env terminal-bench-2 --model "$ASERVED" --model-label king --model-url "$AURL" --model-key-env BENCH_API_KEY --out "$RUN_DIR/king" --concurrency "${FAST_TB2_IN_FLIGHT:-$(toml fast.tb2_in_flight)}" --agent-timeout-s "${FAST_TB2_TIMEOUT_S:-3600}" ${FAST_TB2_ARGS:-} ) > "$RUN_DIR/agentic-box.log" 2>&1 &
+    PIDS+=($!)
+  fi
+  if has_group gaia2; then
+    ( export BENCH_API_KEY="$(podf "${POD[agentic]}" key)"
+      [ -n "${PRIME_API_KEY:-}" ] && "$PY" "$HERE/gaia2_cell.py" run --model "$ASERVED" --model-label king --model-url "$AURL" --model-key-env BENCH_API_KEY --judge-key-env PRIME_API_KEY --concurrency "$(toml fast.gaia2_in_flight)" --out "$RUN_DIR/king" ) > "$RUN_DIR/gaia2-box.log" 2>&1 &
+    PIDS+=($!)
+  fi
 fi
 if [ -n "${POD[swe]:-}" ] && [ -n "${DAYTONA_API_KEY:-}" ]; then
   ( export BENCH_API_KEY="$(podf "${POD[swe]}" key)"
