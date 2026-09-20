@@ -529,6 +529,13 @@ def load_king_done() -> dict:
     if cfg:
         cfg["leak_exempt"] = True
         cfg["min_more_turns"] = int(cfg["raw"].get("min_more_turns", 2) or 2)
+        # Wave 5 (affine_mrcr, 2026-09-20): the king writes the right answer,
+        # then keeps calling tools -- every loop reply is a `bash` tool call,
+        # never prose, so the completion rule sees no "done" reply and the
+        # loop labeler is skipped because the rollout is graded SOLVED. With
+        # `solved_onset`, the FIRST loop onset of a solved king rollout is a
+        # king_done state (the teacher's reference there is the prose stop).
+        cfg["solved_onset"] = bool(cfg["raw"].get("solved_onset", True))
         # Duel-time kind: at a done state the teacher stops -- a prose report
         # or a finish tool call; `text` parses both (Jacob 2026-09-13).
         cfg["kind"] = str(cfg["raw"].get("kind") or dialects.TEXT_KIND)
@@ -1582,6 +1589,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         in_loop: set[int] = set()
         kind = (env.get("policy") or {}).get("action_kind") or "bash"
         want_loop = bool(king_loop) and king_loop_candidate(env, king_loop)
+        want_done_onset = (bool(king_done) and king_done.get("solved_onset") and _policy_ok(env, king_done)
+                           and king_multi_turn(env, king_done) and rollout_outcome(env["trace"]) == "solved")
         pivots = side_table_turns(env, king_pivot) if king_pivot else {}
         recoverable = side_table_turns(env, king_recoverable) if king_recoverable else {}
         divergence = side_table_turns(env, king_divergence) if king_divergence else {}
@@ -1606,7 +1615,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         escapes: set[int] = set()
         want_completion = bool(completion) and completion_candidate(env, completion)
         interactive = str(env.get("source") or "") in INTERACTIVE_SOURCES
-        if want_loop or want_completion or want_done or want_tooluse or want_pre or interactive:
+        if want_loop or want_completion or want_done or want_tooluse or want_pre or interactive or want_done_onset:
             try:
                 convs = trace_conversations(env["trace"], baker)
             except (ToolParityError, TraceShapeError) as e:
@@ -1630,7 +1639,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
 
         later_onsets: set[int] = set()
         loop_labels = None
-        if (want_loop or want_tooluse) and main_convs:
+        if (want_loop or want_tooluse or want_done_onset) and main_convs:
             loop_labels = label_loops(main_convs, kind)
         if want_loop and main_convs:
             n_on = 0
@@ -1666,6 +1675,17 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                 done_route = None
         else:
             done_route = None
+        done_rule = "completion_then_continued"
+        if done_route is None and want_done_onset and loop_labels:
+            # Solved rollout that looped: the first onset is the done state.
+            for j, lab in enumerate(loop_labels):
+                if lab.label == ONSET:
+                    done_route = main[j]
+                    done_rule = "solved_loop_onset"
+                    _count(notes, "king_done_states")
+                    _count(notes, "king_done_solved_onset")
+                    _count(notes, f"king_done_solved_onset_{env.get('source')}")
+                    break
         if pivots:
             _count(notes, "king_pivot_rollouts")
             for i, row in pivots.items():
@@ -1781,7 +1801,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             route[done_route] = KING_DONE_GROUP
             in_loop.discard(done_route)
             later_onsets.discard(done_route)
-            extra[done_route] = {"done": {"after_turn": int(done_route) - 1}}
+            extra[done_route] = {"done": {"after_turn": int(done_route) - 1, "rule": done_rule}}
             kind_stamp[done_route] = king_done["kind"]
         if one_reply_king and not any(g == KING_TOOLUSE_GROUP for g in route.values()):
             # The state is the task prompt, which the teacher's own rollout
