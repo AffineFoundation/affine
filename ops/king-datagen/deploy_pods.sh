@@ -49,7 +49,7 @@ ENV_PKGS=(affine_when2call_v1 affine_notool_v1 affine_logic_v1 affine_trivia_v1 
           affine_tmax_v1 affine_longcot_v1 affine_eog_v1 affine_numina_v1 affine_sql_v1
           affine_autobench_v1 affine_uuidctf_v1
           affine_i3code_v1 affine_i3math_v1 affine_deshuffle_v1 affine_rgym_v1 affine_rcore_v1
-          affine_pydantic_v1 affine_verbatim_v1 affine_oolong_v1
+          affine_pydantic_v1 affine_verbatim_v1 affine_oolong_v1 affine_mrcr_v1
           affine_tau2_v1 affine_tau2_synth_v1)
 # Env wave 3: prime-envs tasksets the pods' pinned checkout lacks are vendored
 # under rollouts/vendor/prime-envs (see its README) and installed from there.
@@ -61,7 +61,7 @@ RESEARCH_ENVS=(reasoning/i3_logic_v1 knowledge/triviaqa_v1 if/ifeval_v1 science/
                lean/numina_v1 tool_use/automationbench_v1 reasoning/uuid_ctf_v1
                tool_use/tau2_bench_v1
                code/i3_code_v1 math/i3_math_v1 long_context/verbatim_copy_v1
-               long_context/oolong_synth_v1)
+               long_context/oolong_synth_v1 long_context/mrcr_v2_v1)
 # longcot's package imports its verifiers (rdkit / chess / sympy) at import
 # time; the catalog listing avoids the import, but the taskset's own
 # `load_questions` needs them on the host, so they are installed by name.

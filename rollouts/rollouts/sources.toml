@@ -1628,9 +1628,14 @@ share = 0.5
 
 [source.affine_oolong]
 # oolong-synth (prime-envs): long-context questions answered from
-# /workspace/context.txt in the box (16k-token bucket of the validation
-# split, ~100 rows; test stays out of D); deterministic Oolong rules, judge
-# off; shell harnesses.
+# /workspace/context.txt in the box (16k-token bucket); deterministic Oolong
+# rules, judge off; shell harnesses.
+# 2026-09-20 (env wave 5, Jacob "go"): split validation -> TEST. The
+# kingboard card `oolong-synth` is the VALIDATION split at 64k; D had been on
+# validation@16k (0 shared context windows, 7/84 shared question strings,
+# same 2 datasets / 6 task templates). D now draws from `test` (5,200 rows,
+# ~400 in the 16k bucket); `test` must never become a card. Task names
+# change (oolong-16384-<row of the test split>), so the pool restarts.
 group = "general"
 runner = "verifiers"
 taskset_id = "affine-oolong-v1"         # rollouts/envs/affine_oolong_v1
@@ -1640,11 +1645,44 @@ pass_dataset = false
 policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased", "king_bashtool",
             "king_pi", "king_textbased", "king_bashtool_greedy",
             "king_pi_greedy", "king_textbased_greedy"]   # + king seat + greedy king 2026-09-13
-extra_flags = ["--env.taskset.context-len", "16384", "--env.taskset.split", "validation"]
+extra_flags = ["--env.taskset.context-len", "16384", "--env.taskset.split", "test"]
 strata_buckets = 115
 strata_offset = 4120
 max_batch = 16
 max_concurrency = 8
 # Probe 2026-09-12 (bash, 12 at 6 concurrent): 7/12 solved, 96 kept tool_call turns,
 # 11 agent_completed + 1 errored, 605 s for the batch.
+share = 1.0
+
+[source.affine_mrcr]
+# MRCR v2 (openai/mrcr, env wave 5, 2026-09-20; docs/env-targets-for-lagging-
+# axes.md §7.2): a long chat transcript in /workspace/context.txt, the agent
+# must find the k-th occurrence the question names and write it, hash-
+# prefixed, to /workspace/answer.txt. Official SequenceMatcher reward
+# (`correct`; fold rule score >= 1.0). Shell harnesses, same shape as oolong.
+# DECONTAMINATION: the kingboard card `mrcr-v2` is the 8-needle 64k-128k CSV
+# (103 rows). The wrapper REFUSES that bucket; D draws the disjoint buckets
+# 4n-32k-64k / 8n-32k-64k / 2n-64k-128k / 4n-64k-128k / 8n-16k-32k (~100 rows
+# each, same generator, different rows and transcripts -- the telecom
+# `full \ base` kind of decision).
+# WHY: the king writes the correct answer and then keeps calling tools
+# (`true` x26, `head -1 answer.txt` x24) with a thought that says the task
+# is done -- the state behind the card's MRCR / Oolong / GraphWalks context
+# overflows; the teacher never does it (0/72 probe rollouts). Probe
+# 2026-09-20 (datagen-2): teacher 71/72 solved, 6-9 tool calls + 1 prose
+# stop per rollout; king reign 20 93/96 solved on content, 23/96 post-done
+# loops (T 0 and T 0.8 alike).
+group = "general"
+runner = "verifiers"
+taskset_id = "affine-mrcr-v1"           # rollouts/envs/affine_mrcr_v1
+catalog = "mrcr"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased", "king_bashtool",
+            "king_pi", "king_textbased", "king_bashtool_greedy",
+            "king_pi_greedy", "king_textbased_greedy"]
+strata_buckets = 230
+strata_offset = 4235
+max_batch = 24
+max_concurrency = 8
 share = 1.0

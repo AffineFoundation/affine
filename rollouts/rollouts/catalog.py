@@ -1312,6 +1312,22 @@ for i, row in enumerate(ds):
 json.dump(out, sys.stdout); sys.stdout.flush()
 os._exit(0)
 """
+# MRCR v2 (env wave 5, 2026-09-20): names = "mrcr-<n>n-<range>-<row>", one per
+# row of each DISJOINT public CSV bucket (the card bucket 8n-64k-128k is
+# refused by the wrapper); listed through the verifiers env so the catalog
+# and the taskset count the same rows. Contexts are not loaded here.
+MRCR_LIST = r"""
+import json, os, sys
+from affine_mrcr_v1.taskset import DEFAULT_BUCKETS, load_rows, task_name
+out = []
+for bucket in DEFAULT_BUCKETS:
+    for i, row in enumerate(load_rows(bucket)):
+        out.append({"uid": task_name(bucket, i), "bucket": bucket,
+                    "n_chars": len(row.get("queries") or ""),
+                    "answer_tokens": str(row.get("answer_token_count") or "")})
+json.dump(out, sys.stdout); sys.stdout.flush()
+os._exit(0)
+"""
 # When2Call (affine_when2call_v1): the taskset's own row walk decides which
 # train_pref rows are usable and what their label is, so the catalog can
 # never disagree with the env about a task's existence or class.
@@ -1416,6 +1432,19 @@ def build_oolong_catalog(cfg: RolloutsConfig, src: Source) -> dict:
         "total": len(rows), "kept": len(kept), "panel_excluded": 0, "unusable": 0})
 
 
+def build_mrcr_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    rows = _verifiers_listing(cfg, MRCR_LIST, what="mrcr-v2")
+    kept = [_bucketed(src, {
+        "uid": r["uid"], "sid": f"mrcr-{r['uid'].rsplit('-', 1)[-1]}",
+        "repo": f"mrcr/{r['bucket']}", "language": "shell",
+        "bucket": r["bucket"], "n_chars": r["n_chars"]}) for r in rows]
+    by_bucket = Counter(r["bucket"] for r in kept)
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": "openai/mrcr v2 (GCS mrcr_v2p1 CSVs), card bucket 8n-64k-128k excluded",
+        "total": len(rows), "kept": len(kept), "panel_excluded": 0, "unusable": 0,
+        "by_bucket": dict(by_bucket)})
+
+
 # -- τ² telecom (env wave 4, 2026-09-17): the disjoint pool = `full` minus the
 # benchmarked `base` split, listed through the verifiers env (τ²'s own task
 # loader; the data dir bootstraps on first use). Names are τ² task ids.
@@ -1514,6 +1543,7 @@ BUILDERS = {
     "when2call": build_when2call_catalog,
     "rcore": build_rcore_catalog,
     "oolong": build_oolong_catalog,
+    "mrcr": build_mrcr_catalog,
     "tmax": build_tmax_catalog,
     "longcot": build_longcot_catalog,
     "autobench": build_autobench_catalog,
