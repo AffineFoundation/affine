@@ -1,0 +1,86 @@
+FRONTIER ARBITER — FEASIBILITY (2026-09-20)
+spend so far: $21.00 over 2984 Engy calls; by model: deepseek-v4.1-flash $0.21/548, glm-5.3 $11.88/1027, glm-5.3-flash $1.48/969, kimi-k3 $7.43/440
+
+1. LIVE SLICE SHAPE (teacher tokenizer Qwen/Qwen3.8-27B, prompt = chat template + <think>)
+  chal-00614: n=1000 prompt tokens p50=8731 p90=41379 max=88153 total=1.611e+07 (>64k: 23, >128k: 0); teacher ref completion tokens p50=238.0 p90=1304.9
+  chal-00621: n=1000 prompt tokens p50=7008 p90=41848 max=92382 total=1.551e+07 (>64k: 23, >128k: 0); teacher ref completion tokens p50=251.0 p90=1082.0
+  chal-00623: n=1000 prompt tokens p50=9158 p90=41995 max=102052 total=1.623e+07 (>64k: 27, >128k: 0); teacher ref completion tokens p50=278.0 p90=1313.999999999999
+  dialect        n(3 slices)  share     p50     p90     max  tokens/1000-slice
+  bash                  1021  0.340    7482   28406   71594          3.993e+06
+  tool_call              861  0.287   18599   53992  102052          6.575e+06
+  text                   941  0.314    2511   47204   92070          4.659e+06
+  boxed                   73  0.024     169     241     398          4.373e+03
+  terminus_json          104  0.035   17278   45021   80383          7.177e+05
+  pooled: prompt tokens p50=8478 mean=15949 -> tokens per 1000-turn slice = 1.595e+07 (prompt only, ×n_F per frontier sample)
+  D (manifest ce506c1a77a4): 634740 turns, 3.828e+10 prefix chars × 0.290 tok/char ≈ 1.108e+10 prompt tokens; by kind {'boxed': 1313, 'tool_call': 305426, 'bash': 276216, 'text': 43355, 'terminus_json': 8430}
+  D growth (manifest chain, 16 manifests): 6508 turns/day ≈ 1.136e+08 tokens/day
+
+2. COST (real x_engy.charged_micro; fit charge ≈ p_in·prompt + p_out·completion)
+  model                   n   $/call  in_tok out_tok  $/M in  $/M out | $/duel nF=1     nF=3 | $/day nF=1     nF=3 | D one-off nF=1      nF=3 | D daily nF=1
+  glm-5.3               406   0.0107   11573     625   0.749    2.837 |       13.71    41.14 |        411     1234 |           9424     28271 |           97
+  glm-5.3-flash         649   0.0015   13072     562   0.099    0.358 |        1.78     5.34 |         53      160 |           1225      3676 |           13
+  deepseek-v4.1-flash   428   0.0004   12292     245   0.032    0.031 |        0.51     1.54 |         15       46 |            356      1068 |            4
+  kimi-k3               240   0.0199   11402     423   1.538    6.622 |       27.34    82.01 |        820     2460 |          18829     56487 |          193
+  ($/duel = 1000 turns × (p_in × mean slice prompt 15949 tok + p_out × mean completion); $/day at 30 duels/day; D one-off = every turn of D once; D daily = 6508 new turns/day)
+
+3. LATENCY / THROUGHPUT (200 real turns, T=0.8, max_tokens 2816, retries=1)
+  model                conc retry     ok/n  wall s  p50 s  p95 s  max s calls/min 1000-turn wall errors
+  glm-5.3-flash          32     1 200/200      219   18.7   91.7  144.4      54.8        18.2 min 
+  glm-5.3-flash          64     1 200/200      132   57.2  116.0  131.8      91.0        11.0 min 
+  glm-5.3                32     1  87/200      376   37.9  174.0  277.2      13.9        31.4 min {"RuntimeError('engy glm-5.3 failed after 1 tries: HTTP 429: {": 113}
+  glm-5.3                64     1  67/200      316   45.3  132.5  278.8      12.7        26.4 min {"RuntimeError('engy glm-5.3 failed after 1 tries: HTTP 429: {": 132, "RuntimeError('engy glm-5.3 failed after 1 tries: HTTP 520: <": 1}
+  glm-5.3                16     1 123/200      727   39.2  245.2  319.8      10.1        98.5 min {"RuntimeError('engy glm-5.3 failed after 1 tries: HTTP 429: {": 77}
+  glm-5.3                 8     1 180/200     1297   36.5  224.1  272.6       8.3       120.1 min {"RuntimeError('engy glm-5.3 failed after 1 tries: HTTP 429: {": 20}
+  glm-5.3                32     6 198/200      634   46.6  256.9  331.6      18.7        53.4 min {"RuntimeError('engy glm-5.3 failed after 6 tries: HTTP 429: {": 2}
+  deepseek-v4.1-flash    64     1  55/200       24   10.7   22.6   24.3     135.9         7.4 min {"RuntimeError('engy deepseek-v4.1-flash failed after 1 tries:": 145}
+  deepseek-v4.1-flash    32     1 118/200      109   11.7   64.2   80.6      65.0        15.4 min {"RuntimeError('engy deepseek-v4.1-flash failed after 1 tries:": 82}
+  kimi-k3                32     1  60/60        32   10.0   25.5   32.1     112.3         8.9 min 
+  live duel: 43–45 min for 1000 turns (chal-00614/621/623 duel_seconds 2628/2586/2719 s); the frontier call runs in parallel with the teacher refs on the API side, so it is 'free' iff its 1000-turn wall ≤ the duel wall.
+
+4. DETERMINISM / REPLAYABILITY (40 fixed prompts, ≤40k tokens, 8 per dialect where available)
+  glm-5.3: greedy passes [1, 2, 3]; gap from last call of pass i-1 to first of pass i (min): p2: 17.1, p3: 32.0
+  glm-5.3-flash: greedy passes [1, 2, 3]; gap from last call of pass i-1 to first of pass i (min): p2: 17.1, p3: 32.7
+  deepseek-v4.1-flash: greedy passes [1, 2, 3]; gap from last call of pass i-1 to first of pass i (min): p2: 17.1, p3: 33.4
+  kimi-k3: greedy passes [1, 2, 3, 4, 5]; gap from last call of pass i-1 to first of pass i (min): p2: 2.1, p3: 1.6, p4: 35.1, p5: 11.5
+  model                | T=0 ×3: exact  jaccard  reason= workers | T=0.8 ×3: exact  jaccard  reason= | T0 vs T0.8 exact
+  glm-5.3              |          0.28     0.66     0.30    1.40 |            0.17     0.58     0.28 |             0.35  (n prompts 40/40)
+  glm-5.3-flash        |          0.23     0.65     0.17    1.30 |            0.23     0.59     0.05 |             0.39  (n prompts 40/40)
+  deepseek-v4.1-flash  |          0.45     0.78     1.00    1.52 |            0.23     0.60     1.00 |             0.46  (n prompts 40/40)
+  kimi-k3              |          0.45     0.83     0.55    1.70 |            0.17     0.60     0.42 |             0.37  (n prompts 40/40)
+  T=0 exact given every run parsed (n): glm-5.3 0.33 (33); glm-5.3-flash 0.26 (35); deepseek-v4.1-flash 0.56 (32); kimi-k3 0.50 (36)
+  T=0 pairwise exact, same worker vs different worker (share, n pairs): glm-5.3 same (0.2727272727272727, 88) / diff (0.46875, 32); glm-5.3-flash same (0.2916666666666667, 96) / diff (0.5, 24); deepseek-v4.1-flash same (0.5, 84) / diff (0.6111111111111112, 36); kimi-k3 same (0.6054421768707483, 294) / diff (0.5566037735849056, 106)
+  T=0 exact by dialect (share, n prompts): glm-5.3: bash 0.25/8, boxed 0.38/8, terminus_json 0.38/8, text 0.25/8, tool_call 0.12/8 | glm-5.3-flash: bash 0.25/8, boxed 0.50/8, terminus_json 0.38/8, text 0.00/8, tool_call 0.00/8 | deepseek-v4.1-flash: bash 0.62/8, boxed 0.62/8, terminus_json 0.62/8, text 0.12/8, tool_call 0.25/8 | kimi-k3: bash 0.62/8, boxed 0.25/8, terminus_json 0.62/8, text 0.25/8, tool_call 0.50/8
+  exact = share of prompts whose action (norm_action, dialect-aware) is identical across all 3 runs; jaccard = mean pairwise token-Jaccard of the actions; reason= = share with byte-identical reasoning text; workers = mean distinct x_engy.worker ids per prompt; 'T0 vs T0.8' = share of fresh T=0.8 samples whose action equals a greedy action (what memorising a published greedy target buys).
+
+5. FORMAT COMPLIANCE per dialect per model (all T=0.8 samples; parsed = (z,y) via reply_to_rollout in the turn's dialect; parsed_live = live split_rollout with require_think_close + text fallback at tool turns)
+  model                dialect           n parsed   live repaired think_closed len_cap  err out_tok p50
+  glm-5.3              bash            261   0.94   0.94     0.00         0.95    0.09 0.00         128
+  glm-5.3              tool_call       296   0.84   0.95     0.42         0.95    0.06 0.00         100
+  glm-5.3              text            241   0.97   0.97     0.00         0.97    0.05 0.00         359
+  glm-5.3              boxed            55   0.76   0.76     0.00         0.80    0.24 0.00        1220
+  glm-5.3              terminus_json    54   0.81   0.81     0.00         0.85    0.15 0.00         364
+  glm-5.3-flash        bash            240   0.88   0.88     0.00         0.91    0.09 0.00         204
+  glm-5.3-flash        tool_call       266   0.88   0.93     0.03         0.93    0.09 0.00         134
+  glm-5.3-flash        text            238   0.99   0.99     0.00         0.99    0.01 0.00         330
+  glm-5.3-flash        boxed            53   0.89   0.89     0.00         0.91    0.11 0.00         735
+  glm-5.3-flash        terminus_json    52   0.92   0.92     0.00         0.98    0.08 0.00         318
+  deepseek-v4.1-flash  bash            112   0.96   0.96     0.00         1.00    0.01 0.00          84
+  deepseek-v4.1-flash  tool_call       116   0.32   1.00     0.00         1.00    0.03 0.00          98
+  deepseek-v4.1-flash  text            105   1.00   1.00     0.00         1.00    0.00 0.00          82
+  deepseek-v4.1-flash  boxed            48   1.00   1.00     0.00         1.00    0.00 0.00         506
+  deepseek-v4.1-flash  terminus_json    47   1.00   1.00     0.00         1.00    0.00 0.00         129
+  kimi-k3              bash             57   0.84   0.84     0.00         0.98    0.02 0.00          89
+  kimi-k3              tool_call        61   0.69   0.92     0.02         0.92    0.05 0.00         126
+  kimi-k3              text             50   1.00   1.00     0.00         1.00    0.04 0.00         241
+  kimi-k3              boxed            36   0.97   0.97     0.00         1.00    0.03 0.00         682
+  kimi-k3              terminus_json    36   0.97   0.97     0.00         0.97    0.03 0.00         218
+  teacher (live refs, same slices): mean refs/turn per dialect from the verdicts:
+    chal-00614: text 3.00/3 (zero-ref 0/292), bash 2.90/3 (zero-ref 3/353), tool_call 2.88/3 (zero-ref 3/293), boxed 2.88/3 (zero-ref 0/32), terminus_json 2.90/3 (zero-ref 0/30)
+    chal-00621: text 3.00/3 (zero-ref 0/348), bash 2.90/3 (zero-ref 3/331), tool_call 2.92/3 (zero-ref 0/261), terminus_json 2.92/3 (zero-ref 0/40), boxed 3.00/3 (zero-ref 0/20)
+    chal-00623: bash 2.94/3 (zero-ref 0/337), text 3.00/3 (zero-ref 0/301), boxed 2.86/3 (zero-ref 0/21), tool_call 2.93/3 (zero-ref 0/307), terminus_json 2.85/3 (zero-ref 0/34)
+  errors:
+     342 glm-5.3              RuntimeError('engy glm-5.3 failed after 1 tries: HTTP 429: {"error":{"message":"
+     227 deepseek-v4.1-flash  RuntimeError('engy deepseek-v4.1-flash failed after 1 tries: HTTP 429: {"error":
+       2 glm-5.3              RuntimeError('engy glm-5.3 failed after 6 tries: HTTP 429: {"error":{"message":"
+       1 glm-5.3              RuntimeError('engy glm-5.3 failed after 1 tries: HTTP 520: <!DOCTYPE html>\n<!--
+

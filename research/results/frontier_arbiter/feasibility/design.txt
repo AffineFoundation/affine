@@ -1,0 +1,142 @@
+6. DESIGN — how a frontier arbiter would be built (no code changed in affine/; nothing here is a contract change
+   until an operator directive flips a knob that touches the ranked quantity = weight_version_key event)
+
+Terms (one line each)
+  F              the frontier model (glm-5.3 / glm-5.3-flash / deepseek-v4.1-flash / kimi-k3 via https://api.engy.ai/v1).
+  C              the frozen teacher Qwen/Qwen3.8-27B, co-located on the eval pod, k = 3 refs per turn (RefCache).
+  frontier ref   one F reply on a duel turn's prefix, split into (z_F, y_F) by the turn's dialect (evalsrv.chat.split_rollout).
+  GATE           per-turn test "does F agree with C?" (y_F vs the k teacher y_C^i under amatch.norm_action / Jaccard).
+  CLOSENESS      per-turn distance of a side's action y_A to y_F (norm-exact, token-Jaccard, or a teacher echo lpC(y_F|z_A)).
+  duel-time      F sampled fresh inside run_duel, published in the artifact like teacher_refs.
+  fold-time      F sampled once per turn by ops/corpus_build.py, published in D (view duel_turns@v5).
+  hybrid         fold-time sample decides the GATE, a duel-time fresh sample decides CLOSENESS.
+  RT-6           dataset sniping: a miner memorises published per-turn targets (AGENTS.md §5).
+
+6a. DUEL-TIME PATH
+  Where it sits (live /tmp/box/affine/evalsrv/dueling.py, wvk 22):
+   * new module evalsrv/frontier.py: `EngyClient` (httpx, bearer from the pod .eval_env `AFFINE_FRONTIER_API_KEY`,
+     per-call cost from x_engy.charged_micro, worker/request_id kept) and `FrontierRefs` — the RefCache twin
+     (dueling.py:410): per-duel dict tid -> list[frontier ref], per-turn asyncio.Lock so king and challenger share ONE set
+     of F samples per turn (pairing), never persisted across duels (same RT-6 reasoning as RefCache's docstring).
+     `ensure(tid, prefix, action_kind)` -> [{model, worker, request_id, temperature, z, y, parsed, finish, usage,
+     cost_usd, latency_s}] ; n_samples calls, no `n` (Engy ignores it).
+   * call site: score_side.one() (dueling.py:565) — the `asyncio.gather(refs.ensure_raw(...), sample_miner_rollouts(...))`
+     grows a third coroutine `frontier.ensure(...)`. It is bounded by its own `[duel.frontier].concurrency` semaphore,
+     NOT by turn_sem (turn_sem budgets GPU work; Engy is an external API). run_duel builds `frontier = FrontierRefs(...)`
+     right next to `refs = RefCache()` (dueling.py:1028) and passes it into score_side like `refs`.
+   * scoring: after `miner_terms` returns the row (dueling.py:587), attach per-turn frontier telemetry the way A_match is
+     attached today (dueling.py:607, amatch.turn_agreement): `f_gate` (F agrees with C: max_i agree(y_F, y_C^i) >= θ),
+     `f_match` (closeness of the side's y to y_F), `f_ref_n` (parsed F samples). Shadow first: a `frontier.shadow_verdict`
+     (twin of sdmeter.shadow_verdict) computes the would-be turn scores on the pooled rows and publishes
+     `verdict.shadow.frontier` = {coverage, gate_rate, by_dialect, per-side means, would_crown, cost}, exactly how the
+     sd-meter shipped 2026-09-18 (shadow -> rule). Rule mode = a new `score_mode` value (wvk event).
+   * stamps: verdict.duel_params.frontier = {model, n_samples, temperature, max_tokens, gate_metric, gate_threshold,
+     closeness_metric, scale, allowed_dialects, on_unavailable, mode}; verdict.frontier = {coverage, n_turns_with_f,
+     n_calls, n_failed, cost_usd, wall_s, workers: {id: n}}; artifact.frontier_refs = {tid: [refs...]} beside
+     artifact.teacher_refs (dueling.py:1336) — z_F and y_F text, worker, temperature, cost. Size: ~1000 × n_F × ~2 kB
+     ≈ +2–6 MB raw (+0.5–1.5 MB gz) on a 3.7–3.9 MB gz artifact.
+  toml knobs `[duel.frontier]` (all additive; defaults = off):
+     mode = "off" | "shadow" | "rule"          shadow publishes, rule ranks (rule requires a score_mode + wvk directive)
+     model = "glm-5.3-flash"                    Engy model id
+     n_samples = 1                              F calls per turn (cost × n)
+     temperature = 0.8                          match [duel].temperature; T=0 is NOT reproducible on Engy anyway (§4)
+     max_tokens = 2816                          thought+action cap (2048+768); F length-cap rate is 4–17 % by dialect (§5)
+     concurrency = 32 ; timeout_s = 300 ; retries = 4
+     allowed_dialects = ["bash","text","boxed","terminus_json"]   turns of other kinds are scored teacher-only
+     gate_metric = "norm_exact" | "jaccard" ; gate_threshold = 0.6
+     closeness_metric = "norm_exact" | "jaccard" | "teacher_echo"  (teacher_echo = lpC(y_F | z_A) − lpC(y_F | ∅): the
+                                                                    R-leg formula with y_F in place of y_C — GPU cost
+                                                                    +1 echo/turn/side, reuse terms.py score paths)
+     scale = 1.0                                weight of the arbitrated term in the turn score (rule mode only)
+     min_coverage = 0.9                         a duel whose F coverage falls below this is an infra requeue, not a verdict
+     on_unavailable = "teacher_only" | "requeue"   per-turn policy when every retry failed (see below)
+  Failure policy — Engy down mid-duel. Two facts decide it: (i) the duel is PAIRED: king and challenger are scored on the
+  same turn with the same refs, so a turn that falls back to teacher-only is still a fair comparison on that turn — no
+  side is favoured; (ii) the turn-score distribution IS a mixture then (arbitrated turns vs teacher-only turns), so the
+  mean/SE the crown rule reads is over a slice whose composition depends on Engy uptime, not on the seed. (ii) is
+  acceptable only when it is small and stamped: fall back per turn (`teacher_only`), count it, and if coverage < min_coverage
+  the pod returns an infra failure (the validator already requeues Fault.CONTEXT_LIMIT-class faults; the same path) so a
+  bad Engy hour never becomes a verdict. Do NOT fail the whole duel on the first missing turn (a 429 at concurrency 32 hit
+  57 % of glm-5.3 calls in §3 — every duel would abort), and do NOT silently drop the turn from pairing (that re-opens
+  the pre-wvk-12 "miner picks its turns" hole via a channel the miner cannot control but the operator cannot audit).
+  Miner-side risk: a miner cannot cause an Engy outage against one duel except by DoS-ing Engy itself; the stamped
+  coverage + requeue closes the "arbitrated only when convenient" argument.
+  Cost / latency / determinism (numbers §2–§4): F in parallel with the teacher refs is free in wall time iff its 1000-turn
+  wall ≤ the 44-min duel. glm-5.3-flash (11–18 min at conc 32–64, 0 % errors), kimi-k3 (9 min, 0 % errors) and
+  deepseek-v4.1-flash (15 min; but a per-key "per-model concurrency limit" 429 above ~24 in flight) fit; glm-5.3 does
+  NOT on today's Engy capacity: HTTP 429 "capacity exhausted" on 10–66 % of first attempts at every concurrency 8–64,
+  and with 6 retries + backoff it needs 53 min per 1000 turns at conc 32 (198/200 delivered) — measured while sibling
+  probes shared the key, so re-measure alone before ruling it out, but plan for a per-model rate cap. Fresh samples are
+  not re-samplable (T=0 exact-action agreement across three greedy passes is only 0.23–0.55; different Engy workers
+  serve the same model), so replay = re-score from the STORED text, which is exactly how teacher refs replay today
+  (artifact.teacher_refs stores z, y and every lp*; research/scripts/minrg_replay_parity.py re-derives the verdict from
+  them without re-sampling).
+  Ops risk: an external, metered, multi-tenant API inside the scoring loop — key rotation in .eval_env (redeploy_pods.py
+  pitfall, AGENTS.md §4), spend alarms, model-id drift on Engy's side (the served weights behind "glm-5.3" are whatever
+  the worker runs: stamp x_engy.worker per ref), and Engy latency tail (p95 116–246 s) inside the pod's whole-duel
+  timeout. None of this touches the GPUs.
+
+6b. FOLD-TIME PATH
+  Data model: `duel_turns@v5` (affine/corpus/view.py VIEW_SPEC; the docstring already reserves "a new spec over the same
+  traces, never new rollouts"): each `turns[i]` meta gains `frontier_refs = [{model, worker, request_id, temperature,
+  z?, y, finish, generated_at, cost_usd}]`; the v4 -> v5 materializer copies them onto the turn dict so
+  corpus.materialize_turns hands the duel `rec["frontier_refs"]` next to `rec["prefix"]`. The manifest gains
+  `frontier = {model, n_samples, temperature, n_turns_with_refs, cost_usd}`; the duel stamps `slice.view_spec` (already)
+  and `duel_params.frontier.source = "fold"`.
+  Generation: ops/corpus_build.py derive_chunk (after validate_turns / the token-cap guard, for turns not in
+  `published`) calls Engy for the kept turns of the chunk — new turns only, resumable via the existing `pending` pack
+  state; the fold runs on the CPU validator box under pm2 cron, so add `[fold.frontier]` concurrency/timeout and a per-fold
+  $ cap. Backfilling the existing 635 k turns is a one-off job (§2 "D one-off"); without it the duel would see a mixed
+  slice (turns with / without refs) for ~1000/635k × 30 duels/day … i.e. essentially every slice, for months — so the
+  backfill is mandatory, not optional, and its price is the deciding number for this path.
+  RT-6 exposure: the fold PUBLISHES y_F per turn. Under a rule that scores closeness to the published y_F, an SFT on
+  (prefix -> y_F) over D is the optimal miner and costs the miner ~nothing (D is public, 635 k pairs). RefCache exists
+  because the same thing happened with teacher refs (AGENTS.md §5: 96–99 % slice recurrence + frozen y_C = memorised
+  targets). The sd-meter / min(R,G) rule dodged it by sampling refs per duel; the fold-time path re-opens it by
+  construction. Determinism does not rescue it: the memorisation target IS the published text, so whether F's greedy is
+  reproducible (it is not: 0.23–0.55) is irrelevant to the attacker — it only matters for the HYBRID, where the scored
+  sample is fresh: then memorising the published greedy buys the miner a hit on only 35–46 % of turns (§4 "T0 vs T0.8"),
+  and on the GATE it buys knowledge of WHICH turns are arbitrated (the set, not the target) — worth little.
+  Fold-time is also the only path that is byte-replayable from public data alone (manifest-pinned), and the only one
+  that puts zero external calls inside the scoring loop.
+
+6c. REPLAY (how a verdict is re-scored offline)
+  duel-time: fetch chal-XXXXX.json.gz -> artifact.turn_ids + slice.manifest_sha256 -> materialize prefixes from
+  data.affine.io (common.materialize does this today) -> artifact.teacher_refs + artifact.frontier_refs (text) ->
+  recompute gate/closeness from the stored y's (pure string ops) and, if closeness_metric = teacher_echo, re-echo
+  lpC(y_F | z_A) under the frozen teacher (Engy `qwen3.8-27b` echo path with token-id prompts + logprob_start_len is
+  bit-identical on repeat, verified in common.py) -> re-run affine.score.duel. Same shape as minrg_replay_parity.py.
+  fold-time: the manifest already carries the refs; replay needs no artifact extension at all — materialize the slice
+  from the pinned manifest and re-score. hybrid: both (gate from D, closeness from the artifact).
+  In no path is "re-sample F" part of replay: Engy T=0 is not reproducible (§4) and vLLM at T=0.8 never was.
+
+6d. COMPARISON
+  criterion            duel-time (fresh F per duel)              fold-time (F baked into D)                 hybrid (gate from D, closeness fresh)
+  $ per duel (n_F=1)   glm-5.3 ≈ $14 · flash ≈ $1.8 ·           ≈ 0 per duel;                              same as duel-time (closeness sample)
+                       deepseek ≈ $0.5 · kimi ≈ $27             one-off backfill glm-5.3 ≈ $9.4k · flash    + fold cost (a cheap gate model:
+                       (n_F=3 ≈ 2.0–2.8× not 3×: the 2nd/3rd     ≈ $1.2k · deepseek ≈ $0.36k · kimi ≈ $19k   deepseek ≈ $0.36k one-off, $4/day)
+                       call on the same prefix is 0.52–0.90×,
+                       prefix cache)
+  $ per day (30 duels) glm-5.3 ≈ $410 · flash ≈ $53 ·          6.5k new turns/day: glm-5.3 ≈ $97 ·         duel-time daily + fold daily
+                       deepseek ≈ $15 · kimi ≈ $820             flash ≈ $13 · deepseek ≈ $4 · kimi ≈ $190
+  latency              0 added if 1000-turn wall ≤ 44 min:      0 (fold runs off the critical path;         as duel-time
+                       flash 11–18 · kimi 9 · deepseek 15 min   backfill of 635k turns at the measured
+                       OK; glm-5.3 53 min with retries = NOT    rates: flash ≈ 5 days at conc 64, glm-5.3
+                       OK today (Engy capacity 429s)            ≈ 3+ weeks at its 429-capped ~19 calls/min)
+  RT-6 exposure        none new (fresh per duel, like y_C)      HIGH: published per-turn targets; SFT on     LOW: published sample only reveals
+                                                                D reproduces y_F exactly on every turn       which turns are gated; the scored
+                                                                                                             target is fresh (memorising greedy
+                                                                                                             hits 35–46 %)
+  replayability        from stored text in the artifact         from the manifest alone (best)              both
+  determinism          T=0 not reproducible (0.23–0.55 exact)   the published sample is fixed by             gate fixed, closeness fresh
+                       -> store text, never re-sample           construction (a coin flip that was frozen)
+  ops risk             external API in the scoring loop:        external API in the fold only; scoring       both surfaces, but the scoring-loop
+                       429 tail, spend, worker drift, key in    loop untouched; view bump v4->v5 + backfill    dependency can fall back to
+                       .eval_env, whole-duel timeout            job                                          teacher-only + gate telemetry
+  wvk                  shadow: none; rule: score_mode change    view spec change alone: none (data event);   as duel-time for the rule; the
+                       = wvk event (explicit dated directive)   scoring on frontier_refs = wvk event          fold field is a data event
+  format coverage      by dialect (§5): tool_call is the weak leg for every F (deepseek 0.32 strict — it emits its native
+                       DSML tool syntax, which the live text-fallback then mis-files as a `text` action; kimi 0.69;
+                       glm-5.3 0.84 with 42 % needing the XML repair; flash 0.88). bash 0.84–0.96, text 0.97–1.00,
+                       boxed 0.76 (glm-5.3, 24 % length-capped at 2816) – 1.00, terminus_json 0.81–1.00. A per-turn
+                       "F did not parse" is a coverage loss like a zero-ref teacher turn: score teacher-only, stamp it.
