@@ -39,11 +39,21 @@ upstream = "http://127.0.0.1:8000"
 served_model = "affine-king"
 
 
+def key_fingerprint(request: Request) -> str:
+    """Length + first/last 4 chars of the presented bearer — enough to tell a
+    wrong or stale key from the right one in the log, never the key itself."""
+    auth = request.headers.get("authorization") or request.headers.get("x-api-key") or ""
+    tok = auth.split(None, 1)[1].strip() if auth.lower().startswith("bearer ") else auth.strip()
+    if not tok:
+        return "none"
+    return f"{len(tok)}:{tok[:4]}..{tok[-4:]}" if len(tok) > 8 else f"{len(tok)}:short"
+
+
 def access_log(request: Request, status: int, model: str, note: str = "") -> None:
     ua = request.headers.get("user-agent", "-")[:60]
     print(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {request.method} "
-          f"{request.url.path} model={model or '-'} ua={ua!r} -> {status} {note}",
-          file=sys.stderr, flush=True)
+          f"{request.url.path} model={model or '-'} ua={ua!r} key={key_fingerprint(request)} "
+          f"-> {status} {note}", file=sys.stderr, flush=True)
 
 
 def text_of(content) -> str:
