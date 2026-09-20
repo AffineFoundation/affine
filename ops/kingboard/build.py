@@ -1161,7 +1161,20 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
             env = row.get("env")
             if not env or env in out or row.get("temperature") != BENCH_TEMPERATURE:
                 continue
-            val = bench_value(row.get(side), env)
+            side_rec = row.get(side) or {}
+            if side_rec.get("status") == "unverified":
+                # the publisher could not trust the grader for this cell (2026-09-20:
+                # gaia2-ambiguity, ARE's soft checker rejects report-then-ask replies);
+                # keep the raw score for the tooltip, never as a value, and let a
+                # verified value from another card win the env
+                raw = side_rec.get("raw_score", side_rec.get("score"))
+                out.setdefault(f"__unverified__{env}", {
+                    "score": None, "unverified": True, "n": side_rec.get("n"), "kind": "bench",
+                    "reason": row.get("unverified") or side_rec.get("failure") or "grader result not verified",
+                    "raw_score": raw, "run_id": card.get("run_id"), "mode": card.get("mode"),
+                    "created_at": card.get("created_at")})
+                continue
+            val = bench_value(side_rec, env)
             if val is None:
                 continue
             val.update(run_id=card.get("run_id"), mode=card.get("mode"),
@@ -1177,11 +1190,14 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
             if side == "teacher" and (row.get("teacher") or {}).get("reused_from"):
                 val["reused_from"] = row["teacher"]["reused_from"]
             out[env] = val
-    for k in [k for k in out if k.startswith("__failed__")]:
-        env = k[len("__failed__"):]
-        failed = out.pop(k)
-        if env not in out:
-            out[env] = failed        # score None + failed: renders "run failed", tooltip has the reason
+    # placeholders only where no card has a verified value: an unverified cell
+    # (grader mismatch) beats a failed run (nothing measured) for the slot
+    for prefix in ("__unverified__", "__failed__"):
+        for k in [k for k in out if k.startswith(prefix)]:
+            env = k[len(prefix):]
+            val = out.pop(k)
+            if env not in out:
+                out[env] = val   # score None + unverified / failed: renders as such, tooltip has the reason
     return out
 
 
