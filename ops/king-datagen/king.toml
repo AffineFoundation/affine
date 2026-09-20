@@ -25,6 +25,9 @@ seat_empty_alert_min = 60                    # page the ops channel when the kin
 # box ran 25 h for a king nobody scored any more while reign 14 waited on a
 # Lium API bug). Within the cap it stays up so the pods keep rolling a king.
 prev_king_max_min = 120
+# Datagen-pod watchdog: one Discord line (per pod, per mount, per 6 h) when
+# `/` (host overlay + docker images) or `/root` has less free space than this.
+datagen_disk_min_free_pct = 10
 state_stale_min = 30                         # keep the last known king this long if state.json is unreadable
 watchdog_every_min = 5                       # datagen-pod supervisor liveness check cadence
 watchdog_relaunch_min = 10                   # supervisor + bootstrap loop both gone this long -> relaunch
