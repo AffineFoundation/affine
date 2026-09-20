@@ -104,6 +104,23 @@ def matrix() -> dict:
     return r.json()
 
 
+def env_gaps(mx: dict, row_label: str) -> list[str]:
+    """env-table columns (kings.affine.io) under 24 rollouts or absent for a row; affine_wiki grades nothing and is 0 for every model."""
+    cols = [c.get("key") if isinstance(c, dict) else c for c in mx["columns"]]
+    envs = [c[4:] for c in cols if c.startswith("env:") and c != "env:affine_wiki"]
+    row = next((r for r in mx["rows"] if r.get("label") == row_label), None)
+    if row is None:
+        return envs
+    cells = row.get("cells") or {}
+    out = []
+    for e in envs:
+        c = cells.get(f"env:{e}")
+        n = (c or {}).get("n") or 0
+        if n < 24:
+            out.append(f"{e}:{n}")
+    return out
+
+
 def missing_cells(mx: dict, row_label: str) -> tuple[list[str], list[str]]:
     """(missing bench envs, envs the board shows as failed) for a row, by the board's own columns."""
     cols = [c.get("key") if isinstance(c, dict) else c for c in mx["columns"]]
@@ -170,9 +187,13 @@ def harbor_busy(d12: str, env: str) -> bool:
 
 
 def swe_jobs_running() -> int:
-    out = subprocess.run(["pgrep", "-fc", "harbor_cell.py run --env swebench-verified"], capture_output=True, text=True).stdout.strip()
-    out2 = subprocess.run(["pgrep", "-fc", "harbor_cell.py resume --env swebench-verified"], capture_output=True, text=True).stdout.strip()
-    return int(out or 0) + int(out2 or 0)
+    """SWE Daytona jobs in flight or about to be (a swe_rerun/swe_resume still renting its pod counts)."""
+    def n(pat: str) -> int:
+        out = subprocess.run(["pgrep", "-fc", pat], capture_output=True, text=True).stdout.strip()
+        return int(out or 0)
+    harbor = n("harbor_cell.py run --env swebench-verified") + n("harbor_cell.py resume --env swebench-verified")
+    scripts = n("^bash .*swe_rerun.sh ") + n("^bash .*swe_resume.sh ")
+    return max(harbor, scripts)
 
 
 def launch(info: dict, job: dict) -> subprocess.Popen:
@@ -245,6 +266,7 @@ def main() -> int:
             continue
         lines = []
         worst_eta = None
+        swe_blocked = False   # a higher-priority row is waiting for a Daytona slot: lower rows do not take it
         for t in [x.strip() for x in a.targets.split(",") if x.strip()]:
             try:
                 info = target_info(t)
@@ -267,6 +289,11 @@ def main() -> int:
                     running_here.append(job["kind"] + "(harbor)"); continue
                 rec = st["jobs"].setdefault(key, {"attempts": 0, "state": "idle"})
                 p = procs.get(key)
+                if p is None and rec.get("state") == "running" and rec.get("pid"):
+                    # watcher restarted: the launcher it started earlier may still be running
+                    if subprocess.run(["kill", "-0", str(rec["pid"])], capture_output=True).returncode == 0:
+                        running_here.append(job["kind"] + "(prev)"); continue
+                    rec["state"] = "ended"
                 if p is not None and p.poll() is None:
                     running_here.append(job["kind"])
                     continue
@@ -279,19 +306,21 @@ def main() -> int:
                     log(f"{info['row']} {job['kind']}: gave up after {rec['attempts']} attempts — {job['envs']}")
                     discord(f"[rows-watch] {info['row']} {job['kind']} {job['envs']}: gave up after {rec['attempts']} attempts (cells stay 'run failed')")
                     continue
-                if job["kind"] in ("swe", "swe4h") and swe_jobs_running() >= MAX_SWE_JOBS:
-                    running_here.append(job["kind"] + "(waiting: Daytona)")
+                if job["kind"] in ("swe", "swe4h") and (swe_blocked or swe_jobs_running() >= MAX_SWE_JOBS):
+                    running_here.append(job["kind"] + "(waiting: Daytona)"); swe_blocked = True
                     continue
                 rec["attempts"] += 1; rec["state"] = "running"; rec["started_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()); rec["envs"] = job["envs"]
-                procs[key] = launch(info, job)
+                procs[key] = launch(info, job); rec["pid"] = procs[key].pid
                 running_here.append(job["kind"])
             eta = None
             if todo:
                 mins = max([DUR.get(j["kind"], 120) for j in jobs_for(info, todo)] or [0]) + 25
                 eta = datetime.now(timezone.utc).timestamp() + mins * 60
                 worst_eta = max(worst_eta or 0, eta)
+            eg = env_gaps(mx, info["row"])
             lines.append(f"{info['row']}: missing {len(missing)} {missing} failed {failed} running {running_here}"
-                         + (f" eta {datetime.fromtimestamp(eta, timezone.utc).strftime('%H:%M')}Z" if eta else " FULL"))
+                         + (f" eta {datetime.fromtimestamp(eta, timezone.utc).strftime('%H:%M')}Z" if eta else " FULL")
+                         + (f" | env rows <24: {eg}" if eg else " | env rows FULL"))
         save_state(st)
         status = f"{time.strftime('%Y-%m-%dT%H:%MZ', time.gmtime())}\n" + "\n".join(lines)
         (STATE / "rows_watch_status.txt").write_text(status + "\n")
