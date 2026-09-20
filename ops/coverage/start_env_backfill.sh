@@ -9,7 +9,10 @@ HERE=$PWD; REPO=~/subnet120; PY=$REPO/.venv/bin/python
 source ./env.sh
 export LIUM_API_KEY="${LIUM_API_KEY:-${LIUM:-}}"
 POD="$1"; D12="$2"; LABEL="$3"; SOURCES="$4"; MAXC="${5:-12}"
-BF_SPEC="${COVERAGE_BACKFILL_POD:-root@73.139.34.205:20009}"; BF_HOST="${BF_SPEC#*@}"; BF_HOST="${BF_HOST%:*}"; BF_PORT="${BF_SPEC##*:}"
+# driver pod: env var > the datagen worker's pointer file (kept current when the pod is replaced)
+# > affine-backfill-3 (no Lium TTL, 2026-09-19 22:19 UTC; -2 died of its 72-h TTL)
+BF_PTR=$(python3 -c 'import json; print(json.load(open("/home/const/subnet120/affine/state/pods/backfill_driver.json"))["ssh"])' 2>/dev/null)
+BF_SPEC="${COVERAGE_BACKFILL_POD:-${BF_PTR:-root@94.70.140.197:20099}}"; BF_HOST="${BF_SPEC#*@}"; BF_HOST="${BF_HOST%:*}"; BF_PORT="${BF_SPEC##*:}"
 MAX_BOX_H="${COVERAGE_ENV_BOX_MAX_H:-14}"     # a serving box never outlives this (2026-09-19: three boxes idled ~45 h after their drivers)
 BF=(ssh -o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new -p $BF_PORT root@$BF_HOST)
 LOG=~/subnet120/ops/coverage/state/env_backfill_$D12.log

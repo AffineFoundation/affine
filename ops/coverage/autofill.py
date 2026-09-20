@@ -54,7 +54,18 @@ ENV_MAX_LIVE = int(os.environ.get("COVERAGE_ENV_MAX_LIVE", "3"))   # serving box
 # The env backfill needs the driver pod (rollouts.backfill runs there). It is rented by
 # the datagen worker; when it is gone (72 h TTL took affine-backfill-2 on 2026-09-19)
 # renting serving boxes only burns money: five idle boxes, $35, that afternoon.
-BACKFILL_POD = os.environ.get("COVERAGE_BACKFILL_POD", "root@73.139.34.205:20009")
+BACKFILL_DRIVER_PTR = Path.home() / "subnet120" / "affine" / "state" / "pods" / "backfill_driver.json"   # kept current by the datagen worker
+
+
+def _driver_default() -> str:
+    """affine-backfill-3 (no Lium TTL, 2026-09-19 22:19 UTC); the pointer file wins when the pod is replaced."""
+    try:
+        return str(json.loads(BACKFILL_DRIVER_PTR.read_text())["ssh"])
+    except (OSError, ValueError, KeyError):
+        return "root@94.70.140.197:20099"
+
+
+BACKFILL_POD = os.environ.get("COVERAGE_BACKFILL_POD") or _driver_default()
 ENV_CONTAINERS = int(os.environ.get("COVERAGE_ENV_CONTAINERS", "12"))
 
 
