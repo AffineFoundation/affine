@@ -59,18 +59,24 @@
         el("td", { class: "num" }, d.z !== undefined && d.z !== null ? Number(d.z).toFixed(2) : "–"),
         el("td", { class: "muted" }, base ? `reign ${base.king.reign}` : (d.vs_reign ? `reign ${d.vs_reign} (no card)` : "–")),
         el("td", { class: "muted" }, c.status === "partial" ? "running" : c.status));
-      const deltas = [];
+      const deltas = [], missing = [];
       for (const e of envs) {
         const row = c.rows.find((x) => x.env === e && x.temperature === 0 && x.king);
         const brow = base ? base.rows.find((x) => x.env === e && x.temperature === 0 && x.king) : null;
-        if (!row) { tr.append(el("td", { class: "num muted" }, "…")); continue; }
-        if (!brow) { tr.append(el("td", { class: "num" }, pct(row.king.score))); continue; }
+        if (row && row.king.status === "failed") { missing.push(e + " (run failed)"); tr.append(el("td", { class: "num run-failed", title: row.king.failure || "run failed" }, "run failed")); continue; }
+        if (!row) { missing.push(e); tr.append(el("td", { class: "num muted" }, "…")); continue; }
+        if (!brow || brow.king.status === "failed" || brow.king.score === null || brow.king.score === undefined) { missing.push(e + " (no king cell)"); tr.append(el("td", { class: "num" }, pct(row.king.score))); continue; }
         const delta = 100 * (row.king.score - brow.king.score), hw = 100 * (brow.king.ci95[1] - brow.king.ci95[0]) / 2;
         deltas.push(delta);
         const cls = Math.abs(delta) > hw ? (delta > 0 ? "good" : "bad") : "";
         tr.append(el("td", { class: "num " + cls, title: `${pct(row.king.score)} vs king ${pct(brow.king.score)} [±${hw.toFixed(1)}]` }, `${delta > 0 ? "+" : ""}${delta.toFixed(1)}${Math.abs(delta) > hw ? "*" : ""}`));
       }
-      tr.append(el("td", { class: "num" }, deltas.length ? `${(deltas.reduce((a, b) => a + b, 0) / deltas.length).toFixed(1)} pt` : "–"));
+      // mean over the cells that exist (same rule as the affine.io total): coverage k/n
+      // next to it, the missing envs in the tooltip, so a 3-cell mean is not read as a full one
+      tr.append(el("td", { class: "num" + (deltas.length && deltas.length < envs.length ? " partial" : ""),
+        title: deltas.length ? `mean Δ over ${deltas.length} of ${envs.length} envs` + (missing.length ? `\nmissing: ${missing.join(", ")}` : "") : "no comparable cell yet" },
+        deltas.length ? `${(deltas.reduce((a, b) => a + b, 0) / deltas.length).toFixed(1)} pt` : "–",
+        deltas.length && deltas.length < envs.length ? el("span", { class: "cov" }, ` ${deltas.length}/${envs.length}`) : ""));
       tbody.append(tr);
     }
     $("#chal-note").textContent = "* = outside the king card's 95% interval. Rows sorted by duel margin (the meter's order); if the meter tracked the benchmarks, mean Δ would fall down the table.";
