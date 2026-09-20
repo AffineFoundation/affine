@@ -121,26 +121,30 @@ function tableColumns(m, spec) {
 const hasValue = (r, key) => r.cells[key] != null && r.cells[key].score != null;
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 
-/** Common column set = the columns every displayed row WITH data has a
- * value for (rows still empty or running do not shrink it). */
-function commonColumns(rows, cols) {
-  const dataRows = rows.filter((r) => cols.some((c) => hasValue(r, c.key)));
-  if (!dataRows.length) return [];
-  return cols.filter((c) => dataRows.every((r) => hasValue(r, c.key)));
-}
-
-function totals(rows, cols, common, teacher) {
+/** Per row: `total` = mean over the cells the row HAS (blanks, running and
+ * "run failed" cells are ignored; operator 2026-09-20: "take the avg"), with
+ * its coverage n/N and the columns it lacks; `full` = mean over every scored
+ * column, only for rows that have them all (unchanged). Deltas compare with
+ * the teacher's mean over the SAME columns the row has. */
+function totals(rows, cols, teacher) {
   const over = (r, cs) => (cs.length && cs.every((c) => hasValue(r, c.key)) ? mean(cs.map((c) => r.cells[c.key].score)) : null);
-  const tCommon = teacher ? over(teacher, common) : null;
   const tFull = teacher ? over(teacher, cols) : null;
   const out = new Map();
   for (const r of rows) {
-    const c = over(r, common), f = over(r, cols);
+    const have = cols.filter((c) => hasValue(r, c.key));
+    const missing = cols.filter((c) => !hasValue(r, c.key));
+    const total = have.length ? mean(have.map((c) => r.cells[c.key].score)) : null;
+    const tSame = teacher && have.length ? over(teacher, have) : null;
+    const f = over(r, cols);
     out.set(r.key, {
-      common: c, full: f,
-      commonDelta: c != null && tCommon != null && r.kind !== "teacher" ? c - tCommon : null,
+      total, n: have.length, of: cols.length, full: f,
+      missing,
+      failed: missing.filter((c) => (r.cells[c.key] || {}).failed),
+      runningCols: missing.filter((c) => (r.cells[c.key] || {}).running),
+      teacherSame: tSame,
+      totalDelta: total != null && tSame != null && r.kind !== "teacher" ? total - tSame : null,
       fullDelta: f != null && tFull != null && r.kind !== "teacher" ? f - tFull : null,
-      running: c == null && cols.some((cc) => (r.cells[cc.key] || {}).running),
+      running: total == null && cols.some((cc) => (r.cells[cc.key] || {}).running),
     });
   }
   return out;
@@ -153,8 +157,8 @@ function visibleRows(m, spec) {
   const rest = m.rows.filter((r) => r !== teacher);
   const sort = state.sort[spec.id] || { key: null, desc: true };
   const cols = tableColumns(m, spec).filter((c) => !c.advisory);
-  const tot = totals([...(teacher ? [teacher] : []), ...rest], cols, commonColumns([...(teacher ? [teacher] : []), ...rest], cols), teacher);
-  const val = (r) => sort.key === "total" ? tot.get(r.key).common
+  const tot = totals([...(teacher ? [teacher] : []), ...rest], cols, teacher);
+  const val = (r) => sort.key === "total" ? tot.get(r.key).total
     : sort.key === "full" ? tot.get(r.key).full
     : (r.cells[sort.key] && r.cells[sort.key].score != null ? r.cells[sort.key].score : null);
   rest.sort((a, b) => {
@@ -190,11 +194,10 @@ function renderTable(m, spec) {
   const sort = state.sort[spec.id] || { key: null, desc: true };
   // judge-graded (advisory) columns are shown but never enter total / full
   const scoreCols = cols.filter((c) => !c.advisory);
-  const common = commonColumns(rows, scoreCols);
-  const tot = totals(rows, scoreCols, common, m.rows.find((r) => r.kind === "teacher"));
-  const commonTitle = `mean over the ${common.length} columns every displayed row with data has a value for:\n`
-    + (common.map((c) => c.short || c.abbr || c.label).join(", ") || "(none)")
-    + `\nrecomputed as rows change; Δ vs the teacher on the same columns${scoreCols.length < cols.length ? "; judge-graded columns excluded" : ""}`;
+  const tot = totals(rows, scoreCols, m.rows.find((r) => r.kind === "teacher"));
+  const commonTitle = `mean over the cells the row has (n/${scoreCols.length} = how many of the ${scoreCols.length} scored columns entered); `
+    + `blank, running and "run failed" cells are left out, so a low n/${scoreCols.length} is a partial score, not a full one`
+    + `\nΔ / tint vs the teacher's mean over the same columns${scoreCols.length < cols.length ? "; judge-graded columns excluded" : ""}`;
   const fullTitle = `mean over all ${scoreCols.length} scored columns — only for rows that have every column; blank otherwise`;
   const allBlocks = groupBlocks(cols);
   // the environments table always shows its fold groups; the benchmarks table
@@ -221,14 +224,20 @@ function renderTable(m, spec) {
     const cls = [r.kind, r.current ? "current" : ""].filter(Boolean).join(" ");
     const t = tot.get(r.key);
     const d = spec.kind === "env" ? 0 : 1;
-    const totalTip = `${rowName(r)} · total (common columns)\n`
-      + (t.common != null ? `${fmt(t.common)} over ${common.length} columns` + (t.commonDelta != null ? ` · teacher on the same columns → Δ ${signed(t.commonDelta)} pt` : "")
-        : t.running ? "benchmark pass running — total appears when its cells land" : "no value on one of the common columns")
-      + `\n${common.map((c) => c.short || c.abbr || c.label).join(", ")}`;
+    const short = (c) => c.short || c.abbr || c.label;
+    const totalTip = `${rowName(r)} · total (mean of the cells the row has)\n`
+      + (t.total != null
+        ? `${fmt(t.total)} over ${t.n} of ${t.of} columns` + (t.n < t.of ? " — partial: not comparable with a full row" : "")
+          + (t.totalDelta != null ? `\nteacher on the same ${t.n} columns: ${fmt(t.teacherSame)} → Δ ${signed(t.totalDelta)} pt` : "")
+        : t.running ? "benchmark pass running — total appears when its first cells land" : "no scored cell yet")
+      + (t.missing.length ? `\nmissing (${t.missing.length}): ${t.missing.filter((c) => !t.failed.includes(c) && !t.runningCols.includes(c)).map(short).join(", ") || "–"}` : "\nall columns present")
+      + (t.failed.length ? `\nrun failed (${t.failed.length}): ${t.failed.map(short).join(", ")}` : "")
+      + (t.runningCols.length ? `\nrunning (${t.runningCols.length}): ${t.runningCols.map(short).join(", ")}` : "");
     const fullTip = `${rowName(r)} · full total\n` + (t.full != null ? `${fmt(t.full)} over all ${scoreCols.length} columns` + (t.fullDelta != null ? ` · Δ ${signed(t.fullDelta)} pt vs teacher` : "")
-      : `blank: the row has ${scoreCols.filter((c) => hasValue(r, c.key)).length} of ${scoreCols.length} scored columns`);
-    const totalTd = `<td class="cell total${t.common == null ? " blank" : ""} duel-hit" data-tip="${esc(totalTip)}"`
-      + `${t.common != null && r.kind !== "teacher" ? ` style="${tint(t.commonDelta)}"` : ""}>${t.common != null ? fmt(t.common, d) : t.running ? "…" : "·"}</td>`;
+      : `blank: the row has ${t.n} of ${scoreCols.length} scored columns`);
+    const cov = t.total != null && t.n < t.of ? `<span class="cov">${t.n}/${t.of}</span>` : "";
+    const totalTd = `<td class="cell total${t.total == null ? " blank" : t.n < t.of ? " partial" : ""} duel-hit" data-tip="${esc(totalTip)}"`
+      + `${t.total != null && r.kind !== "teacher" ? ` style="${tint(t.totalDelta)}"` : ""}>${t.total != null ? fmt(t.total, d) + cov : t.running ? "…" : "·"}</td>`;
     const fullTd = `<td class="cell full${t.full == null ? " blank" : ""} duel-hit" data-tip="${esc(fullTip)}">${t.full != null ? fmt(t.full, d) : "·"}</td>`;
     const cells = cols.map((c) => {
       const cell = r.cells[c.key];
