@@ -134,7 +134,7 @@ chat_shards = [
   ["aime25", "math500", "gpqa-diamond"],
 ]
 shard_after = [["graphwalks"], ["oolong-synth", "mrcr-v2"], ["minif2f"]]   # after each shard: docker long-context cells (prime for minif2f)
-chat_plans = ["h200-1x", "pro6000-1x", "b200-1x"]
+chat_plans = ["h200-1x", "pro6000-1x", "b200-1x", "prime-h200-1x", "prime-h100-2x", "prime-a100-2x"]   # prime-* = Prime pods when Lium is out
 agentic_envs_on_pod = ["tau2-airline", "tau2-retail", "tau2-telecom", "tau3-banking"]
 agentic_plans = ["h200-1x", "b200-1x", "pro6000-1x"]
 swe_plans = ["h200-2x", "b200-2x", "b200-1x", "h200-1x"]
@@ -223,6 +223,33 @@ max_model_len = 131072
 gpu_memory_utilization = 0.90
 max_num_batched_tokens = 16384
 max_num_seqs = 64
+
+# Prime Intellect pods (primepod.py; second provider since 2026-09-20 — Lium has ~20 GPUs of
+# our classes and the board fill wanted more). max_price = USD/h for the whole pod. The A100
+# hosts run 570-series drivers -> the cu129 vLLM wheel (pod_bootstrap.sh VLLM_CUDA). Prime pods
+# expose no data ports: chat cells only (they run on the pod, `prime` sandbox runtime).
+prime_min_balance_usd = 50
+[pods.prime_plans.prime-h200-1x]
+gpu_type = "H200_141GB"
+gpu_count = 1
+tp = 1
+max_price = 6.0
+image = "ubuntu_22_cuda_12"
+vllm_cuda = "cu130"
+[pods.prime_plans.prime-h100-2x]
+gpu_type = "H100_80GB"
+gpu_count = 2
+tp = 2
+max_price = 8.0
+image = "ubuntu_22_cuda_12"
+vllm_cuda = "cu129"
+[pods.prime_plans.prime-a100-2x]
+gpu_type = "A100_80GB"
+gpu_count = 2
+tp = 2
+max_price = 4.0
+image = "ubuntu_22_cuda_12"
+vllm_cuda = "cu129"
 
 [pods.plans.h200-1x]
 match = "H200"

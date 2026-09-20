@@ -16,7 +16,7 @@ PY="${BENCHSUITE_PYTHON:-$REPO/.venv/bin/python}"
 BENCH_HOME="${BENCH_HOME:-$HOME/benchsuite}"
 REF="$1"; LABEL="$2"; RUN_ID="$3"; SIDE="${4:-king}"
 CAP_ENVS="${CAP_ENVS:-mmlu-pro,gpqa-diamond,math500,livecodebench}"
-CAP_PLANS="${CAP_PLANS:-pro6000-1x h200-1x b200-1x}"
+CAP_PLANS="${CAP_PLANS:-pro6000-1x h200-1x b200-1x prime-h200-1x prime-h100-2x prime-a100-2x}"   # prime-* = Prime pods (chat cells) when Lium is out
 CAP_PARALLEL="${CAP_PARALLEL:-2}"
 toml() { "$PY" -c 'import tomllib,sys; d=tomllib.load(open("'"$HERE"'/suite.toml","rb")); v=d
 for k in sys.argv[1].split("."): v=v[k]
@@ -40,7 +40,10 @@ fi
 DIGEST="$REF" R2FLAG=""
 if [[ "$REF" == r2://* ]]; then DIGEST="${CHALLENGER_REVISION:?}"; R2FLAG="--r2 $REF"; export AFFINE_EVAL_R2_ENDPOINT="${AFFINE_EVAL_R2_ENDPOINT:-${R2_ENDPOINT:-}}"
 elif [[ "$REF" == hf://* ]]; then SPEC="${REF#hf://}"; DIGEST="hf-$(echo "${SPEC#*@}" | cut -c1-10)"; R2FLAG="--hf $SPEC"; fi
-podf() { "$PY" -c 'import json,sys; m=json.load(open("'"$HERE"'/state/pods.json"))[sys.argv[1]]; print(m[sys.argv[2]])' "$1" "$2"; }
+podf() { "$PY" -c 'import json,sys; m=json.load(open("'"$HERE"'/state/pods.json"))[sys.argv[1]]; print(m.get(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ""))' "$1" "$2" "${3:-}"; }
+tool_for_plan() { case "$1" in prime-*) echo "$HERE/primepod.py";; *) echo "$HERE/kingpod.py";; esac; }
+tool_for_pod() { [ "$(podf "$1" provider lium)" = prime ] && echo "$HERE/primepod.py" || echo "$HERE/kingpod.py"; }
+pod_ssh_key() { [ "$(podf "$1" provider lium)" = prime ] && echo "${PRIME_SSH_KEY:-$HOME/.ssh/prime_bench}" || echo "$HOME/.ssh/id_ed25519"; }
 
 # ---- 1. old-cap cells -> <env>@<cap>k (the plain names are free for the new cells)
 "$PY" "$HERE/recap.py" --run-dir "$RUN_DIR"
@@ -48,29 +51,30 @@ podf() { "$PY" -c 'import json,sys; m=json.load(open("'"$HERE"'/state/pods.json"
 
 # ---- 2. one pod, replaced when an executor never serves
 POD=""
-cleanup() { [ -n "$POD" ] && { log "releasing $POD"; "$PY" "$HERE/kingpod.py" release "$POD" >/dev/null 2>&1 || true; }; }
+cleanup() { [ -n "$POD" ] && { log "releasing $POD"; "$PY" "$(tool_for_pod "$POD")" release "$POD" >/dev/null 2>&1 || true; }; }
 trap cleanup EXIT
 T0=$(date +%s)
 while [ $(( $(date +%s) - T0 )) -lt "${CAP_RENT_DEADLINE_S:-14400}" ]; do   # zero Lium stock is normal while a fast pass holds 5 pods: wait up to 4 h
   for plan in $CAP_PLANS; do
     # shellcheck disable=SC2086
-    POD=$("$PY" "$HERE/kingpod.py" rent --plan "$plan" --digest "$DIGEST" $R2FLAG 2>>"$RUN_DIR/capfill-rent.log" | tail -1) && [ -n "$POD" ] && break
+    POD=$("$PY" "$(tool_for_plan "$plan")" rent --plan "$plan" --digest "$DIGEST" $R2FLAG 2>>"$RUN_DIR/capfill-rent.log" | tail -1) && [ -n "$POD" ] && break
     POD=""
   done
   [ -n "$POD" ] || { log "no stock; retry in 3 min"; sleep 180; continue; }
-  if timeout 1500 "$PY" "$HERE/kingpod.py" wait "$POD" >>"$RUN_DIR/capfill-rent.log" 2>&1; then break; fi
-  if curl -s -m 15 -H "Authorization: Bearer $(podf "$POD" key)" "$(podf "$POD" base_url)/models" 2>/dev/null | grep -q '"data"'; then break; fi
+  if timeout 1500 "$PY" "$(tool_for_pod "$POD")" wait "$POD" >>"$RUN_DIR/capfill-rent.log" 2>&1; then break; fi
+  if [ "$(podf "$POD" provider lium)" != prime ] && curl -s -m 15 -H "Authorization: Bearer $(podf "$POD" key)" "$(podf "$POD" base_url)/models" 2>/dev/null | grep -q '"data"'; then break; fi
   log "$POD never served in 25 min; strike + re-rent"
-  "$PY" "$HERE/kingpod.py" release "$POD" --strike "never served in 1500s (cap backfill $RUN_ID)" >/dev/null 2>&1 || true
+  "$PY" "$(tool_for_pod "$POD")" release "$POD" --strike "never served in 1500s (cap backfill $RUN_ID)" >/dev/null 2>&1 || true
   POD=""
 done
 [ -n "$POD" ] || { log "no serving pod within the rent deadline; giving up"; finish 3; }
 log "pod $POD serves $(podf "$POD" served) after $(( ($(date +%s) - T0) / 60 )) min"
-ssh_pod() { ssh "${SSHO[@]}" -p "$(podf "$POD" ssh_port)" "root@$(podf "$POD" ssh_host)" "$@"; }
+ssh_pod() { ssh "${SSHO[@]}" -i "$(pod_ssh_key "$POD")" -p "$(podf "$POD" ssh_port)" "$(podf "$POD" ssh_user root)@$(podf "$POD" ssh_host)" "$@"; }
+RUNTIME=docker; [ "$(podf "$POD" provider lium)" = prime ] && RUNTIME=prime   # no docker on Prime images: Prime sandboxes
 
 # ---- 3. install + lock check
 tar -C "$REPO" -czf "/tmp/benchsuite-$TAG.tgz" ops/benchsuite
-scp "${SSHO[@]}" -P "$(podf "$POD" ssh_port)" "/tmp/benchsuite-$TAG.tgz" "root@$(podf "$POD" ssh_host):/tmp/benchsuite.tgz" || finish 4
+scp "${SSHO[@]}" -i "$(pod_ssh_key "$POD")" -P "$(podf "$POD" ssh_port)" "/tmp/benchsuite-$TAG.tgz" "$(podf "$POD" ssh_user root)@$(podf "$POD" ssh_host):/tmp/benchsuite.tgz" || finish 4
 rm -f "/tmp/benchsuite-$TAG.tgz"
 ssh_pod "mkdir -p /root/affine /root/benchsuite/runs && cd /root/affine && tar xzf /tmp/benchsuite.tgz && BENCH_HOME=/root/benchsuite bash /root/affine/ops/benchsuite/install_eval_env.sh > /root/install.log 2>&1; tail -1 /root/install.log" | tee "$RUN_DIR/capfill-install.log" | grep -q INSTALL_DONE || { log "install failed"; finish 5; }
 [ -n "${DOCKERHUB_TOKEN:-}" ] && printf '%s' "$DOCKERHUB_TOKEN" | ssh_pod "docker login -u '$DOCKERHUB_USER' --password-stdin >/dev/null 2>&1" || true
@@ -82,7 +86,7 @@ URL="http://127.0.0.1:$(podf "$POD" front_internal)/v1"; SERVED="$(podf "$POD" s
 if [ "$SIDE" = teacher ]; then MODELARGS="--teacher-url $URL --teacher-model $SERVED --models teacher"
 else MODELARGS="--king-url $URL --king-model $SERVED --models king --teacher-from $TEACHER_FROM"; fi
 PYR=/root/benchsuite/verifiers/.venv/bin/python
-ssh_pod "export BENCH_API_KEY='$(podf "$POD" key)' PRIME_API_KEY='${PRIME_API_KEY:-}' HF_TOKEN='${HF_TOKEN:-}' BENCHSUITE_CHAT_IMAGE=affine-bench-chat:py311; cd /root/affine/ops/benchsuite && $PYR run_suite.py run --run-id $RUN_ID --key-env BENCH_API_KEY $MODELARGS --verifiers-dir /root/benchsuite/verifiers --out /root/benchsuite/runs --runtime docker --envs $CAP_ENVS --temps primary,secondary --concurrency 64 --parallel-envs $CAP_PARALLEL --manifest manifest-capfill.json --push" > "$RUN_DIR/capfill-run.log" 2>&1 &
+ssh_pod "export BENCH_API_KEY='$(podf "$POD" key)' PRIME_API_KEY='${PRIME_API_KEY:-}' HF_TOKEN='${HF_TOKEN:-}' BENCHSUITE_CHAT_IMAGE=affine-bench-chat:py311; cd /root/affine/ops/benchsuite && $PYR run_suite.py run --run-id $RUN_ID --key-env BENCH_API_KEY $MODELARGS --verifiers-dir /root/benchsuite/verifiers --out /root/benchsuite/runs --runtime $RUNTIME --envs $CAP_ENVS --temps primary,secondary --concurrency 64 --parallel-envs $CAP_PARALLEL --manifest manifest-capfill.json --push" > "$RUN_DIR/capfill-run.log" 2>&1 &
 RPID=$!
 pull_light() { ssh_pod "cd /root/benchsuite/runs && tar czf - --exclude='*/logs' --exclude='*/traces.jsonl*' --exclude='*/eval.log' --exclude='manifest.json' $RUN_ID 2>/dev/null" 2>/dev/null | tar xzf - -C "$BENCH_HOME/runs" 2>/dev/null; }
 while kill -0 "$RPID" 2>/dev/null; do
