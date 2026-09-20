@@ -1486,8 +1486,18 @@ os._exit(0)
 """
 
 
-def build_tau2_synth_catalog(cfg: RolloutsConfig, src: Source) -> dict:
-    rows = _verifiers_listing(cfg, TAU2_SYNTH_LIST, what="tau2_synth")
+TAU2_KB_LIST = TAU2_SYNTH_LIST.replace("affine_tau2_synth_v1.taskset import AffineTau2SynthTaskset, AffineTau2SynthConfig, split_name",
+                                       "affine_kb_synth_v1.taskset import AffineKBSynthTaskset as AffineTau2SynthTaskset, AffineKBSynthConfig as AffineTau2SynthConfig, split_name")
+
+
+def build_tau2_kb_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    """affine_kb_synth (env wave 5): the synth pool under the `tau2k-` prefix."""
+    return build_tau2_synth_catalog(cfg, src, listing=TAU2_KB_LIST, prefix="tau2k", what="tau2_kb")
+
+
+def build_tau2_synth_catalog(cfg: RolloutsConfig, src: Source, listing: str = TAU2_SYNTH_LIST,
+                             prefix: str = "tau2s", what: str = "tau2_synth") -> dict:
+    rows = _verifiers_listing(cfg, listing, what=what)
     kept: list[dict] = []
     seen: set[str] = set()
     for r in rows:
@@ -1495,11 +1505,11 @@ def build_tau2_synth_catalog(cfg: RolloutsConfig, src: Source) -> dict:
         if uid in seen:
             continue
         seen.add(uid)
-        _, num = _text_uid("tau2s", uid)
+        _, num = _text_uid(prefix, uid)
         domain = re.sub(r"[^a-z0-9]+", "_", str(r.get("domain") or "synth").lower()).strip("_")
         kept.append(_bucketed(src, {
             "uid": uid,
-            "sid": f"tau2s_{domain}-{num}",
+            "sid": f"{prefix}_{domain}-{num}",
             "repo": f"tau2-synth/{domain}",
             "language": "tool",
             "intent": domain,
@@ -1539,6 +1549,7 @@ BUILDERS = {
     "hf": build_hf_catalog,
     "tau2": build_tau2_catalog,
     "tau2_synth": build_tau2_synth_catalog,
+    "tau2_kb": build_tau2_kb_catalog,
     "rgym": build_rgym_catalog,
     "when2call": build_when2call_catalog,
     "rcore": build_rcore_catalog,
