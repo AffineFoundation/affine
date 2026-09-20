@@ -117,6 +117,23 @@ def scorecard(run_dir: Path) -> dict:
         s = json.loads(summ_path.read_text())
         s = {k: v for k, v in s.items() if k != "rollouts"}
         cells.setdefault(s["env"], {}).setdefault(f"t{s['temperature']:g}", {})[s["model"]] = s
+    # A cell that was started (cmd.txt) and has no result at the FINAL publish is a run
+    # failure — it must show as "run failed" on the card, never blank (Jacob 2026-09-20;
+    # reign 20's card went out with 5 of 26 king cells and nothing said why). While the pass
+    # is still running (--partial) these stay "unfinished" with an ETA.
+    unfinished_now = []
+    for d in sorted(run_dir.glob("*/*")):
+        if d.is_dir() and (d / "cmd.txt").exists() and not (d / "summary.json").exists():
+            unfinished_now.append(d)
+            if not PARTIAL:
+                model = d.parent.name
+                env_id, _, t = d.name.rpartition("__t")
+                why = (d / "cmd.txt").read_text(errors="replace").strip().splitlines()
+                cells.setdefault(env_id, {}).setdefault(f"t{float(t):g}", {}).setdefault(model, {
+                    "env": env_id, "temperature": float(t), "model": model, "n": 0, "n_errored": 0, "score": None, "ci95": None,
+                    "completion_tokens": 0, "prompt_tokens": 0, "run_failed": True,
+                    "failure_note": ("no pod (stock)" if why and why[0].startswith("no pod") else "the pass ended without a result for this cell"),
+                })
     by_id = {e["id"]: e for e in SUITE["envs"]}
 
     def side(x: dict | None, teacher: bool = False) -> dict | None:
@@ -128,6 +145,10 @@ def scorecard(run_dir: Path) -> dict:
         the record so the gap check can retry the cell."""
         if not x:
             return None
+        if x.get("run_failed"):
+            return {"score": None, "ci95": None, "n": 0, "n_errored": 0, "status": "failed", "run_failed": True,
+                    "failure": f"run failed: {x.get('failure_note')}", "finished_only": None, "by_class": None,
+                    "completion_tokens": 0, "prompt_tokens": 0, "wall_seconds": None, "finish_length_frac": None}
         n = int(x.get("n") or 0)
         n_err = int(x.get("n_errored") or 0)
         failed = n == 0 or n_err >= n or (n and n_err / n >= FAILED_CELL_ERROR_SHARE)
@@ -172,10 +193,10 @@ def scorecard(run_dir: Path) -> dict:
                 "prime_eval_url": {m: s.get("prime_eval_url") for m, s in models.items() if s.get("prime_eval_url")} or None,
                 "cost": (manifest.get("cells", {}).get(f"{env_id}__{tkey}") or {}),
             })
-    unfinished = sorted(str(d.relative_to(run_dir)) for d in run_dir.glob("*/*")
-                        if d.is_dir() and (d / "cmd.txt").exists() and not (d / "summary.json").exists())
+    unfinished = sorted(str(d.relative_to(run_dir)) for d in unfinished_now) if PARTIAL else []
+    failed_cells = [] if PARTIAL else sorted(str(d.relative_to(run_dir)) for d in unfinished_now)
     done_cells = sorted(str(d.relative_to(run_dir)) for d in run_dir.glob("*/*") if d.is_dir() and (d / "summary.json").exists())
-    partial = bool(unfinished or PARTIAL)
+    partial = bool(PARTIAL)
     return {
         "run_id": manifest.get("run_id"),
         "status": "partial" if partial else "complete",
@@ -186,6 +207,8 @@ def scorecard(run_dir: Path) -> dict:
                          [min(reference_walls(Path(STATE_DIR_FOR_ETA)).get(c.split("/")[-1], 2700.0), ETA_CAP_S) for c in unfinished] or [0.0])))}
                         if (ETA and unfinished) else {})},
         "unfinished_cells": unfinished,
+        "failed_cells": failed_cells,      # started, no result at the final publish -> "run failed" rows
+        "missing_roles": manifest.get("missing_roles") or None,
         "king": manifest.get("king"), "teacher": manifest.get("teacher"),
         "where": manifest.get("where"), "code": manifest.get("code"),
         "created_at": manifest.get("created_at"),

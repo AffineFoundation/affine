@@ -55,15 +55,28 @@ elif [[ "$REF" == hf://* ]]; then SPEC="${REF#hf://}"; DIGEST="hf-$(echo "${SPEC
 
 podf() { "$PY" -c 'import json,sys; m=json.load(open("'"$HERE"'/state/pods.json"))[sys.argv[1]]; print(m[sys.argv[2]])' "$1" "$2"; }
 
+# FAST_SKIP_ROLES / FAST_ONLY_ROLES: comma lists of chat1..N|agentic|swe (re-run the groups a
+# pass could not staff: reign 20 got one chat pod out of five and its card went out with 5 cells)
+role_wanted() { [[ -n "${FAST_ONLY_ROLES:-}" ]] && [[ ",$FAST_ONLY_ROLES," != *",$1,"* ]] && return 1; [[ ",${FAST_SKIP_ROLES:-}," == *",$1,"* ]] && return 1; return 0; }
 # ---- roles: chat1..N, agentic, swe
-ROLES=(); for i in $(seq 1 "$N_SHARDS"); do ROLES+=("chat$i"); done
-{ has_group agentic || has_group tb2 || has_group gaia2; } && ROLES+=(agentic)
-has_group swe && ROLES+=(swe)
+ROLES=(); for i in $(seq 1 "$N_SHARDS"); do role_wanted "chat$i" && ROLES+=("chat$i"); done
+{ has_group agentic || has_group tb2 || has_group gaia2; } && role_wanted agentic && ROLES+=(agentic)
+has_group swe && role_wanted swe && ROLES+=(swe)
+has_role() { [[ " ${ROLES[*]} " == *" $1 "* ]]; }
 declare -A POD PLANS
 for i in $(seq 1 "$N_SHARDS"); do PLANS[chat$i]=$(toml fast.chat_plans | tr "," " "); done
 PLANS[agentic]=$(toml fast.agentic_plans | tr "," " "); PLANS[swe]=$(toml fast.swe_plans | tr "," " ")
 POD[agentic]=""; POD[swe]=""
-cleanup() { for r in "${ROLES[@]}"; do [ -n "${POD[$r]:-}" ] && { log "releasing ${POD[$r]} ($r)"; "$PY" "$HERE/kingpod.py" release "${POD[$r]}" >/dev/null 2>&1 || true; }; done; }
+release_role() { local r="$1" pod="${POD[$r]:-}"; [ -n "$pod" ] || return 0; log "releasing $pod ($r)"; "$PY" "$HERE/kingpod.py" release "$pod" >/dev/null 2>&1 || true; POD[$r]=""; }
+cleanup() {
+  for r in "${ROLES[@]}"; do
+    # a pod still in the rent phase is only named in its .pod file (2026-09-19: a kill during
+    # renting left four reign-15 pods idle for 12 h) — release those too
+    v=$(cat "$HERE/state/fast-$RUN_ID-$r.pod" 2>/dev/null || echo ""); v="${v#FAILED }"
+    [ -n "$v" ] && [ -z "${POD[$r]:-}" ] && POD[$r]="$v"
+    release_role "$r"
+  done
+}
 trap cleanup EXIT
 
 RENT_WAIT_S="${FAST_RENT_WAIT_S:-1500}"     # a pod that does not serve in 25 min is replaced, not waited on for 60
@@ -108,7 +121,24 @@ for r in "${ROLES[@]}"; do
     *) POD[$r]="$v";;
   esac
 done
-[ -n "${POD[chat1]:-}" ] || { log "no chat pod at all; giving up"; finish 2; }
+STAFFED=0; for r in "${ROLES[@]}"; do [ -n "${POD[$r]:-}" ] && STAFFED=$((STAFFED+1)); done
+[ "$STAFFED" -gt 0 ] || { log "no pod at all; giving up"; finish 2; }
+# roles without a pod: their cells get a cmd.txt placeholder so the card shows "run failed" (never blank)
+# and a later FAST_ONLY_ROLES re-run overwrites them
+MISSING_ROLES=""
+for r in "${ROLES[@]}"; do [ -n "${POD[$r]:-}" ] && continue; MISSING_ROLES="$MISSING_ROLES,$r"
+  case "$r" in
+    chat*) i="${r#chat}"; envs="$(toml "fast.chat_shards.$((i-1))" | tr -d '[]" ' | tr ',' ' ') $(toml "fast.shard_after.$((i-1))" | tr -d '[]" ' | tr ',' ' ')";;
+    agentic) envs="$(toml fast.agentic_envs_on_pod | tr ',' ' ') terminal-bench-2 gaia2-ambiguity";;
+    swe) envs="swebench-verified";;
+  esac
+  for e in $envs; do
+    for t in $("$PY" -c 'import tomllib,sys; d=tomllib.load(open("'"$HERE"'/suite.toml","rb")); e=[x for x in d["envs"] if x["id"]==sys.argv[1]][0]; print("0" + (" 0.8" if e.get("secondary") else ""))' "$e"); do
+      d="$RUN_DIR/king/${e}__t$t"; [ -e "$d/summary.json" ] && continue; mkdir -p "$d"; echo "no pod for role $r (stock) at $(date -u +%FT%TZ)" > "$d/cmd.txt"
+    done
+  done
+done
+MISSING_ROLES="${MISSING_ROLES#,}"; [ -n "$MISSING_ROLES" ] && log "roles without a pod: $MISSING_ROLES (their cells publish as run failed until a FAST_ONLY_ROLES=$MISSING_ROLES re-run)"
 T_READY=$(date +%s); log "pods ready after $(( (T_READY - T_START) / 60 )) min: $(for r in "${ROLES[@]}"; do echo -n "$r=${POD[$r]:-none} "; done)"
 
 ssh_pod() { local pod="$1"; shift; ssh "${SSHO[@]}" -p "$(podf "$pod" ssh_port)" "root@$(podf "$pod" ssh_host)" "$@"; }
@@ -132,9 +162,13 @@ done
 T_INST=$(date +%s); log "installs done after $(( (T_INST - T_START) / 60 )) min"
 
 # ---- manifest + teacher baseline on the box (one canonical manifest.json; pods write manifest-<role>.json)
-"$PY" - "$REF" "$LABEL" "$CODE_COMMIT" "$TEACHER_FROM" "$RUN_DIR/manifest.json" "$(for r in "${ROLES[@]}"; do echo -n "$r=${POD[$r]:-none},"; done)" <<'PY'
+"$PY" - "$REF" "$LABEL" "$CODE_COMMIT" "$TEACHER_FROM" "$RUN_DIR/manifest.json" "$(for r in "${ROLES[@]}"; do echo -n "$r=${POD[$r]:-none},"; done)" "$MISSING_ROLES" <<'PY'
 import json, os, sys, time
-ref, label, commit, tfrom, out, pods = sys.argv[1:]
+ref, label, commit, tfrom, out, pods, missing = sys.argv[1:]
+if os.path.exists(out):
+    # a re-run of missing roles into an existing card: keep the manifest, add this pass's pods
+    m = json.load(open(out)); m.setdefault("reruns", []).append({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "pods": pods, "roles": os.environ.get("FAST_ONLY_ROLES", ""), "missing_roles": missing})
+    m["missing_roles"] = missing; json.dump(m, open(out, "w"), indent=1); sys.exit(0)
 if ref.startswith("r2://"): king = {"repo": ref, "digest": os.environ.get("CHALLENGER_REVISION", "")}
 elif ref.startswith("hf://"):
     spec = ref[5:]; king = {"repo": ref, "hf_repo": spec.split("@")[0], "hf_revision": spec.partition("@")[2], "digest": "hf-" + spec.partition("@")[2][:10]}
@@ -154,7 +188,7 @@ if any(duel.values()): king["duel"] = {k: (float(v) if k in ("margin", "z") and 
 m = {"run_id": os.path.basename(os.path.dirname(out)), "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
      "mode": "fast", "king": king, "teacher": {"reused_from": tfrom},
      "where": {"provider": "Lium (our fleet, TAO) + Daytona", "topology": "fast: 3 chat shards + agentic pod + 2-replica swe server; SWE/TB2 on Daytona, Gaia2 via ARE", "pods": pods},
-     "code": {"affine_commit": commit}, "cells": {}}
+     "code": {"affine_commit": commit}, "cells": {}, "missing_roles": missing}
 json.dump(m, open(out, "w"), indent=1)
 PY
 [ -d "$BENCH_HOME/runs/$TEACHER_FROM/teacher" ] && rsync -a --exclude 'traces.jsonl*' --exclude 'logs' --exclude 'eval.log' --exclude 'harbor' --exclude 'are' "$BENCH_HOME/runs/$TEACHER_FROM/teacher/" "$RUN_DIR/teacher/"
@@ -177,9 +211,9 @@ pull_all() { for r in "${ROLES[@]}"; do [ "$r" = swe ] && continue; [ -n "${POD[
 publish_partial() { "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" --only-state --partial --eta >/dev/null 2>&1 || true; }
 
 # ---- launch every group at once
-PIDS=()
+PIDS=(); declare -A ROLE_PIDS
 for i in $(seq 1 "$N_SHARDS"); do
-  r="chat$i"; [ -n "${POD[$r]:-}" ] || { log "$r: no pod; its shard is skipped"; continue; }
+  r="chat$i"; has_role "$r" || continue; [ -n "${POD[$r]:-}" ] || { log "$r: no pod; its shard is skipped"; continue; }
   SHARD=$(toml "fast.chat_shards.$((i-1))" | tr -d '[]" ' ); AFTER=$(toml "fast.shard_after.$((i-1))" | tr -d '[]" ')
   ( suite_on_pod "$r" "$SHARD" docker primary,secondary 64 "manifest-$r.json" 2
     has_group after || AFTER=""
@@ -187,12 +221,12 @@ for i in $(seq 1 "$N_SHARDS"); do
       rt=docker; [ "$e" = minif2f ] && rt=prime
       suite_on_pod "$r" "$e" "$rt" primary 48 "manifest-$r-after.json" 1
     done ) > "$RUN_DIR/$r.log" 2>&1 &
-  PIDS+=($!)
+  PIDS+=($!); ROLE_PIDS[$r]="$!"
 done
 if [ -n "${POD[agentic]:-}" ]; then
   if has_group agentic; then
     ( suite_on_pod agentic "$(toml fast.agentic_envs_on_pod)" docker primary 8 manifest-agentic.json 4 ) > "$RUN_DIR/agentic.log" 2>&1 &
-    PIDS+=($!)
+    PIDS+=($!); ROLE_PIDS[agentic]="${ROLE_PIDS[agentic]:-} $!"
   fi
   AURL="$(podf "${POD[agentic]}" base_url)"; ASERVED="$(podf "${POD[agentic]}" served)"
   # TB2 (Daytona) and Gaia2 (ARE) run CONCURRENTLY against the agentic pod (the first run
@@ -201,12 +235,12 @@ if [ -n "${POD[agentic]:-}" ]; then
     # shellcheck disable=SC2086
     ( export BENCH_API_KEY="$(podf "${POD[agentic]}" key)"
       [ -n "${DAYTONA_API_KEY:-}" ] && "$PY" "$HERE/harbor_cell.py" run --env terminal-bench-2 --model "$ASERVED" --model-label king --model-url "$AURL" --model-key-env BENCH_API_KEY --out "$RUN_DIR/king" --concurrency "${FAST_TB2_IN_FLIGHT:-$(toml fast.tb2_in_flight)}" --agent-timeout-s "${FAST_TB2_TIMEOUT_S:-3600}" ${FAST_TB2_ARGS:-} ) > "$RUN_DIR/agentic-box.log" 2>&1 &
-    PIDS+=($!)
+    PIDS+=($!); ROLE_PIDS[agentic]="${ROLE_PIDS[agentic]:-} $!"
   fi
   if has_group gaia2; then
     ( export BENCH_API_KEY="$(podf "${POD[agentic]}" key)"
       [ -n "${PRIME_API_KEY:-}" ] && "$PY" "$HERE/gaia2_cell.py" run --model "$ASERVED" --model-label king --model-url "$AURL" --model-key-env BENCH_API_KEY --judge-key-env PRIME_API_KEY --concurrency "$(toml fast.gaia2_in_flight)" --out "$RUN_DIR/king" ) > "$RUN_DIR/gaia2-box.log" 2>&1 &
-    PIDS+=($!)
+    PIDS+=($!); ROLE_PIDS[agentic]="${ROLE_PIDS[agentic]:-} $!"
   fi
 fi
 if [ -n "${POD[swe]:-}" ] && [ -n "${DAYTONA_API_KEY:-}" ]; then
@@ -214,28 +248,39 @@ if [ -n "${POD[swe]:-}" ] && [ -n "${DAYTONA_API_KEY:-}" ]; then
   # 1-h budget queueing -> 454/500 timeouts); [fast].swe_in_flight is the cap for a 2x+ pod
   SWE_REPLICAS=$("$PY" -c 'import json; m=json.load(open("'"$HERE"'/state/pods.json"))["'"${POD[swe]}"'"]; print(int((m.get("plan") or {}).get("replicas") or 1))')
   SWE_INFLIGHT=$(( 64 * SWE_REPLICAS )); [ "$SWE_INFLIGHT" -gt "$(toml fast.swe_in_flight)" ] && SWE_INFLIGHT=$(toml fast.swe_in_flight)
+  [ -n "${FAST_SWE_IN_FLIGHT:-}" ] && [ "$SWE_INFLIGHT" -gt "$FAST_SWE_IN_FLIGHT" ] && SWE_INFLIGHT="$FAST_SWE_IN_FLIGHT"   # two SWE jobs share Daytona's 1000 GB (4 GB per sandbox)
   ( export BENCH_API_KEY="$(podf "${POD[swe]}" key)"
     "$PY" "$HERE/harbor_cell.py" run --env swebench-verified --model "$(podf "${POD[swe]}" served)" --model-label king --model-url "$(podf "${POD[swe]}" base_url)" --model-key-env BENCH_API_KEY --out "$RUN_DIR/king" --concurrency "$SWE_INFLIGHT" --agent-timeout-s "$(toml sandbox_daytona.budgets.default.agent_timeout_s)" ) > "$RUN_DIR/swe-box.log" 2>&1 &
-  PIDS+=($!)
+  PIDS+=($!); ROLE_PIDS[swe]="$!"
 fi
 log "launched ${#PIDS[@]} groups; polling every $(toml fast.poll_s) s"
 
-# ---- poll: light pull + partial publish until every group ends
+# ---- poll: light pull + partial publish until every group ends; a pod whose groups are all
+# done is pulled, retried and RELEASED right away (reign 16 held five H200s for 7 h while only
+# the Daytona SWE job was still running)
+role_done() {  # role -> 0 when none of its group pids is alive
+  local r="$1" p; for p in ${ROLE_PIDS[$r]:-}; do kill -0 "$p" 2>/dev/null && return 1; done; return 0; }
+finish_role() {  # pull everything from the pod, retry infra errors, pull again, release
+  local r="$1" pod="${POD[$r]}"
+  [ "$r" = swe ] || {
+    ssh_pod "$pod" "cd /root/benchsuite/runs && tar czf - --exclude='*/logs/attempt_*' --exclude='manifest.json' $RUN_ID 2>/dev/null" 2>/dev/null | tar xzf - -C "$BENCH_HOME/runs" 2>/dev/null
+    ssh_pod "$pod" "$(pod_env "$r") && $PYR run_suite.py retry --run-id $RUN_ID --out /root/benchsuite/runs --verifiers-dir /root/benchsuite/verifiers" > "$RUN_DIR/retry-$r.log" 2>&1
+    ssh_pod "$pod" "cd /root/benchsuite/runs && tar czf - --exclude='*/logs/attempt_*' --exclude='manifest.json' $RUN_ID 2>/dev/null" 2>/dev/null | tar xzf - -C "$BENCH_HOME/runs" 2>/dev/null
+  }
+  log "$r: all groups ended after $(( ($(date +%s) - T_START) / 60 )) min"; release_role "$r"
+}
 while :; do
   alive=0; for p in "${PIDS[@]}"; do kill -0 "$p" 2>/dev/null && alive=$((alive+1)); done
   pull_light_all; publish_partial
+  for r in "${ROLES[@]}"; do [ -n "${POD[$r]:-}" ] && [ -n "${ROLE_PIDS[$r]:-}" ] && role_done "$r" && finish_role "$r"; done
   [ "$alive" -eq 0 ] && break
   sleep "$(toml fast.poll_s)"
 done
 wait
 T_CELLS=$(date +%s); log "all groups ended after $(( (T_CELLS - T_START) / 60 )) min"
 
-# ---- tail: pull everything, retry infra errors per pod, summarize, publish, release
-pull_all
-for r in "${ROLES[@]}"; do [ "$r" = swe ] && continue; [ -n "${POD[$r]:-}" ] || continue
-  ssh_pod "${POD[$r]}" "$(pod_env "$r") && $PYR run_suite.py retry --run-id $RUN_ID --out /root/benchsuite/runs --verifiers-dir /root/benchsuite/verifiers" > "$RUN_DIR/retry-$r.log" 2>&1 &
-done
-wait; pull_all
+# ---- tail: whatever is still held (a role with no group pid), summarize, publish, release
+for r in "${ROLES[@]}"; do [ -n "${POD[$r]:-}" ] && finish_role "$r"; done
 "$PY" "$HERE/run_suite.py" summarize --run-id "$RUN_ID" --out "$BENCH_HOME/runs" >/dev/null 2>&1 || true
 "$PY" - "$RUN_DIR/manifest.json" "$T_START" "$T_READY" "$T_INST" "$T_CELLS" "$(date +%s)" <<'PY'
 import json, sys
@@ -245,5 +290,6 @@ m = json.load(open(p)); m["timing"] = {"pods_ready_min": (t_ready - t0) // 60, "
 json.dump(m, open(p, "w"), indent=1)
 PY
 "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" || finish 8
+if [ -n "$MISSING_ROLES" ]; then log "card published with roles $MISSING_ROLES unstaffed (their cells: run failed); exit 6 so the queue re-runs them"; finish 6; fi
 log "card complete: $(( ($(date +%s) - T_START) / 60 )) min crown-pass-start -> full card"
 finish 0
