@@ -1,0 +1,27 @@
+1. NO — on the modern panel (kings 11–20 + genesis + teacher, n=12 rows, 2,932 turns, glm-5.3 x2 + deepseek x1 per turn)
+   "closeness to the frontier where the frontier disagrees with the teacher" does not track held-out benchmarks. The proposed
+   rule stat beats_T→F (on contested turns, is the model nearer F than the teacher's own refs?) has Spearman +0.22 (total),
+   +0.15 (agentic), +0.29 (chat) with CIs spanning zero under the exact-match contested definition, and +0.08 / +0.11 / +0.12
+   under the judge-calibrated jac>=0.3 definition; on coding/terminal turns it is −0.03 / −0.19; the within-crown paired
+   reads give sign agreement 4–6 of 9 (coin-flip). gap_F (signed) flips sign between definitions (+0.56 exact, −0.52 j30).
+2. The one statistic that does align, excess_F (+0.57 total, +0.70 chat, p≈0.05/0.01), is matched by its frontier-free twin
+   excess_T (+0.57 / +0.61 / +0.70): being as close to F as a teacher resample is exactly as informative as being as close
+   to the TEACHER as a teacher resample. The frontier adds no information beyond the teacher. Both are carried by the
+   two-cluster structure of the panel (pre-wvk-13 kings 11–15 collapse on tau2/text; kings 16–20 do not): inside the
+   modern cluster (kings 16–20 + teacher + genesis, n=7) every stat is noise (excess_F +0.39 total, −0.07 agentic).
+3. sides_with_F — how often a model visibly sides with F against the teacher — is NEGATIVELY aligned (−0.59 total, −0.70
+   agentic, −0.74 on deep turns, −0.93 agentic inside the modern cluster): the models that most often "go with the frontier"
+   are the weakest ones (genesis, kings 11–15). Every king and genesis has excess_F < 0: no model on the board is closer to
+   the frontier than the teacher's own resamples are, so the rule "miner wins by being closer to F than T was" would pay
+   out on noise, and it would pay genesis-like behaviour (agree_T 0.46, excess_F −0.12, bench above most kings) least.
+4. Disagreement itself is mostly sampling noise, not a signal: F exactly matches >=1 of 3 refs on 25% of samples, but a
+   teacher ref matches another ref only 36% and F matches its own resample 27%; glm vs deepseek 25%. Under the judge-
+   calibrated proxy (jac>=0.3, kappa 0.52 vs glm-5.3-flash "same decision"; exact has kappa 0.21) only 10.5% of turns are
+   contested (judge: 19% of turns have no ref matching F's decision); contested share is highest on terminus_json (24%) and
+   bash (14%), zero on boxed. Disagreement rises with depth (5% at depth 0–1 → 17.5% at depth 20+).
+5. Where alignment looks strong — the text dialect (+0.8 for agree_T, agree_F, excess_F, beats_T→F alike) — it is the
+   wvk-13 "must work as a chat model" split (kings 11–15 agree_T 0.26–0.33 vs 0.37–0.50 for 16–20), captured equally by the
+   teacher-only metric; on shell dialects every stat is ≤0 or noise (gap_F −0.50). Verdict: the frontier-arbiter premise
+   (F-disagreement marks teacher mistakes a better miner can exploit) is not supported on this panel on any axis; with
+   n=12 models and CIs of ±0.6, only |rho| > ~0.6 would have been detectable, and the only stats reaching that are the
+   ones the teacher alone already provides, or point the wrong way (sides_with_F).
