@@ -42,8 +42,13 @@ SYSTEM = (
 )
 
 
-def task_name(context_len: int, index: int) -> str:
-    return f"oolong-{context_len}-{index:05d}"
+def task_name(context_len: int, index: int, split: str = "validation") -> str:
+    """`validation` keeps the historical name (records already in D); any
+    other split carries its name so `test` rows never collide with the
+    published validation-era task ids (env wave 5, 2026-09-20)."""
+    if split == "validation":
+        return f"oolong-{context_len}-{index:05d}"
+    return f"oolong-{split}-{context_len}-{index:05d}"
 
 
 class AffineOolongConfig(OolongSynthConfig):
@@ -63,7 +68,7 @@ class OolongTaskset(vf.Taskset[OolongSynthTask, AffineOolongConfig]):
         for i, row in enumerate(rows):
             if row.get("context_len") != cfg.context_len:
                 continue
-            name = task_name(cfg.context_len, i)
+            name = task_name(cfg.context_len, i, cfg.split)
             if want and name not in want:
                 continue
             answer_type = row.get("answer_type", "")

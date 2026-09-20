@@ -1308,7 +1308,7 @@ context_len = int(sys.argv[1]); split = sys.argv[2]; out = []
 ds = load_dataset(DATASET, split=split, streaming=True).select_columns(["context_len", "answer_type"])
 for i, row in enumerate(ds):
     if row.get("context_len") == context_len:
-        out.append({"uid": task_name(context_len, i), "answer_type": str(row.get("answer_type") or "")})
+        out.append({"uid": task_name(context_len, i, split), "answer_type": str(row.get("answer_type") or "")})
 json.dump(out, sys.stdout); sys.stdout.flush()
 os._exit(0)
 """
