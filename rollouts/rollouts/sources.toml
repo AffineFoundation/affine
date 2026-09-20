@@ -79,7 +79,7 @@ king_pivot = 0.02
 king_recoverable = 0.02
 king_done = 0.03   # 0.01 -> 0.03 (phase 10, stop state)
 king_tooluse = 0.03   # 0.02 -> 0.03 (phase 10, stop state); ~540 When2Call candidates/day + persist states from five tool feeders
-completion = 0.15  # 0.10 -> 0.15 (phase 10, stop state)
+completion = 0.12  # 0.10 -> 0.15 (phase 10) -> 0.12 (2026-09-20 auto-research quota: -0.03 to king_divergence; group sat at 18.7 %)
 completion_pre = 0.02
 general = 0.05
 # 2026-09-15 (Jacob, lever 1/2): + king_coached 0.02 out of coding -- the
@@ -87,7 +87,7 @@ general = 0.05
 # (docs/coached-recovery.md). Small today (11 strict-decisive states / 24
 # solved continuations), grows with the coach loop.
 king_coached = 0.02
-king_divergence = 0.03   # phase 10: the king's first out-of-reference action (side-table, improvement-loop worker)
+king_divergence = 0.06   # phase 10 0.03 -> 0.06 (2026-09-20 auto-research quota.json: 471 admit-ready turns behind the cap; the only king-derived group with fresh states for reigns 15-20)
 
 # Per-source flag `interactive = true` (tau2-airline read, 2026-09-18): the
 # harness talks to a simulated user mid-trajectory, so a teacher reply that
@@ -220,6 +220,13 @@ notool_groups = ["king_tooluse", "king_divergence"]
 notool_floor = 0.035
 chat_groups = ["general"]
 chat_floor = 0.06
+# 2026-09-20 (auto-research quota.json): king_divergence is the only king-
+# derived group with fresh states for reigns 15-20 and 471 admit-ready turns
+# sat behind its cap; the static share is 0.06 (from completion), and this
+# floor carries it through the applied curriculum vector, which otherwise
+# puts the group at ~1 %.
+king_divergence_groups = ["king_divergence"]
+king_divergence_floor = 0.06
 
 [admission_gate]
 # MiMo item 1 (Jacob 2026-09-17 09:08 UTC): two-sided gate on every king-
