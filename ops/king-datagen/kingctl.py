@@ -123,6 +123,7 @@ class Config:
     pod_forget_ticks: int
     seat_empty_alert_min: int
     prev_king_max_min: int
+    datagen_disk_min_free_pct: int
     burst_enabled: bool
     burst_hours: float
     burst_budget_usd_hr: float
@@ -170,6 +171,7 @@ def load_config(path: Path = HERE / "king.toml") -> Config:
         unreachable_grace_min=int(k["unreachable_grace_min"]),
         seat_empty_alert_min=int(k.get("seat_empty_alert_min", 60)),
         prev_king_max_min=int(k.get("prev_king_max_min", 120)),
+        datagen_disk_min_free_pct=int(k.get("datagen_disk_min_free_pct", 10)),
         burst_enabled=bool((raw.get("burst") or {}).get("enabled", False)),
         burst_hours=float((raw.get("burst") or {}).get("hours", 6)),
         burst_budget_usd_hr=float((raw.get("burst") or {}).get("budget_usd_hr", 15)),
@@ -880,7 +882,8 @@ class Controller:
             try:
                 p = ssh_run(*ssh,
                             f"pgrep -f -x '{POD_SUPERVISOR_CMD}' >/dev/null && echo sup; "
-                            f"pgrep -f -x '{POD_BOOTSTRAP_CMD}' >/dev/null && echo loop",
+                            f"pgrep -f -x '{POD_BOOTSTRAP_CMD}' >/dev/null && echo loop; "
+                            f"df --output=target,pcent,avail / /root 2>/dev/null | tail -n +2 | sed 's/^/df /'",
                             timeout=30)
                 unreachable = p.returncode not in (0, 1)
                 detail = p.stderr.strip()[:120]
@@ -898,6 +901,30 @@ class Controller:
             if m.pop("ssh_fail_since", None):
                 self.notify(f"datagen pod {name}: ssh reachable again")
             sup, loop = "sup" in p.stdout.split(), "loop" in p.stdout.split()
+            # disk: the host overlay (`/`, shared with docker's image store)
+            # and the pod volume (`/root`). datagen-2 hit 98 % on 2026-09-20
+            # with nothing paging; a full disk kills every rollout.
+            for line in p.stdout.splitlines():
+                if not line.startswith("df "):
+                    continue
+                parts = line.split()
+                if len(parts) < 4:
+                    continue
+                mount, pct = parts[1], parts[2].rstrip("%")
+                try:
+                    used_pct = int(pct)
+                except ValueError:
+                    continue
+                key = f"disk_alert_{mount}"
+                if 100 - used_pct < cfg.datagen_disk_min_free_pct:
+                    if now - m.get(key, 0) > 6 * 3600:
+                        m[key] = now
+                        self.notify(f"datagen pod {name}: {mount} is {used_pct}% full "
+                                    f"({parts[3]} KB free) — under {cfg.datagen_disk_min_free_pct}% "
+                                    f"headroom; diskgc stage 4 prunes task images below "
+                                    f"{cfg.datagen_disk_min_free_pct}%, check /root/logs/rollouts.log")
+                elif m.pop(key, None):
+                    self.notify(f"datagen pod {name}: {mount} back to {100 - used_pct}% free")
             if sup:
                 if m.get("down_since"):
                     self.notify(f"datagen pod {name}: supervisor back")

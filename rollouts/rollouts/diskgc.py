@@ -15,14 +15,22 @@ Rule (conservative on purpose):
     stopped -- references and that are older than IMAGE_AGE_H hours;
   * stage 3, only if still under the threshold: build cache older than
     IMAGE_AGE_H (`docker builder prune`; costs rebuild time, never data).
-Never touched: any image referenced by a container, the verifiers taskset
-namespaces (catalog.VERIFIERS_IMAGE_PREFIXES: swerebench, namanjain12,
-mswebench, terminal-lego, ...), base images (python, swipl, ...).
+  * stage 4 (2026-09-20), only while free space is still under
+    HARD_MIN_FREE_PCT: unreferenced images in the verifiers taskset
+    namespaces (catalog.VERIFIERS_IMAGE_PREFIXES: swerebench, namanjain12,
+    mswebench, ...) — per-task images the harness re-pulls on demand, so
+    removing one costs a pull, never data. datagen-2 reached 98 % of a
+    937 GB host disk with 223 such images (325 GB) that stages 1-3 could
+    not touch; a full host disk kills every rollout on the pod.
+Never touched: any image referenced by a container, base images (python,
+swipl, kimina-lean-server, ...), and the verifiers namespaces above the
+hard floor.
 
 Every removal is logged (`rollouts.diskgc`) with the space before / after.
 
-Knobs (env): ROLLOUTS_GC_MIN_FREE_PCT (25), ROLLOUTS_GC_IMAGE_AGE_H (6),
-ROLLOUTS_GC_DISABLE=1 turns the GC off.
+Knobs (env): ROLLOUTS_GC_MIN_FREE_PCT (25), ROLLOUTS_GC_HARD_MIN_FREE_PCT
+(10, stage 4 trigger), ROLLOUTS_GC_IMAGE_AGE_H (6), ROLLOUTS_GC_DISABLE=1
+turns the GC off.
 """
 
 from __future__ import annotations
@@ -41,6 +49,7 @@ log = logging.getLogger("rollouts.diskgc")
 GC_IMAGE_PREFIXES = ("prime/primeintellect/tmax", "recoverable.local/")
 MIN_FREE_PCT = float(os.environ.get("ROLLOUTS_GC_MIN_FREE_PCT", 25))
 IMAGE_AGE_H = float(os.environ.get("ROLLOUTS_GC_IMAGE_AGE_H", 6))
+HARD_MIN_FREE_PCT = float(os.environ.get("ROLLOUTS_GC_HARD_MIN_FREE_PCT", 10))
 DISABLED = os.environ.get("ROLLOUTS_GC_DISABLE", "") == "1"
 _DOCKER_TIMEOUT_S = 120
 _PRUNE_TIMEOUT_S = 900
@@ -129,6 +138,28 @@ def _gc_candidates(now: float) -> list[tuple[str, str]]:
     return picked
 
 
+def _task_image_candidates() -> list[tuple[str, str]]:
+    """(repo:tag, image id) of verifiers-namespace task images that no
+    container references — the re-pullable cache stage 4 may spend."""
+    refs = _referenced_images()
+    out = _docker("images", "--no-trunc", "--format", "{{.Repository}}\t{{.Tag}}\t{{.ID}}")
+    picked: list[tuple[str, str]] = []
+    for line in out.splitlines():
+        cols = line.split("\t")
+        if len(cols) != 3:
+            continue
+        repo, tag, image_id = (c.strip() for c in cols)
+        if not repo.startswith(VERIFIERS_IMAGE_PREFIXES):
+            continue
+        ref = f"{repo}:{tag}"
+        short_id = image_id[len("sha256:"):] if image_id.startswith("sha256:") else image_id
+        if (ref in refs or image_id in refs or short_id in refs
+                or any(r and short_id.startswith(r) for r in refs if len(r) >= 12)):
+            continue
+        picked.append((ref, image_id))
+    return picked
+
+
 def gc_if_low(reason: str = "batch") -> None:
     """The per-batch hook. Cheap when the disk is fine (one statvfs)."""
     if DISABLED:
@@ -172,6 +203,21 @@ def gc_if_low(reason: str = "batch") -> None:
                                    if l.startswith("Total")), "")
             log.info("disk GC stage 3: build cache older than %.0f h pruned (%s)",
                      IMAGE_AGE_H, reclaimed_line or "nothing")
+
+        if free_pct(root) < HARD_MIN_FREE_PCT:
+            cands = _task_image_candidates()
+            removed4: list[str] = []
+            for ref, _image_id in cands:
+                if free_pct(root) >= MIN_FREE_PCT:
+                    break
+                proc = subprocess.run(["docker", "rmi", ref], capture_output=True,
+                                      text=True, timeout=_PRUNE_TIMEOUT_S)
+                if proc.returncode == 0:
+                    removed4.append(ref)
+            log.warning("disk GC stage 4 (under the %.0f%% hard floor): removed %d of %d "
+                        "unreferenced task images (re-pulled on demand): %s%s",
+                        HARD_MIN_FREE_PCT, len(removed4), len(cands),
+                        ", ".join(removed4[:12]), " …" if len(removed4) > 12 else "")
 
         free1 = free_pct(root)
         used1 = shutil.disk_usage(root).used
