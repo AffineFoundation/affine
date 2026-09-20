@@ -1099,6 +1099,34 @@ king_rollouts_per_hour = 8
 # the env-wave-1 report; shares below weight the GENERATION deficit inside
 # the group only.
 
+[source.affine_kb_synth]
+# tau2-synth's ten domains with the POLICY MOVED INTO A KNOWLEDGE BASE behind
+# tau3's `KB_search` tool (env wave 5, 2026-09-20, docs/env-targets-for-
+# lagging-axes.md §7.1; Jacob "go" 16:14 UTC). Same tasks / customer / rewards
+# as affine_tau2_synth; the agent prompt is tau3's header ("do not make up
+# policies; all instructions are in the knowledge base") and the policy.md
+# sections are BM25 documents (rollouts/envs/affine_kb_synth_v1/kb.py).
+# WHY: on the tau3-banking card the teacher searches the KB before its first
+# substantive answer on 97 % of tasks, the king on 34 % (answers policy from
+# memory; king 7 / genesis 6 / teacher 29). D held no "retrieve the policy
+# before acting" state. DECONTAMINATION: tau3 has one domain (banking, 97
+# tasks, all on the card); nothing of it is used but the tool name, output
+# layout and header wording. Names `tau2k-<domain>-<id>`.
+group = "tool_use"
+runner = "verifiers_chat"
+taskset_id = "affine-kb-synth-v1"
+catalog = "tau2_kb"
+select = "tasks"
+pass_dataset = false
+interactive = true
+policies = ["teacher_kb_synth", "king_kb_synth", "king_kb_synth_greedy"]
+strata_buckets = 600
+strata_offset = 2260
+max_batch = 16
+max_concurrency = 8
+share = 2.0
+king_rollouts_per_hour = 8
+
 [source.affine_logic]
 # INTELLECT-3-RL `logic` train: 11,647 puzzles in 29 families (zebra,
 # cipher, futoshiki, sudoku, BBH/BBEH, ...), per-family Python verifier in
