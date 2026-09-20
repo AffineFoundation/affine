@@ -497,6 +497,30 @@ class Monitor:
                             "guard hook missing: " + "; ".join(missing) if missing
                             else f"{len(cfg.raw.get('integrity', []))} guard hooks present", missing=missing))
 
+        # (h) secret-shaped literals in the tracked tree — daily whole-tree run
+        # of ops/hooks/secret_scan.py (the pre-commit / pre-push hook's
+        # scanner). The Engy key in engy_parity.py sat in the public repo for
+        # 11 days (2026-09-09 -> 09-20); a hit here pages.
+        every_s = float(t.get("secret_scan_every_h", 24)) * 3600
+        if now - float(self.own.get("secret_scan_at", 0)) >= every_s:
+            try:
+                r = subprocess.run([sys.executable, str(REPO / "ops" / "hooks" / "secret_scan.py"), "--tree"],
+                                   capture_output=True, text=True, timeout=900, cwd=str(REPO))
+                self.own["secret_scan"] = {"rc": r.returncode, "at": now,
+                                           "out": (r.stderr or r.stdout).strip()[:1500]}
+            except (subprocess.SubprocessError, OSError) as e:
+                self.own["secret_scan"] = {"rc": 2, "at": now, "out": repr(e)}
+            self.own["secret_scan_at"] = now
+        ss = self.own.get("secret_scan") or {}
+        if ss:
+            rc = ss.get("rc")
+            lvl = "page" if rc == 1 else ("ok" if rc == 0 else "warn")
+            first = (ss.get("out") or "").split("\n")
+            detail = (f"secret-shaped literal(s) in the tracked tree: {' | '.join(l.strip() for l in first[1:4])}"
+                      if rc == 1 else first[0] if rc == 0 else f"secret scan failed (rc {rc}): {first[0][:200]}")
+            checks.append(Check("secret_literals", lvl, detail, rc=rc,
+                                scanned_at=common.fmt_age(now - float(ss.get("at", now))) + " ago"))
+
         # (d) processes running stale code
         checks.extend(self.code_watch(procs, now))
         return checks

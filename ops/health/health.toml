@@ -27,6 +27,7 @@ bench_held_max_min = 60             # (e): launches held by budget / lock this l
 pods_report_max_age_min = 45        # the reaper must have reported within this
 pod_max_age_no_driver_h = 14        # (f): surfaced from the reaper's report
 sources_dirty_max_min = 30          # (g): uncommitted rollouts/sources.toml this long
+secret_scan_every_h = 24            # (h): whole-tree token-shaped-literal scan (ops/hooks/secret_scan.py --tree); a hit pages
 weights_max_age_h = 2.0             # validator set_weights (evalwatch has it too; belt and braces)
 # chat.affine.io (king chat box; stuck `state: loading` 09-18 14:57 -> 09-19 17:15:
 # orphaned vLLM EngineCore + disk full of old king snapshots after 3 crowns)
