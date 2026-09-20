@@ -16,6 +16,7 @@ import argparse
 import asyncio
 import gzip
 import json
+import os
 import statistics
 import sys
 from pathlib import Path
@@ -31,7 +32,11 @@ from evalsrv.corpus import CorpusSync          # noqa: E402
 from evalsrv.dueling import sample_slice, turn_id  # noqa: E402
 
 BASE = "https://api.engy.ai/v1"
-KEY = "sk-engy-8dCc2yM9s2cGzoBFrEAxXuXYZtj1AX2JXxAHaYxhPj8"
+# The key comes from the environment (ENGY_2 = research probes, else ENGY);
+# a literal lived here until 2026-09-20 and was rotated out — never paste one.
+KEY = os.environ.get("ENGY_2") or os.environ.get("ENGY") or ""
+if not KEY:
+    sys.exit("engy_parity: set ENGY_2 (or ENGY) in the environment — see the Arbos vault")
 MODEL = "qwen3.8-27b-bf16"
 REPO = "Qwen/Qwen3.8-27B"
 REV = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"  # Engy's pinned revision
