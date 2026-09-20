@@ -11,8 +11,12 @@ export LIUM_API_KEY="${LIUM_API_KEY:-${LIUM:-}}"; export HARBOR_BIN="${HARBOR_BI
 [ -n "${DAYTONA_API_KEY:-}" ] || export DAYTONA_API_KEY=$(op read --no-newline "op://Arbos/fywmj6vtq5delybw5c7a53l2qa/notesPlain" 2>/dev/null | grep -o 'dtn_[A-Za-z0-9_-]*' | head -1)
 DIGEST="$1" LABEL="$2" INTO="$BENCH_HOME/runs/$3"
 log() { echo "[swe-rerun] $(date -u +%FT%TZ) $*"; }
-POD=""; for PLAN in ${SWE_PLANS:-h200-2x b200-2x h200-1x b200-1x pro6000-1x}; do POD=$("$PY" "$HERE/kingpod.py" rent --plan "$PLAN" --digest "$DIGEST" 2>/dev/null | tail -1) && [ -n "$POD" ] && break; POD=""; done
-[ -n "$POD" ] || { log "$LABEL: no stock"; exit 2; }
+POD=""; T0=$(date +%s)
+while [ $(( $(date +%s) - T0 )) -lt "${SWE_RENT_DEADLINE_S:-14400}" ]; do   # zero Lium stock is normal tonight: wait up to 4 h
+  for PLAN in ${SWE_PLANS:-h200-2x b200-2x h200-1x b200-1x pro6000-1x}; do POD=$("$PY" "$HERE/kingpod.py" rent --plan "$PLAN" --digest "$DIGEST" 2>/dev/null | tail -1) && [ -n "$POD" ] && break; POD=""; done
+  [ -n "$POD" ] && break; log "$LABEL: no stock; retry in 3 min"; sleep 180
+done
+[ -n "$POD" ] || { log "$LABEL: no stock within the rent deadline"; exit 2; }
 trap '"$PY" "$HERE/kingpod.py" release "$POD" >/dev/null 2>&1' EXIT
 "$PY" "$HERE/kingpod.py" wait "$POD" >/dev/null || { log "pod never served"; exit 3; }
 REPL=$("$PY" -c 'import json; m=json.load(open("'"$HERE"'/state/pods.json"))["'"$POD"'"]; print(int((m.get("plan") or {}).get("replicas") or 1))')
