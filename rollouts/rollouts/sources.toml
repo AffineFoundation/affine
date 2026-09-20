@@ -79,7 +79,7 @@ king_pivot = 0.02
 king_recoverable = 0.02
 king_done = 0.03   # 0.01 -> 0.03 (phase 10, stop state)
 king_tooluse = 0.03   # 0.02 -> 0.03 (phase 10, stop state); ~540 When2Call candidates/day + persist states from five tool feeders
-completion = 0.15  # 0.10 -> 0.15 (phase 10, stop state)
+completion = 0.12  # 0.10 -> 0.15 (phase 10) -> 0.12 (2026-09-20 auto-research quota: -0.03 to king_divergence; group sat at 18.7 %)
 completion_pre = 0.02
 general = 0.05
 # 2026-09-15 (Jacob, lever 1/2): + king_coached 0.02 out of coding -- the
@@ -87,7 +87,7 @@ general = 0.05
 # (docs/coached-recovery.md). Small today (11 strict-decisive states / 24
 # solved continuations), grows with the coach loop.
 king_coached = 0.02
-king_divergence = 0.03   # phase 10: the king's first out-of-reference action (side-table, improvement-loop worker)
+king_divergence = 0.06   # phase 10 0.03 -> 0.06 (2026-09-20 auto-research quota.json: 471 admit-ready turns behind the cap; the only king-derived group with fresh states for reigns 15-20)
 
 # Per-source flag `interactive = true` (tau2-airline read, 2026-09-18): the
 # harness talks to a simulated user mid-trajectory, so a teacher reply that
@@ -220,6 +220,13 @@ notool_groups = ["king_tooluse", "king_divergence"]
 notool_floor = 0.035
 chat_groups = ["general"]
 chat_floor = 0.06
+# 2026-09-20 (auto-research quota.json): king_divergence is the only king-
+# derived group with fresh states for reigns 15-20 and 471 admit-ready turns
+# sat behind its cap; the static share is 0.06 (from completion), and this
+# floor carries it through the applied curriculum vector, which otherwise
+# puts the group at ~1 %.
+king_divergence_groups = ["king_divergence"]
+king_divergence_floor = 0.06
 
 [admission_gate]
 # MiMo item 1 (Jacob 2026-09-17 09:08 UTC): two-sided gate on every king-
@@ -442,9 +449,9 @@ strata_buckets = 4000   # 2000 -> 4000 (2026-09-14 phase 9b: When2Call + tool-fe
 inherit_exclude = false
 one_reply_ok = true
 prose_sources = ["affine_when2call", "affine_notool",
-                 "affine_tau2"]   # datagen P1 sources (2026-09-14); when2call rows carry repo = when2call/<label> -- only request_for_info / cannot_answer items are no-tool prompts; affine_tau2 (2026-09-18): the king opens with a tool call where the teacher asks the customer (turn 1, 24/24 in the probe)
+                 "affine_tau2"]   # NOT affine_tau2_synth: there the customer often opens with their name / id and the teacher's turn-1 lookup is legitimate (13/24 in the probe), so a king turn-1 call is not a failure by itself; synth relies on the persist rule + king_divergence   # datagen P1 sources (2026-09-14); when2call rows carry repo = when2call/<label> -- only request_for_info / cannot_answer items are no-tool prompts; affine_tau2 (2026-09-18): the king opens with a tool call where the teacher asks the customer (turn 1, 24/24 in the probe)
 tool_sources = ["affine_agent", "affine_wikispeedia", "affine_sql", "affine_eog", "affine_autobench",
-                "affine_tau2"]   # + τ² telecom (2026-09-17): the king re-calls get_customer_by_phone with invented numbers after every error
+                "affine_tau2", "affine_tau2_synth"]   # + τ² telecom (2026-09-17): the king re-calls get_customer_by_phone with invented numbers after every error
 # When2Call stamps repo = when2call/<label>; on tool_call items the king's
 # first-reply call is correct, so rule (a) skips them (route only the
 # request_for_info / cannot_answer rows where the king called a tool).
@@ -1020,6 +1027,50 @@ max_concurrency = 8
 # over its own task -> one stratum), i.e. ~50 teacher + ~100 king rollouts
 # per day fleet-wide at ~10 min per teacher rollout.
 share = 2.0
+king_rollouts_per_hour = 8
+
+[source.affine_tau2_synth]
+# tau2-synth (env wave 4b, 2026-09-18; docs/ask-envs-survey.md datagen #1):
+# τ²'s orchestrator on TEN synthetic customer-service domains from
+# mikasenghaas/tau2-synth @ 798589e (MIT; sierra 337326e is an ancestor) -
+# library 1,200 / fitness_gym 1,232 / tech_support 1,232 / auto_repair 2,432 /
+# online_shopping 1,232 / travel_agency 2,432 / vet_clinic 1,200 + the
+# dual-control cloud_incident_response 377 / daily_planner 159 /
+# ev_charging_support 111 (customer runs tools too) ≈ 11,600 generated tasks
+# (issue combination × persona × variant). Every policy opens with "verify
+# the customer's identity before making changes" = the turn-1 ask state; no
+# card runs these domains -> the whole pool is usable (no split files).
+# rollouts/envs/affine_tau2_synth_v1: affine_tau2_v1's harness (DeepSeek
+# customer on Engy, fold-clean stops) with the fork's data dir and a GENERIC
+# example-value patch: every identifier parameter of the domain's toolkit
+# gets "such as '<db prefix><number not in the db>'" (PAT042, MEM042, CUST042,
+# ORD042, ...), emails / phones fixed examples - the sara_doe_496 bait,
+# domain-native. The fork's `tau2` package replaces sierra's in the pod venv
+# (superset; affine_tau2 telecom unchanged). Probe 2026-09-18 (datagen-2,
+# 24 + 24, 8 of 10 domains): teacher 17/24 solved, turn-1 prose 11/24 (the
+# customer often opens with their name / id, so a lookup is legitimate),
+# 107 prose / 306 replies (0.35), 75 asks; king (reign 14) 0/24, 0 messages
+# to the customer in 301 replies, 24/24 turn-1 tool calls, 22 loop_guard +
+# 2 max_turns. Fold simulation (interactive rule): teacher 266 turns / 24
+# rollouts (131 text: 11 turn-1, 20 turns 2-4, 100 deeper; 135 tool_call;
+# 0 prose dropped). Not in king_tooluse prose_sources (see there).
+# tool_use buckets 1660-2259 (600: >= 300 distinct strata needs ~420 rollouts).
+group = "tool_use"
+runner = "verifiers_chat"
+taskset_id = "affine-tau2-synth-v1"
+catalog = "tau2_synth"
+select = "tasks"
+pass_dataset = false
+interactive = true
+policies = ["teacher_tau2_synth", "king_tau2_synth", "king_tau2_synth_greedy"]
+strata_buckets = 600
+strata_offset = 1660
+max_batch = 16
+max_concurrency = 8
+# Share 3.0 + king floor 8/h per pod: >= 300 distinct strata across the ten
+# domains within two folds needs ~420 rollouts (600 buckets); a 16-rollout
+# teacher batch takes ~10 min at 8 concurrent, the king's ~3 min.
+share = 3.0
 king_rollouts_per_hour = 8
 
 # -- general (env wave 1, 2026-09-11; data plan W3 "environment breadth") ---------

@@ -426,7 +426,13 @@ def load_king_divergence() -> dict:
             refs = row.get("refs") or []
             stops = [r for r in refs if r.get("stop")]
             stop_texts = {norm_ws(str(r.get("visible") or "")) for r in stops if str(r.get("visible") or "").strip()}
-            row["_kind"] = dialects.TEXT_KIND if len(stops) >= stop_refs_for_text else None
+            hint = row.get("fold_hint")
+            if hint == "text_kind":
+                row["_kind"] = dialects.TEXT_KIND
+            elif hint == "waive_stored_reply_parse":
+                row["_kind"] = None            # teacher acts: keep the policy dialect
+            else:
+                row["_kind"] = dialects.TEXT_KIND if len(stops) >= stop_refs_for_text else None
             n_text += row["_kind"] is not None
             SIDE_PROBE_ROWS[str(row.get("turn_id") or f"{row.get('traj_id')}:{ti}")] = {
                 "turn_id": row.get("turn_id"), "group": KING_DIVERGENCE_GROUP,
@@ -1580,6 +1586,12 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         recoverable = side_table_turns(env, king_recoverable) if king_recoverable else {}
         divergence = side_table_turns(env, king_divergence) if king_divergence else {}
         divergence_text: dict[int, str] = {}
+        # auto-research 2026-09-20: rows whose KING reply has no action while
+        # the teacher's refs act. The duel scores prefix + fresh samples, never
+        # the stored reply, so the slicer's one-action check is waived for
+        # them: the reply is admitted through the text fallback and the turn
+        # keeps the policy dialect (kind_stamp back to `kind`).
+        divergence_waive: set[int] = set()
         want_done = bool(king_done) and king_done_candidate(env, king_done)
         want_tooluse = (bool(king_tooluse) and _policy_ok(env, king_tooluse)
                         and str(env.get("source") or "") in king_tooluse["sources"])
@@ -1704,6 +1716,9 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                     _count(notes, f"king_divergence_sublabel_{sub}_{row.get('king') or 'king'}")
                 if row.get("_kind"):
                     divergence_text[i] = row["_kind"]
+                elif row.get("fold_hint") == "waive_stored_reply_parse":
+                    divergence_waive.add(i)
+                    _count(notes, "king_divergence_waived_stored_reply")
         kind_stamp: dict[int, str] = dict(divergence_text)     # turn -> duel-time action_kind
         if interactive and convs and kind != dialects.TEXT_KIND:
             # Mid-trajectory prose replies of an interactive harness are
@@ -1781,7 +1796,9 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         # Turns scored under `text` may be recorded from a reply with no action
         # in the policy dialect (the affine_sql king answers with a bare
         # ```sql block; 26 of 28 refused king_done states, 2026-09-13).
-        text_replies = frozenset(i for i, k in kind_stamp.items() if k == dialects.TEXT_KIND)
+        text_replies = frozenset(i for i, k in kind_stamp.items() if k == dialects.TEXT_KIND) | frozenset(divergence_waive)
+        for i in divergence_waive:
+            kind_stamp[i] = kind           # slicer admits via text; meta reverts to the policy dialect
         try:
             rec = build_view_record(env, baker=baker,
                                     generated_at=env.get("stored_at"),
