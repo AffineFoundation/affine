@@ -28,7 +28,25 @@ echo $$ > "$HERE/state/pass-$TAG.pid"
 finish() { echo "$1" > "$HERE/state/pass-$TAG.exit"; exit "$1"; }
 export LIUM_API_KEY="${LIUM_API_KEY:-${LIUM:-}}"
 export PRIME_API_KEY="${PRIME_API_KEY:-${PRIME:-}}"
-RUN_DIR="$BENCH_HOME/runs/$RUN_ID"; [ -d "$RUN_DIR" ] || { log "no run dir $RUN_DIR"; finish 2; }
+RUN_DIR="$BENCH_HOME/runs/$RUN_ID"
+if [ ! -d "$RUN_DIR" ]; then
+  # CAP_NEW_RUN=1: a fresh card for this model (old-cap variant cells live in their own run id so the
+  # pull never overwrites the current-cap cells; the board merges cards by digest)
+  [ "${CAP_NEW_RUN:-0}" = 1 ] || { log "no run dir $RUN_DIR"; finish 2; }
+  mkdir -p "$RUN_DIR/king"
+  "$PY" - "$REF" "$LABEL" "$RUN_DIR/manifest.json" "${CAP_RUN_NOTE:-}" <<'PY'
+import json, os, sys, time
+ref, label, out, note = sys.argv[1:]
+if ref.startswith("hf://"):
+    spec = ref[5:]; king = {"repo": ref, "hf_repo": spec.split("@")[0], "hf_revision": spec.partition("@")[2], "digest": "hf-" + spec.partition("@")[2][:10]}
+elif ref.startswith("r2://"): king = {"repo": ref, "digest": os.environ.get("CHALLENGER_REVISION", "")}
+else: king = {"digest": ref}
+if label.isdigit(): king["reign"] = int(label)
+else: king["label"] = label
+json.dump({"run_id": os.path.basename(os.path.dirname(out)), "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "mode": "capfill",
+           "king": king, "teacher": {}, "where": {"provider": "Lium (our fleet, TAO)", "topology": "one pod, cap_backfill.sh"}, "note": note, "cells": {}}, open(out, "w"), indent=1)
+PY
+fi
 TEACHER_FROM=$(toml modes.teacher_from)
 SSHO=(-i "$HOME/.ssh/id_ed25519" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$HERE/state/known_hosts" -o ConnectTimeout=20 -o LogLevel=ERROR)
 DOCKERHUB_OP_ITEM="${DOCKERHUB_OP_ITEM:-op://Arbos/e7y3qzb2flaczam4rindajho4m}"
@@ -71,7 +89,7 @@ done
 log "pod $POD serves $(podf "$POD" served) after $(( ($(date +%s) - T0) / 60 )) min"
 ssh_pod() { local u; u="$(podf "$POD" ssh_user root)"; local cmd="$*"; [ "$u" != root ] && cmd="sudo -n bash -c $(printf '%q' "$cmd")"   # Prime images: sudo user, layout under /root
   ssh "${SSHO[@]}" -i "$(pod_ssh_key "$POD")" -p "$(podf "$POD" ssh_port)" "$u@$(podf "$POD" ssh_host)" "$cmd"; }
-RUNTIME=docker; [ "$(podf "$POD" provider lium)" = prime ] && RUNTIME=prime   # no docker on Prime images: Prime sandboxes
+RUNTIME="${CAP_RUNTIME:-docker}"; [ "$(podf "$POD" provider lium)" = prime ] && RUNTIME=prime   # CAP_RUNTIME=prime for miniF2F (Lean image only on Prime sandboxes); no docker on Prime images
 
 # ---- 3. install + lock check
 tar -C "$REPO" -czf "/tmp/benchsuite-$TAG.tgz" ops/benchsuite
@@ -87,7 +105,7 @@ URL="http://127.0.0.1:$(podf "$POD" front_internal)/v1"; SERVED="$(podf "$POD" s
 if [ "$SIDE" = teacher ]; then MODELARGS="--teacher-url $URL --teacher-model $SERVED --models teacher"
 else MODELARGS="--king-url $URL --king-model $SERVED --models king --teacher-from $TEACHER_FROM"; fi
 PYR=/root/benchsuite/verifiers/.venv/bin/python
-ssh_pod "export BENCH_API_KEY='$(podf "$POD" key)' PRIME_API_KEY='${PRIME_API_KEY:-}' HF_TOKEN='${HF_TOKEN:-}' BENCHSUITE_CHAT_IMAGE=affine-bench-chat:py311; cd /root/affine/ops/benchsuite && $PYR run_suite.py run --run-id $RUN_ID --key-env BENCH_API_KEY $MODELARGS --verifiers-dir /root/benchsuite/verifiers --out /root/benchsuite/runs --runtime $RUNTIME --envs $CAP_ENVS --temps primary,secondary --concurrency 64 --parallel-envs $CAP_PARALLEL --manifest manifest-capfill.json --push" > "$RUN_DIR/capfill-run.log" 2>&1 &
+ssh_pod "export BENCH_API_KEY='$(podf "$POD" key)' PRIME_API_KEY='${PRIME_API_KEY:-}' HF_TOKEN='${HF_TOKEN:-}' BENCHSUITE_CHAT_IMAGE=affine-bench-chat:py311 BENCHSUITE_SETTINGS_JSON='${BENCHSUITE_SETTINGS_JSON:-}'; cd /root/affine/ops/benchsuite && $PYR run_suite.py run --run-id $RUN_ID --key-env BENCH_API_KEY $MODELARGS --verifiers-dir /root/benchsuite/verifiers --out /root/benchsuite/runs --runtime $RUNTIME --envs $CAP_ENVS --temps primary,secondary --concurrency 64 --parallel-envs $CAP_PARALLEL --manifest manifest-capfill.json --push" > "$RUN_DIR/capfill-run.log" 2>&1 &
 RPID=$!
 pull_light() { ssh_pod "cd /root/benchsuite/runs && tar czf - --exclude='*/logs' --exclude='*/traces.jsonl*' --exclude='*/eval.log' --exclude='manifest.json' $RUN_ID 2>/dev/null" 2>/dev/null | tar xzf - -C "$BENCH_HOME/runs" 2>/dev/null; }
 while kill -0 "$RPID" 2>/dev/null; do

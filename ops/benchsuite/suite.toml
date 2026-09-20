@@ -684,5 +684,12 @@ concurrency = 16
 graded = "llm_judge"
 judge = { model = "openai/gpt-4.1", via = "Prime Inference (api.pinference.ai)", role = "ARE GraphPerEventJudge soft checker (free-text tool arguments); hard checks rule-based", pinned_by = "gaia2_cell.py JUDGE_MODEL" }
 note = "Gaia2 ambiguity split, 160 scenarios (validation), Meta ARE default agent, scripted user, one run per scenario (Meta's leaderboard: 3). Pass = the agent asks / stops on the under-specified or impossible request instead of acting. Temperature: ARE's engine sends none -> the endpoint's served default (a forced difference vs our T=0 cells, flagged on the card)."
+# 2026-09-20 15:20 UTC: every model incl. the teacher scores 0.0 (teacher 0/160: 100 "tool judge
+# reject", 59 counter mismatches). In the sampled traces the teacher DID ask the user (e.g. "which
+# Aurelia do you mean, I found 6") and ARE's LLM soft checker still rejected the message against the
+# oracle's short "You have multiple people named Aurelia" — a grader/style mismatch with our agents'
+# long report-then-ask replies, not a measurement. The column is published as UNVERIFIED (score
+# withheld, raw kept) until the checker is re-validated or the card is dropped.
+unverified = "grader mismatch: ARE's LLM soft checker rejects semantically correct clarification requests (teacher 0/160); scores withheld"
 
 # Skipped by rule (no judge in the suite): HLE (judge-only reward).
