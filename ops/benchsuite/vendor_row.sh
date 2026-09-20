@@ -16,7 +16,7 @@ if [ -n "$WAIT" ]; then
   while ! grep -q "done king/swebench-verified\|FAIL swebench-verified" "$HOME/benchsuite/runs/$WAIT/swe-box.log" 2>/dev/null; do sleep 300; done
 fi
 RUN="$(date -u +%Y%m%dT%H%MZ)-genesis-vendor"
-export FAST_GROUPS="chat,tb2"
+export FAST_GROUPS="${FAST_GROUPS:-chat,tb2}"   # FAST_GROUPS=chat runs the chat shards alone (TB2 later, when Daytona has room)
 export BENCHSUITE_SETTINGS_JSON='{"temperature": 1.0, "max_tokens": 81920, "top_p": 0.95, "top_k": 20, "presence_penalty": 1.5}'
 export BENCHSUITE_SETTINGS_NOTE="Qwen/Qwen3.6-35B-A3B model card: T 1.0, top_p 0.95, top_k 20, presence_penalty 1.5, max_tokens 81920; TB2 3 h/task, 2 attempts, 8 vCPU / 16 GB sandboxes (card: 32 / 48)"
 export BENCHSUITE_REFERENCE_ROW="Genesis (vendor settings)"

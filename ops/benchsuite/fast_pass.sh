@@ -53,7 +53,12 @@ DIGEST="$REF" R2FLAG=""
 if [[ "$REF" == r2://* ]]; then DIGEST="${CHALLENGER_REVISION:?CHALLENGER_REVISION required for an r2:// ref}"; R2FLAG="--r2 $REF"; export AFFINE_EVAL_R2_ENDPOINT="${AFFINE_EVAL_R2_ENDPOINT:-${R2_ENDPOINT:-}}"
 elif [[ "$REF" == hf://* ]]; then SPEC="${REF#hf://}"; DIGEST="hf-$(echo "${SPEC#*@}" | cut -c1-10)"; R2FLAG="--hf $SPEC"; fi
 
-podf() { "$PY" -c 'import json,sys; m=json.load(open("'"$HERE"'/state/pods.json"))[sys.argv[1]]; print(m[sys.argv[2]])' "$1" "$2"; }
+podf() { "$PY" -c 'import json,sys; m=json.load(open("'"$HERE"'/state/pods.json"))[sys.argv[1]]; print(m.get(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ""))' "$1" "$2" "${3:-}"; }
+# pod provider: Lium (kingpod.py) or Prime (primepod.py, plans named prime-*; 2026-09-20)
+tool_for_plan() { case "$1" in prime-*) echo "$HERE/primepod.py";; *) echo "$HERE/kingpod.py";; esac; }
+tool_for_pod() { [ "$(podf "$1" provider lium)" = prime ] && echo "$HERE/primepod.py" || echo "$HERE/kingpod.py"; }
+pod_ssh_key() { [ "$(podf "$1" provider lium)" = prime ] && echo "${PRIME_SSH_KEY:-$HOME/.ssh/prime_bench}" || echo "$HOME/.ssh/id_ed25519"; }
+pod_runtime() { [ "$(podf "$1" provider lium)" = prime ] && echo prime || echo docker; }   # no docker on Prime images: Prime sandboxes
 
 # FAST_SKIP_ROLES / FAST_ONLY_ROLES: comma lists of chat1..N|agentic|swe (re-run the groups a
 # pass could not staff: reign 20 got one chat pod out of five and its card went out with 5 cells)
@@ -64,10 +69,10 @@ ROLES=(); for i in $(seq 1 "$N_SHARDS"); do role_wanted "chat$i" && ROLES+=("cha
 has_group swe && role_wanted swe && ROLES+=(swe)
 has_role() { [[ " ${ROLES[*]} " == *" $1 "* ]]; }
 declare -A POD PLANS
-for i in $(seq 1 "$N_SHARDS"); do PLANS[chat$i]=$(toml fast.chat_plans | tr "," " "); done
+for i in $(seq 1 "$N_SHARDS"); do PLANS[chat$i]="${FAST_CHAT_PLANS:-$(toml fast.chat_plans | tr "," " ")}"; done   # FAST_CHAT_PLANS: e.g. "prime-a100-2x" to keep Lium for other work
 PLANS[agentic]=$(toml fast.agentic_plans | tr "," " "); PLANS[swe]=$(toml fast.swe_plans | tr "," " ")
 POD[agentic]=""; POD[swe]=""
-release_role() { local r="$1" pod="${POD[$r]:-}"; [ -n "$pod" ] || return 0; log "releasing $pod ($r)"; "$PY" "$HERE/kingpod.py" release "$pod" >/dev/null 2>&1 || true; POD[$r]=""; }
+release_role() { local r="$1" pod="${POD[$r]:-}"; [ -n "$pod" ] || return 0; log "releasing $pod ($r)"; "$PY" "$(tool_for_pod "$pod")" release "$pod" >/dev/null 2>&1 || true; POD[$r]=""; }
 cleanup() {
   for r in "${ROLES[@]}"; do
     # a pod still in the rent phase is only named in its .pod file (2026-09-19: a kill during
@@ -92,16 +97,17 @@ rent_role() {  # role -> writes state/fast-$RUN_ID-$role.pod
     pod=""
     for plan in ${PLANS[$role]}; do
       # shellcheck disable=SC2086
-      pod=$("$PY" "$HERE/kingpod.py" rent --plan "$plan" --digest "$DIGEST" $R2FLAG 2>>"$RUN_DIR/rent-$role.log" | tail -1) && [ -n "$pod" ] && break
+      if [[ "$plan" == prime-* ]] && [[ "$role" != chat* ]]; then continue; fi   # Prime pods: chat roles only (no data ports for box-side jobs)
+      pod=$("$PY" "$(tool_for_plan "$plan")" rent --plan "$plan" --digest "$DIGEST" $R2FLAG 2>>"$RUN_DIR/rent-$role.log" | tail -1) && [ -n "$pod" ] && break
       pod=""
     done
     [ -n "$pod" ] || { echo "$(date -u +%FT%TZ) $role: no stock on any plan" >> "$RUN_DIR/rent-$role.log"; sleep 120; continue; }
     echo "$pod" > "$HERE/state/fast-$RUN_ID-$role.pod"
-    if timeout "$RENT_WAIT_S" "$PY" "$HERE/kingpod.py" wait "$pod" >>"$RUN_DIR/rent-$role.log" 2>&1; then return 0; fi
-    # not serving: the pod may still answer (slow ssh tripped `wait` before) — probe once
-    if curl -s -m 15 -H "Authorization: Bearer $(podf "$pod" key 2>/dev/null)" "$(podf "$pod" base_url 2>/dev/null)/models" 2>/dev/null | grep -q '"data"'; then return 0; fi
+    if timeout "$RENT_WAIT_S" "$PY" "$(tool_for_pod "$pod")" wait "$pod" >>"$RUN_DIR/rent-$role.log" 2>&1; then return 0; fi
+    # not serving: a Lium pod may still answer (slow ssh tripped `wait` before) — probe once
+    if [ "$(podf "$pod" provider lium)" != prime ] && curl -s -m 15 -H "Authorization: Bearer $(podf "$pod" key 2>/dev/null)" "$(podf "$pod" base_url 2>/dev/null)/models" 2>/dev/null | grep -q '"data"'; then return 0; fi
     echo "$(date -u +%FT%TZ) $role: $pod never served in ${RENT_WAIT_S}s; releasing with a strike and renting again" >> "$RUN_DIR/rent-$role.log"
-    "$PY" "$HERE/kingpod.py" release "$pod" --strike "never served in ${RENT_WAIT_S}s (fast pass $RUN_ID)" >>"$RUN_DIR/rent-$role.log" 2>&1 || true
+    "$PY" "$(tool_for_pod "$pod")" release "$pod" --strike "never served in ${RENT_WAIT_S}s (fast pass $RUN_ID)" >>"$RUN_DIR/rent-$role.log" 2>&1 || true
     echo "" > "$HERE/state/fast-$RUN_ID-$role.pod"; pod=""
   done
   [ -n "$pod" ] && echo "FAILED $pod" > "$HERE/state/fast-$RUN_ID-$role.pod" && return 3
@@ -115,8 +121,8 @@ for r in "${ROLES[@]}"; do
   case "$v" in
     FAILED*) pod="${v#FAILED }"
              # `wait` gave up, but the pod may serve anyway (a slow ssh tripped it on 2026-09-19): probe once
-             if curl -s -m 15 -H "Authorization: Bearer $(podf "$pod" key)" "$(podf "$pod" base_url)/models" 2>/dev/null | grep -q '"data"'; then POD[$r]="$pod"; log "$r: wait failed but $pod answers; using it"
-             else log "$r: pod never served ($pod); releasing"; "$PY" "$HERE/kingpod.py" release "$pod" >/dev/null 2>&1; fi;;
+             if [ "$(podf "$pod" provider lium)" != prime ] && curl -s -m 15 -H "Authorization: Bearer $(podf "$pod" key)" "$(podf "$pod" base_url)/models" 2>/dev/null | grep -q '"data"'; then POD[$r]="$pod"; log "$r: wait failed but $pod answers; using it"
+             else log "$r: pod never served ($pod); releasing"; "$PY" "$(tool_for_pod "$pod")" release "$pod" >/dev/null 2>&1; fi;;
     "") log "$r: no stock";;
     *) POD[$r]="$v";;
   esac
@@ -141,8 +147,8 @@ done
 MISSING_ROLES="${MISSING_ROLES#,}"; [ -n "$MISSING_ROLES" ] && log "roles without a pod: $MISSING_ROLES (their cells publish as run failed until a FAST_ONLY_ROLES=$MISSING_ROLES re-run)"
 T_READY=$(date +%s); log "pods ready after $(( (T_READY - T_START) / 60 )) min: $(for r in "${ROLES[@]}"; do echo -n "$r=${POD[$r]:-none} "; done)"
 
-ssh_pod() { local pod="$1"; shift; ssh "${SSHO[@]}" -p "$(podf "$pod" ssh_port)" "root@$(podf "$pod" ssh_host)" "$@"; }
-scp_pod() { local pod="$1" src="$2" dst="$3"; scp "${SSHO[@]}" -P "$(podf "$pod" ssh_port)" "$src" "root@$(podf "$pod" ssh_host):$dst"; }
+ssh_pod() { local pod="$1"; shift; ssh "${SSHO[@]}" -i "$(pod_ssh_key "$pod")" -p "$(podf "$pod" ssh_port)" "$(podf "$pod" ssh_user root)@$(podf "$pod" ssh_host)" "$@"; }
+scp_pod() { local pod="$1" src="$2" dst="$3"; scp "${SSHO[@]}" -i "$(pod_ssh_key "$pod")" -P "$(podf "$pod" ssh_port)" "$src" "$(podf "$pod" ssh_user root)@$(podf "$pod" ssh_host):$dst"; }
 
 # ---- install the eval env on the chat + agentic pods, in parallel (the swe pod only serves)
 tar -C "$REPO" -czf "/tmp/benchsuite-$RUN_ID.tgz" ops/benchsuite
@@ -215,10 +221,10 @@ PIDS=(); declare -A ROLE_PIDS
 for i in $(seq 1 "$N_SHARDS"); do
   r="chat$i"; has_role "$r" || continue; [ -n "${POD[$r]:-}" ] || { log "$r: no pod; its shard is skipped"; continue; }
   SHARD=$(toml "fast.chat_shards.$((i-1))" | tr -d '[]" ' ); AFTER=$(toml "fast.shard_after.$((i-1))" | tr -d '[]" ')
-  ( suite_on_pod "$r" "$SHARD" docker primary,secondary 64 "manifest-$r.json" 2
+  ( suite_on_pod "$r" "$SHARD" "$(pod_runtime "${POD[$r]}")" primary,secondary 64 "manifest-$r.json" 2
     has_group after || AFTER=""
     for e in ${AFTER//,/ }; do
-      rt=docker; [ "$e" = minif2f ] && rt=prime
+      rt=$(pod_runtime "${POD[$r]}"); [ "$e" = minif2f ] && rt=prime
       suite_on_pod "$r" "$e" "$rt" primary 48 "manifest-$r-after.json" 1
     done ) > "$RUN_DIR/$r.log" 2>&1 &
   PIDS+=($!); ROLE_PIDS[$r]="$!"
