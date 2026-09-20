@@ -19,7 +19,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 REPO=$PWD
 KH="$REPO/ops/king-datagen/state/known_hosts"
-FILES=(schema.py registry.py run.py king.py scheduler.py policies.toml sources.toml
+FILES=(schema.py registry.py config.py run.py king.py scheduler.py policies.toml sources.toml
        loopguard.py loopguard_site/sitecustomize.py adapters/mini_swe.py adapters/verifiers.py
        dockerwrap/docker
        runners/base.py runners/verifiers.py runners/mini_swe.py)
