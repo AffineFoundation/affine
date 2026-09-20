@@ -200,7 +200,7 @@ BENCH_SKIP_MODES = {"challenger", "comparables"}
 BENCH_SKIP_STATUS = {"skipped_identical_weights"}
 MATRIX_MIN_GRADED = 5            # datagen env cell needs this many graded rollouts
 # Kings before this reign are never rows (operator 2026-09-15 20:31 UTC:
-# Affine-XI and older are not backfilled); they are listed under `hidden`.
+# Affine-X and older are not backfilled); they are listed under `hidden`.
 MATRIX_MIN_REIGN = 11
 MATRIX_LOW_N = 30                # below this the cell is flagged `low_n` (operator 2026-09-15: an inconsistency)
 # Environments scored on the SAMPLED rollouts only (T = 0.8, the standard
@@ -1148,10 +1148,13 @@ def bench_value(side: dict | None, env: str) -> dict | None:
 
 
 def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
-    """env -> cell from the best card for each env. Cards are ordered
-    best-first by the caller; the first card carrying the env wins, later
-    cards only fill envs the earlier ones lack (a parity re-run of five chat
-    sets must not override the full pass)."""
+    """env -> cell merged over every card of one model. Cards are ordered
+    newest-first by the caller (`created_at`); for each env the newest card
+    carrying a real value wins ("latest cell wins per column", operator
+    2026-09-20). A cell whose run failed (status failed / nearly everything
+    errored) never beats a real value from an older card; it is kept only
+    when no card has a value for the env, and then renders as "run failed"
+    (never blank, never 0)."""
     out: dict[str, dict] = {}
     for card in cards:
         for row in card.get("rows") or []:
@@ -1164,7 +1167,7 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
             val.update(run_id=card.get("run_id"), mode=card.get("mode"),
                        created_at=card.get("created_at"), kind="bench")
             if val.get("failed"):
-                # remember the failure, but let a later card with a real value win the env
+                # remember the failure, but let an older card with a real value win the env
                 out.setdefault(f"__failed__{env}", val)
                 continue
             if row.get("graded") == "llm_judge":
@@ -1178,7 +1181,7 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
         env = k[len("__failed__"):]
         failed = out.pop(k)
         if env not in out:
-            out[env] = failed        # score None + reason: renders blank, tooltip says the run failed
+            out[env] = failed        # score None + failed: renders "run failed", tooltip has the reason
     return out
 
 
@@ -1297,8 +1300,10 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
     now = time.time()
     inflight = inflight or []
     model_cards = [c for c in cards if is_model_card(c)]
-    # best-first per digest: the fullest card wins, ties -> newest
-    rank = lambda c: (-len({r.get("env") for r in c.get("rows") or []}), c.get("created_at") or "")
+    # newest-first per digest: a model's cards (chat pass, -agentic pass, sandbox
+    # pass, re-runs) are merged env by env and the newest cell wins each column
+    # (operator 2026-09-20; before: the fullest card won, ties -> newest)
+    rank = lambda c: (c.get("created_at") or "", c.get("published_at") or "")
     by_digest: dict[str, list[dict]] = {}
     genesis_cards: list[dict] = []
     known_digests = {k.get("digest12") for k in [*(stats.get("kings") or []), *(stats.get("revoked_kings") or [])]}
@@ -1315,10 +1320,10 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
         if d12:
             by_digest.setdefault(d12, []).append(c)
     for lst in by_digest.values():
-        lst.sort(key=rank)
+        lst.sort(key=rank, reverse=True)
     for lst in reference_cards.values():
-        lst.sort(key=rank)
-    genesis_cards.sort(key=rank)
+        lst.sort(key=rank, reverse=True)
+    genesis_cards.sort(key=rank, reverse=True)
     # teacher: a card whose teacher cells were measured (not copied) first
     teacher_cards = sorted(
         cards, key=lambda c: (any((r.get("teacher") or {}).get("reused_from") for r in c.get("rows") or []),
@@ -1544,7 +1549,7 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
             "rows": "the teacher, then the crowned kings newest first, then the genesis seed (reign 0) "
                     "as the bottom row, with reference models (open checkpoints of the genesis family "
                     "benchmarked for comparison; not kings, never paid) just above it. "
-                    f"Kings before reign {MATRIX_MIN_REIGN} (Affine-XI and older, not "
+                    f"Kings before reign {MATRIX_MIN_REIGN} (Affine-X and older, not "
                     "backfilled) are listed under `hidden`, never rows; reigns the operator "
                     "revoked after the crown (history.jsonl crown_revoked) are under `removed`",
             "value": "average score 0-100 per cell. Benchmarks: the card's greedy (T=0) row, "

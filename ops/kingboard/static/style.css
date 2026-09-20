@@ -87,3 +87,5 @@ td.bad { color: var(--bad); }
 
 .cap-mark { color: var(--bad, #c44); font-size: 0.8em; }
 .judge-mark { color: var(--muted, #888); font-size: 0.8em; }
+
+.run-failed { color: var(--bad); font-size: 11.5px; letter-spacing: 0.02em; white-space: nowrap; }

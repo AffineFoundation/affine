@@ -212,7 +212,7 @@ function renderMarketBar(d) {
 
 /* ---------- sections ---------- */
 
-// Genesis (reign 0 → Affine-I) is the stock Qwen base since the min(R,G)
+// Genesis (reign 0, named "Genesis") is the stock Qwen base since the min(R,G)
 // era (wvk 10, 2026-08-27). Held-out benchmark scores per reign live in the
 // "Kings vs teacher" matrix (#kings, api/v1/matrix), not in this table.
 const GENESIS_REPO = "Qwen/Qwen3.6-35B-A3B";

@@ -45,8 +45,9 @@ function tint(delta) {
     : `background-color: rgba(255, 71, 71, ${a.toFixed(3)})`;
 }
 
-// Same names as the Reign table: reign n → Affine-<roman(n + 1)> (charts.js
-// kingName); the teacher and the genesis seed keep their plain labels.
+// Same names as the Reign table: reign n → Affine-<roman(n)> (charts.js
+// kingName, the validator's reign number); the teacher and the genesis seed
+// keep their plain labels. The model digest is in the row tooltip.
 function rowName(r) {
   if (r.kind === "king" && r.reign != null) return kingName(r.reign);
   return r.label;
@@ -55,9 +56,10 @@ function rowName(r) {
 function rowTip(r) {
   if (r.kind === "reference") return r.tip || `${r.model} — reference model; not a king`;
   if (r.kind === "teacher") return `${r.model} — the frozen teacher (the score's fixed point)`;
-  if (r.kind === "genesis") return `${r.model} — reign 0 (${kingName(0)}), the seed king; never won a duel`;
-  return `${kingName(r.reign)} · reign ${r.reign} · king-${r.digest12}\ncrowned ${when(r.crowned_at)}`
-    + (r.challenge_id ? ` · ${r.challenge_id}` : "")
+  if (r.kind === "genesis") return `${r.model} — reign 0, the seed king; never won a duel` + (r.digest12 ? `\nrevision ${r.digest12}` : "");
+  return `${kingName(r.reign)} · reign ${r.reign} (validator numbering) · king-${r.digest12}`
+    + `\ndigest ${r.digest || r.digest12}`
+    + `\ncrowned ${when(r.crowned_at)}` + (r.challenge_id ? ` · ${r.challenge_id}` : "")
     + (r.hotkey ? `\nhotkey ${r.hotkey}` : "")
     + (r.current ? "\ncurrent king" : "");
 }
@@ -69,9 +71,15 @@ function cellTip(row, col, cell, teacherCell) {
       + (cell.eta ? `\nETA ≈ ${when(cell.eta)} (pass average per cell; sandbox sets take longer)` : "\nETA: first cell not finished yet")
       + `\npass ${cell.run_id}`;
   }
+  if (cell && cell.failed && cell.score == null) {
+    return `${head}\nrun failed — the benchmark pass ended without a result (infrastructure, not a model score)`
+      + (cell.reason ? `\n${cell.reason}` : "")
+      + (cell.raw_score != null ? `\nraw score of the failed run: ${fmt(100 * Number(cell.raw_score))} (not counted)` : "")
+      + (cell.run_id ? `\ncard ${cell.run_id}${cell.mode ? ` · ${cell.mode}` : ""}` : "");
+  }
   if (!cell || cell.score == null) {
     return `${head}\n${cell?.reason || "no measurement"}`
-      + (col.kind === "bench" ? "\nnever run for this model (no benchmark card)" : "");
+      + (col.kind === "bench" && !cell ? "\nnever run for this model (no benchmark card)" : "");
   }
   const lines = [head];
   if (col.kind.startsWith("total")) {
@@ -226,13 +234,17 @@ function renderTable(m, spec) {
       const cell = r.cells[c.key];
       const has = cell && cell.score != null;
       const running = !has && cell && cell.running;
-      const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? (cell.low_n ? "lown" : "") : running ? "running" : "blank"].filter(Boolean).join(" ");
+      // a benchmark run that ended without a result (status: failed) is shown
+      // as "run failed" — never blank, never 0 — so a hole reads as infra, not as a score
+      const failed = !has && !running && cell && cell.failed;
+      const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? (cell.low_n ? "lown" : "") : running ? "running" : failed ? "failed" : "blank"].filter(Boolean).join(" ");
       const style = has && r.kind !== "teacher" ? tint(cell.delta) : "";
       const marks = has ? `${cell.cap_bound ? `<span class="mk cap">‡</span>` : ""}${cell.graded === "llm_judge" ? `<span class="mk judge">⚖</span>` : ""}` : "";
       return `<td class="${tcls} duel-hit" data-tip="${esc(cellTip(r, c, cell, teacher.cells[c.key]))}"`
-        + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) + marks : running ? "…" : "·"}</td>`;
+        + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) + marks : running ? "…" : failed ? "run failed" : "·"}</td>`;
     }).join("");
-    return `<tr class="${cls}"><td class="model duel-hit" data-tip="${esc(rowTip(r))}">`
+    const rowTitle = r.kind === "king" ? `${kingName(r.reign)} = reign ${r.reign} · king-${r.digest12}` : r.label;
+    return `<tr class="${cls}"><td class="model duel-hit" data-tip="${esc(rowTip(r))}" title="${esc(rowTitle)}">`
       + `<span class="name">${esc(rowName(r))}</span>${r.current ? `<i class="cur" title="current king"></i>` : ""}</td>${totalTd}${fullTd}${cells}</tr>`;
   }).join("");
 

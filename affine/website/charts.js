@@ -30,9 +30,17 @@ export function romanNumeral(n) {
   return out;
 }
 
-/** Kings are numbered from reign 0 (genesis) → Affine-I, reign 1 → Affine-II… */
-export const kingName = (reignNumber) =>
-  `Affine-${romanNumeral(Number(reignNumber) + 1)}`;
+/**
+ * Kings are named by the validator's reign number: reign 1 → Affine-I,
+ * reign 20 → Affine-XX. The genesis seed (reign 0) is "Genesis".
+ * (Until 2026-09-20 the site counted the genesis as Affine-I, so every king
+ * read one higher than its reign number — operator directive to align.)
+ */
+export const kingName = (reignNumber) => {
+  const n = Number(reignNumber);
+  if (n === 0) return "Genesis";
+  return `Affine-${romanNumeral(n)}`;
+};
 
 // Reign lookup: repo → reign_number (and hotkey → reign_number as a fallback
 // for rows with no repo). Rebuilt from every snapshot by setReignLookup.
@@ -326,9 +334,8 @@ function duelAxisMarks(points, xAt, yBase, width) {
         stroke="rgba(229,229,229,0.22)" stroke-width="1"/>`;
     }
     // Reign number, as the API, Discord and the history badges say it
-    // ("crowned #19"). The roman king name (Affine-XX = reign 19) is one
-    // off the reign number by construction and misread as "reign 20" on
-    // the axis; it stays in the tooltip.
+    // ("crowned #19"); the roman king name (Affine-XIX = reign 19) stays
+    // in the tooltip.
     const label = p.reign_number != null ? `#${p.reign_number}` : "#?";
     const w = CALLOUT_ELBOW + 3 + label.length * CALLOUT_CHAR_W;
     // Flip the elbow leftward when the label would run off the right edge.
