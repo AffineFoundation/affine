@@ -7,16 +7,26 @@ and Cursor (like other IDE agents) injects system messages mid-thread — every
 such turn was a vLLM 400 on the operator's Cursor box. Same rule as
 `affine/evalsrv/chatsrv.py::_fold_system_messages` on the public chat box.
 
+Two more things Cursor needs: (a) any model id other than the served one is
+rewritten to it — Cursor's "Verify" button (and some picker entries) call
+/chat/completions with an OpenAI model id such as `gpt-4o`, which vLLM would
+404; (b) one access-log line per request (time, method, path, requested
+model, user agent, status) on stderr, so "what did Cursor actually send" can
+be answered from /root/logs/proxy.log.
+
 Everything else (models, completions, Anthropic /v1/messages, health, the
 Authorization header, streaming) passes through byte for byte.
 
-    fold_proxy.py --listen 127.0.0.1:8001 --upstream http://127.0.0.1:8000
+    fold_proxy.py --listen 127.0.0.1:8001 --upstream http://127.0.0.1:8000 \
+        --served-model affine-king
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import sys
+import time
 
 import httpx
 import uvicorn
@@ -26,6 +36,14 @@ from fastapi.responses import Response, StreamingResponse
 HOP_HEADERS = {"host", "content-length", "transfer-encoding", "connection"}
 app = FastAPI()
 upstream = "http://127.0.0.1:8000"
+served_model = "affine-king"
+
+
+def access_log(request: Request, status: int, model: str, note: str = "") -> None:
+    ua = request.headers.get("user-agent", "-")[:60]
+    print(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {request.method} "
+          f"{request.url.path} model={model or '-'} ua={ua!r} -> {status} {note}",
+          file=sys.stderr, flush=True)
 
 
 def text_of(content) -> str:
@@ -54,14 +72,22 @@ def forward_headers(request: Request) -> dict:
     return {k: v for k, v in request.headers.items() if k.lower() not in HOP_HEADERS}
 
 
-async def relay(method: str, path: str, headers: dict, body: bytes, query: str):
+async def relay(request: Request, headers: dict, body: bytes, model: str, note: str):
     """Stream the upstream response back with its status and headers."""
     client = httpx.AsyncClient(timeout=httpx.Timeout(3600.0, connect=10.0))
-    url = f"{upstream}{path}" + (f"?{query}" if query else "")
-    req = client.build_request(method, url, headers=headers, content=body)
+    query = request.url.query
+    url = f"{upstream}{request.url.path}" + (f"?{query}" if query else "")
+    req = client.build_request(request.method, url, headers=headers, content=body)
     r = await client.send(req, stream=True)
     resp_headers = {k: v for k, v in r.headers.items()
                     if k.lower() not in HOP_HEADERS | {"content-encoding"}}
+    if r.status_code >= 400:
+        err = (await r.aread())[:300].decode("utf-8", "replace")
+        access_log(request, r.status_code, model, f"{note} upstream={err!r}")
+        await r.aclose()
+        await client.aclose()
+        return Response(err.encode(), status_code=r.status_code, headers=resp_headers)
+    access_log(request, r.status_code, model, note)
 
     async def body_iter():
         try:
@@ -78,26 +104,36 @@ async def relay(method: str, path: str, headers: dict, body: bytes, query: str):
 async def proxy(request: Request, path: str):
     body = await request.body()
     headers = forward_headers(request)
-    if request.method == "POST" and request.url.path.endswith("/chat/completions"):
+    model, note = "", ""
+    if request.method == "POST" and request.url.path.endswith(("/chat/completions", "/completions")):
         try:
             payload = json.loads(body)
         except ValueError:
+            access_log(request, 400, "", "invalid JSON body")
             return Response(b'{"error":"invalid JSON body"}', status_code=400,
                             media_type="application/json")
-        if isinstance(payload, dict) and isinstance(payload.get("messages"), list):
-            payload["messages"] = fold_system_messages(payload["messages"])
+        if isinstance(payload, dict):
+            model = str(payload.get("model") or "")
+            if model and model != served_model:
+                payload["model"] = served_model
+                note = f"aliased->{served_model}"
+            if isinstance(payload.get("messages"), list):
+                payload["messages"] = fold_system_messages(payload["messages"])
             body = json.dumps(payload).encode()
             headers["content-type"] = "application/json"
-    return await relay(request.method, request.url.path, headers, body, request.url.query)
+    return await relay(request, headers, body, model, note)
 
 
 def main() -> None:
-    global upstream
+    global upstream, served_model
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--listen", default="127.0.0.1:8001")
     ap.add_argument("--upstream", default="http://127.0.0.1:8000")
+    ap.add_argument("--served-model", default="affine-king",
+                    help="every other model id in a request is rewritten to this")
     args = ap.parse_args()
     upstream = args.upstream.rstrip("/")
+    served_model = args.served_model
     host, port = args.listen.rsplit(":", 1)
     uvicorn.run(app, host=host, port=int(port), log_level="warning", access_log=False)
 
