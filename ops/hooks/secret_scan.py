@@ -15,8 +15,11 @@ Exit 0 = clean, 1 = hit(s), 2 = usage / git error. Output never prints the
 matched secret: the first 6 characters and the length, nothing more.
 
 Allowlist: ops/hooks/secret_scan_allow.txt — one path glob per line
-(fnmatch, `**` = any depth), `#` comments. Dataset dumps with fake keys in
-task prompts live there. A file, not a pragma: a `# noscan` comment next to
+(fnmatch, `**` = any depth), `#` comments; `commit:<full sha>` lines name
+historical commits whose leak is already known and rotated (skipped in
+--commits mode only, so re-pushing history to a new remote is not blocked
+by a key that is already public). Dataset dumps with fake keys in task
+prompts live there. A file, not a pragma: a `# noscan` comment next to
 a literal would be the wrong reflex.
 """
 from __future__ import annotations
@@ -62,9 +65,17 @@ SKIP_SUFFIXES = (".lock", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".gz
 def load_allow() -> list[str]:
     try:
         return [l.strip() for l in ALLOW.read_text().split("\n")
-                if l.strip() and not l.lstrip().startswith("#")]
+                if l.strip() and not l.lstrip().startswith("#") and not l.startswith("commit:")]
     except OSError:
         return []
+
+
+def known_commits() -> set[str]:
+    try:
+        return {l.strip()[len("commit:"):].split()[0] for l in ALLOW.read_text().split("\n")
+                if l.startswith("commit:")}
+    except OSError:
+        return set()
 
 
 def allowed(path: str, globs: list[str]) -> bool:
@@ -187,7 +198,11 @@ def main() -> int:
         return report(scan_diff(git("diff", "-U0", "--no-color", "--diff-filter=AM", args.range), globs), f"commits {args.range}")
     if args.commits:
         hits = []
+        known = known_commits()
         for sha in args.commits:
+            full = git("rev-parse", sha).strip()
+            if full in known:
+                continue
             hits += scan_diff(git("show", "--format=", "-U0", "--no-color", "--diff-filter=AM", sha), globs)
         return report(hits, f"{len(args.commits)} commit(s)")
     if args.tree:
