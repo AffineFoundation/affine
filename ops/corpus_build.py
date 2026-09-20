@@ -2434,7 +2434,13 @@ def load_admission_gate() -> dict:
             # flips back); `recovery_exempt` groups (king_coached: the coached
             # teacher IS the recovery) get the dead-reference drop only.
             "recovery_exempt": frozenset(str(g) for g in (raw.get("recovery_exempt") or [KING_COACHED_GROUP])),
-            "auto_promote": bool(raw.get("auto_promote", True))}
+            "auto_promote": bool(raw.get("auto_promote", True)),
+            # Policies whose solved rollouts count as "a strong model solves
+            # the task" for the task-level signal. 2026-09-20: the 45 gate-
+            # unverified coding tasks had only GLM-era teacher runs
+            # (`glm_*`, engy/glm-5.2, Aug 2026) -- the teacher of wvk <= 9,
+            # not backfill; counted by default, drop `glm_` here to revert.
+            "teacher_prefixes": tuple(str(x) for x in (raw.get("teacher_policy_prefixes") or ["teacher_", "glm_"]))}
 
 
 def load_state_recovery(cfg: dict) -> dict[tuple[str, int], bool]:
@@ -2459,10 +2465,12 @@ def load_state_recovery(cfg: dict) -> dict[tuple[str, int], bool]:
     return out
 
 
-def teacher_solved_tasks(pub: PublicCorpus, traces_manifest: dict) -> tuple[set[str], set[str]]:
-    """(solved instance ids, seen instance ids) from every teacher_* rollout
-    in the traces; cached per traces manifest."""
-    key = hashlib.sha256(json.dumps([c["key"] for c in traces_manifest["chunks"]]).encode()).hexdigest()[:16]
+def teacher_solved_tasks(pub: PublicCorpus, traces_manifest: dict,
+                         prefixes: tuple[str, ...] = ("teacher_",)) -> tuple[set[str], set[str]]:
+    """(solved instance ids, seen instance ids) from every rollout of a
+    teacher-side policy (`prefixes`) in the traces; cached per traces
+    manifest + prefixes. Backfill rollouts never enter the manifest."""
+    key = hashlib.sha256(json.dumps([c["key"] for c in traces_manifest["chunks"]] + list(prefixes)).encode()).hexdigest()[:16]
     if TEACHER_SOLVED_CACHE.exists():
         try:
             c = json.loads(TEACHER_SOLVED_CACHE.read_text())
@@ -2476,7 +2484,7 @@ def teacher_solved_tasks(pub: PublicCorpus, traces_manifest: dict) -> tuple[set[
         path = pub.cached(c["key"], c["sha256"], gz_sha=True)
         for env in iter_jsonl_gz(path):
             pid = str((env.get("policy") or {}).get("id") or "")
-            if not pid.startswith("teacher_"):
+            if not pid.startswith(prefixes) or is_backfill(env):
                 continue
             sid = str((env.get("task") or {}).get("sid") or "")
             if not sid:
@@ -3627,7 +3635,8 @@ def main() -> None:
         # enforced = toml apply_groups + earlier auto-promotions (sticky)
         gate["apply_groups"] = frozenset(gate["apply_groups"]) | frozenset(state.get("gate_enforced") or [])
         state_rec = load_state_recovery(gate)
-        task_solved, task_seen = teacher_solved_tasks(pub, traces_manifest) if gate["task_signal"] else (set(), set())
+        task_solved, task_seen = (teacher_solved_tasks(pub, traces_manifest, gate["teacher_prefixes"])
+                                  if gate["task_signal"] else (set(), set()))
         dead = dead_reference_turns(gate)
         log(f"admission gate: {len(state_rec)} state-level recovery rows "
             f"({sum(state_rec.values())} recover), {len(task_solved)} teacher-solved tasks of {len(task_seen)} seen, "
