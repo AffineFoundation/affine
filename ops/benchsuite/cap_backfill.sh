@@ -69,12 +69,13 @@ while [ $(( $(date +%s) - T0 )) -lt "${CAP_RENT_DEADLINE_S:-14400}" ]; do   # ze
 done
 [ -n "$POD" ] || { log "no serving pod within the rent deadline; giving up"; finish 3; }
 log "pod $POD serves $(podf "$POD" served) after $(( ($(date +%s) - T0) / 60 )) min"
-ssh_pod() { ssh "${SSHO[@]}" -i "$(pod_ssh_key "$POD")" -p "$(podf "$POD" ssh_port)" "$(podf "$POD" ssh_user root)@$(podf "$POD" ssh_host)" "$@"; }
+ssh_pod() { local u; u="$(podf "$POD" ssh_user root)"; local cmd="$*"; [ "$u" != root ] && cmd="sudo -n bash -c $(printf '%q' "$cmd")"   # Prime images: sudo user, layout under /root
+  ssh "${SSHO[@]}" -i "$(pod_ssh_key "$POD")" -p "$(podf "$POD" ssh_port)" "$u@$(podf "$POD" ssh_host)" "$cmd"; }
 RUNTIME=docker; [ "$(podf "$POD" provider lium)" = prime ] && RUNTIME=prime   # no docker on Prime images: Prime sandboxes
 
 # ---- 3. install + lock check
 tar -C "$REPO" -czf "/tmp/benchsuite-$TAG.tgz" ops/benchsuite
-scp "${SSHO[@]}" -i "$(pod_ssh_key "$POD")" -P "$(podf "$POD" ssh_port)" "/tmp/benchsuite-$TAG.tgz" "$(podf "$POD" ssh_user root)@$(podf "$POD" ssh_host):/tmp/benchsuite.tgz" || finish 4
+scp "${SSHO[@]}" -i "$(pod_ssh_key "$POD")" -P "$(podf "$POD" ssh_port)" "/tmp/benchsuite-$TAG.tgz" "$(podf "$POD" ssh_user root)@$(podf "$POD" ssh_host):/tmp/benchsuite.tgz" || finish 4   # /tmp: writable for any login user
 rm -f "/tmp/benchsuite-$TAG.tgz"
 ssh_pod "mkdir -p /root/affine /root/benchsuite/runs && cd /root/affine && tar xzf /tmp/benchsuite.tgz && BENCH_HOME=/root/benchsuite bash /root/affine/ops/benchsuite/install_eval_env.sh > /root/install.log 2>&1; tail -1 /root/install.log" | tee "$RUN_DIR/capfill-install.log" | grep -q INSTALL_DONE || { log "install failed"; finish 5; }
 [ -n "${DOCKERHUB_TOKEN:-}" ] && printf '%s' "$DOCKERHUB_TOKEN" | ssh_pod "docker login -u '$DOCKERHUB_USER' --password-stdin >/dev/null 2>&1" || true

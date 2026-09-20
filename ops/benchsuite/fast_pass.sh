@@ -147,8 +147,12 @@ done
 MISSING_ROLES="${MISSING_ROLES#,}"; [ -n "$MISSING_ROLES" ] && log "roles without a pod: $MISSING_ROLES (their cells publish as run failed until a FAST_ONLY_ROLES=$MISSING_ROLES re-run)"
 T_READY=$(date +%s); log "pods ready after $(( (T_READY - T_START) / 60 )) min: $(for r in "${ROLES[@]}"; do echo -n "$r=${POD[$r]:-none} "; done)"
 
-ssh_pod() { local pod="$1"; shift; ssh "${SSHO[@]}" -i "$(pod_ssh_key "$pod")" -p "$(podf "$pod" ssh_port)" "$(podf "$pod" ssh_user root)@$(podf "$pod" ssh_host)" "$@"; }
-scp_pod() { local pod="$1" src="$2" dst="$3"; scp "${SSHO[@]}" -i "$(pod_ssh_key "$pod")" -P "$(podf "$pod" ssh_port)" "$src" "$(podf "$pod" ssh_user root)@$(podf "$pod" ssh_host):$dst"; }
+# Prime images log in as a sudo user (massedcompute), the pod layout lives under /root: run as root there
+ssh_pod() { local pod="$1"; shift; local u; u="$(podf "$pod" ssh_user root)"; local cmd="$*"; [ "$u" != root ] && cmd="sudo -n bash -c $(printf '%q' "$cmd")"
+  ssh "${SSHO[@]}" -i "$(pod_ssh_key "$pod")" -p "$(podf "$pod" ssh_port)" "$u@$(podf "$pod" ssh_host)" "$cmd"; }
+scp_pod() { local pod="$1" src="$2" dst="$3"; local u; u="$(podf "$pod" ssh_user root)"
+  if [ "$u" = root ]; then scp "${SSHO[@]}" -i "$(pod_ssh_key "$pod")" -P "$(podf "$pod" ssh_port)" "$src" "$u@$(podf "$pod" ssh_host):$dst"
+  else scp "${SSHO[@]}" -i "$(pod_ssh_key "$pod")" -P "$(podf "$pod" ssh_port)" "$src" "$u@$(podf "$pod" ssh_host):/tmp/bs-upload.tgz" && ssh_pod "$pod" "mv /tmp/bs-upload.tgz $dst"; fi; }
 
 # ---- install the eval env on the chat + agentic pods, in parallel (the swe pod only serves)
 tar -C "$REPO" -czf "/tmp/benchsuite-$RUN_ID.tgz" ops/benchsuite
