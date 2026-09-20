@@ -2,7 +2,8 @@
 # pre-push: refuse a push whose new commits add a secret-shaped literal.
 # git feeds "<local ref> <local sha> <remote ref> <remote sha>" per ref on
 # stdin. For a ref the remote does not have yet, scan the commits that no
-# remote-tracking branch has.
+# remote-tracking branch (of ANY remote) has: what is already public is not
+# this push's leak, and a brand-new remote must not re-litigate history.
 REPO="$(git rev-parse --show-toplevel)"
 remote="$1"
 zero=0000000000000000000000000000000000000000
@@ -10,7 +11,7 @@ rc=0
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ "$local_sha" = "$zero" ] && continue          # deleting a remote branch
   if [ "$remote_sha" = "$zero" ]; then
-    commits=$(git rev-list "$local_sha" --not --remotes="$remote" 2>/dev/null | head -n 500)
+    commits=$(git rev-list "$local_sha" --not --remotes 2>/dev/null | head -n 500)
   else
     commits=$(git rev-list "$remote_sha..$local_sha" 2>/dev/null | head -n 500)
   fi
