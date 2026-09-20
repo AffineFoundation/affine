@@ -309,6 +309,9 @@ def main() -> int:
                 if job["kind"] in ("swe", "swe4h") and (swe_blocked or swe_jobs_running() >= MAX_SWE_JOBS):
                     running_here.append(job["kind"] + "(waiting: Daytona)"); swe_blocked = True
                     continue
+                if job["kind"] == "minif2f" and int(subprocess.run(["pgrep", "-fc", "CAP_ENVS=minif2f|eval minif2f"], capture_output=True, text=True).stdout.strip() or 0) > 0:
+                    # Prime sandboxes: one MiniF2F job at a time (three at once hit "Total CPU limit exceeded" 429s today)
+                    running_here.append("minif2f(waiting: Prime sandboxes)"); continue
                 rec["attempts"] += 1; rec["state"] = "running"; rec["started_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()); rec["envs"] = job["envs"]
                 procs[key] = launch(info, job); rec["pid"] = procs[key].pid
                 running_here.append(job["kind"])
