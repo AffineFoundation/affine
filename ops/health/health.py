@@ -497,6 +497,36 @@ class Monitor:
                             "guard hook missing: " + "; ".join(missing) if missing
                             else f"{len(cfg.raw.get('integrity', []))} guard hooks present", missing=missing))
 
+        # (i) env-backfill driver pod (coverage queue's rollouts.backfill host):
+        # affine/state/pods/backfill_driver.json names it; its /health must
+        # answer 200. affine-backfill-3 went dark 2026-09-20 16:20 UTC with
+        # Lium still listing it RUNNING — nothing paged for an hour.
+        ptr_path = REPO / "affine" / "state" / "pods" / "backfill_driver.json"
+        ptr = common.read_json(ptr_path, default={}) or {}
+        url = ptr.get("health_url")
+        if not url:
+            checks.append(Check("backfill_pod", "warn", "no affine/state/pods/backfill_driver.json pointer (env backfill has no driver pod)"))
+        else:
+            bf_ok, bf_detail = False, ""
+            try:
+                r = requests.get(url, timeout=10)
+                body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+                bf_ok = r.status_code == 200 and bool(body.get("ok", True))
+                bf_detail = (f"http {r.status_code}" + (f", reasons {body.get('reasons')}" if body.get("reasons") else "")
+                             + (f", {len(body.get('drivers') or [])} driver(s), load {body.get('load', [None])[0]}" if body else ""))
+            except (requests.RequestException, ValueError) as e:
+                bf_detail = f"unreachable ({type(e).__name__})"
+            down_for = self.since("backfill_pod_down", not bf_ok, now)
+            if bf_ok:
+                checks.append(Check("backfill_pod", "ok", f"{ptr.get('pod')} {bf_detail}", pod=ptr.get("pod"), ssh=ptr.get("ssh")))
+            else:
+                lvl = "page" if (down_for or 0) > t.get("backfill_pod_down_max_min", 15) * 60 else "warn"
+                checks.append(Check("backfill_pod", lvl,
+                                    f"env-backfill driver pod {ptr.get('pod')} ({ptr.get('ssh')}) {bf_detail} for "
+                                    f"{common.fmt_age(down_for)} — coverage env rows stall; re-rent with "
+                                    f"CLONE_ROLE=backfill rollouts/scripts/clone_datagen_pod.sh and update the pointer",
+                                    pod=ptr.get("pod"), ssh=ptr.get("ssh"), down_min=round((down_for or 0) / 60)))
+
         # (h) secret-shaped literals in the tracked tree — daily whole-tree run
         # of ops/hooks/secret_scan.py (the pre-commit / pre-push hook's
         # scanner). The Engy key in engy_parity.py sat in the public repo for
