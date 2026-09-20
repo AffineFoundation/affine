@@ -76,7 +76,7 @@ sys.path.insert(0, str(REPO / "affine"))
 
 from affine import dialects  # noqa: E402
 from affine.config import load_config  # noqa: E402
-from affine.corpus.completion import completion_kind, final_completion  # noqa: E402
+from affine.corpus.completion import bash_body, completion_kind, final_completion  # noqa: E402
 from affine.corpus.loops import ESCAPE, IN_LOOP, ONSET, label_loops, norm_ws  # noqa: E402
 from affine.corpus.materialize import materialize_turn, node_path, stratum_key  # noqa: E402
 from affine.corpus.pack import PackResult  # noqa: E402
@@ -536,6 +536,20 @@ def load_king_done() -> dict:
         # `solved_onset`, the FIRST loop onset of a solved king rollout is a
         # king_done state (the teacher's reference there is the prose stop).
         cfg["solved_onset"] = bool(cfg["raw"].get("solved_onset", True))
+        # Looser form (coordinator 2026-09-20 19:02 UTC): in a SOLVED king
+        # rollout, the first reply AFTER the answer artefact was last written
+        # whose command head repeats an earlier post-write command is the done
+        # state -- the textbased kings re-read the answer with near-identical
+        # `python3 -c` / `cat` commands before submitting. Guards: the final
+        # reply must be the submit (completion-eligible) and the post-write
+        # span >= post_write_min_span replies.
+        # Default OFF (held 2026-09-20 19:40 UTC): on the published textbased
+        # mrcr kings the post-write span is 0-1 replies (one `cat answer.txt`,
+        # then submit) -- the rule fired on 1 of 36 solved rollouts and the
+        # teacher did not stop there (1 of 3). Turn on once the bash-tool
+        # batches land and a 24-state teacher sample shows the prose stop.
+        cfg["post_write_repeat"] = bool(cfg["raw"].get("post_write_repeat", False))
+        cfg["post_write_min_span"] = int(cfg["raw"].get("post_write_min_span", 2) or 2)
         # Duel-time kind: at a done state the teacher stops -- a prose report
         # or a finish tool call; `text` parses both (Jacob 2026-09-13).
         cfg["kind"] = str(cfg["raw"].get("kind") or dialects.TEXT_KIND)
@@ -654,6 +668,73 @@ def side_table_turns(env: dict, cfg: dict) -> dict[int, dict]:
     if not rows or rollout_outcome(env["trace"]) != "failed":
         return {}
     return dict(rows)
+
+
+ANSWER_WRITE_RE = re.compile(
+    r"""(?:>>?\s*|\btee\s+(?:-a\s+)?|\bcp\s+\S+\s+|\bmv\s+\S+\s+|open\(\s*['"]|<parameter=path>\s*|"path":\s*")[^\n'"<]*answer""",
+    re.I)
+INTERPRETERS = frozenset({"python", "python3", "bash", "sh", "node", "perl", "ruby"})
+
+
+def reply_command(reply: str, kind: str) -> str | None:
+    """The shell command a reply carries (bash fence body, bash-tool
+    `<parameter=command>` body, or a JSON `command` argument); None when
+    the reply carries no action."""
+    acts = dialects.get(kind).actions(reply)
+    if not acts:
+        return None
+    a = acts[-1]
+    if kind == dialects.DEFAULT_KIND:
+        return bash_body(a)
+    m = re.search(r"<parameter=command>\s*(.*?)\s*</parameter>", a, re.S)
+    if m:
+        return m.group(1)
+    m = re.search(r'"command"\s*:\s*"((?:[^"\\]|\\.)*)"', a)
+    if m:
+        try:
+            return json.loads('"' + m.group(1) + '"')
+        except ValueError:
+            return m.group(1)
+    return a
+
+
+def command_head(cmd: str) -> str:
+    toks = cmd.strip().split()
+    if not toks:
+        return ""
+    head = toks[0].rsplit("/", 1)[-1]
+    if head in INTERPRETERS and len(toks) > 1:
+        return f"{head} {toks[1]}"
+    return head
+
+
+def post_write_repeat_turn(main_convs: list[list[dict]], kind: str, min_span: int) -> int | None:
+    """Position (within the main-root replies) of the first post-answer-write
+    reply whose command head repeats an earlier post-write reply's head, when
+    the rollout ends on a completion-eligible reply and the post-write span
+    holds >= min_span replies. None otherwise."""
+    replies = [conv[-1]["content"] if conv and conv[-1]["role"] == "assistant" else "" for conv in main_convs]
+    if len(replies) < 3 or completion_kind(replies[-1], kind) is None:
+        return None
+    cmds = [reply_command(r, kind) for r in replies]
+    last_write = None
+    for j, c in enumerate(cmds[:-1]):
+        if c and ANSWER_WRITE_RE.search(c):
+            last_write = j
+    if last_write is None:
+        return None
+    span = list(range(last_write + 1, len(replies) - 1))     # exclude the final submit
+    if len(span) < min_span:
+        return None
+    seen: set[str] = set()
+    for j in span:
+        h = command_head(cmds[j] or "")
+        if not h:
+            continue
+        if h in seen:
+            return j
+        seen.add(h)
+    return None
 
 
 def king_done_turn(main_convs: list[list[dict]], kind: str, min_more: int) -> int | None:
@@ -1686,6 +1767,14 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                     _count(notes, "king_done_solved_onset")
                     _count(notes, f"king_done_solved_onset_{env.get('source')}")
                     break
+        if done_route is None and want_done_onset and king_done.get("post_write_repeat") and main_convs:
+            j = post_write_repeat_turn(main_convs, kind, king_done["post_write_min_span"])
+            if j is not None:
+                done_route = main[j]
+                done_rule = "post_write_repeat"
+                _count(notes, "king_done_states")
+                _count(notes, "king_done_post_write_repeat")
+                _count(notes, f"king_done_post_write_repeat_{env.get('source')}_{(env.get('policy') or {}).get('harness')}")
         if pivots:
             _count(notes, "king_pivot_rollouts")
             for i, row in pivots.items():
