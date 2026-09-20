@@ -49,7 +49,11 @@ from pathlib import Path
 import httpx
 
 REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "affine"))
+# The checkout is stale vs the validator box; a copy of the LIVE tree (wvk 22:
+# as_generated rendering, text_fallback split, curriculum manifests) is kept at
+# /tmp/box/affine and wins when present (override with AFFINE_LIVE_TREE).
+LIVE_TREE = Path(os.environ.get("AFFINE_LIVE_TREE", "/tmp/box/affine"))
+sys.path.insert(0, str(LIVE_TREE if (LIVE_TREE / "evalsrv").is_dir() else REPO / "affine"))
 
 from affine import dialects  # noqa: E402
 from evalsrv.chat import split_rollout  # noqa: E402
@@ -496,7 +500,10 @@ def materialize(rec_or_verdict: str | dict, turn_ids: list[str]) -> dict[str, di
     sl = d["verdict"]["slice"]
     corpus = corpus_for(sl["manifest_sha256"], sl.get("corpus_base_url"))
     rows = {r["turn_id"]: r for r in corpus.load_index_rows()}
-    picked = [rows[t] for t in turn_ids if t in rows]
+    # Group by chunk: CorpusSync keeps only 4 decoded chunks, so slice-order
+    # access over ~90 chunks re-gunzips a chunk per turn (hours for 1000 turns).
+    picked = sorted((rows[t] for t in turn_ids if t in rows),
+                    key=lambda r: (r["chunk_key"], int(r["traj_line"])))
     turns = corpus.materialize_turns(picked)
     return {r["turn_id"]: t for r, t in zip(picked, turns)}
 

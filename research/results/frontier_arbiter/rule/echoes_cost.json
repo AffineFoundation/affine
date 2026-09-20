@@ -1,0 +1,20 @@
+{
+ "cost_usd": 1.8947769999999904,
+ "echoes": 7426,
+ "runs": [
+  {
+   "turns": 184,
+   "echoes": 7426,
+   "cost_usd": 1.8947769999999904,
+   "usage": {
+    "qwen3.8-27b": {
+     "calls": 7456,
+     "prompt_tokens": 73359348,
+     "completion_tokens": 7456,
+     "cost_usd": 1.8947769999999904
+    }
+   },
+   "seconds": 2903.6972024440765
+  }
+ ]
+}
