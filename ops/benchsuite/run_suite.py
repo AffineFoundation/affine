@@ -358,7 +358,7 @@ def run_cell(env: dict, model_label: str, model: str, url: str, key_env: str,
         "env": env["id"], "taskset": env["taskset"], "model": model_label,
         "temperature": temp, "rollouts_per_task": rollouts,
         "harness": env["harness"], "runtime": runtime,
-        "max_tokens": env["max_tokens"], "reward": env["reward"],
+        "max_tokens": int(SETTINGS_OVERRIDE.get("max_tokens", env["max_tokens"])), "reward": env["reward"],   # the EFFECTIVE cap (recap.py tags old-cap runs by it)
         "wall_seconds": round(wall, 1), "exit_code": p.returncode,
         "task_subset": ({"n": int(env["n"]), "shuffle_seed": 0} if int(env.get("n", -1)) > 0
                         else {"n": "all"}),
@@ -631,7 +631,7 @@ def cmd_summarize(a: argparse.Namespace) -> int:
         summ.update({k: prev[k] for k in prev if k not in summ})
         summ.update({"env": env_id, "taskset": env["taskset"], "model": d.parent.name,
                      "temperature": float(temp), "reward": env["reward"],
-                     "harness": env["harness"], "max_tokens": env["max_tokens"]})
+                     "harness": env["harness"], "max_tokens": int(SETTINGS_OVERRIDE.get("max_tokens", env["max_tokens"]))})
         (d / "summary.json").write_text(json.dumps(summ, indent=1))
         log(f"{d.parent.name}/{d.name}: n={summ['n']} score={summ['score']} ci={summ['ci95']}")
     return 0
