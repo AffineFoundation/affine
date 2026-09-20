@@ -178,6 +178,16 @@ def scorecard(run_dir: Path) -> dict:
         e = by_id.get(base_env, {})
         for tkey, models in temps.items():
             k, t = models.get("king"), models.get("teacher")
+            if e.get("unverified"):
+                # suite.toml env.unverified: the grader is suspect (2026-09-20 Gaia2) — the number is
+                # withheld from the board (score null, status "unverified"), the raw value kept for the record
+                rows.append({"env": env_id, "base_env": base_env, "budget_tag": budget_tag or None, "group": e.get("group"),
+                             "temperature": float(tkey[1:]), "note": e.get("note"), "show_classes": None, "graded": e.get("graded", "deterministic"),
+                             "judge": e.get("judge"), "n": (k or t or {}).get("n"), "unverified": e["unverified"],
+                             "king": {**side(models.get("king")), **{"score": None, "ci95": None, "finished_only": None, "status": "unverified", "unverified": e["unverified"], "raw_score": models["king"].get("score")}} if models.get("king") else None,
+                             "teacher": {**side(models.get("teacher"), teacher=True), **{"score": None, "ci95": None, "finished_only": None, "status": "unverified", "unverified": e["unverified"], "raw_score": models["teacher"].get("score")}} if models.get("teacher") else None,
+                             "delta": None, "prime_eval_url": None, "cost": (manifest.get("cells", {}).get(f"{env_id}__{tkey}") or {})})
+                continue
             rows.append({
                 "env": env_id, "base_env": base_env, "budget_tag": budget_tag or None,
                 "group": e.get("group"), "temperature": float(tkey[1:]),

@@ -235,7 +235,7 @@ for i in $(seq 1 "$N_SHARDS"); do
 done
 if [ -n "${POD[agentic]:-}" ]; then
   if has_group agentic; then
-    ( suite_on_pod agentic "$(toml fast.agentic_envs_on_pod)" docker primary 8 manifest-agentic.json 4 ) > "$RUN_DIR/agentic.log" 2>&1 &
+    ( suite_on_pod agentic "${FAST_AGENTIC_ENVS:-$(toml fast.agentic_envs_on_pod)}" docker primary 8 manifest-agentic.json 4 ) > "$RUN_DIR/agentic.log" 2>&1 &   # FAST_AGENTIC_ENVS: re-run a subset
     PIDS+=($!); ROLE_PIDS[agentic]="${ROLE_PIDS[agentic]:-} $!"
   fi
   AURL="$(podf "${POD[agentic]}" base_url)"; ASERVED="$(podf "${POD[agentic]}" served)"
