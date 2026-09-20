@@ -1,9 +1,6 @@
-/* Kingboard "Challengers" tab: renders /api/benchsuite.json (one scorecard per
+/* Kingboard "Benchmarks" tab: renders /api/benchsuite.json (one scorecard per
    benchmark-suite run, written by ops/benchsuite/publish.py). Tab switching
-   is by URL hash (#envs | #challengers) so links are shareable. The per-run
-   benchmark table and the reign-by-reign matrix moved to affine.io/#kings
-   (api/v1/matrix); renderTable / renderHistory stay for a page that has the
-   elements. */
+   is by URL hash (#envs | #benchmarks) so links are shareable. */
 (function () {
   "use strict";
 
@@ -27,11 +24,12 @@
 
   const state = { runs: [], runId: null };
 
-  const TABS = ["envs", "challengers"];
   function showTab(name) {
-    document.querySelectorAll("#tabs a[data-tab]").forEach((a) => a.classList.toggle("active", a.dataset.tab === name));
-    for (const t of TABS) $(`#tab-${t}`).classList.toggle("hidden", name !== t);
-    if (name === "challengers" && !state.runs.length) load();
+    document.querySelectorAll("#tabs a").forEach((a) => a.classList.toggle("active", a.dataset.tab === name));
+    $("#tab-envs").classList.toggle("hidden", name !== "envs");
+    $("#tab-benchmarks").classList.toggle("hidden", name !== "benchmarks");
+    $("#tab-challengers").classList.toggle("hidden", name !== "challengers");
+    if ((name === "benchmarks" || name === "challengers") && !state.runs.length) load();
   }
 
   // -- Challengers tab: challenger cards (mode "challenger") vs the king they duelled --
@@ -89,7 +87,6 @@
 
   function renderRunSelect() {
     const sel = $("#bench-run");
-    if (!sel) return;
     sel.innerHTML = "";
     for (const r of state.runs) sel.append(el("option", { value: r.run_id }, runLabel(r)));
     if (!state.runId || !state.runs.some((r) => r.run_id === state.runId)) state.runId = state.runs[0] && state.runs[0].run_id;
@@ -99,14 +96,14 @@
   function current() { return state.runs.find((r) => r.run_id === state.runId); }
 
   function renderTable() {
-    if (!$("#bench-table")) return;
     const r = current();
     const tbody = $("#bench-table tbody");
     tbody.innerHTML = "";
     if (!r) { $("#bench-meta").textContent = "no benchmark runs published yet"; return; }
     const w = r.where || {};
     const ident = r.identical_to ? `IDENTICAL WEIGHTS — same weights as reign ${r.identical_to.reign} (${r.identical_to.run_id}; ${r.identical_to.how || (r.identical_to.n_tensors + " tensors")}); numbers shown are that run's, no new pass · ` : "";
-    $("#bench-meta").textContent = `${r.rows.length} rows · ${ident}${r.status === "partial" ? "PARTIAL (still running) · " : ""}run created ${(r.created_at || "").replace("T", " ")} · ` +
+    const prog = r.progress || {};
+    $("#bench-meta").textContent = `${r.rows.length} rows · ${ident}${r.status === "partial" ? `RUNNING — ${prog.done ?? "?"}/${prog.total ?? "?"} cells done${(prog.remaining || []).length ? ", next: " + prog.remaining.slice(0, 3).map((c) => c.split("/").pop()).join(", ") : ""} (as of ${(prog.as_of || "").slice(11, 16)} UTC${prog.eta ? `, card ETA ≈ ${prog.eta.slice(11, 16)} UTC` : ""}) · ` : ""}run created ${(r.created_at || "").replace("T", " ")} · ` +
       `${w.provider || ""} ${w.gpu || ""} · teacher ${(r.teacher || {}).hf_repo || ""}` +
       (r.prime_spent_usd !== undefined && r.prime_spent_usd !== null ? ` · pod cost ≈ $${r.prime_spent_usd}` : "");
     const rows = [...r.rows].sort((a, b) => (a.group || "").localeCompare(b.group || "") || a.env.localeCompare(b.env) || a.temperature - b.temperature);
@@ -114,13 +111,23 @@
       const k = row.king, t = row.teacher;
       const d = row.delta;
       const dcls = d === null || d === undefined ? "" : d > 0.005 ? "good" : d < -0.005 ? "bad" : "";
-      tbody.append(el("tr", { title: row.note || "" },
-        el("td", {}, row.env),
+      // cap-bound marker: > 20% of replies cut at the completion cap (scored 0) — the
+      // number is a cap effect, not knowledge (Genesis hit 25–50% on the reasoning sets)
+      const capMark = (side) => side && side.finish_length_frac > 0.2
+        ? el("span", { class: "cap-mark", title: `${pct(side.finish_length_frac, 0)} of replies hit the completion cap (scored 0): cap-bound, not a measure of what the model knows` }, " ‡cap")
+        : "";
+      const judge = row.graded === "llm_judge";
+      const judgeTitle = judge ? `LLM-judge graded (${(row.judge || {}).model || "judge"} via ${(row.judge || {}).via || "?"}, pinned in suite.lock.json) — ADVISORY, never part of the score. ` : "";
+      tbody.append(el("tr", { title: judgeTitle + (row.note || "") },
+        el("td", {}, row.env, judge ? el("span", { class: "judge-mark", title: judgeTitle }, " ⚖ judge") : ""),
         el("td", { class: "muted" }, row.group || ""),
         el("td", { class: "num" }, row.temperature === 0 ? "0" : String(row.temperature)),
         el("td", { class: "num" }, k ? k.n : (t ? t.n : "–")),
-        el("td", { class: "num king-col" }, k ? pct(k.score) + ci(k) : "–"),
-        el("td", { class: "num teacher-col" }, t ? pct(t.score) + ci(t) : "–"),
+        el("td", { class: "num king-col" }, k ? pct(k.score) + ci(k) : "–", capMark(k)),
+        el("td", { class: "num teacher-col", title: t && t.served_by ? `teacher served by ${t.served_by.provider} (${t.served_by.model}) — not our vLLM stack` : "" },
+          t ? pct(t.score) + ci(t) : "–", capMark(t),
+          t && t.served_by ? el("span", { class: "judge-mark" }, ` (${(t.served_by.provider || "").split(" ")[0]})`) : "",
+          row.budget_tag ? el("span", { class: "judge-mark", title: `budget ${row.budget_tag}: ${JSON.stringify((k && k.budget) || (t && t.budget) || {})}` }, "") : ""),
         el("td", { class: "num " + dcls }, d === null || d === undefined ? "–" : (d > 0 ? "+" : "") + (100 * d).toFixed(1) + " pt"),
         el("td", { class: "num muted", title: "score over rollouts that finished inside the time/context budget" },
           k && k.finished_only ? `${pct(k.finished_only.score)} (n=${k.finished_only.n})` : "–"),
@@ -164,7 +171,6 @@
 
   function renderHistory() {
     const thead = $("#bench-history thead"), tbody = $("#bench-history tbody");
-    if (!thead) return;
     thead.innerHTML = ""; tbody.innerHTML = "";
     const runs = [...state.runs].sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
     if (!runs.length) return;
@@ -203,10 +209,9 @@
     renderChallengers();
   }
 
-  $("#bench-run")?.addEventListener("change", (e) => { state.runId = e.target.value; renderTable(); });
-  // Environments is the landing view; the reign-by-reign matrix moved to affine.io/#kings
-  const tabOf = () => { const h = location.hash.replace("#", ""); return TABS.includes(h) ? h : "envs"; };
+  $("#bench-run").addEventListener("change", (e) => { state.runId = e.target.value; renderTable(); });
+  const tabOf = () => location.hash === "#benchmarks" ? "benchmarks" : location.hash === "#challengers" ? "challengers" : "envs";
   window.addEventListener("hashchange", () => showTab(tabOf()));
   showTab(tabOf());
-  setInterval(() => { if (tabOf() === "challengers") load(); }, 300000);
+  setInterval(() => { if (tabOf() !== "envs") load(); }, 300000);
 })();
