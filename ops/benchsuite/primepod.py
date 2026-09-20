@@ -38,6 +38,7 @@ import argparse
 import json
 import os
 import secrets
+import shlex
 import subprocess
 import sys
 import time
@@ -117,14 +118,21 @@ def prime_status(pod_id: str) -> dict:
 
 
 def ssh_run(mem: dict, cmd: str, *, input_text: str | None = None, timeout: int = 60) -> subprocess.CompletedProcess:
+    # Prime images log in as a sudo-capable user (massedcompute: not root) while
+    # pod_bootstrap.sh and the eval install live under /root: run everything as root
+    if mem.get("ssh_user", "root") != "root":
+        cmd = f"sudo -n bash -c {shlex.quote(cmd)}"
     return subprocess.run(["ssh", *SSH_OPTS, "-p", str(mem["ssh_port"]), f"{mem['ssh_user']}@{mem['ssh_host']}", cmd],
                           input=input_text, capture_output=True, text=True, timeout=timeout)
 
 
 def scp_put(mem: dict, local: Path, remote: str) -> bool:
-    p = subprocess.run(["scp", *SSH_OPTS, "-P", str(mem["ssh_port"]), str(local), f"{mem['ssh_user']}@{mem['ssh_host']}:{remote}"],
+    tmp = f"/tmp/primepod-{secrets.token_hex(4)}"
+    p = subprocess.run(["scp", *SSH_OPTS, "-P", str(mem["ssh_port"]), str(local), f"{mem['ssh_user']}@{mem['ssh_host']}:{tmp}"],
                        capture_output=True, text=True, timeout=120)
-    return p.returncode == 0
+    if p.returncode != 0:
+        return False
+    return ssh_run(mem, f"mkdir -p $(dirname {remote}) && mv {tmp} {remote}").returncode == 0
 
 
 # ------------------------------------------------------------------ commands
@@ -174,7 +182,7 @@ def push_env_and_launch(name: str, mem: dict) -> bool:
              f'VLLM_VERSION="{cfg["vllm_version"]}"', f'VLLM_CUDA="{plan.get("vllm_cuda", "cu130")}"']
     if mem.get("hf"):
         repo, _, rev = mem["hf"].partition("@")
-        lines += ['KING_REPLICAS=""', f'TEACHER_HF="{repo}"', f'TEACHER_REV="{rev or "main"}"',
+        lines += ['KING_DIGEST=""', 'KING_REPLICAS=""', f'TEACHER_HF="{repo}"', f'TEACHER_REV="{rev or "main"}"',
                   f'TEACHER_REPLICAS="32001:{gpus}:{plan["tp"]}"', f'HF_TOKEN="{os.environ.get("HF_TOKEN", "")}"']
         front = TEACHER_PORT
     else:
@@ -236,10 +244,17 @@ def cmd_wait(a: argparse.Namespace) -> int:
                 user_host, _, port = ssh.partition(" -p ")
                 user, _, host = user_host.partition("@")
                 mem.update(ssh_user=user or "root", ssh_host=host.strip(), ssh_port=int(port.strip() or 22))
+                # providers reuse IPs across pods: drop a stale host key first (accept-new refuses a changed one)
+                subprocess.run(["ssh-keygen", "-R", f"[{mem['ssh_host']}]:{mem['ssh_port']}" if mem["ssh_port"] != 22 else mem["ssh_host"],
+                                "-f", str(HERE / "state" / "prime_known_hosts")], capture_output=True)
                 try:
-                    ok = ssh_run(mem, "echo ok", timeout=40).returncode == 0
-                except subprocess.SubprocessError:
+                    r = ssh_run(mem, "echo ok", timeout=40)
+                    ok = r.returncode == 0
+                    if not ok:
+                        log(f"{a.name}: ssh not ready: {r.stderr.strip()[-120:]}")
+                except subprocess.SubprocessError as e:
                     ok = False
+                    log(f"{a.name}: ssh {type(e).__name__}")
                 if ok and push_env_and_launch(a.name, mem):
                     kingpod.update_pod(a.name, **mem)
             elif st.get("status") in ("ERROR", "TERMINATED", "FAILED"):
@@ -251,7 +266,9 @@ def cmd_wait(a: argparse.Namespace) -> int:
         elif mem["state"] == "booting":
             try:
                 p = ssh_run(mem, "if [ -f /root/bench/bootstrap.failed ]; then echo FAILED: $(cat /root/bench/bootstrap.failed); fi; "
-                                 "test -f /root/bench/ready && echo READY; tail -n 1 /root/bench/bootstrap.log 2>/dev/null", timeout=30)
+                                 "test -f /root/bench/ready && echo READY; "
+                                 "kill -0 $(cat /root/bench/boot.pid 2>/dev/null) 2>/dev/null || echo BOOT_DEAD; "
+                                 "tail -n 1 /root/bench/bootstrap.log 2>/dev/null", timeout=30)
             except subprocess.SubprocessError as e:
                 log(f"{a.name}: bootstrap log unreadable ({type(e).__name__}); keep waiting")
                 time.sleep(30)
@@ -262,6 +279,19 @@ def cmd_wait(a: argparse.Namespace) -> int:
                 log(f"{a.name}: bootstrap {failed[0][:160]}")
                 kingpod.update_pod(a.name, state="failed")
                 return 3
+            if "BOOT_DEAD" in lines and "READY" not in lines:
+                # the script exited without a verdict (2026-09-20: `set -u` on an unset var);
+                # it is idempotent, so relaunch once, then give up
+                if mem.get("relaunched", 0) >= 1:
+                    log(f"{a.name}: bootstrap exited twice without ready: {lines[-1][:160] if lines else ''}")
+                    kingpod.update_pod(a.name, state="failed")
+                    return 3
+                mem["relaunched"] = mem.get("relaunched", 0) + 1
+                log(f"{a.name}: bootstrap process gone, relaunching ({lines[-1][:120] if lines else ''})")
+                push_env_and_launch(a.name, mem)
+                kingpod.update_pod(a.name, **mem)
+                time.sleep(30)
+                continue
             if "READY" in lines and probe(mem):
                 mem.update(state="ready", ready_at=time.time())
                 kingpod.update_pod(a.name, **mem)
