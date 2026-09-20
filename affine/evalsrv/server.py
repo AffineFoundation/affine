@@ -214,6 +214,18 @@ def _stack_versions() -> dict:
     return out
 
 
+def _load_failure_cause(load_error: str, limit: int = 300) -> str:
+    """The most informative single line of a slot's load_error: the last
+    line carrying an exception name, else the last non-empty line."""
+    lines = [ln.strip() for ln in (load_error or "").splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    for ln in reversed(lines):
+        if "Error" in ln or "error" in ln or "Exception" in ln:
+            return ln[:limit]
+    return lines[-1][:limit]
+
+
 @app.get("/health")
 def health(_: None = Depends(_require_token)):
     # Bench pods live or die by `docker run`: a daemon that lists images but
@@ -366,8 +378,13 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
                 raise DuelFault(Fault.CHALLENGER_INFRA, "challenger could not "
                                 "load (pod disk/OOM/teacher unhealthy)")
             # The checkpoint itself is unservable → a real rejection verdict.
+            # Carry vLLM's own cause line so the miner can self-diagnose
+            # (2026-09-20: two uploads whose index named *.wrap.tmp shards
+            # surfaced only as "failed to load in vLLM").
+            cause = _load_failure_cause(_engine.chall_slot.load_error)
             verdict = {"challenger_wins": False, "job_id": job_id,
-                       "rejection_reason": "unservable:challenger failed to load in vLLM"}
+                       "rejection_reason": "unservable:challenger failed to load in vLLM"
+                                           + (f": {cause}" if cause else "")}
             job["verdict"] = verdict
             events.put({"type": "verdict", "data": verdict})
             job["state"] = "completed"
