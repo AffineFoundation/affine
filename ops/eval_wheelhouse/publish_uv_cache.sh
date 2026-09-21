@@ -48,7 +48,8 @@ then exit 0; fi
 
 remote_key=$("${SSH[@]}" "sha256sum /root/affine/pyproject.toml | cut -c1-8")
 [[ "$remote_key" == "${KEY#py312-}" ]] || { echo "pod pyproject sha $remote_key != local ${KEY#py312-}" >&2; exit 1; }
-"${SSH[@]}" "command -v zstd >/dev/null || apt-get install -y -qq zstd >/dev/null; du -sh /root/.cache/uv | cut -f1" | sed 's/^/pod uv cache: /'
+"${SSH[@]}" "command -v zstd >/dev/null || { apt-get update -qq >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zstd >/dev/null 2>&1; }; command -v zstd >/dev/null || exit 42; du -sh /root/.cache/uv | cut -f1" | sed 's/^/pod uv cache: /' \
+  || { echo "zstd unavailable on the pod; nothing uploaded" >&2; exit 1; }
 echo "publishing s3://affine-data/$OBJKEY ..."
 t0=$(date +%s)
 "${SSH[@]}" "cd /root/.cache/uv && tar -cf - --exclude=.affine-wheelhouse . | zstd -T0 -3" \
@@ -59,6 +60,9 @@ s3 = boto3.client("s3", endpoint_url=os.environ["DATA_R2_ENDPOINT"], aws_access_
 cfg = TransferConfig(multipart_chunksize=64 * 1024 * 1024, max_concurrency=4)
 s3.upload_fileobj(sys.stdin.buffer, "affine-data", os.environ["WH_KEY"], ExtraArgs={"ContentType": "application/zstd"}, Config=cfg)
 h = s3.head_object(Bucket="affine-data", Key=os.environ["WH_KEY"])
+if h["ContentLength"] < 100 * 1024 * 1024:
+    s3.delete_object(Bucket="affine-data", Key=os.environ["WH_KEY"])
+    raise SystemExit(f"upload too small ({h['ContentLength']} bytes) — deleted; check the pod-side tar")
 print(f"uploaded {h['ContentLength']} bytes")
 PY
 echo "published in $(( $(date +%s) - t0 ))s -> https://data.affine.io/${OBJKEY}"

@@ -63,7 +63,7 @@ if [ ! -f "$UV_CACHE_DIR/.affine-wheelhouse" ]; then
   mkdir -p "$UV_CACHE_DIR"
   if curl -sfIL --max-time 20 "$WHEEL_URL" >/dev/null 2>&1; then
     echo "[bootstrap] restoring uv cache from $WHEEL_URL"
-    if command -v zstd >/dev/null 2>&1 || apt-get install -y -qq zstd >/dev/null 2>&1; then
+    if command -v zstd >/dev/null 2>&1 || { apt-get update -qq >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zstd >/dev/null 2>&1; }; then
       if curl -sfL --retry 5 --retry-all-errors --max-time 1800 "$WHEEL_URL" \
           | tar -I zstd -xf - -C "$UV_CACHE_DIR" 2>/root/logs/wheelhouse.err; then
         echo "$WHEEL_KEY" > "$UV_CACHE_DIR/.affine-wheelhouse"
@@ -87,37 +87,12 @@ echo "[bootstrap] pip [eval] took $(( $(date +%s) - t_pip ))s"
 # JIT-compiles at startup — which needs nvcc and dies on pods without a CUDA
 # toolkit ("Could not find nvcc"). The cubin + jit-cache wheels ship the
 # kernels prebuilt (no nvcc); both live on the flashinfer index, not PyPI.
-# Match cubin/jit-cache to whatever flashinfer-python vLLM pulled (0.28 →
-# 0.6.16.post3; 0.29 → 0.6.18). A mismatch aborts TP>1 workers with
-# "flashinfer-cubin version does not match flashinfer version" before CUDA
-# init (seen 2026-09-11 on lunar-raven-18 / vLLM 0.29.0). cuXXX must match
-# torch.version.cuda (cu130 for current vLLM torch wheels).
-FI_VER=$(python - <<'PY'
-import importlib.metadata as m
-print(m.version("flashinfer-python"))
-PY
-)
-echo "[bootstrap] flashinfer-python=$FI_VER — installing matching cubin/jit-cache"
-uv pip install "flashinfer-cubin==${FI_VER}" \
-  --index-url https://flashinfer.ai/whl 2>&1 | tee -a /root/logs/pip_eval.log | tail -5
-CUDA_TAG=$(python - <<'PY'
-import torch
-v = (torch.version.cuda or "13.0").split(".")
-print(f"cu{v[0]}{v[1]}")
-PY
-)
-uv pip install "flashinfer-jit-cache==${FI_VER}" \
-  --index-url "https://flashinfer.ai/whl/${CUDA_TAG}" 2>&1 | tee -a /root/logs/pip_eval.log | tail -5
-python - <<'PY'
-import importlib.metadata as m
-fi = m.version("flashinfer-python")
-cubin = m.version("flashinfer-cubin")
-if cubin != fi:
-    raise SystemExit(
-        f"[bootstrap] FATAL: flashinfer-cubin={cubin} != flashinfer-python={fi}"
-    )
-print(f"[bootstrap] flashinfer match OK cubin={cubin}")
-PY
+# Pin to vLLM 0.28.0's required flashinfer-python==0.6.16.post3; the cuXXX
+# suffix must match torch.version.cuda (cu130 for the torch vLLM 0.28 pulls).
+uv pip install "flashinfer-cubin==0.6.16.post3" \
+  --index-url https://flashinfer.ai/whl 2>&1 | tail -3
+uv pip install "flashinfer-jit-cache==0.6.16.post3" \
+  --index-url https://flashinfer.ai/whl/cu130 2>&1 | tail -3
 python - <<'PY'
 import affine, evalsrv
 from affine.config import load_config
@@ -144,17 +119,7 @@ if [ "$ROLE" = "bench" ]; then
 elif [ "$ROLE" = "chat" ]; then
   # Public king-chat pod: serves the current king only — no corpus, no
   # bench deps. chatsrv polls the public snapshot for king changes itself.
-  # Optional pod-local overrides (AFFINE_CHAT_MAX_MODEL_LEN, public key,
-  # limits) pushed by ops/king-chat/chatbox.sh; the provisioner never
-  # writes this file, so a fresh rental runs on the [chat] toml defaults
-  # until the chatbox watcher re-pushes it.
-  if [ -f /root/affine/.chat_env ]; then
-    set -a
-    # shellcheck disable=SC1091
-    source /root/affine/.chat_env
-    set +a
-    echo "[bootstrap] chat overrides loaded from .chat_env"
-  fi
+  :
 else
   # 2. Turn corpus D: manifest + shard sync from the public bucket. Fail-closed:
   #    the sync verifies the manifest hash against its immutable published copy
