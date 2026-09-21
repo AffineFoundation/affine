@@ -10,8 +10,16 @@
 # `[source.affine_tau2_gen]` stanza. Nothing here touches the pods or D.
 #
 # Layout expected (box): ~/tau2gen/tau2-gen = clone of unarbos/tau2-gen (fork
-# of catoneone/tau2-gen) with upstream/tau2-bench + its .venv + patches applied
-# (README of that repo). TAU2GEN_ROOT overrides.
+# of catoneone/tau2-gen) on its `affine` branch = Alan's main + our three PRs
+# (user-sim pass-through, export_affine, composition guard), with
+# upstream/tau2-bench + its .venv + patches applied. TAU2GEN_ROOT overrides.
+#
+# Decontamination (fold worker, 2026-09-21 13:13 UTC): the persona changes how
+# the customer talks, not what the agent repairs, so a task that shares a
+# benchmark's (intent, fault composition) under another persona is an
+# overlap (`bench_panel_overlap`, 6/66 telecom king rollouts at epoch 62).
+# The telecom generator runs with --exclude-benchmark-compositions AND the
+# exporter drops any survivor whose persona-blind key matches a `base` id.
 #
 # Reward bases: airline [DB, COMMUNICATE] with communicate_info required on
 # every no-write task; retail [DB] (NL_ASSERTION dropped: no LLM judge);
@@ -25,11 +33,11 @@ P="$ROOT/upstream/tau2-bench/.venv/bin/python"
 OUT="$ROOT/out/e$EPOCH"
 cd "$ROOT"
 [ -x "$P" ] || { echo "no tau2-bench venv at $P"; exit 1; }
-[ -f scripts/export_affine.py ] || { echo "scripts/export_affine.py missing — check out the fork branch export-affine (PR catoneone/tau2-gen#2)"; exit 1; }
+[ -f scripts/export_affine.py ] && grep -q "exclude-benchmark-compositions" domains/telecom/gen.py || { echo "checkout lacks our PRs — git checkout affine (unarbos/tau2-gen integration branch)"; exit 1; }
 echo "== generating epoch $EPOCH (seed $EPOCH): airline $N_AIR, retail $N_RET, telecom $N_TEL"
 $P domains/airline/gen.py --n "$N_AIR" --seed "$EPOCH" --out "$OUT/airline" 2>&1 | grep -E "generated|leakage|wrote|rror" || true
 $P domains/retail/gen.py  --n "$N_RET" --seed "$EPOCH" --out "$OUT/retail"  2>&1 | grep -E "generated|leakage|wrote|rror" || true
-$P domains/telecom/gen.py --n "$N_TEL" --seed "$EPOCH" --out "$OUT/telecom" 2>&1 | grep -E "generated|leakage|wrote|rror" || true
+$P domains/telecom/gen.py --n "$N_TEL" --seed "$EPOCH" --exclude-benchmark-compositions --out "$OUT/telecom" 2>&1 | grep -E "generated|leakage|wrote|rror" || true
 for d in airline retail telecom; do [ -f "$OUT/$d/tasks_tau2.json" ] || { echo "generation failed for $d"; exit 1; }; done
 echo "== fidelity reports"
 $P fidelity/report.py --gen-tasks "$OUT/airline/tasks.jsonl" --domain airline --bench-tasks --out "$OUT/airline/fidelity_report.md" >/dev/null 2>&1
@@ -38,9 +46,9 @@ $P fidelity/report.py --gen-tasks "$OUT/telecom/tasks.jsonl" --domain telecom --
 grep -h "Result:" "$OUT"/*/fidelity_report.md
 grep -q "Result: \*\*PASS\*\*" "$OUT/airline/fidelity_report.md" && grep -q "Result: \*\*PASS\*\*" "$OUT/retail/fidelity_report.md" && grep -q "Result: \*\*PASS\*\*" "$OUT/telecom/fidelity_report.md" || { echo "leakage report not PASS on every domain"; exit 1; }
 echo "== exports"
-$P scripts/export_affine.py --tasks "$OUT/airline/tasks_tau2.json" --domain airline --manifest "$OUT/airline/manifest.json" --reward-basis DB,COMMUNICATE --require-communicate-info --out "$OUT/airline/affine_tasks.json" 2>&1 | grep -E "wrote|refusing"
-$P scripts/export_affine.py --tasks "$OUT/retail/tasks_tau2.json"  --domain retail  --manifest "$OUT/retail/manifest.json"  --reward-basis DB --out "$OUT/retail/affine_tasks.json" 2>&1 | grep -E "wrote|refusing"
-$P scripts/export_affine.py --tasks "$OUT/telecom/tasks_tau2.json" --domain telecom --manifest "$OUT/telecom/manifest.json" --out "$OUT/telecom/affine_tasks.json" 2>&1 | grep -E "wrote|refusing"
+$P scripts/export_affine.py --tasks "$OUT/airline/tasks_tau2.json" --domain airline --manifest "$OUT/airline/manifest.json" --reward-basis DB,COMMUNICATE --require-communicate-info --drop-held-out-compositions --out "$OUT/airline/affine_tasks.json" 2>&1 | grep -E "wrote|refusing"
+$P scripts/export_affine.py --tasks "$OUT/retail/tasks_tau2.json"  --domain retail  --manifest "$OUT/retail/manifest.json"  --reward-basis DB --drop-held-out-compositions --out "$OUT/retail/affine_tasks.json" 2>&1 | grep -E "wrote|refusing"
+$P scripts/export_affine.py --tasks "$OUT/telecom/tasks_tau2.json" --domain telecom --manifest "$OUT/telecom/manifest.json" --drop-held-out-compositions --out "$OUT/telecom/affine_tasks.json" 2>&1 | grep -E "wrote|refusing"
 echo "== packaging -> $DST"
 mkdir -p "$DST"
 for d in airline retail telecom; do

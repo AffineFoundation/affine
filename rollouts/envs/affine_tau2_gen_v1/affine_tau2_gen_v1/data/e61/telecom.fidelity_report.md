@@ -6,21 +6,21 @@
 |---|---|---|
 | n | 200 | - |
 | intents | {'mms_issue': '86 (43%)', 'mobile_data_issue': '63 (32%)', 'service_issue': '51 (26%)'} | - |
-| personas | {'Easy': '40 (20%)', 'Hard': '39 (20%)', 'Impatient': '12 (6%)', 'NonNative': '13 (6%)', 'None': '41 (20%)', 'SideRequest': '6 (3%)', 'TechSavvy': '10 (5%)', 'Terse': '14 (7%)', 'Verbose': '13 (6%)', 'WrongNumberOnce': '12 (6%)'} | - |
-| n_faults | {1: '4 (2%)', 2: '44 (22%)', 3: '46 (23%)', 4: '38 (19%)', 5: '28 (14%)', 6: '13 (6%)', 7: '10 (5%)', 8: '8 (4%)', 9: '9 (4%)'} | - |
-| expected_actions_min_med_max | (1, 4, 12) | - |
-| write_actions_min_med_max | (0, 4, 12) | - |
+| personas | {'Easy': '39 (20%)', 'Hard': '51 (26%)', 'Impatient': '17 (8%)', 'NonNative': '8 (4%)', 'None': '44 (22%)', 'SideRequest': '5 (2%)', 'TechSavvy': '6 (3%)', 'Terse': '12 (6%)', 'Verbose': '10 (5%)', 'WrongNumberOnce': '8 (4%)'} | - |
+| n_faults | {1: '21 (10%)', 2: '41 (20%)', 3: '36 (18%)', 4: '24 (12%)', 5: '30 (15%)', 6: '20 (10%)', 7: '11 (6%)', 8: '12 (6%)', 9: '5 (2%)'} | - |
+| expected_actions_min_med_max | (1, 4, 11) | - |
+| write_actions_min_med_max | (0, 4, 11) | - |
 | no_write_tasks | 35 (18%) | - |
 | unfixable | 35 (18%) | - |
 | reward_basis | {'ENV_ASSERTION|ACTION': 35, 'ENV_ASSERTION': 165} | - |
-| assertion_funcs | {'assert_can_send_mms': 86, 'assert_data_refueling_amount': 66, 'assert_mobile_data_status': 63, 'assert_internet_speed': 63, 'assert_service_status': 51, 'assert_no_overdue_bill': 34} | - |
-| init_funcs | {'set_user_info': 200, 'turn_airplane_mode_on': 106, 'turn_data_off': 87, 'set_data_usage': 84, 'set_network_mode_preference': 82, 'simulate_network_search': 80, 'unseat_sim_card': 78, 'set_user_location': 75, 'remove_app_permission': 70, 'break_apn_mms_setting': 52, 'disable_roaming': 48, 'set_wifi_calling': 48, 'turn_roaming_off': 42, 'turn_data_saver_mode_on': 40, 'turn_roaming_on': 33, 'suspend_line_for_overdue_bill': 32, 'break_vpn': 32, 'break_apn_settings': 32, 'enable_roaming': 27, 'refuel_data': 18, 'lock_sim_card': 15} | - |
+| assertion_funcs | {'assert_can_send_mms': 86, 'assert_mobile_data_status': 63, 'assert_internet_speed': 63, 'assert_data_refueling_amount': 58, 'assert_service_status': 51, 'assert_no_overdue_bill': 45} | - |
+| init_funcs | {'set_user_info': 200, 'turn_airplane_mode_on': 95, 'set_user_location': 93, 'turn_data_off': 90, 'set_data_usage': 87, 'simulate_network_search': 77, 'set_network_mode_preference': 77, 'unseat_sim_card': 75, 'remove_app_permission': 71, 'disable_roaming': 58, 'turn_roaming_off': 57, 'set_wifi_calling': 49, 'break_apn_mms_setting': 48, 'turn_data_saver_mode_on': 39, 'turn_roaming_on': 36, 'enable_roaming': 35, 'break_vpn': 33, 'break_apn_settings': 32, 'refuel_data': 29, 'suspend_line_for_overdue_bill': 19, 'lock_sim_card': 4} | - |
 | with_initialization_data | 200 | - |
 
 ## Leakage
 
 - Result: **PASS**. Identifier overlap {'phones': 0, 'ids': 0, 'emails': 0, 'imeis': 0, 'names': 0}. Held-out task-id overlap 0 (out of 114 held-out tasks).
-- Informational: 22 tasks share a (composition, persona) with tau2's full enumeration of 2285. Those are not held out, so they are allowed.
+- Informational: 30 tasks share a (composition, persona) with tau2's full enumeration of 2285. Those are not held out, so they are allowed.
 
 ## Known false-fail rates
 

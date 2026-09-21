@@ -1,7 +1,7 @@
 {
  "generator": "envs/tau2-gen/domains/telecom/gen.py",
- "generated_at": "2026-09-21T11:07:16Z",
- "repo_commit": "402292e",
+ "generated_at": "2026-09-21T13:27:47Z",
+ "repo_commit": "b8b2ef6",
  "tau2_commit": "b7ea9074c1cba482b30687fecdb5c8425fd6f619",
  "seed": 61,
  "n": 200,
@@ -13,6 +13,7 @@
   "max_faults": 9,
   "persona_mix": null,
   "no_exclude_benchmark": false,
+  "exclude_benchmark_compositions": true,
   "allow_duplicate_compositions": false,
   "bench_traces": null,
   "unfixable_rate": null,
@@ -34,9 +35,9 @@
  },
  "stats": {
   "kept": 200,
-  "duplicate_composition": 6566,
-  "excluded_benchmark_triplet": 1257,
-  "unfixable_swapped_to_fixable": 5852,
+  "excluded_benchmark_composition": 6077,
+  "duplicate_composition": 1862,
+  "unfixable_swapped_to_fixable": 5918,
   "intent_quota": {
    "mobile_data_issue": 63,
    "service_issue": 51,
@@ -50,49 +51,49 @@
   "mms_issue": 86
  },
  "persona_hist": {
-  "Easy": 40,
-  "Terse": 14,
-  "Impatient": 12,
-  "Hard": 39,
-  "None": 41,
-  "WrongNumberOnce": 12,
-  "TechSavvy": 10,
-  "Verbose": 13,
-  "SideRequest": 6,
-  "NonNative": 13
+  "Easy": 39,
+  "Terse": 12,
+  "Impatient": 17,
+  "WrongNumberOnce": 8,
+  "Hard": 51,
+  "Verbose": 10,
+  "SideRequest": 5,
+  "None": 44,
+  "NonNative": 8,
+  "TechSavvy": 6
  },
  "n_faults_hist": {
-  "1": 4,
-  "2": 44,
-  "3": 46,
-  "4": 38,
-  "5": 28,
-  "6": 13,
-  "7": 10,
-  "8": 8,
-  "9": 9
+  "1": 21,
+  "2": 41,
+  "3": 36,
+  "4": 24,
+  "5": 30,
+  "6": 20,
+  "7": 11,
+  "8": 12,
+  "9": 5
  },
  "unfixable": 35,
  "family_coverage": {
-  "sim_pin_locked": 15,
-  "sim_unseated": 78,
-  "suspension": 32,
-  "data_saver": 40,
-  "data_switch": 87,
-  "data_usage": 84,
-  "roaming": 75,
-  "vpn": 32,
-  "airplane_mode": 106,
-  "wifi_calling": 48,
-  "network_preference": 82,
-  "apn": 84,
-  "app_permission": 52
+  "sim_pin_locked": 4,
+  "sim_unseated": 75,
+  "suspension": 19,
+  "data_saver": 39,
+  "data_switch": 90,
+  "data_usage": 87,
+  "roaming": 93,
+  "vpn": 33,
+  "airplane_mode": 95,
+  "wifi_calling": 49,
+  "network_preference": 77,
+  "apn": 80,
+  "app_permission": 54
  },
  "refuel_hist": {
-  "2.0": 74,
-  "1.5": 47,
-  "0.5": 38,
-  "1.0": 41
+  "2.0": 80,
+  "0.5": 54,
+  "1.5": 38,
+  "1.0": 28
  },
  "leakage": {
   "ok": true,
@@ -104,13 +105,13 @@
    "names": []
   },
   "task_id_overlap": [],
-  "full_enumeration_id_overlap": 22,
+  "full_enumeration_id_overlap": 30,
   "gen_counts": {
-   "phones": 1091,
-   "ids": 9095,
-   "emails": 789,
-   "imeis": 1597,
-   "names": 705
+   "phones": 1040,
+   "ids": 9000,
+   "emails": 797,
+   "imeis": 1558,
+   "names": 722
   },
   "bench_counts": {
    "phones": 12,
@@ -123,5 +124,5 @@
   "full_enumeration_ids": 2285
  },
  "bench_profile_source": null,
- "task_keys_sha256": "a5701d7845899a7906a9d9cd70a6a343c675896fa4877a9a94e7d650e42f4a95"
+ "task_keys_sha256": "568d2692ae242d10c10089ae1e14be4af86f1c7475bad36c02905d848919454a"
 }

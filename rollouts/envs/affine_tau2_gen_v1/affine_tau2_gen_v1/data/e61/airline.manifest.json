@@ -1,7 +1,7 @@
 {
  "generator": "domains/airline/gen.py",
- "generated_at": "2026-09-21T11:06:20Z",
- "repo_commit": "402292e",
+ "generated_at": "2026-09-21T13:26:49Z",
+ "repo_commit": "b8b2ef6",
  "tau2_commit": "b7ea9074c1cba482b30687fecdb5c8425fd6f619",
  "seed": 61,
  "n": 400,
