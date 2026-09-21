@@ -251,6 +251,29 @@ max_price = 4.0
 image = "ubuntu_22_cuda_12"
 vllm_cuda = "cu129"
 
+# Harbor docker hosts (no model served): nebius CPU nodes, real dockerd, daemon.json address pools at boot
+[pods.prime_plans.prime-cpu96]
+gpu_type = "CPU_NODE"
+gpu_count = 1
+cloud_id = "cpu-d3_96vcpu-384gb"
+role = "docker"
+min_vcpu = 96
+max_price = 3.0
+[pods.prime_plans.prime-cpu64]
+gpu_type = "CPU_NODE"
+gpu_count = 1
+cloud_id = "cpu-d3_64vcpu-256gb"
+role = "docker"
+min_vcpu = 64
+max_price = 2.5
+[pods.prime_plans.prime-cpu48]
+gpu_type = "CPU_NODE"
+gpu_count = 1
+cloud_id = "cpu-d3_48vcpu-192gb"
+role = "docker"
+min_vcpu = 48
+max_price = 2.0
+
 [pods.plans.h200-1x]
 match = "H200"
 gpu_count = 1
