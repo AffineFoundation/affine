@@ -10,12 +10,18 @@ source "$HERE/env.sh"
 export LIUM_API_KEY="${LIUM_API_KEY:-${LIUM:-}}"; export HARBOR_BIN="${HARBOR_BIN:-$BENCH_HOME/harborenv/bin/harbor}"
 [ -n "${DAYTONA_API_KEY:-}" ] || export DAYTONA_API_KEY=$(op read --no-newline "op://Arbos/fywmj6vtq5delybw5c7a53l2qa/notesPlain" 2>/dev/null | grep -o 'dtn_[A-Za-z0-9_-]*' | head -1)
 DIGEST="$1" LABEL="$2" INTO="$BENCH_HOME/runs/$3" TAG="${4:-}"
+AGENT_TIMEOUT_S=3600; [ "$TAG" = 4h250 ] && AGENT_TIMEOUT_S=14400
 log() { echo "[swe-resume] $(date -u +%FT%TZ) $*"; }
 CELL="$INTO/king/swebench-verified${TAG:+@$TAG}__t0"
 [ -d "$CELL/harbor" ] || { log "$LABEL: no harbor job under $CELL"; exit 2; }
 POD=""; for PLAN in ${SWE_PLANS:-h200-2x b200-2x h200-1x b200-1x pro6000-1x}; do POD=$("$PY" "$HERE/kingpod.py" rent --plan "$PLAN" --digest "$DIGEST" 2>/dev/null | tail -1) && [ -n "$POD" ] && break; POD=""; done
 [ -n "$POD" ] || { log "$LABEL: no stock"; exit 2; }
 trap '"$PY" "$HERE/kingpod.py" release "$POD" >/dev/null 2>&1' EXIT
+# lifetime for the pod reaper from the job's own budget: trials x agent budget / in flight, x1.3 slack, + 2 h
+# (2026-09-21: 27-h @4h250 jobs lost their serving box at kingpod's 14-h default -> NetworkConnectionError x 270)
+JOB_H=$(python3 -c "import math; print(max(14, math.ceil(500 * ${AGENT_TIMEOUT_S:-3600} / ${SWE_INFLIGHT_EST:-64} / 3600 * 1.3) + 2))")
+"$PY" -c "import sys; sys.path.insert(0, '$REPO/ops/pods'); import registry; registry.register('$POD', expected_hours=$JOB_H, source='explicit', meta={'job': 'swebench ${TAG:-1h} rerun/resume'})" 2>/dev/null || true
+log "pod registered for $JOB_H h (budget ${AGENT_TIMEOUT_S:-3600}s x 500 / ${SWE_INFLIGHT_EST:-64} in flight)"
 "$PY" "$HERE/kingpod.py" wait "$POD" >/dev/null || { log "pod never served"; exit 3; }
 podf() { "$PY" -c 'import json,sys; m=json.load(open("'"$HERE"'/state/pods.json"))[sys.argv[1]]; print(m[sys.argv[2]])' "$1" "$2"; }
 export BENCH_API_KEY=$(podf "$POD" key)
@@ -42,6 +48,22 @@ for fp in [job / "config.json", job / "lock.json", *job.glob("*/config.json"), *
     if patch(c): fp.write_text(json.dumps(c, indent=2)); n += 1
 print(f"[swe-resume] {n} harbor config/lock files re-pointed at {url}")
 PY
+# infra-errored trials (Daytona NetworkConnectionError / provisioning) are "finished" for harbor and would not
+# re-run: drop their result.json so `job resume` picks them up again (RETRY_INFRA=0 keeps them)
+if [ "${RETRY_INFRA:-1}" = 1 ]; then
+  "$PY" - "$CELL/harbor" <<'PY'
+import json, sys
+from pathlib import Path
+n = 0
+for rp in Path(sys.argv[1]).glob("*/result.json"):
+    try: r = json.loads(rp.read_text())
+    except ValueError: continue
+    et = ((r.get("exception_info") or {}).get("exception_type") or "")
+    if et in ("NetworkConnectionError", "SandboxError", "ApiRateLimitError") or "Provision" in et:
+        rp.rename(rp.with_suffix(".json.infra")); n += 1
+print(f"[swe-resume] {n} infra-errored trials queued for re-run")
+PY
+fi
 log "$LABEL: $POD ($REPL replica(s)) -> resuming $CELL at $((64*REPL)) in flight"
 "$PY" "$HERE/harbor_cell.py" resume --env swebench-verified ${TAG:+--budget-tag $TAG} --model "$(podf "$POD" served)" --model-label king \
   --model-url "$(podf "$POD" base_url)" --model-key-env BENCH_API_KEY --out "$INTO/king" --concurrency $((64*REPL)) --agent-timeout-s 3600
