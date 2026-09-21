@@ -36,9 +36,22 @@ ROLE="${CLONE_ROLE:-shard}"
 [[ "$ROLE" == shard || "$ROLE" == backfill ]] || { echo "CLONE_ROLE must be shard or backfill" >&2; exit 2; }
 [[ "$ROLE" == backfill && "$SHARD" != 0/1 ]] && { echo "CLONE_ROLE=backfill takes shard 0/1 (the driver sees every task)" >&2; exit 2; }
 
-SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
+# no host-key pinning: Lium reuses host:port across pods and re-keys a pod on
+# every container restart; a stale known_hosts entry is what made step 5 exit
+# 255 on three clones (2026-09-19/21)
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
 src() { ssh "${SSH_OPTS[@]}" -p "$SRC_PORT" "root@$SRC_HOST" "$@"; }
-dst() { ssh "${SSH_OPTS[@]}" -p "$DST_PORT" "root@$DST_HOST" "$@"; }
+dst() {
+  # ssh right after the big rsync has twice come back 255 (connection dropped
+  # by the pod's sshd); retry a couple of times before giving up
+  local i rc
+  for i in 1 2 3; do
+    ssh "${SSH_OPTS[@]}" -p "$DST_PORT" "root@$DST_HOST" "$@"; rc=$?
+    [[ $rc -ne 255 ]] && return $rc
+    echo "dst ssh rc=255 (attempt $i); retrying in 20 s" >&2; sleep 20
+  done
+  return $rc
+}
 
 echo "== [1/5] destination sanity ($DST_HOST:$DST_PORT)"
 dst 'set -e
@@ -117,14 +130,18 @@ if [ "$ROLE" = backfill ]; then
   # The driver-pod scripts live in this repo, not on the SRC fleet pod the
   # rsync copied from: ship them from here.
   HERE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  scp "${SSH_OPTS[@]}" -P "$DST_PORT" "$HERE_DIR/run_backfill.sh" "$HERE_DIR/backfill_health.py" \
-      "$HERE_DIR/backfill_post_start.sh" "root@$DST_HOST:/root/rollouts/scripts/"
+  for i in 1 2 3; do
+    scp "${SSH_OPTS[@]}" -P "$DST_PORT" "$HERE_DIR/run_backfill.sh" "$HERE_DIR/backfill_health.py" \
+        "$HERE_DIR/backfill_post_start.sh" "$HERE_DIR/backfill_relaunch.sh" "root@$DST_HOST:/root/rollouts/scripts/" && break
+    echo "scp of the driver scripts failed (attempt $i); retrying in 20 s" >&2; sleep 20
+  done
   dst 'set -e
     pkill -f "^bash /root/rollouts/bootstrap.sh$" 2>/dev/null || true
     pkill -f "^/root/venv/bin/python -m rollouts.run" 2>/dev/null || true
     rm -rf /root/rollouts-data/runs
     install -m 0755 /root/rollouts/scripts/run_backfill.sh /root/rollouts/run_backfill.sh
-    chmod +x /root/rollouts/scripts/backfill_health.py /root/rollouts/scripts/backfill_post_start.sh
+    chmod +x /root/rollouts/scripts/backfill_health.py /root/rollouts/scripts/backfill_post_start.sh /root/rollouts/scripts/backfill_relaunch.sh
+    hostname > /root/rollouts/.pod_name 2>/dev/null || true
     install -m 0755 /root/rollouts/scripts/backfill_post_start.sh /post_start.sh
     pkill -f backfill_health.py 2>/dev/null || true
     bash /post_start.sh
