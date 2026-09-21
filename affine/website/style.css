@@ -2030,6 +2030,7 @@ table.data-table.kings td.running { color: var(--color-warn); text-align: center
 table.data-table.kings .mk { font-size: 8.5px; margin-left: 2px; vertical-align: super; line-height: 0; }
 table.data-table.kings .mk.cap { color: var(--color-warn); }
 table.data-table.kings .mk.judge { color: var(--color-accent); }
+table.data-table.kings .mk.trained { color: var(--color-fg-3); }
 table.data-table.kings th.advisory { color: var(--color-fg-4); }
 table.data-table.kings th.sep, table.data-table.kings td.sep { border-left: 1px solid var(--color-border-hover); }
 
