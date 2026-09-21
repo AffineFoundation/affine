@@ -63,6 +63,8 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE.parent / "teacher-swarm"))
 
 import lium_api  # noqa: E402
+sys.path.insert(0, str(HERE.parents[1] / "ops" / "health"))
+import podheal  # noqa: E402
 
 sys.path.insert(0, str(HERE.parent / "pods"))
 import registry as pod_registry  # noqa: E402
@@ -774,6 +776,23 @@ class Controller:
                 log(f"{name}: booting {int(boot_age / 60)} min ({last or 'no log yet'})")
             return False
         dark = now - mem.get("last_ok", mem["ready_at"])
+        if dark > 300 and now - mem.get("reboot_at", 0) > 2 * 3600:
+            # same failure class as the driver pod: container back without
+            # its volume -> sshd refuses every key. Reboot once (2 h throttle)
+            # and re-run the bootstrap (weights persist on /root) before the
+            # dark -> remove -> re-rent path (45 min gap) fires.
+            ssh = lium_api.parse_ssh(pod)
+            sstate = podheal.ssh_state(*ssh) if ssh else "unreachable"
+            dsec = podheal.denied_for(name, sstate == "denied", now)
+            if sstate == "denied" and dsec >= 10 * 60:
+                res = podheal.maybe_reboot(name, listed_running=True, denied_s=max(dsec, podheal.DENIED_MIN * 60),
+                                           reason="king box dark + ssh publickey denied", now=now)
+                if res:
+                    mem["reboot_at"] = now
+                    mem.pop("boot_started", None)     # advance() re-runs bootstrap_king.sh
+                    mem.pop("ready_at", None)
+                    self.notify(f"{name}: dark {int(dark / 60)} min, ssh denied {int(dsec / 60)} min — {res}; re-bootstrapping")
+                    return False
         if dark > cfg.unreachable_grace_min * 60:
             self.remove(name, f"dark {int(dark / 60)} min after ready")
         elif int(dark) % 300 < 60:
@@ -892,12 +911,23 @@ class Controller:
             if unreachable:
                 since = m.setdefault("ssh_fail_since", now)
                 log(f"watchdog {name}: ssh failed ({int((now - since) / 60)} min): {detail}")
+                # volume-unmounted container: sshd answers, every key refused,
+                # Lium lists RUNNING -> lium reboot (podheal: > 20 min, 2 h throttle);
+                # the supervisor relaunch below picks the pod up afterwards
+                denied = "Permission denied" in detail
+                dsec = podheal.denied_for(name, denied, now)
+                if denied:
+                    res = podheal.maybe_reboot(name, listed_running=True, denied_s=dsec,
+                                               reason="datagen watchdog: ssh publickey denied", now=now)
+                    if res:
+                        self.notify(f"datagen pod {name}: ssh denied {int(dsec / 60)} min while RUNNING — {res}")
                 if (now - since >= cfg.watchdog_relaunch_min * 60
                         and now - m.get("alerted_at", 0) > 3600):
                     m["alerted_at"] = now
-                    self.notify(f"datagen pod {name}: ssh unreachable for "
+                    self.notify(f"datagen pod {name}: ssh {'denied' if denied else 'unreachable'} for "
                                 f"{int((now - since) / 60)} min ({detail[:60]})")
                 continue
+            podheal.denied_for(name, False, now)
             if m.pop("ssh_fail_since", None):
                 self.notify(f"datagen pod {name}: ssh reachable again")
             sup, loop = "sup" in p.stdout.split(), "loop" in p.stdout.split()
@@ -945,7 +975,8 @@ class Controller:
                                 f"/root/logs/rollouts.log")
                 continue
             try:
-                r = ssh_run(*ssh, "cd /root/rollouts && setsid nohup bash "
+                r = ssh_run(*ssh, "install -m 0755 /root/rollouts/scripts/pod_post_start.sh /post_start.sh 2>/dev/null; "
+                                  "cd /root/rollouts && setsid nohup bash "
                                   "/root/rollouts/bootstrap.sh >> "
                                   "/root/logs/rollouts_bootstrap.nohup 2>&1 < /dev/null & "
                                   "echo relaunched", timeout=30)

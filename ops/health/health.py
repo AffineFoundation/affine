@@ -43,6 +43,10 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 import common  # noqa: E402
 import contract_compat  # noqa: E402
+import pagefile  # noqa: E402
+import podheal  # noqa: E402
+sys.path.insert(0, str(REPO / "ops" / "teacher-swarm"))
+import lium_api  # noqa: E402
 
 TAG = "pipeline-health"
 
@@ -517,6 +521,28 @@ class Monitor:
             except (requests.RequestException, ValueError) as e:
                 bf_detail = f"unreachable ({type(e).__name__})"
             down_for = self.since("backfill_pod_down", not bf_ok, now)
+            if not bf_ok and ptr.get("ssh") and not self.dry_run:
+                # Volume-unmounted container (2026-09-21): sshd answers but
+                # refuses every key. > 20 min of that while Lium lists the
+                # pod RUNNING -> one `lium reboot` (throttled 2 h), then the
+                # repair below re-runs the hook + relaunches the drivers.
+                user_host, _, port = ptr["ssh"].rpartition(":")
+                sstate = podheal.ssh_state(user_host.split("@")[-1], int(port))
+                dsec = podheal.denied_for(ptr.get("pod", "backfill"), sstate == "denied", now)
+                bf_detail += f"; ssh {sstate}" + (f" for {common.fmt_age(dsec)}" if dsec else "")
+                if sstate == "denied":
+                    listed = False
+                    try:
+                        listed = any(lium_api.pod_name(p) == ptr.get("pod")
+                                     and str(p.get("status", "")).upper() == "RUNNING"
+                                     for p in (lium_api.pods(lium_api.session()) or []))
+                    except Exception:  # noqa: BLE001 - listing failure = no reboot
+                        pass
+                    res = podheal.maybe_reboot(ptr.get("pod", ""), listed_running=listed, denied_s=dsec,
+                                               reason="health down + ssh publickey denied", now=now)
+                    if res:
+                        bf_detail += f"; AUTO-REBOOT: {res}"
+                        self.post(f"backfill_pod: {ptr.get('pod')} ssh denied {common.fmt_age(dsec)} while RUNNING — {res}")
             if not bf_ok and ptr.get("ssh") and not self.dry_run \
                     and now - float(self.own.get("backfill_repair_at", 0)) > 600:
                 # Self-heal (2026-09-21): a Lium container restart wipes
@@ -530,6 +556,7 @@ class Monitor:
                                         "-o", "StrictHostKeyChecking=accept-new", "-p", port, user_host,
                                         "bash /root/rollouts/scripts/backfill_post_start.sh 2>&1 | tail -1; "
                                         "install -m 0755 /root/rollouts/scripts/backfill_post_start.sh /post_start.sh 2>/dev/null; "
+                                        "sleep 20; bash /root/rollouts/scripts/backfill_relaunch.sh 2>&1 | tail -3; "
                                         "mount | grep -q ' /root ' && echo ROOT_MOUNTED || echo ROOT_NOT_MOUNTED"],
                                        capture_output=True, text=True, timeout=60)
                     bf_detail += f"; repair over ssh: rc {r.returncode} {(r.stdout or r.stderr).strip()[-80:]}"
@@ -746,6 +773,19 @@ class Monitor:
         self.own["active"] = {k: now for k in active_now}
         for line in new_lines:
             self.post(line)
+        # every PAGE also lands on disk (affine/state/health/PAGE-*.txt +
+        # pages.md ledger) — the Discord channel has no reader at night
+        for c in pages:
+            if f"PAGE {c.key}: {c.detail}" in new_lines:
+                try:
+                    pagefile.page(c.key, c.detail)
+                except OSError:
+                    log(f"pagefile write failed for {c.key}")
+        for k in recovered:
+            try:
+                pagefile.resolve(k)
+            except OSError:
+                pass
         if recovered and self.cfg.recovery_lines:
             self.post("recovered: " + ", ".join(recovered))
         # hourly summary

@@ -13,7 +13,8 @@ if pgrep -f "^python3 /root/rollouts/scripts/backfill_health.py" >/dev/null 2>&1
 fi
 nohup bash -c '
   for i in $(seq 1 180); do docker info >/dev/null 2>&1 && break; sleep 5; done
-  echo "[post_start] $(date -u) docker ready after ${i}x5s; starting backfill health endpoint"
+  echo "[post_start] $(date -u) docker ready after ${i}x5s; relaunching drivers, starting backfill health endpoint"
+  bash /root/rollouts/scripts/backfill_relaunch.sh 2>&1 | sed "s/^/[post_start] /"
   export BACKFILL_POD_NAME="$(cat /root/rollouts/.pod_name 2>/dev/null)"
   exec python3 /root/rollouts/scripts/backfill_health.py
 ' >> /root/logs/backfill_health.log 2>&1 < /dev/null &
