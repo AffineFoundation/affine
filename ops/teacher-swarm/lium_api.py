@@ -9,12 +9,25 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 import requests
 
 BASE = os.environ.get("LIUM_BASE_URL", "https://lium.io/api")
+
+# Every rent / rm through this module is recorded in the pod registry
+# (ops/pods/registry.py) so the reaper knows the pod's owner and lifetime.
+# The registry is optional at import time: a missing module never breaks a
+# rent (the reaper then treats the pod as unregistered and pages).
+_OPS_PODS = Path(__file__).resolve().parents[1] / "pods"
+if str(_OPS_PODS) not in sys.path:
+    sys.path.insert(0, str(_OPS_PODS))
+try:
+    import registry as _pod_registry
+except ImportError:  # pragma: no cover - registry not deployed next to us
+    _pod_registry = None
 
 
 def _api_key() -> str:
@@ -64,8 +77,17 @@ def get_json(sess: requests.Session, path: str, params: dict | None = None,
 
 
 def executors(sess: requests.Session) -> list[dict]:
-    data = get_json(sess, "/executors", params={"size": 2000})
+    # 2026-09-17: Lium started answering `size=2000` with HTTP 422 (validation
+    # error); the dict came back here, this returned [] and the manager logged
+    # "0 executors" for every type for 45 min with zero teacher replicas. The
+    # unparameterized listing is complete (~105 rows); try the paginated form
+    # first and fall back to it, and never mistake an error body for "empty".
+    data = get_json(sess, "/executors", params={"page_size": 2000})
     if not isinstance(data, list):
+        data = get_json(sess, "/executors")
+    if not isinstance(data, list):
+        print(f"[lium_api] /executors did not return a list: {str(data)[:200]}",
+              flush=True)
         return []
     return [n for n in data
             if isinstance(n, dict) and n.get("id")
@@ -108,6 +130,9 @@ def rent(sess: requests.Session, executor_id: str, pod_name: str,
               flush=True)
         return None
     # 2xx means the pod is being created even when the body carries no id.
+    if _pod_registry is not None:
+        _pod_registry.auto_register_rent(pod_name, ttl_hours=ttl_hours,
+                                         gpu_count=gpu_count, executor_id=executor_id)
     try:
         data = r.json()
         return data.get("id") or (data.get("pod") or {}).get("id") or "?"
@@ -121,6 +146,8 @@ def remove(pod_name: str, prefix: str) -> bool:
         raise ValueError(f"refuse to rm non-swarm pod {pod_name!r}")
     p = subprocess.run(["lium", "rm", pod_name, "-y"],
                        capture_output=True, text=True, timeout=180)
+    if _pod_registry is not None:
+        _pod_registry.auto_release(pod_name, p.returncode == 0)
     return p.returncode == 0
 
 

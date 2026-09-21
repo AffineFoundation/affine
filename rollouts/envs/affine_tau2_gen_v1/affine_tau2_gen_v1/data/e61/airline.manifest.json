@@ -1,0 +1,117 @@
+{
+ "generator": "domains/airline/gen.py",
+ "generated_at": "2026-09-21T13:26:49Z",
+ "repo_commit": "b8b2ef6",
+ "tau2_commit": "b7ea9074c1cba482b30687fecdb5c8425fd6f619",
+ "seed": 61,
+ "n": 400,
+ "args": {
+  "n": 400,
+  "seed": 61,
+  "out": "/home/const/tau2gen/tau2-gen/out/e61/airline",
+  "persona_mix": null,
+  "refuse_share": 0.48,
+  "unknown_id_share": 0.1,
+  "verbose": false
+ },
+ "persona_mix": {
+  "None": 0.5,
+  "Easy": 0.08,
+  "Hard": 0.08,
+  "Verbose": 0.06,
+  "Terse": 0.06,
+  "NonNative": 0.06,
+  "Impatient": 0.06,
+  "WrongNumberOnce": 0.04,
+  "SideRequest": 0.03,
+  "TechSavvy": 0.03
+ },
+ "stats": {
+  "kept": 400
+ },
+ "case_hist": {
+  "cancel_denied": 41,
+  "cancel_within_24h": 5,
+  "change_cabin": 7,
+  "compensation_denied": 25,
+  "composed": 114,
+  "cancel_two_reservations": 12,
+  "change_flights_denied_basic_economy": 41,
+  "book": 7,
+  "baggage_remove_denied": 20,
+  "cancel_denied_flown": 25,
+  "insurance_add_denied": 20,
+  "cancel_unknown_reservation": 9,
+  "cancel_insurance_health": 5,
+  "passenger_count_denied": 20,
+  "baggage_add": 6,
+  "upgrade_then_baggage": 6,
+  "change_flights": 9,
+  "cancel_airline_cancelled": 5,
+  "compensation_cancelled_flight": 4,
+  "cancel_then_compensation": 5,
+  "cancel_business": 5,
+  "change_flights_then_baggage": 5,
+  "passenger_change": 4
+ },
+ "group_hist": {
+  "refuse": 192,
+  "cancel": 32,
+  "modify": 26,
+  "composite": 139,
+  "book": 7,
+  "compensation": 4
+ },
+ "persona_hist": {
+  "Easy": 37,
+  "None": 210,
+  "TechSavvy": 11,
+  "Impatient": 18,
+  "Verbose": 30,
+  "NonNative": 20,
+  "Terse": 23,
+  "Hard": 24,
+  "WrongNumberOnce": 16,
+  "SideRequest": 11
+ },
+ "no_write_tasks": 192,
+ "unknown_id_tasks": 23,
+ "records_per_user_median": 3,
+ "write_names": {
+  "cancel_reservation": 65,
+  "update_reservation_flights": 79,
+  "update_reservation_baggages": 43,
+  "book_reservation": 7,
+  "update_reservation_passengers": 27,
+  "send_certificate": 38
+ },
+ "median_delta_bytes": 4550,
+ "leakage": {
+  "ok": true,
+  "overlap": {
+   "phones": [],
+   "ids": [],
+   "emails": [],
+   "imeis": [],
+   "names": []
+  },
+  "task_id_overlap": [],
+  "full_enumeration_id_overlap": 0,
+  "gen_counts": {
+   "phones": 3,
+   "ids": 2963,
+   "emails": 400,
+   "imeis": 0,
+   "names": 1136
+  },
+  "bench_counts": {
+   "phones": 0,
+   "ids": 3604,
+   "emails": 500,
+   "imeis": 0,
+   "names": 834
+  },
+  "heldout_task_ids": 50,
+  "full_enumeration_ids": 50
+ }
+}

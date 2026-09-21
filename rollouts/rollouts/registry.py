@@ -13,12 +13,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from affine import dialects
+from rollouts import loopguard
 from rollouts.schema import Endpoint, Policy
 
 RUNNERS = ("verifiers", "verifiers_chat", "mini_swe")
+KING_POLICY_PREFIX = "king_"
 CATALOG_KINDS = ("hf", "hf_swebench", "swesmith", "terminal_lego",
                  "terminal_bench_2", "harbor_swe", "nl2repobench",
-                 "general_agent")
+                 "general_agent", "procedural", "tmax", "longcot", "autobench",
+                 "rgym", "rcore", "oolong", "mrcr", "when2call", "tau2", "tau2_synth", "tau2_kb", "tau2_gen")
 SELECT_MODES = ("filter_fn", "tasks")
 
 _PKG_DIR = Path(__file__).resolve().parent
@@ -33,6 +36,10 @@ class Source:
     policies: tuple[str, ...]
     taskset_id: str = ""
     dataset: str = ""
+    # HF dataset config name (`load_dataset(dataset, dataset_config, ...)`)
+    # and revision pin; empty = the default config / latest revision.
+    dataset_config: str = ""
+    dataset_revision: str = ""
     split: str = "train"
     uid_field: str = "instance_id"
     row_meta: str = ""
@@ -52,6 +59,26 @@ class Source:
     # Bucket names are per group; a second bucketed source in the same
     # group starts its range here so the two do not collide.
     strata_offset: int = 0
+    # catalog = "procedural": the pool is the index range [0, procedural_uids)
+    # of a seeded generator; catalog.PROCEDURAL_META[row_meta] names each
+    # index the way the taskset does, so no taskset import is needed here.
+    procedural_uids: int = 0
+    # Per-source ceilings on the batch (tasks per eval) and on concurrent
+    # containers, below the pod-wide ROLLOUTS_BATCH_SIZE / MAX_CONTAINERS.
+    # 0 = the pod-wide value. For heavy sandboxes (tmax compiler / fuzzing
+    # tasks at 2 GB each, Lean compiles, EOG service containers): on
+    # 2026-09-12 datagen-4 went ssh-dark under 24 such containers on top of
+    # a production batch.
+    max_batch: int = 0
+    max_concurrency: int = 0
+    # King-seat floor (2026-09-14, lever 1 for king_tooluse): the scheduler
+    # takes a king cycle on this source whenever the CURRENT king's rollouts
+    # here over the last hour fall below this rate, ahead of the shortfall
+    # ranking. Turn-based targets starve one-turn sources (a chat source
+    # at 1 turn/rollout meets a 0.7 % turn target with one batch a day),
+    # and a source where an earlier king left thousands of turns ranks
+    # below zero for every later king. 0 = no floor.
+    king_rollouts_per_hour: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -78,6 +105,10 @@ class Registry:
 
 def _load_policies(path: Path) -> dict[str, Policy]:
     raw = tomllib.loads(path.read_text())
+    # [pricing.<endpoint name>] in_per_m / out_per_m / cached_in_per_m ($ per
+    # 1M tokens) is attached to every endpoint of that name (one table for
+    # the 17 engy blocks).
+    pricing = {name: p for name, p in (raw.get("pricing") or {}).items() if isinstance(p, dict)}
     policies: dict[str, Policy] = {}
     for pid, cfg in raw.get("policy", {}).items():
         endpoints = []
@@ -90,10 +121,14 @@ def _load_policies(path: Path) -> dict[str, Policy]:
             if not (e.get("base_url") or base_url_env):
                 raise ValueError(f"policy {pid!r} endpoint {e.get('name')!r}: "
                                  "needs `base_url` or `base_url_env`")
+            price = pricing.get(e["name"], {})
             endpoints.append(Endpoint(
                 name=e["name"], model=str(e.get("model", "")),
                 base_url=str(e.get("base_url", "")), key_env=e["key_env"],
                 litellm_model=e.get("litellm_model", ""),
+                price_in_per_m=float(price.get("in_per_m", 0.0)),
+                price_out_per_m=float(price.get("out_per_m", 0.0)),
+                price_cached_per_m=float(price.get("cached_in_per_m", 0.0)),
                 model_env=model_env, base_url_env=base_url_env))
         endpoints = tuple(endpoints)
         if not endpoints:
@@ -103,11 +138,19 @@ def _load_policies(path: Path) -> dict[str, Policy]:
             raise ValueError(
                 f"policy {pid!r}: action_kind {action_kind!r} is not a "
                 f"registered dialect ({sorted(dialects.DIALECTS)})")
+        # Loop guard default: on for the king seat, off for everyone else
+        # (rollouts.loopguard). An explicit `loop_guard_repeats` wins; 0 = off.
+        default_repeats = (loopguard.DEFAULT_KING_REPEATS
+                           if pid.startswith(KING_POLICY_PREFIX) else 0)
+        repeats = int(cfg.get("loop_guard_repeats", default_repeats))
+        if repeats < 0:
+            raise ValueError(f"policy {pid!r}: loop_guard_repeats must be >= 0")
         policies[pid] = Policy(
             id=pid, harness=cfg["harness"], endpoints=endpoints,
             sampling=cfg.get("sampling", {}),
             share=float(cfg.get("share", 1.0)),
-            action_kind=action_kind)
+            action_kind=action_kind,
+            loop_guard_repeats=repeats)
     if not policies:
         raise ValueError(f"no policies defined in {path}")
     return policies
@@ -138,6 +181,8 @@ def _load_sources(path: Path, policies: dict[str, Policy],
             policies=pids,
             taskset_id=cfg.get("taskset_id", ""),
             dataset=cfg.get("dataset", ""),
+            dataset_config=cfg.get("dataset_config", ""),
+            dataset_revision=cfg.get("dataset_revision", ""),
             split=cfg.get("split", "train"),
             uid_field=cfg.get("uid_field", "instance_id"),
             row_meta=cfg.get("row_meta", ""),
@@ -150,6 +195,10 @@ def _load_sources(path: Path, policies: dict[str, Policy],
             extra_flags=tuple(cfg.get("extra_flags", ())),
             strata_buckets=int(cfg.get("strata_buckets", 0)),
             strata_offset=int(cfg.get("strata_offset", 0)),
+            procedural_uids=int(cfg.get("procedural_uids", 0)),
+            max_batch=int(cfg.get("max_batch", 0)),
+            max_concurrency=int(cfg.get("max_concurrency", 0)),
+            king_rollouts_per_hour=float(cfg.get("king_rollouts_per_hour", 0.0)),
         )
         if src.group not in mix:
             raise ValueError(f"source {name!r} group {src.group!r} missing "

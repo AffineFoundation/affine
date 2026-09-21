@@ -31,7 +31,16 @@ evalsrv package under `affine/`.
 
 ---
 
-## 2. Frozen production scoring — min(R,G) v5: centered Reason + banded Grounding + δ + length floor + B gate (2026-08-27, `weight_version_key = 10`, genesis reset)
+## 2. Frozen production scoring — sd-meter min(z_R, typ_c, z_A) since wvk 22 (2026-09-18); min(R,G) v5 below is the wvk 10–21 rule
+
+**Live rule since wvk 22 (2026-09-18):** `score_mode = "sd_min_rga"`, `n_turns =
+1000` — turn = min(z_R, typ_c, z_A) in teacher-sd units (definition, knobs and
+calibration in §4 under `weight_version_key = 22`; module
+`affine/evalsrv/sdmeter.py`). R below is still the R leg; G (the band) is
+replaced by content-token typicality; the A leg (summed) is live. Gates
+(thought-length floor, B licence, protocol probe) unchanged.
+
+### History — min(R,G) v5 (wvk 10–21): centered Reason + banded Grounding + δ + length floor + B gate (2026-08-27, `weight_version_key = 10`, genesis reset)
 
 Implemented in `affine/affine/score.py` (research twin `research/harness/score.py`,
 which also keeps v4 under `turn_reason` / `score_mode="reason"` and v2 under
@@ -118,10 +127,61 @@ legacy drop-from-pairing path (210/210 checked).
   two live miners and raised the paired SE 0.00057→0.00086, turning this
   crown's z from +3.5 to +0.5; (iii) **per-byte A rewards short actions
   ~10×** (king short 0.021 vs long 0.002; challenger 0.019 vs 0.0025) —
-  the fence bytes dominate a short span — which is the opposite of the
-  directive's intent. Redesign candidates: score the dialect's action
-  *body* only (drop fence bytes via `affine/dialects.py`), or a
-  non-per-byte normalization; re-probe before any flip.
+ the fence bytes dominate a short span — which is the opposite of the
+ directive's intent.
+ **Redesign staged 2026-09-10 (`research/results/v6_action_leg_norm.txt`,
+ offline re-normalization of the same 1,222-turn echoes):** the summed
+ lift of the teacher's own actions is `S = 0.61 + 0.00007·len` nats
+ (Spearman(S, len) = +0.05) — a thought lifts an action by a near-constant
+ ~0.6 nats concentrated on its decision tokens, so dividing by the real
+ length *was* the length bias, and a body-only/fence-subtracted proxy
+ makes it worse (ratio 11× → 30×). Fix: `b_i = S_i / action_norm_bytes`
+ (fixed byte count, new `[duel].action_norm_bytes = 128`, inert under
+ `min_rg`; pairs now carry `n_bytes_ya`). At 128: short/long ratio 0.77,
+ `ls -la` negative on 89 %, A binds 37 % (R 40 / G 23), paired z on the
+ probed duel +0.48 → +2.32 (min(R,G) alone +3.53; L0=192 gives +2.93 but
+ A binds more as it shrinks toward 0). Teacher-own `A<0` stays ~30 % under
+ every normalization (refs disagree by 1.5 nats median; symmetric noise).
+ `v6_action_leg_probe.py` now reports both forms.
+ **Isomorphism check before any flip (2026-09-10, same day):**
+ (a) `research/results/v6_bench_renorm.txt` — the kings' real bench steps
+ (1,348 + 1,600 steps, reigns 0–5) re-scored with fixed-byte A: length
+ bias gone on-bench (5.4× → 0.90); A alone sees repeat steps (z +3.0)
+ but `min(R,G,A)` does not (z −0.3) because A's large negatives (~30 %
+ of steps, refs disagree) dominate the min; a downside floor
+ `max(A, −0.01)` recovers it (bench repeat z +1.9; duel-probe z +2.32 →
+ +3.94 with SE 0.00053 < min(R,G)'s 0.00057). Run-outcome AUC is
+ untestable there (7 mixed tasks, sign flips between step samples).
+ A_fixed rises monotonically over reigns 0→5 while their bench was
+ flat/down — RT-7 shape. (b) `research/results/v6_action_leg_panel.txt`
+ (`v6_action_leg_panel.py`, 11 crown-chain duels × 400 turns re-echoed
+ on the swarm, both sides benched on `swe_rebench_lite_300`): the rules
+ make the same crown decisions (10/11 identical; `chal-00169` differs on
+ the subsample only), Spearman(margin, Δbench) ≈ 0 for every rule
+ (min(R,G) +0.21, A +0.01, A floor 0.01 +0.14; n=11 CI ≈ ±0.6), and the
+ per-duel A difference agrees with the bench sign on 3/7 nonzero moves
+ (the three large moves ≥ 0.08 all agree, p = 0.125). Caveat on the
+ bench itself: `swe_rebench_lite_300` is the pinned **25-task** panel at a
+ 300-step budget (not 300 tasks) → SE ≈ 0.10 per model, Δbench SE ≈ 0.14;
+ only moves ≥ 0.2 are clear. **The panel is winners-only, so it cannot
+ discriminate rules.** The decisive test needs benched LOSERS.
+ **Step 1 done 2026-09-10 (`research/scripts/v6_loser_panel.py` →
+ `research/results/v6_loser_panel.{txt,json}`):** 12 rejected challengers,
+ 12 distinct hotkeys, all Sep 9–10 (schema-3 D, kings 4f7dea97 0.56 /
+ 93b1f299 0.60 / 0ce59769 0.68), all weights verified fetchable
+ (private R2), stratified by min(R,G) margin: near_miss 3 (+0.0011…
+ +0.0018, z 1.4–2.4), tie 3 (−0.0010…−0.0023), mid 3 (−0.0034…−0.0038),
+ far 3 (−0.0129…−0.0257; B pass ≥ 0.45, forfeit < 0.15). Launched the same
+ day: the 12 benches sequentially on the always-on bench pod via
+ `affine/scripts/bench_run.py --label loser-<id>` (~0.3–1 h each; rows land
+ in `bench_history.jsonl` / `benches/index.jsonl` with hotkey ""), and the
+ A echoes for their 12 duels (`v6_action_leg_panel.py --records … --out
+ research/results/v6_action_leg_losers`). When both finish, re-run the
+ panel script with `--resume` to fold the new bench scores into the
+ report, then compute Spearman(margin, Δbench) over winners + losers
+ (n = 23). Until then A is not shown isomorphic with performance; the
+ floor is the recommended form if it ships (needs a staged `action_floor`
+ knob, not yet added).
   `ops/v6/v6_toml_edits.py --forfeit-only` flips the floor alone.
 - **Forfeit floor** (`forfeit_turn_score = -0.1`): a turn with no parseable
   action scores the floor instead of being dropped from pairing
@@ -234,6 +294,67 @@ unchanged.**
   2026-09-07 (through `chal-00359`) drained, projected 2026-09-09 — met.
   llms.txt "Upcoming changes" → "Fork history: wvk 13".
 
+### v9: window-best crown — LIVE 2026-09-12 17:01 UTC (wvk 14→15)
+Operator directive 2026-09-12 16:39 UTC (Jacob Steeves: "best positive
+margin of the last 12 hours"; confirmed 16:43 UTC "Yes I want to make this
+update … implement the full design and push the updated code"). It
+superseded, the same afternoon, the decaying-δ proposal approved at 15:27
+(`MarginSchedule` stays in code, `min_margin_mode = "fixed"`, never
+flipped). Contract (`[duel]`): `crown_mode = "window_best"`,
+`crown_window_blocks = 3600` (12 h at 12 s/block; window id =
+`decision_block // 3600`, aligned on the block number),
+`crown_confirm_slice = true`, `crown_confirm_max = 2`,
+`crown_one_entry_per_hotkey = true`. Rule: the king is FROZEN for a
+window; every challenger dispatched inside window N duels window N's king
+(a duel that crosses the boundary is still N's candidate — the close waits
+for it); at the close the verdicts with a finite margin > 0 and no gate
+rejection are ranked by margin (ties: higher z, earlier id), one per
+hotkey; the best gets ONE fresh 1,300-turn slice vs the frozen king (the
+near-miss draw: seed `block_hash ‖ hotkey ‖ "|slice<k>"`, k = the number
+of slices its duel scored, turns disjoint) and is crowned iff the exact
+pooled margin over both samples is > 0 (`score.pooled_margin_stats`);
+else the next-best, up to 2; nobody confirms → king stays. The
+confirmation runs at the start of N+1 before N+1's first duel and is not
+an N+1 verdict. `max(k_sigma·SE, δ)` + gates are still computed and
+stamped (`duel_rule_wins`) but do not decide; `challenger_wins` is false
+on every duel row. Reign chain / payouts unchanged. Code: PR #16 branch
+(`score.py`: `window_id_of`, `window_candidate_reason`,
+`rank_window_candidates`, `pooled_margin_stats`; `validator.py`:
+`_stamp_window_verdict`, `_window_due`, `_close_window[_safely]`,
+`_finalize_window`, `_confirm_candidate`, `WINDOW_CLOSE_MAX_ATTEMPTS = 6`
+→ after 6 failed infra attempts the window closes with
+`king_stays_confirmation_unavailable`; `state.py`: `crown_window` in
+state.json, `record_window_verdict`, `record_window_close`;
+`evalsrv/dueling.py` + `server.py` + `eval_client.py`: `confirm`
+request → `confirmation_stamp`, probes skipped, near-miss off on a
+confirmation; artifact `evals/<cid>-confirm.json.gz`). Stamps: verdict
+`crown_mode` / `window_id` / `window_blocks` / `decision_block` /
+`duel_rule_wins` / `crown_decision`; history `window_close` rows
+(`verdicts_considered`, `candidates`, `dropped`, `confirmations`,
+`winner`, `outcome`, `crown_block`); `crowned` row `via = "window_best"`.
+Replay (`affine/scripts/replay_window_best.py`, 364 scored duels /
+16 days / 11 real crowns; wall time → blocks from anchor 9052470 @
+15:45 UTC, dispatch = at − duration): 12 h windows → 26/32 windows with a
+positive candidate, ~22–23 crowns with confirmation (1.4 kings/day), 8
+winners at z < 2, 10/11 real crowns are window winners (`chal-00407` is
+not: same window as `chal-00409`); 24 h → 14/17, 0.8 kings/day, 4 at z <
+2. Confirmation modelled (no second-slice records exist yet): z ≥ 1
+pass, z < 1 coin. Flip: `ops/v9/wvk15_toml_edits.py --apply 2026-09-12
+--wvk-to 15 --mode window_best` (+ website mirror), `build_llms_txt.py`
+("Fork history: wvk 15 — window-best crown", `_margin_subs` renders the
+crown rule from the toml), box commit `2ebb3dc`, `/tmp/v9flip/deploy.sh`
+(keepalive ralph off → pod idle + no in_flight → pm2 stop → env from
+`/proc/<pm2 pid>/environ` → `redeploy_pods.py` → pod toml/code verified →
+pm2 start + `affine-dash` restart → keepalive on). Queue was empty; no
+duel interrupted. First window opened: 2514 at block 9052869 (17:03:05 UTC; window 2514 = blocks 9050400–9053999, closes ~20:50 UTC). First wvk-15
+verdict: none yet at flip time (queue empty since 15:30 UTC) — `bash /tmp/v9flip/verify_first_verdict.sh` prints the stamps of every verdict / window_close since the flip. Discord notice `…/1548378529534840892` (17:03:29 UTC). Forward-only:
+reign 11 stands, `min_submission_block` unchanged; pre-flip rows carry no
+`crown_mode` and replay bit-identically. Known gaps: tensor-level copy
+detection still not built (file-hash `check_model_copy` only); a window
+with zero verdicts closes with `king_stays_no_candidates`; the frozen king
+means a challenger that lands in the last minutes of a window is compared
+with the same king as the first — by design.
+
 ### The king seat — king-failure datagen (LIVE 2026-09-10, data event, no wvk)
 Operator directive 2026-09-10 ("do the simplest thing first: trigger on
 the new king, spin up the new king on our fleet, sample envs from Prime
@@ -275,8 +396,11 @@ only teacher-trajectory prefixes (covariate shift; DAgger fix). Pieces:
   watchdog every 5 min (`pgrep -f -x` on the supervisor + bootstrap loop;
   both gone `watchdog_relaunch_min = 10` → relaunch `bootstrap.sh`; loop
   alive but supervisor gone → crash-loop alert; ssh unreachable → alert);
-  every state change is one Discord line (`[discord]`, channel
-  1381987595881414656, token `DISCORD_BOT_TOKEN_ARBOS_BITTENSOR`).
+  every state change is one Discord line (`[discord]`, token
+  `DISCORD_BOT_TOKEN_ARBOS_BITTENSOR`; since 2026-09-12 the private Arbos
+  ops channel 1510910974498967613 — operator directive 2026-09-12: no
+  automated bot post goes to the public SN120 channel 1381987595881414656;
+  the same applies to the fold announce, evalwatch and the audit daemon).
   Deploy to the pods with `ops/king-datagen/deploy_pods.sh [--restart]
   --all` (scp + registry import check + `/root/rollouts/RESTART` flag —
   the supervisor exits at its next cycle boundary and the bootstrap loop
@@ -558,7 +682,85 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
-- `weight_version_key = 14` (2026-09-10 ~21:00 UTC, explicit operator
+- `weight_version_key = 22` (2026-09-18 20:41 UTC, explicit dated operator
+  directive 2026-09-18 10:04 UTC "I like it. And I want to ship it" / 10:25
+  "lets reduce the turns to 1000" / go 15:11 "only when the current queued
+  models have run"; 19:40 "fold it in" + "release wvk 22 right now"): **the
+  sd-meter is the rule and thoughts are scored as generated** — `score_mode =
+  "sd_min_rga"`, `thought_rendering = "as_generated"` (every echo renders
+  `<think>{latent}
+</think>
+
+{visible}
+
+{y}`, latent + visible spans
+  scored, visible verbatim; `canonical` = the wvk ≤ 21 body
+  `</think>
+THOUGHT: {z}`, kept for replay — `evalsrv/chat.py`
+  `thought_body` / `split_z`, two-span `_echo_span`), `n_turns = 1000`,
+  `[duel.sd_meter]` `min_margin_sd = 0.20`,
+  `k_sigma = 2.0`, `forfeit_sd = -12`, `content_lift_nats = 1.0`,
+  `content_min_tokens = 10`, `typicality_width = 2.0`, `a_norm_bytes = 1.0`,
+  `anchor = "loo"`. turn = min(z_R, typ_c, z_A): the largest standardised
+  deviation of the reply from the teacher's own k = 3 samples across thought
+  typicality on content tokens (|lpC(tok|x) − lpC(tok|∅)| > 1 nat),
+  thought→action (the live centred R) and action←thought (summed A leg), in
+  teacher-sd units — μ per turn from the refs' leave-one-out values (6 cross
+  echoes, shared), σ pooled per dialect over the duel. `band_c` /
+  `band_floor` / `min_margin` / `forfeit_turn_score` stay in the toml for
+  wvk ≤ 21 replay only. Code: `affine/evalsrv/sdmeter.py` (+ `terms.py` /
+  `vllm_client.py` cache-aware echoes with per-tag cost accounting,
+  `dueling.py` `sd_min_rga` decide path), `affine/affine/config.py` /
+  `score.py`; ops `ops/v17/` (shadow deploy, notice, flip, rollback,
+  `ops/sd-meter/refresh_frozen.py`). Shadow read 10:41–23:xx UTC on every
+  verdict (`verdict.shadow.sd_meter`, both anchors): 3 duels all sane — LOO
+  and frozen agreed 3/3 with the live decision, positive control teacher vs
+  king z +3.4 / +5.9 / +3.6, no leg bound > 45 %, σ per dialect within 1.2× of
+  phase-2; cost +80 % echo requests / +57 % prompt tokens / +60–63 % computed
+  tokens, wall +15–19 % at n = 1300. Why as generated (project store
+  `docs/g-rendering-claim.md` §8 + `internal/g-rendering/HANDOVER.md`): the
+  canonical body scored the teacher's own visible sentence at −0.18/byte (as
+  generated −0.06), so the meter could not tell the teacher's held-out reply
+  from a reasoning-only king (G control z 1.2 → 8.7; content typicality
+  ref − king +0.20 → +2.40 sd); every king since reign 11 is latent-only.
+  Calibration under the new rendering (225 stored turns re-echoed + the 3
+  shadow duels): kings' typ_c mean ≈ −1.2, sd 2.9, p1 −12, 59 % of turns
+  outside 2σ; paired sd_diff ≈ 2.4–3.1 → δ = 0.082·sd_diff ≈ 0.20; floor
+  under p1 and "2 % forfeit ≈ one δ" both ≈ −12. Pad-after-`</think>` arm
+  (75 turns, live swarm, new code, `ops/v17/pad_arm/`): repeat / tail /
+  generic visible text scores −1.3 / −1.2 / −2.1 typ_c BELOW the honest
+  reasoning-only reply — the lever does not pay. Frozen anchors are (a)-
+  calibrated: `anchor = "loo"` only. Cutoff plan (queue as of 15:11 UTC
+  under wvk 21 first, 8 h max timer) was superseded by the 19:40 directive:
+  flip at the next boundary, queued entries judged under wvk 22. Reign 15
+  (`chal-00581`, crowned 14:59 UTC under wvk 21, sd-meter agreed: +0.139 sd,
+  z 4.73) stands; forward-only. First wvk-22 verdict `chal-00587`:
+  margin -0.028 sd, SE 0.056, z -0.51, 3108 s.
+  Rollback rule (first 3 verdicts; `ops/v17/rollback_wvk22.sh`): SE > 2× the
+  shadow's, teacher-vs-king z ≤ −2, any leg binds > 80 %, a leg dropped on
+  > 5 % of valid turns. Public claim unchanged: a better distillation meter,
+  not benchmark alignment. Plan + status: project store `docs/wvk22-plan.md`.
+  21 = 2026-09-17 10:52 UTC, explicit dated operator
+  directive 10:07 UTC "Remove the double eval on kings. This is too difficult.
+  Lets crown if any model passes 2 sigma like before … Feel free to crown the
+  last model which passed but failed the crown": `confirmation_required = false`
+  — one 1,300-turn slice, `margin > max(2·SE, 0.002)` + gates crowns at once;
+  `chal-00556` (uid 175, `0f4029fd…`, slice-1 z 3.13) crowned retroactively as
+  reign 14 from its stored verdict, `via = retroactive_wvk21`; forward-only.
+  20 = 2026-09-16 14:57 UTC teacher-relative thought cap `thought_cap_ratio =
+  1.25` (cap_T = max(2048, ⌊1.25·L_T⌋), L_T = longest valid teacher reference
+  thought in teacher tokens); 19 = 2026-09-16 11:56 UTC confirmation slice
+  (`confirmation_required`, per-duel rule; retired by 21); 18 = 2026-09-15
+  21:13 UTC `max_thought_tokens` 1024→2048 + `text_fallback_at_tool_turns`;
+  17 = 2026-09-14 10:41 UTC `band_c` 2→4 + teacher-only `ref_max_tokens = 4096`;
+  16 = 2026-09-13 13:01 UTC per-duel crown restored (`crown_mode = "duel"`,
+  `near_miss_enabled = false`) after the reign-13 byte-copy under the window
+  rule — reign 13 and reign 12 uncrowned by operator directive; tensor-level
+  copy gate staged, not applied (PR #20). Older history follows:
+- `weight_version_key = 15` (2026-09-12 ~17:01 UTC, explicit operator directive
+ 16:39/16:43 UTC: `crown_mode = "window_best"` — the crown is decided per 12 h
+ block window, best positive margin + confirmation slice, see §v9; forward-only,
+ reign 11 stands; 14 = 2026-09-10 ~21:00 UTC, explicit operator
   directive "do it now yes": `allowed_action_kinds` += `terminus_json`, the
   Terminus 2 / terminal-bench agent JSON command batch; forward-only, reign
   11 stands; 13 = 2026-09-09 ~02:00 UTC, explicit operator
@@ -1032,8 +1234,18 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 
 ## 12. One-paragraph resume
 
+> **Since wvk 22 (2026-09-18) the live rule is the sd-meter:** turn =
+> min(z_R, typ_c, z_A) — the largest standardised deviation of the reply from
+> the teacher's own three samples across content-token thought typicality,
+> thought→action (centred R) and action←thought (summed A), in teacher-sd
+> units (leave-one-out μ per turn, σ pooled per dialect); 1,000-turn slices;
+> crown iff paired mean > max(2·SE, 0.07 sd) + gates; forfeit −4.5 sd. The
+> paragraph below describes the wvk 10–21 rule it replaced.
+>
 > Affine SN120: teacher-anchored thought-injection duels. Since 2026-08-27
-> (`weight_version_key=14` since the 2026-09-10 terminus_json fork; the
+> (`weight_version_key=15` since the 2026-09-12 window-best crown fork —
+> crown decided per 12 h window, best positive margin, confirmed on a
+> fresh slice; the
 > scoring rule itself dates from wvk 10) the contract is **min(R,G) v5: centered Reason
 > + banded Grounding + δ floor + thought-length floor + B gate**: per turn
 > the teacher samples k=3 refs, a_i = lpC(y_i|z_A) − lpC(y_i|∅);

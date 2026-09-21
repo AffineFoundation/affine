@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
+import time
 import zlib
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import httpx
 import orjson
 
+from affine import dialects
+
 from .chat import (
+    TEXT_FALLBACK_KINDS,
     chat_prompt,
     extract_action,
     force_text,
@@ -30,6 +36,44 @@ log = logging.getLogger("evalsrv.vllm_client")
 # trailing prompt tokens that must be recomputed (not served from the
 # prefix cache) so their logprobs exist.
 ECHO_TAIL_XARG = "affine_echo_tail"
+
+# Echo cost accounting (sd-meter shadow, 2026-09-18). Every echo request is
+# booked under the tag current in this contextvar — "base" for the live
+# min(R,G) echoes, "sd_meter" for the ones only the shadow score needs — so a
+# verdict can say what the extra teacher work measured: requests, prompt
+# tokens sent, tail tokens the engine had to recompute, and request wall
+# seconds (summed over concurrent requests, i.e. engine occupancy, not duel
+# wall). Set with ``echo_tag("sd_meter")`` around the shadow calls.
+ECHO_TAG: contextvars.ContextVar[str] = contextvars.ContextVar("affine_echo_tag",
+                                                              default="base")
+
+# Prefix used for the unconditioned thought echo lpC(z|∅) of the content
+# mask: one empty user turn, so the template renders exactly its fixed
+# header and the thought is scored with no task in front of it. Rendered
+# once per model; ~50 tokens, shared by every such echo via the prefix cache.
+UNCOND_PREFIX: list[dict] = [{"role": "user", "content": ""}]
+
+
+class echo_tag:
+    """``with echo_tag("sd_meter"): ...`` — book the echoes inside under tag."""
+
+    def __init__(self, tag: str):
+        self.tag = tag
+        self._token = None
+
+    def __enter__(self):
+        self._token = ECHO_TAG.set(self.tag)
+        return self
+
+    def __exit__(self, *exc):
+        ECHO_TAG.reset(self._token)
+        return False
+
+
+def _new_echo_stat() -> dict:
+    return {"requests": 0, "prompt_tokens": 0, "tail_tokens": 0,
+            "span_tokens": 0, "computed_tokens": 0, "seconds": 0.0,
+            "uncached_retries": 0}
 
 # Echo bookkeeping off the event loop (2026-09-07 py-spy of a live duel:
 # the single duel thread sat at 99% CPU, 47% in the HF tokenizer call that
@@ -128,10 +172,25 @@ class ModelPool:
         return sum(r.n_think_closed for r in self.replicas)
 
     @property
+    def n_text_fallback(self) -> int:
+        """Samples split as a prose `text` action at a tool_call turn (wvk 18)."""
+        return sum(r.n_text_fallback for r in self.replicas)
+
+    @property
     def think_close_rate(self) -> float | None:
         """Fraction of natural samples that emitted </think> (all replicas)."""
         n = self.n_samples
         return self.n_think_closed / n if n else None
+
+    def echo_stats(self) -> dict[str, dict]:
+        """Echo cost per tag, summed over the replicas (see ECHO_TAG)."""
+        out: dict[str, dict] = {}
+        for r in self.replicas:
+            for tag, s in r.echo_stats().items():
+                acc = out.setdefault(tag, _new_echo_stat())
+                for k, v in s.items():
+                    acc[k] += v
+        return out
 
     async def complete(self, messages: list[dict], temperature: float,
                        max_tokens: int, *, tools: list[dict] | None = None
@@ -175,14 +234,21 @@ class ModelPool:
             prefix_messages, thoughts, action, sticky_key=sticky_key)
 
     async def score_thought(self, prefix_messages: list[dict], thoughts: str,
-                            *, sticky_key: str | None = None) -> dict:
+                            *, sticky_key: str | None = None,
+                            tokens: bool = False) -> dict:
         return await self._pick(sticky_key).score_thought(
-            prefix_messages, thoughts, sticky_key=sticky_key)
+            prefix_messages, thoughts, sticky_key=sticky_key, tokens=tokens)
+
+    async def score_thought_uncond(self, thoughts: str, *,
+                                   sticky_key: str | None = None) -> dict:
+        return await self._pick(sticky_key).score_thought_uncond(
+            thoughts, sticky_key=sticky_key)
 
 
 class VllmModel:
     def __init__(self, cfg: Served, client: httpx.AsyncClient, sem: asyncio.Semaphore,
-                 require_think_close: bool = False):
+                 require_think_close: bool = False,
+                 text_fallback_at_tool_turns: bool = False):
         self.cfg = cfg
         if cfg.base_url:
             self.base = cfg.base_url.rstrip("/")
@@ -199,6 +265,16 @@ class VllmModel:
         # or not the knob is on, so the live rate is known before any flip.
         self.n_samples = 0
         self.n_think_closed = 0
+        # [duel].text_fallback_at_tool_turns (wvk 18): a closed-think prose
+        # reply at a tool_call turn is a `text` action. Counted per sample.
+        self.text_fallback_at_tool_turns = text_fallback_at_tool_turns
+        self.n_text_fallback = 0
+        # Echo cost per ECHO_TAG (requests / prompt tokens / recomputed tail
+        # tokens / request seconds); read by ModelPool.echo_stats.
+        self._echo_stats: dict[str, dict] = defaultdict(_new_echo_stat)
+
+    def echo_stats(self) -> dict[str, dict]:
+        return {k: dict(v) for k, v in self._echo_stats.items()}
 
     async def _post(self, payload: dict) -> dict:
         # Keep per-request timeout under vLLM hang windows but above worst-case
@@ -267,8 +343,14 @@ class VllmModel:
         text = d["choices"][0]["text"]
         self.n_samples += 1
         self.n_think_closed += int(think_closed(text))
-        return split_rollout(text, action_kind,
-                             require_think_close=self.require_think_close)
+        z, y = split_rollout(text, action_kind,
+                             require_think_close=self.require_think_close,
+                             text_fallback_at_tool_turns=self.text_fallback_at_tool_turns)
+        if (y and self.text_fallback_at_tool_turns
+                and (action_kind or dialects.DEFAULT_KIND) in TEXT_FALLBACK_KINDS
+                and dialects.count_actions(y, action_kind) == 0):
+            self.n_text_fallback += 1
+        return z, y
 
     async def complete(self, messages: list[dict], temperature: float,
                        max_tokens: int, *, tools: list[dict] | None = None
@@ -304,18 +386,41 @@ class VllmModel:
         return extract_action(d["choices"][0]["text"], action_kind)
 
     async def _echo_span(self, full: str, span_start: int,
-                         span_bytes: int) -> dict:
+                         span_bytes: int, *, tokens: bool = False,
+                         spans: list[tuple[int, int]] | None = None) -> dict:
         """Teacher-force echo: mean logprob per byte of full[span_start:].
 
         echo=True + logprobs, span located with the tokenizer's offset
         mapping on the full text (robust to BPE merges across the injection
         boundary); add_special_tokens=False keeps vLLM's tokenization aligned.
+
+        tokens=True additionally returns ``tokens``: one (start, end, lp) per
+        span token with character offsets relative to span_start — the
+        per-token view the sd-meter content mask aligns across the
+        conditioned and unconditioned echoes of the same thought. The
+        request is identical either way (the engine always returns
+        per-token logprobs; only what is kept changes).
+
+        spans: when given, the scored tokens are those whose start offset
+        falls inside any [start, end) of `spans` (absolute offsets into
+        `full`; span_start must equal spans[0][0]). Used by the as_generated
+        thought rendering, where the latent and the visible thought are two
+        spans separated by an unscored newline + </think> + newline. None =
+        one span from span_start to the end of `full` (canonical; bit-
+        identical to the pre-wvk-22 behaviour).
         """
+        stat = self._echo_stats[ECHO_TAG.get()]
+        t0 = time.monotonic()
         tok = get_tokenizer(self.cfg.repo, self.cfg.revision)
         input_ids, offsets = await asyncio.get_running_loop().run_in_executor(
             _TOK_POOL, _encode_offsets, tok, full)
         n_prompt = sum(1 for s, _ in offsets if s < span_start)
         n_total = len(input_ids)
+        tail = n_total - n_prompt + 1 + 8
+        stat["requests"] += 1
+        stat["prompt_tokens"] += n_total
+        stat["tail_tokens"] += min(tail, n_total)
+        stat["span_tokens"] += n_total - n_prompt
         payload = {
             "model": self.cfg.request_model,
             "prompt": full,
@@ -330,7 +435,7 @@ class VllmModel:
             # comes from hidden state n_prompt-1) + slack for tokenizer
             # drift at the injection boundary. Stock vLLM ignores the xarg
             # and echoes uncached, exactly as before.
-            "vllm_xargs": {ECHO_TAIL_XARG: n_total - n_prompt + 1 + 8},
+            "vllm_xargs": {ECHO_TAIL_XARG: tail},
         }
         d = await self._post(payload)
         lp = d["choices"][0]["logprobs"]["token_logprobs"]
@@ -347,17 +452,36 @@ class VllmModel:
                         sum(1 for x in raw_span if x is None or x > 0),
                         len(raw_span))
             payload.pop("vllm_xargs")
+            stat["uncached_retries"] += 1
+            stat["requests"] += 1
+            stat["prompt_tokens"] += n_total
+            stat["tail_tokens"] += n_total
             d = await self._post(payload)
             lp = d["choices"][0]["logprobs"]["token_logprobs"]
             raw_span = lp[n_prompt:-1]
+        span_offsets = offsets[n_prompt:]
+        if spans is not None:
+            # Keep only the tokens that start inside a scored span (the
+            # separator between latent and visible is rendered, not scored).
+            keep = [any(a <= st < b for a, b in spans) for st, _ in span_offsets]
+            raw_span = [x if k else None for x, k in zip(raw_span, keep)]
         span = [x for x in raw_span if x is not None]
+        # Positions the engine actually computed (cached prefix rows come
+        # back as the plugin's +1.0 marker or None): the measured recompute.
+        stat["computed_tokens"] += sum(1 for x in lp if x is not None and x <= 0)
         n_bytes = max(span_bytes, 1)
-        return {
+        out = {
             "sum_lp": sum(span),
             "n_tokens": len(span),
             "n_bytes": n_bytes,
             "lp_per_byte": sum(span) / n_bytes if span else 0.0,
         }
+        if tokens:
+            out["tokens"] = [
+                (s - span_start, e - span_start, x)
+                for (s, e), x in zip(span_offsets, raw_span) if x is not None]
+        stat["seconds"] += time.monotonic() - t0
+        return out
 
     async def score_action(self, prefix_messages: list[dict], thoughts: str,
                            action: str, *, sticky_key: str | None = None
@@ -370,16 +494,45 @@ class VllmModel:
                                      len(action.encode()))
 
     async def score_thought(self, prefix_messages: list[dict], thoughts: str,
-                            *, sticky_key: str | None = None) -> dict:
+                            *, sticky_key: str | None = None,
+                            tokens: bool = False) -> dict:
         """Mean logprob per byte of `thoughts` given the turn prefix x.
 
         Grounding-leg echo for min(R, G): m = lpC(z_A|x) for the miner's
         thought, t_i = lpC(z_C^i|x) for each teacher reference thought. Uses
         the same canonical injected rendering as score_action minus the
-        action, so the scored span is exactly the thought bytes.
+        action, so the scored span is exactly the thought bytes. tokens=True
+        keeps the per-token logprobs (sd-meter content mask); same request.
         """
         del sticky_key
-        full = thought_text(self.cfg.repo, self.cfg.revision, prefix_messages,
-                            thoughts)
-        return await self._echo_span(full, len(full) - len(thoughts),
-                                     len(thoughts.encode()))
+        full, spans = thought_text(self.cfg.repo, self.cfg.revision,
+                                   prefix_messages, thoughts)
+        return await self._echo_thought(full, spans, tokens)
+
+    async def _echo_thought(self, full: str, spans: list[tuple[int, int]],
+                            tokens: bool) -> dict:
+        """Echo the thought span(s) of a rendered thought text. Canonical
+        rendering = one span to the end of the text (the pre-wvk-22 call, bit
+        for bit); as_generated = latent + visible spans, separator unscored.
+        Bytes = the scored spans' bytes."""
+        if not spans:                     # empty thought: nothing to score
+            return {"sum_lp": 0.0, "n_tokens": 0, "n_bytes": 1, "lp_per_byte": 0.0,
+                    **({"tokens": []} if tokens else {})}
+        n_bytes = sum(len(full[a:b].encode()) for a, b in spans)
+        if len(spans) == 1 and spans[0][1] == len(full):
+            return await self._echo_span(full, spans[0][0], n_bytes, tokens=tokens)
+        return await self._echo_span(full, spans[0][0], n_bytes, tokens=tokens,
+                                     spans=spans)
+
+    async def score_thought_uncond(self, thoughts: str, *,
+                                   sticky_key: str | None = None) -> dict:
+        """Per-token logprobs of `thoughts` with NO task in front of it:
+        lpC(z|∅), the same canonical THOUGHT rendering after UNCOND_PREFIX
+        (one empty user turn). The sd-meter content mask keeps the tokens
+        whose logprob the task moves by more than θ nats between this echo
+        and score_thought's. Short prompt (header + thought), no turn prefix
+        to cache — the cost is the thought's own tokens once."""
+        del sticky_key
+        full, spans = thought_text(self.cfg.repo, self.cfg.revision,
+                                   UNCOND_PREFIX, thoughts)
+        return await self._echo_thought(full, spans, True)

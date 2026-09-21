@@ -1,0 +1,119 @@
+{
+ "generator": "domains/retail/gen.py",
+ "generated_at": "2026-09-21T13:27:42Z",
+ "repo_commit": "b8b2ef6",
+ "tau2_commit": "b7ea9074c1cba482b30687fecdb5c8425fd6f619",
+ "seed": 61,
+ "n": 200,
+ "args": {
+  "n": 200,
+  "seed": 61,
+  "out": "/home/const/tau2gen/tau2-gen/out/e61/retail",
+  "persona_mix": null,
+  "refuse_share": 0.09,
+  "unknown_id_share": 0.45,
+  "judge": false,
+  "gate_communicate": false,
+  "verbose": false
+ },
+ "persona_mix": {
+  "None": 0.5,
+  "Easy": 0.08,
+  "Hard": 0.08,
+  "Verbose": 0.06,
+  "Terse": 0.06,
+  "NonNative": 0.06,
+  "Impatient": 0.06,
+  "WrongNumberOnce": 0.04,
+  "SideRequest": 0.03,
+  "TechSavvy": 0.03
+ },
+ "stats": {
+  "kept": 200
+ },
+ "case_hist": {
+  "cancel_two_orders": 9,
+  "exchange_then_profile_address": 4,
+  "composed": 96,
+  "cancel_unknown_order": 6,
+  "cancel_one_return_other": 11,
+  "exchange_delivered": 7,
+  "return_unknown_order": 7,
+  "modify_user_address": 4,
+  "modify_items_cross_product_denied": 3,
+  "cancel_pending": 7,
+  "return_delivered": 7,
+  "modify_items": 7,
+  "modify_address": 5,
+  "return_pending_denied": 3,
+  "address_then_payment": 4,
+  "exchange_two_items": 4,
+  "modify_delivered_denied": 3,
+  "modify_payment": 4,
+  "cancel_delivered_denied": 4,
+  "other_user_denied": 2,
+  "exchange_unavailable_denied": 3
+ },
+ "group_hist": {
+  "cancel": 16,
+  "composite": 128,
+  "exchange": 11,
+  "profile": 4,
+  "refuse": 18,
+  "return": 7,
+  "modify": 16
+ },
+ "persona_hist": {
+  "Easy": 16,
+  "None": 98,
+  "Verbose": 16,
+  "Impatient": 16,
+  "Hard": 9,
+  "WrongNumberOnce": 9,
+  "SideRequest": 10,
+  "NonNative": 8,
+  "TechSavvy": 7,
+  "Terse": 11
+ },
+ "no_write_tasks": 16,
+ "unknown_id_tasks": 24,
+ "records_per_user_median": 4,
+ "write_names": {
+  "cancel_pending_order": 61,
+  "exchange_delivered_order_items": 45,
+  "modify_user_address": 35,
+  "modify_pending_order_address": 29,
+  "modify_pending_order_payment": 30,
+  "return_delivered_order_items": 47,
+  "modify_pending_order_items": 27
+ },
+ "median_delta_bytes": 9128,
+ "leakage": {
+  "ok": true,
+  "overlap": {
+   "phones": [],
+   "ids": [],
+   "emails": [],
+   "imeis": [],
+   "names": []
+  },
+  "task_id_overlap": [],
+  "full_enumeration_id_overlap": 0,
+  "gen_counts": {
+   "phones": 3,
+   "ids": 9032,
+   "emails": 310,
+   "imeis": 0,
+   "names": 196
+  },
+  "bench_counts": {
+   "phones": 0,
+   "ids": 3228,
+   "emails": 520,
+   "imeis": 0,
+   "names": 379
+  },
+  "heldout_task_ids": 114,
+  "full_enumeration_ids": 114
+ }
+}

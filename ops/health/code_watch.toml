@@ -1,0 +1,98 @@
+# Process hygiene: a long-running pm2 process that imports shared modules
+# must not keep running old code after a fix lands on disk.
+#
+# Failure this closes (2026-09-16..19, (d)): kingctl kept a pre-fix
+# lium_api.py in memory for 3 days, logged "no stock" and left the king seat
+# empty 25 h. Rule now: the health monitor compares the newest mtime of each
+# process's watched files with the process start time; a process running
+# code older than the files on disk is STALE. action = "restart" -> `pm2
+# restart <name>` (env preserved; never --update-env) once the files have
+# been stable for `settle_min`, at most once per `min_restart_gap_min`;
+# action = "page" -> Discord line only (the operator restarts at a safe
+# point, e.g. the validator at a duel boundary).
+#
+# The fold (affine-corpus-refresh) is a cron job that exits: every run loads
+# the code on disk, nothing to watch.
+
+[rules]
+settle_min = 10            # files must be unchanged this long (an edit in progress is not a deploy)
+min_uptime_min = 10        # never restart a process younger than this
+min_restart_gap_min = 30   # per process
+max_restarts_per_tick = 2  # spread restarts over ticks
+
+[[process]]
+name = "affine-king-datagen"
+action = "restart"
+files = ["ops/king-datagen/kingctl.py", "ops/king-datagen/king.toml",
+         "ops/teacher-swarm/lium_api.py", "ops/pods/registry.py", "ops/health/common.py"]
+note = "tick loop, state in ops/king-datagen/state/state.json; a restart between ticks is safe"
+
+[[process]]
+name = "affine-swarm-manager"
+action = "restart"
+files = ["ops/teacher-swarm/manager.py", "ops/teacher-swarm/swarm.toml",
+         "ops/teacher-swarm/lium_api.py", "ops/pods/registry.py", "ops/health/common.py"]
+note = "tick loop, memory in ops/teacher-swarm/state/pods.json; safe between ticks"
+
+[[process]]
+name = "affine-swarm-router"
+action = "page"
+files = ["ops/teacher-swarm/router.py"]
+note = "carries live echo traffic for the duel; restart by hand at a duel boundary"
+
+[[process]]
+name = "affine-coverage-bench"
+action = "restart"
+files = ["ops/coverage/bench_queue.py", "ops/coverage/run.sh", "ops/benchsuite/kingpod.py",
+         "ops/teacher-swarm/lium_api.py", "ops/pods/registry.py"]
+note = "queue tick loop; passes run detached (setsid), budget in state/budget.json"
+
+[[process]]
+name = "affine-evalwatch"
+action = "restart"
+files = ["ops/evalwatch/evalwatch.py", "ops/evalwatch/evalwatch.toml", "ops/teacher-swarm/lium_api.py"]
+
+[[process]]
+name = "affine-pod-reaper"
+action = "restart"
+files = ["ops/pods/reaper.py", "ops/pods/registry.py", "ops/pods/pods.toml", "ops/pods/run_reaper.sh",
+         "ops/health/common.py", "ops/teacher-swarm/lium_api.py"]
+
+[[process]]
+name = "affine-pipeline-health"
+action = "restart"
+files = ["ops/health/health.py", "ops/health/health.toml", "ops/health/code_watch.toml",
+         "ops/health/consumers.toml", "ops/health/contract_compat.py", "ops/health/common.py",
+         "ops/health/run_health.sh"]
+note = "restarts itself last in the tick"
+
+[[process]]
+name = "affine-kingboard"
+action = "page"
+files = ["ops/kingboard/server.py", "ops/kingboard/build.py"]
+note = "a restart triggers a full rebuild (up to 90 min); restart by hand"
+
+[[process]]
+name = "affine-dash"
+action = "restart"
+files = ["affine/affine/dash/app.py", "affine/affine/dash/index.py", "affine/affine/dash/project.py",
+         "affine/affine/dash/readers.py", "affine/affine/dash/stream.py"]
+
+[[process]]
+name = "affine-validator"
+action = "page"
+files = ["affine/affine.toml", "affine/affine/validator.py", "affine/affine/state.py",
+         "affine/affine/provisioner.py", "affine/affine/score.py", "affine/affine/payout.py",
+         "affine/affine/eval_client.py", "affine/affine/config.py", "ops/run_validator.sh"]
+note = "NEVER auto-restart: duel-boundary procedure (AGENTS.md §4/§9, ops/v17/deploy_wvk22.sh)"
+
+[[process]]
+name = "affine-improvement-loop"
+action = "restart"
+files = ["ops/improvement-loop/watch.py", "ops/improvement-loop/attribution.py", "ops/improvement-loop/run.sh"]
+
+[[process]]
+name = "affine-king-review"
+action = "page"
+files = ["ops/king-review/run_king_review.sh"]
+note = "long benchmark runs in flight; restart by hand"

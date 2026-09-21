@@ -47,8 +47,41 @@ if [ ! -d /root/venv ]; then
   uv venv /root/venv --python 3.12
 fi
 source /root/venv/bin/activate
+# Pre-warmed uv download cache (2026-09-21). A cold bootstrap pulls ~11 GB of
+# wheels (vLLM/torch cu130, flashinfer cubin + jit-cache) from PyPI/GitHub;
+# on a slow Lium pipe that took 24 min + 13 min for the cubin alone and ran
+# into the provisioner's 60 min deadline. The cache tarball is published by
+# ops/eval_wheelhouse/publish_uv_cache.sh from a healthy pod to the public
+# affine-data bucket, keyed by python version + pyproject hash; restoring it
+# makes every `uv pip install` below a cache hit. Any failure here falls
+# through to the normal pip path.
+export UV_CACHE_DIR=${UV_CACHE_DIR:-/root/.cache/uv}
+WHEEL_KEY="py312-$(sha256sum /root/affine/pyproject.toml | cut -c1-8)"
+WHEEL_URL="${AFFINE_WHEELHOUSE_BASE:-https://data.affine.io/wheelhouse}/uv-cache-${WHEEL_KEY}.tar.zst"
+if [ ! -f "$UV_CACHE_DIR/.affine-wheelhouse" ]; then
+  t_wh=$(date +%s)
+  mkdir -p "$UV_CACHE_DIR"
+  if curl -sfIL --max-time 20 "$WHEEL_URL" >/dev/null 2>&1; then
+    echo "[bootstrap] restoring uv cache from $WHEEL_URL"
+    if command -v zstd >/dev/null 2>&1 || { apt-get update -qq >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zstd >/dev/null 2>&1; }; then
+      if curl -sfL --retry 5 --retry-all-errors --max-time 1800 "$WHEEL_URL" \
+          | tar -I zstd -xf - -C "$UV_CACHE_DIR" 2>/root/logs/wheelhouse.err; then
+        echo "$WHEEL_KEY" > "$UV_CACHE_DIR/.affine-wheelhouse"
+        echo "[bootstrap] uv cache restored in $(( $(date +%s) - t_wh ))s"
+      else
+        echo "[bootstrap] uv cache restore FAILED ($(tail -c 200 /root/logs/wheelhouse.err)); falling back to pip"
+      fi
+    else
+      echo "[bootstrap] zstd unavailable; falling back to pip"
+    fi
+  else
+    echo "[bootstrap] no wheelhouse for $WHEEL_KEY at $WHEEL_URL; pip from the index"
+  fi
+fi
 # Fail closed on install errors (do not hide behind `| tail`).
+t_pip=$(date +%s)
 uv pip install -e ".[eval]" 2>&1 | tee /root/logs/pip_eval.log | tail -20
+echo "[bootstrap] pip [eval] took $(( $(date +%s) - t_pip ))s"
 # Prebuilt flashinfer kernels (2026-08-27, Qwen3.8-27B teacher). vLLM >= 0.28
 # imports flashinfer unconditionally for GDN models, and bare flashinfer-python
 # JIT-compiles at startup — which needs nvcc and dies on pods without a CUDA

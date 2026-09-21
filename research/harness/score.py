@@ -191,20 +191,38 @@ def turn_min_rg(pairs: list[dict],
 
 # v6 (2026-09-04) — see affine/affine/score.py for the rationale.
 DEFAULT_FORFEIT_TURN_SCORE: float | None = None
+# A-leg normalizer (2026-09-10): summed action lift / this many bytes.
+# None = per-byte (the length-biased 09-04 probe design, replay only).
+DEFAULT_ACTION_NORM_BYTES: float | None = 128.0
 
 
-def action_lift(pair: dict) -> float | None:
-    """b_i = lpC(y_A|z_C^i) − lpC(y_A|∅) (per byte); None without echoes."""
+def action_lift(pair: dict,
+                norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
+                ) -> float | None:
+    """b_i = Σ_bytes[lpC(y_A|z_C^i) − lpC(y_A|∅)] / norm_bytes.
+
+    The stored echoes are per byte; × n_bytes_ya recovers the summed lift,
+    which does not grow with action length (research/results/
+    v6_action_leg_norm.txt). norm_bytes=None returns the per-byte lift.
+    None without echoes (or without n_bytes_ya when a normalizer is set)."""
     try:
-        return pair["lpC_ya_zc"] - pair["lpC_ya_e"]
+        per_byte = pair["lpC_ya_zc"] - pair["lpC_ya_e"]
     except (KeyError, TypeError):
         return None
+    if norm_bytes is None:
+        return per_byte
+    n_bytes = pair.get("n_bytes_ya")
+    if n_bytes is None:
+        return None
+    return per_byte * n_bytes / norm_bytes
 
 
 def action_leg(pairs: list[dict],
-               tau: float | None = DEFAULT_TEMPER_TAU) -> float | None:
+               tau: float | None = DEFAULT_TEMPER_TAU,
+               norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
+               ) -> float | None:
     """A leg of min(R,G,A): uncentered tempered LME over per-ref action lifts."""
-    b = [v for p in pairs if (v := action_lift(p)) is not None]
+    b = [v for p in pairs if (v := action_lift(p, norm_bytes)) is not None]
     if not b:
         return None
     if tau is None or tau <= 0 or len(b) == 1:
@@ -216,14 +234,17 @@ def action_leg(pairs: list[dict],
 def turn_min_rga(pairs: list[dict],
                  tau: float | None = DEFAULT_TEMPER_TAU,
                  band_c: float = DEFAULT_BAND_C,
-                 band_floor: float = DEFAULT_BAND_FLOOR) -> float:
+                 band_floor: float = DEFAULT_BAND_FLOOR,
+                 action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
+                 ) -> float:
     """Turn score under min(R,G,A) v6. Fails loudly without action echoes."""
     rg = turn_min_rg(pairs, tau, band_c, band_floor)
-    a = action_leg(pairs, tau)
+    a = action_leg(pairs, tau, action_norm_bytes)
     if a is None:
         raise ValueError(
-            "min_rga scoring requires action echoes (lpC_ya_zc / lpC_ya_e); "
-            "replay older rows with their stamped score_mode")
+            "min_rga scoring requires action echoes (lpC_ya_zc / lpC_ya_e"
+            + (" / n_bytes_ya" if action_norm_bytes is not None else "")
+            + "); replay older rows with their stamped score_mode")
     return min(rg, a)
 
 
@@ -231,10 +252,12 @@ def turn_score(pairs: list[dict],
                tau: float | None = DEFAULT_TEMPER_TAU,
                score_mode: str = DEFAULT_SCORE_MODE,
                band_c: float = DEFAULT_BAND_C,
-               band_floor: float = DEFAULT_BAND_FLOOR) -> float:
+               band_floor: float = DEFAULT_BAND_FLOOR,
+               action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
+               ) -> float:
     """Dispatch the per-turn score by contract score_mode."""
     if score_mode == "min_rga":
-        return turn_min_rga(pairs, tau, band_c, band_floor)
+        return turn_min_rga(pairs, tau, band_c, band_floor, action_norm_bytes)
     if score_mode == "min_rg":
         return turn_min_rg(pairs, tau, band_c, band_floor)
     return turn_reason(pairs, tau)
@@ -250,12 +273,14 @@ def side_turn_score(row: dict,
                     score_mode: str = DEFAULT_SCORE_MODE,
                     band_c: float = DEFAULT_BAND_C,
                     band_floor: float = DEFAULT_BAND_FLOOR,
-                    forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE
+                    forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE,
+                    action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
                     ) -> float | None:
     """Turn rule, or the forfeit floor; None = legacy drop."""
     if is_forfeit(row):
         return forfeit_turn_score
-    return turn_score(row["pairs"], tau, score_mode, band_c, band_floor)
+    return turn_score(row["pairs"], tau, score_mode, band_c, band_floor,
+                      action_norm_bytes)
 
 
 def l1_lift(pair: dict) -> float:
@@ -301,7 +326,8 @@ def score_miner(rows: list[dict],
                 score_mode: str = DEFAULT_SCORE_MODE,
                 band_c: float = DEFAULT_BAND_C,
                 band_floor: float = DEFAULT_BAND_FLOOR,
-                forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE
+                forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE,
+                action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
                 ) -> MinerScore:
     """Mean per-turn score + telemetry. No gating.
 
@@ -324,11 +350,13 @@ def score_miner(rows: list[dict],
     b_have = [1.0 if g else 0.0 for g in bflags if g is not None]
     b_vals = [teacher_causality(p) for p in pairs]
     b_finite = [v for v in b_vals if v is not None and math.isfinite(v)]
-    turn_scores = [turn_score(r["pairs"], tau, score_mode, band_c, band_floor)
+    turn_scores = [turn_score(r["pairs"], tau, score_mode, band_c, band_floor,
+                              action_norm_bytes)
                    for r in valid]
     if forfeit_turn_score is not None:
         turn_scores += [forfeit_turn_score] * len(forfeits)
-    a_legs = ([a for r in valid if (a := action_leg(r["pairs"], tau)) is not None]
+    a_legs = ([a for r in valid
+               if (a := action_leg(r["pairs"], tau, action_norm_bytes)) is not None]
               if score_mode == "min_rga" else [])
     return MinerScore(
         miner=rows[0].get("miner", "?"),
@@ -369,6 +397,7 @@ class DuelResult:
     tau: float | None = DEFAULT_TEMPER_TAU
     forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE
     n_forfeit_turns: int = 0
+    action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
 
 
 def duel(challenger_rows: list[dict], king_rows: list[dict],
@@ -382,7 +411,8 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
          score_mode: str = DEFAULT_SCORE_MODE,
          band_c: float = DEFAULT_BAND_C,
          band_floor: float = DEFAULT_BAND_FLOOR,
-         forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE
+         forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE,
+         action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
          ) -> DuelResult:
     """Paired duel on the per-turn score: wins iff
     mean > max(k_sigma·SE, min_margin)
@@ -399,20 +429,22 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
     cs = score_miner(challenger_rows, challenger_bank_frac, tau=tau,
                      score_mode=score_mode, band_c=band_c,
                      band_floor=band_floor,
-                     forfeit_turn_score=forfeit_turn_score)
+                     forfeit_turn_score=forfeit_turn_score,
+                     action_norm_bytes=action_norm_bytes)
     ks = score_miner(king_rows, king_bank_frac, tau=tau,
                      score_mode=score_mode, band_c=band_c,
                      band_floor=band_floor,
-                     forfeit_turn_score=forfeit_turn_score)
+                     forfeit_turn_score=forfeit_turn_score,
+                     action_norm_bytes=action_norm_bytes)
     c_by = {r["turn_id"]: r for r in challenger_rows}
     k_by = {r["turn_id"]: r for r in king_rows}
     diffs = []
     n_forfeit_turns = 0
     for tid in sorted(set(c_by) & set(k_by)):
         rc = side_turn_score(c_by[tid], tau, score_mode, band_c, band_floor,
-                             forfeit_turn_score)
+                             forfeit_turn_score, action_norm_bytes)
         rk = side_turn_score(k_by[tid], tau, score_mode, band_c, band_floor,
-                             forfeit_turn_score)
+                             forfeit_turn_score, action_norm_bytes)
         if rc is None or rk is None:
             continue
         if is_forfeit(c_by[tid]) or is_forfeit(k_by[tid]):
@@ -424,7 +456,8 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
                           k_sigma, False, n, min_margin, min_thought_chars,
                           False, causality_gamma,
                           forfeit_turn_score=forfeit_turn_score,
-                          n_forfeit_turns=n_forfeit_turns)
+                          n_forfeit_turns=n_forfeit_turns,
+                          action_norm_bytes=action_norm_bytes)
     mean = st.mean(diffs)
     se = st.stdev(diffs) / math.sqrt(n)
     z = mean / se if se > 0 else (math.inf if mean > 0 else 0.0)
@@ -450,6 +483,7 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
         tau=tau,
         forfeit_turn_score=forfeit_turn_score,
         n_forfeit_turns=n_forfeit_turns,
+        action_norm_bytes=action_norm_bytes,
     )
 
 
