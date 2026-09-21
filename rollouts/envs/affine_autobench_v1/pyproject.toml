@@ -1,7 +1,7 @@
 [project]
 name = "affine-autobench-v1"
 version = "0.1.0"
-description = "affine-autobench-v1 — Zapier AutomationBench (600 business-workflow tasks over a simulated 47-app SaaS workspace, automationbench-v1); `tasks` selector, binary `solved` = all assertions pass."
+description = "affine-autobench-v1 — Zapier AutomationBench (600 business-workflow tasks over a simulated 47-app SaaS workspace, automationbench-v1); `tasks` selector, `solved` = Artificial Analysis grade (objectives fraction, 0 on a broken guardrail) >= solved_threshold."
 requires-python = ">=3.12"
 dependencies = ["automationbench-v1"]
 
