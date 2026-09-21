@@ -42,6 +42,22 @@ for fp in [job / "config.json", job / "lock.json", *job.glob("*/config.json"), *
     if patch(c): fp.write_text(json.dumps(c, indent=2)); n += 1
 print(f"[swe-resume] {n} harbor config/lock files re-pointed at {url}")
 PY
+# infra-errored trials (Daytona NetworkConnectionError / provisioning) are "finished" for harbor and would not
+# re-run: drop their result.json so `job resume` picks them up again (RETRY_INFRA=0 keeps them)
+if [ "${RETRY_INFRA:-1}" = 1 ]; then
+  "$PY" - "$CELL/harbor" <<'PY'
+import json, sys
+from pathlib import Path
+n = 0
+for rp in Path(sys.argv[1]).glob("*/result.json"):
+    try: r = json.loads(rp.read_text())
+    except ValueError: continue
+    et = ((r.get("exception_info") or {}).get("exception_type") or "")
+    if et in ("NetworkConnectionError", "SandboxError", "ApiRateLimitError") or "Provision" in et:
+        rp.rename(rp.with_suffix(".json.infra")); n += 1
+print(f"[swe-resume] {n} infra-errored trials queued for re-run")
+PY
+fi
 log "$LABEL: $POD ($REPL replica(s)) -> resuming $CELL at $((64*REPL)) in flight"
 "$PY" "$HERE/harbor_cell.py" resume --env swebench-verified ${TAG:+--budget-tag $TAG} --model "$(podf "$POD" served)" --model-label king \
   --model-url "$(podf "$POD" base_url)" --model-key-env BENCH_API_KEY --out "$INTO/king" --concurrency $((64*REPL)) --agent-timeout-s 3600
