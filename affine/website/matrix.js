@@ -77,6 +77,11 @@ function cellTip(row, col, cell, teacherCell) {
       + (cell.raw_score != null ? `\nraw grader score: ${fmt(100 * Number(cell.raw_score))} (not a measurement)` : "")
       + (cell.run_id ? `\ncard ${cell.run_id}${cell.mode ? ` · ${cell.mode}` : ""}` : "");
   }
+  if (cell && cell.errored_only && cell.score == null) {
+    return `${head}\nerrored — the environment ran for this model but every rollout errored (harness / infrastructure), so nothing was graded; not a score`
+      + (cell.reason ? `\n${cell.reason}` : "")
+      + `\n${num(cell.rollouts)} rollouts, ${num(cell.errored)} errored, 0 graded`;
+  }
   if (cell && cell.failed && cell.score == null) {
     return `${head}\nrun failed — the benchmark pass ended without a result (infrastructure, not a model score)`
       + (cell.reason ? `\n${cell.reason}` : "")
@@ -152,6 +157,7 @@ function totals(rows, cols, teacher) {
       total, n: have.length, of: scored.length, full: f, unverified,
       missing,
       failed: missing.filter((c) => (r.cells[c.key] || {}).failed),
+      erroredCols: missing.filter((c) => (r.cells[c.key] || {}).errored_only),
       runningCols: missing.filter((c) => (r.cells[c.key] || {}).running),
       teacherSame: tSame,
       totalDelta: total != null && tSame != null && r.kind !== "teacher" ? total - tSame : null,
@@ -243,8 +249,9 @@ function renderTable(m, spec) {
         ? `${fmt(t.total)} over ${t.n} of ${t.of} columns` + (t.n < t.of ? " — partial: not comparable with a full row" : "")
           + (t.totalDelta != null ? `\nteacher on the same ${t.n} columns: ${fmt(t.teacherSame)} → Δ ${signed(t.totalDelta)} pt` : "")
         : t.running ? "benchmark pass running — total appears when its first cells land" : "no scored cell yet")
-      + (t.missing.length ? `\nmissing (${t.missing.length}): ${t.missing.filter((c) => !t.failed.includes(c) && !t.runningCols.includes(c)).map(short).join(", ") || "–"}` : "\nall columns present")
+      + (t.missing.length ? `\nmissing (${t.missing.length}): ${t.missing.filter((c) => !t.failed.includes(c) && !t.runningCols.includes(c) && !t.erroredCols.includes(c)).map(short).join(", ") || "–"}` : "\nall columns present")
       + (t.failed.length ? `\nrun failed (${t.failed.length}): ${t.failed.map(short).join(", ")}` : "")
+      + (t.erroredCols.length ? `\nerrored, nothing graded (${t.erroredCols.length}): ${t.erroredCols.map(short).join(", ")}` : "")
       + (t.runningCols.length ? `\nrunning (${t.runningCols.length}): ${t.runningCols.map(short).join(", ")}` : "")
       + (t.unverified.length ? `\nunverified, not counted (${t.unverified.length}): ${t.unverified.map(short).join(", ")}` : "");
     const fullTip = `${rowName(r)} · full total\n` + (t.full != null ? `${fmt(t.full)} over all ${t.of} columns` + (t.fullDelta != null ? ` · Δ ${signed(t.fullDelta)} pt vs teacher` : "")
@@ -264,11 +271,13 @@ function renderTable(m, spec) {
       // "unverified": the publisher could not trust the grader (e.g. gaia2's soft
       // checker) — shown grey, never 0 or blank, out of the means and the coverage
       const unverified = !has && !running && cell && cell.unverified;
-      const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? (cell.low_n ? "lown" : "") : running ? "running" : failed ? "failed" : unverified ? "unverified" : "blank"].filter(Boolean).join(" ");
+      // env ran for the model but every rollout errored: "errored", not a 0 and not "never run"
+      const erroredOnly = !has && !running && cell && cell.errored_only;
+      const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? (cell.low_n ? "lown" : "") : running ? "running" : failed ? "failed" : unverified ? "unverified" : erroredOnly ? "failed" : "blank"].filter(Boolean).join(" ");
       const style = has && r.kind !== "teacher" ? tint(cell.delta) : "";
       const marks = has ? `${cell.cap_bound ? `<span class="mk cap">‡</span>` : ""}${cell.graded === "llm_judge" ? `<span class="mk judge">⚖</span>` : ""}${cell.trained && c.trained ? `<span class="mk trained">${esc(c.trained.mark)}</span>` : ""}` : "";
       return `<td class="${tcls} duel-hit" data-tip="${esc(cellTip(r, c, cell, teacher.cells[c.key]))}"`
-        + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) + marks : running ? "…" : failed ? "run failed" : unverified ? "unverified" : "·"}</td>`;
+        + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) + marks : running ? "…" : failed ? "run failed" : unverified ? "unverified" : erroredOnly ? "errored" : "·"}</td>`;
     }).join("");
     const rowTitle = r.kind === "king" ? `${kingName(r.reign)} = reign ${r.reign} · king-${r.digest12}` : r.label;
     return `<tr class="${cls}"><td class="model duel-hit" data-tip="${esc(rowTip(r))}" title="${esc(rowTitle)}">`
