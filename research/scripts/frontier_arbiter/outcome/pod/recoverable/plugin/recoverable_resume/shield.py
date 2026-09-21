@@ -20,13 +20,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 
 from verifiers.v1.runtimes.docker import DockerRuntime
 
 log = logging.getLogger(__name__)
 
-SHADOW_NS = "recoverable.local"
+# A second driver on the same pod (split-states probe 2026-09-21: arm F1 next
+# to a running arm-T driver) uses its own namespace so neither driver's
+# start/exit reaper removes the other's containers.
+SHADOW_NS = os.environ.get("RECOVERABLE_SHADOW_NS", "recoverable.local")
 _original_start = DockerRuntime.start
 _tag_locks: dict[str, asyncio.Lock] = {}
 

@@ -61,7 +61,9 @@ ENGY_PRICES = {   # USD per token (in, out, cached) — Engy list, 2026-09-20
     "glm-5.3": (0.70e-6, 2.8e-6, 0.14e-6),
 }
 HARNESS_ID = "recoverable_resume"
-SHADOW_NS = "recoverable.local"   # plugin/recoverable_resume/shield.py
+# plugin/recoverable_resume/shield.py; RECOVERABLE_SHADOW_NS lets a second
+# driver run concurrently on the pod with its own containers (2026-09-21).
+SHADOW_NS = os.environ.get("RECOVERABLE_SHADOW_NS", "recoverable.local")
 TRACE_NAME_RE = re.compile(r"^[0-9a-f]{32}$")
 # Same-task proxy (states.SAME_TASK): the teacher replays the whole task under
 # the king's own ACP harness (claude_code / pi / kimi_code / hermes_agent) —
