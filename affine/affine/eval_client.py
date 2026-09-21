@@ -60,6 +60,13 @@ class Fault:
     # Prompt (+ max_tokens) exceeded vLLM --max-model-len. Our serving config /
     # corpus length mismatch — never the checkpoint's fault.
     CONTEXT_LIMIT = "context_limit"
+    # Client-side classification of a code-less error whose TEXT proves an
+    # infrastructure origin: a 5xx / connection error from the teacher
+    # router or a swarm replica, a broken SSE stream, a vanished job, an
+    # unreachable miner engine port. 2026-09-15 (chal-00520) and 2026-09-17
+    # (chal-00568): the swarm's 502/503 surfaced as "eval server error" and
+    # burned 2 of the miner's 3 retries before teacher_unservable caught it.
+    UPSTREAM = "upstream_error"
 
 
 # Every code above is OUR infrastructure, never the miner's fault: the duel is
@@ -73,8 +80,45 @@ class Fault:
 ENTRY_FAULT_CODES = frozenset({Fault.POD_CAPACITY, Fault.CHALLENGER_INFRA})
 INFRA_FAULT_CODES = frozenset({
     Fault.TEACHER, Fault.KING_LAUNCH, Fault.POD_CAPACITY, Fault.CHALLENGER_INFRA,
-    Fault.CONTEXT_LIMIT,
+    Fault.CONTEXT_LIMIT, Fault.UPSTREAM,
 })
+
+# Free-text markers that can only come from OUR side of the duel: HTTP 5xx
+# from vLLM / the router, transport failures, the swarm router address, the
+# pod's miner engine ports, stream/job loss. A miner's model can produce a
+# rejection verdict (unservable / probe / format) — it cannot produce these.
+_INFRA_TEXT_MARKERS = (
+    "server error '50", "502 bad gateway", "503 service unavailable",
+    "504 gateway time", "500 internal server error",
+    "connecterror", "connectionerror", "connection refused", "connection reset",
+    "all connection attempts failed", "readtimeout", "read timed out",
+    "remoteprotocolerror", "server disconnected", "peer closed connection",
+    "127.0.0.1:9100", "localhost:9100",           # teacher router
+    "localhost:800", "127.0.0.1:800",             # miner engine ports 8001-8004
+    "duel stream broke", "stream ended without verdict", "vanished (404)",
+    "teacher not servable", "engine died", "enginedeaderror",
+)
+
+
+def is_infra_message(text: str) -> bool:
+    """True when an error's text proves an infrastructure origin (see
+    _INFRA_TEXT_MARKERS). Used for code-less errors from the pod and as the
+    validator's safety net before a retry is counted against the miner."""
+    t = (text or "").lower()
+    return any(m in t for m in _INFRA_TEXT_MARKERS)
+
+
+def classify_server_error(err: str, code: str | None) -> TransientEvalError:
+    """Map an error reported by the eval server to the exception the
+    validator's requeue logic understands. Explicit infra codes and
+    infra-shaped text are InfraFaultError (never counted); anything else is a
+    generic transient (bounded retries)."""
+    if code in INFRA_FAULT_CODES:
+        return InfraFaultError(f"eval server infra fault [{code}]: {err}", code)
+    if is_infra_message(err):
+        return InfraFaultError(
+            f"eval server infra fault [{Fault.UPSTREAM}]: {err}", Fault.UPSTREAM)
+    return TransientEvalError(f"eval server error: {err}")
 
 
 class EvalClient:
@@ -188,14 +232,9 @@ class EvalClient:
                         elif event["type"] == "verdict":
                             return event["data"]
                         elif event["type"] == "error":
-                            err = event["data"].get("error", "?")
-                            code = event["data"].get("code")
-                            if code in INFRA_FAULT_CODES:
-                                raise InfraFaultError(
-                                    f"eval server infra fault [{code}]: {err}",
-                                    code)
-                            raise TransientEvalError(
-                                f"eval server error: {err}")
+                            raise classify_server_error(
+                                event["data"].get("error", "?"),
+                                event["data"].get("code"))
                         else:
                             log.warning("unknown SSE event type %r",
                                         event["type"])
@@ -241,10 +280,14 @@ class EvalClient:
             if verdict is None:
                 verdict = await self._fetch_verdict(client, job_id)
             if verdict is None:
+                # Both are OUR side: the pod (or the tunnel to it) went away.
                 if stream_error is not None:
-                    raise TransientEvalError(
-                        f"duel stream broke: {stream_error}") from stream_error
-                raise TransientEvalError("duel stream ended without verdict")
+                    raise InfraFaultError(
+                        f"eval server infra fault [{Fault.UPSTREAM}]: duel stream "
+                        f"broke: {stream_error}", Fault.UPSTREAM) from stream_error
+                raise InfraFaultError(
+                    f"eval server infra fault [{Fault.UPSTREAM}]: duel stream ended "
+                    f"without verdict", Fault.UPSTREAM)
         return verdict
 
     async def fetch_artifact(self, job_id: str) -> bytes | None:
@@ -276,9 +319,10 @@ class EvalClient:
             r = await client.get(f"{self.base}/duel/{job_id}",
                                  timeout=httpx.Timeout(30.0))
             if r.status_code == 404:
-                raise TransientEvalError(
-                    f"duel job {job_id} vanished (404); evalsrv likely "
-                    f"restarted mid-duel")
+                raise InfraFaultError(
+                    f"eval server infra fault [{Fault.UPSTREAM}]: duel job {job_id} "
+                    f"vanished (404); evalsrv likely restarted mid-duel",
+                    Fault.UPSTREAM)
             r.raise_for_status()
             job = r.json()
             if job.get("state") == "completed" and job.get("verdict"):
@@ -289,12 +333,8 @@ class EvalClient:
                 # returned None until the 2 h duel timeout (chal-00569,
                 # 2026-09-17: challenger engine OOM at 13:12, validator still
                 # "scoring" at 14:17). Same mapping as the SSE error event.
-                err = job.get("error") or "?"
-                code = job.get("error_code")
-                if code in INFRA_FAULT_CODES:
-                    raise InfraFaultError(
-                        f"eval server infra fault [{code}]: {err}", code)
-                raise TransientEvalError(f"eval server error: {err}")
+                raise classify_server_error(job.get("error") or "?",
+                                            job.get("error_code"))
         except TransientEvalError:
             raise
         except httpx.HTTPError:

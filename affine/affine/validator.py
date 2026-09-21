@@ -42,7 +42,8 @@ from .chain import BlockHashUnavailable
 from .config import Config, load_config
 from .dashboard import Dashboard
 from .eval_client import (ENTRY_FAULT_CODES, DispatchError, EvalBusyError,
-                          EvalClient, InfraFaultError, TransientEvalError)
+                          EvalClient, InfraFaultError, TransientEvalError,
+                          is_infra_message)
 from .hippius import Hippius
 from .provisioner import BenchMachineManager, ChatMachineManager, EvalMachineManager
 from .r2protocol import is_r2_ref, parse_r2_ref
@@ -381,7 +382,12 @@ class Validator:
         # transients (including chain hiccups fetching the seed block hash)
         # count against the bounded budget so a permanent failure cannot wedge
         # the queue forever.
+        # Safety net for anything the client did not type explicitly: an
+        # error whose text proves an infra origin is never counted against
+        # the miner (2026-09-15 / 09-17: swarm 502/503 as "eval server
+        # error" burned 2 of 3 retries each).
         machine_fault = (isinstance(e, (EvalBusyError, InfraFaultError, DispatchError))
+                         or is_infra_message(str(e))
                          or not self.machine.is_healthy_now())
         max_retries = self.cfg.validator.max_transient_eval_retries
         if machine_fault:
