@@ -1,0 +1,100 @@
+# contract_compat — who consumes verdict NUMBERS, and in which units.
+#
+# Failure this closes (2026-09-18/19, wvk 22): the curriculum vector was
+# fitted on per-byte turn scores (theta = 7e-6) and kept being applied after
+# verdicts switched to teacher-sd units — nothing checked that the inputs
+# still meant the same thing. Rule now: every consumer of verdict numbers is
+# listed here with the units it expects; ops/health/contract_compat.py
+# compares that with the live [duel].score_mode (and the last stamped
+# verdict) every 5 minutes and in every flip script's preflight. A mismatch
+# pages; a consumer with on_mismatch = "freeze" is frozen automatically
+# (its sentinel file is written) until it is re-fitted and re-declared.
+#
+# Adding a consumer: one [[consumer]] block. Adding a score_mode: one line
+# under [units] (an unknown mode is itself a page).
+
+[live]
+toml = "affine/affine.toml"                 # [duel].score_mode, weight_version_key
+history = "affine/state/history.jsonl"      # last verdict's duel_params.score_mode (what is actually stamped)
+# a live toml mode that no stored verdict has stamped yet for longer than
+# this = the flip happened but the first verdict has not landed (info only)
+stamp_lag_h = 3.0
+
+[units]
+# score_mode -> units of margin / z-numerators / turn scores on the verdict
+reason = "per_byte"
+min_rg = "per_byte"
+min_rga = "per_byte"
+sd_min_rga = "teacher_sd"
+# any other mode starting with "sd_" resolves to teacher_sd
+
+# --- consumers -------------------------------------------------------------------
+# expects_units: list; "unit_free" or "any" = compatible with every mode.
+# expects_score_modes: optional list of modes handled explicitly (era-aware code).
+# declaration_file: JSON the consumer writes; keys `input_units` (str) and
+#   `fitted_score_modes` (list) override the static declaration when present.
+#   A declaration_file that exists without those keys = "undeclared" (warning).
+# on_mismatch: freeze | page | block
+#   freeze -> write freeze_file (consumer must honour it), page
+#   page   -> page only
+#   block  -> a flip preflight refuses to proceed
+
+[[consumer]]
+name = "curriculum"
+path = "ops/curriculum"
+reads = ["verdict.turn_scores", "verdict.margin", "verdict.z", "forfeits"]
+expects_units = ["per_byte"]                # the live rule v1/v2 vector as fitted through 2026-09-18
+declaration_file = "affine/state/curriculum/latest.json"
+on_mismatch = "freeze"
+freeze_file = "affine/state/curriculum/FROZEN.json"
+owner = "curriculum worker / fold"
+
+[[consumer]]
+name = "kingboard_stats"
+path = "ops/kingboard/build.py"
+reads = []                                  # env rows + outcome rates only; no margin / z
+expects_units = ["any"]
+on_mismatch = "page"
+owner = "kingboard worker"
+
+[[consumer]]
+name = "king_divergence_sidetable"
+path = "ops/improvement-loop/attribution.py"
+reads = ["verdict.margin", "verdict.z", "per-group margins"]
+expects_units = ["per_byte", "teacher_sd"]  # reports the numbers as stamped, era column kept
+expects_score_modes = ["min_rg", "sd_min_rga"]
+on_mismatch = "page"
+owner = "improvement-loop worker"
+
+[[consumer]]
+name = "evalwatch_thresholds"
+path = "ops/evalwatch/evalwatch.toml"
+reads = []                                  # timing / queue depth only
+expects_units = ["any"]
+on_mismatch = "page"
+owner = "eval-health worker"
+
+[[consumer]]
+name = "dash_charts"
+path = "affine/affine/dash"
+reads = ["verdict.margin", "verdict.z", "shadow.sd_meter"]
+expects_score_modes = ["reason", "min_rg", "min_rga", "sd_min_rga"]   # PR #41: unit-aware per era
+expects_units = ["per_byte", "teacher_sd"]
+on_mismatch = "page"
+owner = "website worker"
+
+[[consumer]]
+name = "payout"
+path = "affine/affine/payout.py"
+reads = []                                  # crown / king identity + env scores; no verdict units
+expects_units = ["any"]
+on_mismatch = "block"                       # a payout that read verdict units would have to be re-declared before a flip
+owner = "validator"
+
+[[consumer]]
+name = "pipeline_health_thresholds"
+path = "ops/health/health.toml"
+reads = []                                  # ages / counts only
+expects_units = ["any"]
+on_mismatch = "page"
+owner = "hardening worker"

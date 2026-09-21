@@ -32,23 +32,25 @@ import logging
 import os
 import threading
 import time
-from dataclasses import replace
 from pathlib import Path
 
 import bittensor as bt
 
-from . import chain, model_store
+from . import chain, model_store, payout
 from .bench import BenchOrchestrator
 from .chain import BlockHashUnavailable
 from .config import Config, load_config
 from .dashboard import Dashboard
 from .eval_client import (ENTRY_FAULT_CODES, DispatchError, EvalBusyError,
-                          EvalClient, InfraFaultError, TransientEvalError)
+                          EvalClient, InfraFaultError, TransientEvalError,
+                          is_infra_message)
 from .hippius import Hippius
 from .provisioner import BenchMachineManager, ChatMachineManager, EvalMachineManager
 from .r2protocol import is_r2_ref, parse_r2_ref
 from .registrations import AccessController
-from .state import QueueEntry, State, now_iso
+from .score import (effective_min_margin, rank_window_candidates,
+                    window_candidate_reason, window_id_of)
+from .state import King, QueueEntry, State, now_iso
 
 log = logging.getLogger("affine.validator")
 
@@ -135,6 +137,8 @@ class Validator:
         self.subtensor = bt.subtensor(network=cfg.network)
         self.wallet = bt.Wallet(name=cfg.wallet_name, hotkey=cfg.wallet_hotkey)
         self._last_weights = 0.0
+        # Last logged paid set (reign, hotkey, bps) — changes are WARNING-logged.
+        self._last_paid_key: tuple | None = None
         # (repo, revision) -> (status, monotonic ts) from the payout
         # accessibility sweep, so force-triggered weight sets (crowns/reverts)
         # don't re-probe HF within one weight interval.
@@ -144,6 +148,9 @@ class Validator:
         # One slot: at most one prefetch fires per duel. Held so the event
         # loop (which references tasks weakly) can never GC it mid-flight.
         self._prefetch_task: asyncio.Task | None = None
+        # Background public-bucket promotions of crowned private refs (one
+        # per crown; held so the event loop cannot GC them mid-copy).
+        self._promote_tasks: set[asyncio.Task] = set()
         self._last_heartbeat = 0.0
 
     # A suite that failed this many recorded runs for the same revision is
@@ -220,10 +227,10 @@ class Validator:
         provably gone/gated ⇒ forfeit the slot (deeper kings backfill); the
         slot returns if the repo comes back. "unknown" probes keep the
         member's previous status — an HF hiccup must never flip payouts."""
-        depth = self.cfg.king_chain_size
-        # 2x headroom so backfill candidates behind excluded members are
-        # probed too; beyond that the lineage tail is dashboard-only.
-        candidates = self.state.king_lineage_members(depth)[:depth * 2]
+        # Only crowns still inside their payout window can earn; expired
+        # crowns are dashboard-only and are not probed.
+        candidates = [m for m in self.state.king_lineage_members(
+            self.cfg.king_payout_window_s) if not m["expired"]]
         ttl = self.cfg.validator.weight_interval_s
         gone = set(self.state.inaccessible_hotkeys)
         for m in candidates:
@@ -251,10 +258,22 @@ class Validator:
                           < self.cfg.validator.weight_interval_s):
             return
         await asyncio.to_thread(self._sweep_payout_accessibility)
-        hotkeys = self.state.king_chain_hotkeys(self.cfg.king_chain_size)
-        ok = chain.set_rolling_weights(
+        window_s = self.cfg.king_payout_window_s
+        lineage = self.state.king_lineage_members(window_s)
+        shares = payout.shares_by_hotkey(lineage)
+        paid_desc = payout.describe(lineage)
+        paid_key = tuple((m["reign_number"], m["hotkey"], m["weight_bps"])
+                         for m in payout.paid_crowns(lineage))
+        if paid_key != self._last_paid_key:
+            log.warning("payout set changed (window %.0fh): %s",
+                        window_s / 3600, paid_desc)
+            self._last_paid_key = paid_key
+        log.info("payout sweep (window %.0fh): %s | shares by hotkey: %s",
+                 window_s / 3600, paid_desc,
+                 {hk[:8]: round(s, 4) for hk, s in shares.items()})
+        ok = chain.set_payout_weights(
             self.subtensor, self.wallet, self.cfg.netuid,
-            hotkeys, self.metagraph, self.cfg.burn_uid,
+            shares, self.metagraph, self.cfg.burn_uid,
             max_metagraph_age_s=self.cfg.validator.metagraph_max_age_s,
             version_key=self.cfg.weight_version_key)
         if ok:
@@ -339,8 +358,10 @@ class Validator:
         emissions, and requeue the blameless challenge (no burn) to duel the
         restored king next tick. With no prior king to fall back to, nothing
         can be dueled until an operator restores one: defer to the tail (so we
-        don't hot-spin the head) and page loudly."""
-        reverted = self.state.revert_king(reason)
+        don't hot-spin the head) and page loudly. The restored king starts a
+        fresh δ cycle from this block (decaying-margin mode)."""
+        reverted = self.state.revert_king(
+            reason, crown_block=chain.safe_block(self.subtensor) or None)
         if reverted is not None:
             log.error("reverted dead king → %s@%s (reign #%d): %s",
                       reverted.repo, reverted.revision[:12],
@@ -361,7 +382,12 @@ class Validator:
         # transients (including chain hiccups fetching the seed block hash)
         # count against the bounded budget so a permanent failure cannot wedge
         # the queue forever.
+        # Safety net for anything the client did not type explicitly: an
+        # error whose text proves an infra origin is never counted against
+        # the miner (2026-09-15 / 09-17: swarm 502/503 as "eval server
+        # error" burned 2 of 3 retries each).
         machine_fault = (isinstance(e, (EvalBusyError, InfraFaultError, DispatchError))
+                         or is_infra_message(str(e))
                          or not self.machine.is_healthy_now())
         max_retries = self.cfg.validator.max_transient_eval_retries
         if machine_fault:
@@ -436,6 +462,378 @@ class Validator:
         if t0 is not None:
             meta["duration_s"] = max(0.0, time.monotonic() - t0)
         return meta
+
+    # -- decaying crown margin (staged 2026-09-12) -------------------------------
+    def _margin_context(self, king: King) -> dict:
+        """The δ this duel is decided under, plus the clock it came from.
+
+        mode "fixed" (today): δ = [duel].min_margin, stamped as such.
+        mode "decay": δ = the king's cycle curve read at the current chain
+        block (`decision_block`), `blocks_since_crown` blocks after the
+        king's `crown_block`. Kings crowned before the field existed fall
+        back to their reveal block (on-chain, a few hours before the crown
+        at most) and a peak of the cap; the stamp says so. A chain that
+        will not report the current block fails CLOSED in decay mode — the
+        challenge is requeued, never dueled at a guessed δ.
+        """
+        sched = self.cfg.duel.margin_schedule()
+        decision_block = chain.safe_block(self.subtensor)
+        if decision_block <= 0:
+            if sched.mode == "decay":
+                raise BlockHashUnavailable(
+                    "current block unavailable: cannot place the decaying "
+                    "margin clock")
+            decision_block = None
+        crown_block, source = king.crown_block, "king"
+        if crown_block is None:
+            crown_block = king.block if king.block else None
+            source = "reveal_block" if crown_block is not None else "unknown"
+        eff, since = effective_min_margin(sched, king.min_margin_peak,
+                                          crown_block, decision_block)
+        ctx = {
+            "min_margin_mode": sched.mode,
+            "min_margin_base": sched.min_margin,
+            "min_margin_effective": eff,
+            "decision_block": decision_block,
+            "crown_block": crown_block,
+            "crown_block_source": source,
+            "blocks_since_crown": since,
+        }
+        if sched.mode == "decay":
+            ctx.update({
+                "min_margin_peak": (king.min_margin_peak
+                                    if king.min_margin_peak is not None
+                                    else sched.peak_cap),
+                "min_margin_floor": sched.floor,
+                "min_margin_peak_cap": sched.peak_cap,
+                "min_margin_decay_hours": sched.decay_hours,
+                "min_margin_decay_shape": sched.shape,
+            })
+            log.info("decaying margin: δ=%.6f (peak %s, %s blocks since crown "
+                     "block %s [%s], decision block %s)", eff,
+                     ctx["min_margin_peak"], since, crown_block, source,
+                     decision_block)
+        return ctx
+
+    def _crown_cycle(self, margin: dict) -> dict:
+        """`crown_block` / `min_margin_peak` for the king a winning verdict
+        creates: the block the crown lands on and the peak the next cycle
+        starts from (min(double·δ_now, cap) in decay mode; min_margin in
+        fixed mode, so a later flip finds a meaningful stored value)."""
+        sched = self.cfg.duel.margin_schedule()
+        block = chain.safe_block(self.subtensor) or margin.get("decision_block")
+        return {
+            "crown_block": int(block) if block else None,
+            "min_margin_peak": sched.next_peak(float(margin["min_margin_effective"])),
+        }
+
+    def _apply_crown_bar(self, verdict: dict, margin: dict) -> None:
+        """Re-check the crown test with the δ the validator computed.
+
+        The pod decides with the same δ (sent in the request and echoed in
+        `duel_params.min_margin`); this copy catches a stale pod that
+        ignored the override and crowned on its own toml δ. Like the other
+        validator-side gates it can only DENY a crown, never grant one: a
+        stale pod that applied a stricter δ than the effective one is
+        logged loudly so the operator redeploys, but its verdict stands.
+        """
+        m, se = verdict.get("margin"), verdict.get("se")
+        if m is None or se is None:
+            return
+        eff = float(margin["min_margin_effective"])
+        stamped = (verdict.get("duel_params") or {}).get("min_margin")
+        if stamped is None or abs(float(stamped) - eff) > 1e-12:
+            log.error("pod decided with δ=%s but the validator's effective δ is "
+                      "%.6f — stale eval pod? redeploy (scripts/redeploy_pods.py)",
+                      stamped, eff)
+        k_sigma = float(self.cfg.duel.k_sigma)
+        if verdict.get("challenger_wins") and not (float(m) > max(k_sigma * float(se), eff)):
+            verdict["challenger_wins"] = False
+            if not verdict.get("rejection_reason"):
+                verdict["rejection_reason"] = "margin_below_bar"
+        min_z = float(self.cfg.duel.min_z)
+        z = verdict.get("z")
+        if (min_z > 0 and verdict.get("challenger_wins")
+                and (z is None or float(z) < min_z)):
+            verdict["challenger_wins"] = False
+            if not verdict.get("rejection_reason"):
+                verdict["rejection_reason"] = "z_below_min"
+
+    # -- window-best crown mode (staged 2026-09-12) -------------------------------
+    def _stamp_window_verdict(self, verdict: dict, margin: dict) -> None:
+        """Under crown_mode = "window_best" a duel does not crown. Keep the
+        duel-rule outcome as telemetry (`duel_rule_wins`), force
+        `challenger_wins` off, and stamp the window the duel belongs to: the
+        window of the block the validator read at DISPATCH (`decision_block`
+        in the δ context). A duel that starts in window N and finishes after
+        the boundary still dueled window N's frozen king (the close waits
+        for it), so it is window N's candidate."""
+        W = int(self.cfg.duel.crown_window_blocks)
+        block = margin.get("decision_block")
+        verdict["duel_rule_wins"] = bool(verdict.get("challenger_wins"))
+        verdict["challenger_wins"] = False
+        verdict["crown_mode"] = "window_best"
+        verdict["window_blocks"] = W
+        verdict["decision_block"] = block
+        verdict["window_id"] = window_id_of(int(block), W) if block else None
+        why = window_candidate_reason(verdict)
+        verdict["crown_decision"] = ("window_candidate" if why is None
+                                     else f"not_candidate:{why}")
+        cw = self.state.crown_window
+        if cw is not None and verdict["window_id"] is not None \
+                and int(cw["window_id"]) != int(verdict["window_id"]):
+            # Can only happen if the clock jumped between open and dispatch;
+            # the candidate still files under the OPEN window (its king).
+            log.warning("verdict window %s != open window %s; filing under the "
+                        "open window", verdict["window_id"], cw["window_id"])
+            verdict["window_id_dispatch"] = verdict["window_id"]
+            verdict["window_id"] = int(cw["window_id"])
+
+    def _window_due(self) -> tuple[bool, int]:
+        """(a window is past its close, current block). Opens the first
+        window when none is open. Never true in duel mode."""
+        if self.cfg.duel.crown_mode != "window_best":
+            return False, 0
+        block = chain.safe_block(self.subtensor)
+        if block <= 0:
+            return False, 0
+        W = int(self.cfg.duel.crown_window_blocks)
+        wid = window_id_of(block, W)
+        cw = self.state.crown_window
+        if cw is None or int(cw.get("window_blocks", W)) != W:
+            self.state.open_crown_window(wid, W, block)
+            log.info("crown window %d opened at block %d (W=%d, king reign #%s)",
+                     wid, block, W, self.state.king.reign_number if self.state.king else None)
+            return False, block
+        return int(cw["window_id"]) < wid, block
+
+    async def _close_window_safely(self, block: int) -> None:
+        cw = self.state.crown_window
+        try:
+            await self._close_window(block)
+        except (TransientEvalError, BlockHashUnavailable, Exception) as e:
+            # Infra: keep the window open and retry next tick; after a bound
+            # the close finalizes with the king staying, so the queue is not
+            # wedged forever. Miners are never burned by this path.
+            close = cw.setdefault("close", {"attempts": 0, "last_error": None})
+            close["attempts"] = int(close.get("attempts", 0)) + 1
+            close["last_error"] = f"{type(e).__name__}: {e}"[:500]
+            log.exception("window %s close attempt %d failed", cw.get("window_id"),
+                          close["attempts"])
+            if close["attempts"] >= self.WINDOW_CLOSE_MAX_ATTEMPTS:
+                log.error("window %s: giving up on confirmation after %d attempts; "
+                          "king stays", cw.get("window_id"), close["attempts"])
+                await self._finalize_window(
+                    cw, block, winner=None,
+                    outcome="king_stays_confirmation_unavailable",
+                    confirmations=cw.get("_confirmations", []),
+                    error=close["last_error"])
+        finally:
+            self.state.current_eval = None
+            self.state.flush()
+
+    WINDOW_CLOSE_MAX_ATTEMPTS = 6
+
+    def _window_row(self, cw: dict, block: int) -> tuple[dict, list[dict]]:
+        ranked, dropped = rank_window_candidates(
+            cw.get("verdicts", []), bool(self.cfg.duel.crown_one_entry_per_hotkey))
+        king = self.state.king
+        row = {
+            "crown_mode": "window_best",
+            "window_id": int(cw["window_id"]),
+            "window_blocks": int(cw["window_blocks"]),
+            "window_blocks_range": [int(cw["window_id"]) * int(cw["window_blocks"]),
+                                    (int(cw["window_id"]) + 1) * int(cw["window_blocks"]) - 1],
+            "decision_block": int(block),
+            "king": ({"challenge_id": king.challenge_id, "reign_number": king.reign_number,
+                      "hotkey": king.hotkey, "revision": king.revision} if king else None),
+            "crown_confirm_slice": bool(self.cfg.duel.crown_confirm_slice),
+            "crown_confirm_max": int(self.cfg.duel.crown_confirm_max),
+            "crown_one_entry_per_hotkey": bool(self.cfg.duel.crown_one_entry_per_hotkey),
+            "verdicts_considered": [
+                {k: v.get(k) for k in ("challenge_id", "hotkey", "margin", "se", "z",
+                                       "rejection_reason", "duel_rule_wins",
+                                       "decision_block", "at")}
+                for v in cw.get("verdicts", [])],
+            "candidates": [
+                {k: v.get(k) for k in ("challenge_id", "hotkey", "margin", "se", "z",
+                                       "n_paired_turns", "n_slices")}
+                for v in ranked],
+            "dropped": dropped,
+            "close_attempts": int((cw.get("close") or {}).get("attempts", 0)),
+        }
+        return row, ranked
+
+    async def _close_window(self, block: int) -> None:
+        """Window close: rank the window's verdicts, confirm the best
+        positive margin on a fresh slice (up to crown_confirm_max
+        candidates), crown the first that confirms; otherwise the king
+        stays. One `window_close` history row either way; then the next
+        window opens at the current block."""
+        cw = self.state.crown_window
+        assert cw is not None
+        king = self.state.king
+        assert king is not None
+        row, ranked = self._window_row(cw, block)
+        self.state.set_phase("window_close", window_id=cw["window_id"])
+        log.info("closing crown window %s: %d verdicts, %d candidates, %d dropped",
+                 cw["window_id"], len(row["verdicts_considered"]), len(ranked),
+                 len(row["dropped"]))
+        confirmations: list[dict] = list(cw.get("_confirmations", []))
+        cw["_confirmations"] = confirmations
+        already = {c.get("challenge_id") for c in confirmations}
+        tries = (ranked[:int(self.cfg.duel.crown_confirm_max)]
+                 if self.cfg.duel.crown_confirm_slice else ranked[:1])
+        winner: dict | None = None
+        for cand in tries:
+            if self.cfg.duel.crown_confirm_slice:
+                conf = next((c for c in confirmations
+                             if c.get("challenge_id") == cand["challenge_id"]), None)
+                if conf is None:
+                    conf = await self._confirm_candidate(cand, king, cw)
+                    confirmations.append(conf)
+                    self.state.flush()
+                if not conf.get("passed"):
+                    log.info("window %s: %s did not confirm (%s)", cw["window_id"],
+                             cand["challenge_id"],
+                             conf.get("error") or (conf.get("pooled") or {}).get("margin"))
+                    continue
+            winner = cand
+            break
+        outcome = ("crowned" if winner else
+                   "king_stays_no_candidates" if not ranked else
+                   "king_stays_none_confirmed")
+        await self._finalize_window(cw, block, winner=winner, outcome=outcome,
+                                    confirmations=confirmations)
+        if winner is not None:
+            await self._maybe_set_weights(force=True)
+            self.bench.enqueue_for(self.state.king.repo, winner["revision"],
+                                   winner["hotkey"], accepted=True,
+                                   label=f"reign-{self.state.king.reign_number}")
+        self.dashboard.flush(force=True)
+
+    async def _finalize_window(self, cw: dict, block: int, *, winner: dict | None,
+                               outcome: str, confirmations: list[dict],
+                               error: str | None = None) -> None:
+        row, _ = self._window_row(cw, block)
+        row["confirmations"] = [
+            {k: c.get(k) for k in ("challenge_id", "slice_index", "base", "slice",
+                                   "pooled", "passed", "error", "job_id")}
+            for c in confirmations]
+        row["winner"] = ({k: winner.get(k) for k in ("challenge_id", "hotkey", "repo",
+                                                     "revision", "margin", "se", "z")}
+                         if winner else None)
+        row["outcome"] = outcome
+        if error:
+            row["error"] = error
+        crown_block = max(chain.safe_block(self.subtensor) or 0, int(block))
+        row["crown_block"] = int(crown_block) if winner else None
+        if winner is not None:
+            conf = next((c for c in confirmations
+                         if c.get("challenge_id") == winner["challenge_id"]), None)
+            entry = QueueEntry(challenge_id=winner["challenge_id"], hotkey=winner["hotkey"],
+                               repo=winner["repo"], revision=winner["revision"],
+                               block=int(winner.get("block") or 0), queued_at="")
+            repo = winner["repo"]
+            promote_later = is_r2_ref(repo)  # crown the private ref; copy in background
+            verdict = {
+                "challenger_wins": True, "via": "window_best",
+                "crown_mode": "window_best", "window_id": int(cw["window_id"]),
+                "margin": winner.get("margin"), "se": winner.get("se"),
+                "z": winner.get("z"), "n_paired_turns": winner.get("n_paired_turns"),
+                "duel_rule_wins": winner.get("duel_rule_wins"),
+                "confirmation": conf,
+                "candidates": row["candidates"], "outcome": outcome,
+            }
+            if promote_later:
+                verdict["private_repo"] = winner["repo"]
+                verdict["promotion"] = "background"
+            sched = self.cfg.duel.margin_schedule()
+            self.state.record_window_close(row)
+            self.state.set_king(
+                winner["hotkey"], repo, winner["revision"], int(winner.get("block") or 0),
+                winner["challenge_id"], score=winner.get("score"),
+                history_extra={"accepted": True, "verdict": verdict, "via": "window_best",
+                               "uid": winner.get("uid")},
+                crown_block=int(crown_block),
+                min_margin_peak=sched.next_peak(sched.min_margin))
+            log.info("window %s: CROWNED %s (margin %s, z %s) → reign #%d",
+                     cw["window_id"], winner["challenge_id"], winner.get("margin"),
+                     winner.get("z"), self.state.king.reign_number)
+            if promote_later:
+                self._schedule_promotion(entry)
+        else:
+            self.state.record_window_close(row)
+            log.info("window %s closed: %s", cw["window_id"], outcome)
+        W = int(self.cfg.duel.crown_window_blocks)
+        now_block = max(chain.safe_block(self.subtensor) or 0, int(block))
+        self.state.open_crown_window(window_id_of(now_block, W), W, now_block)
+
+    async def _confirm_candidate(self, cand: dict, king: King, cw: dict) -> dict:
+        """One fresh n_turns slice for a window candidate against the frozen
+        king, pooled with its original verdict on the pod. Returns the
+        `confirmation` stamp (passed / pooled numbers). A candidate whose
+        checkpoint can no longer be read fails confirmation (not an infra
+        retry): the miner's own upload is gone."""
+        cid = cand["challenge_id"]
+        ref = model_store.ModelRef(cand["repo"], cand["revision"])
+        try:
+            info = model_store.fetch_repo_info(ref, self.cfg.secrets.hf_token,
+                                               self.r2_reader)
+        except Exception as e:
+            return {"challenge_id": cid, "passed": False,
+                    "error": f"checkpoint unreadable: {e}"[:300]}
+        block_hash = cand.get("block_hash") or chain.block_hash_at(
+            self.subtensor, int(cand["block"]))
+        margin = self._margin_context(king)
+        n_slices = int(cand.get("n_slices") or 1)
+        confirm = {"challenge_id": cid, "slice_index": n_slices,
+                   "base": {"n": int(cand.get("n_paired_turns") or 0),
+                            "margin": cand.get("margin"), "se": cand.get("se")}}
+        self.state.current_eval = {
+            "challenge_id": f"{cid} (confirmation, window {cw['window_id']})",
+            "repo": cand["repo"], "hotkey": cand["hotkey"],
+            "stage": "dispatching", "progress": {}, "started_at": now_iso(),
+        }
+        self.state.set_phase("window_confirm", challenge_id=cid)
+        self.dashboard.flush(force=True)
+
+        def on_progress(data: dict) -> None:
+            self.watchdog.beat()
+            if self.state.current_eval is not None:
+                self.state.current_eval["stage"] = data.get("phase", "scoring")
+                self.state.current_eval["progress"] = data
+            self.dashboard.flush()
+
+        verdict = await self.eval_client.run_duel(
+            king_repo=king.repo, king_revision=king.revision,
+            challenger_repo=cand["repo"], challenger_revision=cand["revision"],
+            challenger_hotkey=cand["hotkey"], block_hash=block_hash,
+            challenger_weight_bytes=info.total_safetensors_bytes,
+            margin=margin, confirm=confirm, on_progress=on_progress)
+        self.state.current_eval = None
+        conf = dict(verdict.get("confirmation") or {})
+        if not conf:
+            conf = {"passed": False,
+                    "error": "pod returned no confirmation stamp (stale eval pod? "
+                             "redeploy scripts/redeploy_pods.py)"}
+            log.error("confirmation of %s: %s", cid, conf["error"])
+        conf.setdefault("challenge_id", cid)
+        conf["job_id"] = verdict.get("job_id")
+        conf["duel_rule_wins_on_slice"] = bool(verdict.get("challenger_wins"))
+        conf["rejection_reason_on_slice"] = verdict.get("rejection_reason")
+        if verdict.get("rejection_reason") in ("thought_too_short", "causality_fail"):
+            conf["passed"] = False
+        entry = QueueEntry(challenge_id=f"{cid}-confirm", hotkey=cand["hotkey"],
+                           repo=cand["repo"], revision=cand["revision"],
+                           block=int(cand.get("block") or 0), queued_at="")
+        verdict.update({"crown_mode": "window_best", "window_id": int(cw["window_id"]),
+                        "confirmation_of": cid})
+        await self._publish_eval_artifact(entry, verdict)
+        log.info("confirmation %s: slice margin=%s pooled=%s passed=%s", cid,
+                 (conf.get("slice") or {}).get("margin"),
+                 (conf.get("pooled") or {}).get("margin"), conf.get("passed"))
+        return conf
 
     def _hygiene_reason(self, info: model_store.RepoInfo) -> str | None:
         """Contract hygiene gates on a repo's metadata; one definition so the
@@ -546,7 +944,8 @@ class Validator:
                 # No duel S* for copy-arbitration crowns.
                 self.state.record_verdict(entry, {
                     "challenger_wins": True, "verdict": "crown_earlier",
-                    "reason": copy.reason}, **self._history_meta(entry, t0))
+                    "reason": copy.reason}, **self._history_meta(entry, t0),
+                    **self._crown_cycle(self._margin_context(king)))
                 await self._maybe_set_weights(force=True)
                 self.bench.enqueue_for(entry.repo, entry.revision, entry.hotkey,
                                        accepted=True, label=f"reign-{self.state.king.reign_number}")
@@ -560,6 +959,9 @@ class Validator:
         # BlockHashUnavailable propagates to the safety wrapper: fail CLOSED
         # and requeue rather than duel on a predictable fallback slice.
         block_hash = chain.block_hash_at(self.subtensor, entry.block)
+        # δ for this duel (fixed today; the decaying-margin curve once the
+        # mode flips). Same failure contract as the seed: no block, no duel.
+        margin = self._margin_context(king)
         self.state.current_eval = {
             "challenge_id": cid, "repo": entry.repo, "hotkey": entry.hotkey,
             "stage": "dispatching", "progress": {},
@@ -601,30 +1003,64 @@ class Validator:
             challenger_repo=entry.repo, challenger_revision=entry.revision,
             challenger_hotkey=entry.hotkey, block_hash=block_hash,
             challenger_weight_bytes=info.total_safetensors_bytes,
+            margin=margin,
             on_progress=on_progress)
         self.state.current_eval = None
 
         verdict["block_hash"] = block_hash
         self._apply_thought_floor(verdict)
         self._apply_causality_gate(verdict)
+        self._apply_crown_bar(verdict, margin)
+        if self.cfg.duel.crown_mode == "window_best":
+            # The window close decides the crown; this duel only files its
+            # candidate view. One `verdict` row, never a crown here.
+            self._stamp_window_verdict(verdict, margin)
+            self.state.record_window_verdict(entry, verdict,
+                                             **self._history_meta(entry, t0))
+            log.info("verdict %s (window %s): margin=%s z=%s duel_rule_wins=%s "
+                     "crown_decision=%s", cid, verdict.get("window_id"),
+                     verdict.get("margin"), verdict.get("z"),
+                     verdict.get("duel_rule_wins"), verdict.get("crown_decision"))
+            await self._publish_eval_artifact(entry, verdict)
+            self.bench.enqueue_for(entry.repo, entry.revision, entry.hotkey,
+                                   accepted=False, label=cid)
+            self.dashboard.flush(force=True)
+            return
+        if verdict.get("challenger_wins") and self.cfg.duel.confirmation_required:
+            # wvk 19: a first-slice pass is a candidate, not a crown. One more
+            # independent slice must agree (own margin > 0, pooled margin over
+            # the bar). A failed confirmation is a plain loss: the slot is
+            # consumed, the king stands, nothing is re-queued.
+            conf = await self._confirm_crown(entry, king, verdict, block_hash,
+                                             margin, info)
+            verdict["confirmation"] = conf
+            if not conf.get("passed"):
+                verdict["challenger_wins"] = False
+                verdict["rejection_reason"] = "confirmation_failed"
         accepted = bool(verdict.get("challenger_wins"))
         crowned_entry = entry
         if accepted and is_r2_ref(entry.repo):
-            # "Public on crown": copy the private prefix to the public bucket
-            # and crown THAT ref, so the king row, weights probe and pods all
-            # point at the published copy. A failed copy still crowns the
-            # private ref (pods read both buckets); promotion is retried by
-            # the operator, never by burning the miner.
-            public_ref = await asyncio.to_thread(self._promote_or_none, entry)
-            if public_ref:
-                crowned_entry = replace(entry, repo=public_ref)
-                verdict["private_repo"] = entry.repo
+            # Crown the PRIVATE ref now and copy it to the public bucket in
+            # the background. Until 2026-09-18 the ~70 GB server-side copy
+            # ran inline here (chal-00581: 12 min 40 s between the pod's
+            # verdict and the crown) and held the queue. Every consumer
+            # tolerates a private-ref king: eval/bench pods read both
+            # buckets, kingctl passes KING_R2 for a private bucket, the
+            # weight sweep re-promotes until the public copy lands
+            # (_repromote_if_private), and rewrite_king_repo repoints the
+            # lineage once it does.
+            verdict["private_repo"] = entry.repo
+            verdict["promotion"] = "background"
         # One history row per duel: a winning verdict crowns inside
-        # record_verdict, so the crowned row carries the full verdict payload.
+        # record_verdict, so the crowned row carries the full verdict payload
+        # (+ the δ cycle the new king starts: crown block, next peak).
         self.state.record_verdict(crowned_entry, verdict,
-                                  **self._history_meta(entry, t0))
+                                  **self._history_meta(entry, t0),
+                                  **(self._crown_cycle(margin) if accepted else {}))
         log.info("verdict %s: challenger_wins=%s z=%s reason=%s", cid, accepted,
                  verdict.get("z"), verdict.get("rejection_reason"))
+        if accepted and is_r2_ref(entry.repo):
+            self._schedule_promotion(entry)
         await self._publish_eval_artifact(entry, verdict)
 
         if accepted:
@@ -633,6 +1069,86 @@ class Validator:
             crowned_entry.repo, entry.revision, entry.hotkey, accepted=accepted,
             label=(f"reign-{self.state.king.reign_number}" if accepted else cid))
         self.dashboard.flush(force=True)
+
+    async def _confirm_crown(self, entry: QueueEntry, king: King, first: dict,
+                             block_hash: str, margin: dict, info) -> dict:
+        """wvk 19 confirmation slice for a first-slice crown pass.
+
+        Same king and challenger (engines are warm), seed
+        blake2b(block_hash ‖ hotkey ‖ "|slice<k>") with k = number of slices
+        the first verdict scored (1; 2 if the near-miss rule pooled), turns
+        disjoint from those, fresh teacher references. The pod pools the two
+        samples exactly (pooled_margin_stats) and applies rule "per_duel":
+        passed = own margin > 0 AND pooled margin > max(k_sigma·SE_pooled, δ).
+        Returns the flat stamp {seed, n, margin, se, z, pooled_margin,
+        pooled_se, pooled_z, bar, passed, ...} plus the pod's sub-blocks.
+        Infra faults propagate (the whole challenge is requeued as infra)."""
+        cid = entry.challenge_id
+        nm = first.get("near_miss") or {}
+        n_slices = len(nm.get("slices") or []) or 1
+        confirm = {"challenge_id": cid, "slice_index": n_slices, "rule": "per_duel",
+                   "k_sigma": float(self.cfg.duel.k_sigma),
+                   "min_margin": float(margin["min_margin_effective"]),
+                   "base": {"n": int(first.get("n_paired_turns") or 0),
+                            "margin": first.get("margin"), "se": first.get("se")}}
+        self.state.current_eval = {
+            "challenge_id": f"{cid} (confirmation slice)", "repo": entry.repo,
+            "hotkey": entry.hotkey, "stage": "dispatching", "progress": {},
+            "started_at": now_iso(),
+        }
+        self.state.set_phase("confirmation", challenge_id=cid)
+        self.dashboard.flush(force=True)
+        log.info("%s: first slice cleared the bar (margin=%s z=%s) — running the "
+                 "confirmation slice", cid, first.get("margin"), first.get("z"))
+
+        def on_progress(data: dict) -> None:
+            self.watchdog.beat()
+            if self.state.current_eval is not None:
+                self.state.current_eval["stage"] = data.get("phase", "scoring")
+                self.state.current_eval["progress"] = data
+            self.dashboard.flush()
+
+        verdict = await self.eval_client.run_duel(
+            king_repo=king.repo, king_revision=king.revision,
+            challenger_repo=entry.repo, challenger_revision=entry.revision,
+            challenger_hotkey=entry.hotkey, block_hash=block_hash,
+            challenger_weight_bytes=info.total_safetensors_bytes,
+            margin=margin, confirm=confirm, on_progress=on_progress)
+        self.state.current_eval = None
+        pod = dict(verdict.get("confirmation") or {})
+        sl = pod.get("slice") or {}
+        pooled = pod.get("pooled") or {}
+        conf = {
+            "required": True, "rule": "per_duel",
+            "seed": sl.get("seed"), "n": sl.get("n_paired_turns"),
+            "n_forfeit_turns": sl.get("n_forfeit_turns"), "digest": sl.get("digest"),
+            "margin": sl.get("margin"), "se": sl.get("se"), "z": sl.get("z"),
+            "pooled_n": pooled.get("n"), "pooled_margin": pooled.get("margin"),
+            "pooled_se": pooled.get("se"), "pooled_z": pooled.get("z"),
+            "bar": pod.get("bar"), "k_sigma": confirm["k_sigma"],
+            "min_margin": confirm["min_margin"],
+            "passed": bool(pod.get("passed")),
+            "rejection_reason_on_slice": (sl.get("rejection_reason")
+                                          or verdict.get("rejection_reason")),
+            "job_id": verdict.get("job_id"), "base": pod.get("base"),
+        }
+        if not pod:
+            conf["passed"] = False
+            conf["error"] = ("pod returned no confirmation stamp (stale eval pod? "
+                             "redeploy scripts/redeploy_pods.py)")
+            log.error("confirmation of %s: %s", cid, conf["error"])
+        if conf["rejection_reason_on_slice"]:
+            conf["passed"] = False
+        art = QueueEntry(challenge_id=f"{cid}-confirm", hotkey=entry.hotkey,
+                         repo=entry.repo, revision=entry.revision,
+                         block=entry.block, queued_at="")
+        verdict["confirmation_of"] = cid
+        await self._publish_eval_artifact(art, verdict)
+        log.info("confirmation %s: slice margin=%s z=%s | pooled margin=%s se=%s "
+                 "z=%s bar=%s -> passed=%s", cid, conf["margin"], conf["z"],
+                 conf["pooled_margin"], conf["pooled_se"], conf["pooled_z"],
+                 conf["bar"], conf["passed"])
+        return conf
 
     def _repromote_if_private(self, member: dict) -> None:
         """A reign member still pointing at its private prefix (promotion
@@ -652,6 +1168,61 @@ class Validator:
                 member["hotkey"], member["revision"], public_ref):
             log.warning("late promotion: %s → %s", member["repo"], public_ref)
             member["repo"] = public_ref
+
+    def _schedule_promotion(self, entry: QueueEntry) -> None:
+        task = asyncio.create_task(self._promote_background(entry),
+                                   name=f"promote-{entry.challenge_id}")
+        self._promote_tasks.add(task)
+        task.add_done_callback(self._promote_tasks.discard)
+
+    async def _promote_background(self, entry: QueueEntry) -> None:
+        """Copy a crowned private prefix to the public bucket and repoint the
+        lineage row. Failure is logged and paged; the weight sweep keeps
+        retrying (_repromote_if_private) until the public copy lands."""
+        t0 = time.monotonic()
+        try:
+            public_ref = await asyncio.to_thread(self._promote_or_none, entry)
+        except Exception as e:  # _promote_or_none swallows, but be safe
+            public_ref, err = None, repr(e)
+        else:
+            err = "see log" if public_ref is None else ""
+        if public_ref:
+            self.state.rewrite_king_repo(entry.hotkey, entry.revision, public_ref)
+            log.info("background promotion of %s done in %.0fs → %s",
+                     entry.challenge_id, time.monotonic() - t0, public_ref)
+            return
+        msg = (f"public-bucket promotion of {entry.challenge_id} "
+               f"({entry.revision[:12]}) failed after {time.monotonic() - t0:.0f}s: "
+               f"{err}. King stays on the private ref; the weight sweep retries "
+               f"every {self.cfg.validator.weight_interval_s}s.")
+        log.error(msg)
+        self._page(msg)
+
+    def _page(self, text: str) -> None:
+        """One Discord line to the private ops channel. Never raises."""
+        channel = os.environ.get("AFFINE_OPS_DISCORD_CHANNEL", "1510910974498967613")
+        token = os.environ.get("DISCORD_BOT_TOKEN_ARBOS_BITTENSOR", "")
+        if not token:
+            env_file = Path(__file__).resolve().parents[2] / ".env"
+            try:
+                for line in env_file.read_text().splitlines():
+                    line = line.strip().removeprefix("export ").strip()
+                    if line.startswith("DISCORD_BOT_TOKEN_ARBOS_BITTENSOR="):
+                        token = line.split("=", 1)[1].strip().strip('"').strip("'")
+            except OSError:
+                pass
+        if not token or not channel:
+            log.warning("page (no discord token): %s", text)
+            return
+        try:
+            import httpx
+            r = httpx.post(f"https://discord.com/api/v10/channels/{channel}/messages",
+                           headers={"Authorization": f"Bot {token}"},
+                           json={"content": f"[validator] {text}"[:1900]}, timeout=20)
+            if r.status_code >= 300:
+                log.warning("page: discord HTTP %s", r.status_code)
+        except Exception:
+            log.warning("page: discord post failed", exc_info=True)
 
     def _promote_or_none(self, entry: QueueEntry) -> str | None:
         if self.registrations is None:
@@ -716,6 +1287,17 @@ class Validator:
             if exc is not None:
                 log.error("duel task died outside the safety wrapper: %s", exc)
             self._duel_task = None
+
+        # Window-best crown mode: a window past its close is settled BEFORE
+        # the next duel is dispatched (its confirmation slice runs against the
+        # frozen king; the next window's first duel faces the new king).
+        if machine_healthy and not self._duel_running():
+            due, block = self._window_due()
+            if due:
+                cw = self.state.crown_window
+                self._duel_task = asyncio.create_task(
+                    self._close_window_safely(block),
+                    name=f"window-close-{cw['window_id']}")
 
         if machine_healthy and not self._duel_running() and self.state.queue:
             entry = self.state.pop_next()

@@ -4,6 +4,15 @@
 #
 #   rollouts/scripts/clone_datagen_pod.sh SRC_HOST:SRC_PORT DST_HOST:DST_PORT i/N
 #
+# CLONE_ROLE=backfill (2026-09-19): make DST the env-backfill DRIVER pod
+# instead of a fleet shard — shard 0/1, ROLLOUTS_R2_PREFIX=traces-backfill/,
+# no HF mirror, the copied live .king_env removed, NO supervisor; the
+# post-start hook only runs the health endpoint (scripts/backfill_health.py,
+# port 20000). The coverage queue then starts one `rollouts.backfill` driver
+# per model over ssh (ops/coverage/start_env_backfill.sh). Rent the pod
+# WITHOUT a Lium TTL (omit termination_hours) — affine-backfill-2 died of its
+# 72-h TTL on 2026-09-19 and five serving boxes idled against it.
+#
 # What moves (pod-to-pod rsync, one hop): the code (/root/affine,
 # /root/rollouts, /root/prime-pilot), the interpreters (/root/venv, uv +
 # its environment cache, harbor cache), the task catalogs, the HF dataset
@@ -23,10 +32,26 @@ SRC_HOST="${1%%:*}"; SRC_PORT="${1##*:}"
 DST_HOST="${2%%:*}"; DST_PORT="${2##*:}"
 SHARD="$3"
 [[ "$SHARD" =~ ^[0-9]+/[0-9]+$ ]] || { echo "shard must look like 1/3" >&2; exit 2; }
+ROLE="${CLONE_ROLE:-shard}"
+[[ "$ROLE" == shard || "$ROLE" == backfill ]] || { echo "CLONE_ROLE must be shard or backfill" >&2; exit 2; }
+[[ "$ROLE" == backfill && "$SHARD" != 0/1 ]] && { echo "CLONE_ROLE=backfill takes shard 0/1 (the driver sees every task)" >&2; exit 2; }
 
-SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
+# no host-key pinning: Lium reuses host:port across pods and re-keys a pod on
+# every container restart; a stale known_hosts entry is what made step 5 exit
+# 255 on three clones (2026-09-19/21)
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
 src() { ssh "${SSH_OPTS[@]}" -p "$SRC_PORT" "root@$SRC_HOST" "$@"; }
-dst() { ssh "${SSH_OPTS[@]}" -p "$DST_PORT" "root@$DST_HOST" "$@"; }
+dst() {
+  # ssh right after the big rsync has twice come back 255 (connection dropped
+  # by the pod's sshd); retry a couple of times before giving up
+  local i rc
+  for i in 1 2 3; do
+    ssh "${SSH_OPTS[@]}" -p "$DST_PORT" "root@$DST_HOST" "$@"; rc=$?
+    [[ $rc -ne 255 ]] && return $rc
+    echo "dst ssh rc=255 (attempt $i); retrying in 20 s" >&2; sleep 20
+  done
+  return $rc
+}
 
 echo "== [1/5] destination sanity ($DST_HOST:$DST_PORT)"
 dst 'set -e
@@ -44,6 +69,9 @@ echo "== [3/5] rsync SRC -> DST (code, venv, caches, catalogs, state seed)"
 # -H keeps uv's hardlinked environments hardlinked (else the env cache
 # balloons); --delete is deliberately absent (never trim a live pod).
 # -R (relative) recreates each source's full path under DST:/ — without it
+# /root/.cache/affine holds the tmax sparse checkout (task Dockerfiles the
+# runner builds from) and the Spider databases; without it the first tmax
+# batch on a clone fails "missing image/Dockerfile" (datagen-5, 2026-09-12).
 # rsync drops the last path component into the destination, so
 # /root/.cache/huggingface landed at /root/huggingface on pods 2/3
 # (2026-09-02) and every terminal_lego catalog path was dead until a
@@ -59,9 +87,13 @@ src "rsync -aHR --info=progress2 --human-readable \
   --exclude='/root/.ssh/' \
   --exclude='/root/.bash_history' \
   /root/affine /root/rollouts /root/prime-pilot /root/prime-lane /root/venv \
-  /root/.local /root/.cache/uv /root/.cache/harbor /root/.cache/huggingface \
-  /root/hf /root/rollouts-data \
+  /root/.local /root/.cache/uv /root/.cache/harbor /root/.cache/huggingface /root/.cache/affine \
+  /root/hf /root/huggingface /root/rollouts-data \
   root@$DST_HOST:/"
+# /root/huggingface: the terminal-lego task tree (844 MB; .cache/huggingface/
+# terminal-lego-git is a symlink into it). Without it every terminal_lego
+# batch on the clone dies with "missing image/Dockerfile" (found on the
+# env-backfill driver pod 2026-09-21: 48 wasted attempts per king).
 
 echo "== [4/5] shard env + import smoke on DST"
 # The rsync just overwrote .rollouts_env with SRC's copy (SRC's own shard
@@ -71,8 +103,13 @@ echo "== [4/5] shard env + import smoke on DST"
 # packages (seen 2026-09-02), so uv must never touch it on a clone.
 dst "set -e
   cd /root/rollouts
-  sed -i '/^export ROLLOUTS_SHARD=/d; /^export UV_NO_SYNC=/d; /^# fleet member (clone_datagen_pod.sh/d; /^# clone: uv must not re-sync/d' .rollouts_env
+  sed -i '/^export ROLLOUTS_SHARD=/d; /^export UV_NO_SYNC=/d; /^# fleet member (clone_datagen_pod.sh/d; /^# clone: uv must not re-sync/d; /^# env-backfill driver (clone_datagen_pod.sh/d; /^export ROLLOUTS_R2_PREFIX=/d; /^export ROLLOUTS_HF_TRACE_MIRROR=/d; /^export ROLLOUTS_SEED=/d; /^export ROLLOUTS_BATCH_SIZE=/d; /^export ROLLOUTS_MAX_CONTAINERS=/d; /^export ROLLOUTS_CATALOG_DIR=/d; /^# per-model drivers (own ROLLOUTS_DATA_DIR)/d' .rollouts_env
   printf '\n# fleet member (clone_datagen_pod.sh %s): owns tasks with blake2b(uid) %% N == i\nexport ROLLOUTS_SHARD=%s\n# clone: uv must not re-sync the copied verifiers env (loses editable tasksets)\nexport UV_NO_SYNC=1\n' \"\$(date -u +%FT%TZ)\" '$SHARD' >> .rollouts_env
+  if [ '$ROLE' = backfill ]; then
+    printf '# env-backfill driver (clone_datagen_pod.sh CLONE_ROLE=backfill): traces go to the backfill prefix, never to D\nexport ROLLOUTS_R2_PREFIX=traces-backfill/\nexport ROLLOUTS_HF_TRACE_MIRROR=0\nexport ROLLOUTS_SEED=120\nexport ROLLOUTS_BATCH_SIZE=24\nexport ROLLOUTS_MAX_CONTAINERS=24\n# per-model drivers (own ROLLOUTS_DATA_DIR) read the catalogs cloned from the fleet: some cannot be rebuilt here\nexport ROLLOUTS_CATALOG_DIR=/root/rollouts-data/catalogs\n' >> .rollouts_env
+    rm -f /root/rollouts/.king_env
+    hostname > /root/rollouts/.pod_name 2>/dev/null || true
+  fi
   source /root/affine/.datagen_env; source .rollouts_env
   export PATH=/root/.local/bin:\$PATH
   (cd /root/prime-pilot/verifiers && uv run python -c 'import affine_math_v1, swesmith_v1, terminal_lego_v1, swerebench_v2_full, verifiers; print(\"verifiers env OK: tasksets import\")')
@@ -85,8 +122,34 @@ st = UnifiedState(cfg.state_path)
 seeded = sum(len(st.done_for(s)) for s in reg.sources)
 print(f'IMPORT_OK shard={cfg.shard[0]}/{cfg.shard[1]} seeded_done_tasks={seeded} '
       f'catalogs={sorted(p.name for p in cfg.catalog_dir.glob(\"*.jsonl\"))}')
-assert cfg.shard[1] > 1, 'shard not applied'
+assert cfg.shard[1] > 1 or '$ROLE' == 'backfill', 'shard not applied'
 PY"
+
+if [ "$ROLE" = backfill ]; then
+  echo "== [5/5] backfill driver: no supervisor; health endpoint on port 20000"
+  # The driver-pod scripts live in this repo, not on the SRC fleet pod the
+  # rsync copied from: ship them from here.
+  HERE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  for i in 1 2 3; do
+    scp "${SSH_OPTS[@]}" -P "$DST_PORT" "$HERE_DIR/run_backfill.sh" "$HERE_DIR/backfill_health.py" \
+        "$HERE_DIR/backfill_post_start.sh" "$HERE_DIR/backfill_relaunch.sh" "root@$DST_HOST:/root/rollouts/scripts/" && break
+    echo "scp of the driver scripts failed (attempt $i); retrying in 20 s" >&2; sleep 20
+  done
+  dst 'set -e
+    pkill -f "^bash /root/rollouts/bootstrap.sh$" 2>/dev/null || true
+    pkill -f "^/root/venv/bin/python -m rollouts.run" 2>/dev/null || true
+    rm -rf /root/rollouts-data/runs
+    install -m 0755 /root/rollouts/scripts/run_backfill.sh /root/rollouts/run_backfill.sh
+    chmod +x /root/rollouts/scripts/backfill_health.py /root/rollouts/scripts/backfill_post_start.sh /root/rollouts/scripts/backfill_relaunch.sh
+    hostname > /root/rollouts/.pod_name 2>/dev/null || true
+    install -m 0755 /root/rollouts/scripts/backfill_post_start.sh /post_start.sh
+    pkill -f backfill_health.py 2>/dev/null || true
+    bash /post_start.sh
+    sleep 4
+    curl -sf http://127.0.0.1:20000/health || { echo "health endpoint not answering:"; tail -n 5 /root/logs/backfill_health.log; exit 1; }'
+  echo "== done: $DST_HOST:$DST_PORT is the env-backfill driver pod (health: http://$DST_HOST:20000/health via the mapped data port)"
+  exit 0
+fi
 
 echo "== [5/5] (re)start the supervisor on DST"
 # /start.sh (PID 1 of the Lium template) runs /post_start.sh on every

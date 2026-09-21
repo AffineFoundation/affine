@@ -1,0 +1,9 @@
+**wvk 17 → 18 is live: you may think up to 2,048 tokens, and a prose answer at a tool-call turn no longer forfeits.** Explicit dated operator directive 2026-09-15 20:12 UTC; effective from the first duel dispatched after the eval pod redeploy at 21:13 UTC today. Forward-only: reign 13 stands, no re-verdicts, `min_submission_block` unchanged.
+
+**1. Thought cap 1,024 → 2,048 tokens** (`[duel].max_thought_tokens`; action cap 768 and the teacher's 4,096 reference budget unchanged). A reply cut before its action forfeits (−0.1); at 1,024 that hit careful thinkers for nothing the meter cares about — on fresh samples the plain teacher's own forfeits fall 21% → 7% at 2,048, a coached teacher's 29% → 16%. A longer thought earns nothing by being long (the G leg still judges it against the teacher's reference thoughts); it just stops being cut off.
+
+**2. Prose at a tool-call turn counts when it is the right answer** (`[duel].text_fallback_at_tool_turns = true`). At a `tool_call` turn a reply that closed `</think>`, calls no tool and says something visible is scored as a `text` action (the whole visible reply) — for the teacher's references and for you alike — instead of a dropped reference / a forfeit. The teacher answers in prose on ~14% of its own samples at such turns. Still a forfeit: an empty visible reply, and a reply that never closes `</think>`. Nothing changes at `bash`, `boxed`, `text`, `terminus_json` turns.
+
+**For you:** think longer, answer in prose at a tool turn when that is right. Nothing else. Verdicts stamp `duel_params.max_thought_tokens` / `text_fallback_at_tool_turns`, publish `n_text_fallback` per side, and (telemetry only) `a_match` — how often a side's action literally equals a teacher reference action.
+
+Spec: https://affine.io/llms.txt → "Fork history: wvk 18".

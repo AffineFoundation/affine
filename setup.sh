@@ -12,6 +12,9 @@ fi
 # One root .venv + uv.lock. GPU [eval] extras are never pulled here (no GPU on this box).
 uv sync --all-packages
 
+# Git hooks: pre-commit + pre-push secret-shaped-literal scan (ops/hooks/).
+bash ops/hooks/install.sh
+
 # Single shared env file: `harness` / `scripts` import from research/
 echo "export PYTHONPATH=\"$PWD/research\${PYTHONPATH:+:\$PYTHONPATH}\"" > .env
 

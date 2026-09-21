@@ -29,6 +29,12 @@ pod_prefix = "swarm-t-"          # manager only ever touches pods with this pref
 template_id = "345273fa-4818-46f7-a8fa-32f0e331713c"  # Pytorch (Cuda+DinD) cu13.0.2
 budget_usd_hr = 240.0            # hard cap on aggregate swarm $/hr
 ttl_hours = 48                   # per-pod safety-net TTL at rent time
+# Zero-gap TTL rotation (2026-09-17): rent the same-type replacement this
+# many hours before Lium removes a box, admit it, then release the old one.
+rotate_before_ttl_hours = 2.0
+# A stand-in type (types.*.standin_for) is released once the covered type
+# has served for this many minutes (hysteresis against a flapping box).
+standin_release_min = 15
 bootstrap_timeout_min = 50       # venv + model pull + engine warmup (slow pipes)
 unreachable_grace_min = 25   # dark grace after healthy: covers a supervisor engine relaunch
 min_balance_usd = 10000.0        # refuse to rent below this Lium balance
@@ -37,7 +43,9 @@ min_balance_usd = 10000.0        # refuse to rent below this Lium balance
 # failing teacher_unservable. When a target>0 type has no stock and the swarm
 # holds no pod at all, rent ONE box of the first type below that has stock;
 # it is released once the primary type is healthy again. Order = throughput.
-fallback_types = ["eval-b200-8x", "pro6000-8x", "h200-8x", "h100-8x", "b300-1x", "b200-1x"]
+# 2026-09-17: widened — h200-4x and pro6000-4x before the single-GPU types, so a
+# market with no 8x boxes still yields TP2 pairs instead of one lone replica.
+fallback_types = ["eval-b200-8x", "h200-8x", "pro6000-8x", "h100-8x", "h200-4x", "pro6000-4x", "b300-1x", "b200-1x"]
 
 # Serving knobs shared by every replica (mirrors production teacher slots).
 # Chunk 8192, not 12288: the 248,320-token vocab makes the fp32 echo
@@ -67,8 +75,11 @@ match = "RTX PRO 6000 Blackwell Server"
 gpu_count = 8
 tp = 2
 replicas = 4
-target = 0
+# Stand-in for b200-8x (2026-09-17, see h200-8x): second box while B200 x8
+# is out of stock, released automatically when it is back.
+target = 1
 max_price = 15.0
+standin_for = "b200-8x"
 est_tps = 0.6               # measured duel-real c12 (2xTP4 layout)
 
 [types.pro6000-4x]           # 384 GB/box: 2 replicas TP2
@@ -168,8 +179,15 @@ match = "H200"
 gpu_count = 8
 tp = 2
 replicas = 4
-target = 0
+# Stand-in for b200-8x (2026-09-17): wanted (1 box, cap $36 — stock sat at
+# $33.20 during the B200 x8 drought) only while b200-8x has no healthy
+# replica; released automatically once b200-8x has served for
+# standin_release_min. Operator directive: running duels matter more than
+# $10-15/h, but the swarm must never double.
+target = 1
 max_price = 27.0
+standin_for = "b200-8x"
+standin_max_price = 36.0
 est_tps = 2.4
 adopt = ["affine-teacher2"]
 
@@ -216,3 +234,10 @@ target = 0
 max_price = 5.0
 est_tps = 0.25
 max_num_batched_tokens = 4096
+
+[alerts]                          # zero-replica paging (manager.py Alerter, 2026-09-17)
+enabled = true
+channel_id = "1510910974498967613"   # private Arbos ops channel (operator directive 2026-09-12)
+token_env = "DISCORD_BOT_TOKEN_ARBOS_BITTENSOR"
+zero_replicas_after_min = 5       # page within 10 min of the swarm going to 0 replicas
+repeat_min = 60                   # re-page hourly while it lasts; one line on recovery

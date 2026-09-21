@@ -7,14 +7,21 @@ not hardcoded config.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 
 from datagen.providers import looks_like_provider_failure
 
-from rollouts.adapters.verifiers import envelopes_from_traces
+from rollouts import loopguard
+from rollouts.adapters.verifiers import (
+    NO_VISIBLE_REPLY_STOP,
+    envelopes_from_traces,
+    mark_no_visible_reply,
+)
 from rollouts.catalog import VERIFIERS_IMAGE_PREFIXES
 from rollouts.config import RolloutsConfig
+from rollouts.diskgc import gc_if_low
 from rollouts.registry import Source
 from rollouts.runners.base import (
     BatchResult,
@@ -28,10 +35,27 @@ from rollouts.schema import (
     PolicyStamp,
     trace_error_type,
     trace_reward_score,
+    priced_cost,
     trace_stats,
 )
 
 log = logging.getLogger("rollouts.runners.verifiers")
+
+# The mini-swe-agent harnesses install `mini-swe-agent==2.4.6` +
+# `litellm[proxy]` (unpinned) into every task container with a PEP 723 uv
+# script. litellm >= 1.98.0 (2026-08-22) no longer imports on Python 3.10
+# (`typing.NotRequired`) although it still declares `>= 3.10`, and on a
+# 3.10 image (r2e_gym, others) uv picks the image's interpreter, so every
+# such rollout died at start-up as "Unknown model class: litellm_textbased"
+# (600 r2e_gym + ~130 other king_textbased rollouts, 2026-09-10/11).
+# UV_PYTHON makes uv fetch a managed 3.12 for the script env instead
+# (~+15 s per container). Harness env vars ride `--env.agent.harness.env.*`.
+MINI_SWE_HARNESSES = ("mini_swe_agent", "mini_swe_textbased")
+MINI_SWE_HARNESS_ENV = {"UV_PYTHON": "3.12"}
+# Harnesses whose "agent completed" may hide a final reply with no visible
+# text (adapters.verifiers.mark_no_visible_reply). pi ends the agent when its
+# last tool completes even if the model then says nothing.
+NO_VISIBLE_REPLY_HARNESSES = ("pi",)
 
 
 def eval_cmd(cfg: RolloutsConfig, source: Source, endpoint: Endpoint,
@@ -47,13 +71,19 @@ def eval_cmd(cfg: RolloutsConfig, source: Source, endpoint: Endpoint,
         "--client.base-url", endpoint.base_url,
         "--client.api-key-var", endpoint.key_env,
         "--env.agent.harness.id", harness,
+    ]
+    if harness in MINI_SWE_HARNESSES:
+        for key, value in MINI_SWE_HARNESS_ENV.items():
+            cmd.extend([f"--env.agent.harness.env.{key}", value])
+    cmd += [
         "--env.agent.runtime.type", runtime,
         "--env.agent.max-turns", str(cfg.max_turns),
         "--env.agent.timeout.setup", "1800",
         "--env.agent.timeout.rollout", str(cfg.rollout_timeout_s),
         "--env.agent.timeout.scoring", "1800",
         "--push", "False", "--rich", "False",
-        "-c", str(min(cfg.max_containers, len(uids))),
+        "-c", str(min(cfg.max_containers, source.max_concurrency or cfg.max_containers,
+                      len(uids))),
         "-o", str(run_dir),
     ]
     # Policy sampling rides the v1 eval CLI's dotted SamplingConfig; unset
@@ -87,10 +117,22 @@ def eval_cmd(cfg: RolloutsConfig, source: Source, endpoint: Endpoint,
     return cmd
 
 
-def build_local_images(batch: list[dict]) -> tuple[list[dict], list[str]]:
-    """Local-build per-task images (terminal_lego); (ok_batch, failed_uids)."""
+# Per-task local builds per batch (terminal_lego, affine_tmax: ~2 GB each).
+# Tasks past the cap are DEFERRED, not failed: they stay unmarked and the
+# scheduler re-selects them, so a batch adds at most this many new images
+# to the disk (2026-09-13; datagen-2 filled its disk twice on tmax builds).
+MAX_LOCAL_BUILDS_PER_BATCH = int(os.environ.get("ROLLOUTS_MAX_LOCAL_BUILDS", 6))
+
+
+def build_local_images(batch: list[dict], max_builds: int = 0,
+                       ) -> tuple[list[dict], list[str], list[str]]:
+    """Local-build per-task images (terminal_lego, tmax):
+    (ok_batch, failed_uids, deferred_uids). Images that already exist do
+    not count against `max_builds` (0 = no cap)."""
     ok: list[dict] = []
     failed: list[str] = []
+    deferred: list[str] = []
+    n_built = 0
     for row in batch:
         uid = row["uid"]
         image = row.get("image") or ""
@@ -106,6 +148,10 @@ def build_local_images(batch: list[dict]) -> tuple[list[dict], list[str]]:
         if probe.returncode == 0:
             ok.append(row)
             continue
+        if max_builds and n_built >= max_builds:
+            deferred.append(uid)
+            continue
+        n_built += 1
         log.info("docker build %s <- %s", image, dockerfile)
         proc = subprocess.run(
             ["docker", "build", "-t", image, "-f", str(dockerfile),
@@ -117,12 +163,81 @@ def build_local_images(batch: list[dict]) -> tuple[list[dict], list[str]]:
             failed.append(uid)
             continue
         ok.append(row)
-    return ok, failed
+    if deferred:
+        log.info("%d task(s) deferred: batch build cap %d reached (re-selected "
+                 "later)", len(deferred), max_builds)
+    return ok, failed, deferred
 
 
-def reap_containers() -> None:
-    """Remove leftover containers from verifiers image namespaces only —
-    mini_swe's swerebench/sweb.eval containers never match."""
+# Container ownership (2026-09-12). Every container the eval subprocess
+# creates is stamped by the `dockerwrap/docker` shim with
+# `rollouts.supervisor=<pid>@<boot id>` and `rollouts.batch=<run tag>`. The
+# per-batch reaper removes only containers whose supervisor is this process
+# or is gone (crashed supervisor -> orphans); containers of another live
+# supervisor or without the label (a one-off `uv run eval`, another agent's
+# experiment) are left alone. Before this, the reaper removed every
+# container in the verifiers image namespaces — two workers' one-offs on a
+# pod and the live supervisor were killing each other's rollouts (exit 137).
+DOCKERWRAP_DIR = str(Path(__file__).resolve().parent.parent / "dockerwrap")
+SUPERVISOR_LABEL = "rollouts.supervisor"
+BATCH_LABEL = "rollouts.batch"
+
+
+def _boot_id() -> str:
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text().strip()[:8]
+    except OSError:
+        return "noboot"
+
+
+def supervisor_id(pid: int | None = None) -> str:
+    """`<pid>@<boot id>`: a pid alone could be reused after a reboot."""
+    return f"{pid if pid is not None else os.getpid()}@{_boot_id()}"
+
+
+def supervisor_alive(label: str) -> bool:
+    pid_s, _, boot = label.partition("@")
+    if boot != _boot_id():
+        return False
+    try:
+        os.kill(int(pid_s), 0)
+    except (ValueError, ProcessLookupError):
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def reap_containers(owner: str | None = None) -> None:
+    """Remove this supervisor's leftover containers and any orphan whose
+    supervisor no longer runs. Unlabeled and other live supervisors'
+    containers are untouched."""
+    owner = owner or supervisor_id()
+    try:
+        out = subprocess.run(
+            ["docker", "ps", "-a", "--format",
+             '{{.ID}}\t{{.Label "' + SUPERVISOR_LABEL + '"}}'],
+            capture_output=True, text=True, timeout=60).stdout
+        stale = []
+        for line in out.splitlines():
+            cid, _, label = line.partition("\t")
+            label = label.strip()
+            if label and (label == owner or not supervisor_alive(label)):
+                stale.append(cid)
+        if stale:
+            subprocess.run(["docker", "rm", "-f", *stale],
+                           capture_output=True, timeout=120)
+            log.info("reaped %d leftover container(s) owned by this or a "
+                     "dead supervisor", len(stale))
+    except Exception:
+        log.warning("container reap failed", exc_info=True)
+
+
+def reap_all_verifiers_containers() -> None:
+    """The pre-2026-09-12 reaper: every container in the verifiers image
+    namespaces, whoever created it (mini_swe's swerebench/sweb.eval
+    containers never match). Explicit `rollouts.run --reap-all` only — for
+    a pod start where unlabeled orphans must be cleared; never per batch."""
     try:
         out = subprocess.run(
             ["docker", "ps", "-a", "--format", "{{.ID}} {{.Image}}"],
@@ -133,40 +248,74 @@ def reap_containers() -> None:
         if stale:
             subprocess.run(["docker", "rm", "-f", *stale],
                            capture_output=True, timeout=120)
-            log.info("reaped %d leftover container(s)", len(stale))
+            log.info("reaped %d verifiers container(s) (--reap-all)", len(stale))
     except Exception:
         log.warning("container reap failed", exc_info=True)
 
 
-def _per_task_rows(envelopes: list[dict]) -> list[dict]:
+def _per_task_rows(envelopes: list[dict], endpoint=None) -> list[dict]:
+    """One state row per envelope. With a priced endpoint the row's
+    cost_usd is filled from the token counts when the harness reported none,
+    and the same figure is stamped on the envelope (`policy.cost_usd`,
+    additive) so the kingboard can sum spend from the trace store."""
     rows = []
     for env in envelopes:
         trace = env["trace"]
         score = trace_reward_score(trace)
+        stats = trace_stats(trace)
+        if not stats.get("cost_usd"):
+            priced = priced_cost(stats, endpoint)
+            if priced is not None:
+                stats["cost_usd"] = priced
+                env.setdefault("policy", {})["cost_usd"] = priced
         rows.append({
             "uid": env["task"]["uid"],
             "resolved": score,
             "stop": trace.get("stop_condition"),
             "error": trace_error_type(trace),
-            **trace_stats(trace),
+            **stats,
         })
     return rows
 
 
-def _batch_suspect(per_task: list[dict], produced_traces: bool) -> bool:
-    """A batch with no traces, or where nothing resolved and most rollouts
-    errored with provider-failure signatures, is retried on the fallback
-    endpoint."""
+BATCH_OK = "ok"
+BATCH_PROVIDER = "provider-suspect"
+BATCH_ENV = "env-failure"
+
+
+def classify_batch(code: int, out_tail: str, per_task: list[dict],
+                   produced_traces: bool) -> str:
+    """Who is to blame for a bad batch.
+
+    BATCH_PROVIDER — the endpoint: rollouts (or, with no traces at all, the
+    eval's own output) carry provider-failure signatures (429 / 401 / 5xx /
+    connection / timeout, datagen.providers.FAILURE_SIGNATURES). Strikes the
+    endpoint and retries on the policy's fallback chain.
+
+    BATCH_ENV — the source / harness: the eval exited non-zero or produced
+    nothing, or every rollout errored, WITHOUT a provider signature (a
+    taskset that fails to load, a docker build, a harness crash). The
+    endpoint is left alone and there is no fallback retry (the same code
+    would crash again); the supervisor's zero-yield streak cools the SOURCE.
+    Until 2026-09-13 this case struck the endpoint: `affine_rgym`'s taskset
+    crashed in ~7 s on every pod and each crash cooled the TEACHER endpoint
+    60 / 120 / 240 s, so the whole teacher seat idled — and once the source
+    had a king policy, teacher cycles were routed onto the king.
+
+    BATCH_OK — anything that resolved, or fewer than half errored."""
     if not produced_traces or not per_task:
-        return True
-    errored = [r for r in per_task if r.get("error")]
+        return (BATCH_PROVIDER if looks_like_provider_failure(out_tail)
+                else BATCH_ENV)
     if any(r["resolved"] == 1.0 for r in per_task):
-        return False
+        return BATCH_OK if code == 0 else BATCH_ENV
+    errored = [r for r in per_task if r.get("error")]
     if len(errored) < max(1, len(per_task) // 2):
-        return False
+        return BATCH_OK if code == 0 else BATCH_ENV
     blob = " ".join(str(r.get("error") or "") + str(r.get("stop") or "")
                     for r in errored)
-    return looks_like_provider_failure(blob) or len(errored) == len(per_task)
+    if looks_like_provider_failure(blob):
+        return BATCH_PROVIDER
+    return BATCH_ENV if (code != 0 or len(errored) == len(per_task)) else BATCH_OK
 
 
 class VerifiersRunner:
@@ -185,9 +334,11 @@ class VerifiersRunner:
         result = BatchResult()
         if self.RUNTIME == "docker":
             reap_containers()
+            gc_if_low(f"{source.name} batch")
 
         if source.local_docker_build:
-            batch, build_failed = build_local_images(batch)
+            batch, build_failed, _deferred = build_local_images(
+                batch, MAX_LOCAL_BUILDS_PER_BATCH)
             for uid in build_failed:
                 result.per_task.append({
                     "uid": uid, "resolved": None, "stop": None,
@@ -203,6 +354,18 @@ class VerifiersRunner:
             attempt_dir.mkdir(parents=True, exist_ok=True)
             env = dict(self.env)
             env["PATH"] = f"{Path.home()}/.local/bin:" + env.get("PATH", "")
+            if self.RUNTIME == "docker":
+                # dockerwrap/docker stamps ownership labels on every
+                # container this eval creates (see reap_containers).
+                env["PATH"] = DOCKERWRAP_DIR + ":" + env["PATH"]
+                env["ROLLOUTS_SUPERVISOR"] = supervisor_id()
+                env["ROLLOUTS_BATCH"] = run_dir.name
+            if policy.loop_guard_repeats > 0:
+                # rollouts.loopguard: sitecustomize installs the `loop_guard`
+                # @stop in the eval process; the threshold rides the env.
+                env[loopguard.ENV_REPEATS] = str(policy.loop_guard_repeats)
+                env["PYTHONPATH"] = loopguard.SITE_DIR + (
+                    ":" + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
             code, out = run_streamed(
                 eval_cmd(self.cfg, source, endpoint, policy.harness, batch,
                          attempt_dir, policy.sampling, runtime=self.RUNTIME),
@@ -212,23 +375,38 @@ class VerifiersRunner:
             stamp = PolicyStamp(policy_id=policy.id, model=endpoint.label,
                                 harness=policy.harness,
                                 endpoint=endpoint.name,
-                                action_kind=policy.action_kind)
+                                action_kind=policy.action_kind,
+                                temperature=policy.sampling.get("temperature"))
             traces_path = attempt_dir / "traces.jsonl"
             envelopes, _ = envelopes_from_traces(
                 traces_path, source=source.name, env_id=source.taskset_id,
                 meta_by_uid=meta_by_uid, policy=stamp)
-            per_task = _per_task_rows(envelopes)
-            suspect = code != 0 or _batch_suspect(per_task,
-                                                  traces_path.exists())
-            log.info("batch via %s: exit=%s tasks=%d resolved=%d%s",
+            if policy.harness in NO_VISIBLE_REPLY_HARNESSES:
+                n_silent = sum(mark_no_visible_reply(e["trace"]) for e in envelopes)
+                if n_silent:
+                    log.info("%d rollout(s) finished without a visible reply "
+                             "-> stop_condition=%s", n_silent, NO_VISIBLE_REPLY_STOP)
+            per_task = _per_task_rows(envelopes, endpoint)
+            # Only the tail is read for provider signatures: the eval prints
+            # its config first, and a crash's exception sits on the last lines.
+            verdict = classify_batch(code, out[-1500:], per_task,
+                                     traces_path.exists())
+            log.info("batch via %s: exit=%s tasks=%d resolved=%d [%s]",
                      endpoint.name, code, len(per_task),
-                     sum(1 for r in per_task if r["resolved"] == 1.0),
-                     " [provider-suspect]" if suspect else "")
-            if suspect:
+                     sum(1 for r in per_task if r["resolved"] == 1.0), verdict)
+            if verdict == BATCH_PROVIDER:
                 self.health.strike(endpoint.name, f"eval exit {code}")
-            else:
+            elif verdict == BATCH_OK:
                 self.health.mark_ok(endpoint.name)
-            if not suspect or attempt == len(endpoints) - 1:
+            else:
+                # Source-side failure: the endpoint keeps its health and the
+                # source takes the zero-yield strike (run.py
+                # record_batch_yield -> scheduler cooldown after 3).
+                log.warning("source %s: env/harness failure on %s (exit %s, "
+                            "%d traces) — not an endpoint fault; no strike, "
+                            "no fallback retry", source.name, endpoint.name,
+                            code, len(per_task))
+            if verdict != BATCH_PROVIDER or attempt == len(endpoints) - 1:
                 result.envelopes = envelopes
                 result.per_task.extend(per_task)
                 result.endpoint = endpoint

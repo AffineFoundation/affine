@@ -1,0 +1,26 @@
+crowns since the wvk-10 reset: 15 (reigns 1–13)
+reign challenge   via           margin      z  second slice -> per-duel confirmation
+    1 chal-00052  duel        +0.00471   5.68  no second slice (would have run one)
+    2 chal-00118  duel        +0.00222   3.07  no second slice (would have run one)
+    3 chal-00128  duel        +0.00304   4.21  no second slice (would have run one)
+    4 chal-00169  duel        +0.00232   3.08  no second slice (would have run one)
+    5 chal-00248  duel        +0.00230   3.89  no second slice (would have run one)
+    6 chal-00267  duel        +0.02920   4.63  no second slice (would have run one)
+    7 chal-00272  duel        +0.00929   2.77  no second slice (would have run one)
+    8 chal-00283  duel        +0.01364   9.39  no second slice (would have run one)
+    9 chal-00349  duel        +0.00222   2.87  no second slice (would have run one)
+   10 chal-00407  duel        +0.00216   2.65  no second slice (would have run one)
+   11 chal-00409  duel        +0.00275   3.34  no second slice (would have run one)
+   12 chal-00454  window_best +0.00119   2.32  wvk-15 confirmation slice margin -0.00003, pooled +0.00078 (se 0.00042) -> FAILED (revoked)
+   13 chal-00461  window_best +0.00074   0.93  wvk-15 confirmation slice margin -0.00065, pooled +0.00005 (se 0.00054) -> FAILED (revoked)
+   12 chal-00502  duel        +0.00208   2.69  no second slice (would have run one)
+   13 chal-00517  duel        +0.00227   2.51  no second slice (would have run one)
+
+crowns with a stored second slice: 2; would have survived the per-duel confirmation: 0
+scored verdicts: 447; first-slice passes (duel rule): 15 (3.4%) -> confirmation slices that would have run
+median SE (last 50): 0.00078; δ = 2.58·SE
+null-challenger false crown: per-duel rule ≈ 0.50% per attempt; with confirmation ≈ 0.0025% (2σ-only framing: 2.3% -> ≈ 0.10%)
+
+== decision replay (last 30) ==
+wvk<=14 rows: 30/30 decisions reproduced bit-identically
+wvk 15 rows : 0/0 agree with the stamped duel_rule_wins; under the restored rule none of them would have crowned unless marked restored=True

@@ -7,6 +7,7 @@ import statistics as st
 from typing import Any
 
 from ..score import eta, gate_pass, l1_lift, reason
+from .readers import slim_sd_meter
 
 
 def _legacy_mix(p: dict) -> float | None:
@@ -200,6 +201,11 @@ def project_duel_summary(history_row: dict | None, artifact: dict | None,
         "margin": row.get("margin"),
         "se": row.get("se"),
         "n_paired_turns": row.get("n_paired_turns"),
+        "n_forfeit_turns": row.get("n_forfeit_turns"),
+        "near_miss": row.get("near_miss"),         # sequential near-miss stamp
+        "protocol_probe": (row.get("protocol_probe")
+                           or (art.get("verdict") or {}).get("protocol_probe")),
+        "sd_meter": row.get("sd_meter") or slim_sd_meter(art.get("verdict")),
         "rejection_reason": row.get("rejection_reason") or art.get("rejection_reason"),
         "error_code": row.get("error_code"),
         "error_detail": row.get("error_detail"),
