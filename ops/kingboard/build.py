@@ -175,6 +175,7 @@ REFERENCE_NOTES = {
     "occamy-1.0": "Accio-Lab/occamy-1.0 — Alibaba, Qwen3.6-35B-A3B post-train, admissible reference; not a king",
 }
 GENESIS_DIGEST12 = "995ad96eacd9"     # HF revision 995ad96e… = reign 0 (seed)
+TEACHER_DIGEST12 = "1d4bf0f2ff60"     # HF revision 1d4bf0f2… of Qwen/Qwen3.8-27B (cards that bench the teacher itself)
 # Held-out benchmarks in display order (benchsuite `[[envs]].id` -> label).
 # Cards may carry more ids; unknown ones are appended in card order.
 BENCH_COLUMNS = [
@@ -1091,6 +1092,18 @@ def is_genesis_card(card: dict) -> bool:
     return "genesis" in ident or "qwen3.6-35b-a3b" in ident
 
 
+def is_teacher_card(card: dict) -> bool:
+    """A card whose `king` seat IS the teacher (the coverage worker's
+    `hf://Qwen/Qwen3.8-27B` agentic pass, label `teacher`). Its king-side
+    cells belong to the Teacher row, never to a reference row of their own."""
+    k = card.get("king") or {}
+    if card_digest12(card) == TEACHER_DIGEST12:
+        return True
+    if str(k.get("label") or "").strip().lower() == "teacher":
+        return True
+    return str(k.get("hf_repo") or k.get("model") or "").strip() == TEACHER_MODEL
+
+
 def is_model_card(card: dict) -> bool:
     """A card measuring a king / genesis (not a challenger or comparable)."""
     return (card.get("mode") not in BENCH_SKIP_MODES
@@ -1198,6 +1211,23 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
             val = out.pop(k)
             if env not in out:
                 out[env] = val   # score None + unverified / failed: renders as such, tooltip has the reason
+    return out
+
+
+def merge_cells(*sides: dict[str, dict]) -> dict[str, dict]:
+    """Union of several env -> cell maps for one row. A real value beats a
+    placeholder (failed / unverified); among real values the newest card
+    (`created_at`) wins."""
+    out: dict[str, dict] = {}
+    for cells in sides:
+        for env, val in cells.items():
+            cur = out.get(env)
+            if cur is None:
+                out[env] = val
+                continue
+            cur_real, val_real = cur.get("score") is not None, val.get("score") is not None
+            if val_real and (not cur_real or (val.get("created_at") or "") > (cur.get("created_at") or "")):
+                out[env] = val
     return out
 
 
@@ -1324,9 +1354,13 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
     genesis_cards: list[dict] = []
     known_digests = {k.get("digest12") for k in [*(stats.get("kings") or []), *(stats.get("revoked_kings") or [])]}
     reference_cards: dict[str, list[dict]] = {}     # label -> cards (fullest first)
+    teacher_self_cards: list[dict] = []     # the teacher benched in the king seat
     for c in model_cards:
         if is_genesis_card(c):
             genesis_cards.append(c)
+            continue
+        if is_teacher_card(c):
+            teacher_self_cards.append(c)
             continue
         kb = c.get("king") or {}
         d12 = card_digest12(c)
@@ -1340,10 +1374,12 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
     for lst in reference_cards.values():
         lst.sort(key=rank, reverse=True)
     genesis_cards.sort(key=rank, reverse=True)
-    # teacher: a card whose teacher cells were measured (not copied) first
-    teacher_cards = sorted(
-        cards, key=lambda c: (any((r.get("teacher") or {}).get("reused_from") for r in c.get("rows") or []),
-                              -len(c.get("rows") or []), c.get("created_at") or ""))
+    # teacher: cards whose teacher cells were measured (not copied) first, then
+    # newest first — the same newest-cell-wins merge as for kings (2026-09-21)
+    teacher_cards = sorted(cards, key=rank, reverse=True)
+    teacher_cards.sort(key=lambda c: any((r.get("teacher") or {}).get("reused_from")
+                                         for r in c.get("rows") or []))   # stable: measured first
+    teacher_self_cards.sort(key=rank, reverse=True)
 
     # -- columns
     bench_envs_seen: list[str] = []
@@ -1458,7 +1494,11 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
     for row in rows:
         cells: dict[str, dict] = {}
         if row["kind"] == "teacher":
-            bench = card_cells(teacher_cards, "teacher")
+            # teacher-side cells of every card + king-side cells of the cards
+            # that bench the teacher itself, folded into ONE row: newest wins,
+            # a verified value beats a placeholder whatever its age
+            bench = merge_cells(card_cells(teacher_cards, "teacher"),
+                                card_cells(teacher_self_cards, "king"))
             env_aggs = {s: {**a, "source": s} for s, a in teacher_envs.items()}
         elif row["kind"] == "genesis":
             bench = card_cells(genesis_cards, "king")
