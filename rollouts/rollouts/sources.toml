@@ -323,7 +323,7 @@ enabled = true
 [strata_budget.buckets]
 coding = 3800     # 6030 -> 3800 (phase 10, 2026-09-16; sized so the stop-state block clears 25 %)
 terminal = 2400   # 3700 -> 2400 (phase 10)
-general = 900     # 830 -> 900 (2026-09-17, chat floor 6 %)
+general = 1000    # 830 -> 900 (2026-09-17, chat floor 6 %) -> 1000 (2026-09-21: autobench / eog / mrcr / oolong carved out of general; keeps chat >= 6 %)
 tool_use = 332
 agentic_ops = 650    # 2026-09-21: 0.05 of ~13k strata
 long_context = 400   # 2026-09-21: 0.03 of ~13k strata
