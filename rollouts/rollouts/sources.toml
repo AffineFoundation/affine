@@ -256,7 +256,7 @@ apply_groups = ["king_fail", "king_divergence"]
 # never flips back on its own (state.gate_enforced; published in the
 # announce / manifest / fold_stats.yield.gate_state); (c) king_coached is
 # exempt from the recovery rule -- the coached teacher is the recovery.
-king_failed_exempt = ["king_done"]
+king_failed_exempt = ["king_done", "king_tooluse"]   # 2026-09-21: king_tooluse's selection IS the failure (tool where the teacher asks / answers), whatever the grade -- tau2-gen airline kings solve while still calling a tool at turn 1
 recovery_exempt = ["king_coached"]
 auto_promote = true
 state_table_dir = "affine/state/recoverable"
@@ -266,6 +266,19 @@ task_teacher_solved = true
 dead_refs = true
 ledger_dir = "affine/state/curriculum/ledger"
 min_refs_valid = 2
+
+[decontamination]
+# Generated-benchmark sources: the fold refuses any task without the [GEN:...]
+# marker and any task whose fingerprint (uid minus the tau2g-e<epoch>-<domain>-
+# prefix and the [GEN:] suffix) is a tau2-bench `base` id of its domain
+# (telecom ids are exactly such fingerprints; same intent + fault composition
+# under any persona also counts). Airline / retail bench ids are bare numbers
+# (no name overlap by construction) -- the marker is the guard there.
+# Drop reasons: decontam_no_gen_marker, bench_panel_overlap.
+[decontamination.affine_tau2_gen]
+bench_ids = "rollouts/envs/affine_tau2_gen_v1/affine_tau2_gen_v1/data/e61/bench_task_ids.json"
+require_gen_marker = true
+domain_field = "repo"
 
 [strata_budget]
 # Phase 9 (2026-09-14). The duel slicer draws one turn per stratum uniformly
@@ -449,13 +462,13 @@ strata_buckets = 4000   # 2000 -> 4000 (2026-09-14 phase 9b: When2Call + tool-fe
 inherit_exclude = false
 one_reply_ok = true
 prose_sources = ["affine_when2call", "affine_notool",
-                 "affine_tau2"]   # NOT affine_tau2_synth: there the customer often opens with their name / id and the teacher's turn-1 lookup is legitimate (13/24 in the probe), so a king turn-1 call is not a failure by itself; synth relies on the persist rule + king_divergence   # datagen P1 sources (2026-09-14); when2call rows carry repo = when2call/<label> -- only request_for_info / cannot_answer items are no-tool prompts; affine_tau2 (2026-09-18): the king opens with a tool call where the teacher asks the customer (turn 1, 24/24 in the probe)
+                 "affine_tau2", "affine_tau2_gen"]   # + tau2-gen (2026-09-21): airline / telecom customers state the problem, not the id, on turn 1; retail openers carry an order id -> skipped via prose_skip_repos   # NOT affine_tau2_synth: there the customer often opens with their name / id and the teacher's turn-1 lookup is legitimate (13/24 in the probe), so a king turn-1 call is not a failure by itself; synth relies on the persist rule + king_divergence   # datagen P1 sources (2026-09-14); when2call rows carry repo = when2call/<label> -- only request_for_info / cannot_answer items are no-tool prompts; affine_tau2 (2026-09-18): the king opens with a tool call where the teacher asks the customer (turn 1, 24/24 in the probe)
 tool_sources = ["affine_agent", "affine_wikispeedia", "affine_sql", "affine_eog", "affine_autobench",
-                "affine_tau2", "affine_tau2_synth"]   # + τ² telecom (2026-09-17): the king re-calls get_customer_by_phone with invented numbers after every error
+                "affine_tau2", "affine_tau2_synth", "affine_tau2_gen"]   # + τ² telecom (2026-09-17): the king re-calls get_customer_by_phone with invented numbers after every error
 # When2Call stamps repo = when2call/<label>; on tool_call items the king's
 # first-reply call is correct, so rule (a) skips them (route only the
 # request_for_info / cannot_answer rows where the king called a tool).
-prose_skip_repos = ["when2call/tool_call"]
+prose_skip_repos = ["when2call/tool_call", "tau2-gen/retail"]   # tau2-gen retail: the opener often gives an order id, a turn-1 lookup is legitimate
 kind = "text"
 
 [king_recoverable]
