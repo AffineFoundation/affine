@@ -1,0 +1,53 @@
+X1/X2 — in-band selection, paraphrase guard, verified-solved band (2026-09-21)
+Scripts: research/scripts/frontier_arbiter/inband_select.py (X1), solved_band.py (X2). Full tables: stored_report.txt, guard_report.txt, x2_report.txt.
+$ spent: X1 0.95 (sample 0.21, echo 0.69, judge 0.05) + X2 0.23 = 1.18 total.
+
+Terms
+  in-band   |m_c(z) − mean_3 m_c(blind)| ≤ 2·σ_Mc(dialect, live verdict) and ≥10 content tokens (live typ_c ≥ 0); blind = the verdict's 3 stored refs re-echoed on Engy.
+  change    ref action norm-exact-different from all 3 blind refs AND best token-Jaccard < 0.5 (the outcome probe's CONTESTED rule).
+  judge     glm-5.3-flash T=0 SAME-decision rate, ref i vs blind ref i (mod 3); p_none floor 0.675.
+  leak      ≥30-char substring of the note in z or y; guarded refs so flagged are rejected.
+  B         lpC(y|x,z) − lpC(y|x,∅) per byte; pass ≥ 0.02.
+  R_priv_S  centered tempered LME (τ .03) of a_i = lpC(y_i|x,z) − lpC(y_i|x,∅) over reference set S; blind-own/king 2-ref LOO-matched (|S| ≥ 2), own = ref j over S\{j} (|S| ≥ 3).
+  hz / d/σ  paired z over turns / mean diff in σ_R(dialect) units.
+
+X1.1 stored p_fr refs (150 turns, k=3, 417 parsed refs) split by the band
+  group        n  change exactB  jacB  judge(n)   leak  lenZ p50  B mean  B pass  |z| p50
+  p_fr in    123  0.431  0.211  0.574  0.500(26)  0.301  1000     0.073   0.715   0.84
+  p_fr out   294  0.503  0.173  0.514  0.482(83)  0.517   618     0.102   0.785   5.10
+  p_none in  361  0.274  0.252  0.662  0.642(95)  —       394     0.063   0.648   0.73
+  p_none out  82  0.183  0.354  0.672  0.783(23)  —       150     0.060   0.524   2.31
+  in×change 2x2: OR 0.75, z −1.35 (in-band refs change the decision slightly less, still ≫ p_none 0.27); median |z| changed 4.11 vs same 3.05.
+  headroom (R per byte)          n≥2 n≥3  R_own   R_bown  R_king  hz o−b  d/σ   hz o−k  d/σ  | R_bown(≥2) R_king(≥2) hz b−k
+    all 3 refs (original)         141 129  0.0143  0.0083  0.0071  2.73   0.49  3.26    0.55 | 0.0083 0.0076  0.95
+    in-band only                   38   9  0.0199  0.0051  0.0052  1.27   0.87  1.42    0.98 | 0.0125 0.0082  1.32
+    in-band & no leak              22   3  0.0054  0.0034  0.0035  0.98   0.06  1.00    0.06 | 0.0117 0.0061  1.02
+    out-of-band only              101  58  0.0135  0.0058  0.0054  2.07   0.51  2.16    0.54 | 0.0068 0.0064  0.52
+  coverage k=3: per-ref in-band 0.273; turns ≥1 0.507, ≥2 0.253, ≥3 0.060 (in-band & no leak 0.407/0.147/0.020); p_none ≥2 0.853 ≥3 0.593.
+  projected N=6 (binomial): pooled p → ≥1 0.85 ≥2 0.52 ≥3 0.21; shrunk per-turn p_t → 0.72 / 0.45 / 0.27.
+
+X1.2 guarded resample (60 turns, N=6, guard prefixed to the note; 360 sampled, 333 parsed, 146 leaked → rejected, 187 clean)
+  group          n  change exactB  jacB  judge(n)   lenZ p50  B mean  B pass  |z| p50  z mean
+  g in-band     31  0.387  0.129  0.556  0.444(18)  1031      0.076   0.710   0.96   −0.61
+  g out-of-band156  0.436  0.154  0.543  0.667(87)   356      0.063   0.712   5.73   −6.46
+  g clean      187  0.428  0.150  0.545  0.629(105)  392      0.065   0.711   4.75   −5.49
+  g leaked     146  0.596  0.055  0.468  0.477(65)  1082      —       —       5.50   −6.11
+  leak rate 0.438 (stored p_fr on the same turns 0.476) — the guard did NOT stop restating; in-band per parsed ref 0.138 (stored 0.247).
+  headroom                       n≥2 n≥3  R_own   R_bown  R_king  hz o−b  d/σ   hz o−k  d/σ
+    clean (≤6 refs)               44  36  0.0065  0.0058  0.0075  0.52   0.14  −0.42  0.08
+    in-band clean                  6   1  —       —       —       —      —     —      —
+    stored p_fr same 60 turns     57  54  0.0100  0.0061  0.0055  1.81   0.24  1.56   0.24
+  coverage N=6 (in-band & clean): ≥1 0.400 ≥2 0.100 ≥3 0.017 (incl. leaked 0.417/0.167/0.100).
+
+X2 verified-outcome teacher first thoughts (40 arm-T states with reasoning_content; 38 scored; 3 fresh blind refs/state)
+  group            n  inband  z mean  z p50  |z|p50  below  above  lenZ p50  visible  blind LOO in-band
+  solved          25  0.840   0.18    0.24   0.98    0.040  0.080   582      0.615    0.783
+  failed          13  0.846   0.15   −0.23   1.03    0.077  0.077   310      0.857    0.897
+  two-proportion z(solved − failed) −0.05; Welch z on z −0.05. Verified-solved teacher thoughts are exactly as in-band as any blind teacher sample.
+
+Verdict
+  1. In-band p_fr refs are NOT the uninformed ones: their decision-change rate (0.43) and judge SAME (0.50) sit near the out-of-band refs (0.50 / 0.48) and far from the blind floor (0.27 / 0.64–0.67); but they are the long, leak-light thoughts, and only 27% of refs / 6% of turns (3/3) qualify at k=3.
+  2. In-band-only reference sets keep a large per-turn effect (R_own 0.020 vs blind-own 0.005, d/σ ≈ 0.9) but on 9 turns (hz 1.3) — coverage, not effect size, is the binding limit; requiring no-leak leaves 3 turns and no headroom.
+  3. The paraphrase guard fails: leak 0.44 (unchanged), in-band per ref 0.25 → 0.14, ≥2 in-band clean refs on 10% of turns at N=6, and the clean-ref headroom collapses (hz 0.5 vs 1.8 for stored p_fr on the same turns) — the refs that restate the note are the ones that change the decision.
+  4. Selection cannot be scaled by resampling alone: the projected N=6 coverage (≥3 in-band 0.21–0.27) is optimistic against the observed 0.017–0.10, because privileged thoughts sit ~5–6σ below the blind band as a class, not by chance.
+  5. X2: the blind band does not separate verified-solved from failed teacher continuations (0.84 vs 0.85 in-band, z ≈ 0 both) — the band is a same-distribution test, not a quality test; solved teacher thoughts are already in band because every blind teacher thought is.
