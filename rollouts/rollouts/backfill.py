@@ -119,12 +119,15 @@ def graded_counts(state_paths: Path | list[Path], policy_ids: set[str]) -> dict[
                     continue
                 if rec.get("policy_id") not in policy_ids:
                     continue
-                c = out.setdefault(rec["source"], {"graded": 0, "attempts": 0})
+                c = out.setdefault(rec["source"], {"graded": 0, "attempts": 0, "infra": 0})
                 # An errored row with no model call (n_calls 0: a missing
                 # image, a harness crash before the first request) is an
                 # infrastructure failure, not one of the model's attempts;
                 # 156 such rows had used up terminal_lego's --max-attempts.
+                # Counted apart ("infra") and capped at 2 x --max-attempts
+                # so a permanently broken harness cannot spin forever.
                 if rec.get("outcome") == "error" and not rec.get("n_calls"):
+                    c["infra"] += 1
                     continue
                 c["attempts"] += 1
                 if rec.get("outcome") in GRADED:
@@ -300,7 +303,8 @@ def main() -> None:
         todo = [name for name in plan
                 if name not in exhausted and name not in in_flight
                 and counts.get(name, {}).get("graded", 0) < args.n
-                and counts.get(name, {}).get("attempts", 0) < args.max_attempts]
+                and counts.get(name, {}).get("attempts", 0) < args.max_attempts
+                and counts.get(name, {}).get("infra", 0) < 2 * args.max_attempts]
         if not todo:
             return None
         # most-behind source first (relative gap), so every env climbs together
