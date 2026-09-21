@@ -124,10 +124,14 @@
       const capMark = (side) => side && side.finish_length_frac > 0.2
         ? el("span", { class: "cap-mark", title: `${pct(side.finish_length_frac, 0)} of replies hit the completion cap (scored 0): cap-bound, not a measure of what the model knows` }, " ‡cap")
         : "";
+      const TRAINED = { "tau2-airline": "affine_tau2_gen in D since 2026-09-21 11:47 UTC", "tau2-retail": "affine_tau2_gen in D since 2026-09-21 11:47 UTC", "tau2-telecom": "affine_tau2 in D since 2026-09-18, affine_tau2_gen since 2026-09-21" };
+      const trainedNote = TRAINED[(row.base_env || row.env || "").split("@")[0]];
+      const trainedTitle = trainedNote ? `† trained environment: a datagen source in D uses this benchmark's environment (policy, tools, scorer) on generated, disjoint tasks; the cell is in-distribution generalisation, not zero-shot, for kings crowned after the admission (${trainedNote}). τ³ banking and Gaia2 stay clean held-outs.` : "";
       const judge = row.graded === "llm_judge";
       const judgeTitle = judge ? `LLM-judge graded (${(row.judge || {}).model || "judge"} via ${(row.judge || {}).via || "?"}, pinned in suite.lock.json) — ADVISORY, never part of the score. ` : "";
       tbody.append(el("tr", { title: judgeTitle + (row.note || "") },
-        el("td", {}, row.env, judge ? el("span", { class: "judge-mark", title: judgeTitle }, " ⚖ judge") : ""),
+        el("td", {}, row.env, judge ? el("span", { class: "judge-mark", title: judgeTitle }, " ⚖ judge") : "",
+          trainedNote ? el("span", { class: "trained-mark", title: trainedTitle }, " † trained env") : ""),
         el("td", { class: "muted" }, row.group || ""),
         el("td", { class: "num" }, row.temperature === 0 ? "0" : String(row.temperature)),
         el("td", { class: "num" }, k ? k.n : (t ? t.n : "–")),

@@ -195,6 +195,23 @@ BENCH_COLUMNS = [
 BENCH_FINISHED_ONLY = {"swebench-verified", "swebench-pro"}
 BENCH_AGENTIC_GROUP = "agentic"
 CAP_BOUND_FRAC = 0.20            # share of replies cut at the completion cap that flags a cell
+# Benchmarks whose ENVIRONMENT (policy, tools, scorer) is also a datagen source in
+# D on generated, disjoint tasks — "trained environment" (†): a king crowned after
+# the admission may have trained on the environment, so its cell is in-distribution
+# generalisation, not zero-shot. Keyed by the row's crown time; the teacher, the
+# genesis and reference models are never marked. τ³ banking and Gaia2 stay clean.
+TRAINED_MARK = "†"
+TRAINED_LEGEND = ("a datagen source in D uses this benchmark's environment (policy, tools, scorer) on "
+                  "generated, disjoint tasks; the cell is in-distribution generalisation, not zero-shot")
+BENCH_TRAINED_ENVS = {
+    # env: (since — crown time from which a king counts as trained, note)
+    "tau2-airline": ("2026-09-21T11:47:00+00:00",
+                     "affine_tau2_gen (τ²-bench airline generator) admitted to D 2026-09-21 11:47 UTC"),
+    "tau2-retail": ("2026-09-21T11:47:00+00:00",
+                    "affine_tau2_gen (τ²-bench retail generator) admitted to D 2026-09-21 11:47 UTC"),
+    "tau2-telecom": ("2026-09-18T00:00:00+00:00",
+                     "affine_tau2 (τ²-bench telecom) in D since 2026-09-18; affine_tau2_gen since 2026-09-21 11:47 UTC"),
+}
 BENCH_TEMPERATURE = 0.0          # the primary (greedy) card row
 # Card modes that are not a king / genesis / teacher measurement.
 BENCH_SKIP_MODES = {"challenger", "comparables"}
@@ -1434,6 +1451,8 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
             "variant_note": (f"{tag}: the cell's completion cap / sandbox budget before 2026-09-19 (kept for continuity; "
                              f"the plain {labels.get(b, b)} column is the current cap)") if tag else None,
             "kind": "bench", "env": e,
+            "trained": ({"mark": TRAINED_MARK, "since": BENCH_TRAINED_ENVS[b][0], "note": BENCH_TRAINED_ENVS[b][1],
+                         "legend": TRAINED_LEGEND} if b in BENCH_TRAINED_ENVS else None),
             "group": meta.get("group"), "n": meta.get("n"), "note": meta.get("note"),
             "metric": "finished_only" if b in BENCH_FINISHED_ONLY else "score",
             "graded": meta.get("graded") or "deterministic",
@@ -1531,6 +1550,12 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
             if tot:
                 cells[key] = tot
         row["cells"] = cells
+        if row["kind"] == "king" and row.get("crowned_at"):
+            # trained-environment marker per cell: only kings crowned after the admission
+            for col in columns:
+                tr = col.get("trained")
+                if tr and col["key"] in cells and str(row["crowned_at"]) >= tr["since"]:
+                    cells[col["key"]]["trained"] = True
         row["n_cells"] = sum(1 for k in value_keys if cells.get(k) and cells[k].get("score") is not None)
         row["cards"] = sorted({v["run_id"] for v in bench.values() if v.get("run_id")})
     # benchmark passes in flight: planned-but-missing cells render as "running"
@@ -1627,7 +1652,10 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                       "red below, stronger with the gap",
             "markers": f"‡ = cap-bound: more than {int(CAP_BOUND_FRAC * 100)}% of the model's replies hit the "
                        "completion cap and scored 0, so the number is a lower bound; ⚖ = judge-graded "
-                       "(graded = llm_judge): an LLM judge graded the rollouts — advisory, never part of the score",
+                       "(graded = llm_judge): an LLM judge graded the rollouts — advisory, never part of the score; "
+                       f"{TRAINED_MARK} = trained environment: {TRAINED_LEGEND} (column header: the environment is in D; "
+                       "cell: the king was crowned after the admission, so it may have trained on it; "
+                       + ", ".join(f"{e} since {v[0][:10]}" for e, v in BENCH_TRAINED_ENVS.items()) + ")",
             "ci": "95% interval: Wilson on graded rollouts (environments) or the card's ci95 "
                   "(benchmarks), shown in the tooltip",
             "cards": "benchmark scorecards from affine/state/benchsuite/ (ops/benchsuite); when a "

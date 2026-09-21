@@ -102,6 +102,7 @@ function cellTip(row, col, cell, teacherCell) {
     if (cell.all_rollouts != null) lines.push(`all rollouts (timeouts count as failed): ${fmt(cell.all_rollouts)}`);
     if (cell.cap_bound) lines.push(`‡ cap-bound: ${Math.round(100 * cell.cap_frac)}% of rollouts hit the completion cap (scored 0); lower bound`);
     if (cell.graded === "llm_judge") lines.push(`⚖ judge-graded: ${judgeText(cell.judge)} — advisory, never part of the score`);
+    if (col.trained) lines.push(`${col.trained.mark} trained environment${cell.trained ? " (this king was crowned after the admission)" : " (column; this model predates the admission or is not a king)"}: ${col.trained.legend}. ${col.trained.note}`);
     lines.push(`card ${cell.run_id}${cell.mode ? ` · ${cell.mode}` : ""}`);
   } else {
     lines.push(`${num(cell.solved)} solved / ${num(cell.n)} graded (${num(cell.rollouts)} rollouts, ${num(cell.errored)} errored)${cell.temp ? ` · ${cell.temp} T=0.8` : ""}`);
@@ -227,8 +228,9 @@ function renderTable(m, spec) {
     + cols.map((c) => {
       const cls = ["col", c.kind, sepAt.has(c.key) ? "sep" : "", sort.key === c.key ? "sorted" : ""].filter(Boolean).join(" ");
       const judge = c.advisory ? `\n⚖ judge-graded: ${judgeText(c.judge)} — advisory, never part of the score` : "";
-      const title = `${c.label}${c.kind === "env" && c.group ? ` · ${c.group}` : ""}${c.kind === "bench" && c.group ? ` · ${c.group}` : ""}${c.kind === "bench" && c.n ? ` · n = ${c.n}` : ""}${judge}${c.note ? `\n${c.note}` : ""}\nclick to sort`;
-      return `<th class="${cls}${c.advisory ? " advisory" : ""}" data-sort="${esc(c.key)}" title="${esc(title)}">${esc(c.short || c.abbr || c.label)}${c.advisory ? `<span class="mk judge">⚖</span>` : ""}${mark(c.key)}</th>`;
+      const trained = c.trained ? `\n${c.trained.mark} trained environment: ${c.trained.legend}. ${c.trained.note}. Cells of kings crowned after the admission carry the mark; the teacher, the genesis and reference models never trained on D` : "";
+      const title = `${c.label}${c.kind === "env" && c.group ? ` · ${c.group}` : ""}${c.kind === "bench" && c.group ? ` · ${c.group}` : ""}${c.kind === "bench" && c.n ? ` · n = ${c.n}` : ""}${judge}${trained}${c.note ? `\n${c.note}` : ""}\nclick to sort`;
+      return `<th class="${cls}${c.advisory ? " advisory" : ""}${c.trained ? " trained" : ""}" data-sort="${esc(c.key)}" title="${esc(title)}">${esc(c.short || c.abbr || c.label)}${c.advisory ? `<span class="mk judge">⚖</span>` : ""}${c.trained ? `<span class="mk trained">${esc(c.trained.mark)}</span>` : ""}${mark(c.key)}</th>`;
     }).join("") + "</tr>";
 
   const body = rows.map((r) => {
@@ -264,7 +266,7 @@ function renderTable(m, spec) {
       const unverified = !has && !running && cell && cell.unverified;
       const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? (cell.low_n ? "lown" : "") : running ? "running" : failed ? "failed" : unverified ? "unverified" : "blank"].filter(Boolean).join(" ");
       const style = has && r.kind !== "teacher" ? tint(cell.delta) : "";
-      const marks = has ? `${cell.cap_bound ? `<span class="mk cap">‡</span>` : ""}${cell.graded === "llm_judge" ? `<span class="mk judge">⚖</span>` : ""}` : "";
+      const marks = has ? `${cell.cap_bound ? `<span class="mk cap">‡</span>` : ""}${cell.graded === "llm_judge" ? `<span class="mk judge">⚖</span>` : ""}${cell.trained && c.trained ? `<span class="mk trained">${esc(c.trained.mark)}</span>` : ""}` : "";
       return `<td class="${tcls} duel-hit" data-tip="${esc(cellTip(r, c, cell, teacher.cells[c.key]))}"`
         + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) + marks : running ? "…" : failed ? "run failed" : unverified ? "unverified" : "·"}</td>`;
     }).join("");
