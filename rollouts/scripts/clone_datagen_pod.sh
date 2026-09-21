@@ -75,8 +75,12 @@ src "rsync -aHR --info=progress2 --human-readable \
   --exclude='/root/.bash_history' \
   /root/affine /root/rollouts /root/prime-pilot /root/prime-lane /root/venv \
   /root/.local /root/.cache/uv /root/.cache/harbor /root/.cache/huggingface /root/.cache/affine \
-  /root/hf /root/rollouts-data \
+  /root/hf /root/huggingface /root/rollouts-data \
   root@$DST_HOST:/"
+# /root/huggingface: the terminal-lego task tree (844 MB; .cache/huggingface/
+# terminal-lego-git is a symlink into it). Without it every terminal_lego
+# batch on the clone dies with "missing image/Dockerfile" (found on the
+# env-backfill driver pod 2026-09-21: 48 wasted attempts per king).
 
 echo "== [4/5] shard env + import smoke on DST"
 # The rsync just overwrote .rollouts_env with SRC's copy (SRC's own shard

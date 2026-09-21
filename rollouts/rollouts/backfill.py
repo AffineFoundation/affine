@@ -24,6 +24,18 @@ this policy's seat already rolled (restart-safe through state.jsonl).
 Stop rule per source: graded (resolved + unresolved) >= N, or attempts >=
 --max-attempts (errored rollouts do not count as graded).
 
+Concurrency (2026-09-21): --parallel W worker threads (default 4) each run
+ONE source at a time — the most-behind source nobody else holds — with
+their own data dir (`<data_dir>/w<k>`: state, trace store, index, run
+scratch), so a 25-source row fills W sources at once instead of one
+1-3 h cycle after another. Graded counts and "done" task sets are read
+across every worker's state file (plus the pre-concurrency `state.jsonl`
+at the data-dir root), so a restart with a different W resumes cleanly.
+Per-worker batch = --worker-batch (default ceil(2 * ROLLOUTS_BATCH_SIZE /
+W), min 4) so the serving box sees ~2 batches' worth in flight, and the
+docker container cap is split the same way (the driver box has 24 cores;
+diskgc runs before every batch as before).
+
 Publish: ROLLOUTS_R2_PREFIX must be `traces-backfill/` (fail-closed here):
 the fold reads `traces/manifest.json` only, so D never sees these; the
 kingboard ingests `traces-backfill/manifest.json` and scores them.
@@ -34,6 +46,9 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import math
+import threading
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import logging
 import os
 import shutil
@@ -88,24 +103,59 @@ def backfill_policies(registry: Registry, source_name: str, tag: str,
     return out
 
 
-def graded_counts(state_path: Path, policy_ids: set[str]) -> dict[str, dict[str, int]]:
-    """source -> {graded, attempts} over the backfill policies' state rows."""
+def graded_counts(state_paths: Path | list[Path], policy_ids: set[str]) -> dict[str, dict[str, int]]:
+    """source -> {graded, attempts} over the backfill policies' state rows,
+    summed over every state file given (the workers' plus the legacy root)."""
     out: dict[str, dict[str, int]] = {}
-    if not state_path.exists():
-        return out
-    with state_path.open(encoding="utf-8") as f:
-        for line in f:
-            try:
-                rec = json.loads(line)
-            except ValueError:
-                continue
-            if rec.get("policy_id") not in policy_ids:
-                continue
-            c = out.setdefault(rec["source"], {"graded": 0, "attempts": 0})
-            c["attempts"] += 1
-            if rec.get("outcome") in GRADED:
-                c["graded"] += 1
+    paths = [state_paths] if isinstance(state_paths, Path) else list(state_paths)
+    for state_path in paths:
+        if not state_path.exists():
+            continue
+        with state_path.open(encoding="utf-8") as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if rec.get("policy_id") not in policy_ids:
+                    continue
+                c = out.setdefault(rec["source"], {"graded": 0, "attempts": 0})
+                c["attempts"] += 1
+                if rec.get("outcome") in GRADED:
+                    c["graded"] += 1
     return out
+
+
+def done_across(state_paths: list[Path], harness_of: dict[str, str], source: str, seat: str) -> set[str]:
+    """Tasks `seat` already rolled on `source`, over every state file (a
+    source may move between workers across restarts / W changes)."""
+    done: set[str] = set()
+    for path in state_paths:
+        if path.exists():
+            done |= UnifiedState(path, harness_of=harness_of).done_for(source, seat)
+    return done
+
+
+class Worker:
+    """One thread's private pipeline: its own data dir, state, store, index
+    and runner instances (run scratch under <data_dir>/runs). Shared with
+    the others: registry, plan, pools, endpoint health, tool baker, env."""
+
+    def __init__(self, k: int, cfg: RolloutsConfig, env: dict, health: EndpointHealth,
+                 harness_of: dict[str, str]):
+        self.k = k
+        self.cfg = cfg
+        self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(self.cfg.data_dir / "runs", ignore_errors=True)
+        self.state = UnifiedState(self.cfg.state_path, harness_of=harness_of)
+        self.store = TraceStore(self.cfg.store_dir)
+        self.index = RolloutIndex(self.cfg.store_dir)
+        self.runners = {
+            "verifiers": VerifiersRunner(self.cfg, health, env),
+            "verifiers_chat": VerifiersChatRunner(self.cfg, health, env),
+            "mini_swe": MiniSweRunner(self.cfg, health, env),
+        }
+        self.fails = 0
 
 
 def main() -> None:
@@ -117,6 +167,10 @@ def main() -> None:
     ap.add_argument("--max-attempts", type=int, default=150, help="attempts per source before giving up")
     ap.add_argument("--sources", default="all", help="comma list, or all = every LIVE source (share > 0)")
     ap.add_argument("--skip", default="affine_wiki", help="comma list of sources to leave out (default: the env with no grader)")
+    ap.add_argument("--parallel", type=int, default=int(os.environ.get("ROLLOUTS_BACKFILL_PARALLEL", "4")),
+                    help="sources rolled at once, one worker thread each (default 4)")
+    ap.add_argument("--worker-batch", type=int, default=0,
+                    help="rollouts per worker batch (default ceil(2 * ROLLOUTS_BATCH_SIZE / parallel), min 4)")
     ap.add_argument("--dry-run", action="store_true", help="print the plan and exit")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -165,15 +219,7 @@ def main() -> None:
     shutil.rmtree(cfg.data_dir / "runs", ignore_errors=True)
     harness_of = {p.id: p.harness for p in registry.policies.values()}
     harness_of.update({p.id: p.harness for pols in plan.values() for p in pols})
-    state = UnifiedState(cfg.state_path, harness_of=harness_of)
     health = EndpointHealth()
-    store = TraceStore(cfg.store_dir)
-    index = RolloutIndex(cfg.store_dir)
-    runners = {
-        "verifiers": VerifiersRunner(cfg, health, env),
-        "verifiers_chat": VerifiersChatRunner(cfg, health, env),
-        "mini_swe": MiniSweRunner(cfg, health, env),
-    }
     r2 = R2TraceMirror(bucket=cfg.r2_bucket, endpoint=cfg.r2_endpoint,
                        access_key_id=cfg.r2_access_key_id,
                        secret_access_key=cfg.r2_secret_access_key,
@@ -184,55 +230,113 @@ def main() -> None:
 
     pools = {name: ordered_rows(cfg, name, load_catalog_or_empty(cfg, registry.sources[name]))
              for name in plan}
-    fails = 0
+
+    n_workers = max(1, min(args.parallel, len(plan)))
+    worker_batch = args.worker_batch or max(4, math.ceil(2 * cfg.batch_size / n_workers))
+    worker_containers = max(worker_batch, math.ceil(cfg.max_containers / n_workers))
+    workers = [Worker(k, dataclasses.replace(cfg, data_dir=cfg.data_dir / f"w{k}",
+                                             batch_size=worker_batch,
+                                             max_containers=worker_containers),
+                      env, health, harness_of) for k in range(n_workers)]
+    # Every state file that can hold this model's rows: the workers' and the
+    # pre-concurrency driver's at the data-dir root (resume across versions).
+    state_paths = [w.cfg.state_path for w in workers] + [cfg.state_path]
+    log.info("backfill %s: %d worker(s), %d rollouts per worker batch, %d containers per worker",
+             tag, n_workers, worker_batch, worker_containers)
+
+    lock = threading.Lock()
+    in_flight: dict[str, int] = {}          # source -> worker k
     round_robin: dict[str, int] = {}
-    while True:
-        counts = graded_counts(cfg.state_path, all_ids)
-        todo = [name for name in plan
-                if counts.get(name, {}).get("graded", 0) < args.n
-                and counts.get(name, {}).get("attempts", 0) < args.max_attempts]
-        if not todo:
-            r2.mirror(store)
-            log.info("backfill %s complete: %s", tag,
-                     {n: counts.get(n, {"graded": 0}) for n in plan})
-            return
-        # most-behind source first (relative gap), so every env climbs together
-        todo.sort(key=lambda n: counts.get(n, {}).get("graded", 0) / args.n)
-        name = todo[0]
+    exhausted: set[str] = set()
+    mirror_lock = threading.Lock()
+
+    def run_one(w: Worker, name: str) -> None:
         source = registry.sources[name]
         pols = plan[name]
-        i = round_robin.get(name, 0)
+        with lock:
+            i = round_robin.get(name, 0)
+            round_robin[name] = i + 1
+            counts = graded_counts(state_paths, all_ids)
         policy = pols[i % len(pols)]
-        round_robin[name] = i + 1
-        refresh_king_env(env)
         if not health.preflight(policy, env):
-            log.warning("policy %s: no endpoint passed preflight; sleeping %ds", policy.id, PREFLIGHT_SLEEP_S)
+            log.warning("w%d policy %s: no endpoint passed preflight; sleeping %ds",
+                        w.k, policy.id, PREFLIGHT_SLEEP_S)
             time.sleep(PREFLIGHT_SLEEP_S)
-            continue
-        done = state.done_for(name, policy_seat(policy, env))
+            return
+        done = done_across(state_paths, harness_of, name, policy_seat(policy, env))
         pending = [r for r in pools[name] if r["uid"] not in done]
-        need = args.n - counts.get(name, {}).get("graded", 0)
-        size = min(cfg.batch_size, source.max_batch or cfg.batch_size, max(1, need))
+        have = counts.get(name, {}).get("graded", 0)
+        need = args.n - have
+        size = min(w.cfg.batch_size, source.max_batch or w.cfg.batch_size, max(1, need))
         batch = pending[:size]
         if not batch:
             log.warning("source %s: pool exhausted for %s at %s", name, policy.id, counts.get(name))
-            # mark the source finished by exhausting attempts
-            counts.setdefault(name, {"graded": 0, "attempts": 0})["attempts"] = args.max_attempts
-            plan.pop(name, None)
-            continue
-        log.info("cycle: source=%s policy=%s batch=%d graded=%d/%d attempts=%d",
-                 name, policy.id, len(batch), counts.get(name, {}).get("graded", 0), args.n,
+            with lock:
+                exhausted.add(name)
+            return
+        log.info("cycle: source=%s policy=%s worker=w%d batch=%d graded=%d/%d attempts=%d",
+                 name, policy.id, w.k, len(batch), have, args.n,
                  counts.get(name, {}).get("attempts", 0))
-        ok, _ = process_batch(cfg, source, policy, batch, runners, state, store, index, panel, baker)
-        fails = 0 if ok else fails + 1
-        if fails >= MAX_CONSECUTIVE_FAILS:
-            log.error("%d consecutive batch failures; sleeping %ds", fails, FAIL_SLEEP_S)
+        ok, _ = process_batch(w.cfg, source, policy, batch, w.runners, w.state, w.store,
+                              w.index, panel, baker)
+        w.fails = 0 if ok else w.fails + 1
+        if w.fails >= MAX_CONSECUTIVE_FAILS:
+            log.error("w%d: %d consecutive batch failures; sleeping %ds", w.k, w.fails, FAIL_SLEEP_S)
             time.sleep(FAIL_SLEEP_S)
-            fails = 0
+            w.fails = 0
         try:
-            r2.mirror(store)
+            with mirror_lock:
+                r2.mirror(w.store)
         except Exception:
             log.warning("R2 publish failed; will retry next cycle", exc_info=True)
+
+    def pick(counts: dict) -> str | None:
+        todo = [name for name in plan
+                if name not in exhausted and name not in in_flight
+                and counts.get(name, {}).get("graded", 0) < args.n
+                and counts.get(name, {}).get("attempts", 0) < args.max_attempts]
+        if not todo:
+            return None
+        # most-behind source first (relative gap), so every env climbs together
+        todo.sort(key=lambda n: counts.get(n, {}).get("graded", 0) / args.n)
+        return todo[0]
+
+    free = list(workers)
+    futures = {}
+    with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="backfill") as ex:
+        while True:
+            refresh_king_env(env)
+            counts = graded_counts(state_paths, all_ids)
+            while free:
+                name = pick(counts)
+                if name is None:
+                    break
+                w = free.pop()
+                in_flight[name] = w.k
+                futures[ex.submit(run_one, w, name)] = (w, name)
+            if not futures:
+                remaining = pick(counts)
+                if remaining is None:
+                    for w in workers:
+                        try:
+                            with mirror_lock:
+                                r2.mirror(w.store)
+                        except Exception:
+                            log.warning("final R2 publish failed for w%d", w.k, exc_info=True)
+                    log.info("backfill %s complete: %s", tag,
+                             {n: counts.get(n, {"graded": 0}) for n in plan})
+                    return
+                time.sleep(5)
+                continue
+            done_set, _ = wait(list(futures), return_when=FIRST_COMPLETED)
+            for fut in done_set:
+                w, name = futures.pop(fut)
+                in_flight.pop(name, None)
+                free.append(w)
+                try:
+                    fut.result()
+                except Exception:
+                    log.exception("w%d: source %s cycle crashed; source stays in the plan", w.k, name)
 
 
 if __name__ == "__main__":
