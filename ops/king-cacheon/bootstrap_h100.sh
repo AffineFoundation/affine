@@ -10,6 +10,8 @@
 #   arena docker image (lmsysorg/sglang pinned digest + cacheon + H100 MoE
 #   tables — examples/arena_inputs/qwen36/Dockerfile, built here), model
 #   mounted read-only at /model, bundle at /bundles/champion.
+#   Everything the container mounts lives under /srv: on Lium pods /root is a
+#   gocryptfs (FUSE) volume that the nested dockerd cannot bind-mount.
 #
 # Two long-lived loops end the script:
 #   run_engine.sh   relaunches the engine; reads /root/cacheon-king/mode
@@ -28,6 +30,7 @@
 set -uo pipefail
 
 ROOT=/root/cacheon-king
+DATA=/srv/cacheon-king            # bind-mountable (not the FUSE /root)
 cd "$ROOT"
 set -a; source "$ROOT/env"; set +a
 : "${KING_DIGEST:?}" "${RESERVATION_ID:?}" "${CONTENT_HASH:?}" "${RELEASE_AT:?}" "${CACHEON_REV:?}"
@@ -35,8 +38,8 @@ PUBLIC_PORT=${PUBLIC_PORT:-20000}
 ENGINE_PORT=30000
 IMAGE=cacheon-qwen-h100
 BASE_IMAGE="lmsysorg/sglang@sha256:37bbbd3444732a464bbc68dee4fb0164e0ce9e18e2f027f3fc967f1152d3c262"
-MODEL_DIR=/root/models/king-${KING_DIGEST:0:12}
-mkdir -p "$ROOT/logs" "$ROOT/bundles" "$ROOT/work/receipts" "$MODEL_DIR"
+MODEL_DIR=$DATA/models/king-${KING_DIGEST:0:12}
+mkdir -p "$ROOT/logs" "$DATA/bundles" "$DATA/work/receipts" "$MODEL_DIR"
 log() { echo "[cacheon-king] $(date -u +%FT%TZ) $*"; }
 fail() { echo "$1" > "$ROOT/bootstrap.failed"; log "FATAL $1"; exit 1; }
 rm -f "$ROOT/bootstrap.failed"
@@ -139,15 +142,15 @@ cat > "$ROOT/run_engine.sh" <<EOF
 while true; do
   mode=\$(cat $ROOT/mode 2>/dev/null || echo stock)
   extra=()
-  if [ "\$mode" = bundle ] && [ -f $ROOT/bundles/champion/manifest.toml ]; then
+  if [ "\$mode" = bundle ] && [ -f $DATA/bundles/champion/manifest.toml ]; then
     extra=(-e CACHEON_ACTIVE=1 -e CACHEON_BUNDLE_PATH=/bundles/champion -e CACHEON_FRAMEWORK_MODE=0
            -e SGLANG_PLUGINS=cacheon -e CACHEON_SEAM_RECEIPT_DIR=/work/receipts)
-    rm -f $ROOT/work/receipts/*
+    rm -f $DATA/work/receipts/*
   fi
   echo "[cacheon-king] \$(date -u +%FT%TZ) launching engine mode=\$mode"
   docker rm -f king-engine >/dev/null 2>&1
   docker run --rm --name king-engine --gpus all --network host --shm-size 32g --ipc host \\
-    -v $MODEL_DIR:/model:ro -v $ROOT/bundles:/bundles:ro -v $ROOT/work:/work \\
+    -v $MODEL_DIR:/model:ro -v $DATA/bundles:/bundles:ro -v $DATA/work:/work \\
     -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 "\${extra[@]}" \\
     $IMAGE python3.12 -m sglang.launch_server \\
       --model-path /model --served-model-name affine-king \\
@@ -181,9 +184,9 @@ while true; do
   dir=\$(find "\$tmp" -mindepth 1 -maxdepth 1 -type d | head -1)
   got=\$(PYTHONPATH=$ROOT/src python3 -c "from cacheon.bundle_hash import content_hash; print(content_hash('\$dir'))")
   if [ "\$got" != "$CONTENT_HASH" ]; then log "content hash \$got != $CONTENT_HASH; refusing"; rm -rf "\$tmp"; sleep 600; continue; fi
-  rm -rf $ROOT/bundles/champion && mv "\$dir" $ROOT/bundles/champion && rm -rf "\$tmp"
-  log "bundle verified (\$got) -> $ROOT/bundles/champion"; ls -la $ROOT/bundles/champion; cat $ROOT/bundles/champion/manifest.toml
-  docker run --rm -v $ROOT/bundles:/bundles:ro $IMAGE python3.12 -m cacheon.cli scan /bundles/champion || { log "scan FAILED; staying on stock"; touch $ROOT/bundle.rejected; exit 1; }
+  rm -rf $DATA/bundles/champion && mv "\$dir" $DATA/bundles/champion && rm -rf "\$tmp"
+  log "bundle verified (\$got) -> $DATA/bundles/champion"; ls -la $DATA/bundles/champion; cat $DATA/bundles/champion/manifest.toml
+  docker run --rm -v $DATA/bundles:/bundles:ro $IMAGE python3.12 -m cacheon.cli scan /bundles/champion || { log "scan FAILED; staying on stock"; touch $ROOT/bundle.rejected; exit 1; }
   echo bundle > $ROOT/mode
   docker rm -f king-engine >/dev/null 2>&1   # run_engine.sh relaunches with the bundle armed
   touch $ROOT/bundle.applied
