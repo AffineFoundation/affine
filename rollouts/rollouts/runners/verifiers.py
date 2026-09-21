@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import threading
 from pathlib import Path
 
 from datagen.providers import looks_like_provider_failure
@@ -181,6 +182,13 @@ def build_local_images(batch: list[dict], max_builds: int = 0,
 DOCKERWRAP_DIR = str(Path(__file__).resolve().parent.parent / "dockerwrap")
 SUPERVISOR_LABEL = "rollouts.supervisor"
 BATCH_LABEL = "rollouts.batch"
+# Batches this process is running right now (run tags). rollouts.backfill
+# runs several batches concurrently in ONE process (2026-09-21); the
+# per-batch reap must not take another live batch's sandboxes — it did, and
+# every sandbox-heavy env (uuidctf, prolog, nl2repobench) died with
+# SandboxError / "Cannot write to closing transport" mid-rollout.
+LIVE_BATCHES: set[str] = set()
+_LIVE_LOCK = threading.Lock()
 
 
 def _boot_id() -> str:
@@ -209,20 +217,28 @@ def supervisor_alive(label: str) -> bool:
 
 
 def reap_containers(owner: str | None = None) -> None:
-    """Remove this supervisor's leftover containers and any orphan whose
-    supervisor no longer runs. Unlabeled and other live supervisors'
-    containers are untouched."""
+    """Remove this supervisor's leftover containers (not those of a batch
+    this process is still running) and any orphan whose supervisor no longer
+    runs. Unlabeled and other live supervisors' containers are untouched."""
     owner = owner or supervisor_id()
     try:
         out = subprocess.run(
             ["docker", "ps", "-a", "--format",
-             '{{.ID}}\t{{.Label "' + SUPERVISOR_LABEL + '"}}'],
+             '{{.ID}}\t{{.Label "' + SUPERVISOR_LABEL + '"}}\t{{.Label "' + BATCH_LABEL + '"}}'],
             capture_output=True, text=True, timeout=60).stdout
+        with _LIVE_LOCK:
+            live = set(LIVE_BATCHES)
         stale = []
         for line in out.splitlines():
-            cid, _, label = line.partition("\t")
-            label = label.strip()
-            if label and (label == owner or not supervisor_alive(label)):
+            cid, label, batch = (line.split("\t") + ["", ""])[:3]
+            label, batch = label.strip(), batch.strip()
+            if not label:
+                continue
+            if label == owner:
+                if batch and batch in live:
+                    continue
+                stale.append(cid)
+            elif not supervisor_alive(label):
                 stale.append(cid)
         if stale:
             subprocess.run(["docker", "rm", "-f", *stale],
@@ -333,8 +349,19 @@ class VerifiersRunner:
                   run_dir: Path) -> BatchResult:
         result = BatchResult()
         if self.RUNTIME == "docker":
+            with _LIVE_LOCK:
+                LIVE_BATCHES.add(run_dir.name)
             reap_containers()
             gc_if_low(f"{source.name} batch")
+        try:
+            return self._run_batch(source, policy, batch, run_dir, result)
+        finally:
+            if self.RUNTIME == "docker":
+                with _LIVE_LOCK:
+                    LIVE_BATCHES.discard(run_dir.name)
+
+    def _run_batch(self, source: Source, policy: Policy, batch: list[dict],
+                   run_dir: Path, result: BatchResult) -> BatchResult:
 
         if source.local_docker_build:
             batch, build_failed, _deferred = build_local_images(
