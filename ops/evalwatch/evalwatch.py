@@ -63,6 +63,10 @@ REQUEUE_RE = re.compile(
     r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),\d+ affine\.state WARNING requeued (chal-\d+) at front "
     r"\(retry \d+, counted=\w+\) due to (.*)$")
 PM2_PREFIX_RE = re.compile(r"^\d{4}-\d\d-\d\dT[\d:]+: ")
+SELECTED_RE = re.compile(
+    r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),\d+ affine\.provisioner INFO selected lium (\S+) executor (\S+) at \$([0-9.]+)")
+READY_RE = re.compile(
+    r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),\d+ affine\.provisioner INFO eval machine ready via")
 
 
 def log(msg: str) -> None:
@@ -177,11 +181,13 @@ def last_verdict(cfg: Config) -> dict:
     return last
 
 
-def scan_validator_log(cfg: Config) -> tuple[dict[str, float], list[tuple[float, str, str]]]:
-    """(last `processing` time per challenge, requeue events (ts, cid, fault))
-    from the log tail. pm2 prefixes lines with `<iso>: `; strip it."""
+def scan_validator_log(cfg: Config) -> tuple[dict[str, float], list[tuple[float, str, str]], dict]:
+    """(last `processing` time per challenge, requeue events (ts, cid, fault),
+    last eval-pod bootstrap {selected_at, gpu, executor, price, ready_at,
+    minutes}) from the log tail. pm2 prefixes lines with `<iso>: `; strip it."""
     processing: dict[str, float] = {}
     requeues: list[tuple[float, str, str]] = []
+    boot: dict = {}
     try:
         with cfg.validator_log.open("rb") as fh:
             fh.seek(0, os.SEEK_END)
@@ -190,7 +196,7 @@ def scan_validator_log(cfg: Config) -> tuple[dict[str, float], list[tuple[float,
             tail = fh.read().decode("utf-8", errors="replace")
     except OSError as e:
         log(f"validator log unreadable: {e!r}")
-        return processing, requeues
+        return processing, requeues, boot
     for line in tail.splitlines():
         line = PM2_PREFIX_RE.sub("", line)
         m = PROCESSING_RE.match(line)
@@ -200,7 +206,19 @@ def scan_validator_log(cfg: Config) -> tuple[dict[str, float], list[tuple[float,
         m = REQUEUE_RE.match(line)
         if m:
             requeues.append((parse_log_ts(m.group(1)), m.group(2), fault_key(m.group(3))))
-    return processing, requeues
+            continue
+        m = SELECTED_RE.match(line)
+        if m:
+            # Each rent attempt restarts the clock; the ready line closes it.
+            boot = {"selected_at": parse_log_ts(m.group(1)), "gpu": m.group(2),
+                    "executor": m.group(3)[:8], "price": float(m.group(4)),
+                    "ready_at": None, "minutes": None}
+            continue
+        m = READY_RE.match(line)
+        if m and boot and boot.get("ready_at") is None:
+            boot["ready_at"] = parse_log_ts(m.group(1))
+            boot["minutes"] = round((boot["ready_at"] - boot["selected_at"]) / 60, 1)
+    return processing, requeues, boot
 
 
 def eval_health(cfg: Config) -> dict:
@@ -288,7 +306,7 @@ class Watch:
         cfg = self.cfg
         now = time.time()
         state = read_state(cfg)
-        processing, requeues = scan_validator_log(cfg)
+        processing, requeues, boot = scan_validator_log(cfg)
         health = eval_health(cfg)
         pm2 = pm2_validator(cfg)
         pods = lium_pods(cfg, state)
@@ -296,7 +314,9 @@ class Watch:
 
         alerts: list[tuple[str, str]] = []  # (dedupe key, text)
         obs: dict = {"at": now_iso(), "health": health, "pm2": pm2, "pods": pods,
-                     "last_verdict": verdict}
+                     "last_verdict": verdict, "eval_bootstrap": boot}
+        if boot and boot.get("ready_at") is None and boot.get("selected_at"):
+            boot["minutes_so_far"] = round((now - boot["selected_at"]) / 60, 1)
 
         if state is None:
             alerts.append(("state_unreadable", "state.json unreadable"))
@@ -385,9 +405,15 @@ class Watch:
         if new:
             self.notify("; ".join(t for _, t in new))
         else:
+            if boot:
+                bs = (f"{boot['minutes']}m" if boot.get("minutes") is not None
+                      else f"{boot.get('minutes_so_far')}m so far")
+                btxt = f" boot={bs}/{boot.get('gpu')}@${boot.get('price')}"
+            else:
+                btxt = ""
             log(f"ok queue={obs.get('queue_depth')} in_flight={obs.get('in_flight')} "
                 f"age={obs.get('in_flight_age_min')}m busy={health.get('busy')} "
-                f"weights_age={obs.get('weights_age_min')}m active={len(alerts)}")
+                f"weights_age={obs.get('weights_age_min')}m active={len(alerts)}{btxt}")
         self._write_out(obs)
         self._save_own()
         return obs
