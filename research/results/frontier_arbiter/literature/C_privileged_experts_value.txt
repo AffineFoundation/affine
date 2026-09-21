@@ -1,0 +1,564 @@
+FRONTIER ARBITER — LITERATURE NOTES C
+Privileged experts done right / scoring the learner's ACTION by the expert's VALUE / coaching /
+per-step value estimation for LM agents / thought imitation / simulated execution as verification
+Read 2026-09-21 from the primary pages (arXiv abs/HTML/PDF, OpenReview, NeurIPS proceedings).
+Numbers are the papers' own; "[mem]" = recalled, page not re-fetched. Companion sweeps: A_*.txt
+(distillation / PI self-teachers / PRMs / expert iteration) and B_*.txt (self-play / verifiers /
+agentic RL) — their sources are NOT re-summarised here.
+
+Setting (AGENTS.md §1–2; store doc dataset-rule-solutions.md §0–1, §3g, §3i, §6b.5, §7):
+turn = min(R, G[, A]) under teacher-forced logprobs of a FROZEN teacher T = Qwen3.8-27B; maximiser
+of every leg is T; kings sit at T parity. Design constraints: one published rule, computable from
+offline data (frontier calls, T samples, stored trajectories with outcomes, containers where a
+grader exists), replayable, not gameable by filler / parroting / splicing / generic exploration.
+Failure modes to design around (this week's measurements):
+  F1 per-turn similarity to a frontier sample — sampling noise; frontier not right where it disagrees.
+  F2 hindsight-informed T refs — thought leg: informed thoughts fall outside the typicality band;
+     action leg: measures "did you follow the hint's plan", generic exploration wins (§3g, §3i).
+  F3 routed pool of other models' refs — splice (T thought + member action) wins.
+  F4 frontier as preference judge — 42 % accuracy vs env outcome.
+  F5 frontier deliberated consensus k=10 — confident and wrong; modal decision = T's failed
+     decision at 9/11 states (§6b.5).
+  F6 verified action tables from N=3–4 continuations — right shape, too sparse.
+Survivors: frontier PROPOSALS verified by T's own continuation add correct actions above T's
+ceiling at 27 % of stuck states; verified-solved T thoughts sit inside the typicality band.
+Notation: x prefix; z thought; y action; T(.|x) blind teacher; T(.|x,p) teacher with privileged
+context p; Q^T(x,a) = value (solve rate) of taking a at x then letting T finish; V^T(x)=E_a~T Q^T(x,a);
+"duel-time" = per-turn work on the eval pod (1300 turns/duel); "fold-time" = building D / the
+reference fields attached to D.
+
+======================================================================================================
+PART I — THE IMITATION GAP AND PRIVILEGED TEACHERS
+======================================================================================================
+
+1. Weihs, Jayaraman, Sun, Schwing, Kembhavi — "Bridging the Imitation Gap by Adaptive Insubordination"
+   (ADVISOR), NeurIPS 2021. https://arxiv.org/abs/2007.12173 (v1 Jul 2020, camera-ready 2021)
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Teacher pi^teach sees state s; student sees o=f(s). Proposition 1 (policy averaging):
+the BC minimiser is pi_f(o) = E[pi^teach(s) | f(s)=o] — the teacher averaged over all states that
+look alike to the student — which can be arbitrarily bad (PoisonedDoors: teacher knows the safe
+door, student learns "open a random door" and is poisoned). ADVISOR trains an AUXILIARY student
+pi^aux_f by pure imitation, uses its per-state distance to the teacher as the gap estimator, and
+weights the loss L^ADV = E[ w(s)·CE(pi^teach(s), pi_f(s)) + (1−w(s))·L_RL ], w(s)=exp(−alpha·d(pi^teach,
+pi^aux_f)(s)). Imitate where the gap is small; learn from reward where it is large.
+(2) Signal. Teacher action distribution (privileged); env reward; gap estimate produced by a
+learner-side auxiliary net trained on the same data — no extra oracle.
+(3) Above the expert? The expert IS optimal given privilege; the student's optimum is the best
+f-restricted policy, which imitation cannot reach (Prop. 1) but RL can where the gap is large.
+Framing for us: our T is NOT privileged relative to the miner (same x), so the classic gap is zero;
+the gap re-appears exactly when we hand T hindsight (F2) — informed refs are a privileged teacher,
+and scoring "match the informed teacher" is Prop. 1's failure in reverse (the miner can only learn
+the average of hindsight-conditioned actions over hidden hindsight = a generic hedge).
+(4) Numbers. 13 tasks (PoisonedDoors, Lighthouse, 8 MiniGrid incl. corrupted/faulty-switch experts,
+PointNav, ObjectNav, CoopNav); ADVISOR-based routines "perform as well or better" than BC, DAgger,
+BC→PPO, BC+PPO, PPO on every task (Tab. 1–2); central empirical claim "smaller imitation gap ⇒
+better performance"; still works when the expert is corrupted near the goal (LC/WC Corrupt Expert).
+(5) Mapping. ADVISOR prescribes a GATE, not a target: only imitate the (informed) reference where an
+un-informed learner could have matched it; elsewhere score outcome. Dataset field g(x) = distance
+between the blind teacher's action distribution T(.|x) and the informed one T(.|x,p) (both from
+fold-time samples, k=3..10 each; JS over canonicalised actions, or the per-byte lp gap). Ranking
+term: turn = w(x)·min(R,G) + (1−w(x))·[verified-value term, see §I.4/§III], w=exp(−alpha·g). Avoids
+F2 (informed refs never become the target; they only mark where T is unreliable); does not touch F1,
+F3, F5. Replayable (g is a stored number). Cost: fold +k informed samples per decision state (already
+produced for §3g/§3i); duel 0 extra if the second term is a stored table. Re-opens: nothing new on
+the imitation half; whatever the value half re-opens.
+
+2a. Chen, Zhou, Koltun, Krähenbühl — "Learning by Cheating", CoRL 2019. https://arxiv.org/abs/1912.12294
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Stage 1: a privileged agent (ground-truth BEV map, all traffic) is trained by BC on
+human demos. Stage 2: the sensorimotor agent is trained by imitating the PRIVILEGED AGENT, which is a
+white box: it can be queried for the correct action at ANY state (all navigation commands at once)
+and on the student's own on-policy states (DAgger without a human).
+(2) Signal. Privileged agent's waypoints/actions at student-visited states; producer = the cheating
+agent (cheap, deterministic, queryable). No reward.
+(3) Above the expert? No — the student is bounded by the privileged agent; the gain is over
+one-stage BC (decomposition of perception from planning + dense on-policy labels).
+(4) Numbers. 100 % success on all tasks of the original CARLA benchmark; new NoCrash record;
+infractions down an order of magnitude vs prior SOTA. Ablation: on-policy + all-command supervision
+are the two big contributors.
+(5) Mapping. LBC's usable lesson is "white-box, queryable, on-policy" — a reference that can be
+asked at the MINER's states, not just T's. Our D already does this for king failures (king seat).
+The trap it walks into is Prop. 1 of ADVISOR the moment the privileged agent's decision depends on
+information the student cannot see (they get away with it because the BEV map is inferable from
+pixels). For us: a hindsight-informed reference is only admissible where the hint is inferable from x
+(= ADVISOR gate). No per-turn term of its own; F2 stays open if used raw.
+
+2b. Shenfeld, Hong, Tamar, Agrawal — "TGRL: An Algorithm for Teacher Guided Reinforcement Learning",
+    ICML 2023. https://arxiv.org/abs/2307.03186
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Objective r_task + lambda·(teacher-imitation reward) with lambda adapted online:
+maintain a COUNTERFACTUAL policy trained on task reward only (same data), compare its performance to
+the main policy; if the guided policy is not ahead, decay lambda (stop trusting the teacher). Cast as
+constrained optimisation; no per-task tuning.
+(2) Signal. Privileged/suboptimal teacher actions + task reward; the trust weight comes from a
+performance COMPARISON, not from a state-wise distance (contrast ADVISOR).
+(3) Above the expert? Yes when the teacher is privileged or suboptimal: the task-reward term takes
+over once imitation stops paying; paper notes ADVISOR fails where the student must deviate early to
+gather information the teacher never needed.
+(4) Numbers. In-hand reorientation (privileged teacher, student without object pose): TS 54 % →
+TGRL 73 % success; wins/ties on MiniGrid, Shadow-Hand, Trifinger vs ADVISOR/PBRS/COSIL without
+hyperparameter search.
+(5) Mapping. TGRL says the trust in a reference should be set by whether following it is
+OUTCOME-competitive, measured on the same states. Dataset field: at each decision state with a
+grader, solve rate of T's blind continuation (V^T(x)) vs solve rate of the informed/proposal action's
+continuation (Q^T(x,a*)); the reference at x is admitted only if Q^T(x,a*) − V^T(x) > margin at N
+continuations. That is the survivor ("proposals verified by T's continuation") stated as a rule:
+verification, not deliberation, decides admission → avoids F4/F5 by construction; F6 (sparsity) is the
+cost. Replayable (table). Cost fold: N×(candidates) continuations per decision state; duel 0.
+
+2c. Lambert, Sicilia, ... — "Privileged Information Dropout in Reinforcement Learning", 2020.
+    https://arxiv.org/abs/2005.09220
+------------------------------------------------------------------------------------------------------
+(1) PI conditions multiplicative (Gaussian) dropout noise on the policy's features during training;
+at test the PI is marginalised out. Compared to distillation and PI auxiliary heads.
+(2) Signal: privileged observation used only as a regulariser, never as a target.
+(3) Not above the expert; there is no expert. Sample-efficiency gain in a partially observed maze.
+(4) Beats distillation and aux-task baselines on the partially observed task [figures, no headline %].
+(5) Mapping: miner-side training trick only; nothing for a scoring rule. Confirms the general theme
+of Part I: PI is safe as CONDITIONING FOR AN ESTIMATOR, unsafe as a TARGET.
+
+2d. Walsman, Zhang, Choudhury, Fox, Farhadi — "Impossibly Good Experts and How to Follow Them",
+    ICLR 2023. https://openreview.net/pdf?id=sciA_xgYofB
+------------------------------------------------------------------------------------------------------
+(1) "Impossibly good" expert = one whose long-run return relies on PI no learner can reproduce.
+ELF Distillation: (a) FOLLOWER = student distilled from the expert (bounded by the averaged
+expert, Prop. 1 again); (b) EXPLORER = RL agent whose reward is shaped by the follower's VALUE
+function V^follower — the follower's value tells the explorer how much an information-gathering
+detour is worth.
+(2) Signal: expert actions → follower; follower's learned V → potential-based shaping for the
+explorer; env reward.
+(3) Above the follower, by design; above the expert only in the observation-restricted sense (it
+learns to gather information the expert never needed).
+(4) Beats ADVISOR/BC/PPO on Minigrid + Vizdoom PI tasks [figures].
+(5) Mapping: the reusable object is "use the imitator's VALUE, not the expert's action, as the
+dense signal". For us the "follower" is the teacher itself and its value V^T(x) is measurable by
+continuation. A per-turn potential term Phi = V^T(x_{t+1}) − V^T(x_t) (progress under the teacher's
+own play from the state the miner's action produces) is a shaped reward that does not require the
+miner to match anybody. Needs the next observation → containers at fold, or a simulator (Part IV).
+Avoids F1–F5 (no reference matching at all); inherits F6.
+
+2e. Two 2025–26 follow-ups on privileged CRITICS (discovered):
+   Venkatraman, Dinot, Aitchison — "Le Critique: Privileged Value Functions for LLM Reinforcement
+   Learning", 17 Aug 2026. https://arxiv.org/abs/2608.16739
+   (authors not recorded) — "Informed Asymmetric Actor-Critic: Leveraging
+   Privileged Signals Beyond Full-State Access", Sep 2025. https://arxiv.org/abs/2509.26000
+------------------------------------------------------------------------------------------------------
+(1) Le Critique: the critic V_phi(h_t, z_t) conditions on the policy's token history PLUS training-
+only context z_t — the REFERENCE SOLUTION, the verifier rubric, or the other K−1 leave-one-out
+sibling rollouts and their rewards; policy unchanged; advantage A = R − V_phi. Admissibility condition:
+z ⟂ y_t | h_t (z must not encode the current token). TETHER = adaptive linear mix of the LOO group
+baseline and the token-level value, rho fit by least squares per batch. Informed-AAC: any
+state-dependent privileged signal (not only full state) yields an unbiased policy gradient; proposes
+two informativeness tests (HSCIC dependence before training; return-prediction-error after).
+(2) Signal: reference solutions / sibling outcomes / latent state → critic only.
+(3) Above the expert: n/a (RL with a verifier); the point is that PI goes to the ESTIMATOR of value,
+never to the policy target, and this is unbiased. Their "reference solution" case is our hindsight
+hint used correctly: it lets the critic judge "is this partial trajectory heading to the known
+correct end state" — a VALUE statement about the learner's own move, not "does it look like the hint".
+(4) Numbers: PVF improves explained variance of the critic on all four tasks (Reasoning Gym,
+CodeIO with LOO siblings, Sudoku, MiniF2F); competitive with or better than mean-baseline GRPO at
+K∈{4,8}; MC advantages so the PI affects only variance. Informed-AAC: matches full-state asymmetric
+baselines with strictly less information on POMDP benchmarks.
+(5) Mapping. The direct transplant is a FROZEN, PUBLISHED privileged critic: at fold, fit
+V_phi(x, z, y | hint/patch/sibling outcomes) on D with env outcomes; at duel score the miner's (z_A,
+y_A) with the hint fed only to the critic. Cheap at duel (one forward). But a learned scorer is a
+judge: its maximiser is argmax V_phi, and F4 (42 %) is exactly what a frontier "critic" did here.
+Unbiasedness of a gradient is not robustness of a ranking target — treat as high-Goodhart unless
+the critic is only used to PRIORITISE which states get real verification. Informed-AAC's post-hoc
+test (does the PI reduce return-prediction error?) is the right acceptance test for any hint field
+we add to D: keep the hint only if it demonstrably predicts outcome.
+
+======================================================================================================
+PART II — SCORING THE LEARNER'S ACTION BY THE EXPERT'S COST-TO-GO
+======================================================================================================
+
+3a. Ross, Bagnell — "Reinforcement and Imitation Learning via Interactive No-Regret Learning"
+    (AggreVaTe), 2014. https://arxiv.org/abs/1406.5979
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Iteration n: roll in with the current learner (mixed with expert, beta_n), pick a
+uniformly random time t, take an EXPLORATORY action a (uniform, or a contextual-bandit choice), then
+let the EXPERT finish from t+1..T and record its cost-to-go Q̂ → cost-weighted example (s,t,a,Q̂). Train
+a cost-sensitive classifier / Q-regressor, pi_{n+1} = argmin_a Q_n(s,t,a). Aggregate datasets;
+no-regret online learner over iterations.
+(2) Signal: the EXPERT'S cost-to-go after the LEARNER'S action — one rollout per sample, arbitrary
+variance accepted; the no-regret learner averages it. Alternative explicitly allowed: a learned
+regressor Q_n(s,t,a) replaces rollouts ("argmax regression"); in the partial-information setting
+which action to explore is a contextual bandit.
+(3) Above the expert? Theorem 2.1: J(pî) ≤ J(pi*) + T[eps_class + eps_regret] + O(Q_max T log T /
+(alpha N)), with eps_class = min over the class of the expected ADVANTAGE regret Q*(s,a) −
+min_a Q*(s,a) on the learner's own state distribution. eps_class can be NEGATIVE-relative: if the
+expert is not locally optimal, some a has Q*(s,a) < Q*(s,pi*(s)) and the learner that picks it
+beats the expert (made explicit in AggreVaTeD Eq. with eps_N ≥ 0: "pî can outperform pi* when pi*
+is not locally optimal"). Also: unlike DAgger the guarantee does not need the expert's action to be
+realisable — only its value from each action.
+(4) Numbers: analysis paper; the bound is the number. Variance: one rollout per (s,t,a), uniform
+exploration is "simple and effective but inefficient".
+(5) Mapping. AggreVaTe IS "force the miner's action, let the teacher finish": term = −Q̂^T(x, y_A)
+(or advantage Q̂^T(x,y_A) − V̂^T(x)). What they say about our questions: (i) rollouts — one noisy
+rollout per sample is enough for LEARNING because the online learner averages over iterations; for a
+RANKING of two miners on 1300 turns the noise must be averaged by us → N continuations per turn or a
+regressor; (ii) variance reduction — use the expert's own value as baseline (advantage form; see
+AggreVaTeD §4.1), and share the roll-in (the same x for both sides is already paired in our duel);
+(iii) Q-estimate instead of rollouts — allowed by the theory, but it is a learned function =
+re-opens F4-style Goodhart; the paper only trusts it as the LEARNER'S internal model, not as the
+grader. Avoids F1/F3/F5 (no reference action to copy or splice; the miner's own action is executed);
+F2 partly (hindsight is not in the loop; T finishes blind); F6 is the cost. Replayable if the
+continuation seeds and container images are pinned and outcomes stored. Cost: duel-time = N×(one
+container run + T continuation, ~10–40 T turns) per scored turn — 2–3 orders above today's echo cost
+→ only for a decision-state SUBSET; fold-time = same per (x, candidate a), amortised across duels only
+if the miner's action can be matched to a stored candidate (Part V, M1).
+
+3b. Sun, Venkatraman, Gordon, Boots, Bagnell — "Deeply AggreVaTeD: Differentiable Imitation Learning
+    for Sequential Prediction", ICML 2017. https://arxiv.org/abs/1703.01030
+------------------------------------------------------------------------------------------------------
+(1) Policy-gradient form of AggreVaTe: ∇ = E_{s~d_pi_n}[ Σ_a ∇pi(a|s)·Q*(s,a) ] (discrete) or the
+importance-weighted / reparameterised analogue; roll-in mixes expert and learner; Q* from expert
+rollouts or from a critic. §4.1 variance reduction: replace Q* by the ADVANTAGE A*(s,a)=Q*(s,a)−V*(s)
+when V*=min_a Q* is available; natural-gradient (exponentiated) update.
+(2) Signal: expert's Q* at the learner's states, all actions (discrete) or sampled actions.
+(3) Above the expert: yes when the expert is not locally optimal (the eps_N ≥ 0 regret term);
+Theorems 5.1–5.3: a depth-K binary-tree MDP where any RL algorithm needs Ω(2^K) samples while IL with
+Q* access needs poly(K) — an exponential separation. Theorem 5.4–5.5: lower bound for IL too.
+(4) Numbers: Walker +5.4 % over the expert, Hopper 97 % of expert, Acrobot +5.8 %, CartPole +25 %
+over the expert (natural gradient); dependency parsing on handwritten algebra: AggreVaTeD > SL, SL-RL,
+DAgger (Tab. 1). Rollouts: one expert rollout per queried (s,a) in the continuous tasks; the exponential-
+gap result assumes an exact/noisy Q* oracle queried per state.
+(5) Mapping. Two prescriptions we can lift verbatim: (a) score the ADVANTAGE, not the raw value —
+Q̂^T(x,y_A) − V̂^T(x) removes the per-state difficulty term exactly as our centering removes the flat
+lift on R; V̂^T(x) is the teacher's own solve rate at x (already part of a verified table); (b) the
+value oracle is worth exponentially more than reward-only search — which is the argument for spending
+containers on Q̂ tables at fold rather than on more frontier deliberation (F5). Same avoidance profile
+as 3a.
+
+3c. Chang, Krishnamurthy, Agarwal, Daumé, Langford — "Learning to Search Better than Your Teacher"
+    (LOLS), ICML 2015. https://arxiv.org/abs/1502.02206
+------------------------------------------------------------------------------------------------------
+(1) Roll-IN with the learned policy; at a random step try every one-step deviation; roll-OUT with a
+MIXTURE (prob. beta reference, 1−beta learned) to get each deviation's cost; train a cost-sensitive
+classifier. Analyses the 3×3 grid of roll-in/roll-out ∈ {reference, learned, mixture}: reference
+roll-in is inconsistent; reference roll-out is right only when the reference is optimal; learned
+roll-out ("SEARN-like") is locally optimal but can lose to a good reference.
+(2) Signal: cost of a one-step deviation followed by the mixture — no expert ACTION labels needed at
+all, only a cost function on final outputs.
+(3) Above the expert: the regret bound is against the MIN of (reference policy, all one-step
+deviations of the learned policy) — so with a bad reference the learner converges to a locally
+optimal policy that beats it; with a good reference it tracks it. Explicit title claim.
+(4) Numbers: dependency parsing with a deliberately BAD reference: LOLS (mixture roll-out) 89.4 UAS
+vs SEARN-style 63.4 [as recorded]; with a good reference all methods ~ equal; cost-sensitive
+one-step deviations = |A| rollouts per sampled step.
+(5) Mapping. LOLS gives the cleanest statement of what our A-leg should measure: LOCAL REGRET,
+Reg(x,y_A) = Q̂(x,y_A) − max_a Q̂(x,a) over a candidate set that includes the teacher's action AND
+deviations (frontier proposals, king actions). Maximiser = locally optimal policy ≥ teacher wherever
+a verified deviation beats it. The mixture roll-out is their answer to F5-type "reference is wrong
+here": don't trust T's continuation alone if a learned continuation exists — for us the only
+alternative finisher is a frontier agent, which is expensive and weaker on our tasks than assumed;
+use T roll-out but let the CANDIDATE set carry the improvement (the survivor). Re-opens: nothing
+beyond F6.
+
+3d. Daumé, Langford, Marcu — "Search-based Structured Prediction" (SEARN), MLJ 2009 [mem]
+    https://doi.org/10.1007/s10994-009-5106-x
+------------------------------------------------------------------------------------------------------
+(1) Iteratively: roll in and roll out with the CURRENT (stochastic) policy, compute each action's cost
+by rollout, train a cost-sensitive classifier, interpolate into the policy. (2) Signal: rollout cost
+under the learner. (3) Locally optimal ≥ a bad reference; needs the learner to roll out (impractical
+in IL, as AggreVaTe notes). (4) [mem] parsing/tagging results; no expert-beating headline.
+(5) Mapping: "roll out with the learner" = the miner finishes its own trajectory — that is the
+bench, not a per-turn duel term; useful only as an advisory, and it is what §RT-7 already measures.
+
+3e. He, Daumé, Eisner — "Imitation Learning by Coaching", NIPS 2012.
+    NeurIPS proceedings, https://papers.nips.cc/paper_files/paper/2012 (entry "Imitation Learning by
+    Coaching"; fetched 2026-09-21)
+------------------------------------------------------------------------------------------------------
+(1) When the oracle's action is unreachable for the learner's feature class, a COACH demonstrates
+"hope actions" pĩ_i(s) = argmax_a [ lambda_i·score_{pi_i}(s,a) − L(s,a) ]: the action that is both
+low-loss AND highly scored by the current learner; lambda_i decays so the coach approaches the oracle.
+DAgger with coaching.
+(2) Signal: task loss L(s,a) (needs a cost for every action = a value table) + the learner's own
+scores. Producer: the training loop, given L.
+(3) Above the expert: no; the claim is a lower REGRET bound than imitating the oracle directly when
+the oracle is not in the learner's class (the intermediate targets are learnable).
+(4) Cost-sensitive dynamic feature selection: coaching beats DAgger and the oracle-imitation baseline
+at matched budgets [tables, no single headline].
+(5) Mapping — the most useful idea in Part II for the REFERENCE side. Our informed refs (F2) are the
+"oracle": correct but unreachable/atypical for a blind policy (outside the band; plan-following). A
+COACHED reference at a decision state = argmax over VERIFIED-solving candidate actions a of
+[ lambda·lp_T(a|x) − (1 − Q̂^T(x,a)) ]: the solving action the blind teacher finds most plausible.
+Dataset field per decision state: coached action y_coach + its lp_T. Per-turn term: today's A/R
+machinery against y_coach instead of T's own sample. Avoids F2 (by construction the ref is in the
+teacher's typicality range or it is not selected), F3 (splice gains nothing when the ref action is
+already the teacher-like one), F5 (verification, not consensus, selects). Re-opens F6 (candidate
+sparsity) and needs the check that a solving action with lp_T inside the band EXISTS at a useful
+fraction of stuck states (the 27 % survivor says yes at some).
+
+======================================================================================================
+PART III — PER-STEP VALUE ESTIMATION FOR LM AGENTS (MC vs learned vs LLM-estimated)
+======================================================================================================
+
+4a. Putta et al. (MultiOn/Stanford) — "Agent Q: Advanced Reasoning and Learning for Autonomous AI
+    Agents", Aug 2024. https://arxiv.org/abs/2408.07199
+------------------------------------------------------------------------------------------------------
+(1) MCTS over web states; node value Q(h,a) = alpha·Q̃ (LLM self-critique ranking of sibling actions)
++ (1−alpha)·Q̂ (MC backup of the env outcome); step-level DPO on sibling pairs with the mixed Q as
+preference; iterate.
+(2) Signal: env success (WebShop / OpenTable via GPT-4V grading), LLM critique as a prior.
+(3) Above the base policy yes (search + outcome); no external expert.
+(4) Numbers: WebShop LLaMA-3-70B zero-shot 28.6 % → Agent Q + MCTS 50.5 % [mem] / MCTS alone 48.4 %
+(human 50.0 %); OpenTable zero-shot 18.6 % → Agent Q 81.7 % → +MCTS 95.4 %. Ablation: outcome-only
+DPO underperforms the mixed Q; the AI-critique alone is weaker than MC.
+(5) Mapping: confirms MC backup is the load-bearing part and the LLM critique is a variance-reducing
+PRIOR — same shape as AggreVaTeD's advantage with a critic baseline. No new term; supports "spend
+containers for Q̂, use frontier only to PROPOSE / prioritise".
+
+4b. Koh, McAleer, Fried, Salakhutdinov — "Tree Search for Language Model Agents", Jul 2024.
+    https://arxiv.org/abs/2407.01476
+------------------------------------------------------------------------------------------------------
+(1) Best-first search in the REAL environment (browser with backtracking) with an LM VALUE FUNCTION:
+GPT-4o prompted to score a state's progress toward the goal 0..1 (self-consistency over 20 samples).
+(2) Signal: LM-estimated value from screenshots/DOM; no outcome during search.
+(3) Above the reactive agent, not above any expert.
+(4) Numbers: VisualWebArena GPT-4o 19.8 → 26.4 % (+39.7 % rel.); Llama-3-70B 7.6 → 16.7 % (+119.7 %);
+WebArena 15.0 → 19.2 %. Value-function quality: with an ORACLE value function (ground truth) success
+would be 43.5 % vs 37.0 % with the GPT-4o value function on their subset — the LM value estimate is
+the bottleneck; errors are mostly false positives (declaring success early).
+(5) Mapping: an LLM value estimate that is good enough to STEER search is not good enough to GRADE
+(6.5-point gap to oracle on the same trees, false-positive bias). This is F4 seen from the other side.
+Use only as a proposal-prioritiser.
+
+4c. Zhou et al. — "Language Agent Tree Search Unifies Reasoning Acting and Planning in Language
+    Models" (LATS), Oct 2023 / ICML 2024. https://arxiv.org/abs/2310.04406
+------------------------------------------------------------------------------------------------------
+(1) MCTS with LM value V(s) = lambda·LM_score(s) + (1−lambda)·self-consistency(s); reflections stored
+and prepended after failures; env feedback (tests, page) in the loop.
+(2) Signal: LM score + vote + env feedback. (3) Above ReAct/ToT; no expert.
+(4) HumanEval pass@1 92.7 % (GPT-4); WebShop score 75.9 / SR 38.0 vs ReAct 53.8 / 28.0.
+(5) Mapping: the self-consistency half of V is the "deliberated consensus" that failed here (F5:
+confident and wrong at 9/11). LATS only survives it because env feedback overrides V; without a
+grader the LM value is not a target.
+
+4d. Zhang et al. — "ReST-MCTS*: LLM Self-Training via Process Reward Guided Tree Search", Jun 2024.
+    https://arxiv.org/abs/2406.03816
+------------------------------------------------------------------------------------------------------
+(1) Per-step value inferred from tree rollouts without human step labels: a step's target value is
+the fraction of its rollouts that reach the correct final answer, weighted by "reasoning distance";
+train a PRM on these; PRM guides further search; iterate policy SFT on the best traces.
+(2) Signal: final-answer correctness (verifier) propagated to steps; producer = the search itself.
+(3) Above the base policy; ceiling = what search + verifier can reach.
+(4) GSM8K SC + ReST-MCTS*(value) 87.5 vs Math-Shepherd 87.1; MATH gains of a few points per
+iteration; PRM accuracy over MS on their held-out step-label set.
+(5) Mapping: the per-step target "fraction of continuations that solve" IS Q̂ — same object as
+AggreVaTe's cost-to-go with a verifier as cost. Their trick for sparsity: reuse EVERY rollout that
+passes through a node as a sample for that node (tree sharing), which is how N=3–4 per action becomes
+N≈20 per state at the same container budget. Directly relevant to F6.
+
+4e. Kazemnejad et al. — "VinePPO: Unlocking RL Potential for LLM Reasoning Through Refined Credit
+    Assignment", Oct 2024. https://arxiv.org/abs/2410.01679
+------------------------------------------------------------------------------------------------------
+(1) Replace PPO's learned value network by MC estimates: at each reasoning step sample K independent
+completions, V_MC(s_t) = mean correctness; advantages from V_MC.
+(2) Signal: verifier outcome of K completions per step (K∈{1,3,9}; default 9 [mem]).
+(3) Above PPO's critic; no expert.
+(4) The learned value network "barely outperforms a random baseline" at RANKING intermediate states
+(pairwise accuracy near 0.5 on MATH); V_MC ranks them well and improves monotonically in K; VinePPO
+reaches PPO's final accuracy in ~1/3 of the steps [mem] on MATH/GSM8K with DeepSeekMath-7B / RhoMath-1B.
+(5) Mapping: the single most relevant negative result for a LEARNED per-step scorer (F4 / §2e
+warning): a value net trained on outcomes ranked partial states no better than chance, while MC with
+K=9 ranked them well. Rule-level lesson: a per-turn term must be MC-verified (containers), not
+regressed; K≈9 per state is the empirical sweet spot they report — our N=3–4 (F6) is below it.
+
+4f. Yuan et al. (ByteDance) — "Agent-R: Training Language Model Agents to Reflect via Iterative
+    Self-Training", Jan 2025. https://arxiv.org/abs/2501.11425
+------------------------------------------------------------------------------------------------------
+(1) MCTS collects good and bad trajectories sharing a prefix; the ACTOR itself identifies the FIRST
+erroneous step t* in its bad trajectory; the revision trajectory = bad prefix up to t* + a revision
+thought + the sibling good branch from the same parent; iterative SFT with alpha rising 0.5→0.7→1.0.
+(2) Signal: env reward (good ≥ alpha, bad ≤ good−beta, beta=0.2); the splice point from the model.
+(3) Above expert-trajectory training: Table 2 avg 70.71 vs ETO 65.12, direct-revision 62.36, Agent-
+FLAN 28.33, GPT-4o 45.46 (WebShop 63.91 / SciWorld 70.23 / TextCraft 78.00); "training on revision
+trajectories surpasses expert trajectories"; loops (repeated action sequences) drop across iterations.
+(4) Rollouts: 300/200/200 MCTS simulations per env; multiple rollouts per simulation for reward
+estimation; three iterations.
+(5) Mapping (dataset-side): a D field marking t* (first step where a verified sibling branch solves
+and the taken one does not) turns king-failure trajectories into "decision states with a verified
+recovery". Their splice is exactly our survivor at fold: teacher-like prefix + verified good branch.
+Their finding that early revision beats end-of-trajectory revision says weight D toward t*, not
+toward the tail of failed runs. Avoids F1/F3/F5; needs F6 handled by tree-sharing (4d).
+
+(ARMAP / AgentTrek: not fetched this pass; ARMAP [mem] learns a reward model from LLM-generated
+trajectories + synthetic intents and reports gains from reward-model-guided sampling — a learned
+judge, same caveat as §2e/4e.)
+
+======================================================================================================
+PART IV — THOUGHTS AS TARGETS; SIMULATED EXECUTION AS VERIFICATION
+======================================================================================================
+
+5. Hu, Clune — "Thought Cloning: Learning to Think while Acting by Imitating Human Thinking",
+   NeurIPS 2023. https://arxiv.org/abs/2306.00323
+------------------------------------------------------------------------------------------------------
+(1) Upper level generates a natural-language thought per step, lower level generates the action
+conditioned on it; loss = CE(actions) + alpha·CE(thoughts) − beta·H(actions); trained on synthetic
+BabyAI thought+action demos.
+(2) Signal: expert THOUGHTS + actions (thoughts are privileged text, produced by the demonstrator).
+(3) Not above the expert; better sample efficiency, OOD generalisation, and steerability.
+(4) BabyAI BossLevel: TC 96.2 % vs BC 91.2 % success; larger gap OOD and on harder splits; "precrime"
+intervention by reading thoughts.
+(5) Mapping: thought imitation helps when the thought is a CAUSAL bottleneck for the action (their
+architecture forces it). Our G leg is thought imitation by typicality band; the survivor "verified-
+solved T thoughts are in the band" says the band already admits the good thoughts — the leverage is
+in WHICH thoughts become refs (solved ones), not in scoring thoughts differently. TC-style test of
+thought quality = does T conditioned on the thought act better (Q̂^T(x, z)) — a value statement about
+the thought, Part V M5.
+
+6a. Gu et al. (OSU) — "Is Your LLM Secretly a World Model of the Internet? Model-Based Planning for
+    Web Agents" (WebDreamer), Nov 2024 / 2025. https://arxiv.org/abs/2411.06559
+------------------------------------------------------------------------------------------------------
+(1) LLM as world model: for each candidate action, generate the predicted next page (text), score
+the imagined outcome, pick the best; optional multi-step imagination. Dreamer-7B fine-tuned on
+synthetic transitions.
+(2) Signal: LM-predicted observation + LM-scored progress; no real execution during planning.
+(3) Above reactive baseline; not above tree search in the real env.
+(4) VWA +34.1 % relative over reactive (GPT-4o), Mind2Web-live gains; 4–5× cheaper than tree search;
+intrinsic next-state prediction (Dreamer-7B): pairwise 88.53 %, state-level 82.98 %, TASK-LEVEL
+52.27 % — i.e. per-transition prediction is decent, whole-task simulation fidelity is a coin flip.
+(5) Mapping: a frontier simulator can VERIFY a proposed action only one step deep with ~80–90 %
+transition accuracy; multi-step verification decays to ~50 % — not enough to replace a container for
+outcome, enough to PRE-FILTER proposals (drop those whose predicted observation is an error/no-op)
+before spending containers. Coverage gap for states without a grader stays open.
+
+6b. Gu et al. — "CRUXEval: A Benchmark for Code Reasoning, Understanding and Execution", Jan 2024.
+    https://arxiv.org/abs/2401.03065
+------------------------------------------------------------------------------------------------------
+(1) 800 short Python functions; predict output from input and input from output.
+(2) Signal: exact execution ground truth. (3) n/a.
+(4) GPT-4 + CoT pass@1: input 75 %, output 81 %; Code Llama 34B 50 / 46 %; models strong on HumanEval
+are not correspondingly strong here.
+(5) Mapping: even on 3–13-line pure functions a 2024 frontier mis-predicts execution 1 time in 5;
+agentic observations (test logs, tracebacks over a repo) are far harder → a frontier "simulator
+verdict" on a shell command is not verification (F4-class accuracy). Use execution.
+
+6c. Meta FAIR — "CWM: An Open-Weights LLM for Research on Code Generation with World Models",
+    Sep 2025. https://arxiv.org/abs/2510.02387
+------------------------------------------------------------------------------------------------------
+(1) 32B model mid-trained on Python execution traces (line-by-line local state) and agentic Docker
+observation–action trajectories (~3M), then SFT + RL on coding/math; can act as a neural debugger /
+environment simulator.
+(2) Signal: real execution traces; real container observations. (3) n/a.
+(4) Full execution-trace prediction on CruxEval-Output 87.7 % (with NL reasoning 94.3 %); per-step
+State Exact Match / Action Exact Match > 96 %; SWE-bench Verified 65.8 % (with test-time scaling)
+[mem]; LiveCodeBench 68.6 [mem].
+(5) Mapping: a purpose-trained simulator gets per-step observation prediction into the mid-90s on
+Python and container traces — the first number that makes "simulate the observation to pre-verify a
+proposal" plausible at scale. Still ≈12 % trace-level error → a simulator is a PROPOSAL FILTER and a
+coverage extender for states without a grader, not a grader; keep the F6 tables container-verified.
+
+======================================================================================================
+PART V — CROSS-CUTTING READ
+======================================================================================================
+• Every method that beats a fixed expert does so by scoring the LEARNER'S action with a VALUE
+  (cost-to-go under a finisher + a verifier), never by matching an action: AggreVaTe/AggreVaTeD
+  (+5–25 % over experts), LOLS (bad-reference case), Agent-R (revision > expert trajectories), TGRL.
+• Privileged information is safe in three places only: (a) conditioning an ESTIMATOR (Le Critique,
+  asymmetric AC, PI-dropout, Scaffolder [A/B sweeps]); (b) selecting WHICH states get outcome
+  scoring (ADVISOR gate; TGRL trust); (c) as a PROPOSAL that is then verified (our survivor). As a
+  TARGET it fails provably (ADVISOR Prop. 1) and empirically here (F2).
+• LLM-estimated value is a prior, not a grader: Koh oracle-vs-GPT-4o gap; VinePPO's critic at chance
+  on ranking; WebDreamer task-level 52 %; CRUXEval 75–81 %; our F4 42 %. MC with K≈9 (VinePPO) or
+  tree-shared rollouts (ReST-MCTS*) is what ranks partial states.
+• Coaching is the principled fix for "the correct reference is atypical": choose the solving action
+  the blind learner already finds plausible.
+• Sparsity (F6) has two known remedies: advantage form (AggreVaTeD) and tree sharing (ReST-MCTS*,
+  Agent-R) — one action-set per STATE reused by every candidate, N per state ≈ 20 at the budget that
+  gave N=3–4 per action.
+
+======================================================================================================
+CANDIDATE MECHANISMS (≤ 6; each: rule, maximiser, gaming surface, cost, cheapest kill experiment)
+======================================================================================================
+
+M1. Verified local-regret action leg (AggreVaTe/LOLS on D, fold-time table).
+  Rule: at fold, for every decision state x with a grader, build a candidate set C(x) = {T's k sampled
+  actions, frontier proposals, king-failure action, Agent-R-style sibling branches}; for each a ∈ C(x)
+  run N teacher continuations in containers → Q̂(x,a) = solve rate, V̂(x) = mean over T's own actions.
+  Publish the table with D. Duel term A' = Q̂(x, canon(y_A)) − max_{a∈C(x)} Q̂(x,a) (local regret, ≤ 0)
+  where canon() is a deterministic dialect-level canonicaliser (normalised command string / patch
+  hunk set); an unmatched y_A scores V̂(x) − max Q̂ (the teacher's own regret). Turn = min(R, G, A').
+  Maximiser: the policy that at every tabled state emits the best VERIFIED action — strictly above T
+  wherever a proposal beat T (the 27 % of stuck states).
+  Gaming surface: memorise D's tables (RT-6: fresh D per epoch, tables built after the slice seed is
+  unknown); canonicaliser gaming (emit a string that canonicalises to the best entry but does
+  something else — closed by requiring canon() to be a parse of the executed action, not a fuzzy
+  match); unmatched actions are never penalised below T's own regret, so generic exploration earns
+  exactly T's value — no lift (closes the §3i "exploration wins" hole).
+  Cost: fold N·|C(x)| continuations per decision state (N=8, |C|=6 → 48 container runs ≈ 10–40 T turns
+  each; ~1k decision states/epoch ≈ 50k continuations); duel 0 extra (table lookup + canon).
+  Kill: on the existing 11 tabled states re-run with N=8 and check the paired sign of Q̂(best
+  proposal) − Q̂(T action) against the N=3–4 tables; if the ranking of candidates flips at > 30 % of
+  states between N=4 and N=8 the table is still noise at any affordable N → dead.
+
+M2. ADVISOR gate: imitation where the teacher is reliable, verified value where it is not.
+  Rule: dataset field g(x) = divergence between blind T(.|x) and hindsight-informed T(.|x,p) actions
+  (fold-time samples, k=5 each, over canon()). w(x) = exp(−alpha·g(x)). Turn = w·min(R,G) + (1−w)·A'
+  (M1's term). Where hindsight changes nothing, score as today; where it changes the decision, ONLY
+  verified value counts and the informed thought/action is never a target.
+  Maximiser: T on low-gap states, best-verified-action policy on high-gap states → above T.
+  Gaming surface: none new on the imitation half (unchanged rule); inherits M1's; a miner cannot move
+  w (it is a stored field).
+  Cost: fold +k informed samples per decision state (already produced for §3g/§3i); duel 0 extra.
+  Kill: AUC of g(x) for predicting "T's blind continuation fails at x" on the ~50 decision states with
+  outcomes; if AUC < 0.65 the gate does not find the unreliable states and M2 collapses to M1 → dead.
+
+M3. Coached references (He–Daumé–Eisner hope actions) replacing hindsight refs.
+  Rule: at each decision state pick y_coach = argmax_{a ∈ C(x), Q̂(x,a) ≥ Q̂_T + margin} lp_T(a|x) — the
+  verified-better action the BLIND teacher finds most plausible; if none exists keep T's own refs.
+  Thought refs = verified-solved T thoughts only (survivor). Run today's R/G/A machinery unchanged
+  against these refs.
+  Maximiser: the most teacher-like policy that actually solves — above T at every coached state, in-
+  band on G by construction.
+  Gaming surface: parroting T still loses at coached states (ref ≠ T's action there); splicing T's
+  thought with a member action (F3) buys nothing because the ref action is already the teacher-
+  plausible one; the residual is the coached ref being predictable from x (no more than today's refs).
+  Cost: fold = M1's tables + one lp_T echo per candidate; duel 0 extra (same echo count as today).
+  Kill: on the 27 % of stuck states with a verified-better proposal, measure lp_T(y_coach|x) against
+  the teacher's own band; if the best verified action lies below the band floor at > 70 % of them
+  the coach has nothing in-band to point at and M3 degenerates to F2 → dead.
+
+M4. Frozen privileged critic as a prioritiser, not a scorer (Le Critique / informed-AAC).
+  Rule: at fold train V_phi(x, z, y | patch/hint/sibling outcomes) on D with outcomes; publish weights
+  and the informed-AAC acceptance test (return-prediction-error must drop vs the blind critic). Use
+  V_phi ONLY to choose which states enter M1's container budget (highest predicted advantage spread)
+  and to pre-rank proposals; it never enters the turn score.
+  Maximiser: unchanged (M1's); V_phi only changes which states are tabled.
+  Gaming surface: a miner cannot touch V_phi; the risk is a biased state selection (critic prefers
+  states where the frontier happens to look good) — mitigated by keeping a uniform random share of
+  the container budget.
+  Cost: fold one critic fit (hours on one GPU) + one forward per candidate state; duel 0.
+  Kill: held-out pairwise accuracy of V_phi at ranking sibling continuations by real outcome on king-
+  failure states; if ≤ 0.6 (VinePPO's critic-at-chance regime; F4 was 0.42) it selects no better than
+  random and the budget is better spent uniformly → dead.
+
+M5. Thought value by teacher continuation (Thought Cloning's causal test, duel-time, subset only).
+  Rule: on a seeded subset of S decision states per duel (S≈60, drawn from M1's tabled states), force
+  (x, z_A) into the teacher, let T choose the action and finish in a container N times → Q̂(x, z_A);
+  term = Q̂(x, z_A) − V̂(x). Both sides scored on the same states (paired). Replaces G on those states.
+  Maximiser: thoughts that make T act better than it does alone — above T by definition; filler and
+  parroting score V̂(x) − V̂(x) = 0.
+  Gaming surface: leaking the answer into z (RT-10/12) — that IS a good thought here (leaking-is-
+  knowing, EQUILIBRIUM.md) and is legitimate if x does not contain it; a thought that hijacks T into a
+  memorised action string is caught by the container, not by us; B leakage check still applies.
+  Cost: duel S·N container runs per side (60×4 = 240 per side per duel, ≈ 2–4 h of extra pod time) —
+  the expensive candidate; fold 0.
+  Kill: on 20 decision states, force verified-good vs verified-bad T thoughts (already labelled) into
+  T with N=6; if the paired solve-rate difference is < 0.1 (T ignores the injected thought) the term
+  has no signal → dead before any miner is scored.
+
+M6. Simulator-filtered proposals to extend M1 to states without a grader (WebDreamer / CWM).
+  Rule: at fold, for decision states with no container grader, frontier proposes a ∈ C(x); a
+  purpose-trained simulator (CWM-class) predicts the observation o(a); proposals whose predicted o is
+  an error/no-op/identical to T's are dropped; the survivors are tabled with Q̂ = frontier-simulated
+  outcome ONLY as a tie-break prior, and the state enters M2's high-gap set with w derived from
+  simulator disagreement. No simulated outcome ever becomes a turn score by itself.
+  Maximiser: unchanged (M1/M2); coverage of tabled states grows.
+  Gaming surface: none for miners; risk is systematic simulator error correlated with action style
+  (short commands predicted better) → cap the simulator-only share of tabled states at 20 %.
+  Cost: fold 1 frontier proposal call + 1 simulator call per candidate (cents); duel 0.
+  Kill: on 40 grader-backed states, compare simulator pass/fail of proposals to the real container
+  outcome; if agreement < 0.8 (WebDreamer task-level was 0.52; CWM trace-level 0.88) the filter
+  admits wrong actions into the tables → dead as a coverage extender.
