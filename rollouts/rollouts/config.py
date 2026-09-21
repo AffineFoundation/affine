@@ -43,6 +43,13 @@ def _shard(name: str) -> tuple[int, int]:
 @dataclass(frozen=True)
 class RolloutsConfig:
     data_dir: Path            # store + index + catalogs + state
+    # Catalogs normally live under data_dir. The env-backfill driver pod runs
+    # one driver per model, each with its own ROLLOUTS_DATA_DIR, and some
+    # catalogs can only be BUILT where their taskset package is importable
+    # (terminal_bench_2 imports terminal_bench_2_v1 from the verifiers env),
+    # so those drivers point ROLLOUTS_CATALOG_DIR at the shared, pre-built
+    # copy cloned from the fleet (2026-09-19).
+    catalog_dir_override: Path | None
     verifiers_dir: Path       # verifiers checkout `uv run eval` runs from
     # Canonical trace publish: the public corpus bucket (data.affine.io),
     # `traces/` prefix. The fold derives D from these on the validator box.
@@ -76,7 +83,7 @@ class RolloutsConfig:
 
     @property
     def catalog_dir(self) -> Path:
-        return self.data_dir / "catalogs"
+        return self.catalog_dir_override or (self.data_dir / "catalogs")
 
     @property
     def store_dir(self) -> Path:
@@ -94,6 +101,8 @@ def load_config() -> RolloutsConfig:
         s.strip() for s in raw_langs.split(",") if s.strip())
     return RolloutsConfig(
         data_dir=Path(os.environ.get("ROLLOUTS_DATA_DIR", "/root/rollouts-data")),
+        catalog_dir_override=(Path(os.environ["ROLLOUTS_CATALOG_DIR"])
+                              if os.environ.get("ROLLOUTS_CATALOG_DIR") else None),
         verifiers_dir=Path(os.environ.get(
             "ROLLOUTS_VERIFIERS_DIR", "/root/prime-pilot/verifiers")),
         r2_bucket=os.environ.get("ROLLOUTS_R2_BUCKET", "affine-data"),

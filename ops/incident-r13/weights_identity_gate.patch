@@ -1,0 +1,597 @@
+diff --git a/affine/affine.toml b/affine/affine.toml
+index 97f581f6..376b7234 100644
+--- a/affine/affine.toml
++++ b/affine/affine.toml
+@@ -97,6 +97,24 @@ allow_auto_map = false
+ # Metadata-intake guards on attacker-controlled repos.
+ max_repo_files = 5000
+ max_config_bytes = 1048576   # 1 MiB; config.json larger than this is rejected
++# Weight-identity gate (2026-09-13, after the reign-13 byte-copy: reign 12
++# re-saved from 16 shards into 2 passed the file-hash copy check and was
++# crowned on a z = 0.93 margin; a second entry, chal-00466, was reign 12
++# with 26 single-element edits — one per shard — so every file hash moved).
++# The eval pod hashes every TENSOR of the verified challenger snapshot before
++# any GPU load. Rejected as model_copy (slot burned, never a window
++# candidate) when the tensor fingerprint equals the king's or any duelled
++# checkpoint's (validator ledger `weight_fingerprints`), or when:
++#   near_duplicate_max_identical_bytes_frac — more than this fraction of the
++#     weight bytes is byte-identical to the king (1.0 disables this test);
++#   near_duplicate_min_changed_frac — the tensors that DO differ from the
++#     king differ in fewer than this fraction of their elements, measured
++#     on a block-hash-seeded sample of 32 such tensors (a trained update is
++#     dense: LoRA merges and SFT move ~every element of a touched tensor;
++#     chal-00466 moved 26 of 3.5e10; 0 disables).
++# Admission rule, no scoring change, no weight_version_key event.
++near_duplicate_max_identical_bytes_frac = 0.5
++near_duplicate_min_changed_frac = 1e-3
+ 
+ # Private submissions over Cloudflare R2 (affine2 reveals; affine/r2protocol.py
+ # is the byte-level contract, scripts/submit.py the miner client). Miners
+diff --git a/affine/affine/config.py b/affine/affine/config.py
+index fb1ef4fa..5e58156e 100644
+--- a/affine/affine/config.py
++++ b/affine/affine/config.py
+@@ -110,6 +110,17 @@ class SubmissionCfg:
+     allow_auto_map: bool
+     max_repo_files: int
+     max_config_bytes: int
++    # Weight-identity gate (2026-09-13, eval pod, before any GPU load). A
++    # challenger whose tensors are the king's — exactly (same fingerprint,
++    # any shard layout), or with cosmetic edits — is rejected as model_copy:
++    #   near_duplicate_max_identical_bytes_frac — reject when MORE than this
++    #     fraction of the weight bytes are byte-identical to the king's
++    #     tensors (1.0 = only the exact-fingerprint test);
++    #   near_duplicate_min_changed_frac — reject when the tensors that do
++    #     differ from the king differ in FEWER than this fraction of their
++    #     elements (seeded sample; 0 = off).
++    near_duplicate_max_identical_bytes_frac: float
++    near_duplicate_min_changed_frac: float
+     # Nested config.json subset every submission must match exactly
+     # (validate_repo_arch). Empty dict = no restriction.
+     pinned_arch: dict
+@@ -438,6 +449,10 @@ def _submission(raw: dict) -> SubmissionCfg:
+         allow_auto_map=bool(s["allow_auto_map"]),
+         max_repo_files=int(s["max_repo_files"]),
+         max_config_bytes=int(s["max_config_bytes"]),
++        near_duplicate_max_identical_bytes_frac=float(
++            s.get("near_duplicate_max_identical_bytes_frac", 1.0)),
++        near_duplicate_min_changed_frac=float(
++            s.get("near_duplicate_min_changed_frac", 0.0)),
+         pinned_arch=dict(s.get("pinned_arch") or {}),
+         pinned_arch_alt=[dict(p) for p in (s.get("pinned_arch_alt") or [])],
+         r2=_r2(s.get("r2") or {}),
+diff --git a/affine/affine/eval_client.py b/affine/affine/eval_client.py
+index 203e2a5f..95861afe 100644
+--- a/affine/affine/eval_client.py
++++ b/affine/affine/eval_client.py
+@@ -115,6 +115,7 @@ class EvalClient:
+                        challenger_weight_bytes: int = 0,
+                        margin: dict | None = None,
+                        confirm: dict | None = None,
++                       reject_weight_fingerprints: list[str] | None = None,
+                        on_progress=None) -> dict:
+         """Dispatch a duel and stream to verdict. Raises TransientEvalError on
+         infra failure; returns the verdict dict on completion.
+@@ -138,6 +139,11 @@ class EvalClient:
+             # Window-best confirmation: one fresh slice pooled with the
+             # original verdict (see evalsrv.dueling.run_duel `confirm`).
+             payload["confirm"] = confirm
++        if reject_weight_fingerprints:
++            # Weight-identity gate: fingerprints of every checkpoint that
++            # already duelled or reigned; the pod rejects a challenger whose
++            # tensors match one of them (or the king's) before any GPU load.
++            payload["reject_weight_fingerprints"] = sorted(set(reject_weight_fingerprints))
+         timeout = httpx.Timeout(self.duel_timeout_s, connect=30.0)
+         async with httpx.AsyncClient(timeout=timeout,
+                                      headers=self._headers) as client:
+diff --git a/affine/affine/state.py b/affine/affine/state.py
+index 43e90361..b9982fc7 100644
+--- a/affine/affine/state.py
++++ b/affine/affine/state.py
+@@ -109,6 +109,11 @@ class State:
+         self.queue: list[QueueEntry] = []
+         self.seen_hotkeys: set[str] = set()
+         self.completed_revisions: set[str] = set()
++        # Weight-content fingerprint → first challenge that carried it
++        # (kings included). The pod computes the fingerprint over the
++        # tensors, so a re-sharded / re-saved copy of a duelled checkpoint
++        # maps to the same key and is rejected at the next duel (2026-09-13).
++        self.weight_fingerprints: dict[str, str] = {}
+         self.bench_jobs: list[dict] = []
+         self.stats = {"queued": 0, "accepted": 0, "rejected": 0, "failed": 0}
+         self._id_counter = 0
+@@ -222,6 +227,8 @@ class State:
+             self._sort_queue()
+             self.seen_hotkeys = set(d.get("seen_hotkeys", []))
+             self.completed_revisions = set(d.get("completed_revisions", []))
++            self.weight_fingerprints = {
++                str(k): str(v) for k, v in (d.get("weight_fingerprints") or {}).items()}
+             self.last_weights_at = d.get("last_weights_at", "")
+             self.bench_jobs = d.get("bench_jobs", [])
+             self.stats = d.get("stats", self.stats)
+@@ -282,6 +289,7 @@ class State:
+                 "in_flight": asdict(self.in_flight) if self.in_flight else None,
+                 "seen_hotkeys": sorted(self.seen_hotkeys),
+                 "completed_revisions": sorted(self.completed_revisions),
++                "weight_fingerprints": dict(sorted(self.weight_fingerprints.items())),
+                 "last_weights_at": self.last_weights_at,
+                 "bench_jobs": self.bench_jobs,
+                 "stats": self.stats,
+@@ -534,6 +542,20 @@ class State:
+         self._append_history(row)
+         self._clear_in_flight(entry)
+ 
++    def record_weight_fingerprint(self, fingerprint: str | None,
++                                  challenge_id: str) -> str | None:
++        """Remember a duelled checkpoint's weight fingerprint. Returns the
++        challenge that first carried it when it was already known (an
++        identical-weights resubmission that slipped past the pod gate —
++        e.g. a pod on old code), else None."""
++        if not fingerprint or len(str(fingerprint)) != 64:
++            return None
++        with self._lock:
++            first = self.weight_fingerprints.get(fingerprint)
++            if first is None:
++                self.weight_fingerprints[fingerprint] = challenge_id
++            return first
++
+     def record_failure_raw(self, hotkey: str, repo: str, revision: str,
+                            code: str, detail: str, *,
+                            uid: int | None = None) -> None:
+diff --git a/affine/affine/validator.py b/affine/affine/validator.py
+index 749891f0..3fdfeab4 100644
+--- a/affine/affine/validator.py
++++ b/affine/affine/validator.py
+@@ -982,9 +982,35 @@ class Validator:
+             challenger_hotkey=entry.hotkey, block_hash=block_hash,
+             challenger_weight_bytes=info.total_safetensors_bytes,
+             margin=margin,
++            reject_weight_fingerprints=list(self.state.weight_fingerprints),
+             on_progress=on_progress)
+         self.state.current_eval = None
+ 
++        # Weight-identity gate (2026-09-13): the pod fingerprints the
++        # challenger's tensors before loading it. Identical weights to the
++        # king or to any duelled checkpoint = not a new model. Recorded like
++        # the file-level copy check above (model_copy, slot burned), never a
++        # window candidate. The fingerprint of every scored challenger is
++        # remembered so the next re-upload of the same weights is refused.
++        reason = str(verdict.get("rejection_reason") or "")
++        if reason.startswith("weights_duplicate:"):
++            self.state.record_failure(
++                entry, "model_copy",
++                f"weights identical to {reason.split(':', 1)[1]} (tensor fingerprint "
++                f"{str(verdict.get('challenger_weight_fingerprint'))[:16]})",
++                **self._history_meta(entry, t0))
++            self.dashboard.flush(force=True)
++            return
++        first = self.state.record_weight_fingerprint(
++            verdict.get("challenger_weight_fingerprint"), cid)
++        if first is not None and first != cid:
++            log.error("%s: weight fingerprint already seen on %s but the pod scored "
++                      "it — stale eval pod? redeploy (scripts/redeploy_pods.py)",
++                      cid, first)
++        if king.revision and verdict.get("king_weight_fingerprint"):
++            self.state.record_weight_fingerprint(
++                verdict.get("king_weight_fingerprint"), king.challenge_id)
++
+         verdict["block_hash"] = block_hash
+         self._apply_thought_floor(verdict)
+         self._apply_causality_gate(verdict)
+diff --git a/affine/evalsrv/engine.py b/affine/evalsrv/engine.py
+index cf1013ab..c9293c28 100644
+--- a/affine/evalsrv/engine.py
++++ b/affine/evalsrv/engine.py
+@@ -636,6 +636,18 @@ class Engine:
+         return (WARM_SWAP and self.role == "duel"
+                 and slot in (self.chall_slot, self.chal2_slot))
+ 
++    def weights_fingerprint(self, repo: str, revision: str | None,
++                            cancel: threading.Event | None = None) -> str | None:
++        """Weight-content fingerprint of an r2 checkpoint (see
++        r2store.compute_weights_fingerprint), materializing it first when it
++        is not on disk yet. None for HF repos (vLLM downloads those itself;
++        the file-level copy check on the validator still covers them).
++        Same exception contract as _ensure_snapshot."""
++        if not r2store.is_r2(repo) or not revision:
++            return None
++        self._ensure_snapshot(repo, revision, cancel)
++        return r2store.weights_fingerprint(r2store.snapshot_dir(repo, revision))
++
+     def _ensure_snapshot(self, repo: str, revision: str | None,
+                          cancel: threading.Event | None = None) -> None:
+         """r2 refs must be on disk and verified before vLLM starts (HF repos
+diff --git a/affine/evalsrv/r2store.py b/affine/evalsrv/r2store.py
+index fd369c84..b6edfef5 100644
+--- a/affine/evalsrv/r2store.py
++++ b/affine/evalsrv/r2store.py
+@@ -29,6 +29,7 @@ import hashlib
+ import json
+ import logging
+ import os
++import random
+ import shutil
+ import sys
+ import threading
+@@ -36,6 +37,7 @@ import time
+ from concurrent.futures import ThreadPoolExecutor, as_completed, wait
+ from pathlib import Path
+ 
++import numpy as np
+ from botocore.exceptions import BotoCoreError, ClientError
+ 
+ from affine import r2, r2protocol as proto
+@@ -75,6 +77,19 @@ PROGRESS_FLUSH_S = 2.0
+ # after a sha256 pass matched the manifest; trusted only while size+mtime
+ # match. Same trust level as the snapshot's completion marker.
+ VERIFIED_SUFFIX = ".sha256ok"
++# Weight-content identity (2026-09-13, reign-13 byte-copy incident): the
++# sha256 of every TENSOR's raw bytes, keyed by tensor name, independent of
++# how the checkpoint is sharded or what the shard files are called. Two
++# checkpoints with the same fingerprint serve the same weights even when
++# every file hash differs (reign 13 was reign 12 re-saved from 16 shards
++# into 2). Cached in the snapshot so the duel path pays the read once.
++FINGERPRINT_FILE = ".affine_weights_fingerprint"
++TENSOR_HASHES_FILE = ".affine_tensor_hashes.json"
++FINGERPRINT_DOMAIN = b"affine-weights-fingerprint-v1\n"
++# Element-level near-duplicate probe: how many hash-different tensors are
++# read from both snapshots (challenger + king) per duel. 32 tensors of a
++# 35B MoE ≈ 2–5 GB read, seconds on NVMe.
++NEAR_DUP_SAMPLE_TENSORS = 32
+ 
+ 
+ class IntegrityError(Exception):
+@@ -232,6 +247,195 @@ def _sha256_file(path: Path, progress: Progress | None = None) -> str:
+     return h.hexdigest()
+ 
+ 
++def _shard_tensor_hashes(path: Path, progress: Progress | None = None
++                         ) -> dict[str, tuple[str, list[int], str, int]]:
++    """{tensor name: (dtype, shape, sha256 of the tensor's raw bytes, nbytes)} for
++    one safetensors file. Header layout per the safetensors spec: 8-byte
++    little-endian header length, JSON header, then the byte buffer that
++    `data_offsets` index into."""
++    out: dict[str, tuple[str, list[int], str, int]] = {}
++    with open(path, "rb") as f:
++        hlen = int.from_bytes(f.read(8), "little")
++        if hlen <= 0 or hlen > 256 << 20:
++            raise IntegrityError(f"{path.name}: bad safetensors header length {hlen}")
++        header = json.loads(f.read(hlen))
++        base = 8 + hlen
++        for name, meta in header.items():
++            if name == "__metadata__":
++                continue
++            start, end = (int(x) for x in meta["data_offsets"])
++            f.seek(base + start)
++            h = hashlib.sha256()
++            left = end - start
++            while left > 0:
++                b = f.read(min(CHUNK, left))
++                if not b:
++                    raise IntegrityError(f"{path.name}: short read inside tensor {name}")
++                h.update(b)
++                left -= len(b)
++                if progress is not None:
++                    progress.add(len(b))
++            out[name] = (str(meta["dtype"]), [int(s) for s in meta["shape"]],
++                         h.hexdigest(), end - start)
++    return out
++
++
++def tensor_hashes(snap: Path, progress: Progress | None = None
++                  ) -> dict[str, list]:
++    """{tensor name: [dtype, shape, sha256, nbytes, shard]} for every
++    *.safetensors under `snap`; cached in TENSOR_HASHES_FILE once computed
++    (a complete snapshot never changes). A tensor name present in two
++    shards is an integrity fault (the safetensors index would be
++    ambiguous)."""
++    side = snap / TENSOR_HASHES_FILE
++    try:
++        cached = json.loads(side.read_text())
++        if isinstance(cached, dict) and cached:
++            return cached
++    except (OSError, ValueError):
++        pass
++    rows: dict[str, list] = {}
++    for shard in sorted(snap.glob("*.safetensors")):
++        for name, (dtype, shape, sha, nbytes) in _shard_tensor_hashes(shard, progress).items():
++            if name in rows:
++                raise IntegrityError(f"tensor {name} appears in two shards")
++            rows[name] = [dtype, shape, sha, nbytes, shard.name]
++    tmp = side.with_suffix(".tmp")
++    tmp.write_text(json.dumps(rows, sort_keys=True))
++    tmp.replace(side)
++    return rows
++
++
++def fingerprint_of(rows: dict[str, list]) -> str:
++    """sha256(FINGERPRINT_DOMAIN + canonical JSON of the sorted rows
++    [name, dtype, shape, tensor_sha256]). Shard count, shard names, header
++    metadata, config / tokenizer bytes and the manifest do not enter it;
++    only the tensors do."""
++    canon = json.dumps(sorted((n, r[0], r[1], r[2]) for n, r in rows.items()),
++                       separators=(",", ":"), ensure_ascii=True)
++    return hashlib.sha256(FINGERPRINT_DOMAIN + canon.encode()).hexdigest()
++
++
++def compute_weights_fingerprint(snap: Path, progress: Progress | None = None
++                                ) -> tuple[str, int]:
++    """(fingerprint, n_tensors) of the checkpoint under `snap`."""
++    rows = tensor_hashes(snap, progress)
++    return fingerprint_of(rows), len(rows)
++
++
++def weights_fingerprint(snap: Path) -> str | None:
++    """Cached weight fingerprint of a complete snapshot; computed and cached
++    on first use for snapshots fetched before this file existed. None when
++    the snapshot is not complete (never fingerprint a partial download)."""
++    if not (snap / COMPLETE_MARKER).is_file():
++        return None
++    side = snap / FINGERPRINT_FILE
++    try:
++        rec = json.loads(side.read_text())
++        fp = str(rec.get("fingerprint") or "")
++        if len(fp) == 64:
++            return fp
++    except (OSError, ValueError):
++        pass
++    t0 = time.time()
++    fp, n = compute_weights_fingerprint(snap)
++    _write_fingerprint(snap, fp, n)
++    log.info("weights fingerprint of %s: %s (%d tensors, %.0fs)", snap.name[:12],
++             fp[:16], n, time.time() - t0)
++    return fp
++
++
++def _write_fingerprint(snap: Path, fp: str, n_tensors: int) -> None:
++    (snap / FINGERPRINT_FILE).write_text(json.dumps({
++        "fingerprint": fp, "n_tensors": n_tensors,
++        "computed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
++    }))
++
++
++def _read_tensor(snap: Path, row: list, name: str) -> "np.ndarray":
++    """Raw bytes of one tensor as a flat uint8/uint16/uint32 view (element
++    width from the safetensors dtype; unknown widths fall back to bytes)."""
++    shard = snap / row[4]
++    with open(shard, "rb") as f:
++        hlen = int.from_bytes(f.read(8), "little")
++        header = json.loads(f.read(hlen))
++        start, end = (int(x) for x in header[name]["data_offsets"])
++        f.seek(8 + hlen + start)
++        buf = f.read(end - start)
++    width = {"BF16": 2, "F16": 2, "F32": 4, "I32": 4, "U32": 4, "I16": 2,
++             "U16": 2, "I8": 1, "U8": 1, "BOOL": 1, "F8_E4M3": 1,
++             "F8_E5M2": 1, "I64": 8, "F64": 8, "U64": 8}.get(row[0], 1)
++    dt = {1: np.uint8, 2: np.uint16, 4: np.uint32, 8: np.uint64}[width]
++    return np.frombuffer(buf, dtype=dt)
++
++
++def near_duplicate_stats(chall: Path, king: Path, seed: str,
++                         sample_tensors: int = NEAR_DUP_SAMPLE_TENSORS) -> dict:
++    """How much of the challenger IS the king, tensor by tensor.
++
++    Hash level (free, both tables cached): the fraction of tensors, and of
++    weight bytes, that are byte-identical to the king. Element level (a
++    seeded sample of up to `sample_tensors` of the tensors whose hashes
++    differ, read from both snapshots): the fraction of elements that
++    actually changed. A trained model changes most elements of every tensor
++    it touched; a copy with a few flipped values (reign-12 → chal-00466:
++    26 elements out of 3.5e10, one per shard so every file hash moved)
++    changes ~1e-6 of them. The sample is seeded by the duel's block hash so
++    a copier cannot know which tensors will be read."""
++    ch, kh = tensor_hashes(chall), tensor_hashes(king)
++    common = [n for n in ch if n in kh and ch[n][0] == kh[n][0] and ch[n][1] == kh[n][1]]
++    stats = {"n_tensors": len(ch), "n_king_tensors": len(kh), "n_comparable": len(common),
++             "identical_tensors": 0, "identical_bytes_frac": 0.0,
++             "sampled_tensors": 0, "sampled_elements": 0, "sampled_changed_elements": 0,
++             "sampled_changed_frac": None}
++    if not common:
++        return stats
++    total_bytes = sum(int(ch[n][3]) for n in ch) or 1
++    same = [n for n in common if ch[n][2] == kh[n][2]]
++    differ = [n for n in common if ch[n][2] != kh[n][2]]
++    stats["identical_tensors"] = len(same)
++    stats["identical_bytes_frac"] = sum(int(ch[n][3]) for n in same) / total_bytes
++    if not differ:
++        stats["sampled_changed_frac"] = 0.0
++        return stats
++    rng = random.Random(seed)
++    picked = differ if len(differ) <= sample_tensors else rng.sample(differ, sample_tensors)
++    changed = elements = 0
++    for name in picked:
++        a, b = _read_tensor(chall, ch[name], name), _read_tensor(king, kh[name], name)
++        if a.shape != b.shape:
++            continue
++        elements += int(a.size)
++        changed += int(np.count_nonzero(a != b))
++    stats.update(sampled_tensors=len(picked), sampled_elements=elements,
++                 sampled_changed_elements=changed,
++                 sampled_changed_frac=(changed / elements) if elements else None)
++    return stats
++
++
++def near_duplicate_reason(stats: dict, max_identical_bytes_frac: float,
++                          min_changed_frac: float) -> str | None:
++    """Why `stats` mean 'this is the king with cosmetic edits', or None.
++
++    Two independent tests, either one rejects:
++      * identical_bytes_frac > max_identical_bytes_frac — most of the weight
++        bytes ARE the king's (1.0 = exact copy, disabled with >= 1.0);
++      * sampled_changed_frac < min_changed_frac — the tensors that do differ
++        differ in a vanishing fraction of their elements (0 disables).
++    """
++    ib = float(stats.get("identical_bytes_frac") or 0.0)
++    if max_identical_bytes_frac < 1.0 and ib > max_identical_bytes_frac:
++        return (f"{ib:.4%} of the weight bytes are byte-identical to the king "
++                f"({stats.get('identical_tensors')}/{stats.get('n_tensors')} tensors)")
++    cf = stats.get("sampled_changed_frac")
++    if min_changed_frac > 0 and cf is not None and stats.get("sampled_elements", 0) > 0 \
++            and cf < min_changed_frac:
++        return (f"only {cf:.2e} of the elements differ from the king in the "
++                f"{stats.get('sampled_tensors')} sampled non-identical tensors "
++                f"({stats.get('sampled_changed_elements')} of {stats.get('sampled_elements')})")
++    return None
++
++
+ def _verified_sidecar(dest: Path) -> Path:
+     return dest.with_name(dest.name + VERIFIED_SUFFIX)
+ 
+@@ -587,12 +791,20 @@ def _fetch(repo: str, revision: str, bucket: str, prefix: str, snap: Path,
+                     fut.cancel()
+                 wait(futs)
+                 raise
++        # One more read pass over the verified shards (NVMe, ~1 GB/s): the
++        # weight fingerprint the duel's identity gate compares against the
++        # king and every past challenger. Done here, at prefetch time, so
++        # the duel itself never waits for it.
++        progress.set_phase("fingerprinting")
++        fp, n_tensors = compute_weights_fingerprint(snap, progress)
+         progress.set_phase("complete")
+     (snap / COMPLETE_MARKER).write_text(json.dumps({
+         "repo": repo, "model_digest": revision,
+         "files": len(manifest["files"]),
+         "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
++        "weights_fingerprint": fp, "n_tensors": n_tensors,
+     }))
++    _write_fingerprint(snap, fp, n_tensors)
+     (snap / PROGRESS_FILE).unlink(missing_ok=True)
+     log.info("snapshot %s@%s complete in %.0fs (%.0f MB/s over the run)",
+              repo, revision[:12], time.time() - t0,
+diff --git a/affine/evalsrv/server.py b/affine/evalsrv/server.py
+index b7e4eedc..6533f7c5 100644
+--- a/affine/evalsrv/server.py
++++ b/affine/evalsrv/server.py
+@@ -46,7 +46,7 @@ from pydantic import BaseModel
+ from affine.config import load_config
+ from affine.eval_client import Fault
+ 
+-from . import benchrunner, dueling, swerunner
++from . import benchrunner, dueling, r2store, swerunner
+ from .corpus import CorpusSync
+ from .engine import Engine
+ from .r2store import FetchCancelled, FetchError, IntegrityError
+@@ -248,6 +248,86 @@ class DuelRequest(BaseModel):
+     # {slice_index, base: {n, margin, se}, challenge_id}; the verdict gains
+     # `confirmation` (slice numbers, pooled numbers, passed). None = a duel.
+     confirm: dict | None = None
++    # Weight-identity gate (2026-09-13): weight fingerprints of every
++    # checkpoint that has already duelled or reigned (validator state). A
++    # challenger whose fingerprint is in this list — or equals the king's,
++    # which the pod checks on its own — is rejected before any GPU load with
++    # rejection_reason "weights_duplicate:<what it duplicates>". Empty = only
++    # the king comparison.
++    reject_weight_fingerprints: list[str] = []
++
++
++def _weights_identity_gate(job_id: str, req: DuelRequest, events: Queue) -> dict | None:
++    """Reject a challenger whose TENSOR content is the king's — exactly, or
++    with cosmetic edits — or equals a known past checkpoint's. Returns the
++    rejection verdict, or None (fingerprints + near-duplicate stats kept on
++    the job for the final verdict's telemetry).
++
++    Runs on the verified snapshot only (r2store hashes tensors after the
++    sha256 pass). Fail-open on HF refs and when the king's own snapshot
++    cannot be materialized: the validator's fingerprint list still applies,
++    and an unreadable king is a pod state, not the challenger's doing. Also
++    runs for a window confirmation slice: a copy that slipped through the
++    original duel (older pod code) must not be crowned on confirmation."""
++    fps: dict[str, str | None] = {"challenger": None, "king": None}
++    events.put({"type": "progress",
++                "data": {"phase": "fingerprint", "repo": req.challenger_repo}})
++    fps["challenger"] = _engine.weights_fingerprint(
++        req.challenger_repo, req.challenger_revision, cancel=_abort_duel)
++    if fps["challenger"] is None:
++        return None
++    near: dict | None = None
++    duplicate_of: str | None = None
++    try:
++        # The king must be on disk for the duel anyway (prepare_miners fetches
++        # it); fetching it here only moves that read earlier. A king fetch
++        # failure is a pod fault that prepare_miners reports properly
++        # (KING_LAUNCH) — here it just means "no king comparison".
++        fps["king"] = _engine.weights_fingerprint(
++            req.king_repo, req.king_revision, cancel=_abort_duel)
++    except FetchCancelled:
++        raise
++    except Exception as e:  # noqa: BLE001 — fail open on the king side only
++        log.warning("%s: king snapshot unavailable for the weight-identity gate "
++                    "(%s); comparing against the fingerprint list only", job_id, e)
++        fps["king"] = None
++    if fps["king"]:
++        king_snap = r2store.snapshot_dir(req.king_repo, req.king_revision)
++        if fps["challenger"] == fps["king"]:
++            duplicate_of = f"king {req.king_revision[:12]} (identical tensors)"
++        else:
++            sub = _cfg.submission
++            near = r2store.near_duplicate_stats(
++                r2store.snapshot_dir(req.challenger_repo, req.challenger_revision),
++                king_snap, seed=req.block_hash)
++            why = r2store.near_duplicate_reason(
++                near, sub.near_duplicate_max_identical_bytes_frac,
++                sub.near_duplicate_min_changed_frac)
++            if why:
++                duplicate_of = f"king {req.king_revision[:12]} with cosmetic edits: {why}"
++    if duplicate_of is None and fps["challenger"] in set(req.reject_weight_fingerprints):
++        duplicate_of = "a previously duelled checkpoint (identical tensors)"
++    _jobs[job_id]["fingerprints"] = fps
++    _jobs[job_id]["near_duplicate"] = near
++    if duplicate_of is None:
++        return None
++    log.warning("%s: challenger %s@%s has the weights of %s (fingerprint %s) — "
++                "rejected without a duel", job_id, req.challenger_repo,
++                req.challenger_revision[:12], duplicate_of, fps["challenger"][:16])
++    verdict = {"challenger_wins": False, "job_id": job_id,
++               "rejection_reason": f"weights_duplicate:{duplicate_of}"[:400],
++               "challenger_weight_fingerprint": fps["challenger"],
++               "king_weight_fingerprint": fps["king"],
++               "near_duplicate": near}
++    if req.confirm:
++        # The validator reads `confirmation.passed`; a failed confirmation
++        # moves the window on to the next candidate.
++        verdict["confirmation"] = {
++            "challenge_id": (req.confirm or {}).get("challenge_id"),
++            "slice_index": (req.confirm or {}).get("slice_index"),
++            "base": (req.confirm or {}).get("base"), "slice": None, "pooled": None,
++            "passed": False, "error": verdict["rejection_reason"]}
++    return verdict
+ 
+ 
+ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
+@@ -301,6 +381,25 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
+                 f"challenger weights ~{req.challenger_weight_bytes / 1e9:.0f} GB "
+                 f"do not fit {free_gb:.0f} GB free after cache prune; provision "
+                 "a larger pod or lower submission.max_model_size_gb")
++        # Weight-identity gate: the challenger lands on disk (usually already
++        # prefetched) and its tensor fingerprint is compared before either
++        # engine loads. Same fetch exceptions as prepare_miners below.
++        job["phase"] = "fingerprint"
++        _check_superseded()
++        try:
++            rejected = _weights_identity_gate(job_id, req, events)
++        except FetchCancelled as e:
++            raise dueling.DuelAborted(f"superseded during download: {e}") from e
++        except IntegrityError as e:
++            rejected = {"challenger_wins": False, "job_id": job_id,
++                        "rejection_reason": f"integrity:{str(e)[:300]}"}
++        except FetchError as e:
++            raise DuelFault(Fault.CHALLENGER_INFRA, f"r2 fetch failed: {e}") from e
++        if rejected is not None:
++            job["verdict"] = rejected
++            events.put({"type": "verdict", "data": rejected})
++            job["state"] = "completed"
++            return
+         # King + challenger occupy disjoint GPUs: launch together so a cold
+         # pair (evalsrv bounce) pays one vLLM start, not two in series.
+         try:
+@@ -396,6 +495,10 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
+                 code = Fault.CHALLENGER_INFRA
+             raise DuelFault(code, str(e)) from e
+         verdict["job_id"] = job_id  # lets the root fetch the artifact post-verdict
++        fps = job.get("fingerprints") or {}
++        verdict["challenger_weight_fingerprint"] = fps.get("challenger")
++        verdict["king_weight_fingerprint"] = fps.get("king")
++        verdict["near_duplicate"] = job.get("near_duplicate")
+         _save_artifact(job_id, req, verdict, artifact)
+ 
+         # Set the verdict on the job and enqueue the event BEFORE flipping the

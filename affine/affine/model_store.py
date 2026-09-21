@@ -62,6 +62,10 @@ class RepoInfo:
     total_safetensors_bytes: int
     total_repo_bytes: int
     committed_at: datetime | None
+    # Parsed model.safetensors.index.json when the layout is sharded (None
+    # for single-file repos or when it could not be read). Hygiene checks
+    # that every shard the index names is actually in the upload.
+    weight_index: dict | None = None
 
 
 def _api(hf_token: str) -> HfApi:
@@ -76,6 +80,7 @@ def resolve_head_revision(repo: str, hf_token: str = "") -> str:
 MAX_TREE_ENTRIES = 20000  # hard stop while listing an attacker-controlled repo
 MAX_CONFIG_BYTES_HARD = 16 * 1024 * 1024  # refuse to download bigger configs
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+MAX_INDEX_BYTES = 8 * 1024 * 1024  # model.safetensors.index.json (Qwen3.6 MoE ≈ 0.2 MB)
 
 
 class R2Reader:
@@ -116,9 +121,22 @@ class R2Reader:
         total_all = sum(int(f["size"]) for f in manifest["files"])
         if uploaded_at is not None and uploaded_at.tzinfo is None:
             uploaded_at = uploaded_at.replace(tzinfo=timezone.utc)
+        weight_index = None
+        idx = by_path.get("model.safetensors.index.json")
+        if idx is not None and int(idx["size"]) <= MAX_INDEX_BYTES:
+            try:
+                raw_idx = r2.get_bytes(self.s3, bucket,
+                                       prefix + "model.safetensors.index.json",
+                                       MAX_INDEX_BYTES)
+                if proto.sha256_hex(raw_idx) == idx["sha256"]:
+                    weight_index = json.loads(raw_idx)
+            except Exception:
+                log.warning("could not read weight index under %s", prefix,
+                            exc_info=True)
         return RepoInfo(files=files, config=config, safetensors_blobs=blobs,
                         total_safetensors_bytes=total_st,
-                        total_repo_bytes=total_all, committed_at=uploaded_at)
+                        total_repo_bytes=total_all, committed_at=uploaded_at,
+                        weight_index=weight_index)
 
     def repo_info(self, ref: ModelRef) -> RepoInfo:
         """Raises when the prefix/manifest is missing or the manifest's
@@ -210,9 +228,21 @@ def fetch_repo_info(ref: ModelRef, hf_token: str = "",
                   exc_info=True)
     if committed_at is not None and committed_at.tzinfo is None:
         committed_at = committed_at.replace(tzinfo=timezone.utc)
+    weight_index = None
+    if "model.safetensors.index.json" in files:
+        try:
+            raw_idx = api.hf_hub_download(
+                ref.repo, "model.safetensors.index.json", revision=ref.revision)
+            if Path(raw_idx).stat().st_size <= MAX_INDEX_BYTES:
+                with open(raw_idx) as f:
+                    weight_index = json.load(f)
+        except Exception:
+            log.warning("could not read weight index of %s", ref.immutable_ref,
+                        exc_info=True)
     return RepoInfo(files=files, config=config, safetensors_blobs=blobs,
                     total_safetensors_bytes=total_st,
-                    total_repo_bytes=total_all, committed_at=committed_at)
+                    total_repo_bytes=total_all, committed_at=committed_at,
+                    weight_index=weight_index)
 
 
 def fetch_repo_info_or_status(ref: ModelRef, hf_token: str = "",
@@ -268,6 +298,32 @@ def validate_repo_name(repo: str, pattern: str,
     return None
 
 
+def validate_weight_index(info: RepoInfo) -> str | None:
+    """Every shard named by model.safetensors.index.json must be in the
+    upload, and none may be a temp file. 2026-09-20: two "miracle-1000"
+    uploads (uid 71, uid 92) shipped an index whose weight_map pointed at
+    `model-0000N-of-00002.safetensors.wrap.tmp`; the pod downloaded 70 GB,
+    vLLM died with FileNotFoundError, and the miner got an opaque
+    `unservable`. Reject at intake with the shard names instead."""
+    idx = info.weight_index
+    if not isinstance(idx, dict):
+        return None
+    wm = idx.get("weight_map")
+    if not isinstance(wm, dict) or not wm:
+        return "model.safetensors.index.json has no weight_map"
+    shards = sorted({str(v) for v in wm.values()})
+    files = set(info.files)
+    tmp = [s for s in shards if s.endswith(".tmp") or ".tmp." in s]
+    missing = [s for s in shards if s not in files]
+    if tmp or missing:
+        bad = sorted(set(tmp) | set(missing))
+        return (f"missing_shards {bad[:4]}{' …' if len(bad) > 4 else ''}: "
+                f"model.safetensors.index.json names {len(bad)} shard file(s) "
+                f"that are not in the upload"
+                + (" (temp-file names — rerun your packaging step)" if tmp else ""))
+    return None
+
+
 def validate_repo_hygiene(info: RepoInfo, *, max_size_gb: float,
                           max_total_repo_gb: float,
                           allow_python_files: bool,
@@ -296,6 +352,10 @@ def validate_repo_hygiene(info: RepoInfo, *, max_size_gb: float,
         if has_shards and not has_index:
             return "missing model.safetensors.index.json for sharded layout"
         return f"safetensors present but not in canonical layout: {st_files[:3]}"
+
+    reason = validate_weight_index(info)
+    if reason:
+        return reason
 
     size_gb = info.total_safetensors_bytes / 1e9
     if size_gb > max_size_gb:

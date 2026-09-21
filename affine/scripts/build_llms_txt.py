@@ -77,6 +77,8 @@ WVK18_EFFECTIVE = "2026-09-15"
 WVK19_EFFECTIVE = "2026-09-16"
 WVK20_EFFECTIVE = "2026-09-16"
 WVK21_EFFECTIVE = "2026-09-17"
+WVK22_NOTICE = "2026-09-18"
+WVK22_EFFECTIVE = "2026-09-18"
 
 
 def _payout_subs() -> dict[str, str]:
@@ -200,6 +202,8 @@ def _margin_subs() -> dict[str, str]:
         "{WVK19_EFFECTIVE}": WVK19_EFFECTIVE,
         "{WVK20_EFFECTIVE}": WVK20_EFFECTIVE,
         "{WVK21_EFFECTIVE}": WVK21_EFFECTIVE,
+        "{WVK22_NOTICE}": WVK22_NOTICE,
+        "{WVK22_EFFECTIVE}": WVK22_EFFECTIVE,
         "{CAP_RATIO}": f"{float(d.get('thought_cap_ratio', 0.0)):g}",
         "{CAP_RULE}": (f" Per turn the thought cap is `max({int(d['max_thought_tokens'])}, "
                        f"floor({float(d.get('thought_cap_ratio', 0.0)):g} × L_T))`, L_T = the longest "
@@ -222,6 +226,90 @@ def _margin_subs() -> dict[str, str]:
         "{BAND_FLOOR}": f"{float(d.get('band_floor', 0.002)):g}",
         "{MINER_CAP}": str(int(d["max_thought_tokens"]) + int(d["max_action_tokens"])),
         "{REF_MAX_TOKENS}": str(int(d.get("ref_max_tokens") or (int(d["max_thought_tokens"]) + int(d["max_action_tokens"])))),
+    }
+
+
+def _rule_subs() -> dict[str, str]:
+    """The live turn-score rule from `[duel]`: which meter decides, in which
+    units, on how many turns. wvk 22 (2026-09-18) made `score_mode =
+    "sd_min_rga"` the rule — turn = min(z_R, typ_c, z_A) in teacher-sd units,
+    δ from `[duel.sd_meter].min_margin_sd`; `min_margin`, `band_c`,
+    `band_floor` and `forfeit_turn_score` in the same table are the wvk ≤ 21
+    per-byte knobs kept for replay. Rendered here so the front matter can
+    never disagree with the toml."""
+    d = _toml()["duel"]
+    mode = str(d.get("score_mode", "min_rg"))
+    n_turns = int(d["n_turns"])
+    sd = d.get("sd_meter") or {}
+    near_miss = bool(d.get("near_miss_enabled", False))
+    confirm = bool(d.get("confirmation_required", False))
+    rendering = str(d.get("thought_rendering", "canonical"))
+    if mode == "sd_min_rga":
+        delta = float(sd.get("min_margin_sd", 0.2))
+        k = float(sd.get("k_sigma", d.get("k_sigma", 2.0)))
+        forfeit = float(sd.get("forfeit_sd", -12))
+        score_name = ("the sd-meter `min(z_R, typ_c, z_A)` — how far the reply "
+                      "sits from the teacher's own samples, in teacher-sd units")
+        rule_step = (
+            f"Both sides are scored with the **sd-meter** (wvk 22, "
+            f"2026-09-18): the teacher samples `k = 3` reference rollouts per "
+            f"turn; every echo renders the thought **as generated** "
+            f"(`thought_rendering = \"{rendering}\"`: the `<think>` latent plus "
+            f"the visible text, verbatim); per turn three legs are each "
+            f"standardised against the teacher's own samples — `z_R` "
+            f"(thought→action: the centred R leg), `typ_c` (content-token "
+            f"typicality of the thought: `2 − |m_c − μ_c|/σ_c` over tokens whose "
+            f"teacher log-probability the task moves by more than "
+            f"`content_lift_nats = {float(sd.get('content_lift_nats', 1.0)):g}` nat) "
+            f"and `z_A` (action←thought: the summed A leg); μ per turn from the "
+            f"refs' leave-one-out values (`anchor = \"{sd.get('anchor', 'loo')}\"`), "
+            f"σ pooled per dialect over the duel; the turn score is "
+            f"`min(z_R, typ_c, z_A)`; a turn with no parseable action in its "
+            f"dialect or no `</think>` scores `forfeit_sd = {forfeit:g}`; miner "
+            f"score = mean over turns. You dethrone the king iff the paired mean "
+            f"`turn_c − turn_k` beats `max(k_sigma·SE, δ)` (`k_sigma = {k:g}`, "
+            f"`δ = min_margin_sd = {delta:g}` sd) **and** your median stripped "
+            f"thought length is at least `min_thought_chars = 80` **and** at "
+            f"least `causality_gamma = 0.30` of pairs pass teacher-side B "
+            f"(`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no leakage). Full "
+            f"definition, calibration and knobs: Fork history: wvk 22 below; "
+            f"the wvk 10–21 rule `min(R, G)` is kept in \"The turn score\" for "
+            f"replay.")
+        delta_live = f"δ = {delta:g} teacher sd"
+        toc_line = ("- The turn score — the one score you optimize: since wvk 22 "
+                    "`min(z_R, typ_c, z_A)` in teacher-sd units (thoughts scored as "
+                    "generated); `min(R, G)` in per-byte nats for wvk 10–21 replay")
+        section_lead = (
+            f"**Live rule (wvk 22, 2026-09-18 20:41 UTC): `score_mode = "
+            f"\"sd_min_rga\"`, `n_turns = {n_turns}`, `δ = {delta:g}` teacher sd, "
+            f"`forfeit_sd = {forfeit:g}`, thoughts scored as generated.** The turn "
+            f"score is `min(z_R, typ_c, z_A)` — see \"Fork history: wvk 22\" for "
+            f"the definition, the calibration and every knob; the verdict's "
+            f"`margin / se / z` are in sd units and the full per-side breakdown "
+            f"is under `shadow.sd_meter` (`role = \"rule\"`). The block below is "
+            f"the **wvk 10–21 rule, min(R, G) in per-byte nats**, kept because "
+            f"every verdict before `chal-00587` replays with it (the legacy "
+            f"per-side `reason` is still published as telemetry).\n\n")
+    else:
+        delta = float(d["min_margin"])
+        score_name = "min(R, G): centered Reason and banded thought Grounding"
+        rule_step = ""  # the min(R, G) step text below stays in force
+        delta_live = f"δ = {delta:g} nats/byte"
+        toc_line = ("- min(R, G) — the one score you optimize (and the telemetry "
+                    "published around it)")
+        section_lead = ""
+    slice_rule = (
+        f"one `n_turns = {n_turns}` slice decides"
+        + (" after a confirmation slice" if confirm else " (no second slice, no confirmation)")
+        + ("; a near-miss margin draws one more slice" if near_miss else ""))
+    return {
+        "{SCORE_NAME}": score_name,
+        "{NTURNS}": str(n_turns),
+        "{SLICE_RULE}": slice_rule,
+        "{RULE_STEP5}": rule_step,
+        "{DELTA_LIVE}": delta_live,
+        "{TOC_SCORE_LINE}": toc_line,
+        "{SCORE_SECTION_LEAD}": section_lead,
     }
 
 
@@ -340,15 +428,19 @@ HEADER = """\
 > King-of-the-hill subnet. Miners upload checkpoints **privately** to a \
 validator-controlled bucket (nobody else can read them; only a crowned model \
 is published); the validator crowns the reigning king by a single \
-teacher-anchored distillation score — min(R, G): centered Reason and banded \
-thought Grounding — not an LLM judge. This file is the miner index: submit \
-path, public contract, and links to the exact scoring code the network runs.
+teacher-anchored distillation score — {SCORE_NAME} — not an LLM judge. \
+This file is the miner index: submit path, public contract, and links to \
+the exact scoring code the network runs.
 
-**Cutover notice (posted 2026-09-02): private R2 submissions go live \
-2026-09-03. From then on Hugging Face `affine1|…` commits are dropped at \
-intake, and your hotkey MUST be Ed25519** (btcli's default sr25519 hotkey \
-cannot open the sealed credentials). See "Submit checklist" below — the \
-whole flow is one command, `submit.py submit`.
+**Private R2 submissions are the only path (live since 2026-09-03 15:47 \
+UTC). Hugging Face `affine1|…` commits revealed after block 8987674 are \
+dropped at intake, and your hotkey MUST be Ed25519** — btcli's default \
+sr25519 hotkey cannot open the sealed credentials and is rejected \
+(`rejected_not_ed25519`); an already-registered sr25519 hotkey cannot be \
+reused, register a fresh Ed25519 one. See "Submit checklist" below — the \
+whole flow is one command, `submit.py submit`. **Crown rule in one line:** \
+{SLICE_RULE}; margin > max(2·SE, {DELTA_LIVE}) plus the thought floor and \
+the B gate.
 
 Machine-readable knobs (subset of the contract below) also ship as \
 `data/contract.json` on this site. When in doubt, trust the linked sources \
@@ -378,11 +470,19 @@ Throne / duel rules unchanged, no `weight_version_key` bump
 signals, what "private" means (and the retiring HF path)
 - Serving stack — how your checkpoint is loaded; pre-flight before you burn \
 the slot
-- min(R, G) — the one score you optimize (and the telemetry published \
-around it)
+{TOC_SCORE_LINE}
 - Sequential near-miss (2026-09-11, no fork; OFF since wvk 16) — a \
 first-slice margin in the near-miss window drew a second seeded slice; one \
 seeded slice decides again
+- **Fork history: wvk 22 — the sd-meter `min(z_R, typ_c, z_A)` + 1,000-turn \
+slices (notice {WVK22_NOTICE}, effective {WVK22_EFFECTIVE})** — the turn score \
+becomes minus the largest standardised deviation of your reply from the \
+teacher's own samples across the three factors of the teacher's joint \
+(thought typicality on content tokens, thought→action, action←thought), in \
+teacher-sd units, with thoughts scored as generated (`<think>` reasoning, \
+then a visible thought, then the action); δ, k_sigma and the forfeit floor \
+re-expressed in sd units; band_c/band_floor retired; forward-only, reign 15 \
+(uid 222) stands
 - **Fork history: wvk 21 — double evaluation removed (effective \
 {WVK21_EFFECTIVE})** — the wvk-19 confirmation slice is gone: a challenger \
 crowns on ONE 1,300-turn slice when its margin clears `max(2·SE, 0.002)`, as \
@@ -535,14 +635,14 @@ read it. (Legacy until cutover: commit-reveal an HF repo pinned to a 40-hex \
 git revision.)
 3. The validator burns your hotkey's **one eval slot at enqueue** (not at \
 verdict). Failed hygiene, failed probe, or lost duel still burns the slot.
-4. Eval machine runs a duel on an `n_turns = 1300` slice of D seeded by \
+4. Eval machine runs a duel on an `n_turns = {NTURNS}` slice of D seeded by \
 `blake2b(reveal_block_hash ‖ your_hotkey)` — you cannot know the slice before \
-reveal; anyone can re-derive it after. If that slice's margin lands inside \
-the near-miss window `(near_miss_low, near_miss_high) = (0.001, 0.003)`, a \
-second slice of 1300 (seed `blake2b(block_hash ‖ hotkey ‖ "|slice1")`, \
-disjoint turns) is scored and the crown is decided on the pooled 2600 \
-turns (see "Sequential near-miss" below).
-5. Both sides are scored with min(R, G) v5 (centered Reason + banded \
+reveal; anyone can re-derive it after; {SLICE_RULE}. Before any scoring, two \
+admission checks run on your served checkpoint: the injectability probe \
+(can it take the thought-injection prompt) and the chat-protocol probe \
+(closes `</think>` and answers on ≥ 90 % of ten IDE-shaped prompts).
+5. {RULE_STEP5} *(wvk 10–21 rule, for replay of verdicts before `chal-00587`:)* \
+Both sides were scored with min(R, G) v5 (centered Reason + banded \
 Grounding + δ + thought-length floor + B gate): the teacher samples `k = 3` \
 reference rollouts per turn; each ref scores \
 `a_i = lpC(y_i|z_A) − lpC(y_i|∅)`; the R leg is the tempered log-mean-exp \
@@ -866,11 +966,11 @@ once-ever eval slot on a checkpoint that cannot load.
 
 ---
 
-## min(R, G) (what you optimize)
+## The turn score (what you optimize)
 
-Since 2026-08-27 (`weight_version_key = 10`; the forfeit line was added at \
-`weight_version_key = 12`, 2026-09-05, nothing else has changed since) the \
-whole scoring contract is:
+{SCORE_SECTION_LEAD}From 2026-08-27 (`weight_version_key = 10`; the forfeit line was added at \
+`weight_version_key = 12`, 2026-09-05, the `</think>` requirement at wvk 13, \
+`band_c` 2 → 4 at wvk 17) until wvk 21 the whole scoring contract was:
 
 ```
 a_i (per teacher ref) = lpC(y_i | z_A) − lpC(y_i | ∅)     i = 1..k, k = 3
@@ -1067,6 +1167,112 @@ Knobs: `[duel] near_miss_enabled / near_miss_low / near_miss_high / \
 near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
 `near_miss_triggered` in `code/affine/score.py`; the draw is \
 `duel_seed(block_hash, hotkey, slice_index)` in `code/evalsrv/dueling.py`.
+
+---
+
+## Fork history: wvk 22 — the sd-meter `min(z_R, typ_c, z_A)` + 1,000-turn slices (effective {WVK22_EFFECTIVE})
+
+**Effective {WVK22_EFFECTIVE} at the first duel dispatched after the eval pod \
+redeploy (notice {WVK22_NOTICE} 10:46 UTC; explicit dated operator directive \
+2026-09-18 10:04 / 10:25 UTC; go 15:11 UTC; 19:40 UTC "fold it in" + "release \
+wvk 22 right now" — flipped at the duel boundary after `chal-00586`, 20:41 UTC: \
+duels through `chal-00586` were judged under wvk 21, `chal-00587` onward under \
+wvk 22). Reign 15 (`chal-00581`, uid 222, crowned 14:59 UTC under wvk 21) stands.** \
+`weight_version_key = 22`; `[duel].score_mode = "sd_min_rga"`, `n_turns = 1000`; \
+`[duel.sd_meter]`: `min_margin_sd = 0.2` (δ, teacher-sd), `k_sigma = 2.0`, \
+`forfeit_sd = -12`, `content_lift_nats = 1.0`, `content_min_tokens = 10`, \
+`typicality_width = 2.0`, `a_norm_bytes = 1.0`, `anchor = "loo"`. Forward-only — \
+reign 15 stands, no re-verdicts, `min_submission_block` unchanged. Every \
+verdict stamps these under `duel_params.sd_meter`; the deciding numbers are \
+the verdict's `margin / se / z` (now in sd units) with the full breakdown \
+under `shadow.sd_meter` (`role = "rule"`).
+
+**Thoughts are scored as generated (folded into wvk 22, explicit operator \
+directive 2026-09-18 19:40 UTC "fold it in").** `[duel].thought_rendering = \
+"as_generated"`: for EVERY echo — typicality / grounding, Reason's injection, \
+the B licence, the action leg, the content-mask ∅ echo — a thought is rendered \
+the way the model produced it, `<think>{latent}\\n</think>\\n\\n{visible}\\n\\n{y}`, \
+and the latent and visible spans are scored (the separator is not); the \
+visible text is taken verbatim, no `THOUGHT:` label added or stripped. The old \
+canonical body `</think>\\nTHOUGHT: {z}\\n\\n{y}` (wvk ≤ 21, kept for replay) put \
+the model's reasoning AFTER `</think>` as prose. Why: under that body the \
+teacher's own visible sentence scored −0.18 nats/byte (as generated: −0.06), so \
+the meter could not tell the teacher's held-out reply from a reasoning-only \
+king (grounding control z 1.2; as generated z 8.7; content typicality ref − \
+king +0.20 → +2.40 sd), and the population drifted to the shape the convention \
+favoured: every king since reign 11 writes nothing visible before the action. \
+Same function for the teacher references and both sides. **What you must do:** \
+reason inside `<think>…</think>`, then write a visible thought (a sentence or \
+two, as the teacher does), then the action. A reasoning-only reply is now \
+atypical on most turns; pasting the reasoning again after `</think>` does not \
+help (two-sided typicality — checked with a pad-after-`</think>` arm before the \
+flip).
+
+**Definition (exchangeability).** The teacher's joint over a turn has three \
+factors: how the teacher writes a **thought** for this task (thought \
+typicality, measured on the thought's *content* tokens — the tokens whose \
+teacher log-probability the task moves by more than 1 nat, \
+|lpC(tok|x) − lpC(tok|∅)| > 1), how much the thought predicts the teacher's \
+**action** (thought→action pointwise mutual information), and how much the \
+teacher's own thinking licenses the **action** (action←thought PMI). Your \
+reply is compared with the teacher's own k = 3 samples on the same turn on \
+each factor, in units of the teacher's own sample-to-sample spread \
+(teacher-sd). **Turn score = minus the largest of the three standardised \
+deviations.** A reply the teacher could have written scores near 0; a reply \
+that is off on any one factor scores that factor's deficit. The three legs \
+below are the derivation:
+
+```
+a_i   = lpC(y_C^i | z_A) − lpC(y_C^i | ∅)                         (per byte, i = 1..3)
+R     = τ·log mean_i exp(a_i/τ) − mean_i a_i                       τ = 0.03 — the live centred Reason, unchanged
+b_i   = [lpC(y_A | z_C^i) − lpC(y_A | ∅)] · bytes(y_A)             (summed nats)
+A     = τ·log mean_i exp(b_i/τ)                                    action leg
+m_c   = mean over content tokens of lpC(tok | x) for your thought z_A
+μ_c   = the same statistic averaged over the three teacher thoughts z_C^i
+z_R   = (R − μ_R)/σ_R      z_A = (A − μ_A)/σ_A      typ_c = 2 − |m_c − μ_c|/σ_c
+turn  = min(z_R, typ_c, z_A)          valid reply
+      = forfeit_sd                    no parseable action / no </think> (a fixed negative, in sd)
+      typ_c = forfeit_sd              when your thought has fewer than 10 content tokens
+```
+
+μ_R, μ_A per turn = the teacher's own value on that turn, from each reference \
+scored as if it were the miner against the other two (leave-one-out; six \
+cross echoes lpC(y_C^i | z_C^j), shared by both sides). σ_R, σ_A, σ_c = the \
+pooled within-turn spread of those reference values, per dialect (bash, \
+tool_call, text, boxed, terminus_json), over the duel's turns. Score = mean \
+over the slice; crown iff the paired mean `turn_c − turn_k` > \
+`max(k_sigma·SE, δ_sd)`, plus the unchanged thought-length floor and B gate.
+
+**What changes (old → new).** `score_mode` `min_rg` → `sd_min_rga`. \
+`n_turns` **1,300 → 1,000** (verdicts ~25 % faster; SE × 1.14). The grounding \
+band (`band_c`, `band_floor`) is retired — typicality on content tokens \
+replaces it. δ, `k_sigma` and the forfeit floor are re-expressed in sd \
+units — **δ = 0.2 sd, k_sigma = 2.0, forfeit = -12 sd**, calibrated on the \
+as-generated re-echo of 225 stored turns and the three shadow duels to keep \
+today's crown-bar ratio (δ = 0.082 × the per-turn diff sd, ≈ 1.25–1.5× the 2σ \
+bar at n = 1,000) and the forfeit floor under the 1st percentile of the kings' \
+valid turn scores (a 2 % forfeit gap ≈ one δ, the wvk-12 rule). \
+Everything else stays: `</think>` required, prose answers at tool turns, \
+teacher-relative thought cap, reference cap, protocol probe, admission rules.
+
+**What you must do differently.** Act like the teacher, not just sound like \
+it. Content matters, style does not: the thought is judged on the tokens \
+the task makes informative, so generic filler, restating the prompt, or the \
+teacher's phrasing without its reasoning no longer earn typicality. Your \
+action is now scored too: the teacher, thinking its own thought, must find \
+your action likely. It no longer pays to sit at the edge of the old band — \
+the score is continuous in how far you are from the teacher's own samples. \
+Nothing changes in what you emit: same prompt, dialects, caps, `</think>`.
+
+**The honest line.** This improves the meter's robustness — it defeats every \
+synthetic thought attack we tried (filler, generic, restated prompt, style \
+skeleton, thinking-off) and ranks the teacher's own held-out replies first — \
+but it is a better distillation meter, **not** a benchmark of coding or chat \
+ability. On the carded models it still ranks kings by teacher-likeness.
+
+**Shadow read.** From {WVK22_NOTICE} 10:41 UTC to the flip every verdict carried \
+`verdict.shadow.sd_meter` (`role = "shadow"`); from the flip the same block \
+carries `role = "rule"` and is the deciding score.
 
 ---
 
@@ -2280,7 +2486,7 @@ gate/logprob diagnostics from `pairs`.
 
 ---
 
-## Adaptive curriculum (data event, no wvk — shadow since 2026-09-15: weights published, static mix still applied)
+## Adaptive curriculum (data event, no wvk — shadow since 2026-09-15, applied since 2026-09-17)
 
 How often each stratum of D is drawn is now set by a published rule, not by \
 hand. Nothing in the scoring rule changes; this is the sampling side of D.
@@ -2421,13 +2627,13 @@ def build() -> str:
                   .replace("{DATA}", _data_base())
                   .replace("{DASH}", _dash_base()))
     for token, value in {**_serving_subs(), **_r2_subs(), **_margin_subs(),
-                         **_payout_subs()}.items():
+                         **_payout_subs(), **_rule_subs()}.items():
         text = text.replace(token, value)
     # Fail closed if we somehow produced a broken index.
     if "## Table of contents" not in text or "data/validator_log.txt" not in text:
         raise RuntimeError("llms.txt build failed closed: missing table of contents")
     leftovers = ["{BASE}", "{DATA}", "{DASH}", "{CODE_LINKS}", *_serving_subs(), *_r2_subs(),
-                 *_margin_subs(), *_payout_subs()]
+                 *_margin_subs(), *_payout_subs(), *_rule_subs()]
     if any(t in text for t in leftovers):
         raise RuntimeError("llms.txt build failed closed: unsubstituted placeholder")
     score_copy = CODE_DIR / "affine" / "score.py"

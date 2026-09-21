@@ -30,6 +30,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from affine import payout
+
 log = logging.getLogger("affine.state")
 
 # Recent reveal→intake decisions for the dashboard (commit ≠ queue row).
@@ -91,6 +93,14 @@ class King:
     # and when known reign_number / crowned_at / block. Deduped by hotkey when
     # building the rolling payout chain (Albedo / Teutonic last-N design).
     previous: list[dict] = field(default_factory=list)
+    # Decaying crown margin (staged 2026-09-12). `crown_block` is the chain
+    # block the crown was decided at (the clock origin of the δ cycle; NOT
+    # `block`, which is the winning challenge's reveal block).
+    # `min_margin_peak` is the δ the cycle started from. Both None for kings
+    # crowned before the fields existed — the validator then falls back to
+    # the reveal block and the peak cap, and stamps that it did.
+    crown_block: int | None = None
+    min_margin_peak: float | None = None
 
 
 class State:
@@ -129,6 +139,14 @@ class State:
         # restart could wrongly withhold a restored model's share.
         self.inaccessible_hotkeys: set[str] = set()
         self.current_eval: dict | None = None
+        # Window-best crown mode (staged 2026-09-12): the open window the
+        # king is frozen for. {"window_id", "window_blocks", "opened_block",
+        # "king_challenge_id", "king_reign", "verdicts": [...], "close":
+        # {"attempts": n, "last_error": str}}. Each verdict entry is the
+        # candidate view of one scored duel (challenge_id, hotkey, repo,
+        # revision, block, uid, margin, se, z, n_paired_turns,
+        # rejection_reason, decision_block, at). None until the mode is on.
+        self.crown_window: dict | None = None
         self.phase: dict = {"name": "boot", "since": now_iso()}
         self._last_flush = 0.0
         # State is touched from the main loop AND the provisioner thread
@@ -213,6 +231,7 @@ class State:
             self.eval_machine = d.get("eval_machine", {})
             self.bench_machine = d.get("bench_machine", {})
             self.chat_machine = d.get("chat_machine", {})
+            self.crown_window = d.get("crown_window") or None
             self.intake = list(d.get("intake") or [])[-INTAKE_MAX:]
             decided = d.get("intake_decided")
             if isinstance(decided, list) and decided:
@@ -276,6 +295,8 @@ class State:
                 "chat_machine": self.chat_machine,
                 "flushed_at": now_iso(),
             }
+            if self.crown_window is not None:
+                d["crown_window"] = self.crown_window
             tmp = self._state_path.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(d, indent=1))
             tmp.replace(self._state_path)
@@ -314,9 +335,16 @@ class State:
             revision=last_crown["revision"], block=int(last_crown.get("block", 0)),
             challenge_id=last_crown.get("challenge_id", "recovered"),
             reign_number=int(last_crown.get("reign_number", 0)),
-            crowned_at=last_crown.get("at", now_iso()),
+            # A revert row carries the restored king's ORIGINAL crowned_at
+            # (payout window); a normal crown's time is the row's `at`.
+            crowned_at=last_crown.get("crowned_at") or last_crown.get("at", now_iso()),
             score=float(score) if score is not None else None,
-            previous=prev)
+            previous=prev,
+            crown_block=(int(last_crown["crown_block"])
+                         if last_crown.get("crown_block") is not None else None),
+            min_margin_peak=(float(last_crown["min_margin_peak"])
+                             if last_crown.get("min_margin_peak") is not None
+                             else None))
 
     # -- intake / queue ------------------------------------------------------
     def next_id(self) -> str:
@@ -527,7 +555,9 @@ class State:
 
     def record_verdict(self, entry: QueueEntry, verdict: dict, *,
                        uid: int | None = None,
-                       duration_s: float | None = None) -> "King | None":
+                       duration_s: float | None = None,
+                       crown_block: int | None = None,
+                       min_margin_peak: float | None = None) -> "King | None":
         """Terminal duel outcome — exactly ONE history row per duel.
 
         A winning verdict crowns inline: the single `crowned` row carries the
@@ -535,6 +565,8 @@ class State:
         shape wrote a `verdict` row then a bare `crowned` row, which doubled
         the duel on every chart and left the crown row without values.
         Returns the new King when the challenger won, else None.
+        `crown_block` / `min_margin_peak` seed the new king's δ cycle
+        (decaying-margin mode); None keeps the pre-2026-09-12 row shape.
         """
         accepted = bool(verdict.get("challenger_wins"))
         self.stats["accepted" if accepted else "rejected"] += 1
@@ -550,7 +582,8 @@ class State:
                 entry.hotkey, entry.repo, entry.revision, entry.block,
                 entry.challenge_id,
                 score=float(score) if score is not None else None,
-                history_extra=extra)
+                history_extra=extra, crown_block=crown_block,
+                min_margin_peak=min_margin_peak)
             self._clear_in_flight(entry)
             return king
         row = {
@@ -562,20 +595,89 @@ class State:
         self._clear_in_flight(entry)
         return None
 
+    # -- window-best crown mode (staged 2026-09-12) ----------------------------
+    def open_crown_window(self, window_id: int, window_blocks: int,
+                          block: int) -> dict:
+        """Start (or replace) the open window the king is frozen for."""
+        with self._lock:
+            self.crown_window = {
+                "window_id": int(window_id), "window_blocks": int(window_blocks),
+                "opened_block": int(block), "opened_at": now_iso(),
+                "king_challenge_id": self.king.challenge_id if self.king else None,
+                "king_reign": self.king.reign_number if self.king else None,
+                "verdicts": [], "close": {"attempts": 0, "last_error": None},
+            }
+            return self.crown_window
+
+    def record_window_verdict(self, entry: QueueEntry, verdict: dict, *,
+                              uid: int | None = None,
+                              duration_s: float | None = None) -> None:
+        """A scored duel under crown_mode = "window_best": ONE `verdict`
+        history row (never a crown — the window close decides) plus the
+        candidate view appended to the open window. The verdict must
+        already carry crown_mode / window_id / decision_block /
+        duel_rule_wins / crown_decision (validator stamps them)."""
+        self.stats["rejected"] += 1
+        row = {
+            "event": "verdict", "at": now_iso(), "challenge_id": entry.challenge_id,
+            "hotkey": entry.hotkey, "repo": entry.repo, "revision": entry.revision,
+            "accepted": False, "verdict": verdict,
+        }
+        if uid is not None:
+            row["uid"] = int(uid)
+        if duration_s is not None:
+            row["duration_s"] = round(float(duration_s), 1)
+        with self._lock:
+            self._append_history(row)
+            if self.crown_window is not None:
+                self.crown_window["verdicts"].append({
+                    "challenge_id": entry.challenge_id, "hotkey": entry.hotkey,
+                    "repo": entry.repo, "revision": entry.revision,
+                    "block": entry.block, "uid": uid, "at": row["at"],
+                    "margin": verdict.get("margin"), "se": verdict.get("se"),
+                    "z": verdict.get("z"),
+                    "n_paired_turns": verdict.get("n_paired_turns"),
+                    "rejection_reason": verdict.get("rejection_reason"),
+                    "duel_rule_wins": verdict.get("duel_rule_wins"),
+                    "decision_block": verdict.get("decision_block"),
+                    "n_slices": 1 + len(((verdict.get("slice") or {})
+                                         .get("extra_slices") or [])),
+                    "block_hash": verdict.get("block_hash"),
+                    "job_id": verdict.get("job_id"),
+                    "score": (verdict.get("challenger") or {}).get("reason"),
+                })
+            self._clear_in_flight(entry)
+
+    def record_window_close(self, row: dict) -> None:
+        """The `window_close` history row: everything a replayer needs to
+        re-derive the decision (candidates, drops, confirmations, winner)."""
+        with self._lock:
+            self._append_history({"event": "window_close", "at": now_iso(), **row})
+
     @staticmethod
     def _king_lineage_entry(king: King) -> dict:
-        return {
+        row = {
             "hotkey": king.hotkey, "repo": king.repo, "revision": king.revision,
             "reign_number": king.reign_number, "crowned_at": king.crowned_at,
             "block": king.block, "score": king.score,
         }
+        if king.crown_block is not None:
+            row["crown_block"] = king.crown_block
+        if king.min_margin_peak is not None:
+            row["min_margin_peak"] = king.min_margin_peak
+        return row
 
     def set_king(self, hotkey: str, repo: str, revision: str, block: int,
                  challenge_id: str, score: float | None = None,
-                 history_extra: dict | None = None) -> King:
+                 history_extra: dict | None = None,
+                 crown_block: int | None = None,
+                 min_margin_peak: float | None = None) -> King:
         """Crown a king. `history_extra` merges duel context (verdict payload,
         uid, duration) into the single `crowned` history row — duels must not
-        write a second row for the same challenge."""
+        write a second row for the same challenge. `crown_block` and
+        `min_margin_peak` (decaying-margin mode) are stored on the king and
+        in the row only when given, so the row shape is unchanged until the
+        mode is on."""
         with self._lock:
             prev = []
             reign = 0
@@ -586,7 +688,9 @@ class State:
             self.king = King(hotkey=hotkey, repo=repo, revision=revision,
                              block=block, challenge_id=challenge_id,
                              reign_number=reign, crowned_at=now_iso(),
-                             score=score, previous=prev)
+                             score=score, previous=prev,
+                             crown_block=crown_block,
+                             min_margin_peak=min_margin_peak)
             log.info("CROWNED reign #%d: %s@%s (challenge %s, score=%s)",
                      reign, repo, revision[:12], challenge_id, score)
             row = {
@@ -594,14 +698,23 @@ class State:
                 "hotkey": hotkey, "repo": repo, "revision": revision,
                 "block": block, "reign_number": reign, "score": score,
             }
+            if crown_block is not None:
+                row["crown_block"] = int(crown_block)
+            if min_margin_peak is not None:
+                row["min_margin_peak"] = float(min_margin_peak)
             if history_extra:
                 row.update(history_extra)
             self._append_history(row)
             self.flush()
             return self.king
 
-    def revert_king(self, reason: str) -> King | None:
+    def revert_king(self, reason: str,
+                    crown_block: int | None = None) -> King | None:
         """Drop the reigning king and promote the most recent prior king.
+
+        `crown_block` (decaying-margin mode): the throne changed hands, so
+        the restored king starts a FRESH δ cycle at the cap from this block
+        (`min_margin_peak` None = cap). None keeps the legacy row shape.
 
         Used when the sitting king can no longer be served (repo deleted or
         gated): a dead king that stays crowned wedges every duel and keeps
@@ -615,6 +728,10 @@ class State:
         `_reconcile_from_history` — which replays the latest crown — restores
         the SAME king after a crash restart instead of resurrecting the dead
         one. Reign numbers stay monotonic across crowns and reverts alike.
+
+        The restored king keeps its ORIGINAL `crowned_at` (payout window
+        rule, 2026-09-14): a revert must not mint a fresh 72 h payout window
+        for a model that was already king. The row's `at` is the revert time.
         """
         with self._lock:
             if not self.king or not self.king.previous:
@@ -630,18 +747,24 @@ class State:
                 block=int(entry.get("block", 0)),
                 challenge_id=challenge_id,
                 reign_number=reign,
-                crowned_at=now_iso(),
+                crowned_at=entry.get("crowned_at") or now_iso(),
                 score=entry.get("score"),
-                previous=rest)
-            self._append_history({
+                previous=rest,
+                crown_block=crown_block,
+                min_margin_peak=None)
+            row = {
                 "event": "crowned", "at": now_iso(), "challenge_id": challenge_id,
                 "hotkey": self.king.hotkey, "repo": self.king.repo,
                 "revision": self.king.revision, "block": self.king.block,
                 "reign_number": reign, "score": self.king.score,
+                "crowned_at": self.king.crowned_at,
                 "via": "revert", "reason": reason[:2000],
                 "reverted_from_repo": dead.repo,
                 "reverted_from_revision": dead.revision,
-            })
+            }
+            if crown_block is not None:
+                row["crown_block"] = int(crown_block)
+            self._append_history(row)
             self.flush()
             return self.king
 
@@ -664,73 +787,46 @@ class State:
             self.flush()
         return changed
 
-    def king_lineage_members(self, payout_depth: int) -> list[dict]:
-        """Full stored king lineage (current first) for the dashboard.
+    def king_lineage_members(self, window_s: float,
+                             now: datetime | None = None) -> list[dict]:
+        """Full stored king lineage (current first), one row per reign, each
+        stamped with its payout status (`affine.payout.annotate_lineage`).
 
-        The rolling payout window is the first `payout_depth` distinct hotkeys
-        whose model is still accessible on HF (`earning=True`, equal-share
-        `weight_bps`). Members in `inaccessible_hotkeys` (repo@revision gone or
-        gated — validator sweep) forfeit their slot for as long as the repo
-        stays dark; deeper accessible kings backfill the window. Older kings
-        stay listed with `earning=False` / zero weight so miners can see the
-        full reign history, not only the last-N earners.
+        Payout window rule (2026-09-14): a crown is paid for `window_s`
+        seconds after its `crowned_at`; every crown inside its window holds
+        one equal share (`earning=True`, `share`, `weight_bps`,
+        `paid_until`); expired crowns stay listed with `earning=False` so
+        miners see the whole reign history. Members in `inaccessible_hotkeys`
+        (repo@revision gone or gated — validator sweep) forfeit their share
+        while the repo stays dark. Genesis/seed rows (empty hotkey) never
+        earn. Revoked reigns are not in the lineage at all.
         """
         if not self.king:
             return []
-        members = [{
-            "reign_number": self.king.reign_number,
-            "repo": self.king.repo,
-            "revision": self.king.revision,
-            "hotkey": self.king.hotkey,
-            "crowned_at": self.king.crowned_at,
-            "block": self.king.block,
-            "score": self.king.score,
-            "current": True,
-        }]
-        seen = {self.king.hotkey}
-        for p in self.king.previous:
-            hk = p.get("hotkey", "")
-            if not hk or hk in seen:
-                continue
-            seen.add(hk)
-            row = {
-                "reign_number": p.get("reign_number"),
-                "repo": p.get("repo", ""),
-                "revision": p.get("revision", ""),
-                "hotkey": hk,
-                "crowned_at": p.get("crowned_at"),
-                "block": p.get("block"),
-                "score": p.get("score"),
-                "current": False,
-            }
-            if p.get("uid") is not None:
-                row["uid"] = int(p["uid"])
-            members.append(row)
-        depth = max(int(payout_depth), 0)
-        n_earners = 0
-        for m in members:
-            m["inaccessible"] = m["hotkey"] in self.inaccessible_hotkeys
-            # Seed/genesis rows use an empty hotkey and cannot take a metagraph
-            # slot — they must never consume a payout window seat.
-            m["earning"] = (bool(m["hotkey"]) and not m["inaccessible"]
-                            and n_earners < depth)
-            n_earners += m["earning"]
-        weight_bps = (10000 // n_earners) if n_earners else 0
-        for m in members:
-            m["weight_bps"] = weight_bps if m["earning"] else 0
-        return members
+        rows = payout.lineage_rows(asdict(self.king))
+        return payout.annotate_lineage(
+            rows, window_s=window_s,
+            now=now or datetime.now(timezone.utc),
+            inaccessible=self.inaccessible_hotkeys)
 
-    def king_chain_members(self, depth: int) -> list[dict]:
-        """Rolling last-N king chain (current first), equal-share weights.
+    def king_chain_members(self, window_s: float,
+                           now: datetime | None = None) -> list[dict]:
+        """The paid set: every crown inside its payout window (current first)."""
+        return payout.paid_crowns(self.king_lineage_members(window_s, now))
 
-        Same payout shape as Albedo / Teutonic: up to `depth` distinct
-        hotkeys, each receiving 1/N of emissions. Used for weight-setting.
-        """
-        return [m for m in self.king_lineage_members(depth) if m.get("earning")]
+    def king_chain_hotkeys(self, window_s: float,
+                           now: datetime | None = None) -> list[str]:
+        """Distinct paid hotkeys, current king first (older readers' view)."""
+        out: list[str] = []
+        for m in self.king_chain_members(window_s, now):
+            if m["hotkey"] not in out:
+                out.append(m["hotkey"])
+        return out
 
-    def king_chain_hotkeys(self, depth: int) -> list[str]:
-        """Current king first, then prior distinct kings, deduped by hotkey."""
-        return [m["hotkey"] for m in self.king_chain_members(depth)]
+    def king_payout_shares(self, window_s: float,
+                           now: datetime | None = None) -> dict[str, float]:
+        """hotkey → emission share (a hotkey with two paid crowns gets 2/n)."""
+        return payout.shares_by_hotkey(self.king_lineage_members(window_s, now))
 
     # -- bench jobs ------------------------------------------------------------
     def enqueue_bench(self, repo: str, revision: str, hotkey: str,

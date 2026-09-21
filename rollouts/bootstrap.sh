@@ -23,6 +23,19 @@ if [ -f /root/rollouts/.rollouts_env ]; then
   # shellcheck disable=SC1091
   source /root/rollouts/.rollouts_env
 fi
+
+# Docker Hub pull-cap login (2026-09-13). The task images (swebench, swerebench,
+# mswebench, ...) come from Docker Hub; anonymous pulls are capped at 100/h per IP,
+# the login lifts the pod to the account's 200/h. DOCKERHUB_USER / DOCKERHUB_TOKEN
+# live in /root/rollouts/.rollouts_env (pushed from the Arbos vault by the operator,
+# never committed); unset = anonymous pulls, as before. Token over stdin only.
+if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+  if printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin >/dev/null 2>&1; then
+    echo "[rollouts bootstrap] docker hub login ok ($DOCKERHUB_USER)"
+  else
+    echo "[rollouts bootstrap] WARN: docker hub login failed; anonymous pulls"
+  fi
+fi
 PYTHONPATH=/root/affine:/root/rollouts /root/venv/bin/python - <<'PY'
 from rollouts.registry import load_registry
 from rollouts.config import load_config
