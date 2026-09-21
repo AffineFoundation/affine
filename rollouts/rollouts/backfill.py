@@ -47,6 +47,7 @@ import argparse
 import dataclasses
 import json
 import math
+import shlex
 import threading
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import logging
@@ -240,6 +241,27 @@ def main() -> None:
     pools = {name: ordered_rows(cfg, name, load_catalog_or_empty(cfg, registry.sources[name]))
              for name in plan}
 
+    # Launch record for rollouts/scripts/backfill_relaunch.sh (a container
+    # restart kills every driver; the record recreates the tmux session).
+    drivers_dir = Path("/root/rollouts/drivers")
+    record_path = drivers_dir / f"{tag}.json"
+    try:
+        drivers_dir.mkdir(parents=True, exist_ok=True)
+        wrapper = Path(f"/root/rollouts/run_backfill_{tag}.sh")
+        if not wrapper.exists():
+            wrapper = Path("/root/rollouts/run_backfill.sh")
+        log_path = f"/root/logs/backfill_{tag}.log"
+        env_bits = " ".join(f"{k}={shlex.quote(os.environ[k])}" for k in
+                            ("ROLLOUTS_DATA_DIR", "ROLLOUTS_KING_ENV", "ROLLOUTS_MAX_CONTAINERS", "ROLLOUTS_BATCH_SIZE")
+                            if k in os.environ)
+        record_path.write_text(json.dumps({
+            "tag": tag, "tmux": f"backfill-{tag}", "wrapper": str(wrapper), "log": log_path,
+            "cmd": f"{env_bits} {wrapper} {shlex.join(sys.argv[1:])} >> {log_path} 2>&1".strip(),
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "pid": os.getpid(),
+        }, indent=1))
+    except OSError:
+        log.warning("could not write the driver record %s", record_path, exc_info=True)
+
     n_workers = max(1, min(args.parallel, len(plan)))
     worker_batch = args.worker_batch or max(4, math.ceil(2 * cfg.batch_size / n_workers))
     worker_containers = max(worker_batch, math.ceil(cfg.max_containers / n_workers))
@@ -335,6 +357,12 @@ def main() -> None:
                             log.warning("final R2 publish failed for w%d", w.k, exc_info=True)
                     log.info("backfill %s complete: %s", tag,
                              {n: counts.get(n, {"graded": 0}) for n in plan})
+                    try:
+                        rec = json.loads(record_path.read_text())
+                        rec["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                        record_path.write_text(json.dumps(rec, indent=1))
+                    except (OSError, ValueError):
+                        pass
                     return
                 time.sleep(5)
                 continue
