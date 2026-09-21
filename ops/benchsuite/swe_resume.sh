@@ -16,6 +16,9 @@ CELL="$INTO/king/swebench-verified${TAG:+@$TAG}__t0"
 POD=""; for PLAN in ${SWE_PLANS:-h200-2x b200-2x h200-1x b200-1x pro6000-1x}; do POD=$("$PY" "$HERE/kingpod.py" rent --plan "$PLAN" --digest "$DIGEST" 2>/dev/null | tail -1) && [ -n "$POD" ] && break; POD=""; done
 [ -n "$POD" ] || { log "$LABEL: no stock"; exit 2; }
 trap '"$PY" "$HERE/kingpod.py" release "$POD" >/dev/null 2>&1' EXIT
+# a @4h250 job runs ~27 h at 64 in flight: tell the pod reaper (kingpod registers 14 h) so it does not release
+# the serving box mid-job (2026-09-21: 19 / 16 / 15 lost 267-300 trials each to NetworkConnectionError that way)
+"$PY" -c "import sys; sys.path.insert(0, '$REPO/ops/pods'); import registry; registry.register('$POD', expected_hours=36, source='explicit', meta={'job': 'swebench @4h250 / rerun'})" 2>/dev/null || true
 "$PY" "$HERE/kingpod.py" wait "$POD" >/dev/null || { log "pod never served"; exit 3; }
 podf() { "$PY" -c 'import json,sys; m=json.load(open("'"$HERE"'/state/pods.json"))[sys.argv[1]]; print(m[sys.argv[2]])' "$1" "$2"; }
 export BENCH_API_KEY=$(podf "$POD" key)

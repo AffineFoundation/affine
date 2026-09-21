@@ -18,6 +18,9 @@ while [ $(( $(date +%s) - T0 )) -lt "${SWE_RENT_DEADLINE_S:-14400}" ]; do   # ze
 done
 [ -n "$POD" ] || { log "$LABEL: no stock within the rent deadline"; exit 2; }
 trap '"$PY" "$HERE/kingpod.py" release "$POD" >/dev/null 2>&1' EXIT
+# a @4h250 job runs ~27 h at 64 in flight: tell the pod reaper (kingpod registers 14 h) so it does not release
+# the serving box mid-job (2026-09-21: 19 / 16 / 15 lost 267-300 trials each to NetworkConnectionError that way)
+"$PY" -c "import sys; sys.path.insert(0, '$REPO/ops/pods'); import registry; registry.register('$POD', expected_hours=36, source='explicit', meta={'job': 'swebench @4h250 / rerun'})" 2>/dev/null || true
 "$PY" "$HERE/kingpod.py" wait "$POD" >/dev/null || { log "pod never served"; exit 3; }
 REPL=$("$PY" -c 'import json; m=json.load(open("'"$HERE"'/state/pods.json"))["'"$POD"'"]; print(int((m.get("plan") or {}).get("replicas") or 1))')
 export BENCH_API_KEY=$("$PY" -c 'import json; print(json.load(open("'"$HERE"'/state/pods.json"))["'"$POD"'"]["key"])')
