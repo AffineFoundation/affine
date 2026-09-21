@@ -131,6 +131,8 @@ class Config:
         self.busy_max_s = float(w.get("busy_unchanged_max_min", 90)) * 60
         self.weights_max_s = float(w.get("weights_max_min", 120)) * 60
         self.repeat_min_count = int(w.get("repeat_fault_min_count", 3))
+        self.queue_idle_max_s = float(w.get("queue_idle_max_min", 10)) * 60
+        self.bootstrap_max_s = float(w.get("bootstrap_max_min", 30)) * 60
         self.repeat_window_s = float(w.get("repeat_fault_window_min", 120)) * 60
         self.dedupe_s = float(w.get("alert_dedupe_h", 6)) * 3600
         self.log_tail_bytes = int(w.get("log_tail_bytes", 4_000_000))
@@ -317,6 +319,12 @@ class Watch:
                      "last_verdict": verdict, "eval_bootstrap": boot}
         if boot and boot.get("ready_at") is None and boot.get("selected_at"):
             boot["minutes_so_far"] = round((now - boot["selected_at"]) / 60, 1)
+            if now - boot["selected_at"] > cfg.bootstrap_max_s:
+                alerts.append((f"pod_bootstrapping:{boot.get('executor')}",
+                               f"eval pod {boot.get('gpu')} {boot.get('executor')} "
+                               f"(${boot.get('price')}/h) bootstrapping for "
+                               f"{boot['minutes_so_far']:.0f} min (> {cfg.bootstrap_max_s/60:.0f}); "
+                               f"provisioner deadline is 60 min — slow pipe?"))
 
         if state is None:
             alerts.append(("state_unreadable", "state.json unreadable"))
@@ -339,6 +347,21 @@ class Watch:
                     alerts.append((f"inflight_age:{cid}",
                                    f"{cid} in flight for {age/60:.0f} min "
                                    f"(> {cfg.inflight_max_s/60:.0f})"))
+            # Queue waiting with nothing in flight: the validator is not
+            # dispatching (no pod, pod bootstrapping, provisioner stuck).
+            # 2026-09-21: 2 entries waited 13:00-14:21 while this line said ok.
+            if queue and not inflight:
+                if not self.own.get("queue_idle_since"):
+                    self.own["queue_idle_since"] = now
+                idle_for = now - float(self.own["queue_idle_since"])
+                obs["queue_idle_min"] = round(idle_for / 60, 1)
+                if idle_for > cfg.queue_idle_max_s:
+                    alerts.append(("queue_idle",
+                                   f"{len(queue)} queued, nothing in flight for "
+                                   f"{idle_for/60:.0f} min (head {obs['queue_head'][:2]}; "
+                                   f"eval /health {'ok' if health.get('ok') else 'NOT ok'})"))
+            else:
+                self.own["queue_idle_since"] = None
             wts = parse_iso(state.get("last_weights_at"))
             obs["weights_age_min"] = round((now - wts) / 60, 1) if wts else None
             if wts is None or now - wts > cfg.weights_max_s:

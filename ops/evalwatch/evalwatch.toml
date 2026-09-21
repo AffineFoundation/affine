@@ -18,6 +18,11 @@ weights_max_min = 120
 # a re-rented pod with the wrong vLLM, 2.5 h of zero verdicts, nobody paged)
 repeat_fault_min_count = 3
 repeat_fault_window_min = 120
+# queue > 0 with nothing in flight for this long -> alert (validator not
+# dispatching: no pod / pod bootstrapping / provisioner stuck; 2026-09-21)
+queue_idle_max_min = 10
+# eval pod rented but not ready for this long -> alert (60 min = provisioner deadline)
+bootstrap_max_min = 30
 # one Discord line per condition key per this many hours
 alert_dedupe_h = 6
 # how much of the validator log tail to scan (bytes)
