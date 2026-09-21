@@ -1099,6 +1099,43 @@ king_rollouts_per_hour = 8
 # the env-wave-1 report; shares below weight the GENERATION deficit inside
 # the group only.
 
+[source.affine_tau2_gen]
+# tau2-gen (Alan, catoneone/tau2-gen; our fork unarbos/tau2-gen) — generated
+# airline / retail / telecom tasks with a FRESH DATABASE PER TASK, τ²'s own
+# environment, tools, DeepSeek customer and scorer. ADMITTED 2026-09-21 10:51
+# UTC (Jacob "admit", held-out policy (b)): train on all three domains, the τ²
+# kingboard cells are marked "trained environment", τ³ banking + Gaia2 stay
+# the clean held-outs. Data event, no wvk.
+# DECONTAMINATION: the generator excludes every (intent, composition, persona)
+# of the τ² `base` splits (= the cards: airline 50 / retail 114 / telecom 114)
+# and checks identifier intersection with the τ² clone (must be empty);
+# export_affine.py refuses any id collision; the held-out ids ship with the
+# data (`data/e<epoch>/bench_task_ids.json`) for the fold's list. Reports:
+# `data/e<epoch>/<domain>.fidelity_report.md`.
+# Set e61 (seed 61 = the first fold epoch that reads it): airline 400 (weighted
+# up on purpose: the card where the king was 0 → 70), retail 200, telecom 200;
+# bases airline [DB, COMMUNICATE] (must-mention on every task), retail [DB]
+# (no judge), telecom ENV_ASSERTION. Refresh per fold: ops/tau2gen/refresh.sh
+# <epoch> then bump `--env.taskset.data-epoch` here + redeploy; names carry
+# the epoch (tau2g-e61-<domain>-<id>) so pools never collide.
+# Probe 2026-09-21 (datagen-2, teacher via engy T 0.7, DeepSeek customer, k=1,
+# seed-0 sets): airline 131/150, retail 138/150 (DB-only), telecom 160/200.
+group = "tool_use"
+runner = "verifiers_chat"
+taskset_id = "affine-tau2-gen-v1"
+catalog = "tau2_gen"
+select = "tasks"
+pass_dataset = false
+interactive = true
+policies = ["teacher_tau2_gen", "king_tau2_gen", "king_tau2_gen_greedy"]
+strata_buckets = 600
+strata_offset = 2860
+max_batch = 16
+max_concurrency = 8
+extra_flags = ["--env.taskset.data-epoch", "61"]
+share = 1.0                               # vs tau2_synth 3.0 / tau2 2.0 (Jacob: start small)
+king_rollouts_per_hour = 8
+
 [source.affine_kb_synth]
 # tau2-synth's ten domains with the POLICY MOVED INTO A KNOWLEDGE BASE behind
 # tau3's `KB_search` tool (env wave 5, 2026-09-20, docs/env-targets-for-

@@ -1,0 +1,127 @@
+{
+ "generator": "envs/tau2-gen/domains/telecom/gen.py",
+ "generated_at": "2026-09-21T11:07:16Z",
+ "repo_commit": "402292e",
+ "tau2_commit": "b7ea9074c1cba482b30687fecdb5c8425fd6f619",
+ "seed": 61,
+ "n": 200,
+ "args": {
+  "n": 200,
+  "seed": 61,
+  "out": "/home/const/tau2gen/tau2-gen/out/e61/telecom",
+  "min_faults": 1,
+  "max_faults": 9,
+  "persona_mix": null,
+  "no_exclude_benchmark": false,
+  "allow_duplicate_compositions": false,
+  "bench_traces": null,
+  "unfixable_rate": null,
+  "db_mode": "per-task",
+  "verbose": false
+ },
+ "db_mode": "per-task",
+ "persona_mix": {
+  "None": 0.22,
+  "Easy": 0.2,
+  "Hard": 0.2,
+  "Verbose": 0.06,
+  "Terse": 0.06,
+  "NonNative": 0.06,
+  "Impatient": 0.06,
+  "WrongNumberOnce": 0.07,
+  "SideRequest": 0.04,
+  "TechSavvy": 0.03
+ },
+ "stats": {
+  "kept": 200,
+  "duplicate_composition": 6566,
+  "excluded_benchmark_triplet": 1257,
+  "unfixable_swapped_to_fixable": 5852,
+  "intent_quota": {
+   "mobile_data_issue": 63,
+   "service_issue": 51,
+   "mms_issue": 86
+  },
+  "unfixable_quota": 35
+ },
+ "intent_hist": {
+  "service_issue": 51,
+  "mobile_data_issue": 63,
+  "mms_issue": 86
+ },
+ "persona_hist": {
+  "Easy": 40,
+  "Terse": 14,
+  "Impatient": 12,
+  "Hard": 39,
+  "None": 41,
+  "WrongNumberOnce": 12,
+  "TechSavvy": 10,
+  "Verbose": 13,
+  "SideRequest": 6,
+  "NonNative": 13
+ },
+ "n_faults_hist": {
+  "1": 4,
+  "2": 44,
+  "3": 46,
+  "4": 38,
+  "5": 28,
+  "6": 13,
+  "7": 10,
+  "8": 8,
+  "9": 9
+ },
+ "unfixable": 35,
+ "family_coverage": {
+  "sim_pin_locked": 15,
+  "sim_unseated": 78,
+  "suspension": 32,
+  "data_saver": 40,
+  "data_switch": 87,
+  "data_usage": 84,
+  "roaming": 75,
+  "vpn": 32,
+  "airplane_mode": 106,
+  "wifi_calling": 48,
+  "network_preference": 82,
+  "apn": 84,
+  "app_permission": 52
+ },
+ "refuel_hist": {
+  "2.0": 74,
+  "1.5": 47,
+  "0.5": 38,
+  "1.0": 41
+ },
+ "leakage": {
+  "ok": true,
+  "overlap": {
+   "phones": [],
+   "ids": [],
+   "emails": [],
+   "imeis": [],
+   "names": []
+  },
+  "task_id_overlap": [],
+  "full_enumeration_id_overlap": 22,
+  "gen_counts": {
+   "phones": 1091,
+   "ids": 9095,
+   "emails": 789,
+   "imeis": 1597,
+   "names": 705
+  },
+  "bench_counts": {
+   "phones": 12,
+   "ids": 43,
+   "emails": 4,
+   "imeis": 9,
+   "names": 4
+  },
+  "heldout_task_ids": 114,
+  "full_enumeration_ids": 2285
+ },
+ "bench_profile_source": null,
+ "task_keys_sha256": "a5701d7845899a7906a9d9cd70a6a343c675896fa4877a9a94e7d650e42f4a95"
+}

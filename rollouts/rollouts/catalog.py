@@ -1444,6 +1444,40 @@ def build_mrcr_catalog(cfg: RolloutsConfig, src: Source) -> dict:
         "total": len(rows), "kept": len(kept), "panel_excluded": 0, "unusable": 0,
         "by_bucket": dict(by_bucket)})
 
+# tau2-gen (admitted 2026-09-21): names from the packaged exports; case / group /
+# persona / n_writes joined from the generator's meta.jsonl.
+TAU2_GEN_LIST = r"""
+import json, os, sys
+from affine_tau2_gen_v1.taskset import DOMAINS, load_export, load_meta, task_name
+epoch = int(sys.argv[1]); out = []
+for domain in DOMAINS:
+    meta = load_meta(epoch, domain)
+    for rec in load_export(epoch, domain)["tasks"]:
+        m = meta.get(rec["id"], {})
+        out.append({"uid": task_name(epoch, domain, rec["id"]), "domain": domain, "case": m.get("case") or "",
+                    "group": m.get("group") or "", "persona": m.get("persona") or "", "n_writes": m.get("n_writes")})
+json.dump(out, sys.stdout); sys.stdout.flush()
+os._exit(0)
+"""
+
+
+def build_tau2_gen_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    epoch = _flag_value(src, "--env.taskset.data-epoch", "61")
+    rows = _verifiers_listing(cfg, TAU2_GEN_LIST, epoch, what="tau2_gen")
+    kept: list[dict] = []
+    for r in rows:
+        _, num = _text_uid("tau2g", r["uid"])
+        kept.append(_bucketed(src, {
+            "uid": r["uid"], "sid": f"tau2g_{r['domain']}-{num}",
+            "repo": f"tau2-gen/{r['domain']}", "language": "tool",
+            "intent": r["domain"], "case": r["case"], "group": r["group"],
+            "persona": r["persona"], "n_writes": r["n_writes"]}))
+    by_domain = Counter(r["intent"] for r in kept)
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": f"catoneone/tau2-gen export e{epoch}",
+        "total": len(rows), "kept": len(kept), "panel_excluded": 0, "unusable": 0,
+        "by_domain": dict(by_domain)})
+
 
 # -- τ² telecom (env wave 4, 2026-09-17): the disjoint pool = `full` minus the
 # benchmarked `base` split, listed through the verifiers env (τ²'s own task
@@ -1550,6 +1584,7 @@ BUILDERS = {
     "tau2": build_tau2_catalog,
     "tau2_synth": build_tau2_synth_catalog,
     "tau2_kb": build_tau2_kb_catalog,
+    "tau2_gen": build_tau2_gen_catalog,
     "rgym": build_rgym_catalog,
     "when2call": build_when2call_catalog,
     "rcore": build_rcore_catalog,
