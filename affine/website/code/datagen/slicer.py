@@ -102,7 +102,8 @@ def slice_messages(messages: list[dict], *, instance_id: str, repo: str,
                    max_prefix_chars: int = MAX_PREFIX_CHARS,
                    action_kind: str = dialects.DEFAULT_KIND,
                    turn: tuple[int, int] | None = None,
-                   text_final: bool = False) -> list[dict]:
+                   text_final: bool = False,
+                   leak_check: bool = True) -> list[dict]:
     """Turn records from one conversation: every assistant message whose
     prefix ends in a user message and that holds exactly one action.
 
@@ -118,7 +119,13 @@ def slice_messages(messages: list[dict], *, instance_id: str, repo: str,
     truncated). A reply with NO action in the policy's dialect then becomes
     a `text` record — the visible report/answer is its action — instead of
     being skipped. Replies with an action keep their dialect; nothing about
-    existing records changes."""
+    existing records changes.
+
+    `leak_check=False` skips the reference-leakage predicate. Only the fold's
+    `king_loop_onset` group uses it (2026-09-11): the first turn of a loop
+    repeats an earlier command by definition, and under min(R,G) the stored
+    reference is never scored (the duel samples fresh teacher references),
+    so the rule protects corpus hygiene there, not the score."""
     dialect = dialects.get(action_kind)
     text_dialect = dialects.get(dialects.TEXT_KIND)
     msgs: list[dict] = []
@@ -168,7 +175,7 @@ def slice_messages(messages: list[dict], *, instance_id: str, repo: str,
         # corpus-refresh prefilter and leakage-gated at duel time. The turn
         # stays in later records' prefix history (it is real history).
         body = _norm_ws(actions[0])
-        if (len(body) > LEAK_MIN_CHARS
+        if (leak_check and len(body) > LEAK_MIN_CHARS
                 and any(body in norm for norm in norm_contents[:pos])):
             n_leaked += 1
             continue

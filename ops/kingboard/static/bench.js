@@ -59,18 +59,26 @@
         el("td", { class: "num" }, d.z !== undefined && d.z !== null ? Number(d.z).toFixed(2) : "–"),
         el("td", { class: "muted" }, base ? `reign ${base.king.reign}` : (d.vs_reign ? `reign ${d.vs_reign} (no card)` : "–")),
         el("td", { class: "muted" }, c.status === "partial" ? "running" : c.status));
-      const deltas = [];
+      const deltas = [], missing = [], unverified = [];
       for (const e of envs) {
         const row = c.rows.find((x) => x.env === e && x.temperature === 0 && x.king);
         const brow = base ? base.rows.find((x) => x.env === e && x.temperature === 0 && x.king) : null;
-        if (!row) { tr.append(el("td", { class: "num muted" }, "…")); continue; }
-        if (!brow) { tr.append(el("td", { class: "num" }, pct(row.king.score))); continue; }
+        if (row && row.king.status === "unverified") { unverified.push(e); tr.append(el("td", { class: "num unverified", title: `unverified — not counted. ${row.unverified || ""}` }, "unverified")); continue; }
+        if (row && row.king.status === "failed") { missing.push(e + " (run failed)"); tr.append(el("td", { class: "num run-failed", title: row.king.failure || "run failed" }, "run failed")); continue; }
+        if (!row) { missing.push(e); tr.append(el("td", { class: "num muted" }, "…")); continue; }
+        if (!brow || brow.king.status === "failed" || brow.king.score === null || brow.king.score === undefined) { missing.push(e + " (no king cell)"); tr.append(el("td", { class: "num" }, pct(row.king.score))); continue; }
         const delta = 100 * (row.king.score - brow.king.score), hw = 100 * (brow.king.ci95[1] - brow.king.ci95[0]) / 2;
         deltas.push(delta);
         const cls = Math.abs(delta) > hw ? (delta > 0 ? "good" : "bad") : "";
         tr.append(el("td", { class: "num " + cls, title: `${pct(row.king.score)} vs king ${pct(brow.king.score)} [±${hw.toFixed(1)}]` }, `${delta > 0 ? "+" : ""}${delta.toFixed(1)}${Math.abs(delta) > hw ? "*" : ""}`));
       }
-      tr.append(el("td", { class: "num" }, deltas.length ? `${(deltas.reduce((a, b) => a + b, 0) / deltas.length).toFixed(1)} pt` : "–"));
+      // mean over the cells that exist (same rule as the affine.io total): coverage k/n
+      // next to it, the missing envs in the tooltip, so a 3-cell mean is not read as a full one
+      const denom = envs.length - unverified.length;   // unverified cells leave the coverage denominator
+      tr.append(el("td", { class: "num" + (deltas.length && deltas.length < denom ? " partial" : ""),
+        title: deltas.length ? `mean Δ over ${deltas.length} of ${denom} envs` + (missing.length ? `\nmissing: ${missing.join(", ")}` : "") + (unverified.length ? `\nunverified, not counted: ${unverified.join(", ")}` : "") : "no comparable cell yet" },
+        deltas.length ? `${(deltas.reduce((a, b) => a + b, 0) / deltas.length).toFixed(1)} pt` : "–",
+        deltas.length && deltas.length < denom ? el("span", { class: "cov" }, ` ${deltas.length}/${denom}`) : ""));
       tbody.append(tr);
     }
     $("#chal-note").textContent = "* = outside the king card's 95% interval. Rows sorted by duel margin (the meter's order); if the meter tracked the benchmarks, mean Δ would fall down the table.";
@@ -116,16 +124,28 @@
       const capMark = (side) => side && side.finish_length_frac > 0.2
         ? el("span", { class: "cap-mark", title: `${pct(side.finish_length_frac, 0)} of replies hit the completion cap (scored 0): cap-bound, not a measure of what the model knows` }, " ‡cap")
         : "";
+      const TRAINED = { "tau2-airline": "affine_tau2_gen in D since 2026-09-21 11:47 UTC", "tau2-retail": "affine_tau2_gen in D since 2026-09-21 11:47 UTC", "tau2-telecom": "affine_tau2 in D since 2026-09-18, affine_tau2_gen since 2026-09-21" };
+      const trainedNote = TRAINED[(row.base_env || row.env || "").split("@")[0]];
+      const trainedTitle = trainedNote ? `† trained environment: a datagen source in D uses this benchmark's environment (policy, tools, scorer) on generated, disjoint tasks; the cell is in-distribution generalisation, not zero-shot, for kings crowned after the admission (${trainedNote}). τ³ banking and Gaia2 stay clean held-outs.` : "";
       const judge = row.graded === "llm_judge";
       const judgeTitle = judge ? `LLM-judge graded (${(row.judge || {}).model || "judge"} via ${(row.judge || {}).via || "?"}, pinned in suite.lock.json) — ADVISORY, never part of the score. ` : "";
       tbody.append(el("tr", { title: judgeTitle + (row.note || "") },
-        el("td", {}, row.env, judge ? el("span", { class: "judge-mark", title: judgeTitle }, " ⚖ judge") : ""),
+        el("td", {}, row.env, judge ? el("span", { class: "judge-mark", title: judgeTitle }, " ⚖ judge") : "",
+          trainedNote ? el("span", { class: "trained-mark", title: trainedTitle }, " † trained env") : ""),
         el("td", { class: "muted" }, row.group || ""),
         el("td", { class: "num" }, row.temperature === 0 ? "0" : String(row.temperature)),
         el("td", { class: "num" }, k ? k.n : (t ? t.n : "–")),
-        el("td", { class: "num king-col" }, k ? pct(k.score) + ci(k) : "–", capMark(k)),
-        el("td", { class: "num teacher-col", title: t && t.served_by ? `teacher served by ${t.served_by.provider} (${t.served_by.model}) — not our vLLM stack` : "" },
-          t ? pct(t.score) + ci(t) : "–", capMark(t),
+        k && k.status === "failed"
+          ? el("td", { class: "num king-col run-failed", title: k.failure || "run failed: the benchmark pass ended without a result (infrastructure, not a model score)" }, "run failed")
+          : k && k.status === "unverified"
+            ? el("td", { class: "num king-col unverified", title: `unverified — grader result not trusted, not counted. ${row.unverified || ""}${k.raw_score !== undefined && k.raw_score !== null ? ` (raw ${pct(k.raw_score)})` : ""}` }, "unverified")
+            : el("td", { class: "num king-col" }, k ? pct(k.score) + ci(k) : "–", capMark(k)),
+        el("td", { class: "num teacher-col" + (t && t.status === "failed" ? " run-failed" : t && t.status === "unverified" ? " unverified" : ""),
+          title: t && t.status === "failed" ? (t.failure || "run failed")
+            : t && t.status === "unverified" ? `unverified — grader result not trusted, not counted. ${row.unverified || ""}${t.raw_score !== undefined && t.raw_score !== null ? ` (raw ${pct(t.raw_score)})` : ""}`
+            : (t && t.served_by ? `teacher served by ${t.served_by.provider} (${t.served_by.model}) — not our vLLM stack` : "") },
+          t && t.status === "failed" ? "run failed" : t && t.status === "unverified" ? "unverified" : (t ? pct(t.score) + ci(t) : "–"),
+          t && (t.status === "failed" || t.status === "unverified") ? "" : capMark(t),
           t && t.served_by ? el("span", { class: "judge-mark" }, ` (${(t.served_by.provider || "").split(" ")[0]})`) : "",
           row.budget_tag ? el("span", { class: "judge-mark", title: `budget ${row.budget_tag}: ${JSON.stringify((k && k.budget) || (t && t.budget) || {})}` }, "") : ""),
         el("td", { class: "num " + dcls }, d === null || d === undefined ? "–" : (d > 0 ? "+" : "") + (100 * d).toFixed(1) + " pt"),

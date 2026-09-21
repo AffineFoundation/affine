@@ -79,6 +79,12 @@ _abort_bench = threading.Event()
 _abort_duel = threading.Event()
 _corpus_kick = threading.Event()
 _teacher_ready = False
+
+
+def _teacher_is_remote() -> bool:
+    """[teacher].base_url set ⇒ the teacher is the swarm router, not a
+    local vLLM slot on this pod."""
+    return bool(str((_engine.cfg.get("teacher") or {}).get("base_url") or "").strip())
 _ROLE = os.environ.get("AFFINE_ROLE", "duel")
 _JOBS_RETENTION = _cfg.validator.jobs_retention
 
@@ -153,6 +159,21 @@ def _startup():
 
     def _warm():
         global _teacher_ready
+        if _teacher_is_remote():
+            # A remote teacher (the swarm router) can be down for reasons
+            # that have nothing to do with this pod. 2026-09-17: the swarm
+            # had 0 replicas for 58 min; evalsrv self-killed on every
+            # relaunch, /health flapped between unreachable and ok=false,
+            # and the validator terminated a healthy eval pod after 12
+            # strikes — then found no whole-host GPU box to replace it.
+            # Keep polling instead; /health reports teacher_remote so the
+            # provisioner can tell "degraded upstream" from "dead pod".
+            while True:
+                _teacher_ready = _engine.ensure_teacher()
+                if _teacher_ready:
+                    return
+                log.warning("remote teacher not ready; retrying in 30s")
+                time.sleep(30)
         _teacher_ready = _engine.ensure_teacher()
         if not _teacher_ready:
             _schedule_self_kill("teacher failed to start")
@@ -193,6 +214,18 @@ def _stack_versions() -> dict:
     return out
 
 
+def _load_failure_cause(load_error: str, limit: int = 300) -> str:
+    """The most informative single line of a slot's load_error: the last
+    line carrying an exception name, else the last non-empty line."""
+    lines = [ln.strip() for ln in (load_error or "").splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    for ln in reversed(lines):
+        if "Error" in ln or "error" in ln or "Exception" in ln:
+            return ln[:limit]
+    return lines[-1][:limit]
+
+
 @app.get("/health")
 def health(_: None = Depends(_require_token)):
     # Bench pods live or die by `docker run`: a daemon that lists images but
@@ -201,6 +234,10 @@ def health(_: None = Depends(_require_token)):
     docker_err = swerunner.docker_probe() if _ROLE == "bench" else None
     return {
         "ok": _teacher_ready and docker_err is None,
+        # True when [teacher].base_url points at the swarm router: an
+        # ok=false with teacher.ready=false is then an upstream outage, not
+        # a broken pod (the provisioner must not reprovision on it).
+        "teacher_remote": _teacher_is_remote(),
         "docker": ({"ok": docker_err is None, "error": docker_err}
                    if _ROLE == "bench" else None),
         "role": _ROLE,
@@ -238,6 +275,16 @@ class DuelRequest(BaseModel):
     # Servable-weight bytes of the challenger (from the root validator's
     # metadata scan). 0 = unknown → skip the pre-download disk-fit check.
     challenger_weight_bytes: int = 0
+    # Decaying crown margin context from the validator (staged 2026-09-12):
+    # `min_margin_effective` overrides [duel].min_margin for this duel's
+    # crown test; the other keys (mode, peak, crown_block, decision_block,
+    # blocks_since_crown, …) are stamped on the verdict. None = pod toml δ.
+    margin: dict | None = None
+    # Window-best crown mode (staged 2026-09-12): when set, score ONE fresh
+    # confirmation slice for a window winner instead of a full duel —
+    # {slice_index, base: {n, margin, se}, challenge_id}; the verdict gains
+    # `confirmation` (slice numbers, pooled numbers, passed). None = a duel.
+    confirm: dict | None = None
 
 
 def _run_duel_job(job_id: str, req: DuelRequest) -> None:
@@ -331,8 +378,13 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
                 raise DuelFault(Fault.CHALLENGER_INFRA, "challenger could not "
                                 "load (pod disk/OOM/teacher unhealthy)")
             # The checkpoint itself is unservable → a real rejection verdict.
+            # Carry vLLM's own cause line so the miner can self-diagnose
+            # (2026-09-20: two uploads whose index named *.wrap.tmp shards
+            # surfaced only as "failed to load in vLLM").
+            cause = _load_failure_cause(_engine.chall_slot.load_error)
             verdict = {"challenger_wins": False, "job_id": job_id,
-                       "rejection_reason": "unservable:challenger failed to load in vLLM"}
+                       "rejection_reason": "unservable:challenger failed to load in vLLM"
+                                           + (f": {cause}" if cause else "")}
             job["verdict"] = verdict
             events.put({"type": "verdict", "data": verdict})
             job["state"] = "completed"
@@ -367,7 +419,9 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
                 corpus_info=_corpus.info(),
                 on_progress=on_progress,
                 corpus=_corpus,
-                abort_event=_abort_duel))
+                abort_event=_abort_duel,
+                margin=req.margin,
+                confirm=req.confirm))
         except ContextLengthError as e:
             # Serving config / corpus length — requeue without burning miner.
             raise DuelFault(Fault.CONTEXT_LIMIT, str(e)) from e

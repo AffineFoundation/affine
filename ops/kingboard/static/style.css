@@ -87,3 +87,9 @@ td.bad { color: var(--bad); }
 
 .cap-mark { color: var(--bad, #c44); font-size: 0.8em; }
 .judge-mark { color: var(--muted, #888); font-size: 0.8em; }
+
+.run-failed { color: var(--bad); font-size: 11.5px; letter-spacing: 0.02em; white-space: nowrap; }
+.cov { color: var(--muted); font-size: 10.5px; }
+td.partial { font-style: italic; }
+.unverified { color: var(--muted); font-style: italic; font-size: 11.5px; white-space: nowrap; }
+.trained-mark { color: var(--muted, #888); font-size: 0.8em; }

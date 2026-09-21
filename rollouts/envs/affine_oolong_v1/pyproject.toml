@@ -1,0 +1,13 @@
+[project]
+name = "affine-oolong-v1"
+version = "0.1.0"
+description = "affine-oolong-v1 — Oolong synthetic long-context questions answered from a file in the sandbox (oolong-synth-v1); task selector, system message, judge off, correct reward."
+requires-python = ">=3.10"
+dependencies = ["oolong-synth-v1"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["affine_oolong_v1"]

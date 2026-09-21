@@ -39,6 +39,9 @@ sys.path.insert(0, str(REPO / "ops" / "teacher-swarm"))
 
 import lium_api  # noqa: E402
 
+sys.path.insert(0, str(REPO / "ops" / "pods"))
+import registry as pod_registry  # noqa: E402
+
 STATE_DIR = HERE / "state"
 PODS_JSON = STATE_DIR / "pods.json"
 KNOWN_HOSTS = STATE_DIR / "known_hosts"
@@ -183,6 +186,11 @@ def cmd_rent(args: argparse.Namespace) -> int:
         update_pod(name, digest=digest, served=f"king-{digest[:12]}", plan=plan, r2=args.r2 or "", hf=args.hf or "",
                    executor_id=str(cand["id"]), machine=cand.get("machine_name"), price=price,
                    rented_at=time.time(), key=secrets.token_hex(24), state="rented")
+        # coverage audit 2026-09-19: a bench box lives <= 14 h; the pass log that
+        # names it (or a live process) is its owner, the reaper releases the rest
+        pod_registry.register(name, purpose="bench", owner="passlog:ops/benchsuite/state",
+                              expected_hours=14, price_usd_h=price, ttl_hours=int(cfg["ttl_hours"]),
+                              meta={"digest": digest[:12], "plan": plan["name"], "r2": bool(args.r2), "hf": bool(args.hf)})
         log(f"rented {name}: {plan['name']} {cand.get('machine_name')} "
             f"${price:.2f}/h executor={str(cand['id'])[:12]}")
         print(name)
@@ -287,6 +295,12 @@ def cmd_wait(args: argparse.Namespace) -> int:
     if mem is None:
         raise SystemExit(f"unknown pod {args.name}")
     sess = lium_api.session()
+    if mem.get("state") == "ready":
+        # an already-serving box (2026-09-21: start_env_backfill re-runs on a live box waited the full
+        # hour here, then released the box as "never became ready")
+        if probe(mem):
+            print(mem["base_url"]); return 0
+        mem["state"] = "booting"
     deadline = time.time() + int(cfg["bootstrap_timeout_min"]) * 60
     while time.time() < deadline:
         pod = find_pod(sess, args.name)

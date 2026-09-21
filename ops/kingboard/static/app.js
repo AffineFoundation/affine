@@ -3,7 +3,7 @@
   "use strict";
 
   const REFRESH_S = 60;
-  const GROUP_ORDER = ["coding", "terminal", "math", "tool_use", "nl2repo", "agent", "other"];
+  const GROUP_ORDER = ["coding", "terminal", "math", "tool_use", "nl2repo", "general", "agent", "other"];
 
   const state = {
     stats: null,
@@ -66,12 +66,24 @@
           el("small", {}, `${num(st.counts.king)} king · ${num(st.counts.teacher)} teacher`)),
         el("div", { class: "small muted" }, `${num(st.manifest && st.manifest.n_chunks)} chunks · stats ${ago(st.generated_ts)}`)),
     ];
+    if (st.spend && st.spend.windows) {
+      const w = st.spend.windows, d = w["24h"], wk = w["7d"];
+      const mtok = (x) => (x / 1e6).toFixed(1) + "M";
+      cards.push(el("div", { class: "card" },
+        el("div", { class: "k" }, "teacher API spend (Engy) 24 h"),
+        el("div", { class: "v" }, `$${d.usd.toFixed(2)}`, el("small", {}, `${num(d.rollouts)} rollouts · ${mtok(d.prompt_tokens)} in / ${mtok(d.completion_tokens)} out`)),
+        el("div", { class: "small muted" }, `7 d $${wk.usd.toFixed(2)} · all time $${w.all.usd.toFixed(2)} · list price in ${st.spend.prices_per_m.in} / out ${st.spend.prices_per_m.out} $/M`)));
+    }
     if (reign) {
       const t = reign.total;
+      const bt = reign.by_temp || {};
+      const g = bt.greedy, sm = bt.sampled;
       cards.push(el("div", { class: "card" },
         el("div", { class: "k" }, `selected reign overall`),
         el("div", { class: "v" }, pct(t.rate), el("small", {}, `${t.solved}/${t.graded} graded`)),
-        el("div", { class: "small muted" }, `teacher ${pct(st.teacher.total.rate)} on ${num(st.teacher.total.graded)} graded`)));
+        el("div", { class: "small muted" }, `teacher ${pct(st.teacher.total.rate)} on ${num(st.teacher.total.graded)} graded`),
+        el("div", { class: "small muted" },
+          `loop guard ${pct(t.loop_guard_rate)} · greedy T=0 ${g && g.n ? pct(g.rate) + " (" + num(g.n) + ")" : "–"} · sampled T=0.8 ${sm && sm.n ? pct(sm.rate) + " (" + num(sm.n) + ")" : "–"}`)));
     }
     const box = $("#cards");
     box.replaceChildren(...cards);
@@ -85,7 +97,7 @@
   }
 
   function reignLabel(r) {
-    const name = r.reign !== null && r.reign !== undefined ? `reign ${r.reign}` : "reign ? (not in state.json)";
+    const name = r.reign !== null && r.reign !== undefined ? `reign ${r.reign}${r.revoked ? " (removed)" : ""}` : "reign ? (not in state.json)";
     return `${name} · king-${r.digest12} · ${r.n_rollouts.toLocaleString()} rollouts${r.current ? " · current" : ""}`;
   }
 
@@ -112,6 +124,23 @@
     const bar = el("span", { class: "bar" + (cls || ""), style: `width:${Math.round(44 * row.rate)}px` });
     return el("td", { class: "num" }, bar, pct(row.rate),
       el("span", { class: "ci" }, `[${pct(row.lo, 0)}–${pct(row.hi, 0)}]`));
+  }
+
+  function loopCell(row) {
+    if (!row.n) return el("td", { class: "num muted" }, "–");
+    return el("td", { class: "num" + (row.loop_guard_rate >= 0.5 ? " neg" : "") }, pct(row.loop_guard_rate),
+      el("span", { class: "n" }, `(${num(row.loop_guards)})`));
+  }
+
+  function tempCell(row) {
+    // greedy (T=0, king_*_greedy) vs sampled (T=0.8) solve rate with graded n
+    const bt = row.by_temp || {};
+    const one = (a, label) => a && a.n
+      ? el("span", { class: "temp " + label, title: `${label}: ${a.solved}/${a.graded} graded of ${a.n} rollouts` },
+          a.rate === null || a.rate === undefined ? "–" : pct(a.rate, 0), el("span", { class: "n" }, `(${num(a.graded)})`))
+      : el("span", { class: "muted" }, "–");
+    if (!(bt.greedy && bt.greedy.n) && !(bt.sampled && bt.sampled.n)) return el("td", { class: "num muted" }, "–");
+    return el("td", { class: "num" }, one(bt.greedy, "greedy"), " / ", one(bt.sampled, "sampled"));
   }
 
   function sparkline(series) {
@@ -161,10 +190,11 @@
     const spec = state.sort.env;
     markSorted("#env-table", spec);
     if (!r) {
-      tbody.replaceChildren(el("tr", {}, el("td", { colspan: 12, class: "empty" }, "No king rollouts in the trace store yet.")));
+      tbody.replaceChildren(el("tr", {}, el("td", { colspan: 14, class: "empty" }, "No king rollouts in the trace store yet.")));
       return;
     }
-    const get = (row, k) => k === "teacher_rate" ? (row.teacher ? row.teacher.rate : null) : row[k];
+    const get = (row, k) => k === "teacher_rate" ? (row.teacher ? row.teacher.rate : null)
+      : k === "greedy_rate" ? (row.by_temp && row.by_temp.greedy ? row.by_temp.greedy.rate : null) : row[k];
     const groups = new Map();
     for (const row of r.envs) {
       if (!groups.has(row.group)) groups.set(row.group, []);
@@ -182,7 +212,7 @@
       const graded = rows.reduce((s, x) => s + x.graded, 0);
       const tSolved = rows.reduce((s, x) => s + (x.teacher ? x.teacher.solved : 0), 0);
       const tGraded = rows.reduce((s, x) => s + (x.teacher ? x.teacher.graded : 0), 0);
-      out.push(el("tr", { class: "group" }, el("td", { colspan: 12 }, g,
+      out.push(el("tr", { class: "group" }, el("td", { colspan: 14 }, g,
         el("span", { class: "muted" }, `${n.toLocaleString()} king rollouts · king ${graded ? pct(solved / graded) : "–"} vs teacher ${tGraded ? pct(tSolved / tGraded) : "–"}`))));
       for (const row of rows) {
         const t = row.teacher;
@@ -197,6 +227,8 @@
           el("td", { class: "num" }, num(row.unscored)),
           el("td", { class: "num" }, num(row.median_turns)),
           el("td", { class: "num" }, pct(row.timeout_rate)),
+          loopCell(row),
+          tempCell(row),
           t && t.rate !== null && t.rate !== undefined
             ? el("td", { class: "num" }, el("span", { class: "bar t", style: `width:${Math.round(44 * t.rate)}px` }), pct(t.rate), el("span", { class: "n" }, `(${t.graded.toLocaleString()})`))
             : el("td", { class: "num muted" }, t ? `– (${t.n} ungraded)` : "no teacher data"),
@@ -224,7 +256,9 @@
       el("td", { class: "num" + (row.errored ? " neg" : "") }, num(row.errored)),
       el("td", { class: "num" }, num(row.unscored)),
       el("td", { class: "num" }, num(row.median_turns)),
-      el("td", { class: "num" }, pct(row.timeout_rate)))));
+      el("td", { class: "num" }, pct(row.timeout_rate)),
+      loopCell(row),
+      tempCell(row))));
   }
 
   function markSorted(tableSel, spec) {
@@ -286,12 +320,12 @@
     const y = (rate) => T + (1 - rate) * (H - T - B);
     for (let i = 0; i <= 4; i++) {
       const yy = y(i / 4);
-      svg.append(mk("line", { x1: L, x2: W - R, y1: yy, y2: yy, stroke: "#30363d", "stroke-width": 1 }));
-      svg.append(mk("text", { x: L - 6, y: yy + 4, fill: "#8b949e", "font-size": 11, "text-anchor": "end" }, `${i * 25}%`));
+      svg.append(mk("line", { x1: L, x2: W - R, y1: yy, y2: yy, stroke: "rgba(255,255,255,0.08)", "stroke-width": 1 }));
+      svg.append(mk("text", { x: L - 6, y: yy + 4, fill: "rgba(229,229,229,0.45)", "font-size": 11, "text-anchor": "end" }, `${i * 25}%`));
     }
     for (const b of [13, 9, 6, 3, 0]) {
       const anchor = b === 13 ? "start" : b === 0 ? "end" : "middle";
-      svg.append(mk("text", { x: x(b), y: H - 10, fill: "#8b949e", "font-size": 11, "text-anchor": anchor }, b === 0 ? "last 24 h" : `${b} d ago`));
+      svg.append(mk("text", { x: x(b), y: H - 10, fill: "rgba(229,229,229,0.45)", "font-size": 11, "text-anchor": anchor }, b === 0 ? "last 24 h" : `${b} d ago`));
     }
     const drawSeries = (series, color, width, dash) => {
       const pts = series.filter((p) => p.rate !== null);
@@ -309,10 +343,10 @@
     const cur = currentReign();
     for (const r of st.reigns) {
       if (cur && r.digest12 === cur.digest12) continue;
-      drawSeries(pooled(r.trend, state.trendEnv), "#6e7681", 1, "3 3");
+      drawSeries(pooled(r.trend, state.trendEnv), "rgba(229,229,229,0.3)", 1, "3 3");
     }
-    drawSeries(pooled(st.teacher.trend, state.trendEnv), "#58a6ff", 2);
-    if (cur) drawSeries(pooled(cur.trend, state.trendEnv), "#f2cc60", 2.5);
+    drawSeries(pooled(st.teacher.trend, state.trendEnv), "#5ac8fa", 2);
+    if (cur) drawSeries(pooled(cur.trend, state.trendEnv), "#f3c449", 2.5);
     const k = cur ? pooled(cur.trend, state.trendEnv) : [];
     const t = pooled(st.teacher.trend, state.trendEnv);
     const kn = k.reduce((s, p) => s + p.n, 0), tn = t.reduce((s, p) => s + p.n, 0);
@@ -361,8 +395,8 @@
 
   $("#reign").addEventListener("change", (e) => { state.reign = e.target.value; render(); });
   $("#trend-env").addEventListener("change", (e) => { state.trendEnv = e.target.value; renderTrend(state.stats); });
-  bindSorting("#env-table", "env", ["n", "rate", "solved", "failed", "errored", "unscored", "median_turns", "timeout_rate", "teacher_rate", "delta"]);
-  bindSorting("#harness-table", "harness", ["n", "rate", "solved", "failed", "errored", "unscored", "median_turns", "timeout_rate"]);
+  bindSorting("#env-table", "env", ["n", "rate", "solved", "failed", "errored", "unscored", "median_turns", "timeout_rate", "loop_guard_rate", "greedy_rate", "teacher_rate", "delta"]);
+  bindSorting("#harness-table", "harness", ["n", "rate", "solved", "failed", "errored", "unscored", "median_turns", "timeout_rate", "loop_guard_rate", "greedy_rate"]);
 
   load();
   setInterval(() => {

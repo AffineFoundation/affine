@@ -10,6 +10,16 @@ after the commit), and any external auditor can re-derive it from public
 inputs. Stratified round-robin over repo×phase strata keeps single bug
 families from dominating.
 
+Sequential near-miss (2026-09-11, `[duel].near_miss_*`): when the first
+slice's paired margin lands inside the near-miss window, further slices of
+the same size are drawn with
+
+    seed_i = blake2b(reveal_block_hash || challenger_hotkey || "|slice<i>")
+
+from the turns not yet drawn, scored the same way, and the crown is decided
+by the unchanged rule on the pooled rows. Every slice's seed and digest is
+stamped so the pooled verdict is as re-derivable as a single-slice one.
+
 Before burning GPU-hours on the full duel, a cheap injectability probe
 rejects checkpoints that cannot play the game at all (no parsable actions,
 non-finite forced logprobs) — our analogue of a pretraining subnet's
@@ -38,8 +48,16 @@ if TYPE_CHECKING:
 from affine import dialects
 from affine.corpus.materialize import stratum_key
 from affine.score import (
+    DEFAULT_NEAR_MISS_HIGH,
+    DEFAULT_NEAR_MISS_LOW,
+    NEAR_MISS_WINDOW_MODES,
+    DuelResult,
     duel as score_duel,
+    near_miss_triggered,
+    near_miss_window,
+    pooled_margin_stats,
     score_miner,
+    turn_score as turn_score_live,
 )
 
 from .terms import (
@@ -48,6 +66,8 @@ from .terms import (
     sample_teacher_rollouts,
     score_teacher_rollouts,
 )
+from . import amatch, sdmeter
+from .chat import THOUGHT_RENDERINGS, get_tokenizer, set_thought_rendering
 from .protocol_probe import probe_settings, rejection_detail, run_probe
 from .vllm_client import EngineUnreachableError, ModelPool, Served, VllmModel
 
@@ -77,8 +97,14 @@ def turn_id(rec: dict) -> str:
     return f"{rec['traj_id']}:{rec['turn_idx']}"
 
 
-def duel_seed(block_hash: str, hotkey: str) -> int:
+def duel_seed(block_hash: str, hotkey: str, slice_index: int = 0) -> int:
+    """Slice seed. ``slice_index`` 0 is the contract seed every verdict since
+    launch used, bit-for-bit; ``i >= 1`` are the sequential near-miss slices
+    (suffix ``|slice<i>`` on the same public material, so they are just as
+    unpredictable before reveal and just as re-derivable after)."""
     material = block_hash.encode() + hotkey.encode()
+    if slice_index:
+        material += f"|slice{slice_index}".encode()
     return int.from_bytes(
         hashlib.blake2b(material, digest_size=8).digest(), "little")
 
@@ -151,6 +177,127 @@ def check_dialects(turns: list[dict], allowed: list[str]) -> None:
             f"allowed_action_kinds={allowed}")
 
 
+def near_miss_settings(duel_cfg: dict) -> dict:
+    """`[duel].near_miss_*` as one dict: enabled, low, high, extra_slices.
+
+    Absent keys = the rule is off (pre-2026-09-11 behaviour: one slice).
+    Fails loudly on a malformed window so a typo cannot silently turn every
+    duel into a two-slice duel or none."""
+    enabled = bool(duel_cfg.get("near_miss_enabled", False))
+    low = float(duel_cfg.get("near_miss_low", DEFAULT_NEAR_MISS_LOW))
+    high = float(duel_cfg.get("near_miss_high", DEFAULT_NEAR_MISS_HIGH))
+    extra = int(duel_cfg.get("near_miss_extra_slices", 1))
+    window_mode = str(duel_cfg.get("near_miss_window_mode", "absolute"))
+    if enabled and not (0.0 <= low < high):
+        raise ValueError(f"near-miss window needs 0 <= low < high, got "
+                         f"low={low} high={high}")
+    if enabled and extra < 1:
+        raise ValueError(f"near_miss_extra_slices must be >= 1, got {extra}")
+    if window_mode not in NEAR_MISS_WINDOW_MODES:
+        raise ValueError(f"near_miss_window_mode must be one of "
+                         f"{NEAR_MISS_WINDOW_MODES}, got {window_mode!r}")
+    return {"enabled": enabled, "low": low, "high": high, "extra_slices": extra,
+            "window_mode": window_mode}
+
+
+# Keys of the validator's margin context that are stamped verbatim under
+# duel_params (decaying crown margin, staged 2026-09-12).
+MARGIN_STAMP_KEYS = ("min_margin_mode", "min_margin_base", "min_margin_peak",
+                     "min_margin_floor", "min_margin_peak_cap",
+                     "min_margin_decay_hours", "min_margin_decay_shape",
+                     "crown_block", "crown_block_source", "decision_block",
+                     "blocks_since_crown")
+
+
+def confirmation_stamp(confirm: dict, slice_info: dict, result: DuelResult) -> dict:
+    """The `confirmation` block of a window-best confirmation verdict: this
+    slice's own numbers, the original (pooled) numbers it is pooled with,
+    and the exact pooled (n, margin, se, z). `passed` = pooled margin > 0.
+    A slice with no finite margin (every turn forfeited on both sides, or a
+    gate the original passed now failing) does not pass."""
+    base = dict(confirm.get("base") or {})
+    n1 = int(base.get("n") or 0)
+    m1, se1 = base.get("margin"), base.get("se")
+    own = {"index": slice_info.get("index"), "seed": slice_info.get("seed"),
+           "n": slice_info.get("n"), "digest": slice_info.get("digest"),
+           "n_paired_turns": result.n_paired_turns,
+           "n_forfeit_turns": result.n_forfeit_turns,
+           "margin": result.margin if math.isfinite(result.margin) else None,
+           "se": result.se if math.isfinite(result.se) else None,
+           "z": result.z if math.isfinite(result.z) else None,
+           "rejection_reason": (
+               "thought_too_short" if result.thought_floor_blocked
+               else "causality_fail" if result.causality_blocked else None)}
+    rule = str(confirm.get("rule") or "window_best")
+    stamp = {"challenge_id": confirm.get("challenge_id"),
+             "slice_index": int(confirm.get("slice_index", 1)),
+             "rule": rule,
+             "base": {"n": n1, "margin": m1, "se": se1},
+             "slice": own, "pooled": None, "passed": False}
+    ok = (n1 > 0 and isinstance(m1, (int, float)) and isinstance(se1, (int, float))
+          and own["margin"] is not None and own["se"] is not None
+          and result.n_paired_turns > 0 and own["rejection_reason"] is None)
+    if ok:
+        N, M, se, z = pooled_margin_stats(n1, float(m1), float(se1),
+                                          result.n_paired_turns, result.margin,
+                                          result.se)
+        stamp["pooled"] = {"n": N, "margin": M, "se": se,
+                           "z": z if math.isfinite(z) else None}
+        if rule == "per_duel":
+            # wvk 19 (2026-09-16): a crown must win twice — this slice's own
+            # margin > 0 AND the pooled margin clears the same bar the first
+            # slice cleared, max(k_sigma·SE_pooled, δ).
+            k_sigma = float(confirm.get("k_sigma", 2.0))
+            delta = float(confirm.get("min_margin", 0.0))
+            bar = max(k_sigma * se, delta)
+            stamp["bar"] = bar
+            stamp["passed"] = bool(result.margin > 0.0 and M > bar)
+        else:
+            stamp["passed"] = bool(M > 0.0)
+    return stamp
+
+
+def margin_stamp_for(duel_cfg: dict, margin: dict | None) -> dict:
+    """The δ context this duel is decided under, as stamped on the verdict.
+
+    With a validator-supplied ``margin`` carrying ``min_margin_effective``,
+    that value is the δ of the crown test and the context keys ride along.
+    Without one (older validator, offline harness) the pod's own
+    ``[duel].min_margin`` is the δ, stamped as mode "fixed" — so every
+    verdict from now on carries ``min_margin_effective`` and
+    ``min_margin_mode`` and a replayer never has to guess."""
+    base = float(duel_cfg.get("min_margin", 0.0))
+    stamp: dict = {"min_margin_mode": "fixed", "min_margin_base": base,
+                   "min_margin_effective": base}
+    if not margin:
+        return stamp
+    eff = margin.get("min_margin_effective")
+    if eff is None or not math.isfinite(float(eff)) or float(eff) < 0:
+        raise ValueError(f"margin.min_margin_effective must be a finite "
+                         f"non-negative number, got {eff!r}")
+    stamp["min_margin_effective"] = float(eff)
+    for key in MARGIN_STAMP_KEYS:
+        if key in margin:
+            stamp[key] = margin[key]
+    return stamp
+
+
+def _slice_stats(slice_info: dict, result: DuelResult) -> dict:
+    """Verdict-sized record of one slice: how it was drawn and what the
+    standard rule would have said on that slice alone."""
+    return {
+        "index": int(slice_info["index"]),
+        "seed": slice_info["seed"], "n": slice_info["n"],
+        "digest": slice_info["digest"],
+        "n_paired_turns": result.n_paired_turns,
+        "n_forfeit_turns": result.n_forfeit_turns,
+        "margin": result.margin if math.isfinite(result.margin) else None,
+        "se": result.se if math.isfinite(result.se) else None,
+        "z": result.z if math.isfinite(result.z) else None,
+        "challenger_wins": result.challenger_wins,
+    }
+
+
 # -- probe -----------------------------------------------------------------------
 
 def token_caps(duel_cfg: dict):
@@ -176,6 +323,33 @@ def token_caps(duel_cfg: dict):
     def caps(action_kind: str | None) -> tuple[int, int]:
         return by_kind.get(action_kind or dialects.DEFAULT_KIND, dflt)
     return caps
+
+
+def ref_token_caps(duel_cfg: dict):
+    """(max_thought, max_action) the TEACHER samples its k references under.
+
+    `[duel].ref_max_tokens` (staged 2026-09-14, wvk 17) is a teacher-only
+    total budget: a reference may run to ref_max_tokens (thought + action)
+    where the miners stay at max_thought_tokens + max_action_tokens. The
+    action share is the kind's max_action; the thought share takes the
+    rest. Absent / None = exactly the miners' caps (pre-wvk-17 behaviour;
+    wvk <= 16 verdicts replay unchanged). Never below the kind's own cap.
+    Why: at the shared 1,792-token cap the teacher's own reference finished
+    `length` on ~21% of deep turns (mean_refs 2.6–2.8 of 3, boxed 1.75), so
+    those turns lost references or were dropped (refs < 2) — the miner was
+    judged against fewer, truncated references exactly where the task is
+    hardest.
+    """
+    caps = token_caps(duel_cfg)
+    ref_total = duel_cfg.get("ref_max_tokens")
+    ref_total = int(ref_total) if ref_total is not None else None
+
+    def ref_caps(action_kind: str | None) -> tuple[int, int]:
+        thought, action = caps(action_kind)
+        if ref_total is None or ref_total <= thought + action:
+            return thought, action
+        return ref_total - action, action
+    return ref_caps
 
 
 async def probe_injectable(model: VllmModel | ModelPool, turns: list[dict],
@@ -278,10 +452,15 @@ class RefCache:
 
     async def ensure_scored(self, tid: str, teacher: VllmModel | ModelPool,
                             prefix: list[dict],
-                            thought_echo: bool = False) -> list[dict]:
+                            thought_echo: bool = False, *,
+                            cross_echo: bool = False,
+                            content_echo: bool = False,
+                            content_lift_nats: float = 1.0) -> list[dict]:
         """lp_own / lp_empty (+ lp_thought under min(R,G)) for the turn's
         raw teacher rollouts. The grounding band echoes are cached here so
-        both sides share them — k thought echoes per turn per duel."""
+        both sides share them — k thought echoes per turn per duel. The
+        sd-meter's shared echoes (cross / unconditioned thought) ride along
+        the same way: once per turn per duel."""
         if tid in self.cache:
             return self.cache[tid]
         async with self._locks[tid]:
@@ -290,7 +469,8 @@ class RefCache:
             raw = self._raw.get(tid) or []
             ref = await score_teacher_rollouts(
                 teacher, prefix, raw, thought_echo=thought_echo,
-                sticky_key=tid)
+                cross_echo=cross_echo, content_echo=content_echo,
+                content_lift_nats=content_lift_nats, sticky_key=tid)
             self.cache[tid] = ref
             return ref
 
@@ -318,14 +498,34 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
     n_miner = int(duel_cfg["n_miner_samples"])
     temperature = float(duel_cfg["temperature"])
     caps = token_caps(duel_cfg)
+    ref_caps = ref_token_caps(duel_cfg)
     score_bank = bool(duel_cfg.get("score_bank", False))
     reason_only = bool(duel_cfg.get("reason_only", True))
     causality_gate = bool(duel_cfg.get("causality_gate", False))
     # min(R,G) v5: grounding echoes (t_i on refs, m per miner rollout).
     # min(R,G,A) v6 adds the action echoes lpC(y_A|z_C^i) per pair.
     score_mode = str(duel_cfg.get("score_mode", "reason"))
-    thought_echo = score_mode in ("min_rg", "min_rga")
+    thought_echo = score_mode in ("min_rg", "min_rga", "sd_min_rga")
     action_echo = score_mode == "min_rga"
+    # sd-meter (shadow 2026-09-18 / rule under score_mode="sd_min_rga"):
+    # A echoes on the miner side, cross + unconditioned thought echoes on
+    # the shared ref side. Off unless the shadow knob or the mode asks.
+    sd = sdmeter.settings(duel_cfg)
+    sd_on = sd["shadow"] or score_mode == "sd_min_rga"
+    sd_cross = sd_on and (sd["cross_echo"] or sd["anchor"] == "loo")
+    sd_content = sd_on
+    sd_action = sd_on and not action_echo
+    # wvk 20 (2026-09-16): teacher-relative miner thought cap. 0 = fixed cap.
+    thought_cap_ratio = float(duel_cfg.get("thought_cap_ratio", 0.0))
+    teacher_tok = (get_tokenizer(teacher.cfg.repo, teacher.cfg.revision)
+                   if thought_cap_ratio > 0 else None)
+
+    def teacher_cap(raw_refs: list[tuple[str, str]], fixed: int) -> tuple[int, int]:
+        """(cap_T, L_T): L_T = longest valid reference thought in teacher
+        tokens; cap_T = max(fixed, floor(ratio·L_T))."""
+        lt = max((len(teacher_tok.encode(z or "", add_special_tokens=False))
+                  for z, _ in raw_refs), default=0)
+        return max(int(fixed), int(thought_cap_ratio * lt)), lt
 
     async def one(rec: dict) -> None:
         nonlocal done
@@ -335,44 +535,78 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
         # which means bash (affine.dialects.DEFAULT_KIND).
         action_kind = rec.get("action_kind")
         max_thought, max_action = caps(action_kind)
+        ref_thought, ref_action = ref_caps(action_kind)
+        cap_tokens, ref_lt = max_thought, None
         async with turn_sem:
             if abort_event is not None and abort_event.is_set():
                 raise DuelAborted("superseded by a new duel request")
-            # Miner only needs the prefix x. Teacher refs (z_C, y_C) are
-            # independent. Running them in series left miner GPUs idle at
-            # duel start (chal-00076: all 8 at 0% while 64 turns sat in
-            # ensure_raw). Same calls, overlapped. No sticky_key on the
-            # miner sample: n_miner=1 cannot reuse a prefix cache, and
-            # hash-pinning left one copy idle.
-            raw, miner_rollouts = await asyncio.gather(
-                refs.ensure_raw(
+            if thought_cap_ratio > 0:
+                # wvk 20: the miner's thought cap depends on the teacher's
+                # references, so they come first; both sides read the same
+                # RefCache entry and therefore the same cap_T. The miner
+                # engines stay busy on the other turns in flight.
+                raw = await refs.ensure_raw(
                     tid, teacher, prefix, n_teacher, temperature,
-                    max_thought, max_action, action_kind),
-                sample_miner_rollouts(
+                    ref_thought, ref_action, action_kind)
+                if not raw:
+                    done += 1
+                    return
+                cap_tokens, ref_lt = teacher_cap(raw, max_thought)
+                miner_rollouts = await sample_miner_rollouts(
                     miner, prefix, n_miner, temperature,
-                    max_thought, max_action, action_kind=action_kind),
-            )
-            if not raw:
-                done += 1
-                return
+                    cap_tokens, max_action, action_kind=action_kind)
+            else:
+                # Miner only needs the prefix x. Teacher refs (z_C, y_C) are
+                # independent. Running them in series left miner GPUs idle at
+                # duel start (chal-00076: all 8 at 0% while 64 turns sat in
+                # ensure_raw). Same calls, overlapped. No sticky_key on the
+                # miner sample: n_miner=1 cannot reuse a prefix cache, and
+                # hash-pinning left one copy idle.
+                raw, miner_rollouts = await asyncio.gather(
+                    refs.ensure_raw(
+                        tid, teacher, prefix, n_teacher, temperature,
+                        ref_thought, ref_action, action_kind),
+                    sample_miner_rollouts(
+                        miner, prefix, n_miner, temperature,
+                        max_thought, max_action, action_kind=action_kind),
+                )
+                if not raw:
+                    done += 1
+                    return
         # Teacher-only from here: ref echoes, then Reason/B/grounding.
         # Holding turn_sem through these left miner GPUs idle (chal-00075).
         if abort_event is not None and abort_event.is_set():
             raise DuelAborted("superseded by a new duel request")
-        ref = await refs.ensure_scored(tid, teacher, prefix, thought_echo)
+        ref = await refs.ensure_scored(
+            tid, teacher, prefix, thought_echo,
+            cross_echo=sd_cross, content_echo=sd_content,
+            content_lift_nats=sd["content_lift_nats"])
         if not ref:
             done += 1
             return
         t = await miner_terms(
             teacher, miner, prefix, ref, n_miner, temperature,
-            max_thought, max_action,
+            cap_tokens, max_action,
             score_bank=score_bank, reason_only=reason_only,
             causality_gate=causality_gate,
             thought_echo=thought_echo,
             action_echo=action_echo,
+            content_echo=sd_content,
+            content_lift_nats=sd["content_lift_nats"],
+            shadow_action_echo=sd_action,
             sticky_key=tid, action_kind=action_kind,
             rollouts=miner_rollouts)
-        t.update({"turn_id": tid, "miner": miner.cfg.name})
+        t.update({"turn_id": tid, "miner": miner.cfg.name,
+                  # wvk 20: the thought cap this side sampled under and the
+                  # longest reference thought (teacher tokens) behind it.
+                  "cap_tokens": cap_tokens, "ref_thought_tokens": ref_lt})
+        # A_match telemetry (2026-09-14, not scored): does the side's
+        # action literally match the teacher's reference actions, and how
+        # often do the refs agree with each other. Forfeit rows (no
+        # parseable action) carry None.
+        y_side = miner_rollouts[0][1] if (t.get("valid") and miner_rollouts) else None
+        t["a_match"], t["ref_pair"] = amatch.turn_agreement(
+            y_side, [r["y"] for r in ref], action_kind)
         rows.append(t)
         done += 1
         on_progress(miner.cfg.name, done, total)
@@ -389,12 +623,14 @@ def _mean_bank(rows: list[dict]) -> float | None:
 def _miner_summary(rows: list[dict], tau: float | None,
                    score_mode: str = "reason",
                    band_c: float = 2.0, band_floor: float = 0.002,
-                   forfeit_turn_score: float | None = None) -> dict:
+                   forfeit_turn_score: float | None = None,
+                   action_norm_bytes: float | None = None) -> dict:
     """Per-side summary: the score (reason) plus measured-not-scored telemetry."""
     s = score_miner(rows, bank_frac=_mean_bank(rows), tau=tau,
                     score_mode=score_mode, band_c=band_c,
                     band_floor=band_floor,
-                    forfeit_turn_score=forfeit_turn_score)
+                    forfeit_turn_score=forfeit_turn_score,
+                    action_norm_bytes=action_norm_bytes)
     out = {
         "reason": s.reason if math.isfinite(s.reason) else None,
         "n_turns": s.n_turns, "n_pairs": s.n_pairs,
@@ -419,13 +655,23 @@ def _miner_summary(rows: list[dict], tau: float | None,
     if score_mode == "min_rga":
         out["mean_a_leg"] = s.mean_a_leg
         out["a_bind_frac"] = s.a_bind_frac
+    # A_match telemetry (2026-09-14): share of reference actions equal to
+    # the side's action, and the same minus the refs' own agreement.
+    out.update(amatch.summarize(rows))
+    # wvk 20: teacher-relative thought cap telemetry.
+    caps_ = [r.get("cap_tokens") for r in rows if isinstance(r.get("cap_tokens"), int)]
+    fixed = min(caps_) if caps_ else None
+    out["n_turns_cap_raised"] = (sum(1 for c in caps_ if c > fixed) if caps_ else 0)
+    out["mean_cap_tokens"] = (sum(caps_) / len(caps_)) if caps_ else None
+    out["max_cap_tokens"] = max(caps_) if caps_ else None
     return out
 
 
 def _by_dialect(rows: list[dict], kind_by_tid: dict[str, str],
                 tau: float | None, score_mode: str,
                 band_c: float, band_floor: float,
-                forfeit_turn_score: float | None = None) -> dict[str, dict]:
+                forfeit_turn_score: float | None = None,
+                action_norm_bytes: float | None = None) -> dict[str, dict]:
     """Per-action_kind telemetry for one side (wvk 11 dialect watch item).
 
     ``parse_rate`` is the share of this dialect's turns where the side
@@ -441,7 +687,8 @@ def _by_dialect(rows: list[dict], kind_by_tid: dict[str, str],
     for kind, grp in sorted(groups.items()):
         s = score_miner(grp, tau=tau, score_mode=score_mode,
                         band_c=band_c, band_floor=band_floor,
-                        forfeit_turn_score=forfeit_turn_score)
+                        forfeit_turn_score=forfeit_turn_score,
+                        action_norm_bytes=action_norm_bytes)
         n_valid = sum(1 for r in grp if r.get("valid") and "pairs" in r)
         out[kind] = {
             "n_turns": len(grp), "n_valid": n_valid,
@@ -455,6 +702,7 @@ def _by_dialect(rows: list[dict], kind_by_tid: dict[str, str],
         if score_mode == "min_rga":
             out[kind]["mean_a_leg"] = s.mean_a_leg
             out[kind]["a_bind_frac"] = s.a_bind_frac
+        out[kind].update(amatch.summarize(grp))
     return out
 
 
@@ -465,13 +713,22 @@ def _teacher_by_dialect(turns: list[dict],
     out: dict[str, dict] = {}
     for rec in turns:
         kind = rec.get("action_kind") or dialects.DEFAULT_KIND
-        d = out.setdefault(kind, {"n_turns": 0, "zero_ref_turns": 0, "_refs": 0})
-        n = len(refs_used.get(turn_id(rec)) or [])
+        d = out.setdefault(kind, {"n_turns": 0, "zero_ref_turns": 0, "_refs": 0, "_pairs": []})
+        refs = refs_used.get(turn_id(rec)) or []
+        n = len(refs)
         d["n_turns"] += 1
         d["zero_ref_turns"] += (n == 0)
         d["_refs"] += n
+        # Teacher self-agreement on this turn's reference actions (A_match
+        # telemetry, 2026-09-14): None below two normalisable refs / `text`.
+        _, pair = amatch.turn_agreement(None, [r["y"] for r in refs], kind)
+        if pair is not None:
+            d["_pairs"].append(pair)
     for d in out.values():
         d["mean_refs"] = d.pop("_refs") / d["n_turns"] if d["n_turns"] else None
+        pairs = d.pop("_pairs")
+        d["ref_pair_agreement"] = sum(pairs) / len(pairs) if pairs else None
+        d["ref_pair_n"] = len(pairs)
     return out
 
 
@@ -501,8 +758,21 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
                    block_hash: str, hotkey: str, corpus_info: dict,
                    on_progress,
                    corpus: "CorpusSync | None" = None,
-                   abort_event=None) -> tuple[dict, dict]:
+                   abort_event=None,
+                   margin: dict | None = None,
+                   confirm: dict | None = None) -> tuple[dict, dict]:
     """Full duel. Returns (verdict, artifact).
+
+    ``confirm`` (window-best crown mode, staged 2026-09-12): score ONE fresh
+    slice for a window winner instead of a full duel. ``slice_index`` (k ≥
+    1) names the draw: slices 0..k−1 are re-derived from the same
+    block_hash ‖ hotkey seeds and excluded, exactly as the near-miss extra
+    draw does, so the confirmation turns are disjoint from every turn the
+    original duel scored. ``base`` = {n, margin, se} of the original
+    (pooled) verdict; the verdict gains ``confirmation`` with this slice's
+    own numbers and the exact pooled (n, margin, se, z) over both —
+    ``passed`` iff the pooled margin is > 0. Probes are skipped (the model
+    was admitted by its original duel); the near-miss rule does not apply.
 
     The verdict is the small audit summary streamed to the validator. The
     artifact is the full training-grade record — sliced turn ids, teacher
@@ -512,37 +782,101 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
 
     schema_version>=2: sample the Parquet index via ``corpus``, materialize
     only the drawn turns. schema v1 / ``turns_path``: load flat turns.jsonl.
+
+    ``margin`` (decaying crown margin, staged 2026-09-12): the validator's
+    δ context for this duel. Its ``min_margin_effective`` replaces
+    ``[duel].min_margin`` in the crown test (and in the "bar" near-miss
+    window); the whole dict is stamped under ``duel_params``. None = the
+    pod's own toml δ, stamped as mode "fixed".
     """
-    duel_cfg = engine_cfg["duel"]
+    duel_cfg = dict(engine_cfg["duel"])
+    # wvk 22: how thoughts are rendered for every echo (canonical = the
+    # wvk <= 21 "</think>\nTHOUGHT: z" body; as_generated = latent inside
+    # <think>…</think>, visible text after it, verbatim). Process-wide, set
+    # before any sampling or echo of this duel.
+    thought_rendering = str(duel_cfg.get("thought_rendering", "canonical"))
+    if thought_rendering not in THOUGHT_RENDERINGS:
+        raise ValueError(f"[duel] thought_rendering must be one of {THOUGHT_RENDERINGS}")
+    set_thought_rendering(thought_rendering)
+    margin_stamp = margin_stamp_for(duel_cfg, margin)
+    duel_cfg["min_margin"] = margin_stamp["min_margin_effective"]
     started = time.monotonic()
-    seed = duel_seed(block_hash, hotkey)
     n = int(duel_cfg["n_turns"])
+    near_miss = near_miss_settings(duel_cfg)
     if corpus is not None and corpus.schema_version >= 2:
         rows = corpus.load_index_rows()
-        picked = sample_slice(rows, n, seed)
-        turns = corpus.materialize_turns(picked)
     else:
         if turns_path is None:
             raise ValueError("turns_path required for schema_version=1")
         with open(turns_path) as f:
             rows = [json.loads(line) for line in f if line.strip()]
-        turns = sample_slice(rows, n, seed)
     allowed_kinds = [str(k) for k in engine_cfg.get("dataset", {}).get(
         "allowed_action_kinds", [dialects.DEFAULT_KIND])]
-    check_dialects(turns, allowed_kinds)
-    # The manifest hash pins exactly which shard set this duel was scored
-    # against — replayable even after shards are retired from the window.
-    slice_info = {"seed": seed, "n": len(turns),
-                  "digest": slice_digest(turns), "block_hash": block_hash,
-                  "corpus_epoch": int(corpus_info.get("corpus_epoch", 0)),
-                  "manifest_sha256": str(corpus_info.get("manifest_sha256", ""))}
-    # Schema-3 corpora are a view over traces served from a base URL that
-    # may move (Hippius -> data.affine.io); stamp both so a replayer knows
-    # which view built these prefixes and where the manifest lived.
-    if corpus_info.get("view_spec"):
-        slice_info["view_spec"] = str(corpus_info["view_spec"])
-        slice_info["corpus_base_url"] = str(corpus_info.get("corpus_base_url", ""))
+
+    def draw_slice(index: int, exclude: set[str]) -> tuple[list[dict], dict]:
+        """Slice `index` (0 = the contract slice): n_turns drawn from the
+        corpus minus `exclude`, materialized and admission-checked, plus
+        its audit stamp (seed, n, digest, manifest pin)."""
+        seed = duel_seed(block_hash, hotkey, index)
+        pool = ([r for r in rows if turn_id(r) not in exclude]
+                if exclude else rows)
+        picked = sample_slice(pool, n, seed)
+        turns = (corpus.materialize_turns(picked)
+                 if corpus is not None and corpus.schema_version >= 2
+                 else picked)
+        check_dialects(turns, allowed_kinds)
+        # The manifest hash pins exactly which shard set this duel was
+        # scored against — replayable even after shards are retired.
+        info = {"index": index, "seed": seed, "n": len(turns),
+                "digest": slice_digest(turns), "block_hash": block_hash,
+                "corpus_epoch": int(corpus_info.get("corpus_epoch", 0)),
+                "manifest_sha256": str(corpus_info.get("manifest_sha256", ""))}
+        # Schema-3 corpora are a view over traces served from a base URL
+        # that may move (Hippius -> data.affine.io); stamp both so a
+        # replayer knows which view built these prefixes and where the
+        # manifest lived.
+        if corpus_info.get("view_spec"):
+            info["view_spec"] = str(corpus_info["view_spec"])
+            info["corpus_base_url"] = str(corpus_info.get("corpus_base_url", ""))
+        # Adaptive curriculum stamp (2026-09-14, additive telemetry): which
+        # curriculum rule / weights the manifest was folded under. Absent
+        # on manifests without a `curriculum` block (every epoch so far).
+        cur = corpus_info.get("curriculum")
+        if isinstance(cur, dict) and cur:
+            wsha = str(cur.get("weights_sha256") or "")
+            info["curriculum_version"] = f"v{cur.get('rule_version', 0)}@{wsha[:12]}"
+            info["curriculum"] = {
+                "rule_version": cur.get("rule_version"),
+                "mode": cur.get("mode"),
+                "ledger_sha256": cur.get("ledger_sha256"),
+                "weights_sha256": cur.get("weights_sha256") or None,
+                "manifest_sha256": info["manifest_sha256"],
+            }
+        return turns, info
+
+    turns, slice_info = draw_slice(0, set())
     turn_ids = [turn_id(rec) for rec in turns]
+    if confirm:
+        # Re-derive every slice the original duel scored (same seeds) only
+        # to exclude their turns; the confirmation slice is draw k.
+        k = int(confirm.get("slice_index", 1))
+        if k < 1:
+            raise ValueError("confirm.slice_index must be >= 1")
+        drawn = set(turn_ids)
+        prior = [slice_info]
+        for idx in range(1, k):
+            prev_turns, prev_info = draw_slice(idx, drawn)
+            drawn |= {turn_id(r) for r in prev_turns}
+            prior.append(prev_info)
+        turns, slice_info = draw_slice(k, drawn)
+        turn_ids = [turn_id(rec) for rec in turns]
+        slice_info["confirmation_of"] = [
+            {key: i[key] for key in ("index", "seed", "n", "digest")} for i in prior]
+        log.info("confirmation slice %d for %s: n=%d (excluding %d turns of %d "
+                 "prior slice(s))", k, confirm.get("challenge_id"), len(turns),
+                 len(drawn), len(prior))
+    # Every slice actually scored, in order; slice 0 is `slice_info`.
+    slices: list[dict] = [{"info": slice_info, "turn_ids": list(turn_ids)}]
 
     # Per-engine in-flight budgets. One semaphore shared across all three
     # engines (the old design) couples them: teacher calls starve miner calls
@@ -558,18 +892,21 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     # from them) are unchanged by the flip.
     require_think_close = bool(duel_cfg.get("require_think_close", False))
     async with httpx.AsyncClient() as http:
+        text_fallback = bool(duel_cfg.get("text_fallback_at_tool_turns", False))
+
         def _pool(served: Served | list[Served],
                   require_close: bool = False) -> ModelPool:
             items = served if isinstance(served, list) else [served]
             return ModelPool([
                 VllmModel(s, http, asyncio.Semaphore(conc),
-                          require_think_close=require_close) for s in items
+                          require_think_close=require_close,
+                          text_fallback_at_tool_turns=text_fallback) for s in items
             ])
         teacher_m = _pool(teacher)
         king_m = _pool(king, require_think_close)
         chall_m = _pool(challenger, require_think_close)
 
-        rejection = await probe_injectable(
+        rejection = None if confirm else await probe_injectable(
             chall_m, turns, float(duel_cfg["temperature"]),
             int(duel_cfg["max_thought_tokens"]), int(duel_cfg["max_action_tokens"]))
         if rejection:
@@ -588,7 +925,7 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         # minutes. mode: off (default) | shadow (publish only) | enforce.
         probe_cfg = probe_settings(engine_cfg.get("protocol_probe"))
         protocol = None
-        if probe_cfg["mode"] != "off":
+        if probe_cfg["mode"] != "off" and not confirm:
             protocol = await run_probe(chall_m, probe_cfg)
             log.info("protocol probe (%s): pass_rate=%.2f think_close=%.2f %s",
                      probe_cfg["mode"], protocol["pass_rate"],
@@ -604,56 +941,175 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
                                  "rejection_reason": verdict["rejection_reason"],
                                  "protocol_probe": protocol}
 
+        min_thought = int(duel_cfg.get("min_thought_chars", 0))
+        causality_gate = bool(duel_cfg.get("causality_gate", False))
+        causality_gamma = (
+            float(duel_cfg.get("causality_gamma", 0.30)) if causality_gate else 0.0)
+        tau = float(duel_cfg.get("tau", 0.0)) or None  # tau <= 0 → v3 plain mean
+        score_mode = str(duel_cfg.get("score_mode", "reason"))
+        band_c = float(duel_cfg.get("band_c", 2.0))
+        band_floor = float(duel_cfg.get("band_floor", 0.002))
+        # v6 forfeit floor: absent/None keeps the legacy drop-from-pairing rule.
+        _ff = duel_cfg.get("forfeit_turn_score")
+        forfeit_turn_score = float(_ff) if _ff is not None else None
+        # A-leg normalizer (min_rga only): summed action lift / this many bytes.
+        # Absent = the per-byte design (length-biased; replay of the 09-04 probe).
+        _anb = duel_cfg.get("action_norm_bytes")
+        action_norm_bytes = float(_anb) if _anb is not None else None
+        # Minimum z safeguard (staged 2026-09-12; 0 = off).
+        min_z = float(duel_cfg.get("min_z", 0.0) or 0.0)
+        # sd-meter (2026-09-18): shadow on every duel when [duel.sd_meter]
+        # shadow = true; THE rule when score_mode = "sd_min_rga". The live
+        # legs (R, G, B, lengths) are still summarised through min_rg so the
+        # telemetry stays comparable across the fork.
+        sd = sdmeter.settings(duel_cfg)
+        sd_rule = score_mode == "sd_min_rga"
+        legs_mode = "min_rg" if sd_rule else score_mode
+        last_shadow: dict = {}
+
+        def kinds() -> dict[str, str]:
+            return {turn_id(rec): rec.get("action_kind") or dialects.DEFAULT_KIND
+                    for rec in turns}
+
+        def decide(c_rows: list[dict], k_rows: list[dict]) -> DuelResult:
+            """The crown rule on a set of paired rows — one slice or the
+            pool of all slices, the same call either way. δ is the
+            effective margin for this duel (`margin_stamp`)."""
+            live = score_duel(
+                c_rows, k_rows,
+                k_sigma=float(duel_cfg["k_sigma"]),
+                min_margin=float(duel_cfg.get("min_margin", 0.0)),
+                min_thought_chars=min_thought,
+                causality_gamma=causality_gamma,
+                challenger_bank_frac=_mean_bank(c_rows),
+                king_bank_frac=_mean_bank(k_rows),
+                tau=tau,
+                score_mode=legs_mode, band_c=band_c, band_floor=band_floor,
+                forfeit_turn_score=forfeit_turn_score,
+                action_norm_bytes=action_norm_bytes,
+                min_z=min_z)
+            if not sd_rule:
+                return live
+            # The sd-meter decides; the live call above supplies the gates
+            # (thought floor, B licence) and the min(R,G) telemetry.
+            gates_ok = not (live.thought_floor_blocked or live.causality_blocked)
+            shadow = sdmeter.shadow_verdict(
+                c_rows, k_rows, {tid: refs.cache[tid] for tid in refs.cache},
+                kinds(), tau, sd, live_gates_pass=gates_ok)
+            last_shadow.clear()
+            last_shadow.update(shadow)
+            head = shadow["by_anchor"].get(sd["anchor"]) or {}
+            if not head.get("available"):
+                raise RuntimeError(
+                    f"sd_min_rga: anchor {sd['anchor']!r} unavailable: {head.get('reason')}")
+            se = head["se"] if head["se"] is not None else float("inf")
+            wins = bool(head["would_crown_rule_only"]) and gates_ok
+            z = head["z"] if head["z"] is not None else 0.0
+            if min_z > 0 and wins and z < min_z:
+                wins = False
+            return DuelResult(
+                challenger=live.challenger, king=live.king,
+                margin=head["margin"] if head["margin"] is not None else 0.0,
+                se=se, z=z, k_sigma=sd["k_sigma"], challenger_wins=wins,
+                n_paired_turns=head["n_paired_turns"],
+                min_margin=sd["min_margin_sd"], min_thought_chars=min_thought,
+                thought_floor_blocked=live.thought_floor_blocked,
+                causality_gamma=causality_gamma,
+                causality_blocked=live.causality_blocked,
+                tau=tau, score_mode=score_mode, band_c=band_c, band_floor=band_floor,
+                forfeit_turn_score=sd["forfeit_sd"],
+                n_forfeit_turns=head["n_forfeit_turns"],
+                action_norm_bytes=sd["a_norm_bytes"], min_z=min_z,
+                min_z_blocked=(min_z > 0 and bool(head["would_crown_rule_only"])
+                               and gates_ok and z < min_z))
+
         # Fresh teacher references every duel (see RefCache docstring): the
         # cache lives and dies inside this call.
         refs = RefCache()
-        # Both sides score concurrently: they live on separate vLLM
-        # engines on separate GPUs, so interleaving them is pure win.
-        # The exact same calls happen — RefCache per-turn locks dedupe
-        # teacher reference sampling across the two sides — so scoring
-        # semantics are untouched. Per-side turn semaphores bound each
-        # side's in-flight turns independently.
-        king_rows, chall_rows = await asyncio.gather(
-            score_side(teacher_m, king_m, turns, refs, duel_cfg,
-                       asyncio.Semaphore(turn_conc), on_progress,
-                       abort_event=abort_event),
-            score_side(teacher_m, chall_m, turns, refs, duel_cfg,
-                       asyncio.Semaphore(turn_conc), on_progress,
-                       abort_event=abort_event),
-        )
+
+        async def score_slice(slice_turns: list[dict], done_before: int
+                              ) -> tuple[list[dict], list[dict]]:
+            """Both sides on one slice. They score concurrently: they live
+            on separate vLLM engines on separate GPUs, so interleaving them
+            is pure win. The exact same calls happen — RefCache per-turn
+            locks dedupe teacher reference sampling across the two sides —
+            so scoring semantics are untouched. Per-side turn semaphores
+            bound each side's in-flight turns independently. Progress is
+            reported cumulatively over all slices of the duel."""
+            total = done_before + len(slice_turns)
+
+            def progress(miner: str, done: int, _total: int) -> None:
+                on_progress(miner, done_before + done, total)
+            return await asyncio.gather(
+                score_side(teacher_m, king_m, slice_turns, refs, duel_cfg,
+                           asyncio.Semaphore(turn_conc), progress,
+                           abort_event=abort_event),
+                score_side(teacher_m, chall_m, slice_turns, refs, duel_cfg,
+                           asyncio.Semaphore(turn_conc), progress,
+                           abort_event=abort_event),
+            )
+
+        king_rows, chall_rows = await score_slice(turns, 0)
+        result = decide(chall_rows, king_rows)
+        slice_results = [_slice_stats(slice_info, result)]
+        # Sequential near-miss (2026-09-11): a first-slice margin inside the
+        # window is one slice's noise away from the bar either way. Draw
+        # more slices — different seed, turns the duel has not scored yet,
+        # same size and stratification — and let the unchanged rule decide
+        # on the pool. Rows are simply concatenated: score.duel pairs by
+        # turn_id, so the pooled margin is the mean over every paired turn
+        # of every slice, the pooled SE is sd/√n_pooled, forfeits keep
+        # their floor, and the gates are read over the pooled challenger
+        # rows. Nothing about a single turn's score changes.
+        # Window placement: "absolute" = the configured pair; "bar" = around
+        # this slice's own crown bar max(k_sigma·SE, δ_effective), so a
+        # decayed δ moves the window with it.
+        nm_low, nm_high = near_miss_window(
+            result, near_miss["window_mode"], near_miss["low"], near_miss["high"])
+        triggered = (bool(near_miss["enabled"]) and not confirm
+                     and near_miss_triggered(result, nm_low, nm_high))
+        if triggered:
+            log.info("near-miss: margin=%.5f in (%.4f, %.4f) [%s], z=%.2f — "
+                     "drawing %d extra slice(s) of %d turns", result.margin,
+                     nm_low, nm_high, near_miss["window_mode"], result.z,
+                     near_miss["extra_slices"], n)
+            for index in range(1, int(near_miss["extra_slices"]) + 1):
+                if abort_event is not None and abort_event.is_set():
+                    raise DuelAborted("superseded by a new duel request")
+                drawn = {tid for s in slices for tid in s["turn_ids"]}
+                extra_turns, extra_info = draw_slice(index, drawn)
+                extra_ids = [turn_id(rec) for rec in extra_turns]
+                k_extra, c_extra = await score_slice(extra_turns, len(turn_ids))
+                slice_results.append(
+                    _slice_stats(extra_info, decide(c_extra, k_extra)))
+                slices.append({"info": extra_info, "turn_ids": extra_ids})
+                turns = turns + extra_turns
+                turn_ids = turn_ids + extra_ids
+                king_rows = king_rows + k_extra
+                chall_rows = chall_rows + c_extra
+            result = decide(chall_rows, king_rows)
+            log.info("near-miss pooled: n=%d margin=%.5f se=%.5f z=%.2f wins=%s",
+                     result.n_paired_turns, result.margin, result.se,
+                     result.z, result.challenger_wins)
         # Teacher rollouts actually used this duel (post-hoc: the slice
         # was unpredictable before reveal and the refs are resampled per
         # duel, so publishing them is audit data, not a reusable target).
         refs_used = {tid: refs.cache[tid] for tid in turn_ids
                      if tid in refs.cache}
 
-    min_thought = int(duel_cfg.get("min_thought_chars", 0))
-    causality_gate = bool(duel_cfg.get("causality_gate", False))
-    causality_gamma = (
-        float(duel_cfg.get("causality_gamma", 0.30)) if causality_gate else 0.0)
-    tau = float(duel_cfg.get("tau", 0.0)) or None  # tau <= 0 → v3 plain mean
-    score_mode = str(duel_cfg.get("score_mode", "reason"))
-    band_c = float(duel_cfg.get("band_c", 2.0))
-    band_floor = float(duel_cfg.get("band_floor", 0.002))
-    # v6 forfeit floor: absent/None keeps the legacy drop-from-pairing rule.
-    _ff = duel_cfg.get("forfeit_turn_score")
-    forfeit_turn_score = float(_ff) if _ff is not None else None
-    result = score_duel(
-        chall_rows, king_rows,
-        k_sigma=float(duel_cfg["k_sigma"]),
-        min_margin=float(duel_cfg.get("min_margin", 0.0)),
-        min_thought_chars=min_thought,
-        causality_gamma=causality_gamma,
-        challenger_bank_frac=_mean_bank(chall_rows),
-        king_bank_frac=_mean_bank(king_rows),
-        tau=tau,
-        score_mode=score_mode, band_c=band_c, band_floor=band_floor,
-        forfeit_turn_score=forfeit_turn_score)
+    if len(slices) > 1:
+        # `slice` stays the contract slice (seed/n/digest as every verdict
+        # since launch); the extra draws ride along so a reader of `slice`
+        # alone sees that the verdict pooled more turns.
+        slice_info["extra_slices"] = [
+            {k: s["info"][k] for k in ("index", "seed", "n", "digest")}
+            for s in slices[1:]]
+        slice_info["n_pooled"] = len(turn_ids)
 
-    king_sum = _miner_summary(king_rows, tau, score_mode, band_c, band_floor,
-                              forfeit_turn_score)
-    chall_sum = _miner_summary(chall_rows, tau, score_mode, band_c, band_floor,
-                               forfeit_turn_score)
+    king_sum = _miner_summary(king_rows, tau, legs_mode, band_c, band_floor,
+                              forfeit_turn_score, action_norm_bytes)
+    chall_sum = _miner_summary(chall_rows, tau, legs_mode, band_c, band_floor,
+                               forfeit_turn_score, action_norm_bytes)
     teacher_sum = _teacher_lengths(refs_used)
     _len_deltas(king_sum, teacher_sum)
     _len_deltas(chall_sum, teacher_sum)
@@ -664,17 +1120,29 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
                           (teacher_sum, teacher_m)):
         summary["n_samples"] = pool.n_samples
         summary["think_close_rate"] = pool.think_close_rate
+        # wvk 18: samples that became a prose `text` action at a tool_call
+        # turn (0 when the knob is off — telemetry either way).
+        summary["n_text_fallback"] = pool.n_text_fallback
     # Per-dialect telemetry (wvk 11 watch item): parse rate and leg means
     # per action_kind on each side; teacher ref yield per dialect.
     kind_by_tid = {turn_id(rec): rec.get("action_kind") or dialects.DEFAULT_KIND
                    for rec in turns}
     king_sum["by_dialect"] = _by_dialect(
-        king_rows, kind_by_tid, tau, score_mode, band_c, band_floor,
-        forfeit_turn_score)
+        king_rows, kind_by_tid, tau, legs_mode, band_c, band_floor,
+        forfeit_turn_score, action_norm_bytes)
     chall_sum["by_dialect"] = _by_dialect(
-        chall_rows, kind_by_tid, tau, score_mode, band_c, band_floor,
-        forfeit_turn_score)
+        chall_rows, kind_by_tid, tau, legs_mode, band_c, band_floor,
+        forfeit_turn_score, action_norm_bytes)
     teacher_sum["by_dialect"] = _teacher_by_dialect(turns, refs_used)
+    # Overall teacher self-agreement = turn-weighted mean over the dialects
+    # that have a normal form (A_match telemetry, 2026-09-14).
+    _pairs = [(d["ref_pair_agreement"], d["ref_pair_n"])
+              for d in teacher_sum["by_dialect"].values() if d.get("ref_pair_agreement") is not None]
+    _n = sum(n for _, n in _pairs)
+    teacher_sum["ref_pair_agreement"] = (sum(p * n for p, n in _pairs) / _n) if _n else None
+    teacher_sum["ref_pair_n"] = _n
+    # Counted over every scored turn (all slices when the near-miss rule
+    # pooled), matching the by_dialect telemetry above.
     slice_info["dialects"] = {
         kind: sum(1 for k in kind_by_tid.values() if k == kind)
         for kind in sorted(set(kind_by_tid.values()))}
@@ -685,11 +1153,36 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         " G = min(m − (mu − w), (mu + w) − m),"
         " m = lpC(z_A|x), mu/sd over lpC(z_C^i|x),"
         " w = max(band_c·sd, band_floor)")
-    if score_mode == "min_rga":
+    # sd-meter block: the shadow (every duel while [duel.sd_meter].shadow is
+    # on) or the deciding numbers (score_mode = "sd_min_rga"). Computed on
+    # the pooled rows with the same refs; the live min(R,G) numbers stay in
+    # king/challenger telemetry either way.
+    sd_block = None
+    if sd["shadow"] or sd_rule:
+        gates_ok = not (result.thought_floor_blocked or result.causality_blocked)
+        if sd_rule and last_shadow:
+            sd_block = dict(last_shadow)
+        else:
+            sd_block = sdmeter.shadow_verdict(
+                chall_rows, king_rows, refs_used, kind_by_tid, tau, sd,
+                live_gates_pass=gates_ok,
+                live_turn_score=lambda pairs: turn_score_live(
+                    pairs, tau, legs_mode, band_c, band_floor, action_norm_bytes),
+                forfeit_turn_score=forfeit_turn_score)
+        sd_block["cost"] = sdmeter.cost_block(
+            teacher_m.echo_stats() if hasattr(teacher_m, "echo_stats") else {},
+            time.monotonic() - started)
+        sd_block["role"] = "rule" if sd_rule else "shadow"
+
+    if sd_rule:
+        ranking_formula = (sd_block or {}).get("formula") or "turn = min(z_R, typ_c, z_A)"
+    elif score_mode == "min_rga":
         ranking_formula = (
             "turn = min(R, G, A); " + _rg_formula +
             "; A = tau·log(mean_i exp(b_i/tau)),"
-            " b_i = lpC(y_A|z_C^i) − lpC(y_A|∅)")
+            + (" b_i = Σ_bytes[lpC(y_A|z_C^i) − lpC(y_A|∅)] / action_norm_bytes"
+               if action_norm_bytes is not None
+               else " b_i = lpC(y_A|z_C^i) − lpC(y_A|∅)"))
     elif score_mode == "min_rg":
         ranking_formula = "turn = min(R, G); " + _rg_formula
     elif tau:
@@ -697,17 +1190,67 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "Reason(turn) = tau·log(mean_i exp((lpC(y_i|z_A) − lpC(y_i|∅))/tau))")
     else:
         ranking_formula = "Reason = lpC(y_C|z_A) − lpC(y_C|∅)"
-    if forfeit_turn_score is not None:
+    if forfeit_turn_score is not None and not sd_rule:
         ranking_formula += (
             f"; forfeit (no parseable action) scores {forfeit_turn_score:g}")
     if require_think_close:
         ranking_formula += "; a rollout without </think> is a forfeit"
+    if thought_rendering == "as_generated":
+        ranking_formula += ("; thoughts rendered as generated for every echo: "
+                            "<think>{latent}\n</think>\n\n{visible}\n\n{y} (latent + visible "
+                            "spans scored, verbatim, no label)")
+    if near_miss["enabled"]:
+        if near_miss["window_mode"] == "bar":
+            ranking_formula += (
+                f"; first-slice margin in (0.5·bar, 1.5·bar), bar = "
+                f"max(k_sigma·SE, δ), draws {near_miss['extra_slices']} more "
+                f"slice(s) and the crown is decided on the pooled turns")
+        else:
+            ranking_formula += (
+                f"; first-slice margin in ({near_miss['low']:g}, "
+                f"{near_miss['high']:g}) draws {near_miss['extra_slices']} more "
+                f"slice(s) and the crown is decided on the pooled turns")
+    if margin_stamp["min_margin_mode"] == "decay":
+        ranking_formula += (
+            f"; δ = {margin_stamp['min_margin_effective']:.6g} for this duel "
+            f"(decaying margin: {margin_stamp.get('min_margin_decay_shape', '?')} "
+            f"from peak {margin_stamp.get('min_margin_peak')} at crown block "
+            f"{margin_stamp.get('crown_block')} to floor "
+            f"{margin_stamp.get('min_margin_floor')} over "
+            f"{margin_stamp.get('min_margin_decay_hours')} h; "
+            f"{margin_stamp.get('blocks_since_crown')} blocks since crown)")
+    if min_z > 0:
+        ranking_formula += f"; a crown also needs z ≥ {min_z:g}"
+
+    # Sequential near-miss stamp: the window, what each slice said on its
+    # own, and (when pooled) the pooled decision — the top-level margin /
+    # se / z / n_paired_turns above are the deciding (pooled) numbers.
+    near_miss_stamp = {
+        "enabled": near_miss["enabled"],
+        "low": near_miss["low"], "high": near_miss["high"],
+        "window_mode": near_miss["window_mode"],
+        # The window actually tested on the first slice ("bar" mode moves it).
+        "window": [nm_low, nm_high],
+        "extra_slices": near_miss["extra_slices"],
+        "triggered": triggered,
+        "slices": slice_results,
+        "pooled": ({
+            "n_turns": len(turn_ids),
+            "n_paired_turns": result.n_paired_turns,
+            "n_forfeit_turns": result.n_forfeit_turns,
+            "margin": result.margin if math.isfinite(result.margin) else None,
+            "se": result.se if math.isfinite(result.se) else None,
+            "z": result.z if math.isfinite(result.z) else None,
+            "challenger_wins": result.challenger_wins,
+        } if triggered else None),
+    }
 
     verdict = {
         "challenger_wins": result.challenger_wins,
         "rejection_reason": (
             "thought_too_short" if result.thought_floor_blocked
             else "causality_fail" if result.causality_blocked
+            else "z_below_min" if result.min_z_blocked
             else None),
         "margin": result.margin if math.isfinite(result.margin) else None,
         "se": result.se if math.isfinite(result.se) else None,
@@ -731,25 +1274,65 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "band_c": band_c,
             "band_floor": band_floor,
             "forfeit_turn_score": forfeit_turn_score,
+            "action_norm_bytes": action_norm_bytes,
             "require_think_close": require_think_close,
+            # wvk 22: thought rendering for every echo (see chat.thought_body).
+            "thought_rendering": thought_rendering,
             "allowed_action_kinds": allowed_kinds,
             "max_thought_tokens": int(duel_cfg["max_thought_tokens"]),
             "max_action_tokens": int(duel_cfg["max_action_tokens"]),
+            # wvk 18: prose reply at a tool_call turn = `text` action.
+            "text_fallback_at_tool_turns": text_fallback,
+            # wvk 19: a first-slice pass needs a confirmation slice to crown.
+            "confirmation_required": bool(duel_cfg.get("confirmation_required", False)),
+            # wvk 20: teacher-relative miner thought cap (0 = fixed cap).
+            "thought_cap_ratio": float(duel_cfg.get("thought_cap_ratio", 0.0)),
+            "thought_cap_rule": (f"max(fixed, {float(duel_cfg.get('thought_cap_ratio', 0.0)):g}*L_T)"
+                                 if float(duel_cfg.get("thought_cap_ratio", 0.0)) > 0 else "fixed"),
+            "thought_cap_tokenizer": (teacher[0].repo if isinstance(teacher, list) else teacher.repo)
+                                     if float(duel_cfg.get("thought_cap_ratio", 0.0)) > 0 else None,
+            # Teacher-only reference budget (wvk 17); None = shared cap.
+            "ref_max_tokens": (int(duel_cfg["ref_max_tokens"])
+                               if duel_cfg.get("ref_max_tokens") is not None else None),
             "max_tokens_by_kind": {
                 str(k): {str(f): int(n) for f, n in v.items()}
                 for k, v in (duel_cfg.get("max_tokens_by_kind") or {}).items()},
+            "near_miss_enabled": near_miss["enabled"],
+            "near_miss_low": near_miss["low"],
+            "near_miss_high": near_miss["high"],
+            "near_miss_extra_slices": near_miss["extra_slices"],
+            "near_miss_window_mode": near_miss["window_mode"],
+            "min_z": min_z,
+            # Decaying crown margin (staged 2026-09-12): `min_margin` above
+            # is already the effective δ; these say where it came from.
+            **margin_stamp,
         },
+        "near_miss": near_miss_stamp,
         "king": king_sum,
         "challenger": chall_sum,
         "teacher": teacher_sum,
         "duel_seconds": time.monotonic() - started,
         "slice": slice_info,
     }
+    if sd_block is not None:
+        verdict["shadow"] = {"sd_meter": sd_block}
+        verdict["duel_params"]["sd_meter"] = {
+            "role": sd_block["role"], "anchor": sd["anchor"], **sd_block["knobs"]}
     if protocol is not None:
         verdict["protocol_probe"] = _probe_public(protocol)
+    if confirm:
+        verdict["confirmation"] = confirmation_stamp(confirm, slice_info, result)
+        verdict["ranking_formula"] += (
+            "; CONFIRMATION SLICE (window-best crown): pooled margin over the "
+            "original slice(s) and this one must be > 0")
     artifact = {
         "slice": slice_info,
+        # Every turn scored, in slice order (slice 0 first); `slices` splits
+        # them per draw with each draw's seed/digest so any one slice — or
+        # the pool — can be re-derived from public D.
         "turn_ids": turn_ids,
+        "slices": [{**s["info"], "turn_ids": s["turn_ids"]} for s in slices],
+        "near_miss": near_miss_stamp,
         "teacher_refs": refs_used,
         "king_rows": king_rows,
         "challenger_rows": chall_rows,

@@ -1,0 +1,9 @@
+**wvk 18 → 19 is live: a crown must win twice.** Explicit dated operator directive 2026-09-16 11:10 UTC; effective from the first duel dispatched after the eval pod redeploy at 11:56 UTC today. Forward-only: reign 13 stands, no re-verdicts, `min_submission_block` unchanged.
+
+**What changes.** The duel rule itself is unchanged: you beat the king on a 1,300-turn slice iff your paired margin clears `max(2·SE, δ = 0.002)`, plus the thought-length floor and the B gate. But a pass no longer crowns on the spot. The validator immediately scores a **second, independent 1,300-turn slice** against the same king — seed derived from your reveal block, turns disjoint from the first slice, fresh teacher references, same engines (~40 more minutes) — and crowns only if **(a)** that slice's own margin is **> 0** and **(b)** the **pooled** margin over both slices clears `max(2·SE_pooled, δ)`. If either fails the verdict is `confirmation_failed`: a loss like any other, the king stands, the hotkey's slot is consumed.
+
+**Why.** All 15 crowns since the wvk-10 reset rested on a single slice; the only two that ever got a second slice (under the retired window rule) came back at or below zero and were revoked. A challenger exactly as good as the king crowns by luck on ~0.5% of attempts under one slice — with the confirmation, ~0.01%. A real improver loses nothing but ~40 minutes: a genuine +0.003 margin clears the pooled bar with z ≈ 5. First slices pass on ~3% of duels, so this runs a few times a week.
+
+**What you see.** `duel_params.confirmation_required = true`; on a first-slice pass, `verdict.confirmation = {seed, n, margin, se, z, pooled_margin, pooled_se, pooled_z, bar, passed}` and the slice's record at `evals/<challenge_id>-confirm.json.gz`. Nothing changes in what you emit.
+
+Spec: https://affine.io/llms.txt → "Fork history: wvk 19".
