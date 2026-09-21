@@ -486,6 +486,43 @@ model_env = "KING_MODEL"
 base_url_env = "KING_BASE_URL"
 key_env = "KING_KEY"
 
+# -- Stirrup (Artificial Analysis' harness, 2026-09-21) ------------------------
+# docs/artificial-analysis-index-path.md §9 #6. Stirrup is the agent loop AA
+# runs GDPval-AA / AA-Briefcase with (25 % of the Intelligence Index): one
+# `code_exec` tool over a sandbox, `finish(reason, paths)` /
+# `abandon_task_finish(reason)`, up to 250 turns, deliverable FILES. Our
+# harness package rollouts/harnesses/stirrup_agent (id `stirrup_agent`,
+# installed editable on the pods like mini_swe_textbased) runs Stirrup's own
+# ChatCompletionsClient against the interception endpoint, so the recorded
+# prefixes are the prompts Stirrup sends -- tool schemas, turn-budget
+# warnings and the `finish` state included. Native tool calls -> tool_call.
+# STAGED: not in [defaults].policies; affine_gdpval (share 0.0) is the probe
+# source and is fold-excluded by construction (benchmark tasks). Enable on
+# the synthesized-variant env once the probe derives turns with parity.
+[policy.teacher_stirrup]
+harness = "stirrup_agent"
+action_kind = "tool_call"
+share = 2.0
+[policy.teacher_stirrup.sampling]
+temperature = 0.8
+[[policy.teacher_stirrup.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+[policy.king_stirrup]
+harness = "stirrup_agent"
+action_kind = "tool_call"
+share = 1.0
+[policy.king_stirrup.sampling]
+temperature = 0.8
+[[policy.king_stirrup.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
 # -- text dialect (env wave 1, 2026-09-11) --------------------------------------
 # Harness `null` again, but the action is the WHOLE visible reply
 # (affine/dialects.py `text`: no system marker; admitted since wvk 13).
