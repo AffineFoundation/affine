@@ -506,11 +506,15 @@ class Monitor:
         # answer 200. affine-backfill-3 went dark 2026-09-20 16:20 UTC with
         # Lium still listing it RUNNING — nothing paged for an hour.
         ptr_path = REPO / "affine" / "state" / "pods" / "backfill_driver.json"
-        ptr = common.read_json(ptr_path, default={}) or {}
-        url = ptr.get("health_url")
-        if not url:
+        ptr_all = common.read_json(ptr_path, default={}) or {}
+        # primary + any secondaries (2026-09-21: rows 14/15 moved to a second
+        # box on another host after the primary's host restarted twice)
+        pods_to_check = ([("backfill_pod", ptr_all)] if ptr_all.get("health_url") else []) + [
+            (f"backfill_pod:{sec.get('pod')}", sec) for sec in ptr_all.get("secondaries", []) if sec.get("health_url")]
+        if not pods_to_check:
             checks.append(Check("backfill_pod", "warn", "no affine/state/pods/backfill_driver.json pointer (env backfill has no driver pod)"))
-        else:
+        for ckey, ptr in pods_to_check:
+            url = ptr["health_url"]
             bf_ok, bf_detail = False, ""
             try:
                 r = requests.get(url, timeout=10)
@@ -520,7 +524,7 @@ class Monitor:
                              + (f", {len(body.get('drivers') or [])} driver(s), load {body.get('load', [None])[0]}" if body else ""))
             except (requests.RequestException, ValueError) as e:
                 bf_detail = f"unreachable ({type(e).__name__})"
-            down_for = self.since("backfill_pod_down", not bf_ok, now)
+            down_for = self.since(f"{ckey}_down", not bf_ok, now)
             if not bf_ok and ptr.get("ssh") and not self.dry_run:
                 # Volume-unmounted container (2026-09-21): sshd answers but
                 # refuses every key. > 20 min of that while Lium lists the
@@ -542,14 +546,14 @@ class Monitor:
                                                reason="health down + ssh publickey denied", now=now)
                     if res:
                         bf_detail += f"; AUTO-REBOOT: {res}"
-                        self.post(f"backfill_pod: {ptr.get('pod')} ssh denied {common.fmt_age(dsec)} while RUNNING — {res}")
+                        self.post(f"{ckey}: {ptr.get('pod')} ssh denied {common.fmt_age(dsec)} while RUNNING — {res}")
             if not bf_ok and ptr.get("ssh") and not self.dry_run \
-                    and now - float(self.own.get("backfill_repair_at", 0)) > 240:
+                    and now - float(self.own.get(f"repair_at:{ckey}", 0)) > 240:
                 # Self-heal (2026-09-21): a Lium container restart wipes
                 # /post_start.sh (overlay) and the health server with it while
                 # /root (the volume) survives; re-running the hook over ssh
                 # brings the endpoint back. A dead host just fails the ssh.
-                self.own["backfill_repair_at"] = now
+                self.own[f"repair_at:{ckey}"] = now
                 user_host, _, port = ptr["ssh"].rpartition(":")
                 try:
                     # Lium pods get a NEW host key on every container restart —
@@ -568,10 +572,10 @@ class Monitor:
                 except (subprocess.SubprocessError, OSError) as e:
                     bf_detail += f"; repair over ssh failed: {type(e).__name__}"
             if bf_ok:
-                checks.append(Check("backfill_pod", "ok", f"{ptr.get('pod')} {bf_detail}", pod=ptr.get("pod"), ssh=ptr.get("ssh")))
+                checks.append(Check(ckey, "ok", f"{ptr.get('pod')} {bf_detail}", pod=ptr.get("pod"), ssh=ptr.get("ssh")))
             else:
                 lvl = "page" if (down_for or 0) > t.get("backfill_pod_down_max_min", 15) * 60 else "warn"
-                checks.append(Check("backfill_pod", lvl,
+                checks.append(Check(ckey, lvl,
                                     f"env-backfill driver pod {ptr.get('pod')} ({ptr.get('ssh')}) {bf_detail} for "
                                     f"{common.fmt_age(down_for)} — coverage env rows stall; re-rent with "
                                     f"CLONE_ROLE=backfill rollouts/scripts/clone_datagen_pod.sh and update the pointer",
