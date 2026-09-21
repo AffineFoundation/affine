@@ -18,7 +18,7 @@ rec = json.load(open(sys.argv[1]))
 if rec.get("completed_at"):
     sys.exit(0)
 tmux = rec["tmux"]
-alive = subprocess.run(["tmux", "-f", "/dev/null", "has-session", "-t", tmux], capture_output=True).returncode == 0
+alive = subprocess.run(["tmux", "-f", "/dev/null", "has-session", "-t", "=" + tmux], capture_output=True).returncode == 0  # "=" = exact name (plain -t is a prefix match: backfill-X would match backfill-X-b)
 if alive:
     sys.exit(0)
 if not os.path.exists(rec.get("wrapper", "")):
