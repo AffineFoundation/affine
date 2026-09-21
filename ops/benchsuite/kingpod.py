@@ -295,6 +295,12 @@ def cmd_wait(args: argparse.Namespace) -> int:
     if mem is None:
         raise SystemExit(f"unknown pod {args.name}")
     sess = lium_api.session()
+    if mem.get("state") == "ready":
+        # an already-serving box (2026-09-21: start_env_backfill re-runs on a live box waited the full
+        # hour here, then released the box as "never became ready")
+        if probe(mem):
+            print(mem["base_url"]); return 0
+        mem["state"] = "booting"
     deadline = time.time() + int(cfg["bootstrap_timeout_min"]) * 60
     while time.time() < deadline:
         pod = find_pod(sess, args.name)
