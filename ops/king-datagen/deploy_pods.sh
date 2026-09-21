@@ -50,7 +50,8 @@ ENV_PKGS=(affine_when2call_v1 affine_notool_v1 affine_logic_v1 affine_trivia_v1 
           affine_autobench_v1 affine_uuidctf_v1
           affine_i3code_v1 affine_i3math_v1 affine_deshuffle_v1 affine_rgym_v1 affine_rcore_v1
           affine_pydantic_v1 affine_verbatim_v1 affine_oolong_v1 affine_mrcr_v1
-          affine_tau2_v1 affine_tau2_synth_v1 affine_kb_synth_v1 affine_tau2_gen_v1)
+          affine_tau2_v1 affine_tau2_synth_v1 affine_kb_synth_v1 affine_tau2_gen_v1
+          affine_terminal_gen_v1)
 # Env wave 3: prime-envs tasksets the pods' pinned checkout lacks are vendored
 # under rollouts/vendor/prime-envs (see its README) and installed from there.
 VENDOR_ENVS=(deshuffle_papers)

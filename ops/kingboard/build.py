@@ -261,7 +261,7 @@ KING_GROUP_ABBR = {"king_fail": "KFAIL", "king_loop_onset": "KLOOP", "king_pivot
 # sources fall back to the first 4 letters after `affine_`, upper-cased.
 ENV_ABBR = {
     "multiswe": "MSWE", "r2e_gym": "R2E", "scaleswe": "SCSW", "swelego": "SWLG",
-    "swerebench_v2": "SWRB", "swesmith": "SWSM", "affine_tmax": "TMAX",
+    "swerebench_v2": "SWRB", "swesmith": "SWSM", "affine_tmax": "TMAX", "affine_terminal_gen": "TGEN",
     "terminal_bench_2": "TMB", "terminal_lego": "TML", "affine_i3math": "I3M",
     "affine_math": "MATH", "affine_agent": "AGNT", "affine_notool": "NOTL",
     "affine_when2call": "W2CT", "affine_wiki": "WIKI", "affine_nl2lib": "NL2L",
