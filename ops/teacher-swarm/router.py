@@ -19,6 +19,7 @@ import collections
 import hashlib
 import json
 import math
+import os
 import time
 from pathlib import Path
 
@@ -39,6 +40,9 @@ OVERLOAD_FACTOR = 4       # spill if chosen backend has 4x the min in-flight
 ECHO_TIMEOUT_S = 240.0
 EMPTY_GRACE_S = 120.0  # empty backend list must persist this long to take effect
 SAMPLE_TIMEOUT_S = 600.0
+# Replicas slower than the fastest by more than this factor are spill-only
+# (see Router.ranked). 0 disables the filter.
+FAST_RATIO = float(os.environ.get("SWARM_FAST_RATIO", "0"))  # 2026-09-17: measured 2.0 = 4171 s vs 3287-4040 baseline; off
 AFFINITY_KEY_CHARS = 2048  # chat/completions fallback: leading chars hashed
 # Completions (the duel path): the key is the rendered prompt up to the final
 # assistant turn — i.e. exactly the turn prefix x that every sample and echo
@@ -172,7 +176,20 @@ class Router:
             h = (int.from_bytes(digest[:8], "big") + 1) / (2**64 + 2)
             return -b.weight / math.log(h)
 
-        ranked = sorted(alive, key=score, reverse=True)
+        # Affinity only among replicas within FAST_RATIO of the fastest
+        # weight; slower ones (PRO 6000 TP2 at 0.15 vs H200 TP2 at 0.6,
+        # 2026-09-17) stay as spill/retry targets but never own a turn's
+        # prefix, so the duel tail is not gated by a slow replica holding
+        # long echoes. Falls back to everyone when fewer than 2 fast.
+        fast = alive
+        if len(alive) >= 2 and FAST_RATIO > 0:
+            top = max(b.weight for b in alive)
+            fast = [b for b in alive if b.weight * FAST_RATIO >= top]
+            if len(fast) < 2:
+                fast = alive
+        slow = [b for b in alive if b not in fast]
+        ranked = (sorted(fast, key=score, reverse=True)
+                  + sorted(slow, key=score, reverse=True))
         if len(ranked) >= 2:
             min_if = min(b.in_flight for b in ranked)
             if ranked[0].in_flight > OVERLOAD_FACTOR * (min_if + 1):

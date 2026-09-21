@@ -2,15 +2,20 @@
 # Private king-chat pod bootstrap. Runs ON the pod as root from /root/king-chat.
 # Idempotent: re-running skips finished steps and (re)starts the supervisors.
 #
-# What it builds (one 1×H200 pod, nothing public):
-#   vLLM 0.28  127.0.0.1:8000  serves the current SN120 king as model
-#                              "affine-king", Bearer-key gated (--api-key)
-#   Caddy      127.0.0.1:8080  strips the /king URL prefix and forwards to vLLM
-#                              (the Cloudflare tunnel on the operator box routes
-#                              https://<host>/king/* here over an SSH forward)
+# What it builds (one 1-GPU pod — H200 / B200 / B300 — nothing public):
+#   vLLM 0.28   127.0.0.1:8000  serves the current SN120 king as model
+#                               "affine-king", Bearer-key gated (--api-key)
+#   fold_proxy  127.0.0.1:8001  folds mid-thread system messages (Cursor sends
+#                               them; the Qwen template rejects them) into one
+#                               leading system message, then forwards to vLLM
+#   Caddy       127.0.0.1:8080  strips the /king or /king-cursor URL prefix and
+#                               forwards to the proxy (the Cloudflare tunnel on
+#                               the operator box routes https://<host>/king*/*
+#                               here over an SSH forward)
 #
 # Inputs (0600 file written by kingchat.sh over stdin, never on a cmdline):
 #   /root/king-chat/.env   KING_API_KEY=...   KING_DIGEST=<sha256 model_digest>
+#   /root/king-chat/fold_proxy.py  uploaded next to this script by kingchat.sh
 # Weights come from the PUBLIC bucket https://models.affine.io — only a crowned
 # model lives there, so no R2 credentials are needed. Every file is checked
 # against the size + sha256 in the signed manifest before vLLM sees it.
@@ -24,6 +29,7 @@ source /root/king-chat/.env
 MODELS_BASE=${MODELS_BASE:-https://models.affine.io/models/sha256}
 MODEL_DIR=/root/models/king-${KING_DIGEST:0:12}
 VLLM_PORT=8000
+PROXY_PORT=8001
 CADDY_PORT=8080
 export HF_HOME=/root/hf
 mkdir -p /root/logs "$MODEL_DIR" "$HF_HOME"
@@ -113,8 +119,9 @@ PY
   touch "$MODEL_DIR/.complete"
 fi
 
-# 4. Caddy: /king/* -> vLLM, everything else 404. Bound to loopback; the only
-#    way in is the SSH forward from the operator box.
+# 4. Caddy: /king/* and /king-cursor/* -> fold proxy -> vLLM, everything else
+#    404. Bound to loopback; the only way in is the SSH forward from the
+#    operator box.
 cat > /root/king-chat/Caddyfile <<EOF
 {
 	admin off
@@ -125,8 +132,20 @@ cat > /root/king-chat/Caddyfile <<EOF
 # host-keyed site block would answer it with an empty 200); bind = loopback.
 http://:${CADDY_PORT} {
 	bind 127.0.0.1
-	handle_path /king/* {
-		reverse_proxy 127.0.0.1:${VLLM_PORT} {
+	# One line per request (path, status, user agent) — what did the IDE send?
+	log {
+		output file /root/logs/caddy_access.log {
+			roll_size 20mb
+			roll_keep 3
+		}
+	}
+	# /king is the original Cursor path. /king-cursor is the dedicated
+	# reign-11+ box so the old affine-chat-const tunnel can stay put.
+	@king_prefix path /king/* /king-cursor/*
+	handle @king_prefix {
+		uri strip_prefix /king-cursor
+		uri strip_prefix /king
+		reverse_proxy 127.0.0.1:${PROXY_PORT} {
 			flush_interval -1
 			transport http {
 				read_timeout 0
@@ -142,8 +161,10 @@ caddy validate --config /root/king-chat/Caddyfile --adapter caddyfile
 # 5. Supervisors. Kill old ones — loops first so they cannot respawn the
 #    children ([b]racket so pkill never matches this script's own cmdline).
 pkill -f '[r]un_vllm.sh' || true
+pkill -f '[r]un_proxy.sh' || true
 pkill -f '[r]un_caddy.sh' || true
 pkill -f '[v]llm serve' || true
+pkill -f '[f]old_proxy.py' || true
 pkill -f '[c]addy run' || true
 sleep 2
 
@@ -187,6 +208,19 @@ while true; do
 done
 EOF
 chmod +x /root/king-chat/run_vllm.sh
+# fastapi / uvicorn / httpx come with vLLM, so the proxy runs in the same venv.
+cat > /root/king-chat/run_proxy.sh <<EOF
+#!/bin/bash
+# fold_proxy supervise loop (written by pod_bootstrap.sh)
+source /root/venv/bin/activate
+while true; do
+  python /root/king-chat/fold_proxy.py --listen 127.0.0.1:${PROXY_PORT} \\
+    --upstream http://127.0.0.1:${VLLM_PORT} \\
+    || echo "[king-chat] fold_proxy exited \$?"
+  sleep 5
+done
+EOF
+chmod +x /root/king-chat/run_proxy.sh
 cat > /root/king-chat/run_caddy.sh <<'EOF'
 #!/bin/bash
 # caddy supervise loop (written by pod_bootstrap.sh)
@@ -198,5 +232,6 @@ done
 EOF
 chmod +x /root/king-chat/run_caddy.sh
 nohup /root/king-chat/run_vllm.sh </dev/null >> /root/logs/vllm.log 2>&1 &
+nohup /root/king-chat/run_proxy.sh </dev/null >> /root/logs/proxy.log 2>&1 &
 nohup /root/king-chat/run_caddy.sh </dev/null >> /root/logs/caddy.log 2>&1 &
-log "supervisors started; vllm log /root/logs/vllm.log"
+log "supervisors started; vllm log /root/logs/vllm.log, proxy log /root/logs/proxy.log"

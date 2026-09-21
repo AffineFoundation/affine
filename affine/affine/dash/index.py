@@ -54,6 +54,12 @@ CREATE TABLE IF NOT EXISTS bench (
 CREATE INDEX IF NOT EXISTS idx_bench_repo ON bench(repo);
 """
 
+# Bump when history_row_from_raw gains fields: the sqlite payload column is a
+# frozen projection, so older rows would otherwise never carry the new keys.
+# A mismatch re-ingests history.jsonl from offset 0 at startup (one pass over
+# the file; a few seconds).
+PAYLOAD_VERSION = "2"
+
 
 class DashIndex:
     """Append-only ingest from jsonl files via byte-offset watermarks."""
@@ -69,6 +75,11 @@ class DashIndex:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(SCHEMA)
+            if self._get_meta("payload_version", "1") != PAYLOAD_VERSION:
+                log.info("history payload version changed -> re-ingesting")
+                self._conn.execute("DELETE FROM history")
+                self._set_meta("history_offset", "0")
+                self._set_meta("payload_version", PAYLOAD_VERSION)
 
     def close(self) -> None:
         with self._lock:

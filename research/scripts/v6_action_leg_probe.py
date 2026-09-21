@@ -14,6 +14,12 @@ corpus, and echoes on the teacher swarm:
 Reports A distributions, A vs R/G bind fractions, and the paired margin of
 the duel under min(R,G) vs min(R,G,A) on the probed turns.
 
+2026-09-10: every A is reported in two normalizations — per byte of the
+action (the original design; length-biased, see v6_action_leg_norm.txt)
+and summed lift / --norm-bytes (the staged `[duel].action_norm_bytes`
+form). Rows store both `b` (per byte) and `S` (summed nats) so either can
+be recomputed offline.
+
     python research/scripts/v6_action_leg_probe.py --record affine/state/evals/chal-00248.json.gz \
         --n 400 --out research/results/v6_action_leg_probe
 """
@@ -59,13 +65,20 @@ def pct(xs: list[float], p: float) -> float:
 
 
 async def side_action_leg(model: VllmModel, prefix: list[dict], ref_thoughts: list[str],
-                          action: str, tau: float) -> tuple[float, list[float]]:
+                          action: str, tau: float, norm_bytes: float) -> dict:
+    """A under both normalizations for one action.
+
+    b_i = per-byte lift, S_i = summed lift (nats over the action span);
+    A = LME_tau(b_i) (per byte), A_fixed = LME_tau(S_i / norm_bytes)."""
     res = await asyncio.gather(
         *[model.score_action(prefix, z, action) for z in ref_thoughts],
         model.score_action(prefix, EMPTY_THOUGHTS, action))
-    base = res[-1]["lp_per_byte"]
-    b = [r["lp_per_byte"] - base for r in res[:-1]]
-    return lme(b, tau), b
+    base = res[-1]
+    b = [r["lp_per_byte"] - base["lp_per_byte"] for r in res[:-1]]
+    S = [r["sum_lp"] - base["sum_lp"] for r in res[:-1]]
+    return {"A": lme(b, tau), "b": b, "S": S,
+            "A_fixed": lme([s / norm_bytes for s in S], tau),
+            "n_bytes": base["n_bytes"]}
 
 
 async def main() -> int:
@@ -76,6 +89,8 @@ async def main() -> int:
     ap.add_argument("--swarm", default="http://127.0.0.1:9100/v1")
     ap.add_argument("--concurrency", type=int, default=48)
     ap.add_argument("--out", default="research/results/v6_action_leg_probe")
+    ap.add_argument("--norm-bytes", type=float, default=128.0,
+                    help="fixed byte normalizer for A_fixed ([duel].action_norm_bytes)")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -115,22 +130,23 @@ async def main() -> int:
                 ref = refs[tid]
                 zs = [r["z"] for r in ref]
                 kp, cp = k_by[tid]["pairs"], c_by[tid]["pairs"]
-                a_k, b_k = await side_action_leg(model, prefix, zs, kp[0]["y_a"], tau)
-                a_c, b_c = await side_action_leg(model, prefix, zs, cp[0]["y_a"], tau)
-                a_t, b_t = await side_action_leg(model, prefix, zs[1:], ref[0]["y"], tau)
-                a_g, b_g = await side_action_leg(model, prefix, zs, GENERIC_ACTION, tau)
+                nb = args.norm_bytes
+                a_k = await side_action_leg(model, prefix, zs, kp[0]["y_a"], tau, nb)
+                a_c = await side_action_leg(model, prefix, zs, cp[0]["y_a"], tau, nb)
+                a_t = await side_action_leg(model, prefix, zs[1:], ref[0]["y"], tau, nb)
+                a_g = await side_action_leg(model, prefix, zs, GENERIC_ACTION, tau, nb)
                 out_rows.append({
                     "turn_id": tid,
-                    "king": {"A": a_k, "b": b_k, "R": centered_reason(kp, tau),
+                    "king": {**a_k, "R": centered_reason(kp, tau),
                              "G": grounding(kp, band_c, band_floor),
                              "B": kp[0]["lpC_ya_za"] - kp[0]["lpC_ya_e"],
                              "len_y": len(kp[0]["y_a"])},
-                    "challenger": {"A": a_c, "b": b_c, "R": centered_reason(cp, tau),
+                    "challenger": {**a_c, "R": centered_reason(cp, tau),
                                    "G": grounding(cp, band_c, band_floor),
                                    "B": cp[0]["lpC_ya_za"] - cp[0]["lpC_ya_e"],
                                    "len_y": len(cp[0]["y_a"])},
-                    "teacher_own": {"A": a_t, "b": b_t, "len_y": len(ref[0]["y"])},
-                    "generic": {"A": a_g, "b": b_g},
+                    "teacher_own": {**a_t, "len_y": len(ref[0]["y"])},
+                    "generic": a_g,
                 })
                 if len(out_rows) % 50 == 0:
                     print(f"  {len(out_rows)}/{len(tids)} turns "
@@ -139,11 +155,12 @@ async def main() -> int:
         await asyncio.gather(*[one(t) for t in tids])
 
     out_rows.sort(key=lambda r: r["turn_id"])
-    report = summarize(out_rows, tau, d["verdict"])
+    report = summarize(out_rows, tau, d["verdict"], args.norm_bytes)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.with_suffix(".json").write_text(json.dumps(
         {"record": args.record, "n": len(out_rows), "tau": tau,
+         "norm_bytes": args.norm_bytes,
          "swarm": args.swarm, "summary": report["summary"], "rows": out_rows},
         indent=1))
     out.with_suffix(".txt").write_text(report["text"])
@@ -155,53 +172,62 @@ def not_forfeit(row: dict | None) -> bool:
     return bool(row and row.get("valid") and "pairs" in row)
 
 
-def summarize(rows: list[dict], tau: float, verdict: dict) -> dict:
+def summarize(rows: list[dict], tau: float, verdict: dict,
+              norm_bytes: float = 128.0) -> dict:
     def col(side: str, key: str) -> list[float]:
         return [r[side][key] for r in rows if r[side].get(key) is not None]
 
     lines = [f"v6 action-leg probe — {len(rows)} turns of {verdict.get('slice', {}).get('n')} "
              f"(duel margin {verdict['margin']:+.5f}, z={verdict['z']:.2f})", ""]
-    lines.append(f"{'side':12} {'A med':>8} {'A p10':>8} {'A p90':>8} {'A<0':>6} {'|y| med':>8}")
-    for side in ("king", "challenger", "teacher_own", "generic"):
-        a = col(side, "A")
-        ly = col(side, "len_y") if side != "generic" else [len(GENERIC_ACTION)] * len(a)
-        lines.append(f"{side:12} {st.median(a):8.4f} {pct(a, .1):8.4f} {pct(a, .9):8.4f} "
-                     f"{sum(1 for x in a if x < 0) / len(a):6.1%} {st.median(ly):8.0f}")
+    # Paired margin under min(R,G) once; the per-normalization blocks below
+    # each add their min(R,G,A) line.
+    d_rg = [min(r["challenger"]["R"], r["challenger"]["G"]) - min(r["king"]["R"], r["king"]["G"]) for r in rows]
+    m = st.mean(d_rg); se = st.stdev(d_rg) / math.sqrt(len(d_rg))
+    lines.append(f"paired margin (challenger − king) under min(R,G)   : {m:+.5f}  SE {se:.5f}  z {m / se:+.2f}")
     lines.append("")
-    # Ordering checks (paired per turn)
+
     def frac(f) -> float:
         return sum(1 for r in rows if f(r)) / len(rows)
-    lines.append(f"teacher-own A > generic A on {frac(lambda r: r['teacher_own']['A'] > r['generic']['A']):.1%} of turns")
-    lines.append(f"king A > generic A        on {frac(lambda r: r['king']['A'] > r['generic']['A']):.1%} of turns")
-    lines.append(f"challenger A > generic A  on {frac(lambda r: r['challenger']['A'] > r['generic']['A']):.1%} of turns")
-    lines.append("")
-    # Scale vs R and G, and bind fractions
-    for side in ("king", "challenger"):
-        R, G, A = col(side, "R"), col(side, "G"), col(side, "A")
-        lines.append(f"{side:12} R med={st.median(R):.4f}  G med={st.median(G):.4f}  A med={st.median(A):.4f}  "
-                     f"B med={st.median(col(side, 'B')):.4f}")
-        binds = {"R": 0, "G": 0, "A": 0}
-        for r in rows:
-            s = r[side]
-            legs = {"R": s["R"], "G": s["G"], "A": s["A"]}
-            binds[min(legs, key=legs.get)] += 1
-        n = len(rows)
-        lines.append(f"{'':12} binding leg under min(R,G,A): "
-                     f"R {binds['R'] / n:.1%}  G {binds['G'] / n:.1%}  A {binds['A'] / n:.1%}")
-    lines.append("")
-    # Paired margin on probed turns: min(R,G) vs min(R,G,A)
-    d_rg = [min(r["challenger"]["R"], r["challenger"]["G"]) - min(r["king"]["R"], r["king"]["G"]) for r in rows]
-    d_rga = [min(r["challenger"]["R"], r["challenger"]["G"], r["challenger"]["A"])
-             - min(r["king"]["R"], r["king"]["G"], r["king"]["A"]) for r in rows]
-    for name, dd in (("min(R,G)", d_rg), ("min(R,G,A)", d_rga)):
-        m = st.mean(dd); se = st.stdev(dd) / math.sqrt(len(dd))
-        lines.append(f"paired margin (challenger − king) under {name:11}: {m:+.5f}  SE {se:.5f}  z {m / se:+.2f}")
-    # Does A correlate with action length? (tiny-command concern)
-    for side in ("king", "challenger"):
-        pairs_ = [(r[side]["len_y"], r[side]["A"]) for r in rows]
-        short = [a for l, a in pairs_ if l <= st.median(x for x, _ in pairs_)]
-        long_ = [a for l, a in pairs_ if l > st.median(x for x, _ in pairs_)]
-        lines.append(f"{side:12} A med for short actions {st.median(short):.4f} vs long actions {st.median(long_):.4f}")
+
+    for key, title in (("A", "A per byte of the action (2026-09-04 design)"),
+                       ("A_fixed", f"A = LME(S_i / {norm_bytes:g} bytes)  (staged action_norm_bytes form)")):
+        lines.append(f"== {title} ==")
+        lines.append(f"{'side':12} {'A med':>8} {'A p10':>8} {'A p90':>8} {'A<0':>6} {'|y| med':>8}")
+        for side in ("king", "challenger", "teacher_own", "generic"):
+            a = col(side, key)
+            ly = col(side, "len_y") if side != "generic" else [len(GENERIC_ACTION)] * len(a)
+            lines.append(f"{side:12} {st.median(a):8.4f} {pct(a, .1):8.4f} {pct(a, .9):8.4f} "
+                         f"{sum(1 for x in a if x < 0) / len(a):6.1%} {st.median(ly):8.0f}")
+        lines.append("")
+        lines.append(f"teacher-own A > generic A on {frac(lambda r: r['teacher_own'][key] > r['generic'][key]):.1%} of turns")
+        lines.append(f"king A > generic A        on {frac(lambda r: r['king'][key] > r['generic'][key]):.1%} of turns")
+        lines.append(f"challenger A > generic A  on {frac(lambda r: r['challenger'][key] > r['generic'][key]):.1%} of turns")
+        lines.append("")
+        for side in ("king", "challenger"):
+            R, G, A = col(side, "R"), col(side, "G"), col(side, key)
+            lines.append(f"{side:12} R med={st.median(R):.4f}  G med={st.median(G):.4f}  A med={st.median(A):.4f}  "
+                         f"B med={st.median(col(side, 'B')):.4f}")
+            binds = {"R": 0, "G": 0, "A": 0}
+            for r in rows:
+                s = r[side]
+                legs = {"R": s["R"], "G": s["G"], "A": s[key]}
+                binds[min(legs, key=legs.get)] += 1
+            n = len(rows)
+            lines.append(f"{'':12} binding leg under min(R,G,A): "
+                         f"R {binds['R'] / n:.1%}  G {binds['G'] / n:.1%}  A {binds['A'] / n:.1%}")
+        d_rga = [min(r["challenger"]["R"], r["challenger"]["G"], r["challenger"][key])
+                 - min(r["king"]["R"], r["king"]["G"], r["king"][key]) for r in rows]
+        m = st.mean(d_rga); se = st.stdev(d_rga) / math.sqrt(len(d_rga))
+        lines.append(f"paired margin (challenger − king) under min(R,G,A) : {m:+.5f}  SE {se:.5f}  z {m / se:+.2f}")
+        # Length bias check (the reason the per-byte form was not flipped).
+        for side in ("king", "challenger", "teacher_own"):
+            pairs_ = [(r[side]["len_y"], r[side][key]) for r in rows]
+            med_len = st.median(x for x, _ in pairs_)
+            short = [a for l, a in pairs_ if l <= med_len]
+            long_ = [a for l, a in pairs_ if l > med_len]
+            lines.append(f"{side:12} A med for short actions {st.median(short):.4f} vs long actions "
+                         f"{st.median(long_):.4f}  (ratio {st.median(short) / st.median(long_):.2f})")
+        lines.append("")
     text = "\n".join(lines) + "\n"
     return {"text": text, "summary": {"lines": lines}}
 

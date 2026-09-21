@@ -14,6 +14,8 @@
 #   KING_KEY        bearer every replica enforces (vllm --api-key)
 #   SERVED_NAME     model name the endpoint answers to, e.g. king-0ce59769300c
 #   DIGEST          sha256 model_digest on https://models.affine.io  (R2 king)
+#   KING_R2         optional r2://<bucket>/<prefix>/ of a PRIVATE ref (benchsuite
+#                   challenger mode) + AFFINE_EVAL_R2_ENDPOINT/ACCESS_KEY_ID/SECRET_ACCESS_KEY
 #   HF_MODEL/HF_REV HF repo + revision instead (genesis king), HF_TOKEN
 #   FRONT_PORT      nginx listen port (Lium-mapped)
 #   REPLICAS        semicolon list of "port:gpus:tp", e.g. "20001:0:1;20002:1:1"
@@ -70,16 +72,39 @@ MODEL_DIR=/root/king/model
 if [ -n "${DIGEST:-}" ]; then
   mkdir -p "$MODEL_DIR"
   if [ ! -f "$MODEL_DIR/.complete" ]; then
-    log "downloading king $DIGEST from models.affine.io"
+    # Source: the PUBLIC copy (crowned kings) or, when KING_R2 is set (benchsuite
+    # challenger mode), the private bucket via the eval pods' read-only key
+    # (AFFINE_EVAL_R2_ENDPOINT / _ACCESS_KEY_ID / _SECRET_ACCESS_KEY). Same manifest,
+    # every file sha256-verified either way.
+    if [ -n "${KING_R2:-}" ]; then
+      /root/venv/bin/python -c "import boto3" 2>/dev/null || VIRTUAL_ENV=/root/venv uv pip install -q boto3 >> /root/logs/pip_vllm.log 2>&1
+      log "downloading king $DIGEST from $KING_R2 (private, read-only key)"
+    else
+      log "downloading king $DIGEST from models.affine.io"
+    fi
     MODEL_DIR="$MODEL_DIR" DIGEST="$DIGEST" /root/venv/bin/python - <<'PY' || fail download
 import hashlib, json, os, subprocess
 from concurrent.futures import ThreadPoolExecutor
-base = f"https://models.affine.io/models/sha256/{os.environ['DIGEST']}/"
-man = json.loads(subprocess.run(["curl", "-sSL", "--retry", "5", base + "manifest.json"],
-                                check=True, capture_output=True, text=True).stdout)
+d = os.environ["MODEL_DIR"]
+r2 = os.environ.get("KING_R2") or ""
+if r2:
+    import boto3
+    bucket, _, prefix = r2.removeprefix("r2://").partition("/")
+    s3 = boto3.client("s3", endpoint_url=os.environ["AFFINE_EVAL_R2_ENDPOINT"],
+                      aws_access_key_id=os.environ["AFFINE_EVAL_R2_ACCESS_KEY_ID"],
+                      aws_secret_access_key=os.environ["AFFINE_EVAL_R2_SECRET_ACCESS_KEY"], region_name="auto")
+    man = json.loads(s3.get_object(Bucket=bucket, Key=prefix + "manifest.json")["Body"].read())
+    def get(path, dst):
+        s3.download_file(bucket, prefix + path, dst)
+else:
+    base = f"https://models.affine.io/models/sha256/{os.environ['DIGEST']}/"
+    man = json.loads(subprocess.run(["curl", "-sSL", "--retry", "5", base + "manifest.json"],
+                                    check=True, capture_output=True, text=True).stdout)
+    def get(path, dst):
+        subprocess.run(["curl", "-sSL", "--http1.1", "--retry", "8", "--retry-all-errors",
+                        "-C", "-", "-o", dst, base + path], check=True)
 if man.get("model_digest") not in (None, os.environ["DIGEST"]):
     raise SystemExit(f"manifest digest {man.get('model_digest')} != {os.environ['DIGEST']}")
-d = os.environ["MODEL_DIR"]
 
 def fetch(f):
     path, size, sha = f["path"], f["size"], f.get("sha256")
@@ -87,8 +112,7 @@ def fetch(f):
     if os.path.exists(dst) and os.path.getsize(dst) == size:
         return "cached " + path
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    subprocess.run(["curl", "-sSL", "--http1.1", "--retry", "8", "--retry-all-errors",
-                    "-C", "-", "-o", dst, base + path], check=True)
+    get(path, dst)
     if sha:
         h = hashlib.sha256()
         with open(dst, "rb") as fh:

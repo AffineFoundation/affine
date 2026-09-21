@@ -1,0 +1,6 @@
+#!/bin/bash
+# pre-commit: refuse a commit whose staged changes add a secret-shaped literal.
+# Installed via `ops/hooks/install.sh` (git config core.hooksPath ops/hooks);
+# setup.sh runs that on every fresh clone.
+REPO="$(git rev-parse --show-toplevel)"
+exec python3 "$REPO/ops/hooks/secret_scan.py" --staged

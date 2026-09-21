@@ -22,6 +22,8 @@ from dataclasses import dataclass
 import bittensor as bt
 from bittensor.result import ChainError
 
+from affine import payout
+
 log = logging.getLogger("affine.chain")
 
 REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
@@ -255,29 +257,26 @@ class Metagraph:
         return [(k[:prefix_len].lower(), k[-suffix_len:].lower()) for k in keys]
 
 
-def set_rolling_weights(subtensor, wallet, netuid: int,
-                        king_chain_hotkeys: list[str],
-                        metagraph: Metagraph, burn_uid: int,
-                        max_metagraph_age_s: float = 1800.0,
-                        version_key: int = 0) -> bool:
-    """Equal-share weights across registered members of the rolling king
-    chain (current king first, then prior distinct kings). Falls back to the
-    burn UID when nobody in the chain is registered. Refuses to act on a
-    stale metagraph — a rotated uid map would pay the wrong neurons."""
+def set_payout_weights(subtensor, wallet, netuid: int,
+                       shares: dict[str, float],
+                       metagraph: Metagraph, burn_uid: int,
+                       max_metagraph_age_s: float = 1800.0,
+                       version_key: int = 0) -> bool:
+    """Set weights from hotkey → emission share (`State.king_payout_shares`:
+    one equal share per crown inside the payout window, summed per hotkey).
+    Unregistered hotkeys are skipped and the rest renormalised; nothing
+    payable → the burn UID. Refuses to act on a stale metagraph — a rotated
+    uid map would pay the wrong neurons."""
     age = metagraph.age_s()
     if age > max_metagraph_age_s:
         log.error("metagraph is %.0fs stale (> %.0fs); refusing to set weights",
                   age, max_metagraph_age_s)
         return False
-    uids: list[int] = []
-    for hk in king_chain_hotkeys:
-        uid = metagraph.uid_of.get(hk)
-        if uid is not None and uid not in uids:
-            uids.append(uid)
-    if not uids:
-        uids = [burn_uid]
-    w = 1.0 / len(uids)
-    weights = [w] * len(uids)
+    uids, weights = payout.uid_weights(shares, metagraph.uid_of, burn_uid)
+    skipped = [hk[:8] for hk, s in shares.items()
+               if s > 0 and hk not in metagraph.uid_of]
+    if skipped:
+        log.warning("payout: unregistered hotkeys skipped %s", skipped)
     try:
         # bittensor 11 intent path; execute() waits for inclusion and returns
         # an ExtrinsicResult (raise_for_failure covers dispatch errors).
@@ -287,8 +286,8 @@ def set_rolling_weights(subtensor, wallet, netuid: int,
             wallet,
         )
         res.raise_for_failure()
-        log.info("set_weights uids=%s weights=%.3f each block=%s", uids, w,
-                 res.block_hash)
+        log.info("set_weights uids=%s weights=%s block=%s", uids,
+                 [round(w, 4) for w in weights], res.block_hash)
         return True
     except ChainError as e:
         # The chain allows one set_weights per rate-limit window (100 blocks);
@@ -303,3 +302,18 @@ def set_rolling_weights(subtensor, wallet, netuid: int,
     except Exception:
         log.exception("set_weights failed")
         return False
+
+
+def set_rolling_weights(subtensor, wallet, netuid: int,
+                        king_chain_hotkeys: list[str],
+                        metagraph: Metagraph, burn_uid: int,
+                        max_metagraph_age_s: float = 1800.0,
+                        version_key: int = 0) -> bool:
+    """Equal-share weights across a hotkey list (the pre-2026-09-14 rolling
+    king chain). Kept for ops scripts and replays; the validator now uses
+    `set_payout_weights` with per-crown window shares."""
+    distinct = list(dict.fromkeys(hk for hk in king_chain_hotkeys if hk))
+    shares = {hk: 1.0 / len(distinct) for hk in distinct} if distinct else {}
+    return set_payout_weights(subtensor, wallet, netuid, shares, metagraph,
+                              burn_uid, max_metagraph_age_s=max_metagraph_age_s,
+                              version_key=version_key)

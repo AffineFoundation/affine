@@ -1,0 +1,19 @@
+{
+ "state": "failed",
+ "kind": "duel",
+ "created_at": 1789728461.0888073,
+ "request": {
+  "king_repo": "r2://affine-models/models/sha256/0f4029fd59ededd2d312a18080ea8b3aa941f3a48c320e86f7d40bba0c2b9b1c/",
+  "king_revision": "0f4029fd59ededd2d312a18080ea8b3aa941f3a48c320e86f7d40bba0c2b9b1c",
+  "challenger_repo": "r2://affine-models/models/sha256/0f4029fd59ededd2d312a18080ea8b3aa941f3a48c320e86f7d40bba0c2b9b1c/",
+  "challenger_revision": "0f4029fd59ededd2d312a18080ea8b3aa941f3a48c320e86f7d40bba0c2b9b1c",
+  "challenger_hotkey": "5CX396QeJuLZ3WKYfueQRRXsxRyvdwhPP3Q4d73brxk2bYCq",
+  "block_hash": "0x5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d",
+  "challenger_weight_bytes": 0,
+  "margin": null,
+  "confirm": null
+ },
+ "phase": "scoring",
+ "error": "superseded by a new duel request",
+ "error_code": "superseded"
+}
