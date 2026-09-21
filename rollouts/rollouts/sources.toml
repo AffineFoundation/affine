@@ -256,7 +256,7 @@ apply_groups = ["king_fail", "king_divergence"]
 # never flips back on its own (state.gate_enforced; published in the
 # announce / manifest / fold_stats.yield.gate_state); (c) king_coached is
 # exempt from the recovery rule -- the coached teacher is the recovery.
-king_failed_exempt = ["king_done"]
+king_failed_exempt = ["king_done", "king_tooluse"]   # 2026-09-21: king_tooluse's selection IS the failure (tool where the teacher asks / answers), whatever the grade -- tau2-gen airline kings solve while still calling a tool at turn 1
 recovery_exempt = ["king_coached"]
 auto_promote = true
 state_table_dir = "affine/state/recoverable"
@@ -266,6 +266,19 @@ task_teacher_solved = true
 dead_refs = true
 ledger_dir = "affine/state/curriculum/ledger"
 min_refs_valid = 2
+
+[decontamination]
+# Generated-benchmark sources: the fold refuses any task without the [GEN:...]
+# marker and any task whose fingerprint (uid minus the tau2g-e<epoch>-<domain>-
+# prefix and the [GEN:] suffix) is a tau2-bench `base` id of its domain
+# (telecom ids are exactly such fingerprints; same intent + fault composition
+# under any persona also counts). Airline / retail bench ids are bare numbers
+# (no name overlap by construction) -- the marker is the guard there.
+# Drop reasons: decontam_no_gen_marker, bench_panel_overlap.
+[decontamination.affine_tau2_gen]
+bench_ids = "rollouts/envs/affine_tau2_gen_v1/affine_tau2_gen_v1/data/e61/bench_task_ids.json"
+require_gen_marker = true
+domain_field = "repo"
 
 [strata_budget]
 # Phase 9 (2026-09-14). The duel slicer draws one turn per stratum uniformly
@@ -449,13 +462,13 @@ strata_buckets = 4000   # 2000 -> 4000 (2026-09-14 phase 9b: When2Call + tool-fe
 inherit_exclude = false
 one_reply_ok = true
 prose_sources = ["affine_when2call", "affine_notool",
-                 "affine_tau2"]   # NOT affine_tau2_synth: there the customer often opens with their name / id and the teacher's turn-1 lookup is legitimate (13/24 in the probe), so a king turn-1 call is not a failure by itself; synth relies on the persist rule + king_divergence   # datagen P1 sources (2026-09-14); when2call rows carry repo = when2call/<label> -- only request_for_info / cannot_answer items are no-tool prompts; affine_tau2 (2026-09-18): the king opens with a tool call where the teacher asks the customer (turn 1, 24/24 in the probe)
+                 "affine_tau2", "affine_tau2_gen"]   # + tau2-gen (2026-09-21): airline / telecom customers state the problem, not the id, on turn 1; retail openers carry an order id -> skipped via prose_skip_repos   # NOT affine_tau2_synth: there the customer often opens with their name / id and the teacher's turn-1 lookup is legitimate (13/24 in the probe), so a king turn-1 call is not a failure by itself; synth relies on the persist rule + king_divergence   # datagen P1 sources (2026-09-14); when2call rows carry repo = when2call/<label> -- only request_for_info / cannot_answer items are no-tool prompts; affine_tau2 (2026-09-18): the king opens with a tool call where the teacher asks the customer (turn 1, 24/24 in the probe)
 tool_sources = ["affine_agent", "affine_wikispeedia", "affine_sql", "affine_eog", "affine_autobench",
-                "affine_tau2", "affine_tau2_synth"]   # + τ² telecom (2026-09-17): the king re-calls get_customer_by_phone with invented numbers after every error
+                "affine_tau2", "affine_tau2_synth", "affine_tau2_gen"]   # + τ² telecom (2026-09-17): the king re-calls get_customer_by_phone with invented numbers after every error
 # When2Call stamps repo = when2call/<label>; on tool_call items the king's
 # first-reply call is correct, so rule (a) skips them (route only the
 # request_for_info / cannot_answer rows where the king called a tool).
-prose_skip_repos = ["when2call/tool_call"]
+prose_skip_repos = ["when2call/tool_call", "tau2-gen/retail"]   # tau2-gen retail: the opener often gives an order id, a turn-1 lookup is legitimate
 kind = "text"
 
 [king_recoverable]
@@ -1099,6 +1112,71 @@ king_rollouts_per_hour = 8
 # the env-wave-1 report; shares below weight the GENERATION deficit inside
 # the group only.
 
+[source.affine_tau2_gen]
+# tau2-gen (Alan, catoneone/tau2-gen; our fork unarbos/tau2-gen) — generated
+# airline / retail / telecom tasks with a FRESH DATABASE PER TASK, τ²'s own
+# environment, tools, DeepSeek customer and scorer. ADMITTED 2026-09-21 10:51
+# UTC (Jacob "admit", held-out policy (b)): train on all three domains, the τ²
+# kingboard cells are marked "trained environment", τ³ banking + Gaia2 stay
+# the clean held-outs. Data event, no wvk.
+# DECONTAMINATION: the generator excludes every (intent, composition, persona)
+# of the τ² `base` splits (= the cards: airline 50 / retail 114 / telecom 114)
+# and checks identifier intersection with the τ² clone (must be empty);
+# export_affine.py refuses any id collision; the held-out ids ship with the
+# data (`data/e<epoch>/bench_task_ids.json`) for the fold's list. Reports:
+# `data/e<epoch>/<domain>.fidelity_report.md`.
+# Set e61 (seed 61 = the first fold epoch that reads it): airline 400 (weighted
+# up on purpose: the card where the king was 0 → 70), retail 200, telecom 200;
+# bases airline [DB, COMMUNICATE] (must-mention on every task), retail [DB]
+# (no judge), telecom ENV_ASSERTION. Refresh per fold: ops/tau2gen/refresh.sh
+# <epoch> then bump `--env.taskset.data-epoch` here + redeploy; names carry
+# the epoch (tau2g-e61-<domain>-<id>) so pools never collide.
+# Probe 2026-09-21 (datagen-2, teacher via engy T 0.7, DeepSeek customer, k=1,
+# seed-0 sets): airline 131/150, retail 138/150 (DB-only), telecom 160/200.
+group = "tool_use"
+runner = "verifiers_chat"
+taskset_id = "affine-tau2-gen-v1"
+catalog = "tau2_gen"
+select = "tasks"
+pass_dataset = false
+interactive = true
+policies = ["teacher_tau2_gen", "king_tau2_gen", "king_tau2_gen_greedy"]
+strata_buckets = 600
+strata_offset = 2860
+max_batch = 16
+max_concurrency = 8
+extra_flags = ["--env.taskset.data-epoch", "61"]
+share = 1.0                               # vs tau2_synth 3.0 / tau2 2.0 (Jacob: start small)
+king_rollouts_per_hour = 8
+
+[source.affine_kb_synth]
+# tau2-synth's ten domains with the POLICY MOVED INTO A KNOWLEDGE BASE behind
+# tau3's `KB_search` tool (env wave 5, 2026-09-20, docs/env-targets-for-
+# lagging-axes.md §7.1; Jacob "go" 16:14 UTC). Same tasks / customer / rewards
+# as affine_tau2_synth; the agent prompt is tau3's header ("do not make up
+# policies; all instructions are in the knowledge base") and the policy.md
+# sections are BM25 documents (rollouts/envs/affine_kb_synth_v1/kb.py).
+# WHY: on the tau3-banking card the teacher searches the KB before its first
+# substantive answer on 97 % of tasks, the king on 34 % (answers policy from
+# memory; king 7 / genesis 6 / teacher 29). D held no "retrieve the policy
+# before acting" state. DECONTAMINATION: tau3 has one domain (banking, 97
+# tasks, all on the card); nothing of it is used but the tool name, output
+# layout and header wording. Names `tau2k-<domain>-<id>`.
+group = "tool_use"
+runner = "verifiers_chat"
+taskset_id = "affine-kb-synth-v1"
+catalog = "tau2_kb"
+select = "tasks"
+pass_dataset = false
+interactive = true
+policies = ["teacher_kb_synth", "king_kb_synth", "king_kb_synth_greedy"]
+strata_buckets = 600
+strata_offset = 2260
+max_batch = 16
+max_concurrency = 8
+share = 2.0
+king_rollouts_per_hour = 8
+
 [source.affine_logic]
 # INTELLECT-3-RL `logic` train: 11,647 puzzles in 29 families (zebra,
 # cipher, futoshiki, sudoku, BBH/BBEH, ...), per-family Python verifier in
@@ -1628,9 +1706,14 @@ share = 0.5
 
 [source.affine_oolong]
 # oolong-synth (prime-envs): long-context questions answered from
-# /workspace/context.txt in the box (16k-token bucket of the validation
-# split, ~100 rows; test stays out of D); deterministic Oolong rules, judge
-# off; shell harnesses.
+# /workspace/context.txt in the box (16k-token bucket); deterministic Oolong
+# rules, judge off; shell harnesses.
+# 2026-09-20 (env wave 5, Jacob "go"): split validation -> TEST. The
+# kingboard card `oolong-synth` is the VALIDATION split at 64k; D had been on
+# validation@16k (0 shared context windows, 7/84 shared question strings,
+# same 2 datasets / 6 task templates). D now draws from `test` (5,200 rows,
+# ~400 in the 16k bucket); `test` must never become a card. Task names
+# change (oolong-16384-<row of the test split>), so the pool restarts.
 group = "general"
 runner = "verifiers"
 taskset_id = "affine-oolong-v1"         # rollouts/envs/affine_oolong_v1
@@ -1640,11 +1723,44 @@ pass_dataset = false
 policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased", "king_bashtool",
             "king_pi", "king_textbased", "king_bashtool_greedy",
             "king_pi_greedy", "king_textbased_greedy"]   # + king seat + greedy king 2026-09-13
-extra_flags = ["--env.taskset.context-len", "16384", "--env.taskset.split", "validation"]
+extra_flags = ["--env.taskset.context-len", "16384", "--env.taskset.split", "test"]
 strata_buckets = 115
 strata_offset = 4120
 max_batch = 16
 max_concurrency = 8
 # Probe 2026-09-12 (bash, 12 at 6 concurrent): 7/12 solved, 96 kept tool_call turns,
 # 11 agent_completed + 1 errored, 605 s for the batch.
+share = 1.0
+
+[source.affine_mrcr]
+# MRCR v2 (openai/mrcr, env wave 5, 2026-09-20; docs/env-targets-for-lagging-
+# axes.md §7.2): a long chat transcript in /workspace/context.txt, the agent
+# must find the k-th occurrence the question names and write it, hash-
+# prefixed, to /workspace/answer.txt. Official SequenceMatcher reward
+# (`correct`; fold rule score >= 1.0). Shell harnesses, same shape as oolong.
+# DECONTAMINATION: the kingboard card `mrcr-v2` is the 8-needle 64k-128k CSV
+# (103 rows). The wrapper REFUSES that bucket; D draws the disjoint buckets
+# 4n-32k-64k / 8n-32k-64k / 2n-64k-128k / 4n-64k-128k / 8n-16k-32k (~100 rows
+# each, same generator, different rows and transcripts -- the telecom
+# `full \ base` kind of decision).
+# WHY: the king writes the correct answer and then keeps calling tools
+# (`true` x26, `head -1 answer.txt` x24) with a thought that says the task
+# is done -- the state behind the card's MRCR / Oolong / GraphWalks context
+# overflows; the teacher never does it (0/72 probe rollouts). Probe
+# 2026-09-20 (datagen-2): teacher 71/72 solved, 6-9 tool calls + 1 prose
+# stop per rollout; king reign 20 93/96 solved on content, 23/96 post-done
+# loops (T 0 and T 0.8 alike).
+group = "general"
+runner = "verifiers"
+taskset_id = "affine-mrcr-v1"           # rollouts/envs/affine_mrcr_v1
+catalog = "mrcr"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased", "king_bashtool",
+            "king_pi", "king_textbased", "king_bashtool_greedy",
+            "king_pi_greedy", "king_textbased_greedy"]
+strata_buckets = 230
+strata_offset = 4235
+max_batch = 24
+max_concurrency = 8
 share = 1.0

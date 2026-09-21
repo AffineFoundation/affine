@@ -255,6 +255,53 @@ BACKFILL_POLICY_PREFIX = "backfill_"
 BACKFILL_CHUNK_PREFIX = "traces-backfill/"
 
 
+# tau2-gen decontamination (2026-09-21, Jacob "admit" 10:51 UTC): the tau2-bench
+# `base` ids per domain ship with the data; a generated task is admitted only
+# if it carries the [GEN:...] marker and its fingerprint (uid without the
+# tau2g-e<epoch>-<domain>- prefix and the [GEN:...] suffix -- telecom bench ids
+# ARE such fingerprints) is not a bench id. Airline / retail bench ids are
+# bare numbers with no name overlap by construction; the [GEN:] marker is the
+# fold-side guard there.
+DECONTAM: dict[str, dict] = {}     # source -> {"bench": {domain: set(ids)}, "require_gen": bool}
+_GEN_RE = re.compile(r"\[GEN:[^\]]*\]")
+
+
+def load_decontamination() -> dict[str, dict]:
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("decontamination") or {}
+    out: dict[str, dict] = {}
+    for src, cfg in raw.items():
+        if not isinstance(cfg, dict):
+            continue
+        path = REPO / str(cfg.get("bench_ids") or "")
+        bench: dict[str, set[str]] = {}
+        if path.exists():
+            data = json.loads(path.read_text())
+            bench = {str(k): set(map(str, v)) for k, v in data.items() if isinstance(v, list)}
+        out[str(src)] = {"bench": bench, "require_gen": bool(cfg.get("require_gen_marker", True)),
+                         "domain_field": str(cfg.get("domain_field") or "repo")}
+    return out
+
+
+def decontaminated(env: dict) -> str | None:
+    """Drop reason for a generated-benchmark task, or None."""
+    cfg = DECONTAM.get(str(env.get("source") or ""))
+    if not cfg:
+        return None
+    task = env.get("task") or {}
+    uid = str(task.get("uid") or task.get("sid") or "")
+    if cfg["require_gen"] and "[GEN:" not in uid:
+        return "decontam_no_gen_marker"
+    domain = str(task.get(cfg["domain_field"]) or "").rsplit("/", 1)[-1]
+    fp = _GEN_RE.sub("", uid)
+    fp = re.sub(r"^tau2g-e\d+-[a-z]+-", "", fp)
+    ids = cfg["bench"].get(domain, set())
+    if fp in ids:                                   # exact fingerprint (telecom ids are fingerprints)
+        return "bench_panel_overlap"
+    if domain == "telecom" and fp.split("[PERSONA")[0] in {i.split("[PERSONA")[0] for i in ids}:
+        return "bench_panel_overlap"                # same intent + fault composition, any persona
+    return None
+
+
 def is_backfill(env: dict, chunk_key: str = "") -> bool:
     pid = str((env.get("policy") or {}).get("id") or "")
     return pid.startswith(BACKFILL_POLICY_PREFIX) or str(chunk_key).startswith(BACKFILL_CHUNK_PREFIX)
@@ -504,8 +551,14 @@ def divergence_sublabel(row: dict, env: dict, prefix_text: str = "") -> str | No
     """`schema_example_where_teacher_asked`: at least one teacher reference
     stopped with a question and the king's action carries an identifier
     that is an example value from the tool schema (tau2-airline read
-    2026-09-18: `get_user_details(user_id="sara_doe_496")`)."""
+    2026-09-18: `get_user_details(user_id="sara_doe_496")`).
+    `false_confirmation` (tau2-gen admission 2026-09-21): the king STOPPED
+    with prose (confirms / reports) where every teacher reference acts --
+    it claims an outcome it has not produced."""
     refs = row.get("refs") or []
+    if row.get("king_stop") and refs and not any(r.get("stop") for r in refs) \
+            and all(r.get("valid") for r in refs):
+        return "false_confirmation"
     asked = any(r.get("stop") and "?" in str(r.get("visible") or "") for r in refs)
     if not asked:
         return None
@@ -737,18 +790,23 @@ def post_write_repeat_turn(main_convs: list[list[dict]], kind: str, min_span: in
     return None
 
 
-def king_done_turn(main_convs: list[list[dict]], kind: str, min_more: int) -> int | None:
+def king_done_turn(main_convs: list[list[dict]], kind: str, min_more: int,
+                   interactive: bool = False) -> int | None:
     """Position (within the main-root replies) of the first turn that
     follows a completion-eligible reply while >= `min_more` replies follow
     it -- the king said/attempted "done" and kept going. None if no such
-    turn."""
+    turn. In an interactive harness a prose reply is a message to the user,
+    not a completion (tau2-gen 2026-09-21: 75 of 66 king rollouts' asks read
+    as "done"), so only real finishes (submit / finish tool / task_complete)
+    count there."""
     for k in range(1, len(main_convs)):
         if len(main_convs) - k < min_more:
             return None
         prev = main_convs[k - 1]
-        if prev and prev[-1]["role"] == "assistant" \
-                and completion_kind(prev[-1]["content"], kind) is not None:
-            return k
+        if prev and prev[-1]["role"] == "assistant":
+            ck = completion_kind(prev[-1]["content"], kind)
+            if ck is not None and not (interactive and ck == "text"):
+                return k
     return None
 
 
@@ -1655,6 +1713,11 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         if is_backfill(env, chunk_key):
             _count(drops, "backfill_excluded")
             continue
+        _dc = decontaminated(env)
+        if _dc:
+            _count(drops, _dc)
+            _count(drops, f"{_dc}_{env.get('source')}")
+            continue
         _src = str(env.get("source") or "")
         YIELD.setdefault(_src, {"seen": 0, "accepted_turns": 0, "records": 0, "drops": {}})["seen"] += 1
         _pid = str((env.get("policy") or {}).get("id") or "")
@@ -1745,7 +1808,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             _count(notes, "king_loop_in_loop_labels", len(in_loop))
             _count(notes, "king_later_onset_labels", len(later_onsets))
         if want_done and main_convs:
-            k = king_done_turn(main_convs, kind, king_done["min_more_turns"])
+            k = king_done_turn(main_convs, kind, king_done["min_more_turns"], interactive=interactive)
             if k is not None:
                 i = main[k]
                 _count(notes, "king_done_states")
@@ -2636,6 +2699,10 @@ def gate_turn(rec: dict, m: dict, g: str, cfg: dict, state_rec: dict, task_solve
         return "admit" if st else "not_recovered"
     task = (rec.get("task") or {})
     ts = task.get("teacher_solved") if isinstance(task, dict) else None
+    if isinstance(ts, str):       # datagen stamps it as text ('True' / 'False')
+        ts = ts.strip().lower() in ("true", "1", "yes")
+    if ts is False:
+        ts = None                 # 'False' = not known solved at stamp time; let the traces decide
     if ts is None and cfg["task_signal"]:
         sid = str(rec.get("instance_id") or "")
         if sid in task_solved:
@@ -3363,6 +3430,11 @@ def main() -> None:
     mix, src2grp, lang_mix, buckets = load_mix(ignore_fold_mix=args.ignore_fold_mix)
     global INTERACTIVE_SOURCES
     INTERACTIVE_SOURCES = load_interactive_sources()      # before any derive_chunk call
+    DECONTAM.clear(); DECONTAM.update(load_decontamination())
+    if DECONTAM:
+        log("decontamination: " + "; ".join(f"{src} bench ids {sum(len(v) for v in c['bench'].values())} "
+                                            f"({', '.join(f'{d} {len(v)}' for d, v in c['bench'].items())})"
+                                            for src, c in DECONTAM.items()))
     if INTERACTIVE_SOURCES:
         log(f"interactive sources (mid-trajectory prose replies admitted as text): {sorted(INTERACTIVE_SOURCES)}")
     routed = {KING_LOOP_GROUP: load_king_loop_onset(),
