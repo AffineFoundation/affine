@@ -10,6 +10,7 @@ source "$HERE/env.sh"
 export LIUM_API_KEY="${LIUM_API_KEY:-${LIUM:-}}"; export HARBOR_BIN="${HARBOR_BIN:-$BENCH_HOME/harborenv/bin/harbor}"
 [ -n "${DAYTONA_API_KEY:-}" ] || export DAYTONA_API_KEY=$(op read --no-newline "op://Arbos/fywmj6vtq5delybw5c7a53l2qa/notesPlain" 2>/dev/null | grep -o 'dtn_[A-Za-z0-9_-]*' | head -1)
 DIGEST="$1" LABEL="$2" INTO="$BENCH_HOME/runs/$3"
+AGENT_TIMEOUT_S=3600; [ "${BUDGET_TAG:-}" = 4h250 ] && AGENT_TIMEOUT_S=14400; TAG="${BUDGET_TAG:-}"
 log() { echo "[swe-rerun] $(date -u +%FT%TZ) $*"; }
 POD=""; T0=$(date +%s)
 while [ $(( $(date +%s) - T0 )) -lt "${SWE_RENT_DEADLINE_S:-14400}" ]; do   # zero Lium stock is normal tonight: wait up to 4 h
@@ -18,9 +19,11 @@ while [ $(( $(date +%s) - T0 )) -lt "${SWE_RENT_DEADLINE_S:-14400}" ]; do   # ze
 done
 [ -n "$POD" ] || { log "$LABEL: no stock within the rent deadline"; exit 2; }
 trap '"$PY" "$HERE/kingpod.py" release "$POD" >/dev/null 2>&1' EXIT
-# a @4h250 job runs ~27 h at 64 in flight: tell the pod reaper (kingpod registers 14 h) so it does not release
-# the serving box mid-job (2026-09-21: 19 / 16 / 15 lost 267-300 trials each to NetworkConnectionError that way)
-"$PY" -c "import sys; sys.path.insert(0, '$REPO/ops/pods'); import registry; registry.register('$POD', expected_hours=36, source='explicit', meta={'job': 'swebench @4h250 / rerun'})" 2>/dev/null || true
+# lifetime for the pod reaper from the job's own budget: trials x agent budget / in flight, x1.3 slack, + 2 h
+# (2026-09-21: 27-h @4h250 jobs lost their serving box at kingpod's 14-h default -> NetworkConnectionError x 270)
+JOB_H=$(python3 -c "import math; print(max(14, math.ceil(500 * ${AGENT_TIMEOUT_S:-3600} / ${SWE_INFLIGHT_EST:-64} / 3600 * 1.3) + 2))")
+"$PY" -c "import sys; sys.path.insert(0, '$REPO/ops/pods'); import registry; registry.register('$POD', expected_hours=$JOB_H, source='explicit', meta={'job': 'swebench ${TAG:-1h} rerun/resume'})" 2>/dev/null || true
+log "pod registered for $JOB_H h (budget ${AGENT_TIMEOUT_S:-3600}s x 500 / ${SWE_INFLIGHT_EST:-64} in flight)"
 "$PY" "$HERE/kingpod.py" wait "$POD" >/dev/null || { log "pod never served"; exit 3; }
 REPL=$("$PY" -c 'import json; m=json.load(open("'"$HERE"'/state/pods.json"))["'"$POD"'"]; print(int((m.get("plan") or {}).get("replicas") or 1))')
 export BENCH_API_KEY=$("$PY" -c 'import json; print(json.load(open("'"$HERE"'/state/pods.json"))["'"$POD"'"]["key"])')
