@@ -1,0 +1,281 @@
+N4 (ADVISOR gate) + N6 (PPI) — $0 checks on stored artifacts — 2026-09-21
+turns 150 (hint_design cells on 100); source-trajectory family|outcome {'king|failed': 44, 'teacher|failed': 23, 'glm|solved': 30, 'teacher|solved': 42, 'glm|failed': 10, 'king|solved': 1}; dialect|outcome {'bash|failed': 26, 'tool_call|failed': 31, 'bash|solved': 35, 'terminus_json|failed': 20, 'tool_call|solved': 30, 'terminus_json|solved': 8}; $ spent 0.00
+
+Terms (one line each):
+  g(x)       = 1 − agreement(informed refs, blind refs) at turn x; informed = teacher (T:) or king (K:) sampled with a hindsight/hint note in the prompt; blind = the verdict's stored k=3 teacher refs (T:) or the fresh k=3 blind king refs (K:).
+  exact      = share of the informed refs whose norm_action (dialect-canonical, whitespace/quotes unified) equals one of the blind refs' — agreement; g = 1 − share.
+  jac50      = share of the informed refs with max token-Jaccard to the blind set ≥ 0.5; g = 1 − share.  jac_mean = 1 − mean of that max Jaccard (continuous).
+  judge      = 1 − share of judged pairs (informed ref i vs blind ref i, i = 0,1; glm-5.3-flash taxonomy) labelled SAME; only on the judged subset (60 hindsight / 40 hint_design turns).
+  exact_vs6  = exact with the blind set widened to the 3 stored + 3 fresh (p_none) blind teacher refs (sensitivity).  excess_* = g − g0 on the same turn.
+  g0 control = the SAME divergence between two blind draws (teacher: fresh p_none vs stored refs; king: blind2 vs blind) = the sampler's own stochasticity at x, no privilege.
+  label      = the SOURCE trajectory (the rollout the prefix was cut from) FAILED its task; AUC = P(g_failed > g_solved) + ½ ties, bootstrap 2000 turn-resamples, 95% percentile CI.
+  p_hind / p_err = hindsight plan note / later-error note (W1); h_ground / h_causal / h_answer = grounding / causal / next-step hints (W3). p_err ('no error… SOLVED' vs an error dump) and h_causal ('the run was solved') state the outcome in the note itself.
+  subsets: all = 150 turns; teacher_policy = the 65 turns whose source trajectory was sampled by the teacher itself (label ≈ 'the teacher failed from here'); non_king = teacher + GLM trajectories (105).
+  live_tvk   = the live meter's teacher-vs-king control on a wvk-22 verdict (teacher scored as a miner against the incumbent king, paired mean over the slice, sd units).  verified gap = teacher_pass1 − king_pass1 on identical datagen tasks for that king (verified_refs Q2).
+
+== CHECK 1 — N4: does blind-vs-informed divergence predict 'source trajectory FAILED'? ==
+Overlap with continuation-graded states: 150 informed-sample turns ∩ 67 graded states = 0; ∩ 30 deliberated states = 0; ∩ 18 VAV states = 0.
+  → NO graded state has informed samples. Every AUC below is against the TRAJECTORY outcome (did the run the prefix came from end solved), not the STATE outcome (does the teacher's blind continuation from x fail).
+    Implication: the label is one bit per trajectory shared by every turn of it, so a turn-level gate cannot be validated here — a turn in a failed run may be fine (the error is later) and a turn in a solved run may be a recovered mistake; and for the 45 king-trajectory turns (44 failed) the label is the KING's failure, not the teacher's.
+
+-- subset all   (AUC [95% CI]; variant × agreement metric × dialect; '-' = no data / one class; CI omitted when n < 6)
+variant      metric            pooled                  bash                tool_call            terminus_json     
+                             n=150 f=77             n=61 f=26              n=61 f=31              n=28 f=20       
+T:p_hind     exact       0.553 [0.48,0.63]      0.533 [0.42,0.63]      0.570 [0.44,0.70]      0.587 [0.42,0.78]   
+T:p_hind     jac50       0.589 [0.50,0.68]      0.547 [0.40,0.69]      0.630 [0.49,0.76]      0.560 [0.33,0.79]   
+T:p_hind     judge       0.700 [0.56,0.82]      0.687 [0.46,0.89]      0.675 [0.47,0.87]      0.773 [0.50,1.00]   
+T:p_hind     jac_mean    0.612 [0.52,0.70]      0.556 [0.39,0.70]      0.626 [0.47,0.77]      0.714 [0.48,0.92]   
+T:p_err      exact       0.560 [0.48,0.64]      0.543 [0.43,0.65]      0.574 [0.45,0.70]      0.601 [0.39,0.81]   
+T:p_err      jac50       0.605 [0.52,0.69]      0.556 [0.41,0.69]      0.577 [0.46,0.69]      0.806 [0.57,0.97]   
+T:p_err      judge       0.591 [0.44,0.73]      0.565 [0.32,0.81]      0.675 [0.43,0.88]      0.625 [0.30,0.92]   
+T:p_err      jac_mean    0.623 [0.53,0.71]      0.599 [0.45,0.75]      0.628 [0.48,0.77]      0.750 [0.53,0.93]   
+T:h_ground   exact       0.554 [0.46,0.65]      0.630 [0.51,0.74]      0.494 [0.33,0.66]      0.692 [0.36,1.00]   
+T:h_ground   jac50       0.610 [0.50,0.72]      0.554 [0.36,0.74]      0.576 [0.42,0.73]      0.721 [0.31,1.00]   
+T:h_ground   judge       0.627 [0.44,0.80]      0.607 [0.30,0.88]      0.542 [0.25,0.84]      0.800 [0.33,1.00]   
+T:h_ground   jac_mean    0.631 [0.51,0.74]      0.610 [0.40,0.81]      0.614 [0.42,0.78]      0.712 [0.43,0.94]   
+T:h_causal   exact       0.623 [0.53,0.71]      0.658 [0.54,0.77]      0.568 [0.41,0.72]      0.731 [0.43,1.00]   
+T:h_causal   jac50       0.652 [0.55,0.76]      0.588 [0.41,0.76]      0.654 [0.50,0.80]      0.740 [0.35,1.00]   
+T:h_causal   judge       0.649 [0.47,0.81]      0.719 [0.44,0.94]      0.458 [0.16,0.78]      0.900 [0.67,1.00]   
+T:h_causal   jac_mean    0.695 [0.59,0.79]      0.727 [0.53,0.88]      0.650 [0.47,0.82]      0.885 [0.64,1.00]   
+T:h_answer   exact       0.537 [0.46,0.62]      0.533 [0.44,0.62]      0.526 [0.38,0.67]      0.712 [0.39,1.00]   
+T:h_answer   jac50       0.603 [0.49,0.71]      0.506 [0.33,0.68]      0.672 [0.52,0.81]      0.712 [0.31,0.97]   
+T:h_answer   judge       0.691 [0.52,0.84]      0.758 [0.50,0.97]      0.643 [0.33,0.93]      0.500 [0.20,0.80]   
+T:h_answer   jac_mean    0.609 [0.49,0.73]      0.539 [0.34,0.74]      0.651 [0.47,0.81]      0.750 [0.50,0.96]   
+K:h_ground   exact       0.575 [0.48,0.67]      0.646 [0.48,0.80]      0.613 [0.47,0.75]      0.402 [0.16,0.78]   
+K:h_ground   jac50       0.602 [0.50,0.71]      0.578 [0.38,0.76]      0.659 [0.50,0.80]      0.643 [0.15,0.91]   
+K:h_ground   judge       0.631 [0.46,0.80]      0.705 [0.43,0.94]      0.771 [0.46,1.00]      0.100 [0.00,0.33]   
+K:h_ground   jac_mean    0.684 [0.57,0.79]      0.636 [0.44,0.82]      0.732 [0.56,0.88]      0.679 [0.12,1.00]   
+K:h_causal   exact       0.527 [0.43,0.62]      0.582 [0.45,0.70]      0.529 [0.38,0.69]      0.464 [0.23,0.82]   
+K:h_causal   jac50       0.616 [0.51,0.72]      0.552 [0.37,0.72]      0.681 [0.53,0.82]      0.696 [0.41,0.92]   
+K:h_causal   judge       0.681 [0.51,0.85]      0.680 [0.42,0.92]      0.795 [0.54,0.98]      0.400 [0.00,0.80]   
+K:h_causal   jac_mean    0.639 [0.53,0.75]      0.608 [0.41,0.79]      0.761 [0.60,0.90]      0.607 [0.32,0.88]   
+K:h_answer   exact       0.526 [0.43,0.62]      0.482 [0.32,0.64]      0.538 [0.38,0.70]      0.562 [0.35,0.88]   
+K:h_answer   jac50       0.617 [0.50,0.73]      0.489 [0.31,0.66]      0.670 [0.53,0.81]      0.768 [0.36,1.00]   
+K:h_answer   judge       0.603 [0.41,0.79]      0.609 [0.34,0.86]      0.768 [0.54,0.95]      0.100 [0.00,0.30]   
+K:h_answer   jac_mean    0.599 [0.48,0.71]      0.488 [0.29,0.68]      0.644 [0.47,0.80]      0.750 [0.29,1.00]   
+-- controls (no privilege)
+g0:teacher_  exact       0.546 [0.47,0.63]      0.645 [0.53,0.75]      0.542 [0.41,0.67]      0.466 [0.23,0.69]   
+g0:teacher_  jac50       0.530 [0.45,0.61]      0.606 [0.46,0.74]      0.470 [0.36,0.58]      0.547 [0.32,0.76]   
+g0:teacher_  judge       0.534 [0.40,0.67]      0.653 [0.42,0.87]      0.597 [0.38,0.79]      0.375 [0.04,0.71]   
+g0:king_bli  exact       0.568 [0.46,0.68]      0.675 [0.50,0.83]      0.502 [0.33,0.67]      0.419 [0.10,0.79]   
+g0:king_bli  jac50       0.565 [0.48,0.65]      0.554 [0.41,0.69]      0.599 [0.45,0.73]      0.588 [0.50,0.69]   
+g0:king_bli  judge       0.540 [0.39,0.69]      0.750 [0.48,0.95]      0.446 [0.21,0.70]      0.562 [0.50,0.71]   
+g0:king_vs_  exact       0.509 [0.42,0.61]      0.578 [0.44,0.71]      0.526 [0.37,0.67]      0.419 [0.21,0.74]   
+g0:king_vs_  jac50       0.593 [0.49,0.70]      0.578 [0.41,0.75]      0.543 [0.38,0.69]      0.603 [0.20,0.95]   
+stored_self_exact_div    0.505 [0.43,0.58]      0.596 [0.52,0.67]      0.468 [0.34,0.59]      0.481 [0.27,0.70]   
+stored_self_judge_div    0.526 [0.40,0.65]      0.583 [0.37,0.79]      0.623 [0.44,0.79]      0.542 [0.50,0.64]   
+is_king_trajectory       0.779 [0.72,0.83]      0.731 [0.63,0.83]      0.742 [0.66,0.83]      0.863 [0.69,0.98]   
+turn_idx                 0.524 [0.43,0.61]      0.466 [0.32,0.62]      0.527 [0.38,0.67]      0.694 [0.46,0.89]   
+prefix_chars             0.571 [0.48,0.67]      0.545 [0.40,0.70]      0.537 [0.38,0.68]      0.662 [0.41,0.88]   
+p_err_has_error          0.543 [0.47,0.62]      0.551 [0.43,0.67]      0.578 [0.47,0.69]      0.512 [0.30,0.71]   
+note_words:p_hind        0.426 [0.33,0.53]      0.547 [0.40,0.70]      0.412 [0.25,0.58]      0.368 [0.13,0.62]   
+note_words:p_err         0.532 [0.45,0.61]      0.516 [0.36,0.65]      0.568 [0.46,0.68]      0.522 [0.30,0.72]   
+note_words:h_ground      0.412 [0.30,0.53]      0.544 [0.33,0.75]      0.461 [0.27,0.66]      0.616 [0.29,0.90]   
+note_words:h_causal      0.431 [0.32,0.55]      0.579 [0.38,0.77]      0.518 [0.34,0.69]      0.250 [0.00,0.56]   
+note_words:h_answer      0.547 [0.43,0.66]      0.609 [0.40,0.80]      0.635 [0.46,0.80]      0.571 [0.31,0.81]   
+-- sensitivity (pooled only): exact vs 6-blind union | excess g − g0 (exact / jac50)
+T:p_hind     exact_vs6 0.544 [0.47,0.62]   excess_exact 0.484 [0.40,0.57]   excess_jac50 0.575 [0.48,0.67]
+T:p_err      exact_vs6 0.532 [0.44,0.62]   excess_exact 0.466 [0.39,0.54]   excess_jac50 0.582 [0.49,0.66]
+T:h_ground   exact_vs6 0.572 [0.47,0.67]   excess_exact 0.470 [0.38,0.57]   excess_jac50 0.525 [0.41,0.63]
+T:h_causal   exact_vs6 0.614 [0.52,0.71]   excess_exact 0.559 [0.46,0.65]   excess_jac50 0.602 [0.49,0.71]
+T:h_answer   exact_vs6 0.554 [0.46,0.64]   excess_exact 0.481 [0.39,0.58]   excess_jac50 0.549 [0.44,0.66]
+K:h_ground   exact_vs6      -               excess_exact 0.465 [0.36,0.58]   excess_jac50 0.537 [0.43,0.65]
+K:h_causal   exact_vs6      -               excess_exact 0.473 [0.37,0.58]   excess_jac50 0.551 [0.44,0.65]
+K:h_answer   exact_vs6      -               excess_exact 0.479 [0.36,0.59]   excess_jac50 0.565 [0.45,0.67]
+
+-- subset teacher_policy   (AUC [95% CI]; variant × agreement metric × dialect; '-' = no data / one class; CI omitted when n < 6)
+variant      metric            pooled                  bash                tool_call            terminus_json     
+                             n=65 f=23               n=9 f=4               n=46 f=16               n=10 f=3       
+T:p_hind     exact       0.541 [0.42,0.66]      0.500 [0.50,0.50]      0.575 [0.43,0.72]      0.083 [0.00,0.25]   
+T:p_hind     jac50       0.618 [0.47,0.77]      0.458 [0.00,0.90]      0.712 [0.54,0.87]      0.000 [0.00,0.00]   
+T:p_hind     judge       0.667 [0.44,0.87]           -                 0.722 [0.50,0.92]       0.000              
+T:p_hind     jac_mean    0.633 [0.47,0.79]      0.417 [0.00,1.00]      0.699 [0.50,0.87]      0.000 [0.00,0.00]   
+T:p_err      exact       0.572 [0.44,0.69]      0.600 [0.50,0.80]      0.569 [0.40,0.72]      0.524 [0.17,0.79]   
+T:p_err      jac50       0.704 [0.57,0.83]      0.775 [0.33,1.00]      0.648 [0.49,0.79]      0.905 [0.67,1.00]   
+T:p_err      judge       0.706 [0.50,0.90]           -                 0.670 [0.43,0.90]       0.750              
+T:p_err      jac_mean    0.699 [0.54,0.84]      0.800 [0.33,1.00]      0.693 [0.48,0.87]      0.952 [0.75,1.00]   
+T:h_ground   exact       0.509 [0.35,0.67]      0.625 [0.50,0.88]      0.498 [0.31,0.67]           -              
+T:h_ground   jac50       0.609 [0.43,0.78]      0.562 [0.10,1.00]      0.626 [0.43,0.80]           -              
+T:h_ground   judge       0.644 [0.33,0.91]           -                 0.594 [0.25,0.92]           -              
+T:h_ground   jac_mean    0.595 [0.38,0.80]      0.500 [0.00,1.00]      0.632 [0.41,0.85]           -              
+T:h_causal   exact       0.562 [0.40,0.71]      0.500 [0.50,0.50]      0.577 [0.39,0.75]           -              
+T:h_causal   jac50       0.641 [0.45,0.81]      0.500 [0.00,1.00]      0.671 [0.46,0.86]           -              
+T:h_causal   judge       0.694 [0.28,1.00]           -                 0.583 [0.15,1.00]           -              
+T:h_causal   jac_mean    0.662 [0.46,0.85]      0.750 [0.20,1.00]      0.671 [0.44,0.87]           -              
+T:h_answer   exact       0.503 [0.36,0.65]      0.500 [0.50,0.50]      0.504 [0.33,0.66]           -              
+T:h_answer   jac50       0.655 [0.49,0.81]      0.500 [0.00,1.00]      0.713 [0.54,0.87]           -              
+T:h_answer   judge       0.800 [0.46,1.00]           -                 0.766 [0.35,1.00]           -              
+T:h_answer   jac_mean    0.631 [0.42,0.83]      0.500 [0.00,1.00]      0.680 [0.47,0.88]           -              
+K:h_ground   exact       0.579 [0.44,0.71]      0.625 [0.50,0.88]      0.599 [0.43,0.75]       0.500              
+K:h_ground   jac50       0.623 [0.45,0.79]      0.562 [0.10,1.00]      0.654 [0.45,0.84]       0.667              
+K:h_ground   judge       0.678 [0.31,1.00]           -                 0.656 [0.25,1.00]           -              
+K:h_ground   jac_mean    0.673 [0.49,0.84]      0.375 [0.00,1.00]      0.753 [0.55,0.92]       0.667              
+K:h_causal   exact       0.531 [0.39,0.67]      0.500 [0.50,0.50]      0.567 [0.40,0.72]       0.500              
+K:h_causal   jac50       0.691 [0.54,0.85]      0.562 [0.10,1.00]      0.706 [0.52,0.87]       1.000              
+K:h_causal   judge       0.900 [0.71,1.00]           -                 0.891 [0.68,1.00]           -              
+K:h_causal   jac_mean    0.738 [0.58,0.88]      0.875 [0.40,1.00]      0.822 [0.66,0.95]       0.667              
+K:h_answer   exact       0.510 [0.36,0.64]      0.438 [0.00,0.88]      0.545 [0.36,0.71]       0.500              
+K:h_answer   jac50       0.716 [0.56,0.86]      0.750 [0.25,1.00]      0.719 [0.55,0.88]       0.667              
+K:h_answer   judge       0.722 [0.50,0.94]           -                 0.812 [0.62,1.00]           -              
+K:h_answer   jac_mean    0.688 [0.49,0.84]      1.000 [1.00,1.00]      0.692 [0.49,0.87]       0.667              
+-- controls (no privilege)
+g0:teacher_  exact       0.525 [0.40,0.65]      0.600 [0.50,0.83]      0.522 [0.36,0.68]      0.452 [0.00,0.75]   
+g0:teacher_  jac50       0.529 [0.40,0.66]      0.550 [0.14,1.00]      0.509 [0.38,0.66]      0.690 [0.17,1.00]   
+g0:teacher_  judge       0.548 [0.36,0.74]           -                 0.561 [0.34,0.78]       0.250              
+g0:king_bli  exact       0.576 [0.41,0.74]      0.875 [0.62,1.00]      0.540 [0.34,0.75]      0.444 [0.00,0.83]   
+g0:king_bli  jac50       0.614 [0.48,0.76]      0.688 [0.20,1.00]      0.595 [0.43,0.76]      0.667 [0.50,1.00]   
+g0:king_bli  judge       0.579 [0.31,0.83]           -                 0.547 [0.23,0.89]       0.750              
+g0:king_vs_  exact       0.505 [0.35,0.65]      0.625 [0.50,0.88]      0.526 [0.34,0.70]      0.333 [0.00,0.50]   
+g0:king_vs_  jac50       0.589 [0.42,0.74]      0.562 [0.19,1.00]      0.565 [0.36,0.74]      0.556 [0.00,1.00]   
+stored_self_exact_div    0.453 [0.34,0.57]      0.375 [0.12,0.50]      0.458 [0.29,0.62]      0.429 [0.11,0.69]   
+stored_self_judge_div    0.631 [0.45,0.80]           -                 0.631 [0.43,0.83]       0.500              
+is_king_trajectory       0.500 [0.50,0.50]      0.500 [0.50,0.50]      0.500 [0.50,0.50]      0.500 [0.50,0.50]   
+turn_idx                 0.545 [0.40,0.69]      0.500 [0.00,1.00]      0.539 [0.37,0.71]      0.548 [0.06,1.00]   
+prefix_chars             0.494 [0.34,0.65]      0.400 [0.00,0.85]      0.506 [0.32,0.69]      0.571 [0.19,0.95]   
+p_err_has_error          0.620 [0.51,0.74]      0.675 [0.31,1.00]      0.604 [0.47,0.74]      0.619 [0.22,0.93]   
+note_words:p_hind        0.443 [0.29,0.61]      0.458 [0.00,1.00]      0.403 [0.22,0.60]      0.250 [0.00,0.80]   
+note_words:p_err         0.603 [0.47,0.74]      0.675 [0.25,1.00]      0.579 [0.45,0.71]      0.714 [0.25,1.00]   
+note_words:h_ground      0.636 [0.46,0.80]      0.688 [0.12,1.00]      0.543 [0.34,0.75]       1.000              
+note_words:h_causal      0.571 [0.38,0.75]      0.625 [0.00,1.00]      0.534 [0.32,0.74]       0.667              
+note_words:h_answer      0.668 [0.51,0.83]      0.500 [0.00,1.00]      0.652 [0.44,0.84]       1.000              
+-- sensitivity (pooled only): exact vs 6-blind union | excess g − g0 (exact / jac50)
+T:p_hind     exact_vs6 0.526 [0.40,0.65]   excess_exact 0.487 [0.37,0.60]   excess_jac50 0.641 [0.48,0.78]
+T:p_err      exact_vs6 0.548 [0.41,0.68]   excess_exact 0.505 [0.40,0.61]   excess_jac50 0.637 [0.51,0.76]
+T:h_ground   exact_vs6 0.527 [0.37,0.69]   excess_exact 0.450 [0.31,0.59]   excess_jac50 0.572 [0.39,0.74]
+T:h_causal   exact_vs6 0.580 [0.42,0.72]   excess_exact 0.514 [0.38,0.65]   excess_jac50 0.632 [0.47,0.80]
+T:h_answer   exact_vs6 0.518 [0.37,0.67]   excess_exact 0.453 [0.31,0.60]   excess_jac50 0.641 [0.47,0.80]
+K:h_ground   exact_vs6      -               excess_exact 0.468 [0.30,0.64]   excess_jac50 0.523 [0.35,0.69]
+K:h_causal   exact_vs6      -               excess_exact 0.489 [0.31,0.66]   excess_jac50 0.587 [0.43,0.74]
+K:h_answer   exact_vs6      -               excess_exact 0.488 [0.32,0.66]   excess_jac50 0.607 [0.43,0.78]
+
+-- subset non_king   (AUC [95% CI]; variant × agreement metric × dialect; '-' = no data / one class; CI omitted when n < 6)
+variant      metric            pooled                  bash                tool_call            terminus_json     
+                             n=105 f=33             n=49 f=14              n=46 f=16               n=10 f=3       
+T:p_hind     exact       0.549 [0.46,0.64]      0.583 [0.48,0.68]      0.575 [0.43,0.72]      0.083 [0.00,0.25]   
+T:p_hind     jac50       0.613 [0.49,0.72]      0.587 [0.42,0.75]      0.712 [0.54,0.86]      0.000 [0.00,0.00]   
+T:p_hind     judge       0.707 [0.54,0.86]      0.750 [0.52,0.93]      0.722 [0.49,0.92]       0.000              
+T:p_hind     jac_mean    0.619 [0.49,0.74]      0.587 [0.40,0.76]      0.699 [0.51,0.87]      0.000 [0.00,0.00]   
+T:p_err      exact       0.562 [0.46,0.65]      0.582 [0.44,0.70]      0.569 [0.40,0.72]      0.524 [0.17,0.81]   
+T:p_err      jac50       0.622 [0.51,0.74]      0.564 [0.38,0.74]      0.648 [0.49,0.80]      0.905 [0.67,1.00]   
+T:p_err      judge       0.646 [0.48,0.80]      0.646 [0.36,0.89]      0.670 [0.41,0.90]       0.750              
+T:p_err      jac_mean    0.635 [0.50,0.75]      0.616 [0.43,0.80]      0.693 [0.49,0.88]      0.952 [0.75,1.00]   
+T:h_ground   exact       0.522 [0.39,0.65]      0.601 [0.44,0.75]      0.498 [0.31,0.67]           -              
+T:h_ground   jac50       0.574 [0.43,0.72]      0.555 [0.30,0.80]      0.626 [0.43,0.82]           -              
+T:h_ground   judge       0.673 [0.44,0.87]      0.750 [0.40,1.00]      0.594 [0.25,0.91]           -              
+T:h_ground   jac_mean    0.578 [0.41,0.74]      0.623 [0.35,0.88]      0.632 [0.40,0.84]           -              
+T:h_causal   exact       0.591 [0.47,0.70]      0.636 [0.49,0.77]      0.577 [0.39,0.74]           -              
+T:h_causal   jac50       0.661 [0.52,0.80]      0.705 [0.51,0.87]      0.671 [0.47,0.86]           -              
+T:h_causal   judge       0.761 [0.54,0.95]      0.854 [0.60,1.00]      0.583 [0.12,0.95]           -              
+T:h_causal   jac_mean    0.684 [0.52,0.83]      0.801 [0.60,0.96]      0.671 [0.45,0.88]           -              
+T:h_answer   exact       0.495 [0.38,0.60]      0.503 [0.33,0.63]      0.504 [0.33,0.67]           -              
+T:h_answer   jac50       0.585 [0.44,0.73]      0.494 [0.26,0.72]      0.713 [0.54,0.88]           -              
+T:h_answer   judge       0.782 [0.57,0.95]      0.802 [0.53,1.00]      0.766 [0.37,1.00]           -              
+T:h_answer   jac_mean    0.569 [0.41,0.73]      0.500 [0.25,0.76]      0.680 [0.45,0.88]           -              
+K:h_ground   exact       0.589 [0.46,0.72]      0.571 [0.33,0.80]      0.599 [0.43,0.76]       0.500              
+K:h_ground   jac50       0.548 [0.40,0.69]      0.438 [0.19,0.70]      0.654 [0.46,0.84]       0.667              
+K:h_ground   judge       0.631 [0.39,0.84]      0.650 [0.32,0.95]      0.656 [0.25,1.00]           -              
+K:h_ground   jac_mean    0.617 [0.47,0.76]      0.523 [0.27,0.78]      0.753 [0.56,0.92]       0.667              
+K:h_causal   exact       0.558 [0.45,0.66]      0.585 [0.43,0.71]      0.567 [0.40,0.72]       0.500              
+K:h_causal   jac50       0.658 [0.52,0.79]      0.648 [0.45,0.81]      0.706 [0.53,0.88]       1.000              
+K:h_causal   judge       0.835 [0.68,0.95]      0.771 [0.55,0.98]      0.891 [0.69,1.00]           -              
+K:h_causal   jac_mean    0.687 [0.55,0.82]      0.727 [0.48,0.93]      0.822 [0.66,0.95]       0.667              
+K:h_answer   exact       0.499 [0.37,0.61]      0.469 [0.26,0.65]      0.545 [0.38,0.71]       0.500              
+K:h_answer   jac50       0.626 [0.49,0.75]      0.534 [0.33,0.73]      0.719 [0.54,0.88]       0.667              
+K:h_answer   judge       0.618 [0.41,0.82]      0.542 [0.24,0.83]      0.812 [0.62,1.00]           -              
+K:h_answer   jac_mean    0.588 [0.45,0.73]      0.551 [0.32,0.75]      0.692 [0.49,0.87]       0.667              
+-- controls (no privilege)
+g0:teacher_  exact       0.549 [0.44,0.65]      0.632 [0.51,0.75]      0.522 [0.36,0.68]      0.452 [0.00,0.78]   
+g0:teacher_  jac50       0.556 [0.45,0.66]      0.627 [0.44,0.79]      0.509 [0.38,0.66]      0.690 [0.17,1.00]   
+g0:teacher_  judge       0.559 [0.39,0.72]      0.688 [0.41,0.91]      0.561 [0.35,0.79]       0.250              
+g0:king_bli  exact       0.575 [0.43,0.71]      0.596 [0.35,0.83]      0.540 [0.34,0.73]      0.444 [0.00,0.83]   
+g0:king_bli  jac50       0.584 [0.47,0.70]      0.540 [0.37,0.72]      0.595 [0.42,0.77]      0.667 [0.50,1.00]   
+g0:king_bli  judge       0.630 [0.44,0.81]      0.708 [0.42,0.96]      0.547 [0.25,0.88]       0.750              
+g0:king_vs_  exact       0.535 [0.42,0.65]      0.619 [0.48,0.74]      0.526 [0.34,0.71]      0.333 [0.00,0.50]   
+g0:king_vs_  jac50       0.579 [0.44,0.72]      0.581 [0.35,0.80]      0.565 [0.36,0.75]      0.556 [0.00,1.00]   
+stored_self_exact_div    0.503 [0.41,0.60]      0.580 [0.48,0.67]      0.458 [0.31,0.61]      0.429 [0.00,0.69]   
+stored_self_judge_div    0.605 [0.45,0.76]      0.667 [0.43,0.86]      0.631 [0.42,0.84]       0.500              
+is_king_trajectory       0.500 [0.50,0.50]      0.500 [0.50,0.50]      0.500 [0.50,0.50]      0.500 [0.50,0.50]   
+turn_idx                 0.539 [0.43,0.65]      0.536 [0.37,0.70]      0.539 [0.36,0.70]      0.548 [0.06,1.00]   
+prefix_chars             0.528 [0.40,0.65]      0.582 [0.39,0.77]      0.506 [0.32,0.70]      0.571 [0.19,0.92]   
+p_err_has_error          0.547 [0.44,0.65]      0.493 [0.34,0.65]      0.604 [0.46,0.74]      0.619 [0.25,0.93]   
+note_words:p_hind        0.455 [0.34,0.58]      0.473 [0.30,0.65]      0.403 [0.23,0.60]      0.250 [0.00,0.71]   
+note_words:p_err         0.518 [0.41,0.63]      0.439 [0.29,0.62]      0.579 [0.44,0.72]      0.714 [0.22,1.00]   
+note_words:h_ground      0.585 [0.44,0.72]      0.591 [0.31,0.86]      0.543 [0.34,0.76]       1.000              
+note_words:h_causal      0.580 [0.42,0.73]      0.642 [0.40,0.87]      0.534 [0.33,0.74]       0.667              
+note_words:h_answer      0.689 [0.56,0.81]      0.651 [0.43,0.85]      0.652 [0.46,0.83]       1.000              
+-- sensitivity (pooled only): exact vs 6-blind union | excess g − g0 (exact / jac50)
+T:p_hind     exact_vs6 0.530 [0.43,0.63]   excess_exact 0.462 [0.36,0.56]   excess_jac50 0.592 [0.47,0.71]
+T:p_err      exact_vs6 0.530 [0.42,0.64]   excess_exact 0.476 [0.39,0.57]   excess_jac50 0.536 [0.42,0.65]
+T:h_ground   exact_vs6 0.538 [0.40,0.67]   excess_exact 0.427 [0.32,0.55]   excess_jac50 0.519 [0.37,0.67]
+T:h_causal   exact_vs6 0.588 [0.46,0.71]   excess_exact 0.512 [0.40,0.63]   excess_jac50 0.589 [0.45,0.72]
+T:h_answer   exact_vs6 0.528 [0.40,0.65]   excess_exact 0.392 [0.28,0.51]   excess_jac50 0.511 [0.37,0.65]
+K:h_ground   exact_vs6      -               excess_exact 0.472 [0.33,0.62]   excess_jac50 0.485 [0.34,0.64]
+K:h_causal   exact_vs6      -               excess_exact 0.493 [0.34,0.64]   excess_jac50 0.563 [0.42,0.70]
+K:h_answer   exact_vs6      -               excess_exact 0.446 [0.32,0.59]   excess_jac50 0.539 [0.39,0.69]
+
+-- kill test: AUC < 0.65 everywhere?
+  all: top cells (n ≥ 20) T:p_err jac50 terminus_json AUC 0.806 n 26 CI [0.57,0.97]; K:h_causal jac_mean tool_call AUC 0.761 n 41 CI [0.60,0.90]; T:p_err jac_mean terminus_json AUC 0.750 n 26 CI [0.53,0.93]; K:h_ground jac_mean tool_call AUC 0.732 n 40 CI [0.56,0.88]; T:h_causal jac_mean bash AUC 0.727 n 37 CI [0.53,0.88]
+  all: best blind-vs-blind control (no privilege) = king_blind exact bash AUC 0.675; is_king_trajectory AUC 0.779
+  teacher_policy: top cells (n ≥ 20) K:h_causal jac_mean tool_call AUC 0.822 n 32 CI [0.66,0.95]; K:h_ground jac_mean tool_call AUC 0.753 n 32 CI [0.55,0.92]; K:h_causal jac_mean pooled AUC 0.738 n 42 CI [0.58,0.88]; K:h_answer jac50 tool_call AUC 0.719 n 32 CI [0.55,0.88]; K:h_answer jac50 pooled AUC 0.716 n 42 CI [0.56,0.86]
+  teacher_policy: best blind-vs-blind control (no privilege) = king_blind jac50 pooled AUC 0.614; is_king_trajectory AUC 0.500
+  non_king: top cells (n ≥ 20) K:h_causal judge pooled AUC 0.835 n 27 CI [0.68,0.95]; K:h_causal jac_mean tool_call AUC 0.822 n 32 CI [0.66,0.95]; T:h_causal jac_mean bash AUC 0.801 n 30 CI [0.60,0.96]; T:h_answer judge pooled AUC 0.782 n 27 CI [0.57,0.95]; T:h_causal judge pooled AUC 0.761 n 26 CI [0.54,0.95]
+  non_king: best blind-vs-blind control (no privilege) = teacher_blind exact bash AUC 0.632; is_king_trajectory AUC 0.500
+-- informed g vs its own blind control (paired AUC difference, same turns; + = privilege adds signal beyond teacher/king stochasticity)
+  all: T:p_hind/exact -0.004 [-0.08,+0.08]; T:p_hind/jac50 +0.068 [-0.03,+0.16]; T:p_err/exact +0.001 [-0.06,+0.06]; T:p_err/jac50 +0.079 [-0.01,+0.17]; T:h_ground/exact -0.002 [-0.07,+0.07]; T:h_ground/jac50 +0.044 [-0.07,+0.16]; T:h_causal/exact +0.072 [-0.01,+0.16]; T:h_causal/jac50 +0.077 [-0.03,+0.18]; T:h_answer/exact -0.017 [-0.10,+0.07]; T:h_answer/jac50 +0.033 [-0.07,+0.14]; K:h_ground/exact +0.002 [-0.10,+0.11]; K:h_ground/jac50 +0.042 [-0.08,+0.16]; K:h_causal/exact -0.044 [-0.14,+0.06]; K:h_causal/jac50 +0.050 [-0.08,+0.17]; K:h_answer/exact -0.045 [-0.15,+0.07]; K:h_answer/jac50 +0.051 [-0.07,+0.17]
+  teacher_policy: T:p_hind/exact -0.015 [-0.11,+0.08]; T:p_hind/jac50 +0.108 [-0.05,+0.27]; T:p_err/exact +0.036 [-0.01,+0.10]; T:p_err/jac50 +0.166 [+0.04,+0.31]; T:h_ground/exact -0.029 [-0.09,+0.02]; T:h_ground/jac50 +0.078 [-0.11,+0.27]; T:h_causal/exact +0.034 [-0.07,+0.16]; T:h_causal/jac50 +0.099 [-0.05,+0.26]; T:h_answer/exact -0.036 [-0.12,+0.05]; T:h_answer/jac50 +0.124 [-0.03,+0.28]; K:h_ground/exact -0.010 [-0.17,+0.16]; K:h_ground/jac50 +0.017 [-0.15,+0.19]; K:h_causal/exact -0.058 [-0.20,+0.09]; K:h_causal/jac50 +0.085 [-0.07,+0.25]; K:h_answer/exact -0.079 [-0.24,+0.07]; K:h_answer/jac50 +0.111 [-0.07,+0.27]
+
+== CHECK 2 — N6: corr(live meter, verified action value) ==
+Per-action r = corr(lpC(y|x,z_own) − lpC(y|x,∅), V − B): NOT COMPUTABLE from disk — 0 teacher echoes exist for any of the 67 graded states / 240 labelled first actions (checked vav/, deliberated/, split_states/, outcome/).
+What joins and what does not:
+  - vav/tables.jsonl (18 states, 91 labelled first actions with V) + split_states/outcome continuations (67 states, 240 labelled first actions) carry outcomes but NO teacher logprobs; vav/, deliberated/, split_states/, outcome/ hold samples, tables, judge calls and continuation reports only — the per-action live A-leg proxy lpC(y|x,z_own) − lpC(y|x,∅) is not on disk.
+  - verified_refs/report.json is task-level (pass@1 per king reign vs the teacher on identical tasks); it has no per-state or per-action rows and no live-meter numbers.
+  - no_typicality/report.json + the cached verdicts (chal-00409..00630) carry the live meter per verdict: challenger−king margin and, on wvk-22 verdicts, the teacher-vs-king control (teacher scored as a miner against the incumbent king on the duel slice) pooled and per dialect.
+  - The only key both sides share is the KING DIGEST (reigns 11–20). Join J2: live teacher-vs-king control ↔ verified teacher−king pass gap of that king (7 distinct kings, 35 verdicts = pseudo-replicates). Join J1: crown chain — the live crowning z of chal→king ↔ the verified pass1 change between consecutive kings (9 crowns). Both are reign-level, both are 'meter vs outcome of a whole POLICY', not 'meter vs verified value of an ACTION at a state' — which is what N6's PPI rectifier needs. Task mixes also differ per reign (reign 11 = 77% math), so the verified gaps are not on one scale.
+  - Non-crowned challengers have no datagen rollouts (only the king seat is sampled), so the 25 losing wvk-22 challengers cannot be joined to any verified outcome at all.
+
+-- J2: live teacher-vs-king control ↔ verified teacher−king pass1 gap, per king (n kings 7, verdicts 35)
+reign   nV live_tvk_margin  live_z P(T ahead) ver_gap_p1  ver_n |  coding    math    term    tool | bash_tmk boxed_tmk terminus tool_call
+14       1           0.117    3.61       1.00      0.434    440 |       -       -       -   0.582 |        -         -        -         -
+15       3           0.927    8.28       0.67      0.396    805 |   0.200       -   0.000   0.638 |    2.899     2.855    1.945     1.146
+16       7           1.005    8.66       1.00      0.155   1236 |   0.344   0.321   0.278   0.144 |    0.418     0.694    0.732     1.012
+17       4           0.518    4.90       1.00      0.179    726 |   0.053       -       -   0.143 |    0.185     1.004    0.856     0.668
+18       3           0.107    1.07       1.00      0.168    684 |       -       -       -   0.161 |    0.247     0.779    0.899     0.165
+19       6          -0.127   -1.32       0.00      0.162    761 |   1.000       -   0.357   0.167 |    0.094     1.078    0.278     0.011
+20      11          -0.514   -5.70       0.00      0.115   2591 |   0.188   0.204   0.190   0.085 |   -0.068     0.325    0.032    -0.500
+  per king (n=7): pearson  0.321 (p  0.483) spearman  0.357; per verdict (pseudo-replicated, n=35): pearson  0.445 spearman  0.617 (z: pearson  0.499)
+  dialect↔group axis live_bash_tmk~verified_gap_coding: n 5 pearson -0.240 spearman  0.100
+  dialect↔group axis live_boxed_tmk~verified_gap_math: n 2 pearson      - spearman      -
+  dialect↔group axis live_terminus_tmk~verified_gap_terminal: n 4 pearson -0.785 spearman -0.400
+  dialect↔group axis live_tool_call_tmk~verified_gap_tool_use: n 6 pearson  0.614 spearman  0.486
+  dialect↔group axis pooled_axes: n 17 pearson -0.086 spearman  0.110
+  reading: the live control puts the teacher BEHIND the king on reigns 19, 20 (P(T ahead) ≤ 0.5), while every king is verified-below the teacher by 0.11–0.43 pass1 on identical tasks — the meter's sign is wrong at the top of the chain even where its ordering across kings is right. tmk = per-dialect teacher−king live mean; coding/math/term/tool = verified teacher−king pass@n by task group.
+
+-- J1: crown chain — live crowning z (chal beat king) ↔ verified pass1 change (K_new−T) − (K_old−T)  (n 9)
+rec          old  new mode        live_margin  live_z  old_gap  new_gap  Δverified  n_old  n_new
+chal-00502    11   12 min_rg           0.0021    2.69    0.039    0.263     -0.224   9962    804
+chal-00517    12   13 min_rg           0.0023    2.51    0.263    0.377     -0.113    804   4450
+chal-00556    13   14 min_rg           0.0022    3.13    0.377    0.434     -0.057   4450    440
+chal-00581    14   15 min_rg           0.0029    4.57    0.434    0.396     +0.038    440    805
+chal-00588    15   16 sd_min_rga       0.3160    2.20    0.396    0.155     +0.241    805   1236
+chal-00598    16   17 sd_min_rga       0.5686    5.18    0.155    0.179     -0.024   1236    726
+chal-00602    17   18 sd_min_rga       0.4452    4.43    0.179    0.168     +0.011    726    684
+chal-00606    18   19 sd_min_rga       0.2511    2.84    0.168    0.162     +0.006    684    761
+chal-00614    19   20 sd_min_rga       0.4597    6.11    0.162    0.115     +0.047    761   2591
+  every crown is live-positive by construction; verified improved 5/9, worsened 4/9; corr(live z, Δverified) pearson  0.108 spearman  0.250 (n 9; units differ across score modes, z is the comparable quantity; task mixes differ per reign).
+
+-- The $-probe that computes N6's r (not run; spec)
+  per labelled first action y at graded state x: A(y) = τ·log mean_i exp(b_i/τ) with b_i = [lpC(y|x, z_i) − lpC(y|x, ∅)]·bytes(y), z_i = the 3 blind teacher thoughts already stored for x in outcome/samples.jsonl (teacher[*].z); live z_A = (A − μ_A)/σ_A with LOO anchors from the refs' own cross matrix; V − B from the state's continuation table (class = norm_action-exact / Jaccard≥.5).
+  inputs on disk: 67 graded states (50 with ≥2 continuations, 15 with mixed outcomes), 240 labelled first actions (237 with reply text), blind teacher refs stored for 67/67 states, prefix p50 28940 chars ≈ 8039 tokens.
+  echoes: 948 action echoes (4 per action: 3 cross + 1 empty) + 804 anchor echoes (12 per state, LOO μ/σ) + 216 for the VAV king samples = 1968 teacher echoes via common.TeacherEcho.lp_action.
+  cost: ≈ $0.47 at $0.03/M prompt tokens (qwen3.8-27b on Engy; echo caching not assumed); $0.95 with 2× retry headroom. Wall ≈ 15–30 min at concurrency 16.
+  output: r = corr(z_A(y), V(class(y)) − B(x)) over labelled actions (n≈237), within-state (state-centred) and pooled; per dialect; plus AUC(z_A → solved) on the 15 mixed-outcome states; decision rule per §8 N6: r ≤ 0.1 → VAV-with-commit, r < 0 → gate-only.
+  caveat: V − B at N = 3–4 per state is itself noisy (§6.5); with 15 mixed states the within-state r has ~50 informative actions — expect a wide CI; the harvest at N = 8 (§7) is what makes this rankable.
+
+-- N4 follow-up that would test the actual claim (not run)
+  the claim is about STATE failure; informed samples exist only at trajectory-labelled turns. Reuse the 67 continuation-graded states (V̂(x) = teacher solve rate from x, 15 mixed): write one hindsight note per state from the stored source trajectory (glm-5.3, $0.028/turn as in W1 → ≈ $1.9), sample k = 3 informed teacher refs per state (qwen3.8-27b, ≈ 8k-token prompts → ≈ $0.05), g(x) vs the 3 blind refs already stored (outcome/samples.jsonl); AUC(g → V̂(x) < 0.5) and Spearman(g, V̂). ≈ $2 total; ~67 states is enough to separate AUC 0.5 from 0.75 at 2σ, not finer.
+
+== VERDICT ==
+  N4 — not killed by the letter, not supported in substance: 40/154 (variant × exact/jac50/judge × dialect × subset, n ≥ 20) cells reach AUC ≥ 0.65, 27 of them with a CI excluding 0.5 and 1 with a CI wholly above 0.65; on the teacher-policy subset the leak-free variants (p_hind/h_ground/h_answer) clear 0.65 in 8 pooled cells (T:p_hind/judge 0.67 n22, T:h_answer/jac50 0.66 n41, T:h_answer/judge 0.80 n14, K:h_ground/judge 0.68 n14, K:h_ground/jac_mean 0.67 n42, K:h_answer/jac50 0.72 n42, K:h_answer/judge 0.72 n14, K:h_answer/jac_mean 0.69 n42), 1 with a CI above 0.5; the outcome-stating hints (p_err/h_causal, which say 'solved'/'failed' in the note) clear it in 8 cells — that is the note changing the action, not the teacher knowing where it fails.
+  N4 — norm-exact g never exceeds AUC 0.62 (all) / 0.58 (teacher-policy); the paired informed-minus-blind AUC gain (g vs g0, same turns) has a CI excluding 0 in 1/48 subset × variant × metric cells (teacher_policy:T:p_err|jac50 +0.17); on all 150 turns the bit 'source trajectory was a king run' alone scores 0.78, above every g cell pooled; and every label is trajectory-level (0/150 turns overlap a graded state), so the gate's actual claim — divergence marks states where the teacher's blind continuation fails — is untested here (≈ $2 spec above).
+  N6 — per-action r = corr(live A-leg proxy, V − B) is NOT computable from disk (0 teacher echoes at the 67 graded states / 240 labelled first actions); the ≈ $0.5–1 echo probe is specified above and is the only way to get the number.
+  N6 — closest join (reign level, n = 7 kings / 35 verdicts): live teacher-vs-king control ↔ verified teacher−king pass gap, Pearson  0.321 / Spearman  0.357 per king (n.s.; per-verdict Spearman  0.617 is pseudo-replicated); ordering only weakly positive and the SIGN is wrong at reigns 19, 20 (meter: king ≥ teacher; verified: teacher ahead by 0.11–0.16 pass1) — RT-7-shaped: as a PPI proxy the live meter is a biased control variate whose rectifier would carry the whole crown at the top of the chain (r ≤ 0.1 → 'VAV with a commit' by §8 N6's own rule); crown chain: verified improved in 5/9 crowns, corr(live z, Δverified) ρ  0.250.
