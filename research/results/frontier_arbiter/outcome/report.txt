@@ -1,0 +1,79 @@
+==============================================================================
+1. CLASSIFICATION (all candidate states; frontier = glm-5.3 greedy vs 3 teacher samples @T0.8)
+==============================================================================
+candidates 245: agreed 128, contested 112, unparsed 5
+-- contested rate by all --
+  ALL                                contested 112/240 =  46.7% [  40– 53]  judge-differs|contested 59/112 =  52.7%  judge-same|agreed 109/128 =  85.2%
+-- contested rate by harness --
+  bash                               contested 21/98 =  21.4% [  14– 31]  judge-differs|contested 16/21 =  76.2%  judge-same|agreed 60/77 =  77.9%
+  mini_swe_textbased                 contested 56/99 =  56.6% [  47– 66]  judge-differs|contested 35/56 =  62.5%  judge-same|agreed 41/43 =  95.3%
+  terminus_2                         contested 35/43 =  81.4% [  67– 90]  judge-differs|contested 8/35 =  22.9%  judge-same|agreed 8/8 = 100.0%
+-- contested rate by source --
+  coding/multiswe                    contested 10/28 =  35.7% [  21– 54]  judge-differs|contested 9/10 =  90.0%  judge-same|agreed 11/18 =  61.1%
+  coding/scaleswe                    contested 10/28 =  35.7% [  21– 54]  judge-differs|contested 8/10 =  80.0%  judge-same|agreed 13/18 =  72.2%
+  coding/swelego                     contested 9/27 =  33.3% [  19– 52]  judge-differs|contested 4/9 =  44.4%  judge-same|agreed 15/18 =  83.3%
+  coding/swerebench_v2               contested 11/28 =  39.3% [  24– 58]  judge-differs|contested 9/11 =  81.8%  judge-same|agreed 16/17 =  94.1%
+  coding/swesmith                    contested 11/28 =  39.3% [  24– 58]  judge-differs|contested 6/11 =  54.5%  judge-same|agreed 15/17 =  88.2%
+  terminal/terminal_bench_2          contested 47/72 =  65.3% [  54– 75]  judge-differs|contested 18/47 =  38.3%  judge-same|agreed 25/25 = 100.0%
+  terminal/terminal_lego             contested 14/29 =  48.3% [  31– 66]  judge-differs|contested 5/14 =  35.7%  judge-same|agreed 14/15 =  93.3%
+-- contested rate by depth --
+  depth 10–15                        contested 46/101 =  45.5% [  36– 55]  judge-differs|contested 28/46 =  60.9%  judge-same|agreed 46/55 =  83.6%
+  depth 3–5                          contested 34/70 =  48.6% [  37– 60]  judge-differs|contested 17/34 =  50.0%  judge-same|agreed 32/36 =  88.9%
+  depth 6–9                          contested 32/69 =  46.4% [  35– 58]  judge-differs|contested 14/32 =  43.8%  judge-same|agreed 31/37 =  83.8%
+-- contested rate by orig_outcome --
+  orig failed                        contested 55/115 =  47.8% [  39– 57]  judge-differs|contested 29/55 =  52.7%  judge-same|agreed 52/60 =  86.7%
+  orig solved                        contested 57/125 =  45.6% [  37– 54]  judge-differs|contested 30/57 =  52.6%  judge-same|agreed 57/68 =  83.8%
+-- reference spreads --
+  teacher 3-sample pairwise norm-exact agreement: 81/697 = 11.6%; mean pairwise Jaccard 0.54
+  frontier greedy vs frontier @T0.8 Jaccard: mean 0.55 (share >=0.5: 53%)
+  frontier greedy vs the teacher's ORIGINAL action at the state: norm-exact 16/240 =   6.7%, Jaccard>=0.5 92/240 =  38.3%
+  frontier greedy reply harness-valid as emitted: 239/240 =  99.6% (fence fixed ```bash->mswea: 0)
+-- judge taxonomy (frontier action relative to closest teacher action) --
+  contested relation: same 53, different_target 35, act_or_finish 13, explore_more 6, different_fix 5
+  contested frontier a_type: explore 72, act 19, verify 16, finish 3, other 2
+  agreed    relation: same 109, different_target 16, explore_more 2, act_or_finish 1
+  agreed    frontier a_type: explore 90, act 17, verify 15, finish 5, other 1
+
+==============================================================================
+2. CONTINUATIONS (kept states; solved = env grader reward >= 1.0; errored/unrun excluded per pair)
+==============================================================================
+runs per arm/status: F/errored 2, F/ok 19, F1/errored 4, F1/ok 27, T/errored 6, T/ok 51
+-- CONTESTED kept states: 50 --
+  arm T  solved 25/39 =  64.1% [  48– 77]
+  arm F1 solved 9/16 =  56.2% [  33– 77]
+  arm F  solved 12/19 =  63.2% [  41– 81]
+  F1−T: n=13  solved arm 7/13 =  53.8%  solved T 9/13 =  69.2%  mean diff -0.154 [-0.385, +0.000]  discordant +0/-2  sign p=0.500
+  F−T: n=16  solved arm 10/16 =  62.5%  solved T 10/16 =  62.5%  mean diff +0.000 [-0.188, +0.188]  discordant +1/-1  sign p=1.000
+  by harness:
+    bash                   n= 13  T 7/10 =  70.0%  F1 2/4 =  50.0%  F 3/4 =  75.0%  F1−T +0/−1 p=1.00
+    mini_swe_textbased     n= 29  T 15/25 =  60.0%  F1 5/10 =  50.0%  F 5/9 =  55.6%  F1−T +0/−1 p=1.00
+    terminus_2             n=  8  T 3/4 =  75.0%  F1 2/2 = 100.0%  F 4/6 =  66.7%  F1−T +0/−0 p=nan
+  by orig outcome:
+    failed                 n= 24  T 5/18 =  27.8%  F1 1/8 =  12.5%  F 0/6 =   0.0%  F1−T +0/−2 p=0.50
+    solved                 n= 26  T 20/21 =  95.2%  F1 8/8 = 100.0%  F 12/13 =  92.3%  F1−T +0/−0 p=nan
+  by group:
+    coding                 n= 30  T 16/27 =  59.3%  F1 6/12 =  50.0%  F 4/9 =  44.4%  F1−T +0/−2 p=0.50
+    terminal               n= 20  T 9/12 =  75.0%  F1 3/4 =  75.0%  F 8/10 =  80.0%  F1−T +0/−0 p=nan
+  by judge relation:
+    act_or_finish          n= 12  T 5/9 =  55.6%  F1 2/3 =  66.7%  F 4/6 =  66.7%  F1−T +0/−0 p=nan
+    different_fix          n=  4  T 1/1 = 100.0%  F1 2/2 = 100.0%  F 2/2 = 100.0%  F1−T +0/−0 p=nan
+    different_target       n= 30  T 18/26 =  69.2%  F1 4/10 =  40.0%  F 6/8 =  75.0%  F1−T +0/−2 p=0.50
+    explore_more           n=  4  T 1/3 =  33.3%  F1 1/1 = 100.0%  F 0/3 =   0.0%  F1−T +0/−0 p=nan
+-- AGREED kept states: 25 --
+  arm T  solved 8/12 =  66.7% [  39– 86]
+  arm F1 solved 7/11 =  63.6% [  35– 85]
+  F1−T: n=4  solved arm 3/4 =  75.0%  solved T 2/4 =  50.0%  mean diff +0.250 [+0.000, +0.750]  discordant +1/-0  sign p=1.000
+  by harness:
+    bash                   n=  9  T 3/4 =  75.0%  F1 0/1 =   0.0%  F   —    F1−T +0/−0 p=nan
+    mini_swe_textbased     n=  8  T 2/3 =  66.7%  F1 2/5 =  40.0%  F   —    F1−T +0/−0 p=nan
+    terminus_2             n=  8  T 3/5 =  60.0%  F1 5/5 = 100.0%  F   —    F1−T +1/−0 p=1.00
+  by orig outcome:
+    failed                 n= 12  T 2/5 =  40.0%  F1 2/6 =  33.3%  F   —    F1−T +0/−0 p=nan
+    solved                 n= 13  T 6/7 =  85.7%  F1 5/5 = 100.0%  F   —    F1−T +1/−0 p=1.00
+  by group:
+    coding                 n= 14  T 5/7 =  71.4%  F1 2/6 =  33.3%  F   —    F1−T +0/−0 p=nan
+    terminal               n= 11  T 3/5 =  60.0%  F1 5/5 = 100.0%  F   —    F1−T +1/−0 p=1.00
+  by judge relation:
+    same                   n= 25  T 8/12 =  66.7%  F1 7/11 =  63.6%  F   —    F1−T +1/−0 p=1.00
+
+COST  classification $4.46 (Engy charged_micro)  continuations $7.72 (Engy list price from trace usage)  total $12.18

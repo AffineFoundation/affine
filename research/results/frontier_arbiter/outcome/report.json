@@ -1,0 +1,321 @@
+{
+ "classification": {
+  "n": 245,
+  "classes": {
+   "agreed": 128,
+   "contested": 112,
+   "unparsed": 5
+  }
+ },
+ "contested_by_all": {
+  "ALL": {
+   "n": 240,
+   "contested": 112,
+   "judge_differs_given_contested": [
+    59,
+    112
+   ],
+   "judge_same_given_agreed": [
+    109,
+    128
+   ]
+  }
+ },
+ "contested_by_harness": {
+  "bash": {
+   "n": 98,
+   "contested": 21,
+   "judge_differs_given_contested": [
+    16,
+    21
+   ],
+   "judge_same_given_agreed": [
+    60,
+    77
+   ]
+  },
+  "mini_swe_textbased": {
+   "n": 99,
+   "contested": 56,
+   "judge_differs_given_contested": [
+    35,
+    56
+   ],
+   "judge_same_given_agreed": [
+    41,
+    43
+   ]
+  },
+  "terminus_2": {
+   "n": 43,
+   "contested": 35,
+   "judge_differs_given_contested": [
+    8,
+    35
+   ],
+   "judge_same_given_agreed": [
+    8,
+    8
+   ]
+  }
+ },
+ "contested_by_source": {
+  "coding/multiswe": {
+   "n": 28,
+   "contested": 10,
+   "judge_differs_given_contested": [
+    9,
+    10
+   ],
+   "judge_same_given_agreed": [
+    11,
+    18
+   ]
+  },
+  "coding/scaleswe": {
+   "n": 28,
+   "contested": 10,
+   "judge_differs_given_contested": [
+    8,
+    10
+   ],
+   "judge_same_given_agreed": [
+    13,
+    18
+   ]
+  },
+  "coding/swelego": {
+   "n": 27,
+   "contested": 9,
+   "judge_differs_given_contested": [
+    4,
+    9
+   ],
+   "judge_same_given_agreed": [
+    15,
+    18
+   ]
+  },
+  "coding/swerebench_v2": {
+   "n": 28,
+   "contested": 11,
+   "judge_differs_given_contested": [
+    9,
+    11
+   ],
+   "judge_same_given_agreed": [
+    16,
+    17
+   ]
+  },
+  "coding/swesmith": {
+   "n": 28,
+   "contested": 11,
+   "judge_differs_given_contested": [
+    6,
+    11
+   ],
+   "judge_same_given_agreed": [
+    15,
+    17
+   ]
+  },
+  "terminal/terminal_bench_2": {
+   "n": 72,
+   "contested": 47,
+   "judge_differs_given_contested": [
+    18,
+    47
+   ],
+   "judge_same_given_agreed": [
+    25,
+    25
+   ]
+  },
+  "terminal/terminal_lego": {
+   "n": 29,
+   "contested": 14,
+   "judge_differs_given_contested": [
+    5,
+    14
+   ],
+   "judge_same_given_agreed": [
+    14,
+    15
+   ]
+  }
+ },
+ "contested_by_depth": {
+  "depth 10\u201315": {
+   "n": 101,
+   "contested": 46,
+   "judge_differs_given_contested": [
+    28,
+    46
+   ],
+   "judge_same_given_agreed": [
+    46,
+    55
+   ]
+  },
+  "depth 3\u20135": {
+   "n": 70,
+   "contested": 34,
+   "judge_differs_given_contested": [
+    17,
+    34
+   ],
+   "judge_same_given_agreed": [
+    32,
+    36
+   ]
+  },
+  "depth 6\u20139": {
+   "n": 69,
+   "contested": 32,
+   "judge_differs_given_contested": [
+    14,
+    32
+   ],
+   "judge_same_given_agreed": [
+    31,
+    37
+   ]
+  }
+ },
+ "contested_by_orig_outcome": {
+  "orig failed": {
+   "n": 115,
+   "contested": 55,
+   "judge_differs_given_contested": [
+    29,
+    55
+   ],
+   "judge_same_given_agreed": [
+    52,
+    60
+   ]
+  },
+  "orig solved": {
+   "n": 125,
+   "contested": 57,
+   "judge_differs_given_contested": [
+    30,
+    57
+   ],
+   "judge_same_given_agreed": [
+    57,
+    68
+   ]
+  }
+ },
+ "taxonomy_contested": {
+  "relation": {
+   "same": 53,
+   "different_target": 35,
+   "act_or_finish": 13,
+   "explore_more": 6,
+   "different_fix": 5
+  },
+  "a_type": {
+   "explore": 72,
+   "act": 19,
+   "other": 2,
+   "verify": 16,
+   "finish": 3
+  }
+ },
+ "taxonomy_agreed": {
+  "relation": {
+   "same": 109,
+   "explore_more": 2,
+   "different_target": 16,
+   "act_or_finish": 1
+  },
+  "a_type": {
+   "explore": 90,
+   "act": 17,
+   "verify": 15,
+   "other": 1,
+   "finish": 5
+  }
+ },
+ "runs": {
+  "T/ok": 51,
+  "F1/ok": 27,
+  "T/errored": 6,
+  "F1/errored": 4,
+  "F/ok": 19,
+  "F/errored": 2
+ },
+ "arms": {
+  "CONTESTED": {
+   "T": {
+    "solved": 25,
+    "n": 39
+   },
+   "F1": {
+    "solved": 9,
+    "n": 16
+   },
+   "F": {
+    "solved": 12,
+    "n": 19
+   },
+   "F1-T": {
+    "n": 13,
+    "solved_arm": 7,
+    "solved_T": 9,
+    "mean_diff": -0.15384615384615385,
+    "ci95": [
+     -0.38461538461538464,
+     0.0
+    ],
+    "plus": 0,
+    "minus": 2,
+    "sign_p": 0.5
+   },
+   "F-T": {
+    "n": 16,
+    "solved_arm": 10,
+    "solved_T": 10,
+    "mean_diff": 0.0,
+    "ci95": [
+     -0.1875,
+     0.1875
+    ],
+    "plus": 1,
+    "minus": 1,
+    "sign_p": 1.0
+   }
+  },
+  "AGREED": {
+   "T": {
+    "solved": 8,
+    "n": 12
+   },
+   "F1": {
+    "solved": 7,
+    "n": 11
+   },
+   "F1-T": {
+    "n": 4,
+    "solved_arm": 3,
+    "solved_T": 2,
+    "mean_diff": 0.25,
+    "ci95": [
+     0.0,
+     0.75
+    ],
+    "plus": 1,
+    "minus": 0,
+    "sign_p": 1.0
+   }
+  }
+ },
+ "cost_usd": {
+  "classification": 4.45831,
+  "continuations": 7.7195,
+  "total": 12.177810000000001
+ }
+}
