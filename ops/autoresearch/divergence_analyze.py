@@ -133,7 +133,7 @@ with open(SIDE, "w") as f:
                "stop_condition": r["stop_condition"], "n_turns_total": r["n_turns_total"], "divergence_kind": kind,
                "stop_eligible": t["stop_eligible"], "ref_stop": t["ref_stop"], "king_stop": t["king_stop"], "king_action": t["king_action"],
                "refs": t["refs"], "ref_n_valid": t["ref_n_valid"], "ref_unanimous": t["ref_unanimous"], "a_match": t["a_match"], "agree": t["agree"],
-               "echo": t.get("echo"), "failure_label": label, "axis": {"agent": "coding", "tool": "tool_use", "notool": "tool_use"}.get(r["cls"], "other"), "prefix_chars": t["prefix_chars"], "king_thought_len": t["king_thought_len"], "king_finish": t["king_finish"],
+               "echo": t.get("echo"), "failure_label": label, "king_reply_has_action": bool(ka) and not t["king_stop"], "fold_hint": ("waive_stored_reply_parse" if (t["king_stop"] and t["ref_stop"] < 2) else ("text_kind" if t["ref_stop"] >= 2 else None)), "axis": {"agent": "coding", "tool": "tool_use", "notool": "tool_use"}.get(r["cls"], "other"), "prefix_chars": t["prefix_chars"], "king_thought_len": t["king_thought_len"], "king_finish": t["king_finish"],
                "king_loop": t["king_loop"], "obs_kind": t["obs_kind"], "probe_model": "engy/qwen3.8-27b T0.8 4096", "probed_at": "2026-09-16"}
         f.write(json.dumps(row) + "\n"); n_side += 1
 print(f"\nside-table {SIDE}: {n_side} first-divergence states of failed rollouts")
