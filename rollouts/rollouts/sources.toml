@@ -52,7 +52,7 @@
 # derived mass: >= 25 % of every slice (16.8 % at epoch 44), taken from the
 # coding / terminal teacher-trajectory turns (floor 40 % kept: buckets 6030 /
 # 3700 -> 4000 / 2600), k = 3 sub-strata on every stop-state group.
-coding = 0.25   # 0.36 -> 0.34 (king_coached) -> 0.28 (phase 10) -> 0.25 (2026-09-21 agentic_ops / long_context)
+coding = 0.24   # 0.36 -> 0.34 (king_coached) -> 0.28 (phase 10) -> 0.25 (2026-09-21 agentic_ops / long_context) -> 0.24 (2026-09-21 22:25: 0.01 to completion so the static stop-state block meets its 0.25 floor)
 terminal = 0.17 # 0.22 -> 0.18 (phase 10) -> 0.17 (2026-09-21)
 nl2repo = 0.01
 math = 0.02
@@ -79,7 +79,7 @@ king_pivot = 0.02
 king_recoverable = 0.02
 king_done = 0.03   # 0.01 -> 0.03 (phase 10, stop state)
 king_tooluse = 0.03   # 0.02 -> 0.03 (phase 10, stop state); ~540 When2Call candidates/day + persist states from five tool feeders
-completion = 0.10  # 0.10 -> 0.15 (phase 10) -> 0.12 (2026-09-20 auto-research quota: -0.03 to king_divergence; group sat at 18.7 %) -> 0.10 (2026-09-21)
+completion = 0.11  # 0.10 -> 0.15 (phase 10) -> 0.12 (2026-09-20 auto-research quota: -0.03 to king_divergence; group sat at 18.7 %) -> 0.10 (2026-09-21) -> 0.11 (22:25: static stop-state block back to the 0.25 floor)
 completion_pre = 0.02
 general = 0.05
 # 2026-09-15 (Jacob, lever 1/2): + king_coached 0.02 out of coding -- the
