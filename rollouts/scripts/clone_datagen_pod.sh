@@ -38,7 +38,17 @@ ROLE="${CLONE_ROLE:-shard}"
 
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
 src() { ssh "${SSH_OPTS[@]}" -p "$SRC_PORT" "root@$SRC_HOST" "$@"; }
-dst() { ssh "${SSH_OPTS[@]}" -p "$DST_PORT" "root@$DST_HOST" "$@"; }
+dst() {
+  # ssh right after the big rsync has twice come back 255 (connection dropped
+  # by the pod's sshd); retry a couple of times before giving up
+  local i rc
+  for i in 1 2 3; do
+    ssh "${SSH_OPTS[@]}" -p "$DST_PORT" "root@$DST_HOST" "$@"; rc=$?
+    [[ $rc -ne 255 ]] && return $rc
+    echo "dst ssh rc=255 (attempt $i); retrying in 20 s" >&2; sleep 20
+  done
+  return $rc
+}
 
 echo "== [1/5] destination sanity ($DST_HOST:$DST_PORT)"
 dst 'set -e

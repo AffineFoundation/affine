@@ -243,19 +243,23 @@ def main() -> None:
 
     # Launch record for rollouts/scripts/backfill_relaunch.sh (a container
     # restart kills every driver; the record recreates the tmux session).
+    # Two drivers can share a digest (the coverage queue's second-box `-b`
+    # run: data dir `rollouts-data-<d12>-b`, wrapper `run_backfill_<d12>_b.sh`,
+    # session `backfill-<d12>-b`); the data-dir suffix tells them apart.
     drivers_dir = Path("/root/rollouts/drivers")
-    record_path = drivers_dir / f"{tag}.json"
+    suffix = cfg.data_dir.name.removeprefix(f"rollouts-data-{tag}") if cfg.data_dir.name.startswith(f"rollouts-data-{tag}") else ""
+    record_path = drivers_dir / f"{tag}{suffix}.json"
     try:
         drivers_dir.mkdir(parents=True, exist_ok=True)
-        wrapper = Path(f"/root/rollouts/run_backfill_{tag}.sh")
+        wrapper = Path(f"/root/rollouts/run_backfill_{tag}{suffix.replace('-', '_')}.sh")
         if not wrapper.exists():
             wrapper = Path("/root/rollouts/run_backfill.sh")
-        log_path = f"/root/logs/backfill_{tag}.log"
+        log_path = f"/root/logs/backfill_{tag}{suffix.replace('-', '_')}.log"
         env_bits = " ".join(f"{k}={shlex.quote(os.environ[k])}" for k in
                             ("ROLLOUTS_DATA_DIR", "ROLLOUTS_KING_ENV", "ROLLOUTS_MAX_CONTAINERS", "ROLLOUTS_BATCH_SIZE")
                             if k in os.environ)
         record_path.write_text(json.dumps({
-            "tag": tag, "tmux": f"backfill-{tag}", "wrapper": str(wrapper), "log": log_path,
+            "tag": tag, "tmux": f"backfill-{tag}{suffix}", "wrapper": str(wrapper), "log": log_path,
             "cmd": f"{env_bits} {wrapper} {shlex.join(sys.argv[1:])} >> {log_path} 2>&1".strip(),
             "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "pid": os.getpid(),
         }, indent=1))
