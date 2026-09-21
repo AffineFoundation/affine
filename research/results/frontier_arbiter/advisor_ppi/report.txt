@@ -1,5 +1,5 @@
 N4 (ADVISOR gate) + N6 (PPI) — $0 checks on stored artifacts — 2026-09-21
-turns 150 (hint_design cells on 100); source-trajectory family|outcome {'king|failed': 44, 'teacher|failed': 23, 'glm|solved': 30, 'teacher|solved': 42, 'glm|failed': 10, 'king|solved': 1}; dialect|outcome {'bash|failed': 26, 'tool_call|failed': 31, 'bash|solved': 35, 'terminus_json|failed': 20, 'tool_call|solved': 30, 'terminus_json|solved': 8}; $ spent 0.00
+turns 150 (hint_design cells on 100); source-trajectory family|outcome {'king|failed': 44, 'teacher|failed': 23, 'glm|solved': 30, 'teacher|solved': 42, 'glm|failed': 10, 'king|solved': 1}; dialect|outcome {'bash|failed': 26, 'tool_call|failed': 31, 'bash|solved': 35, 'terminus_json|failed': 20, 'tool_call|solved': 30, 'terminus_json|solved': 8}; $ spent 0.00 on the disk checks (the $-probes below report their own spend)
 
 Terms (one line each):
   g(x)       = 1 − agreement(informed refs, blind refs) at turn x; informed = teacher (T:) or king (K:) sampled with a hindsight/hint note in the prompt; blind = the verdict's stored k=3 teacher refs (T:) or the fresh k=3 blind king refs (K:).
@@ -279,3 +279,95 @@ chal-00614    19   20 sd_min_rga       0.4597    6.11    0.162    0.115     +0.0
   N4 — norm-exact g never exceeds AUC 0.62 (all) / 0.58 (teacher-policy); the paired informed-minus-blind AUC gain (g vs g0, same turns) has a CI excluding 0 in 1/48 subset × variant × metric cells (teacher_policy:T:p_err|jac50 +0.17); on all 150 turns the bit 'source trajectory was a king run' alone scores 0.78, above every g cell pooled; and every label is trajectory-level (0/150 turns overlap a graded state), so the gate's actual claim — divergence marks states where the teacher's blind continuation fails — is untested here (≈ $2 spec above).
   N6 — per-action r = corr(live A-leg proxy, V − B) is NOT computable from disk (0 teacher echoes at the 67 graded states / 240 labelled first actions); the ≈ $0.5–1 echo probe is specified above and is the only way to get the number.
   N6 — closest join (reign level, n = 7 kings / 35 verdicts): live teacher-vs-king control ↔ verified teacher−king pass gap, Pearson  0.321 / Spearman  0.357 per king (n.s.; per-verdict Spearman  0.617 is pseudo-replicated); ordering only weakly positive and the SIGN is wrong at reigns 19, 20 (meter: king ≥ teacher; verified: teacher ahead by 0.11–0.16 pass1) — RT-7-shaped: as a PPI proxy the live meter is a biased control variate whose rectifier would carry the whole crown at the top of the chain (r ≤ 0.1 → 'VAV with a commit' by §8 N6's own rule); crown chain: verified improved in 5/9 crowns, corr(live z, Δverified) ρ  0.250.
+
+== $-PROBES (2026-09-21) — N6 per-action echo probe + N4 state-level ADVISOR test ==
+$ spent on the probes: 3.12 (cost.jsonl; echo + notes + sampling).  states materialised 67/67 (prefix from the trace mirror via affine.corpus.trace.trace_conversations + ToolBaker, mswea→bash fence as the slicer does).
+Terms (one line each):
+  A_live   = live A leg for action y at x: τ·log mean_i exp(b_i/τ), b_i = lpC(y|x,z_i) − lpC(y|x,∅) per byte, z_i = the 3 stored blind teacher thoughts (LOO for a blind ref's own), τ=0.03.
+  A_mean / A_sum = plain mean of b_i per byte / summed over the action's tokens (the per-byte fence artefact of the A-leg probe does not apply to A_sum).
+  B_own    = lpC(y|x,z_own) − lpC(y|x,∅) per byte: the live causality license, own thought on own action.  z_own for T/F actions is the stored VISIBLE reply text only (no reasoning_content was kept); K and blind carry latent+visible.
+  R_blind / R_lab = centred tempered LME (live R) of a_j = lpC(y_j|x,z_own) − lpC(y_j|x,∅) over refs y_j = the 3 blind actions / the state's OTHER labelled T actions; *_lme = uncentred.
+  V        = solve rate of the action's norm-exact class among the state's labelled first actions (self included); B(x) = s/N of the T arm; K samples get V by exact or Jaccard≥.5 class match.
+  within   = state-centred Pearson (both variables minus their state mean) over states with ≥ 2 rows; within_mixed = the same on states whose labelled outcomes are mixed; CIs = 2000 state-cluster bootstraps.
+  g(x)     = 1 − share of the 3 informed refs (teacher + hindsight note from the source trajectory) matching the 3 STORED blind refs (exact / jac50); g0 = same for 3 FRESH blind refs; excess = g − g0.
+  label    = the teacher's OWN continuation from x fails: s/N ≤ 0.25 (fail) vs ≥ 0.75 (solve), from the T-arm continuation table; Spearman on all states against s/N.
+
+-- N6: 2831 echoes (0 errors), 486 action rows {'T': 166, 'F': 70, 'B': 197, 'K': 53}, 263 labelled/matched rows with V − B; king samples matched {'unmatched': 15, 'jac50': 29, 'exact': 9}; own thought available {'T/visible_only': 115, 'F/visible_only': 53, 'F/none': 17, 'T/none': 51, 'K/latent+visible': 53}
+   sanity: blind refs' own-action A_live mean  0.0220 (negative on  0.40 of 196); T mean  0.0140 (solved  0.0077 / failed  0.0214); K mean  0.0200
+   proxy           n  st | pooled r [CI]            ρ | within r [CI]  (n,st) | within_mixed r [CI] (n,st) | within T+F r [CI] (n,st) | T+F mixed r [CI] (n,st) | +/− st | AUC solved (T, mixed) [CI]  centred [CI]  n | AUC TF all
+   A_live        263  57 |  0.040 [-0.08,+0.19] -0.056 |  0.057 [-0.14,+0.27] (255,49) | -0.221 [-0.39,+0.19] (55,8) |  0.102 [-0.11,+0.32] (217,49) | -0.129 [-0.51,+0.43] (40,8) | 3/7 |  0.49 [+0.29,+0.69]  0.40 [+0.21,+0.61]  36 |  0.46 [+0.39,+0.54] n236
+   A_mean        263  57 |  0.059 [-0.10,+0.25] -0.097 |  0.016 [-0.25,+0.28] (255,49) | -0.241 [-0.43,+0.18] (55,8) |  0.065 [-0.23,+0.32] (217,49) | -0.149 [-0.50,+0.39] (40,8) | 4/7 |  0.41 [+0.22,+0.61]  0.42 [+0.24,+0.61]  36 |  0.48 [+0.40,+0.55] n236
+   A_sum         263  57 | -0.010 [-0.08,+0.06] -0.062 | -0.015 [-0.15,+0.13] (255,49) |  0.040 [-0.28,+0.35] (55,8) | -0.001 [-0.16,+0.15] (217,49) |  0.094 [-0.29,+0.43] (40,8) | 4/7 |  0.57 [+0.35,+0.77]  0.56 [+0.34,+0.78]  36 |  0.46 [+0.39,+0.53] n236
+   B_own         199  45 |  0.150 [-0.10,+0.41] -0.008 |  0.262 [+0.01,+0.50] (191,37) |  0.194 [-0.17,+0.35] (40,7) |  0.273 [-0.00,+0.54] (153,35) |  0.054 [-0.10,+0.32] (25,6) | 3/4 |  0.64 [+0.39,+0.87]  0.59 [+0.32,+0.83]  24 |  0.44 [+0.36,+0.53] n168
+   R_blind       197  44 |  0.014 [-0.04,+0.07]  0.009 |  0.049 [-0.05,+0.24] (189,36) | -0.056 [-0.16,-0.00] (40,7) |  0.068 [-0.04,+0.26] (151,34) | -0.175 [-0.74,+0.30] (25,6) | 0/3 |  0.51 [+0.25,+0.76]  0.35 [+0.14,+0.60]  24 |  0.40 [+0.31,+0.48] n166
+   R_lab         164  26 | -0.065 [-0.29,+0.12]  0.098 | -0.050 [-0.34,+0.28] (164,26) | -0.047 [-0.59,+0.73] (40,7) |  0.061 [-0.07,+0.26] (126,24) |  0.430 [+0.20,+0.69] (25,6) | 4/5 |  0.73 [+0.50,+0.91]  0.74 [+0.53,+0.93]  24 |  0.50 [+0.38,+0.60] n126
+   R_blind_lme   197  44 |  0.015 [-0.07,+0.09] -0.065 |  0.007 [-0.10,+0.13] (189,36) | -0.077 [-0.43,+0.23] (40,7) |  0.012 [-0.12,+0.15] (151,34) | -0.142 [-0.66,+0.41] (25,6) | 3/4 |  0.44 [+0.20,+0.69]  0.56 [+0.30,+0.83]  24 |  0.45 [+0.36,+0.54] n166
+   R_lab_lme     164  26 | -0.021 [-0.16,+0.10] -0.055 |  0.020 [-0.16,+0.20] (164,26) |  0.136 [-0.35,+0.49] (40,7) |  0.067 [-0.06,+0.21] (126,24) |  0.308 [+0.17,+0.70] (25,6) | 4/5 |  0.65 [+0.42,+0.87]  0.77 [+0.55,+0.95]  24 |  0.53 [+0.43,+0.64] n126
+   pooled r on the king samples alone (V by class match): A_live n38 r -0.067; A_sum n38 r -0.176; B_own n38 r -0.143; R_lab n38 r -0.417
+   by dialect (A_live / A_sum / R_lab: n, pooled r, within r):
+     A_live   bash: n114  0.113 /  0.067 (21 st)  tool_call: n89 -0.030 /  0.147 (15 st)  terminus_json: n60 -0.088 / -0.271 (13 st)
+     A_sum    bash: n114  0.042 / -0.117 (21 st)  tool_call: n89  0.037 /  0.216 (15 st)  terminus_json: n60 -0.025 / -0.187 (13 st)
+     R_lab    bash: n83 -0.085 / -0.069 (12 st)  tool_call: n56  0.183 / -0.007 (8 st)  terminus_json: n25  0.117 /  0.113 (6 st)
+
+-- N4 state-level: 46 states with informed refs ({'terminus_json': 12, 'tool_call': 11, 'bash': 23}), notes ok 58, samples parsed 313/348; labels fail 15 / solve 28 / in-between dropped 3
+   metric     | AUC g→fail [CI]          | AUC g0 (control)         | AUC excess g−g0          | paired ΔAUC g−g0 [CI]  | Spearman(g, s/N) [CI] n      | Spearman(g0, s/N)
+   exact      |  0.51 [+0.36,+0.65] n43  |  0.41 [+0.26,+0.56] n42  |  0.67 [+0.55,+0.80] n42  |  0.101 [+0.02,+0.19]     | -0.020 [-0.31,+0.30] n46       |  0.189 [-0.12,+0.48]
+   jac50      |  0.47 [+0.30,+0.64] n43  |  0.48 [+0.29,+0.67] n42  |  0.48 [+0.30,+0.65] n42  | -0.006 [-0.18,+0.16]     |  0.072 [-0.23,+0.38] n46       |  0.113 [-0.20,+0.43]
+   jac_mean   |  0.45 [+0.27,+0.62] n43  |  0.42 [+0.23,+0.63] n42  |  0.56 [+0.38,+0.74] n42  |  0.049 [-0.10,+0.20]     |  0.068 [-0.24,+0.35] n46       |  0.164 [-0.16,+0.46]
+   states with N ≥ 3 own continuations only (24 labelled: 9 fail / 15 solve): exact: AUC g  0.50 [+0.32,+0.65] vs g0  0.40, Spearman(g, s/N)  0.040 n27; jac50: AUC g  0.49 [+0.26,+0.72] vs g0  0.54, Spearman(g, s/N)  0.028 n27; jac_mean: AUC g  0.41 [+0.18,+0.65] vs g0  0.47, Spearman(g, s/N)  0.134 n27
+   ceiling: g_exact = 1.0 on 34/46 states (g0_exact = 1.0 on 33) — no informed ref repeats a stored blind ref verbatim there; g_jac50 = 1.0 on 18.
+   per dialect AUC(g→fail) exact / jac50: bash n23  0.49 /  0.36; tool_call n8  0.67 /  0.67; terminus_json n12  0.45 /  0.34
+   controls: AUC(g→SOURCE trajectory failed, the check-1 label) exact  0.54 / jac50  0.55 (n46); AUC(note length→fail)  0.39; AUC(source-trajectory-failed bit→state fail)  0.81; notes mentioning the outcome 28/46.
+   state rows (sid | kind | s/N | g_exact g_jac50 | g0_exact g0_jac50):
+     0dab990492834640bf0e5a169fd3437c:8   terminus_json 0/1  1.00 0.33 | 1.00 0.00
+     2934988576f741f18b09cc38be90afb4:10  bash          0/1  0.33 0.33 | 0.00 0.00
+     2a10d948893a4f56a647ebf778b2b3fb:4   bash          0/5  1.00 1.00 | 1.00 1.00
+     2f4d4ef3ee024338ab9c654a8f9e0ab4:6   terminus_json 0/1  0.33 0.00 | 0.00 0.00
+     30be2fbf008b480197d49ebf7b93a545:12  tool_call     0/5  1.00 1.00 | 1.00 0.00
+     37feff8f9eee47e1b3b8b2787040d3b7:6   terminus_json 0/4  0.00 0.00 | 0.00 0.00
+     3bd0a74a1b2842b9a96913491aebef98:8   bash          0/1  1.00 0.67 | 1.00 0.67
+     7aa0fc310c7e4346a2f9a3a4f7241794:3   tool_call     0/5  1.00 0.00 | 0.67 0.33
+     8bee1f3117134d2d800008fbbe9bf087:5   bash          0/5  0.67 0.33 | 0.00 0.00
+     8ddd2d89cea6401ba840e399b962a226:6   bash          0/5  1.00 0.50 | 1.00 0.67
+     a079281ff9b942faaab7896cbe0388b4:7   bash          0/5  1.00 0.00 | 0.67 0.00
+     b6e6a32fd6204d2c89f9a8bdf682ecfc:14  bash          0/1  1.00 1.00 | 1.00 1.00
+     e6c8b60891344d30b909e58216f31035:5   bash          0/1  1.00 0.67 | 1.00 1.00
+     fff3d932236d44848e81b16c55d8c148:11  bash          0/3  1.00 1.00 | 1.00 1.00
+     a785cb844bd440f2ae269f95190a859c:12  terminus_json 1/4  1.00 1.00 | 1.00 1.00
+     cd54272236014427bc71ea1d0a2fdbd7:12  tool_call     2/5  1.00 1.00 | 1.00 0.00
+     f1e5d484b2a5457594858b512377d3d7:14  tool_call     3/5  1.00 0.50 | 1.00 0.67
+     4ab938c937f2492a99e7bd4e8672705c:10  tool_call     2/3  1.00 0.00 | 1.00 0.33
+     3665be6010bf456ca018c12d94ea0e05:13  terminus_json 3/4  0.33 0.33 | 0.00 0.00
+     48e27ac1ac2e478f92b42bd91e32ce3a:8   bash          4/5  1.00 1.00 | 1.00 0.67
+     913f7a01d1d14336a156331a4cf11204:14  tool_call     4/5  1.00 0.33 | 1.00 0.00
+     1b23a2c430c742758a300424e2334f95:8   terminus_json 3/3  1.00 1.00 |    -    -
+     21bc74b278844c9c8d29cfbe2d389553:3   tool_call     1/1  1.00 0.00 | 1.00 0.33
+     3de46d10d60b4faa8dc2536a5a415c10:8   bash          4/4  1.00 1.00 | 1.00 0.33
+     4c0cc415e87d4b0ab03f2462a3efbc3f:4   tool_call     4/4  0.00 0.00 | 0.33 0.00
+     5661d770e8114a398cfa4ba32ca30f57:3   tool_call     4/4  1.00 0.00 | 1.00 0.00
+     5773d34eaf754fe7a5e5fd864c0ac182:4   bash          4/4  1.00 1.00 | 1.00 0.67
+     6a1f2d81f00542e196167931c3364c76:12  bash          1/1  1.00 0.00 | 1.00 0.67
+     701bd65d85774058b804b2021bd3bb2c:9   tool_call     4/4  1.00 0.00 | 1.00 0.67
+     7497273ee72d4a2fbaafc4a82016cf98:4   bash          1/1  0.67 0.67 | 1.00 0.67
+     764405287e174dd5ba548d0aca2fe3a5:3   tool_call     1/1  0.67 0.33 | 0.00 0.00
+     84ca303506be49c58ed6e804c88fa92c:3   terminus_json 4/4  0.00 0.67 | 0.00 0.33
+     85315778a3f24a01a589b40aafb26b21:13  terminus_json 4/4  1.00 0.00 | 1.00 0.67
+     87ac83deb48944ba8258aff531e46e26:5   bash          4/4  1.00 1.00 | 1.00 1.00
+     aa37825860364857b3afea74d7766a19:12  bash          1/1  0.33 0.33 | 0.67 0.67
+     acfca5b914134cb4808924fba8b6a4f0:10  bash          1/1  1.00 1.00 | 1.00 0.67
+     b3ea21bb2e3844bf9adf8fd5bd8e6662:5   terminus_json 1/1  0.00 0.67 | 0.00 1.00
+     b61ae3d22462424baf5c9600f7dc06de:4   bash          1/1  1.00 1.00 | 1.00 1.00
+     b98315ff231d49fa991bc698688aeef8:7   terminus_json 2/2  1.00 1.00 | 1.00 0.00
+     bac2685f6b324a30ac92805cb0222884:10  bash          1/1  1.00 0.67 | 1.00 1.00
+     c3ba82cca0c74a9da033547975019f8b:10  bash          1/1  1.00 1.00 | 1.00 1.00
+     cf69135d68ab4034a23af9be5897ce65:3   terminus_json 4/4  1.00 0.00 | 1.00 0.00
+     cfa692cfc20d44a5859c88d4655e196d:15  bash          1/1  0.67 0.00 | 1.00 0.00
+     d072da96f1304bb59fdbff5a37293852:8   terminus_json 4/4  1.00 1.00 | 1.00 0.33
+     d5e8285629994892a6dd9456fc2b305b:9   bash          4/4  1.00 1.00 | 1.00 0.33
+     efc243e1956048c4adf85ae3101a53c6:8   bash          1/1  1.00 1.00 | 1.00 0.67
+
+== PROBE VERDICT ==
+  N6 — within a state the live A leg is NULL (point -0.22, CI spans 0) with verified action value (state-centred r -0.221 [-0.39,+0.19] on 55 actions / 8 mixed states; all states  0.057 [-0.14,+0.27]; pooled  0.040 [-0.08,+0.19], n 263); AUC(A_live → the teacher's own first action solved | mixed states)  0.49 [+0.29,+0.69].
+  N6 — other legs, state-centred on mixed states: A_sum  0.040 [-0.28,+0.35] n55 (T+F only  0.094 [-0.29,+0.43] n40; AUC  0.57 [+0.35,+0.77]); B_own  0.194 [-0.17,+0.35] n40 (T+F only  0.054 [-0.10,+0.32] n25; AUC  0.64 [+0.39,+0.87]); R_blind -0.056 [-0.16,-0.00] n40 (T+F only -0.175 [-0.74,+0.30] n25; AUC  0.51 [+0.25,+0.76]); R_lab -0.047 [-0.59,+0.73] n40 (T+F only  0.430 [+0.20,+0.69] n25; AUC  0.73 [+0.50,+0.91]). R_lab's refs ARE the other labelled actions, so a high R_lab means the action sits in the state's modal class — at these 6 states the mode solves more often, which is typicality, not the meter reading value; A (the leg that would rank a miner's action) is null.
+  N4 — blind-vs-informed divergence does NOT locate the states where the teacher's own continuation fails: AUC(g→fail) exact  0.51 [+0.36,+0.65] / jac50  0.47 [+0.30,+0.64] (n 43: 15 fail / 28 solve) vs the blind-vs-blind control  0.41 /  0.48; Spearman(g, s/N) -0.020 [-0.31,+0.30] /  0.072 [-0.23,+0.38] (n 46); kill line 0.65: not cleared by the point estimate, not by the CI.
+  N4 — caveats that cut both ways: norm-exact g is at its ceiling (1.0) on 34/46 states (the teacher rarely repeats a stored blind action verbatim, note or not), 28/46 notes name the grade (the W1 p_hind leak), and 18 of the labelled states have a single own continuation; on the 24 states with N ≥ 3 the AUC is exact  0.50 / jac50  0.49 — same answer.
