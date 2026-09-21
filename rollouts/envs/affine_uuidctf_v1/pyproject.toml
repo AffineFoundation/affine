@@ -1,0 +1,13 @@
+[project]
+name = "affine-uuidctf-v1"
+version = "0.1.0"
+description = "affine-uuidctf-v1 — forensic CTF: recover five encoded shard UUIDs from a synthetic incident filesystem in a sandbox (uuid-ctf-v1); index-named tasks, system message, `solved` reward."
+requires-python = ">=3.10"
+dependencies = ["uuid-ctf-v1"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["affine_uuidctf_v1"]

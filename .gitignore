@@ -30,3 +30,12 @@ ops/king-datagen/state/
 # private king-chat pod state (ops/king-chat/kingchat.sh)
 ops/king-chat/state.json
 ops/king-chat/known_hosts
+
+# affine-evalwatch daemon state (alert dedupe, restart baseline)
+ops/evalwatch/state/
+
+# improvement-loop watcher state (box-local)
+ops/improvement-loop/state/
+
+# autoresearch state (box-local)
+affine/state/autoresearch/

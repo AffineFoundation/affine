@@ -168,7 +168,7 @@ def main() -> None:
     print(f"in_flight: {state.in_flight.challenge_id if state.in_flight else None}")
     print(f"queue: {len(state.queue)}")
     print(f"target genesis: {repo}@{revision[:12]} (hotkey='', previous=[])")
-    earners = state.king_chain_hotkeys(5) if king else []
+    earners = state.king_chain_hotkeys(72 * 3600) if king else []
     print(f"current earning hotkeys: {earners or '(none → burn)'}")
 
     if not args.apply:
@@ -197,7 +197,7 @@ def main() -> None:
             f"queue {q_before}→{q_after} in_flight {inflight_before}→{inflight_after}")
     print(f"king now: reign {new_king.reign_number} {new_king.repo} "
           f"hk={new_king.hotkey!r} previous={len(new_king.previous)}")
-    print(f"earning hotkeys now: {state.king_chain_hotkeys(5) or '(none → burn)'}")
+    print(f"earning hotkeys now: {state.king_chain_hotkeys(72 * 3600) or '(none → burn)'}")
     print(f"queue unchanged ({len(q_after)}): {q_after}")
     print(f"in_flight unchanged: {inflight_after}")
 

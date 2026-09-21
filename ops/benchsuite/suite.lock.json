@@ -1,0 +1,693 @@
+{
+ "lock_version": 1,
+ "suite": {
+  "name": "affine-benchsuite",
+  "version": 2
+ },
+ "code": {
+  "verifiers": {
+   "repo": "https://github.com/PrimeIntellect-ai/verifiers.git",
+   "commit": "a32cc09c5"
+  },
+  "research_environments": {
+   "repo": "https://github.com/PrimeIntellect-ai/research-environments.git",
+   "commit": "c4d04dfe2"
+  },
+  "patched_files_sha256": {
+   "verifiers/verifiers/v1/runtimes/docker/egress.py": "ddc65876659ee2328bfec9ef3311c08e963ec444815f5564aa94ab3f9b4ccfb5",
+   "verifiers/verifiers/v1/harnesses/utils/core.py": "64c7e7b3b8c74b1bf3b4d0d4b992cf192a741807866499e221a1fcbfe1e6da9e",
+   "verifiers/verifiers/v1/tasksets/lean/taskset.py": "dc3693fd815a98507459db6544a2ef9150edf85f199d8ad9ae63f84445fa96ff",
+   "research-environments/environments/tool_use/bfcl_v3/bfcl_v3/taskset.py": "cb4e2d65fb55ff92e851474c7a35e4bdb7ce60570fda4d528f2e668ceba8fd06"
+  }
+ },
+ "python": {
+  "verifiers": "0.3.2.dev85",
+  "math-verify": "0.9.0",
+  "datasets": "5.0.1",
+  "bfcl-eval": "0.0.0.dev0",
+  "openai": "2.54.0",
+  "httpx": "0.28.1",
+  "nltk": "3.10.3",
+  "langdetect": "1.0.9",
+  "spacy": "3.8.16",
+  "prime": null,
+  "prime-sandboxes": "0.2.40",
+  "harbor": "0.21.0",
+  "huggingface-hub": "1.28.0",
+  "tau2": "0.2.1.dev0"
+ },
+ "python_side_venvs": {
+  "tau3": {
+   "verifiers": "0.3.2.dev85",
+   "tau2": "1.0.0",
+   "tau3-bench": "0.3.0",
+   "litellm": "1.82.6"
+  }
+ },
+ "serving": {
+  "vllm_version": "0.28.0",
+  "max_model_len": 131072,
+  "gpu_memory_utilization": 0.9,
+  "max_num_batched_tokens": 16384,
+  "max_num_seqs": 64,
+  "reasoning_parser": "qwen3",
+  "tool_call_parser": "qwen3_xml",
+  "dtype": "bfloat16",
+  "enable_prefix_caching": true,
+  "teacher": {
+   "hf_repo": "Qwen/Qwen3.8-27B",
+   "served_name": "teacher"
+  }
+ },
+ "seeds": {
+  "verifiers_shuffle_seed": 0,
+  "gpqa_option_shuffle_seed": 0,
+  "sampling_seed": null,
+  "note": "T=0 is greedy; the T=0.8 row is unseeded and stochastic by design"
+ },
+ "sandbox": {
+  "chat_cell_image": "affine-bench-chat:py311 (python:3.11-slim + uv + harness deps pre-cached; built by install_eval_env.sh)"
+ },
+ "envs": {
+  "aime25": {
+   "taskset": "aime25",
+   "package_version": "0.1.0",
+   "install": "math/aime25",
+   "harness": "null",
+   "runtime": "none",
+   "temperatures": [
+    0.0,
+    0.8
+   ],
+   "secondary_rollouts": 4,
+   "max_tokens": 32768,
+   "reward": "correct",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "concurrency": null,
+   "datasets": {
+    "dataset": "opencompass/AIME2025",
+    "revision": "a6ad95f611d72cf628a80b58bd0432ef6638f958"
+   },
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "math500": {
+   "taskset": "math500",
+   "package_version": "0.1.0",
+   "install": "math/math500",
+   "harness": "null",
+   "runtime": "none",
+   "temperatures": [
+    0.0,
+    0.8
+   ],
+   "secondary_rollouts": 1,
+   "max_tokens": 32768,
+   "reward": "correct",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "concurrency": null,
+   "datasets": {
+    "dataset": "HuggingFaceH4/MATH-500",
+    "revision": "6e4ed1a2a79af7d8630a6b768ec859cb5af4d3be"
+   },
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "gpqa-diamond": {
+   "taskset": "gpqa-strict",
+   "package_version": "0.1.0",
+   "install": "envs/gpqa_strict",
+   "harness": "null",
+   "runtime": "none",
+   "temperatures": [
+    0.0,
+    0.8
+   ],
+   "secondary_rollouts": 1,
+   "max_tokens": 32768,
+   "reward": "correct",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "concurrency": null,
+   "datasets": {},
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "mmlu-pro": {
+   "taskset": "mmlu-pro",
+   "package_version": "0.1.0",
+   "install": "knowledge/mmlu_pro",
+   "harness": "null",
+   "runtime": "none",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 32768,
+   "reward": "correct",
+   "subset": {
+    "n": 2000,
+    "shuffle_seed": 0
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "concurrency": null,
+   "datasets": {
+    "dataset": "TIGER-Lab/MMLU-Pro",
+    "revision": "b189ec765aa7ed75c8acfea42df31fdae71f97be"
+   },
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "ifbench": {
+   "taskset": "ifbench",
+   "package_version": "0.1.0",
+   "install": "if/ifbench",
+   "harness": "null",
+   "runtime": "none",
+   "temperatures": [
+    0.0,
+    0.8
+   ],
+   "secondary_rollouts": 1,
+   "max_tokens": 8192,
+   "reward": "followed_instructions",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "concurrency": null,
+   "datasets": {
+    "dataset": "allenai/IFBench_test"
+   },
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "ifeval": {
+   "taskset": "ifeval",
+   "package_version": "0.1.0",
+   "install": "if/ifeval",
+   "harness": "null",
+   "runtime": "none",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "followed_instructions",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "concurrency": null,
+   "datasets": {
+    "dataset": "google/IFEval"
+   },
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "humaneval": {
+   "taskset": "humaneval",
+   "package_version": "0.1.0",
+   "install": "code/humaneval",
+   "harness": "null",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "passed",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "concurrency": null,
+   "datasets": {
+    "dataset": "openai/openai_humaneval"
+   },
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "livecodebench": {
+   "taskset": "livecodebench",
+   "package_version": "0.1.0",
+   "install": "code/livecodebench",
+   "harness": "null",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 65536,
+   "reward": "passed",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "concurrency": null,
+   "datasets": {
+    "dataset": "livecodebench/code_generation_lite"
+   },
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "bfcl-v3": {
+   "taskset": "bfcl-v3",
+   "package_version": "0.3.0",
+   "install": "tool_use/bfcl_v3",
+   "harness": "null",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 4096,
+   "reward": "correct",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "concurrency": null,
+   "datasets": {},
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "when2call": {
+   "taskset": "when2call-mcq",
+   "package_version": "0.1.1",
+   "install": "envs/when2call_mcq",
+   "harness": "null",
+   "runtime": "none",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "correct",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "concurrency": null,
+   "datasets": {
+    "dataset": "nvidia/When2Call",
+    "revision": "0582f7749df63a96fdc3070932e83e72396ace53",
+    "benchmark_split": {
+     "test/when2call_test_mcq.jsonl": "8c3694e583eeeb8dbc297e6cd90da70efc68efa4b6adb7227523e828c6b7b14c"
+    },
+    "excluded_splits_in_d": {
+     "train/when2call_train_sft.jsonl": "3eb20258557513579995ff55c09fcc33fabf2cd2004dea49dc3a0ba9880e631c",
+     "train/when2call_train_pref.jsonl": "d90637f108fabf1b097493c5818c3692e1d73140259d2f8e490536255e765bc4"
+    }
+   },
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "minif2f": {
+   "taskset": "minif2f",
+   "package_version": "0.1.0",
+   "install": "lean/minif2f",
+   "harness": "bash",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "lean_compiled",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "concurrency": null,
+   "datasets": {},
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "oolong-synth": {
+   "taskset": "oolong-synth",
+   "package_version": "0.1.0",
+   "install": "long_context/oolong_synth",
+   "harness": "bash",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "correct",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": {
+    "context_len": 65536
+   },
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "concurrency": null,
+   "datasets": {
+    "dataset": "oolongbench/oolong-synth"
+   },
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "mrcr-v2": {
+   "taskset": "mrcr-v2",
+   "package_version": "0.1.0",
+   "install": "long_context/mrcr_v2",
+   "harness": "bash",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "correct",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": {
+    "needle_count": 8,
+    "context_range": "64k-128k"
+   },
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "concurrency": null,
+   "datasets": {},
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "graphwalks": {
+   "taskset": "graphwalks",
+   "package_version": "0.1.0",
+   "install": "long_context/graphwalks",
+   "harness": "bash",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "correct",
+   "subset": {
+    "n": 500,
+    "shuffle_seed": 0
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "concurrency": null,
+   "datasets": {
+    "dataset": "openai/graphwalks"
+   },
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "swebench-verified": {
+   "taskset": "swebench-verified",
+   "package_version": "0.1.0",
+   "install": "swe/swebench_verified",
+   "harness": "mini_swe_agent",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "solved",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": 300,
+   "rollout_timeout_s": 3600,
+   "concurrency": 48,
+   "datasets": {},
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "terminal-bench-2": {
+   "taskset": "terminal-bench-2",
+   "package_version": "0.1.0",
+   "install": "terminal/terminal_bench_2",
+   "harness": "terminus_2",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "solved",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": 200,
+   "rollout_timeout_s": 3600,
+   "concurrency": 16,
+   "datasets": {},
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "swebench-pro": {
+   "taskset": "swebench-pro",
+   "package_version": "0.1.0",
+   "install": "swe/swebench_pro",
+   "harness": "mini_swe_agent",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "solved",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": 300,
+   "rollout_timeout_s": 3600,
+   "concurrency": 48,
+   "datasets": {},
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "tau2-airline": {
+   "taskset": "tau2-bench",
+   "package_version": "0.3.1",
+   "install": "tool_use/tau2_bench",
+   "harness": "tau2-bench",
+   "runtime": "subprocess",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "tau2_reward",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": {
+    "domain": "airline"
+   },
+   "max_turns": null,
+   "rollout_timeout_s": 3600,
+   "concurrency": 8,
+   "datasets": {},
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "tau2-retail": {
+   "taskset": "tau2-bench",
+   "package_version": "0.3.1",
+   "install": "tool_use/tau2_bench",
+   "harness": "tau2-bench",
+   "runtime": "subprocess",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "tau2_reward",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": {
+    "domain": "retail"
+   },
+   "max_turns": null,
+   "rollout_timeout_s": 3600,
+   "concurrency": 8,
+   "datasets": {},
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "tau2-telecom": {
+   "taskset": "tau2-bench",
+   "package_version": "0.3.1",
+   "install": "tool_use/tau2_bench",
+   "harness": "tau2-bench",
+   "runtime": "subprocess",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "tau2_reward",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": {
+    "domain": "telecom"
+   },
+   "max_turns": null,
+   "rollout_timeout_s": 3600,
+   "concurrency": 8,
+   "datasets": {},
+   "venv": null,
+   "graded": "deterministic",
+   "judge": null,
+   "runner": null
+  },
+  "tau3-banking": {
+   "taskset": "tau3-bench",
+   "package_version": "0.3.0",
+   "install": "tool_use/tau3_bench",
+   "harness": "tau3-bench",
+   "runtime": "subprocess",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "tau3_reward",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": 3600,
+   "concurrency": 8,
+   "datasets": {},
+   "venv": "tau3",
+   "graded": "llm_judge",
+   "judge": {
+    "model": "openai/gpt-4.1",
+    "via": "Prime Inference (api.pinference.ai)",
+    "temperature": 0,
+    "role": "NL-assertion judge; the same model simulates the user",
+    "pinned_by": "tau3-bench 0.3.0 harness.py (evaluator_nl_assertions.DEFAULT_LLM_NL_ASSERTIONS)"
+   },
+   "runner": null
+  },
+  "gaia2-ambiguity": {
+   "taskset": "are:gaia2/ambiguity",
+   "package_version": null,
+   "install": "envs/none",
+   "harness": "are:default_agent",
+   "runtime": "in-process",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 16384,
+   "reward": "gaia2_success",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": 1800,
+   "concurrency": 16,
+   "datasets": null,
+   "venv": null,
+   "graded": "llm_judge",
+   "judge": {
+    "model": "openai/gpt-4.1",
+    "via": "Prime Inference (api.pinference.ai)",
+    "role": "ARE GraphPerEventJudge soft checker (free-text tool arguments); hard checks rule-based",
+    "pinned_by": "gaia2_cell.py JUDGE_MODEL"
+   },
+   "runner": {
+    "kind": "are-benchmark",
+    "package": "meta-agents-research-environments",
+    "version": "1.2.0",
+    "agent": "default",
+    "hf_dataset": "meta-agents-research-environments/gaia2",
+    "hf_config": "ambiguity",
+    "hf_split": "validation",
+    "hf_revision": "78ea3bdbdeec2bdcd6afa5420915d8a22f23ed99",
+    "filesystem": "meta-agents-research-environments/gaia2_filesystem (demo_filesystem mirrored locally, DEMO_FS_PATH)"
+   }
+  }
+ },
+ "lock_sha256": "815d5a6a236b0c17"
+}

@@ -30,8 +30,9 @@ import re
 import time
 from pathlib import Path
 
-from . import __version__
+from . import __version__, payout
 from .config import Config
+from .dash.readers import slim_sd_meter
 from .hippius import Hippius
 from .r2protocol import is_r2_ref, parse_r2_ref, public_model_url
 from .state import State, now_iso
@@ -70,8 +71,12 @@ _SIDE_FIELDS = ("reason", "mean_l1lift", "mean_eta", "mean_len_z",
                 "n_turns", "n_pairs",
                 # min(R,G) v5 leg telemetry
                 "mean_r_leg", "mean_g_leg", "g_bind_frac",
+                # A_match telemetry (2026-09-14, not scored)
+                "a_match", "a_match_n", "a_match_centered",
                 # wvk 11 action-dialect telemetry (per action_kind)
                 "by_dialect",
+                # wvk 12 forfeit floor + wvk 13 </think> requirement
+                "n_forfeits", "forfeit_rate", "think_close_rate",
                 # legacy (pre-fork verdicts)
                 "valid", "S", "mean_lambda2", "baseline_band_exceeded")
 
@@ -194,6 +199,9 @@ class Dashboard:
         ms = self.cfg.miner_serving
         contract = {
             "subnet": self.cfg.raw["subnet"],
+            "payout": payout.contract_block(
+                self.cfg.king_payout_window_s / 3600,
+                self.cfg.king_payout_rule_effective_at, self.cfg.burn_uid),
             "submission": self.cfg.raw["submission"],
             "teacher": {"repo": self.cfg.teacher.repo},
             "dataset": self.cfg.raw["dataset"],
@@ -242,6 +250,8 @@ class Dashboard:
         self._last_flush = now
         s = self.state
         king = s.king
+        lineage = self._annotate_uids(
+            s.king_lineage_members(self.cfg.king_payout_window_s))
         payload = {
             "generated_at": now_iso(),
             "version": __version__,
@@ -265,14 +275,16 @@ class Dashboard:
                 "public_models_base_url": self.cfg.submission.r2.public_models_base_url,
                 "hf_cutover_block": self.cfg.submission.r2.hf_cutover_block,
             } if self.registrations is not None else {"enabled": False}),
-            # Full lineage for the UI; `size` is the equal-share payout window.
+            # Full lineage for the UI, one row per reign, each stamped with
+            # its payout status (earning / share / paid_until).
             "reign": {
-                "size": self.cfg.king_chain_size,
-                "members": self._annotate_uids(
-                    s.king_lineage_members(self.cfg.king_chain_size)),
+                "size": self.cfg.king_chain_size,  # retired knob, kept for readers
+                "payout_window_hours": self.cfg.king_payout_window_s / 3600,
+                "members": lineage,
             },
-            # Hotkey list kept for older readers / miners (payout window only).
-            "reign_chain": s.king_chain_hotkeys(self.cfg.king_chain_size),
+            "payout": self._payout_block(lineage),
+            # Distinct paid hotkeys kept for older readers / miners.
+            "reign_chain": s.king_chain_hotkeys(self.cfg.king_payout_window_s),
             "queue": [{
                 "challenge_id": e.challenge_id, "repo": e.repo,
                 "hotkey": e.hotkey, "queued_at": e.queued_at,
@@ -381,6 +393,32 @@ class Dashboard:
                 continue
         return rows[-n:]
 
+    def _payout_block(self, lineage: list[dict]) -> dict:
+        """The live paid set under the payout window rule, for the snapshot
+        and the contract: who is paid right now, each crown's share and the
+        instant it expires. `burn` is true when no crown is inside its window."""
+        paid = payout.paid_crowns(lineage)
+        return {
+            "rule": payout.rule_text(self.cfg.king_payout_window_s / 3600),
+            "window_hours": self.cfg.king_payout_window_s / 3600,
+            "effective_at": self.cfg.king_payout_rule_effective_at or None,
+            "burn": not paid,
+            "n_paid": len(paid),
+            "paid": [{
+                "reign_number": m.get("reign_number"),
+                "hotkey": m.get("hotkey"),
+                "uid": m.get("uid"),
+                "repo": m.get("repo"),
+                "revision": m.get("revision"),
+                "crowned_at": m.get("crowned_at"),
+                "paid_until": m.get("paid_until"),
+                "share": m.get("share"),
+                "weight_bps": m.get("weight_bps"),
+                "current": m.get("current", False),
+            } for m in paid],
+            "shares_by_hotkey": payout.shares_by_hotkey(lineage),
+        }
+
     def _annotate_uids(self, members: list[dict]) -> list[dict]:
         out = []
         for m in members:
@@ -414,6 +452,16 @@ class Dashboard:
                 "se": v.get("se"), "k_sigma": v.get("k_sigma"),
                 "min_margin": v.get("min_margin"),
                 "n_paired_turns": v.get("n_paired_turns"),
+                # Sequential near-miss (2026-09-11): window, per-slice
+                # stats, pooled decision. Absent on older verdicts.
+                "near_miss": v.get("near_miss"),
+                # wvk 19 confirmation slice (flat stamp).
+                "confirmation": v.get("confirmation"),
+                "n_forfeit_turns": v.get("n_forfeit_turns"),
+                # Chat-protocol probe stamp (enforced since 2026-09-09).
+                "protocol_probe": v.get("protocol_probe"),
+                # wvk 22 sd-meter block (teacher-sd units), slimmed.
+                "sd_meter": slim_sd_meter(v),
                 "rejection_reason": v.get("rejection_reason"),
                 "reign_number": r.get("reign_number"),
                 # Absolute score (Reason) for both sides; falls back to the

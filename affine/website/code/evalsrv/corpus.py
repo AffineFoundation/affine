@@ -117,7 +117,18 @@ class CorpusSync:
             "synced_at": self.synced_at,
             "stale": self.stale,
             "ready": self.ready,
+            # Adaptive curriculum (2026-09-14, telemetry): the manifest's
+            # `curriculum` block — {rule_version, mode, ledger_sha256,
+            # weights_sha256, knobs} — or None for a manifest without one.
+            "curriculum": self.curriculum_block(),
         }
+
+    def curriculum_block(self) -> dict | None:
+        """The corpus manifest's `curriculum` block, or None. Read-only: the
+        fold writes it; the pod stamps it on every verdict slice so a
+        reader can tell which curriculum weights drew the slice."""
+        block = (self.manifest or {}).get("curriculum")
+        return dict(block) if isinstance(block, dict) and block else None
 
     def refresh(self) -> bool:
         """Sync to the current manifest. Returns readiness (old corpus counts:
