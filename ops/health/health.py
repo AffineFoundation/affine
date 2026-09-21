@@ -517,6 +517,24 @@ class Monitor:
             except (requests.RequestException, ValueError) as e:
                 bf_detail = f"unreachable ({type(e).__name__})"
             down_for = self.since("backfill_pod_down", not bf_ok, now)
+            if not bf_ok and ptr.get("ssh") and not self.dry_run \
+                    and now - float(self.own.get("backfill_repair_at", 0)) > 600:
+                # Self-heal (2026-09-21): a Lium container restart wipes
+                # /post_start.sh (overlay) and the health server with it while
+                # /root (the volume) survives; re-running the hook over ssh
+                # brings the endpoint back. A dead host just fails the ssh.
+                self.own["backfill_repair_at"] = now
+                user_host, _, port = ptr["ssh"].rpartition(":")
+                try:
+                    r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
+                                        "-o", "StrictHostKeyChecking=accept-new", "-p", port, user_host,
+                                        "bash /root/rollouts/scripts/backfill_post_start.sh 2>&1 | tail -1; "
+                                        "install -m 0755 /root/rollouts/scripts/backfill_post_start.sh /post_start.sh 2>/dev/null; "
+                                        "mount | grep -q ' /root ' && echo ROOT_MOUNTED || echo ROOT_NOT_MOUNTED"],
+                                       capture_output=True, text=True, timeout=60)
+                    bf_detail += f"; repair over ssh: rc {r.returncode} {(r.stdout or r.stderr).strip()[-80:]}"
+                except (subprocess.SubprocessError, OSError) as e:
+                    bf_detail += f"; repair over ssh failed: {type(e).__name__}"
             if bf_ok:
                 checks.append(Check("backfill_pod", "ok", f"{ptr.get('pod')} {bf_detail}", pod=ptr.get("pod"), ssh=ptr.get("ssh")))
             else:
