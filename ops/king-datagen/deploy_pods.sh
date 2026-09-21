@@ -125,8 +125,9 @@ done
 rc=0
 for t in "${TARGETS[@]}"; do
   H=${t%%:*}; P=${t##*:}
-  SSH="ssh -o UserKnownHostsFile=$KH -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15 -o LogLevel=ERROR -p $P root@$H"
-  SCP="scp -o UserKnownHostsFile=$KH -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o LogLevel=ERROR -P $P"
+  # no host-key pinning: Lium pods re-key on every container restart
+  SSH="ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=15 -o LogLevel=ERROR -p $P root@$H"
+  SCP="scp -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o BatchMode=yes -o LogLevel=ERROR -P $P"
   echo "== $H:$P"
   $SSH 'mkdir -p /root/rollouts/rollouts/{runners,adapters,loopguard_site,dockerwrap} /root/rollouts/rollouts/.bak/{runners,adapters,loopguard_site,dockerwrap} /root/affine/.bak/affine/corpus /root/affine/.bak/datagen && cd /root/rollouts/rollouts && for f in '"${FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; cd /root/affine && for f in '"${AFFINE_FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; mkdir -p "$(dirname '"$HARNESS_DST"')/.bak" && [ -f '"$HARNESS_DST"' ] && cp '"$HARNESS_DST"' "$(dirname '"$HARNESS_DST"')/.bak/__init__.py"; echo backed-up' || { echo "SSH-FAILED"; rc=1; continue; }
   ok=1

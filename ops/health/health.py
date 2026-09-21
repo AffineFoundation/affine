@@ -544,7 +544,7 @@ class Monitor:
                         bf_detail += f"; AUTO-REBOOT: {res}"
                         self.post(f"backfill_pod: {ptr.get('pod')} ssh denied {common.fmt_age(dsec)} while RUNNING — {res}")
             if not bf_ok and ptr.get("ssh") and not self.dry_run \
-                    and now - float(self.own.get("backfill_repair_at", 0)) > 600:
+                    and now - float(self.own.get("backfill_repair_at", 0)) > 240:
                 # Self-heal (2026-09-21): a Lium container restart wipes
                 # /post_start.sh (overlay) and the health server with it while
                 # /root (the volume) survives; re-running the hook over ssh
@@ -552,8 +552,13 @@ class Monitor:
                 self.own["backfill_repair_at"] = now
                 user_host, _, port = ptr["ssh"].rpartition(":")
                 try:
+                    # Lium pods get a NEW host key on every container restart —
+                    # exactly the moment this repair matters — so host keys are
+                    # not pinned here (2026-09-21 13:37-15:23: the repair failed
+                    # for 1.5 h on "REMOTE HOST IDENTIFICATION HAS CHANGED").
                     r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
-                                        "-o", "StrictHostKeyChecking=accept-new", "-p", port, user_host,
+                                        "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+                                        "-o", "LogLevel=ERROR", "-p", port, user_host,
                                         "bash /root/rollouts/scripts/backfill_post_start.sh 2>&1 | tail -1; "
                                         "install -m 0755 /root/rollouts/scripts/backfill_post_start.sh /post_start.sh 2>/dev/null; "
                                         "sleep 20; bash /root/rollouts/scripts/backfill_relaunch.sh 2>&1 | tail -3; "

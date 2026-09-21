@@ -82,9 +82,12 @@ CANARY_DARK_FAILS = 3              # consecutive canary misses = dark
 POD_SUPERVISOR_CMD = "/root/venv/bin/python -m rollouts.run"
 POD_BOOTSTRAP_CMD = "bash /root/rollouts/bootstrap.sh"
 
+# Host keys are not pinned: a Lium pod gets a new host key on every container
+# restart (same host:port), and that is exactly when the watchdog must get in.
 SSH_OPTS = [
-    "-o", "StrictHostKeyChecking=accept-new",
-    "-o", f"UserKnownHostsFile={KNOWN_HOSTS}",
+    "-o", "StrictHostKeyChecking=no",
+    "-o", "UserKnownHostsFile=/dev/null",
+    "-o", "LogLevel=ERROR",
     "-o", "ConnectTimeout=15",
     "-o", "BatchMode=yes",
     "-o", "LogLevel=ERROR",
