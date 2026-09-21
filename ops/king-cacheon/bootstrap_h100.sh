@@ -143,8 +143,12 @@ while true; do
   mode=\$(cat $ROOT/mode 2>/dev/null || echo stock)
   extra=()
   if [ "\$mode" = bundle ] && [ -f $DATA/bundles/champion/manifest.toml ]; then
+    # PYTHONPATH: the direct loader registers only the entry file; a bundle that
+    # imports its own package (from qwen36_layer.moe import ...) needs its root
+    # importable — the validator gets this from its materialized engine tree.
     extra=(-e CACHEON_ACTIVE=1 -e CACHEON_BUNDLE_PATH=/bundles/champion -e CACHEON_FRAMEWORK_MODE=0
-           -e SGLANG_PLUGINS=cacheon -e CACHEON_SEAM_RECEIPT_DIR=/work/receipts)
+           -e SGLANG_PLUGINS=cacheon -e CACHEON_SEAM_RECEIPT_DIR=/work/receipts
+           -e PYTHONPATH=/bundles/champion)
     rm -f $DATA/work/receipts/*
   fi
   echo "[cacheon-king] \$(date -u +%FT%TZ) launching engine mode=\$mode"
