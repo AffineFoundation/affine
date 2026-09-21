@@ -76,7 +76,7 @@ sys.path.insert(0, str(REPO / "affine"))
 
 from affine import dialects  # noqa: E402
 from affine.config import load_config  # noqa: E402
-from affine.corpus.completion import completion_kind, final_completion  # noqa: E402
+from affine.corpus.completion import bash_body, completion_kind, final_completion  # noqa: E402
 from affine.corpus.loops import ESCAPE, IN_LOOP, ONSET, label_loops, norm_ws  # noqa: E402
 from affine.corpus.materialize import materialize_turn, node_path, stratum_key  # noqa: E402
 from affine.corpus.pack import PackResult  # noqa: E402
@@ -255,6 +255,53 @@ BACKFILL_POLICY_PREFIX = "backfill_"
 BACKFILL_CHUNK_PREFIX = "traces-backfill/"
 
 
+# tau2-gen decontamination (2026-09-21, Jacob "admit" 10:51 UTC): the tau2-bench
+# `base` ids per domain ship with the data; a generated task is admitted only
+# if it carries the [GEN:...] marker and its fingerprint (uid without the
+# tau2g-e<epoch>-<domain>- prefix and the [GEN:...] suffix -- telecom bench ids
+# ARE such fingerprints) is not a bench id. Airline / retail bench ids are
+# bare numbers with no name overlap by construction; the [GEN:] marker is the
+# fold-side guard there.
+DECONTAM: dict[str, dict] = {}     # source -> {"bench": {domain: set(ids)}, "require_gen": bool}
+_GEN_RE = re.compile(r"\[GEN:[^\]]*\]")
+
+
+def load_decontamination() -> dict[str, dict]:
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("decontamination") or {}
+    out: dict[str, dict] = {}
+    for src, cfg in raw.items():
+        if not isinstance(cfg, dict):
+            continue
+        path = REPO / str(cfg.get("bench_ids") or "")
+        bench: dict[str, set[str]] = {}
+        if path.exists():
+            data = json.loads(path.read_text())
+            bench = {str(k): set(map(str, v)) for k, v in data.items() if isinstance(v, list)}
+        out[str(src)] = {"bench": bench, "require_gen": bool(cfg.get("require_gen_marker", True)),
+                         "domain_field": str(cfg.get("domain_field") or "repo")}
+    return out
+
+
+def decontaminated(env: dict) -> str | None:
+    """Drop reason for a generated-benchmark task, or None."""
+    cfg = DECONTAM.get(str(env.get("source") or ""))
+    if not cfg:
+        return None
+    task = env.get("task") or {}
+    uid = str(task.get("uid") or task.get("sid") or "")
+    if cfg["require_gen"] and "[GEN:" not in uid:
+        return "decontam_no_gen_marker"
+    domain = str(task.get(cfg["domain_field"]) or "").rsplit("/", 1)[-1]
+    fp = _GEN_RE.sub("", uid)
+    fp = re.sub(r"^tau2g-e\d+-[a-z]+-", "", fp)
+    ids = cfg["bench"].get(domain, set())
+    if fp in ids:                                   # exact fingerprint (telecom ids are fingerprints)
+        return "bench_panel_overlap"
+    if domain == "telecom" and fp.split("[PERSONA")[0] in {i.split("[PERSONA")[0] for i in ids}:
+        return "bench_panel_overlap"                # same intent + fault composition, any persona
+    return None
+
+
 def is_backfill(env: dict, chunk_key: str = "") -> bool:
     pid = str((env.get("policy") or {}).get("id") or "")
     return pid.startswith(BACKFILL_POLICY_PREFIX) or str(chunk_key).startswith(BACKFILL_CHUNK_PREFIX)
@@ -426,7 +473,13 @@ def load_king_divergence() -> dict:
             refs = row.get("refs") or []
             stops = [r for r in refs if r.get("stop")]
             stop_texts = {norm_ws(str(r.get("visible") or "")) for r in stops if str(r.get("visible") or "").strip()}
-            row["_kind"] = dialects.TEXT_KIND if len(stops) >= stop_refs_for_text else None
+            hint = row.get("fold_hint")
+            if hint == "text_kind":
+                row["_kind"] = dialects.TEXT_KIND
+            elif hint == "waive_stored_reply_parse":
+                row["_kind"] = None            # teacher acts: keep the policy dialect
+            else:
+                row["_kind"] = dialects.TEXT_KIND if len(stops) >= stop_refs_for_text else None
             n_text += row["_kind"] is not None
             SIDE_PROBE_ROWS[str(row.get("turn_id") or f"{row.get('traj_id')}:{ti}")] = {
                 "turn_id": row.get("turn_id"), "group": KING_DIVERGENCE_GROUP,
@@ -498,8 +551,14 @@ def divergence_sublabel(row: dict, env: dict, prefix_text: str = "") -> str | No
     """`schema_example_where_teacher_asked`: at least one teacher reference
     stopped with a question and the king's action carries an identifier
     that is an example value from the tool schema (tau2-airline read
-    2026-09-18: `get_user_details(user_id="sara_doe_496")`)."""
+    2026-09-18: `get_user_details(user_id="sara_doe_496")`).
+    `false_confirmation` (tau2-gen admission 2026-09-21): the king STOPPED
+    with prose (confirms / reports) where every teacher reference acts --
+    it claims an outcome it has not produced."""
     refs = row.get("refs") or []
+    if row.get("king_stop") and refs and not any(r.get("stop") for r in refs) \
+            and all(r.get("valid") for r in refs):
+        return "false_confirmation"
     asked = any(r.get("stop") and "?" in str(r.get("visible") or "") for r in refs)
     if not asked:
         return None
@@ -523,6 +582,27 @@ def load_king_done() -> dict:
     if cfg:
         cfg["leak_exempt"] = True
         cfg["min_more_turns"] = int(cfg["raw"].get("min_more_turns", 2) or 2)
+        # Wave 5 (affine_mrcr, 2026-09-20): the king writes the right answer,
+        # then keeps calling tools -- every loop reply is a `bash` tool call,
+        # never prose, so the completion rule sees no "done" reply and the
+        # loop labeler is skipped because the rollout is graded SOLVED. With
+        # `solved_onset`, the FIRST loop onset of a solved king rollout is a
+        # king_done state (the teacher's reference there is the prose stop).
+        cfg["solved_onset"] = bool(cfg["raw"].get("solved_onset", True))
+        # Looser form (coordinator 2026-09-20 19:02 UTC): in a SOLVED king
+        # rollout, the first reply AFTER the answer artefact was last written
+        # whose command head repeats an earlier post-write command is the done
+        # state -- the textbased kings re-read the answer with near-identical
+        # `python3 -c` / `cat` commands before submitting. Guards: the final
+        # reply must be the submit (completion-eligible) and the post-write
+        # span >= post_write_min_span replies.
+        # Default OFF (held 2026-09-20 19:40 UTC): on the published textbased
+        # mrcr kings the post-write span is 0-1 replies (one `cat answer.txt`,
+        # then submit) -- the rule fired on 1 of 36 solved rollouts and the
+        # teacher did not stop there (1 of 3). Turn on once the bash-tool
+        # batches land and a 24-state teacher sample shows the prose stop.
+        cfg["post_write_repeat"] = bool(cfg["raw"].get("post_write_repeat", False))
+        cfg["post_write_min_span"] = int(cfg["raw"].get("post_write_min_span", 2) or 2)
         # Duel-time kind: at a done state the teacher stops -- a prose report
         # or a finish tool call; `text` parses both (Jacob 2026-09-13).
         cfg["kind"] = str(cfg["raw"].get("kind") or dialects.TEXT_KIND)
@@ -643,18 +723,90 @@ def side_table_turns(env: dict, cfg: dict) -> dict[int, dict]:
     return dict(rows)
 
 
-def king_done_turn(main_convs: list[list[dict]], kind: str, min_more: int) -> int | None:
+ANSWER_WRITE_RE = re.compile(
+    r"""(?:>>?\s*|\btee\s+(?:-a\s+)?|\bcp\s+\S+\s+|\bmv\s+\S+\s+|open\(\s*['"]|<parameter=path>\s*|"path":\s*")[^\n'"<]*answer""",
+    re.I)
+INTERPRETERS = frozenset({"python", "python3", "bash", "sh", "node", "perl", "ruby"})
+
+
+def reply_command(reply: str, kind: str) -> str | None:
+    """The shell command a reply carries (bash fence body, bash-tool
+    `<parameter=command>` body, or a JSON `command` argument); None when
+    the reply carries no action."""
+    acts = dialects.get(kind).actions(reply)
+    if not acts:
+        return None
+    a = acts[-1]
+    if kind == dialects.DEFAULT_KIND:
+        return bash_body(a)
+    m = re.search(r"<parameter=command>\s*(.*?)\s*</parameter>", a, re.S)
+    if m:
+        return m.group(1)
+    m = re.search(r'"command"\s*:\s*"((?:[^"\\]|\\.)*)"', a)
+    if m:
+        try:
+            return json.loads('"' + m.group(1) + '"')
+        except ValueError:
+            return m.group(1)
+    return a
+
+
+def command_head(cmd: str) -> str:
+    toks = cmd.strip().split()
+    if not toks:
+        return ""
+    head = toks[0].rsplit("/", 1)[-1]
+    if head in INTERPRETERS and len(toks) > 1:
+        return f"{head} {toks[1]}"
+    return head
+
+
+def post_write_repeat_turn(main_convs: list[list[dict]], kind: str, min_span: int) -> int | None:
+    """Position (within the main-root replies) of the first post-answer-write
+    reply whose command head repeats an earlier post-write reply's head, when
+    the rollout ends on a completion-eligible reply and the post-write span
+    holds >= min_span replies. None otherwise."""
+    replies = [conv[-1]["content"] if conv and conv[-1]["role"] == "assistant" else "" for conv in main_convs]
+    if len(replies) < 3 or completion_kind(replies[-1], kind) is None:
+        return None
+    cmds = [reply_command(r, kind) for r in replies]
+    last_write = None
+    for j, c in enumerate(cmds[:-1]):
+        if c and ANSWER_WRITE_RE.search(c):
+            last_write = j
+    if last_write is None:
+        return None
+    span = list(range(last_write + 1, len(replies) - 1))     # exclude the final submit
+    if len(span) < min_span:
+        return None
+    seen: set[str] = set()
+    for j in span:
+        h = command_head(cmds[j] or "")
+        if not h:
+            continue
+        if h in seen:
+            return j
+        seen.add(h)
+    return None
+
+
+def king_done_turn(main_convs: list[list[dict]], kind: str, min_more: int,
+                   interactive: bool = False) -> int | None:
     """Position (within the main-root replies) of the first turn that
     follows a completion-eligible reply while >= `min_more` replies follow
     it -- the king said/attempted "done" and kept going. None if no such
-    turn."""
+    turn. In an interactive harness a prose reply is a message to the user,
+    not a completion (tau2-gen 2026-09-21: 75 of 66 king rollouts' asks read
+    as "done"), so only real finishes (submit / finish tool / task_complete)
+    count there."""
     for k in range(1, len(main_convs)):
         if len(main_convs) - k < min_more:
             return None
         prev = main_convs[k - 1]
-        if prev and prev[-1]["role"] == "assistant" \
-                and completion_kind(prev[-1]["content"], kind) is not None:
-            return k
+        if prev and prev[-1]["role"] == "assistant":
+            ck = completion_kind(prev[-1]["content"], kind)
+            if ck is not None and not (interactive and ck == "text"):
+                return k
     return None
 
 
@@ -933,6 +1085,20 @@ def load_curriculum() -> dict:
     out = {"mode": mode, "raw": raw, "groups": {}, "m": {}, "path": None, "error": None}
     if mode == "off":
         return out
+    # Contract guard (ops/health/contract_compat.py, 2026-09-19): while the
+    # curriculum is FROZEN (its inputs' units no longer match the live
+    # score_mode, or an operator froze it) the fold falls back to the static
+    # [mix] exactly like a missing vector, and the announce line says why.
+    # Kept in place by ops/fold/ensure_frozen_hook.py — do not remove.
+    frozen_path = REPO / "affine" / "state" / "curriculum" / "FROZEN.json"
+    if frozen_path.exists():
+        try:
+            fz = json.loads(frozen_path.read_text())
+        except (OSError, ValueError):
+            fz = {}
+        out["error"] = f"frozen since {fz.get('frozen_at', '?')} by {fz.get('by', '?')}: {fz.get('reason', 'no reason recorded')}"
+        out["frozen"] = True
+        return out
     path = REPO / str(raw.get("weights_path") or "ops/curriculum/out/groups.json")
     out["path"] = str(path)
     if not path.exists():
@@ -972,8 +1138,9 @@ def load_curriculum() -> dict:
         if str(data.get("mode") or mode) != mode:
             out["error"] = f"mode mismatch (vector {data.get('mode')} vs toml {mode})"
         age_h = (datetime.now(timezone.utc) - datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)).total_seconds() / 3600
-        if age_h > 24:
-            out["error"] = f"vector older than 24 h ({age_h:.0f} h)"
+        max_age = float(raw.get("max_vector_age_h", 24) or 24)
+        if age_h > max_age:
+            out["error"] = f"vector older than {max_age:.0f} h ({age_h:.0f} h)"
         out["meta"] = {k: data.get(k) for k in ("epoch", "ledger_sha256", "weights_sha256", "rule_version", "generated_at")
                        if isinstance(data, dict) and k in data}
         tot = sum(out["groups"].values())
@@ -1066,7 +1233,7 @@ def yield_report(after: dict[str, int], mix: dict[str, float], group_turns: dict
                         "top_drops": [{"reason": k, "n": v} for k, v in top]}
     subl = {k[len("king_divergence_sublabel_"):]: v for k, v in (NOTES_GLOBAL or {}).items()
             if k.startswith("king_divergence_sublabel_")}
-    return {"groups": groups, "sources": sources,
+    return {"groups": groups, "sources": sources, "by_king": dict(YIELD_BY_KING),
             # tau2-airline read (2026-09-18): "acted with a schema example value
             # where the teacher asked", per fold and per king digest, so the
             # rate can be tracked reign over reign.
@@ -1531,6 +1698,14 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         for r in out[n0:]:
             y["records"] += 1
             y["accepted_turns"] += len(r["turns"])
+            pid = str((r.get("policy") or {}).get("id") or "")
+            if pid.startswith("king_"):
+                kd = r.get("king_digest") or str((r.get("policy") or {}).get("model") or "").rsplit("king-", 1)[-1][:12] or "unknown"
+                ky = YIELD_BY_KING.setdefault(kd, {"seen": 0, "records": 0, "turns": 0, "groups": {}, "sources": {}})
+                ky["records"] += 1
+                ky["turns"] += len(r["turns"])
+                g0 = r.get("fold_group") or "king_fail?"
+                ky["groups"][g0] = ky["groups"].get(g0, 0) + len(r["turns"])
 
     for env in iter_jsonl_gz(path):
         _settle(_prev)
@@ -1538,8 +1713,19 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         if is_backfill(env, chunk_key):
             _count(drops, "backfill_excluded")
             continue
+        _dc = decontaminated(env)
+        if _dc:
+            _count(drops, _dc)
+            _count(drops, f"{_dc}_{env.get('source')}")
+            continue
         _src = str(env.get("source") or "")
         YIELD.setdefault(_src, {"seen": 0, "accepted_turns": 0, "records": 0, "drops": {}})["seen"] += 1
+        _pid = str((env.get("policy") or {}).get("id") or "")
+        if _pid.startswith("king_"):
+            _kd = str((env.get("policy") or {}).get("model") or "").rsplit("king-", 1)[-1][:12] or "unknown"
+            _ky = YIELD_BY_KING.setdefault(_kd, {"seen": 0, "records": 0, "turns": 0, "groups": {}, "sources": {}})
+            _ky["seen"] += 1
+            _ky["sources"][_src] = _ky["sources"].get(_src, 0) + 1
         _prev = (_src, dict(drops), len(out))
         convs = None
         route: dict[int, str] = {}          # turn_idx -> group (final)
@@ -1547,10 +1733,18 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         in_loop: set[int] = set()
         kind = (env.get("policy") or {}).get("action_kind") or "bash"
         want_loop = bool(king_loop) and king_loop_candidate(env, king_loop)
+        want_done_onset = (bool(king_done) and king_done.get("solved_onset") and _policy_ok(env, king_done)
+                           and king_multi_turn(env, king_done) and rollout_outcome(env["trace"]) == "solved")
         pivots = side_table_turns(env, king_pivot) if king_pivot else {}
         recoverable = side_table_turns(env, king_recoverable) if king_recoverable else {}
         divergence = side_table_turns(env, king_divergence) if king_divergence else {}
         divergence_text: dict[int, str] = {}
+        # auto-research 2026-09-20: rows whose KING reply has no action while
+        # the teacher's refs act. The duel scores prefix + fresh samples, never
+        # the stored reply, so the slicer's one-action check is waived for
+        # them: the reply is admitted through the text fallback and the turn
+        # keeps the policy dialect (kind_stamp back to `kind`).
+        divergence_waive: set[int] = set()
         want_done = bool(king_done) and king_done_candidate(env, king_done)
         want_tooluse = (bool(king_tooluse) and _policy_ok(env, king_tooluse)
                         and str(env.get("source") or "") in king_tooluse["sources"])
@@ -1565,7 +1759,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         escapes: set[int] = set()
         want_completion = bool(completion) and completion_candidate(env, completion)
         interactive = str(env.get("source") or "") in INTERACTIVE_SOURCES
-        if want_loop or want_completion or want_done or want_tooluse or want_pre or interactive:
+        if want_loop or want_completion or want_done or want_tooluse or want_pre or interactive or want_done_onset:
             try:
                 convs = trace_conversations(env["trace"], baker)
             except (ToolParityError, TraceShapeError) as e:
@@ -1589,7 +1783,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
 
         later_onsets: set[int] = set()
         loop_labels = None
-        if (want_loop or want_tooluse) and main_convs:
+        if (want_loop or want_tooluse or want_done_onset) and main_convs:
             loop_labels = label_loops(main_convs, kind)
         if want_loop and main_convs:
             n_on = 0
@@ -1614,7 +1808,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             _count(notes, "king_loop_in_loop_labels", len(in_loop))
             _count(notes, "king_later_onset_labels", len(later_onsets))
         if want_done and main_convs:
-            k = king_done_turn(main_convs, kind, king_done["min_more_turns"])
+            k = king_done_turn(main_convs, kind, king_done["min_more_turns"], interactive=interactive)
             if k is not None:
                 i = main[k]
                 _count(notes, "king_done_states")
@@ -1625,6 +1819,25 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                 done_route = None
         else:
             done_route = None
+        done_rule = "completion_then_continued"
+        if done_route is None and want_done_onset and loop_labels:
+            # Solved rollout that looped: the first onset is the done state.
+            for j, lab in enumerate(loop_labels):
+                if lab.label == ONSET:
+                    done_route = main[j]
+                    done_rule = "solved_loop_onset"
+                    _count(notes, "king_done_states")
+                    _count(notes, "king_done_solved_onset")
+                    _count(notes, f"king_done_solved_onset_{env.get('source')}")
+                    break
+        if done_route is None and want_done_onset and king_done.get("post_write_repeat") and main_convs:
+            j = post_write_repeat_turn(main_convs, kind, king_done["post_write_min_span"])
+            if j is not None:
+                done_route = main[j]
+                done_rule = "post_write_repeat"
+                _count(notes, "king_done_states")
+                _count(notes, "king_done_post_write_repeat")
+                _count(notes, f"king_done_post_write_repeat_{env.get('source')}_{(env.get('policy') or {}).get('harness')}")
         if pivots:
             _count(notes, "king_pivot_rollouts")
             for i, row in pivots.items():
@@ -1675,6 +1888,9 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                     _count(notes, f"king_divergence_sublabel_{sub}_{row.get('king') or 'king'}")
                 if row.get("_kind"):
                     divergence_text[i] = row["_kind"]
+                elif row.get("fold_hint") == "waive_stored_reply_parse":
+                    divergence_waive.add(i)
+                    _count(notes, "king_divergence_waived_stored_reply")
         kind_stamp: dict[int, str] = dict(divergence_text)     # turn -> duel-time action_kind
         if interactive and convs and kind != dialects.TEXT_KIND:
             # Mid-trajectory prose replies of an interactive harness are
@@ -1737,7 +1953,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             route[done_route] = KING_DONE_GROUP
             in_loop.discard(done_route)
             later_onsets.discard(done_route)
-            extra[done_route] = {"done": {"after_turn": int(done_route) - 1}}
+            extra[done_route] = {"done": {"after_turn": int(done_route) - 1, "rule": done_rule}}
             kind_stamp[done_route] = king_done["kind"]
         if one_reply_king and not any(g == KING_TOOLUSE_GROUP for g in route.values()):
             # The state is the task prompt, which the teacher's own rollout
@@ -1752,7 +1968,9 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         # Turns scored under `text` may be recorded from a reply with no action
         # in the policy dialect (the affine_sql king answers with a bare
         # ```sql block; 26 of 28 refused king_done states, 2026-09-13).
-        text_replies = frozenset(i for i, k in kind_stamp.items() if k == dialects.TEXT_KIND)
+        text_replies = frozenset(i for i, k in kind_stamp.items() if k == dialects.TEXT_KIND) | frozenset(divergence_waive)
+        for i in divergence_waive:
+            kind_stamp[i] = kind           # slicer admits via text; meta reverts to the policy dialect
         try:
             rec = build_view_record(env, baker=baker,
                                     generated_at=env.get("stored_at"),
@@ -1766,6 +1984,11 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                 _count_leaked(route, convs, kind, leak_exempt, notes)
             _count(drops, "no_scorable_turn")
             continue
+        _pid0 = str((env.get("policy") or {}).get("id") or "")
+        if _pid0.startswith("king_"):
+            # Served king digest (policy.model `king/king-<digest12>`) on the
+            # record, so admissions can be reported per king (2026-09-19).
+            rec["king_digest"] = str((env.get("policy") or {}).get("model") or "").rsplit("king-", 1)[-1][:12] or None
         if kind_stamp:
             # Duel-time kind per routed turn (Jacob 2026-09-13: whatever keeps
             # the teacher's references parseable at the state). Stamped on
@@ -2346,6 +2569,7 @@ def derive_coached(cfg: dict, baker: ToolBaker, panel, allowed_kinds, published:
 TEACHER_SOLVED_CACHE = CACHE_DIR / "teacher_solved_tasks.json"
 GATE_SHADOW_RETIRE: dict[str, list[str]] = {}   # rows a shadow group WOULD retire under the recovery rule
 YIELD: dict[str, dict] = {}     # per source: envelopes seen, records / turns accepted at derive, drop reasons
+YIELD_BY_KING: dict[str, dict] = {}   # per served king digest: king rollouts seen, records / turns at derive, by routed group / source
 NOTES_GLOBAL: dict[str, int] = {}   # the fold's `notes` counters, for the yield report
 # Sources whose harness talks to a (simulated) user mid-trajectory
 # (`[source.<name>] interactive = true`, tau2-airline read 2026-09-18): a
@@ -2382,7 +2606,13 @@ def load_admission_gate() -> dict:
             # flips back); `recovery_exempt` groups (king_coached: the coached
             # teacher IS the recovery) get the dead-reference drop only.
             "recovery_exempt": frozenset(str(g) for g in (raw.get("recovery_exempt") or [KING_COACHED_GROUP])),
-            "auto_promote": bool(raw.get("auto_promote", True))}
+            "auto_promote": bool(raw.get("auto_promote", True)),
+            # Policies whose solved rollouts count as "a strong model solves
+            # the task" for the task-level signal. 2026-09-20: the 45 gate-
+            # unverified coding tasks had only GLM-era teacher runs
+            # (`glm_*`, engy/glm-5.2, Aug 2026) -- the teacher of wvk <= 9,
+            # not backfill; counted by default, drop `glm_` here to revert.
+            "teacher_prefixes": tuple(str(x) for x in (raw.get("teacher_policy_prefixes") or ["teacher_", "glm_"]))}
 
 
 def load_state_recovery(cfg: dict) -> dict[tuple[str, int], bool]:
@@ -2407,10 +2637,12 @@ def load_state_recovery(cfg: dict) -> dict[tuple[str, int], bool]:
     return out
 
 
-def teacher_solved_tasks(pub: PublicCorpus, traces_manifest: dict) -> tuple[set[str], set[str]]:
-    """(solved instance ids, seen instance ids) from every teacher_* rollout
-    in the traces; cached per traces manifest."""
-    key = hashlib.sha256(json.dumps([c["key"] for c in traces_manifest["chunks"]]).encode()).hexdigest()[:16]
+def teacher_solved_tasks(pub: PublicCorpus, traces_manifest: dict,
+                         prefixes: tuple[str, ...] = ("teacher_",)) -> tuple[set[str], set[str]]:
+    """(solved instance ids, seen instance ids) from every rollout of a
+    teacher-side policy (`prefixes`) in the traces; cached per traces
+    manifest + prefixes. Backfill rollouts never enter the manifest."""
+    key = hashlib.sha256(json.dumps([c["key"] for c in traces_manifest["chunks"]] + list(prefixes)).encode()).hexdigest()[:16]
     if TEACHER_SOLVED_CACHE.exists():
         try:
             c = json.loads(TEACHER_SOLVED_CACHE.read_text())
@@ -2424,7 +2656,7 @@ def teacher_solved_tasks(pub: PublicCorpus, traces_manifest: dict) -> tuple[set[
         path = pub.cached(c["key"], c["sha256"], gz_sha=True)
         for env in iter_jsonl_gz(path):
             pid = str((env.get("policy") or {}).get("id") or "")
-            if not pid.startswith("teacher_"):
+            if not pid.startswith(prefixes) or is_backfill(env):
                 continue
             sid = str((env.get("task") or {}).get("sid") or "")
             if not sid:
@@ -2467,6 +2699,10 @@ def gate_turn(rec: dict, m: dict, g: str, cfg: dict, state_rec: dict, task_solve
         return "admit" if st else "not_recovered"
     task = (rec.get("task") or {})
     ts = task.get("teacher_solved") if isinstance(task, dict) else None
+    if isinstance(ts, str):       # datagen stamps it as text ('True' / 'False')
+        ts = ts.strip().lower() in ("true", "1", "yes")
+    if ts is False:
+        ts = None                 # 'False' = not known solved at stamp time; let the traces decide
     if ts is None and cfg["task_signal"]:
         sid = str(rec.get("instance_id") or "")
         if sid in task_solved:
@@ -2682,6 +2918,12 @@ def failed_published(pub: PublicCorpus, live: dict | None, cfg: dict) -> dict[st
 
 # -- composition guard ----------------------------------------------------------
 MAX_SHARE_SHIFT = 0.05
+# docs/auto-research-loop.md §2: with folds every 6 h the per-fold guard
+# alone allows a 30-point daily swing, so any group's slice share may move
+# at most DAILY_SHIFT_CAP points against its share 24 h ago (state
+# `share_history`: one snapshot per published epoch).
+DAILY_SHIFT_CAP = 0.10
+DAILY_WINDOW_S = 24 * 3600
 
 
 def composition_table(before: dict[str, int], after: dict[str, int]) -> list[tuple]:
@@ -2829,6 +3071,13 @@ def finalize(state: dict, manifest: dict, mhash: str) -> None:
     for bucket, keys in (pending.get("lang_strata_added") or {}).items():
         state["lang_strata"][bucket] = sorted(
             set(state["lang_strata"].get(bucket, [])) | set(keys))
+    tot_s = sum(len(v) for v in state["group_strata"].values()) or 1
+    hist = [h for h in (state.get("share_history") or [])
+            if datetime.now(timezone.utc).timestamp() - float(h["at"]) <= 3 * DAILY_WINDOW_S]
+    hist.append({"epoch": int(pending["epoch"]), "at": datetime.now(timezone.utc).timestamp(),
+                 "iso": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                 "shares": {g: round(len(v) / tot_s, 5) for g, v in state["group_strata"].items()}})
+    state["share_history"] = hist
     state["unannounced"] = {
         "epoch": int(pending["epoch"]), "n_added": int(pending["n_turns"]),
         "total": int(manifest["index"]["n_turns"]), "manifest_sha256": mhash,
@@ -2914,6 +3163,10 @@ def sublabel_line(info: dict) -> str:
         parts.append("king_divergence sub-labels this fold: " + ", ".join(f"{k} {v}" for k, v in sorted(subl.items())))
     if y.get("interactive_prose_turns"):
         parts.append(f"interactive prose turns admitted as text: {y['interactive_prose_turns']}")
+    bk = y.get("by_king") or {}
+    if bk:
+        parts.append("king candidates by digest: " + ", ".join(
+            f"{d} {v['seen']} rollouts/{v['turns']} turns" for d, v in sorted(bk.items(), key=lambda kv: -kv[1]['seen'])[:5]))
     return ("; ".join(parts) + ".\n") if parts else ""
 
 
@@ -3177,6 +3430,11 @@ def main() -> None:
     mix, src2grp, lang_mix, buckets = load_mix(ignore_fold_mix=args.ignore_fold_mix)
     global INTERACTIVE_SOURCES
     INTERACTIVE_SOURCES = load_interactive_sources()      # before any derive_chunk call
+    DECONTAM.clear(); DECONTAM.update(load_decontamination())
+    if DECONTAM:
+        log("decontamination: " + "; ".join(f"{src} bench ids {sum(len(v) for v in c['bench'].values())} "
+                                            f"({', '.join(f'{d} {len(v)}' for d, v in c['bench'].items())})"
+                                            for src, c in DECONTAM.items()))
     if INTERACTIVE_SOURCES:
         log(f"interactive sources (mid-trajectory prose replies admitted as text): {sorted(INTERACTIVE_SOURCES)}")
     routed = {KING_LOOP_GROUP: load_king_loop_onset(),
@@ -3558,7 +3816,8 @@ def main() -> None:
         # enforced = toml apply_groups + earlier auto-promotions (sticky)
         gate["apply_groups"] = frozenset(gate["apply_groups"]) | frozenset(state.get("gate_enforced") or [])
         state_rec = load_state_recovery(gate)
-        task_solved, task_seen = teacher_solved_tasks(pub, traces_manifest) if gate["task_signal"] else (set(), set())
+        task_solved, task_seen = (teacher_solved_tasks(pub, traces_manifest, gate["teacher_prefixes"])
+                                  if gate["task_signal"] else (set(), set()))
         dead = dead_reference_turns(gate)
         log(f"admission gate: {len(state_rec)} state-level recovery rows "
             f"({sum(state_rec.values())} recover), {len(task_solved)} teacher-solved tasks of {len(task_seen)} seen, "
@@ -3765,6 +4024,26 @@ def main() -> None:
             log(f"GUARD (dry run): {msg}")
         else:
             fatal(msg)
+    # 24 h cumulative cap: compare against the oldest snapshot inside the window
+    # (or the newest before it) so six 5-point steps cannot add up to thirty.
+    now_ts = datetime.now(timezone.utc).timestamp()
+    hist = [h for h in (state.get("share_history") or []) if now_ts - float(h["at"]) <= DAILY_WINDOW_S]
+    older = [h for h in (state.get("share_history") or []) if now_ts - float(h["at"]) > DAILY_WINDOW_S]
+    base = (hist[0] if hist else (older[-1] if older else None))
+    if base:
+        ta = sum(after.values()) or 1
+        daily = [(g, after.get(g, 0) / ta - float(base["shares"].get(g, 0.0)))
+                 for g in set(after) | set(base["shares"])]
+        over = [(g, round(d, 3)) for g, d in daily if abs(d) > DAILY_SHIFT_CAP]
+        if over and not args.allow_shift:
+            msg = (f"24 h cumulative slice-share move of {over} exceeds {DAILY_SHIFT_CAP:.0%} "
+                   f"(baseline epoch {base.get('epoch')} at {base.get('iso')}); rerun with --allow-shift")
+            if args.no_publish:
+                log(f"GUARD (dry run): {msg}")
+            else:
+                fatal(msg)
+        log(f"24 h shift cap: max |move| {max((abs(d) for _, d in daily), default=0):.3f} vs "
+            f"baseline epoch {base.get('epoch')} ({len(hist)} snapshots in window)")
 
     recurrence = None
     if STRATA_BUDGET:
@@ -3858,7 +4137,8 @@ def main() -> None:
         "floors": fstat if STRATA_BUDGET else None,
         "yield_groups": yrep["groups"] if STRATA_BUDGET else None,
         "yield_extra": {"divergence_sublabels": yrep.get("divergence_sublabels"),
-                        "interactive_prose_turns": yrep.get("interactive_prose_turns")} if STRATA_BUDGET else None,
+                        "interactive_prose_turns": yrep.get("interactive_prose_turns"),
+                        "by_king": yrep.get("by_king")} if STRATA_BUDGET else None,
         "yield_sources": yrep["sources"] if STRATA_BUDGET else None,
         "admission_gate": gate_report or None,
         "gate_enforced": sorted(gate["apply_groups"]) if gate else None,

@@ -33,3 +33,9 @@ ops/king-chat/known_hosts
 
 # affine-evalwatch daemon state (alert dedupe, restart baseline)
 ops/evalwatch/state/
+
+# improvement-loop watcher state (box-local)
+ops/improvement-loop/state/
+
+# autoresearch state (box-local)
+affine/state/autoresearch/

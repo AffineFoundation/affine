@@ -103,9 +103,12 @@ def plan_of(name: str) -> dict:
 
 
 def offers(plan: dict) -> list[dict]:
-    return [o for o in availability(plan["gpu_type"], int(plan["gpu_count"]))
-            if ((o.get("prices") or {}).get("onDemand") or 1e9) <= float(plan["max_price"])
-            and plan.get("image", "ubuntu_22_cuda_12") in (o.get("images") or [plan.get("image", "ubuntu_22_cuda_12")])]
+    out = [o for o in availability(plan["gpu_type"], int(plan["gpu_count"]))
+           if ((o.get("prices") or {}).get("onDemand") or 1e9) <= float(plan["max_price"])
+           and (not plan.get("cloud_id") or o.get("cloudId") == plan["cloud_id"])
+           and (plan.get("role") == "docker" or plan.get("image", "ubuntu_22_cuda_12") in (o.get("images") or [plan.get("image", "ubuntu_22_cuda_12")]))
+           and ((o.get("vcpu") or {}).get("defaultCount") or 0) >= int(plan.get("min_vcpu", 0))]
+    return out
 
 
 def prime_status(pod_id: str) -> dict:
@@ -150,12 +153,18 @@ def cmd_rent(a: argparse.Namespace) -> int:
     if not stock:
         log(f"no Prime stock for {plan['gpu_count']}x {plan['gpu_type']} under ${plan['max_price']}/h")
         return 2
-    image = plan.get("image", "ubuntu_22_cuda_12")
     for pick in stock:
+        image = plan.get("image", "ubuntu_22_cuda_12")
+        if image not in (pick.get("images") or [image]):
+            image = (pick.get("images") or [image])[0]      # CPU nodes: whatever ubuntu image the offer has
         price = (pick.get("prices") or {}).get("onDemand")
         cmd = ["prime", "--plain", "pods", "create", "--cloud-id", pick["cloudId"], "--gpu-type", plan["gpu_type"],
-               "--gpu-count", str(plan["gpu_count"]), "--name", name, "--image", image, "-y"]
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=180, env={**os.environ, "PRIME_DISABLE_VERSION_CHECK": "1"})
+               "--gpu-count", str(plan["gpu_count"]), "--name", name, "--image", image, "-y",
+               "--disk-size", str(int(plan.get("disk_gb", 200)))]     # CPU nodes prompt for disk / vcpus / memory otherwise
+        if plan.get("role") == "docker":
+            cmd += ["--vcpus", str(int((pick.get("vcpu") or {}).get("defaultCount") or plan.get("min_vcpu", 0))),
+                    "--memory", str(int((pick.get("memory") or {}).get("defaultCount") or 0))]
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL, env={**os.environ, "PRIME_DISABLE_VERSION_CHECK": "1"})
         out = p.stdout + p.stderr
         pod_id = next((tok for tok in out.split() if len(tok) == 32 and all(c in "0123456789abcdef" for c in tok)), None)
         if p.returncode != 0 or not pod_id:
@@ -163,7 +172,8 @@ def cmd_rent(a: argparse.Namespace) -> int:
             continue
         kingpod.update_pod(name, provider="prime", pod_id=pod_id, digest=digest, plan={"name": plan["name"], "gpu_count": int(plan["gpu_count"]),
                            "tp": int(plan.get("tp", plan["gpu_count"])), "replicas": 1, "gpu_type": plan["gpu_type"], "vllm_cuda": plan.get("vllm_cuda", "cu130")},
-                           served=("teacher" if a.hf else f"king-{digest[:12]}"), r2=a.r2 or "", hf=a.hf or "",
+                           served=("" if plan.get("role") == "docker" else "teacher" if a.hf else f"king-{digest[:12]}"), r2=a.r2 or "", hf=a.hf or "",
+                           role=plan.get("role", "serve"),
                            executor_id=f"prime:{pick.get('provider')}:{pick['cloudId']}", machine=f"{plan['gpu_count']}x {plan['gpu_type']} ({pick.get('provider')})",
                            price=float(price or 0), rented_at=time.time(), key=secrets.token_hex(24), state="rented", ssh_user="root")
         log(f"rented {name}: {plan['name']} on {pick.get('provider')} {pick['cloudId']} ${price}/h pod_id={pod_id} (balance ${bal if bal is None else round(bal)})")
@@ -215,6 +225,43 @@ def push_env_and_launch(name: str, mem: dict) -> bool:
     return True
 
 
+DOCKER_BOOT = r"""set -e
+export DEBIAN_FRONTEND=noninteractive
+mkdir -p /etc/docker
+# one compose network per Harbor trial: give the daemon room for 500 of them BEFORE it starts
+cat > /etc/docker/daemon.json <<'J'
+{"default-address-pools": [{"base": "10.200.0.0/16", "size": 24}, {"base": "10.201.0.0/16", "size": 24}, {"base": "10.202.0.0/16", "size": 24}], "log-driver": "json-file", "log-opts": {"max-size": "20m"}}
+J
+if ! command -v docker >/dev/null 2>&1; then curl -fsSL https://get.docker.com | sh >/tmp/get-docker.log 2>&1; fi
+systemctl restart docker 2>/dev/null || service docker restart 2>/dev/null || true
+for i in $(seq 1 20); do docker info >/dev/null 2>&1 && break; sleep 3; done
+docker info >/dev/null 2>&1
+docker network inspect bridge -f '{{.IPAM.Config}}' | grep -q 10.200 || echo "WARN: address pool not applied"
+apt-get install -y -qq rsync tmux python3 >/dev/null 2>&1 || true
+export PATH=$HOME/.local/bin:$PATH
+command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1
+export PATH=$HOME/.local/bin:$PATH
+[ -x /root/harborenv/bin/harbor ] || { uv venv /root/harborenv --python 3.12 >/dev/null 2>&1; VIRTUAL_ENV=/root/harborenv uv pip install -q "harbor==0.21.0" >/dev/null 2>&1; }
+/root/harborenv/bin/harbor --version
+echo DOCKER_HOST_READY
+"""
+
+
+def docker_bootstrap(name: str, mem: dict) -> bool:
+    """A Prime CPU/GPU node as a Harbor docker host: real dockerd (no sysbox), daemon.json address pools
+    written before the daemon starts, harbor in its own venv (2026-09-21, the @4h250 parallel lane)."""
+    try:
+        p = ssh_run(mem, "bash -s", input_text=DOCKER_BOOT, timeout=900)
+    except subprocess.SubprocessError as e:
+        log(f"{name}: docker bootstrap {type(e).__name__}")
+        return False
+    if "DOCKER_HOST_READY" not in p.stdout:
+        log(f"{name}: docker bootstrap failed: {(p.stdout + p.stderr)[-300:].strip()}")
+        return False
+    log(f"{name}: docker host ready ({p.stdout.strip().splitlines()[-2] if len(p.stdout.strip().splitlines()) > 1 else ''})")
+    return True
+
+
 def probe(mem: dict) -> bool:
     try:
         p = ssh_run(mem, f"curl -sf -m 8 -H 'Authorization: Bearer {mem['key']}' http://127.0.0.1:{mem['front_internal']}/v1/models", timeout=30)
@@ -255,6 +302,15 @@ def cmd_wait(a: argparse.Namespace) -> int:
                 except subprocess.SubprocessError as e:
                     ok = False
                     log(f"{a.name}: ssh {type(e).__name__}")
+                if ok and mem.get("role") == "docker":
+                    if docker_bootstrap(a.name, mem):
+                        mem.update(state="ready", ready_at=time.time(), base_url=None, front_internal=None)
+                        kingpod.update_pod(a.name, **mem)
+                        log(f"{a.name}: READY docker host ({mem['ssh_user']}@{mem['ssh_host']}:{mem['ssh_port']})")
+                        print(f"{mem['ssh_user']}@{mem['ssh_host']}:{mem['ssh_port']}")
+                        return 0
+                    kingpod.update_pod(a.name, state="failed")
+                    return 3
                 if ok and push_env_and_launch(a.name, mem):
                     kingpod.update_pod(a.name, **mem)
             elif st.get("status") in ("ERROR", "TERMINATED", "FAILED"):

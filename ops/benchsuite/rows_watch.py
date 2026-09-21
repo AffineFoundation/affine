@@ -306,6 +306,9 @@ def main() -> int:
                     log(f"{info['row']} {job['kind']}: gave up after {rec['attempts']} attempts — {job['envs']}")
                     discord(f"[rows-watch] {info['row']} {job['kind']} {job['envs']}: gave up after {rec['attempts']} attempts (cells stay 'run failed')")
                     continue
+                lp = STATE / f"swe-local-{info['d12']}.pid"
+                if job["kind"] == "swe4h" and lp.exists() and subprocess.run(["kill", "-0", lp.read_text().strip()], capture_output=True).returncode == 0:
+                    running_here.append("swe4h(+docker lane)")   # swe_prime.sh runs it too; both lanes race, first to publish wins
                 if job["kind"] in ("swe", "swe4h") and (swe_blocked or swe_jobs_running() >= MAX_SWE_JOBS):
                     running_here.append(job["kind"] + "(waiting: Daytona)"); swe_blocked = True
                     continue

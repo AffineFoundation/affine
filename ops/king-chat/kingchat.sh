@@ -13,18 +13,26 @@
 #
 # Path: Cursor -> https://sn120.arbos.life/king/v1 -> Cloudflare tunnel
 #   (pm2 affine-tunnel on this box) -> 127.0.0.1:LOCAL_PORT (pm2 ssh -L loop)
-#   -> pod 127.0.0.1:8080 caddy (strips /king) -> pod vLLM :8000 (--api-key).
+#   -> pod 127.0.0.1:8080 caddy (strips /king) -> pod fold_proxy :8001
+#   (folds mid-thread system messages) -> pod vLLM :8000 (--api-key).
+#
+# Two boxes share this script through env overrides (see tunnel-cursor.sh):
+#   KINGCHAT_POD_NAME / KINGCHAT_LOCAL_PORT / KINGCHAT_PUBLIC_PATH /
+#   KINGCHAT_SECRETS / KINGCHAT_STATE. Defaults = the original /king box.
 #
 # State:  ops/king-chat/state.json   {"ssh": "root@HOST -p PORT", ...}
 # Secret: ~/.affine-king-chat.env    KING_API_KEY=... (0600; the Cursor key)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-STATE=$HERE/state.json
-SECRETS=$HOME/.affine-king-chat.env
 POD_NAME=${KINGCHAT_POD_NAME:-affine-chat-const}
+STATE=${KINGCHAT_STATE:-$HERE/state.json}
 LOCAL_PORT=${KINGCHAT_LOCAL_PORT:-9012}
 PUBLIC_HOST=${KINGCHAT_PUBLIC_HOST:-sn120.arbos.life}
+# URL path Cloudflare matches and Caddy strips. Default keeps the original
+# /king route. The dedicated Cursor box uses /king-cursor.
+PUBLIC_PATH=${KINGCHAT_PUBLIC_PATH:-/king}
 CF_TUNNEL_ID=${KINGCHAT_CF_TUNNEL_ID:-6cfb1dc0-2ef8-41ba-8245-2b581abbbd7f}
+SECRETS=${KINGCHAT_SECRETS:-$HOME/.affine-king-chat.env}
 SNAPSHOT_URL=https://affine.io/api/v1/snapshot
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$HERE/known_hosts"
           -o ConnectTimeout=15 -o LogLevel=ERROR)
@@ -73,11 +81,12 @@ cmd_provision() {
   local digest; digest=$(king_digest)
   echo "current king digest: $digest"
   read -r host port <<<"$(host_port)"
-  scp "${SSH_OPTS[@]}" -P "$port" "$HERE/pod_bootstrap.sh" "root@$host:/tmp/pod_bootstrap.sh"
+  scp "${SSH_OPTS[@]}" -P "$port" "$HERE/pod_bootstrap.sh" "$HERE/fold_proxy.py" "root@$host:/tmp/"
   # Secrets over stdin into a 0600 file — never on a command line.
   printf 'KING_API_KEY=%s\nKING_DIGEST=%s\n' "$KING_API_KEY" "$digest" | ssh_pod \
     'mkdir -p /root/king-chat /root/logs && umask 077 && cat > /root/king-chat/.env && \
      mv /tmp/pod_bootstrap.sh /root/king-chat/pod_bootstrap.sh && \
+     mv /tmp/fold_proxy.py /root/king-chat/fold_proxy.py && \
      chmod +x /root/king-chat/pod_bootstrap.sh && \
      { pkill -xf "bash pod_bootstrap.sh" || true; } && \
      cd /root/king-chat && (nohup bash pod_bootstrap.sh </dev/null >> /root/logs/bootstrap.log 2>&1 &) && \
@@ -115,8 +124,10 @@ acct, tok = os.environ["CLOUDFLARE_ACCOUNT_ID"], os.environ["CLOUDFLARE_API_TOKE
 url = f"https://api.cloudflare.com/client/v4/accounts/{acct}/cfd_tunnel/{tunnel}/configurations"
 hdr = {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
 cur = json.load(urllib.request.urlopen(urllib.request.Request(url, headers=hdr)))["result"]["config"]
-rule = {"hostname": host, "path": "^/king(/|$)", "service": f"http://127.0.0.1:{port}"}
-ingress = [r for r in cur["ingress"] if not (r.get("hostname") == host and r.get("path"))]
+path = os.environ.get("KINGCHAT_PUBLIC_PATH", "/king").strip("/")
+rule = {"hostname": host, "path": f"^/{path}(/|$)", "service": f"http://127.0.0.1:{port}"}
+ingress = [r for r in cur["ingress"] if not (
+    r.get("hostname") == host and (r.get("path") or "").startswith(f"^/{path}"))]
 ingress.insert(0, rule)
 cur["ingress"] = ingress
 req = urllib.request.Request(url, data=json.dumps({"config": cur}).encode(), headers=hdr, method="PUT")
@@ -131,10 +142,11 @@ cmd_status() {
   echo "pod: $(pod_ssh)"
   ssh_pod 'nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader; \
            curl -s -m 5 http://127.0.0.1:8000/health -o /dev/null -w "vllm /health %{http_code}\n"; \
-           curl -s -m 5 http://127.0.0.1:8080/king/v1/models -H "Authorization: Bearer '"$KING_API_KEY"'" | head -c 300; echo; \
+           curl -s -m 5 http://127.0.0.1:8001/health -o /dev/null -w "fold_proxy /health %{http_code}\n"; \
+           curl -s -m 5 http://127.0.0.1:8080'"$PUBLIC_PATH"'/v1/models -H "Authorization: Bearer '"$KING_API_KEY"'" | head -c 300; echo; \
            tail -2 /root/logs/bootstrap.log 2>/dev/null; tail -2 /root/logs/vllm.log 2>/dev/null | cut -c1-200'
-  echo "local forward 127.0.0.1:$LOCAL_PORT: $(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:$LOCAL_PORT/king/v1/models -H "Authorization: Bearer $KING_API_KEY")"
-  echo "public https://$PUBLIC_HOST/king/v1/models: $(curl -s -m 15 -o /dev/null -w '%{http_code}' https://$PUBLIC_HOST/king/v1/models -H "Authorization: Bearer $KING_API_KEY")"
+  echo "local forward 127.0.0.1:$LOCAL_PORT: $(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:$LOCAL_PORT$PUBLIC_PATH/v1/models -H "Authorization: Bearer $KING_API_KEY")"
+  echo "public https://$PUBLIC_HOST$PUBLIC_PATH/v1/models: $(curl -s -m 15 -o /dev/null -w '%{http_code}' https://$PUBLIC_HOST$PUBLIC_PATH/v1/models -H "Authorization: Bearer $KING_API_KEY")"
 }
 
 cmd_logs() { ssh_pod 'tail -n 40 -f /root/logs/vllm.log'; }

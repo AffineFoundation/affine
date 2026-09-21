@@ -29,7 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import rule  # noqa: E402
 from common import (  # noqa: E402
-    DATA_BASE, INDEX_CACHE, PROBES_PATH, STATE_DIR, base_stratum, canonical_json,
+    DATA_BASE, FITTED_SCORE_MODES, INDEX_CACHE, INPUT_UNITS, PROBES_PATH, RESCORING_METHOD, STATE_DIR,
+    base_stratum, canonical_json,
     clean_float, depth_bin, fetch_bytes, group_of_stratum, index_table_for_manifest,
     load_curriculum_cfg, load_sources_toml, load_src2grp, load_static_mix, log,
     manifest_by_sha, norm_text, sha256_bytes, write_json, write_parquet,
@@ -63,9 +64,9 @@ def live_manifest(base: str, sha: str | None) -> tuple[dict, str]:
 
 
 def load_rollup(path: Path) -> dict[str, dict[str, dict]]:
-    out: dict[str, dict[str, dict]] = {"stratum": {}, "cell": {}, "group": {}}
+    out: dict[str, dict[str, dict]] = {"stratum": {}, "cell": {}, "group": {}, "group_era": {}}
     for r in pq.read_table(path).to_pylist():
-        out[r["level"]][r["key"]] = r
+        out.setdefault(r["level"], {})[r["key"]] = r
     return out
 
 
@@ -377,6 +378,11 @@ def compute(args) -> dict:
             "v2_reason": vec_v2["reasons"].get(g, "no_supply"),
             "king_div_action": clean_float(gr.get("div_action")), "king_div_action_exact": clean_float(gr.get("div_action_exact")),
             "king_div_score": clean_float(gr.get("div_score")),
+            # inputs split by scoring era (wvk / score_mode) -- an era shift shows here first
+            "king_by_era": {k.split("|", 1)[1]: {kk: (clean_float(er.get(kk)) if kk != "n_obs" else int(er.get(kk) or 0))
+                                                 for kk in ("n_obs", "M", "forfeit_rate", "mean_score", "Dbar_plus",
+                                                            "div_action", "div_score", "S")}
+                            for k, er in sorted(roll.get("group_era", {}).items()) if k.split("|", 1)[0] == g},
             "king_Dbar": clean_float(gr.get("Dbar")), "king_Dbar_plus": clean_float(gr.get("Dbar_plus")),
             "king_n_d": int(gr.get("n_d") or 0),
             # the king's miss rate, raw from the ledger (decayed means over king rows)
@@ -389,6 +395,8 @@ def compute(args) -> dict:
             "m_hist_shadow": dict(sorted(Counter(int(r["m_shadow"]) for r in ss).items())),
         }
     groups_doc = {"mode": mode, "rule_version": int(cfg["rule_version"]), "weights_sha256": wsha,
+                  "input_units": INPUT_UNITS, "fitted_score_modes": list(FITTED_SCORE_MODES),
+                  "rescoring_method": RESCORING_METHOD,
                   "share_unit": share_unit, "theta": ledger_doc.get("theta"),
                   "counted_rule": counted,
                   "recurrence_guard": {"actions": guard["actions"][:200], "n_actions": len(guard["actions"]),
@@ -474,6 +482,7 @@ def compute(args) -> dict:
     top = sorted(strata.values(), key=lambda r: (-float(r["w_counted"]), r["stratum"]))[:10]
     rule_doc = {
         "rule_version": int(cfg["rule_version"]), "mode": mode, "knobs": knobs, "counted_rule": counted,
+        "input_units": INPUT_UNITS, "fitted_score_modes": list(FITTED_SCORE_MODES), "rescoring_method": RESCORING_METHOD,
         "formula": "w_s = (M~_s + eps)^gamma * S~_s; share_g ∝ Σ w over the group's slice keys (a phase-9 bucket "
                    "weighs the mean w of the base strata it merges; share_unit = base_strata sums base strata instead); floors (coding+terminal ≥ floor_coding_terminal, "
                    "every group ≥ floor_frac_of_static × [mix]); cap group_cap; clamp ± max_share_shift vs the live "
