@@ -1,0 +1,154 @@
+N5 — COACHED REFERENCES: is the verified-better action plausible under the blind teacher, and is its thought in band?
+states 67 graded (outcome + split-states probes; prefix = advisor_ppi materialisation) | stuck (>= 1 teacher-failed first action) 28 | stuck with >= 1 verified-better action (tiers T∪F1) 12 (+ tier F: 12) | verified-better actions 24 (teacher-solved 18, frontier F1-solved 6)
+echoes: 4895 usable (0 errors), advisor_ppi action echoes reused where the (state, thought, action) key matched; $ spent here 0.90
+σ_c pooled on these states (sqrt mean within-state var of the 3 blind m_c): {bash: 0.196, tool_call: 0.201, terminus_json: 0.165}; live verdict σ_Mc: {bash: 0.155, tool_call: 0.198, terminus_json: 0.134}
+Terms: lp0 = lpC(y|x,∅) (blind teacher, no thought; per byte / summed); lpB = mean over the 3 stored blind thoughts of lpC(y|x,z_blind); teacher range = [min,max] lp0 over the teacher's OWN actions at x (F = failed first actions only; F+B = failed + the 3 blind refs; duplicates by normalised action collapsed); in-range = inside it; >= floor = at/above its min; z = (v − mean)/sd of those teacher values (needs >= 2);
+       Δbest = lp0(verified) − max lp0(teacher-failed); m_c/band as in the live sd-meter (θ = 1 nat, width 2, >= 10 content tokens); in-band uses the live σ_Mc unless marked pooled.
+
+========================================================================================================================
+1. ACTION PLAUSIBILITY — verified-better actions vs the blind teacher's own actions at the same stuck state
+========================================================================================================================
+-- metric lp0 per byte --
+  group                                        ref    n  st  in-range  inR|n>=2  >=floor  >max  z mean   z p50 Δbest mean Δbest p50 =teacher
+  ALL verified-better (T∪F1)                   F     24  12       25%    75%(8)      67%   42%   -0.07    0.10     0.0111   -0.0095      21%
+    mini_swe_textbased                         F      9   4       11%    50%(2)      78%   67%    0.51    0.51     0.0610    0.0755       0%
+    bash                                       F      9   5       44%    80%(5)      67%   22%   -0.24    0.12    -0.0229   -0.0213       0%
+    terminus_2                                 F      6   3       17%   100%(1)      50%   33%   -0.36   -0.36    -0.0126   -0.0106      83%
+    tier T (teacher-solved first actions)      F     18   8       22%    80%(5)      67%   44%   -0.38    0.09     0.0075   -0.0089      17%
+    tier F1 (frontier proposals, teacher finished) F      6   6       33%    67%(3)      67%   33%    0.45    0.34     0.0220   -0.0171      33%
+    tier F (frontier own continuation solved)  F      0   0       n/a    n/a(0)      n/a   n/a     n/a     n/a        n/a       n/a      n/a
+  ALL verified-better (T∪F1)                   F+B   24  12       62%   65%(23)      96%   33%    0.67    0.63     0.0111   -0.0095      21%
+    mini_swe_textbased                         F+B    9   4       44%    44%(9)     100%   56%    1.11    1.51     0.0610    0.0755       0%
+    bash                                       F+B    9   5       89%    89%(9)     100%   11%    0.32    0.23    -0.0229   -0.0213       0%
+    terminus_2                                 F+B    6   3       50%    60%(5)      83%   33%    0.50    0.47    -0.0126   -0.0106      83%
+    tier T (teacher-solved first actions)      F+B   18   8       67%   67%(18)     100%   33%    0.62    0.59     0.0075   -0.0089      17%
+    tier F1 (frontier proposals, teacher finished) F+B    6   6       50%    60%(5)      83%   33%    0.85    0.67     0.0220   -0.0171      33%
+    tier F (frontier own continuation solved)  F+B    0   0       n/a    n/a(0)      n/a   n/a     n/a     n/a        n/a       n/a      n/a
+-- metric lp0 summed --
+  group                                        ref    n  st  in-range  inR|n>=2  >=floor  >max  z mean   z p50 Δbest mean Δbest p50 =teacher
+  ALL verified-better (T∪F1)                   F     24  12       12%    38%(8)      50%   38%   -6.61   -0.75    -7.4212   -1.5652      21%
+    mini_swe_textbased                         F      9   4       11%    50%(2)      67%   56%   -3.79   -3.79    -5.4927    5.2326       0%
+    bash                                       F      9   5       11%    20%(5)      33%   22%   -9.05   -0.84    -9.8614   -7.9425       0%
+    terminus_2                                 F      6   3       17%   100%(1)      50%   33%   -0.00   -0.00    -6.6534   -1.1721      83%
+    tier T (teacher-solved first actions)      F     18   8        6%    20%(5)      50%   44%   -8.95   -0.84    -4.1723   -1.1336      17%
+    tier F1 (frontier proposals, teacher finished) F      6   6       33%    67%(3)      50%   17%   -2.69   -0.67   -17.1676   -8.6631      33%
+    tier F (frontier own continuation solved)  F      0   0       n/a    n/a(0)      n/a   n/a     n/a     n/a        n/a       n/a      n/a
+  ALL verified-better (T∪F1)                   F+B   24  12       58%   61%(23)      88%   29%    0.26    0.55    -7.4212   -1.5652      21%
+    mini_swe_textbased                         F+B    9   4       33%    33%(9)      89%   56%    0.44    1.29    -5.4927    5.2326       0%
+    bash                                       F+B    9   5       89%    89%(9)      89%    0%   -0.15    0.17    -9.8614   -7.9425       0%
+    terminus_2                                 F+B    6   3       50%    60%(5)      83%   33%    0.67    0.67    -6.6534   -1.1721      83%
+    tier T (teacher-solved first actions)      F+B   18   8       61%   61%(18)      94%   33%    0.64    0.71    -4.1723   -1.1336      17%
+    tier F1 (frontier proposals, teacher finished) F+B    6   6       50%    60%(5)      67%   17%   -1.13    0.43   -17.1676   -8.6631      33%
+    tier F (frontier own continuation solved)  F+B    0   0       n/a    n/a(0)      n/a   n/a     n/a     n/a        n/a       n/a      n/a
+-- metric lpB per byte (under blind thoughts) --
+  group                                        ref    n  st  in-range  inR|n>=2  >=floor  >max  z mean   z p50 Δbest mean Δbest p50 =teacher
+  ALL verified-better (T∪F1)                   F     24  12       25%    75%(8)      58%   33%   -0.15    0.24    -0.0150   -0.0112      21%
+    mini_swe_textbased                         F      9   4       11%    50%(2)      67%   56%    0.09    0.09    -0.0139    0.0324       0%
+    bash                                       F      9   5       44%    80%(5)      67%   22%   -0.09    0.24    -0.0089   -0.0115       0%
+    terminus_2                                 F      6   3       17%   100%(1)      33%   17%   -0.91   -0.91    -0.0260   -0.0121      83%
+    tier T (teacher-solved first actions)      F     18   8       22%    80%(5)      56%   33%   -0.32    0.24    -0.0142   -0.0124      17%
+    tier F1 (frontier proposals, teacher finished) F      6   6       33%    67%(3)      67%   33%    0.14    0.23    -0.0174   -0.0073      33%
+    tier F (frontier own continuation solved)  F      0   0       n/a    n/a(0)      n/a   n/a     n/a     n/a        n/a       n/a      n/a
+  ALL verified-better (T∪F1)                   F+B   24  12       58%   61%(23)      79%   21%    0.07    0.23    -0.0150   -0.0112      21%
+    mini_swe_textbased                         F+B    9   4       33%    33%(9)      67%   33%    0.02   -0.39    -0.0139    0.0324       0%
+    bash                                       F+B    9   5       78%    78%(9)      89%   11%    0.08    0.02    -0.0089   -0.0115       0%
+    terminus_2                                 F+B    6   3       67%    80%(5)      83%   17%    0.14    0.44    -0.0260   -0.0121      83%
+    tier T (teacher-solved first actions)      F+B   18   8       56%   56%(18)      78%   22%   -0.12    0.13    -0.0142   -0.0124      17%
+    tier F1 (frontier proposals, teacher finished) F+B    6   6       67%    80%(5)      83%   17%    0.76    0.44    -0.0174   -0.0073      33%
+    tier F (frontier own continuation solved)  F+B    0   0       n/a    n/a(0)      n/a   n/a     n/a     n/a        n/a       n/a      n/a
+-- paired, split states: mean lp0(teacher-solved) − mean lp0(teacher-failed) at the same state --
+  lp0_pb   ALL: n=8 mean=0.0126 p50=0.0046 se=0.0162 solved>failed 62%  terminus_2: n=2 mean=-0.0055 p50=-0.0055 se=0.0114 solved>failed 50%  mini_swe_textbased: n=2 mean=0.0595 p50=0.0595 se=0.0562 solved>failed 100%  bash: n=4 mean=-0.0018 p50=-0.0047 se=0.0134 solved>failed 50%
+  lp0_sum  ALL: n=8 mean=-1.6978 p50=-0.5482 se=3.1886 solved>failed 38%  terminus_2: n=2 mean=1.4635 p50=1.4635 se=1.5946 solved>failed 50%  mini_swe_textbased: n=2 mean=5.9587 p50=5.9587 se=6.9240 solved>failed 50%  bash: n=4 mean=-7.1068 p50=-10.3156 se=4.2243 solved>failed 25%
+  lpB_pb   ALL: n=8 mean=-0.0037 p50=-0.0016 se=0.0101 solved>failed 50%  terminus_2: n=2 mean=-0.0228 p50=-0.0228 se=0.0162 solved>failed 0%  mini_swe_textbased: n=2 mean=-0.0143 p50=-0.0143 se=0.0302 solved>failed 50%  bash: n=4 mean=0.0112 p50=0.0121 se=0.0113 solved>failed 75%
+-- the frontier-verified actions individually (F1-family proposals whose teacher-finished continuation solved) --
+  state         harness            stuck arm rel                lp0/B         F range/B       F+B range/B  lp0 sum         F range sum   lpB/B       F lpB range    m_c    μ_c z_live band  vis z
+  1a29993d:10   terminus_2         False F1                    -0.105               n/a   [-0.089,-0.078]    -24.8                 n/a  -0.144               n/a  -3.96  -0.31 -27.34  out    n/a
+      y: '{\n  "analysis": "Verified /app/results.txt contains exactly `FLAG{b4ff3r_0v3rfl0w_m4st3r_k3y_2024}` followed by a newline. The task is complete.",\n  "'
+  1fa9c7e2:4    terminus_2         False F1                    -0.199               n/a   [-0.112,-0.087]   -165.2                 n/a  -0.242               n/a  -2.53  -0.78 -13.04  out    n/a
+      y: '{\n  "analysis": "The active Python is a uv-managed virtual environment, but `pip` may resolve to the system pip. No C/C++ compiler or make is currentl'
+  21bc74b2:3    bash               False F1                    -0.103               n/a   [-0.078,-0.058]   -442.7                 n/a  -0.104               n/a  -1.72  -0.53  -5.99  out  -2.51
+      y: '<tool_call>\n{"name": "bash", "arguments": {"command": "cat << \'PYEOF\' > /tmp/test3.py\\nimport re\\n\\nOCT = r\'(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0'
+  22dfccc2:13   mini_swe_textbased False F1                    -0.098               n/a   [-0.098,-0.098]     -6.6                 n/a  -0.001               n/a  -0.59  -0.69   0.63  out   0.32
+      y: '```bash\ncd /testbed && PYTHONPATH=/testbed python /tmp/repro.py\n```'
+  2f4d4ef3:6    terminus_2         True  F1                    -0.061   [-0.035,-0.035]   [-0.045,-0.031]    -24.6       [-15.3,-15.3]  -0.081   [-0.031,-0.031]  -1.39  -0.32  -7.96  out    n/a
+      y: '{\n  "analysis": "gcc and g++ have been installed successfully. Now I need to install PyTorch to load model.pth and extract the weights.",\n  "plan": "I'
+  3665be60:13   terminus_2         True  F1                    -0.066   [-0.053,-0.053]   [-0.103,-0.053]    -16.1       [-15.6,-15.6]  -0.058   [-0.047,-0.047]  -1.01  -0.62  -2.89  out    n/a
+      y: '{\n  "analysis": "The rstan installation is still running. It\'s compiling dependencies which can take a while.",\n  "plan": "Wait for the installation t'
+  3cab611b:15   mini_swe_textbased True  F1                    -0.104   [-0.251,-0.251]   [-0.251,-0.140]     -6.0       [-14.8,-14.8]  -0.085   [-0.133,-0.133]  -1.03  -0.91  -0.79  out   4.53
+      y: '```bash\ncd /testbed && pip install -e . 2>&1 | tail -5\n```'
+  6a1f2d81:12   mini_swe_textbased False F1                    -0.369               n/a   [-0.144,-0.134]    -30.2                 n/a  -0.361               n/a  -1.44  -0.58  -5.58  out  -1.50
+      y: '```bash\ngit log --oneline -10; echo "---"; cat tests/test_config.py | head -60\n```'
+  701bd65d:9    bash               False F1                    -0.111               n/a   [-0.154,-0.113]    -23.0                 n/a  -0.129               n/a  -2.78  -1.30  -7.51  out  -5.61
+      y: '<tool_call>\n{"name": "bash", "arguments": {"command": "cat /home/commander.js/examples/custom-help /home/commander.js/examples/pizza 2>/dev/null; ls /'
+  8bee1f31:5    mini_swe_textbased True  F1b same              -0.182   [-0.190,-0.151]   [-0.190,-0.151]    -22.0       [-25.7,-12.1]  -0.148   [-0.152,-0.025]  -1.83  -0.65  -7.67  out  -1.05
+      y: '```bash\ngit log --oneline -10 && echo "=====" && cat fuel-crypto/Cargo.toml && echo "=====" && cat fuel-vm/Cargo.toml\n```'
+  9d3fd174:14   mini_swe_textbased True  F1  act_or_finish     -0.096   [-0.305,-0.172]   [-0.305,-0.172]    -99.6       [-38.3,-15.5]  -0.096   [-0.357,-0.133]  -0.64  -0.82   1.17   IN   3.39
+      y: '```bash\nmkdir -p /tmp/repro && cat <<\'EOF\' > /tmp/repro/reproduce.py\nimport sys\nfrom pathlib import Path\n\nsys.path.insert(0, "/app")\n\nfrom graphql imp'
+  aa378258:12   mini_swe_textbased False F1                    -0.455               n/a   [-0.338,-0.148]    -23.6                 n/a  -0.410               n/a  -1.16  -0.74  -2.71  out   1.43
+      y: '```bash\ngit log --oneline -10 && cat CHANGES.rst\n```'
+  acfca5b9:10   mini_swe_textbased False F1                    -0.221               n/a   [-0.384,-0.114]    -11.1                 n/a  -0.455               n/a  -1.59  -0.78  -5.24  out   0.10
+      y: '```bash\ncat src/Sentry/Laravel/Integration.php\n```'
+  b3ea21bb:5    terminus_2         False F1                    -0.211               n/a   [-0.087,-0.069]   -110.8                 n/a  -0.209               n/a  -1.88  -0.31 -11.72  out    n/a
+      y: '{\n  "analysis": "All required counts have been independently verified. The final /app/summary.csv exists with the correct header and all 15 rows in th'
+  ca99dd9d:12   bash               True  F1  different_target  -0.074   [-0.099,-0.052]   [-0.099,-0.052]    -14.4        [-15.1,-6.5]  -0.132   [-0.144,-0.128]  -1.12  -0.92  -1.01   IN -12.94
+      y: '<tool_call>\n{"name": "bash", "arguments": {"command": "cd /tcomb && find node_modules -name \\"declare.js\\" -path \\"*tcomb*\\" 2>/dev/null; ls node_modu'
+  cfa692cf:15   mini_swe_textbased False F1                    -0.190               n/a   [-0.115,-0.084]    -21.1                 n/a  -0.242               n/a  -1.33  -0.49  -5.48  out  -0.72
+      y: '```bash\ncd /testbed && git log --oneline -5 -- cache.go && git log -S "keyEvict) + 1" --oneline -- cache.go\n```'
+  d0949dbf:3    terminus_2         False F1                    -0.113               n/a   [-0.076,-0.021]  -1337.9                 n/a  -0.113               n/a  -3.29  -0.50 -20.83  out    n/a
+      y: '{\n  "analysis": "The initial implementation works for basic commands and Ctrl-C, but it has a SyntaxWarning, does not robustly consume output while co'
+
+========================================================================================================================
+2. THOUGHT TYPICALITY — content-masked m_c vs the state's blind teacher thoughts (band = μ_c ± 2σ_c)
+========================================================================================================================
+  group                                                                    n  st  inband      95% CI   inbP  z mean   z p50  |z|p50  below  above  <10ct     m_c  len50
+  teacher first thought, solved                                           65  32     77%   [ 65– 85]    85%    0.09    0.04    0.83     5%    11%     9%  -0.745    490
+  teacher first thought, failed                                           61  25     84%   [ 72– 91]    90%    0.13    0.13    0.75     7%     8%     3%  -0.752    611
+  teacher first thought, solved @stuck (split states)                     17   8     82%   [ 59– 94]    82%    0.26   -0.23    1.26     0%    12%    18%  -0.744    389
+  frontier proposal thought (GLM latent+visible), solved                  17  17     12%   [  3– 34]    12%   -7.29   -5.58    5.58    76%     0%    18%  -1.723    228
+  frontier proposal thought (GLM latent+visible), failed                  24  17     38%   [ 21– 57]    38%   -3.71   -3.08    3.08    62%     0%     8%  -1.369    464
+  frontier proposal thought (GLM latent+visible), solved @stuck            6   6     33%   [ 10– 70]    33%   -3.19   -1.95    2.03    50%     0%    17%  -1.170    103
+  frontier proposal thought (GLM latent+visible), failed @stuck           21  14     43%   [ 24– 63]    43%   -3.57   -2.89    2.89    57%     0%    10%  -1.367    504
+  frontier proposal visible text only, solved                             11  11     45%   [ 21– 72]    45%   -1.32   -0.72    1.50    27%    18%     9%  -1.051    228
+  frontier proposal visible text only, failed                             22  15     59%   [ 39– 77]    68%   -0.99    0.12    1.53    23%    14%     9%  -0.956    878
+  frontier own-continuation first thought, solved                          1   1    100%   [ 21–100]   100%   -0.52   -0.52    0.52     0%     0%     0%  -0.608    606
+  frontier own-continuation first thought, failed                          0   0     n/a         n/a    n/a     n/a     n/a     n/a    n/a    n/a    n/a     n/a    n/a
+  blind ref LOO (band's own hit rate)                                    192  64     82%   [ 76– 87]    n/a     n/a     n/a     n/a    n/a    n/a     4%  -0.706    n/a
+  by harness (in-band live share, n):
+    teacher first thought, solved                                          mini_swe_t 74% (23)  bash 91% (22)  terminus_2 65% (20)
+    teacher first thought, failed                                          mini_swe_t 84% (25)  bash 90% (21)  terminus_2 73% (15)
+    frontier proposal thought (GLM latent+visible), solved                 mini_swe_t 12% (8)  bash 33% (3)  terminus_2 0% (6)
+    frontier proposal thought (GLM latent+visible), failed                 mini_swe_t 36% (14)  bash 57% (7)  terminus_2 0% (3)
+    frontier proposal visible text only, solved                            mini_swe_t 62% (8)  bash 0% (3)  terminus_2 n/a (0)
+    frontier proposal visible text only, failed                            mini_swe_t 71% (14)  bash 50% (6)  terminus_2 0% (2)
+
+========================================================================================================================
+3. THE COACHED PICK — per stuck state with >= 1 verified-better action: the verified action the blind teacher finds most plausible (max lp0 per byte)
+========================================================================================================================
+  stuck states with a coached pick: 12 (tiers T∪F1); with tier F added: 12
+  coached pick is a TEACHER action (band unchanged: reference thoughts stay the teacher's own): 7/12; a FRONTIER action (no in-band thought by construction → action-only entry into the A/R legs): 5/12
+  coached pick >= teacher floor (min lp0/B over failed first actions): 11/12  |  >= floor over failed + blind refs: 11/12  |  BELOW the failed floor: 1/12 = 8% (kill line: > 70%)
+  Δbest (lp0/B coached − best teacher-failed): mean 0.0120 p50 -0.0071, positive at 6/12; summed Δ mean -9.13 nats; per-byte and summed argmax agree at 9/12
+  coached pick's thought in band (live σ): 8/12 with a thought echo; teacher-pick AND in band: 6/12
+  teacher-ONLY coached set (restrict the pick to teacher-solved actions, so every reference thought is the teacher's own): available at 8/12; its best action >= failed floor 8/8, thought in band 7/8, both 7/8
+  by harness: mini_swe_textbased n=4 teacher-pick 1 >=floor 4 in-band 2; bash n=5 teacher-pick 4 >=floor 5 in-band 5; terminus_2 n=3 teacher-pick 2 >=floor 2 in-band 1
+  state         harness             d nTf nV pick    lp0/B bestF/B     Δ/B    Δsum >=flr >=flrB    z_c band nTs nTs_in y
+  2f4d4ef3:6    terminus_2          6   1  1 F1     -0.061  -0.035  -0.026    -9.4 False  False  -7.96  out   0      0 '{\n  "analysis": "gcc and g++ have been installed successfull'
+  3665be60:13   terminus_2         13   1  4 T      -0.033  -0.053   0.020     7.6  True   True  -0.49  out   3      0 '{\n  "analysis": "The R installation command is still running'
+  3cab611b:15   mini_swe_textbased 15   1  4 F1     -0.104  -0.251   0.147     8.8  True   True  -0.79  out   3      2 '```bash\ncd /testbed && pip install -e . 2>&1 | tail -5\n```'
+  48e27ac1:8    mini_swe_textbased  8   1  3 T      -0.178  -0.225   0.047     5.9  True   True  -1.32   IN   3      3 '```bash\ngrep -rn "Scratcher" --include="*.go" . | grep -v "_'
+  4ab938c9:10   bash               10   1  1 T      -0.049  -0.081   0.032     5.3  True   True   0.69   IN   1      1 '<tool_call>\n{"name": "bash", "arguments": {"command": "env |'
+  8bee1f31:5    mini_swe_textbased  5   4  1 F1b    -0.182  -0.151  -0.030    -9.9  True   True  -7.67  out   0      0 '```bash\ngit log --oneline -10 && echo "=====" && cat fuel-cr'
+  913f7a01:14   bash               14   1  3 T      -0.027  -0.033   0.006   -26.8  True   True  -1.70   IN   3      3 '<tool_call>\n{"name": "bash", "arguments": {"command": "cd /t'
+  9d3fd174:14   mini_swe_textbased 14   4  1 F1     -0.096  -0.172   0.076   -61.3  True   True   1.17   IN   0      0 "```bash\nmkdir -p /tmp/repro && cat <<'EOF' > /tmp/repro/repr"
+  a785cb84:12   terminus_2         12   3  1 T      -0.131  -0.076  -0.054    -6.1  True   True  -0.83   IN   1      1 '{\n  "analysis": "My solution\'s output looks correct (top wor'
+  ca99dd9d:12   bash               12   3  1 F1     -0.074  -0.052  -0.021    -7.9  True   True  -1.01   IN   0      0 '<tool_call>\n{"name": "bash", "arguments": {"command": "cd /t'
+  cd542722:12   bash               12   2  2 T      -0.045  -0.014  -0.031   -22.4  True   True   1.26   IN   2      2 '<tool_call>\n{"name": "bash", "arguments": {"command": "cd /t'
+  f1e5d484:14   bash               14   2  2 T      -0.044  -0.023  -0.020     6.7  True   True  -1.58   IN   2      2 '<tool_call>\n{"name": "bash", "arguments": {"command": "cd /w'
+
+========================================================================================================================
+VERDICT
+========================================================================================================================
+1. Plausibility: verified-better actions sit at/above the blind teacher's own lp0/B floor at 67% vs the failed first actions and 96% vs failed+blind refs (n=24 actions / 12 stuck states); strictly inside the range at 25% vs failed (75% where the teacher has >= 2 distinct failed actions, n=8) and 62% vs failed+blind — 42% sit ABOVE every failed action; z vs failed+blind mean 0.67 (teacher-solved tier 67% >= failed floor, n=18; frontier F1 tier 67%, n=6).
+2. Thoughts: teacher-solved first thoughts in band 77% (n=65) vs teacher-failed 84% (n=61); blind LOO 82% — no solved/failed gap, X2's 0.84/0.85 confirmed; frontier proposal thoughts (GLM latent+visible) in band 27% (n=41; solved ones 12%, n=17) — out of band as expected.
+3. Coached pick: 12 stuck states have one; it is a teacher action at 7/12 (band unchanged) and a frontier action at 5/12 (action-only); a teacher-only coached set exists at 8/12 and is >= floor AND in band at 7/8; Δ vs the best teacher-failed action is positive at 6/12 (p50 -0.0071/B); the pick lies BELOW the teacher's failed-action floor at 1/12 = 8%.
+4. Kill line (dead if the best verified action is below the teacher floor at > 70% of stuck states): NOT DEAD — 8% below; a coached reference can be built at these 12 states without leaving the teacher's band in most cases; caveats: n is small (12 stuck states with a verified action, 28 stuck in total → 16 stuck states have NO verified-better action at all), the 'better' label is one graded continuation per action, and frontier-derived picks bring no in-band thought.
