@@ -373,7 +373,10 @@ class LiumProvider(Provider):
                           gpu, _redact(p.stderr[-300:]))
                 continue
             ranked = _rank_lium_executors(p.stdout, self.em.max_price_per_hour,
-                                          min_gpu_count=self.em.gpu_count)
+                                          min_gpu_count=self.em.gpu_count,
+                                          min_download_mbps=float(getattr(
+                                              self.em, "min_download_mbps",
+                                              DEFAULT_MIN_DOWNLOAD_MBPS)))
             for huid, price in ranked:
                 if huid in exclude:
                     continue
@@ -643,8 +646,17 @@ def _scp_to(ssh: str, local: Path, remote: str,
     return _run(cmd, timeout=timeout)
 
 
+# Executors whose Lium speed test is below this are skipped for eval pods:
+# an eval pod must pull ~136 GB of king + challenger weights per fresh rent,
+# and the miner-slot downloads run at the pod's line rate. 2026-09-21: a
+# $9.60/h RTX PRO 6000 box took 24 min for pip and pulled R2 at 29 KB/s.
+# Override per role with [eval_machine].min_download_mbps (0 = off).
+DEFAULT_MIN_DOWNLOAD_MBPS = 400.0
+
+
 def _rank_lium_executors(ls_output: str, cap: float,
-                         min_gpu_count: int | None = None
+                         min_gpu_count: int | None = None,
+                         min_download_mbps: float = 0.0,
                          ) -> list[tuple[str, float]]:
     """Parse `lium ls --format json` → [(id, $/hr), ...] cheapest first under cap.
 
@@ -682,6 +694,15 @@ def _rank_lium_executors(ls_output: str, cap: float,
                             continue
                     except (TypeError, ValueError):
                         continue
+                if min_download_mbps > 0:
+                    down = row.get("download_mbps")
+                    try:
+                        if down is not None and float(down) < min_download_mbps:
+                            log.info("lium: skipping %s (%s Mbps down < %.0f)",
+                                     ident[:8], down, min_download_mbps)
+                            continue
+                    except (TypeError, ValueError):
+                        pass
                 ranked.append((ident, price))
             ranked.sort(key=lambda x: x[1])
             return ranked
