@@ -1183,6 +1183,59 @@ def build_tmax_catalog(cfg: RolloutsConfig, src: Source) -> dict:
     })
 
 
+# -- terminal_gen (2026-09-21): generated terminal tasks (ops/terminal_gen:
+# Stack Exchange post -> LLM spec -> Harbor task dir -> Docker-validated ->
+# decontaminated vs Terminal-Bench 2.0 / 4.0 + tmax). The set ships inside
+# the affine_terminal_gen_v1 package as data/e<epoch>/tasks.tar.gz; the
+# listing runs in the verifiers venv (where the package lives), extracts the
+# tarball once and enumerates the task dirs. Harbor names the task by
+# task.toml [task].name (`terminal_gen/<dir>`); the taskset filter takes the
+# dir basename (task_id_basename). Images are built on the pod like tmax.
+TERMINAL_GEN_LIST = r"""
+import json, os, sys, tomllib
+from affine_terminal_gen_v1.taskset import task_dirs
+epoch = int(sys.argv[1]); out = []
+for d in task_dirs(epoch):
+    toml = tomllib.loads((d / "task.toml").read_text())
+    meta = toml.get("metadata", {})
+    out.append({"dir": d.name, "name": toml.get("task", {}).get("name") or f"terminal_gen/{d.name}",
+                "image": toml.get("environment", {}).get("docker_image") or "",
+                "language": str(meta.get("language") or "shell"), "domain": str(meta.get("domain") or ""),
+                "difficulty": str(meta.get("difficulty") or ""), "se_site": str(meta.get("se_site") or ""),
+                "task_dir": str(d)})
+json.dump(out, sys.stdout); sys.stdout.flush()
+os._exit(0)
+"""
+
+
+def build_terminal_gen_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    epoch = _flag_value(src, "--env.taskset.data-epoch", "63")
+    rows = _verifiers_listing(cfg, TERMINAL_GEN_LIST, epoch, what="terminal_gen")
+    kept: list[dict] = []
+    n_unusable = 0
+    for r in rows:
+        if not r["image"]:
+            n_unusable += 1
+            continue
+        kept.append({
+            "uid": r["name"],
+            "sid": f"terminal_gen__{_dotless_task(r['dir'])}-0",
+            "repo": f"terminal-gen/{r['dir']}",
+            "language": _tmax_language(r["language"]),
+            "image": r["image"],
+            "task_dir": r["task_dir"],
+            "domain": r["domain"],
+            "difficulty": r["difficulty"],
+            "se_site": r["se_site"],
+        })
+    by_domain = Counter(r["domain"] for r in kept)
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": f"affine_terminal_gen_v1 data e{epoch}",
+        "total": len(rows), "kept": len(kept), "panel_excluded": 0, "unusable": n_unusable,
+        "by_domain": dict(by_domain),
+    })
+
+
 # -- longcot (env wave 2): the questions ship as JSON inside the `longcot`
 # git package (`data/<domain>/<difficulty>.json`), which lives in the pod's
 # VERIFIERS env only. The listing runs through that interpreter but reads
@@ -1612,6 +1665,7 @@ BUILDERS = {
     "oolong": build_oolong_catalog,
     "mrcr": build_mrcr_catalog,
     "tmax": build_tmax_catalog,
+    "terminal_gen": build_terminal_gen_catalog,
     "longcot": build_longcot_catalog,
     "autobench": build_autobench_catalog,
     "general_agent": build_general_agent_catalog,

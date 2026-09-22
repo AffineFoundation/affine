@@ -20,7 +20,7 @@ RUNNERS = ("verifiers", "verifiers_chat", "mini_swe")
 KING_POLICY_PREFIX = "king_"
 CATALOG_KINDS = ("hf", "hf_swebench", "swesmith", "terminal_lego",
                  "terminal_bench_2", "harbor_swe", "nl2repobench",
-                 "general_agent", "procedural", "tmax", "longcot", "autobench",
+                 "general_agent", "procedural", "tmax", "terminal_gen", "longcot", "autobench",
                  "rgym", "rcore", "oolong", "mrcr", "when2call", "tau2", "tau2_synth", "tau2_kb", "tau2_gen")
 SELECT_MODES = ("filter_fn", "tasks")
 

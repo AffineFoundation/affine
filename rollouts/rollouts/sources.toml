@@ -1446,6 +1446,48 @@ policies = ["teacher_textbased", "teacher_bashtool", "teacher_pi", "teacher_term
 # turns, 10 agent_completed + 2 errored; 12 images built on the pod.
 share = 1.0
 
+[source.affine_terminal_gen]
+# Generated terminal tasks (2026-09-21, Jacob "plan this out, implement and
+# push"; MiMo's terminal recipe): Stack Exchange posts (unix / askubuntu /
+# serverfault / superuser / dba, CC BY-SA 4.0, attribution in every
+# task.toml [metadata]) -> LLM task spec (instruction + Dockerfile + fixtures
+# + reference solution + pytest on the final state) -> Harbor task dir ->
+# Docker validation (untouched image scores 0, the reference solution scores
+# 1 twice) -> decontamination vs Terminal-Bench 2.0 AND 4.0 + tmax (word
+# 16-gram, SE url / qid, name; report ships with the set as
+# data/e<epoch>/decontam_report.md). Generator: ops/terminal_gen/run.sh
+# <epoch>; the set is data/e<epoch>/tasks.tar.gz inside the package, seed =
+# epoch, so every refresh is fresh tasks (RT-6). WHY: Terminal-Bench 2 is the
+# worst held-out cell (king 23-30 / seed 36 / teacher 51 / frontier 89) and
+# the terminal group was three fixed pools. Data event, no wvk.
+# Serving = tmax's path: the pod builds each task image from its Dockerfile
+# (local_docker_build), Harbor verifier -> `solved`, same four terminal
+# harnesses, teacher + king + greedy king. Target share 1.0 next to tmax 1.0 /
+# terminal_lego 3.0 / tb2 1.0 (start small; [mix].terminal unchanged).
+# STAGED at share 0.0 until the first set is committed: a live source whose
+# catalog cannot be built takes the supervisor down (run.py
+# load_catalog_or_empty; the 2026-09-12 longcot crash loop), and the
+# package ships no data/e<epoch>/ until ops/terminal_gen/run.sh has run.
+# Go-live = commit data/e<epoch>/, set `--env.taskset.data-epoch` to it, set
+# share = 1.0, redeploy (datagen worker) after the handshake in the store's
+# internal/benchsuite/requests.md.
+group = "terminal"
+runner = "verifiers"
+taskset_id = "affine-terminal-gen-v1"   # rollouts/envs/affine_terminal_gen_v1
+catalog = "terminal_gen"                # extracts data/e<epoch>/tasks.tar.gz, lists the dirs
+select = "tasks"
+pass_dataset = false
+task_id_basename = true     # harbor names tasks `terminal_gen/<dir>`; the filter takes the dir
+local_docker_build = true
+max_batch = 16
+max_concurrency = 8
+extra_flags = ["--env.taskset.data-epoch", "63"]
+policies = ["teacher_textbased", "teacher_bashtool", "teacher_pi", "teacher_terminus",
+            "king_textbased", "king_bashtool", "king_pi", "king_terminus",
+            "king_textbased_greedy", "king_bashtool_greedy",
+            "king_pi_greedy", "king_terminus_greedy"]
+share = 0.0   # STAGED: -> 1.0 with the first data_epoch (see above)
+
 [source.affine_longcot]
 # LongCoT (longcot-v1): ~2,000 long-horizon reasoning tasks in five domains
 # (logic / cs / chemistry / chess / math), solved by an agent in a sandbox
