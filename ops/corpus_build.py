@@ -272,9 +272,10 @@ def load_decontamination() -> dict[str, dict]:
     for src, cfg in raw.items():
         if not isinstance(cfg, dict):
             continue
-        path = REPO / str(cfg.get("bench_ids") or "")
+        bench_ids = str(cfg.get("bench_ids") or "")
+        path = REPO / bench_ids
         bench: dict[str, set[str]] = {}
-        if path.exists():
+        if bench_ids and path.is_file():
             data = json.loads(path.read_text())
             bench = {str(k): set(map(str, v)) for k, v in data.items() if isinstance(v, list)}
         out[str(src)] = {"bench": bench, "require_gen": bool(cfg.get("require_gen_marker", True)),
@@ -1314,9 +1315,17 @@ def budget_stratum(group: str, stratum_src: str, turn_id: str, cfg: dict | None 
     return stratum_src
 
 
+BUCKETED_TEACHER_GROUPS = ("math", "tool_use", "general", "agentic_ops", "long_context")
+
+
 def group_from_row(stratum_src: str, source: str, src2grp: dict[str, str]) -> str:
+    """A published row's group. Bucketed strata carry their group as the
+    namespace (`general:2660`), and that namespace wins over the source's
+    CURRENT group: a source moved to another group (autobench / eog ->
+    agentic_ops, mrcr / oolong -> long_context, 2026-09-21) keeps its
+    already-published rows where they were folded."""
     ns = str(stratum_src).split(":")[0]
-    return ns if ns in ROUTED_GROUPS or ns in KING_GROUPS or ns in ("math", "tool_use", "general") \
+    return ns if ns in ROUTED_GROUPS or ns in KING_GROUPS or ns in BUCKETED_TEACHER_GROUPS \
         else src2grp.get(str(source), DEFAULT_GROUP)
 
 

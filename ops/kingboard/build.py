@@ -229,7 +229,7 @@ MATRIX_ENV_TEMP = SAMPLED
 # An env whose rollouts carry a numeric grade less often than this has no
 # grader (affine_wiki: 0 of 288 teacher rollouts graded); no row gets a cell.
 NO_GRADER_SHARE = 0.05
-MATRIX_GROUP_ORDER = ["coding", "terminal", "math", "tool_use", "nl2repo", "general", "agent", "other"]
+MATRIX_GROUP_ORDER = ["coding", "terminal", "math", "tool_use", "agentic_ops", "long_context", "nl2repo", "general", "agent", "other"]
 # Short header labels for the compact matrix (full names travel in `label`).
 BENCH_ABBR = {
     "mmlu-pro": "MMLU", "math500": "M500", "gpqa-diamond": "GPQA", "aime25": "AIME",
@@ -249,6 +249,7 @@ BENCH_SHORT = {
     "tau2-telecom": "τ² telecom", "tau3-banking": "τ³ banking", "swebench-pro": "SWE-Pro",
 }
 GROUP_ABBR = {"coding": "code", "terminal": "term", "math": "math", "tool_use": "tool",
+              "agentic_ops": "aops", "long_context": "lctx",
               "nl2repo": "nl2r", "general": "gen", "agent": "agent", "other": "other"}
 # Fold groups that are not backed by a datagen source (routed from king /
 # teacher rollouts by the fold): extra column groups of the dataset table.
