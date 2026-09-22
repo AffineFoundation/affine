@@ -1,6 +1,6 @@
 #!/bin/bash
 # ops/terminal_gen/run.sh <epoch> [--n-posts N] [--model M] [--base-url U] [--key-env K]
-#                                 [--max-usd D] [--concurrency C] [--against NAME=DIR]... [--skip-fetch]
+#                                 [--max-usd D] [--concurrency C] [--synth-concurrency S] [--against NAME=DIR]... [--skip-fetch]
 #
 # Generate a fresh affine_terminal_gen task set for fold epoch <epoch> (seed =
 # epoch): Stack Exchange posts -> LLM task specs -> Harbor task dirs -> Docker
@@ -17,13 +17,14 @@
 # ~300 image builds at 1-5 min each on 4 workers (~2-4 h), ~10 GB of images.
 set -euo pipefail
 EPOCH=${1:?fold epoch (seed)}; shift
-N_POSTS=300; MODEL_ARGS=(); MAX_USD=20; CONC=4; AGAINST=(); SKIP_FETCH=0
+N_POSTS=300; MODEL_ARGS=(); MAX_USD=20; CONC=4; SYNTH_CONC=8; AGAINST=(); SKIP_FETCH=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --n-posts) N_POSTS=$2; shift 2;;
     --model|--base-url|--key-env) MODEL_ARGS+=("$1" "$2"); shift 2;;
     --max-usd) MAX_USD=$2; shift 2;;
     --concurrency) CONC=$2; shift 2;;
+    --synth-concurrency) SYNTH_CONC=$2; shift 2;;   # LLM calls in flight (a spec is ~90 s at the teacher; 8 = 3,000 posts in 10 h, 48 = ~1.5 h)
     --against) AGAINST+=(--against "$2"); shift 2;;
     --skip-fetch) SKIP_FETCH=1; shift;;
     *) echo "unknown arg $1"; exit 2;;
@@ -40,7 +41,7 @@ if [ "$SKIP_FETCH" = 0 ] || [ ! -f "$OUT/e$EPOCH/posts.jsonl.gz" ]; then
   $PY "$HERE/posts.py" --epoch "$EPOCH" --n "$N_POSTS" --out "$OUT"
 fi
 echo "== synth"
-$PY "$HERE/synth.py" --epoch "$EPOCH" --out "$OUT" --max-usd "$MAX_USD" --concurrency 8 "${MODEL_ARGS[@]}"
+$PY "$HERE/synth.py" --epoch "$EPOCH" --out "$OUT" --max-usd "$MAX_USD" --concurrency "$SYNTH_CONC" "${MODEL_ARGS[@]}"
 echo "== render"
 $PY "$HERE/harbor.py" --epoch "$EPOCH" --out "$OUT"
 echo "== validate (docker)"
