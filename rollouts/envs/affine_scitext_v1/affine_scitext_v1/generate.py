@@ -15,17 +15,21 @@ problems (changed constants, changed asked quantity, same physics) as JSON
   2. the teacher re-solves the variant BLIND from the env prompt in 1-3 of 3
      attempts (0/3 = too hard to reference).
 
-Budget: --budget-usd (plan USD 110 for ~12k variants; default 130).
-  python -m affine_scitext_v1.generate --epoch 1 --seeds 6000 --variants 2 --budget-usd 130
+Seeds run in --workers threads (the 17:54 sequential run was over a day for
+6,000 seeds). Every kept variant is appended to data/e<epoch>/tasks.jsonl.gz
+the moment it passes (a SIGTERM loses nothing); reruns skip uids already in
+the file. Budget: --budget-usd (plan USD 110; default 130).
+  python -m affine_scitext_v1.generate --epoch 1 --seeds 6000 --variants 2 --workers 8 --budget-usd 130
 """
 
 from __future__ import annotations
 
 import argparse
-import gzip
+import concurrent.futures as cf
 import json
 import random
 import sys
+import threading
 
 from datasets import load_dataset
 
@@ -38,10 +42,11 @@ from affine_scitext_v1.taskset import PACKAGE_DIR, SOURCE, SYSTEM
 GEN_SYSTEM = (
     "You write new quantitative science problems by varying a given seed problem: change the numbers, the "
     "asked quantity or the scenario while keeping the underlying physics/chemistry/mathematics. Reply with ONE "
-    "JSON object: {\"variants\": [{\"problem\": str, \"answer\": str, \"unit\": str, \"solution_code\": str}]}. "
-    "`answer` is the final numeric value (or closed form) the problem asks for, to 3-4 significant figures; "
-    "`solution_code` is complete Python (math, sympy, numpy allowed) that computes it from the problem's givens "
-    "and prints ONLY the final value. Problems must be self-contained, unambiguous, solvable without images."
+    "JSON object inside a ```json fenced block: {\"variants\": [{\"problem\": str, \"answer\": str, \"unit\": str, "
+    "\"solution_code\": str}]}. `answer` is the final numeric value (or closed form) the problem asks for, to 3-4 "
+    "significant figures; `solution_code` is complete Python (math, sympy, numpy allowed) that computes it from "
+    "the problem's givens and prints ONLY the final value. Problems must be self-contained, unambiguous, solvable "
+    "without images. Escape backslashes and newlines correctly inside JSON strings."
 )
 
 
@@ -68,13 +73,81 @@ def seeds(limit: int, rng: random.Random) -> list[dict]:
 
 
 def parse_variants(text: str) -> list[dict]:
-    i, j = text.find("{"), text.rfind("}")
-    try:
-        obj = json.loads(text[i:j + 1])
-    except Exception:  # noqa: BLE001
-        return []
-    vs = obj.get("variants") if isinstance(obj, dict) else None
-    return [v for v in (vs or []) if isinstance(v, dict) and v.get("problem") and v.get("answer") and v.get("solution_code")]
+    text = text or ""
+    import re
+    cands = re.findall(r"```(?:json)?\s*\n(.*?)```", text, re.S) + [text]
+    dec = json.JSONDecoder()
+    for c in cands:
+        i = c.find("{")
+        while i != -1:
+            try:
+                obj, _ = dec.raw_decode(c[i:])
+            except json.JSONDecodeError:
+                obj = None
+            vs = obj.get("variants") if isinstance(obj, dict) else None
+            if isinstance(vs, list):
+                return [v for v in vs if isinstance(v, dict) and v.get("problem") and v.get("answer") and v.get("solution_code")]
+            i = c.find("{", i + 1)
+    return []
+
+
+class Gen:
+    def __init__(self, a, store: GenTaskStore) -> None:
+        self.a, self.store = a, store
+        self.spend = Spend(a.budget_usd)
+        self.teacher = TeacherClient(self.spend)
+        self.kept = 0
+        self.rejects: dict[str, int] = {}
+        self.seen = store.existing_uids()
+        self.lock = threading.Lock()
+        self.stop = False
+
+    def reject(self, seed: str, why: str, detail: str = "") -> None:
+        with self.lock:
+            self.rejects[why] = self.rejects.get(why, 0) + 1
+        self.store.append_reject({"seed": seed, "why": why, "detail": detail[-800:]})
+
+    def keep(self, rec: dict) -> int:
+        with self.lock:
+            if rec["uid"] in self.seen:
+                return self.kept
+            self.seen.add(rec["uid"])
+            self.store.append_task(rec)
+            self.kept += 1
+            self.spend.write(self.store.local_dir / "spend.json")
+            return self.kept
+
+    def seed(self, s: dict) -> None:
+        if self.stop:
+            return
+        try:
+            raw = self.teacher.complete("generate", GEN_SYSTEM,
+                                        f"Seed problem ({s['subject']}):\n{s['problem']}\nSeed answer: {s['answer']} {s['unit']}\n\n"
+                                        f"Write {self.a.variants} variants as the JSON object.", max_tokens=6000, temperature=0.9)
+            variants = parse_variants(raw)
+            if not variants:
+                self.reject(s["seed_source"], "bad_json", raw[-500:]); return
+            for v in variants:
+                res = run_python(v["solution_code"], timeout=30)
+                computed = res.stdout.strip().splitlines()[-1].strip() if res.ok and res.stdout.strip() else None
+                if computed is None or not answers_equal(computed, str(v["answer"])):
+                    self.reject(s["seed_source"], "code_mismatch", f"code={computed!r} answer={v['answer']!r} err={res.stderr[-200:]}"); continue
+                prompt = v["problem"].strip() + (f"\n\nGive the answer in {v['unit']}." if v.get("unit") else "")
+                passes = 0
+                for _ in range(3):
+                    reply = self.teacher.complete("blind_solve", SYSTEM, prompt, max_tokens=8000, temperature=0.8)
+                    passes += int(answers_equal(boxed_answer(reply), str(v["answer"])))
+                if passes == 0:
+                    self.reject(s["seed_source"], "teacher_0_of_3"); continue
+                n = self.keep({"uid": gen_uid("scitext", self.a.epoch, v["problem"]), "problem": prompt, "answer": str(v["answer"]),
+                               "unit": v.get("unit", ""), "subject": s["subject"], "seed_source": s["seed_source"],
+                               "teacher_pass": passes})
+                print(f"kept {n} ({s['seed_source']}, teacher {passes}/3) spend USD {self.spend.usd:.2f}", file=sys.stderr)
+        except BudgetExceeded as e:
+            self.stop = True
+            print(f"STOP: {e}", file=sys.stderr)
+        except Exception as e:  # noqa: BLE001 - one bad seed must not kill the run
+            self.reject(s["seed_source"], f"error_{type(e).__name__}", str(e))
 
 
 def main() -> None:
@@ -82,44 +155,23 @@ def main() -> None:
     ap.add_argument("--epoch", type=int, default=1)
     ap.add_argument("--seeds", type=int, default=6000)
     ap.add_argument("--variants", type=int, default=2)
+    ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--budget-usd", type=float, default=130.0)
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
     rng = random.Random(a.seed)
     store = GenTaskStore(SOURCE, PACKAGE_DIR, a.epoch)
-    spend = Spend(a.budget_usd)
-    teacher = TeacherClient(spend)
-    kept, rejects = [], []
+    g = Gen(a, store)
+    rows = seeds(a.seeds, rng)
+    print(f"{len(rows)} seeds × {a.variants} variants, {a.workers} workers, budget USD {a.budget_usd}, "
+          f"{len(g.seen)} already kept", file=sys.stderr)
     try:
-        for s in seeds(a.seeds, rng):
-            raw = teacher.complete("generate", GEN_SYSTEM,
-                                   f"Seed problem ({s['subject']}):\n{s['problem']}\nSeed answer: {s['answer']} {s['unit']}\n\n"
-                                   f"Write {a.variants} variants as the JSON object.", max_tokens=4000, temperature=0.9)
-            for v in parse_variants(raw):
-                res = run_python(v["solution_code"], timeout=30)
-                computed = res.stdout.strip().splitlines()[-1].strip() if res.ok and res.stdout.strip() else None
-                if computed is None or not answers_equal(computed, str(v["answer"])):
-                    rejects.append({"seed": s["seed_source"], "why": "code_mismatch"}); continue
-                prompt = v["problem"].strip() + (f"\n\nGive the answer in {v['unit']}." if v.get("unit") else "")
-                passes = 0
-                for _ in range(3):
-                    reply = teacher.complete("blind_solve", SYSTEM, prompt, max_tokens=6000, temperature=0.8)
-                    passes += int(answers_equal(boxed_answer(reply), str(v["answer"])))
-                if passes == 0:
-                    rejects.append({"seed": s["seed_source"], "why": "teacher_0_of_3"}); continue
-                kept.append({"uid": gen_uid("scitext", a.epoch, v["problem"]), "problem": prompt, "answer": str(v["answer"]),
-                             "unit": v.get("unit", ""), "subject": s["subject"], "seed_source": s["seed_source"],
-                             "teacher_pass": passes})
-            print(f"kept {len(kept)} spend USD {spend.usd:.2f}", file=sys.stderr)
-    except BudgetExceeded as e:
-        print(f"STOP: {e}", file=sys.stderr)
+        with cf.ThreadPoolExecutor(a.workers) as ex:
+            list(ex.map(g.seed, rows))
     finally:
-        store.write_tasks(kept)
-        with gzip.open(store.local_dir / "rejects.jsonl.gz", "wt") as f:
-            for r in rejects:
-                f.write(json.dumps(r) + "\n")
-        spend.write(store.local_dir / "spend.json")
-        print(json.dumps({"kept": len(kept), "rejected": len(rejects), "spend": spend.to_dict()}, indent=1))
+        g.spend.write(store.local_dir / "spend.json")
+        print(json.dumps({"seeds": len(rows), "kept_this_run": g.kept, "kept_total": len(g.seen),
+                          "rejected": sum(g.rejects.values()), "rejects_by_reason": g.rejects, "spend": g.spend.to_dict()}, indent=1))
 
 
 if __name__ == "__main__":

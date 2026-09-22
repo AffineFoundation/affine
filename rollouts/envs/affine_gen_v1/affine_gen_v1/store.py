@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Iterator
 
@@ -76,6 +77,29 @@ class GenTaskStore:
             return json.load(f)
 
     # -- writing (generators run on the datagen box) ---------------------------
+    # Durability rule (2026-09-22 17:54, a SIGTERM lost 27 + 29 kept items that
+    # were only written at exit): every kept item is APPENDED to the epoch
+    # file the moment it passes verification. gzip members concatenate, so
+    # `tasks.jsonl.gz` opened in "at" mode stays a valid file that `tasks()`
+    # reads whole; the exit path only writes the ledger and a summary.
+    _append_lock = threading.Lock()
+
+    def existing_uids(self) -> set[str]:
+        path = self.local_dir / "tasks.jsonl.gz"
+        if not path.exists():
+            return set()
+        return {r["uid"] for r in self.tasks() if "uid" in r}
+
+    def append_task(self, rec: dict) -> None:
+        self.local_dir.mkdir(parents=True, exist_ok=True)
+        with self._append_lock, gzip.open(self.local_dir / "tasks.jsonl.gz", "at", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    def append_reject(self, rec: dict) -> None:
+        self.local_dir.mkdir(parents=True, exist_ok=True)
+        with self._append_lock, gzip.open(self.local_dir / "rejects.jsonl.gz", "at", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
     def write_tasks(self, rows: list[dict]) -> Path:
         self.local_dir.mkdir(parents=True, exist_ok=True)
         out = self.local_dir / "tasks.jsonl.gz"

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +23,17 @@ DEFAULT_BASE_URL = os.environ.get("AFFINE_GEN_BASE_URL", "https://api.engy.ai/v1
 DEFAULT_MODEL = os.environ.get("AFFINE_GEN_MODEL", "qwen3.8-27b")
 PRICE_IN = float(os.environ.get("AFFINE_GEN_PRICE_IN", "0.4"))     # USD per 1M input tokens
 PRICE_OUT = float(os.environ.get("AFFINE_GEN_PRICE_OUT", "1.0"))   # USD per 1M output tokens
+# Qwen3.8 on Engy thinks before it answers. The first scicomp probe
+# (2026-09-22 16:00) spent all 16 generate calls on exactly 6,000 reasoning
+# tokens each and returned EMPTY visible text -> 15/15 bad_json, 0 kept —
+# the same failure ops/terminal_gen/synth.py hit. Cap the thinking with
+# Engy's reasoning_effort tiers (none/minimal = off) and floor max_tokens so
+# the JSON still has room after the (short) thought.
+REASONING_EFFORT = os.environ.get("AFFINE_GEN_REASONING_EFFORT", "low")
+MIN_MAX_TOKENS = int(os.environ.get("AFFINE_GEN_MIN_MAX_TOKENS", "12000"))
+
+
+_SPEND_LOCK = threading.Lock()
 
 
 class BudgetExceeded(RuntimeError):
@@ -42,13 +54,15 @@ class Spend:
         return self.input_tokens / 1e6 * PRICE_IN + self.output_tokens / 1e6 * PRICE_OUT
 
     def add(self, stage: str, inp: int, out: int) -> None:
-        self.input_tokens += inp
-        self.output_tokens += out
-        self.calls += 1
-        st = self.by_stage.setdefault(stage, {"input_tokens": 0, "output_tokens": 0, "calls": 0})
-        st["input_tokens"] += inp
-        st["output_tokens"] += out
-        st["calls"] += 1
+        # Generators run several items in threads (scicomp --workers); one lock keeps the ledger exact.
+        with _SPEND_LOCK:
+            self.input_tokens += inp
+            self.output_tokens += out
+            self.calls += 1
+            st = self.by_stage.setdefault(stage, {"input_tokens": 0, "output_tokens": 0, "calls": 0})
+            st["input_tokens"] += inp
+            st["output_tokens"] += out
+            st["calls"] += 1
 
     def assert_within(self) -> None:
         if self.usd > self.budget_usd:
@@ -76,10 +90,14 @@ class TeacherClient:
     def complete(self, stage: str, system: str, user: str, *, max_tokens: int = 8192,
                  temperature: float | None = None) -> str:
         self.spend.assert_within()
+        extra = {"reasoning_effort": REASONING_EFFORT} if REASONING_EFFORT and REASONING_EFFORT != "default" else {}
         r = self.client.chat.completions.create(
             model=self.model, temperature=self.temperature if temperature is None else temperature,
-            max_tokens=max_tokens,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
+            max_tokens=max(max_tokens, MIN_MAX_TOKENS),
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            extra_body=extra)
         u = r.usage
         self.spend.add(stage, getattr(u, "prompt_tokens", 0) or 0, getattr(u, "completion_tokens", 0) or 0)
+        if not r.choices:  # Engy returned no choice (upstream error body); count the call, keep going
+            return ""
         return r.choices[0].message.content or ""

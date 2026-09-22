@@ -191,6 +191,19 @@ min_submission_block = 8938619
 # Forward-only: reign 14 stands, no re-verdicts, min_submission_block
 # unchanged. Notice: llms.txt "Upcoming change: wvk 22" + Discord
 # 2026-09-18 10:46 UTC; shadow read since 10:41 UTC.
+# 22→23 thought cap 4096 + one-sided-long typicality (2026-09-22): explicit dated
+# operator directive 2026-09-22 17:00 UTC ("all of them and also 3 flipped",
+# after the benchsuite thought-shrink audit). max_thought_tokens 2048 → 4096,
+# ref_max_tokens 4096 → 4864 (refs may think the full miner cap and act);
+# [duel.sd_meter].content_prefix = refs_max: the miner's thought is judged for
+# typicality on its first K content tokens, K = the teacher's longest reference
+# in content tokens — extra deliberation is unscored, the short / filler side
+# keeps its penalty, the two-sided band on the scored prefix keeps the pasting
+# guard. Offline probe on the last 30 wvk-22 verdicts + a 173-turn re-echo:
+# 0/30 decisions change, truncation touches 28 % of miner thoughts by +0.03…
+# +0.07 sd on average, typicality-leg teacher-vs-king control +0.36 → +0.27 sd
+# (z 3.8 → 3.0). Everything else in [duel] unchanged; forward-only, reign 21
+# stands, min_submission_block unchanged. ~3x duel cost accepted.
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -198,7 +211,7 @@ min_submission_block = 8938619
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 22
+weight_version_key = 23
 
 [wallet]
 name = "default"
@@ -905,7 +918,12 @@ temperature = 0.8
 # tokens forfeited for nothing the meter cares about. Action cap and the
 # teacher's ref_max_tokens are unchanged; the serving window holds
 # (110k-token prefix cap + 2048 + 768 < 131072).
-max_thought_tokens = 2048
+# 2026-09-22 (wvk 22→23, explicit dated operator directive 2026-09-22 17:00 UTC):
+# 2048 → 4096. Kings think less every generation (GPQA chains 5.4k → 3.3k →
+# 2.2k tokens over reigns 19 → 21); the cap is not binding on D (forfeits
+# 0.2 %) but it bounds the teacher-relative cap and the references, so it
+# is raised across the board. ~3x duel cost accepted.
+max_thought_tokens = 4096
 max_action_tokens = 768
 # 2026-09-16 (weight_version_key 19→20, explicit dated operator directive
 # 2026-09-16 14:31 UTC): teacher-relative thought cap. Per turn the miner
@@ -931,7 +949,11 @@ thought_cap_ratio = 1.25
 # max_thought_tokens / max_action_tokens are NOT changed by this knob.
 # Cost: ≈ +15–20% teacher echo compute, +25–40% teacher-side duel wall
 # time. Absent = the shared cap (pre-wvk-17 replay path).
-ref_max_tokens = 4096
+# 2026-09-22 (wvk 22→23): 4096 → 4864 = max_thought_tokens + max_action_tokens, so
+# a reference may think the full miner cap and still act (the validator
+# requires ref_max_tokens >= thought + action). Not 8192: the k = 3
+# reference samples per turn set the wall time, KV is not the constraint.
+ref_max_tokens = 4864
 # Client-side turn pipelines in flight per side (ops knob, no scoring
 # effect). 24 -> 36 on 2026-08-15 with the teacher swarm absorbing echo
 # load. 36 -> 64 on 2026-08-29: two 8x B200 teacher boxes (16 TP1
@@ -978,6 +1000,15 @@ timeout_s = 7200
 shadow = true
 anchor = "loo"
 cross_echo = true
+# 2026-09-22 (wvk 22→23, directive 17:00 UTC "3 flipped" — typicality one-sided on
+# the long end): only the first K content tokens of the miner's thought are
+# scored, K = the largest content-token count among the turn's k references.
+# A thought longer / more deliberate than the teacher's is not penalised
+# for the extra; the two-sided band still applies to the scored prefix, so
+# filler stays below and a pasted reference thought stays above (RT-11 /
+# RT-12 guards intact). Probe: ops/v18/probe_a.txt, probe_b.txt; project
+# store internal/wvk23/g-one-sided-probe.md. "none" = the wvk-22 rule.
+content_prefix = "refs_max"
 content_lift_nats = 1.0
 content_min_tokens = 10
 typicality_width = 2.0

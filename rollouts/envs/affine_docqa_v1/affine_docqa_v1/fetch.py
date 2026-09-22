@@ -30,6 +30,9 @@ from pathlib import Path
 import httpx
 
 UA = os.environ.get("AFFINE_DOCQA_UA", "AffineFoundation research (ops@affine.io)")
+# Fetched bodies are cached by URL so a restarted generator does not re-download
+# (the 17:54 restart rule: redeploy + restart must not lose the run's inputs).
+CACHE_DIR = Path(os.environ.get("AFFINE_DOCQA_CACHE", Path.home() / ".cache" / "affine_docqa" / "http"))
 HERE = Path(__file__).resolve().parent
 EXCLUDE = {l.strip().lower() for l in (HERE / "exclude_titles.txt").read_text().splitlines()
            if l.strip() and not l.startswith("#")} if (HERE / "exclude_titles.txt").exists() else set()
@@ -49,12 +52,31 @@ def html_to_text(s: str) -> str:
     return NL_RE.sub("\n\n", "\n".join(line.strip() for line in s.splitlines())).strip()
 
 
-def _get(client: httpx.Client, url: str, **kw) -> httpx.Response:
+class _Cached:
+    """Minimal stand-in for httpx.Response: `.text` and `.json()` from a cached body."""
+
+    def __init__(self, body: bytes) -> None:
+        self.content = body
+        self.text = body.decode("utf-8", "replace")
+
+    def json(self):
+        return json.loads(self.text)
+
+
+def _get(client: httpx.Client, url: str, **kw):
+    key = hashlib.sha256((url + json.dumps(kw.get("params") or {}, sort_keys=True)).encode()).hexdigest()
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cached = CACHE_DIR / key
+    if cached.exists():
+        return _Cached(cached.read_bytes())
     for attempt in range(4):
         r = client.get(url, **kw)
         if r.status_code in (429, 503) and attempt < 3:
             time.sleep(2.0 * (attempt + 1)); continue
         r.raise_for_status()
+        tmp = cached.with_suffix(".tmp")
+        tmp.write_bytes(r.content)
+        tmp.rename(cached)
         return r
     raise RuntimeError(f"unreachable: {url}")
 

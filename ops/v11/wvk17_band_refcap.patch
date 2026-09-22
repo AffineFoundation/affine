@@ -1,0 +1,69 @@
+--- a/affine/affine.toml
++++ b/affine/affine.toml
+@@ -79,6 +79,22 @@
+ # stands. Window / near-miss / decaying-δ code stays behind its knobs so
+ # wvk-15 verdicts replay bit-identically. min(R,G) math unchanged.
+ # Forward-only; min_submission_block unchanged.
++# 16→17 wider grounding band + teacher reference cap (YYYY-MM-DD): explicit
++# dated operator directive 2026-09-14 10:30 UTC ("we can easily go for one
++# and two today"). (1) band_c 2.0 → 4.0: the G leg judges the miner's
++# thought against the band mu ± max(band_c·sd, band_floor) built from the
++# teacher's k = 3 reference thoughts; at c = 2 the teacher's OWN held-out
++# thought was outside that band 25.5% of the time, i.e. G penalised
++# honest teacher-like thoughts on a quarter of turns. c = 4.0 keeps
++# 90.3% inside (smallest width ≥ 90%); no stored crown flips; reign-12
++# margin z 2.3 → 2.9; positive control z 4.2; filler still loses at
++# z −8 / −12. (2) ref_max_tokens = 4096, TEACHER SIDE ONLY: the k
++# reference rollouts may run to 4,096 tokens (was the miners' shared
++# 1,792). At 1,792 the teacher capped ~21% of deep references; refs per
++# turn 1.99 → 2.27, R-dead turns 41% → 30%. Miners' caps, what miners
++# emit, min(R,G) math, the crown bar max(2·SE, 0.002), gates and the
++# reign chain are unchanged. Expected cost: verdicts ~40 → ~50 min.
++# Forward-only; reign 12 stands; min_submission_block unchanged.
+ #
+ # ############################################################################
+ # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
+@@ -86,7 +102,7 @@
+ # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
+ # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
+ # ############################################################################
+-weight_version_key = 16
++weight_version_key = 17
+ 
+ [wallet]
+ name = "default"
+@@ -623,7 +639,16 @@
+ # a 1x-4x sweep (honest beats the live filler suffix on 97-100% of turns at
+ # every width; research/results/minrg_round2/band_sweep). band_floor keeps
+ # the band open when the k=3 reference thoughts happen to agree tightly.
+-band_c = 2.0
++# YYYY-MM-DD (weight_version_key 16→17, explicit dated operator directive
++# 2026-09-14 10:30 UTC): band_c 2.0 → 4.0. At c = 2 the teacher's OWN
++# held-out thought fell outside the band its k = 3 references define on
++# 25.5% of turns — G was noise a quarter of the time. c = 4.0 is the
++# smallest width with ≥ 90% of held-out teacher thoughts inside (90.3%);
++# no stored crown or window decision flips, the reign-12 margin moves
++# z 2.3 → 2.9, the positive control (held-out teacher thought vs base
++# model) stays at z 4.2 (was 4.64), filler / generic thoughts still lose
++# at z −8 / −12. band_floor unchanged. Replay worker: docs/scoring-today.md.
++band_c = 4.0
+ band_floor = 0.002
+ # 2026-09-05 (weight_version_key 11→12): forfeits are scored, not dropped.
+ forfeit_turn_score = -0.1
+@@ -708,6 +733,16 @@
+ temperature = 0.8
+ max_thought_tokens = 1024
+ max_action_tokens = 768
++# Teacher-only reference budget (thought + action tokens) for the k
++# reference rollouts. YYYY-MM-DD (weight_version_key 16→17, same directive):
++# 1792 (the miners' shared cap) → 4096. At 1792 the teacher's own
++# reference hit finish=length on ~21% of deep turns, so those turns had
++# fewer / truncated references or were dropped (refs < 2): refs per turn
++# 1.99 → 2.27, turns with a dead R leg 41% → 30% in the replay. Miners'
++# max_thought_tokens / max_action_tokens are NOT changed by this knob.
++# Cost: ≈ +15–20% teacher echo compute, +25–40% teacher-side duel wall
++# time. Absent = the shared cap (pre-wvk-17 replay path).
++ref_max_tokens = 4096
+ # Client-side turn pipelines in flight per side (ops knob, no scoring
+ # effect). 24 -> 36 on 2026-08-15 with the teacher swarm absorbing echo
+ # load. 36 -> 64 on 2026-08-29: two 8x B200 teacher boxes (16 TP1
