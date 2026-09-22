@@ -44,7 +44,11 @@ from common import out_dir, read_jsonl, write_jsonl
 log = logging.getLogger("terminal_gen.decontam")
 
 NGRAM = 16
-DEFAULT_HARBOR = ("terminal-bench@2.0", "terminal-bench@4.0")
+# The Harbor hub (2026-09-22) registers terminal-bench@2.0 and @2.1 (plus
+# -pro / -science); "terminal-bench@4.0" does not resolve there. A default
+# that cannot be fetched is skipped with a warning and recorded in
+# decontam.json["missing_refs"] instead of aborting the run.
+DEFAULT_HARBOR = ("terminal-bench@2.0", "terminal-bench@2.1", "terminal-bench@4.0")
 CACHE_ROOT = Path("~/.cache/affine/terminal_gen/benchmarks").expanduser()
 _WORD_RE = re.compile(r"[a-z0-9_./-]+")
 _URL_RE = re.compile(r"https?://[^\s)\]>\"']+")
@@ -207,9 +211,14 @@ def main() -> None:
         for n in DEFAULT_HARBOR:
             if n not in harbor_names and n not in sets:
                 harbor_names.append(n)
+    missing_refs: list[str] = []
     for n in harbor_names:
         if n not in sets:
-            sets[n] = fetch_harbor_dataset(n)
+            try:
+                sets[n] = fetch_harbor_dataset(n)
+            except SystemExit as e:
+                log.warning("reference set %s unavailable — skipped: %s", n, str(e)[:200])
+                missing_refs.append(n)
     if not sets:
         raise SystemExit("no benchmark set to check against")
 
@@ -228,6 +237,7 @@ def main() -> None:
     write_jsonl(out / "decontam.jsonl", rows)
     by_name = {name: sum(1 for b in benches if b["bench"] == name) for name in sets}
     summary = {"epoch": args.epoch, "ngram": NGRAM, "benchmarks": by_name, "checked": len(rows),
+               "missing_refs": missing_refs,
                "clean": sum(r["ok"] for r in rows), "dropped": sum(not r["ok"] for r in rows)}
     (out / "decontam.json").write_text(json.dumps(summary, indent=1))
     write_report(out / "decontam_report.md", args.epoch, by_name, rows, len(validated))
