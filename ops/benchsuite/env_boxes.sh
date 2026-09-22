@@ -33,7 +33,11 @@ case "$REIGN" in
   12) DRV=root@73.139.34.205:20008; EXIST="_";   NEW="";  KEEP_SESS="";  KEEP_SRC=""; PAR=4 ;;
   *) echo "no config for reign $REIGN"; exit 2 ;;
 esac
-PLANS="${PLANS:-b200-1x h200-1x pro6000-1x}"
+# positional overrides: env_boxes.sh <reign> [EXIST] [NEW]  (e.g. `14 b _` = box A died, keep B, rent a new A)
+[ $# -ge 2 ] && EXIST="$2"
+[ $# -ge 3 ] && NEW="$3"
+PLANS="${PLANS:-b200-1x h200-1x pro6000-1x h100-2x h200-2x b200-2x}"
+STOCK_WAIT_S="${STOCK_WAIT_S:-21600}"   # keep polling Lium for stock this long (budget is not the constraint; stock is)
 U=${DRV%%@*}; HP=${DRV#*@}; H=${HP%%:*}; P=${HP##*:}
 sshd() { ssh -n -o ConnectTimeout=20 -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p "$P" "$U@$H" "$@" 2>/dev/null | grep -v setlocale; }
 
@@ -50,13 +54,20 @@ say "reign $REIGN = $d12; driver host $H; existing drivers [$EXIST]; new boxes [
 # ---- 1. rent the new boxes in parallel (weights pull + vLLM ≈ 15–25 min each)
 declare -A POD URL KEY
 rent_one() {  # suffix -> writes state/logs/env_boxes_<reign>_<suffix>.pod with "pod url key"
-  local suf="$1" pod="" plan
-  for plan in $PLANS; do
-    pod=$($PY kingpod.py rent --plan "$plan" --digest "$rev" --expected-hours 24 2>>"$LOG" | tail -1)
-    [ -n "$pod" ] && [[ "$pod" == bench-king-* ]] && break; pod=""
+  local suf="$1" pod="" plan t0=$(date +%s)
+  while :; do
+    for plan in $PLANS; do
+      pod=$($PY kingpod.py rent --plan "$plan" --digest "$rev" --expected-hours 36 2>>"$LOG" | tail -1)
+      [ -n "$pod" ] && [[ "$pod" == bench-king-* ]] && break; pod=""
+    done
+    [ -n "$pod" ] && break
+    [ $(( $(date +%s) - t0 )) -lt "$STOCK_WAIT_S" ] || { say "box $suf: no stock in any of [$PLANS] for $STOCK_WAIT_S s; giving up"; return 3; }
+    sleep 180
   done
-  [ -n "$pod" ] || { say "box $suf: no stock in any of [$PLANS]"; return 3; }
   say "box $suf: rented $pod ($plan)"
+  # The pod reaper released six env boxes at the 14-h mark on 2026-09-21 (owner `passlog:` looked dead
+  # while the drivers were mid-row) — register this one to THIS process for 36 h; it is released here.
+  $PY "$REPO/ops/pods/registry.py" register "$pod" --purpose bench --owner "pid:$$" --hours 36 >>"$LOG" 2>&1 || true
   local url; url=$(timeout 2700 $PY kingpod.py wait "$pod" 2>>"$LOG" | tail -1)
   if [ -z "$url" ] || [[ "$url" != http* ]]; then
     say "box $suf: $pod never served; releasing"; $PY kingpod.py release "$pod" --strike "env box never served" >>"$LOG" 2>&1; return 4
@@ -76,6 +87,8 @@ for suf in $NEW; do
 done
 DRIVERS="$EXIST$NEW_OK"
 [ -n "$(echo $DRIVERS)" ] || { say "no driver has a box; nothing to do"; exit 3; }
+# A box that was asked for but never came must not cost the live drivers their in-flight batches.
+[ -z "$(echo $NEW)" ] || [ -n "$(echo $NEW_OK)" ] || { say "no new box arrived; leaving the live drivers untouched (re-run to try again)"; exit 4; }
 
 # ---- 2. the row's remaining sources from the board (n < 24), most-behind first
 GAPS=$(python3 - "$REIGN" "$KEEP_SRC" <<'PY'
