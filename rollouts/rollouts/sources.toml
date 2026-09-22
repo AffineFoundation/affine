@@ -1438,7 +1438,7 @@ extra_flags = ["--env.taskset.epoch", "1"]
 policies = ["teacher_boxed", "king_boxed", "king_boxed_greedy"]
 strata_buckets = 600
 strata_offset = 340   # science namespace, after affine_science's 0-339
-share = 0.0            # flip to 1.0 when data/e1/tasks.jsonl.gz exists (generate.py) -- admitted by Jacob 15:24 UTC once it passes its own verification
+share = 1.0            # 2026-09-22 19:40 UTC: e1 committed (202 tasks, all [GEN:e1], teacher 3/3 on 176) -- AA-worker threshold >= 200 met; later passes merge in
 
 [source.affine_unscramble]
 # kalomaze/unscramble-mix-it2 (10,300): reorder scrambled text blocks; the
@@ -2040,7 +2040,7 @@ strata_buckets = 300
 strata_offset = 345   # long_context namespace, after mrcr 0-229 and oolong 230-344
 max_batch = 8
 max_concurrency = 4
-share = 0.0            # flip to 1.0 when e1 is published (generate.py + publish.py); admitted by Jacob 15:24 UTC once verified
+share = 1.0            # 2026-09-22 19:40 UTC: e1 published to data.affine.io/envs/affine_docqa/e1 (107 questions, 47 bundles) -- AA-worker threshold >= 100 met; the full run goes to e2
 
 [source.affine_gdpval]
 # 2026-09-21 (docs/artificial-analysis-index-path.md §9 #6): OpenAI's GDPval
