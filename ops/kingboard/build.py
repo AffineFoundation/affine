@@ -1208,6 +1208,44 @@ def bench_value(side: dict | None, env: str) -> dict | None:
     }
 
 
+OLDCAP_RUN_MARK = "-oldcap"
+
+
+def suite_caps() -> dict[str, int]:
+    """env id -> current completion cap (`max_tokens`) from ops/benchsuite/suite.toml
+    `[[envs]]`; {} when the file is unreadable."""
+    try:
+        suite = tomllib.loads(BENCHSUITE_SUITE_TOML.read_text()) if BENCHSUITE_SUITE_TOML.exists() else {}
+    except (OSError, ValueError):
+        return {}
+    out: dict[str, int] = {}
+    for e in suite.get("envs") or []:
+        if isinstance(e, dict) and e.get("id") and isinstance(e.get("max_tokens"), int):
+            out[str(e["id"])] = int(e["max_tokens"])
+    return out
+
+
+def is_current_cap_row(card: dict, row: dict, side_rec: dict, caps: dict[str, int]) -> bool:
+    """Whether an UNTAGGED row (`gpqa-diamond`, not `gpqa-diamond@16k`) is a
+    measurement at the suite's current completion cap and may fill the base
+    column. Old-cap re-runs (2026-09-20 `…-oldcap16k` / `…-oldcap8k` cards)
+    carry their cell twice — tagged with a `budget` block and again untagged,
+    a plain copy — so the newest-card rule filled the 32k column from a 16k
+    run (benchsuite 2026-09-22 16:25). Rejected: rows of an old-cap card, and
+    rows whose own `budget.max_tokens` differs from the suite cap."""
+    env = str(row.get("env") or "")
+    if "@" in env:
+        return True            # tagged rows are their own sub-column
+    if OLDCAP_RUN_MARK in str(card.get("run_id") or ""):
+        return False
+    budget = side_rec.get("budget") or row.get("budget") or {}
+    cap = caps.get(env)
+    mt = budget.get("max_tokens") if isinstance(budget, dict) else None
+    if cap is not None and isinstance(mt, int) and mt != cap:
+        return False
+    return True
+
+
 def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
     """env -> cell merged over every card of one model. Cards are ordered
     newest-first by the caller (`created_at`); for each env the newest card
@@ -1217,12 +1255,15 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
     when no card has a value for the env, and then renders as "run failed"
     (never blank, never 0)."""
     out: dict[str, dict] = {}
+    caps = suite_caps()
     for card in cards:
         for row in card.get("rows") or []:
             env = row.get("env")
             if not env or env in out or row.get("temperature") != BENCH_TEMPERATURE:
                 continue
             side_rec = row.get(side) or {}
+            if not is_current_cap_row(card, row, side_rec, caps):
+                continue
             if side_rec.get("status") == "partial":
                 # a Harbor job interrupted mid-run (2026-09-22): n_live of n_expected
                 # trials ran against a live model; the number is provisional — shown
