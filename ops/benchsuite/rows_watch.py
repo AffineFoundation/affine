@@ -327,6 +327,18 @@ def main() -> int:
                 log(f"{t}: no card yet (a full pass is the watcher's job); skipping")
                 continue
             missing, failed = missing_cells(mx, info["row"])
+            # the board renders a partial Harbor job as a number (finished-only metric); our own summary
+            # knows it is incomplete -> keep it on the list until n_live reaches the task set
+            for cell_env in ("swebench-verified@4h250", "swebench-verified"):
+                summ = BENCH_HOME / "runs" / info["run_id"] / "king" / f"{cell_env}__t0" / "summary.json"
+                try:
+                    x = json.loads(summ.read_text())
+                except (OSError, ValueError):
+                    continue
+                n_exp = x.get("n_expected")
+                if n_exp and int(x.get("n_live") if x.get("n_live") is not None else x.get("n") or 0) < int(n_exp) \
+                        and cell_env not in missing and cell_env not in failed:
+                    failed.append(cell_env)
             todo = missing + failed
             running_here = []
             main_alive = pass_alive(info["run_id"])
