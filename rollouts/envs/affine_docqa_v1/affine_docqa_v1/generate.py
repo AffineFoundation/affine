@@ -23,6 +23,9 @@ Budget: --budget-usd (pilot 80 ≈ 300 bundles; full run 350, approved). The
 input side dominates (~100k tokens × 4 passes per bundle). Output goes to
 data/e<epoch>/ (tasks.jsonl.gz, bundles/<id>.json.gz, spend.json); the
 package .gitignores data/ — run publish.py to push it to data.affine.io.
+Bundles are asked/verified in --workers threads; every kept question is
+appended the moment it passes (a SIGTERM loses nothing) and reruns skip
+uids already in the file.
 
   python -m affine_docqa_v1.generate --epoch 1 --bundles 300 --budget-usd 80
 """
@@ -30,10 +33,12 @@ package .gitignores data/ — run publish.py to push it to data.affine.io.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures as cf
 import gzip
 import json
 import random
 import sys
+import threading
 from pathlib import Path
 
 from affine_gen_v1.store import GenTaskStore, gen_uid
@@ -136,6 +141,7 @@ def main() -> None:
     ap.add_argument("--epoch", type=int, default=1)
     ap.add_argument("--bundles", type=int, default=300)
     ap.add_argument("--budget-usd", type=float, default=80.0)
+    ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
     rng = random.Random(a.seed)
@@ -145,13 +151,24 @@ def main() -> None:
 
     with fetch.client() as c:
         bundles = make_bundles(c, a.bundles, rng)
-    print(f"{len(bundles)} bundles", file=sys.stderr)
+    print(f"{len(bundles)} bundles, {a.workers} workers", file=sys.stderr)
     (store.local_dir / "bundles").mkdir(parents=True, exist_ok=True)
-    kept, rejects = [], []
-    try:
-        for b in bundles:
-            docs = b["docs"]
-            bid = gen_uid("bundle", a.epoch, "|".join(d["url"] for d in docs)).split("[")[0]
+    seen = store.existing_uids()
+    lock = threading.Lock()
+    state = {"kept": 0, "rejects": {}, "stop": False}
+
+    def reject(bid: str, why: str) -> None:
+        with lock:
+            state["rejects"][why] = state["rejects"].get(why, 0) + 1
+        store.append_reject({"bundle": bid, "why": why})
+
+    def bundle(b: dict) -> None:
+        if state["stop"]:
+            return
+        docs = b["docs"]
+        bid = gen_uid("bundle", a.epoch, "|".join(d["url"] for d in docs)).split("[")[0]
+        brng = random.Random(hash((a.seed, bid)) & 0xFFFFFFFF)
+        try:
             with gzip.open(store.local_dir / "bundles" / f"{bid}.json.gz", "wt", encoding="utf-8") as f:
                 json.dump({"theme": b["theme"], "docs": docs}, f, ensure_ascii=False)
             rendered = render_documents(docs)
@@ -160,37 +177,48 @@ def main() -> None:
             for q in parse_questions(raw):
                 needed = [str(x) for x in (q.get("docs_needed") or [])]
                 if len(needed) < 2:
-                    rejects.append({"bundle": bid, "why": "single_doc"}); continue
+                    reject(bid, "single_doc"); continue
                 gold = q["answer"]
-                # (a) blind re-answer, shuffled order, twice
                 ok = 0
                 for _ in range(2):
-                    order = docs[:]; rng.shuffle(order)
+                    order = docs[:]; brng.shuffle(order)
                     reply = teacher.complete("verify", SYSTEM, build_prompt(order, q["question"]), max_tokens=4000, temperature=0.6)
                     ok += int(answers_match(answer_of(reply), gold, q.get("answer_type", "short_text")))
                 if ok < 2:
-                    rejects.append({"bundle": bid, "why": f"blind_{ok}_of_2"}); continue
-                # (b) removal: drop one required document -> must fail
-                drop = rng.choice(needed)
+                    reject(bid, f"blind_{ok}_of_2"); continue
+                drop = brng.choice(needed)
                 reduced = [d for d in docs if d["id"] != drop]
                 if len(reduced) == len(docs):
-                    rejects.append({"bundle": bid, "why": "bad_doc_id"}); continue
+                    reject(bid, "bad_doc_id"); continue
                 reply = teacher.complete("removal", SYSTEM, build_prompt(reduced, q["question"]), max_tokens=4000, temperature=0.6)
                 if answers_match(answer_of(reply), gold, q.get("answer_type", "short_text")):
-                    rejects.append({"bundle": bid, "why": "single_doc_suffices"}); continue
-                kept.append({"uid": gen_uid("docqa", a.epoch, bid + q["question"]), "bundle": bid, "theme": b["theme"],
-                             "question": q["question"], "answer": gold, "answer_type": q.get("answer_type", "short_text"),
-                             "docs_needed": needed, "n_docs": len(docs), "tokens": bundle_tokens(docs)})
-            print(f"kept {len(kept)} after {bid} ({b['theme']}) spend USD {spend.usd:.2f}", file=sys.stderr)
-    except BudgetExceeded as e:
-        print(f"STOP: {e}", file=sys.stderr)
+                    reject(bid, "single_doc_suffices"); continue
+                rec = {"uid": gen_uid("docqa", a.epoch, bid + q["question"]), "bundle": bid, "theme": b["theme"],
+                       "question": q["question"], "answer": gold, "answer_type": q.get("answer_type", "short_text"),
+                       "docs_needed": needed, "n_docs": len(docs), "tokens": bundle_tokens(docs)}
+                with lock:
+                    if rec["uid"] in seen:
+                        continue
+                    seen.add(rec["uid"])
+                    store.append_task(rec)
+                    state["kept"] += 1
+                    spend.write(store.local_dir / "spend.json")
+                    n = state["kept"]
+                print(f"kept {n} ({b['theme']}) spend USD {spend.usd:.2f}", file=sys.stderr)
+        except BudgetExceeded as e:
+            state["stop"] = True
+            print(f"STOP: {e}", file=sys.stderr)
+        except Exception as e:  # noqa: BLE001 - one bad bundle must not kill the run
+            reject(bid, f"error_{type(e).__name__}")
+
+    try:
+        with cf.ThreadPoolExecutor(a.workers) as ex:
+            list(ex.map(bundle, bundles))
     finally:
-        store.write_tasks(kept)
-        with gzip.open(store.local_dir / "rejects.jsonl.gz", "wt") as f:
-            for r in rejects:
-                f.write(json.dumps(r) + "\n")
         spend.write(store.local_dir / "spend.json")
-        print(json.dumps({"bundles": len(bundles), "kept": len(kept), "rejected": len(rejects), "spend": spend.to_dict()}, indent=1))
+        print(json.dumps({"bundles": len(bundles), "kept_this_run": state["kept"], "kept_total": len(seen),
+                          "rejected": sum(state["rejects"].values()), "rejects_by_reason": state["rejects"],
+                          "spend": spend.to_dict()}, indent=1))
 
 
 if __name__ == "__main__":

@@ -27,7 +27,9 @@ the spend ledger is locked). ~2.5 min per item sequential on the probe, so
 Budget: --budget-usd (default 30 at Engy's 0.045 / 0.32 per 1M rates the
 runner exports; the count caps bind first). Output: data/e<epoch>/
 tasks.jsonl.gz + spend.json + rejects.jsonl.gz (with the pytest tail of
-every reference failure, for the next round of prompt fixes).
+every reference failure, for the next round of prompt fixes). Every kept
+item is appended the moment it passes (gzip members concatenate), so a
+SIGTERM loses nothing; a rerun skips uids already in the file.
 
   python -m affine_scicomp_v1.generate --epoch 1 --per-topic 6 --workers 8 --budget-usd 30
 """
@@ -36,7 +38,6 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
-import gzip
 import json
 import os
 import random
@@ -221,18 +222,31 @@ def stub_of(signature: str) -> str:
 
 
 class Gen:
-    def __init__(self, a, py: str) -> None:
-        self.a, self.py = a, py
+    def __init__(self, a, py: str, store: GenTaskStore) -> None:
+        self.a, self.py, self.store = a, py, store
         self.spend = Spend(a.budget_usd)
         self.teacher = TeacherClient(self.spend)
-        self.kept: list[dict] = []
-        self.rejects: list[dict] = []
+        self.kept = 0
+        self.rejects: dict[str, int] = {}
+        self.seen = store.existing_uids()
         self.lock = threading.Lock()
         self.stop = False
 
     def reject(self, domain: str, method: str, why: str, tail: str = "") -> None:
         with self.lock:
-            self.rejects.append({"domain": domain, "method": method, "why": why, "tail": tail[-1500:]})
+            self.rejects[why.split(" ")[0]] = self.rejects.get(why.split(" ")[0], 0) + 1
+        self.store.append_reject({"domain": domain, "method": method, "why": why, "tail": tail[-1500:]})
+
+    def keep(self, rec: dict) -> int:
+        """Append the item and the ledger NOW — a kill loses nothing after this returns."""
+        with self.lock:
+            if rec["uid"] in self.seen:
+                return self.kept
+            self.seen.add(rec["uid"])
+            self.store.append_task(rec)
+            self.kept += 1
+            self.spend.write(self.store.local_dir / "spend.json")
+            return self.kept
 
     def verify_reference(self, rec: dict, domain: str, method: str) -> bool:
         res = run_tests(self.py, rec["reference_code"], rec["tests_code"])
@@ -294,9 +308,7 @@ class Gen:
                 self.reject(domain, method, "teacher_0_of_3"); return
             rec["teacher_pass"] = passes
             rec["uid"] = gen_uid("scicomp", self.a.epoch, rec["signature"] + rec["task"])
-            with self.lock:
-                self.kept.append(rec)
-                n = len(self.kept)
+            n = self.keep(rec)
             print(f"kept {n} ({domain}/{method}, teacher {passes}/3) spend USD {self.spend.usd:.2f}", file=sys.stderr)
         except BudgetExceeded as e:
             self.stop = True
@@ -315,7 +327,7 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
     store = GenTaskStore(SOURCE, PACKAGE_DIR, a.epoch)
-    g = Gen(a, _venv())
+    g = Gen(a, _venv(), store)
     topics = TOPICS[: a.topics] if a.topics else TOPICS
     items = [(d, m, k) for d, m in topics for k in range(a.per_topic)]
     print(f"{len(topics)} topics × {a.per_topic} = {len(items)} items, {a.workers} workers, budget USD {a.budget_usd}", file=sys.stderr)
@@ -323,22 +335,11 @@ def main() -> None:
         with cf.ThreadPoolExecutor(a.workers) as ex:
             list(ex.map(lambda t: g.item(t[0], t[1], t[2], random.Random(hash((a.seed, t[0], t[1], t[2])) & 0xFFFFFFFF)), items))
     finally:
-        # resume-friendly: merge with an existing epoch file rather than overwrite
-        existing = []
-        if (store.local_dir / "tasks.jsonl.gz").exists():
-            existing = [r for r in store.tasks()]
-        seen = {r["uid"] for r in existing}
-        merged = existing + [r for r in g.kept if r["uid"] not in seen]
-        store.write_tasks(merged)
-        with gzip.open(store.local_dir / "rejects.jsonl.gz", "at") as f:
-            for r in g.rejects:
-                f.write(json.dumps(r) + "\n")
+        # Items and rejects were appended as they happened; only the ledger + summary here.
         g.spend.write(store.local_dir / "spend.json")
-        by_why = {}
-        for r in g.rejects:
-            by_why[r["why"].split(" ")[0]] = by_why.get(r["why"].split(" ")[0], 0) + 1
-        print(json.dumps({"items": len(items), "kept_this_run": len(g.kept), "kept_total": len(merged),
-                          "rejected": len(g.rejects), "rejects_by_reason": by_why, "spend": g.spend.to_dict()}, indent=1))
+        print(json.dumps({"items": len(items), "kept_this_run": g.kept, "kept_total": len(g.seen),
+                          "rejected": sum(g.rejects.values()), "rejects_by_reason": g.rejects,
+                          "spend": g.spend.to_dict()}, indent=1))
 
 
 if __name__ == "__main__":
