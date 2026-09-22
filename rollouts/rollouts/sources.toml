@@ -325,24 +325,45 @@ domain_field = "repo"
 require_gen_marker = true
 domain_field = "repo"
 
+[band_filter.defaults]
+# Signal band on EVERY source (Jacob 2026-09-22 21:05 UTC "fold go"; first
+# on affine_science 15:24 UTC, aa-gap-fill-plan item 1). Context: reign 21
+# beat reign 20 on the duel (+0.23 sd) but fell on the envs (terminal 65.8
+# vs 83.0, SQL 17 vs 76, general 58.5 vs 71.4) and the teacher-vs-king
+# control has been negative on the last 30 verdicts -- the meter is
+# saturated on turns the king already handles. The validator does not run
+# envs, so the lever is slice composition: a task's TEACHER-side turns fold
+# only if the teacher solved it (>= teacher_min_solved of >=
+# teacher_min_attempts attempts; tighten as coverage grows) and the king
+# seat did NOT (with >= king_min_attempts seat attempts, drop when the seat
+# solved more than king_max_solved_frac of them: 1/1, 2/2, 2/3 drop; 1/2,
+# 1/3 stay -- the seat has 1 attempt on most tasks, 2-3 on some, so a
+# fraction is the per-source m/n). king_missing = "admit": a source is
+# never held hostage to seat coverage. Attempts are counted from the traces
+# (graded teacher_* / king_* rollouts, all reigns of the seat); records of
+# ungraded rollouts (affine_wiki) bypass the band. Published rows outside
+# the band retire from the index; king-derived groups keep their own
+# two-sided gate. Every [source.*] runs the king seat, so defaults cover
+# them all; [band_filter.<source>] overrides fields. Measured 2026-09-22
+# (all traces, tasks): affine_math 7,494 -> 233 (king solves 94 %),
+# affine_when2call 3,625 -> 521, swerebench_v2 1,868 -> 494, multiswe
+# 1,821 -> 554, terminal_lego 12,124 -> 10,335, nl2repobench 87 -> 0
+# (teacher solves 2 %), affine_sql teacher-covered 276 -> 16.
+enabled = true
+exclude_sources = []
+teacher_min_solved = 1
+teacher_min_attempts = 1
+king_min_attempts = 1
+king_max_solved_frac = 0.5
+king_missing = "admit"
+retire_published = true
+
 [band_filter.affine_science]
-# AA gap-fill plan item 1 (Jacob 2026-09-22 15:24 UTC): a TEACHER source's
-# task folds only inside the signal band -- teacher solved >= k of n
-# attempts, king seat solved <= m of n. Attempts are counted from the traces
-# (every graded teacher_* / king_* rollout of the task), so the 3-attempt
-# teacher pre-pass tightens the band as its rollouts publish; no datagen
-# stamp. Before: teacher 19 % right on INTELLECT-3 science (4 of 5 refs end
-# in a wrong answer). teacher_min_attempts = 1 until the pre-pass covers the
-# set (a 0/1 problem drops, a 1/1 problem stays and is re-judged at 3);
-# king side: drop once the seat has >= 2 attempts and solved >= 2 (plan
-# rule king_max_solved = 1), admit while the seat has not tried the task
-# (king_missing = "admit"; "hold" = the plan's §5 default). Published rows
-# that fail the band retire from the index (chunks untouched).
-# Reusable: add [band_filter.<source>] for scicomp / abstention / docqa.
+# Item 1 block (15:24 UTC): same rule, absolute m = 1 of n >= 2 (the plan's
+# wording); teacher_min_attempts -> 3 once the pre-pass covers the set.
 enabled = true
 teacher_min_solved = 1
 teacher_min_attempts = 1
-# teacher_max_solved = 2        # set to drop the saturated end (3/3) later
 king_max_solved = 1
 king_min_attempts = 2
 king_missing = "admit"
@@ -380,9 +401,9 @@ domain_field = "repo"
 enabled = true
 
 [strata_budget.buckets]
-coding = 3800     # 6030 -> 3800 (phase 10, 2026-09-16; sized so the stop-state block clears 25 %)
+coding = 5500     # 6030 -> 3800 (phase 10, 2026-09-16; sized so the stop-state block clears 25 %) -> 5500 (2026-09-22 21:05 wide band: the retire cut coding's raw strata 10,412 -> 5,755, so 3,800 hashed buckets populate only 2,956 (23.7 % -> 18.4 %); 5,500 populate 3,562 = the pre-band share. Bucket counts are caps on populated buckets, not targets)
 terminal = 2400   # 3700 -> 2400 (phase 10)
-general = 1000    # 830 -> 900 (2026-09-17, chat floor 6 %) -> 1000 (2026-09-21: autobench / eog / mrcr / oolong carved out of general; keeps chat >= 6 %)
+general = 1060    # 830 -> 900 (2026-09-17, chat floor 6 %) -> 1000 (2026-09-21: autobench / eog / mrcr / oolong carved out of general; keeps chat >= 6 %) -> 1060 (2026-09-22 wide band: raw strata 2,964 -> 2,319, populated 944 -> 895 at 1000; 1060 restores ~950 so chat stays >= 6 %)
 tool_use = 332
 agentic_ops = 650    # 2026-09-21: 0.05 of ~13k strata
 long_context = 400   # 2026-09-21: 0.03 of ~13k strata
