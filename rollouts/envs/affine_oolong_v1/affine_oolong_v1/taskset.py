@@ -63,7 +63,12 @@ class OolongTaskset(vf.Taskset[OolongSynthTask, AffineOolongConfig]):
         cfg = self.config
         want = set(cfg.tasks)
         column = "context_window_text_with_labels" if cfg.with_labels else "context_window_text"
-        rows = load_dataset(DATASET, split=cfg.split, streaming=True)
+        # Not streaming (2026-09-22): from the env-backfill driver pod the HF
+        # xet stream of oolong-synth never yielded a first row inside the
+        # eval's window (every affine_oolong king batch on affine-backfill-4
+        # ended "tasks=0" after ~7 min for six hours); the cached download is
+        # 2 min once, then seconds, and keeps the same row order / indices.
+        rows = load_dataset(DATASET, split=cfg.split)
         tasks: list[OolongSynthTask] = []
         for i, row in enumerate(rows):
             if row.get("context_len") != cfg.context_len:
