@@ -651,6 +651,7 @@ class Engine:
             # Never set on duel/bench pods — scoring must see raw text.
             cmd += ["--enable-auto-tool-choice", "--tool-call-parser", "qwen3_xml",
                     "--reasoning-parser", "qwen3"]
+            cmd += self._chat_speculative_flags(repo, revision)
             # --served-model-name replaces the default id; vLLM echoes the
             # FIRST name in every response, so the alias leads and the repo
             # id stays listed (HF kings included) for clients that send it.
@@ -666,6 +667,39 @@ class Engine:
         if served_names:
             cmd += ["--served-model-name", *served_names]
         return cmd
+
+    def _chat_speculative_flags(self, repo: str, revision: str) -> list[str]:
+        """Speculative decoding for the chat pod only, default OFF.
+
+        Kings are Qwen3.6-35B-A3B fine-tunes whose checkpoints carry no
+        `mtp.*` tensors (config.json still says mtp_num_hidden_layers = 1).
+        The BASE model's MTP head still drafts them well: 3.1-3.4 accepted
+        tokens per step (71-80 %) on reign 20, +16..69 % single-stream tok/s
+        (code best). Opt in by pushing AFFINE_CHAT_MTP_DRAFT=<dir> in the
+        pod's .chat_env, where <dir> was built once per pod by
+        ops/king-chat/fetch_mtp_draft.sh (base shards holding the mtp.*
+        tensors + an index of them, ~5.7 GB). The draft's config.json is
+        refreshed from the king on every launch so it follows the crown;
+        shapes are identical under the architecture pin. Never on duel /
+        bench pods: scoring must see the plain decode path.
+        """
+        draft = os.environ.get("AFFINE_CHAT_MTP_DRAFT", "").strip()
+        if not draft:
+            return []
+        if not os.path.exists(os.path.join(draft, ".complete")):
+            log.warning("chat: AFFINE_CHAT_MTP_DRAFT=%s has no .complete marker; "
+                        "serving without speculation", draft)
+            return []
+        try:
+            shutil.copy(os.path.join(r2store.model_path(repo, revision), "config.json"),
+                        os.path.join(draft, "config.json"))
+        except OSError as e:
+            log.warning("chat: could not refresh draft config (%r); serving without "
+                        "speculation", e)
+            return []
+        spec = {"method": "qwen3_5_mtp", "model": draft,
+                "num_speculative_tokens": int(os.environ.get("AFFINE_CHAT_MTP_TOKENS", "2"))}
+        return ["--speculative-config", json.dumps(spec)]
 
     def _warm_swap_slot(self, slot: Slot) -> bool:
         return (WARM_SWAP and self.role == "duel"

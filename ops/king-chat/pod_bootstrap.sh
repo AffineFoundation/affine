@@ -119,6 +119,19 @@ PY
   touch "$MODEL_DIR/.complete"
 fi
 
+# 3b. Speculative-decoding draft head (KING_MTP=1, default) — see
+#     fetch_mtp_draft.sh (uploaded next to this script by kingchat.sh) for
+#     why the BASE model's MTP head is used and how the draft dir is built.
+KING_MTP=${KING_MTP:-1}
+DRAFT_DIR=/root/models/draft-mtp
+if [ "$KING_MTP" = 1 ]; then
+  bash /root/king-chat/fetch_mtp_draft.sh "$DRAFT_DIR" "$MODEL_DIR"
+  # Single quotes survive into run_vllm.sh (unquoted heredoc) and protect the JSON there.
+  SPEC_FLAG="--speculative-config '{\"method\":\"qwen3_5_mtp\",\"model\":\"$DRAFT_DIR\",\"num_speculative_tokens\":${KING_MTP_TOKENS:-2}}'"
+else
+  SPEC_FLAG=""
+fi
+
 # 4. Caddy: /king/* and /king-cursor/* -> fold proxy -> vLLM, everything else
 #    404. Bound to loopback; the only way in is the SSH forward from the
 #    operator box.
@@ -203,6 +216,7 @@ while true; do
     --safetensors-load-strategy prefetch \\
     --enable-auto-tool-choice --tool-call-parser qwen3_xml \\
     --default-chat-template-kwargs '{"enable_thinking": false}' \\
+    $SPEC_FLAG \\
     || echo "[king-chat] vllm exited \$?"
   sleep 10
 done
