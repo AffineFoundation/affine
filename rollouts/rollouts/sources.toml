@@ -1275,7 +1275,7 @@ pass_dataset = false
 policies = ["teacher_text", "king_text", "king_text_greedy"]
 strata_buckets = 230
 strata_offset = 4350   # general namespace, above affine_verbatim's 4005-4119 and the retired 4120-4349 (oolong / mrcr, now long_context)
-share = 0.0            # staged: flip to 1.0 once the abstain probe passes
+share = 0.5  # 2026-09-22 coordinator decision: probe rescued 27.5-27.8 % of plain-wrong rows on n=400 with <1/3 of that lost (omniscience index +7..+14); half the default share
 
 [source.affine_ifeval]
 # Verifiable instruction following: allenai/RLVR-IFeval train (14,973
