@@ -22,6 +22,14 @@ DEFAULT_BASE_URL = os.environ.get("AFFINE_GEN_BASE_URL", "https://api.engy.ai/v1
 DEFAULT_MODEL = os.environ.get("AFFINE_GEN_MODEL", "qwen3.8-27b")
 PRICE_IN = float(os.environ.get("AFFINE_GEN_PRICE_IN", "0.4"))     # USD per 1M input tokens
 PRICE_OUT = float(os.environ.get("AFFINE_GEN_PRICE_OUT", "1.0"))   # USD per 1M output tokens
+# Qwen3.8 on Engy thinks before it answers. The first scicomp probe
+# (2026-09-22 16:00) spent all 16 generate calls on exactly 6,000 reasoning
+# tokens each and returned EMPTY visible text -> 15/15 bad_json, 0 kept —
+# the same failure ops/terminal_gen/synth.py hit. Cap the thinking with
+# Engy's reasoning_effort tiers (none/minimal = off) and floor max_tokens so
+# the JSON still has room after the (short) thought.
+REASONING_EFFORT = os.environ.get("AFFINE_GEN_REASONING_EFFORT", "low")
+MIN_MAX_TOKENS = int(os.environ.get("AFFINE_GEN_MIN_MAX_TOKENS", "12000"))
 
 
 class BudgetExceeded(RuntimeError):
@@ -76,10 +84,14 @@ class TeacherClient:
     def complete(self, stage: str, system: str, user: str, *, max_tokens: int = 8192,
                  temperature: float | None = None) -> str:
         self.spend.assert_within()
+        extra = {"reasoning_effort": REASONING_EFFORT} if REASONING_EFFORT and REASONING_EFFORT != "default" else {}
         r = self.client.chat.completions.create(
             model=self.model, temperature=self.temperature if temperature is None else temperature,
-            max_tokens=max_tokens,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
+            max_tokens=max(max_tokens, MIN_MAX_TOKENS),
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            extra_body=extra)
         u = r.usage
         self.spend.add(stage, getattr(u, "prompt_tokens", 0) or 0, getattr(u, "completion_tokens", 0) or 0)
+        if not r.choices:  # Engy returned no choice (upstream error body); count the call, keep going
+            return ""
         return r.choices[0].message.content or ""
