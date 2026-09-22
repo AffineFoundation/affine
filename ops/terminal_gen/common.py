@@ -42,9 +42,13 @@ def task_id(epoch: int, site: str, qid: str | int) -> str:
     return f"task_e{epoch}_{digest}"
 
 
-def open_text(path: str | os.PathLike, mode: str = "rt"):
+def open_text(path: str | os.PathLike, mode: str = "rt", *, gz: bool | None = None):
+    """gzip when the name ends in .gz (or `gz` says so — the atomic writer's
+    temp file is `<name>.gz.tmp`, whose suffix is .tmp)."""
     path = Path(path)
-    if path.suffix == ".gz":
+    if gz is None:
+        gz = path.suffix == ".gz" or path.name.endswith(".gz.tmp")
+    if gz:
         return gzip.open(path, mode, encoding="utf-8")
     return open(path, mode, encoding="utf-8")
 
@@ -62,7 +66,7 @@ def write_jsonl(path: str | os.PathLike, rows: Iterable[dict]) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     n = 0
-    with open_text(tmp, "wt") as fh:
+    with open_text(tmp, "wt", gz=path.suffix == ".gz") as fh:
         for row in rows:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
             n += 1
