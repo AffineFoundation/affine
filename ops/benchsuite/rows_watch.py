@@ -105,9 +105,15 @@ def matrix() -> dict:
 
 
 def env_gaps(mx: dict, row_label: str) -> list[str]:
-    """env-table columns (kings.affine.io) under 24 rollouts or absent for a row; affine_wiki grades nothing and is 0 for every model."""
+    """env-table columns (kings.affine.io) under 24 rollouts or absent for a row.
+
+    affine_wiki grades nothing and is 0 for every model. affine_tau2 is not a gap either: its harness
+    fails before the first model call on every row (reign 13: 300 infra rows, 0 graded) and the board
+    renders it "errored" -- an env-side fix, not something more rollouts can fill (kingboard worker,
+    2026-09-22). Reign 13's affine_tau2_synth 0.0% is real (50 graded, 0 solved), not an ingest gap.
+    """
     cols = [c.get("key") if isinstance(c, dict) else c for c in mx["columns"]]
-    envs = [c[4:] for c in cols if c.startswith("env:") and c != "env:affine_wiki"]
+    envs = [c[4:] for c in cols if c.startswith("env:") and c not in ("env:affine_wiki", "env:affine_tau2")]
     row = next((r for r in mx["rows"] if r.get("label") == row_label), None)
     if row is None:
         return envs
