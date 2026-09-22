@@ -124,7 +124,9 @@ def box_alive(env_path: Path | None) -> tuple[bool, str]:
 
 def fetch_board() -> dict | None:
     try:
-        with urllib.request.urlopen(BOARD_URL, timeout=15) as r:
+        # Cloudflare in front of kings.affine.io returns 403 to Python-urllib's default UA.
+        req = urllib.request.Request(BOARD_URL, headers={"User-Agent": "affine-backfill-relaunch/0.1"})
+        with urllib.request.urlopen(req, timeout=15) as r:
             return json.loads(r.read().decode())
     except Exception as e:  # noqa: BLE001
         print(f"board {BOARD_URL} unreachable ({e.__class__.__name__}: {str(e)[:80]}); using saved source lists")
