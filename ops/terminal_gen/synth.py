@@ -153,9 +153,16 @@ def post_key(model: str, post: dict) -> str:
 
 
 async def call_model(client: httpx.AsyncClient, base_url: str, key: str, model: str,
-                     messages: list[dict], max_tokens: int, temperature: float) -> tuple[str, dict]:
+                     messages: list[dict], max_tokens: int, temperature: float,
+                     reasoning_effort: str = "low") -> tuple[str, dict]:
     body = {"model": model, "messages": messages, "max_tokens": max_tokens,
             "temperature": temperature, "response_format": {"type": "json_object"}}
+    # Qwen3.8 on Engy thinks before it answers; with the old max_tokens 6000
+    # every reply of the first run (2,953 / 3,000) was 6,000 reasoning tokens
+    # and an EMPTY visible text -> "no_json". Cap the thinking (Engy's
+    # reasoning_effort tiers: none/minimal = off) and leave room for the spec.
+    if reasoning_effort and reasoning_effort != "default":
+        body["reasoning_effort"] = reasoning_effort
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     for attempt in range(4):
         try:
@@ -199,7 +206,8 @@ async def run(args: argparse.Namespace) -> None:
                     return
                 t0 = time.time()
                 text, usage = await call_model(client, args.base_url, key, args.model,
-                                               build_messages(post), args.max_tokens, args.temperature)
+                                               build_messages(post), args.max_tokens, args.temperature,
+                                               args.reasoning_effort)
                 n_in = int(usage.get("prompt_tokens") or 0)
                 n_out = int(usage.get("completion_tokens") or 0)
                 cost = n_in * args.price_in / 1e6 + n_out * args.price_out / 1e6
@@ -245,7 +253,9 @@ def main() -> None:
     ap.add_argument("--price-in", type=float, default=DEFAULT_PRICE_IN, help="$ per 1M prompt tokens")
     ap.add_argument("--price-out", type=float, default=DEFAULT_PRICE_OUT, help="$ per 1M completion tokens")
     ap.add_argument("--concurrency", type=int, default=8)
-    ap.add_argument("--max-tokens", type=int, default=6000)
+    ap.add_argument("--max-tokens", type=int, default=16000)
+    ap.add_argument("--reasoning-effort", default="low",
+                    help="Engy/OpenAI reasoning_effort tier (none|minimal|low|medium|high; 'default' = do not send)")
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--max-usd", type=float, default=20.0)
     args = ap.parse_args()

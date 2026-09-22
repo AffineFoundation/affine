@@ -9,6 +9,11 @@
 #
 # WHERE TO RUN: a datagen pod or one rented builder box (Docker + the LLM key
 # in the environment). Never the eval pod or the benchmark-fill pods.
+# TERMINAL_GEN_OUT must NOT live on the pod's encrypted /root volume
+# (gocryptfs/FUSE): validate.py bind-mounts <task>/tests into the container
+# and nested docker cannot mount a FUSE path ("change mount propagation
+# through procfd ... no such file or directory" on every task, 2026-09-22).
+# Default therefore /var/tmp/terminal_gen/out (container overlay).
 # Nothing here touches the pods or D; deploying the package is the datagen
 # worker's step (ops/king-datagen/deploy_pods.sh) after the handshake in
 # the store's internal/benchsuite/requests.md.
@@ -24,14 +29,15 @@ while [ $# -gt 0 ]; do
     --model|--base-url|--key-env) MODEL_ARGS+=("$1" "$2"); shift 2;;
     --max-usd) MAX_USD=$2; shift 2;;
     --concurrency) CONC=$2; shift 2;;
-    --synth-concurrency) SYNTH_CONC=$2; shift 2;;   # LLM calls in flight (a spec is ~90 s at the teacher; 8 = 3,000 posts in 10 h, 48 = ~1.5 h)
+    --synth-concurrency) SYNTH_CONC=$2; shift 2;;
+    --max-tokens|--reasoning-effort) MODEL_ARGS+=("$1" "$2"); shift 2;;   # LLM calls in flight (a spec is ~90 s at the teacher; 8 = 3,000 posts in 10 h, 48 = ~1.5 h)
     --against) AGAINST+=(--against "$2"); shift 2;;
     --skip-fetch) SKIP_FETCH=1; shift;;
     *) echo "unknown arg $1"; exit 2;;
   esac
 done
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT=${TERMINAL_GEN_OUT:-$HOME/terminal_gen/out}
+OUT=${TERMINAL_GEN_OUT:-/var/tmp/terminal_gen/out}
 PY=${PYTHON:-python}
 TMAX_DIR=${TMAX_ROOT:-$HOME/.cache/affine/prime-tasks}/datasets/tmax
 [ -d "$TMAX_DIR" ] && AGAINST+=(--against "tmax=$TMAX_DIR")
