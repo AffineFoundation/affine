@@ -566,6 +566,36 @@ def load_groups() -> dict[str, str]:
             for name, block in (cfg.get("source") or {}).items()}
 
 
+def excluded_sources() -> dict[str, str]:
+    """source -> reason for sources that are NOT part of D and so not board
+    columns nor gap counts (benchsuite request 2026-09-22 05:05 UTC):
+    `share = 0` (retired / staged / probe-only), an explicit `probe_only =
+    true`, or a `[decontamination.<source>]` block that requires a [GEN:]
+    marker without a bench-id file (= every rollout dropped at the fold;
+    affine_gdpval). A source with a share > 0 stays whatever its history."""
+    if not SOURCES_TOML.exists():
+        return {}
+    try:
+        cfg = tomllib.loads(SOURCES_TOML.read_text())
+    except (OSError, ValueError):
+        return {}
+    out: dict[str, str] = {}
+    decon = cfg.get("decontamination") or {}
+    for name, block in (cfg.get("source") or {}).items():
+        if not isinstance(block, dict):
+            continue
+        share = block.get("share")
+        if block.get("probe_only"):
+            out[name] = "probe_only source (never folded into D)"
+        elif isinstance(share, (int, float)) and not isinstance(share, bool) and float(share) <= 0:
+            out[name] = "share = 0 in sources.toml (retired, staged or probe-only; not generated for D)"
+        else:
+            d = decon.get(name)
+            if isinstance(d, dict) and d.get("require_gen_marker") and not d.get("bench_ids"):
+                out[name] = "decontamination-blocked: every rollout dropped at the fold (benchmark's own tasks)"
+    return out
+
+
 def ingest(conn: sqlite3.Connection, fetcher: Fetcher, groups: dict[str, str]) -> dict:
     raw = fetcher.get(MANIFEST_KEY)
     manifest = loads(raw)
@@ -1193,6 +1223,19 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
             if not env or env in out or row.get("temperature") != BENCH_TEMPERATURE:
                 continue
             side_rec = row.get(side) or {}
+            if side_rec.get("status") == "partial":
+                # a Harbor job interrupted mid-run (2026-09-22): n_live of n_expected
+                # trials ran against a live model; the number is provisional — shown
+                # grey as "partial (n/N)", never a final value, out of the means
+                out.setdefault(f"__partial__{env}", {
+                    "score": None, "partial": True, "kind": "bench",
+                    "n_live": side_rec.get("n_live"), "n_expected": side_rec.get("n_expected"),
+                    "n": side_rec.get("n"), "n_infra_env": side_rec.get("n_infra_env"),
+                    "raw_score": side_rec.get("score", side_rec.get("raw_score")),
+                    "reason": side_rec.get("failure") or "partial: the benchmark job was interrupted and is being resumed",
+                    "run_id": card.get("run_id"), "mode": card.get("mode"),
+                    "created_at": card.get("created_at")})
+                continue
             if side_rec.get("status") == "unverified":
                 # the publisher could not trust the grader for this cell (2026-09-20:
                 # gaia2-ambiguity, ARE's soft checker rejects report-then-ask replies);
@@ -1221,9 +1264,10 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
             if side == "teacher" and (row.get("teacher") or {}).get("reused_from"):
                 val["reused_from"] = row["teacher"]["reused_from"]
             out[env] = val
-    # placeholders only where no card has a verified value: an unverified cell
-    # (grader mismatch) beats a failed run (nothing measured) for the slot
-    for prefix in ("__unverified__", "__failed__"):
+    # placeholders only where no card has a verified value: a partial run (some
+    # trials measured) beats an unverified cell (grader mismatch), which beats a
+    # failed run (nothing measured), for the slot
+    for prefix in ("__partial__", "__unverified__", "__failed__"):
         for k in [k for k in out if k.startswith(prefix)]:
             env = k[len(prefix):]
             val = out.pop(k)
@@ -1470,8 +1514,13 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
             "judge": meta.get("judge") if meta.get("graded") == "llm_judge" else None,
             "advisory": meta.get("graded") == "llm_judge",
         })
-    env_groups = {e["source"]: e.get("group") or "other" for e in stats.get("envs") or []}
+    # sources outside D (share 0 / probe-only / decontamination-blocked) are
+    # not columns and not gaps; listed under `excluded_envs` for the record
+    excluded = excluded_sources()
+    env_groups = {e["source"]: e.get("group") or "other" for e in stats.get("envs") or []
+                  if e["source"] not in excluded}
     env_ids = {e["source"]: e.get("env_id") or "" for e in stats.get("envs") or []}
+    excluded_present = sorted(e["source"] for e in stats.get("envs") or [] if e["source"] in excluded)
     # envs whose grader never writes a score: a column nobody can fill
     no_grader = {e["source"] for e in stats.get("envs") or []
                  if e.get("graded_share") is not None and e["graded_share"] < NO_GRADER_SHARE}
@@ -1630,6 +1679,7 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                    for r in hidden],
         "inflight": [{k: p[k] for k in ("run_id", "mode", "label", "digest12", "genesis", "started_at",
                                          "n_done", "n_planned", "running_env")} for p in inflight],
+        "excluded_envs": [{"source": src, "reason": excluded[src]} for src in excluded_present],
         "n_cards": len(cards),
         "cards": [{"run_id": c.get("run_id"), "mode": c.get("mode"), "status": c.get("status"),
                    "created_at": c.get("created_at"), "digest12": card_digest12(c),
@@ -1660,7 +1710,9 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                      f"{MATRIX_MIN_GRADED} graded rollouts on the environment); '…' = a benchmark pass "
                      "for the model is running and this cell is planned (ops/benchsuite pass log); "
                      "'errored' = the environment ran for the model but every rollout errored "
-                     "(nothing graded); 'run failed' = a benchmark pass ended without a result",
+                     "(nothing graded); 'run failed' = a benchmark pass ended without a result; "
+                     "'partial (n/N)' = a benchmark job interrupted after n of N trials ran against a "
+                     "live model (status partial) — provisional, never a final number",
             "colour": "cell tint = score minus the teacher's score in the same column: green above, "
                       "red below, stronger with the gap",
             "markers": f"‡ = cap-bound: more than {int(CAP_BOUND_FRAC * 100)}% of the model's replies hit the "
