@@ -159,6 +159,11 @@ def scorecard(run_dir: Path) -> dict:
         # a job our infrastructure cut down (half or more of its trials never saw the model) is not a
         # result yet either: it shows as failed WITH the reason, and the watcher resumes it
         infra_cut = bool(n) and n_env / n >= 0.5
+        # an interrupted Harbor job (fewer live trials than the task set) is PARTIAL: the number is shown
+        # with its n, but the cell is not final — the watcher resumes the job (2026-09-22: reign 15's
+        # @4h250 published 0.389 on 216 of 500 live trials after a Daytona capacity stop)
+        n_exp = x.get("n_expected")
+        partial = bool(n_exp) and n_live < int(n_exp) and not (failed or infra_cut)
         out = {"score": None if (failed or infra_cut) else x["score"], "ci95": None if (failed or infra_cut) else x["ci95"], "n": x["n"],
                "n_errored": x["n_errored"], "n_timeout": x.get("n_timeout"), "n_context_overflow": x.get("n_context_overflow"),
                "n_infra_env": x.get("n_infra_env"), "n_live": x.get("n_live"),
@@ -166,7 +171,10 @@ def scorecard(run_dir: Path) -> dict:
                "prompt_tokens": x["prompt_tokens"], "wall_seconds": x.get("wall_seconds"),
                "finish_length_frac": x.get("finish_length_frac"),
                "by_class": x.get("by_class") or None,
-               "status": "failed" if (failed or infra_cut) else "ok"}
+               "status": "failed" if (failed or infra_cut) else ("partial" if partial else "ok")}
+        if partial:
+            out["n_expected"] = int(n_exp)
+            out["failure"] = f"partial: {n_live} of {n_exp} trials ran against a live model; the job is being resumed"
         if infra_cut and not failed:
             out["failure"] = f"infrastructure: {n_env} of {n} trials never ran against a live model (serving box / Daytona); resuming"
         # cloud-sandbox / harness-change provenance (harbor_cell.py cells): the kingboard

@@ -145,6 +145,9 @@ def is_infra_env(etype: str, emsg: str, agent_result: dict) -> bool:
     return not (agent_result.get("n_input_tokens") or 0)
 
 
+DATASET_SIZE = {"swebench-verified": 500, "terminal-bench-2": 89}   # full task sets; a job below this is partial
+
+
 def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit_code: int) -> dict:
     rows = []
     for rp in sorted(job_dir.glob("*/result.json")):
@@ -207,6 +210,7 @@ def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit
         "n_errored": sum(1 for r in rows if r["error_class"] == "infra"),
         "n_infra_env": sum(1 for r in rows if r["error_class"] == "infra_env"),
         "n_live": sum(1 for r in rows if r["error_class"] != "infra_env"),   # trials that ran against a live model
+        "n_expected": int(a.n_tasks) if a.n_tasks and a.n_tasks > 0 else DATASET_SIZE.get(a.env),
         "n_timeout": sum(1 for r in rows if r["error_class"] == "timeout"),
         "n_context_overflow": sum(1 for r in rows if r["error_class"] == "context_overflow"),
         "score": round(k / len(scored), 4) if scored else 0.0, "ci95": [round(lo, 4), round(hi, 4)],
