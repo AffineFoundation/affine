@@ -1035,6 +1035,7 @@ def lang_bucket(rec: dict) -> str:
 # mapping is idempotent and re-tunable without a rewrite of chunks.
 STRATA_BUDGET: dict = {}
 SRC2GRP_GLOBAL: dict[str, str] = {}
+MIX_GROUPS_GLOBAL: frozenset[str] = frozenset()   # every [mix] group: a published stratum namespace wins over the source's current group
 FOLD_STATS_PATH = STATE_DIR / "fold_stats.json"
 FOLD_STATS_KEY = "corpus/fold_stats.json"
 
@@ -1335,7 +1336,7 @@ def group_from_row(stratum_src: str, source: str, src2grp: dict[str, str]) -> st
     agentic_ops, mrcr / oolong -> long_context, 2026-09-21) keeps its
     already-published rows where they were folded."""
     ns = str(stratum_src).split(":")[0]
-    return ns if ns in ROUTED_GROUPS or ns in KING_GROUPS or ns in BUCKETED_TEACHER_GROUPS \
+    return ns if ns in ROUTED_GROUPS or ns in KING_GROUPS or ns in BUCKETED_TEACHER_GROUPS or ns in MIX_GROUPS_GLOBAL \
         else src2grp.get(str(source), DEFAULT_GROUP)
 
 
@@ -2821,6 +2822,145 @@ def gate_published(pub: PublicCorpus, live: dict | None, cfg: dict, state_rec, t
     return retire, tally
 
 
+# -- band filter (AA gap-fill plan §5 / §1.1, Jacob 2026-09-22 15:24 UTC) ------
+# A TEACHER source's task folds only if the teacher solved it in
+# >= teacher_min_solved of >= teacher_min_attempts attempts (and <=
+# teacher_max_solved when set -- drop the saturated end), and the king seat
+# solved it in <= king_max_solved of >= king_min_attempts attempts. Attempt
+# counts come from the traces (every teacher_* / king_* rollout of the task),
+# cached per traces manifest, so the 3-attempt teacher pre-pass tightens the
+# band as its rollouts are published -- no datagen stamp needed. Missing
+# teacher attempts -> hold; missing king attempts -> hold when
+# king_min_attempts > 0 and king_missing = "hold" (the plan's default);
+# king_missing = "admit" lets the king side bite only once the seat has
+# attempted the task, so a source is not held hostage to seat coverage.
+# king_min_attempts = 0 turns the king side off. Published rows of a
+# banded source that fail the band are retired (retire_published).
+# affine_science first (teacher 19 % right -> 4 of 5 references wrong).
+BAND_CACHE = CACHE_DIR / "band_attempts.json"
+
+
+def load_band_filters() -> dict[str, dict]:
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("band_filter") or {}
+    out: dict[str, dict] = {}
+    for src, cfg in raw.items():
+        if not isinstance(cfg, dict) or not cfg.get("enabled", True):
+            continue
+        out[str(src)] = {
+            "teacher_min_solved": int(cfg.get("teacher_min_solved", 1) or 0),
+            "teacher_min_attempts": int(cfg.get("teacher_min_attempts", 1) or 1),
+            "teacher_max_solved": cfg.get("teacher_max_solved"),
+            "king_max_solved": int(cfg.get("king_max_solved", 1)),
+            "king_min_attempts": int(cfg.get("king_min_attempts", 0) or 0),
+            "king_missing": str(cfg.get("king_missing", "hold")),   # hold | admit when the king seat has < king_min_attempts
+            "retire_published": bool(cfg.get("retire_published", True))}
+    return out
+
+
+def task_attempts(pub: PublicCorpus, traces_manifest: dict, sources: frozenset[str]) -> dict[str, dict]:
+    """{sid: {t_n, t_s, k_n, k_s}} over every graded teacher_* / king_*
+    rollout of the given sources in the traces."""
+    key = hashlib.sha256(json.dumps([c["key"] for c in traces_manifest["chunks"]] + sorted(sources)).encode()).hexdigest()[:16]
+    if BAND_CACHE.exists():
+        try:
+            c = json.loads(BAND_CACHE.read_text())
+            if c.get("key") == key:
+                return c["stats"]
+        except (OSError, ValueError):
+            pass
+    stats: dict[str, dict] = {}
+    for c in traces_manifest["chunks"]:
+        name = c["key"].rsplit("/", 1)[-1]
+        if not any(name.startswith(src) for src in sources):
+            continue
+        path = pub.cached(c["key"], c["sha256"], gz_sha=True)
+        for env in iter_jsonl_gz(path):
+            if str(env.get("source") or "") not in sources or is_backfill(env):
+                continue
+            pid = str((env.get("policy") or {}).get("id") or "")
+            side = "t" if pid.startswith(("teacher_", "glm_")) else ("k" if pid.startswith("king_") else None)
+            if side is None:
+                continue
+            outcome = rollout_outcome(env["trace"])
+            if outcome not in ("solved", "failed"):
+                continue
+            sid = str((env.get("task") or {}).get("sid") or "")
+            st = stats.setdefault(sid, {"t_n": 0, "t_s": 0, "k_n": 0, "k_s": 0})
+            st[f"{side}_n"] += 1
+            st[f"{side}_s"] += int(outcome == "solved")
+    BAND_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    BAND_CACHE.write_text(json.dumps({"key": key, "stats": stats}))
+    return stats
+
+
+def band_verdict(st: dict | None, cfg: dict) -> str:
+    """admit | hold | teacher_unsolved | teacher_saturated | king_solved"""
+    st = st or {"t_n": 0, "t_s": 0, "k_n": 0, "k_s": 0}
+    if st["t_n"] < cfg["teacher_min_attempts"]:
+        return "hold"
+    if st["t_s"] < cfg["teacher_min_solved"]:
+        return "teacher_unsolved"
+    if cfg["teacher_max_solved"] is not None and st["t_s"] > int(cfg["teacher_max_solved"]):
+        return "teacher_saturated"
+    if cfg["king_min_attempts"] > 0:
+        if st["k_n"] < cfg["king_min_attempts"]:
+            return "hold" if cfg["king_missing"] == "hold" else "admit"
+        if st["k_s"] > cfg["king_max_solved"]:
+            return "king_solved"
+    return "admit"
+
+
+def band_filter_records(records: list[dict], bands: dict[str, dict], stats: dict[str, dict],
+                        drops: dict[str, int]) -> tuple[list[dict], list[dict], dict[str, dict[str, int]]]:
+    """Teacher-side records of banded sources -> (ready, held, tally by source).
+    King-derived records (king_* policies) keep their own groups' gates."""
+    ready: list[dict] = []
+    held: list[dict] = []
+    tally: dict[str, dict[str, int]] = {}
+    for rec in records:
+        src = str(rec.get("source") or "")
+        pid = str((rec.get("policy") or {}).get("id") or "")
+        if src not in bands or pid.startswith("king_"):
+            ready.append(rec)
+            continue
+        v = band_verdict(stats.get(str(rec.get("instance_id") or "")), bands[src])
+        t = tally.setdefault(src, {})
+        t[v] = t.get(v, 0) + 1
+        if v == "admit":
+            ready.append(rec)
+        elif v == "hold":
+            held.append(rec)
+        else:
+            _count(drops, f"band_{v}")
+            _count(drops, f"band_{v}_{src}")
+    return ready, held, tally
+
+
+def band_published_retire(pub: PublicCorpus, live: dict | None, bands: dict[str, dict],
+                          stats: dict[str, dict], src2grp: dict[str, str]) -> dict[str, list[str]]:
+    """Published teacher rows of banded sources that fail the band now:
+    {group: [turn ids]} (index-only retirement, chunks untouched)."""
+    if not live or not live.get("index"):
+        return {}
+    t = index_table(pub, live, ["turn_id", "traj_id", "stratum_src", "source"])
+    # sid is not an index column; traj_id = <source>.<sha256(sid)[:8]>.<...>
+    sha8 = {hashlib.sha256(sid.encode()).hexdigest()[:8]: sid for sid in stats}
+    out: dict[str, list[str]] = {}
+    cols = [t.column(c).to_pylist() for c in ("turn_id", "traj_id", "stratum_src", "source")]
+    for tid, traj, st, src in zip(*cols):
+        src = str(src)
+        if src not in bands or not bands[src]["retire_published"]:
+            continue
+        g = group_from_row(str(st), src, src2grp)
+        if g in KING_GROUPS or g in ROUTED_GROUPS:
+            continue
+        sid = next((sha8[p] for p in str(traj).split(".") if p in sha8), None)
+        v = band_verdict(stats.get(sid) if sid else None, bands[src])
+        if v in ("teacher_unsolved", "teacher_saturated", "king_solved"):
+            out.setdefault(g, []).append(str(tid))
+    return out
+
+
 # -- teacher probe gate (improvement loop P4, 2026-09-14) -----------------------
 # ~25 % of king-group strata were dead for every miner: the teacher itself
 # gave <= 1 parseable reference or forfeited there. The gate: a turn of a
@@ -3773,6 +3913,8 @@ def main() -> None:
     budget_cfg = load_strata_budget()
     STRATA_BUDGET.clear(); STRATA_BUDGET.update(budget_cfg)
     SRC2GRP_GLOBAL.clear(); SRC2GRP_GLOBAL.update(src2grp)
+    global MIX_GROUPS_GLOBAL
+    MIX_GROUPS_GLOBAL = frozenset(mix)
     static_mix = dict(mix)
     curriculum = load_curriculum()
     if curriculum["mode"] != "off":
@@ -3839,6 +3981,29 @@ def main() -> None:
                     log(f"GUARD (dry run): {msg}")
                 else:
                     fatal(msg)
+    bands = load_band_filters()
+    band_report: dict = {}
+    band_held: list[dict] = []
+    if bands:
+        band_stats = task_attempts(pub, traces_manifest, frozenset(bands))
+        candidates, band_held, band_tally = band_filter_records(candidates, bands, band_stats, drops)
+        band_retire = band_published_retire(pub, live, bands, band_stats, src2grp)
+        for g, ids in band_retire.items():
+            extra_retire.setdefault(g, set()).update(ids)
+            retire_surviving[g] = strata_after_retire(pub, live, g, extra_retire[g])
+        if band_retire:
+            pivot_retire = sorted(set().union(*extra_retire.values()))
+        per_src = {}
+        for src, cfg in bands.items():
+            kept = [v for v in band_stats.values() if band_verdict(v, cfg) == "admit"]
+            per_src[src] = {"tasks_seen": len(band_stats),
+                            "teacher_solve_rate_all": round(sum(v["t_s"] for v in band_stats.values())
+                                                            / max(1, sum(v["t_n"] for v in band_stats.values())), 3),
+                            "teacher_solve_rate_kept": round(sum(v["t_s"] for v in kept) / max(1, sum(v["t_n"] for v in kept)), 3),
+                            "tasks_kept": len(kept)}
+        band_report = {"tally": band_tally, "retired": {g: len(v) for g, v in band_retire.items()},
+                       "per_source": per_src, "rules": bands}
+        log(f"band filter: {json.dumps(band_report, sort_keys=True)}")
     gate = load_admission_gate()
     gate_report: dict = {}
     gate_held: list[dict] = []
@@ -4012,7 +4177,7 @@ def main() -> None:
     selected, deferred, group_added = cap_fill(
         candidates, lambda r: group_of(r, src2grp, mix), have_groups, mix,
         anchor_min_target=ANCHOR_MIN_TARGET, max_new=budgets)
-    deferred += lang_deferred + probe_held + gate_held
+    deferred += lang_deferred + probe_held + gate_held + band_held
     log(f"mix: selected {len(selected)} rollouts (+{ {g: len(v) for g, v in group_added.items()} } "
         f"strata), deferred {len(deferred)}")
     # Language strata credited only for coding rollouts that made it through
@@ -4121,7 +4286,8 @@ def main() -> None:
                          extra={"floors": fstat,
                                 "yield": {**yrep, "gate_state": (gate_report or {}).get("gate_state"),
                                           "gate_reason": (gate_report or {}).get("gate_reason")},
-                                "admission_gate": gate_report or None})
+                                "admission_gate": gate_report or None,
+                                "band_filter": band_report or None})
 
     n_new = sum(len(r["turns"]) for r in selected)
     stale = False

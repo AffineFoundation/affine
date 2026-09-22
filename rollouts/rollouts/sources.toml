@@ -305,6 +305,29 @@ domain_field = "repo"
 require_gen_marker = true
 domain_field = "repo"
 
+[band_filter.affine_science]
+# AA gap-fill plan item 1 (Jacob 2026-09-22 15:24 UTC): a TEACHER source's
+# task folds only inside the signal band -- teacher solved >= k of n
+# attempts, king seat solved <= m of n. Attempts are counted from the traces
+# (every graded teacher_* / king_* rollout of the task), so the 3-attempt
+# teacher pre-pass tightens the band as its rollouts publish; no datagen
+# stamp. Before: teacher 19 % right on INTELLECT-3 science (4 of 5 refs end
+# in a wrong answer). teacher_min_attempts = 1 until the pre-pass covers the
+# set (a 0/1 problem drops, a 1/1 problem stays and is re-judged at 3);
+# king side: drop once the seat has >= 2 attempts and solved >= 2 (plan
+# rule king_max_solved = 1), admit while the seat has not tried the task
+# (king_missing = "admit"; "hold" = the plan's §5 default). Published rows
+# that fail the band retire from the index (chunks untouched).
+# Reusable: add [band_filter.<source>] for scicomp / abstention / docqa.
+enabled = true
+teacher_min_solved = 1
+teacher_min_attempts = 1
+# teacher_max_solved = 2        # set to drop the saturated end (3/3) later
+king_max_solved = 1
+king_min_attempts = 2
+king_missing = "admit"
+retire_published = true
+
 [strata_budget]
 # Phase 9 (2026-09-14). The duel slicer draws one turn per stratum uniformly
 # over strata, so slice share = strata share. `buckets` merges a teacher-
