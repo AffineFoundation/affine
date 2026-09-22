@@ -2,8 +2,17 @@
 # Deploy the rollouts package to the datagen pods and (optionally) ask the
 # supervisor to relaunch between batches.
 #
-#   ops/king-datagen/deploy_pods.sh [--restart] --all
-#   ops/king-datagen/deploy_pods.sh [--restart] HOST:PORT [HOST:PORT ...]
+#   ops/king-datagen/deploy_pods.sh [--restart] [--worktree] --all
+#   ops/king-datagen/deploy_pods.sh [--restart] [--worktree] HOST:PORT [HOST:PORT ...]
+#
+# What is shipped is the COMMITTED tree: every shipped path is exported from
+# HEAD (`git archive`) into a scratch dir and copied from there, and the
+# script refuses to run when any shipped path differs from HEAD (staged,
+# unstaged or untracked). 2026-09-22 21:11: a deploy that copied the working
+# tree caught rollouts/sources.toml mid-rebase on datagen-2 (old [mix]) and
+# shipped another worker's uncommitted [band_filter] draft to datagen-5/-6.
+# `--worktree` is the deliberate-testing override: ships the working tree
+# as-is and prints what differs.
 #
 # Per pod: back up the current files to /root/rollouts/rollouts/.bak/, scp
 # the package files listed in FILES, import-check the registry on the pod
@@ -119,16 +128,43 @@ ENV_IMAGES=(swipl:latest python:3.12-slim projectnumina/kimina-lean-server:2.0.0
   shivakrishnareddyma225/enterpriseops-gym-mcp-hr@sha256:1ea1c1d64d4be35e8062e56f00b8318e9e6c09289cfa56bcfd0595bfa59ac64d
   shivakrishnareddyma225/enterpriseops-gym-mcp-itsm@sha256:a234ae3fb7cee196ba25e6b9957969dea829919b6e8271dddae128f065aaf39f
   shivakrishnareddyma225/enterpriseops-gym-mcp-teams@sha256:602655e46f6501885540c36dc9b12114cb173c75063d7f25c17ed0652695fa78)
-RESTART=0; TARGETS=()
+RESTART=0; WORKTREE=0; TARGETS=()
 for a in "$@"; do
   case "$a" in
     --restart) RESTART=1 ;;
+    --worktree) WORKTREE=1 ;;
     --all) mapfile -t rows < <("$REPO/.venv/bin/python" ops/king-datagen/kingctl.py pods)
            for r in "${rows[@]}"; do read -r _n h p <<< "$r"; TARGETS+=("$h:$p"); done ;;
     *) TARGETS+=("$a") ;;
   esac
 done
 [ ${#TARGETS[@]} -gt 0 ] || { echo "no targets (use --all or HOST:PORT)"; exit 2; }
+
+# Source tree for everything below: a clean export of HEAD unless --worktree.
+SHIP_PATHS=()
+for f in "${FILES[@]}"; do SHIP_PATHS+=("rollouts/rollouts/$f"); done
+for f in "${AFFINE_FILES[@]}"; do SHIP_PATHS+=("affine/$f"); done
+SHIP_PATHS+=("$HARNESS_SRC")
+for p in "${ENV_PKGS[@]}"; do SHIP_PATHS+=("rollouts/envs/$p"); done
+for p in "${VENDOR_ENVS[@]}"; do SHIP_PATHS+=("rollouts/vendor/prime-envs/$p"); done
+for p in "${HARNESS_PKGS[@]}"; do SHIP_PATHS+=("rollouts/harnesses/$p"); done
+HEAD_SHORT=$(git rev-parse --short HEAD)
+DIRTY=$(git status --porcelain --untracked-files=all -- "${SHIP_PATHS[@]}")
+if [ $WORKTREE = 1 ]; then
+  SRC=$REPO
+  echo "WARNING: --worktree: shipping the working tree, not HEAD $HEAD_SHORT"
+  [ -n "$DIRTY" ] && { echo "paths that differ from HEAD:"; echo "$DIRTY"; }
+else
+  if [ -n "$DIRTY" ]; then
+    echo "refusing: shipped paths differ from HEAD $HEAD_SHORT (commit them, or pass --worktree to test uncommitted changes):"
+    echo "$DIRTY"
+    exit 3
+  fi
+  SRC=$(mktemp -d /tmp/deploy_pods.XXXXXX) || exit 1
+  trap 'rm -rf "$SRC"' EXIT
+  git archive --format=tar HEAD -- "${SHIP_PATHS[@]}" | tar -x -C "$SRC" || { echo "HEAD export failed"; exit 1; }
+  echo "shipping HEAD $HEAD_SHORT (clean export in $SRC)"
+fi
 
 rc=0
 for t in "${TARGETS[@]}"; do
@@ -140,21 +176,21 @@ for t in "${TARGETS[@]}"; do
   $SSH 'mkdir -p /root/rollouts/rollouts/{runners,adapters,loopguard_site,dockerwrap} /root/rollouts/rollouts/.bak/{runners,adapters,loopguard_site,dockerwrap} /root/affine/.bak/affine/corpus /root/affine/.bak/datagen && cd /root/rollouts/rollouts && for f in '"${FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; cd /root/affine && for f in '"${AFFINE_FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; mkdir -p "$(dirname '"$HARNESS_DST"')/.bak" && [ -f '"$HARNESS_DST"' ] && cp '"$HARNESS_DST"' "$(dirname '"$HARNESS_DST"')/.bak/__init__.py"; echo backed-up' || { echo "SSH-FAILED"; rc=1; continue; }
   ok=1
   for f in "${FILES[@]}"; do
-    $SCP "rollouts/rollouts/$f" "root@$H:/root/rollouts/rollouts/$f" || { echo "SCP-FAILED $f"; ok=0; break; }
+    $SCP "$SRC/rollouts/rollouts/$f" "root@$H:/root/rollouts/rollouts/$f" || { echo "SCP-FAILED $f"; ok=0; break; }
   done
   for f in "${AFFINE_FILES[@]}"; do
-    $SCP "affine/$f" "root@$H:/root/affine/$f" || { echo "SCP-FAILED $f"; ok=0; break; }
+    $SCP "$SRC/affine/$f" "root@$H:/root/affine/$f" || { echo "SCP-FAILED $f"; ok=0; break; }
   done
   if [ $ok = 1 ]; then
-    $SCP "$HARNESS_SRC" "root@$H:$HARNESS_DST" || { echo "SCP-FAILED $HARNESS_SRC"; ok=0; }
+    $SCP "$SRC/$HARNESS_SRC" "root@$H:$HARNESS_DST" || { echo "SCP-FAILED $HARNESS_SRC"; ok=0; }
   fi
   [ $ok = 1 ] || { rc=1; continue; }
   $SSH 'chmod +x /root/rollouts/rollouts/dockerwrap/docker'
-  tar -C rollouts/envs -czf - "${ENV_PKGS[@]}" | $SSH 'mkdir -p /root/rollouts/envs && tar -C /root/rollouts/envs -xzf -' \
+  tar -C "$SRC/rollouts/envs" -czf - "${ENV_PKGS[@]}" | $SSH 'mkdir -p /root/rollouts/envs && tar -C /root/rollouts/envs -xzf -' \
     || { echo "ENV-COPY-FAILED"; rc=1; continue; }
-  tar -C rollouts/vendor/prime-envs -czf - "${VENDOR_ENVS[@]}" | $SSH 'mkdir -p /root/rollouts/vendor && tar -C /root/rollouts/vendor -xzf -' \
+  tar -C "$SRC/rollouts/vendor/prime-envs" -czf - "${VENDOR_ENVS[@]}" | $SSH 'mkdir -p /root/rollouts/vendor && tar -C /root/rollouts/vendor -xzf -' \
     || { echo "VENDOR-COPY-FAILED"; rc=1; continue; }
-  tar -C rollouts/harnesses -czf - "${HARNESS_PKGS[@]}" | $SSH 'mkdir -p /root/rollouts/harnesses && tar -C /root/rollouts/harnesses -xzf -' \
+  tar -C "$SRC/rollouts/harnesses" -czf - "${HARNESS_PKGS[@]}" | $SSH 'mkdir -p /root/rollouts/harnesses && tar -C /root/rollouts/harnesses -xzf -' \
     || { echo "HARNESS-COPY-FAILED"; rc=1; continue; }
   $SSH 'export PATH=$HOME/.local/bin:$PATH; cd /root/prime-pilot/verifiers || exit 1
 RE=/root/prime-pilot/research-environments/environments
