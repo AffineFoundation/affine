@@ -97,6 +97,9 @@ function cellTip(row, col, cell, teacherCell) {
       + (cell.run_id ? `\ncard ${cell.run_id}${cell.mode ? ` · ${cell.mode}` : ""}` : "");
   }
   if (!cell || cell.score == null) {
+    if (col.kind === "env" && !cell) {
+      return `${head}\npending — no graded rollouts for this model on this environment yet (the king seat / coverage backfill has not run it); not counted in total or coverage`;
+    }
     return `${head}\n${cell?.reason || "no measurement"}`
       + (col.kind === "bench" && !cell ? "\nnever run for this model (no benchmark card)" : "");
   }
