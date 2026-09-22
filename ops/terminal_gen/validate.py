@@ -31,7 +31,7 @@ import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from common import out_dir, write_jsonl
+from common import out_dir, read_jsonl, write_jsonl
 
 log = logging.getLogger("terminal_gen.validate")
 
@@ -123,6 +123,7 @@ def main() -> None:
     ap.add_argument("--concurrency", type=int, default=4)
     ap.add_argument("--keep-images", action="store_true")
     ap.add_argument("--only", default=None, help="comma-separated task ids")
+    ap.add_argument("--no-resume", action="store_true", help="ignore an existing validation.jsonl")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     if shutil.which("docker") is None:
@@ -132,12 +133,34 @@ def main() -> None:
     if args.only:
         want = set(args.only.split(","))
         dirs = [d for d in dirs if d.name in want]
-    log.info("validating %d tasks with %d workers", len(dirs), args.concurrency)
-    with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-        rows = list(pool.map(lambda d: validate_task(d, args.keep_images), dirs))
-    for r in rows:
+    # Resume: results are appended to validation.jsonl as each task finishes
+    # (a 6,000-task pass is hours; the first builder box dropped sshd once),
+    # and tasks already in the file are skipped on a rerun.
+    done_rows: dict[str, dict] = {}
+    if not args.no_resume:
+        for r in read_jsonl(out / "validation.jsonl"):
+            done_rows[r["task_id"]] = r
+    todo = [d for d in dirs if d.name not in done_rows]
+    log.info("validating %d tasks with %d workers (%d already done)", len(todo), args.concurrency, len(done_rows))
+    import threading
+    lock = threading.Lock()
+    out_path = out / "validation.jsonl"
+    n_done = [0]
+
+    def one(d: Path) -> dict:
+        r = validate_task(d, args.keep_images)
+        with lock:
+            with open(out_path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+            n_done[0] += 1
+            if n_done[0] % 50 == 0:
+                log.info("progress: %d/%d", n_done[0], len(todo))
         log.info("%s %s %s", r["task_id"], "OK" if r["ok"] else "DROP", r.get("reason", ""))
-    write_jsonl(out / "validation.jsonl", rows)
+        return r
+
+    with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
+        new_rows = list(pool.map(one, todo))
+    rows = list(done_rows.values()) + new_rows
     reasons: dict[str, int] = {}
     for r in rows:
         if not r["ok"]:
