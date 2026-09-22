@@ -136,7 +136,7 @@ def env_gaps(mx: dict, row_label: str) -> list[str]:
     2026-09-22). Reign 13's affine_tau2_synth 0.0% is real (50 graded, 0 solved), not an ingest gap.
     """
     cols = [c.get("key") if isinstance(c, dict) else c for c in mx["columns"]]
-    envs = [c[4:] for c in cols if c.startswith("env:") and c not in ("env:affine_wiki", "env:affine_tau2")]
+    envs = [c[4:] for c in cols if c.startswith("env:") and c not in ("env:affine_wiki", "env:affine_tau2", "env:affine_gdpval")]
     row = next((r for r in mx["rows"] if r.get("label") == row_label), None)
     if row is None:
         return envs
@@ -165,7 +165,8 @@ def missing_cells(mx: dict, row_label: str) -> tuple[list[str], list[str]]:
         c = cells.get(f"bench:{e}")
         if c is None:
             missing.append(e)
-        elif (c.get("status") or "").startswith("fail") or (c.get("score") is None and not c.get("unverified")):
+        elif (c.get("status") or "").startswith(("fail", "partial")) or (c.get("score") is None and not c.get("unverified")):
+            # "partial" = an interrupted Harbor job published with its n; it still needs its resume
             failed.append(e)
     return missing, failed
 

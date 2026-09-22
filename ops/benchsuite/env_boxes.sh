@@ -95,7 +95,7 @@ GAPS=$(python3 - "$REIGN" "$KEEP_SRC" <<'PY'
 import json, sys, urllib.request
 mx = json.load(urllib.request.urlopen("http://127.0.0.1:8790/api/matrix.json", timeout=60))
 cols = [c.get("key") if isinstance(c, dict) else c for c in mx["columns"]]
-envs = [c[4:] for c in cols if c.startswith("env:") and c not in ("env:affine_wiki", "env:affine_tau2")]
+envs = [c[4:] for c in cols if c.startswith("env:") and c not in ("env:affine_wiki", "env:affine_tau2", "env:affine_gdpval")]
 keep = {s for s in sys.argv[2].split(",") if s}
 row = next(r for r in mx["rows"] if r.get("label") == f"King {sys.argv[1]}")
 cells = row.get("cells") or {}
