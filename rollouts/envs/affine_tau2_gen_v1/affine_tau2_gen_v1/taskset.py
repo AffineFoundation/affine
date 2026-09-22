@@ -53,7 +53,7 @@ from affine_tau2_v1.taskset import AffineTau2Task  # noqa: E402
 
 DATA_ROOT = Path(__file__).resolve().parent / "data"
 DOMAINS = ("airline", "retail", "telecom")
-DEFAULT_EPOCH = 61
+DEFAULT_EPOCH = 67
 NAME_PREFIX = "tau2g-"
 
 

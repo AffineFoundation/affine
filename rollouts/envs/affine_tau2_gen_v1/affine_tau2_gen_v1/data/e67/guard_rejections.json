@@ -1,0 +1,31 @@
+{
+ "airline": {
+  "kept": 400,
+  "build_fail_total": 41,
+  "build_fail_by_case": {
+   "change_cabin": 8,
+   "composed": 23,
+   "change_flights": 5,
+   "upgrade_then_baggage": 5
+  },
+  "excluded_benchmark_composition": 0,
+  "excluded_benchmark_triplet": 0
+ },
+ "retail": {
+  "kept": 200,
+  "build_fail_total": 2,
+  "build_fail_by_case": {
+   "modify_items": 1,
+   "exchange_unavailable_denied": 1
+  },
+  "excluded_benchmark_composition": 0,
+  "excluded_benchmark_triplet": 0
+ },
+ "telecom": {
+  "kept": 200,
+  "build_fail_total": 0,
+  "build_fail_by_case": {},
+  "excluded_benchmark_composition": 6048,
+  "excluded_benchmark_triplet": 0
+ }
+}
