@@ -68,6 +68,9 @@ MAX_PODS = int(os.environ.get("COVERAGE_BENCH_MAX_PODS", "6"))
 # short of pods.
 SHARED_MAX_PODS = int(os.environ.get("COVERAGE_SHARED_MAX_PODS", "10"))
 KING_RESERVE = 5
+YIELD_WINDOW_MIN = 60        # yield only while the king's pass is this young (renting its pods)
+YIELD_BACKOFF_S = 2 * 3600   # a yielded entry is not re-rented for 2 h
+YIELD_MAX = 2                # after this many yields the entry waits for a hand
 BENCH_POD_GLOB = "bench-king-"
 VALIDATOR_STATE = REPO / "affine" / "state" / "state.json"
 BUDGET_PATH = STATE_DIR / "budget.json"     # cap + buckets + actuals (the ledger of approved money)
@@ -379,6 +382,16 @@ def yield_to_king(q: list[dict], view: dict) -> int:
     cut = 0
     if need <= 0 or not view["king_pass"]:
         return 0
+    # Only a STARTING king pass is short of pods by our fault; a pass hours old that holds
+    # one pod is simply in its long tail (SWE job) and needs nothing. 2026-09-21: 51 of our
+    # passes were rented and cut 5 min later against a king pass that was 30 h old.
+    marker = BENCH_STATE / f"inflight-{view['king']}"
+    try:
+        age_min = (time.time() - marker.stat().st_mtime) / 60
+    except OSError:
+        return 0
+    if age_min > YIELD_WINDOW_MIN:
+        return 0
     for e in sorted([e for e in q if e.get("status") == "running" and POD_WEIGHT.get(e.get("mode", "lium"), 1) == 1],
                     key=lambda e: e.get("started_at") or "", reverse=True):
         if cut >= need:
@@ -387,8 +400,9 @@ def yield_to_king(q: list[dict], view: dict) -> int:
             os.killpg(int(e["pid"]), 15)
         except (OSError, TypeError, ValueError):
             pass
-        e.update(status="pending", not_before=time.time() + 1800, pid=None,
-                 note=(e.get("note", "") + f" | yielded to the king's pass {now_iso()[:16]}").strip(" |"))
+        e["yields"] = int(e.get("yields") or 0) + 1
+        e.update(status="pending" if e["yields"] <= YIELD_MAX else "held", not_before=time.time() + YIELD_BACKOFF_S, pid=None,
+                 note=(e.get("note", "") + f" | yielded to the king's pass {now_iso()[:16]} ({e['yields']}x)").strip(" |"))
         log(f"yield: {e.get('run_id')} cancelled so the king's pass ({view['king']}) gets its pods; requeued")
         cut += 1
     return cut

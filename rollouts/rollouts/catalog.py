@@ -363,6 +363,26 @@ def _eog_meta(row: dict) -> dict | None:
     }
 
 
+def _gdpval_meta(row: dict) -> dict | None:
+    """openai/gdpval (train, 220 tasks): task_id is the task name
+    affine_gdpval_v1 filters on. No [GEN:] marker on purpose: these are the
+    public GDPval tasks = Artificial Analysis' GDPval-AA set, run for the
+    Stirrup harness probe only; the fold drops them (sources.toml
+    [decontamination.affine_gdpval])."""
+    tid = str(row.get("task_id") or "")
+    if not tid or not row.get("prompt"):
+        return None
+    occupation = str(row.get("occupation") or "task")
+    _, num = _text_uid("gdpval", tid)
+    return {
+        "uid": tid,
+        "sid": f"gdpval_{_dotless_task(occupation)[:40]}-{num}",
+        "repo": f"gdpval/{str(row.get('sector') or 'sector')}",
+        "language": "tool",
+        "domain": occupation,
+    }
+
+
 def _numina_meta(row: dict) -> dict | None:
     """AI-MO/NuminaMath-LEAN (train): uuid is the task name the lean base
     taskset uses (name_column = uuid); rows without a formal statement are
@@ -478,6 +498,7 @@ ROW_META = {
     "i3_math": _i3_math_meta,
     "pydantic": _pydantic_meta,
     "eog": _eog_meta,
+    "gdpval": _gdpval_meta,
     "numina": _numina_meta,
     "spider": _spider_meta,
     "commit0": _commit0_meta,

@@ -229,7 +229,7 @@ MATRIX_ENV_TEMP = SAMPLED
 # An env whose rollouts carry a numeric grade less often than this has no
 # grader (affine_wiki: 0 of 288 teacher rollouts graded); no row gets a cell.
 NO_GRADER_SHARE = 0.05
-MATRIX_GROUP_ORDER = ["coding", "terminal", "math", "tool_use", "nl2repo", "general", "agent", "other"]
+MATRIX_GROUP_ORDER = ["coding", "terminal", "math", "tool_use", "agentic_ops", "long_context", "nl2repo", "general", "agent", "other"]
 # Short header labels for the compact matrix (full names travel in `label`).
 BENCH_ABBR = {
     "mmlu-pro": "MMLU", "math500": "M500", "gpqa-diamond": "GPQA", "aime25": "AIME",
@@ -249,6 +249,7 @@ BENCH_SHORT = {
     "tau2-telecom": "τ² telecom", "tau3-banking": "τ³ banking", "swebench-pro": "SWE-Pro",
 }
 GROUP_ABBR = {"coding": "code", "terminal": "term", "math": "math", "tool_use": "tool",
+              "agentic_ops": "aops", "long_context": "lctx",
               "nl2repo": "nl2r", "general": "gen", "agent": "agent", "other": "other"}
 # Fold groups that are not backed by a datagen source (routed from king /
 # teacher rollouts by the fold): extra column groups of the dataset table.
@@ -1263,8 +1264,18 @@ def env_agg(row_agg: dict | None) -> dict | None:
 
 
 def env_cell(agg: dict | None) -> dict | None:
-    """Datagen environment cell from an Agg.out() dict (stats.json)."""
-    if not agg or not agg.get("graded"):
+    """Datagen environment cell from an Agg.out() dict (stats.json). Rollouts
+    that ran but ALL errored (harness / infra failure, no grade) yield an
+    `errored` placeholder — rendered "errored", never a score of 0, never
+    blank — so a broken env run is told apart from "never run"."""
+    if not agg:
+        return None
+    if not agg.get("graded"):
+        n_err = int(agg.get("errored") or 0)
+        if n_err and n_err >= int(agg.get("n") or 0) - int(agg.get("unscored") or 0):
+            return {"score": None, "kind": "env", "n": 0, "errored_only": True,
+                    "errored": n_err, "rollouts": agg.get("n"),
+                    "reason": f"all {n_err} rollouts errored (harness / infrastructure failure); nothing was graded"}
         return None
     graded = int(agg["graded"])
     if graded < MATRIX_MIN_GRADED:
@@ -1647,7 +1658,9 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                      "same columns",
             "blank": f"no measurement (no benchmark card for the model, or fewer than "
                      f"{MATRIX_MIN_GRADED} graded rollouts on the environment); '…' = a benchmark pass "
-                     "for the model is running and this cell is planned (ops/benchsuite pass log)",
+                     "for the model is running and this cell is planned (ops/benchsuite pass log); "
+                     "'errored' = the environment ran for the model but every rollout errored "
+                     "(nothing graded); 'run failed' = a benchmark pass ended without a result",
             "colour": "cell tint = score minus the teacher's score in the same column: green above, "
                       "red below, stronger with the gap",
             "markers": f"‡ = cap-bound: more than {int(CAP_BOUND_FRAC * 100)}% of the model's replies hit the "

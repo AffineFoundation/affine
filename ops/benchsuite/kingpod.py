@@ -189,7 +189,7 @@ def cmd_rent(args: argparse.Namespace) -> int:
         # coverage audit 2026-09-19: a bench box lives <= 14 h; the pass log that
         # names it (or a live process) is its owner, the reaper releases the rest
         pod_registry.register(name, purpose="bench", owner="passlog:ops/benchsuite/state",
-                              expected_hours=14, price_usd_h=price, ttl_hours=int(cfg["ttl_hours"]),
+                              expected_hours=float(args.expected_hours), price_usd_h=price, ttl_hours=int(cfg["ttl_hours"]),
                               meta={"digest": digest[:12], "plan": plan["name"], "r2": bool(args.r2), "hf": bool(args.hf)})
         log(f"rented {name}: {plan['name']} {cand.get('machine_name')} "
             f"${price:.2f}/h executor={str(cand['id'])[:12]}")
@@ -391,6 +391,9 @@ def main() -> int:
     r.add_argument("--digest", required=True)
     r.add_argument("--r2", default="", help="private r2://bucket/prefix/ ref (challenger); needs AFFINE_EVAL_R2_* in the env")
     r.add_argument("--hf", default="", help="Hugging Face repo@revision instead of a public digest (genesis)")
+    r.add_argument("--expected-hours", type=float, default=14.0,
+                   help="lifetime for the pod reaper (default 14 h); a long job passes its own estimate "
+                        "(2026-09-21: 27-h SWE @4h250 jobs lost their serving box at 14 h)")
     for c in ("wait", "endpoint"):
         sub.add_parser(c).add_argument("name")
     rel = sub.add_parser("release")

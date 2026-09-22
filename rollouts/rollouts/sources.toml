@@ -52,8 +52,8 @@
 # derived mass: >= 25 % of every slice (16.8 % at epoch 44), taken from the
 # coding / terminal teacher-trajectory turns (floor 40 % kept: buckets 6030 /
 # 3700 -> 4000 / 2600), k = 3 sub-strata on every stop-state group.
-coding = 0.28   # 0.36 -> 0.34 (king_coached) -> 0.28 (phase 10)
-terminal = 0.18 # 0.22 -> 0.18 (phase 10)
+coding = 0.24   # 0.36 -> 0.34 (king_coached) -> 0.28 (phase 10) -> 0.25 (2026-09-21 agentic_ops / long_context) -> 0.24 (2026-09-21 22:25: 0.01 to completion so the static stop-state block meets its 0.25 floor)
+terminal = 0.17 # 0.22 -> 0.18 (phase 10) -> 0.17 (2026-09-21)
 nl2repo = 0.01
 math = 0.02
 tool_use = 0.02
@@ -73,13 +73,13 @@ tool_use = 0.02
 # `text`), completion 0.03 -> 0.05, + completion_pre 0.01 (the 1-2 teacher
 # turns before a solved stop). The 0.05 comes from coding and terminal
 # proportionally (0.4276/0.2624 -> 0.3966/0.2434).
-king_fail = 0.08   # 0.09 -> 0.08 (phase 10)
+king_fail = 0.06   # 0.09 -> 0.08 (phase 10) -> 0.06 (2026-09-21; supply-limited cap, the loosest king dial)
 king_loop_onset = 0.04
 king_pivot = 0.02
 king_recoverable = 0.02
 king_done = 0.03   # 0.01 -> 0.03 (phase 10, stop state)
 king_tooluse = 0.03   # 0.02 -> 0.03 (phase 10, stop state); ~540 When2Call candidates/day + persist states from five tool feeders
-completion = 0.12  # 0.10 -> 0.15 (phase 10) -> 0.12 (2026-09-20 auto-research quota: -0.03 to king_divergence; group sat at 18.7 %)
+completion = 0.11  # 0.10 -> 0.15 (phase 10) -> 0.12 (2026-09-20 auto-research quota: -0.03 to king_divergence; group sat at 18.7 %) -> 0.10 (2026-09-21) -> 0.11 (22:25: static stop-state block back to the 0.25 floor)
 completion_pre = 0.02
 general = 0.05
 # 2026-09-15 (Jacob, lever 1/2): + king_coached 0.02 out of coding -- the
@@ -88,6 +88,23 @@ general = 0.05
 # solved continuations), grows with the coach loop.
 king_coached = 0.02
 king_divergence = 0.06   # phase 10 0.03 -> 0.06 (2026-09-20 auto-research quota.json: 471 admit-ready turns behind the cap; the only king-derived group with fresh states for reigns 15-20)
+# 2026-09-21 (Jacob: "lets do all 6", docs/artificial-analysis-index-path.md
+# §9): two groups carved out of `general` for the Artificial Analysis
+# Intelligence Index axes the king trails the teacher on and that D barely
+# held. `agentic_ops` = the SaaS / enterprise REST-API tool loops
+# (affine_autobench = AutomationBench-AA's own task family, affine_eog);
+# they sat inside general's 0.05 with ~20 one-shot envs, i.e. < 0.5 % of a
+# slice. `long_context` = the "answer is on disk -> stop and say it" state
+# (affine_mrcr, affine_oolong; AA-LCR, the card's MRCR / Oolong overflows).
+# Tool use / asking is the one axis where env gains have transferred to the
+# held-out benchmarks (docs/bench-vs-env-correlation.md §3, r +0.84). Paid
+# for by coding -0.03, terminal -0.01 (0.42 > floor_coding_terminal 0.40),
+# completion -0.02, king_fail -0.02. Rows those four sources already
+# published keep their `general:NNNN` strata (group_from_row reads the
+# namespace); only new rollouts land in the new groups, so the shares fill
+# over the next folds as the scheduler's deficit picks them up.
+agentic_ops = 0.05
+long_context = 0.03
 
 # Per-source flag `interactive = true` (tau2-airline read, 2026-09-18): the
 # harness talks to a simulated user mid-trajectory, so a teacher reply that
@@ -280,6 +297,14 @@ bench_ids = "rollouts/envs/affine_tau2_gen_v1/affine_tau2_gen_v1/data/e61/bench_
 require_gen_marker = true
 domain_field = "repo"
 
+# openai/gdpval IS Artificial Analysis' GDPval-AA task set. affine_gdpval runs
+# it for the Stirrup harness probe; with the marker required and no bench-id
+# file, every one of its rollouts is dropped (`decontam_no_gen_marker`). A
+# synthesized-variant source carries [GEN:...] uids and folds normally.
+[decontamination.affine_gdpval]
+require_gen_marker = true
+domain_field = "repo"
+
 [strata_budget]
 # Phase 9 (2026-09-14). The duel slicer draws one turn per stratum uniformly
 # over strata, so slice share = strata share. `buckets` merges a teacher-
@@ -298,8 +323,10 @@ enabled = true
 [strata_budget.buckets]
 coding = 3800     # 6030 -> 3800 (phase 10, 2026-09-16; sized so the stop-state block clears 25 %)
 terminal = 2400   # 3700 -> 2400 (phase 10)
-general = 900     # 830 -> 900 (2026-09-17, chat floor 6 %)
+general = 1000    # 830 -> 900 (2026-09-17, chat floor 6 %) -> 1000 (2026-09-21: autobench / eog / mrcr / oolong carved out of general; keeps chat >= 6 %)
 tool_use = 332
+agentic_ops = 650    # 2026-09-21: 0.05 of ~13k strata
+long_context = 400   # 2026-09-21: 0.03 of ~13k strata
 
 [strata_budget.sub_strata]
 king_fail = 3
@@ -333,7 +360,7 @@ completion = 3        # 2 -> 3 (phase 10)
 # call (spec §2.1 rule 3).
 policy_prefix = "king_"
 exclude_sources = ["affine_wiki", "affine_agent", "affine_math",
-                   "affine_logic", "affine_trivia", "affine_ifeval", "affine_science",
+                   "affine_logic", "affine_trivia", "affine_trivia_abstain", "affine_ifeval", "affine_science",
                    "affine_unscramble", "affine_needle"]
 one_reply_ok = false
 first_onset_only = true
@@ -1221,6 +1248,35 @@ strata_buckets = 230
 strata_offset = 340
 share = 1.0
 
+[source.affine_trivia_abstain]
+# 2026-09-21 (docs/artificial-analysis-index-path.md §9 #4): the same
+# TriviaQA train rows under a system prompt that names the abstention
+# ("If you are not confident you know the answer, reply exactly: I don't
+# know"). Grade: `solved` = correct OR abstained, a wrong answer 0; metric
+# `omniscience` = +1 / 0 / -1 (Artificial Analysis' AA-Omniscience rule,
+# 15 % of the Intelligence Index, where genesis and teacher both hallucinate
+# on ~50 % of what they do not know). Knowledge is not teachable from D;
+# the decision to say "I don't know" is one state the teacher either takes
+# or not -- the τ² shape. Probe first (ops/aa/abstain_probe.py): the env is
+# worth its share only if the teacher abstains on a real fraction of the
+# questions it would otherwise get wrong. A question may sit in both trivia
+# envs; the prefixes differ (system prompt).
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-trivia-abstain-v1" # rollouts/envs/affine_trivia_abstain_v1
+catalog = "hf"
+dataset = "mandarjoshi/trivia_qa"
+dataset_config = "rc.wikipedia.nocontext"
+dataset_revision = "0f7faf33a3908546c6fd5b73a660e0f8ff173c2f"
+split = "train"
+row_meta = "triviaqa"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_text", "king_text", "king_text_greedy"]
+strata_buckets = 230
+strata_offset = 4350   # general namespace, above affine_verbatim's 4005-4119 and the retired 4120-4349 (oolong / mrcr, now long_context)
+share = 0.0            # staged: flip to 1.0 once the abstain probe passes
+
 [source.affine_ifeval]
 # Verifiable instruction following: allenai/RLVR-IFeval train (14,973
 # prompts, one checkable constraint each, open-instruct checker vendored in
@@ -1462,7 +1518,8 @@ share = 0.0
 # taskset's toolset in local Docker, fresh seeded databases, final-state
 # SQL verifiers -> `solved`. Null harness (native tool calling); heaviest
 # infra of the wave - capacity-probed at 8 concurrent.
-group = "general"
+# 2026-09-21: group general -> agentic_ops (see [mix]); buckets 600-1249.
+group = "agentic_ops"
 runner = "verifiers_chat"
 taskset_id = "affine-eog-v1"            # rollouts/envs/affine_eog_v1
 catalog = "hf"
@@ -1474,8 +1531,8 @@ row_meta = "eog"
 select = "tasks"
 pass_dataset = false
 policies = ["teacher_toolcall", "king_toolcall", "king_toolcall_greedy"]   # + king seat + greedy king 2026-09-13
-strata_buckets = 200
-strata_offset = 2000
+strata_buckets = 650   # 2026-09-21: one per task (649), agentic_ops namespace
+strata_offset = 600
 max_batch = 16
 max_concurrency = 8
 share = 1.0
@@ -1539,16 +1596,22 @@ king_rollouts_per_hour = 4   # king_tooluse persist-state feeder (2026-09-14); 0
 # 600 business-workflow tasks (sales / marketing / operations / support /
 # finance / hr) over a simulated 47-app SaaS workspace served in-process
 # through `api_search` / `api_fetch`; deterministic final-state assertions
-# -> `solved` (all pass). Null harness, no container, no external service.
-group = "general"
+# -> `solved`. Null harness, no container, no external service.
+# 2026-09-21: group general -> agentic_ops (own 0.05 share, see [mix]) and
+# the grade is Artificial Analysis' AutomationBench-AA rule (objectives
+# fraction, 0 on a broken guardrail; `solved` = aa_score >= 0.5, taskset
+# knob `solved_threshold`). Under the old all-assertions bit the teacher
+# solved 18 % (kingboard), so most references here were on failed tasks.
+# Bucket namespace restarts with the group: 0-599 (one per task).
+group = "agentic_ops"
 runner = "verifiers_chat"
 taskset_id = "affine-autobench-v1"      # rollouts/envs/affine_autobench_v1
 catalog = "autobench"                   # task names via the verifiers env's automationbench package
 select = "tasks"
 pass_dataset = false
 policies = ["teacher_toolcall", "king_toolcall", "king_toolcall_greedy"]   # + king seat + greedy king 2026-09-13
-strata_buckets = 200
-strata_offset = 2660
+strata_buckets = 600
+strata_offset = 0
 # Probe 2026-09-12 (after the tool-server bridge): 4/12 solved, partial credit
 # 0.6-0.86 on most misses, 10.5 calls p50, 92 % of completions under the ref cap.
 share = 1.0
@@ -1756,7 +1819,8 @@ share = 0.5
 # same 2 datasets / 6 task templates). D now draws from `test` (5,200 rows,
 # ~400 in the 16k bucket); `test` must never become a card. Task names
 # change (oolong-16384-<row of the test split>), so the pool restarts.
-group = "general"
+# 2026-09-21: group general -> long_context (see [mix]); buckets 230-344.
+group = "long_context"
 runner = "verifiers"
 taskset_id = "affine-oolong-v1"         # rollouts/envs/affine_oolong_v1
 catalog = "oolong"
@@ -1767,7 +1831,7 @@ policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased", "king_bashtoo
             "king_pi_greedy", "king_textbased_greedy"]   # + king seat + greedy king 2026-09-13
 extra_flags = ["--env.taskset.context-len", "16384", "--env.taskset.split", "test"]
 strata_buckets = 115
-strata_offset = 4120
+strata_offset = 230   # 2026-09-21: long_context namespace, after mrcr's 0-229
 max_batch = 16
 max_concurrency = 8
 # Probe 2026-09-12 (bash, 12 at 6 concurrent): 7/12 solved, 96 kept tool_call turns,
@@ -1792,7 +1856,8 @@ share = 1.0
 # 2026-09-20 (datagen-2): teacher 71/72 solved, 6-9 tool calls + 1 prose
 # stop per rollout; king reign 20 93/96 solved on content, 23/96 post-done
 # loops (T 0 and T 0.8 alike).
-group = "general"
+# 2026-09-21: group general -> long_context (see [mix]); buckets 0-229.
+group = "long_context"
 runner = "verifiers"
 taskset_id = "affine-mrcr-v1"           # rollouts/envs/affine_mrcr_v1
 catalog = "mrcr"
@@ -1802,7 +1867,38 @@ policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased", "king_bashtoo
             "king_pi", "king_textbased", "king_bashtool_greedy",
             "king_pi_greedy", "king_textbased_greedy"]
 strata_buckets = 230
-strata_offset = 4235
+strata_offset = 0     # 2026-09-21: long_context namespace
 max_batch = 24
 max_concurrency = 8
 share = 1.0
+
+[source.affine_gdpval]
+# 2026-09-21 (docs/artificial-analysis-index-path.md §9 #6): OpenAI's GDPval
+# (openai/gdpval, 220 professional tasks with reference files + rubrics) under
+# Artificial Analysis' Stirrup harness -- the exact task set + agent loop of
+# GDPval-AA v2 (10 % of the AA Intelligence Index; AA-Briefcase is the same
+# shape at 15 %). PROBE SOURCE: teacher + king seat play it so we learn
+# whether the models emit valid tool calls under Stirrup, call `finish`, and
+# what they submit (rollouts/envs/affine_gdpval_v1 grades protocol-level:
+# finish + a non-empty submitted file). NEVER FOLDED: these are the
+# benchmark's own tasks -- [decontamination.affine_gdpval] below drops every
+# rollout at the fold (no [GEN:] marker). The D-bound env is the synthesized-
+# variant successor (other occupations / files, `[GEN:...]` uids).
+# Reference files are downloaded from HF into a host cache on first use and
+# written into the container by Task.setup.
+group = "agentic_ops"
+runner = "verifiers"
+taskset_id = "affine-gdpval-v1"         # rollouts/envs/affine_gdpval_v1
+catalog = "hf"
+dataset = "openai/gdpval"
+dataset_revision = "11e7900cdcac61bc4daf59e65feb238acda98fbf"
+split = "train"
+row_meta = "gdpval"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_stirrup", "king_stirrup"]
+strata_buckets = 220
+strata_offset = 1250  # agentic_ops namespace, after eog's 600-1249 (moot: never folded)
+max_batch = 8
+max_concurrency = 4
+share = 0.0            # probe only; run by hand with the scheduler's --source override

@@ -177,6 +177,7 @@ def main() -> None:
     ap.add_argument("--max-attempts", type=int, default=150, help="attempts per source before giving up")
     ap.add_argument("--sources", default="all", help="comma list, or all = every LIVE source (share > 0)")
     ap.add_argument("--skip", default="affine_wiki", help="comma list of sources to leave out (default: the env with no grader)")
+    ap.add_argument("--harness", default="", help="comma list of harness tags to keep (e.g. bashtool,pi); default: every seat policy of the source")
     ap.add_argument("--parallel", type=int, default=int(os.environ.get("ROLLOUTS_BACKFILL_PARALLEL", "4")),
                     help="sources rolled at once, one worker thread each (default 4)")
     ap.add_argument("--worker-batch", type=int, default=0,
@@ -213,6 +214,9 @@ def main() -> None:
         if name not in registry.sources:
             sys.exit(f"unknown source {name!r}")
         pols = backfill_policies(registry, name, tag, args.teacher)
+        if args.harness:
+            keep = {h.strip() for h in args.harness.split(",") if h.strip()}
+            pols = [p for p in pols if p.id.rsplit("_", 1)[-1] in keep or any(p.id.endswith("_" + h) for h in keep)]
         if not pols:
             log.warning("source %s: no %s policy; skipped", name, "teacher_*" if args.teacher else "king_*")
             continue

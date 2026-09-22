@@ -42,14 +42,20 @@ AFFINE_FILES=(affine/dialects.py affine/corpus/trace.py affine/corpus/view.py da
 # truth is rollouts/harnesses/mini_swe_textbased in this repo.
 HARNESS_SRC=rollouts/harnesses/mini_swe_textbased/mini_swe_textbased/__init__.py
 HARNESS_DST=/root/prime-pilot/mini-swe-textbased/mini_swe_textbased/__init__.py
+# Whole-package verifiers harnesses (2026-09-21: stirrup_agent -- Artificial
+# Analysis' Stirrup agent loop): copied to /root/rollouts/harnesses/<pkg> and
+# installed editable into the verifiers venv next to the env wrappers, so
+# `--env.agent.harness.id <pkg>` imports them by module name.
+HARNESS_PKGS=(stirrup_agent)
 # Env wave 2 (2026-09-12): + tmax, longcot, enterprise-ops-gym, numina, sql,
 # automationbench, uuid-ctf wrappers and their research-environments bases.
-ENV_PKGS=(affine_when2call_v1 affine_notool_v1 affine_logic_v1 affine_trivia_v1 affine_ifeval_v1 affine_science_v1
+ENV_PKGS=(affine_when2call_v1 affine_notool_v1 affine_logic_v1 affine_trivia_v1 affine_trivia_abstain_v1 affine_ifeval_v1 affine_science_v1
           affine_unscramble_v1 affine_prolog_v1 affine_needle_v1 affine_wikispeedia_v1
           affine_tmax_v1 affine_longcot_v1 affine_eog_v1 affine_numina_v1 affine_sql_v1
           affine_autobench_v1 affine_uuidctf_v1
           affine_i3code_v1 affine_i3math_v1 affine_deshuffle_v1 affine_rgym_v1 affine_rcore_v1
           affine_pydantic_v1 affine_verbatim_v1 affine_oolong_v1 affine_mrcr_v1
+          affine_gdpval_v1
           affine_tau2_v1 affine_tau2_synth_v1 affine_kb_synth_v1 affine_tau2_gen_v1
           affine_terminal_gen_v1)
 # Env wave 3: prime-envs tasksets the pods' pinned checkout lacks are vendored
@@ -147,6 +153,8 @@ for t in "${TARGETS[@]}"; do
     || { echo "ENV-COPY-FAILED"; rc=1; continue; }
   tar -C rollouts/vendor/prime-envs -czf - "${VENDOR_ENVS[@]}" | $SSH 'mkdir -p /root/rollouts/vendor && tar -C /root/rollouts/vendor -xzf -' \
     || { echo "VENDOR-COPY-FAILED"; rc=1; continue; }
+  tar -C rollouts/harnesses -czf - "${HARNESS_PKGS[@]}" | $SSH 'mkdir -p /root/rollouts/harnesses && tar -C /root/rollouts/harnesses -xzf -' \
+    || { echo "HARNESS-COPY-FAILED"; rc=1; continue; }
   $SSH 'export PATH=$HOME/.local/bin:$PATH; cd /root/prime-pilot/verifiers || exit 1
 RE=/root/prime-pilot/research-environments/environments
 base=(); for d in '"${RESEARCH_ENVS[*]}"'; do [ -d "$RE/$d" ] && base+=(-e "$RE/$d") || echo "missing research env $d"; done
@@ -155,6 +163,8 @@ vend=(); for p in '"${VENDOR_ENVS[*]}"'; do vend+=(-e "/root/rollouts/vendor/$p"
 uv pip install --python .venv/bin/python -q --no-deps "${vend[@]}" || exit 1
 wrap=(); for p in '"${ENV_PKGS[*]}"'; do wrap+=(-e "/root/rollouts/envs/$p"); done
 uv pip install --python .venv/bin/python -q --no-deps "${wrap[@]}" || exit 1
+harn=(); for p in '"${HARNESS_PKGS[*]}"'; do harn+=(-e "/root/rollouts/harnesses/$p"); done
+uv pip install --python .venv/bin/python -q --no-deps "${harn[@]}" || exit 1
 # Extra deps resolve WITH their dependencies but under a constraints file
 # frozen from the venv itself, so nothing already installed (verifiers, the
 # prime-* packages, pydantic, ...) can change version.
@@ -168,7 +178,7 @@ uv pip install --python .venv/bin/python -q -c /tmp/venv-constraints.txt '"$(pri
 uv pip install --python .venv/bin/python -q --no-deps '"$(printf "%q " "${ENV_REPLACE_GIT_DEPS[@]}")"' || exit 1
 .venv/bin/python -c "from tau2.registry import registry; d = registry.get_info().domains; assert len(d) >= 15, d; print(\"TAU2_FORK_OK\", len(d))" || exit 1
 uv pip install --python .venv/bin/python -q --no-deps '"${RCORE_NODEPS[*]}"' || exit 1
-.venv/bin/python -c "import '"$(IFS=,; echo "${ENV_PKGS[*]}")"'; import verifiers; assert verifiers.__file__.startswith(\"/root/prime-pilot/verifiers/\"), verifiers.__file__; print(\"ENV_IMPORT_OK\")" || exit 1
+.venv/bin/python -c "import '"$(IFS=,; echo "${ENV_PKGS[*]}")"'; import '"$(IFS=,; echo "${HARNESS_PKGS[*]}")"'; import verifiers; assert verifiers.__file__.startswith(\"/root/prime-pilot/verifiers/\"), verifiers.__file__; print(\"ENV_IMPORT_OK\")" || exit 1
 for img in '"${ENV_IMAGES[*]}"'; do docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null || echo "WARNING: pull failed $img"; done' \
     || { echo "ENV-INSTALL-FAILED"; rc=1; continue; }
   $SSH "/root/prime-pilot/verifiers/.venv/bin/python -m py_compile $HARNESS_DST && echo HARNESS_OK" || { echo "HARNESS-COMPILE-FAILED (restored from .bak)"; $SSH "cp $(dirname "$HARNESS_DST")/.bak/__init__.py $HARNESS_DST"; rc=1; continue; }

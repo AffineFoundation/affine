@@ -68,6 +68,12 @@ def classify(matrix: dict) -> dict:
                 # `<env>@<tag>` = an older cap / budget kept for continuity; not a coverage target
                 totals["cells"] -= 1
                 continue
+            if v.get("unverified") or v.get("errored_only"):
+                # published on purpose without a number (Gaia2 ambiguity: grader result
+                # not verified; an env whose rollouts all errored): present, not a gap.
+                # Counting these as missing re-queued full rows 51 times on 2026-09-21.
+                totals["complete"] += 1
+                continue
             if v.get("score") is None:
                 if v.get("running"):
                     running.append(c["env"])

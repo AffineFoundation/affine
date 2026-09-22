@@ -49,6 +49,9 @@ PY = str(REPO / ".venv" / "bin" / "python")
 TEACHER_REF = os.environ.get("COVERAGE_TEACHER_REF", "hf://Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0")
 GENESIS_REF = "hf://Qwen/Qwen3.6-35B-A3B@995ad96eacd98c81ed38be0c5b274b04031597b0"
 FULL_SANDBOX_TRIGGERS = {"minif2f"}
+# benchmark columns autofill never queues: Gaia2 ambiguity runs from the box through the
+# benchsuite worker's ask-queue (ARE), not as a pod pass (2026-09-21)
+BENCH_EXCLUDE = set((os.environ.get("COVERAGE_BENCH_EXCLUDE") or "gaia2-ambiguity").split(","))
 FAST_MIN_MISSING = int(os.environ.get("COVERAGE_FAST_MIN_MISSING", "8"))   # >= this many benchmark cells missing -> one fast pass   # only the Prime-sandbox set needs the full sandbox phase; docker sets run as cells
 ENV_MAX_LIVE = int(os.environ.get("COVERAGE_ENV_MAX_LIVE", "3"))   # serving boxes (not the driver pod); pro6000 first
 # The env backfill needs the driver pod (rollouts.backfill runs there). It is rented by
@@ -192,7 +195,7 @@ def main() -> int:
             continue
         merge_into = (row.get("cards") or [None])[0]
         merge_as = "teacher" if row["kind"] == "teacher" else "king"
-        missing = set(r["missing_bench"])   # running cells are not in missing_bench
+        missing = set(r["missing_bench"]) - BENCH_EXCLUDE   # running cells are not in missing_bench
         if row.get("inflight"):
             # a benchsuite pass (watcher / by hand / fast) is running for this row: its
             # cells land on their own; queueing them again doubled reign 18 on 09-19
