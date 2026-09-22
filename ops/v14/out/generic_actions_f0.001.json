@@ -1,0 +1,101 @@
+{
+ "f": 0.001,
+ "rule": "normalised action share of the dialect's reference pool > f -> no A credit",
+ "pool_refs": {
+  "tool_call": 87361,
+  "bash": 120876,
+  "boxed": 6220,
+  "terminus_json": 4006
+ },
+ "generic": {
+  "tool_call": [
+   {
+    "action": "[[\"wiki_go_back\", {}]]",
+    "n": 440,
+    "share": 0.00503657238355788
+   },
+   {
+    "action": "[[\"bash\", {\"command\": \"cd /testbed && git diff\"}]]",
+    "n": 173,
+    "share": 0.001980288687171621
+   },
+   {
+    "action": "[[\"TaskUpdate\", {\"status\": \"in_progress\", \"taskId\": \"1\"}]]",
+    "n": 141,
+    "share": 0.001613992513821957
+   },
+   {
+    "action": "[[\"Bash\", {\"command\": \"git diff\", \"description\": \"Show final diff\"}]]",
+    "n": 121,
+    "share": 0.0013850574054784172
+   }
+  ],
+  "bash": [
+   {
+    "action": "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT",
+    "n": 5215,
+    "share": 0.043143386611072504
+   },
+   {
+    "action": "ls -la /app/task_file/ 2>/dev/null || echo 'Directory does not exist'",
+    "n": 1856,
+    "share": 0.015354578245474702
+   },
+   {
+    "action": "ls -la /app/task_file/ 2>/dev/null && find /app/task_file -type f 2>/dev/null",
+    "n": 268,
+    "share": 0.002217148151825011
+   },
+   {
+    "action": "git diff",
+    "n": 176,
+    "share": 0.0014560375922432907
+   },
+   {
+    "action": "cd /testbed && git diff",
+    "n": 170,
+    "share": 0.0014063999470531785
+   },
+   {
+    "action": "ls -la /app/task_file/ 2>/dev/null && find /app/task_file -type f 2>/dev/null | head -50",
+    "n": 162,
+    "share": 0.0013402164201330288
+   },
+   {
+    "action": "cd /app/task_file && python solution.py",
+    "n": 154,
+    "share": 0.0012740328932128793
+   },
+   {
+    "action": "cat /app/task_file/output/results.txt",
+    "n": 154,
+    "share": 0.0012740328932128793
+   },
+   {
+    "action": "ls -la /app/task_file/ && ls -la /app/task_file/input/ 2>/dev/null",
+    "n": 146,
+    "share": 0.0012078493662927296
+   },
+   {
+    "action": "ls -la /app/task_file/output/ && python3 --version",
+    "n": 146,
+    "share": 0.0012078493662927296
+   },
+   {
+    "action": "ls -la /app/task_file/ && find /app/task_file -type f | head -50",
+    "n": 135,
+    "share": 0.001116847016777524
+   },
+   {
+    "action": "ls -la /app/task_file/ 2>/dev/null && echo '---' && ls -la /app/task_file/input/ 2>/dev/null && echo '---' && ls -la /app/task_file/output/ 2>/dev/null",
+    "n": 135,
+    "share": 0.001116847016777524
+   },
+   {
+    "action": "ls -la && find . -type f -name '*.py' | head -50",
+    "n": 123,
+    "share": 0.0010175717263972996
+   }
+  ]
+ }
+}

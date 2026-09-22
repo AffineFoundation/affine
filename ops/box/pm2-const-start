@@ -1,0 +1,37 @@
+#!/bin/bash
+# ExecStart for pm2-const.service (runs as root via the "+" prefix).
+# Lets systemd supervise the pm2 daemon of user const WITHOUT restarting the
+# apps under it:
+#  - if a pm2 God daemon is already alive (started from a shell), move it and
+#    every descendant into this unit's cgroup and report its pid;
+#  - otherwise run `pm2 resurrect` as const (normal boot / after a kill).
+# The pid is written to a root-owned PID file so systemd accepts a main
+# process it did not fork itself.
+set -euo pipefail
+USER_NAME=const
+export PM2_HOME=/home/$USER_NAME/.pm2
+PM2=/usr/lib/node_modules/pm2/bin/pm2
+PIDFILE=/run/pm2-const.pid
+CG="/sys/fs/cgroup$(awk -F: '$1=="0"{print $3}' /proc/self/cgroup)"
+
+alive() {
+  local p=$1
+  [ -n "$p" ] && [ -r "/proc/$p/cmdline" ] && tr "\0" " " < "/proc/$p/cmdline" | grep -q "God Daemon"
+}
+descendants() {
+  local p; for p in $(ps -o pid= --ppid "$1"); do echo "$p"; descendants "$p"; done
+}
+
+pid=$(cat "$PM2_HOME/pm2.pid" 2>/dev/null || true)
+if alive "$pid"; then
+  echo "pm2-const: adopting live pm2 daemon $pid into $CG"
+  for p in "$pid" $(descendants "$pid"); do
+    echo "$p" > "$CG/cgroup.procs" 2>/dev/null || echo "pm2-const: could not move pid $p" >&2
+  done
+else
+  echo "pm2-const: no live daemon; pm2 resurrect as $USER_NAME"
+  runuser -u "$USER_NAME" -- env PM2_HOME="$PM2_HOME" PATH="$PATH" "$PM2" resurrect
+  pid=$(cat "$PM2_HOME/pm2.pid")
+fi
+echo "$pid" > "$PIDFILE"
+echo "pm2-const: main pid $pid"

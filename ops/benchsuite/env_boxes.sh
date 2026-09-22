@@ -31,6 +31,7 @@ case "$REIGN" in
   19) DRV=root@73.139.34.205:20008; EXIST="_";   NEW="";  KEEP_SESS="";  KEEP_SRC=""; PAR=4 ;;    # re-split only: stale list lacked kb_synth/tau2_gen/mrcr
   13) DRV=root@73.139.34.205:20008; EXIST="_";   NEW="";  KEEP_SESS="";  KEEP_SRC=""; PAR=3 ;;    # driver completed 18:39 with a stale list; box 67c0 idle since
   12) DRV=root@73.139.34.205:20008; EXIST="_";   NEW="";  KEEP_SESS="";  KEEP_SRC=""; PAR=4 ;;
+  21) DRV=root@73.139.34.205:20008; EXIST="";    NEW="_ b"; KEEP_SESS=""; KEEP_SRC=""; PAR=5 ;;   # crowned 2026-09-22 13:03; king seat serves datagen, these serve the backfill driver
   *) echo "no config for reign $REIGN"; exit 2 ;;
 esac
 # positional overrides: env_boxes.sh <reign> [EXIST] [NEW]  (e.g. `14 b _` = box A died, keep B, rent a new A)

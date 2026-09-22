@@ -1,0 +1,210 @@
+{
+ "generated_at": "2026-09-13T00:24:17.012779+00:00",
+ "track": "T",
+ "source": "live",
+ "teacher": "Qwen3.8-27B",
+ "header": [
+  "pure-GAN training run: RAW student (no SFT warm start anywhere) vs 27B teacher -- does adversarial training alone build SWE ability? every SWE point must be attributable to the GAN loop",
+  "POD: brave-wolf-83 (name trackT) 8xB300 -- ssh -p 40300 root@204.9.206.216 | gpu: 0,1=teacher+judge 27B TP2 :8000 (base=teacher, d_v*=judge) | 2=student :8001 (base + m_r*) | 3,4=g_sft (+5 borrowed at judge pretrain, DDPx3) | 5=d_train online | 6,7=bench server :8006 (student base + bench_* adapters)",
+  "STUDENT: dendriteholdings/albedo-qwen3.6-35b-king-genesis (Albedo SN97 king genesis, Qwen3.6-35B-A3B miner arch; best SWE evidence among Affine checkpoints: 6/25 internal suite, recent kings score 1/25 having Goodharted the distillation metric). CONTROL = its raw baseline on the full 150-panel (tag full_baseline)",
+  "RULES: student trains ONLY on its own rollouts (best-of-k rejection SFT, judge reward = P(judged teacher), both A/B orders averaged); cached teacher corpus used ONLY as judge-train/scoring references; loop rewards scored vs FRESH teacher rollouts each round; judge pretrained to 0.6-0.85 held band BEFORE the loop, then warm-start every 3rd round, SKIPPED while held_acc>0.85",
+  "LINE FORMATS (key=value, space-separated; a frontend parser is built against these):",
+  "[loop] round=N fool=X fool_best=X valid=X agree_exact=X agree_tok=X typ_lp=X winners=N dver=vN wall=Xs fool_win=X t_valid=X tt_tok=X think_len=N g=m_rN(eff=X)|kept errs=A+B",
+  "[judge] PRETRAIN dver=v0 attempt=N held_acc=X pos_bias=X matched=X n=N steps=N train_acc=X eff=X pairs=N wall=Xs gpu_hours=X",
+  "[judge] UPDATE dver=vN held_acc=X pos_bias=X matched=X n=N train_acc=X pairs=N+Mreplay probe_delta=X eff=X wall=Xs",
+  "[judge] SKIP round=N held_acc=X (>0.85 balanced-regime throttle) pos_bias=X n=N",
+  "[bench] PROXY round=N ckpt=m_rN score=K/16 gpu_hours=X wall=Xs",
+  "[bench] FULL ckpt=m_rN|<base> score=0.XXXX resolved=K/150 p_vs_baseline=P(b=B,c=C)|n/a gpu_hours=X round=N wall=Xs",
+  "[bench] START|LAUNCH|SKIP|FAILED|ABORTED tag=... (bench lifecycle; ABORTED = adapter-effect gate tripped)",
+  "[pretrain] ... (phase-0 progress) | [infra] ... (bring-up, watchdog, restarts)",
+  "METRIC KEY: fool = mean over valid candidates of (1 - p_teacher), the judge's belief the student rollout is the teacher (continuous reward); fool_best = same over per-turn winners; valid = parse gate pass rate; agree_* = winner-vs-teacher bash-action agreement (exact / token-jaccard); typ_lp = mean per-token logprob of winners under the plain 27B (drift); tt_tok = teacher-vs-teacher agreement floor; held_acc = judge accuracy on held-out (student, cached-teacher) pairs, band 0.6-0.85; gpu_hours = wall since pod start x 8",
+  "BASELINES (full 150-panel): teacher Qwen3.8-27B = 0.3133; stock Qwen3.6-35B-A3B = 0.1333; raw Albedo-genesis student = see [bench] FULL ckpt=dendriteholdings/... tag full_baseline line",
+  "paths (pod): /root/work (code+data) /dshare/trackT/{status.log,state.json,m_lora/,d_versions/,d_pending.jsonl,d_pretrain_pairs.jsonl,bench_*.json,bench_*_instances.json} /dshare/hf (HF cache) /dshare/bench (panel workdirs)"
+ ],
+ "log_start": "2026-08-22T19:20:22Z",
+ "log_end": "2026-08-22T21:12:21Z",
+ "swe_teacher": 0.3133,
+ "swe_student_baseline": null,
+ "rounds": [
+  {
+   "t": "2026-08-22T20:23:46Z",
+   "round": 1,
+   "fool": 0.1269,
+   "valid": 0.994,
+   "dver": "v0",
+   "wall_s": 417.0
+  },
+  {
+   "t": "2026-08-22T20:31:13Z",
+   "round": 2,
+   "fool": 0.1943,
+   "valid": 1.0,
+   "dver": "v0",
+   "wall_s": 448.0
+  },
+  {
+   "t": "2026-08-22T20:38:44Z",
+   "round": 3,
+   "fool": 0.2413,
+   "valid": 0.994,
+   "dver": "v0",
+   "wall_s": 451.0
+  },
+  {
+   "t": "2026-08-22T21:12:21Z",
+   "round": 4,
+   "fool": 0.1724,
+   "valid": 0.976,
+   "dver": "v3",
+   "wall_s": 429.0
+  }
+ ],
+ "judges": [
+  {
+   "t": "2026-08-22T21:05:12Z",
+   "dver": "v3",
+   "held_acc": 0.8254,
+   "train_acc": 0.8875,
+   "pairs": "82+100replay",
+   "wall_s": 1587.0
+  }
+ ],
+ "bench_proxy": [],
+ "bench_full": [
+  {
+   "t": "2026-08-22T20:15:40Z",
+   "ckpt": "dendriteholdings/albedo-qwen3.6-35b-king-genesis",
+   "score": 0.08,
+   "resolved": 12,
+   "panel": 150,
+   "p_vs_baseline": null,
+   "gpu_hours": 8.8,
+   "baseline": false
+  }
+ ],
+ "events": [
+  {
+   "t": "2026-08-22T19:20:22Z",
+   "t_last": "2026-08-22T19:25:51Z",
+   "src": "infra",
+   "msg": "phaseT: bringing up servers (vllm :latest docker)",
+   "count": 2,
+   "sev": "info"
+  },
+  {
+   "t": "2026-08-22T19:34:03Z",
+   "t_last": "2026-08-22T19:34:03Z",
+   "src": "infra",
+   "msg": "servers up: 0,1=teacher+judge :8000 | 2=student :8001 | 3,4=g_sft | 5=d_train | 6,7=bench :8006",
+   "count": 1,
+   "sev": "info"
+  },
+  {
+   "t": "2026-08-22T19:34:03Z",
+   "t_last": "2026-08-22T19:34:03Z",
+   "src": "infra",
+   "msg": "RAW BASELINE full-150 launched on :8006 (background)",
+   "count": 1,
+   "sev": "info"
+  },
+  {
+   "t": "2026-08-22T19:34:03Z",
+   "t_last": "2026-08-22T19:34:03Z",
+   "src": "infra",
+   "msg": "trackT driver launched (pid 18118)",
+   "count": 1,
+   "sev": "info"
+  },
+  {
+   "t": "2026-08-22T19:34:04Z",
+   "t_last": "2026-08-22T19:34:04Z",
+   "src": "infra",
+   "msg": "watchdog launched",
+   "count": 1,
+   "sev": "warn"
+  },
+  {
+   "t": "2026-08-22T19:34:04Z",
+   "t_last": "2026-08-22T19:34:04Z",
+   "src": "bench",
+   "msg": "START tag=full_baseline ckpt=dendriteholdings/albedo-qwen3.6-35b-king-genesis n=150 gpu_hours=3.3",
+   "count": 1,
+   "sev": "info"
+  },
+  {
+   "t": "2026-08-22T19:34:32Z",
+   "t_last": "2026-08-22T19:34:32Z",
+   "src": "infra",
+   "msg": "driver up: student=dendriteholdings/albedo-qwen3.6-35b-king-genesis (RAW, no SFT warm start) teacher=Qwen/Qwen3.8-27B judge=27B+LoRA online (every 3r warm-start 150 steps lr 1e-5, throttle held_acc>0.85) k=6 turns/round=28 temp=0.9 max_tok=1792 train_turns=7174 held=200 (fixed 64) | gpu_map[0,1=teacher+judge :8000 2=student :8001 3,4=g_sft 5=d_train 6,7=bench :8006]",
+   "count": 1,
+   "sev": "info"
+  },
+  {
+   "t": "2026-08-22T19:38:00Z",
+   "t_last": "2026-08-22T19:38:00Z",
+   "src": "pretrain",
+   "msg": "student rollouts done: turns=800 pairs=1593 valid=0.996 errs=0 wall=208s",
+   "count": 1,
+   "sev": "info"
+  },
+  {
+   "t": "2026-08-22T19:38:16Z",
+   "t_last": "2026-08-22T19:38:16Z",
+   "src": "pretrain",
+   "msg": "held gate pairs: n=64",
+   "count": 1,
+   "sev": "info"
+  },
+  {
+   "t": "2026-08-22T19:38:16Z",
+   "t_last": "2026-08-22T19:38:16Z",
+   "src": "pretrain",
+   "msg": "training judge v0 attempt1: steps=120 pairs=1593 gpus=3,4,5",
+   "count": 1,
+   "sev": "info"
+  },
+  {
+   "t": "2026-08-22T20:15:40Z",
+   "t_last": "2026-08-22T20:15:40Z",
+   "src": "bench",
+   "msg": "FULL ckpt=dendriteholdings/albedo-qwen3.6-35b-king-genesis score=0.0800 resolved=12/150 p_vs_baseline=n/a gpu_hours=8.8 round=0 wall=2495.2s (refs: teacher27B=0.3133 stock35B=0.1333)",
+   "count": 1,
+   "sev": "info"
+  },
+  {
+   "t": "2026-08-22T20:16:49Z",
+   "t_last": "2026-08-22T20:16:49Z",
+   "src": "judge",
+   "msg": "PRETRAIN dver=v0 attempt=1 held_acc=0.8281 pos_bias=0.4146 matched=0.6719 n=64 steps=120 train_acc=0.8 eff=0.1794 pairs=1593 wall=2312s gpu_hours=9.0",
+   "count": 1,
+   "sev": "info"
+  },
+  {
+   "t": "2026-08-22T20:16:49Z",
+   "t_last": "2026-08-22T20:16:49Z",
+   "src": "pretrain",
+   "msg": "pretrain complete; entering GAN loop",
+   "count": 1,
+   "sev": "info"
+  },
+  {
+   "t": "2026-08-22T21:05:12Z",
+   "t_last": "2026-08-22T21:05:12Z",
+   "src": "judge",
+   "msg": "UPDATE dver=v3 held_acc=0.8254 pos_bias=0.2943 matched=0.5238 n=63 train_acc=0.8875 pairs=82+100replay probe_delta=0.0586 eff=0.1937 wall=1587s",
+   "count": 1,
+   "sev": "info"
+  }
+ ],
+ "banner": {
+  "rounds": 4,
+  "started_at": "2026-08-22T19:20:22Z",
+  "judge_version": "v3",
+  "gpu_hours": 8.8,
+  "last_fool": 0.1724,
+  "benches": {
+   "proxy": 0,
+   "full": 1
+  }
+ }
+}

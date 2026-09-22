@@ -81,12 +81,14 @@ cmd_provision() {
   local digest; digest=$(king_digest)
   echo "current king digest: $digest"
   read -r host port <<<"$(host_port)"
-  scp "${SSH_OPTS[@]}" -P "$port" "$HERE/pod_bootstrap.sh" "$HERE/fold_proxy.py" "root@$host:/tmp/"
+  scp "${SSH_OPTS[@]}" -P "$port" "$HERE/pod_bootstrap.sh" "$HERE/fold_proxy.py" \
+    "$HERE/fetch_mtp_draft.sh" "root@$host:/tmp/"
   # Secrets over stdin into a 0600 file — never on a command line.
   printf 'KING_API_KEY=%s\nKING_DIGEST=%s\n' "$KING_API_KEY" "$digest" | ssh_pod \
     'mkdir -p /root/king-chat /root/logs && umask 077 && cat > /root/king-chat/.env && \
      mv /tmp/pod_bootstrap.sh /root/king-chat/pod_bootstrap.sh && \
      mv /tmp/fold_proxy.py /root/king-chat/fold_proxy.py && \
+     mv /tmp/fetch_mtp_draft.sh /root/king-chat/fetch_mtp_draft.sh && \
      chmod +x /root/king-chat/pod_bootstrap.sh && \
      { pkill -xf "bash pod_bootstrap.sh" || true; } && \
      cd /root/king-chat && (nohup bash pod_bootstrap.sh </dev/null >> /root/logs/bootstrap.log 2>&1 &) && \
