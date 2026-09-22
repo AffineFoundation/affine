@@ -130,9 +130,16 @@ def keep_row(row: dict, sites: set[str], min_score: int, max_chars: int) -> dict
     }
 
 
-def iter_hf_rows(dataset: str, split: str):
+def iter_hf_rows(dataset: str, split: str, sites=()):
     from datasets import load_dataset  # heavy import; only when streaming
 
+    # The repo is laid out one directory per site (data/<site>/*.parquet) and
+    # a whole-split stream walks data/Stackoverflow.com/ (335 shards) first:
+    # the first run scanned 3,000,000 rows and matched 0 (2026-09-22). Stream
+    # only the requested sites' shards.
+    if sites:
+        files = [f"data/{site}/*.parquet" for site in sorted(sites)]
+        return load_dataset(dataset, data_files={split: files}, split=split, streaming=True)
     return load_dataset(dataset, split=split, streaming=True)
 
 
@@ -178,7 +185,7 @@ def main() -> None:
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     sites = {s.strip().lower() for s in args.sites.split(",") if s.strip()}
-    rows = iter_hf_rows(args.dataset, args.split)
+    rows = iter_hf_rows(args.dataset, args.split, sites)
     kept = collect(rows, sites, args.min_score, args.max_chars, args.scan_limit, args.n, args.epoch)
     path = out_dir(args.out, args.epoch) / "posts.jsonl.gz"
     n = write_jsonl(path, kept)
