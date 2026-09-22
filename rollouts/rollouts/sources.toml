@@ -73,13 +73,13 @@ tool_use = 0.02
 # `text`), completion 0.03 -> 0.05, + completion_pre 0.01 (the 1-2 teacher
 # turns before a solved stop). The 0.05 comes from coding and terminal
 # proportionally (0.4276/0.2624 -> 0.3966/0.2434).
-king_fail = 0.02   # 0.09 -> 0.08 (phase 10) -> 0.06 (2026-09-21; supply-limited cap, the loosest king dial) -> 0.04 (2026-09-22 science) -> 0.02 (2026-09-22 17:00 science 0.05)
+king_fail = 0.04   # 0.09 -> 0.08 (phase 10) -> 0.06 (2026-09-21; supply-limited cap, the loosest king dial) -> 0.04 (2026-09-22 science) -> 0.02 (17:00 science 0.05) -> 0.04 (21:05 restored: the DAgger channel for the terminal / SQL drop; science's extra 0.02 now comes from completion)
 king_loop_onset = 0.04
 king_pivot = 0.01   # 0.02 -> 0.01 (2026-09-22 science)
 king_recoverable = 0.01   # 0.02 -> 0.01 (2026-09-22 sci_code)
 king_done = 0.03   # 0.01 -> 0.03 (phase 10, stop state)
 king_tooluse = 0.03   # 0.02 -> 0.03 (phase 10, stop state); ~540 When2Call candidates/day + persist states from five tool feeders
-completion = 0.11  # 0.10 -> 0.15 (phase 10) -> 0.12 (2026-09-20 auto-research quota: -0.03 to king_divergence; group sat at 18.7 %) -> 0.10 (2026-09-21) -> 0.11 (22:25: static stop-state block back to the 0.25 floor)
+completion = 0.09  # 0.10 -> 0.15 (phase 10) -> 0.12 (2026-09-20 auto-research quota: -0.03 to king_divergence; group sat at 18.7 %) -> 0.10 (2026-09-21) -> 0.11 (22:25: static stop-state block back to the 0.25 floor) -> 0.09 (2026-09-22 21:05 Jacob: stop-state block 0.25 -> 0.23, completion is the over-supplied member — 2,648 strata vs 1,970 target at e70; funds science's extra 0.02 so king_fail goes back to 0.04)
 completion_pre = 0.02
 general = 0.05
 # 2026-09-15 (Jacob, lever 1/2): + king_coached 0.02 out of coding -- the
@@ -239,7 +239,7 @@ first_challenge = "chal-00367"
 # deficit bonus; the fold rescales an applied vector up to the floor as the
 # belt-and-braces (ops/corpus_build.py STOP_STATE_GROUPS).
 stop_state_groups = ["king_done", "king_tooluse", "completion_pre", "completion", "king_divergence"]
-stop_state_floor = 0.25
+stop_state_floor = 0.23   # 0.25 -> 0.23 (2026-09-22 21:05 Jacob "fold go": block over-supplied; 0.02 to science via completion)
 # MiMo item 3 (Jacob 2026-09-17 09:08 UTC): hard non-zero quotas, one place.
 # Every `<name>_floor` + `<name>_groups` pair here is a published slice-share
 # floor (ops/corpus_build.py load_floors): reported every fold
