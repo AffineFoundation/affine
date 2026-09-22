@@ -1,0 +1,64 @@
+Harvest N = 8 — run notes (store doc §7/§8; worker thread, started 2026-09-21 23:29 UTC)
+
+Setup
+- States: research/scripts/frontier_arbiter/outcome/select_harvest.py — failed-origin teacher trajectories from the public
+  traces (teacher_index), depth >= 10 for mini_swe_textbased / verifiers bash, >= 3 for terminus_2; terminal_lego excluded;
+  images that failed on 2026-09-20/21 excluded; images seen working preferred. 296 new states + 24 seeded from the
+  split-states probe (their arm-T results copied as c1..cN seeds) = 320 selected. Sharded by blake2b(state id) weighted by
+  pod workers: dg5 122 (8 workers), dg6 77 (6), dg2 61 (4), bf4 60 (4) = 22 containers.
+- Pods (Lium listing 2026-09-21 23:10 UTC): affine-datagen-5 64.247.196.242:40299, affine-datagen-6 87.203.233.23:20100,
+  affine-datagen-2 86.125.172.23:57598, affine-backfill-4 73.139.34.205:20008. affine-backfill-5 skipped (not probed; 4 pods
+  already give 22 containers). dg2/dg6/bf4 got /root/recoverable/frontier + the patched driver via `run_pods.sh setup`
+  (ENGY_2 in /root/recoverable/.env); dg5 reused. Never touched /root/rollouts or /root/affine; only recoverable.local/ tags.
+- Driver: run_states.py --adaptive 4/8 --watch-minutes 10 --max-retries 2 --deadline-hours 46 --budget-usd 80 per pod
+  (tmux fa-harvest-harvest-2329 on each pod, log out_harvest_harvest.log). Phase A = 4 continuations; a state whose 4 are
+  all solved is dropped; kept states (split / ceiling) are topped up to 8; errored slots re-run in place after a 10-min
+  delay up to 2x unless the error is permanent (image / grader); max_turns-cap errors count as failed (fold rule).
+- Controller: harvest_ctl.py loop --every 7200 (tmux fa-harvest-ctl on this box): collect → arms → king → tables → report.
+  Arms are appended to the pod's arms/<pod>/T/states.jsonl (atomic mv) + new state files; the driver's watch picks them up.
+- Z arm mechanics: the teacher's chat template renders the prefix (with tools), the assistant turn is opened with the
+  stored thought CLOSED (<think>\n…\n</think>\n\n) and Engy raw /completions writes the visible reply = the teacher's own
+  action given that thought (Engy chat ignores continue_final_message, verified 2026-09-21). Tool calls come back in the
+  Qwen XML form <function=…><parameter=…> and are converted to tool_calls for the plugin. That first reply is then forced
+  F1-style and the teacher finishes inside the container. Works for all three dialects (textbased fence, bash tool_call,
+  terminus JSON); nothing skipped.
+
+Events
+- 23:29 UTC launched Phase A on 4 pods (487 / 305 / 234 / 238 continuations queued incl. seeds).
+- 23:29 bf4 c4 of 30be2fbf errored in 6 s: HF datasets arrow mmap race in the task-cache load (two containers of the same
+  task starting together) — retryable, the driver re-runs it after 10 min.
+- dg6 had no recoverable.local images yet: first 5 min were docker pulls (alexgshaw/filter-js-from-html, mswebench hugo).
+- fff3d932:11 (dg2) abandoned_permanent at start (seeded permanent image error).
+- 00:06 first arms cycle: 11 ceiling states → 44 F1/F1b/TX/TXb rows shipped (dg5 20, dg6 16, dg2 4, bf4 4); Engy $0.22
+  (glm $0.20). Sequential sampling took 19 min → parallelised across states (4 at a time) for the loop.
+2026-09-22 00:08 UTC  collect: 125 rows (115 ok) from {'bf4': 25, 'dg2': 30, 'dg5': 40, 'dg6': 30} in 9s; 125 continuation rows, 0 traces -> /tmp/fa_harvest/collect
+2026-09-22 00:10 UTC  arms: 0 F1/TX rows, 24 Z rows planned; Engy $0.011 (glm $0.000)
+2026-09-22 00:10 UTC  shipped 16 arm state(s) to dg2: 81 states.jsonl 81
+2026-09-22 00:10 UTC  shipped 8 arm state(s) to bf4: 72 states.jsonl 72
+2026-09-22 00:11 UTC  king: 54 samples stored for 18 kept states
+2026-09-22 00:11 UTC  tables: 18 kept states (5 at N>=8) -> tables.jsonl
+2026-09-22 00:11 UTC  report: kept 18 (n8 5, split 8, ceiling 10); N=8 teacher−king mean  0.1583 sign +2/−1/=2 p 1.000; $4.14
+2026-09-22 00:23 UTC  00:25 UTC bf4 driver restarted under host guard (RECOVERABLE_MAX_LOAD1=18, RECOVERABLE_MIN_DISK_FREE_PCT=20, workers 4 ≤ 6) per coordinator constraint; session fa-harvest-harvest-guarded
+2026-09-22 04:01 UTC  collect: 342 rows (326 ok) from {'bf4': 51, 'dg2': 119, 'dg5': 100, 'dg6': 72} in 10s; 342 continuation rows, 0 traces -> /tmp/fa_harvest/collect
+2026-09-22 04:05 UTC  arms: 24 F1/TX rows, 80 Z rows planned; Engy $0.116 (glm $0.076)
+2026-09-22 04:05 UTC  shipped 24 arm state(s) to dg5: 166 states.jsonl 166
+2026-09-22 04:05 UTC  shipped 20 arm state(s) to dg6: 113 states.jsonl 113
+2026-09-22 04:06 UTC  shipped 48 arm state(s) to dg2: 129 states.jsonl 129
+2026-09-22 04:06 UTC  shipped 12 arm state(s) to bf4: 84 states.jsonl 84
+2026-09-22 04:06 UTC  king: 90 samples stored for 30 kept states
+2026-09-22 04:06 UTC  tables: 30 kept states (27 at N>=8) -> tables.jsonl
+2026-09-22 04:06 UTC  cmd_report CRASHED: in cmd_cycle
+    step(args)
+  File "/workspace/research/scripts/frontier_arbiter/outcome/harvest_ctl.py", line 868, in cmd_report
+    scored = [score_state(t, states.get(t["sid"]), ks) for t in tables]
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/research/scripts/frontier_arbiter/outcome/harvest_ctl.py", line 656, in score_state
+    m = match(c["y"], kind, tab, t["sid"], None)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/research/scripts/frontier_arbiter/vav_sim.py", line 337, in match
+    res.update({"how": "jaccard", "V": c["V"], "classes": [scored[0][1]], "term": c["V"] - B})
+                                                                                  ~~~~~~~^~~
+TypeError: unsupported operand type(s) for -: 'float' and 'NoneType'
+
+2026-09-22 04:07 UTC  report: kept 30 (n8 27, split 15, ceiling 15); N=8 teacher−king mean -0.0171 sign +5/−6/=16 p 1.000; $11.64
+2026-09-22 04:08 UTC  04:10 UTC controller: the in-VM `loop` stalls while the cloud VM sleeps between turns (time.sleep does not advance); cycles are now driven by the 4-h timer (harvest_ctl.py cycle). vav_sim.match: B None (tables without teacher rows) -> term uses 0.0.

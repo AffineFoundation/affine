@@ -323,18 +323,21 @@ def match(y: str, kind: str, table: list[dict], sid: str, verdicts: Verdicts | N
     candidate equivalent to several stored actions inherits their union)."""
     cl = classes_of(table)
     B = baseline(table, cl)
+    # A table with no teacher-sourced rows (only forced arms landed so far) has
+    # no habit to beat: the term is the class's V alone; B stays None in the row.
+    B0 = B if B is not None else 0.0
     ny = norm_action(y, kind)
     res = {"how": "none", "V": None, "B": B, "term": 0.0, "classes": [], "judge_needed": 0, "judge_missing": 0,
            "best_jaccard": 0.0, "best_jaccard_envelope": max((jaccard(ny, k) for k in cl), default=0.0)}
     if ny in cl:
         c = cl[ny]
-        res.update({"how": "exact", "V": c["V"], "classes": [ny], "term": c["V"] - B})
+        res.update({"how": "exact", "V": c["V"], "classes": [ny], "term": c["V"] - B0})
         return res
     scored = sorted(((body_jaccard(y, c["y"], kind), k) for k, c in cl.items()), reverse=True)
     res["best_jaccard"] = scored[0][0] if scored else 0.0
     if scored and scored[0][0] >= JACCARD_MIN:
         c = cl[scored[0][1]]
-        res.update({"how": "jaccard", "V": c["V"], "classes": [scored[0][1]], "term": c["V"] - B})
+        res.update({"how": "jaccard", "V": c["V"], "classes": [scored[0][1]], "term": c["V"] - B0})
         return res
     res["judge_needed"] = len(cl)
     if verdicts is None:
@@ -350,7 +353,7 @@ def match(y: str, kind: str, table: list[dict], sid: str, verdicts: Verdicts | N
     if yes:
         s_ = sum(cl[k]["solved"] for k in yes)
         n_ = sum(cl[k]["total"] for k in yes)
-        res.update({"how": "judge", "V": s_ / n_, "classes": yes, "term": s_ / n_ - B})
+        res.update({"how": "judge", "V": s_ / n_, "classes": yes, "term": s_ / n_ - B0})
     return res
 
 
