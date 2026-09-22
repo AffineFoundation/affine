@@ -50,6 +50,12 @@ DEFAULTS = {
     "shadow": False,
     "anchor": "loo",
     "cross_echo": True,
+    # wvk 23 (2026-09-22): "none" = every content token of the miner's thought
+    # is scored (wvk 22); "refs_max" = only the first K content tokens, K =
+    # the largest content-token count among the turn's k references — a
+    # thought longer / more deliberate than the teacher's is not penalised
+    # for the extra; the two-sided band still applies to the scored prefix.
+    "content_prefix": "none",
     "content_lift_nats": 1.0,
     "content_min_tokens": 10,
     "typicality_width": 2.0,
@@ -75,6 +81,9 @@ def settings(duel_cfg: dict) -> dict:
     out["content_min_tokens"] = int(out["content_min_tokens"])
     out["shadow"] = bool(out["shadow"])
     out["cross_echo"] = bool(out["cross_echo"])
+    out["content_prefix"] = str(out["content_prefix"])
+    if out["content_prefix"] not in ("none", "refs_max"):
+        raise ValueError(f"[duel.sd_meter] content_prefix must be none|refs_max, got {out['content_prefix']!r}")
     out["frozen"] = dict(out["frozen"] or {})
     return out
 
@@ -103,6 +112,9 @@ def content_stats(tok_x: list[tuple], tok_e: list[tuple], theta: float) -> dict:
     return {
         "mc": (sum(kept) / len(kept)) if kept else None,
         "n_content": len(kept),
+        # kept content-token logprobs in thought order (for the wvk-23
+        # content_prefix truncation; not stored on rows)
+        "kept": kept,
         "n_tokens": len(tok_x),
         "n_aligned": n_aligned,
         "mean_lift": (sum(lifts) / len(lifts)) if lifts else None,
@@ -435,7 +447,10 @@ def shadow_verdict(chall_rows: list[dict], king_rows: list[dict],
                     f"b_i = Σ_bytes[lpC(y_A|z_C^i) − lpC(y_A|∅)] / {a_norm:g}; "
                     f"typ_c = {cfg['typicality_width']:g} − |m_c − μ_c|/σ_c, m_c = mean lpC(tok|x) over "
                     f"tokens with |lpC(tok|x) − lpC(tok|∅)| > {cfg['content_lift_nats']:g} nat "
-                    f"(< {cfg['content_min_tokens']} such tokens → typ_c = floor); "
+                    f"(< {cfg['content_min_tokens']} such tokens → typ_c = floor"
+                    + ("; only the first K content tokens of the miner's thought are scored, "
+                       "K = max_i n_content(z_C^i)" if cfg["content_prefix"] == "refs_max" else "")
+                    + "); "
                     f"forfeit = {cfg['forfeit_sd']:g} sd; μ per turn = mean of the k refs' "
                     "leave-one-out values (anchor loo) or per-dialect constants (anchor frozen); "
                     "σ = pooled within-turn sd of the refs per dialect; crown iff paired mean > "
@@ -443,7 +458,8 @@ def shadow_verdict(chall_rows: list[dict], king_rows: list[dict],
         "anchor": cfg["anchor"],
         "knobs": {k: cfg[k] for k in ("content_lift_nats", "content_min_tokens",
                                        "typicality_width", "a_norm_bytes", "forfeit_sd",
-                                       "k_sigma", "min_margin_sd", "cross_echo")},
+                                       "k_sigma", "min_margin_sd", "cross_echo",
+                                       "content_prefix")},
         "tau": tau,
         "sigma_by_dialect": loo.sigma,
         "mu_mean_by_dialect": loo.mu_mean,
