@@ -3218,6 +3218,11 @@ def publish_pending(state: dict, publisher: CorpusPublisher,
                                    "flips_this_fold": ag.get("flips_this_fold"), "projection": ag.get("projection"),
                                    "published_tally": ag.get("published"), "signals": ag.get("signals"),
                                    "rule": "admit iff king failed AND teacher recovers (state majority-of-3, else task teacher_solved); dead-reference turns dropped; unverified held"}
+    if pending.get("band_filter"):
+        bf = pending["band_filter"]
+        extra["band_filter"] = {"per_source": bf.get("per_source"), "retired": bf.get("retired"),
+                                "tally": bf.get("tally"), "rules": bf.get("rules"),
+                                "rule": "teacher source task folds iff teacher solved >= k of n attempts and king seat solved <= m of n (attempts from the traces); rows outside the band retire"}
     if pending.get("curriculum_block"):
         # Adaptive curriculum stamp (plan §2.3 / §3.4; evalsrv reads it into
         # slice.curriculum_version). manifest_sha256 = the manifest the
@@ -3267,6 +3272,7 @@ def finalize(state: dict, manifest: dict, mhash: str) -> None:
         "yield_groups": pending.get("yield_groups"),
         "yield_extra": pending.get("yield_extra"),
         "admission_gate": pending.get("admission_gate"),
+        "band_filter": pending.get("band_filter"),
     }
     if pending.get("coached_folded") is not None:
         state["coached_folded"] = pending["coached_folded"]
@@ -4338,6 +4344,7 @@ def main() -> None:
                         "by_king": yrep.get("by_king")} if STRATA_BUDGET else None,
         "yield_sources": yrep["sources"] if STRATA_BUDGET else None,
         "admission_gate": gate_report or None,
+        "band_filter": band_report or None,
         "gate_enforced": sorted(gate["apply_groups"]) if gate else None,
         "budget_signature": budget_cfg.get("signature") if budget_cfg else None,
         "budget_migrated": budget_migrated,
