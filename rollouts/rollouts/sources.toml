@@ -457,6 +457,12 @@ readmit_published = true
 # it reclaims such turns already published under king_fail. Leak rule
 # waived like every king group. Strata king_done:NNNN.
 strata_buckets = 4000
+# king_bad_finish (auto-research request 2026-09-22, approved): sources whose
+# grade reads the FINAL reply. A failed king rollout that ended on a
+# completion-eligible reply routes its final turn here with kind `text`, so
+# the whole reply (```sql block + submit fence) is the scored action against
+# the teacher's correct final reply. Generalise by adding a source here.
+final_output_sources = ["affine_sql", "affine_nl2lib", "affine_i3code", "affine_deshuffle", "affine_verbatim"]
 min_more_turns = 2
 # kind: at a done state the teacher stops -- a prose report or a finish
 # tool call; `text` parses both (Jacob 2026-09-13).

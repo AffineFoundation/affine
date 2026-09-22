@@ -604,6 +604,16 @@ def load_king_done() -> dict:
         # batches land and a 24-state teacher sample shows the prose stop.
         cfg["post_write_repeat"] = bool(cfg["raw"].get("post_write_repeat", False))
         cfg["post_write_min_span"] = int(cfg["raw"].get("post_write_min_span", 2) or 2)
+        # king_bad_finish (auto-research 2026-09-22): on sources whose GRADE
+        # reads the final reply (affine_sql: "one ```sql block + the submit
+        # fence in one reply"), a FAILED king rollout that ended on a
+        # completion-eligible reply (submit fence / finish tool /
+        # task_complete) is a done state at its final turn, kind `text`, so
+        # the whole reply -- block + fence -- is the scored action against the
+        # teacher's correct final reply (reign 21: 72 of 80 sql finishes were
+        # the bare submit fence; under `bash` the refs' action is the fence
+        # alone, identical across refs, R == 0).
+        cfg["final_output_sources"] = frozenset(str(x) for x in (cfg["raw"].get("final_output_sources") or []))
         # Duel-time kind: at a done state the teacher stops -- a prose report
         # or a finish tool call; `text` parses both (Jacob 2026-09-13).
         cfg["kind"] = str(cfg["raw"].get("kind") or dialects.TEXT_KIND)
@@ -1744,6 +1754,10 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         want_loop = bool(king_loop) and king_loop_candidate(env, king_loop)
         want_done_onset = (bool(king_done) and king_done.get("solved_onset") and _policy_ok(env, king_done)
                            and king_multi_turn(env, king_done) and rollout_outcome(env["trace"]) == "solved")
+        want_bad_finish = (bool(king_done) and str(env.get("source") or "") in king_done.get("final_output_sources", ())
+                           and _policy_ok(env, king_done) and king_multi_turn(env, king_done)
+                           and rollout_outcome(env["trace"]) == "failed"
+                           and env["trace"].get("stop_condition") == "agent_completed")
         pivots = side_table_turns(env, king_pivot) if king_pivot else {}
         recoverable = side_table_turns(env, king_recoverable) if king_recoverable else {}
         divergence = side_table_turns(env, king_divergence) if king_divergence else {}
@@ -1768,7 +1782,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         escapes: set[int] = set()
         want_completion = bool(completion) and completion_candidate(env, completion)
         interactive = str(env.get("source") or "") in INTERACTIVE_SOURCES
-        if want_loop or want_completion or want_done or want_tooluse or want_pre or interactive or want_done_onset:
+        if want_loop or want_completion or want_done or want_tooluse or want_pre or interactive or want_done_onset or want_bad_finish:
             try:
                 convs = trace_conversations(env["trace"], baker)
             except (ToolParityError, TraceShapeError) as e:
@@ -1839,6 +1853,14 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                     _count(notes, "king_done_solved_onset")
                     _count(notes, f"king_done_solved_onset_{env.get('source')}")
                     break
+        if done_route is None and want_bad_finish and main_convs:
+            final_reply = main_convs[-1][-1]["content"] if main_convs[-1] and main_convs[-1][-1]["role"] == "assistant" else ""
+            if completion_kind(final_reply, kind) is not None:
+                done_route = main[-1]
+                done_rule = "king_bad_finish"
+                _count(notes, "king_done_states")
+                _count(notes, "king_done_bad_finish")
+                _count(notes, f"king_done_bad_finish_{env.get('source')}")
         if done_route is None and want_done_onset and king_done.get("post_write_repeat") and main_convs:
             j = post_write_repeat_turn(main_convs, kind, king_done["post_write_min_span"])
             if j is not None:
