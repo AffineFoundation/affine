@@ -110,7 +110,9 @@ def validate_task(task_dir: Path, keep_images: bool) -> dict:
         return row
     finally:
         row["seconds"] = round(time.time() - t0, 1)
-        if not keep_images and not row["ok"]:
+        # the package ships task dirs, the pods build images themselves;
+        # keeping thousands of validated images filled the builder's overlay
+        if not keep_images:
             sh(["docker", "rmi", "-f", image], 120)
 
 
