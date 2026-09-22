@@ -73,7 +73,7 @@ tool_use = 0.02
 # `text`), completion 0.03 -> 0.05, + completion_pre 0.01 (the 1-2 teacher
 # turns before a solved stop). The 0.05 comes from coding and terminal
 # proportionally (0.4276/0.2624 -> 0.3966/0.2434).
-king_fail = 0.04   # 0.09 -> 0.08 (phase 10) -> 0.06 (2026-09-21; supply-limited cap, the loosest king dial) -> 0.04 (2026-09-22 science)
+king_fail = 0.02   # 0.09 -> 0.08 (phase 10) -> 0.06 (2026-09-21; supply-limited cap, the loosest king dial) -> 0.04 (2026-09-22 science) -> 0.02 (2026-09-22 17:00 science 0.05)
 king_loop_onset = 0.04
 king_pivot = 0.01   # 0.02 -> 0.01 (2026-09-22 science)
 king_recoverable = 0.01   # 0.02 -> 0.01 (2026-09-22 sci_code)
@@ -112,7 +112,18 @@ long_context = 0.03
 # (SciCode-shaped; D had none). Paid by king_fail -0.02, king_pivot -0.01
 # (science) and coding -0.01, king_recoverable -0.01 (sci_code). coding +
 # terminal = 0.40, exactly the floor; the stop-state block stays at 0.25.
-science = 0.03
+# 2026-09-22 17:00 UTC (Jacob): science 0.03 -> 0.05 now, not after the
+# separation test -- kings' benchmark reasoning chains shrink each generation
+# (GPQA 5.4k -> 2.2k tokens) while D's teacher thoughts are short; the banded
+# affine_science + affine_scitext turns are the long-reasoning lever. Paid by
+# king_fail 0.04 -> 0.02 (the same donor; king_pivot is already at 0.01 and
+# coding + terminal sit on the 0.40 floor, the stop-state block on 0.25, so
+# neither can give). Until the 3-attempt pre-pass lands the band holds ~127
+# rows / 95 strata, so 0.05 is a CEILING: cap_fill lets an under-supplied
+# group take everything it has and hands the slack to the single most
+# over-supplied group (coding); the science share grows fold by fold as the
+# pre-pass rollouts publish.
+science = 0.05
 sci_code = 0.02
 
 # Per-source flag `interactive = true` (tau2-airline read, 2026-09-18): the
@@ -375,7 +386,7 @@ general = 1000    # 830 -> 900 (2026-09-17, chat floor 6 %) -> 1000 (2026-09-21:
 tool_use = 332
 agentic_ops = 650    # 2026-09-21: 0.05 of ~13k strata
 long_context = 400   # 2026-09-21: 0.03 of ~13k strata
-science = 400        # 2026-09-22: 0.03 of ~13k strata
+science = 650        # 2026-09-22: 0.03 -> 0.05 of ~13k strata (17:00 UTC)
 sci_code = 260       # 2026-09-22: 0.02 of ~13k strata
 
 [strata_budget.sub_strata]
