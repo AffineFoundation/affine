@@ -88,8 +88,12 @@ src "rsync -aHR --info=progress2 --human-readable \
   --exclude='/root/.bash_history' \
   /root/affine /root/rollouts /root/prime-pilot /root/prime-lane /root/venv \
   /root/.local /root/.cache/uv /root/.cache/harbor /root/.cache/huggingface /root/.cache/affine \
+  /root/.cache/tau2-bench-v1 /root/.cache/tau2-synth /root/.cache/chroma /root/.cache/wiki_search /root/.cache/wikispeedia \
   /root/hf /root/huggingface /root/rollouts-data \
   root@$DST_HOST:/"
+# /root/.cache/{tau2-bench-v1,tau2-synth,chroma,wiki_search,wikispeedia}: env
+# data the tasksets read at run time (2026-09-22: every affine_tau2 rollout
+# on a clone without tau2-bench-v1 died with FileNotFoundError db.toml).
 # /root/huggingface: the terminal-lego task tree (844 MB; .cache/huggingface/
 # terminal-lego-git is a symlink into it). Without it every terminal_lego
 # batch on the clone dies with "missing image/Dockerfile" (found on the
