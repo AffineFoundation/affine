@@ -42,6 +42,7 @@ import re
 import statistics as st
 import subprocess
 import sys
+import threading
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -457,6 +458,52 @@ def box_ssh(cmd: str, timeout: int = 600) -> str:
     if out.returncode != 0:
         raise RuntimeError(f"ssh failed: {out.stderr[:300]}")
     return out.stdout
+
+
+# ------------------------------------------------------------------ pod reaper (heartbeat-based since 2026-09-22 03:01 UTC)
+# Every Lium pod a probe RENTS must be registered with an owner and a hard
+# ceiling, heartbeat-touched every <= 10 min while the job runs, and marked
+# done at the end; the reaper releases on `done`, or on a heartbeat stale
+# > 60 min with idle vLLM, or at the ceiling (pages at 90 %). Pods we only
+# BORROW (datagen-*, backfill-*) need nothing. Convention from
+# internal/benchsuite/requests.md (datagen worker, 2026-09-22 03:20 UTC).
+REAPER_OWNER = "manual:frontier-arbiter"
+
+
+def _registry(cmd: str) -> str:
+    return box_ssh(f"cd {BOX_REPO} && python3 ops/pods/registry.py {cmd}", timeout=120)
+
+
+def reaper_register(pod: str, purpose: str, hours: float, note: str = "") -> str:
+    q = purpose.replace('"', "'")
+    n = note.replace('"', "'")
+    return _registry(f'register {pod} --purpose "{q}" --owner {REAPER_OWNER} --hours {hours:g}'
+                     + (f' --note "{n}"' if note else ""))
+
+
+def reaper_touch(pod: str) -> str:
+    return _registry(f"touch {pod}")
+
+
+def reaper_done(pod: str, reason: str = "probe finished") -> str:
+    return _registry(f'done {pod} --reason "{reason}"')
+
+
+def reaper_heartbeat_thread(pod: str, every_s: int = 480) -> "threading.Event":
+    """Background heartbeat for a rented pod; set the returned Event to stop
+    (then call reaper_done). Failures are logged, never raised — a missed
+    touch only costs the 60-min grace, not the job."""
+    stop = threading.Event()
+
+    def _run() -> None:
+        while not stop.wait(every_s):
+            try:
+                reaper_touch(pod)
+            except Exception as e:  # noqa: BLE001 — heartbeat must not kill the job
+                print(f"[reaper] touch {pod} failed: {e!r}", file=sys.stderr)
+
+    threading.Thread(target=_run, daemon=True, name=f"reaper-touch-{pod}").start()
+    return stop
 
 
 def fetch_verdict(rec: str) -> Path:
