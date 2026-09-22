@@ -682,6 +682,13 @@ class Engine:
         refreshed from the king on every launch so it follows the crown;
         shapes are identical under the architecture pin. Never on duel /
         bench pods: scoring must see the plain decode path.
+
+        Validate on the pod's GPU first: on Blackwell (1×B300, vLLM 0.28)
+        vLLM drops the FULL decode CUDA graphs under spec-decode for this
+        hybrid model (FA3 is Hopper-only; the FlashInfer fallback supports
+        only single-token decode graphs) and single-stream speed HALVED
+        (228 -> 115 tok/s). The chat pod is an H200 (Hopper, FLASH_ATTN),
+        where the graphs should survive — unmeasured as of 2026-09-22.
         """
         draft = os.environ.get("AFFINE_CHAT_MTP_DRAFT", "").strip()
         if not draft:

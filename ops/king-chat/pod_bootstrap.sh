@@ -119,10 +119,19 @@ PY
   touch "$MODEL_DIR/.complete"
 fi
 
-# 3b. Speculative-decoding draft head (KING_MTP=1, default) — see
-#     fetch_mtp_draft.sh (uploaded next to this script by kingchat.sh) for
-#     why the BASE model's MTP head is used and how the draft dir is built.
-KING_MTP=${KING_MTP:-1}
+# 3b. Speculative-decoding draft head (KING_MTP=1 to enable; default OFF) —
+#     see fetch_mtp_draft.sh (uploaded next to this script by kingchat.sh)
+#     for why the BASE model's MTP head is used and how the draft dir is
+#     built. Measured 2026-09-22 on the 1×B300 Cursor box with vLLM 0.28:
+#     acceptance is fine (2.1 of 3 tokens/step) but vLLM drops the FULL
+#     decode CUDA graphs under spec-decode for this hybrid model on
+#     Blackwell ("FULL_AND_PIECEWISE is not supported with spec-decode for
+#     attention backend FlashInferBackend"; FA3 is Hopper-only and
+#     TRITON_ATTN is not honoured), so every step pays the launch overhead:
+#     single stream 228 -> 115 tok/s, 32 streams 3,325 -> 2,635. SGLang on
+#     H100 keeps its graphs and gains +16..69 %. Enable here only after
+#     validating on the target GPU (Hopper + FLASH_ATTN is the candidate).
+KING_MTP=${KING_MTP:-0}
 DRAFT_DIR=/root/models/draft-mtp
 if [ "$KING_MTP" = 1 ]; then
   bash /root/king-chat/fetch_mtp_draft.sh "$DRAFT_DIR" "$MODEL_DIR"
