@@ -20,7 +20,7 @@ import os
 import shutil
 import subprocess
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("BACKFILL_HEALTH_PORT", "20000"))
 ROLLOUTS_ENV = "/root/rollouts/.rollouts_env"
@@ -94,6 +94,13 @@ def health() -> tuple[bool, dict]:
 
 
 class H(BaseHTTPRequestHandler):
+    # A stalled client (probe that connects and never sends a request line)
+    # must not wedge the server: 2026-09-22 15:xx affine-backfill-5's endpoint
+    # sat in wait_woken on one half-open socket for > 45 min under the old
+    # single-threaded HTTPServer while ssh + drivers were fine, and
+    # pipeline-health paged `backfill_pod:affine-backfill-5` the whole time.
+    timeout = 30
+
     def do_GET(self):  # noqa: N802
         if self.path.split("?")[0] in ("/", "/health"):
             ok, body = health()
@@ -114,4 +121,6 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    HTTPServer(("0.0.0.0", PORT), H).serve_forever()
+    srv = ThreadingHTTPServer(("0.0.0.0", PORT), H)
+    srv.daemon_threads = True
+    srv.serve_forever()

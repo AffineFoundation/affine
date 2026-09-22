@@ -1019,6 +1019,15 @@ class Controller:
         pub_before = dict(pub)      # who the pods used when this tick began
         self.seat_empty_alert(king, pub, now)
         # Advance every box of the current king; note which ones serve.
+        # Every box kingctl remembers and Lium lists gets a registry
+        # heartbeat: kingctl owns their lifetime (rotation / re-rent), the
+        # reaper must never take one under it.
+        for name in list(self.state["pods"]):
+            if name in mine and pod_registry is not None:
+                try:
+                    pod_registry.touch(name)
+                except Exception:  # noqa: BLE001
+                    pass
         serving: list[str] = []
         for name in self.boxes_for(ident, mine):
             mem = self.state["pods"][name]

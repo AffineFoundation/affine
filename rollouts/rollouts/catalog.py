@@ -363,6 +363,22 @@ def _eog_meta(row: dict) -> dict | None:
     }
 
 
+def _popqa_meta(row: dict) -> dict | None:
+    """akariasai/PopQA (test): `popqa-<id>` is the task name affine_popqa_abstain_v1
+    filters on; `s_pop` (subject page views) travels so the band can read it."""
+    rid = row.get("id")
+    if rid is None or not row.get("question"):
+        return None
+    _, num = _text_uid("popqa", str(rid))
+    return {
+        "uid": f"popqa-{rid}",
+        "sid": f"popqa_{_dotless_task(str(row.get('prop') or 'fact'))}-{num}",
+        "repo": f"popqa/{row.get('prop') or 'fact'}",
+        "language": "chat",
+        "s_pop": int(row.get("s_pop") or 0),
+    }
+
+
 def _gdpval_meta(row: dict) -> dict | None:
     """openai/gdpval (train, 220 tasks): task_id is the task name
     affine_gdpval_v1 filters on. No [GEN:] marker on purpose: these are the
@@ -499,6 +515,7 @@ ROW_META = {
     "pydantic": _pydantic_meta,
     "eog": _eog_meta,
     "gdpval": _gdpval_meta,
+    "popqa": _popqa_meta,
     "numina": _numina_meta,
     "spider": _spider_meta,
     "commit0": _commit0_meta,
@@ -1183,6 +1200,59 @@ def build_tmax_catalog(cfg: RolloutsConfig, src: Source) -> dict:
     })
 
 
+# -- terminal_gen (2026-09-21): generated terminal tasks (ops/terminal_gen:
+# Stack Exchange post -> LLM spec -> Harbor task dir -> Docker-validated ->
+# decontaminated vs Terminal-Bench 2.0 / 4.0 + tmax). The set ships inside
+# the affine_terminal_gen_v1 package as data/e<epoch>/tasks.tar.gz; the
+# listing runs in the verifiers venv (where the package lives), extracts the
+# tarball once and enumerates the task dirs. Harbor names the task by
+# task.toml [task].name (`terminal_gen/<dir>`); the taskset filter takes the
+# dir basename (task_id_basename). Images are built on the pod like tmax.
+TERMINAL_GEN_LIST = r"""
+import json, os, sys, tomllib
+from affine_terminal_gen_v1.taskset import task_dirs
+epoch = int(sys.argv[1]); out = []
+for d in task_dirs(epoch):
+    toml = tomllib.loads((d / "task.toml").read_text())
+    meta = toml.get("metadata", {})
+    out.append({"dir": d.name, "name": toml.get("task", {}).get("name") or f"terminal_gen/{d.name}",
+                "image": toml.get("environment", {}).get("docker_image") or "",
+                "language": str(meta.get("language") or "shell"), "domain": str(meta.get("domain") or ""),
+                "difficulty": str(meta.get("difficulty") or ""), "se_site": str(meta.get("se_site") or ""),
+                "task_dir": str(d)})
+json.dump(out, sys.stdout); sys.stdout.flush()
+os._exit(0)
+"""
+
+
+def build_terminal_gen_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    epoch = _flag_value(src, "--env.taskset.data-epoch", "63")
+    rows = _verifiers_listing(cfg, TERMINAL_GEN_LIST, epoch, what="terminal_gen")
+    kept: list[dict] = []
+    n_unusable = 0
+    for r in rows:
+        if not r["image"]:
+            n_unusable += 1
+            continue
+        kept.append({
+            "uid": r["name"],
+            "sid": f"terminal_gen__{_dotless_task(r['dir'])}-0",
+            "repo": f"terminal-gen/{r['dir']}",
+            "language": _tmax_language(r["language"]),
+            "image": r["image"],
+            "task_dir": r["task_dir"],
+            "domain": r["domain"],
+            "difficulty": r["difficulty"],
+            "se_site": r["se_site"],
+        })
+    by_domain = Counter(r["domain"] for r in kept)
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": f"affine_terminal_gen_v1 data e{epoch}",
+        "total": len(rows), "kept": len(kept), "panel_excluded": 0, "unusable": n_unusable,
+        "by_domain": dict(by_domain),
+    })
+
+
 # -- longcot (env wave 2): the questions ship as JSON inside the `longcot`
 # git package (`data/<domain>/<difficulty>.json`), which lives in the pod's
 # VERIFIERS env only. The listing runs through that interpreter but reads
@@ -1600,6 +1670,38 @@ def build_tau2_catalog(cfg: RolloutsConfig, src: Source) -> dict:
         "unusable": len(rows) - len(kept)})
 
 
+# Teacher-generated sources (affine_gen_v1 store): the env's `list_catalog(epoch)`
+# is the single source of task names (uids carry the [GEN:e<epoch>] marker the
+# fold's decontamination rule requires). Epoch from `--env.taskset.epoch`.
+GENENV_LIST = r"""
+import importlib, json, os, sys
+mod = importlib.import_module(sys.argv[1] + ".taskset")
+json.dump(mod.list_catalog(int(sys.argv[2])), sys.stdout); sys.stdout.flush()
+os._exit(0)
+"""
+GENENV_LANGUAGE = {"affine_scicomp": "python", "affine_docqa": "chat", "affine_scitext": "chat"}
+
+
+def build_genenv_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    pkg = src.taskset_id.replace("-", "_")
+    epoch = _flag_value(src, "--env.taskset.epoch", "1")
+    rows = _verifiers_listing(cfg, GENENV_LIST, pkg, epoch, what=src.name)
+    prefix = src.name.replace("affine_", "")
+    kept = []
+    for r in rows:
+        domain = _dotless_task(str(r.get("domain") or "task"))[:40]
+        _, num = _text_uid(prefix, r["uid"])
+        kept.append(_bucketed(src, {
+            "uid": r["uid"], "sid": f"{prefix}_{domain}-{num}", "repo": f"{prefix}/{domain}",
+            "language": GENENV_LANGUAGE.get(src.name, "chat"), "domain": domain,
+            "topic": str(r.get("topic") or ""), "teacher_pass": int(r.get("teacher_pass") or 0),
+        }))
+    by_domain = Counter(r["domain"] for r in kept)
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": f"{pkg} e{epoch} (teacher-generated, [GEN:] uids)",
+        "total": len(rows), "kept": len(kept), "panel_excluded": 0, "unusable": 0, "by_domain": dict(by_domain)})
+
+
 BUILDERS = {
     "hf": build_hf_catalog,
     "tau2": build_tau2_catalog,
@@ -1612,6 +1714,7 @@ BUILDERS = {
     "oolong": build_oolong_catalog,
     "mrcr": build_mrcr_catalog,
     "tmax": build_tmax_catalog,
+    "terminal_gen": build_terminal_gen_catalog,
     "longcot": build_longcot_catalog,
     "autobench": build_autobench_catalog,
     "general_agent": build_general_agent_catalog,
@@ -1622,6 +1725,7 @@ BUILDERS = {
     "harbor_swe": build_harbor_swe_catalog,
     "nl2repobench": build_nl2repobench_catalog,
     "procedural": build_procedural_catalog,
+    "genenv": build_genenv_catalog,
 }
 
 

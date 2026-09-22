@@ -24,8 +24,20 @@ enforce = true
 unregistered_page_min = 30
 unregistered_release_min = 90
 # a registered pod whose owner is dead but whose lifetime has not passed:
-# warn after this many hours (no release — lifetime rules release)
+# warn after this many hours (kept for the report; releases follow the
+# heartbeat / idle / ceiling rules below)
 owner_dead_warn_h = 2.0
+# Lifetime rules (2026-09-22, after six env serving boxes were killed at a
+# fixed 14 h while their drivers still used them): a registered pod is
+# released only when its owner marks it done (`registry.py done`), or its
+# heartbeat (`registry.py touch`, kingctl, the backfill drivers' /drivers) is
+# older than heartbeat_stale_min AND its vLLM served nothing for idle_min
+# (no /metrics = no release, a warning instead), or it reaches its
+# expected_hours CEILING — which pages at ceiling_page_frac first
+# (`registry.py extend NAME --hours H` raises it).
+heartbeat_stale_min = 60
+idle_min = 30
+ceiling_page_frac = 0.9
 # a pod marked released in the registry but still in the Lium listing after
 # this many minutes: release again + warn (a failed `lium rm` bills on)
 zombie_min = 15
@@ -67,7 +79,7 @@ expected_hours = 49          # 48-h TTL + rotation slack
 glob = "bench-king-*"
 purpose = "bench"
 owner = "passlog:ops/benchsuite/state"
-expected_hours = 14          # coverage audit 2026-09-19: 14-h cap on a bench box
+expected_hours = 48          # hard CEILING (pages at 90 %), not a lifetime: the 14-h cap killed env boxes mid-job 2026-09-21/22
 
 [[purposes]]
 glob = "affine-eval"
@@ -147,4 +159,12 @@ file = "../benchsuite/state/pods.json"
 kind = "kingpod_pods"                 # {name: {"state": rented|ready|released, ...}}
 owner = "passlog:ops/benchsuite/state"
 purpose = "bench"
-expected_hours = 14
+expected_hours = 48
+
+# Heartbeats the reaper collects itself (besides `registry.py touch` and
+# kingctl): the env-backfill driver pods' /drivers endpoint names the serving
+# box each live driver talks to; a driver whose log moved within
+# driver_fresh_min is a heartbeat for that box.
+[heartbeat]
+driver_pointer = "../../affine/state/pods/backfill_driver.json"
+driver_fresh_min = 10

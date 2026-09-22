@@ -1,0 +1,3 @@
+# Titles of Artificial Analysis AA-LCR documents to skip (one per line, case-insensitive).
+# Fill from the AA-LCR evaluation page before the full run; the pilot themes (EDGAR 10-Ks,
+# GOV.UK consultation outcomes, Europe PMC CC-BY papers) are fetched fresh, not from AA.

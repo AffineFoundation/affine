@@ -53,7 +53,30 @@ OLDCAP = {"mmlu-pro@8k": ("mmlu-pro", 8192), "math500@16k": ("math500", 16384),
           "gpqa-diamond@16k": ("gpqa-diamond", 16384), "livecodebench@16k": ("livecodebench", 16384)}
 AGENTIC_POD = set(SUITE["fast"]["agentic_envs_on_pod"])
 MAX_SWE_JOBS = int(os.environ.get("ROWS_MAX_SWE_JOBS", "2"))
-MAX_RETRIES = 2
+MAX_RETRIES = 2          # model / harness failures
+MAX_INFRA_EXITS = 12     # infrastructure exits (no stock, reaped box, Daytona) are not attempts, but not forever either
+INFRA_ENV_SHARE = 0.20   # a job whose results are >= 20 % infra_env trials was cut down by our infrastructure
+
+
+def infra_exit(info: dict, job: dict, code: int) -> str:
+    """Why this launcher exit was OUR infrastructure (empty string = the model / harness result stands)."""
+    if code in (2, 3):
+        return {2: "no stock / no job dir", 3: "pod never served"}[code]
+    if job["kind"] in ("swe", "swe4h"):
+        cell = "swebench-verified@4h250__t0" if job["kind"] == "swe4h" else "swebench-verified__t0"
+        summ = BENCH_HOME / "runs" / info["run_id"] / "king" / cell / "summary.json"
+        try:
+            x = json.loads(summ.read_text())
+        except (OSError, ValueError):
+            return "no summary written"
+        n, env_n = int(x.get("n") or 0), int(x.get("n_infra_env") or 0)
+        if n == 0:
+            return "empty job"
+        if env_n / n >= INFRA_ENV_SHARE:
+            return f"{env_n}/{n} trials never ran against a live model (reaped box / Daytona)"
+        if n < 500 and x.get("exit_code", 0) != 0:
+            return f"harbor exited {x.get('exit_code')} at {n}/500"
+    return ""
 # typical wall time per job kind (minutes), for the ETA projection
 DUR = {"oldcap8k": 150, "oldcap16k": 150, "swe": 150, "swe4h": 330, "minif2f": 90, "cells": 120, "tb2": 240, "agentic": 120}
 
@@ -105,9 +128,15 @@ def matrix() -> dict:
 
 
 def env_gaps(mx: dict, row_label: str) -> list[str]:
-    """env-table columns (kings.affine.io) under 24 rollouts or absent for a row; affine_wiki grades nothing and is 0 for every model."""
+    """env-table columns (kings.affine.io) under 24 rollouts or absent for a row.
+
+    affine_wiki grades nothing and is 0 for every model. affine_tau2 is not a gap either: its harness
+    fails before the first model call on every row (reign 13: 300 infra rows, 0 graded) and the board
+    renders it "errored" -- an env-side fix, not something more rollouts can fill (kingboard worker,
+    2026-09-22). Reign 13's affine_tau2_synth 0.0% is real (50 graded, 0 solved), not an ingest gap.
+    """
     cols = [c.get("key") if isinstance(c, dict) else c for c in mx["columns"]]
-    envs = [c[4:] for c in cols if c.startswith("env:") and c != "env:affine_wiki"]
+    envs = [c[4:] for c in cols if c.startswith("env:") and c not in ("env:affine_wiki", "env:affine_tau2", "env:affine_gdpval")]
     row = next((r for r in mx["rows"] if r.get("label") == row_label), None)
     if row is None:
         return envs
@@ -136,7 +165,8 @@ def missing_cells(mx: dict, row_label: str) -> tuple[list[str], list[str]]:
         c = cells.get(f"bench:{e}")
         if c is None:
             missing.append(e)
-        elif (c.get("status") or "").startswith("fail") or (c.get("score") is None and not c.get("unverified")):
+        elif (c.get("status") or "").startswith(("fail", "partial")) or (c.get("score") is None and not c.get("unverified")):
+            # "partial" = an interrupted Harbor job published with its n; it still needs its resume
             failed.append(e)
     return missing, failed
 
@@ -181,16 +211,26 @@ def pass_alive(run_id: str) -> bool:
 
 
 def harbor_busy(d12: str, env: str) -> bool:
-    """A Harbor job for this model+env is already running (the row's own pass or an earlier launch)."""
-    out = subprocess.run(["pgrep", "-f", f"harbor_cell.py (run|resume) --env {env}.* --model king-{d12}"], capture_output=True, text=True).stdout.strip()
+    """A Harbor job for this model+env is already running (the row's own pass, an earlier launch, or a
+    chain script). `<env>@<tag>` cells run as `--env <env> --budget-tag <tag>`; the plain cell must NOT
+    match a tagged one (2026-09-22: the watcher launched a second reign-19 @4h250 resume next to the
+    running one because swe4h never checked)."""
+    if "@" in env:
+        base, tag = env.split("@", 1)
+        pat = f"harbor_cell.py (run|resume) --env {base} --budget-tag {tag} .*--model king-{d12}"
+    else:
+        pat = f"harbor_cell.py (run|resume) --env {env} --model king-{d12}"
+    out = subprocess.run(["pgrep", "-f", pat], capture_output=True, text=True).stdout.strip()
     return bool(out)
 
 
 def swe_jobs_running() -> int:
     """SWE Daytona jobs in flight or about to be (a swe_rerun/swe_resume still renting its pod counts)."""
     def n(pat: str) -> int:
-        out = subprocess.run(["pgrep", "-fc", pat], capture_output=True, text=True).stdout.strip()
-        return int(out or 0)
+        # distinct command lines, not pids: a bash script forks a copy of itself (same cmdline) for every
+        # `$(...)` substitution, and a script polling for stock did that non-stop -> two scripts counted as four
+        out = subprocess.run(["pgrep", "-fa", pat], capture_output=True, text=True).stdout
+        return len({line.split(" ", 1)[1] for line in out.splitlines() if " " in line})
     harbor = n("harbor_cell.py run --env swebench-verified") + n("harbor_cell.py resume --env swebench-verified")
     scripts = n("^bash .*swe_rerun.sh ") + n("^bash .*swe_resume.sh ")
     return max(harbor, scripts)
@@ -214,8 +254,18 @@ def launch(info: dict, job: dict) -> subprocess.Popen:
         script = "swe_resume.sh" if harbor.is_dir() else "swe_rerun.sh"
         cmd = ["bash", str(HERE / script), ref, label, info["run_id"]]
     elif kind == "swe4h":
-        env.update(BUDGET_TAG="4h250")
-        cmd = ["bash", str(HERE / "swe_rerun.sh"), ref, label, info["run_id"]]
+        # an interrupted job is RESUMED (finished trials stay, infra-errored ones re-run); `run` would
+        # skip on the stale summary.json and exit 0 — that was reign 15's and 16's "3 attempts"
+        cell = run_dir / "king" / "swebench-verified@4h250__t0"
+        harbor = cell / "harbor"
+        if harbor.is_dir() and (harbor / "config.json").exists():
+            cmd = ["bash", str(HERE / "swe_resume.sh"), ref, label, info["run_id"], "4h250"]
+        else:
+            if cell.exists():   # a job that died before harbor wrote its config cannot be resumed; `run` would skip on its summary
+                dead = cell.with_name(cell.name + f".dead-{time.strftime('%d%H%M', time.gmtime())}")
+                cell.rename(dead); log(f"{info['row']} swe4h: unresumable cell moved to {dead.name}")
+            env.update(BUDGET_TAG="4h250")
+            cmd = ["bash", str(HERE / "swe_rerun.sh"), ref, label, info["run_id"]]
     elif kind == "minif2f":
         env.update(CAP_ENVS="minif2f", CAP_RUNTIME="prime")
         cmd = ["bash", str(HERE / "cap_backfill.sh"), ref, label, info["run_id"], info["side"]]
@@ -277,6 +327,18 @@ def main() -> int:
                 log(f"{t}: no card yet (a full pass is the watcher's job); skipping")
                 continue
             missing, failed = missing_cells(mx, info["row"])
+            # the board renders a partial Harbor job as a number (finished-only metric); our own summary
+            # knows it is incomplete -> keep it on the list until n_live reaches the task set
+            for cell_env in ("swebench-verified@4h250", "swebench-verified"):
+                summ = BENCH_HOME / "runs" / info["run_id"] / "king" / f"{cell_env}__t0" / "summary.json"
+                try:
+                    x = json.loads(summ.read_text())
+                except (OSError, ValueError):
+                    continue
+                n_exp = x.get("n_expected")
+                if n_exp and int(x.get("n_live") if x.get("n_live") is not None else x.get("n") or 0) < int(n_exp) \
+                        and cell_env not in missing and cell_env not in failed:
+                    failed.append(cell_env)
             todo = missing + failed
             running_here = []
             main_alive = pass_alive(info["run_id"])
@@ -285,7 +347,7 @@ def main() -> int:
                 # the row's own pass is still producing cells: only the variants it never makes are ours now
                 if main_alive and job["kind"] not in ("oldcap8k", "oldcap16k", "swe4h"):
                     running_here.append(job["kind"] + "(pass)"); continue
-                if job["kind"] in ("swe", "tb2") and harbor_busy(info["d12"], job["envs"][0]):
+                if job["kind"] in ("swe", "swe4h", "tb2") and harbor_busy(info["d12"], job["envs"][0]):
                     running_here.append(job["kind"] + "(harbor)"); continue
                 rec = st["jobs"].setdefault(key, {"attempts": 0, "state": "idle"})
                 p = procs.get(key)
@@ -299,6 +361,17 @@ def main() -> int:
                     continue
                 if p is not None:                      # ended: the cell decides whether it worked
                     rec["state"] = "ended"; rec["exit"] = p.returncode; procs.pop(key, None)
+                    why = infra_exit(info, job, p.returncode)
+                    if why:
+                        # our infrastructure, not the model: no stock, a pod that never served, a reaped serving
+                        # box or Daytona outage mid-job -> the attempt does not count (Jacob 2026-09-22 02:55)
+                        rec["attempts"] = max(0, rec["attempts"] - 1); rec["infra_exits"] = rec.get("infra_exits", 0) + 1
+                        log(f"{info['row']} {job['kind']}: exit {p.returncode} classified infra ({why}); not counted "
+                            f"(infra exits so far {rec['infra_exits']})")
+                        if rec["infra_exits"] >= MAX_INFRA_EXITS:
+                            rec["state"] = "gave_up"
+                            discord(f"[rows-watch] {info['row']} {job['kind']}: {rec['infra_exits']} infrastructure exits in a row ({why}); stopping — needs a human")
+                            continue
                 if rec.get("state") == "gave_up":
                     continue
                 if rec["attempts"] > MAX_RETRIES:

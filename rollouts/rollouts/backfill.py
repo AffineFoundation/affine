@@ -74,13 +74,25 @@ from rollouts.runners.base import EndpointHealth
 from rollouts.runners.mini_swe import MiniSweRunner
 from rollouts.runners.verifiers import VerifiersChatRunner, VerifiersRunner
 from rollouts.scheduler import UnifiedState, policy_seat
-from rollouts.schema import Policy
+from rollouts.schema import Endpoint, Policy
 from rollouts.store import TraceStore
 
 log = logging.getLogger("rollouts.backfill")
 
 BACKFILL_PREFIX = "backfill_"
+FRONTIER_PREFIX = "frontier_"      # frontier seat (2026-09-22, Jacob "FIND IT"): ids frontier_<slug>_<harness>
 TEACHER_POLICY_PREFIX = "teacher_"
+# Frontier models reachable on Engy (2026-09-22 /v1/models); slug = tag /
+# endpoint suffix; prices $ per 1M tokens (in, out, cached-in) for the ledger.
+FRONTIER_MODELS = {
+    "glm-5.3": ("glm53", 0.98, 3.08, 0.18),
+    "glm-5.3-flash": ("glm53f", 0.135, 0.45, 0.027),
+    "glm-5.2": ("glm52", 0.68, 1.50, 0.18),
+    "deepseek-v4.1-flash": ("dsv41f", 0.04, 0.08, 0.008),
+    "deepseek-v4-flash-0731": ("dsv4f", 0.045, 0.09, 0.009),
+    "kimi-k3": ("kimik3", 1.95, 9.75, 0.195),
+}
+ENGY_BASE_URL = "https://api.engy.ai/v1"
 GREEDY_SUFFIX = "_greedy"          # king_*_greedy: T = 0 variants, not the standard sampling
 REQUIRED_R2_PREFIX = "traces-backfill/"
 GRADED = ("resolved", "unresolved")
@@ -89,18 +101,31 @@ FAIL_SLEEP_S = 300
 MAX_CONSECUTIVE_FAILS = 3
 
 
+def frontier_endpoint(model: str) -> Endpoint:
+    slug, pin, pout, pcache = FRONTIER_MODELS[model]
+    return Endpoint(name=f"frontier-{slug}", model=model, base_url=ENGY_BASE_URL, key_env="ENGY",
+                    price_in_per_m=pin, price_out_per_m=pout, price_cached_per_m=pcache)
+
+
 def backfill_policies(registry: Registry, source_name: str, tag: str,
-                      teacher: bool) -> list[Policy]:
+                      teacher: bool, frontier_model: str | None = None) -> list[Policy]:
     """The source's seat policies (king_* or teacher_*) cloned under the
-    backfill ids, greedy variants excluded, in the source's policy order."""
-    prefix = TEACHER_POLICY_PREFIX if teacher else KING_POLICY_PREFIX
+    backfill ids, greedy variants excluded, in the source's policy order.
+    Frontier seat: the source's teacher_* policies with the Engy endpoint
+    swapped for `frontier_model` (same harness, sampling, loop guard, action
+    kind), ids frontier_<slug>_<harness>, endpoint frontier-<slug>."""
+    prefix = TEACHER_POLICY_PREFIX if (teacher or frontier_model) else KING_POLICY_PREFIX
     out = []
     for pid in registry.sources[source_name].policies:
         if not pid.startswith(prefix) or pid.endswith(GREEDY_SUFFIX):
             continue
         base = registry.policies[pid]
         harness_tag = pid[len(prefix):]
-        out.append(dataclasses.replace(base, id=f"{BACKFILL_PREFIX}{tag}_{harness_tag}"))
+        if frontier_model:
+            out.append(dataclasses.replace(base, id=f"{FRONTIER_PREFIX}{tag}_{harness_tag}",
+                                           endpoints=(frontier_endpoint(frontier_model),)))
+        else:
+            out.append(dataclasses.replace(base, id=f"{BACKFILL_PREFIX}{tag}_{harness_tag}"))
     return out
 
 
@@ -173,6 +198,9 @@ def main() -> None:
     who = ap.add_mutually_exclusive_group(required=True)
     who.add_argument("--digest12", help="model digest prefix (12 hex) the policies are labelled with")
     who.add_argument("--teacher", action="store_true", help="backfill the teacher (teacher_* policies, backfill_teacher_* ids)")
+    who.add_argument("--frontier", choices=sorted(FRONTIER_MODELS), metavar="MODEL",
+                     help="frontier seat: the source's teacher_* policies with this Engy model "
+                          f"(one of {', '.join(sorted(FRONTIER_MODELS))}); ids frontier_<slug>_<harness>")
     ap.add_argument("--n", type=int, default=50, help="graded rollouts per source")
     ap.add_argument("--max-attempts", type=int, default=150, help="attempts per source before giving up")
     ap.add_argument("--sources", default="all", help="comma list, or all = every LIVE source (share > 0)")
@@ -193,13 +221,15 @@ def main() -> None:
     if not (cfg.r2_endpoint and cfg.r2_access_key_id and cfg.r2_secret_access_key):
         sys.exit("ROLLOUTS_R2_* missing (fail-closed: traces could never publish)")
     registry = load_registry()
-    tag = "teacher" if args.teacher else args.digest12
-    if not args.teacher and not (len(tag) == 12 and all(c in "0123456789abcdef" for c in tag)):
+    tag = "teacher" if args.teacher else (FRONTIER_MODELS[args.frontier][0] if args.frontier else args.digest12)
+    if not args.teacher and not args.frontier and not (len(tag) == 12 and all(c in "0123456789abcdef" for c in tag)):
         sys.exit("--digest12 must be 12 lowercase hex characters")
 
     env = dict(os.environ)
     refresh_king_env(env)
-    if not args.teacher:
+    if args.frontier and not env.get("ENGY"):
+        sys.exit("ENGY key missing in the environment (the frontier seat runs on Engy)")
+    if not args.teacher and not args.frontier:
         served = env.get("KING_MODEL") or ""
         if not served.endswith(tag):
             sys.exit(f"KING_MODEL={served!r} does not serve king-{tag}: refusing (is .king_env pointing at the backfill box?)")
@@ -213,12 +243,12 @@ def main() -> None:
             continue
         if name not in registry.sources:
             sys.exit(f"unknown source {name!r}")
-        pols = backfill_policies(registry, name, tag, args.teacher)
+        pols = backfill_policies(registry, name, tag, args.teacher, args.frontier)
         if args.harness:
             keep = {h.strip() for h in args.harness.split(",") if h.strip()}
             pols = [p for p in pols if p.id.rsplit("_", 1)[-1] in keep or any(p.id.endswith("_" + h) for h in keep)]
         if not pols:
-            log.warning("source %s: no %s policy; skipped", name, "teacher_*" if args.teacher else "king_*")
+            log.warning("source %s: no %s policy; skipped", name, "teacher_*" if (args.teacher or args.frontier) else "king_*")
             continue
         plan[name] = pols
     all_ids = {p.id for pols in plan.values() for p in pols}

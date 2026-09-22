@@ -161,6 +161,38 @@ def touch(name: str) -> None:
             _save(data, cfg)
 
 
+def request_release(name: str, reason: str = "owner done", by: str = "caller") -> dict | None:
+    """The owner's completion marker: the reaper releases the pod on its next
+    tick (rule (a) of the 2026-09-22 lifetime rules)."""
+    cfg = load_config()
+    with common.file_lock(_lock_path(cfg)):
+        data = load(cfg)
+        rec = data.get(name)
+        if rec is None or rec.get("released_at"):
+            return rec
+        rec["release_requested_at"] = common.now()
+        rec["release_requested_by"] = by
+        rec["release_requested_reason"] = reason
+        _save(data, cfg)
+        _ledger(cfg, {"at": common.now_iso(), "action": "release_requested", "pod": name, "by": by, "reason": reason})
+        return rec
+
+
+def extend(name: str, hours: float, by: str = "caller") -> dict | None:
+    """Raise the hard ceiling (expected_hours) of a running pod."""
+    cfg = load_config()
+    with common.file_lock(_lock_path(cfg)):
+        data = load(cfg)
+        rec = data.get(name)
+        if rec is None:
+            return None
+        rec["expected_hours"] = float(hours)
+        rec["heartbeat_at"] = common.now()
+        _save(data, cfg)
+        _ledger(cfg, {"at": common.now_iso(), "action": "extend", "pod": name, "by": by, "expected_hours": float(hours)})
+        return rec
+
+
 def release(name: str, reason: str, by: str = "caller") -> dict | None:
     cfg = load_config()
     with common.file_lock(_lock_path(cfg)):
@@ -236,7 +268,25 @@ def main() -> int:
     rl.add_argument("--reason", required=True)
     s = sub.add_parser("show")
     s.add_argument("name")
+    t = sub.add_parser("touch", help="owner heartbeat (call every <= 10 min while the pod is in use)")
+    t.add_argument("name")
+    d = sub.add_parser("done", help="owner completion marker: the reaper releases the pod on its next tick")
+    d.add_argument("name")
+    d.add_argument("--reason", default="owner done")
+    e = sub.add_parser("extend", help="raise the hard ceiling (expected_hours)")
+    e.add_argument("name")
+    e.add_argument("--hours", type=float, required=True)
     args = ap.parse_args()
+    if args.cmd == "touch":
+        touch(args.name)
+        print(f"heartbeat {args.name} @ {common.now_iso()}")
+        return 0
+    if args.cmd == "done":
+        print(json.dumps(request_release(args.name, args.reason, by="cli"), indent=1, default=str))
+        return 0
+    if args.cmd == "extend":
+        print(json.dumps(extend(args.name, args.hours, by="cli"), indent=1, default=str))
+        return 0
     if args.cmd == "list":
         data = load()
         for name, rec in sorted(data.items()):
