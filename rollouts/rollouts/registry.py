@@ -21,7 +21,8 @@ KING_POLICY_PREFIX = "king_"
 CATALOG_KINDS = ("hf", "hf_swebench", "swesmith", "terminal_lego",
                  "terminal_bench_2", "harbor_swe", "nl2repobench",
                  "general_agent", "procedural", "tmax", "longcot", "autobench",
-                 "rgym", "rcore", "oolong", "mrcr", "when2call", "tau2", "tau2_synth", "tau2_kb", "tau2_gen")
+                 "rgym", "rcore", "oolong", "mrcr", "when2call", "tau2", "tau2_synth", "tau2_kb", "tau2_gen",
+                 "genenv")
 SELECT_MODES = ("filter_fn", "tasks")
 
 _PKG_DIR = Path(__file__).resolve().parent
@@ -94,8 +95,11 @@ class Registry:
         by_group: dict[str, float] = {}
         for src in self.sources.values():
             by_group[src.group] = by_group.get(src.group, 0.0) + src.share
+        # A group whose every source is staged (share 0 — sci_code until
+        # affine_scicomp's first epoch lands) has no target yet, not a
+        # division by zero.
         return {
-            name: self.mix[src.group] * src.share / by_group[src.group]
+            name: (self.mix.get(src.group, 0.0) * src.share / by_group[src.group]) if by_group[src.group] > 0 else 0.0
             for name, src in self.sources.items()
         }
 
