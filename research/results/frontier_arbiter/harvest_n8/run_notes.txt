@@ -62,3 +62,12 @@ TypeError: unsupported operand type(s) for -: 'float' and 'NoneType'
 
 2026-09-22 04:07 UTC  report: kept 30 (n8 27, split 15, ceiling 15); N=8 teacher−king mean -0.0171 sign +5/−6/=16 p 1.000; $11.64
 2026-09-22 04:08 UTC  04:10 UTC controller: the in-VM `loop` stalls while the cloud VM sleeps between turns (time.sleep does not advance); cycles are now driven by the 4-h timer (harvest_ctl.py cycle). vav_sim.match: B None (tables without teacher rows) -> term uses 0.0.
+2026-09-22 08:00 UTC  collect: 510 rows (493 ok) from {'bf4': 51, 'dg2': 184, 'dg5': 161, 'dg6': 114} in 9s; 510 continuation rows, 0 traces -> /tmp/fa_harvest/collect
+2026-09-22 08:02 UTC  arms: 16 F1/TX rows, 24 Z rows planned; Engy $0.099 (glm $0.084)
+2026-09-22 08:02 UTC  shipped 20 arm state(s) to dg5: 186 states.jsonl 186
+2026-09-22 08:02 UTC  shipped 4 arm state(s) to dg6: 117 states.jsonl 117
+2026-09-22 08:02 UTC  shipped 16 arm state(s) to dg2: 145 states.jsonl 145
+2026-09-22 08:03 UTC  king: 114 samples stored for 38 kept states
+2026-09-22 08:03 UTC  tables: 38 kept states (34 at N>=8) -> tables.jsonl
+2026-09-22 08:03 UTC  report: kept 38 (n8 34, split 19, ceiling 19); N=8 teacher−king mean -0.0526 sign +5/−10/=19 p 0.302; $17.36
+2026-09-22 08:04 UTC  08:10 UTC HARVEST STOPPED on dg5/dg6/dg2 by the coordinator's worker: decision rule met early — 34 states at N=8 give teacher-heldout − king −0.053 (z −1.17, 19 ties), S2 control null (F 1/32 vs X 1/32), N7 null (ZG 19/48 vs ZB 20/47). bf4 driver had already exited 02:57 (host guard hold + loop-exit bug). Containers removed; tables kept for gate/data use.

@@ -553,6 +553,12 @@ class Adaptive:
                         fut = ex.submit(self.work, *item)
                         self.running[fut] = item
                     if not self.running:
+                        # A host-guard hold is a pause, not an exit (2026-09-22: the
+                        # bf4 driver quit at 02:57 with 221 continuations queued
+                        # when the guard held and nothing was running).
+                        if not self.host_ok():
+                            time.sleep(60)
+                            continue
                         if not self.can_start() or (not self.pending and not self.args.watch_minutes):
                             break
                         time.sleep(30)      # delayed retries / the next watch tick
