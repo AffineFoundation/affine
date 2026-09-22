@@ -27,6 +27,11 @@
 set -euo pipefail
 EPOCH=${1:?fold epoch (seed)}; N_AIR=${2:-400}; N_RET=${3:-200}; N_TEL=${4:-200}
 ROOT=${TAU2GEN_ROOT:-$HOME/tau2gen/tau2-gen}
+# Pin: the tau2-gen commit this refresh is validated against (upstream
+# catoneone/tau2-gen main; our three PRs are merged there since 2026-09-22).
+# 402292e = e61; a32a7bd = pinned answers, decision cases, build-time
+# invariants, pressure clauses at the reference share (Alan, 2026-09-22).
+TAU2GEN_REV=${TAU2GEN_REV:-a32a7bd}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 DST="$REPO/rollouts/envs/affine_tau2_gen_v1/affine_tau2_gen_v1/data/e$EPOCH"
 P="$ROOT/upstream/tau2-bench/.venv/bin/python"
@@ -34,6 +39,11 @@ OUT="$ROOT/out/e$EPOCH"
 cd "$ROOT"
 [ -x "$P" ] || { echo "no tau2-bench venv at $P"; exit 1; }
 [ -f scripts/export_affine.py ] && grep -q "exclude-benchmark-compositions" domains/telecom/gen.py || { echo "checkout lacks our PRs — git checkout affine (unarbos/tau2-gen integration branch)"; exit 1; }
+HEAD_REV=$(git -C "$ROOT" rev-parse --short=7 HEAD)
+# The checkout is the fork's `affine` branch = the pinned upstream commit plus our not-yet-merged
+# PRs, so the pin must be an ancestor of HEAD (equal once everything is merged).
+git -C "$ROOT" merge-base --is-ancestor "$TAU2GEN_REV" HEAD || { echo "tau2-gen checkout $HEAD_REV does not contain the pin $TAU2GEN_REV (git -C $ROOT checkout affine, or TAU2GEN_REV=... to move the pin)"; exit 1; }
+echo "tau2-gen $HEAD_REV (pin $TAU2GEN_REV)"
 echo "== generating epoch $EPOCH (seed $EPOCH): airline $N_AIR, retail $N_RET, telecom $N_TEL"
 $P domains/airline/gen.py --n "$N_AIR" --seed "$EPOCH" --out "$OUT/airline" 2>&1 | grep -E "generated|leakage|wrote|rror" || true
 $P domains/retail/gen.py  --n "$N_RET" --seed "$EPOCH" --out "$OUT/retail"  2>&1 | grep -E "generated|leakage|wrote|rror" || true
@@ -57,6 +67,19 @@ for d in airline retail telecom; do
   cp "$OUT/$d/manifest.json" "$DST/$d.manifest.json"
   cp "$OUT/$d/fidelity_report.md" "$DST/$d.fidelity_report.md"
 done
+# build-time guard rejections (stats build_fail:<case>) per domain, from the generator manifests
+python3 - "$DST" <<'PY'
+import json, sys, pathlib
+dst = pathlib.Path(sys.argv[1]); out = {}
+for d in ("airline", "retail", "telecom"):
+    st = json.load(open(dst / f"{d}.manifest.json")).get("stats", {})
+    rej = {k.split(":", 1)[1]: v for k, v in st.items() if k.startswith("build_fail:")}
+    out[d] = {"kept": st.get("kept"), "build_fail_total": sum(rej.values()), "build_fail_by_case": rej,
+              "excluded_benchmark_composition": st.get("excluded_benchmark_composition", 0),
+              "excluded_benchmark_triplet": st.get("excluded_benchmark_triplet", 0)}
+json.dump(out, open(dst / "guard_rejections.json", "w"), indent=1)
+print("guard rejections:", {d: (v["kept"], v["build_fail_total"]) for d, v in out.items()})
+PY
 # held-out ids for the fold's decontamination list: tau2 `base` split per domain
 $P - "$DST/bench_task_ids.json" <<'PY'
 import json, sys

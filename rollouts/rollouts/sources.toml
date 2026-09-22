@@ -1172,7 +1172,7 @@ strata_buckets = 600
 strata_offset = 2860
 max_batch = 16
 max_concurrency = 8
-extra_flags = ["--env.taskset.data-epoch", "61"]
+extra_flags = ["--env.taskset.data-epoch", "67"]   # e67 = tau2-gen a32a7bd (+ anchor fix): pinned answers, decision cases, build guards, pressure clauses; e61 kept for replay
 share = 1.0                               # vs tau2_synth 3.0 / tau2 2.0 (Jacob: start small)
 king_rollouts_per_hour = 8
 

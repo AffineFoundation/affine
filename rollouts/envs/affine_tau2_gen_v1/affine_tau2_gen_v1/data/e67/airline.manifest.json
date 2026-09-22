@@ -1,0 +1,123 @@
+{
+ "generator": "domains/airline/gen.py",
+ "generated_at": "2026-09-22T08:07:26Z",
+ "repo_commit": "9eef317",
+ "tau2_commit": "b7ea9074c1cba482b30687fecdb5c8425fd6f619",
+ "seed": 67,
+ "n": 400,
+ "args": {
+  "n": 400,
+  "seed": 67,
+  "out": "/home/const/tau2gen/tau2-gen/out/e67/airline",
+  "persona_mix": null,
+  "refuse_share": 0.48,
+  "unknown_id_share": 0.1,
+  "verbose": false
+ },
+ "persona_mix": {
+  "None": 0.5,
+  "Easy": 0.08,
+  "Hard": 0.08,
+  "Verbose": 0.06,
+  "Terse": 0.06,
+  "NonNative": 0.06,
+  "Impatient": 0.06,
+  "WrongNumberOnce": 0.04,
+  "SideRequest": 0.03,
+  "TechSavvy": 0.03
+ },
+ "stats": {
+  "kept": 400,
+  "build_fail:change_cabin": 8,
+  "build_fail:composed": 23,
+  "build_fail:change_flights": 5,
+  "build_fail:upgrade_then_baggage": 5
+ },
+ "case_hist": {
+  "composed": 104,
+  "cancel_denied": 33,
+  "change_flights_denied_basic_economy": 33,
+  "insurance_add_denied": 17,
+  "cancel_unknown_reservation": 8,
+  "change_cabin": 6,
+  "passenger_change": 3,
+  "baggage_add": 13,
+  "upgrade_then_baggage": 5,
+  "passenger_count_denied": 17,
+  "cancel_mixed_eligibility": 18,
+  "cancel_within_24h": 5,
+  "cancel_airline_cancelled": 4,
+  "change_flights_then_baggage": 5,
+  "compensation_denied": 21,
+  "compensation_facts_denied": 33,
+  "baggage_remove_denied": 17,
+  "cancel_denied_flown": 21,
+  "cancel_then_compensation": 5,
+  "book": 6,
+  "cancel_business": 5,
+  "change_flights": 8,
+  "compensation_cancelled_flight": 4,
+  "cancel_two_reservations": 4,
+  "cancel_insurance_health": 5
+ },
+ "group_hist": {
+  "composite": 127,
+  "refuse": 192,
+  "modify": 30,
+  "cancel": 41,
+  "book": 6,
+  "compensation": 4
+ },
+ "persona_hist": {
+  "Terse": 21,
+  "None": 198,
+  "Verbose": 25,
+  "WrongNumberOnce": 15,
+  "Easy": 41,
+  "SideRequest": 11,
+  "Impatient": 23,
+  "NonNative": 20,
+  "Hard": 32,
+  "TechSavvy": 14
+ },
+ "no_write_tasks": 192,
+ "unknown_id_tasks": 25,
+ "records_per_user_median": 4,
+ "write_names": {
+  "send_certificate": 42,
+  "update_reservation_passengers": 22,
+  "update_reservation_flights": 54,
+  "update_reservation_baggages": 50,
+  "cancel_reservation": 82,
+  "book_reservation": 6
+ },
+ "median_delta_bytes": 4734,
+ "leakage": {
+  "ok": true,
+  "overlap": {
+   "phones": [],
+   "ids": [],
+   "emails": [],
+   "imeis": [],
+   "names": []
+  },
+  "task_id_overlap": [],
+  "full_enumeration_id_overlap": 0,
+  "gen_counts": {
+   "phones": 3,
+   "ids": 2993,
+   "emails": 400,
+   "imeis": 0,
+   "names": 1145
+  },
+  "bench_counts": {
+   "phones": 0,
+   "ids": 3604,
+   "emails": 500,
+   "imeis": 0,
+   "names": 834
+  },
+  "heldout_task_ids": 50,
+  "full_enumeration_ids": 50
+ }
+}
