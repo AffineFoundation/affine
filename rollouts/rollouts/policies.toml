@@ -20,6 +20,26 @@ in_per_m = 0.045
 out_per_m = 0.32
 cached_in_per_m = 0.015
 
+# Frontier seat (2026-09-22, Jacob "FIND IT"): rollouts.backfill --frontier
+# <model> runs each source's teacher_* policies with the Engy endpoint swapped
+# (endpoint frontier-<slug>, policy ids frontier_<slug>_<harness>), publishes
+# under traces-backfill/ (never folded) so the kingboard can show frontier
+# rows next to Teacher. Prices = Engy list 2026-09-22 ($ per 1M tokens).
+[pricing.frontier-glm53]
+in_per_m = 0.98
+out_per_m = 3.08
+cached_in_per_m = 0.18
+
+[pricing.frontier-dsv41f]
+in_per_m = 0.04
+out_per_m = 0.08
+cached_in_per_m = 0.008
+
+[pricing.frontier-kimik3]
+in_per_m = 1.95
+out_per_m = 9.75
+cached_in_per_m = 0.195
+
 [policy.glm_textbased]
 harness = "mini_swe_textbased"
 share = 1.0
