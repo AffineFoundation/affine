@@ -151,14 +151,24 @@ def scorecard(run_dir: Path) -> dict:
                     "completion_tokens": 0, "prompt_tokens": 0, "wall_seconds": None, "finish_length_frac": None}
         n = int(x.get("n") or 0)
         n_err = int(x.get("n_errored") or 0)
-        failed = n == 0 or n_err >= n or (n and n_err / n >= FAILED_CELL_ERROR_SHARE)
-        out = {"score": None if failed else x["score"], "ci95": None if failed else x["ci95"], "n": x["n"],
+        # the error share is over trials that ran against a LIVE model: a reaped serving box or a
+        # Daytona outage (n_infra_env) is our failure to retry, not the model's (Jacob 2026-09-22)
+        n_live = int(x.get("n_live") if x.get("n_live") is not None else n)
+        failed = n_live == 0 or n_err >= n_live or (n_live and n_err / n_live >= FAILED_CELL_ERROR_SHARE)
+        n_env = int(x.get("n_infra_env") or 0)
+        # a job our infrastructure cut down (half or more of its trials never saw the model) is not a
+        # result yet either: it shows as failed WITH the reason, and the watcher resumes it
+        infra_cut = bool(n) and n_env / n >= 0.5
+        out = {"score": None if (failed or infra_cut) else x["score"], "ci95": None if (failed or infra_cut) else x["ci95"], "n": x["n"],
                "n_errored": x["n_errored"], "n_timeout": x.get("n_timeout"), "n_context_overflow": x.get("n_context_overflow"),
-               "finished_only": None if failed else x.get("finished_only"), "completion_tokens": x["completion_tokens"],
+               "n_infra_env": x.get("n_infra_env"), "n_live": x.get("n_live"),
+               "finished_only": None if (failed or infra_cut) else x.get("finished_only"), "completion_tokens": x["completion_tokens"],
                "prompt_tokens": x["prompt_tokens"], "wall_seconds": x.get("wall_seconds"),
                "finish_length_frac": x.get("finish_length_frac"),
                "by_class": x.get("by_class") or None,
-               "status": "failed" if failed else "ok"}
+               "status": "failed" if (failed or infra_cut) else "ok"}
+        if infra_cut and not failed:
+            out["failure"] = f"infrastructure: {n_env} of {n} trials never ran against a live model (serving box / Daytona); resuming"
         # cloud-sandbox / harness-change provenance (harbor_cell.py cells): the kingboard
         # flags a cell whose harness differs from the card's default for that env
         for key in ("sandbox", "harness", "harness_change", "harness_note", "budget", "served_by"):

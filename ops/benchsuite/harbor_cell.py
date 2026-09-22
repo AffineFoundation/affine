@@ -129,6 +129,22 @@ def agent_log_has(trial_dir: Path, needle: str) -> bool:
     return False
 
 
+INFRA_ENV_TYPES = ("NetworkConnectionError", "SandboxError", "SandboxBuildFailedError", "SandboxTimeoutError",
+                   "EnvironmentStartTimeoutError", "EnvironmentBuildError", "ApiRateLimitError", "CancelledError",
+                   "DaytonaError", "ProvisionError")
+INFRA_ENV_MSG = ("Connection refused", "Max retries exceeded", "APIConnectionError", "502 Bad Gateway", "503 Service",
+                 "504 Gateway", "Agent install failed", "Failed to execute session command", "Sandbox build failed")
+
+
+def is_infra_env(etype: str, emsg: str, agent_result: dict) -> bool:
+    """A trial that never ran against a live model (our box, Daytona, or harbor failed)."""
+    if etype in INFRA_ENV_TYPES or "Provision" in etype or "Sandbox" in etype:
+        return True
+    if any(m in emsg for m in INFRA_ENV_MSG):
+        return True
+    return not (agent_result.get("n_input_tokens") or 0)
+
+
 def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit_code: int) -> dict:
     rows = []
     for rp in sorted(job_dir.glob("*/result.json")):
@@ -159,6 +175,12 @@ def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit
             # the MODEL's failure (our verifiers cells call it context_overflow, score 0),
             # not infrastructure (reign 13 @4h: 110 of 500)
             err_class = "context_overflow"
+        elif etype and is_infra_env(etype, emsg, ares):
+            # OUR infrastructure failed before / instead of the model: the serving box reaped
+            # mid-job, a Daytona network / provisioning / rate-limit error, a cancelled harbor,
+            # or any exception on a trial that never got a model token. Excluded from n_live and
+            # from the failed-cell error share; swe_resume re-runs them (Jacob 2026-09-22 02:55).
+            err_class = "infra_env"
         elif etype:
             err_class = "infra"
         else:
@@ -183,6 +205,8 @@ def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit
     return {
         "n": len(rows), "n_scored": len(scored),
         "n_errored": sum(1 for r in rows if r["error_class"] == "infra"),
+        "n_infra_env": sum(1 for r in rows if r["error_class"] == "infra_env"),
+        "n_live": sum(1 for r in rows if r["error_class"] != "infra_env"),   # trials that ran against a live model
         "n_timeout": sum(1 for r in rows if r["error_class"] == "timeout"),
         "n_context_overflow": sum(1 for r in rows if r["error_class"] == "context_overflow"),
         "score": round(k / len(scored), 4) if scored else 0.0, "ci95": [round(lo, 4), round(hi, 4)],

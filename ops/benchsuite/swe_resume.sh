@@ -14,8 +14,12 @@ AGENT_TIMEOUT_S=3600; [ "$TAG" = 4h250 ] && AGENT_TIMEOUT_S=14400
 log() { echo "[swe-resume] $(date -u +%FT%TZ) $*"; }
 CELL="$INTO/king/swebench-verified${TAG:+@$TAG}__t0"
 [ -d "$CELL/harbor" ] || { log "$LABEL: no harbor job under $CELL"; exit 2; }
-POD=""; for PLAN in ${SWE_PLANS:-h200-2x b200-2x h200-1x b200-1x pro6000-1x}; do POD=$("$PY" "$HERE/kingpod.py" rent --plan "$PLAN" --digest "$DIGEST" 2>/dev/null | tail -1) && [ -n "$POD" ] && break; POD=""; done
-[ -n "$POD" ] || { log "$LABEL: no stock"; exit 2; }
+POD=""; T0=$(date +%s)
+while [ $(( $(date +%s) - T0 )) -lt "${SWE_RENT_DEADLINE_S:-14400}" ]; do
+  for PLAN in ${SWE_PLANS:-h200-2x b200-2x h200-1x b200-1x pro6000-1x}; do POD=$("$PY" "$HERE/kingpod.py" rent --plan "$PLAN" --digest "$DIGEST" 2>/dev/null | tail -1) && [ -n "$POD" ] && break; POD=""; done
+  [ -n "$POD" ] && break; log "$LABEL: no stock; retry in 3 min"; sleep 180
+done
+[ -n "$POD" ] || { log "$LABEL: no stock within the rent deadline"; exit 2; }
 trap '"$PY" "$HERE/kingpod.py" release "$POD" >/dev/null 2>&1' EXIT
 # lifetime for the pod reaper from the job's own budget: trials x agent budget / in flight, x1.3 slack, + 2 h
 # (2026-09-21: 27-h @4h250 jobs lost their serving box at kingpod's 14-h default -> NetworkConnectionError x 270)
@@ -58,14 +62,24 @@ n = 0
 for rp in Path(sys.argv[1]).glob("*/result.json"):
     try: r = json.loads(rp.read_text())
     except ValueError: continue
-    et = ((r.get("exception_info") or {}).get("exception_type") or "")
-    if et in ("NetworkConnectionError", "SandboxError", "ApiRateLimitError") or "Provision" in et:
+    exc = r.get("exception_info") or {}
+    et = exc.get("exception_type") or ""
+    if not et:
+        continue
+    # same rule as harbor_cell.is_infra_env: our box / Daytona / harbor failed, or the trial never got a model token
+    if et in ("NetworkConnectionError", "SandboxError", "SandboxBuildFailedError", "SandboxTimeoutError", "EnvironmentStartTimeoutError",
+              "EnvironmentBuildError", "ApiRateLimitError", "CancelledError", "DaytonaError") or "Provision" in et or "Sandbox" in et \
+       or any(m in (exc.get("exception_message") or "") for m in ("Connection refused", "Max retries exceeded", "APIConnectionError",
+              "502 Bad Gateway", "503 Service", "504 Gateway", "Agent install failed", "Failed to execute session command")) \
+       or not ((r.get("agent_result") or {}).get("n_input_tokens") or 0):
         rp.rename(rp.with_suffix(".json.infra")); n += 1
 print(f"[swe-resume] {n} infra-errored trials queued for re-run")
 PY
 fi
-log "$LABEL: $POD ($REPL replica(s)) -> resuming $CELL at $((64*REPL)) in flight"
+INFLIGHT="${SWE_INFLIGHT:-$((64*REPL))}"
+BUDGET_ARGS=(--agent-timeout-s "$AGENT_TIMEOUT_S"); [ "$TAG" = 4h250 ] && BUDGET_ARGS+=(--step-limit 250)
+log "$LABEL: $POD ($REPL replica(s)) -> resuming $CELL at $INFLIGHT in flight (budget ${TAG:-1h})"
 "$PY" "$HERE/harbor_cell.py" resume --env swebench-verified ${TAG:+--budget-tag $TAG} --model "$(podf "$POD" served)" --model-label king \
-  --model-url "$(podf "$POD" base_url)" --model-key-env BENCH_API_KEY --out "$INTO/king" --concurrency $((64*REPL)) --agent-timeout-s 3600
+  --model-url "$(podf "$POD" base_url)" --model-key-env BENCH_API_KEY --out "$INTO/king" --concurrency "$INFLIGHT" "${BUDGET_ARGS[@]}"
 "$PY" "$HERE/publish.py" --run-dir "$INTO" --only-cells "king/swebench-verified${TAG:+@$TAG}__t0"
 log "$LABEL: done"
