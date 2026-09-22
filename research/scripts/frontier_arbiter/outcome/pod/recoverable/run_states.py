@@ -29,6 +29,7 @@ read-only), RECOVERABLE_PLUGIN (dir containing the plugin package; default
 from __future__ import annotations
 
 import argparse
+import collections
 import concurrent.futures as cf
 import hashlib
 import json
@@ -71,6 +72,11 @@ TRACE_NAME_RE = re.compile(r"^[0-9a-f]{32}$")
 SAME_TASK = "same_task"
 DOCKER_KINDS = ("textbased", "bash", "terminus", SAME_TASK)
 EVAL_TIMEOUT_S = 3 * 3600
+TURN_CAP_MSG = "rollout stopped: max_turns"
+RETRY_DELAY_S = 600
+# Errors no re-run fixes (the image / the task's grader), harvest --max-retries skips them.
+PERMANENT_ERROR_MARKS = ("docker_build_failed", "pull access denied", "manifest unknown",
+                         "checkout HEAD~1 failed", "no such image")
 # Engy list price for qwen3.8-27b (USD per token), 2026-09-11.
 PRICE_IN = 0.045e-6
 PRICE_OUT = 0.32e-6
@@ -119,7 +125,10 @@ def first_reply(trace: dict) -> dict | None:
     for nd in trace.get("nodes") or []:
         m = nd.get("message") or {}
         if nd.get("sampled") and m.get("role") == "assistant":
-            return {"content": m.get("content"), "tool_calls": m.get("tool_calls")}
+            # `reasoning` (the latent thought) rides along since the harvest
+            # (2026-09-22): arm Z forces a stored thought without the trace.
+            return {"content": m.get("content"), "tool_calls": m.get("tool_calls"),
+                    "reasoning": m.get("reasoning_content")}
     return None
 
 
@@ -144,9 +153,19 @@ def trace_summary(trace: dict, model: str = "qwen3.8-27b") -> dict:
     rewards = trace.get("rewards") or {}
     score = primary_score(trace)
     errs = real_errors(trace)
+    outcome = rollout_outcome(trace)
+    turn_cap_error = False
+    if outcome == "errored" and errs and all(TURN_CAP_MSG in str(e.get("message") or "") for e in errs):
+        # The continuation ran its remaining turn budget out: interception
+        # refused the next call ("rollout stopped: max_turns") and the
+        # harness raised it as a provider error before the stop condition
+        # was stamped. The agent did not finish = failed (fold rule,
+        # affine.corpus.trace.is_turn_cap_artifact), not an infra error.
+        outcome, turn_cap_error = "failed", True
     return {
         "trace_id": trace.get("id"),
-        "outcome": rollout_outcome(trace),
+        "outcome": outcome,
+        "turn_cap_error": turn_cap_error,
         "reward_score": score,
         "rewards": {k: (v or {}).get("score") for k, v in rewards.items()},
         "stop_condition": trace.get("stop_condition"),
@@ -336,6 +355,218 @@ def plan_continuations(state: dict, have: dict[int, dict], target: int,
     return todo
 
 
+def is_permanent(r: dict) -> bool:
+    err = str(r.get("error") or "")
+    return any(m in err for m in PERMANENT_ERROR_MARKS)
+
+
+class Adaptive:
+    """Harvest scheduler (2026-09-22): Phase A = `phase_a` OK continuations
+    per unit; a unit whose Phase A did not solve every continuation is KEPT
+    and topped up to `phase_b` (split 0 < s < N and ceiling s = 0 alike);
+    all-solved units are dropped. Errored slots are re-run in place up to
+    `max_retries` times unless the error is permanent (image / grader);
+    a slot past its retries is DEAD and settles the unit's phase like an OK
+    result would. Rows with `continuations_needed` (F1 / TX / Z arm files
+    the controller ships later) are plain targets. The states file is
+    re-read every `watch_minutes` so arm files dropped into it while the
+    driver runs are picked up; the driver exits when the deadline passes
+    (running continuations finish) or, without --watch, when it runs dry."""
+
+    def __init__(self, cfg, registry, args, env, kinds, only, shard):
+        self.cfg, self.registry, self.args, self.env = cfg, registry, args, env
+        self.kinds, self.only, self.shard = kinds, only, shard
+        self.phase_a, self.phase_b = (int(x) for x in args.adaptive.split("/"))
+        self.results_dir = args.out / "results"
+        self.units: dict[str, dict] = {}
+        self.order: dict[str, int] = {}
+        self.pending: dict[tuple[str, int], int] = {}    # (key, k) -> priority
+        self.running: dict[cf.Future, tuple[str, int]] = {}
+        self.spent = 0.0
+        self.deadline = time.time() + args.deadline_hours * 3600 if args.deadline_hours else None
+        self.decided: dict[str, str] = {}
+        self.not_before: dict[tuple[str, int], float] = {}
+        self.n_done = 0
+
+    # -- planning -------------------------------------------------------------
+    def load_states(self) -> int:
+        try:
+            rows = [json.loads(l) for l in open(self.args.states, encoding="utf-8") if l.strip()]
+        except (OSError, ValueError):
+            log.warning("states file unreadable, keeping the last plan", exc_info=True)
+            return 0
+        new = 0
+        for i, s in enumerate(rows):
+            try:
+                s["path"] = resolve_state_path(s, self.args.states)
+            except FileNotFoundError:
+                continue
+            if s["resume_kind"] not in self.kinds or (self.only and s["state_id"] not in self.only):
+                continue
+            shard_i, shard_n = self.shard
+            if not owns(s["state_id"], shard_i, shard_n):
+                continue
+            key = unit_key(s)
+            if key not in self.units:
+                new += 1
+                self.order[key] = i
+            self.units[key] = s
+        return new
+
+    def target_of(self, s: dict, have: dict[int, dict]) -> tuple[int, str]:
+        ok = [r for r in have.values() if r.get("status") == "ok"]
+        dead = [r for r in have.values() if r.get("status") != "ok"
+                and (is_permanent(r) or int(r.get("attempts") or 1) > self.args.max_retries)]
+        if any(is_permanent(r) for r in have.values()):
+            # the image / grader is broken for every slot of this unit
+            return len(ok), "abandoned_permanent"
+        if s.get("continuations_needed") is not None:
+            return int(s["continuations_needed"]), "fixed"
+        if len(ok) + len(dead) < self.phase_a:
+            return self.phase_a, "phase_a"
+        if not ok:
+            return len(ok), "abandoned"
+        solved = sum(r.get("outcome") == "solved" for r in ok)
+        if solved == len(ok):
+            return len(ok), "dropped_all_solved"
+        return self.phase_b, "phase_b"
+
+    def plan(self, key: str) -> None:
+        s = self.units[key]
+        with _lock:      # workers write result files under the same lock
+            have = existing_results(self.results_dir, key)
+        target, phase = self.target_of(s, have)
+        if self.decided.get(key) != phase:
+            self.decided[key] = phase
+            if phase not in ("phase_a", "fixed"):
+                ok = [r for r in have.values() if r.get("status") == "ok"]
+                log.info("unit %s: %s (s/N %d/%d)", key, phase,
+                         sum(r.get("outcome") == "solved" for r in ok), len(ok))
+        inflight = {k for (kk, k) in list(self.pending) + list(self.running.values()) if kk == key}
+        n_ok = sum(1 for r in have.values() if r.get("status") == "ok")
+        n_dead = sum(1 for r in have.values() if r.get("status") != "ok"
+                     and (is_permanent(r) or int(r.get("attempts") or 1) > self.args.max_retries))
+        # a dead slot fills its place: a unit never grows past `target` slots
+        need = target - n_ok - n_dead - len(inflight)
+        prio = 0 if phase in ("phase_b", "fixed") else 1
+        retries = sorted(k for k, r in have.items() if r.get("status") != "ok" and k not in inflight
+                         and not is_permanent(r) and int(r.get("attempts") or 1) <= self.args.max_retries)
+        for k in retries:
+            if need <= 0:
+                break
+            self.pending[(key, k)] = prio
+            # an Engy outage lasts tens of minutes: a fast re-run would burn
+            # the slot's retries on the same outage
+            self.not_before.setdefault((key, k), time.time() + RETRY_DELAY_S)
+            need -= 1
+        next_k = max([*have, *inflight], default=-1) + 1
+        while need > 0:
+            self.pending[(key, next_k)] = prio
+            next_k += 1
+            need -= 1
+
+    def plan_all(self) -> None:
+        for key in list(self.units):
+            self.plan(key)
+
+    def pick(self) -> tuple[str, int] | None:
+        now = time.time()
+        ready = [it for it in self.pending if self.not_before.get(it, 0) <= now]
+        if not ready:
+            return None
+        item = min(ready, key=lambda it: (self.pending[it], self.order.get(it[0], 1 << 30), it[1]))
+        del self.pending[item]
+        self.not_before.pop(item, None)
+        return item
+
+    # -- execution ------------------------------------------------------------
+    def work(self, key: str, k: int) -> dict:
+        state = self.units[key]
+        with _lock:
+            prev = existing_results(self.results_dir, key).get(k)
+        attempts = int((prev or {}).get("attempts") or (1 if prev else 0)) + 1
+        try:
+            r = run_one(self.cfg, self.registry, state, self.args.out, self.env, k)
+        except Exception as e:  # noqa: BLE001 - one state must not kill the batch
+            log.exception("unit %s c%d crashed", key, k)
+            r = {"state_id": key, "resume_kind": state["resume_kind"], "harness": state["harness"],
+                 "continuation": k, "status": "errored", "error": f"driver: {type(e).__name__}: {e}"}
+        r["attempts"] = attempts
+        r["arm"] = state.get("arm")
+        with _lock:
+            self.spent += float(r.get("cost_usd") or 0.0)
+            tmp = self.results_dir / f".{file_stem(key, k)}.json.tmp"
+            tmp.write_text(json.dumps(r))
+            os.replace(tmp, self.results_dir / f"{file_stem(key, k)}.json")
+            with open(self.args.out / "results.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps(r) + "\n")
+        return r
+
+    def can_start(self) -> bool:
+        if self.deadline and time.time() > self.deadline:
+            return False
+        if self.args.budget_usd and self.spent >= self.args.budget_usd:
+            return False
+        return True
+
+    def run(self) -> None:
+        n_new = self.load_states()
+        self.plan_all()
+        log.info("adaptive %d/%d: %d units (%d new), %d continuation(s) queued, %d workers, deadline %s h, "
+                 "budget %s, watch %s min, retries %d", self.phase_a, self.phase_b, len(self.units), n_new,
+                 len(self.pending), self.args.workers, self.args.deadline_hours or "none",
+                 f"${self.args.budget_usd:.0f}" if self.args.budget_usd else "none",
+                 self.args.watch_minutes or "off", self.args.max_retries)
+        last_watch = time.time()
+        reap_own_containers()
+        try:
+            with cf.ThreadPoolExecutor(max_workers=self.args.workers) as ex:
+                while True:
+                    while len(self.running) < self.args.workers and self.can_start():
+                        item = self.pick()
+                        if item is None:
+                            break
+                        fut = ex.submit(self.work, *item)
+                        self.running[fut] = item
+                    if not self.running:
+                        if not self.can_start() or (not self.pending and not self.args.watch_minutes):
+                            break
+                        time.sleep(30)      # delayed retries / the next watch tick
+                        done = set()
+                    else:
+                        done, _ = cf.wait(list(self.running), timeout=60, return_when=cf.FIRST_COMPLETED)
+                    for fut in done:
+                        key, k = self.running.pop(fut)
+                        r = fut.result()
+                        self.n_done += 1
+                        log.info("%s c%d -> %s outcome=%s stop=%s turns=%s wall=%ss cost=$%.3f (run $%.2f, "
+                                 "%d done, %d queued, %d running)", key, k, r.get("status"), r.get("outcome"),
+                                 r.get("stop_condition"), r.get("n_turns"), r.get("wall_s"),
+                                 float(r.get("cost_usd") or 0.0), self.spent, self.n_done,
+                                 len(self.pending), len(self.running))
+                        self.plan(key)
+                    if self.args.watch_minutes and time.time() - last_watch > self.args.watch_minutes * 60:
+                        last_watch = time.time()
+                        n_new = self.load_states()
+                        self.plan_all()
+                        if n_new:
+                            log.info("watch: %d new unit(s), %d queued", n_new, len(self.pending))
+                    if self.deadline and time.time() > self.deadline and not self.running:
+                        break
+            if self.pending:
+                log.info("deadline or budget reached: %d continuation(s) not started", len(self.pending))
+        finally:
+            reap_own_containers(untag=self.args.untag)
+        self.write_status()
+
+    def write_status(self) -> None:
+        summary = collections.Counter(self.decided.values())
+        (self.args.out / "driver_status.json").write_text(json.dumps({
+            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "units": len(self.units),
+            "decided": dict(summary), "done": self.n_done, "spent_usd": round(self.spent, 3),
+            "queued": len(self.pending)}))
+
+
 def main() -> None:
     global TEACHER
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -362,6 +593,13 @@ def main() -> None:
     ap.add_argument("--budget-usd", type=float, default=0.0,
                     help="start no new continuation once this run's summed "
                          "cost_usd (Engy list price) passes this (0 = no budget)")
+    ap.add_argument("--adaptive", default="",
+                    help="A/B (harvest 2026-09-22): Phase A = A OK continuations per state, "
+                         "kept states (not all solved) topped up to B; see Adaptive")
+    ap.add_argument("--watch-minutes", type=float, default=0.0,
+                    help="adaptive: re-read --states this often for new arm rows (0 = off)")
+    ap.add_argument("--max-retries", type=int, default=2,
+                    help="adaptive: re-run an errored slot in place up to this many times")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
@@ -383,6 +621,12 @@ def main() -> None:
     args.states = args.states.resolve()
     kinds = set(args.kinds.split(","))
     only = set(args.only.split(",")) if args.only else None
+    if args.adaptive:
+        args.out.mkdir(parents=True, exist_ok=True)
+        (args.out / "results").mkdir(exist_ok=True)
+        shard = tuple(int(x) for x in args.shard.split("/"))
+        Adaptive(cfg, registry, args, env, kinds, only, shard).run()
+        return
     states = [json.loads(l) for l in open(args.states, encoding="utf-8")]
     for s in states:
         s["path"] = resolve_state_path(s, args.states)
