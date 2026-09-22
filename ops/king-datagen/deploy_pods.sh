@@ -57,7 +57,8 @@ ENV_PKGS=(affine_when2call_v1 affine_notool_v1 affine_logic_v1 affine_trivia_v1 
           affine_pydantic_v1 affine_verbatim_v1 affine_oolong_v1 affine_mrcr_v1
           affine_gdpval_v1
           affine_tau2_v1 affine_tau2_synth_v1 affine_kb_synth_v1 affine_tau2_gen_v1
-          affine_terminal_gen_v1)
+          affine_terminal_gen_v1
+          affine_gen_v1 affine_popqa_abstain_v1 affine_scicomp_v1 affine_docqa_v1 affine_scitext_v1)
 # Env wave 3: prime-envs tasksets the pods' pinned checkout lacks are vendored
 # under rollouts/vendor/prime-envs (see its README) and installed from there.
 VENDOR_ENVS=(deshuffle_papers)
@@ -79,7 +80,7 @@ RESEARCH_ENVS=(reasoning/i3_logic_v1 knowledge/triviaqa_v1 if/ifeval_v1 science/
 # on datagen-2) next to antlr4 4.9.3, and letting the resolver see tarski's
 # own pins makes the constrained install fail (tarski 0.9.1 wants antlr4
 # 4.13). Its planning generators run on whatever tarski is present.
-ENV_EXTRA_DEPS=(immutabledict langdetect markdown rdkit chess sympy mpmath pyyaml
+ENV_EXTRA_DEPS=(immutabledict langdetect markdown rdkit chess sympy mpmath pyyaml openai boto3
                 orjson faker python-dateutil reasoning-gym
                 appdirs beautifulsoup4 duckdb easydict exrex funcy gramforge greenery inflection
                 lazy-object-proxy multiprocess networkx nltk numpy pandas pgmpy pooch psutil

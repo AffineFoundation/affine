@@ -363,6 +363,22 @@ def _eog_meta(row: dict) -> dict | None:
     }
 
 
+def _popqa_meta(row: dict) -> dict | None:
+    """akariasai/PopQA (test): `popqa-<id>` is the task name affine_popqa_abstain_v1
+    filters on; `s_pop` (subject page views) travels so the band can read it."""
+    rid = row.get("id")
+    if rid is None or not row.get("question"):
+        return None
+    _, num = _text_uid("popqa", str(rid))
+    return {
+        "uid": f"popqa-{rid}",
+        "sid": f"popqa_{_dotless_task(str(row.get('prop') or 'fact'))}-{num}",
+        "repo": f"popqa/{row.get('prop') or 'fact'}",
+        "language": "chat",
+        "s_pop": int(row.get("s_pop") or 0),
+    }
+
+
 def _gdpval_meta(row: dict) -> dict | None:
     """openai/gdpval (train, 220 tasks): task_id is the task name
     affine_gdpval_v1 filters on. No [GEN:] marker on purpose: these are the
@@ -499,6 +515,7 @@ ROW_META = {
     "pydantic": _pydantic_meta,
     "eog": _eog_meta,
     "gdpval": _gdpval_meta,
+    "popqa": _popqa_meta,
     "numina": _numina_meta,
     "spider": _spider_meta,
     "commit0": _commit0_meta,
@@ -1653,6 +1670,38 @@ def build_tau2_catalog(cfg: RolloutsConfig, src: Source) -> dict:
         "unusable": len(rows) - len(kept)})
 
 
+# Teacher-generated sources (affine_gen_v1 store): the env's `list_catalog(epoch)`
+# is the single source of task names (uids carry the [GEN:e<epoch>] marker the
+# fold's decontamination rule requires). Epoch from `--env.taskset.epoch`.
+GENENV_LIST = r"""
+import importlib, json, os, sys
+mod = importlib.import_module(sys.argv[1] + ".taskset")
+json.dump(mod.list_catalog(int(sys.argv[2])), sys.stdout); sys.stdout.flush()
+os._exit(0)
+"""
+GENENV_LANGUAGE = {"affine_scicomp": "python", "affine_docqa": "chat", "affine_scitext": "chat"}
+
+
+def build_genenv_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    pkg = src.taskset_id.replace("-", "_")
+    epoch = _flag_value(src, "--env.taskset.epoch", "1")
+    rows = _verifiers_listing(cfg, GENENV_LIST, pkg, epoch, what=src.name)
+    prefix = src.name.replace("affine_", "")
+    kept = []
+    for r in rows:
+        domain = _dotless_task(str(r.get("domain") or "task"))[:40]
+        _, num = _text_uid(prefix, r["uid"])
+        kept.append(_bucketed(src, {
+            "uid": r["uid"], "sid": f"{prefix}_{domain}-{num}", "repo": f"{prefix}/{domain}",
+            "language": GENENV_LANGUAGE.get(src.name, "chat"), "domain": domain,
+            "topic": str(r.get("topic") or ""), "teacher_pass": int(r.get("teacher_pass") or 0),
+        }))
+    by_domain = Counter(r["domain"] for r in kept)
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": f"{pkg} e{epoch} (teacher-generated, [GEN:] uids)",
+        "total": len(rows), "kept": len(kept), "panel_excluded": 0, "unusable": 0, "by_domain": dict(by_domain)})
+
+
 BUILDERS = {
     "hf": build_hf_catalog,
     "tau2": build_tau2_catalog,
@@ -1676,6 +1725,7 @@ BUILDERS = {
     "harbor_swe": build_harbor_swe_catalog,
     "nl2repobench": build_nl2repobench_catalog,
     "procedural": build_procedural_catalog,
+    "genenv": build_genenv_catalog,
 }
 
 

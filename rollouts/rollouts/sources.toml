@@ -52,7 +52,7 @@
 # derived mass: >= 25 % of every slice (16.8 % at epoch 44), taken from the
 # coding / terminal teacher-trajectory turns (floor 40 % kept: buckets 6030 /
 # 3700 -> 4000 / 2600), k = 3 sub-strata on every stop-state group.
-coding = 0.24   # 0.36 -> 0.34 (king_coached) -> 0.28 (phase 10) -> 0.25 (2026-09-21 agentic_ops / long_context) -> 0.24 (2026-09-21 22:25: 0.01 to completion so the static stop-state block meets its 0.25 floor)
+coding = 0.23   # 0.36 -> 0.34 (king_coached) -> 0.28 (phase 10) -> 0.25 (2026-09-21 agentic_ops / long_context) -> 0.24 (2026-09-21 22:25: 0.01 to completion so the static stop-state block meets its 0.25 floor) -> 0.23 (2026-09-22 sci_code; coding + terminal = 0.40 = floor)
 terminal = 0.17 # 0.22 -> 0.18 (phase 10) -> 0.17 (2026-09-21)
 nl2repo = 0.01
 math = 0.02
@@ -73,10 +73,10 @@ tool_use = 0.02
 # `text`), completion 0.03 -> 0.05, + completion_pre 0.01 (the 1-2 teacher
 # turns before a solved stop). The 0.05 comes from coding and terminal
 # proportionally (0.4276/0.2624 -> 0.3966/0.2434).
-king_fail = 0.06   # 0.09 -> 0.08 (phase 10) -> 0.06 (2026-09-21; supply-limited cap, the loosest king dial)
+king_fail = 0.04   # 0.09 -> 0.08 (phase 10) -> 0.06 (2026-09-21; supply-limited cap, the loosest king dial) -> 0.04 (2026-09-22 science)
 king_loop_onset = 0.04
-king_pivot = 0.02
-king_recoverable = 0.02
+king_pivot = 0.01   # 0.02 -> 0.01 (2026-09-22 science)
+king_recoverable = 0.01   # 0.02 -> 0.01 (2026-09-22 sci_code)
 king_done = 0.03   # 0.01 -> 0.03 (phase 10, stop state)
 king_tooluse = 0.03   # 0.02 -> 0.03 (phase 10, stop state); ~540 When2Call candidates/day + persist states from five tool feeders
 completion = 0.11  # 0.10 -> 0.15 (phase 10) -> 0.12 (2026-09-20 auto-research quota: -0.03 to king_divergence; group sat at 18.7 %) -> 0.10 (2026-09-21) -> 0.11 (22:25: static stop-state block back to the 0.25 floor)
@@ -105,6 +105,15 @@ king_divergence = 0.06   # phase 10 0.03 -> 0.06 (2026-09-20 auto-research quota
 # over the next folds as the scheduler's deficit picks them up.
 agentic_ops = 0.05
 long_context = 0.03
+# 2026-09-22 (Jacob 15:24 UTC "yes go for it" on docs/aa-gap-fill-plan.md §7):
+# `science` = the HLE-shaped band (affine_science banded to teacher-solves /
+# king-fails + affine_scitext, teacher-synthesized textbook variants);
+# `sci_code` = affine_scicomp, scientific-computing Python with hidden tests
+# (SciCode-shaped; D had none). Paid by king_fail -0.02, king_pivot -0.01
+# (science) and coding -0.01, king_recoverable -0.01 (sci_code). coding +
+# terminal = 0.40, exactly the floor; the stop-state block stays at 0.25.
+science = 0.03
+sci_code = 0.02
 
 # Per-source flag `interactive = true` (tau2-airline read, 2026-09-18): the
 # harness talks to a simulated user mid-trajectory, so a teacher reply that
@@ -328,6 +337,22 @@ king_min_attempts = 2
 king_missing = "admit"
 retire_published = true
 
+# Teacher-generated sources (aa-gap-fill-plan, 2026-09-22): every task uid
+# carries [GEN:e<epoch>] by construction (affine_gen_v1.gen_uid); requiring
+# the marker guarantees that a benchmark row (SciCode, HLE, AA-LCR) can never
+# fold through these sources even if someone loads it into the taskset.
+[decontamination.affine_scicomp]
+require_gen_marker = true
+domain_field = "repo"
+
+[decontamination.affine_scitext]
+require_gen_marker = true
+domain_field = "repo"
+
+[decontamination.affine_docqa]
+require_gen_marker = true
+domain_field = "repo"
+
 [strata_budget]
 # Phase 9 (2026-09-14). The duel slicer draws one turn per stratum uniformly
 # over strata, so slice share = strata share. `buckets` merges a teacher-
@@ -350,6 +375,8 @@ general = 1000    # 830 -> 900 (2026-09-17, chat floor 6 %) -> 1000 (2026-09-21:
 tool_use = 332
 agentic_ops = 650    # 2026-09-21: 0.05 of ~13k strata
 long_context = 400   # 2026-09-21: 0.03 of ~13k strata
+science = 400        # 2026-09-22: 0.03 of ~13k strata
+sci_code = 260       # 2026-09-22: 0.02 of ~13k strata
 
 [strata_budget.sub_strata]
 king_fail = 3
@@ -383,7 +410,7 @@ completion = 3        # 2 -> 3 (phase 10)
 # call (spec §2.1 rule 3).
 policy_prefix = "king_"
 exclude_sources = ["affine_wiki", "affine_agent", "affine_math",
-                   "affine_logic", "affine_trivia", "affine_trivia_abstain", "affine_ifeval", "affine_science",
+                   "affine_logic", "affine_trivia", "affine_trivia_abstain", "affine_popqa_abstain", "affine_ifeval", "affine_science",
                    "affine_unscramble", "affine_needle"]
 one_reply_ok = false
 first_onset_only = true
@@ -1304,7 +1331,32 @@ pass_dataset = false
 policies = ["teacher_text", "king_text", "king_text_greedy"]
 strata_buckets = 230
 strata_offset = 4350   # general namespace, above affine_verbatim's 4005-4119 and the retired 4120-4349 (oolong / mrcr, now long_context)
-share = 0.5  # 2026-09-22 coordinator decision: probe rescued 27.5-27.8 % of plain-wrong rows on n=400 with <1/3 of that lost (omniscience index +7..+14); half the default share
+share = 1.0            # 2026-09-22 Jacob: 0.5 (probe: 27.5-27.8 % rescued hallucinations) -> 1.0
+
+[source.affine_popqa_abstain]
+# 2026-09-22 (aa-gap-fill-plan §3.1, Jacob "go" 15:24 UTC): PopQA (akariasai/
+# PopQA, 14,267 questions about LOW-popularity Wikidata entities -- the
+# "confidently wrong on rare facts" failure AA-Omniscience penalises) under
+# the abstention prompt and grade of affine_trivia_abstain (solved = correct
+# or "I don't know"; wrong = 0; omniscience metric +1/0/-1). Band: subjects
+# with <= 5,000 page views (taskset `max_pop`), then the fold's [band_filter]
+# (king wrong under the plain answer, teacher abstains or is right). Licence:
+# the source repo is MIT, the HF card has no licence field (noted to Jacob).
+# Natural Questions is NOT used (CC-BY-SA; Jacob: "PopQA only").
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-popqa-abstain-v1"  # rollouts/envs/affine_popqa_abstain_v1
+catalog = "hf"
+dataset = "akariasai/PopQA"
+dataset_revision = "098765c79ea10a2cb19c828324e33281b8336ec0"
+split = "test"
+row_meta = "popqa"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_text", "king_text", "king_text_greedy"]
+strata_buckets = 230
+strata_offset = 4580   # general namespace, after affine_trivia_abstain's 4350-4579
+share = 1.0
 
 [source.affine_ifeval]
 # Verifiable instruction following: allenai/RLVR-IFeval train (14,973
@@ -1332,7 +1384,12 @@ share = 0.5
 # INTELLECT-3-RL `science` train (29,307 problems), \boxed{} answer graded by
 # math-verify ONLY (the upstream LLM-judge fallback is removed: no judge
 # endpoint on the pods). Same difficulty band as logic -> ~17k rows.
-group = "general"
+# 2026-09-22 (aa-gap-fill-plan §1.1): group general -> science (own 0.03
+# share). The teacher solves 19 % of these as shipped, so most references
+# were wrong; the fold worker's [band_filter] (teacher >= 1/3 solved, king
+# seat <= 1/2) + a `band_ids.json` teacher pre-pass keep the signal band.
+# Bucket namespace restarts with the group: 0-339.
+group = "science"
 runner = "verifiers_chat"
 taskset_id = "affine-science-v1"        # rollouts/envs/affine_science_v1
 catalog = "hf"
@@ -1344,11 +1401,33 @@ select = "tasks"
 pass_dataset = false
 policies = ["teacher_boxed", "king_boxed", "king_boxed_greedy"]   # + king seat 2026-09-12; + greedy 2026-09-13
 strata_buckets = 340
-strata_offset = 800
+strata_offset = 0     # 2026-09-22: science namespace (was general 800-1139)
 # Probe: 3/12 by math-verify (a lower bound: free-text golds), replies p50
 # 4.5k tokens — far past the duel's 1,792-token ref cap, so duel yield on
 # these prefixes will be low until that knob moves. Half share.
 share = 0.5
+
+[source.affine_scitext]
+# 2026-09-22 (aa-gap-fill-plan §1.2, Jacob "go" 15:24 UTC; build after items
+# 1-4 are in flight): teacher-synthesized variants of open textbook / olympiad
+# science problems (OlympiadBench Apache-2.0, SciBench MIT, TheoremQA MIT;
+# HLE never used). Each variant's answer is recomputed by executing the
+# teacher's own solution code and the teacher re-solves it blind (kept at
+# 1-3 of 3) -- rollouts/envs/affine_scitext_v1/generate.py. Uids carry
+# [GEN:e<epoch>] ([decontamination.affine_scitext]). Same shape as
+# affine_science (boxed, math-verify). Staged at share 0 until the first
+# generated epoch is published to the package data dir.
+group = "science"
+runner = "verifiers_chat"
+taskset_id = "affine-scitext-v1"        # rollouts/envs/affine_scitext_v1
+catalog = "genenv"
+select = "tasks"
+pass_dataset = false
+extra_flags = ["--env.taskset.epoch", "1"]
+policies = ["teacher_boxed", "king_boxed", "king_boxed_greedy"]
+strata_buckets = 600
+strata_offset = 340   # science namespace, after affine_science's 0-339
+share = 0.0            # flip to 1.0 when data/e1/tasks.jsonl.gz exists (generate.py) -- admitted by Jacob 15:24 UTC once it passes its own verification
 
 [source.affine_unscramble]
 # kalomaze/unscramble-mix-it2 (10,300): reorder scrambled text blocks; the
@@ -1711,6 +1790,30 @@ max_concurrency = 12
 # (25 % under the duel ref cap - the logic / science caveat).
 share = 1.0
 
+[source.affine_scicomp]
+# 2026-09-22 (aa-gap-fill-plan §2.1, Jacob "go" 15:24 UTC): SciCode-shaped
+# scientific-computing Python functions with hidden pytest tests run IN the
+# rollout runtime (docker runner, like affine_i3code). Tasks are teacher-
+# generated from public method inventories (SciPy / NumPy, OpenStax,
+# Astropy / Biopython / ChemPy algorithms) and kept only if the reference
+# passes its tests, a stub fails them, and the teacher solves blind 1-3 of 3
+# (rollouts/envs/affine_scicomp_v1/generate.py). SciCode itself is never
+# used; uids carry [GEN:e<epoch>] ([decontamination.affine_scicomp]).
+# `text` dialect (the whole reply; last ```python block is graded).
+group = "sci_code"
+runner = "verifiers"
+taskset_id = "affine-scicomp-v1"        # rollouts/envs/affine_scicomp_v1
+catalog = "genenv"
+select = "tasks"
+pass_dataset = false
+extra_flags = ["--env.taskset.epoch", "1"]
+policies = ["teacher_text", "king_text", "king_text_greedy"]
+strata_buckets = 260
+strata_offset = 0     # sci_code namespace
+max_batch = 16
+max_concurrency = 8
+share = 0.0            # flip to 1.0 when data/e1/tasks.jsonl.gz exists (generate.py); admitted by Jacob 15:24 UTC once verified
+
 [source.affine_i3math]
 # INTELLECT-3-RL math (train), \boxed{} + math-verify in the runtime; the
 # boxed mandate in a real system message. Same difficulty band. Joins the
@@ -1900,6 +2003,33 @@ strata_offset = 0     # 2026-09-21: long_context namespace
 max_batch = 24
 max_concurrency = 8
 share = 1.0
+
+[source.affine_docqa]
+# 2026-09-22 (aa-gap-fill-plan §4.1, Jacob "go" 15:24 UTC, full-run spend
+# approved): AA-LCR-shaped questions over bundles of REAL public documents
+# (SEC EDGAR 10-Ks, GOV.UK consultation outcomes under OGL v3, Europe PMC
+# CC-BY papers), 60-95k tokens INLINE in the user turn, one visible reply
+# ending `Answer: <value>`; solved = normalised exact match (numbers 1 %,
+# dates by day). Questions are teacher-written and verified: blind
+# re-answer 2x with shuffled documents must match, removing a required
+# document must break it (rollouts/envs/affine_docqa_v1/generate.py).
+# Bundles live on data.affine.io (`envs/affine_docqa/e<epoch>/`, publish.py);
+# uids carry [GEN:e<epoch>] ([decontamination.affine_docqa]). Prefixes stay
+# under the slicer's 110k-token cap. Pilot = 300 bundles (~USD 60), then
+# the full run without waiting (Jacob).
+group = "long_context"
+runner = "verifiers_chat"
+taskset_id = "affine-docqa-v1"          # rollouts/envs/affine_docqa_v1
+catalog = "genenv"
+select = "tasks"
+pass_dataset = false
+extra_flags = ["--env.taskset.epoch", "1"]
+policies = ["teacher_text", "king_text", "king_text_greedy"]
+strata_buckets = 300
+strata_offset = 345   # long_context namespace, after mrcr 0-229 and oolong 230-344
+max_batch = 8
+max_concurrency = 4
+share = 0.0            # flip to 1.0 when e1 is published (generate.py + publish.py); admitted by Jacob 15:24 UTC once verified
 
 [source.affine_gdpval]
 # 2026-09-21 (docs/artificial-analysis-index-path.md §9 #6): OpenAI's GDPval

@@ -1,0 +1,13 @@
+[project]
+name = "affine-gen-v1"
+version = "0.1.0"
+description = "affine-gen-v1 — shared pieces for the teacher-generated D sources (task store with [GEN:] uids, budgeted teacher client, verification helpers)."
+requires-python = ">=3.11"
+dependencies = ["httpx", "filelock", "openai"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["affine_gen_v1"]

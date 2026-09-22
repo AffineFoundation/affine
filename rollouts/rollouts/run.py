@@ -325,7 +325,7 @@ def main() -> None:
             if args.once:
                 break
             time.sleep(POOL_EXHAUSTED_SLEEP_S)
-            pools = {n: ordered_rows(cfg, n, load_catalog(cfg, s))
+            pools = {n: ordered_rows(cfg, n, load_catalog_or_empty(cfg, s))
                      for n, s in registry.sources.items()}
             continue
         source = registry.sources[name]
