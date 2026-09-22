@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,6 +33,9 @@ REASONING_EFFORT = os.environ.get("AFFINE_GEN_REASONING_EFFORT", "low")
 MIN_MAX_TOKENS = int(os.environ.get("AFFINE_GEN_MIN_MAX_TOKENS", "12000"))
 
 
+_SPEND_LOCK = threading.Lock()
+
+
 class BudgetExceeded(RuntimeError):
     pass
 
@@ -50,13 +54,15 @@ class Spend:
         return self.input_tokens / 1e6 * PRICE_IN + self.output_tokens / 1e6 * PRICE_OUT
 
     def add(self, stage: str, inp: int, out: int) -> None:
-        self.input_tokens += inp
-        self.output_tokens += out
-        self.calls += 1
-        st = self.by_stage.setdefault(stage, {"input_tokens": 0, "output_tokens": 0, "calls": 0})
-        st["input_tokens"] += inp
-        st["output_tokens"] += out
-        st["calls"] += 1
+        # Generators run several items in threads (scicomp --workers); one lock keeps the ledger exact.
+        with _SPEND_LOCK:
+            self.input_tokens += inp
+            self.output_tokens += out
+            self.calls += 1
+            st = self.by_stage.setdefault(stage, {"input_tokens": 0, "output_tokens": 0, "calls": 0})
+            st["input_tokens"] += inp
+            st["output_tokens"] += out
+            st["calls"] += 1
 
     def assert_within(self) -> None:
         if self.usd > self.budget_usd:
