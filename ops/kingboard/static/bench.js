@@ -139,7 +139,9 @@
           ? el("td", { class: "num king-col run-failed", title: k.failure || "run failed: the benchmark pass ended without a result (infrastructure, not a model score)" }, "run failed")
           : k && k.status === "unverified"
             ? el("td", { class: "num king-col unverified", title: `unverified — grader result not trusted, not counted. ${row.unverified || ""}${k.raw_score !== undefined && k.raw_score !== null ? ` (raw ${pct(k.raw_score)})` : ""}` }, "unverified")
-            : el("td", { class: "num king-col" }, k ? pct(k.score) + ci(k) : "–", capMark(k)),
+            : k && k.status === "partial"
+              ? el("td", { class: "num king-col unverified", title: `${k.failure || "partial: the job was interrupted"}; score so far ${pct(k.score)} over ${k.n} trials${k.n_infra_env ? `, ${k.n_infra_env} never reached a live model` : ""} — provisional, not a final number` }, `partial (${k.n_live ?? "?"}/${k.n_expected ?? "?"})`)
+              : el("td", { class: "num king-col" }, k ? pct(k.score) + ci(k) : "–", capMark(k)),
         el("td", { class: "num teacher-col" + (t && t.status === "failed" ? " run-failed" : t && t.status === "unverified" ? " unverified" : ""),
           title: t && t.status === "failed" ? (t.failure || "run failed")
             : t && t.status === "unverified" ? `unverified — grader result not trusted, not counted. ${row.unverified || ""}${t.raw_score !== undefined && t.raw_score !== null ? ` (raw ${pct(t.raw_score)})` : ""}`
