@@ -147,7 +147,7 @@ def adopt(cfg: dict, listed: set[str]) -> int:
                 if isinstance(mem, dict) and mem.get("state") != "released":
                     names[str(name)] = {"purpose": a.get("purpose"), "owner": a.get("owner"),
                                         "expected_hours": a.get("expected_hours"),
-                                        "price": mem.get("price")}
+                                        "price": mem.get("price"), "base_url": mem.get("base_url")}
         for name, info in names.items():
             if name not in listed:
                 continue
@@ -156,6 +156,7 @@ def adopt(cfg: dict, listed: set[str]) -> int:
                     registry.SOURCE_RANK.get(str(rec.get("source", "auto")).split(":")[0], 1) >= 2:
                 continue
             registry.register(name, purpose=info.get("purpose"), owner=info.get("owner"),
+                              meta=({"base_url": info["base_url"]} if info.get("base_url") else None),
                               expected_hours=(float(info["expected_hours"])
                                               if info.get("expected_hours") is not None else None),
                               price_usd_h=info.get("price"), source=f"adopted:{a['name']}")
@@ -237,6 +238,94 @@ class Reaper:
         c = self._created(pod)
         return (common.now() - c) / 3600 if c else 0.0
 
+    # -- lifetime rules (2026-09-22): a registered pod is released only when
+    #    (a) its owner wrote the completion marker (registry `done`), or
+    #    (b) its heartbeat is stale > heartbeat_stale_min AND its vLLM has served
+    #        nothing for idle_min (no signal = no release), or
+    #    (c) it reaches expected_hours — a hard CEILING that pages at
+    #        ceiling_page_frac first. Fixed lifetimes alone killed six env
+    #        serving boxes overnight while their drivers still used them.
+    def feed_heartbeats(self, by_name: dict[str, dict]) -> int:
+        """Owner heartbeats the reaper collects itself: the env-backfill driver
+        pods' /drivers list every live driver with the serving box it talks
+        to and how fresh its log is; a fresh driver = a heartbeat for that
+        box. Returns the number of pods touched."""
+        hb = self.cfg.get("heartbeat", {})
+        ptr_path = (HERE / hb.get("driver_pointer", "../../affine/state/pods/backfill_driver.json")).resolve()
+        ptr = common.read_json(ptr_path, default={}) or {}
+        pods = ([ptr] if ptr.get("health_url") else []) + list(ptr.get("secondaries") or [])
+        fresh_s = float(hb.get("driver_fresh_min", 10)) * 60
+        # host:port -> pod name for every listed pod of ours
+        addr: dict[str, str] = {}
+        for name, pod in by_name.items():
+            ssh = lium_api.parse_ssh(pod)
+            if not ssh:
+                continue
+            for ext in lium_api.data_ports(pod).values():
+                addr[f"{ssh[0]}:{ext}"] = name
+        touched = 0
+        for dp in pods:
+            url = str(dp.get("health_url", "")).replace("/health", "/drivers")
+            try:
+                drivers = requests.get(url, timeout=10).json().get("drivers") or []
+            except (requests.RequestException, ValueError):
+                continue
+            for d in drivers:
+                if d.get("complete") or d.get("log_age_s") is None or float(d["log_age_s"]) > fresh_s:
+                    continue
+                base = str(d.get("base_url") or "")
+                hp = base.split("://", 1)[-1].split("/", 1)[0]
+                name = addr.get(hp)
+                if name:
+                    registry.touch(name)
+                    touched += 1
+        return touched
+
+    def idle_seconds(self, name: str, pod: dict, rec: dict) -> float | None:
+        """Seconds since the pod's vLLM last served a request (its /metrics
+        counters moved or a request was running), or None when no metrics
+        endpoint answers."""
+        cands = []
+        base = ((rec.get("meta") or {}).get("base_url") or "").rstrip("/")
+        if base:
+            cands.append(base[:-3] if base.endswith("/v1") else base)
+        ssh = lium_api.parse_ssh(pod)
+        if ssh:
+            for ext in list(lium_api.data_ports(pod).values())[:3]:
+                cands.append(f"http://{ssh[0]}:{ext}")
+        text = None
+        for c in cands:
+            try:
+                r = requests.get(f"{c}/metrics", timeout=5)
+                if r.status_code == 200 and "vllm:" in r.text:
+                    text = r.text
+                    break
+            except requests.RequestException:
+                continue
+        if text is None:
+            return None
+        running = total = 0.0
+        for line in text.splitlines():
+            if line.startswith("#"):
+                continue
+            key, _, val = line.rpartition(" ")
+            try:
+                v = float(val)
+            except ValueError:
+                continue
+            if key.startswith("vllm:num_requests_running"):
+                running += v
+            elif key.startswith(("vllm:request_success_total", "vllm:prompt_tokens_total")):
+                total += v
+        st = self.own.setdefault("activity", {}).setdefault(name, {})
+        now = common.now()
+        if running > 0 or st.get("total") != total or "changed_at" not in st:
+            st["changed_at"] = now
+        st["total"] = total
+        st["running"] = running
+        st["seen_at"] = now
+        return now - float(st["changed_at"])
+
     def _hours_left(self, pod: dict) -> float:
         rem = common.parse_iso(pod.get("removal_scheduled_at"))
         if rem and rem > common.now():
@@ -264,6 +353,12 @@ class Reaper:
         adopted = adopt(self.cfg, listed)
         if adopted:
             log(f"adopted {adopted} pod(s) from controller state files")
+        try:
+            fed = self.feed_heartbeats(by_name)
+            if fed:
+                log(f"heartbeats from the env-backfill drivers: {fed} pod(s)")
+        except Exception as e:  # noqa: BLE001 - a feeder failure must not stop the audit
+            log(f"heartbeat feed failed: {e!r}")
         reg = registry.load(self.cfg)
         procs = common.pm2_jlist()
         cmdlines = _proc_cmdlines()
@@ -319,22 +414,57 @@ class Reaper:
             alive = owner_alive(name, rec.get("owner", "unknown"), procs, cmdlines)
             row["owner_alive"] = alive
             exp = float(rec.get("expected_hours") or 0)
-            over = exp > 0 and age_h > exp
-            if over and alive is False:
-                row["decision"] = "release_expired"
+            hb_at = float(rec.get("heartbeat_at") or rec.get("registered_at") or now)
+            # A live controller process (pm2:/pid:/proc: owner) IS the
+            # heartbeat — kingctl, the swarm manager, the validator rotate
+            # their own boxes. Indefinite pods (expected_hours 0: the fleet,
+            # eval, chat, driver pods) are outside the heartbeat rule.
+            owner = str(rec.get("owner") or "")
+            if alive is True and owner.startswith(("pm2:", "pid:", "proc:")):
+                hb_at = now
+            if exp <= 0:
+                hb_at = now
+            hb_age_min = (now - hb_at) / 60
+            stale_min = float(r.get("heartbeat_stale_min", 60))
+            idle_min = float(r.get("idle_min", 30))
+            frac = float(r.get("ceiling_page_frac", 0.9))
+            row.update({"heartbeat_age_min": round(hb_age_min), "ceiling_h": exp or None,
+                        "heartbeat_at": rec.get("heartbeat_at")})
+            idle_s = None
+            if hb_age_min > stale_min or (exp > 0 and age_h >= frac * exp):
+                idle_s = self.idle_seconds(name, pod, rec)
+                row["idle_min"] = None if idle_s is None else round(idle_s / 60)
+            if rec.get("release_requested_at"):
+                row["decision"] = "release_marker"
                 report["actions"].append(self.release(
-                    pod, name, f"{age_h:.1f} h > expected {exp:.0f} h and owner `{rec.get('owner')}` is dead", rec))
-            elif over:
-                row["decision"] = "over_lifetime_owner_alive"
-                self.warn(f"over:{name}", f"`{name}` ({rec.get('purpose')}, ${price:.2f}/h) is "
-                          f"{age_h:.1f} h old, expected {exp:.0f} h; owner `{rec.get('owner')}` still alive — "
-                          f"check it, or raise its expected lifetime")
-                report["problems"].append(f"over lifetime {name} ({age_h:.0f} h > {exp:.0f} h)")
-            elif alive is False and age_h > float(r.get("owner_dead_warn_h", 2)):
-                row["decision"] = "owner_dead_inside_lifetime"
-                self.warn(f"dead:{name}", f"`{name}` ({rec.get('purpose')}, ${price:.2f}/h, age {age_h:.1f} h): "
-                          f"owner `{rec.get('owner')}` is not running; released at {exp:.0f} h unless it comes back")
-                report["problems"].append(f"owner dead {name}")
+                    pod, name, f"owner marked it done ({rec.get('release_requested_reason') or 'done'})", rec))
+            elif exp > 0 and age_h >= exp:
+                row["decision"] = "release_ceiling"
+                report["actions"].append(self.release(
+                    pod, name, f"hard ceiling: {age_h:.1f} h >= {exp:.0f} h (paged at {frac:.0%}; "
+                               f"`registry.py extend {name} --hours H` would have kept it)", rec))
+            elif exp > 0 and age_h >= frac * exp:
+                row["decision"] = "ceiling_soon"
+                self.warn(f"ceiling:{name}", f"`{name}` ({rec.get('purpose')}, ${price:.2f}/h) is at "
+                          f"{age_h / exp:.0%} of its {exp:.0f} h ceiling (heartbeat {hb_age_min:.0f} min ago"
+                          f"{'' if idle_s is None else f', idle {idle_s / 60:.0f} min'}) — "
+                          f"`python ops/pods/registry.py extend {name} --hours H` or it is released at {exp:.0f} h",
+                          dedupe_h=max(0.5, (1 - frac) * exp / 2))
+                report["problems"].append(f"ceiling soon {name} ({age_h:.0f}/{exp:.0f} h)")
+            elif hb_age_min > stale_min and idle_s is not None and idle_s >= idle_min * 60:
+                row["decision"] = "release_stale_idle"
+                report["actions"].append(self.release(
+                    pod, name, f"no owner heartbeat for {hb_age_min:.0f} min and no /v1 request for "
+                               f"{idle_s / 60:.0f} min (owner `{rec.get('owner')}` {'alive' if alive else 'dead'})", rec))
+            elif hb_age_min > stale_min and idle_s is None:
+                row["decision"] = "stale_no_idle_signal"
+                self.warn(f"stale:{name}", f"`{name}` ({rec.get('purpose')}, ${price:.2f}/h, age {age_h:.1f} h): "
+                          f"no owner heartbeat for {hb_age_min:.0f} min and no /metrics to read idleness — "
+                          f"not released; `registry.py touch {name}` if it is in use, `registry.py done {name}` if not",
+                          dedupe_h=12)
+                report["problems"].append(f"stale heartbeat, no idle signal {name}")
+            elif hb_age_min > stale_min:
+                row["decision"] = "stale_but_busy"
             else:
                 row["decision"] = "ok"
             report["ours"].append(row)
@@ -349,7 +479,7 @@ class Reaper:
         report["foreign"]["usd_h"] = round(report["foreign"]["usd_h"], 2)
         report["n_ours"] = len(report["ours"])
         report["over_lifetime"] = [x["name"] for x in report["ours"]
-                                   if str(x.get("decision", "")).startswith(("release_expired", "over_lifetime"))]
+                                   if str(x.get("decision", "")).startswith(("release_ceiling", "ceiling_soon"))]
         saved = sum(a.get("saved_usd_est", 0) for a in report["actions"] if a.get("released"))
         log(f"ours={report['n_ours']} ${ours_usd:.2f}/h foreign={report['foreign']['count']} "
             f"${report['foreign']['usd_h']:.2f}/h actions={len(report['actions'])} "

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -46,17 +47,48 @@ def env_value(key: str) -> str:
     return ""
 
 
+def _king_env_base_url(path: str) -> str:
+    try:
+        for line in open(path):
+            line = line.strip().removeprefix("export ").strip()
+            if line.startswith("KING_BASE_URL="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return ""
+
+
 def drivers() -> list[dict]:
+    """Live backfill-<tag> sessions. `base_url` = the serving box the driver
+    talks to (from its record's ROLLOUTS_KING_ENV, else .king_env_<tag>);
+    `log_age_s` = seconds since its log moved — the pod reaper reads both as
+    an owner heartbeat for that box (2026-09-22)."""
     rc, out = sh("tmux -f /dev/null ls -F '#{session_name}' 2>/dev/null")
     rows = []
     for name in (out.splitlines() if rc == 0 else []):
         if not name.startswith("backfill-"):
             continue
-        d12 = name.removeprefix("backfill-")
-        log = f"/root/logs/backfill_{d12}.log"
+        tag = name.removeprefix("backfill-")
+        log = f"/root/logs/backfill_{tag.replace('-', '_')}.log"
+        if not os.path.exists(log):
+            log = f"/root/logs/backfill_{tag}.log"
         _, tail = sh(f"tail -n 1 {log} 2>/dev/null")
-        rows.append({"session": name, "digest12": d12, "log": log, "last_line": tail[-300:],
-                     "complete": os.path.exists(log) and sh(f"grep -q 'backfill {d12} complete' {log}")[0] == 0})
+        king_env = f"/root/rollouts/.king_env_{tag.replace('-', '_')}"
+        try:
+            rec = json.load(open(f"/root/rollouts/drivers/{tag}.json"))
+            m = re.search(r"ROLLOUTS_KING_ENV=(\S+)", rec.get("cmd", ""))
+            if m:
+                king_env = m.group(1).strip("'\"")
+        except (OSError, ValueError):
+            pass
+        try:
+            log_age = time.time() - os.path.getmtime(log)
+        except OSError:
+            log_age = None
+        rows.append({"session": name, "digest12": tag.split("-")[0], "tag": tag, "log": log,
+                     "last_line": tail[-300:], "log_age_s": None if log_age is None else round(log_age),
+                     "base_url": _king_env_base_url(king_env),
+                     "complete": os.path.exists(log) and sh(f"grep -q 'backfill {tag.split(chr(45))[0]} complete' {log}")[0] == 0})
     return rows
 
 
