@@ -15,7 +15,10 @@
 #
 # Two long-lived loops end the script:
 #   run_engine.sh   relaunches the engine; reads /root/cacheon-king/mode
-#                   ("stock" | "bundle") on every launch
+#                   ("stock" | "bundle") and, when present, the extra server
+#                   flags in /root/cacheon-king/extra_args (one line; e.g.
+#                   speculative decoding) on every launch. Whatever sits in
+#                   $DATA/models/draft-mtp is mounted at /draft.
 #   bundle_watch.sh polls dash.cacheon.ai from RELEASE_AT, verifies the
 #                   bundle's content hash, scans it, flips mode -> bundle and
 #                   restarts the engine once.
@@ -151,10 +154,12 @@ while true; do
            -e PYTHONPATH=/bundles/champion)
     rm -f $DATA/work/receipts/*
   fi
-  echo "[cacheon-king] \$(date -u +%FT%TZ) launching engine mode=\$mode"
+  extra_args=\$(cat $ROOT/extra_args 2>/dev/null || true)
+  echo "[cacheon-king] \$(date -u +%FT%TZ) launching engine mode=\$mode extra_args=[\$extra_args]"
   docker rm -f king-engine >/dev/null 2>&1
+  mkdir -p $DATA/models/draft-mtp
   docker run --rm --name king-engine --gpus all --network host --shm-size 32g --ipc host \\
-    -v $MODEL_DIR:/model:ro -v $DATA/bundles:/bundles:ro -v $DATA/work:/work \\
+    -v $MODEL_DIR:/model:ro -v $DATA/models/draft-mtp:/draft:ro -v $DATA/bundles:/bundles:ro -v $DATA/work:/work \\
     -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 "\${extra[@]}" \\
     $IMAGE python3.12 -m sglang.launch_server \\
       --model-path /model --served-model-name affine-king \\
@@ -164,7 +169,7 @@ while true; do
       --moe-runner-backend triton --disable-radix-cache \\
       --cuda-graph-bs 1 2 4 8 16 24 32 40 48 \\
       --tool-call-parser qwen3_coder --reasoning-parser qwen3 \\
-      --log-level info \\
+      --log-level info \$extra_args \\
     || echo "[cacheon-king] engine exited \$?"
   sleep 10
 done
