@@ -502,12 +502,36 @@ class Adaptive:
                 f.write(json.dumps(r) + "\n")
         return r
 
+    def host_ok(self) -> bool:
+        """Back off on a shared box: no new continuation while the 1-min load
+        exceeds RECOVERABLE_MAX_LOAD1 or free disk on / is below
+        RECOVERABLE_MIN_DISK_FREE_PCT (both unset = no ceiling). Running
+        containers finish; only new starts wait. Requested for
+        affine-backfill-4 (live env-backfill driver box), 2026-09-22."""
+        max_load = os.environ.get("RECOVERABLE_MAX_LOAD1")
+        min_free = os.environ.get("RECOVERABLE_MIN_DISK_FREE_PCT")
+        if not max_load and not min_free:
+            return True
+        try:
+            if max_load and os.getloadavg()[0] > float(max_load):
+                log.warning("host guard: load1 %.1f > %s, holding new starts", os.getloadavg()[0], max_load)
+                return False
+            if min_free:
+                st = os.statvfs("/")
+                free_pct = 100.0 * st.f_bavail / max(st.f_blocks, 1)
+                if free_pct < float(min_free):
+                    log.warning("host guard: disk free %.1f%% < %s%%, holding new starts", free_pct, min_free)
+                    return False
+        except OSError:
+            return True
+        return True
+
     def can_start(self) -> bool:
         if self.deadline and time.time() > self.deadline:
             return False
         if self.args.budget_usd and self.spent >= self.args.budget_usd:
             return False
-        return True
+        return self.host_ok()
 
     def run(self) -> None:
         n_new = self.load_states()
