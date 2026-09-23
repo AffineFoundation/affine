@@ -204,6 +204,17 @@ min_submission_block = 8938619
 # +0.07 sd on average, typicality-leg teacher-vs-king control +0.36 → +0.27 sd
 # (z 3.8 → 3.0). Everything else in [duel] unchanged; forward-only, reign 21
 # stands, min_submission_block unchanged. ~3x duel cost accepted.
+# 23→24 forfeit floor −12 → −6 sd (2026-09-23): explicit dated operator directive
+# 2026-09-23 20:17 UTC ("Lets do this", on the training-speed probe: 2.0 % of
+# side-turns at −12 carried 48 % of the per-turn score variance). −6 stays
+# strictly below the genuine valid-turn p1 (−4.64; p0.5 −5.48); 0.32 % of
+# valid turns score below it (oracle forfeit-seeking gain 0.007 sd/turn =
+# 3.5 % of δ; at −7: 0.19 % / 0.0045). Counterfactual on the last 30 verdicts:
+# 0 decision flips, SE ×0.89 median (×0.78 at best), z shifts within ±0.5
+# (one +0.99). A 2 % forfeit gap now costs ≈ 0.09 sd (half a δ; was one δ).
+# Nothing else changes: δ 0.2, k_sigma 2, n_turns 1000, caps, rendering,
+# content_prefix. Forward-only, reign 21 stands, min_submission_block
+# unchanged.
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -211,7 +222,7 @@ min_submission_block = 8938619
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 23
+weight_version_key = 24
 
 [wallet]
 name = "default"
@@ -1013,7 +1024,14 @@ content_lift_nats = 1.0
 content_min_tokens = 10
 typicality_width = 2.0
 a_norm_bytes = 1.0
-forfeit_sd = -12
+# 2026-09-23 (wvk 23→24, explicit dated operator directive 2026-09-23 20:17 UTC "Lets
+# do this"): −12 → −6. At −12 the 2 % of forfeited side-turns carried 48 % of the
+# per-turn score variance (training-speed probe); −6 is still strictly below
+# the genuine valid-turn p1 (−4.64) and p0.5 (−5.48): 0.32 % of valid turns
+# score under it, oracle forfeit-seeking gain 0.007 sd/turn (3.5 % of δ).
+# Counterfactual on the last 30 verdicts: 0 flips, SE ×0.89 median. Also the
+# typ_c floor for thoughts with < content_min_tokens content tokens.
+forfeit_sd = -6
 k_sigma = 2.0
 min_margin_sd = 0.2
 
