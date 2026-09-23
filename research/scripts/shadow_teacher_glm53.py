@@ -51,6 +51,7 @@ sys.path.insert(0, str(REPO / "affine"))
 
 from affine import dialects  # noqa: E402
 from affine.config import load_config  # noqa: E402
+from affine.score import DEFAULT_CAUSALITY_TAU, b_gate_pass, teacher_causality  # noqa: E402
 from evalsrv import sdmeter  # noqa: E402
 from evalsrv.chat import (  # noqa: E402
     gen_prompt, get_tokenizer, set_thought_rendering, split_rollout,
@@ -507,9 +508,21 @@ def score_group(turn_refs: dict, rows_c: dict, rows_k: dict, kind_by_tid: dict,
         se = st.stdev(d) / math.sqrt(len(d))
         return {"margin": st.mean(d), "z": st.mean(d) / se if se > 0 else None, "n": len(d)}
 
+    def b_pass(rows: dict) -> dict:
+        """B licence (causality_tau per byte, leakage check) on the valid rows —
+        the one per-byte knob the sd-meter still carries."""
+        vals = [b_gate_pass(r["pairs"][0], DEFAULT_CAUSALITY_TAU) for r in rows.values()
+                if r.get("valid") and r.get("pairs")]
+        vals = [v for v in vals if v is not None]
+        bs = [teacher_causality(r["pairs"][0]) for r in rows.values() if r.get("valid") and r.get("pairs")]
+        bs = [b for b in bs if b is not None]
+        return {"pass_rate": (sum(vals) / len(vals)) if vals else None, "n": len(vals),
+                "mean_b": (st.mean(bs) if bs else None)}
+
     return {
         "n_turns": len(turn_refs), "n_loo_turns": len(loo.mu),
         "sigma_by_dialect": sigma, "mu_mean_by_dialect": loo.mu_mean,
+        "b_gate": {"challenger": b_pass(rows_c), "king": b_pass(rows_k)},
         "challenger": leg_means(c_scores), "king": leg_means(k_scores),
         "teacher": leg_means(t_scores),
         "paired": paired,
@@ -650,6 +663,9 @@ def render(rep: dict) -> str:
                  f"z_A leg {_f(tk['z_A']['margin'])} z {_f(tk['z_A']['z'],6,2)}")
         p = g["paired"]
         L.append(f"  challenger − king (all verdicts pooled): margin {_f(p['margin'])}  z {_f(p['z'],6,2)}  n {p['n_paired_turns']}")
+        bg = g["b_gate"]
+        L.append(f"  B licence (tau {DEFAULT_CAUSALITY_TAU}/byte, gate 0.30): king pass {_f(bg['king']['pass_rate'],5,2)} mean B {_f(bg['king']['mean_b'],7,4)}  |  "
+                 f"challenger pass {_f(bg['challenger']['pass_rate'],5,2)} mean B {_f(bg['challenger']['mean_b'],7,4)}")
         L.append(f"  sigma by dialect: " + ", ".join(f"{k}: R {_f(v.get('R'),6,4)} A {_f(v.get('A'),6,2)} Mc {_f(v.get('Mc'),6,3)}"
                                                     for k, v in sorted(g["sigma_by_dialect"].items())))
         L.append("")
