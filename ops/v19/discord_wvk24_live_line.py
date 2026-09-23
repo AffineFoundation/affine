@@ -48,7 +48,8 @@ def main() -> int:
               f"per-turn score variance, dominating verdict SE and any training signal. −6 is still strictly worse than honest play — the 1st percentile of valid turns is "
               f"−4.6 sd, only 0.3 % of valid turns score below −6, and forfeiting even those perfectly would gain 0.007 sd/turn (3.5 % of δ) — so skipping a turn never pays. "
               f"Last 30 verdicts replayed: no decision changes, SE × 0.89. Nothing else changes (δ 0.2, k 2, 1,000 turns, caps 4,096/4,864, rendering, typicality prefix). "
-              f"Forward-only; **reign 21 stands**; {a.queue_n} challenger(s) were pending at the flip. First wvk-24 verdict `{a.first}`: {a.secs} s, forfeits {a.forfeits}, SE {a.se}, control {a.ctrl}. "
+              f"Two more items in the same fork, live from the next boundary (`chal-00679` on; `chal-00678` ran with the floor only): a teacher reference with fewer than 10 content tokens no longer anchors the typicality leg, and a turn with fewer than 2 such references scores min(z_R, z_A); and every verdict now publishes a k-matched, floor-dropped teacher-vs-king control (`control_kmatched`, overall + per leg) next to the legacy one. "
+              f"Forward-only; **reign 21 stands**. First full-bundle verdict `{a.first}`: {a.secs} s, forfeits {a.forfeits}, SE {a.se}, control {a.ctrl}. "
               f"Details: https://affine.io/llms.txt → \"Fork history: wvk 24\".")
     private = (f"wvk 24 live {a.flip_time}: forfeit_sd −6 (was −12); box `{a.box_commit}`. Counterfactual ops/v19/floor_counterfactual.md: 0 flips / 30, SE ×0.89 median, genuine valid p1 −4.64, "
                f"0.32 % of valid turns below −6 (oracle gain 0.007 sd/turn). First verdict `{a.first}`: {a.secs} s, forfeits {a.forfeits}, SE {a.se}, control {a.ctrl}. Rollback on a control sign flip: bash ops/v19/rollback_wvk24.sh.")

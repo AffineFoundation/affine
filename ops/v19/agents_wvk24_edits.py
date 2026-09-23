@@ -25,7 +25,19 @@ def main():
   (3.5 % of δ). Counterfactual on the last 30 verdicts (`ops/v19/
   floor_counterfactual.md`): 0 flips, SE ×0.89 median (×0.78 best), z shifts
   within ±0.5 (one +0.99); a 2 % forfeit gap now costs ≈ 0.09 sd (half a δ).
-  Nothing else changed; forward-only, reign 21 stands. First wvk-24 verdict
+  **Two-step flip at consecutive boundaries (same wvk):** floor live 20:45 UTC
+  (`chal-00678` judged with the floor only); addendum (directive 20:47 "do
+  it") from the next boundary, `chal-00679` on: (6) `ref_min_content = 10`,
+  `typ_min_refs = 2` — a reference thought with < 10 content tokens does not
+  anchor typicality, < 2 content-bearing refs → min(z_R, z_A) (7.5 % of refs,
+  ~4.8 % of turns; combined counterfactual 0 flips / 30, `ops/v19/
+  combined_counterfactual.md`); (3) `control_kmatched` on every verdict —
+  teacher-vs-king with the king scored against the same k−1 refs as the
+  held-out reference, king forfeits / content-floor turns dropped, overall +
+  per leg; pre-fork: all −0.13 (z −2.5, 30/30 neg), R −0.19 (z −4.2, 30/30
+  neg), Gc −0.03 (mixed), A +0.16 (z +4.3, 30/30 pos) — the rollback signal
+  is a sign flip vs these. Nothing else changed; forward-only, reign 21
+  stands. First full-bundle verdict
   `{a.first_verdict}`: {a.first_secs} s, forfeits {a.first_forfeits}, SE {a.first_se},
   control {a.first_ctrl}. Rollback = control z sign flip
   (`ops/v19/rollback_wvk24.sh`).
