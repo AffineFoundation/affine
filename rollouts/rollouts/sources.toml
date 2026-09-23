@@ -407,7 +407,7 @@ general = 1060    # 830 -> 900 (2026-09-17, chat floor 6 %) -> 1000 (2026-09-21:
 tool_use = 332
 agentic_ops = 650    # 2026-09-21: 0.05 of ~13k strata
 long_context = 400   # 2026-09-21: 0.03 of ~13k strata
-science = 650        # 2026-09-22: 0.03 -> 0.05 of ~13k strata (17:00 UTC)
+science = 1500       # 400 -> 650 (2026-09-22 17:00, 0.05 of ~13k) -> 1500 (2026-09-23: budget buckets re-hash the raw strata, populated = n(1-e^(-raw/n)); at 650 the 569 raw science strata would populate only ~380. The source-level strata_buckets (1000) is the binding cap; this one must not bind)
 sci_code = 260       # 2026-09-22: 0.02 of ~13k strata
 
 [strata_budget.sub_strata]
@@ -1432,8 +1432,8 @@ row_meta = "i3_science"
 select = "tasks"
 pass_dataset = false
 policies = ["teacher_boxed", "king_boxed", "king_boxed_greedy"]   # + king seat 2026-09-12; + greedy 2026-09-13
-strata_buckets = 340
-strata_offset = 0     # 2026-09-22: science namespace (was general 800-1139)
+strata_buckets = 1000  # 340 -> 1000 (2026-09-23 06:30: the group's 5 % target is ~715 slice strata; 340 hashed buckets capped the source at ~310. Populated = n(1-e^(-kept/n)): 842 band-kept tasks -> 569 at 1000, filling as the pre-pass lands)
+strata_offset = 0     # 2026-09-22: science namespace (was general 800-1139); 0-999 since 2026-09-23
 # Probe: 3/12 by math-verify (a lower bound: free-text golds), replies p50
 # 4.5k tokens — far past the duel's 1,792-token ref cap, so duel yield on
 # these prefixes will be low until that knob moves. Half share.
@@ -1458,7 +1458,7 @@ pass_dataset = false
 extra_flags = ["--env.taskset.epoch", "1"]
 policies = ["teacher_boxed", "king_boxed", "king_boxed_greedy"]
 strata_buckets = 600
-strata_offset = 340   # science namespace, after affine_science's 0-339
+strata_offset = 1000  # science namespace, after affine_science's 0-999 (340 -> 1000 on 2026-09-23; nothing was published under science: before)
 share = 1.0            # 2026-09-22 19:40 UTC: e1 committed (202 tasks, all [GEN:e1], teacher 3/3 on 176) -- AA-worker threshold >= 200 met; later passes merge in
 
 [source.affine_unscramble]
