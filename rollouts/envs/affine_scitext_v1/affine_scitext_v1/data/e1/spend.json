@@ -1,22 +1,22 @@
 {
  "budget_usd": 130.0,
- "usd": 0.66,
- "input_tokens": 180811,
- "output_tokens": 2036627,
- "calls": 843,
- "elapsed_s": 4159,
+ "usd": 6.96,
+ "input_tokens": 1969378,
+ "output_tokens": 21479196,
+ "calls": 9198,
+ "elapsed_s": 62558,
  "price_in_per_m": 0.045,
  "price_out_per_m": 0.32,
  "by_stage": {
   "generate": {
-   "input_tokens": 42738,
-   "output_tokens": 464750,
-   "calls": 139
+   "input_tokens": 459017,
+   "output_tokens": 5062312,
+   "calls": 1488
   },
   "blind_solve": {
-   "input_tokens": 138073,
-   "output_tokens": 1571877,
-   "calls": 704
+   "input_tokens": 1510361,
+   "output_tokens": 16416884,
+   "calls": 7710
   }
  }
 }
