@@ -272,7 +272,7 @@ class Scheduler:
     def replay_targets(self, source: str, rows: list[dict]) -> list[dict]:
         """Band-relevant rows of the source: tasks the pod's teacher solved
         plus the fold's kept-in-D list, in pool order."""
-        if self.registry.sources[source].king_attempts <= 1:
+        if self.registry.sources[source].king_attempts < 1:
             return []
         solved = self.state.teacher_solved.get(source, set())
         sids = self.replay_sids(source)
@@ -478,7 +478,7 @@ class Scheduler:
             # first, fewest attempts first, and the CURRENT seat may roll a
             # task it already did once (that is the second attempt).
             want = self.registry.sources[source].king_attempts
-            if want > 1:
+            if want >= 1:
                 att = self.state.king_attempts.get(source, {})
                 owed = [r for r in self.replay_targets(source, rows) if att.get(r["uid"], 0) < want]
                 if owed:

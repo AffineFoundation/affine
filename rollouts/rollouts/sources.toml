@@ -843,9 +843,9 @@ row_meta = "multiswe"
 share = 3.0
 
 [source.swesmith]
-king_attempts = 2   # 2026-09-23 20:47 UTC Jacob "do" (slice composition): king-seat replay so the fold's
-                    # [band_filter] king side (>= 2 seat attempts) covers every teacher-solved task; the seat
-                    # replays the band sources first (scheduler KING_REPLAY_SHARE 0.65)
+king_attempts = 1   # 2026-09-23 21:31 UTC (coordinator, "15 days is too slow"): ONE seat pass -- the fold's
+                    # [band_filter.defaults] king_min_attempts is 1 and the king solves 0.80-0.86 of what it
+                    # tries here, so one attempt already retires what the king solves; halves the owed work
 group = "coding"
 runner = "verifiers"
 taskset_id = "swesmith-v1"
@@ -914,9 +914,9 @@ share = 0.0
 # -- terminal ------------------------------------------------------------------
 
 [source.terminal_lego]
-king_attempts = 2   # 2026-09-23 20:47 UTC Jacob "do" (slice composition): king-seat replay so the fold's
-                    # [band_filter] king side (>= 2 seat attempts) covers every teacher-solved task; the seat
-                    # replays the band sources first (scheduler KING_REPLAY_SHARE 0.65)
+king_attempts = 1   # 2026-09-23 21:31 UTC (coordinator, "15 days is too slow"): ONE seat pass -- the fold's
+                    # [band_filter.defaults] king_min_attempts is 1 and the king solves 0.80-0.86 of what it
+                    # tries here, so one attempt already retires what the king solves; halves the owed work
 group = "terminal"
 runner = "verifiers"
 taskset_id = "terminal-lego-v1"
