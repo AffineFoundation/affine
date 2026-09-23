@@ -71,6 +71,7 @@ import httpx
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
+from transformers import AutoTokenizer
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "affine"))
@@ -1590,12 +1591,62 @@ def soft_lang_fill(records: list[dict], have: dict[str, set[str]], *,
 
 # -- derive ----------------------------------------------------------------------
 # The prefix cap in the unit that binds at duel time: the serving window is
-# max_model_len = 131072 tokens minus 1792 generated. MAX_PREFIX_CHARS (300k,
-# datagen/slicer.py) is the coarse cut; prefixes above TOKEN_GUARD_FROM_CHARS
-# are measured with the teacher tokenizer and dropped past MAX_PREFIX_TOKENS
-# (a 2026-09-10 data event; 300k chars ~ 78k tokens p50 / 90k p10).
+# [miner_serving].max_model_len minus what a duel generates on top of the
+# prefix. MAX_PREFIX_CHARS (datagen/slicer.py) is the coarse cut; prefixes
+# above TOKEN_GUARD_FROM_CHARS are measured and dropped past the cap (a
+# 2026-09-10 data event; 300k chars ~ 78k tokens p50 / 90k p10).
+#
+# Two tokenizers (teacher-swap staging, 2026-09-23): the miner engines
+# tokenize with the GENESIS family's tokenizer and the teacher swarm with
+# the teacher's. Today both are Qwen so one count served; with a teacher
+# from another lab the miner-side count can exceed the window while the
+# teacher-side count passes (and vice versa), so the guard measures both
+# and keeps the larger. prefix_token_cap() derives the cap from the toml:
+#   max_model_len − (miner thought cap after the 1.25× teacher-relative
+#   relaxation) − max_action_tokens − PREFIX_CAP_SLACK
+# = 131072 − 5120 − 768 − 512 = 124,672 today; 255,744 at 262,144.
+# MAX_PREFIX_TOKENS is the historical 131k-window value and the floor the
+# derived cap never drops below in a misconfigured toml.
 MAX_PREFIX_TOKENS = 110_000
 TOKEN_GUARD_FROM_CHARS = 120_000
+PREFIX_CAP_SLACK = 512
+
+
+def prefix_token_cap(contract: dict | None = None) -> int:
+    """Largest prefix (in tokens, either tokenizer) a duel can serve."""
+    raw = contract if contract is not None else tomllib.loads(
+        (REPO / "affine" / "affine.toml").read_text())
+    duel = raw["duel"]
+    window = int(raw["miner_serving"]["max_model_len"])
+    thought = int(duel["max_thought_tokens"])
+    action = int(duel["max_action_tokens"])
+    ref_total = int(duel.get("ref_max_tokens") or (thought + action))
+    ratio = float(duel.get("thought_cap_ratio") or 0.0)
+    # wvk 20: cap_T = max(thought, ratio × longest reference thought); the
+    # longest reference thought is bounded by the teacher's own budget.
+    miner_thought = max(thought, int(ratio * max(ref_total - action, thought)))
+    if window <= 131072:
+        # Pre-swap window: keep the historical constant so today's fold is
+        # bit-identical (110k carried a deliberate margin under 124,672).
+        return MAX_PREFIX_TOKENS
+    return window - miner_thought - action - PREFIX_CAP_SLACK
+
+
+def guard_tokenizers(baker: ToolBaker, contract: dict | None = None) -> list:
+    """Tokenizers whose token count must fit the window: the teacher's (the
+    baker's) and the genesis family's (the miner engines'), deduplicated by
+    vocabulary so a same-family teacher costs one count as before."""
+    raw = contract if contract is not None else tomllib.loads(
+        (REPO / "affine" / "affine.toml").read_text())
+    seed = raw.get("seed_king") or {}
+    toks = [baker.tok]
+    repo, rev = seed.get("repo"), seed.get("revision")
+    if repo:
+        genesis = AutoTokenizer.from_pretrained(str(repo), revision=(str(rev) if rev else None))
+        same = (genesis.get_vocab() == baker.tok.get_vocab())
+        if not same:
+            toks.append(genesis)
+    return toks
 
 
 class PrefixTokenCache:
@@ -1615,13 +1666,18 @@ class PrefixTokenCache:
         self.conn.commit()
         self.hits = self.misses = 0
 
-    def count(self, text: str, baker: ToolBaker) -> int:
-        k = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    def count(self, text: str, baker: ToolBaker, tokenizer=None) -> int:
+        """Token count of `text` under `tokenizer` (default: the baker's).
+        The cache key carries the tokenizer's vocabulary size so counts from
+        different tokenizers never collide (a swap-era guard measures two)."""
+        tok = tokenizer if tokenizer is not None else baker.tok
+        salt = "" if tok is baker.tok else f"|{len(tok)}"
+        k = hashlib.sha256((text + salt).encode("utf-8")).hexdigest()
         row = self.conn.execute("SELECT n FROM tok WHERE k = ?", (k,)).fetchone()
         if row is not None:
             self.hits += 1
             return int(row[0])
-        n = len(baker.tok(text, add_special_tokens=False)["input_ids"])
+        n = len(tok(text, add_special_tokens=False)["input_ids"])
         self.conn.execute("INSERT OR IGNORE INTO tok (k, n) VALUES (?, ?)", (k, n))
         self.conn.commit()
         self.misses += 1
@@ -1638,12 +1694,24 @@ def token_cache() -> PrefixTokenCache:
     return _TOKEN_CACHE
 
 
+_GUARD: dict = {}
+
+
+def _guard_state(baker: ToolBaker) -> tuple[list, int]:
+    if _GUARD.get("baker") is not baker:
+        _GUARD.update({"baker": baker, "toks": guard_tokenizers(baker),
+                       "cap": prefix_token_cap()})
+    return _GUARD["toks"], _GUARD["cap"]
+
+
 def prefix_over_token_cap(turn: dict, baker: ToolBaker) -> bool:
     if int(turn.get("n_prefix_chars") or 0) <= TOKEN_GUARD_FROM_CHARS:
         return False
     text = "\n".join(m.get("content", "") for m in turn.get("prefix") or [])
-    n = token_cache().count(text, baker)
-    return n + 8 * len(turn.get("prefix") or []) > MAX_PREFIX_TOKENS
+    toks, cap = _guard_state(baker)
+    cache = token_cache()
+    n = max(cache.count(text, baker, tok) for tok in toks)
+    return n + 8 * len(turn.get("prefix") or []) > cap
 
 
 def _count(counter: dict[str, int], key: str, n: int = 1) -> None:
@@ -2898,15 +2966,29 @@ def load_band_filters() -> dict[str, dict]:
     return out
 
 
-def _band_scan_chunk(path: Path) -> dict[str, list[int]]:
+def band_teacher_models() -> tuple[str, ...]:
+    """`[band_filter.defaults].teacher_models`: endpoint model ids whose
+    `teacher_*` rollouts count as THE teacher's attempts. Empty (today) =
+    every teacher_* / glm_* policy, whatever model served it. Set during a
+    teacher swap so the "teacher solved it" signal tracks the contract
+    teacher: both ids while the new teacher's pre-pass covers the pools
+    ("both counted"), then the new id alone."""
+    raw = (tomllib.loads(SOURCES_TOML.read_text()).get("band_filter") or {}).get("defaults") or {}
+    return tuple(str(x) for x in (raw.get("teacher_models") or []))
+
+
+def _band_scan_chunk(path: Path, teacher_models: tuple[str, ...] = ()) -> dict[str, list[int]]:
     """{source\\tsid: [t_n, t_s, k_n, k_s]} for one trace chunk."""
     stats: dict[str, list[int]] = {}
     for env in iter_jsonl_gz(path):
         if is_backfill(env):
             continue
-        pid = str((env.get("policy") or {}).get("id") or "")
+        pol = env.get("policy") or {}
+        pid = str(pol.get("id") or "")
         side = 0 if pid.startswith(("teacher_", "glm_")) else (2 if pid.startswith("king_") else None)
         if side is None:
+            continue
+        if side == 0 and teacher_models and str(pol.get("model") or "") not in teacher_models:
             continue
         outcome = rollout_outcome(env["trace"])
         if outcome not in ("solved", "failed"):
@@ -2923,11 +3005,19 @@ def task_attempts(pub: PublicCorpus, traces_manifest: dict, sources: frozenset[s
     king_* rollout in the traces. Per-chunk cache; only unseen chunks are
     scanned (a process pool: the work is gzip + json)."""
     cached: dict[str, dict[str, list[int]]] = {}
+    models = band_teacher_models()
+    # The per-chunk cache is only valid for the attribution rule it was
+    # scanned under; a changed teacher_models list re-scans (rows tagged
+    # with a different rule, or untagged rows once a rule is set, are
+    # ignored and rewritten).
+    rule = ",".join(models)
     if BAND_CACHE.exists():
         with BAND_CACHE.open() as fh:
             for line in fh:
                 try:
                     row = json.loads(line)
+                    if str(row.get("rule") or "") != rule:
+                        continue
                     cached[row["key"]] = row["stats"]
                 except (ValueError, KeyError):
                     continue
@@ -2936,9 +3026,10 @@ def task_attempts(pub: PublicCorpus, traces_manifest: dict, sources: frozenset[s
         paths = {c["key"]: pub.cached(c["key"], c["sha256"], gz_sha=True) for c in want}
         BAND_CACHE.parent.mkdir(parents=True, exist_ok=True)
         with ProcessPoolExecutor(max_workers=8) as ex, BAND_CACHE.open("a") as fh:
-            for key, st in zip(paths, ex.map(_band_scan_chunk, paths.values())):
+            for key, st in zip(paths, ex.map(_band_scan_chunk, paths.values(),
+                                             [models] * len(paths))):
                 cached[key] = st
-                fh.write(json.dumps({"key": key, "stats": st}) + "\n")
+                fh.write(json.dumps({"key": key, "rule": rule, "stats": st}) + "\n")
         log(f"band filter: scanned {len(want)} new trace chunk(s) ({len(cached)} cached)")
     live_keys = {c["key"] for c in traces_manifest["chunks"]}
     stats: dict[str, list[int]] = {}

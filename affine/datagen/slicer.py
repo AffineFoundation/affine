@@ -50,7 +50,12 @@ TRAILING_NUM_RE = re.compile(r"-(\d+)$")
 # the deep turns of long agent trajectories — where the king's failures
 # live — enter D. Data event, no weight_version_key change. The fold adds a
 # tokenizer-measured guard (ops/corpus_build.py MAX_PREFIX_TOKENS).
+# Teacher-swap staging (2026-09-23): at a 262,144-token serving window the
+# coarse cut becomes MAX_PREFIX_CHARS_262K (~255k tokens at ~3.9 chars per
+# token on code); ops/v19/teacher_swap_toml_edits.py --apply moves the live
+# value in lockstep with [miner_serving].max_model_len. Until then 300_000.
 MAX_PREFIX_CHARS = 300_000
+MAX_PREFIX_CHARS_262K = 1_000_000
 # Reference-leakage predicate, byte-for-byte the ops/datagen_refresh.py
 # prefilter (which drops such records downstream anyway — 4.6-5% of early
 # shards): whole ```bash block, whitespace collapsed + lowercased, longer
