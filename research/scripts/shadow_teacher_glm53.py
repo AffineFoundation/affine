@@ -358,6 +358,10 @@ async def run(args: argparse.Namespace) -> None:
         except httpx.HTTPError as e:
             log.warning("%s: no artifact (%s)", chal, e)
             continue
+        if "king_rows" not in art or "challenger_rows" not in art:
+            log.warning("%s: no duel rows (%s); skipped", chal,
+                        art.get("rejection_reason") or "rejected/infra")
+            continue
         n = args.turns_per_verdict if not args.smoke else 2
         seed = int(art["slice"]["seed"]) ^ 0x5A5A
         tids = pick_turns(art, n, seed)
@@ -488,6 +492,16 @@ def score_group(turn_refs: dict, rows_c: dict, rows_k: dict, kind_by_tid: dict,
     t_scores = teacher_control(turn_refs, sigma, kind_by_tid, tau, cfg)
     paired = _paired_stats(c_scores, k_scores, cfg)
     t_vs_k = _paired_stats(t_scores, {t: s for t, s in k_scores.items() if t in t_scores}, cfg)
+    # The held-out reference scores forfeit_sd when it carries < content_min_tokens
+    # content tokens (a teacher that answers a wrap-up turn without thinking).
+    # That floor is a rule artefact, not headroom: report the control on the
+    # turns where neither side sits at the floor as well.
+    floor = cfg["forfeit_sd"] + 1.0
+    nf = {t: s for t, s in t_scores.items()
+          if s["score"] > floor and t in k_scores and k_scores[t]["score"] is not None
+          and k_scores[t]["score"] > floor}
+    t_vs_k_nf = _paired_stats(nf, {t: k_scores[t] for t in nf}, cfg)
+    n_t_floor = sum(1 for s in t_scores.values() if s["score"] <= floor)
     t_vs_c = _paired_stats(t_scores, {t: s for t, s in c_scores.items() if t in t_scores}, cfg)
 
     def leg_means(scores: dict) -> dict:
@@ -529,7 +543,9 @@ def score_group(turn_refs: dict, rows_c: dict, rows_k: dict, kind_by_tid: dict,
         "teacher_vs_king": {**{k: t_vs_k.get(k) for k in ("margin", "se", "z", "n_paired_turns")},
                             "typ_c": paired_leg(t_scores, k_scores, "typ_c"),
                             "z_R": paired_leg(t_scores, k_scores, "z_R"),
-                            "z_A": paired_leg(t_scores, k_scores, "z_A")},
+                            "z_A": paired_leg(t_scores, k_scores, "z_A"),
+                            "n_teacher_floor": n_t_floor,
+                            "excl_floor": {k: t_vs_k_nf.get(k) for k in ("margin", "se", "z", "n_paired_turns")}},
         "teacher_vs_challenger": {k: t_vs_c.get(k) for k in ("margin", "se", "z", "n_paired_turns")},
         "_scores": {"c": c_scores, "k": k_scores, "t": t_scores},
     }
@@ -661,6 +677,9 @@ def render(rep: dict) -> str:
         L.append(f"  teacher − king (control): margin {_f(tk['margin'])} sd  z {_f(tk['z'],6,2)}  n {tk['n_paired_turns']}  |  "
                  f"typ_c leg margin {_f(tk['typ_c']['margin'])} z {_f(tk['typ_c']['z'],6,2)}  |  z_R leg {_f(tk['z_R']['margin'])} z {_f(tk['z_R']['z'],6,2)}  |  "
                  f"z_A leg {_f(tk['z_A']['margin'])} z {_f(tk['z_A']['z'],6,2)}")
+        ef = tk["excl_floor"]
+        L.append(f"  teacher − king excluding floor turns ({tk['n_teacher_floor']} teacher refs at the content floor): "
+                 f"margin {_f(ef['margin'])} sd  z {_f(ef['z'],6,2)}  n {ef['n_paired_turns']}")
         p = g["paired"]
         L.append(f"  challenger − king (all verdicts pooled): margin {_f(p['margin'])}  z {_f(p['z'],6,2)}  n {p['n_paired_turns']}")
         bg = g["b_gate"]
