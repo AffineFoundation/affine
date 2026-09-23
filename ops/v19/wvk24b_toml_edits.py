@@ -31,8 +31,13 @@ HIST = ("# 24 addendum ({date}): explicit dated operator directive 2026-09-23 20
         "# with < 10 content tokens do not anchor typicality; < 2 content-bearing\n"
         "# references → min(z_R, z_A). Counterfactual on the last 30 verdicts (floor\n"
         "# −6 + this rule vs live): 0 flips; the rule touches 7.5 % of references and\n"
-        "# drops typicality on ~4.8 % of turns; chal-00678 ran under wvk 24 with the\n"
-        "# floor only (dispatched 20:46, before the addendum).\n")
+        "# drops typicality on ~4.8 % of turns. wvk 24 flipped in TWO steps at\n"
+        "# consecutive duel boundaries: the floor at 20:45 UTC (chal-00678, dispatched\n"
+        "# 20:46, was judged with the floor only), the empty-ref rule + k-matched\n"
+        "# control from the next boundary (chal-00679 onward) — the addendum directive\n"
+        "# (20:47) arrived two minutes after the floor flip had landed, and a rule\n"
+        "# change is applied only at a duel boundary. duel_params.sd_meter\n"
+        "# (ref_min_content / typ_min_refs) distinguishes the two.\n")
 def _check(s, l):
     if s.count(l) != 1: raise SystemExit(f"anchor {l.strip()!r}: {s.count(l)} occurrences")
 def _hist(out, para):

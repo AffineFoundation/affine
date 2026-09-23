@@ -11,9 +11,14 @@ def main():
 smaller for the same slice.
 """
     if s.count(old) != 1: raise SystemExit("anchor")
-    new = """**Addendum, same fork (operator directive 2026-09-23 20:47 UTC), effective at the \\
-eval pod redeploy that followed (the first wvk-24 duel, `chal-00678`, ran with the \\
-floor only).**
+    new = """**wvk 24 flipped in two steps at consecutive duel boundaries.** The forfeit \\
+floor went live at 20:45 UTC; the addendum below (operator directive 20:47 UTC, \\
+"same fork") arrived two minutes later, after the flip had landed and `chal-00678` \\
+had been dispatched — a rule change is only ever applied at a duel boundary, so \\
+`chal-00678` was judged with the floor only and the addendum took effect at the \\
+next boundary, from `chal-00679` onward. Both steps are wvk 24; \\
+`duel_params.sd_meter` (`ref_min_content` / `typ_min_refs` present or absent) \\
+tells the two apart and both replay from their own stamps.
 - **Empty-thought reference rule** — `[duel.sd_meter].ref_min_content = 10`, \\
 `typ_min_refs = 2`: a teacher reference whose thought has fewer than 10 content \\
 tokens does not anchor the typicality leg (it is left out of μ_c and σ_c instead \\
