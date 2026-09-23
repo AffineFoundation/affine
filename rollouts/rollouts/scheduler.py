@@ -374,14 +374,11 @@ class Scheduler:
         self.picks_king += 1
         replay = [n for n in king_cands if self._replay.get(n, (0, 0))[0] > 0]
         if replay:
-            # King seat first on the band sources: the one with the lowest
-            # coverage (owed / (attempts wanted x targets)) wins; ties -> the
-            # smaller pool, so the small sources reach 50 / 90 % first.
-            def gap(n: str) -> tuple[float, int]:
-                owed, targets = self._replay[n]
-                want = self.registry.sources[n].king_attempts
-                return (owed / max(1, want * targets), -targets)
-            return max(replay, key=gap)
+            # King seat first on the band sources, smallest backlog first:
+            # terminal_bench_2 / multiswe / swerebench_v2 / swelego reach
+            # 90 % coverage in hours and the fold can tighten their king
+            # side while the big pools (terminal_lego, swesmith) fill.
+            return min(replay, key=lambda n: (self._replay[n][0], self._replay[n][1], n))
         return self._rank_pick(king_cands, self._king_kept)
 
     def _rank_pick(self, cands: list[str], kept_of) -> str:
