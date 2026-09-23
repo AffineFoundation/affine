@@ -205,6 +205,10 @@ def launch(entry: dict) -> None:
         env["BENCHSUITE_CHAT_ENVS"] = entry["chat_envs"]
     for k, v in (entry.get("env") or {}).items():
         env[k] = v
+    if entry.get("mode") == "fast":
+        # Daytona's 100 sandboxes are shared with the sitting king's jobs (benchsuite worker
+        # 2026-09-23 15:25): a non-king fast pass never takes more than 32 for SWE-bench
+        env.setdefault("FAST_SWE_IN_FLIGHT", os.environ.get("COVERAGE_FAST_SWE_IN_FLIGHT", "32"))
     BENCH_STATE.mkdir(parents=True, exist_ok=True)
     # Double-fork through a transient shell: `setsid` there is not a session leader, so it
     # execs in place (pid == pgid == $!), and the pass is reparented to init when the shell
