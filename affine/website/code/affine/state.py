@@ -253,14 +253,39 @@ class State:
             inflight = d.get("in_flight")
             if inflight:
                 entry = QueueEntry(**inflight)
-                if not any(e.challenge_id == entry.challenge_id
-                           for e in self.queue):
+                if entry.challenge_id in self._judged_ids():
+                    # The verdict/failure row is already in history: the
+                    # process stopped between that append and the next
+                    # state flush. Requeuing would duel the same submission
+                    # twice (chal-00308 2026-08-07, chal-00366 at the wvk-13
+                    # flip, chal-00569 2026-09-18, chal-00637 2026-09-21).
+                    log.warning("in-flight %s already has a history row; "
+                                "not requeuing", entry.challenge_id)
+                elif not any(e.challenge_id == entry.challenge_id
+                             for e in self.queue):
                     log.warning("recovered in-flight %s (%s) from a hard "
                                 "shutdown; requeued at front",
                                 entry.challenge_id, entry.repo)
                     self.queue.insert(0, entry)
                     self._sort_queue()
+            self.in_flight = None
         self._reconcile_from_history()
+
+    def _judged_ids(self) -> set[str]:
+        """Challenge ids with a terminal history row (verdict / crowned /
+        failed)."""
+        out: set[str] = set()
+        if not self.history_path.exists():
+            return out
+        with open(self.history_path) as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if r.get("event") in ("verdict", "crowned", "failed") and r.get("challenge_id"):
+                    out.add(str(r["challenge_id"]))
+        return out
 
     def _sort_queue(self) -> None:
         """Restore the canonical order (see QueueEntry.order_key). Caller
@@ -457,11 +482,18 @@ class State:
             return entry
 
     def _clear_in_flight(self, entry: QueueEntry) -> None:
-        """The entry landed (history or queue); stop tracking it as popped."""
+        """The entry landed (history or queue); stop tracking it as popped.
+
+        Flushed synchronously: waiting for the periodic tick flush left a
+        window (verdict in history, in_flight still on disk) in which a
+        stop/restart requeued an already-judged duel. History is written
+        first on purpose — a crash between the two writes must leave the
+        entry recoverable, and load() now recognises the judged case."""
         with self._lock:
             if (self.in_flight is not None
                     and self.in_flight.challenge_id == entry.challenge_id):
                 self.in_flight = None
+                self.flush()
 
     def record_weights_set(self) -> None:
         """Stamp a successful on-chain set_weights (flushed immediately so

@@ -29,6 +29,20 @@ import tomllib
 # docker pulls failed ("Unable to find image", Docker Hub cap) and a 70.4 finished-only over
 # 54 tasks on the board (2026-09-17 18:18 UTC); half the tasks missing is not a score.
 FAILED_CELL_ERROR_SHARE = 0.50
+DATASET_SIZE = {"swebench-verified": 500, "terminal-bench-2": 89}
+
+
+def job_running(run_dir, model: str, env_id: str):
+    """A launcher / Harbor job for this cell is alive (the watcher's SWE and TB2 jobs run outside the pass)."""
+    import subprocess
+    base, _, tag = env_id.partition("@")
+    d12 = run_dir.name.split("-")[1][:12] if "-" in run_dir.name else ""
+    out = subprocess.run(["pgrep", "-fa", f"harbor_cell.py (run|resume) --env {base} .*--model (king-)?{d12}"], capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        tagged = "--budget-tag" in line
+        if (tag and f"--budget-tag {tag}" in line) or (not tag and not tagged):
+            return {"n_expected": DATASET_SIZE.get(base)}
+    return None
 from pathlib import Path
 
 import boto3
@@ -129,11 +143,20 @@ def scorecard(run_dir: Path) -> dict:
                 model = d.parent.name
                 env_id, _, t = d.name.rpartition("__t")
                 why = (d / "cmd.txt").read_text(errors="replace").strip().splitlines()
-                cells.setdefault(env_id, {}).setdefault(f"t{float(t):g}", {}).setdefault(model, {
-                    "env": env_id, "temperature": float(t), "model": model, "n": 0, "n_errored": 0, "score": None, "ci95": None,
-                    "completion_tokens": 0, "prompt_tokens": 0, "run_failed": True,
-                    "failure_note": ("no pod (stock)" if why and why[0].startswith("no pod") else "the pass ended without a result for this cell"),
-                })
+                # a Harbor job still running under this cell (the watcher's SWE / TB2 jobs share the run dir) is not
+                # a failure: publish it as RUNNING with its trial count (Jacob 2026-09-23: "failed" placeholders were
+                # shown for reign 21's @4h250 while it was 400/500 in)
+                running = job_running(run_dir, model, env_id)
+                n_done = len(list((d / "harbor").glob("*/result.json"))) if (d / "harbor").is_dir() else 0
+                entry = {"env": env_id, "temperature": float(t), "model": model, "n": n_done, "n_errored": 0, "score": None, "ci95": None,
+                         "completion_tokens": 0, "prompt_tokens": 0}
+                if running:
+                    entry.update(running=True, n_expected=running.get("n_expected"),
+                                 failure_note=f"running: {n_done} of {running.get('n_expected') or '?'} trials done")
+                else:
+                    entry.update(run_failed=True,
+                                 failure_note=("no pod (stock)" if why and why[0].startswith("no pod") else "the pass ended without a result for this cell"))
+                cells.setdefault(env_id, {}).setdefault(f"t{float(t):g}", {}).setdefault(model, entry)
     by_id = {e["id"]: e for e in SUITE["envs"]}
 
     def side(x: dict | None, teacher: bool = False) -> dict | None:
@@ -145,6 +168,10 @@ def scorecard(run_dir: Path) -> dict:
         the record so the gap check can retry the cell."""
         if not x:
             return None
+        if x.get("running"):
+            return {"score": None, "ci95": None, "n": x.get("n", 0), "n_errored": 0, "status": "running", "running": True,
+                    "n_expected": x.get("n_expected"), "failure": x.get("failure_note"), "finished_only": None, "by_class": None,
+                    "completion_tokens": 0, "prompt_tokens": 0, "wall_seconds": None, "finish_length_frac": None}
         if x.get("run_failed"):
             return {"score": None, "ci95": None, "n": 0, "n_errored": 0, "status": "failed", "run_failed": True,
                     "failure": f"run failed: {x.get('failure_note')}", "finished_only": None, "by_class": None,

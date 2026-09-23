@@ -593,6 +593,7 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
             action_echo=action_echo,
             content_echo=sd_content,
             content_lift_nats=sd["content_lift_nats"],
+            content_prefix=sd["content_prefix"],
             shadow_action_echo=sd_action,
             sticky_key=tid, action_kind=action_kind,
             rollouts=miner_rollouts)

@@ -225,10 +225,13 @@ def harbor_busy(d12: str, env: str) -> bool:
     if "@" in env:
         base, tag = env.split("@", 1)
         pat = f"harbor_cell.py (run|resume) --env {base} --budget-tag {tag} .*--model king-{d12}"
-    else:
-        pat = f"harbor_cell.py (run|resume) --env {env} --model king-{d12}"
-    out = subprocess.run(["pgrep", "-f", pat], capture_output=True, text=True).stdout.strip()
-    return bool(out)
+        out = subprocess.run(["pgrep", "-f", pat], capture_output=True, text=True).stdout.strip()
+        return bool(out)
+    # plain cell: the tagged job's command line also starts `--env <env> --model king-<d12>` (the budget tag comes
+    # later) — it must not count, or the 1-h cell never launches while the @4h250 job runs (reign 21, 2026-09-23)
+    pat = f"harbor_cell.py (run|resume) --env {env} --model king-{d12}"
+    out = subprocess.run(["pgrep", "-fa", pat], capture_output=True, text=True).stdout
+    return any("--budget-tag" not in line for line in out.splitlines())
 
 
 def swe_jobs_running() -> int:
