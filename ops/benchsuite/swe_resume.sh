@@ -39,7 +39,7 @@ def patch(o):
     ch = False
     if isinstance(o, dict):
         for k, v in list(o.items()):
-            if k in ("OPENAI_API_BASE", "OPENAI_BASE_URL") and isinstance(v, str) and v != url: o[k] = url; ch = True
+            if k in ("OPENAI_API_BASE", "OPENAI_BASE_URL", "ANTHROPIC_BASE_URL", "api_base", "base_url") and isinstance(v, str) and v != url: o[k] = url; ch = True
             elif k == "model_name" and isinstance(v, str) and v.startswith("openai/") and v != f"openai/{served}": o[k] = f"openai/{served}"; ch = True
             else: ch |= patch(v)
     elif isinstance(o, list):
