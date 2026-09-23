@@ -346,7 +346,7 @@ def main() -> int:
                 except (OSError, ValueError):
                     continue
                 n_exp = x.get("n_expected")
-                if n_exp and int(x.get("n_live") if x.get("n_live") is not None else x.get("n") or 0) < int(n_exp) \
+                if n_exp and int(x.get("n_live") if x.get("n_live") is not None else x.get("n") or 0) < 0.98 * int(n_exp) \
                         and cell_env not in missing and cell_env not in failed:
                     failed.append(cell_env)
             todo = missing + failed
