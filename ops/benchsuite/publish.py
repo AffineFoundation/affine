@@ -197,7 +197,7 @@ def scorecard(run_dir: Path) -> dict:
         partial = bool(n_exp) and n_live < int(n_exp) and not (failed or infra_cut)
         out = {"score": None if (failed or infra_cut) else x["score"], "ci95": None if (failed or infra_cut) else x["ci95"], "n": x["n"],
                "n_errored": x["n_errored"], "n_timeout": x.get("n_timeout"), "n_context_overflow": x.get("n_context_overflow"),
-               "n_infra_env": x.get("n_infra_env"), "n_live": x.get("n_live"),
+               "n_infra_env": x.get("n_infra_env"), "n_live": x.get("n_live"), "served_gpu": x.get("served_gpu"),
                "finished_only": None if (failed or infra_cut) else x.get("finished_only"), "completion_tokens": x["completion_tokens"],
                "prompt_tokens": x["prompt_tokens"], "wall_seconds": x.get("wall_seconds"),
                "finish_length_frac": x.get("finish_length_frac"),

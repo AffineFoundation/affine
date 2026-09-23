@@ -148,6 +148,19 @@ def is_infra_env(etype: str, emsg: str, agent_result: dict) -> bool:
 DATASET_SIZE = {"swebench-verified": 500, "terminal-bench-2": 89}   # full task sets; a job below this is partial
 
 
+def served_gpu(model_url: str) -> str | None:
+    """The GPU class that served the model, from kingpod / primepod state (by base_url)."""
+    try:
+        pods = json.loads((Path(__file__).resolve().parent / "state" / "pods.json").read_text())
+    except (OSError, ValueError):
+        return None
+    for v in pods.values():
+        if v.get("base_url") and model_url and v["base_url"].rstrip("/") == model_url.rstrip("/"):
+            plan = v.get("plan") or {}
+            return plan.get("match") or plan.get("name") or v.get("machine")
+    return None
+
+
 def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit_code: int) -> dict:
     rows = []
     for rp in sorted(job_dir.glob("*/result.json")):
@@ -211,6 +224,7 @@ def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit
         "n_infra_env": sum(1 for r in rows if r["error_class"] == "infra_env"),
         "n_live": sum(1 for r in rows if r["error_class"] != "infra_env"),   # trials that ran against a live model
         "n_expected": int(a.n_tasks) if a.n_tasks and a.n_tasks > 0 else DATASET_SIZE.get(a.env),
+        "served_gpu": served_gpu(getattr(a, "model_url", "") or ""),
         "n_timeout": sum(1 for r in rows if r["error_class"] == "timeout"),
         "n_context_overflow": sum(1 for r in rows if r["error_class"] == "context_overflow"),
         "score": round(k / len(scored), 4) if scored else 0.0, "ci95": [round(lo, 4), round(hi, 4)],

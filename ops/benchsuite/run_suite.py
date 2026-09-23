@@ -120,6 +120,21 @@ def by_class_summary(rows: list[dict]) -> dict:
     return out
 
 
+def _served_gpu() -> str | None:
+    """GPU class serving the model on this pod (the suite runs next to the vLLM it scores); env override for remote models."""
+    if os.environ.get("BENCHSUITE_SERVED_GPU"):
+        return os.environ["BENCHSUITE_SERVED_GPU"]
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True, timeout=20).stdout
+        names = sorted({x.strip() for x in out.splitlines() if x.strip()})
+        return ", ".join(names) or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+SERVED_GPU = _served_gpu()
+
+
 def summarize_traces(path: Path, reward_name: str, class_field: str = "") -> dict:
     """Per-rollout records + aggregate from a verifiers traces.jsonl."""
     rows = []
@@ -359,6 +374,7 @@ def run_cell(env: dict, model_label: str, model: str, url: str, key_env: str,
         "temperature": temp, "rollouts_per_task": rollouts,
         "harness": env["harness"], "runtime": runtime,
         "max_tokens": int(SETTINGS_OVERRIDE.get("max_tokens", env["max_tokens"])), "reward": env["reward"],   # the EFFECTIVE cap (recap.py tags old-cap runs by it)
+        "served_gpu": SERVED_GPU,
         "wall_seconds": round(wall, 1), "exit_code": p.returncode,
         "task_subset": ({"n": int(env["n"]), "shuffle_seed": 0} if int(env.get("n", -1)) > 0
                         else {"n": "all"}),
