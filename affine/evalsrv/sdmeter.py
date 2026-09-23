@@ -56,6 +56,14 @@ DEFAULTS = {
     # thought longer / more deliberate than the teacher's is not penalised
     # for the extra; the two-sided band still applies to the scored prefix.
     "content_prefix": "none",
+    # wvk 24 (2026-09-23): reference thoughts with fewer than ref_min_content
+    # content tokens are EXCLUDED from the typicality anchor (μ_c, σ_c) and
+    # from the teacher control instead of entering it with a noisy mean;
+    # a turn with fewer than typ_min_refs content-bearing references scores
+    # min(z_R, z_A) (typicality leg dropped). ref_min_content = 0 = the
+    # wvk 22/23 rule (every reference enters the anchor).
+    "ref_min_content": 0,
+    "typ_min_refs": 2,
     "content_lift_nats": 1.0,
     "content_min_tokens": 10,
     "typicality_width": 2.0,
@@ -82,6 +90,8 @@ def settings(duel_cfg: dict) -> dict:
     out["shadow"] = bool(out["shadow"])
     out["cross_echo"] = bool(out["cross_echo"])
     out["content_prefix"] = str(out["content_prefix"])
+    out["ref_min_content"] = int(out["ref_min_content"])
+    out["typ_min_refs"] = int(out["typ_min_refs"])
     if out["content_prefix"] not in ("none", "refs_max"):
         raise ValueError(f"[duel.sd_meter] content_prefix must be none|refs_max, got {out['content_prefix']!r}")
     out["frozen"] = dict(out["frozen"] or {})
@@ -130,8 +140,8 @@ def _lme(vals: list[float], tau: float | None) -> float:
     return m + tau * math.log(st.mean(math.exp((v - m) / tau) for v in vals))
 
 
-def ref_loo_terms(refs: list[dict], tau: float | None, a_norm_bytes: float
-                  ) -> dict | None:
+def ref_loo_terms(refs: list[dict], tau: float | None, a_norm_bytes: float,
+                  ref_min_content: int = 0) -> dict | None:
     """Leave-one-out teacher values on one turn from the ref records.
 
     refs[i] carries lp_empty (lpC(y_C^i|∅)), n_bytes_y, and lp_cross:
@@ -158,7 +168,10 @@ def ref_loo_terms(refs: list[dict], tau: float | None, a_norm_bytes: float
             b.append((c_ji - refs[j]["lp_empty"]) * nb / a_norm_bytes)
         R.append(_lme(a, tau) - st.mean(a))
         A.append(_lme(b, tau))
-        M.append(refs[j].get("mc_thought"))
+        mc = refs[j].get("mc_thought")
+        if ref_min_content and (refs[j].get("n_content_thought") or 0) < ref_min_content:
+            mc = None      # wvk 24: an (almost) empty reference thought does not anchor typicality
+        M.append(mc)
     return {"R": R, "A": A, "Mc": M}
 
 
@@ -190,21 +203,26 @@ class Anchors:
 
 
 def loo_anchors(turn_refs: dict[str, list[dict]], kind_by_tid: dict[str, str],
-                tau: float | None, a_norm_bytes: float) -> Anchors:
+                tau: float | None, a_norm_bytes: float,
+                ref_min_content: int = 0, typ_min_refs: int = 2) -> Anchors:
     """μ per turn from the leave-one-out values; σ = sqrt(mean within-turn
-    variance) pooled per dialect over the turns that have all cross echoes."""
+    variance) pooled per dialect over the turns that have all cross echoes.
+    wvk 24: references with < ref_min_content content tokens are left out of
+    the Mc anchor; fewer than typ_min_refs content-bearing references → no
+    Mc anchor for the turn (typicality leg dropped there)."""
     out = Anchors()
     var_by: dict[str, dict[str, list[float]]] = {}
     mu_by: dict[str, dict[str, list[float]]] = {}
     for tid, refs in turn_refs.items():
-        t = ref_loo_terms(refs, tau, a_norm_bytes)
+        t = ref_loo_terms(refs, tau, a_norm_bytes, ref_min_content)
         if t is None:
             continue
         kind = kind_by_tid.get(tid) or dialects.DEFAULT_KIND
         mu = {}
         for leg in ("R", "A", "Mc"):
             vals = [v for v in t[leg] if v is not None and math.isfinite(v)]
-            if len(vals) >= 2:
+            need = max(2, typ_min_refs) if leg == "Mc" else 2
+            if len(vals) >= need:
                 mu[leg] = st.mean(vals)
                 var_by.setdefault(kind, {}).setdefault(leg, []).append(st.variance(vals))
                 mu_by.setdefault(kind, {}).setdefault(leg, []).append(mu[leg])
@@ -368,7 +386,8 @@ def shadow_verdict(chall_rows: list[dict], king_rows: list[dict],
     a_norm = cfg["a_norm_bytes"]
     c_legs = {r["turn_id"]: side_legs(r, tau, a_norm) for r in chall_rows}
     k_legs = {r["turn_id"]: side_legs(r, tau, a_norm) for r in king_rows}
-    loo = loo_anchors(turn_refs, kind_by_tid, tau, a_norm)
+    loo = loo_anchors(turn_refs, kind_by_tid, tau, a_norm,
+                      cfg["ref_min_content"], cfg["typ_min_refs"])
     frozen = frozen_table(cfg)
 
     def anchors_for(mode: str, tid: str) -> tuple[dict | None, dict | None]:
@@ -390,7 +409,7 @@ def shadow_verdict(chall_rows: list[dict], king_rows: list[dict],
         k−1 refs (its own value left out of μ), averaged over j per turn."""
         out = {}
         for tid, refs in turn_refs.items():
-            t = ref_loo_terms(refs, tau, a_norm)
+            t = ref_loo_terms(refs, tau, a_norm, cfg["ref_min_content"])
             if t is None:
                 continue
             _, sig = anchors_for(mode, tid)
@@ -416,6 +435,47 @@ def shadow_verdict(chall_rows: list[dict], king_rows: list[dict],
                             "z_A": _mean([p["z_A"] for p in per]), "dropped": []}
         return out
 
+    def kmatched_control(sig_of) -> dict:
+        """wvk 24 control: the king scored the same way as the held-out teacher
+        reference — against the mean of k−1 references, averaged over the
+        left-out j — with forfeits and content-floor turns of the king dropped
+        (the teacher never forfeits, so the floor only ever enters one side).
+        Overall = min over legs; per-leg = each standardised leg alone."""
+        out = {leg: [] for leg in ("all", "R", "Gc", "A")}
+        for tid, refs in turn_refs.items():
+            t = ref_loo_terms(refs, tau, a_norm, cfg["ref_min_content"])
+            kl = k_legs.get(tid)
+            if t is None or kl is None:
+                continue
+            sig = sig_of(tid)
+            if kl.get("n_content") is not None and kl["n_content"] < cfg["content_min_tokens"]:
+                continue   # floor-dropped: the king's content-floor turns are excluded
+            k = len(refs)
+            per_t, per_k = {leg: [] for leg in ("all", "R", "Gc", "A")}, {leg: [] for leg in ("all", "R", "Gc", "A")}
+            for j in range(k):
+                others = {leg: [v for i, v in enumerate(t[leg]) if i != j and v is not None] for leg in ("R", "A", "Mc")}
+                mu_j = {leg: st.mean(v) for leg, v in others.items() if v}
+                tj = turn_score({"R": t["R"][j], "A": t["A"][j], "mc": t["Mc"][j],
+                                 "n_content": refs[j].get("n_content_thought"), "n_tokens": None}, mu_j, sig, cfg)
+                kj = turn_score(kl, mu_j, sig, cfg)          # king vs the SAME k−1 anchor
+                if tj["score"] is None or kj["score"] is None or kj["bind"] == "forfeit":
+                    continue
+                for leg, key in (("R", "z_R"), ("Gc", "typ_c"), ("A", "z_A")):
+                    if tj.get(key) is not None and kj.get(key) is not None:
+                        per_t[leg].append(tj[key]); per_k[leg].append(kj[key])
+                per_t["all"].append(tj["score"]); per_k["all"].append(kj["score"])
+            for leg in out:
+                if per_t[leg]:
+                    out[leg].append(st.mean(per_t[leg]) - st.mean(per_k[leg]))
+        res = {}
+        for leg, d in out.items():
+            if len(d) >= 2:
+                m = st.mean(d); se = st.stdev(d) / math.sqrt(len(d))
+                res[leg] = {"margin": m, "se": se, "z": (m / se) if se > 0 else None, "n": len(d)}
+            else:
+                res[leg] = {"margin": None, "se": None, "z": None, "n": len(d)}
+        return res
+
     by_anchor = {}
     for mode in ("loo", "frozen"):
         if mode == "frozen" and not frozen:
@@ -436,7 +496,10 @@ def shadow_verdict(chall_rows: list[dict], king_rows: list[dict],
             "king": _side_summary(k_scores, k_legs),
             # Positive control: the teacher's own held-out replies vs the king.
             "teacher": _side_summary(t_scores, {}),
+            # legacy construction (wvk 22/23): LOO teacher vs the king scored against all k refs
             "teacher_vs_king": {k: t_vs_k.get(k) for k in ("margin", "se", "z", "n_paired_turns")},
+            # wvk 24 control: k-matched anchors, king forfeits / content-floor turns dropped
+            "control_kmatched": kmatched_control(lambda tid: anchors_for(mode, tid)[1]),
             **paired,
             "would_crown": would,
             "would_crown_rule_only": paired["rule_passes"],
@@ -450,6 +513,9 @@ def shadow_verdict(chall_rows: list[dict], king_rows: list[dict],
                     f"(< {cfg['content_min_tokens']} such tokens → typ_c = floor"
                     + ("; only the first K content tokens of the miner's thought are scored, "
                        "K = max_i n_content(z_C^i)" if cfg["content_prefix"] == "refs_max" else "")
+                    + (f"; references with < {cfg['ref_min_content']} content tokens do not anchor "
+                       f"typicality and a turn with < {cfg['typ_min_refs']} content-bearing references "
+                       "scores min(z_R, z_A)" if cfg["ref_min_content"] else "")
                     + "); "
                     f"forfeit = {cfg['forfeit_sd']:g} sd; μ per turn = mean of the k refs' "
                     "leave-one-out values (anchor loo) or per-dialect constants (anchor frozen); "
@@ -459,7 +525,7 @@ def shadow_verdict(chall_rows: list[dict], king_rows: list[dict],
         "knobs": {k: cfg[k] for k in ("content_lift_nats", "content_min_tokens",
                                        "typicality_width", "a_norm_bytes", "forfeit_sd",
                                        "k_sigma", "min_margin_sd", "cross_echo",
-                                       "content_prefix")},
+                                       "content_prefix", "ref_min_content", "typ_min_refs")},
         "tau": tau,
         "sigma_by_dialect": loo.sigma,
         "mu_mean_by_dialect": loo.mu_mean,
