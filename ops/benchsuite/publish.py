@@ -145,7 +145,7 @@ def scorecard(run_dir: Path) -> dict:
                 try:
                     float(t)
                 except ValueError:
-                    continue   # a moved-aside cell (, ) is not a live cell
+                    continue   # a moved-aside cell dir (__t0.contended-HHMM, .dead-...) is not a live cell
                 why = (d / "cmd.txt").read_text(errors="replace").strip().splitlines()
                 # a Harbor job still running under this cell (the watcher's SWE / TB2 jobs share the run dir) is not
                 # a failure: publish it as RUNNING with its trial count (Jacob 2026-09-23: "failed" placeholders were
