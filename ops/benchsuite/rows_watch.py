@@ -206,6 +206,13 @@ def pass_alive(run_id: str) -> bool:
         except (OSError, ValueError):
             continue
         if subprocess.run(["kill", "-0", str(pid)], capture_output=True).returncode == 0:
+            # a zombie (state Z) answers kill -0 but is dead: reign 21's tb2 pass left one for 12 h and
+            # blocked its own SWE 1-h / cells re-queue behind "(pass)" (2026-09-23)
+            try:
+                if open(f"/proc/{pid}/stat").read().rsplit(")", 1)[-1].split()[0] == "Z":
+                    continue
+            except OSError:
+                continue
             return True
     return False
 
