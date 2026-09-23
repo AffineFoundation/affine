@@ -27,7 +27,7 @@ MANIFEST = "https://data.affine.io/corpus/manifest.json"
 
 def replay_sources() -> list[str]:
     d = tomllib.load(open(REPO / "rollouts" / "rollouts" / "sources.toml", "rb"))
-    return [n for n, s in d["source"].items() if int(s.get("king_attempts", 1)) >= 2]
+    return [n for n, s in d["source"].items() if int(s.get("king_attempts", 0)) >= 1]
 
 
 def main() -> int:
