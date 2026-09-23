@@ -26,9 +26,21 @@ def api_key() -> str:
 
 
 def sandboxes(key: str) -> list[dict]:
-    req = urllib.request.Request("https://app.daytona.io/api/sandbox", headers={"Authorization": "Bearer " + key})
-    d = json.load(urllib.request.urlopen(req, timeout=60))
-    return d if isinstance(d, list) else d.get("items", d)
+    """Every sandbox in the org: the API pages at 100 (200 max) with a nextCursor -- the first page alone hid
+    200+ sandboxes for two days (2026-09-23), which is why the org looked capped at 100."""
+    import urllib.parse
+    out, seen, cursor = [], set(), None
+    for _ in range(50):
+        q = "?limit=200" + (f"&cursor={urllib.parse.quote(cursor)}" if cursor else "")
+        req = urllib.request.Request("https://app.daytona.io/api/sandbox" + q, headers={"Authorization": "Bearer " + key})
+        d = json.load(urllib.request.urlopen(req, timeout=60))
+        items = d if isinstance(d, list) else d.get("items", [])
+        new = [x for x in items if x.get("id") not in seen]
+        out += new; seen.update(x.get("id") for x in new)
+        cursor = None if isinstance(d, list) else d.get("nextCursor")
+        if not cursor or not new:
+            break
+    return out
 
 
 def delete(key: str, sid: str) -> bool:
