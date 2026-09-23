@@ -31,12 +31,14 @@ evalsrv package under `affine/`.
 
 ---
 
-## 2. Frozen production scoring — sd-meter min(z_R, typ_c, z_A) since wvk 22 (2026-09-18); min(R,G) v5 below is the wvk 10–21 rule
+## 2. Frozen production scoring — sd-meter min(z_R, typ_c, z_A) since wvk 22 (2026-09-18; wvk 23 2026-09-22: thought cap 4096, typicality on the first K content tokens); min(R,G) v5 below is the wvk 10–21 rule
 
 **Live rule since wvk 22 (2026-09-18):** `score_mode = "sd_min_rga"`, `n_turns =
 1000` — turn = min(z_R, typ_c, z_A) in teacher-sd units (definition, knobs and
 calibration in §4 under `weight_version_key = 22`; module
-`affine/evalsrv/sdmeter.py`). R below is still the R leg; G (the band) is
+`affine/evalsrv/sdmeter.py`; since wvk 23 typ_c reads only the first K
+content tokens of the miner's thought, K = the longest reference, and the
+thought cap is 4096 / refs 4864). R below is still the R leg; G (the band) is
 replaced by content-token typicality; the A leg (summed) is live. Gates
 (thought-length floor, B licence, protocol probe) unchanged.
 
@@ -682,7 +684,37 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
-- `weight_version_key = 22` (2026-09-18 20:41 UTC, explicit dated operator
+- `weight_version_key = 23` (2026-09-22 17:20 UTC, explicit dated operator directive
+  Jacob Steeves 2026-09-22 17:00 UTC "all of them and also 3 flipped", after
+  the benchsuite thought-shrink audit `internal/benchsuite/thought-shrink-
+  mechanism-2026-09-22.md`): `[duel].max_thought_tokens` 2048 → **4096**,
+  `ref_max_tokens` 4096 → **4864** (= 4096 + 768; the validator requires refs
+  ≥ thought + action; 8192 not taken — the k = 3 reference samples per turn
+  set the wall time, KV is not the constraint), and
+  `[duel.sd_meter].content_prefix = "refs_max"`: typ_c is computed on the
+  first K content tokens of the miner's thought, K = the teacher's longest
+  reference in content tokens — extra deliberation unscored, the two-sided
+  band on the scored prefix keeps RT-11/RT-12 (filler below, pasting above).
+  Chosen over dropping the above side (38 % of miner turns sit above μ_c
+  today — mode-hugging, not deliberation; would reopen the pasting hole).
+  Probe (`ops/v18/probe_a.txt`, `probe_b.txt`; project store
+  `internal/wvk23/g-one-sided-probe.md`): last 30 wvk-22 verdicts replayed
+  under (i) one-sided — 0/30 decisions change; 173-turn re-echo under (ii)
+  refs_max — truncation touches 28 % of miner thoughts by +0.03…+0.07 sd,
+  typicality-leg control +0.36 → +0.27 sd (z 3.8 → 3.0). **Standing finding
+  from the probe:** the overall teacher-vs-king control has been NEGATIVE on
+  every one of the last 30 wvk-22 verdicts (−0.3…−0.7 sd, z −3.4…−8.6) — the
+  kings beat the teacher's held-out replies on the R and A legs (typ leg
+  still +0.36 for the teacher); the wvk-22 §3 trigger "control z ≤ −2" has
+  therefore been true since ~09-20 and is read as the meter's asymptote, not
+  a fault (Jacob informed 2026-09-22). Rollback for wvk 23 = a control SIGN
+  FLIP relative to the pre-fork value on the first verdicts
+  (`ops/v18/rollback_wvk23.sh`). Rows carry `mc_za_full` / `n_content_za_full`
+  / `k_ref_content` so the wvk-22 rule replays on wvk-23 rows. Cost ~3×
+  accepted. Forward-only, reign 21 stands. First wvk-23 verdict
+  `chal-00669 (uid 155, 19:09 UTC)`: 2217 (pre-fork 2087) s, forfeits chal 0.1 % / king 0.2 %, median
+  thought chars chal 580 / king 607 (pre-fork 599 / 602); teacher refs mean 1275 vs 1210; refs_max truncation on 35 % of king thoughts, control overall −0.51 sd z −7.2 (pre-fork −0.68 / −7.4), typicality-leg +0.20 sd z +5.8 (pre-fork +0.28 / +7.5) — no sign flip.
+  22 = 2026-09-18 20:41 UTC, explicit dated operator
   directive 2026-09-18 10:04 UTC "I like it. And I want to ship it" / 10:25
   "lets reduce the turns to 1000" / go 15:11 "only when the current queued
   models have run"; 19:40 "fold it in" + "release wvk 22 right now"): **the
