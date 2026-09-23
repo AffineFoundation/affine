@@ -196,7 +196,7 @@ def scorecard(run_dir: Path) -> dict:
         n_exp = x.get("n_expected")
         # <= 2 % of the task set never reaching a live model is noise-level (reign 15: 5 of 500 after three resumes) --
         # publish as final with the count in the note instead of holding the cell "partial" forever
-        partial = bool(n_exp) and n_live < 0.98 * int(n_exp) and not (failed or infra_cut)
+        partial = bool(n_exp) and (int(n_exp) - n_live) > max(2, 0.02 * int(n_exp)) and not (failed or infra_cut)   # <= 2 trials or <= 2 % missing = final
         out = {"score": None if (failed or infra_cut) else x["score"], "ci95": None if (failed or infra_cut) else x["ci95"], "n": x["n"],
                "n_errored": x["n_errored"], "n_timeout": x.get("n_timeout"), "n_context_overflow": x.get("n_context_overflow"),
                "n_infra_env": x.get("n_infra_env"), "n_live": x.get("n_live"), "served_gpu": x.get("served_gpu"),
