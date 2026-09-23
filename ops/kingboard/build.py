@@ -1264,6 +1264,17 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
             side_rec = row.get(side) or {}
             if not is_current_cap_row(card, row, side_rec, caps):
                 continue
+            if side_rec.get("status") == "running":
+                # started cell whose Harbor job is alive (publish.py 2026-09-23): n of
+                # n_expected trials done — "running (n/N)", grey, out of the means
+                out.setdefault(f"__running__{env}", {
+                    "score": None, "running": True, "progress": True, "kind": "bench",
+                    "n": side_rec.get("n"), "n_expected": side_rec.get("n_expected"),
+                    "state": side_rec.get("failure") or f"running: {side_rec.get('n')} of {side_rec.get('n_expected')} trials done",
+                    "reason": side_rec.get("failure") or "benchmark job running",
+                    "run_id": card.get("run_id"), "mode": card.get("mode"),
+                    "created_at": card.get("created_at")})
+                continue
             if side_rec.get("status") == "partial":
                 # a Harbor job interrupted mid-run (2026-09-22): n_live of n_expected
                 # trials ran against a live model; the number is provisional — shown
@@ -1308,7 +1319,7 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
     # placeholders only where no card has a verified value: a partial run (some
     # trials measured) beats an unverified cell (grader mismatch), which beats a
     # failed run (nothing measured), for the slot
-    for prefix in ("__partial__", "__unverified__", "__failed__"):
+    for prefix in ("__running__", "__partial__", "__unverified__", "__failed__"):
         for k in [k for k in out if k.startswith(prefix)]:
             env = k[len(prefix):]
             val = out.pop(k)
@@ -1672,7 +1683,8 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                                                     "running_env", "n_done", "n_planned")}, "eta": eta_iso}
         for e in p["planned"]:
             key = f"bench:{e}"
-            if target["cells"].get(key, {}).get("score") is None:
+            cur = target["cells"].get(key, {})
+            if cur.get("score") is None and not cur.get("progress"):   # the card's own running (n/N) cell wins
                 target["cells"][key] = {"score": None, "running": True, "kind": "bench",
                                         "run_id": p["run_id"], "eta": eta_iso,
                                         "state": ("running now" if e == p["running_env"]

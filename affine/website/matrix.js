@@ -66,6 +66,10 @@ function rowTip(r) {
 
 function cellTip(row, col, cell, teacherCell) {
   const head = `${rowName(row)} · ${col.label}${col.kind === "env" && col.group ? ` (${col.group})` : ""}`;
+  if (cell && cell.running && cell.progress) {
+    return `${head}\nrunning — ${num(cell.n)} of ${num(cell.n_expected)} trials done; the number lands when the job finishes; not counted in total / full`
+      + (cell.run_id ? `\ncard ${cell.run_id}${cell.mode ? ` · ${cell.mode}` : ""}` : "");
+  }
   if (cell && cell.running) {
     return `${head}\n${col.kind === "bench" ? "benchmark set" : "cell"} ${cell.state || "running"}`
       + (cell.eta ? `\nETA ≈ ${when(cell.eta)} (pass average per cell; sandbox sets take longer)` : "\nETA: first cell not finished yet")
@@ -289,11 +293,14 @@ function renderTable(m, spec) {
       // interrupted Harbor job: n_live of n_expected trials ran — provisional, grey, never a final number
       const partial = !has && !running && cell && cell.partial;
       const partialText = partial ? `partial (${num(cell.n_live)}/${num(cell.n_expected)})` : "";
-      const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? (cell.low_n ? "lown" : "") : running ? "running" : failed ? "failed" : unverified ? "unverified" : partial ? "partialcell" : erroredOnly ? "failed" : "blank"].filter(Boolean).join(" ");
+      // a started cell whose job is alive (status running, publish.py 2026-09-23): "running (n/N)"
+      const progress = running && cell.progress && cell.n_expected;
+      const runningText = progress ? `running (${num(cell.n)}/${num(cell.n_expected)})` : "…";
+      const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? (cell.low_n ? "lown" : "") : running ? (progress ? "partialcell" : "running") : failed ? "failed" : unverified ? "unverified" : partial ? "partialcell" : erroredOnly ? "failed" : "blank"].filter(Boolean).join(" ");
       const style = has && r.kind !== "teacher" ? tint(cell.delta) : "";
       const marks = has ? `${cell.cap_bound ? `<span class="mk cap">‡</span>` : ""}${cell.graded === "llm_judge" ? `<span class="mk judge">⚖</span>` : ""}${cell.trained && c.trained ? `<span class="mk trained">${esc(c.trained.mark)}</span>` : ""}` : "";
       return `<td class="${tcls} duel-hit" data-tip="${esc(cellTip(r, c, cell, teacher.cells[c.key]))}"`
-        + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) + marks : running ? "…" : failed ? "run failed" : unverified ? "unverified" : partial ? partialText : erroredOnly ? "errored" : "·"}</td>`;
+        + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) + marks : running ? runningText : failed ? "run failed" : unverified ? "unverified" : partial ? partialText : erroredOnly ? "errored" : "·"}</td>`;
     }).join("");
     const rowTitle = r.kind === "king" ? `${kingName(r.reign)} = reign ${r.reign} · king-${r.digest12}` : r.label;
     return `<tr class="${cls}"><td class="model duel-hit" data-tip="${esc(rowTip(r))}" title="${esc(rowTitle)}">`
