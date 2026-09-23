@@ -151,7 +151,7 @@ def check_task(task_dir: Path, benches: list[dict], index: dict[str, list[tuple[
 
 
 def write_report(path: Path, epoch: int, benches_by_name: dict[str, int], rows: list[dict],
-                 validated: int) -> None:
+                 validated: int, missing_refs: list[str] = ()) -> None:
     kinds = defaultdict(int)
     per_bench = defaultdict(int)
     for r in rows:
@@ -170,6 +170,8 @@ def write_report(path: Path, epoch: int, benches_by_name: dict[str, int], rows: 
     ]
     for name, n in benches_by_name.items():
         lines.append(f"| {name} | {n} | {per_bench.get(name, 0)} |")
+    for name in missing_refs:
+        lines.append(f"| {name} | NOT CHECKED (set unavailable at generation time) | - |")
     lines += [
         "",
         f"Validated tasks checked: {validated}. Clean: {ok}. Dropped: {len(rows) - ok} "
@@ -240,7 +242,7 @@ def main() -> None:
                "missing_refs": missing_refs,
                "clean": sum(r["ok"] for r in rows), "dropped": sum(not r["ok"] for r in rows)}
     (out / "decontam.json").write_text(json.dumps(summary, indent=1))
-    write_report(out / "decontam_report.md", args.epoch, by_name, rows, len(validated))
+    write_report(out / "decontam_report.md", args.epoch, by_name, rows, len(validated), missing_refs)
     log.info("decontam: %s", json.dumps(summary))
 
 
