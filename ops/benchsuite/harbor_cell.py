@@ -262,6 +262,16 @@ def harbor_version() -> str:
         return "?"
 
 
+def sweep_job_sandboxes(job_dir: Path) -> None:
+    """Delete Daytona sandboxes of this job's finished trials (harbor leaves them behind on SIGHUP / errors;
+    2026-09-23: the org's 100-sandbox cap is the binding limit, so every leak starves the next job)."""
+    try:
+        subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "daytona_sweep.py"), "--job", str(job_dir), "--min-age-min", "0"],
+                       timeout=600, check=False)
+    except (OSError, subprocess.SubprocessError) as e:
+        log(f"daytona sweep skipped: {e!r}")
+
+
 def cmd_run(a: argparse.Namespace) -> int:
     env = env_by_id(a.env)
     if "harbor" not in env:
@@ -287,6 +297,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     with (d / "harbor.log").open("a") as fh:
         p = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, env=os.environ.copy())
     wall = time.time() - t0
+    sweep_job_sandboxes(job_dir)
     if not (job_dir / "result.json").exists() and not list(job_dir.glob("*/result.json")):
         log(f"FAIL {cell}: exit={p.returncode}, no results (see {d / 'harbor.log'})")
         return 1
@@ -348,6 +359,7 @@ def cmd_resume(a: argparse.Namespace) -> int:
     t0 = time.time()
     with (d / "harbor.log").open("a") as fh:
         p = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, env=os.environ.copy())
+    sweep_job_sandboxes(job_dir)
     prev = json.loads((d / "summary.json").read_text()) if (d / "summary.json").exists() else {}
     wall = float(prev.get("wall_seconds") or 0) + time.time() - t0
     summ = summarize(job_dir, env, a, wall, p.returncode)
