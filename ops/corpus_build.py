@@ -4033,6 +4033,23 @@ def main() -> None:
         # The published vector becomes the group targets; `m` the sub-strata
         # count (changes the budget signature -> re-key + --allow-shift).
         mix = {g: float(v) for g, v in curriculum["groups"].items() if float(v) > 0}
+        # Bootstrap (2026-09-23): a group the static [mix] targets but the
+        # curriculum vector does not know yet (absent, or 0 because no
+        # verdict has ever carried it) keeps its static share, the known
+        # groups scale down to make room. Without this `group_of` mapped
+        # every record of such a group to DEFAULT_GROUP (coding, at its cap)
+        # and the group could never enter a slice -- science / sci_code /
+        # agentic_ops / long_context sat at 0 % through epochs 64-73 while
+        # the fold "accepted" their turns. The curriculum can only measure a
+        # group once it is in slices, so the static target is the prior.
+        boot = {g: float(v) for g, v in static_mix.items() if float(v) > 0 and mix.get(g, 0.0) <= 0}
+        if boot:
+            room = max(0.0, 1.0 - sum(boot.values()))
+            tot = sum(mix.values()) or 1.0
+            mix = {g: v * room / tot for g, v in mix.items()}
+            mix.update(boot)
+            log(f"curriculum apply: bootstrapped {boot} from the static [mix] (no curriculum signal yet); "
+                f"known groups scaled by {room:.3f}")
         # Published floors ([curriculum].<name>_floor / _groups: stop_state,
         # notool, chat, ...) hold under any applied vector -- belt-and-braces
         # next to the rule's own bonuses; the excess comes from the others.
