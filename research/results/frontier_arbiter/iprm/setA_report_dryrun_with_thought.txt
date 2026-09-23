@@ -1,0 +1,99 @@
+N1 stage-2 scorer — set A; rendering with_thought; span level body; metric term
+base = engy:qwen3.8-27b; plus = mock:base+N(0,0.05); rows 5; candidates 33; unique echoes 33; echo errors {'base': 0, 'plus': 0}; terms 33/33; engy cost $0.0153
+!! DRY RUN: plus side is base + noise; every statistic below is pipeline exercise only !!
+
+parity (base action lp/byte vs live lpC(y|z) echo): n 25  mean |Δ| 0.00586  max |Δ| 0.02553  Spearman +0.949
+===== SET A — N1 term (term) per candidate; 5 turns with terms =====
+term = lpC+(y|x) − lpC(y|x) over the chosen span; ref_mean = mean of the 3 teacher held-out actions on the turn
+
+-- per-role mean (unpaired) --
+slice                n          king    challenger      ref_mean         ref_0         ref_1         ref_2     attack_ls attack_repeat
+ALL                  5 -0.0293±0.066 -0.1692±0.202  0.0008±0.105 -0.2088±0.183 -0.0517±0.125  0.2628±0.158  0.0605±0.042 -0.0684±0.042
+kind bash            1  0.1340±    - -0.2897±    -  0.3311±    -  0.2461±    -  0.0850±    -  0.6622±    -  0.0227±    -       -±    -
+kind text            3 -0.1338±0.031 -0.3216±0.258 -0.0876±0.119 -0.3260±0.261 -0.1759±0.180  0.2390±0.196  0.1037±0.057 -0.0684±0.042
+kind tool_call       1  0.1206±    -  0.4085±    - -0.0643±    - -0.3121±    -  0.1843±    - -0.0653±    - -0.0316±    -       -±    -
+
+-- paired differences X − Y over turns where both exist (mean ± SE, z = mean/SE, exact two-sided sign test) --
+[ALL]
+  ref_mean − king                    n=   5  mean +0.0301 ± 0.0874  z +0.34  frac>0 0.400  sign p 1
+  ref_mean − challenger              n=   5  mean +0.1700 ± 0.1971  z +0.86  frac>0 0.800  sign p 0.375
+  challenger − king                  n=   5  mean -0.1399 ± 0.1854  z -0.75  frac>0 0.400  sign p 1
+  ref_min − king                     n=   5  mean -0.3173 ± 0.1296  z -2.45  frac>0 0.000  sign p 0.0625
+  ref_mean − attack_ls               n=   5  mean -0.0597 ± 0.1295  z -0.46  frac>0 0.400  sign p 1
+  king − attack_ls                   n=   5  mean -0.0898 ± 0.1024  z -0.88  frac>0 0.400  sign p 1
+  challenger − attack_ls             n=   5  mean -0.2297 ± 0.2251  z -1.02  frac>0 0.400  sign p 1
+  ref_mean − attack_repeat           n=   3  mean -0.0192 ± 0.0919  z -0.21  frac>0 0.333  sign p 1
+  king − attack_repeat               n=   3  mean -0.0653 ± 0.0614  z -1.06  frac>0 0.333  sign p 1
+  challenger − attack_repeat         n=   3  mean -0.2532 ± 0.2184  z -1.16  frac>0 0.333  sign p 1
+  ref_0 − ref_1                      n=   5  mean -0.1571 ± 0.2509  z -0.63  frac>0 0.600  sign p 1
+[kind bash]
+  ref_mean − king                    n=   1  -
+  ref_mean − challenger              n=   1  -
+  challenger − king                  n=   1  -
+  ref_min − king                     n=   1  -
+  ref_mean − attack_ls               n=   1  -
+  king − attack_ls                   n=   1  -
+  challenger − attack_ls             n=   1  -
+  ref_mean − attack_repeat           n=   0  -
+  king − attack_repeat               n=   0  -
+  challenger − attack_repeat         n=   0  -
+  ref_0 − ref_1                      n=   1  -
+[kind text]
+  ref_mean − king                    n=   3  mean +0.0462 ± 0.1140  z +0.41  frac>0 0.333  sign p 1
+  ref_mean − challenger              n=   3  mean +0.2340 ± 0.1571  z +1.49  frac>0 1.000  sign p 0.25
+  challenger − king                  n=   3  mean -0.1878 ± 0.2637  z -0.71  frac>0 0.333  sign p 1
+  ref_min − king                     n=   3  mean -0.3683 ± 0.2012  z -1.83  frac>0 0.000  sign p 0.25
+  ref_mean − attack_ls               n=   3  mean -0.1913 ± 0.1567  z -1.22  frac>0 0.333  sign p 1
+  king − attack_ls                   n=   3  mean -0.2375 ± 0.0870  z -2.73  frac>0 0.000  sign p 0.25
+  challenger − attack_ls             n=   3  mean -0.4253 ± 0.2717  z -1.57  frac>0 0.333  sign p 1
+  ref_mean − attack_repeat           n=   3  mean -0.0192 ± 0.0919  z -0.21  frac>0 0.333  sign p 1
+  king − attack_repeat               n=   3  mean -0.0653 ± 0.0614  z -1.06  frac>0 0.333  sign p 1
+  challenger − attack_repeat         n=   3  mean -0.2532 ± 0.2184  z -1.16  frac>0 0.333  sign p 1
+  ref_0 − ref_1                      n=   3  mean -0.1501 ± 0.4169  z -0.36  frac>0 0.667  sign p 1
+[kind tool_call]
+  ref_mean − king                    n=   1  -
+  ref_mean − challenger              n=   1  -
+  challenger − king                  n=   1  -
+  ref_min − king                     n=   1  -
+  ref_mean − attack_ls               n=   1  -
+  king − attack_ls                   n=   1  -
+  challenger − attack_ls             n=   1  -
+  ref_mean − attack_repeat           n=   0  -
+  king − attack_repeat               n=   0  -
+  challenger − attack_repeat         n=   0  -
+  ref_0 − ref_1                      n=   1  -
+
+-- AUC (unpaired, pooled over turns): P(term_X > term_Y) --
+  refs(all 3)    > king            AUC 0.560   (n 15 vs 5)
+  refs(all 3)    > challenger      AUC 0.600   (n 15 vs 5)
+  refs(all 3)    > attack_ls       AUC 0.440   (n 15 vs 5)
+  king           > attack_ls       AUC 0.320   (n 5 vs 5)
+  refs(all 3)    > attack_repeat   AUC 0.644   (n 15 vs 3)
+  king           > attack_repeat   AUC 0.533   (n 5 vs 3)
+
+-- attack rows vs the labelled candidates: fraction of turns where the attack beats the MEDIAN of {king, challenger, refs} --
+  attack_ls      beats median labelled action on 0.600 of 5 turns
+  attack_repeat  beats median labelled action on 0.333 of 3 turns
+
+-- correlation with the LIVE sd-meter legs (Spearman over (turn, side) for king+challenger; refs LOO) --
+[miners (king+challenger)]
+  term vs live z_R     rho +0.212  perm p 0.533  n 10
+  term vs live typ_c   rho -0.139  perm p 0.721  n 10
+  term vs live z_A     rho -0.067  perm p 0.857  n 10
+  term vs live score   rho -0.127  perm p 0.737  n 10
+  term vs live lpC_ya_za  (per-byte teacher lp)  rho +0.370  n 10
+  term vs live lpC_ya_e   (per-byte teacher lp)  rho -0.212  n 10
+[teacher refs (LOO legs)]
+  term vs live z_R     rho -0.175  perm p 0.543  n 15
+  term vs live typ_c   rho -0.136  perm p 0.625  n 15
+  term vs live z_A     rho +0.086  perm p 0.763  n 15
+  term vs live score   rho -0.368  perm p 0.170  n 15
+  term vs live lpC_ya_za  (per-byte teacher lp)  rho +0.314  n 15
+  term vs live lpC_ya_e   (per-byte teacher lp)  rho -0.411  n 15
+
+-- per record: paired (challenger − king) term margin next to the verdict's live z --
+  chal-00614  n   1  chal−king +0.2626 ± nan (z +nan)   refs−king +0.2658 ± nan   live z +6.11 wins=True
+  chal-00621  n   1  chal−king -0.1755 ± nan (z +nan)   refs−king -0.0107 ± nan   live z -0.69 wins=False
+  chal-00623  n   1  chal−king -0.4237 ± nan (z +nan)   refs−king +0.1971 ± nan   live z +0.20 wins=False
+  chal-00625  n   1  chal−king +0.2879 ± nan (z +nan)   refs−king -0.1849 ± nan   live z -0.40 wins=False
+  chal-00630  n   1  chal−king -0.6506 ± nan (z +nan)   refs−king -0.1166 ± nan   live z +1.33 wins=False

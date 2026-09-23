@@ -1,0 +1,192 @@
+{"at": 1790000388.4317925, "stage": "sample_gen", "cost_usd": 0.019739999999999994, "usage": {"qwen3.6-35b-a3b": {"calls": 48, "prompt_tokens": 600952, "completion_tokens": 13648, "cost_usd": 0.019739999999999994}}, "note": "48/720"}
+{"at": 1790000390.1133022, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 48, "prompt_tokens": 600952, "completion_tokens": 12632, "cost_usd": 0.0}}, "note": "48/720"}
+{"at": 1790000420.3402615, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 96, "prompt_tokens": 1015732, "completion_tokens": 37830, "cost_usd": 0.0}}, "note": "96/720"}
+{"at": 1790000429.271189, "stage": "sample_gen", "cost_usd": 0.04074200000000002, "usage": {"qwen3.6-35b-a3b": {"calls": 96, "prompt_tokens": 1015732, "completion_tokens": 39756, "cost_usd": 0.04074200000000002}}, "note": "96/720"}
+{"at": 1790000438.9350984, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 144, "prompt_tokens": 1524588, "completion_tokens": 52056, "cost_usd": 0.0}}, "note": "144/720"}
+{"at": 1790000451.8137906, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 192, "prompt_tokens": 1989308, "completion_tokens": 61591, "cost_usd": 0.0}}, "note": "192/720"}
+{"at": 1790000461.683972, "stage": "sample_gen", "cost_usd": 0.061701000000000034, "usage": {"qwen3.6-35b-a3b": {"calls": 144, "prompt_tokens": 1524588, "completion_tokens": 60730, "cost_usd": 0.061701000000000034}}, "note": "144/720"}
+{"at": 1790000466.4303253, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 240, "prompt_tokens": 2646436, "completion_tokens": 71738, "cost_usd": 0.0}}, "note": "240/720"}
+{"at": 1790000481.934582, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 288, "prompt_tokens": 3147052, "completion_tokens": 83669, "cost_usd": 0.0}}, "note": "288/720"}
+{"at": 1790000486.2094855, "stage": "sample_gen", "cost_usd": 0.07836799999999997, "usage": {"qwen3.6-35b-a3b": {"calls": 192, "prompt_tokens": 1989308, "completion_tokens": 75492, "cost_usd": 0.07836799999999997}}, "note": "192/720"}
+{"at": 1790000492.274383, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 336, "prompt_tokens": 3620968, "completion_tokens": 90718, "cost_usd": 0.0}}, "note": "336/720"}
+{"at": 1790000510.1187904, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 384, "prompt_tokens": 4223172, "completion_tokens": 104088, "cost_usd": 0.0}}, "note": "384/720"}
+{"at": 1790000514.115552, "stage": "sample_gen", "cost_usd": 0.09945599999999996, "usage": {"qwen3.6-35b-a3b": {"calls": 240, "prompt_tokens": 2646436, "completion_tokens": 89454, "cost_usd": 0.09945599999999996}}, "note": "240/720"}
+{"at": 1790000519.6662512, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 432, "prompt_tokens": 4796116, "completion_tokens": 110602, "cost_usd": 0.0}}, "note": "432/720"}
+{"at": 1790000530.6551247, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 480, "prompt_tokens": 5104532, "completion_tokens": 118974, "cost_usd": 0.0}}, "note": "480/720"}
+{"at": 1790000540.9813485, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 528, "prompt_tokens": 5547984, "completion_tokens": 126956, "cost_usd": 0.0}}, "note": "528/720"}
+{"at": 1790000557.2385018, "stage": "sample_gen", "cost_usd": 0.11631099999999996, "usage": {"qwen3.6-35b-a3b": {"calls": 288, "prompt_tokens": 3147052, "completion_tokens": 105319, "cost_usd": 0.11631099999999996}}, "note": "288/720"}
+{"at": 1790000557.6159763, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 576, "prompt_tokens": 5942360, "completion_tokens": 138103, "cost_usd": 0.0}}, "note": "576/720"}
+{"at": 1790000567.5299807, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 624, "prompt_tokens": 6389852, "completion_tokens": 144930, "cost_usd": 0.0}}, "note": "624/720"}
+{"at": 1790000579.6517022, "stage": "sample_gen", "cost_usd": 0.13065699999999997, "usage": {"qwen3.6-35b-a3b": {"calls": 336, "prompt_tokens": 3620968, "completion_tokens": 116490, "cost_usd": 0.13065699999999997}}, "note": "336/720"}
+{"at": 1790000594.1686282, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 672, "prompt_tokens": 6849632, "completion_tokens": 156082, "cost_usd": 0.0}}, "note": "672/720"}
+{"at": 1790000618.8282886, "stage": "sample_gen", "cost_usd": 0.150823, "usage": {"qwen3.6-35b-a3b": {"calls": 384, "prompt_tokens": 4223172, "completion_tokens": 133459, "cost_usd": 0.150823}}, "note": "384/720"}
+{"at": 1790000634.4362273, "stage": "sample_gen", "cost_usd": 0.16709400000000005, "usage": {"qwen3.6-35b-a3b": {"calls": 432, "prompt_tokens": 4796116, "completion_tokens": 141379, "cost_usd": 0.16709400000000005}}, "note": "432/720"}
+{"at": 1790000654.7963538, "stage": "sample_gen", "cost_usd": 0.17881100000000005, "usage": {"qwen3.6-35b-a3b": {"calls": 480, "prompt_tokens": 5104532, "completion_tokens": 152125, "cost_usd": 0.17881100000000005}}, "note": "480/720"}
+{"at": 1790000674.8212438, "stage": "sample_gen", "cost_usd": 0.1924140000000001, "usage": {"qwen3.6-35b-a3b": {"calls": 528, "prompt_tokens": 5547984, "completion_tokens": 163407, "cost_usd": 0.1924140000000001}}, "note": "528/720"}
+{"at": 1790000696.6249065, "stage": "sample_gen", "cost_usd": 0.20577900000000016, "usage": {"qwen3.6-35b-a3b": {"calls": 576, "prompt_tokens": 5942360, "completion_tokens": 175550, "cost_usd": 0.20577900000000016}}, "note": "576/720"}
+{"at": 1790000710.5439262, "stage": "sample_gen", "cost_usd": 0.2188730000000001, "usage": {"qwen3.6-35b-a3b": {"calls": 624, "prompt_tokens": 6389852, "completion_tokens": 181926, "cost_usd": 0.2188730000000001}}, "note": "624/720"}
+{"at": 1790000722.2925813, "stage": "sample_gen", "cost_usd": 0.23208600000000024, "usage": {"qwen3.6-35b-a3b": {"calls": 672, "prompt_tokens": 6849632, "completion_tokens": 188824, "cost_usd": 0.23208600000000024}}, "note": "672/720"}
+{"at": 1790000746.6840312, "stage": "sample_gen", "cost_usd": 0.2465040000000003, "usage": {"qwen3.6-35b-a3b": {"calls": 720, "prompt_tokens": 7297708, "completion_tokens": 198760, "cost_usd": 0.2465040000000003}}, "note": "720/720"}
+{"at": 1790000823.7311602, "stage": "echo", "cost_usd": 0.016629000000000005, "usage": {"qwen3.8-27b": {"calls": 120, "prompt_tokens": 635798, "completion_tokens": 120, "cost_usd": 0.016629000000000005}}, "note": "120/15758"}
+{"at": 1790001059.76311, "stage": "echo", "cost_usd": 0.041866, "usage": {"qwen3.8-27b": {"calls": 240, "prompt_tokens": 1879999, "completion_tokens": 240, "cost_usd": 0.041866}}, "note": "240/15758"}
+{"at": 1790001394.132146, "stage": "echo", "cost_usd": 0.06570499999999999, "usage": {"qwen3.8-27b": {"calls": 360, "prompt_tokens": 2766812, "completion_tokens": 360, "cost_usd": 0.06570499999999999}}, "note": "360/15758"}
+{"at": 1790001448.8398583, "stage": "echo", "cost_usd": 0.08751900000000025, "usage": {"qwen3.8-27b": {"calls": 480, "prompt_tokens": 3658929, "completion_tokens": 480, "cost_usd": 0.08751900000000025}}, "note": "480/15758"}
+{"at": 1790001482.9791522, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 48, "prompt_tokens": 600952, "completion_tokens": 13062, "cost_usd": 0.0}}, "note": "48/720"}
+{"at": 1790001515.461598, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 96, "prompt_tokens": 1015732, "completion_tokens": 40880, "cost_usd": 0.0}}, "note": "96/720"}
+{"at": 1790001534.1843512, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 144, "prompt_tokens": 1524588, "completion_tokens": 54754, "cost_usd": 0.0}}, "note": "144/720"}
+{"at": 1790001558.691685, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 192, "prompt_tokens": 1989308, "completion_tokens": 66276, "cost_usd": 0.0}}, "note": "192/720"}
+{"at": 1790001571.9044821, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 240, "prompt_tokens": 2646436, "completion_tokens": 74965, "cost_usd": 0.0}}, "note": "240/720"}
+{"at": 1790001583.7215536, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 288, "prompt_tokens": 3147052, "completion_tokens": 84141, "cost_usd": 0.0}}, "note": "288/720"}
+{"at": 1790001594.2211463, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 336, "prompt_tokens": 3620968, "completion_tokens": 91638, "cost_usd": 0.0}}, "note": "336/720"}
+{"at": 1790001612.733055, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 384, "prompt_tokens": 4223172, "completion_tokens": 105573, "cost_usd": 0.0}}, "note": "384/720"}
+{"at": 1790001622.531125, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 432, "prompt_tokens": 4796116, "completion_tokens": 111970, "cost_usd": 0.0}}, "note": "432/720"}
+{"at": 1790001634.512149, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 480, "prompt_tokens": 5104532, "completion_tokens": 121157, "cost_usd": 0.0}}, "note": "480/720"}
+{"at": 1790001645.8531485, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 528, "prompt_tokens": 5547984, "completion_tokens": 130237, "cost_usd": 0.0}}, "note": "528/720"}
+{"at": 1790001660.1287994, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 576, "prompt_tokens": 5942360, "completion_tokens": 140066, "cost_usd": 0.0}}, "note": "576/720"}
+{"at": 1790001669.9220443, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 624, "prompt_tokens": 6389852, "completion_tokens": 146356, "cost_usd": 0.0}}, "note": "624/720"}
+{"at": 1790001679.0741632, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 672, "prompt_tokens": 6849632, "completion_tokens": 152814, "cost_usd": 0.0}}, "note": "672/720"}
+{"at": 1790001697.4709263, "stage": "sample_occ", "cost_usd": 0.0, "usage": {"occamy-1.0": {"calls": 720, "prompt_tokens": 7297708, "completion_tokens": 163981, "cost_usd": 0.0}}, "note": "720/720"}
+{"at": 1790002162.7681887, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "240/32226 | pod echoes 240, uncached retries 0, offset fallbacks 0, 648/min"}
+{"at": 1790002200.3123534, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "480/32226 | pod echoes 480, uncached retries 0, offset fallbacks 0, 482/min"}
+{"at": 1790002228.9365652, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "720/32226 | pod echoes 720, uncached retries 0, offset fallbacks 0, 489/min"}
+{"at": 1790002253.8282223, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "960/32226 | pod echoes 960, uncached retries 0, offset fallbacks 0, 508/min"}
+{"at": 1790002301.475705, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1200/32226 | pod echoes 1200, uncached retries 0, offset fallbacks 0, 447/min"}
+{"at": 1790002372.3083627, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1440/32226 | pod echoes 1440, uncached retries 0, offset fallbacks 0, 373/min"}
+{"at": 1790002430.102429, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1680/32226 | pod echoes 1680, uncached retries 0, offset fallbacks 0, 348/min"}
+{"at": 1790002475.863011, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1920/32226 | pod echoes 1920, uncached retries 0, offset fallbacks 0, 344/min"}
+{"at": 1790002575.9367876, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "240/10750 | pod echoes 240, uncached retries 0, offset fallbacks 0, 202/min"}
+{"at": 1790002580.8908305, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "240/8760 | pod echoes 240, uncached retries 0, offset fallbacks 0, 189/min"}
+{"at": 1790002584.6191335, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "240/10702 | pod echoes 240, uncached retries 0, offset fallbacks 0, 180/min"}
+{"at": 1790002632.7708783, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "480/10750 | pod echoes 480, uncached retries 0, offset fallbacks 0, 225/min"}
+{"at": 1790002633.4586434, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "480/8760 | pod echoes 480, uncached retries 0, offset fallbacks 0, 223/min"}
+{"at": 1790002641.1528876, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "480/10702 | pod echoes 480, uncached retries 0, offset fallbacks 0, 211/min"}
+{"at": 1790002698.313235, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "720/8760 | pod echoes 720, uncached retries 0, offset fallbacks 0, 223/min"}
+{"at": 1790002707.956354, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "720/10702 | pod echoes 720, uncached retries 0, offset fallbacks 0, 212/min"}
+{"at": 1790002708.0423427, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "720/10750 | pod echoes 720, uncached retries 0, offset fallbacks 0, 212/min"}
+{"at": 1790002780.494671, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "960/8760 | pod echoes 960, uncached retries 0, offset fallbacks 0, 209/min"}
+{"at": 1790002799.7578278, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "960/10702 | pod echoes 960, uncached retries 0, offset fallbacks 0, 195/min"}
+{"at": 1790002808.7830412, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "960/10750 | pod echoes 960, uncached retries 0, offset fallbacks 0, 189/min"}
+{"at": 1790002894.3646138, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1200/8760 | pod echoes 1200, uncached retries 0, offset fallbacks 0, 185/min"}
+{"at": 1790002907.187538, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1200/10702 | pod echoes 1200, uncached retries 0, offset fallbacks 0, 179/min"}
+{"at": 1790002912.6238637, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1200/10750 | pod echoes 1200, uncached retries 0, offset fallbacks 0, 176/min"}
+{"at": 1790002982.355329, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1440/8760 | pod echoes 1440, uncached retries 0, offset fallbacks 0, 181/min"}
+{"at": 1790002992.763419, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1440/10702 | pod echoes 1440, uncached retries 0, offset fallbacks 0, 177/min"}
+{"at": 1790003001.56168, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1440/10750 | pod echoes 1440, uncached retries 0, offset fallbacks 0, 174/min"}
+{"at": 1790003069.3652039, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1680/8760 | pod echoes 1680, uncached retries 0, offset fallbacks 0, 178/min"}
+{"at": 1790003095.8743632, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1680/10702 | pod echoes 1680, uncached retries 0, offset fallbacks 0, 170/min"}
+{"at": 1790003102.575599, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1680/10750 | pod echoes 1680, uncached retries 0, offset fallbacks 0, 169/min"}
+{"at": 1790003153.9898388, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1920/8760 | pod echoes 1920, uncached retries 0, offset fallbacks 0, 177/min"}
+{"at": 1790003184.9441695, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1920/10702 | pod echoes 1920, uncached retries 0, offset fallbacks 0, 169/min"}
+{"at": 1790003203.1557589, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1920/10750 | pod echoes 1920, uncached retries 0, offset fallbacks 0, 165/min"}
+{"at": 1790003252.0300868, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "2160/8760 | pod echoes 2160, uncached retries 0, offset fallbacks 0, 173/min"}
+{"at": 1790003272.672903, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "2160/10702 | pod echoes 2160, uncached retries 0, offset fallbacks 0, 169/min"}
+{"at": 1790003288.7168682, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "2160/10750 | pod echoes 2160, uncached retries 0, offset fallbacks 0, 165/min"}
+{"at": 1790003330.416413, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "2400/8760 | pod echoes 2400, uncached retries 0, offset fallbacks 0, 174/min"}
+{"at": 1790003345.0205657, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "2400/10702 | pod echoes 2400, uncached retries 0, offset fallbacks 0, 171/min"}
+{"at": 1790003363.2324815, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "2400/10750 | pod echoes 2400, uncached retries 0, offset fallbacks 0, 168/min"}
+{"at": 1790003426.5446544, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "2640/8760 | pod echoes 2640, uncached retries 0, offset fallbacks 0, 172/min"}
+{"at": 1790003450.9422336, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "2640/10702 | pod echoes 2640, uncached retries 0, offset fallbacks 0, 167/min"}
+{"at": 1790003464.3905838, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "2640/10750 | pod echoes 2640, uncached retries 0, offset fallbacks 0, 165/min"}
+{"at": 1790003516.3667722, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "2880/8760 | pod echoes 2880, uncached retries 0, offset fallbacks 0, 171/min"}
+{"at": 1790003542.0463834, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "2880/10702 | pod echoes 2880, uncached retries 0, offset fallbacks 0, 167/min"}
+{"at": 1790003548.247099, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "2880/10750 | pod echoes 2880, uncached retries 0, offset fallbacks 0, 166/min"}
+{"at": 1790003600.5879323, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "3120/8760 | pod echoes 3120, uncached retries 0, offset fallbacks 0, 171/min"}
+{"at": 1790003621.3836665, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "3120/10750 | pod echoes 3120, uncached retries 0, offset fallbacks 0, 168/min"}
+{"at": 1790003621.6417036, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "3120/10702 | pod echoes 3120, uncached retries 0, offset fallbacks 0, 168/min"}
+{"at": 1790003664.8346145, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "3360/8760 | pod echoes 3360, uncached retries 0, offset fallbacks 0, 174/min"}
+{"at": 1790003687.204145, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "3360/10750 | pod echoes 3360, uncached retries 0, offset fallbacks 0, 170/min"}
+{"at": 1790003697.402817, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "3360/10702 | pod echoes 3360, uncached retries 0, offset fallbacks 0, 169/min"}
+{"at": 1790003786.73898, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "3600/8760 | pod echoes 3600, uncached retries 0, offset fallbacks 0, 168/min"}
+{"at": 1790003789.6218274, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "3600/10750 | pod echoes 3600, uncached retries 0, offset fallbacks 0, 168/min"}
+{"at": 1790003800.8339384, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "3600/10702 | pod echoes 3600, uncached retries 0, offset fallbacks 0, 167/min"}
+{"at": 1790003851.4883265, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "3840/8760 | pod echoes 3840, uncached retries 0, offset fallbacks 0, 171/min"}
+{"at": 1790003867.3967197, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "3840/10750 | pod echoes 3840, uncached retries 0, offset fallbacks 0, 169/min"}
+{"at": 1790003882.2163131, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "3840/10702 | pod echoes 3840, uncached retries 0, offset fallbacks 0, 167/min"}
+{"at": 1790003933.6447914, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "4080/8760 | pod echoes 4080, uncached retries 0, offset fallbacks 0, 171/min"}
+{"at": 1790003959.1793165, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "4080/10750 | pod echoes 4080, uncached retries 0, offset fallbacks 0, 168/min"}
+{"at": 1790003974.5991127, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "4080/10702 | pod echoes 4080, uncached retries 0, offset fallbacks 0, 167/min"}
+{"at": 1790004030.1895223, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "4320/8760 | pod echoes 4320, uncached retries 0, offset fallbacks 0, 170/min"}
+{"at": 1790004069.517553, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "4320/10750 | pod echoes 4320, uncached retries 0, offset fallbacks 0, 166/min"}
+{"at": 1790004081.8531115, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "4320/10702 | pod echoes 4320, uncached retries 0, offset fallbacks 0, 164/min"}
+{"at": 1790004113.362488, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "4560/8760 | pod echoes 4560, uncached retries 0, offset fallbacks 0, 170/min"}
+{"at": 1790004152.9459033, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "4560/10750 | pod echoes 4560, uncached retries 0, offset fallbacks 0, 166/min"}
+{"at": 1790004187.0836864, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "4560/10702 | pod echoes 4560, uncached retries 0, offset fallbacks 0, 163/min"}
+{"at": 1790004210.9711535, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "4800/8760 | pod echoes 4800, uncached retries 0, offset fallbacks 0, 169/min"}
+{"at": 1790004260.3865743, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "4800/10750 | pod echoes 4800, uncached retries 0, offset fallbacks 0, 164/min"}
+{"at": 1790004295.619565, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "4800/10702 | pod echoes 4800, uncached retries 0, offset fallbacks 0, 161/min"}
+{"at": 1790004308.4956064, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "5040/8760 | pod echoes 5040, uncached retries 0, offset fallbacks 0, 168/min"}
+{"at": 1790004352.1399515, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "5040/10750 | pod echoes 5040, uncached retries 0, offset fallbacks 0, 164/min"}
+{"at": 1790004375.5977974, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "5040/10702 | pod echoes 5040, uncached retries 0, offset fallbacks 0, 162/min"}
+{"at": 1790004396.083327, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "5280/8760 | pod echoes 5280, uncached retries 0, offset fallbacks 0, 167/min"}
+{"at": 1790004414.355156, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "5280/10750 | pod echoes 5280, uncached retries 0, offset fallbacks 0, 166/min"}
+{"at": 1790004449.507905, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "5280/10702 | pod echoes 5280, uncached retries 0, offset fallbacks 0, 163/min"}
+{"at": 1790004484.4182823, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "5520/8760 | pod echoes 5520, uncached retries 0, offset fallbacks 0, 167/min"}
+{"at": 1790004498.636734, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "5520/10750 | pod echoes 5520, uncached retries 0, offset fallbacks 0, 166/min"}
+{"at": 1790004539.5023582, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "5520/10702 | pod echoes 5520, uncached retries 0, offset fallbacks 0, 163/min"}
+{"at": 1790004565.7249997, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "5760/8760 | pod echoes 5760, uncached retries 0, offset fallbacks 0, 168/min"}
+{"at": 1790004565.7576272, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "5760/10750 | pod echoes 5760, uncached retries 0, offset fallbacks 0, 168/min"}
+{"at": 1790004672.2820706, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "5760/10702 | pod echoes 5760, uncached retries 0, offset fallbacks 0, 159/min"}
+{"at": 1790004714.6946754, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "6000/10750 | pod echoes 6000, uncached retries 0, offset fallbacks 0, 163/min"}
+{"at": 1790004714.7604835, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "6000/8760 | pod echoes 6000, uncached retries 0, offset fallbacks 0, 163/min"}
+{"at": 1790004786.9564455, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "6000/10702 | pod echoes 6000, uncached retries 0, offset fallbacks 0, 158/min"}
+{"at": 1790004794.1125824, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "6240/8760 | pod echoes 6240, uncached retries 0, offset fallbacks 0, 164/min"}
+{"at": 1790004807.6137528, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "6240/10750 | pod echoes 6240, uncached retries 0, offset fallbacks 0, 163/min"}
+{"at": 1790004873.03447, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "6480/8760 | pod echoes 6480, uncached retries 0, offset fallbacks 0, 164/min"}
+{"at": 1790004873.042668, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "6240/10702 | pod echoes 6240, uncached retries 0, offset fallbacks 0, 158/min"}
+{"at": 1790004900.2919717, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "6480/10750 | pod echoes 6480, uncached retries 0, offset fallbacks 0, 162/min"}
+{"at": 1790004943.6720266, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "6720/8760 | pod echoes 6720, uncached retries 0, offset fallbacks 0, 165/min"}
+{"at": 1790004949.3745, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "6480/10702 | pod echoes 6480, uncached retries 0, offset fallbacks 0, 159/min"}
+{"at": 1790004969.7533023, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "6720/10750 | pod echoes 6720, uncached retries 0, offset fallbacks 0, 164/min"}
+{"at": 1790005012.8255122, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "6960/8760 | pod echoes 6960, uncached retries 0, offset fallbacks 0, 166/min"}
+{"at": 1790005026.7347538, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "6720/10702 | pod echoes 6720, uncached retries 0, offset fallbacks 0, 160/min"}
+{"at": 1790005035.2557175, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "6960/10750 | pod echoes 6960, uncached retries 0, offset fallbacks 0, 165/min"}
+{"at": 1790005113.1455586, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "7200/8760 | pod echoes 7200, uncached retries 0, offset fallbacks 0, 166/min"}
+{"at": 1790005114.9583154, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "7200/10750 | pod echoes 7200, uncached retries 0, offset fallbacks 0, 165/min"}
+{"at": 1790005115.0238802, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "6960/10702 | pod echoes 6960, uncached retries 0, offset fallbacks 0, 160/min"}
+{"at": 1790005217.0599854, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "7200/10702 | pod echoes 7200, uncached retries 0, offset fallbacks 0, 159/min"}
+{"at": 1790005222.538795, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "7440/10750 | pod echoes 7440, uncached retries 0, offset fallbacks 0, 164/min"}
+{"at": 1790005222.9069173, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "7440/8760 | pod echoes 7440, uncached retries 0, offset fallbacks 0, 164/min"}
+{"at": 1790005311.383933, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "7440/10702 | pod echoes 7440, uncached retries 0, offset fallbacks 0, 159/min"}
+{"at": 1790005313.5855649, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "7680/8760 | pod echoes 7680, uncached retries 0, offset fallbacks 0, 164/min"}
+{"at": 1790005313.8127637, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "7680/10750 | pod echoes 7680, uncached retries 0, offset fallbacks 0, 164/min"}
+{"at": 1790005413.0183725, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "7920/10750 | pod echoes 7920, uncached retries 0, offset fallbacks 0, 163/min"}
+{"at": 1790005426.2467043, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "7920/8760 | pod echoes 7920, uncached retries 0, offset fallbacks 0, 163/min"}
+{"at": 1790005431.029244, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "7680/10702 | pod echoes 7680, uncached retries 0, offset fallbacks 0, 157/min"}
+{"at": 1790005530.1341424, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "8160/10750 | pod echoes 8160, uncached retries 0, offset fallbacks 0, 162/min"}
+{"at": 1790005546.9097033, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "8160/8760 | pod echoes 8160, uncached retries 0, offset fallbacks 0, 161/min"}
+{"at": 1790005558.6015809, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "7920/10702 | pod echoes 7920, uncached retries 0, offset fallbacks 0, 156/min"}
+{"at": 1790005640.67283, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "8400/10750 | pod echoes 8400, uncached retries 0, offset fallbacks 0, 161/min"}
+{"at": 1790005669.1397288, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "8160/10702 | pod echoes 8160, uncached retries 0, offset fallbacks 0, 155/min"}
+{"at": 1790005681.035161, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "8400/8760 | pod echoes 8400, uncached retries 0, offset fallbacks 0, 159/min"}
+{"at": 1790005769.6030664, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "8640/10750 | pod echoes 8640, uncached retries 0, offset fallbacks 0, 159/min"}
+{"at": 1790005786.419134, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "8400/10702 | pod echoes 8400, uncached retries 0, offset fallbacks 0, 154/min"}
+{"at": 1790005809.498469, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "8640/8760 | pod echoes 8640, uncached retries 0, offset fallbacks 0, 157/min"}
+{"at": 1790005853.600294, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "8760/8760 | pod echoes 8760, uncached retries 0, offset fallbacks 0, 157/min"}
+{"at": 1790005863.6330972, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "8880/10750 | pod echoes 8880, uncached retries 0, offset fallbacks 0, 159/min"}
+{"at": 1790005866.279935, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "8640/10702 | pod echoes 8640, uncached retries 0, offset fallbacks 0, 154/min"}
+{"at": 1790005909.4454744, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "9120/10750 | pod echoes 9120, uncached retries 0, offset fallbacks 0, 161/min"}
+{"at": 1790005922.0309818, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "8880/10702 | pod echoes 8880, uncached retries 0, offset fallbacks 0, 156/min"}
+{"at": 1790005956.2461627, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "9360/10750 | pod echoes 9360, uncached retries 0, offset fallbacks 0, 163/min"}
+{"at": 1790005978.4297664, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "9120/10702 | pod echoes 9120, uncached retries 0, offset fallbacks 0, 158/min"}
+{"at": 1790006019.7628045, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "9600/10750 | pod echoes 9600, uncached retries 0, offset fallbacks 0, 164/min"}
+{"at": 1790006035.086626, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "9360/10702 | pod echoes 9360, uncached retries 0, offset fallbacks 0, 159/min"}
+{"at": 1790006082.9324667, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "9840/10750 | pod echoes 9840, uncached retries 0, offset fallbacks 0, 165/min"}
+{"at": 1790006088.0207386, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "9600/10702 | pod echoes 9600, uncached retries 0, offset fallbacks 0, 161/min"}
+{"at": 1790006137.6076193, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "9840/10702 | pod echoes 9840, uncached retries 0, offset fallbacks 0, 163/min"}
+{"at": 1790006137.8379004, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "10080/10750 | pod echoes 10080, uncached retries 0, offset fallbacks 0, 166/min"}
+{"at": 1790006173.7924237, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "10080/10702 | pod echoes 10080, uncached retries 0, offset fallbacks 0, 165/min"}
+{"at": 1790006211.3498745, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "10320/10750 | pod echoes 10320, uncached retries 0, offset fallbacks 0, 167/min"}
+{"at": 1790006224.6501048, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "10320/10702 | pod echoes 10320, uncached retries 0, offset fallbacks 0, 166/min"}
+{"at": 1790006254.3413455, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "10560/10750 | pod echoes 10560, uncached retries 0, offset fallbacks 0, 169/min"}
+{"at": 1790006262.4836986, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "10560/10702 | pod echoes 10560, uncached retries 0, offset fallbacks 0, 169/min"}
+{"at": 1790006291.310611, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "10702/10702 | pod echoes 10702, uncached retries 0, offset fallbacks 0, 170/min"}
+{"at": 1790006291.4210272, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "10750/10750 | pod echoes 10750, uncached retries 0, offset fallbacks 0, 170/min"}
+{"at": 1790007140.893611, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "240/2008 | pod echoes 240, uncached retries 0, offset fallbacks 0, 503/min"}
+{"at": 1790007165.5150168, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "480/2008 | pod echoes 480, uncached retries 0, offset fallbacks 0, 541/min"}
+{"at": 1790007193.4125419, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "720/2008 | pod echoes 720, uncached retries 0, offset fallbacks 0, 532/min"}
+{"at": 1790007216.5129013, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "960/2008 | pod echoes 960, uncached retries 0, offset fallbacks 0, 552/min"}
+{"at": 1790007236.6642315, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1200/2008 | pod echoes 1200, uncached retries 0, offset fallbacks 0, 579/min"}
+{"at": 1790007258.1331117, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1440/2008 | pod echoes 1440, uncached retries 0, offset fallbacks 0, 592/min"}
+{"at": 1790007279.1449013, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1680/2008 | pod echoes 1680, uncached retries 0, offset fallbacks 0, 604/min"}
+{"at": 1790007298.566552, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "1920/2008 | pod echoes 1920, uncached retries 0, offset fallbacks 0, 618/min"}
+{"at": 1790007305.8153193, "stage": "echo", "cost_usd": 0.0, "usage": {}, "note": "2008/2008 | pod echoes 2008, uncached retries 0, offset fallbacks 0, 622/min"}

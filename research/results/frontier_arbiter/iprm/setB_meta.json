@@ -1,0 +1,379 @@
+{
+ "n_rows": 2979,
+ "n_unique_turns": 1329,
+ "per_model": 150,
+ "per_dialect": 30,
+ "seed": 20260921,
+ "rows_by_model": {
+  "king11": 150,
+  "king12": 150,
+  "king13": 150,
+  "king14": 150,
+  "king15": 150,
+  "king16": 150,
+  "king17": 150,
+  "king18": 150,
+  "king19": 150,
+  "king20": 150,
+  "genesis": 150,
+  "teacher": 1329
+ },
+ "by_dialect_by_model": {
+  "king11": {
+   "tool_call": 36,
+   "bash": 41,
+   "text": 33,
+   "boxed": 34,
+   "terminus_json": 6
+  },
+  "king12": {
+   "text": 30,
+   "tool_call": 30,
+   "bash": 30,
+   "terminus_json": 30,
+   "boxed": 30
+  },
+  "king13": {
+   "text": 30,
+   "bash": 30,
+   "terminus_json": 30,
+   "tool_call": 30,
+   "boxed": 30
+  },
+  "king14": {
+   "bash": 30,
+   "tool_call": 30,
+   "terminus_json": 30,
+   "text": 30,
+   "boxed": 30
+  },
+  "king15": {
+   "tool_call": 30,
+   "bash": 30,
+   "terminus_json": 30,
+   "text": 30,
+   "boxed": 30
+  },
+  "king16": {
+   "tool_call": 30,
+   "bash": 30,
+   "terminus_json": 30,
+   "text": 30,
+   "boxed": 30
+  },
+  "king17": {
+   "tool_call": 30,
+   "bash": 30,
+   "terminus_json": 30,
+   "text": 30,
+   "boxed": 30
+  },
+  "king18": {
+   "bash": 30,
+   "text": 30,
+   "tool_call": 30,
+   "terminus_json": 30,
+   "boxed": 30
+  },
+  "king19": {
+   "text": 30,
+   "bash": 30,
+   "tool_call": 30,
+   "terminus_json": 30,
+   "boxed": 30
+  },
+  "king20": {
+   "tool_call": 30,
+   "terminus_json": 30,
+   "text": 30,
+   "bash": 30,
+   "boxed": 30
+  },
+  "genesis": {
+   "bash": 34,
+   "tool_call": 37,
+   "text": 31,
+   "terminus_json": 31,
+   "boxed": 17
+  },
+  "teacher": {
+   "bash": 300,
+   "text": 276,
+   "tool_call": 289,
+   "terminus_json": 236,
+   "boxed": 228
+  }
+ },
+ "by_dialect": {
+  "tool_call": 632,
+  "bash": 645,
+  "text": 610,
+  "boxed": 549,
+  "terminus_json": 543
+ },
+ "bench_axes": {
+  "teacher": {
+   "total": 15.66141994949495,
+   "agentic": 17.110565656565658,
+   "agentic_no_tau2": 8.7816148989899,
+   "chat": 7.642679924242427,
+   "total_raw": 72.8085,
+   "agentic_raw": 70.46857142857144,
+   "agentic_no_tau2_raw": 67.38,
+   "chat_raw": 82.8925,
+   "total_n": 20,
+   "agentic_n": 7,
+   "agentic_no_tau2_n": 4,
+   "chat_n": 8
+  },
+  "genesis": {
+   "total": 10.85791994949495,
+   "agentic": 18.749137085137086,
+   "agentic_no_tau2": 5.356614898989902,
+   "chat": 0.34392992424242497,
+   "total_raw": 68.005,
+   "agentic_raw": 72.10714285714286,
+   "agentic_no_tau2_raw": 63.955,
+   "chat_raw": 75.59375,
+   "total_n": 20,
+   "agentic_n": 7,
+   "agentic_no_tau2_n": 4,
+   "chat_n": 8
+  },
+  "king11": {
+   "total": -12.15858005050505,
+   "agentic": -22.16514862914863,
+   "agentic_no_tau2": -4.010885101010101,
+   "chat": -2.5510700757575746,
+   "total_raw": 44.9885,
+   "agentic_raw": 31.192857142857143,
+   "agentic_no_tau2_raw": 54.5875,
+   "chat_raw": 72.69875,
+   "total_n": 20,
+   "agentic_n": 7,
+   "agentic_no_tau2_n": 4,
+   "chat_n": 8
+  },
+  "king12": {
+   "total": -12.81758005050505,
+   "agentic": -23.5765772005772,
+   "agentic_no_tau2": -6.480885101010102,
+   "chat": -3.2335700757575765,
+   "total_raw": 44.329499999999996,
+   "agentic_raw": 29.78142857142857,
+   "agentic_no_tau2_raw": 52.1175,
+   "chat_raw": 72.01625,
+   "total_n": 20,
+   "agentic_n": 7,
+   "agentic_no_tau2_n": 4,
+   "chat_n": 8
+  },
+  "king13": {
+   "total": -19.92908005050505,
+   "agentic": -22.449434343434344,
+   "agentic_no_tau2": -4.5083851010101,
+   "chat": -9.374820075757576,
+   "total_raw": 37.217999999999996,
+   "agentic_raw": 30.908571428571427,
+   "agentic_no_tau2_raw": 54.09,
+   "chat_raw": 65.875,
+   "total_n": 20,
+   "agentic_n": 7,
+   "agentic_no_tau2_n": 4,
+   "chat_n": 8
+  },
+  "king14": {
+   "total": -11.75258005050505,
+   "agentic": -21.5065772005772,
+   "agentic_no_tau2": -2.858385101010099,
+   "chat": -2.3360700757575747,
+   "total_raw": 45.3945,
+   "agentic_raw": 31.85142857142857,
+   "agentic_no_tau2_raw": 55.74,
+   "chat_raw": 72.91375,
+   "total_n": 20,
+   "agentic_n": 7,
+   "agentic_no_tau2_n": 4,
+   "chat_n": 8
+  },
+  "king15": {
+   "total": -11.670015993265993,
+   "agentic": -25.11730303030303,
+   "agentic_no_tau2": -3.863772727272727,
+   "chat": 0.5251799242424253,
+   "total_raw": 49.77611111111111,
+   "agentic_raw": 32.019999999999996,
+   "agentic_no_tau2_raw": 64.03999999999999,
+   "chat_raw": 75.775,
+   "total_n": 18,
+   "agentic_n": 6,
+   "agentic_no_tau2_n": 3,
+   "chat_n": 8
+  },
+  "king16": {
+   "total": 6.753419949494951,
+   "agentic": 14.227708513708516,
+   "agentic_no_tau2": 2.041614898989902,
+   "chat": -1.094820075757574,
+   "total_raw": 63.9005,
+   "agentic_raw": 67.58571428571429,
+   "agentic_no_tau2_raw": 60.64,
+   "chat_raw": 74.155,
+   "total_n": 20,
+   "agentic_n": 7,
+   "agentic_no_tau2_n": 4,
+   "chat_n": 8
+  },
+  "king17": {
+   "total": 10.400507575757578,
+   "agentic": 22.8375,
+   "agentic_no_tau2": -2.0275000000000034,
+   "chat": 2.9528333333333365,
+   "total_raw": 70.173,
+   "agentic_raw": 73.49000000000001,
+   "agentic_no_tau2_raw": 61.47,
+   "chat_raw": 80.73,
+   "total_n": 10,
+   "agentic_n": 4,
+   "agentic_no_tau2_n": 1,
+   "chat_n": 5
+  },
+  "king18": {
+   "total": 10.14941994949495,
+   "agentic": 15.873422799422798,
+   "agentic_no_tau2": 1.629114898989899,
+   "chat": 1.9214299242424273,
+   "total_raw": 67.2965,
+   "agentic_raw": 69.23142857142857,
+   "agentic_no_tau2_raw": 60.2275,
+   "chat_raw": 77.17125,
+   "total_n": 20,
+   "agentic_n": 7,
+   "agentic_no_tau2_n": 4,
+   "chat_n": 8
+  },
+  "king19": {
+   "total": 10.36691994949495,
+   "agentic": 15.291994227994229,
+   "agentic_no_tau2": 0.5116148989899001,
+   "chat": 3.798929924242425,
+   "total_raw": 67.514,
+   "agentic_raw": 68.65,
+   "agentic_no_tau2_raw": 59.11,
+   "chat_raw": 79.04875,
+   "total_n": 20,
+   "agentic_n": 7,
+   "agentic_no_tau2_n": 4,
+   "chat_n": 8
+  },
+  "king20": {
+   "total": 10.89530808080808,
+   "agentic": 23.69363636363636,
+   "agentic_no_tau2": 5.885340909090903,
+   "chat": 2.5126799242424243,
+   "total_raw": 74.03933333333333,
+   "agentic_raw": 75.986,
+   "agentic_no_tau2_raw": 67.06,
+   "chat_raw": 77.7625,
+   "total_n": 15,
+   "agentic_n": 5,
+   "agentic_no_tau2_n": 2,
+   "chat_n": 8
+  }
+ },
+ "bench_axis_cells": {
+  "total": [
+   "aime25",
+   "bfcl-v3",
+   "gpqa-diamond",
+   "graphwalks",
+   "humaneval",
+   "ifbench",
+   "ifeval",
+   "livecodebench",
+   "math500",
+   "minif2f",
+   "mmlu-pro",
+   "mrcr-v2",
+   "oolong-synth",
+   "swebench-verified",
+   "tau2-airline",
+   "tau2-retail",
+   "tau2-telecom",
+   "tau3-banking",
+   "terminal-bench-2",
+   "when2call"
+  ],
+  "agentic": [
+   "swebench-verified",
+   "terminal-bench-2",
+   "tau2-airline",
+   "tau2-retail",
+   "tau2-telecom",
+   "bfcl-v3",
+   "when2call"
+  ],
+  "agentic_no_tau2": [
+   "swebench-verified",
+   "terminal-bench-2",
+   "bfcl-v3",
+   "when2call"
+  ],
+  "chat": [
+   "mmlu-pro",
+   "gpqa-diamond",
+   "math500",
+   "aime25",
+   "ifeval",
+   "ifbench",
+   "humaneval",
+   "livecodebench"
+  ]
+ },
+ "bench_cell_means": {
+  "aime25": 69.44333333333333,
+  "bfcl-v3": 58.85181818181818,
+  "gpqa-diamond": 74.49916666666667,
+  "graphwalks": 77.47090909090909,
+  "humaneval": 92.82583333333334,
+  "ifbench": 56.23583333333333,
+  "ifeval": 85.02,
+  "livecodebench": 47.24454545454545,
+  "math500": 95.88166666666667,
+  "minif2f": 22.847,
+  "mmlu-pro": 80.84818181818181,
+  "mrcr-v2": 44.475,
+  "oolong-synth": 16.415,
+  "swebench-verified": 81.362,
+  "tau2-airline": 39.33583333333333,
+  "tau2-retail": 45.67583333333334,
+  "tau2-telecom": 54.100833333333334,
+  "tau3-banking": 6.2290909090909095,
+  "terminal-bench-2": 30.682222222222222,
+  "when2call": 63.4975
+ },
+ "matrix_generated_at": "2026-09-20T14:33:02+00:00",
+ "renderings": [
+  "no_thought",
+  "with_thought"
+ ],
+ "n_candidate_rows": 10587,
+ "body_kinds": {
+  "xml_parameter_values": 2153,
+  "fence_inner": 2280,
+  "stripped_reply": 2181,
+  "envelope_inner": 32,
+  "boxed_inner": 1968,
+  "keystrokes_values": 968,
+  "commands_array": 968,
+  "json_arguments": 37
+ },
+ "n_text_fallback": 17,
+ "n_terminus_empty_batch": 968,
+ "notes": [
+  "one row per (model, turn); teacher rows carry only the 3 refs (LOO: ref_i \u2212 mean of the other two \u2261 0 on average for k=3, so the teacher anchors excess at 0)",
+  "genesis rows = the panel's parsed qwen3.6-35b-a3b samples (Engy) on crowning-duel turns",
+  "identical candidate texts on a turn (boxed answers) dedupe to one echo in score_sets.py"
+ ],
+ "source_panel": "research/results/frontier_arbiter/panel/turns.jsonl.gz"
+}

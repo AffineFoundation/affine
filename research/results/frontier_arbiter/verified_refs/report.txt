@@ -1,0 +1,326 @@
+Verified-references headroom (P3/A1 teacher-conditioned-on-success, A2 king-conditioned)
+generated 2026-09-21T00:31:21.854975+00:00; traces manifest 2026-09-20T13:57Z (5,352 chunks, 135,489 rollouts; 58,954 teacher_*, 55,496 king_*)
+
+Terms: p1all = pass@1 over ALL graded tasks incl. n=1; pass@1 = mean over tasks (n>=2) of solved/graded; pass@k = unbiased 1-C(n-c,k)/C(n,k) over tasks with n>=k;
+       p@n = share of tasks with >=1 solve among their n rollouts; mixed = tasks with both a solved and a failed rollout
+       (the only tasks where a success filter changes the reference set); allS/allF = all rollouts solved/failed.
+       Tasks = (source, sid) with >=2 graded (solved|failed) rollouts; errored/unscored rollouts excluded.
+
+== Q1 TEACHER (all teacher_* policies, T=0.8 sampled; no greedy teacher policy exists) ==
+group                              tasks  rolls  n50 nmax  p1all    p@1    p@2    p@3    p@4    p@8    p@n  mixed   allS   allF
+ALL (source,sid) any harness        2913   7088    2   15  0.740  0.750  0.794  0.786  0.785  0.947  0.799  0.107  0.693  0.201
+ALL (source,sid,policy) same        2039   4108    2   15  0.738  0.757  0.797  0.875  1.000  1.000  0.797  0.081  0.717  0.203
+-- by source, task=(source,sid) pooled over the teacher's harnesses (the brief's grouping)
+affine_math                          771   1543    2    3  0.966  0.969  0.983  1.000    nan    nan  0.983  0.029  0.955  0.017
+affine_tmax                          439   1437    3    4  0.745  0.751  0.799  0.813  0.854    nan  0.809  0.143  0.665  0.191
+affine_logic                         337    676    2    4  0.699  0.710  0.760  1.000  1.000    nan  0.760  0.101  0.659  0.240
+affine_trivia                        288    576  2.0    2  0.683  0.649  0.701    nan    nan    nan  0.701  0.104  0.597  0.299
+affine_sql                           191    430    2    3  0.860  0.834  0.873  0.854    nan    nan  0.874  0.084  0.791  0.126
+affine_ifeval                        144    288  2.0    2  0.950  0.944  0.965    nan    nan    nan  0.965  0.042  0.924  0.035
+affine_science                       144    288  2.0    2  0.191  0.174  0.215    nan    nan    nan  0.215  0.083  0.132  0.785
+affine_unscramble                    144    288  2.0    2  0.387  0.354  0.431    nan    nan    nan  0.431  0.153  0.278  0.569
+terminal_bench_2                      88    610  7.0   11  0.565  0.571  0.682  0.744  0.780  0.944  0.784  0.500  0.284  0.216
+affine_agent                          69    145    2    3  0.905  0.833  0.927  0.857    nan    nan  0.927  0.203  0.725  0.072
+affine_oolong                         68    164  2.0    3  0.784  0.794  0.897  0.929    nan    nan  0.897  0.235  0.662  0.103
+affine_uuidctf                        48    128  3.0    3  0.971  0.983  1.000  1.000    nan    nan  1.000  0.042  0.958  0.000
+affine_nl2lib                         47    166    3    6  0.074  0.082  0.106  0.100  0.000    nan  0.106  0.064  0.043  0.894
+r2e_gym                               39    126    4    4  0.700  0.840  0.897  0.885  0.917    nan  0.949  0.205  0.744  0.051
+affine_deshuffle                      34     74  2.0    3  0.448  0.515  0.647  1.000    nan    nan  0.647  0.265  0.382  0.353
+affine_wikispeedia                    24     48  2.0    2  0.743  0.729  0.833    nan    nan    nan  0.833  0.208  0.625  0.167
+affine_numina                         23     53    2    3  0.686  0.667  0.768  1.000    nan    nan  0.783  0.217  0.565  0.217
+affine_rcore                          14     46  2.0   15  0.709  1.000  1.000  1.000  1.000  1.000  1.000  0.000  1.000  0.000
+-- by source, task=(source,sid,policy) = same sampler (genuine split)
+affine_math                          771   1543    2    3  0.966  0.969  0.983  1.000    nan    nan  0.983  0.029  0.955  0.017
+affine_logic                         337    676    2    4  0.699  0.710  0.760  1.000  1.000    nan  0.760  0.101  0.659  0.240
+affine_trivia                        288    576  2.0    2  0.683  0.649  0.701    nan    nan    nan  0.701  0.104  0.597  0.299
+affine_ifeval                        144    288  2.0    2  0.950  0.944  0.965    nan    nan    nan  0.965  0.042  0.924  0.035
+affine_science                       144    288  2.0    2  0.191  0.174  0.215    nan    nan    nan  0.215  0.083  0.132  0.785
+affine_unscramble                    144    288  2.0    2  0.387  0.354  0.431    nan    nan    nan  0.431  0.153  0.278  0.569
+terminal_bench_2                      79    160    2    3  0.606  0.646  0.747  0.500    nan    nan  0.747  0.203  0.544  0.253
+affine_agent                          69    145    2    3  0.905  0.833  0.927  0.857    nan    nan  0.927  0.203  0.725  0.072
+affine_wikispeedia                    24     48  2.0    2  0.743  0.729  0.833    nan    nan    nan  0.833  0.208  0.625  0.167
+r2e_gym                               24     48  2.0    2  0.726  0.750  0.833    nan    nan    nan  0.833  0.167  0.667  0.167
+affine_rcore                          14     46  2.0   15  0.709  1.000  1.000  1.000  1.000  1.000  1.000  0.000  1.000  0.000
+-- by harness (same policy)
+null                                1936   3900  2.0   15  0.750  0.762  0.799  0.929  1.000  1.000  0.799  0.075  0.724  0.201
+mini_swe_textbased                    44     88  2.0    2  0.750  0.716  0.841    nan    nan    nan  0.841  0.250  0.591  0.159
+hermes_agent                          19     38    2    2  0.478  0.711  0.737    nan    nan    nan  0.737  0.053  0.684  0.263
+kimi_code                             18     36  2.0    2  0.431  0.639  0.722    nan    nan    nan  0.722  0.167  0.556  0.278
+pi                                    13     26    2    2  0.724  0.538  0.692    nan    nan    nan  0.692  0.308  0.385  0.308
+terminus_2                             9     20    2    3  0.718  0.611  0.667  0.500    nan    nan  0.667  0.111  0.556  0.333
+-- by source|harness (same policy, >=5 tasks)
+affine_math|null                     771   1543    2    3  0.966  0.969  0.983  1.000    nan    nan  0.983  0.029  0.955  0.017
+affine_logic|null                    337    676    2    4  0.699  0.710  0.760  1.000  1.000    nan  0.760  0.101  0.659  0.240
+affine_trivia|null                   288    576  2.0    2  0.683  0.649  0.701    nan    nan    nan  0.701  0.104  0.597  0.299
+affine_ifeval|null                   144    288  2.0    2  0.950  0.944  0.965    nan    nan    nan  0.965  0.042  0.924  0.035
+affine_science|null                  144    288  2.0    2  0.191  0.174  0.215    nan    nan    nan  0.215  0.083  0.132  0.785
+affine_unscramble|null               144    288  2.0    2  0.387  0.354  0.431    nan    nan    nan  0.431  0.153  0.278  0.569
+affine_agent|null                     69    145    2    3  0.905  0.833  0.927  0.857    nan    nan  0.927  0.203  0.725  0.072
+affine_wikispeedia|null               24     48  2.0    2  0.743  0.729  0.833    nan    nan    nan  0.833  0.208  0.625  0.167
+r2e_gym|mini_swe_textbased            24     48  2.0    2  0.747  0.750  0.833    nan    nan    nan  0.833  0.167  0.667  0.167
+terminal_bench_2|mini_swe_textbased    20     40  2.0    2  0.586  0.675  0.850    nan    nan    nan  0.850  0.350  0.500  0.150
+terminal_bench_2|hermes_agent         19     38    2    2  0.645  0.711  0.737    nan    nan    nan  0.737  0.053  0.684  0.263
+terminal_bench_2|kimi_code            18     36  2.0    2  0.596  0.639  0.722    nan    nan    nan  0.722  0.167  0.556  0.278
+affine_rcore|null                     14     46  2.0   15  0.709  1.000  1.000  1.000  1.000  1.000  1.000  0.000  1.000  0.000
+terminal_bench_2|pi                   13     26    2    2  0.646  0.538  0.692    nan    nan    nan  0.692  0.308  0.385  0.308
+terminal_bench_2|terminus_2            9     20    2    3  0.669  0.611  0.667  0.500    nan    nan  0.667  0.111  0.556  0.333
+-- coverage: how often the teacher REPLAYS a task at all (graded rollouts / distinct tasks / tasks with >=2)
+    affine_math          graded=  8266 tasks=  7494 ge2_any=  771 ge2_same_policy=  771
+    affine_i3math        graded=  4709 tasks=  4709 ge2_any=    0 ge2_same_policy=    0
+    affine_agent         graded=  4365 tasks=  4289 ge2_any=   69 ge2_same_policy=   69
+    affine_when2call     graded=  3612 tasks=  3611 ge2_any=    1 ge2_same_policy=    1
+    terminal_lego        graded=  3133 tasks=  3133 ge2_any=    0 ge2_same_policy=    0
+    affine_notool        graded=  2771 tasks=  2771 ge2_any=    0 ge2_same_policy=    0
+    scaleswe             graded=  2488 tasks=  2488 ge2_any=    0 ge2_same_policy=    0
+    swesmith             graded=  2406 tasks=  2406 ge2_any=    0 ge2_same_policy=    0
+    affine_i3code        graded=  2169 tasks=  2169 ge2_any=    0 ge2_same_policy=    0
+    affine_logic         graded=  2144 tasks=  1805 ge2_any=  337 ge2_same_policy=  337
+    affine_pydantic      graded=  1911 tasks=  1911 ge2_any=    0 ge2_same_policy=    0
+    affine_trivia        graded=  1848 tasks=  1560 ge2_any=  288 ge2_same_policy=  288
+    affine_rcore         graded=  1728 tasks=  1696 ge2_any=   14 ge2_same_policy=   14
+    multiswe             graded=  1528 tasks=  1528 ge2_any=    0 ge2_same_policy=    0
+    affine_tmax          graded=  1470 tasks=   472 ge2_any=  439 ge2_same_policy=    0
+    swerebench_v2        graded=  1380 tasks=  1380 ge2_any=    0 ge2_same_policy=    0
+    swelego              graded=  1045 tasks=  1045 ge2_any=    0 ge2_same_policy=    0
+    affine_rgym          graded=  1032 tasks=  1032 ge2_any=    0 ge2_same_policy=    0
+    affine_unscramble    graded=   948 tasks=   804 ge2_any=  144 ge2_same_policy=  144
+    affine_verbatim      graded=   948 tasks=   948 ge2_any=    0 ge2_same_policy=    0
+    affine_ifeval        graded=   900 tasks=   756 ge2_any=  144 ge2_same_policy=  144
+    affine_science       graded=   900 tasks=   756 ge2_any=  144 ge2_same_policy=  144
+    affine_tau2_synth    graded=   622 tasks=   622 ge2_any=    0 ge2_same_policy=    0
+    terminal_bench_2     graded=   611 tasks=    89 ge2_any=   88 ge2_same_policy=   79
+    affine_sql           graded=   515 tasks=   276 ge2_any=  191 ge2_same_policy=    0
+    affine_tau2          graded=   416 tasks=   416 ge2_any=    0 ge2_same_policy=    0
+    r2e_gym              graded=   261 tasks=   174 ge2_any=   39 ge2_same_policy=   24
+    affine_eog           graded=   240 tasks=   240 ge2_any=    0 ge2_same_policy=    0
+    affine_wikispeedia   graded=   240 tasks=   216 ge2_any=   24 ge2_same_policy=   24
+    affine_autobench     graded=   237 tasks=   237 ge2_any=    0 ge2_same_policy=    0
+    affine_oolong        graded=   184 tasks=    88 ge2_any=   68 ge2_same_policy=    0
+    affine_uuidctf       graded=   176 tasks=    96 ge2_any=   48 ge2_same_policy=    0
+    affine_nl2lib        graded=   171 tasks=    52 ge2_any=   47 ge2_same_policy=    0
+    affine_prolog        graded=   131 tasks=   131 ge2_any=    0 ge2_same_policy=    0
+    affine_deshuffle     graded=    88 tasks=    48 ge2_any=   34 ge2_same_policy=    0
+    affine_numina        graded=    64 tasks=    34 ge2_any=   23 ge2_same_policy=    0
+    affine_wiki          graded=     1 tasks=     1 ge2_any=    0 ge2_same_policy=    0
+teacher outcome counts: {'solved': 41142, 'failed': 14516, 'errored': 3010, 'unscored': 286}
+n rollouts/task histogram (ALL any-harness, n>=2): {2: 2261, 3: 327, 4: 234, 5: 14, 6: 26, 7: 31, 8: 1, 9: 5, 10: 5, 11: 8, 15: 1}
+
+== Q2 KINGS reigns 11-20 (+ revoked crowns 12r/13r that sat in the datagen seat; king_* policies; sampled T=0.8 unless *_greedy T=0) ==
+king rollouts in window: 55496; policies: {'king_toolcall': 7522, 'king_toolcall_greedy': 3897, 'king_textbased': 2534, 'king_pi': 1964, 'king_bashtool': 1953, 'king_text': 4068, 'king_text_greedy': 2076, 'king_boxed': 11624, 'king_boxed_greedy': 2472, 'king_terminus': 943, 'king_textbased_greedy': 1268, 'king_pi_greedy': 1290, 'king_bashtool_greedy': 871, 'king_tau2': 944, 'king_tau2_greedy': 480, 'king_tau2_synth': 960, 'king_tau2_synth_greedy': 480, 'king_terminus_greedy': 228, 'king_when2call': 4860, 'king_when2call_greedy': 2472, 'king_kimi': 999, 'king_hermes': 529, 'king_claude_code': 714, 'king_kimi_greedy': 210, 'king_hermes_greedy': 78, 'king_claude_code_greedy': 60}
+-- pass@k where one king replayed a task under the same policy (task=(source,sid,king,policy))
+group                              tasks  rolls  n50 nmax  p1all    p@1    p@2    p@3    p@4    p@8    p@n  mixed   allS   allF
+pooled_sampled                      2491   4987    2    4  0.668  0.945  0.966  0.917  1.000    nan  0.967  0.044  0.923  0.033
+pooled_greedy                          2      4  2.0    2  0.643  0.500  0.500    nan    nan    nan  0.500  0.000  0.500  0.500
+pooled_all                          2493   4991    2    4  0.661  0.944  0.966  0.917  1.000    nan  0.966  0.044  0.923  0.034
+reign 11 (0ce59769300c)             2484   4970  2.0    4  0.782  0.945  0.967  1.000  1.000    nan  0.967  0.043  0.924  0.033
+    n_rollouts=15263 ge2 tasks by source={'affine_logic': 1, 'affine_math': 2483}
+reign 12r (d76150805915)               1      2    2    2  0.494  1.000  1.000    nan    nan    nan  1.000  0.000  1.000  0.000
+    n_rollouts=2617 ge2 tasks by source={'affine_rcore': 1}
+reign 12 (6c877fd2242d)            (no tasks with >=2 graded rollouts)
+    n_rollouts=1363 ge2 tasks by source={}
+reign 13r (ed3111d3b0b9)           (no tasks with >=2 graded rollouts)
+    n_rollouts=142 ge2 tasks by source={}
+reign 13 (6d0ee567e33e)                4     11  2.5    4  0.499  0.521  0.792  0.875  1.000    nan  1.000  0.750  0.250  0.000
+    n_rollouts=9248 ge2 tasks by source={'affine_rcore': 4}
+reign 14 (0f4029fd59ed)            (no tasks with >=2 graded rollouts)
+    n_rollouts=906 ge2 tasks by source={}
+reign 15 (5b1679a0db66)            (no tasks with >=2 graded rollouts)
+    n_rollouts=1598 ge2 tasks by source={}
+reign 16 (6ea86b6e1868)            (no tasks with >=2 graded rollouts)
+    n_rollouts=1742 ge2 tasks by source={}
+reign 17 (e416aab8599d)            (no tasks with >=2 graded rollouts)
+    n_rollouts=1096 ge2 tasks by source={}
+reign 18 (73dd5bbcf1f7)            (no tasks with >=2 graded rollouts)
+    n_rollouts=882 ge2 tasks by source={}
+reign 19 (f82deda2ffbd)            (no tasks with >=2 graded rollouts)
+    n_rollouts=1189 ge2 tasks by source={}
+reign 20 (50e3c081ab1c)                2      4  2.0    2  0.722  1.000  1.000    nan    nan    nan  1.000  0.000  1.000  0.000
+    n_rollouts=3568 ge2 tasks by source={'affine_rcore': 2}
+-- king vs TEACHER on the SAME task under the SAME harness (n=1 each mostly): K+/T+ = solved at least once
+   A2 'king|success' reaches king p@n; the plain teacher is teacher p@1; union = pooling both samplers' successes
+    pooled sampled kings       tasks=16939 king p@1=0.715 p@n=0.748 | teacher p@1=0.849 p@n=0.852 | union p@n=0.884 | cells K+T+ 12112 K+T- 553 K-T+ 2312 K-T- 1962 | king-only 0.033 teacher-only 0.137
+      by group: coding: n=547 K=0.67 T=0.78 K-only=0.07 T-only=0.19; general: n=4322 K=0.58 T=0.69 K-only=0.05 T-only=0.16; math: n=8235 K=0.91 T=0.95 K-only=0.02 T-only=0.06; nl2repo: n=16 K=0.00 T=0.06 K-only=0.00 T-only=0.06; terminal: n=254 K=0.57 T=0.78 K-only=0.07 T-only=0.28; tool_use: n=3565 K=0.60 T=0.83 K-only=0.04 T-only=0.27
+    pooled greedy kings        tasks= 7418 king p@1=0.625 p@n=0.653 | teacher p@1=0.813 p@n=0.816 | union p@n=0.846 | cells K+T+ 4623 K+T- 224 K-T+ 1430 K-T- 1141 | king-only 0.030 teacher-only 0.193
+      by group: coding: n=391 K=0.65 T=0.72 K-only=0.07 T-only=0.15; general: n=2744 K=0.59 T=0.75 K-only=0.03 T-only=0.18; math: n=1962 K=0.80 T=0.90 K-only=0.02 T-only=0.12; nl2repo: n=12 K=0.00 T=0.00 K-only=0.00 T-only=0.00; terminal: n=119 K=0.62 T=0.81 K-only=0.02 T-only=0.20; tool_use: n=2190 K=0.60 T=0.85 K-only=0.03 T-only=0.28
+    reign 11 (sampled)         tasks= 9962 king p@1=0.841 p@n=0.846 | teacher p@1=0.880 p@n=0.885 | union p@n=0.911 | cells K+T+ 8168 K+T- 263 K-T+ 649 K-T- 882 | king-only 0.026 teacher-only 0.065
+      by group: coding: n=166 K=0.61 T=0.52 K-only=0.19 T-only=0.11; general: n=1845 K=0.55 T=0.64 K-only=0.06 T-only=0.14; math: n=7685 K=0.94 T=0.96 K-only=0.01 T-only=0.04; nl2repo: n=11 K=0.00 T=0.00 K-only=0.00 T-only=0.00; terminal: n=62 K=0.50 T=0.77 K-only=0.10 T-only=0.37; tool_use: n=193 K=0.36 T=0.72 K-only=0.03 T-only=0.39
+    reign 12r (sampled)        tasks= 1811 king p@1=0.492 p@n=0.492 | teacher p@1=0.663 p@n=0.665 | union p@n=0.731 | cells K+T+ 772 K+T- 119 K-T+ 432 K-T- 488 | king-only 0.066 teacher-only 0.238
+      by group: coding: n=178 K=0.56 T=0.54 K-only=0.10 T-only=0.07; general: n=1205 K=0.47 T=0.70 K-only=0.05 T-only=0.29; math: n=371 K=0.53 T=0.57 K-only=0.12 T-only=0.16; nl2repo: n=2 K=0.00 T=0.50 K-only=0.00 T-only=0.50; terminal: n=32 K=0.56 T=0.81 K-only=0.00 T-only=0.25; tool_use: n=23 K=0.70 T=0.87 K-only=0.04 T-only=0.22
+    reign 12 (sampled)         tasks=  804 king p@1=0.455 p@n=0.455 | teacher p@1=0.719 p@n=0.719 | union p@n=0.736 | cells K+T+ 352 K+T- 14 K-T+ 226 K-T- 212 | king-only 0.017 teacher-only 0.281
+      by group: general: n=346 K=0.59 T=0.67 K-only=0.01 T-only=0.10; nl2repo: n=1 K=0.00 T=0.00 K-only=0.00 T-only=0.00; tool_use: n=457 K=0.36 T=0.76 K-only=0.02 T-only=0.42
+    reign 13r (sampled)        tasks=  103 king p@1=0.417 p@n=0.417 | teacher p@1=0.553 p@n=0.553 | union p@n=0.602 | cells K+T+ 38 K+T- 5 K-T+ 19 K-T- 41 | king-only 0.049 teacher-only 0.184
+      by group: general: n=26 K=0.08 T=0.19 K-only=0.00 T-only=0.12; math: n=72 K=0.51 T=0.67 K-only=0.07 T-only=0.22; terminal: n=5 K=0.80 T=0.80 K-only=0.00 T-only=0.00
+    reign 13 (sampled)         tasks= 4450 king p@1=0.468 p@n=0.469 | teacher p@1=0.845 p@n=0.848 | union p@n=0.862 | cells K+T+ 2021 K+T- 64 K-T+ 1751 K-T- 614 | king-only 0.014 teacher-only 0.394
+      by group: coding: n=245 K=0.65 T=1.00 K-only=0.00 T-only=0.35; general: n=1352 K=0.62 T=0.85 K-only=0.01 T-only=0.24; math: n=517 K=0.41 T=0.97 K-only=0.00 T-only=0.56; nl2repo: n=2 K=0.00 T=0.00 K-only=0.00 T-only=0.00; terminal: n=61 K=0.84 T=0.87 K-only=0.07 T-only=0.10; tool_use: n=2273 K=0.36 T=0.80 K-only=0.02 T-only=0.46
+    reign 14 (sampled)         tasks=  440 king p@1=0.434 p@n=0.434 | teacher p@1=0.868 p@n=0.868 | union p@n=0.884 | cells K+T+ 184 K+T- 7 K-T+ 198 K-T- 51 | king-only 0.016 teacher-only 0.450
+      by group: general: n=160 K=0.53 T=0.70 K-only=0.03 T-only=0.21; tool_use: n=280 K=0.38 T=0.96 K-only=0.01 T-only=0.59
+    reign 15 (sampled)         tasks=  805 king p@1=0.446 p@n=0.446 | teacher p@1=0.842 p@n=0.842 | union p@n=0.856 | cells K+T+ 348 K+T- 11 K-T+ 330 K-T- 116 | king-only 0.014 teacher-only 0.410
+      by group: coding: n=5 K=0.80 T=1.00 K-only=0.00 T-only=0.20; general: n=372 K=0.56 T=0.69 K-only=0.03 T-only=0.16; terminal: n=5 K=0.40 T=0.40 K-only=0.20 T-only=0.20; tool_use: n=423 K=0.34 T=0.98 K-only=0.00 T-only=0.64
+    reign 16 (sampled)         tasks= 1236 king p@1=0.736 p@n=0.736 | teacher p@1=0.891 p@n=0.892 | union p@n=0.911 | cells K+T+ 887 K+T- 23 K-T+ 216 K-T- 110 | king-only 0.019 teacher-only 0.175
+      by group: coding: n=32 K=0.66 T=1.00 K-only=0.00 T-only=0.34; general: n=285 K=0.48 T=0.59 K-only=0.05 T-only=0.16; math: n=84 K=0.68 T=1.00 K-only=0.00 T-only=0.32; terminal: n=18 K=0.50 T=0.78 K-only=0.11 T-only=0.39; tool_use: n=817 K=0.84 T=0.98 K-only=0.01 T-only=0.15
+    reign 17 (sampled)         tasks=  726 king p@1=0.769 p@n=0.769 | teacher p@1=0.948 p@n=0.952 | union p@n=0.960 | cells K+T+ 552 K+T- 6 K-T+ 139 K-T- 29 | king-only 0.008 teacher-only 0.192
+      by group: coding: n=19 K=0.95 T=1.00 K-only=0.00 T-only=0.05; general: n=241 K=0.60 T=0.87 K-only=0.02 T-only=0.29; tool_use: n=466 K=0.85 T=0.99 K-only=0.00 T-only=0.15
+    reign 18 (sampled)         tasks=  684 king p@1=0.754 p@n=0.754 | teacher p@1=0.922 p@n=0.927 | union p@n=0.934 | cells K+T+ 511 K+T- 5 K-T+ 123 K-T- 45 | king-only 0.007 teacher-only 0.180
+      by group: general: n=163 K=0.49 T=0.70 K-only=0.03 T-only=0.23; tool_use: n=521 K=0.84 T=1.00 K-only=0.00 T-only=0.16
+    reign 19 (sampled)         tasks=  761 king p@1=0.773 p@n=0.773 | teacher p@1=0.935 p@n=0.940 | union p@n=0.947 | cells K+T+ 582 K+T- 6 K-T+ 133 K-T- 40 | king-only 0.008 teacher-only 0.175
+      by group: coding: n=1 K=0.00 T=1.00 K-only=0.00 T-only=1.00; general: n=288 K=0.73 T=0.87 K-only=0.01 T-only=0.16; terminal: n=28 K=0.46 T=0.82 K-only=0.04 T-only=0.39; tool_use: n=444 K=0.82 T=0.99 K-only=0.00 T-only=0.17
+    reign 20 (sampled)         tasks= 2591 king p@1=0.742 p@n=0.742 | teacher p@1=0.857 p@n=0.859 | union p@n=0.899 | cells K+T+ 1819 K+T- 104 K-T+ 406 K-T- 262 | king-only 0.040 teacher-only 0.157
+      by group: coding: n=32 K=0.81 T=1.00 K-only=0.00 T-only=0.19; general: n=900 K=0.57 T=0.72 K-only=0.02 T-only=0.17; math: n=108 K=0.80 T=1.00 K-only=0.00 T-only=0.20; terminal: n=63 K=0.54 T=0.73 K-only=0.08 T-only=0.27; tool_use: n=1488 K=0.85 T=0.93 K-only=0.06 T-only=0.14
+
+== Q3 FIRST-DIVERGENCE DEPTH (mixed tasks; every (solved, failed) pair; main-root actions, norm_action by dialect) ==
+-- teacher (solved,failed) pairs, same task, same policy: pairs=170 mixed_tasks=165
+   depth p50=0.0 mean=0.24 | d=0: 87.1%  d<=1: 95.9%  d<=2: 97.1%  d>=5: 1.2%
+   hist (capped at 10): {'0': 148, '1': 15, '2': 2, '3': 2, '4': 1, '5': 1, '6': 1}
+   pre-divergence share of turns: pair-mean 1.8%, turn-weighted 2.9%
+   by harness: hermes_agent: n=1 p50=0 d0=100% d<=2=100%; kimi_code: n=3 p50=1 d0=33% d<=2=100%; mini_swe_textbased: n=11 p50=0 d0=73% d<=2=100%; null: n=150 p50=0.0 d0=89% d<=2=97%; pi: n=4 p50=0.0 d0=75% d<=2=100%; terminus_2: n=1 p50=0 d0=100% d<=2=100%
+   by source: affine_agent: n=17 p50=1 d0=35%; affine_ifeval: n=6 p50=0.0 d0=100%; affine_logic: n=36 p50=0.0 d0=100%; affine_math: n=22 p50=0.0 d0=100%; affine_science: n=12 p50=0.0 d0=100%; affine_trivia: n=30 p50=0.0 d0=100%; affine_unscramble: n=22 p50=0.0 d0=100%; affine_wikispeedia: n=5 p50=1 d0=0%; r2e_gym: n=4 p50=0.0 d0=75%; terminal_bench_2: n=16 p50=0.0 d0=69%
+-- teacher pairs, same task, ANY harness (cross-harness pairs diverge at 0 by construction): pairs=867 mixed_tasks=311
+   depth p50=0 mean=0.06 | d=0: 96.4%  d<=1: 99.2%  d<=2: 99.4%  d>=5: 0.2%
+   hist (capped at 10): {'0': 836, '1': 24, '2': 2, '3': 2, '4': 1, '5': 1, '6': 1}
+   pre-divergence share of turns: pair-mean 0.4%, turn-weighted 0.2%
+   by harness: bash: n=90 p50=0.0 d0=99% d<=2=100%; claude_code: n=42 p50=0.0 d0=100% d<=2=100%; hermes_agent: n=88 p50=0.0 d0=97% d<=2=100%; kimi_code: n=94 p50=0.0 d0=98% d<=2=100%; mini_swe_textbased: n=168 p50=0.0 d0=97% d<=2=100%; null: n=150 p50=0.0 d0=89% d<=2=97%; pi: n=112 p50=0.0 d0=96% d<=2=100%; terminus_2: n=123 p50=0 d0=100% d<=2=100%
+   by source: affine_agent: n=17 p50=1 d0=35%; affine_deshuffle: n=9 p50=0 d0=100%; affine_ifeval: n=6 p50=0.0 d0=100%; affine_logic: n=36 p50=0.0 d0=100%; affine_math: n=22 p50=0.0 d0=100%; affine_nl2lib: n=5 p50=0 d0=100%; affine_numina: n=6 p50=0.0 d0=67%; affine_oolong: n=22 p50=0.0 d0=96%; affine_science: n=12 p50=0.0 d0=100%; affine_sql: n=20 p50=0.0 d0=100%; affine_tmax: n=141 p50=0 d0=98%; affine_trivia: n=30 p50=0.0 d0=100%; affine_unscramble: n=22 p50=0.0 d0=100%; affine_uuidctf: n=3 p50=0 d0=100%; affine_wikispeedia: n=5 p50=1 d0=0%; r2e_gym: n=27 p50=0 d0=96%; terminal_bench_2: n=484 p50=0.0 d0=98%
+-- king (solved,failed) pairs, same task, same king, same policy: pairs=112 mixed_tasks=109
+   depth p50=0.0 mean=0 | d=0: 100.0%  d<=1: 100.0%  d<=2: 100.0%  d>=5: 0.0%
+   hist (capped at 10): {'0': 112}
+   pre-divergence share of turns: pair-mean 0.0%, turn-weighted 0.0%
+   by harness: null: n=112 p50=0.0 d0=100% d<=2=100%
+   by source: affine_math: n=106 p50=0.0 d0=100%; affine_rcore: n=6 p50=0.0 d0=100%
+
+== Q4 COST of verified refs at fold time ==
+sibling continuations (Engy teacher, resume + run to end): n=24 wall_s={'p50': 601.6, 'mean': 629.1, 'p90': 1042.3} cost_usd={'p50': 0.0336, 'mean': 0.0289, 'sum': 0.69}
+  by kind: {'textbased': {'n': 17, 'wall_p50': 759.7, 'cost_mean': 0.0361}, 'bash': {'n': 5, 'wall_p50': 512.6, 'cost_mean': 0.0154}, 'terminus': {'n': 2, 'wall_p50': 109.7, 'cost_mean': 0.0016}}
+  at-depth state resample (orig outcome vs one fresh teacher continuation from the same state, contested pivots depth 3-15): {'n_states': 24, 'depth_range': [3, 15], 'cells': {'orig_failed->cont_failed': 8, 'orig_failed->cont_solved': 3, 'orig_solved->cont_failed': 1, 'orig_solved->cont_solved': 12}, 'flip_share': 0.167, 'orig_solved': {'n': 13, 'cont_solve_rate': 0.923, 'p_mixed_N4': 0.274}, 'orig_failed': {'n': 11, 'cont_solve_rate': 0.273, 'p_mixed_N4': 0.715}}
+  pivots_10pct: {'pivot_share': 0.1, 'continuations_per_1000_new_turns': 400, 'container_hours_per_1000_new_turns': 69.9, 'usd_per_1000_new_turns': 11.56, 'container_hours_per_1000_pivot_turns': 699.0, 'usd_per_1000_pivot_turns': 115.65}
+  mixed_task_share: {'pivot_share': 0.107, 'continuations_per_1000_new_turns': 427, 'container_hours_per_1000_new_turns': 74.7, 'usd_per_1000_new_turns': 12.35, 'container_hours_per_1000_pivot_turns': 699.0, 'usd_per_1000_pivot_turns': 115.65}
+D (epoch 58 index, 638116 turns) joined to trace outcomes by rollout_id:
+  by policy family: {'teacher': {'n_turns': 425970, 'errored': 0.002, 'failed': 0.364, 'solved': 0.63, 'unscored': 0.004}, 'glm': {'n_turns': 192148, 'failed': 0.307, 'solved': 0.688, 'unscored': 0.005}, 'king': {'n_turns': 18209, 'errored': 0.074, 'failed': 0.775, 'solved': 0.151}, 'not_in_traces': {'n_turns': 1789, 'not_in_traces': 1.0}}
+  by stratum group (fold groups):
+    coding             n=356904 solved=0.581 failed=0.419 errored=0.000 not_in_traces=0.000
+    terminal           n=138624 solved=0.788 failed=0.209 errored=0.001 not_in_traces=0.002
+    tool_use           n= 75269 solved=0.760 failed=0.202 errored=0.000 not_in_traces=0.007
+    general            n= 33371 solved=0.633 failed=0.331 errored=0.013 not_in_traces=0.024
+    king_fail          n= 11408 solved=0.000 failed=0.937 errored=0.063 not_in_traces=0.000
+    completion         n=  7667 solved=0.980 failed=0.000 errored=0.000 not_in_traces=0.020
+    king_tooluse       n=  1822 solved=0.002 failed=0.901 errored=0.098 not_in_traces=0.000
+    king_loop_onset    n=   757 solved=0.000 failed=0.778 errored=0.222 not_in_traces=0.000
+    king_divergence    n=   650 solved=0.000 failed=0.666 errored=0.334 not_in_traces=0.000
+    math               n=   503 solved=0.423 failed=0.573 errored=0.000 not_in_traces=0.004
+    completion_pre     n=   343 solved=0.000 failed=1.000 errored=0.000 not_in_traces=0.000
+    king_done          n=   313 solved=0.681 failed=0.281 errored=0.038 not_in_traces=0.000
+    king_recoverable   n=   216 solved=0.000 failed=0.981 errored=0.019 not_in_traces=0.000
+    c0_scrapy|pr_0#1   n=   172 solved=0.000 failed=1.000 errored=0.000 not_in_traces=0.000
+    c0_scrapy|pr_0#0   n=   170 solved=0.000 failed=1.000 errored=0.000 not_in_traces=0.000
+    king_pivot         n=   159 solved=0.000 failed=0.755 errored=0.245 not_in_traces=0.000
+    c0_pylint|pr_0#1   n=   157 solved=0.000 failed=1.000 errored=0.000 not_in_traces=0.000
+    c0_web3_py|pr_0#0  n=   152 solved=0.000 failed=1.000 errored=0.000 not_in_traces=0.000
+    c0_parsel|pr_0#1   n=   151 solved=0.000 failed=1.000 errored=0.000 not_in_traces=0.000
+    c0_sphinx|pr_0#1   n=   149 solved=0.000 failed=1.000 errored=0.000 not_in_traces=0.000
+    c0_parsel|pr_0#0   n=   145 solved=0.000 failed=1.000 errored=0.000 not_in_traces=0.000
+    c0_pylint|pr_0#0   n=   143 solved=0.000 failed=1.000 errored=0.000 not_in_traces=0.000
+    c0_sphinx|pr_0#0   n=   141 solved=0.000 failed=1.000 errored=0.000 not_in_traces=0.000
+    c0_statsmodels|pr_0#0 n=   138 solved=0.000 failed=1.000 errored=0.000 not_in_traces=0.000
+    c0_dnspython|pr_0#1 n=   137 solved=0.000 failed=0.810 errored=0.190 not_in_traces=0.000
+  by source (share of D turns from solved / failed / other rollouts):
+    affine_agent           n= 52411 solved=0.832 failed=0.166 unscored=0.000 errored=0.002 not_in_traces=0.000
+    affine_autobench       n=  2388 solved=0.141 failed=0.775 unscored=0.000 errored=0.084 not_in_traces=0.000
+    affine_deshuffle       n=  1311 solved=0.323 failed=0.530 unscored=0.000 errored=0.147 not_in_traces=0.000
+    affine_eog             n=  1996 solved=0.293 failed=0.644 unscored=0.000 errored=0.060 not_in_traces=0.004
+    affine_i3code          n=  1250 solved=0.857 failed=0.143 unscored=0.000 errored=0.000 not_in_traces=0.000
+    affine_i3math          n=   140 solved=0.014 failed=0.971 unscored=0.000 errored=0.000 not_in_traces=0.014
+    affine_ifeval          n=   885 solved=0.962 failed=0.038 unscored=0.000 errored=0.000 not_in_traces=0.000
+    affine_kb_synth        n=   318 solved=0.000 failed=0.000 unscored=0.000 errored=0.000 not_in_traces=1.000
+    affine_logic           n=  1749 solved=0.859 failed=0.130 unscored=0.000 errored=0.000 not_in_traces=0.010
+    affine_math            n=   363 solved=0.581 failed=0.419 unscored=0.000 errored=0.000 not_in_traces=0.000
+    affine_mrcr            n=   669 solved=0.000 failed=0.000 unscored=0.000 errored=0.000 not_in_traces=1.000
+    affine_nl2lib          n=  8485 solved=0.058 failed=0.899 unscored=0.000 errored=0.043 not_in_traces=0.000
+    affine_notool          n=  2740 solved=0.653 failed=0.347 unscored=0.000 errored=0.000 not_in_traces=0.000
+    affine_numina          n=  1502 solved=0.563 failed=0.381 unscored=0.000 errored=0.056 not_in_traces=0.000
+    affine_oolong          n=  2057 solved=0.666 failed=0.211 unscored=0.000 errored=0.121 not_in_traces=0.002
+    affine_prolog          n=  6861 solved=0.726 failed=0.268 unscored=0.000 errored=0.005 not_in_traces=0.001
+    affine_pydantic        n=  1884 solved=0.805 failed=0.195 unscored=0.000 errored=0.000 not_in_traces=0.000
+    affine_rcore           n=  1611 solved=0.766 failed=0.219 unscored=0.000 errored=0.000 not_in_traces=0.015
+    affine_rgym            n=   836 solved=0.859 failed=0.118 unscored=0.000 errored=0.000 not_in_traces=0.023
+    affine_science         n=   922 solved=0.183 failed=0.766 unscored=0.000 errored=0.000 not_in_traces=0.051
+    affine_sql             n=  2821 solved=0.679 failed=0.256 unscored=0.000 errored=0.060 not_in_traces=0.005
+    affine_tau2            n=  7874 solved=0.663 failed=0.334 unscored=0.000 errored=0.000 not_in_traces=0.003
+    affine_tau2_synth      n=  6986 solved=0.672 failed=0.288 unscored=0.000 errored=0.010 not_in_traces=0.030
+    affine_tmax            n= 21716 solved=0.632 failed=0.349 unscored=0.000 errored=0.007 not_in_traces=0.012
+    affine_trivia          n=  1785 solved=0.701 failed=0.286 unscored=0.000 errored=0.000 not_in_traces=0.012
+    affine_unscramble      n=   912 solved=0.397 failed=0.603 unscored=0.000 errored=0.000 not_in_traces=0.000
+    affine_uuidctf         n=  1773 solved=0.860 failed=0.104 unscored=0.000 errored=0.029 not_in_traces=0.007
+    affine_verbatim        n=   941 solved=0.644 failed=0.356 unscored=0.000 errored=0.000 not_in_traces=0.000
+    affine_when2call       n=  6553 solved=0.519 failed=0.478 unscored=0.000 errored=0.000 not_in_traces=0.003
+    affine_wiki            n=  2391 solved=0.000 failed=0.001 unscored=0.999 errored=0.000 not_in_traces=0.000
+    affine_wikispeedia     n=  3070 solved=0.508 failed=0.478 unscored=0.000 errored=0.009 not_in_traces=0.005
+    multiswe               n= 77083 solved=0.369 failed=0.630 unscored=0.000 errored=0.001 not_in_traces=0.000
+    nl2repobench           n=  1618 solved=0.017 failed=0.983 unscored=0.000 errored=0.000 not_in_traces=0.000
+    r2e_gym                n=  3909 solved=0.727 failed=0.256 unscored=0.000 errored=0.008 not_in_traces=0.009
+    scaleswe               n= 90188 solved=0.569 failed=0.431 unscored=0.000 errored=0.000 not_in_traces=0.000
+    swelego                n= 38495 solved=0.902 failed=0.096 unscored=0.000 errored=0.001 not_in_traces=0.000
+    swerebench_v2          n= 60957 solved=0.301 failed=0.698 unscored=0.000 errored=0.001 not_in_traces=0.000
+    swesmith               n= 98688 solved=0.758 failed=0.242 unscored=0.000 errored=0.001 not_in_traces=0.000
+    terminal_bench_2       n= 21249 solved=0.470 failed=0.523 unscored=0.000 errored=0.006 not_in_traces=0.000
+    terminal_lego          n= 98729 solved=0.882 failed=0.117 unscored=0.000 errored=0.000 not_in_traces=0.000
+
+== Q5 BAND PROXY: thought shape of solved vs failed TEACHER replies at matched depth, per harness ==
+-- pooled over depth >= 1 (agentic regime): latent chars p50/p90, share of replies with no visible prose, share truncated (finish=length)
+   affine-tau2-synth-v1 S n=  5554 lat p50/p90=  427/  2105 noVis=0.23 trunc=0.000 | F n=  1992 lat p50/p90=  413/  2582 noVis=0.27 trunc=0.000
+   affine-tau2-v1       S n=  4959 lat p50/p90=  757/  2596 noVis=0.22 trunc=0.000 | F n=  2633 lat p50/p90=  806/  2865 noVis=0.19 trunc=0.000
+   bash                 S n= 55614 lat p50/p90=  311/  2904 noVis=0.49 trunc=0.001 | F n= 32907 lat p50/p90=  316/  3832 noVis=0.64 trunc=0.007
+   claude_code          S n= 86834 lat p50/p90=  328/  6130 noVis=0.33 trunc=0.000 | F n= 76755 lat p50/p90=  445/ 10841 noVis=0.31 trunc=0.001
+   hermes_agent         S n=  2001 lat p50/p90=  604/ 14395 noVis=0.35 trunc=0.001 | F n=  4100 lat p50/p90=  714/ 14834 noVis=0.40 trunc=0.001
+   kimi_code            S n=  2136 lat p50/p90=  686/  8719 noVis=0.33 trunc=0.000 | F n=  4874 lat p50/p90=  700/ 10748 noVis=0.53 trunc=0.000
+   mini_swe_textbased   S n= 55143 lat p50/p90=  372/  3265 noVis=0.02 trunc=0.006 | F n= 30921 lat p50/p90=  321/  4125 noVis=0.06 trunc=0.021
+   null                 S n= 49305 lat p50/p90=  180/  1478 noVis=0.04 trunc=0.000 | F n= 16712 lat p50/p90=  256/  2498 noVis=0.19 trunc=0.004
+   pi                   S n= 61553 lat p50/p90=  307/  3066 noVis=0.50 trunc=0.001 | F n= 44658 lat p50/p90=  331/  4198 noVis=0.62 trunc=0.003
+   terminus_2           S n=  5883 lat p50/p90=  810/ 13623 noVis=0.67 trunc=0.037 | F n=  4413 lat p50/p90=  989/ 14067 noVis=0.67 trunc=0.054
+-- by depth bucket
+   (lat = latent/reasoning chars p50; vis = visible chars p50; alen = action chars p50; noLat/noVis = share of replies with none)
+   affine-tau2-synth-v1 t0     solved n=   472 lat=   354 vis=  139 alen=    0 noLat=0.00 noVis=0.36 len=0.00 | failed n=   150 lat=   312 vis=   82 alen=   92 noLat=0.00 noVis=0.45 len=0.00 | lat ratio S/F=1.133
+   affine-tau2-synth-v1 t1-3   solved n=  1409 lat=   428 vis=  112 alen=   92 noLat=0.00 noVis=0.31 len=0.00 | failed n=   450 lat=   363 vis=   95 alen=   91 noLat=0.00 noVis=0.36 len=0.00 | lat ratio S/F=1.179
+   affine-tau2-synth-v1 t4-9   solved n=  2456 lat=   502 vis=  194 alen=   87 noLat=0.00 noVis=0.22 len=0.00 | failed n=   852 lat=   487 vis=  150 alen=   91 noLat=0.00 noVis=0.28 len=0.00 | lat ratio S/F=1.031
+   affine-tau2-synth-v1 t10+   solved n=  1689 lat=   325 vis=  225 alen=    0 noLat=0.00 noVis=0.19 len=0.00 | failed n=   690 lat=   400 vis=  266 alen=    0 noLat=0.00 noVis=0.21 len=0.00 | lat ratio S/F=0.812
+   affine-tau2-v1       t0     solved n=   310 lat=   781 vis=  270 alen=    0 noLat=0.00 noVis=0.00 len=0.00 | failed n=   106 lat=   582 vis=  199 alen=    0 noLat=0.00 noVis=0.00 len=0.00 | lat ratio S/F=1.343
+   affine-tau2-v1       t1-3   solved n=   930 lat=   115 vis=    0 alen=   84 noLat=0.00 noVis=0.76 len=0.00 | failed n=   318 lat=    97 vis=    0 alen=   84 noLat=0.00 noVis=0.77 len=0.00 | lat ratio S/F=1.186
+   affine-tau2-v1       t4-9   solved n=  1838 lat=  1312 vis=  517 alen=    0 noLat=0.00 noVis=0.20 len=0.00 | failed n=   628 lat=  1175 vis=  433 alen=    0 noLat=0.00 noVis=0.24 len=0.00 | lat ratio S/F=1.116
+   affine-tau2-v1       t10+   solved n=  2191 lat=   743 vis=  602 alen=    0 noLat=0.00 noVis=0.02 len=0.00 | failed n=  1687 lat=   820 vis=  573 alen=    0 noLat=0.00 noVis=0.06 len=0.00 | lat ratio S/F=0.906
+   bash                 t0     solved n=  2571 lat=   200 vis=    0 alen=  194 noLat=0.00 noVis=0.92 len=0.00 | failed n=   898 lat=   284 vis=    0 alen=  199 noLat=0.00 noVis=0.92 len=0.02 | lat ratio S/F=0.703
+   bash                 t1-3   solved n=  7548 lat=   151 vis=    0 alen=  221 noLat=0.00 noVis=0.57 len=0.00 | failed n=  2617 lat=   141 vis=    0 alen=  202 noLat=0.00 noVis=0.73 len=0.00 | lat ratio S/F=1.071
+   bash                 t4-9   solved n= 12264 lat=   338 vis=   54 alen=  249 noLat=0.00 noVis=0.45 len=0.00 | failed n=  4908 lat=   280 vis=    0 alen=  234 noLat=0.00 noVis=0.64 len=0.00 | lat ratio S/F=1.207
+   bash                 t10+   solved n= 35802 lat=   342 vis=   40 alen=  239 noLat=0.00 noVis=0.48 len=0.00 | failed n= 25382 lat=   354 vis=    0 alen=  230 noLat=0.00 noVis=0.63 len=0.01 | lat ratio S/F=0.966
+   claude_code          t0     solved n=  3083 lat=   437 vis=    0 alen=  233 noLat=0.00 noVis=0.63 len=0.00 | failed n=  1556 lat=   534 vis=    0 alen=  246 noLat=0.00 noVis=0.52 len=0.00 | lat ratio S/F=0.818
+   claude_code          t1-3   solved n=  9223 lat=   159 vis=    0 alen=  230 noLat=0.00 noVis=0.61 len=0.00 | failed n=  4637 lat=   162 vis=    0 alen=  249 noLat=0.00 noVis=0.65 len=0.00 | lat ratio S/F=0.981
+   claude_code          t4-9   solved n= 16992 lat=   334 vis=   59 alen=  281 noLat=0.00 noVis=0.43 len=0.00 | failed n=  9093 lat=   344 vis=   45 alen=  290 noLat=0.00 noVis=0.48 len=0.00 | lat ratio S/F=0.971
+   claude_code          t10+   solved n= 60619 lat=   357 vis=   95 alen=  300 noLat=0.00 noVis=0.26 len=0.00 | failed n= 63025 lat=   504 vis=   96 alen=  337 noLat=0.00 noVis=0.27 len=0.00 | lat ratio S/F=0.708
+   hermes_agent         t0     solved n=    67 lat=   164 vis=    0 alen=  265 noLat=0.00 noVis=0.85 len=0.00 | failed n=    64 lat=    98 vis=    0 alen=  287 noLat=0.02 noVis=0.89 len=0.00 | lat ratio S/F=1.673
+   hermes_agent         t1-3   solved n=   199 lat=   280 vis=    0 alen=  313 noLat=0.00 noVis=0.54 len=0.01 | failed n=   191 lat=   370 vis=    0 alen=  304 noLat=0.00 noVis=0.72 len=0.00 | lat ratio S/F=0.757
+   hermes_agent         t4-9   solved n=   368 lat=   574 vis=   85 alen=  380 noLat=0.00 noVis=0.35 len=0.00 | failed n=   373 lat=   457 vis=    0 alen=  319 noLat=0.00 noVis=0.57 len=0.00 | lat ratio S/F=1.257
+   hermes_agent         t10+   solved n=  1434 lat=   653 vis=  108 alen=  374 noLat=0.00 noVis=0.32 len=0.00 | failed n=  3536 lat=   800 vis=   91 alen=  367 noLat=0.00 noVis=0.37 len=0.00 | lat ratio S/F=0.817
+   kimi_code            t0     solved n=    65 lat=   374 vis=   65 alen=  235 noLat=0.00 noVis=0.46 len=0.00 | failed n=    77 lat=   365 vis=    0 alen=  271 noLat=0.00 noVis=0.58 len=0.01 | lat ratio S/F=1.025
+   kimi_code            t1-3   solved n=   195 lat=   370 vis=   85 alen=  294 noLat=0.00 noVis=0.31 len=0.00 | failed n=   231 lat=   373 vis=   41 alen=  307 noLat=0.00 noVis=0.48 len=0.00 | lat ratio S/F=0.992
+   kimi_code            t4-9   solved n=   357 lat=   664 vis=   94 alen=  341 noLat=0.00 noVis=0.26 len=0.00 | failed n=   460 lat=   441 vis=   58 alen=  290 noLat=0.00 noVis=0.46 len=0.00 | lat ratio S/F=1.506
+   kimi_code            t10+   solved n=  1584 lat=   750 vis=   94 alen=  375 noLat=0.00 noVis=0.35 len=0.00 | failed n=  4183 lat=   776 vis=    0 alen=  319 noLat=0.00 noVis=0.54 len=0.00 | lat ratio S/F=0.967
+   mini_swe_textbased   t0     solved n=  1998 lat=   104 vis=   87 alen=   81 noLat=0.00 noVis=0.00 len=0.00 | failed n=   667 lat=    99 vis=   87 alen=   70 noLat=0.00 noVis=0.01 len=0.01 | lat ratio S/F=1.051
+   mini_swe_textbased   t1-3   solved n=  5984 lat=   165 vis=  115 alen=  109 noLat=0.00 noVis=0.00 len=0.00 | failed n=  1996 lat=   143 vis=  100 alen=   86 noLat=0.00 noVis=0.01 len=0.01 | lat ratio S/F=1.154
+   mini_swe_textbased   t4-9   solved n= 10608 lat=   365 vis=  117 alen=  135 noLat=0.00 noVis=0.01 len=0.00 | failed n=  3859 lat=   221 vis=   96 alen=  106 noLat=0.00 noVis=0.03 len=0.01 | lat ratio S/F=1.652
+   mini_swe_textbased   t10+   solved n= 38551 lat=   416 vis=  105 alen=  160 noLat=0.00 noVis=0.03 len=0.01 | failed n= 25066 lat=   372 vis=   91 alen=  141 noLat=0.00 noVis=0.07 len=0.02 | lat ratio S/F=1.118
+   null                 t0     solved n= 29252 lat=  1394 vis=   96 alen=   19 noLat=0.00 noVis=0.34 len=0.00 | failed n=  9717 lat=  8160 vis=    0 alen=   13 noLat=0.00 noVis=0.63 len=0.28 | lat ratio S/F=0.171
+   null                 t1-3   solved n= 13511 lat=   276 vis=  140 alen=   97 noLat=0.00 noVis=0.01 len=0.00 | failed n=  3005 lat=   382 vis=  138 alen=  100 noLat=0.00 noVis=0.11 len=0.01 | lat ratio S/F=0.723
+   null                 t4-9   solved n= 16971 lat=   196 vis=  115 alen=  110 noLat=0.00 noVis=0.03 len=0.00 | failed n=  4077 lat=   354 vis=  108 alen=  121 noLat=0.00 noVis=0.14 len=0.00 | lat ratio S/F=0.554
+   null                 t10+   solved n= 18823 lat=   113 vis=   79 alen=  115 noLat=0.00 noVis=0.07 len=0.00 | failed n=  9630 lat=   164 vis=   60 alen=  111 noLat=0.00 noVis=0.23 len=0.00 | lat ratio S/F=0.689
+   pi                   t0     solved n=  2882 lat=   128 vis=    0 alen=  181 noLat=0.00 noVis=0.95 len=0.00 | failed n=  1105 lat=   237 vis=    0 alen=  182 noLat=0.00 noVis=0.97 len=0.00 | lat ratio S/F=0.538
+   pi                   t1-3   solved n=  8480 lat=   158 vis=    0 alen=  216 noLat=0.00 noVis=0.60 len=0.00 | failed n=  3261 lat=   157 vis=    0 alen=  223 noLat=0.00 noVis=0.75 len=0.00 | lat ratio S/F=1.01
+   pi                   t4-9   solved n= 12970 lat=   297 vis=   44 alen=  220 noLat=0.00 noVis=0.46 len=0.00 | failed n=  5965 lat=   295 vis=    0 alen=  229 noLat=0.00 noVis=0.63 len=0.00 | lat ratio S/F=1.007
+   pi                   t10+   solved n= 40103 lat=   351 vis=   27 alen=  232 noLat=0.00 noVis=0.49 len=0.00 | failed n= 35432 lat=   366 vis=    0 alen=  228 noLat=0.00 noVis=0.61 len=0.00 | lat ratio S/F=0.959
+   terminus_2           t0     solved n=   442 lat=   563 vis=    0 alen=  731 noLat=0.00 noVis=0.83 len=0.04 | failed n=   176 lat=   488 vis=    0 alen=  713 noLat=0.00 noVis=0.77 len=0.03 | lat ratio S/F=1.153
+   terminus_2           t1-3   solved n=  1304 lat=   782 vis=    0 alen=  910 noLat=0.01 noVis=0.81 len=0.00 | failed n=   521 lat=   588 vis=    0 alen=  843 noLat=0.02 noVis=0.80 len=0.01 | lat ratio S/F=1.329
+   terminus_2           t4-9   solved n=  1765 lat=   797 vis=    0 alen=  895 noLat=0.00 noVis=0.73 len=0.00 | failed n=   891 lat=   780 vis=    0 alen=  868 noLat=0.00 noVis=0.72 len=0.00 | lat ratio S/F=1.022
+   terminus_2           t10+   solved n=  2814 lat=   845 vis=    0 alen=  755 noLat=0.00 noVis=0.56 len=0.07 | failed n=  3001 lat=  1280 vis=    0 alen=  772 noLat=0.00 noVis=0.63 len=0.07 | lat ratio S/F=0.66
+
+== VERDICT (numbers above) ==
+1. Teacher task-level headroom is thin: same-sampler pass@1 0.7574 -> pass@2 0.7974 -> pass@n 0.7974; only 8.1% of replayed tasks are mixed (any-harness pooling: 10.7%); the 42-50 % terminal_bench_2 figure is the outlier (89 tasks x 7-11 harness-pooled runs).
+2. The teacher runs every coding/terminal task ONCE (swesmith/multiswe/scaleswe/swerebench/swelego/terminal_lego: 0 tasks with >=2 rollouts), so pass@n there is unmeasurable from traces; the only depth evidence is the sibling's 24 resampled pivot states: 17% flip with one resample, implied N=4 split 0.274 at solved-trajectory states / 0.715 at failed-trajectory states.
+3. Kings never replay their own tasks except math under reign 11 (pass@1 0.9452 -> pass@2 0.9666, mixed 0.0427); on the SAME task+harness the king solves 0.7146 vs teacher 0.8485, and only 3.3% of tasks are king-solved-teacher-failed: 'king|success' cannot exceed the plain teacher, it can only close part of a 0.13 gap.
+4. Where a same-sampler split exists it is at the ROOT: first-divergence depth 0 on 87% of pairs, <=1 on 96%; pre-divergence turns are 2.9% of pair turns -> a success filter re-labels the sampled state itself, never a shared prefix, so every scored turn needs its own N continuations.
+5. Cost: 629.1 s / $0.0289 Engy per continuation -> N=4 at 10 % pivots = 69.9 container-h + $11.56 per 1,000 new D turns (699.0 h per 1,000 pivot turns); the zero-continuation variant (refs from solved trajectories only) keeps 63% of teacher D turns (coding 58%, terminal 79%) but drops every failed-trajectory prefix, which is exactly the king_fail material D was built to carry.

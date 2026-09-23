@@ -1,0 +1,27 @@
+{
+ "_note": "Published numbers collected 2026-09-22 by web search; harnesses differ from the kingboard's (matrix teacher row = our own runs: swebench-verified, terminal-bench-2 = TB 2.0-style, tau2-*, bfcl-v3, livecodebench, gpqa-diamond, aime25, ifbench). Vendor self-reports marked 'vendor'; independent runs marked with the runner. GLM-5.3 weights were still closed at report time (2026-08-14 blog; open weights 'in ~2 wks'), so most GLM-5.3 rows are vendor or aggregator runs. DeepSeek-V4 = DeepSeek-V4-Pro (Max effort) HF model card (2026-04-24) unless noted; the 0813 refresh adds TB 2.1 = 87.9.",
+ "glm-5.3": {
+  "SWE-bench Verified": {"score": 95.4, "note": "vals.ai independent run, mini-swe-agent bash-only harness (board 2026-08-19/20); Zhipu docs list 77.8 inherited from GLM-5 — attribution contested", "source": "https://themodelgap.com/models/glm-5-3 ; https://aichoiceengine.com/ai-models/glm-5-3 (both citing vals.ai)"},
+  "Terminal-Bench 2": {"score": 88.2, "note": "Terminal-Bench 2.1, vendor run under Claude Code harness (blog/HF card 2026-08-14); Artificial Analysis independent TB 2.1 = 83.9; vals.ai TB 2.1 = 71.5; our matrix key is terminal-bench-2 (2.0 tasks, own harness) — not the same harness", "source": "https://z.ai/blog/glm-5.3 ; https://huggingface.co/zai-org/GLM-5.3 ; https://benchlm.ai/models/glm-5-3"},
+  "tau2-airline": {"score": null, "note": "not reported by Z.ai or any aggregator found (only AA Tau3-Banking 50.3)", "source": "https://benchmarklist.com/models/z-ai-glm-5.3/"},
+  "tau2-retail": {"score": null, "note": "not reported", "source": null},
+  "tau2-telecom": {"score": null, "note": "not reported", "source": null},
+  "BFCL v3": {"score": null, "note": "not reported", "source": null},
+  "LiveCodeBench": {"score": 80.5, "note": "vals.ai independent run (2026-08-20); LCB version/window differs from ours", "source": "https://themodelgap.com/models/glm-5-3 ; https://benchlm.ai/models/glm-5-3"},
+  "GPQA Diamond": {"score": 91.7, "note": "Artificial Analysis independent (2026-08-20); vals.ai 88.1", "source": "https://themodelgap.com/models/glm-5-3 ; https://benchlm.ai/models/glm-5-3"},
+  "AIME 2025": {"score": null, "note": "not reported (AA math index '—')", "source": "https://graysoft.dev/benchmarks/zai-glm-5-3.html"},
+  "IFBench": {"score": null, "note": "not reported (AA ifbench '—')", "source": "https://graysoft.dev/benchmarks/zai-glm-5-3.html"}
+ },
+ "deepseek-v4": {
+  "SWE-bench Verified": {"score": 80.6, "note": "DeepSeek-V4-Pro Max, vendor HF model card (2026-04-24)", "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro"},
+  "Terminal-Bench 2": {"score": 67.9, "note": "Terminal-Bench 2.0, vendor HF card (V4-Pro Max); V4-Pro-0813 TB 2.1 = 87.9 (0813 card)", "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro ; https://inferencex.semianalysis.com/model/deepseek-v4"},
+  "tau2-airline": {"score": null, "note": "not in the V4-Pro / 0813 result tables (only tau2 Telecom 96.2 via evals.report)", "source": "https://inferencex.semianalysis.com/model/deepseek-v4"},
+  "tau2-retail": {"score": null, "note": "not reported", "source": null},
+  "tau2-telecom": {"score": 96.2, "note": "pass^1, listed as Official on evals.report / aiflashreport", "source": "https://evals.report/models/deepseek-v4-pro ; https://aiflashreport.com/models/deepseek-v4-pro/"},
+  "BFCL v3": {"score": null, "note": "not reported", "source": null},
+  "LiveCodeBench": {"score": 93.5, "note": "vendor HF card (V4-Pro Max); aiflashreport 'LiveCodeBench Reasoning' 66.3 (AA)", "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro"},
+  "GPQA Diamond": {"score": 90.1, "note": "vendor HF card (V4-Pro Max); AA 88.8", "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro"},
+  "AIME 2025": {"score": null, "note": "not reported; math via HMMT Feb 2026 = 95.2, AIME 2026 = 95.83 (evals.report)", "source": "https://evals.report/models/deepseek-v4-pro"},
+  "IFBench": {"score": 76.5, "note": "Official per evals.report / aiflashreport", "source": "https://evals.report/models/deepseek-v4-pro"}
+ }
+}

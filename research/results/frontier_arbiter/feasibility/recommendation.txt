@@ -1,0 +1,26 @@
+7. RECOMMENDATION (buildability + cost only; whether the signal is USEFUL is another worker's question)
+
+  1. Build it duel-time, in SHADOW first: a `FrontierRefs` twin of RefCache, fresh F samples per duel published in the
+     artifact like teacher_refs; the deciding number is RT-6 — fold-time publishes 635k per-turn targets, and a
+     published target is memorised exactly (determinism is irrelevant to the attacker when the published text IS the target).
+  2. Use glm-5.3-flash (or kimi-k3 if the usefulness probe needs the stronger model) for the live path: 1000 turns in
+     11–18 min (kimi 9) at 0 % errors fits inside the 44-min duel, so the F call is free in wall time; glm-5.3 does not
+     fit today (Engy HTTP 429 "capacity exhausted": 53 min per 1000 turns with 6 retries at conc 32, 57–66 % first-attempt
+     failures at conc 32–64).
+  3. Cost is not the constraint for the flash-class models: $1.8/duel = $53/day (glm-5.3-flash), $0.5/duel (deepseek);
+     the deciding number against glm-5.3 duel-time is $14/duel = $410/day, and against kimi-k3 $27/duel = $820/day.
+  4. Do NOT pre-generate at fold time as the scored target: the one-off backfill alone is $1.2k (flash) – $9.4k (glm-5.3)
+     – $19k (kimi) for 1.1e10 prompt tokens, takes days to weeks of API time, and re-opens the RT-6 hole RefCache
+     closed on 2026-08-06.
+  5. Hybrid is the only defensible fold-time use: a CHEAP published sample (deepseek, $0.36k one-off + $4/day) as the
+     GATE, a fresh duel-time sample for CLOSENESS; the deciding number is 0.35–0.46 = the share of fresh T=0.8 samples
+     that equal the published greedy action — what memorising the published target buys the miner on the scored leg.
+  6. Replay = re-score from stored text in every path (T=0 is not reproducible on Engy: 0.23–0.55 exact-action agreement
+     across three greedy passes, 1.3–1.7 distinct workers per prompt); any rule-mode flip (a new score_mode reading
+     frontier_refs) is a weight_version_key event needing an explicit dated operator directive — affine.toml untouched here.
+
+  Caveats: 429 rates were measured while sibling frontier-arbiter probes shared the same Engy key; the deepseek 429 is a
+  per-key concurrency cap (~24 in flight is clean), the glm-5.3 one is global capacity. tool_call turns are the weak leg
+  for every F (strict parse 0.32–0.88; deepseek emits DSML tool syntax) — restrict `allowed_dialects` or expect ~30 %
+  coverage loss there. Costs are measured Engy charges (x_engy.charged_micro), fit as $/M prompt + $/M completion and
+  projected onto the live slice's prompt distribution (mean 15,949 teacher tokens/turn; p50 8.5k, p90 42k, max 102k).

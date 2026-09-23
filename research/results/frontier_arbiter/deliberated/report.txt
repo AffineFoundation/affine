@@ -1,0 +1,215 @@
+====================================================================================================
+DELIBERATED FRONTIER ORACLE — self-agreement and outcome accuracy at ground-truth states (2026-09-21)
+====================================================================================================
+states 30: {'split': 7, 'ceiling': 11, 'outcome': 12}  (split = teacher first actions led to solved AND failed; ceiling = teacher 0/N with frontier proposals executed; outcome = yesterday's paired T/F1 continuations)
+by harness: {'terminus_2': 7, 'mini_swe_textbased': 14, 'bash': 9}
+labelled actions per state: mean 4.3 (solved 45, failed 84 in total)
+classes per state pool (all samples + labelled + teacher API + king): after tier 1+2 mean 8.3 -> after tier 3 judge mean 4.6; judge calls 702
+
+Terms: class = equivalence class of actions (tier 1 norm-exact, tier 2 token-Jaccard>=0.5 single linkage, tier 3 glm-5.3-flash T=0 same-decision judge on class representatives); modal share = fraction of a variant's parsed samples in its largest class (= confidence); single-sample = pairwise agreement between two independent draws; correct/wrong = modal class contains a solved / only failed labelled action, mixed = both, novel = no labelled member; accuracy = correct/(correct+wrong).
+
+====================================================================================================
+1. SELF-AGREEMENT — single-sample pairwise vs deliberated modal share
+====================================================================================================
+variant                          states  parsed/k | single-sample pairwise:  exact  jac>=.5 jac mean sameclass | deliberated: classes modal share  >=0.5  >=0.7 2nd share
+v1 deliberated glm-5.3 k=10          30  291/300  |                           0.12     0.41     0.44      0.65 |                  2.5        0.76  27/30  19/30      0.14
+v2 critique-then-act k=3             30   84/90   |                           0.15     0.38     0.47      0.69 |                  1.5        0.84  28/30  18/30      0.13
+v3 self-critique k=3                 30   84/90   |                           0.10     0.24     0.37      0.64 |                  1.5        0.82  28/30  17/30      0.16
+v4 deepseek-v4.1-flash k=5           30  147/150  |                           0.11     0.38     0.44      0.62 |                  2.1        0.77  24/30  19/30      0.14
+joint v1+v4 k=15                     30  438/450  |                           0.10     0.34     0.41      0.61 |                  3.2        0.73  24/30  16/30      0.16
+teacher (its N labelled first actions)     20   77/77   |                           0.12     0.34     0.40      0.55 |                  2.0        0.71  18/20  12/20          
+teacher + 3 API samples (unlabelled)     30  167/167  |                           0.14     0.41     0.45      0.60 |
+  NOTE the teacher's N is 3–5 per state (modal share of 3 draws is coarse: 1/3, 2/3, 1); the frontier's k=10 modal share has finer support. 'sameclass' is the pairwise rate of landing in the same 3-tier class = the deliberated notion of agreement.
+  Prior single-frontier-sample numbers for reference: self-agreement 0.27 exact / 0.69 Jaccard; frontier-vs-teacher 0.25.
+
+-- v1 modal share by state class and harness --
+  class    ceiling              n=11 modal share 0.82 >=0.5 11  classes 2.1  pairwise sameclass 0.73
+  class    outcome              n=12 modal share 0.73 >=0.5 10  classes 2.9  pairwise sameclass 0.59
+  class    split                n= 7 modal share 0.73 >=0.5 6  classes 2.3  pairwise sameclass 0.63
+  harness  bash                 n= 9 modal share 0.85 >=0.5 9  classes 1.4  pairwise sameclass 0.78
+  harness  mini_swe_textbased   n=14 modal share 0.70 >=0.5 12  classes 3.3  pairwise sameclass 0.55
+  harness  terminus_2           n= 7 modal share 0.78 >=0.5 6  classes 2.1  pairwise sameclass 0.68
+
+====================================================================================================
+2. OUTCOME ACCURACY — does the modal class match a SOLVED first action?
+====================================================================================================
+split states: labelled = teacher first actions (solved / failed continuations); ceiling states: labelled = teacher's failed first actions + frontier proposals executed under F1 (solved / failed); outcome states: yesterday's T and F1 (+ F = frontier ran the rest itself) first actions.
+variant                          set          n correct wrong mixed novel |               accuracy | conf>=.5: n                    acc | 2nd-modal correct | any class correct
+v1 deliberated glm-5.3 k=10      split        7       0     1     5     1 | 0/1 =   0.0% [  0– 79] |           6 0/1 =   0.0% [  0– 79] | 0/1 =   0.0% [  0– 79] | 6/7 =  85.7% [ 49– 97]
+                                 ceiling     11       0     9     2     0 | 0/9 =   0.0% [  0– 30] |          11 0/9 =   0.0% [  0– 30] | 0/3 =   0.0% [  0– 56] | 3/11 =  27.3% [ 10– 57]
+                                 primary18   18       0    10     7     1 | 0/10 =   0.0% [  0– 28] |          17 0/10 =   0.0% [  0– 28] | 0/4 =   0.0% [  0– 49] | 9/18 =  50.0% [ 29– 71]
+                                 outcome     12       8     1     2     1 | 8/9 =  88.9% [ 56– 98] |          10 6/7 =  85.7% [ 49– 97] | 2/2 = 100.0% [ 34–100] | 10/12 =  83.3% [ 55– 95]
+                                 pooled      30       8    11     9     2 | 8/19 =  42.1% [ 23– 64] |          27 6/17 =  35.3% [ 17– 59] | 2/6 =  33.3% [ 10– 70] | 19/30 =  63.3% [ 46– 78]
+v2 critique-then-act k=3         split        7       1     0     5     1 | 1/1 = 100.0% [ 21–100] |           6 1/1 = 100.0% [ 21–100] |              —    | 7/7 = 100.0% [ 65–100]
+                                 ceiling     11       0     8     1     2 | 0/8 =   0.0% [  0– 32] |          10 0/7 =   0.0% [  0– 35] | 0/2 =   0.0% [  0– 66] | 1/11 =   9.1% [  2– 38]
+                                 primary18   18       1     8     6     3 | 1/9 =  11.1% [  2– 44] |          16 1/8 =  12.5% [  2– 47] | 0/2 =   0.0% [  0– 66] | 8/18 =  44.4% [ 25– 66]
+                                 outcome     12       7     1     2     2 | 7/8 =  87.5% [ 53– 98] |          12 7/8 =  87.5% [ 53– 98] |              —    | 9/12 =  75.0% [ 47– 91]
+                                 pooled      30       8     9     8     5 | 8/17 =  47.1% [ 26– 69] |          28 8/16 =  50.0% [ 28– 72] | 0/2 =   0.0% [  0– 66] | 17/30 =  56.7% [ 39– 73]
+v3 self-critique k=3             split        7       0     0     5     2 |                   —    |           7                   —    |              —    | 5/7 =  71.4% [ 36– 92]
+                                 ceiling     11       0     7     1     3 | 0/7 =   0.0% [  0– 35] |          10 0/6 =   0.0% [  0– 39] | 0/3 =   0.0% [  0– 56] | 2/11 =  18.2% [  5– 48]
+                                 primary18   18       0     7     6     5 | 0/7 =   0.0% [  0– 35] |          17 0/6 =   0.0% [  0– 39] | 0/3 =   0.0% [  0– 56] | 7/18 =  38.9% [ 20– 61]
+                                 outcome     12       7     1     2     2 | 7/8 =  87.5% [ 53– 98] |          11 6/7 =  85.7% [ 49– 97] | 2/3 =  66.7% [ 21– 94] | 9/12 =  75.0% [ 47– 91]
+                                 pooled      30       7     8     8     7 | 7/15 =  46.7% [ 25– 70] |          28 6/13 =  46.2% [ 23– 71] | 2/6 =  33.3% [ 10– 70] | 16/30 =  53.3% [ 36– 70]
+v4 deepseek-v4.1-flash k=5       split        7       0     1     5     1 | 0/1 =   0.0% [  0– 79] |           4                   —    | 0/1 =   0.0% [  0– 79] | 6/7 =  85.7% [ 49– 97]
+                                 ceiling     11       0     7     2     2 | 0/7 =   0.0% [  0– 35] |          10 0/7 =   0.0% [  0– 35] | 0/4 =   0.0% [  0– 49] | 2/11 =  18.2% [  5– 48]
+                                 primary18   18       0     8     7     3 | 0/8 =   0.0% [  0– 32] |          14 0/7 =   0.0% [  0– 35] | 0/5 =   0.0% [  0– 43] | 8/18 =  44.4% [ 25– 66]
+                                 outcome     12       7     1     1     3 | 7/8 =  87.5% [ 53– 98] |          10 6/7 =  85.7% [ 49– 97] | 2/2 = 100.0% [ 34–100] | 9/12 =  75.0% [ 47– 91]
+                                 pooled      30       7     9     8     6 | 7/16 =  43.8% [ 23– 67] |          24 6/14 =  42.9% [ 21– 67] | 2/7 =  28.6% [  8– 64] | 17/30 =  56.7% [ 39– 73]
+joint v1+v4 k=15                 split        7       0     1     6     0 | 0/1 =   0.0% [  0– 79] |           5 0/1 =   0.0% [  0– 79] | 0/1 =   0.0% [  0– 79] | 6/7 =  85.7% [ 49– 97]
+                                 ceiling     11       0     9     2     0 | 0/9 =   0.0% [  0– 30] |           9 0/7 =   0.0% [  0– 35] | 0/4 =   0.0% [  0– 49] | 3/11 =  27.3% [ 10– 57]
+                                 primary18   18       0    10     8     0 | 0/10 =   0.0% [  0– 28] |          14 0/8 =   0.0% [  0– 32] | 0/5 =   0.0% [  0– 43] | 9/18 =  50.0% [ 29– 71]
+                                 outcome     12       8     1     2     1 | 8/9 =  88.9% [ 56– 98] |          10 6/7 =  85.7% [ 49– 97] | 3/3 = 100.0% [ 44–100] | 10/12 =  83.3% [ 55– 95]
+                                 pooled      30       8    11    10     1 | 8/19 =  42.1% [ 23– 64] |          24 6/15 =  40.0% [ 20– 64] | 3/8 =  37.5% [ 14– 69] | 19/30 =  63.3% [ 46– 78]
+  lenient accuracy (modal class contains ANY solved action; mixed counted as correct) and granularity sensitivity:
+  variant                          tier               n modal share  >=0.5 | corr wrong mixed novel |               accuracy |            lenient acc |             novel rate
+  v1 deliberated glm-5.3 k=10      strict            30        0.26      5 |    2     5     1    22 | 2/7 =  28.6% [  8– 64] | 3/8 =  37.5% [ 14– 69] | 22/30 =  73.3% [ 56– 86]
+                                   loose             30        0.72     24 |    7    11     9     3 | 7/18 =  38.9% [ 20– 61] | 16/27 =  59.3% [ 41– 75] | 3/30 =  10.0% [  3– 26]
+                                   judged            30        0.76     27 |    8    11     9     2 | 8/19 =  42.1% [ 23– 64] | 17/28 =  60.7% [ 42– 76] | 2/30 =   6.7% [  2– 21]
+                                   judged/primary18  18        0.79     17 |    0    10     7     1 | 0/10 =   0.0% [  0– 28] | 7/17 =  41.2% [ 22– 64] | 1/18 =   5.6% [  1– 26]
+  v2 critique-then-act k=3         strict            30        0.50     11 |    2     4     2    22 | 2/6 =  33.3% [ 10– 70] | 4/8 =  50.0% [ 22– 78] | 22/30 =  73.3% [ 56– 86]
+                                   loose             30        0.74     23 |    7     6     8     9 | 7/13 =  53.8% [ 29– 77] | 15/21 =  71.4% [ 50– 86] | 9/30 =  30.0% [ 17– 48]
+                                   judged            30        0.84     28 |    8     9     8     5 | 8/17 =  47.1% [ 26– 69] | 16/25 =  64.0% [ 45– 80] | 5/30 =  16.7% [  7– 34]
+                                   judged/primary18  18        0.85     16 |    1     8     6     3 | 1/9 =  11.1% [  2– 44] | 7/15 =  46.7% [ 25– 70] | 3/18 =  16.7% [  6– 39]
+  v3 self-critique k=3             strict            30        0.46     10 |    1     2     1    26 | 1/3 =  33.3% [  6– 79] | 2/4 =  50.0% [ 15– 85] | 26/30 =  86.7% [ 70– 95]
+                                   loose             30        0.66     22 |    5     5     6    14 | 5/10 =  50.0% [ 24– 76] | 11/16 =  68.8% [ 44– 86] | 14/30 =  46.7% [ 30– 64]
+                                   judged            30        0.82     28 |    7     8     8     7 | 7/15 =  46.7% [ 25– 70] | 15/23 =  65.2% [ 45– 81] | 7/30 =  23.3% [ 12– 41]
+                                   judged/primary18  18        0.81     17 |    0     7     6     5 | 0/7 =   0.0% [  0– 35] | 6/13 =  46.2% [ 23– 71] | 5/18 =  27.8% [ 12– 51]
+  v4 deepseek-v4.1-flash k=5       strict            30        0.33      5 |    1     2     0    27 | 1/3 =  33.3% [  6– 79] | 1/3 =  33.3% [  6– 79] | 27/30 =  90.0% [ 74– 97]
+                                   loose             30        0.67     20 |    6     9     7     8 | 6/15 =  40.0% [ 20– 64] | 13/22 =  59.1% [ 39– 77] | 8/30 =  26.7% [ 14– 44]
+                                   judged            30        0.77     24 |    7     9     8     6 | 7/16 =  43.8% [ 23– 67] | 15/24 =  62.5% [ 43– 79] | 6/30 =  20.0% [ 10– 37]
+                                   judged/primary18  18        0.78     14 |    0     8     7     3 | 0/8 =   0.0% [  0– 32] | 7/15 =  46.7% [ 25– 70] | 3/18 =  16.7% [  6– 39]
+  joint v1+v4 k=15                 strict            30        0.21      3 |    2     5     1    22 | 2/7 =  28.6% [  8– 64] | 3/8 =  37.5% [ 14– 69] | 22/30 =  73.3% [ 56– 86]
+                                   loose             30        0.68     21 |    8    11     9     2 | 8/19 =  42.1% [ 23– 64] | 17/28 =  60.7% [ 42– 76] | 2/30 =   6.7% [  2– 21]
+                                   judged            30        0.73     24 |    8    11    10     1 | 8/19 =  42.1% [ 23– 64] | 18/29 =  62.1% [ 44– 77] | 1/30 =   3.3% [  1– 17]
+                                   judged/primary18  18        0.75     14 |    0    10     8     0 | 0/10 =   0.0% [  0– 28] | 8/18 =  44.4% [ 25– 66] | 0/18 =   0.0% [  0– 18]
+  v1 deliberated glm-5.3 k=10      direct/all        30                    |    9    10     8     3 | 9/19 =  47.4% [ 27– 68] | 17/27 =  63.0% [ 44– 78] | 3/30 =  10.0% [  3– 26]   teacher overlap 21/30
+                                   direct/primary18  18                    |    1     9     6     2 | 1/10 =  10.0% [  2– 40] | 7/16 =  43.8% [ 23– 67] | 2/18 =  11.1% [  3– 33]   teacher overlap 15/18
+  v2 critique-then-act k=3         direct/all        30                    |    6     4     7    13 | 6/10 =  60.0% [ 31– 83] | 13/17 =  76.5% [ 53– 90] | 13/30 =  43.3% [ 27– 61]   teacher overlap 19/30
+                                   direct/primary18  18                    |    1     4     6     7 | 1/5 =  20.0% [  4– 62] | 7/11 =  63.6% [ 35– 85] | 7/18 =  38.9% [ 20– 61]   teacher overlap 12/18
+  v3 self-critique k=3             direct/all        30                    |    4     5     6    15 | 4/9 =  44.4% [ 19– 73] | 10/15 =  66.7% [ 42– 85] | 15/30 =  50.0% [ 33– 67]   teacher overlap 15/30
+                                   direct/primary18  18                    |    0     5     5     8 | 0/5 =   0.0% [  0– 43] | 5/10 =  50.0% [ 24– 76] | 8/18 =  44.4% [ 25– 66]   teacher overlap 10/18
+  v4 deepseek-v4.1-flash k=5       direct/all        30                    |    4     9     7    10 | 4/13 =  30.8% [ 13– 58] | 11/20 =  55.0% [ 34– 74] | 10/30 =  33.3% [ 19– 51]   teacher overlap 22/30
+                                   direct/primary18  18                    |    0     8     6     4 | 0/8 =   0.0% [  0– 32] | 6/14 =  42.9% [ 21– 67] | 4/18 =  22.2% [  9– 45]   teacher overlap 14/18
+  joint v1+v4 k=15                 direct/all        30                    |    9    10     8     3 | 9/19 =  47.4% [ 27– 68] | 17/27 =  63.0% [ 44– 78] | 3/30 =  10.0% [  3– 26]   teacher overlap 23/30
+                                   direct/primary18  18                    |    1     9     6     2 | 1/10 =  10.0% [  2– 40] | 7/16 =  43.8% [ 23– 67] | 2/18 =  11.1% [  3– 33]   teacher overlap 15/18
+  'direct' = the judged-tier modal class, but a match to a labelled/teacher action must be carried by one of the modal class's own samples (norm-exact or Jaccard>=0.5) — no chaining through the pool.
+  teacher modal first action       strict            30        0.58     14 |   13    15     2     0 | 13/28 =  46.4% [ 30– 64] | 15/30 =  50.0% [ 33– 67] |
+                                   loose             30        0.76     25 |    9    12     9     0 | 9/21 =  42.9% [ 24– 63] | 18/30 =  60.0% [ 42– 75] |
+                                   judged            30        0.81     28 |    9    11    10     0 | 9/20 =  45.0% [ 26– 66] | 19/30 =  63.3% [ 46– 78] |
+  'mixed' at loose/judged granularity = the class holds BOTH a solved and a failed labelled action: at that granularity the first-action decision did not determine the outcome (the split probe already found solved/failed diverge at the state under norm-exact in 6/7 splits but only 3/7 under Jaccard>=0.5).
+
+-- baselines on the same states --
+  split      teacher MODAL first action: correct 1 wrong 0 mixed 6 -> accuracy 1/1 = 100.0% [ 21–100]; blind pick of a labelled action solves 0.59 on average
+  ceiling    teacher MODAL first action: correct 0 wrong 9 mixed 2 -> accuracy 0/9 =   0.0% [  0– 30]; blind pick of a labelled action solves 0.05 on average
+  primary18  teacher MODAL first action: correct 1 wrong 9 mixed 8 -> accuracy 1/10 =  10.0% [  2– 40]; blind pick of a labelled action solves 0.26 on average
+  outcome    teacher MODAL first action: correct 8 wrong 2 mixed 2 -> accuracy 8/10 =  80.0% [ 49– 94]; blind pick of a labelled action solves 0.72 on average
+  pooled     teacher MODAL first action: correct 9 wrong 11 mixed 10 -> accuracy 9/20 =  45.0% [ 26– 66]; blind pick of a labelled action solves 0.44 on average
+
+====================================================================================================
+3. VARIANT AGREEMENT WITH v1 MODAL, FRONTIER-vs-TEACHER OVERLAP, KING
+====================================================================================================
+variant                            n   modal = v1 modal |  modal class contains a TEACHER action ..of which solved ..failed ..mixed | contains KING action
+v1 deliberated glm-5.3 k=10       30            (is v1) |               24/30 =  80.0% [ 63– 90]                 4       11       9 | 14/30 =  46.7% [ 30– 64]
+v2 critique-then-act k=3          30 20/30 =  66.7% [ 49– 81] |               25/30 =  83.3% [ 66– 93]                 7        9       8 | 19/30 =  63.3% [ 46– 78]
+v3 self-critique k=3              30 19/30 =  63.3% [ 46– 78] |               22/30 =  73.3% [ 56– 86]                 6        8       8 | 15/30 =  50.0% [ 33– 67]
+v4 deepseek-v4.1-flash k=5        30 21/30 =  70.0% [ 52– 83] |               23/30 =  76.7% [ 59– 88]                 5        9       8 | 17/30 =  56.7% [ 39– 73]
+joint v1+v4 k=15                  30 27/30 =  90.0% [ 74– 97] |               26/30 =  86.7% [ 70– 95]                 5       11      10 | 16/30 =  53.3% [ 36– 70]
+  (teacher action = any of the teacher's labelled first actions or its 3 unlabelled API samples at the state; 'solved' = that class holds a solved labelled action)
+  frontier-vs-teacher overlap by granularity (modal class contains a teacher action):
+    v1 deliberated glm-5.3 k=10      strict 4/30 (3/18 primary18) | loose 24/30 (17/18 primary18) | judged 24/30 (17/18 primary18)
+    v2 critique-then-act k=3         strict 8/30 (6/18 primary18) | loose 20/30 (12/18 primary18) | judged 25/30 (15/18 primary18)
+    v3 self-critique k=3             strict 3/30 (2/18 primary18) | loose 15/30 (8/18 primary18) | judged 22/30 (13/18 primary18)
+    v4 deepseek-v4.1-flash k=5       strict 5/30 (2/18 primary18) | loose 22/30 (14/18 primary18) | judged 23/30 (15/18 primary18)
+    joint v1+v4 k=15                 strict 6/30 (3/18 primary18) | loose 25/30 (17/18 primary18) | judged 26/30 (18/18 primary18)
+
+====================================================================================================
+4. COST — as run (Engy realised charge) and projections
+====================================================================================================
+variant                          states calls/state prompt tok/state cached share compl tok/state reasoning share $/state realised $/state @list @flash list fallback len-cap
+v1 deliberated glm-5.3 k=10          30        10.0           90,074         0.86          10,225            0.28           0.0578        0.0966      0.0127        0       7
+v2 critique-then-act k=3             30         3.0           28,824         0.95          13,447            0.38           0.0476        0.0598      0.0077        0       6
+v3 self-critique k=3                 30         6.0           54,906         0.97          17,556            0.45           0.0651        0.0910      0.0118        0       6
+v4 deepseek-v4.1-flash k=5           30         5.0           46,976         0.77           4,108            0.78           0.0011        0.0015      0.0062        0       1
+  '$/state @list' = tokens x list price with no cache discount; 'realised' = Engy's charge (cache discount + actual model mix); '@flash list' = same tokens priced at glm-5.3-flash ($0.10/M in, $0.36/M out).
+
+-- projections (realised $/state; 1,000-turn duel = 2 sides share the oracle so ONE oracle per turn; D = 635k turns) --
+variant                          duel all turns duel 40% decision        D all        D 40% | @flash: duel all        D all        D 40%
+v1 deliberated glm-5.3 k=10                  58                23       36,732       14,693 |               13        8,057        3,223
+v2 critique-then-act k=3                     48                19       30,257       12,103 |                8        4,904        1,962
+v3 self-critique k=3                         65                26       41,351       16,540 |               12        7,500        3,000
+v4 deepseek-v4.1-flash k=5                    1                 0          671          268 |                6        3,922        1,569
+  + clustering judge (glm-5.3-flash): 23.4 calls/state here (pool of ~28 actions incl. labels), $0.0073/state; a production oracle clusters only its own k samples.
+SPENT: sampling $5.15 + judge $0.22 = $5.37 (this analyze run's judge share $0.00)
+
+====================================================================================================
+5. PER STATE (conf = modal share; outcome of modal class; 2nd = second-modal outcome)
+====================================================================================================
+  split    3665be6010bf terminus_2         d=13 labels s4/f1 teacher conf 1.00 mixe | v1 1.00/1c mixe  v2 1.00/1c mixe  v3 1.00/1c mixe  v4 1.00/1c mixe  joint 1.00/1c mixe
+      v1 modal: '{\n  "analysis": "The rstan installation command is still running (no shell prompt has returned yet). Compilation of rstan and its dependencies can tak'
+  split    3cab611bfbee mini_swe_textbased d=15 labels s4/f1 teacher conf 0.75 mixe | v1 1.00/1c mixe  v2 1.00/1c mixe  v3 1.00/1c mixe  v4 0.80/2c mixe|2nd nove  joint 0.93/2c mixe|2nd nove
+      v1 modal: '```bash\ncd /testbed && pip install -e . 2>&1 | tail -5 && python /tmp/repro.py\n```'
+  split    48e27ac1ac2e mini_swe_textbased d= 8 labels s3/f1 teacher conf 0.50 mixe | v1 0.50/4c mixe|2nd nove  v2 0.67/2c mixe|2nd nove  v3 0.50/2c nove|2nd nove  v4 0.40/4c nove|2nd mixe  joint 0.40/5c mixe|2nd nove
+      v1 modal: '```bash\ngrep -rn "ScratchProvider\\|Scratcher" --include="*.go" . | grep -v "_test" | head -30 && echo "=====" && sed -n \'400,440p\' resources/page/page'
+  split    913f7a01d1d1 bash               d=14 labels s3/f2 teacher conf 0.75 mixe | v1 1.00/1c mixe  v2 1.00/1c mixe  v3 1.00/1c mixe  v4 1.00/1c mixe  joint 1.00/1c mixe
+      v1 modal: '<tool_call>\n{"name": "bash", "arguments": {"command": "sed -n 400,460p /pyxform/pyxform/survey_element.py"}}\n</tool_call>'
+  split    a785cb844bd4 terminus_2         d=12 labels s1/f3 teacher conf 0.50 mixe | v1 0.33/5c nove|2nd mixe  v2 0.33/3c nove|2nd mixe  v3 1.00/1c mixe  v4 0.40/4c mixe|2nd wron  joint 0.29/7c mixe|2nd nove
+      v1 modal: '{\n  "analysis": "The current optimized query runs in 3.3s, but it processes senses twice: once for word-level aggregates and once for top-synset ranki'
+  split    cd5427223601 bash               d=12 labels s2/f3 teacher conf 0.50 mixe | v1 0.60/2c mixe|2nd mixe  v2 1.00/1c mixe  v3 1.00/1c mixe  v4 1.00/1c mixe  joint 0.60/2c mixe|2nd mixe
+      v1 modal: '<tool_call>\n{"name": "bash", "arguments": {"command": "cd /testbed && sed -n 725,760p dask/array/slicing.py"}}\n</tool_call>'
+  split    f1e5d484b2a5 bash               d=14 labels s2/f2 teacher conf 0.25 corr | v1 0.67/2c wron|2nd wron  v2 1.00/1c corr  v3 0.67/2c nove|2nd nove  v4 0.40/3c wron|2nd nove  joint 0.57/4c wron|2nd wron
+      v1 modal: '<tool_call>\n{"name": "bash", "arguments": {"command": "cd /workspace/py4vasp && grep -rn \\"eigvalsh\\\\|eigenvalue\\" src/py4vasp --include=\\"*.py\\" | gr'
+  ceiling  2a10d948893a mini_swe_textbased d= 4 labels s0/f7 teacher conf 0.50 wron | v1 0.50/5c wron|2nd wron  v2 0.67/2c wron|2nd wron  v3 1.00/1c wron  v4 0.60/3c wron|2nd nove  joint 0.40/6c wron|2nd wron
+      v1 modal: "```bash\ncat <<'EOF' > /tmp/repro.sh\n#!/bin/bash\n# Reproduce: simulate a source tree exported without symlinks\nset -x\nrm -rf /tmp/idna-nosymlink\ncp -rL"
+  ceiling  30be2fbf008b bash               d=12 labels s0/f6 teacher conf 0.75 wron | v1 1.00/1c wron  v2 1.00/1c wron  v3 1.00/1c wron  v4 1.00/1c wron  joint 1.00/1c wron
+      v1 modal: '<tool_call>\n{"name": "edit", "arguments": {"new_str": "# -*- coding: utf-8 -*-\\nfrom .cfg import SettingsLoadStrategyCfg\\nfrom .python import Settings'
+  ceiling  37feff8f9eee terminus_2         d= 6 labels s0/f6 teacher conf 1.00 wron | v1 0.90/2c wron|2nd nove  v2 0.67/2c wron|2nd nove  v3 0.67/2c wron|2nd nove  v4 1.00/1c wron  joint 0.93/2c wron|2nd nove
+      v1 modal: '{\n  "analysis": "The polyglot file at /app/polyglot/main.rs compiles and runs correctly with both rustc and g++. Tested values N=0,1,2,3,5,10 all prod'
+  ceiling  3a9986a18340 bash               d= 8 labels s0/f5 teacher conf 0.50 wron | v1 0.70/2c wron|2nd wron  v2 0.67/2c wron|2nd wron  v3 1.00/1c wron  v4 0.80/2c wron|2nd wron  joint 0.73/2c wron|2nd wron
+      v1 modal: '<tool_call>\n{"name": "bash", "arguments": {"command": "cd /tmp/helmresearch/helm && git show bf9c64f4 --stat | head -30 && echo \\"=== the diff of func'
+  ceiling  7aa0fc310c7e bash               d= 3 labels s0/f6 teacher conf 0.75 wron | v1 1.00/1c wron  v2 1.00/1c nove  v3 0.67/2c nove|2nd wron  v4 0.60/3c nove|2nd wron  joint 0.73/3c wron|2nd nove
+      v1 modal: '<tool_call>\n{"name": "bash", "arguments": {"command": "coqc --version; cd /workspace && echo \'Require Import Arith.\\nCheck plus_n_O.\\nCheck plus_n_Sm.'
+  ceiling  8bee1f311713 mini_swe_textbased d= 5 labels s1/f4 teacher conf 1.00 mixe | v1 0.90/2c mixe|2nd nove  v2 1.00/1c mixe  v3 1.00/1c mixe  v4 1.00/1c mixe  joint 0.93/2c mixe|2nd nove
+      v1 modal: '```bash\ncat fuel-crypto/Cargo.toml && echo "=====" && cat fuel-vm/Cargo.toml\n```'
+  ceiling  8ddd2d89cea6 mini_swe_textbased d= 6 labels s0/f7 teacher conf 0.50 wron | v1 1.00/1c wron  v2 1.00/1c wron  v3 0.50/2c nove|2nd wron  v4 0.80/2c wron|2nd wron  joint 0.93/2c wron|2nd wron
+      v1 modal: "```bash\ncd /app 2>/dev/null || cd $(pwd); git log --oneline -5 && nl -ba server/filestore.go | sed -n '4600,4760p'\n```"
+  ceiling  9d3fd174f997 mini_swe_textbased d=14 labels s1/f6 teacher conf 0.25 wron | v1 0.50/5c wron|2nd mixe  v2 0.33/3c wron|2nd nove  v3 0.67/2c wron|2nd nove  v4 0.40/4c nove|2nd nove  joint 0.33/9c wron|2nd mixe
+      v1 modal: '```bash\nls tests/main/ && grep -rn "dict\\[" tests/ | head -20\n```'
+  ceiling  a079281ff9b9 mini_swe_textbased d= 7 labels s0/f6 teacher conf 1.00 wron | v1 1.00/1c wron  v2 1.00/1c wron  v3 1.00/1c wron  v4 1.00/1c wron  joint 1.00/1c wron
+      v1 modal: "```bash\nnl -ba modules/collect.go | sed -n '150,400p'\n```"
+  ceiling  ca99dd9d809c bash               d=12 labels s1/f4 teacher conf 1.00 mixe | v1 1.00/1c mixe  v2 1.00/1c nove  v3 0.50/2c nove|2nd mixe  v4 1.00/1c mixe  joint 1.00/1c mixe
+      v1 modal: '<tool_call>\n{"name": "bash", "arguments": {"command": "cd /tmp && timeout 30 npm view tcomb versions 2>&1 | tail -5"}}\n</tool_call>'
+  ceiling  eeacceec7da9 terminus_2         d= 7 labels s0/f6 teacher conf 0.75 wron | v1 0.57/2c wron|2nd wron  v2 1.00/1c wron  v3 0.33/3c wron|2nd wron  v4 0.75/2c wron|2nd wron  joint 0.64/2c wron|2nd wron
+      v1 modal: '{\n  "analysis": "Critical bug found: SCRIPT_BLOCK_RE treats <script/> as an opening tag and then matches everything to the next </script>, destroying '
+  outcome  06706134ab59 mini_swe_textbased d= 3 labels s0/f2 teacher conf 1.00 wron | v1 1.00/1c wron  v2 1.00/1c wron  v3 1.00/1c wron  v4 1.00/1c wron  joint 1.00/1c wron
+      v1 modal: "```bash\nsed -n '1820,1990p' /workspace/gspread/gspread/worksheet.py\n```"
+  outcome  21bc74b27884 bash               d= 3 labels s3/f0 teacher conf 1.00 corr | v1 0.70/2c corr|2nd corr  v2 0.67/2c corr|2nd nove  v3 1.00/1c corr  v4 0.60/2c corr|2nd corr  joint 0.67/2c corr|2nd corr
+      v1 modal: '<tool_call>\n{"name": "bash", "arguments": {"command": "cat << \'PYEOF\' > /tmp/test3.py\\nimport re\\n\\nOCT = r\'(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0'
+  outcome  2f4d4ef3ee02 terminus_2         d= 6 labels s1/f1 teacher conf 1.00 mixe | v1 0.78/2c mixe|2nd nove  v2 1.00/1c mixe  v3 0.67/2c mixe|2nd nove  v4 0.80/2c nove|2nd mixe  joint 0.57/2c mixe|2nd nove
+      v1 modal: '{\n  "analysis": "gcc and g++ have been installed successfully. Now I need to install PyTorch to load model.pth and extract the weights.",\n  "plan": "I'
+  outcome  6a1f2d81f005 mini_swe_textbased d=12 labels s2/f0 teacher conf 1.00 corr | v1 0.60/5c corr|2nd nove  v2 1.00/1c corr  v3 0.67/2c corr|2nd nove  v4 0.40/3c corr|2nd corr  joint 0.53/6c corr|2nd corr
+      v1 modal: '```bash\ngit log --oneline -10 && cat tests/test_config.py | head -60\n```'
+  outcome  701bd65d8577 bash               d= 9 labels s4/f0 teacher conf 1.00 corr | v1 1.00/1c corr  v2 0.67/2c corr|2nd nove  v3 1.00/1c corr  v4 1.00/1c corr  joint 1.00/1c corr
+      v1 modal: '<tool_call>\n{"name": "bash", "arguments": {"command": "cat /home/commander.js/test/test.command.nohelp.js && cat /home/commander.js/test/run.js"}}\n</t'
+  outcome  7497273ee72d mini_swe_textbased d= 4 labels s1/f1 teacher conf 1.00 mixe | v1 0.80/2c mixe|2nd nove  v2 0.67/2c mixe|2nd nove  v3 1.00/1c mixe  v4 0.80/2c mixe|2nd nove  joint 0.80/3c mixe|2nd nove
+      v1 modal: '```bash\nls -la internal/config/ internal/ && cat internal/config/config.go\n```'
+  outcome  aa3782586036 mini_swe_textbased d=12 labels s2/f0 teacher conf 1.00 corr | v1 0.70/4c corr|2nd nove  v2 0.67/2c nove|2nd nove  v3 0.33/3c corr|2nd corr  v4 0.60/3c nove|2nd nove  joint 0.47/6c corr|2nd nove
+      v1 modal: '```bash\ncat CHANGES.rst && git log --oneline | head -10\n```'
+  outcome  acfca5b91413 mini_swe_textbased d=10 labels s2/f1 teacher conf 1.00 corr | v1 0.30/6c corr|2nd nove  v2 0.67/2c corr|2nd nove  v3 1.00/1c nove  v4 0.60/3c corr|2nd nove  joint 0.40/8c corr|2nd nove
+      v1 modal: '```bash\ncat src/Sentry/Laravel/Tracing/ServiceProvider.php\n```'
+  outcome  b3ea21bb2e38 terminus_2         d= 5 labels s2/f0 teacher conf 1.00 corr | v1 1.00/1c corr  v2 1.00/1c corr  v3 1.00/1c corr  v4 1.00/1c corr  joint 1.00/1c corr
+      v1 modal: '{\n  "analysis": "All required counts have been independently verified with grep. The corrected last-30-day range is 2025-07-14 through 2025-08-12, and'
+  outcome  b6e6a32fd620 mini_swe_textbased d=14 labels s0/f3 teacher conf 1.00 wron | v1 0.60/5c nove|2nd nove  v2 0.67/2c nove|2nd nove  v3 0.67/2c nove|2nd wron  v4 0.40/4c nove|2nd nove  joint 0.53/7c nove|2nd nove
+      v1 modal: '```bash\ncat src/evidently/utils/data_preprocessing.py | head -250\n```'
+  outcome  cfa692cfc20d mini_swe_textbased d=15 labels s2/f0 teacher conf 1.00 corr | v1 0.40/4c corr|2nd corr  v2 1.00/1c corr  v3 0.67/2c corr|2nd corr  v4 1.00/1c corr  joint 0.60/4c corr|2nd corr
+      v1 modal: '```bash\ncd /testbed && git log --oneline -5 -- cache.go && git log -L 700,710:cache.go --oneline | head -40\n```'
+  outcome  d072da96f130 terminus_2         d= 8 labels s4/f0 teacher conf 1.00 corr | v1 0.89/2c corr|2nd nove  v2 1.00/1c corr  v3 1.00/1c corr  v4 0.80/2c corr|2nd nove  joint 0.86/2c corr|2nd nove
+      v1 modal: '{\n  "analysis": "Password auth works on the debug sshd (port 2222) but fails on the main sshd (port 22). The main sshd is still offering publickey aut'
+
+====================================================================================================
+6. VERDICT
+====================================================================================================
+1. Deliberation buys CONFIDENCE, not agreement between draws: v1 pairwise same-class 0.65 (norm-exact 0.12, Jaccard>=.5 0.41) vs the teacher's own 0.55 (exact 0.12); the k=10 modal class holds 0.76 of samples, >=0.5 at 27/30 states.
+2. Confidence is not accuracy: on the 18 ground-truth split+ceiling states the v1 modal class is correct 0 / wrong 10 / mixed 7 / novel 1 (accuracy 0.00); confident (>=0.5) states are no better (0/17 correct).
+3. The deliberated frontier converges on the TEACHER's decision class (24/30 states; direct, chain-free 21/30) — at 9/11 ceiling states that class is one the teacher already failed with, at the other 2 it is 'mixed' (the judge equates the solved F1 proposal with the teacher's failed action); no ceiling state has a modal class that is cleanly a solved action.
+4. The easy 'outcome' states (12 states, mostly all-solved) inflate pooled accuracy to 0.42; critique (v2) and self-critique (v3) raise modal share to 0.84/0.82 and add novel actions (v2 direct novel 13/30) without lifting accuracy on the hard 18.
+5. A per-state frontier oracle from deliberation is NOT viable as the ranking target on this evidence: it would rank miners by similarity to a confident consensus that is the teacher's own failure mode at exactly the states where the teacher fails; only environment-verified continuations separate solved from failed first actions, and even those separate only at norm-exact granularity.

@@ -1,0 +1,23 @@
+Split-states probe, 2026-09-21 10:47 -> ~16:45 UTC, datagen pod dg5 only (dg1 lost 2026-09-20).
+Design: 36 states from the 245 cheap candidates of 2026-09-20 (states.jsonl): 24 failed-origin (8 per harness) x 4
+teacher continuations + 12 solved-origin (4 per harness) x 3; terminal_lego excluded (its env errored on dg5 on
+2026-09-20); states whose arm T errored on 2026-09-20 excluded; preference order kept+T-ok (image pulled, one
+continuation banked) > kept > other candidates, round-robin over sources; 30 of 36 states re-use the 2026-09-20 arm-T
+continuation as one of their N (seeded into out/split/results). Y2: arm F1 (proposal forced, teacher finishes) once
+per distinct frontier proposal (glm-5.3 greedy = F1, glm-5.3 T0.8 = F1b, one extra T0.8 sample = F1c when <2 distinct)
+at up to 16 states: the 0/N ceilings as they completed (two waves) + the 2026-09-20 contested states whose single T
+continuation failed. Concurrency: 6 workers at launch, restarted at 11:52 with 8 (pod load 0.3, 64 GB free, CPU 65-75 %
+idle throughout) + a concurrent 3-worker F1 driver in its own container namespace (RECOVERABLE_SHADOW_NS) from 13:26.
+Engy qwen3.8-27b outages: 11:05-11:46 (504 "miner timeout or disconnect", 429/502 "per-model concurrency limit")
+cost the first 6 continuations their 3,600 s budget and errored 4 more later as ProviderError; a second bout ~16:00-16:30
+errored the 4 retried slots again. Per-origin N was reduced to 3 for solved-origin at the 11:52 restart to stay inside
+the wall budget. Systematic errors, not retried: 3 terminus states hit the 3,600 s verifiers budget (0dab9904 x3,
+b98315ff x2, d072da96 x1, 23bf7fd4 F1/F1b), fff3d932 (swesmith grader "checkout HEAD~1 failed", every continuation).
+2 solved-origin continuations were never started (arm-T deadline 15:37). Arm-T driver exited 17:04 (last retries:
+87ac83de c1 solved, 1b23a2c4 c2 solved, 1b23a2c4 c1 errored at the 3,600 s budget). Final collect 17:11 UTC: 162 rows
+(126 new today + 36 seeded). Still running on dg5 at 17:12: 2 F1 wave-2 units (0dab9904 F1b — every prior run of this
+terminus state hit the 3,600 s budget — and 06706134 F1b, an N<3 ceiling); the F1 driver's 17:15 deadline blocks new
+units, it exits and removes its own containers when they finish (<= 17:50). To fold them in:
+`ONLY=dg5 run_pods.sh collect split /tmp/fa_split/collect` + split_yield.py (--out is a PREFIX: pass
+.../split_states/report). Wall 10:47 -> 17:11 = 6.4 h (6 h budget exceeded by the two Engy outages, ~1.2 h of dead
+container time). Traces: /tmp/fa_split/collect/traces.

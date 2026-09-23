@@ -1,0 +1,105 @@
+IPRM probe (N1): implicit process reward from the success-conditioned teacher — lpC+(y|x) - lpC(y|x) over action-body tokens
+========================================================================================================================
+
+  lpC     = sum log p_C (action body tokens | prefix, empty thought)     frozen teacher
+  lpC+    = same under the solved-SFT LoRA teacher C+
+  TERM    = lpC+ - lpC              (per action, sum over body tokens)  the N1 ranking term
+  TERM_pb = TERM / body bytes
+  PLAUS   = lpC_pb(y) - max_i lpC_pb(y_i) over the state's TEACHER actions (per-byte typicality gate proxy)
+  label   = outcome of the graded continuation that took y as its first action (1 solved / 0 failed)
+
+0. TRAINING (C+ = LoRA on the frozen teacher, loss on assistant tokens of SOLVED teacher trajectories)
+   data: 993 solved trajectories -> 1596 windows (<= 12288 tok; head + turn block), 14.0M tokens, 3.8M loss tokens; 246 eval tasks held out
+   cells (source|harness -> windows): affine_deshuffle|mini_swe_textbased 4, affine_deshuffle|pi 9, affine_numina|mini_swe_textbased 21, affine_numina|pi 5, affine_oolong|bash 22, affine_oolong|mini_swe_textbased 40, affine_oolong|pi 39, affine_prolog|mini_swe_textbased 19, affine_sql|bash 3, affine_sql|mini_swe_textbased 13, affine_sql|pi 18, affine_tmax|bash 35, affine_tmax|mini_swe_textbased 31, affine_tmax|pi 29, affine_tmax|terminus_2 39, affine_uuidctf|bash 30, affine_uuidctf|mini_swe_textbased 59, affine_uuidctf|pi 32, multiswe|bash 73, multiswe|mini_swe_textbased 61, multiswe|pi 42, r2e_gym|mini_swe_textbased 116, r2e_gym|pi 67, r2e_gym|terminus_2 44, scaleswe|bash 66, scaleswe|mini_swe_textbased 71, scaleswe|pi 43, swelego|bash 47, swelego|mini_swe_textbased 29, swelego|pi 63, swerebench_v2|bash 26, swerebench_v2|mini_swe_textbased 24, swerebench_v2|pi 80, swesmith|bash 41, swesmith|mini_swe_textbased 71, swesmith|pi 72, terminal_bench_2|bash 7, terminal_bench_2|terminus_2 4, terminal_lego|bash 33, terminal_lego|mini_swe_textbased 32, terminal_lego|pi 36
+   LoRA r=32 alpha=64 on every linear of the language model; lr 0.0001 cosine, accum 8, 199 optimizer steps (1596 windows seen, 14.0M tokens), 99 min on 1x B200, 2361 tok/s, peak mem 93 GB
+   loss (nats/token, assistant tokens): first 5 steps 0.318 -> last 5 steps 0.242; ema 0.248
+
+1. AUC solved-vs-failed FIRST ACTIONS (each graded continuation = one sample; the action it started with carries its outcome)
+   arms T+F1 = teacher-continued only (label = the teacher's own finish from that action); +F adds frontier-continued rows
+   [T+F1] 217 samples (109 solved) at 65 states
+      TERM (sum)                       pooled AUC +0.454   within-state mean AUC +0.546 over 13 states  [95% 0.37,0.73]   frac states AUC>0.5 +0.54
+      TERM per byte                    pooled AUC +0.451   within-state mean AUC +0.595 over 13 states  [95% 0.40,0.78]   frac states AUC>0.5 +0.58
+      lpC (sum)                        pooled AUC +0.573   within-state mean AUC +0.388 over 13 states  [95% 0.21,0.59]   frac states AUC>0.5 +0.35
+      lpC per byte                     pooled AUC +0.564   within-state mean AUC +0.492 over 13 states  [95% 0.31,0.67]   frac states AUC>0.5 +0.50
+      lpC+ (sum)                       pooled AUC +0.568   within-state mean AUC +0.388 over 13 states  [95% 0.21,0.59]   frac states AUC>0.5 +0.35
+      PLAUS                            pooled AUC +0.592   within-state mean AUC +0.492 over 13 states  [95% 0.31,0.67]   frac states AUC>0.5 +0.50
+      TERM whole action incl. fence    pooled AUC +0.450   within-state mean AUC +0.412 over 13 states  [95% 0.22,0.63]   frac states AUC>0.5 +0.35
+      distinct actions (p_solved>0.5 vs <0.5, 79 vs 74): pooled AUC TERM +0.499
+   [T only] 166 samples (90 solved) at 57 states
+      TERM (sum)                       pooled AUC +0.466   within-state mean AUC +0.458 over 8 states  [95% 0.31,0.56]   frac states AUC>0.5 +0.50
+      TERM per byte                    pooled AUC +0.456   within-state mean AUC +0.521 over 8 states  [95% 0.33,0.71]   frac states AUC>0.5 +0.56
+      lpC (sum)                        pooled AUC +0.541   within-state mean AUC +0.531 over 8 states  [95% 0.31,0.75]   frac states AUC>0.5 +0.50
+      lpC per byte                     pooled AUC +0.553   within-state mean AUC +0.552 over 8 states  [95% 0.36,0.73]   frac states AUC>0.5 +0.62
+      lpC+ (sum)                       pooled AUC +0.536   within-state mean AUC +0.531 over 8 states  [95% 0.31,0.75]   frac states AUC>0.5 +0.50
+      PLAUS                            pooled AUC +0.606   within-state mean AUC +0.552 over 8 states  [95% 0.36,0.73]   frac states AUC>0.5 +0.62
+      TERM whole action incl. fence    pooled AUC +0.453   within-state mean AUC +0.438 over 8 states  [95% 0.25,0.62]   frac states AUC>0.5 +0.44
+      distinct actions (p_solved>0.5 vs <0.5, 79 vs 74): pooled AUC TERM +0.499
+   by dialect (T+F1 samples, TERM sum): 
+      bash           n= 98 pooled +0.484 within-state +0.580 (5 states)
+      tool_call      n= 66 pooled +0.405 within-state +0.490 (5 states)
+      terminus_json  n= 53 pooled +0.476 within-state +0.583 (3 states)
+   mean TERM solved +0.600 vs failed +0.981 (per byte +0.0142 vs +0.0204); mean lpC solved -40.233 vs failed -31.702
+   TERM distribution over all 1235 scored (state, action) rows: p5 -4.52  p25 -1.01  median +0.02  p75 +1.14  p95 +4.75; median |TERM| 1.07 nats over a median body of 45 tokens (numerical floor: cached-vs-full forward disagree by ~0.1 nats, see 6) — C+ does move away from C; the movement just does not track the outcome
+
+2. CEILING STATES: teacher 0/N in arm T, a forced frontier proposal solved — is the solved proposal ranked above the teacher's failed actions?
+   TERM       solved proposal above ALL failed teacher actions: 3/4; mean fraction of failed teacher actions beaten 0.75
+   TERM/byte  solved proposal above ALL failed teacher actions: 3/4; mean fraction of failed teacher actions beaten 0.94
+   lpC        solved proposal above ALL failed teacher actions: 0/4; mean fraction of failed teacher actions beaten 0.06
+   lpC/byte   solved proposal above ALL failed teacher actions: 2/4; mean fraction of failed teacher actions beaten 0.56
+   PLAUS      solved proposal above ALL failed teacher actions: 2/4; mean fraction of failed teacher actions beaten 0.56
+      2f4d4ef3ee02 terminus_json teacher failed 1  beats(TERM) 1.00 beats(lpC) 0.00  '[\n    {\n      "keystrokes": "pip install torch --index-url https://dow'
+      8bee1f311713 bash          teacher failed 4  beats(TERM) 1.00 beats(lpC) 0.25  'git log --oneline -10 && echo "=====" && cat fuel-crypto/Cargo.toml &&'
+      9d3fd174f997 bash          teacher failed 4  beats(TERM) 1.00 beats(lpC) 0.00  "mkdir -p /tmp/repro && cat <<'EOF' > /tmp/repro/reproduce.py\nimport sy"
+      ca99dd9d809c tool_call     teacher failed 1  beats(TERM) 0.00 beats(lpC) 0.00  '{"name": "bash", "arguments": {"command": "cd /tcomb && find node_modu'
+
+3. ATTACK ROWS: where `ls -la` (generic) and repeat-last land in each state's ranking (candidates = labelled actions + teacher samples)
+   attack_generic: 67 states
+      TERM       mean fraction of candidates beaten +0.48; beats the MEDIAN labelled action in +0.33 of states
+      TERM/byte  mean fraction of candidates beaten +0.53; beats the MEDIAN labelled action in +0.49 of states
+      PLAUS      mean fraction of candidates beaten +0.07; beats the MEDIAN labelled action in +0.13 of states
+      lpC/byte   mean fraction of candidates beaten +0.07; beats the MEDIAN labelled action in +0.13 of states
+      PLAUS of the attack: median -0.5462/byte, frac >= -0.05 0.04, frac >= 0 0.00
+      TERM of the attack: median +0.287 vs median TERM of labelled-solved +0.168 and labelled-failed +0.215
+   attack_repeat: 67 states
+      TERM       mean fraction of candidates beaten +0.60; beats the MEDIAN labelled action in +0.46 of states
+      TERM/byte  mean fraction of candidates beaten +0.61; beats the MEDIAN labelled action in +0.49 of states
+      PLAUS      mean fraction of candidates beaten +0.69; beats the MEDIAN labelled action in +0.61 of states
+      lpC/byte   mean fraction of candidates beaten +0.69; beats the MEDIAN labelled action in +0.61 of states
+      PLAUS of the attack: median +0.0006/byte, frac >= -0.05 0.79, frac >= 0 0.51
+      TERM of the attack: median +0.342 vs median TERM of labelled-solved +0.168 and labelled-failed +0.215
+
+4. TEACHER vs KING (reign 20): mean TERM of king actions (stored duel action + 3 fresh samples at the 36 primary states) vs teacher actions, paired per state
+   primary (36) states 36: mean TERM king +0.254 (n=121) vs teacher +0.088 (n=230); paired king-teacher +0.213 (SE 0.298, z +0.71); per byte +0.0011; king above teacher in 0.53 of states
+   all          states 67: mean TERM king +0.417 (n=152) vs teacher +0.230 (n=360); paired king-teacher +0.349 (SE 0.211, z +1.66); per byte -0.0003; king above teacher in 0.57 of states
+   fresh king samples: 108, think closed 108, parsed action 105
+
+5. PREFIX-SWAP CONTROL: the same action body scored under (i) its own prefix, (ii) the same trajectory 2 assistant turns earlier, (iii) another task's prefix (same dialect)
+   earlier    n=366 actions: mean |TERM(other prefix) - TERM(own)| = 2.638  vs  mean |TERM(a) - TERM(b)| across actions, same prefix = +1.740; var across prefixes (same action) 29.119 vs mean within-state var across actions +2.561; corr(TERM own, TERM earlier) -0.12
+              pooled AUC of TERM computed under the earlier prefix: +0.636 (own prefix on the same samples: +0.454)
+   other_task n=366 actions: mean |TERM(other prefix) - TERM(own)| = 3.143  vs  mean |TERM(a) - TERM(b)| across actions, same prefix = +1.740; var across prefixes (same action) 20.595 vs mean within-state var across actions +2.561; corr(TERM own, TERM other_task) +0.17
+              pooled AUC of TERM computed under the other_task prefix: +0.432 (own prefix on the same samples: +0.454)
+   filler control (f): the term reads only the action body given the prefix with an EMPTY thought — a filler thought is invisible to it;
+   a miner's thought cannot move TERM at all (neither up nor down); TERM is a pure action term and must be paired with the thought legs.
+
+6. PARITY pod (HF bf16, cached prefix) vs live teacher echo (Engy vLLM) on 12 rows: mean lpC diff +1.927, max |diff| 7.914, mean |lpC| 52.91; token-count match 12/12
+   cached-prefix vs full-forward parity on 8 rows: mean |diff| 0.124 nats
+
+7. COST / TIME
+   lium_pod: 1x B200 (iprm-probe-b200-1, $5.50/h), rented 2026-09-21 22:00 UTC, deleted 00:28 UTC; Lium statement billed 8,921 s = $13.63
+   pod_time_breakdown_min: {'setup+weights+deps': 22, 'smoke (train 4 steps + score 24 rows)': 12, 'lora_train': 98.9, 'scoring': 16.3, 'idle/transfer': 10}
+   engy_usd: 0.005117
+   engy_note: 12 parity echoes (114k prompt tokens); king samples came from the reign-20 king vLLM box on our fleet (no Engy charge)
+   total_usd: 13.64
+   train_throughput: 14.0M tokens in 99 min = 2361 tok/s (bf16 LoRA r32, grad ckpt, 12k windows, micro-batch 1, accum 8)
+   echo_cost: 3934 teacher-forced echoes (median 9.5k-token prefix, prefix KV shared per state) in 16.3 min = 0.25 s/echo = $0.00038/echo
+   per_duel_projection: ranking one candidate action needs 2 echoes (C, C+); a 1300-turn duel with 1 candidate per side = 5,200 echoes = ~22 min B200 = ~$2/duel on top of today's echoes (fewer with the swarm's echo prefix cache)
+   refit_projection: full solved agentic teacher set = ~11.1k trajectories (claude_code 3083, pi 2882, bash 2571, mini_swe 1998, terminus_2 442, hermes 67, kimi 65; math/wiki 'null' harness 29k excluded) = 11.2x this run -> ~157M window tokens at the same <=2 windows/traj -> ~18.5 h on 1x B200 = ~$100 per refit (1 epoch); a per-fold refit (5 folds) = ~$500 and ~4 days of single-GPU time, or ~$130 on 4x B200 in ~5 h. Scoring a 1300-turn duel adds ~$2.
+
+8. VERDICT against the kill criteria
+   within-state AUC(TERM) = +0.546 (kill if <= 0.60) -> KILL; pooled +0.454
+   generic / repeat beat the median labelled action under PLAUS in +0.13 / +0.61 of states (kill if > 0.5) -> KILL
+   prefix-swap variance 20.595 vs action-swap variance +2.561 (kill if prefix > action) -> KILL
+   => DEAD
+   reading: C+ is trained on the teacher's OWN solved samples (self-distillation), so what it learns is which tasks/trajectories
+   the teacher tends to finish, not which action at a split state is right — TERM is higher on failed than solved first actions,
+   higher on the king's actions than the teacher's, indifferent to `ls -la`/repeat-last, and moves ~8x more with the prefix than with the action.

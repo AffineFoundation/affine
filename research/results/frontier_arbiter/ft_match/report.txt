@@ -1,0 +1,142 @@
+FT-match killing test — frontier-authored target classes as the ranked quantity (2026-09-22)
+generated 2026-09-22T10:27:49Z; Engy spend this probe $12.06; frontier glm-5.3 T=0.8 max_tokens 8192; judge glm-5.3-flash T0; k=5 (Set A) / 3 (panel); minority weight 0.5 x share
+Terms: turn = prefix x of a stored duel turn; class = same-decision equivalence class (norm-exact -> body-Jaccard>=0.5 -> judge YES); target set = frontier classes with sample shares; T = weight of the class the candidate's action joins (modal 1.0, minority 0.5*share, none 0); credited = T>0; agreement = the ref's action is in the frontier's modal class; excess = T_model - mean T of the teacher refs on the same turn; cap = reply hit max_tokens; parse = a dialect action was recovered.
+
+== 1. TARGETS on Set-A duel turns (glm-5.3 deliberation as the agent on the prefix) ==
+dialect       turns samples parsed%   cap% fb_model% fb_parse% cls/turn  modal 1-class% judge/turn  $/turn $/sample  tok_in tok_out cached% think% think_tok
+bash             50     250    96.8    1.6       0.0       0.0     1.68   0.83     56.0        1.8  0.0278   0.0056    9522     626    74.3   54.0       418
+tool_call        50     250    72.0    0.0       0.0       0.0     1.87   0.76     38.3        1.7  0.0273   0.0055   15340     269    84.8   50.4       164
+terminus_json    50     250    96.4    2.0       0.0       0.0     1.68   0.85     56.0        1.6  0.0429   0.0086   13727    1192    77.7   41.2       707
+text             50     250    97.6    2.4       0.0       0.0     1.22   0.94     81.6        1.8  0.0195   0.0039    4896     754    82.0   43.6       579
+all             200    1000    90.7    1.5       0.0       0.0     1.61   0.85     58.2        1.7  0.0294   0.0059   10871     710    79.9   47.3       451
+think% = share of glm-5.3 samples that used reasoning tokens (thinking is dynamic on GLM-5.3; 'long reasoning allowed' = max_tokens 8192, not forced); think_tok = mean reasoning tokens on those. Same regime as the deliberated-oracle v1 samples (median 0).
+unparsed frontier samples are the frontier's own choice not to act in the dialect (final answer / prose without a call), not parser misses; Set-A turns with zero parsed samples = 4 (excluded from the score tables)
+judge verdicts stored 2807 (YES 826 / NO 1981 / unanswered 0), $0.682
+
+== 2. FT-MATCH SCORES on Set A (T per candidate; mean over turns with >=1 parsed frontier sample) ==
+candidate               bash        tool_call    terminus_json             text              all   (mean T | credited% | n)
+teacher      0.711| 90.0| 50  0.612| 89.4| 47  0.667| 86.0| 50  0.879| 98.0| 49  0.718| 90.8|196
+king         0.668| 72.0| 50  0.482| 57.4| 47  0.666| 72.0| 50  0.822| 85.7| 49  0.661| 71.9|196
+challenger   0.722| 74.0| 50  0.504| 59.6| 47  0.746| 80.0| 50  0.865| 89.8| 49  0.712| 76.0|196
+genesis      0.524| 56.0| 25  0.439| 47.8| 23  0.684| 72.0| 25  0.764| 80.0| 25  0.606| 64.3| 98
+filler       0.668| 72.0| 50  0.482| 57.4| 47  0.666| 72.0| 50  0.822| 85.7| 49  0.661| 71.9|196
+ls           0.102| 12.0| 50  0.021|  2.1| 47  0.020|  2.0| 50  0.000|  0.0| 49  0.036|  4.1|196
+repeat       0.209| 22.7| 44  0.070|  7.0| 43  0.385| 40.4| 47  0.141| 17.2| 29  0.211| 22.7|163
+filler = the king's action with a filler thought: T reads only the action, so filler == king; filler is a GATE item (length floor / B licence), not a T item.
+repeat = the previous assistant action re-issued: the no-repeat GATE would zero it; its raw T is shown to size the leak if the gate were absent.
+match path per candidate (exact / jaccard / judge / none / forfeit): teacher: exact 130, jaccard 172, judge 164, none 122; king: exact 38, jaccard 48, judge 55, none 55; challenger: exact 40, jaccard 57, judge 52, none 47; genesis: exact 16, forfeit 3, jaccard 22, judge 25, none 32; filler: exact 38, jaccard 48, judge 55, none 55; ls: jaccard 2, judge 6, none 188; repeat: exact 17, jaccard 15, judge 5, none 126
+
+-- paired contrasts (per turn; sign test exact binomial, ties dropped; z = mean/SE) --
+teacher-king         | bash       0.043 z  0.8 + 11/-  9 p 0.824 | tool_call  0.130 z  1.9 + 17/-  8 p 0.108 | terminus_  0.001 z  0.0 +  7/- 10 p 0.629 | text       0.056 z  1.3 +  6/-  5 p 1.000 | all        0.057 z  2.1 + 41/- 32 p 0.349
+king-ls              | bash       0.566 z  8.1 + 31/-  0 p 0.000 | tool_call  0.460 z  6.4 + 26/-  0 p 0.000 | terminus_  0.646 z  9.6 + 35/-  0 p 0.000 | text       0.822 z 15.2 + 42/-  0 p 0.000 | all        0.625 z 18.3 +134/-  0 p 0.000
+king-repeat          | bash       0.414 z  4.2 + 24/-  5 p 0.001 | tool_call  0.410 z  4.7 + 23/-  2 p 0.000 | terminus_  0.260 z  3.1 + 17/-  3 p 0.003 | text       0.628 z  7.0 + 20/-  0 p 0.000 | all        0.406 z  8.9 + 84/- 10 p 0.000
+teacher-challenger   | bash      -0.011 z -0.2 +  9/- 12 p 0.664 | tool_call  0.108 z  1.4 + 17/-  9 p 0.169 | terminus_ -0.079 z -2.0 +  3/- 12 p 0.035 | text       0.014 z  0.4 +  4/-  7 p 0.549 | all        0.006 z  0.2 + 33/- 40 p 0.483
+challenger-king      | bash       0.054 z  0.9 +  6/-  4 p 0.754 | tool_call  0.022 z  0.3 +  7/-  6 p 1.000 | terminus_  0.080 z  1.4 +  6/-  2 p 0.289 | text       0.043 z  1.0 +  4/-  2 p 0.688 | all        0.050 z  1.8 + 23/- 14 p 0.188
+teacher-genesis      | bash       0.100 z  1.0 +  7/-  6 p 1.000 | tool_call  0.165 z  1.6 + 10/-  3 p 0.092 | terminus_ -0.008 z -0.1 +  3/-  3 p 1.000 | text       0.136 z  2.1 +  5/-  0 p 0.062 | all        0.097 z  2.3 + 25/- 12 p 0.047
+king-genesis         | bash       0.088 z  0.7 +  6/-  4 p 0.754 | tool_call  0.012 z  0.1 +  5/-  4 p 1.000 | terminus_ -0.076 z -0.8 +  2/-  4 p 0.688 | text       0.080 z  0.8 +  4/-  2 p 0.688 | all        0.026 z  0.5 + 17/- 14 p 0.720
+teacher-ls           | bash       0.609 z  9.8 + 40/-  1 p 0.000 | tool_call  0.591 z  9.9 + 41/-  0 p 0.000 | terminus_  0.647 z 11.3 + 42/-  0 p 0.000 | text       0.879 z 23.3 + 48/-  0 p 0.000 | all        0.682 z 23.9 +171/-  1 p 0.000
+
+-- frontier-teacher decision agreement on real duel turns: share of teacher refs whose action is in the frontier's MODAL class; turn-level = >=1 of 3 refs / all 3 refs / mean of the 3 refs' T --
+  bash          refs in modal   70.0%  turns >=1 ref modal   80.0%  all 3 modal   56.0%  >=1 ref credited   90.0%  n=50 | in modal: king   66.0% challenger   72.0% genesis   52.0%
+  tool_call     refs in modal   59.6%  turns >=1 ref modal   76.6%  all 3 modal   46.8%  >=1 ref credited   89.4%  n=47 | in modal: king   46.8% challenger   48.9% genesis   43.5%
+  terminus_json refs in modal   66.0%  turns >=1 ref modal   80.0%  all 3 modal   52.0%  >=1 ref credited   86.0%  n=50 | in modal: king   66.0% challenger   74.0% genesis   68.0%
+  text          refs in modal   87.1%  turns >=1 ref modal   91.8%  all 3 modal   77.6%  >=1 ref credited   98.0%  n=49 | in modal: king   81.6% challenger   85.7% genesis   76.0%
+  all           refs in modal   70.7%  turns >=1 ref modal   82.1%  all 3 modal   58.2%  >=1 ref credited   90.8%  n=196 | in modal: king   65.3% challenger   70.4% genesis   60.2%
+
+== 3. PANEL (kings 11-20 + genesis + teacher on panel turns; k=3 targets per turn, shared across the models on a turn) ==
+model        n   meanT   excess      se  cred%  bench(centered):  total agentic noTau2   chat
+king11      49   0.446   -0.170   0.073   53.1                    -12.2   -22.2   -4.0   -2.6
+king12      49   0.500   -0.156   0.053   55.1                    -12.8   -23.6   -6.5   -3.2
+king13      49   0.704    0.010   0.051   75.5                    -19.9   -22.4   -4.5   -9.4
+king14      47   0.546   -0.155   0.065   61.7                    -11.8   -21.5   -2.9   -2.3
+king15      46   0.507   -0.151   0.079   54.3                    -11.7   -25.1   -3.9    0.5
+king16      47   0.585   -0.065   0.057   63.8                      6.8    14.2    2.0   -1.1
+king17      48   0.708   -0.041   0.050   70.8                     10.4    22.8   -2.0    3.0
+king18      49   0.643   -0.058   0.057   69.4                     10.1    15.9    1.6    1.9
+king19      47   0.677   -0.037   0.048   76.6                     10.4    15.3    0.5    3.8
+king20      22   0.826   -0.013   0.062   86.4                     10.9    23.7    5.9    2.5
+genesis    225   0.612   -0.065   0.028   64.9                     10.9    18.7    5.4    0.3
+teacher    239   0.686    0.000   0.000   83.7                     15.7    17.1    8.8    7.6
+-- Spearman(metric, bench axis) over the 12 models; perm p two-sided (5000 shuffles); teacher included (excess 0 by definition) --
+  mean_T  vs total            rho  0.580 p  0.056 n=12   kings-only rho  0.636 n=10
+  mean_T  vs agentic          rho  0.713 p  0.012 n=12   kings-only rho  0.733 n=10
+  mean_T  vs agentic_no_tau2  rho  0.510 p  0.095 n=12   kings-only rho  0.564 n=10
+  mean_T  vs chat             rho  0.545 p  0.071 n=12   kings-only rho  0.539 n=10
+  excess  vs total            rho  0.483 p  0.114 n=12   kings-only rho  0.430 n=10
+  excess  vs agentic          rho  0.503 p  0.096 n=12   kings-only rho  0.503 n=10
+  excess  vs agentic_no_tau2  rho  0.469 p  0.128 n=12   kings-only rho  0.418 n=10
+  excess  vs chat             rho  0.490 p  0.109 n=12   kings-only rho  0.394 n=10
+Under this frame a null here can coexist with a right mechanism: no king was trained on frontier targets, so nothing in the panel was optimised for T; the panel only tells whether incidental frontier-agreement tracks the benches.
+Caveat: each king is scored on its own duel turns (its crowning record as challenger + the next crowning as king), so mean_T mixes model and turn difficulty; excess (T minus the teacher refs' mean T on the same turn) is the turn-controlled reading.
+panel targets: 243 turns {'terminus_json': 31, 'text': 53, 'bash': 73, 'tool_call': 62, 'boxed': 24}, classes/turn  1.40, modal share  0.87, $0.0218/turn
+
+== 4. TARGET ACCURACY where an environment grade exists (deliberated k=10 glm-5.3 samples at 30 graded states; labels = env-graded first actions from split_states / outcome / harvest N=8 tables) ==
+  [all      n=30] frontier MODAL class: solved-class   67.9% (strict   28.6%; correct/mixed/wrong/novel 8/11/9/2) mean class solve rate  0.48 | random frontier sample class rate  0.47
+                   teacher: random action solves   44.8% | MODAL class solved-class   60.0% (strict   26.7%; 8/10/12/0) mean class rate  0.44
+                   execution-verified ceiling: SOME frontier class verified-solved   70.0% of states | SOME teacher class   70.0% | any solved label at all   70.0%
+  [split    n= 7] frontier MODAL class: solved-class  100.0% (strict    0.0%; correct/mixed/wrong/novel 0/6/0/1) mean class solve rate  0.64 | random frontier sample class rate  0.58
+                   teacher: random action solves   58.9% | MODAL class solved-class   85.7% (strict    0.0%; 0/6/1/0) mean class rate  0.53
+                   execution-verified ceiling: SOME frontier class verified-solved  100.0% of states | SOME teacher class  100.0% | any solved label at all  100.0%
+  [ceiling  n=11] frontier MODAL class: solved-class   27.3% (strict    0.0%; correct/mixed/wrong/novel 0/3/8/0) mean class solve rate  0.05 | random frontier sample class rate  0.06
+                   teacher: random action solves    2.9% | MODAL class solved-class   18.2% (strict    0.0%; 0/2/9/0) mean class rate  0.04
+                   execution-verified ceiling: SOME frontier class verified-solved   36.4% of states | SOME teacher class   36.4% | any solved label at all   36.4%
+  [outcome  n=12] frontier MODAL class: solved-class   90.9% (strict   72.7%; correct/mixed/wrong/novel 8/2/1/1) mean class solve rate  0.82 | random frontier sample class rate  0.80
+                   teacher: random action solves   75.0% | MODAL class solved-class   83.3% (strict   66.7%; 8/2/2/0) mean class rate  0.75
+                   execution-verified ceiling: SOME frontier class verified-solved   83.3% of states | SOME teacher class   83.3% | any solved label at all   83.3%
+  harvest N=8 tables (38 failed-teacher states, no deliberation): teacher first actions solve 64/291 =   22.0%; single glm-5.3 proposal (F1 greedy + F1b T0.8) forced then teacher finishes 1/32 =    3.1%; extra teacher draws (TX) 1/32; states with T=0/N: 19, of which a frontier proposal solved 1
+  MISSING for a full verify-where-possible read: the frontier's modal class is verified only where a labelled action happens to fall in it (novel classes carry no label); the ceiling row counts states where ANY frontier class touches a verified solve, not the frontier's own continuation; no new continuations were run.
+
+== 5. CEILING — frontier vs teacher on our bench axes (kingboard matrix teacher row vs published numbers; margins in points) ==
+matrix teacher row generated 2026-09-22T09:26:51+00:00
+bench                 teacher  GLM-5.3  margin  DeepSeek-V4  margin  notes / sources
+SWE-bench Verified      78.33    95.40    17.1        80.60     2.3  vals.ai independent run, mini-swe-agent bash-only harness (board 2026-08-19/20); Zhipu docs list 77.8 inherited from GLM-5 — attribution contested | DeepSeek-V4-Pro Max, vendor HF model card (2026-04-24)
+Terminal-Bench 2        50.57    88.20    37.6        67.90    17.3  Terminal-Bench 2.1, vendor run under Claude Code harness (blog/HF card 2026-08-14); Artificial Analysis independent TB 2.1 = 83.9; vals.ai TB 2.1 = 71.5; our matrix key is terminal-bench-2 (2.0 tasks, own harness) — not the same harness | Terminal-Bench 2.0, vendor HF card (V4-Pro Max); V4-Pro-0813 TB 2.1 = 87.9 (0813 card)
+tau2-airline            72.00      n/a     n/a          n/a     n/a  not reported by Z.ai or any aggregator found (only AA Tau3-Banking 50.3) | not in the V4-Pro / 0813 result tables (only tau2 Telecom 96.2 via evals.report)
+tau2-retail             78.95      n/a     n/a          n/a     n/a  not reported | not reported
+tau2-telecom            72.81      n/a     n/a        96.20    23.4  not reported | pass^1, listed as Official on evals.report / aiflashreport
+BFCL v3                 73.34      n/a     n/a          n/a     n/a  not reported | not reported
+LiveCodeBench           63.00    80.50    17.5        93.50    30.5  vals.ai independent run (2026-08-20); LCB version/window differs from ours | vendor HF card (V4-Pro Max); aiflashreport 'LiveCodeBench Reasoning' 66.3 (AA)
+GPQA Diamond            81.31    91.70    10.4        90.10     8.8  Artificial Analysis independent (2026-08-20); vals.ai 88.1 | vendor HF card (V4-Pro Max); AA 88.8
+AIME 2025               93.33      n/a     n/a          n/a     n/a  not reported (AA math index '—') | not reported; math via HMMT Feb 2026 = 95.2, AIME 2026 = 95.83 (evals.report)
+IFBench                 63.00      n/a     n/a        76.50    13.5  not reported (AA ifbench '—') | Official per evals.report / aiflashreport
+  source: https://themodelgap.com/models/glm-5-3 ; https://aichoiceengine.com/ai-models/glm-5-3 (both citing vals.ai)  [glm-5.3:SWE-bench Verified]
+  source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro  [deepseek-v4:GPQA Diamond, deepseek-v4:LiveCodeBench, deepseek-v4:SWE-bench Verified]
+  source: https://z.ai/blog/glm-5.3 ; https://huggingface.co/zai-org/GLM-5.3 ; https://benchlm.ai/models/glm-5-3  [glm-5.3:Terminal-Bench 2]
+  source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro ; https://inferencex.semianalysis.com/model/deepseek-v4  [deepseek-v4:Terminal-Bench 2]
+  source: https://benchmarklist.com/models/z-ai-glm-5.3/  [glm-5.3:tau2-airline]
+  source: https://inferencex.semianalysis.com/model/deepseek-v4  [deepseek-v4:tau2-airline]
+  source: https://evals.report/models/deepseek-v4-pro ; https://aiflashreport.com/models/deepseek-v4-pro/  [deepseek-v4:tau2-telecom]
+  source: https://themodelgap.com/models/glm-5-3 ; https://benchlm.ai/models/glm-5-3  [glm-5.3:GPQA Diamond, glm-5.3:LiveCodeBench]
+  source: https://graysoft.dev/benchmarks/zai-glm-5-3.html  [glm-5.3:AIME 2025, glm-5.3:IFBench]
+  source: https://evals.report/models/deepseek-v4-pro  [deepseek-v4:AIME 2025, deepseek-v4:IFBench]
+  note: Published numbers collected 2026-09-22 by web search; harnesses differ from the kingboard's (matrix teacher row = our own runs: swebench-verified, terminal-bench-2 = TB 2.0-style, tau2-*, bfcl-v3, livecodebench, gpqa-diamond, aime25, ifbench). Vendor self-reports marked 'vendor'; independent runs marked with the runner. GLM-5.3 weights were still closed at report time (2026-08-14 blog; open weights 'in ~2 wks'), so most GLM-5.3 rows are vendor or aggregator runs. DeepSeek-V4 = DeepSeek-V4-Pro (Max effort) HF model card (2026-04-24) unless noted; the 0813 refresh adds TB 2.1 = 87.9.
+internal proxy — public traces, glm_* vs teacher_* policies on IDENTICAL (source, task, harness): tasks=2056 glm p@1   96.1% teacher p@1   95.6% diff  0.005 (se  0.004) sign +46/-39 p  0.515 [2056 glm / 2078 teacher rollouts]
+   group math       tasks= 1990 glm   97.6% teacher   96.8% diff  0.008 sign +37/-21 p  0.048
+   group terminal   tasks=   66 glm   51.5% teacher   61.4% diff -0.098 sign +9/-18 p  0.122
+   harness mini_swe_textbased tasks=   66 glm   51.5% teacher   61.4% diff -0.098
+   harness null             tasks= 1990 glm   97.6% teacher   96.8% diff  0.008
+   source affine_math          tasks= 1990 glm   97.6% teacher   96.8% diff  0.008 sign +37/-21 p  0.048
+   source terminal_bench_2     tasks=   66 glm   51.5% teacher   61.4% diff -0.098 sign +9/-18 p  0.122
+  glm_* models in the traces: {'engy/glm-5.2': 14100, 'openrouter/z-ai/glm-4.5-air': 55} (GLM-5.x rows only are used above; the coding pools were shared before the seat scheduler so a task ran once — no paired coding tasks exist). UNPAIRED per-source p@1 (weaker proxy; task mix may differ):
+   affine_math/null                     [math    ] glm   97.6% (n= 1990) teacher   96.6% (n= 8266) diff  0.009 +-0.004
+   multiswe/mini_swe_textbased          [coding  ] glm   30.8% (n=  211) teacher   42.7% (n=  281) diff -0.119 +-0.043
+   scaleswe/mini_swe_textbased          [coding  ] glm   56.4% (n=  635) teacher   55.0% (n=  189) diff  0.014 +-0.041
+   swelego/mini_swe_textbased           [coding  ] glm   90.0% (n=  502) teacher   92.2% (n=  116) diff -0.022 +-0.028
+   swerebench_v2/mini_swe_textbased     [coding  ] glm   26.1% (n=  429) teacher   35.7% (n=   98) diff -0.096 +-0.053
+   swesmith/mini_swe_textbased          [coding  ] glm   72.1% (n= 1330) teacher   85.7% (n=  414) diff -0.136 +-0.021
+   terminal_bench_2/mini_swe_textbased  [terminal] glm   51.5% (n=   68) teacher   60.4% (n=  101) diff -0.089 +-0.078
+   terminal_lego/mini_swe_textbased     [terminal] glm   90.3% (n= 8878) teacher   91.8% (n=  673) diff -0.016 +-0.011
+
+== 6. COST ==
+per D turn (production): k=5 glm-5.3 samples $ 0.0294 + clustering judge $0.0004 = $0.0298  (k=5 at list price; cached prefix share   79.9%)
+per candidate action scored (duel time): judge $0.0002 -> a 1300-turn duel, both sides: $0.42
+projection: fold of 6,500 new turns/day = $194/day; all of D (635,000 turns) = $18,918 (sampling only: $191/day, $18,666); k=3 would be ~0.6x
+spent this probe: $12.06 by stage {"truth_judge": 0.044, "sample": 11.273, "genesis": 0.061, "targets_judge": 0.177, "score_judge": 0.506}
+
+== 7. VERDICT ==
+1. Separation today: FT-match separates acting from not-acting (king-ls +0.625 z 18.3; king-repeat +0.406 z 8.9) but barely separates real policies: teacher-king 0.057 (z 2.1, sign p 0.35), challenger-king 0.050 (p 0.19), king-genesis 0.026 (p 0.72); per-turn SD of T ~0.47 -> the paired 2-sigma bar at n=1300 is ~0.037, so the teacher-king gap would clear it and the live king-challenger gaps would not.
+2. What the targets are: 71% of teacher ref actions already sit in the frontier's modal class (60% tool_call .. 87% text); the modal class holds 0.85 of frontier samples (1.61 classes/turn). On live D turns a frontier target set is ~70% 'what the teacher does anyway' plus a ~30% frontier-only decision.
+3. Is the target right where truth exists (30 graded states): frontier modal class is a solved class 67.9% vs teacher modal 60.0%; a random frontier sample's class solves 0.47 vs a random teacher action 0.45; execution-verified ceiling identical (70.0% both). On the 11 teacher-fails states the frontier modal touches a solve on 3 vs 2 states; harvest: 1/32 forced frontier proposals rescued a failed state. The frontier's target is about as right as the teacher's, not more.
+4. Panel: mean_T tracks the agentic axis (rho 0.71, p 0.012, n=12) but the turn-controlled excess does not reach significance (rho 0.50, p 0.096); kings 11-15 sit ~-0.16 under the teacher refs, 16-20 ~-0.04 — consistent with, not proof of, the mechanism; no king was trained on these targets, so a null here would not falsify the frame.
+5. Ceiling: published frontier margins over the teacher are large on agentic axes (TB2 +17..+38, tau2-telecom +23 DS-V4, LCB +17..+30, SWE-V +2..+17 with harness caveats, GPQA +9..+10, IFBench +13; tau2 airline/retail, BFCL, AIME unreported) — but the internal proxy inverts: GLM-5.2 as datagen policy is BELOW the teacher on our own coding/terminal sources (swesmith -13.6, multiswe -11.9, swerebench -9.6, TB2 -8.9 pts; math +0.9). The affordable target generator (GLM-5.x via Engy) is not above the teacher on D's tasks.
+6. A miner trained to reproduce these targets: on the ~70% agreeing turns it learns the teacher (what min(R,G) already rewards); on the ~30% divergent turns it learns GLM-5.3's decision, whose measured truth rate equals the teacher's. Plausible gains: format/decision compliance on text and terminus (modal 0.85-0.94, but the teacher is already credited 86-98% there) and whatever GLM-5.3's SWE/terminal edge is on tasks where it IS stronger — not demonstrable from D's own traces today. Cost $0.030/turn ($194/day fold, $18,918 for all D) is affordable; the binding constraint is the generator's margin, not the price.
