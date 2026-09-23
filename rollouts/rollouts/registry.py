@@ -80,6 +80,12 @@ class Source:
     # and a source where an earlier king left thousands of turns ranks
     # below zero for every later king. 0 = no floor.
     king_rollouts_per_hour: float = 0.0
+    # King-seat attempts wanted per task on the source's band-relevant tasks
+    # (teacher-solved / in D). 1 = one pass per served king (default);
+    # 2 = the fold's [band_filter] king side (king_min_attempts = 2) can bite
+    # on every task the teacher solved. Counted over ALL king seats (every
+    # reign), like the fold counts them. See scheduler.Scheduler.pending.
+    king_attempts: int = 1
 
 
 @dataclass(frozen=True)
@@ -203,6 +209,7 @@ def _load_sources(path: Path, policies: dict[str, Policy],
             max_batch=int(cfg.get("max_batch", 0)),
             max_concurrency=int(cfg.get("max_concurrency", 0)),
             king_rollouts_per_hour=float(cfg.get("king_rollouts_per_hour", 0.0)),
+            king_attempts=int(cfg.get("king_attempts", 1)),
         )
         if src.group not in mix:
             raise ValueError(f"source {name!r} group {src.group!r} missing "
