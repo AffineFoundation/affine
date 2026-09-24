@@ -148,6 +148,19 @@ def is_infra_env(etype: str, emsg: str, agent_result: dict) -> bool:
 DATASET_SIZE = {"swebench-verified": 500, "terminal-bench-2": 89}   # full task sets; a job below this is partial
 
 
+def served_gpu(model_url: str) -> str | None:
+    """The GPU class that served the model, from kingpod / primepod state (by base_url)."""
+    try:
+        pods = json.loads((Path(__file__).resolve().parent / "state" / "pods.json").read_text())
+    except (OSError, ValueError):
+        return None
+    for v in pods.values():
+        if v.get("base_url") and model_url and v["base_url"].rstrip("/") == model_url.rstrip("/"):
+            plan = v.get("plan") or {}
+            return plan.get("match") or plan.get("name") or v.get("machine")
+    return None
+
+
 def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit_code: int) -> dict:
     rows = []
     for rp in sorted(job_dir.glob("*/result.json")):
@@ -211,6 +224,7 @@ def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit
         "n_infra_env": sum(1 for r in rows if r["error_class"] == "infra_env"),
         "n_live": sum(1 for r in rows if r["error_class"] != "infra_env"),   # trials that ran against a live model
         "n_expected": int(a.n_tasks) if a.n_tasks and a.n_tasks > 0 else DATASET_SIZE.get(a.env),
+        "served_gpu": served_gpu(getattr(a, "model_url", "") or ""),
         "n_timeout": sum(1 for r in rows if r["error_class"] == "timeout"),
         "n_context_overflow": sum(1 for r in rows if r["error_class"] == "context_overflow"),
         "score": round(k / len(scored), 4) if scored else 0.0, "ci95": [round(lo, 4), round(hi, 4)],
@@ -248,6 +262,16 @@ def harbor_version() -> str:
         return "?"
 
 
+def sweep_job_sandboxes(job_dir: Path) -> None:
+    """Delete Daytona sandboxes of this job's finished trials (harbor leaves them behind on SIGHUP / errors;
+    2026-09-23: the org's 100-sandbox cap is the binding limit, so every leak starves the next job)."""
+    try:
+        subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "daytona_sweep.py"), "--job", str(job_dir), "--min-age-min", "0"],
+                       timeout=600, check=False)
+    except (OSError, subprocess.SubprocessError) as e:
+        log(f"daytona sweep skipped: {e!r}")
+
+
 def cmd_run(a: argparse.Namespace) -> int:
     env = env_by_id(a.env)
     if "harbor" not in env:
@@ -273,6 +297,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     with (d / "harbor.log").open("a") as fh:
         p = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, env=os.environ.copy())
     wall = time.time() - t0
+    sweep_job_sandboxes(job_dir)
     if not (job_dir / "result.json").exists() and not list(job_dir.glob("*/result.json")):
         log(f"FAIL {cell}: exit={p.returncode}, no results (see {d / 'harbor.log'})")
         return 1
@@ -334,6 +359,7 @@ def cmd_resume(a: argparse.Namespace) -> int:
     t0 = time.time()
     with (d / "harbor.log").open("a") as fh:
         p = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, env=os.environ.copy())
+    sweep_job_sandboxes(job_dir)
     prev = json.loads((d / "summary.json").read_text()) if (d / "summary.json").exists() else {}
     wall = float(prev.get("wall_seconds") or 0) + time.time() - t0
     summ = summarize(job_dir, env, a, wall, p.returncode)

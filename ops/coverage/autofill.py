@@ -196,6 +196,16 @@ def main() -> int:
         merge_into = (row.get("cards") or [None])[0]
         merge_as = "teacher" if row["kind"] == "teacher" else "king"
         missing = set(r["missing_bench"]) - BENCH_EXCLUDE   # running cells are not in missing_bench
+        if row.get("current"):
+            # the sitting king's card is the watcher's crown pass (fast mode, 5 pods): never
+            # queue a second pass for it; its gaps close when the watcher's pass ends
+            if missing:
+                print(f"{r['label']}: sitting king — {len(missing)} cells left to the watcher's pass")
+            missing = set()
+        if r.get("running_bench") and missing:
+            # a pass is still landing cells on this row: wait for it before judging gaps
+            print(f"{r['label']}: {len(r['running_bench'])} cells running; gap check deferred")
+            missing = set()
         if row.get("inflight"):
             # a benchsuite pass (watcher / by hand / fast) is running for this row: its
             # cells land on their own; queueing them again doubled reign 18 on 09-19

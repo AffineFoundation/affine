@@ -62,8 +62,8 @@ def infra_exit(info: dict, job: dict, code: int) -> str:
     """Why this launcher exit was OUR infrastructure (empty string = the model / harness result stands)."""
     if code in (2, 3):
         return {2: "no stock / no job dir", 3: "pod never served"}[code]
-    if job["kind"] in ("swe", "swe4h"):
-        cell = "swebench-verified@4h250__t0" if job["kind"] == "swe4h" else "swebench-verified__t0"
+    if job["kind"] in ("swe", "swe4h", "tb2"):
+        cell = {"swe4h": "swebench-verified@4h250__t0", "swe": "swebench-verified__t0", "tb2": "terminal-bench-2__t0"}[job["kind"]]
         summ = BENCH_HOME / "runs" / info["run_id"] / "king" / cell / "summary.json"
         try:
             x = json.loads(summ.read_text())
@@ -74,7 +74,7 @@ def infra_exit(info: dict, job: dict, code: int) -> str:
             return "empty job"
         if env_n / n >= INFRA_ENV_SHARE:
             return f"{env_n}/{n} trials never ran against a live model (reaped box / Daytona)"
-        if n < 500 and x.get("exit_code", 0) != 0:
+        if n < int(x.get("n_expected") or 500) and x.get("exit_code", 0) != 0:
             return f"harbor exited {x.get('exit_code')} at {n}/500"
     return ""
 # typical wall time per job kind (minutes), for the ETA projection
@@ -283,8 +283,15 @@ def launch(info: dict, job: dict) -> subprocess.Popen:
         env.update(CAP_ENVS=",".join(job["envs"]))
         cmd = ["bash", str(HERE / "cap_backfill.sh"), ref, label, info["run_id"], info["side"]]
     elif kind == "tb2":
-        env.update(FAST_ONLY_ROLES="agentic", FAST_GROUPS="tb2")
-        cmd = ["bash", str(HERE / "pass.sh"), ref, label, info["run_id"], "fast"]
+        # an interrupted / infra-cut job is RESUMED on its own H200/B200 (a fresh pass would skip on the
+        # existing summary — 2026-09-23: three pods rented for nothing); a cell with no harbor job gets the
+        # fast pass's dedicated tb2 role
+        harbor = run_dir / "king" / "terminal-bench-2__t0" / "harbor"
+        if (harbor / "config.json").exists():
+            cmd = ["bash", str(HERE / "tb2_resume.sh"), ref, label, info["run_id"]]
+        else:
+            env.update(FAST_ONLY_ROLES="tb2", FAST_GROUPS="tb2")
+            cmd = ["bash", str(HERE / "pass.sh"), ref, label, info["run_id"], "fast"]
     elif kind == "agentic":
         env.update(FAST_ONLY_ROLES="agentic", FAST_GROUPS="agentic", FAST_AGENTIC_ENVS=",".join(job["envs"]))
         cmd = ["bash", str(HERE / "pass.sh"), ref, label, info["run_id"], "fast"]
@@ -346,7 +353,7 @@ def main() -> int:
                 except (OSError, ValueError):
                     continue
                 n_exp = x.get("n_expected")
-                if n_exp and int(x.get("n_live") if x.get("n_live") is not None else x.get("n") or 0) < int(n_exp) \
+                if n_exp and (int(n_exp) - int(x.get("n_live") if x.get("n_live") is not None else x.get("n") or 0)) > max(2, 0.02 * int(n_exp)) \
                         and cell_env not in missing and cell_env not in failed:
                     failed.append(cell_env)
             todo = missing + failed

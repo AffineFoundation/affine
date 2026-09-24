@@ -31,7 +31,7 @@ evalsrv package under `affine/`.
 
 ---
 
-## 2. Frozen production scoring — sd-meter min(z_R, typ_c, z_A) since wvk 22 (2026-09-18; wvk 23 2026-09-22: thought cap 4096, typicality on the first K content tokens); min(R,G) v5 below is the wvk 10–21 rule
+## 2. Frozen production scoring — sd-meter min(z_R, typ_c, z_A) since wvk 22 (2026-09-18; wvk 23 2026-09-22: thought cap 4096, typicality on the first K content tokens; wvk 24 2026-09-23: forfeit floor −6 sd); min(R,G) v5 below is the wvk 10–21 rule
 
 **Live rule since wvk 22 (2026-09-18):** `score_mode = "sd_min_rga"`, `n_turns =
 1000` — turn = min(z_R, typ_c, z_A) in teacher-sd units (definition, knobs and
@@ -684,6 +684,32 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
+- `weight_version_key = 24` (2026-09-23 20:45 UTC (floor) / 21:33 UTC (addendum), explicit dated operator directive
+  Jacob Steeves 2026-09-23 20:17 UTC "Lets do this", on the training-speed
+  probe `internal/wvk23/training-speed-probe-2026-09-23.md`): `[duel.sd_meter].
+  forfeit_sd` −12 → **−6** (also the typ_c floor for < 10 content tokens).
+  Why: 2.0 % of side-turns at −12 carried 48 % of the per-turn score variance.
+  −6 stays strictly below the genuine valid-turn p1 (−4.64; p0.5 −5.48); 0.32 %
+  of valid turns score below it, oracle forfeit-seeking gain 0.007 sd/turn
+  (3.5 % of δ). Counterfactual on the last 30 verdicts (`ops/v19/
+  floor_counterfactual.md`): 0 flips, SE ×0.89 median (×0.78 best), z shifts
+  within ±0.5 (one +0.99); a 2 % forfeit gap now costs ≈ 0.09 sd (half a δ).
+  **Two-step flip at consecutive boundaries (same wvk):** floor live 20:45 UTC
+  (`chal-00678` judged with the floor only); addendum (directive 20:47 "do
+  it") from the next boundary, `chal-00679` on: (6) `ref_min_content = 10`,
+  `typ_min_refs = 2` — a reference thought with < 10 content tokens does not
+  anchor typicality, < 2 content-bearing refs → min(z_R, z_A) (7.5 % of refs,
+  ~4.8 % of turns; combined counterfactual 0 flips / 30, `ops/v19/
+  combined_counterfactual.md`); (3) `control_kmatched` on every verdict —
+  teacher-vs-king with the king scored against the same k−1 refs as the
+  held-out reference, king forfeits / content-floor turns dropped, overall +
+  per leg; pre-fork: all −0.13 (z −2.5, 30/30 neg), R −0.19 (z −4.2, 30/30
+  neg), Gc −0.03 (mixed), A +0.16 (z +4.3, 30/30 pos) — the rollback signal
+  is a sign flip vs these. Nothing else changed; forward-only, reign 21
+  stands. First full-bundle verdict
+  `chal-00679 (uid 211, 22:20 UTC)`: 2271 (pre-fork 1985) s, forfeits chal 0.2 % / king 0.2 %, SE 0.030 (pre-fork verdicts 0.045 / 0.027),
+  control k-matched all −0.12 sd z −2.6, R −0.23 z −5.4, Gc −0.12 z −2.0, A +0.14 z +3.9 (same signs as pre-fork); legacy −0.16 z −3.3. Rollback = control z sign flip
+  (`ops/v19/rollback_wvk24.sh`).
 - `weight_version_key = 23` (2026-09-22 17:20 UTC, explicit dated operator directive
   Jacob Steeves 2026-09-22 17:00 UTC "all of them and also 3 flipped", after
   the benchsuite thought-shrink audit `internal/benchsuite/thought-shrink-

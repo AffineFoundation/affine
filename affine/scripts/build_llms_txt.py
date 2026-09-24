@@ -79,6 +79,7 @@ WVK20_EFFECTIVE = "2026-09-16"
 WVK21_EFFECTIVE = "2026-09-17"
 WVK22_NOTICE = "2026-09-18"
 WVK22_EFFECTIVE = "2026-09-18"
+WVK24_EFFECTIVE = "2026-09-23"
 WVK23_EFFECTIVE = "2026-09-22"
 
 
@@ -206,6 +207,7 @@ def _margin_subs() -> dict[str, str]:
         "{WVK22_NOTICE}": WVK22_NOTICE,
         "{WVK22_EFFECTIVE}": WVK22_EFFECTIVE,
         "{WVK23_EFFECTIVE}": WVK23_EFFECTIVE,
+        "{WVK24_EFFECTIVE}": WVK24_EFFECTIVE,
         "{CAP_RATIO}": f"{float(d.get('thought_cap_ratio', 0.0)):g}",
         "{CAP_RULE}": (f" Per turn the thought cap is `max({int(d['max_thought_tokens'])}, "
                        f"floor({float(d.get('thought_cap_ratio', 0.0)):g} × L_T))`, L_T = the longest "
@@ -476,6 +478,11 @@ the slot
 - Sequential near-miss (2026-09-11, no fork; OFF since wvk 16) — a \
 first-slice margin in the near-miss window drew a second seeded slice; one \
 seeded slice decides again
+- **Fork history: wvk 24 — forfeit floor −12 → −6 sd (effective {WVK24_EFFECTIVE})** \
+— a turn with no parseable action (or a thought with fewer than 10 content \
+tokens) scores −6 sd instead of −12; still strictly below the 1st percentile \
+of valid turns, so skipping a turn never pays; verdict SE falls ~11 %; nothing \
+else changes; forward-only, reign 21 stands
 - **Fork history: wvk 23 — thought cap 4,096 + typicality one-sided on the \
 long end (effective {WVK23_EFFECTIVE})** — `max_thought_tokens` 2,048 → 4,096 \
 (teacher references 4,096 → 4,864 so they can think the full cap and act); the \
@@ -1186,6 +1193,67 @@ Knobs: `[duel] near_miss_enabled / near_miss_low / near_miss_high / \
 near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
 `near_miss_triggered` in `code/affine/score.py`; the draw is \
 `duel_seed(block_hash, hotkey, slice_index)` in `code/evalsrv/dueling.py`.
+
+---
+
+## Fork history: wvk 24 — forfeit floor −12 → −6 sd (effective {WVK24_EFFECTIVE})
+
+**Effective {WVK24_EFFECTIVE} at the first duel dispatched after the eval pod \
+redeploy (explicit dated operator directive, Jacob Steeves 2026-09-23 20:17 \
+UTC: "Lets do this").** `weight_version_key = 24`; `[duel.sd_meter].forfeit_sd` \
+**−12 → −6**. Nothing else changes (δ = 0.2 sd, k_sigma = 2, 1,000-turn slices, \
+caps 4,096 / 4,864, as-generated rendering, `content_prefix = refs_max`, gates). \
+Forward-only — reign 21 stands, no re-verdicts, `min_submission_block` unchanged.
+
+**Why.** At −12 the 2 % of turns that forfeit carried 48 % of the per-turn \
+score variance: a handful of forfeits dominated a verdict's standard error and \
+a miner's training signal. −6 is still strictly worse than any honest turn in \
+practice — the 1st percentile of valid turn scores is −4.6 sd (0.5th: −5.5), \
+only 0.3 % of valid turns score below −6, and even a miner that could predict \
+those turns perfectly and forfeited them would gain 0.007 sd per turn (3.5 % of \
+δ) — so skipping a turn still never pays, which is what the floor exists for. \
+Counterfactual on the last 30 verdicts: no decision changes, SE × 0.89 (median; \
+× 0.78 at best), z shifts within ± 0.5. A 2 % forfeit gap now costs ≈ 0.09 sd \
+(half a δ; it was one δ).
+
+**What you must do.** Nothing new. Answer every turn with a parseable action \
+and close `</think>`; a forfeit costs −6 sd, worse than 99 % of valid turns. \
+The same value floors the typicality leg for a thought with fewer than 10 \
+content tokens.
+
+**wvk 24 flipped in two steps at consecutive duel boundaries.** The forfeit \
+floor went live at 20:45 UTC; the addendum below (operator directive 20:47 UTC, \
+"same fork") arrived two minutes later, after the flip had landed and `chal-00678` \
+had been dispatched — a rule change is only ever applied at a duel boundary, so \
+`chal-00678` was judged with the floor only and the addendum took effect at the \
+next boundary, from `chal-00679` onward. Both steps are wvk 24; \
+`duel_params.sd_meter` (`ref_min_content` / `typ_min_refs` present or absent) \
+tells the two apart and both replay from their own stamps.
+- **Empty-thought reference rule** — `[duel.sd_meter].ref_min_content = 10`, \
+`typ_min_refs = 2`: a teacher reference whose thought has fewer than 10 content \
+tokens does not anchor the typicality leg (it is left out of μ_c and σ_c instead \
+of entering them as a mean over a handful of tokens), and a turn with fewer than \
+2 content-bearing references scores `min(z_R, z_A)` — the typicality leg is \
+dropped for that turn (counted in `n_leg_dropped.Gc`). Live data: 7.5 % of \
+references, ~4.8 % of turns. Counterfactual on the last 30 verdicts (with the \
+−6 floor): no decision changes.
+- **Teacher-vs-king control, k-matched and floor-dropped** — published on every \
+verdict as `shadow.sd_meter.by_anchor.loo.control_kmatched` (`all`, `R`, `Gc`, \
+`A`: margin, SE, z, n), next to the legacy `teacher_vs_king`. Construction: for \
+each turn and each left-out reference j, the held-out reference and the king are \
+both scored against the mean of the other k−1 references (the legacy control \
+scored the king against all k, which handicapped the teacher by construction); \
+king turns that forfeited or sat on the content floor are excluded (the teacher \
+never forfeits, so the floor only ever entered one side). Pre-fork values on the \
+last 30 verdicts: overall −0.13 sd (z −2.5, all negative), R −0.19 (z −4.2, all \
+negative: kings' thoughts predict the teacher's actions better than the teacher's \
+own held-out thoughts do), typicality −0.03 (z −0.4, mixed), A +0.16 (z +4.3, all \
+positive). Telemetry only; it is the rollback signal for this fork (a sign flip \
+against those values).
+
+**What you see.** `duel_params.sd_meter.forfeit_sd = -6`, `ref_min_content = 10`, \
+`typ_min_refs = 2`; verdict SE about 10 % smaller for the same slice; \
+`control_kmatched` on every verdict.
 
 ---
 

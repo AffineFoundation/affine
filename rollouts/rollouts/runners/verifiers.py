@@ -14,7 +14,7 @@ from pathlib import Path
 
 from datagen.providers import looks_like_provider_failure
 
-from rollouts import loopguard
+from rollouts import loopguard, upstream_guard
 from rollouts.adapters.verifiers import (
     NO_VISIBLE_REPLY_STOP,
     envelopes_from_traces,
@@ -57,6 +57,20 @@ MINI_SWE_HARNESS_ENV = {"UV_PYTHON": "3.12"}
 # text (adapters.verifiers.mark_no_visible_reply). pi ends the agent when its
 # last tool completes even if the model then says nothing.
 NO_VISIBLE_REPLY_HARNESSES = ("pi",)
+
+
+def _prepend_site(env: dict) -> None:
+    """Put loopguard_site first on PYTHONPATH once.
+
+    sitecustomize.py in that directory installs the loop guard and the
+    upstream block. Both hooks read their own env vars, so sharing one
+    path is enough.
+    """
+    site = loopguard.SITE_DIR
+    parts = [p for p in env.get("PYTHONPATH", "").split(":") if p]
+    if site in parts:
+        return
+    env["PYTHONPATH"] = site + ((":" + ":".join(parts)) if parts else "")
 
 
 def eval_cmd(cfg: RolloutsConfig, source: Source, endpoint: Endpoint,
@@ -391,8 +405,12 @@ class VerifiersRunner:
                 # rollouts.loopguard: sitecustomize installs the `loop_guard`
                 # @stop in the eval process; the threshold rides the env.
                 env[loopguard.ENV_REPEATS] = str(policy.loop_guard_repeats)
-                env["PYTHONPATH"] = loopguard.SITE_DIR + (
-                    ":" + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+                _prepend_site(env)
+            if self.RUNTIME == "docker" and upstream_guard.applies(source):
+                # The teacher has the loop guard off. The site hook still has
+                # to load, or the process that leaks never sees the block.
+                env[upstream_guard.ENV] = "1"
+                _prepend_site(env)
             code, out = run_streamed(
                 eval_cmd(self.cfg, source, endpoint, policy.harness, batch,
                          attempt_dir, policy.sampling, runtime=self.RUNTIME),

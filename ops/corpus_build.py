@@ -1248,12 +1248,16 @@ def yield_report(after: dict[str, int], mix: dict[str, float], group_turns: dict
                         "top_drops": [{"reason": k, "n": v} for k, v in top]}
     subl = {k[len("king_divergence_sublabel_"):]: v for k, v in (NOTES_GLOBAL or {}).items()
             if k.startswith("king_divergence_sublabel_")}
+    upstream_fetch_turns = sum(y["drops"].get("upstream_fetch", 0) for y in YIELD.values())
     return {"groups": groups, "sources": sources, "by_king": dict(YIELD_BY_KING),
             # tau2-airline read (2026-09-18): "acted with a schema example value
             # where the teacher asked", per fold and per king digest, so the
             # rate can be tracked reign over reign.
             "divergence_sublabels": subl,
-            "interactive_prose_turns": int((NOTES_GLOBAL or {}).get("interactive_prose_turns", 0))}
+            "interactive_prose_turns": int((NOTES_GLOBAL or {}).get("interactive_prose_turns", 0)),
+            # Turns whose prefix already held a successful GitHub / upstream
+            # fetch (affine.corpus.upstream). New derivations drop them.
+            "upstream_fetch_turns": upstream_fetch_turns}
 
 
 def write_fold_stats(epoch: int, after: dict[str, int], turns_by_group: dict[str, int],
@@ -2900,6 +2904,103 @@ def load_band_filters() -> dict[str, dict]:
     return out
 
 
+def load_band_backfill() -> dict:
+    """[band_filter.defaults] backfill_outcomes = "<key under the public
+    base>" (+ backfill_seats, backfill_kings = "all" | "current"): the env
+    backfill's per-task outcome table (datagen worker, internal/king-seat-
+    replay-band-coverage.md: one row per (source, sid, seat model) with n /
+    n_solved / n_errored). Its king rows merge into the seat counts k_n /
+    k_s -- more coverage for the "king did not solve it" side without
+    waiting for the seat replay. Only drops can come of it (no backfill
+    turn enters D). Empty key = off."""
+    d = (tomllib.loads(SOURCES_TOML.read_text()).get("band_filter") or {}).get("defaults") or {}
+    key = str(d.get("backfill_outcomes") or "").strip("/")
+    return {"key": key,
+            "seats": frozenset(str(x) for x in (d.get("backfill_seats") or ["king"])),
+            "kings": str(d.get("backfill_kings") or "all"),
+            "current_digest": None}
+
+
+def current_king_digest() -> str | None:
+    """The validator's current king (affine/state/state.json revision[:12]),
+    for backfill_kings = "current"."""
+    try:
+        k = json.loads((REPO / "affine" / "state" / "state.json").read_text()).get("king") or {}
+        rev = str(k.get("revision") or "")
+        return rev[:12] or None
+    except (OSError, ValueError):
+        return None
+
+
+def merge_band_backfill(pub: PublicCorpus, stats: dict[str, list[int]], cfg: dict,
+                        current_digest: str | None = None) -> dict:
+    """Add the backfill table's rows to k_n / k_s in place. Returns a report
+    (rows merged, tasks touched, sha) or {"error": ...}; a sha mismatch with
+    the meta file (hourly republish race) skips the merge for this fold."""
+    if not cfg.get("key"):
+        return {}
+    try:
+        raw = pub.get(cfg["key"])
+        meta = json.loads(pub.get(cfg["key"].rsplit(".", 1)[0] + ".meta.json").decode())
+    except Exception as ex:  # noqa: BLE001 -- network / 404: the band runs on the seat alone
+        log(f"band filter: backfill outcomes unavailable ({type(ex).__name__}: {ex}); seat counts only")
+        return {"error": f"{type(ex).__name__}: {ex}"}
+    sha = hashlib.sha256(raw).hexdigest()
+    if meta.get("sha256") and meta["sha256"] != sha:
+        log(f"band filter: backfill outcomes sha {sha[:12]} != meta {str(meta.get('sha256'))[:12]} (republish race?); seat counts only")
+        return {"error": "sha_mismatch", "sha256": sha}
+    rows = 0
+    touched: set[str] = set()
+    new_tasks = 0
+    by_src: dict[str, int] = {}
+    for line in raw.decode().splitlines():
+        if not line.strip():
+            continue
+        r = json.loads(line)
+        if str(r.get("seat") or "") not in cfg["seats"]:
+            continue
+        if cfg["kings"] == "current" and current_digest and str(r.get("king_digest") or "") != current_digest:
+            continue
+        n, ns = int(r.get("n") or 0), int(r.get("n_solved") or 0)
+        if n <= 0:
+            continue
+        key = f"{r.get('source') or ''}\t{r.get('sid') or ''}"
+        st = stats.get(key)
+        if st is None:
+            st = stats[key] = [0, 0, 0, 0]
+            new_tasks += 1
+        st[2] += n
+        st[3] += ns
+        rows += 1
+        touched.add(key)
+        by_src[key.split("\t", 1)[0]] = by_src.get(key.split("\t", 1)[0], 0) + 1
+    rep = {"key": cfg["key"], "sha256": sha, "generated_at": meta.get("generated_at"),
+           "traces_backfill_manifest_sha256": meta.get("traces_backfill_manifest_sha256"),
+           "seats": sorted(cfg["seats"]), "kings": cfg["kings"], "rows_merged": rows,
+           "tasks_touched": len(touched), "tasks_new": new_tasks, "rows_by_source": by_src}
+    log(f"band filter: merged {rows} backfill outcome rows ({len(touched)} tasks, {new_tasks} not in the traces) "
+        f"from {cfg['key']} sha {sha[:12]} (generated {meta.get('generated_at')})")
+    return rep
+
+
+def band_coverage(stats: dict[str, list[int]], bands: dict[str, dict]) -> dict[str, dict]:
+    """Per source: teacher-covered tasks, share with >= 1 king attempt, share
+    the king side would drop -- for the seat-only vs merged comparison."""
+    out: dict[str, dict] = {}
+    per: dict[str, list] = {}
+    for k, v in stats.items():
+        src = k.split("\t", 1)[0]
+        if src not in bands or v[0] <= 0:
+            continue
+        p = per.setdefault(src, [0, 0, 0])
+        p[0] += 1
+        p[1] += v[2] > 0
+        p[2] += band_verdict(v, bands[src]) == "king_solved"
+    for src, (n, cov, ks) in per.items():
+        out[src] = {"teacher_tasks": n, "king_covered": round(cov / n, 3), "king_solved_share": round(ks / n, 3)}
+    return out
+
+
 def _band_scan_chunk(path: Path) -> dict[str, list[int]]:
     """{source\\tsid: [t_n, t_s, k_n, k_s]} for one trace chunk."""
     stats: dict[str, list[int]] = {}
@@ -3328,6 +3429,7 @@ def publish_pending(state: dict, publisher: CorpusPublisher,
         extra["band_filter"] = {"per_source": bf.get("per_source"), "retired": bf.get("retired"),
                                 "retired_by_source": bf.get("retired_by_source"),
                                 "tally": bf.get("tally"), "rules": bf.get("rules"), "held_turns": bf.get("held_turns"),
+                                "backfill": bf.get("backfill"), "coverage": bf.get("coverage"),
                                 "rule": "teacher-side turns of a task fold iff the teacher solved it (>= k of n attempts) and the king seat did not (> m of n seat solves drop; attempts from the traces); rows outside the band retire"}
     if pending.get("curriculum_block"):
         # Adaptive curriculum stamp (plan §2.3 / §3.4; evalsrv reads it into
@@ -3438,6 +3540,15 @@ def yield_line(info: dict) -> str:
         "; full per-source table in corpus/fold_stats.json.\n"
 
 
+def upstream_line(info: dict) -> str:
+    extra = info.get("yield_extra") or {}
+    if "upstream_fetch_turns" not in extra:
+        return ""
+    n = int(extra.get("upstream_fetch_turns") or 0)
+    return (f"Upstream fetch: {n} new turns dropped because the prefix already "
+            "held a GitHub fetch, an upstream clone, or a package download.\n")
+
+
 def sublabel_line(info: dict) -> str:
     y = info.get("yield_extra") or {}
     subl = y.get("divergence_sublabels") or {}
@@ -3494,7 +3605,7 @@ def announce(state: dict, public_base: str) -> None:
            if info.get("n_backfill_excluded") else "")
         + budget_note(info)
         + (f"{info['curriculum_line']}\n" if info.get("curriculum_line") else "")
-        + floors_line(info) + yield_line(info) + gate_line(info) + sublabel_line(info)
+        + floors_line(info) + yield_line(info) + upstream_line(info) + gate_line(info) + sublabel_line(info)
         + "\n"
         f"- corpus_epoch: **{epoch}**\n"
         f"- schema_version: **3** (view `{VIEW_SPEC}`: one record per rollout "
@@ -4115,6 +4226,13 @@ def main() -> None:
     band_held: list[dict] = []
     if bands:
         band_stats = task_attempts(pub, traces_manifest, frozenset(bands))
+        backfill_cfg = load_band_backfill()
+        coverage_seat = band_coverage(band_stats, bands)
+        backfill_rep = {}
+        if backfill_cfg.get("key"):
+            backfill_rep = merge_band_backfill(pub, band_stats, backfill_cfg,
+                                               current_digest=current_king_digest())
+        coverage_merged = band_coverage(band_stats, bands)
         candidates, band_held, band_tally = band_filter_records(candidates, bands, band_stats, drops)
         band_retire, band_pub = band_published_retire(pub, live, bands, band_stats, src2grp)
         for g, ids in band_retire.items():
@@ -4130,7 +4248,21 @@ def main() -> None:
                        "retired_by_source": {s0: v.get("retired", 0) for s0, v in band_pub.items() if v.get("retired")},
                        "per_source": per_src,
                        "rules": [{"sources": sorted(v), **json.loads(k)} for k, v in rules.items()],
-                       "held_turns": sum(len(r.get("turns") or []) for r in band_held)}
+                       "held_turns": sum(len(r.get("turns") or []) for r in band_held),
+                       "backfill": backfill_rep or None,
+                       "coverage": {src: {"teacher_tasks": m["teacher_tasks"],
+                                          "king_covered_seat": coverage_seat.get(src, {}).get("king_covered"),
+                                          "king_covered": m["king_covered"],
+                                          "king_solved_share_seat": coverage_seat.get(src, {}).get("king_solved_share"),
+                                          "king_solved_share": m["king_solved_share"]}
+                                    for src, m in coverage_merged.items()}}
+        if backfill_rep and not backfill_rep.get("error"):
+            moved = sorted(((src, c["king_covered_seat"], c["king_covered"], c["king_solved_share_seat"], c["king_solved_share"])
+                            for src, c in band_report["coverage"].items()
+                            if c["king_covered_seat"] is not None and c["king_covered"] != c["king_covered_seat"]),
+                           key=lambda x: -(x[2] - x[1]))
+            log("band filter: king coverage seat -> merged (king_solved share seat -> merged): " + ", ".join(
+                f"{src} {a:.2f}->{b:.2f} ({c:.2f}->{d:.2f})" for src, a, b, c, d in moved[:25]))
         log(f"band filter: retired by group {band_report['retired']}; held {band_report['held_turns']} turns; "
             f"by source: " + ", ".join(
                 f"{s0} kept {v['published'].get('kept', 0)}/retired {v['published'].get('retired', 0)}"
@@ -4468,7 +4600,8 @@ def main() -> None:
         "yield_groups": yrep["groups"] if STRATA_BUDGET else None,
         "yield_extra": {"divergence_sublabels": yrep.get("divergence_sublabels"),
                         "interactive_prose_turns": yrep.get("interactive_prose_turns"),
-                        "by_king": yrep.get("by_king")} if STRATA_BUDGET else None,
+                        "by_king": yrep.get("by_king"),
+                        "upstream_fetch_turns": yrep.get("upstream_fetch_turns", 0)} if STRATA_BUDGET else None,
         "yield_sources": yrep["sources"] if STRATA_BUDGET else None,
         "admission_gate": gate_report or None,
         "band_filter": band_report or None,

@@ -142,6 +142,10 @@ def scorecard(run_dir: Path) -> dict:
             if not PARTIAL:
                 model = d.parent.name
                 env_id, _, t = d.name.rpartition("__t")
+                try:
+                    float(t)
+                except ValueError:
+                    continue   # a moved-aside cell dir (__t0.contended-HHMM, .dead-...) is not a live cell
                 why = (d / "cmd.txt").read_text(errors="replace").strip().splitlines()
                 # a Harbor job still running under this cell (the watcher's SWE / TB2 jobs share the run dir) is not
                 # a failure: publish it as RUNNING with its trial count (Jacob 2026-09-23: "failed" placeholders were
@@ -190,15 +194,20 @@ def scorecard(run_dir: Path) -> dict:
         # with its n, but the cell is not final — the watcher resumes the job (2026-09-22: reign 15's
         # @4h250 published 0.389 on 216 of 500 live trials after a Daytona capacity stop)
         n_exp = x.get("n_expected")
-        partial = bool(n_exp) and n_live < int(n_exp) and not (failed or infra_cut)
+        # <= 2 % of the task set never reaching a live model is noise-level (reign 15: 5 of 500 after three resumes) --
+        # publish as final with the count in the note instead of holding the cell "partial" forever
+        partial = bool(n_exp) and (int(n_exp) - n_live) > max(2, 0.02 * int(n_exp)) and not (failed or infra_cut)   # <= 2 trials or <= 2 % missing = final
         out = {"score": None if (failed or infra_cut) else x["score"], "ci95": None if (failed or infra_cut) else x["ci95"], "n": x["n"],
                "n_errored": x["n_errored"], "n_timeout": x.get("n_timeout"), "n_context_overflow": x.get("n_context_overflow"),
-               "n_infra_env": x.get("n_infra_env"), "n_live": x.get("n_live"),
+               "n_infra_env": x.get("n_infra_env"), "n_live": x.get("n_live"), "served_gpu": x.get("served_gpu"),
                "finished_only": None if (failed or infra_cut) else x.get("finished_only"), "completion_tokens": x["completion_tokens"],
                "prompt_tokens": x["prompt_tokens"], "wall_seconds": x.get("wall_seconds"),
                "finish_length_frac": x.get("finish_length_frac"),
                "by_class": x.get("by_class") or None,
                "status": "failed" if (failed or infra_cut) else ("partial" if partial else "ok")}
+        if n_exp and not partial and n_live < int(n_exp) and not (failed or infra_cut):
+            out["n_expected"] = int(n_exp)
+            out["note"] = f"{int(n_exp) - n_live} of {n_exp} trials never ran against a live model (infrastructure); scored on {n_live}"
         if partial:
             out["n_expected"] = int(n_exp)
             out["failure"] = f"partial: {n_live} of {n_exp} trials ran against a live model; the job is being resumed"
