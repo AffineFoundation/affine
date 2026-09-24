@@ -122,7 +122,18 @@ function cellTip(row, col, cell, teacherCell) {
     if (cell.all_rollouts != null) lines.push(`all rollouts (timeouts count as failed): ${fmt(cell.all_rollouts)}`);
     if (cell.cap_bound) lines.push(`‡ cap-bound: ${Math.round(100 * cell.cap_frac)}% of rollouts hit the completion cap (scored 0); lower bound`);
     if (cell.graded === "llm_judge") lines.push(`⚖ judge-graded: ${judgeText(cell.judge)} — advisory, never part of the score`);
-    if (cell.contaminated) lines.push(`⚠ contaminated: ${num(cell.leaked)} of ${num(cell.leak_scanned || cell.raw_n)} trials fetched upstream code (sandboxes had outbound internet)${cell.leaked_resolved != null ? `, ${num(cell.leaked_resolved)} of them resolved` : ""}; raw score ${fmt(cell.raw_score)} — shown and counted: ${fmt(cell.score)} over the ${num(cell.n)} trials that did not leak${cell.leak_date ? ` (audit ${cell.leak_date})` : ""}`);
+    if (cell.contaminated && cell.excl_unavailable) {
+      lines.push(`⚠ contaminated — leak rate from a sibling attempt: ${num(cell.leaked)} of ${num(cell.leak_scanned)} trials fetched upstream code (sandboxes had outbound internet); per-trial exclusion unavailable, the score shown is the original`
+        + (cell.sibling && cell.sibling.score_excl_leaked != null ? ` (the sibling attempt scored ${fmt(100 * cell.sibling.score_all)} all trials, ${fmt(100 * cell.sibling.score_excl_leaked)} excluding its leaks)` : "")
+        + (cell.leak_date ? ` (audit ${cell.leak_date})` : ""));
+    } else if (cell.contaminated) {
+      lines.push(`⚠ contaminated: ${num(cell.leaked)} of ${num(cell.leak_scanned || cell.raw_n)} trials fetched upstream code (sandboxes had outbound internet)${cell.leaked_resolved != null ? `, ${num(cell.leaked_resolved)} of them resolved` : ""}; raw score ${fmt(cell.raw_score)} — shown and counted: ${fmt(cell.score)} over the ${num(cell.n)} trials that did not leak${cell.leak_date ? ` (audit ${cell.leak_date})` : ""}`);
+    }
+    if (cell.network && cell.network.mode) {
+      lines.push(cell.network.mode === "agent-allowlist" || cell.network.mode === "allowlist"
+        ? `network: ${cell.network.mode} — fenced sandbox, only ${(cell.network.allowed_hosts || []).length ? (cell.network.allowed_hosts || []).join(", ") : "the serving box"} reachable in the agent phase (clean by construction)`
+        : `network: ${cell.network.mode} — sandbox had outbound internet`);
+    }
     if (col.trained) lines.push(`${col.trained.mark} trained environment${cell.trained ? " (this king was crowned after the admission)" : " (column; this model predates the admission or is not a king)"}: ${col.trained.legend}. ${col.trained.note}`);
     lines.push(`card ${cell.run_id}${cell.mode ? ` · ${cell.mode}` : ""}`);
   } else {

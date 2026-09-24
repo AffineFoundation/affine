@@ -1219,6 +1219,25 @@ def bench_value(side: dict | None, env: str) -> dict | None:
     if metric == "finished_only":
         fo_excl = audit.get("finished_only_excl_leaked") or {}
         excl, n_excl = fo_excl.get("score"), int(fo_excl.get("n") or 0)
+    net = side.get("network") if isinstance(side.get("network"), dict) else None
+    if net:
+        # Harbor cells stamp how the sandbox was fenced: `agent-allowlist` = only the
+        # serving box reachable in the agent phase (clean by construction), `public` = open
+        out["network"] = {"mode": net.get("mode"), "allowed_hosts": net.get("allowed_hosts")}
+    if side.get("contaminated") and not (isinstance(excl, (int, float)) and not isinstance(excl, bool)):
+        # rate known, per-trial exclusion impossible (King 11: the stored traces are a
+        # sibling attempt of the same run) — keep the score, badge + rate in the tooltip
+        sib = audit.get("sibling_attempt") or {}
+        out.update({
+            "contaminated": True, "excl_unavailable": True,
+            "raw_score": out["score"], "raw_n": out["n"],
+            "leaked": audit.get("n_leaked"), "leaked_resolved": audit.get("n_leaked_resolved"),
+            "leak_scanned": audit.get("n_trials_scanned") or audit.get("n_scanned") or sib.get("n"),
+            "leak_kinds": audit.get("by_kind"), "leak_note": audit.get("note"),
+            "leak_date": audit.get("date"),
+            "sibling": ({"n": sib.get("n"), "score_all": sib.get("score_all"),
+                         "score_excl_leaked": sib.get("score_excl_leaked")} if sib else None),
+        })
     if side.get("contaminated") and isinstance(excl, (int, float)) and not isinstance(excl, bool):
         k_excl = int(round(float(excl) * n_excl)) if n_excl else 0
         _, lo, hi = wilson(k_excl, n_excl) if n_excl else (None, None, None)
@@ -1232,7 +1251,7 @@ def bench_value(side: dict | None, env: str) -> dict | None:
             "raw_score": round(100.0 * float(src["score"]), 2),
             "raw_n": src.get("n") or side.get("n"),
             "leaked": audit.get("n_leaked"), "leaked_resolved": audit.get("n_leaked_resolved"),
-            "leak_scanned": audit.get("n_trials_scanned"), "leak_kinds": audit.get("by_kind"),
+            "leak_scanned": audit.get("n_trials_scanned") or audit.get("n_scanned"), "leak_kinds": audit.get("by_kind"),
             "leak_rule": audit.get("rule"), "leak_date": audit.get("date"),
         })
     return out
