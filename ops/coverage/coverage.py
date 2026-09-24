@@ -68,7 +68,10 @@ def classify(matrix: dict) -> dict:
                 # `<env>@<tag>` = an older cap / budget kept for continuity; not a coverage target
                 totals["cells"] -= 1
                 continue
-            if v.get("unverified") or v.get("errored_only"):
+            if v.get("unverified") or v.get("errored_only") or v.get("partial"):
+                # `partial` = a job interrupted / still being resumed by its owner: present, not a
+                # gap (2026-09-24: 13 partial cells of the watcher's reign-21 pass made autofill
+                # rent a second 5-pod fast pass for a card that was already complete)
                 # published on purpose without a number (Gaia2 ambiguity: grader result
                 # not verified; an env whose rollouts all errored): present, not a gap.
                 # Counting these as missing re-queued full rows 51 times on 2026-09-21.
