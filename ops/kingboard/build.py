@@ -1210,10 +1210,16 @@ def bench_value(side: dict | None, env: str) -> dict | None:
     # share of trials fetched upstream code. The cell's VALUE becomes the score over
     # the trials that did not leak (`leak_audit.score_excl_leaked`, Wilson on
     # n_excl_leaked); the raw score and the leaked count go to the tooltip.
+    # The excl-leaked field must match the column's metric: a finished-only
+    # cell takes `finished_only_excl_leaked` (score + n over finished, non-leaked
+    # trials), an all-trials cell takes `score_excl_leaked` / `n_excl_leaked`
+    # (benchsuite 2026-09-24 09:05; mixing bases put 31.1 next to 84.6).
     audit = side.get("leak_audit") or {}
-    excl = audit.get("score_excl_leaked")
+    excl, n_excl = audit.get("score_excl_leaked"), int(audit.get("n_excl_leaked") or 0)
+    if metric == "finished_only":
+        fo_excl = audit.get("finished_only_excl_leaked") or {}
+        excl, n_excl = fo_excl.get("score"), int(fo_excl.get("n") or 0)
     if side.get("contaminated") and isinstance(excl, (int, float)) and not isinstance(excl, bool):
-        n_excl = int(audit.get("n_excl_leaked") or 0)
         k_excl = int(round(float(excl) * n_excl)) if n_excl else 0
         _, lo, hi = wilson(k_excl, n_excl) if n_excl else (None, None, None)
         out.update({
