@@ -75,7 +75,9 @@ declare -A POD PLANS
 for i in $(seq 1 "$N_SHARDS"); do PLANS[chat$i]="${FAST_CHAT_PLANS:-$(toml fast.chat_plans | tr "," " ")}"; done   # FAST_CHAT_PLANS: e.g. "prime-a100-2x" to keep Lium for other work
 PLANS[agentic]=$(toml fast.agentic_plans | tr "," " "); PLANS[tb2]=$(toml fast.agentic_plans | tr "," " "); PLANS[swe]=$(toml fast.swe_plans | tr "," " ")
 POD[agentic]=""; POD[tb2]=""; POD[swe]=""
-release_role() { local r="$1" pod="${POD[$r]:-}"; [ -n "$pod" ] || return 0; log "releasing $pod ($r)"; "$PY" "$(tool_for_pod "$pod")" release "$pod" >/dev/null 2>&1 || true; POD[$r]=""; }
+release_role() { local r="$1" pod="${POD[$r]:-}"; [ -n "$pod" ] || return 0
+  [ -f "$HERE/state/fast-$RUN_ID-$r.released" ] && { POD[$r]=""; return 0; }   # finish_role runs in a subshell: the marker makes the release idempotent across it, the tail and cleanup()
+  log "releasing $pod ($r)"; "$PY" "$(tool_for_pod "$pod")" release "$pod" >/dev/null 2>&1 || true; echo "$pod" > "$HERE/state/fast-$RUN_ID-$r.released"; POD[$r]=""; }
 cleanup() {
   for r in "${ROLES[@]}"; do
     # a pod still in the rent phase is only named in its .pod file (2026-09-19: a kill during
@@ -282,18 +284,27 @@ finish_role() {  # pull everything from the pod, retry infra errors, pull again,
   }
   log "$r: all groups ended after $(( ($(date +%s) - T_START) / 60 )) min"; release_role "$r"
 }
+# finish_role runs in the BACKGROUND per role (2026-09-24): its `run_suite.py retry` ssh can take hours
+# (Albedo chat3's miniF2F retry ran 4 h+) and, inline, it stalled the whole loop — the TB2 pod sat idle 3 h
+# after its cell finished and chat1's pass log went silent long enough for the pod reaper to release it
+# mid-BFCL. Each finishing role is marked so it is finished exactly once; the tail waits for them.
+declare -A FINISHING
+start_finish() { local r="$1"; [ -n "${FINISHING[$r]:-}" ] && return 0; FINISHING[$r]=1; ( finish_role "$r" ) & FINISH_PIDS+=($!); }
+FINISH_PIDS=()
 while :; do
   alive=0; for p in "${PIDS[@]}"; do kill -0 "$p" 2>/dev/null && alive=$((alive+1)); done
   pull_light_all; publish_partial
-  for r in "${ROLES[@]}"; do [ -n "${POD[$r]:-}" ] && [ -n "${ROLE_PIDS[$r]:-}" ] && role_done "$r" && finish_role "$r"; done
+  for r in "${ROLES[@]}"; do [ -n "${POD[$r]:-}" ] && [ -n "${ROLE_PIDS[$r]:-}" ] && [ -z "${FINISHING[$r]:-}" ] && role_done "$r" && start_finish "$r"; done
+  log "poll: $alive group(s) alive, finishing [${!FINISHING[*]}]"   # a line every poll keeps the passlog owner visibly alive for the reaper
   [ "$alive" -eq 0 ] && break
   sleep "$(toml fast.poll_s)"
 done
+for p in "${FINISH_PIDS[@]:-}"; do [ -n "$p" ] && wait "$p"; done
 wait
 T_CELLS=$(date +%s); log "all groups ended after $(( (T_CELLS - T_START) / 60 )) min"
 
-# ---- tail: whatever is still held (a role with no group pid), summarize, publish, release
-for r in "${ROLES[@]}"; do [ -n "${POD[$r]:-}" ] && finish_role "$r"; done
+# ---- tail: whatever is still held (a role with no group pid, or one never finished above), summarize, publish, release
+for r in "${ROLES[@]}"; do [ -n "${POD[$r]:-}" ] && [ -z "${FINISHING[$r]:-}" ] && finish_role "$r"; done
 "$PY" "$HERE/run_suite.py" summarize --run-id "$RUN_ID" --out "$BENCH_HOME/runs" >/dev/null 2>&1 || true
 "$PY" - "$RUN_DIR/manifest.json" "$T_START" "$T_READY" "$T_INST" "$T_CELLS" "$(date +%s)" <<'PY'
 import json, sys
