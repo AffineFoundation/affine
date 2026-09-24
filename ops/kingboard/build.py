@@ -173,6 +173,11 @@ GENESIS_MODEL = "Qwen/Qwen3.6-35B-A3B"
 # paid). Rendered as a reference row just above Genesis. Notes per label.
 REFERENCE_NOTES = {
     "occamy-1.0": "Accio-Lab/occamy-1.0 — Alibaba, Qwen3.6-35B-A3B post-train, admissible reference; not a king",
+    "albedo-cxxvii": "dendriteholdings/albedo-qwen3.6-35b-king-CXXVII @ e920362b — Albedo (SN97) reigning king, version 127, crowned 2026-09-20; public checkpoint, not an Affine king",
+}
+# Display names for reference rows whose card label is a machine key.
+REFERENCE_LABELS = {
+    "albedo-cxxvii": "Albedo CXXVII",
 }
 GENESIS_DIGEST12 = "995ad96eacd9"     # HF revision 995ad96e… = reign 0 (seed)
 TEACHER_DIGEST12 = "1d4bf0f2ff60"     # HF revision 1d4bf0f2… of Qwen/Qwen3.8-27B (cards that bench the teacher itself)
@@ -1614,7 +1619,8 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
         kb = lst[0].get("king") or {}
         rev = str(kb.get("hf_revision") or "")
         rows.append({
-            "key": f"ref:{label}", "kind": "reference", "label": label[:1].upper() + label[1:],
+            "key": f"ref:{label}", "kind": "reference",
+            "label": REFERENCE_LABELS.get(label, label[:1].upper() + label[1:]),
             "model": kb.get("hf_repo") or kb.get("repo") or label, "hf_revision": rev,
             "digest12": card_digest12(lst[0]),
             "sub": f"{kb.get('hf_repo') or label}{' @ ' + rev[:8] if rev else ''}",
