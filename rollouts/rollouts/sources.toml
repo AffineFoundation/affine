@@ -461,7 +461,8 @@ agentic_ops = 650    # 2026-09-21: 0.05 of ~13k strata
 long_context = 400   # 2026-09-21: 0.03 of ~13k strata
 science = 1500       # 400 -> 650 (2026-09-22 17:00, 0.05 of ~13k) -> 1500 (2026-09-23: budget buckets re-hash the raw strata, populated = n(1-e^(-raw/n)); at 650 the 569 raw science strata would populate only ~380. The source-level strata_buckets (1000) is the binding cap; this one must not bind)
 sci_code = 260       # 2026-09-22: 0.02 of ~13k strata
-bench_fail = 520     # 2026-09-24: 0.04 of ~13k strata (per-suite split inside [bench_fail])
+# bench_fail: NO budget bucket -- [bench_fail].strata_buckets (520, split per suite) already
+# sets its strata; a second hash here would populate only ~63 % of them (n(1-e^-1)).
 
 [strata_budget.sub_strata]
 king_fail = 3

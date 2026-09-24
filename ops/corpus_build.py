@@ -1361,7 +1361,10 @@ def yield_report(after: dict[str, int], mix: dict[str, float], group_turns: dict
             "interactive_prose_turns": int((NOTES_GLOBAL or {}).get("interactive_prose_turns", 0)),
             # Turns whose prefix already held a successful GitHub / upstream
             # fetch (affine.corpus.upstream). New derivations drop them.
-            "upstream_fetch_turns": upstream_fetch_turns}
+            "upstream_fetch_turns": upstream_fetch_turns,
+            # Records of sources not listed in [source.*]: held, never admitted.
+            "unknown_source_turns": int((NOTES_GLOBAL or {}).get("unknown_source_turns", 0)),
+            "unknown_sources": (NOTES_GLOBAL or {}).get("unknown_sources") or {}}
 
 
 def write_fold_stats(epoch: int, after: dict[str, int], turns_by_group: dict[str, int],
@@ -4219,6 +4222,31 @@ def main() -> None:
     for k, v in bench_drops.items():
         drops[k] = drops.get(k, 0) + v
     n_before = len(candidates)
+    # Unknown-source gate (2026-09-24, hygiene hole found by the datagen
+    # worker): a record whose source is not a [source.*] entry -- and is not
+    # a bench_* record the bench_fail router just claimed -- used to fall into
+    # DEFAULT_GROUP (coding) as a teacher-side row. It is now HELD (deferred,
+    # re-enters when the toml lists the source) and logged per source; it is
+    # never admitted.
+    known_sources = set(src2grp)
+    unknown_held: list[dict] = []
+    kept_known: list[dict] = []
+    unknown_by_src: dict[str, int] = {}
+    for rec in candidates:
+        src0 = str(rec.get("source") or "")
+        bench_ok = (rec.get("fold_group") == BENCH_FAIL.get("group") and src0.startswith(BENCH_SOURCE_PREFIX)
+                    and BENCH_FAIL.get("enabled"))
+        if src0 in known_sources or bench_ok:
+            kept_known.append(rec)
+        else:
+            unknown_held.append(rec)
+            unknown_by_src[src0] = unknown_by_src.get(src0, 0) + len(rec.get("turns") or [])
+    if unknown_held:
+        log(f"unknown source: {len(unknown_held)} records held, never admitted (turns by source {unknown_by_src}); "
+            f"list the source in [source.*] to admit it")
+        NOTES_GLOBAL["unknown_source_turns"] = sum(unknown_by_src.values())
+        NOTES_GLOBAL["unknown_sources"] = unknown_by_src  # type: ignore[assignment]
+    candidates = kept_known
     candidates = drop_excluded_routed(candidates, routed, drops)
     if len(candidates) != n_before:
         log(f"routed groups: dropped {n_before - len(candidates)} carryover records "
@@ -4571,7 +4599,7 @@ def main() -> None:
     selected, deferred, group_added = cap_fill(
         candidates, lambda r: group_of(r, src2grp, mix), have_groups, mix,
         anchor_min_target=ANCHOR_MIN_TARGET, max_new=budgets)
-    deferred += lang_deferred + probe_held + gate_held + band_held
+    deferred += lang_deferred + probe_held + gate_held + band_held + unknown_held
     log(f"mix: selected {len(selected)} rollouts (+{ {g: len(v) for g, v in group_added.items()} } "
         f"strata), deferred {len(deferred)}")
     # Language strata credited only for coding rollouts that made it through
@@ -4674,13 +4702,21 @@ def main() -> None:
         log("yield (accepted turns this fold / strata over target): " + ", ".join(
             f"{g} {v['accepted_turns_this_fold']}/{v['strata_over_target']}" for g, v in yrep["groups"].items()
             if v["accepted_turns_this_fold"] or (v["strata_over_target"] or 0) < 1))
-        # trained_on: any bench_* source with admitted records this fold flips
-        # its suite (once; the first epoch stays).
+        # trained_on: a bench_* suite flips when the fold PUBLISHES its rows
+        # (records in `selected`, i.e. past cap_fill), not when derive_chunk
+        # accepts them -- a suite whose records the mix stage deferred is not
+        # trained on yet. Once flipped, the first epoch stays.
         epoch_next = (int(live["corpus_epoch"]) if live else 0) + 1
+        bench_selected: dict[str, int] = {}
+        for r in selected:
+            if r.get("fold_group") == BENCH_FAIL.get("group") and str(r.get("source") or "").startswith(BENCH_SOURCE_PREFIX):
+                bench_selected[str(r["source"])] = bench_selected.get(str(r["source"]), 0) + len(r["turns"])
+        if bench_selected:
+            log(f"bench_fail: published this fold by suite (turns) {dict(sorted(bench_selected.items()))}")
         if BENCH_FAIL.get("enabled"):
             tr = dict(state.get("trained_on") or {})
-            for src0, y0 in (yrep.get("sources") or {}).items():
-                if str(src0).startswith(BENCH_SOURCE_PREFIX) and int((y0 or {}).get("records") or 0) > 0:
+            for src0, n0 in bench_selected.items():
+                if n0 > 0:
                     suite = str(src0).removeprefix(BENCH_SOURCE_PREFIX)
                     tr.setdefault(suite, {"since_epoch": epoch_next, "since": datetime.now(timezone.utc).date().isoformat(),
                                           "group": BENCH_FAIL.get("group"), "mode": BENCH_FAIL.get("mode")})
@@ -4744,7 +4780,9 @@ def main() -> None:
         "yield_extra": {"divergence_sublabels": yrep.get("divergence_sublabels"),
                         "interactive_prose_turns": yrep.get("interactive_prose_turns"),
                         "by_king": yrep.get("by_king"),
-                        "upstream_fetch_turns": yrep.get("upstream_fetch_turns", 0)} if STRATA_BUDGET else None,
+                        "upstream_fetch_turns": yrep.get("upstream_fetch_turns", 0),
+                        "unknown_source_turns": yrep.get("unknown_source_turns", 0),
+                        "unknown_sources": yrep.get("unknown_sources") or {}} if STRATA_BUDGET else None,
         "yield_sources": yrep["sources"] if STRATA_BUDGET else None,
         "admission_gate": gate_report or None,
         "band_filter": band_report or None,
