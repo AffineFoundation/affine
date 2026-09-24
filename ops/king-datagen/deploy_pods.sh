@@ -39,13 +39,13 @@ REPO=$PWD
 KH="$REPO/ops/king-datagen/state/known_hosts"
 FILES=(schema.py registry.py catalog.py config.py run.py king.py scheduler.py policies.toml sources.toml
        loopguard.py loopguard_site/sitecustomize.py adapters/mini_swe.py adapters/verifiers.py
-       dockerwrap/docker diskgc.py backfill.py
+       dockerwrap/docker diskgc.py backfill.py prepass.py upstream_guard.py
        runners/base.py runners/verifiers.py runners/mini_swe.py)
 # + view.py / slicer.py (2026-09-14): the pods derive turns for YIELD
 # ACCOUNTING only, but with the pre-wvk-13 copies a teacher's prose reply
 # under a tool_call policy counted 0 kept turns (no text_final rule), which
 # struck the source into 4 h cooldowns (affine_notool, 13 batches).
-AFFINE_FILES=(affine/dialects.py affine/corpus/trace.py affine/corpus/view.py datagen/slicer.py)
+AFFINE_FILES=(affine/dialects.py affine/corpus/trace.py affine/corpus/view.py affine/corpus/upstream.py datagen/slicer.py)
 # The mini_swe_textbased verifiers harness is a tiny package of ours installed
 # editable on every pod at /root/prime-pilot/mini-swe-textbased; its source of
 # truth is rollouts/harnesses/mini_swe_textbased in this repo.
