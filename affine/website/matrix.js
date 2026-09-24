@@ -122,6 +122,7 @@ function cellTip(row, col, cell, teacherCell) {
     if (cell.all_rollouts != null) lines.push(`all rollouts (timeouts count as failed): ${fmt(cell.all_rollouts)}`);
     if (cell.cap_bound) lines.push(`‡ cap-bound: ${Math.round(100 * cell.cap_frac)}% of rollouts hit the completion cap (scored 0); lower bound`);
     if (cell.graded === "llm_judge") lines.push(`⚖ judge-graded: ${judgeText(cell.judge)} — advisory, never part of the score`);
+    if (cell.contaminated) lines.push(`⚠ contaminated: ${num(cell.leaked)} of ${num(cell.leak_scanned || cell.raw_n)} trials fetched upstream code (sandboxes had outbound internet)${cell.leaked_resolved != null ? `, ${num(cell.leaked_resolved)} of them resolved` : ""}; raw score ${fmt(cell.raw_score)} — shown and counted: ${fmt(cell.score)} over the ${num(cell.n)} trials that did not leak${cell.leak_date ? ` (audit ${cell.leak_date})` : ""}`);
     if (col.trained) lines.push(`${col.trained.mark} trained environment${cell.trained ? " (this king was crowned after the admission)" : " (column; this model predates the admission or is not a king)"}: ${col.trained.legend}. ${col.trained.note}`);
     lines.push(`card ${cell.run_id}${cell.mode ? ` · ${cell.mode}` : ""}`);
   } else {
@@ -298,7 +299,7 @@ function renderTable(m, spec) {
       const runningText = progress ? `running (${num(cell.n)}/${num(cell.n_expected)})` : "…";
       const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? (cell.low_n ? "lown" : "") : running ? (progress ? "partialcell" : "running") : failed ? "failed" : unverified ? "unverified" : partial ? "partialcell" : erroredOnly ? "failed" : "blank"].filter(Boolean).join(" ");
       const style = has && r.kind !== "teacher" ? tint(cell.delta) : "";
-      const marks = has ? `${cell.cap_bound ? `<span class="mk cap">‡</span>` : ""}${cell.graded === "llm_judge" ? `<span class="mk judge">⚖</span>` : ""}${cell.trained && c.trained ? `<span class="mk trained">${esc(c.trained.mark)}</span>` : ""}` : "";
+      const marks = has ? `${cell.cap_bound ? `<span class="mk cap">‡</span>` : ""}${cell.graded === "llm_judge" ? `<span class="mk judge">⚖</span>` : ""}${cell.contaminated ? `<span class="mk leak" title="contaminated: leaked trials excluded">⚠</span>` : ""}${cell.trained && c.trained ? `<span class="mk trained">${esc(c.trained.mark)}</span>` : ""}` : "";
       return `<td class="${tcls} duel-hit" data-tip="${esc(cellTip(r, c, cell, teacher.cells[c.key]))}"`
         + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) + marks : running ? runningText : failed ? "run failed" : unverified ? "unverified" : partial ? partialText : erroredOnly ? "errored" : "·"}</td>`;
     }).join("");

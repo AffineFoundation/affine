@@ -143,7 +143,10 @@
               ? el("td", { class: "num king-col unverified", title: `${k.failure || "running"} — the job is alive; the number lands when it finishes` }, `running (${k.n ?? "?"}/${k.n_expected ?? "?"})`)
             : k && k.status === "partial"
               ? el("td", { class: "num king-col unverified", title: `${k.failure || "partial: the job was interrupted"}; score so far ${pct(k.score)} over ${k.n} trials${k.n_infra_env ? `, ${k.n_infra_env} never reached a live model` : ""} — provisional, not a final number` }, `partial (${k.n_live ?? "?"}/${k.n_expected ?? "?"})`)
-              : el("td", { class: "num king-col" }, k ? pct(k.score) + ci(k) : "–", capMark(k)),
+              : k && k.contaminated && k.leak_audit && k.leak_audit.score_excl_leaked !== undefined && k.leak_audit.score_excl_leaked !== null
+                ? el("td", { class: "num king-col", title: `⚠ contaminated: ${k.leak_audit.n_leaked} of ${k.leak_audit.n_trials_scanned || k.n} trials fetched upstream code (sandboxes had outbound internet); raw score ${pct(k.score)}; shown: ${pct(k.leak_audit.score_excl_leaked)} over the ${k.leak_audit.n_excl_leaked} trials that did not leak` },
+                    pct(k.leak_audit.score_excl_leaked), el("span", { class: "cap-mark" }, " ⚠leak"), capMark(k))
+                : el("td", { class: "num king-col" }, k ? pct(k.score) + ci(k) : "–", capMark(k)),
         el("td", { class: "num teacher-col" + (t && t.status === "failed" ? " run-failed" : t && t.status === "unverified" ? " unverified" : ""),
           title: t && t.status === "failed" ? (t.failure || "run failed")
             : t && t.status === "unverified" ? `unverified — grader result not trusted, not counted. ${row.unverified || ""}${t.raw_score !== undefined && t.raw_score !== null ? ` (raw ${pct(t.raw_score)})` : ""}`
