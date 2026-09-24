@@ -1193,7 +1193,7 @@ def bench_value(side: dict | None, env: str) -> dict | None:
     ci = src.get("ci95") or [None, None]
     cap = side.get("finish_length_frac")
     cap = float(cap) if isinstance(cap, (int, float)) and not isinstance(cap, bool) else None
-    return {
+    out = {
         "score": round(100.0 * float(src["score"]), 2),
         "lo": None if ci[0] is None else round(100.0 * float(ci[0]), 2),
         "hi": None if ci[1] is None else round(100.0 * float(ci[1]), 2),
@@ -1206,6 +1206,30 @@ def bench_value(side: dict | None, env: str) -> dict | None:
         "cap_frac": None if cap is None else round(cap, 4),
         "cap_bound": bool(cap is not None and cap > CAP_BOUND_FRAC),
     }
+    # Leak audit (benchsuite 2026-09-24): SWE sandboxes had outbound internet and a
+    # share of trials fetched upstream code. The cell's VALUE becomes the score over
+    # the trials that did not leak (`leak_audit.score_excl_leaked`, Wilson on
+    # n_excl_leaked); the raw score and the leaked count go to the tooltip.
+    audit = side.get("leak_audit") or {}
+    excl = audit.get("score_excl_leaked")
+    if side.get("contaminated") and isinstance(excl, (int, float)) and not isinstance(excl, bool):
+        n_excl = int(audit.get("n_excl_leaked") or 0)
+        k_excl = int(round(float(excl) * n_excl)) if n_excl else 0
+        _, lo, hi = wilson(k_excl, n_excl) if n_excl else (None, None, None)
+        out.update({
+            "score": round(100.0 * float(excl), 2),
+            "lo": None if lo is None else round(100.0 * lo, 2),
+            "hi": None if hi is None else round(100.0 * hi, 2),
+            "n": n_excl or out["n"],
+            "metric": f"{metric}_excl_leaked",
+            "contaminated": True,
+            "raw_score": round(100.0 * float(src["score"]), 2),
+            "raw_n": src.get("n") or side.get("n"),
+            "leaked": audit.get("n_leaked"), "leaked_resolved": audit.get("n_leaked_resolved"),
+            "leak_scanned": audit.get("n_trials_scanned"), "leak_kinds": audit.get("by_kind"),
+            "leak_rule": audit.get("rule"), "leak_date": audit.get("date"),
+        })
+    return out
 
 
 OLDCAP_RUN_MARK = "-oldcap"
@@ -1259,10 +1283,24 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
     for card in cards:
         for row in card.get("rows") or []:
             env = row.get("env")
-            if not env or env in out or row.get("temperature") != BENCH_TEMPERATURE:
+            if not env or row.get("temperature") != BENCH_TEMPERATURE:
                 continue
             side_rec = row.get(side) or {}
             if not is_current_cap_row(card, row, side_rec, caps):
+                continue
+            if env in out:
+                # an older card may carry the leak-audited stamp of the SAME measurement
+                # (re-published cards copy the cell without the audit): the audited
+                # version wins over an unaudited copy with the same raw score and n
+                cur = out[env]
+                if (side_rec.get("contaminated") and not cur.get("contaminated")
+                        and cur.get("score") is not None):
+                    val = bench_value(side_rec, env)
+                    if val and val.get("contaminated") and val.get("raw_score") == cur.get("score") \
+                            and (val.get("raw_n") or None) == (cur.get("n") or None):
+                        val.update(run_id=card.get("run_id"), mode=card.get("mode"),
+                                   created_at=card.get("created_at"), kind="bench")
+                        out[env] = val
                 continue
             if side_rec.get("status") == "running":
                 # started cell whose Harbor job is alive (publish.py 2026-09-23): n of
@@ -1771,6 +1809,9 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
             "markers": f"‡ = cap-bound: more than {int(CAP_BOUND_FRAC * 100)}% of the model's replies hit the "
                        "completion cap and scored 0, so the number is a lower bound; ⚖ = judge-graded "
                        "(graded = llm_judge): an LLM judge graded the rollouts — advisory, never part of the score; "
+                       "⚠ = contaminated (leak audit): a share of the SWE trials fetched upstream code "
+                       "(sandboxes had outbound internet); the value shown is the score over the trials "
+                       "that did not leak, the raw score is in the tooltip; "
                        f"{TRAINED_MARK} = trained environment: {TRAINED_LEGEND} (column header: the environment is in D; "
                        "cell: the king was crowned after the admission, so it may have trained on it; "
                        + ", ".join(f"{e} since {v[0][:10]}" for e, v in BENCH_TRAINED_ENVS.items()) + ")",
