@@ -62,11 +62,32 @@ def _proc_cmdlines() -> list[str]:
 
 
 def passlog_alive(pod: str, rel_dir: str, cmdlines: list[str]) -> bool:
-    """pod_audit.py's rule: a pass log that names the pod, written in the
-    last 3 h, without a .exit sibling; or a live process naming the pod."""
+    """A benchsuite pass owns the pod while it runs. Alive when any of:
+    * a live process names the pod on its command line;
+    * a `pass-<run>.pid` in the state dir holds a LIVE pid and that run's
+      log (`<run>.log`) names the pod (2026-09-24 21:25: a fast pass is
+      silent for hours while a long cell runs — Albedo's chat1 was released
+      mid-BFCL, reign 12's fenced @4h250 at 499/500 — so the pid, not the
+      log's mtime, is the liveness signal);
+    * (legacy) a pass log naming the pod written in the last 3 h without a
+      .exit sibling."""
     if any(pod in c for c in cmdlines):
         return True
     d = (REPO / rel_dir).resolve()
+    for pf in d.glob("pass-*.pid"):
+        try:
+            pid = int(pf.read_text().strip() or 0)
+        except (OSError, ValueError):
+            continue
+        if pid <= 0 or not common.pid_alive(pid):
+            continue
+        run_id = pf.stem[len("pass-"):]
+        lp = d / f"{run_id}.log"
+        try:
+            if lp.exists() and pod in lp.read_text(errors="replace"):
+                return True
+        except OSError:
+            continue
     cutoff = common.now() - 3 * 3600
     for lp in d.glob("*.log"):
         try:
@@ -240,8 +261,9 @@ class Reaper:
 
     # -- lifetime rules (2026-09-22): a registered pod is released only when
     #    (a) its owner wrote the completion marker (registry `done`), or
-    #    (b) its heartbeat is stale > heartbeat_stale_min AND its vLLM has served
-    #        nothing for idle_min (no signal = no release), or
+    #    (b) its heartbeat is stale > heartbeat_stale_min AND its owner is DEAD
+    #        AND its vLLM has served nothing for idle_min (no signal = no
+    #        release; owner alive or unknown = page, never release — 2026-09-24), or
     #    (c) it reaches expected_hours — a hard CEILING that pages at
     #        ceiling_page_frac first. Fixed lifetimes alone killed six env
     #        serving boxes overnight while their drivers still used them.
@@ -451,11 +473,25 @@ class Reaper:
                           f"`python ops/pods/registry.py extend {name} --hours H` or it is released at {exp:.0f} h",
                           dedupe_h=max(0.5, (1 - frac) * exp / 2))
                 report["problems"].append(f"ceiling soon {name} ({age_h:.0f}/{exp:.0f} h)")
-            elif hb_age_min > stale_min and idle_s is not None and idle_s >= idle_min * 60:
+            elif hb_age_min > stale_min and alive is not False and bool(r.get("require_owner_dead_for_idle_release", True)):
+                # 2026-09-24: rule (b) alone released two live benchsuite pods
+                # (chat cells talk to 127.0.0.1 and multi-replica boxes hide
+                # their /metrics behind one replica, so "idle" lies). A stale
+                # heartbeat with a live (or unknown) owner pages; only `done`,
+                # the ceiling, or stale + owner DEAD + idle release.
+                row["decision"] = "stale_owner_alive"
+                self.warn(f"stale_alive:{name}", f"`{name}` ({rec.get('purpose')}, ${price:.2f}/h, age {age_h:.1f} h): "
+                          f"no owner heartbeat for {hb_age_min:.0f} min but owner `{rec.get('owner')}` is "
+                          f"{'alive' if alive else 'unknown'}"
+                          f"{'' if idle_s is None else f' (vLLM idle {idle_s / 60:.0f} min)'} — NOT released; "
+                          f"`registry.py touch {name}` keeps it quiet, `registry.py done {name}` releases it",
+                          dedupe_h=6)
+                report["problems"].append(f"stale heartbeat, owner alive {name}")
+            elif hb_age_min > stale_min and alive is False and idle_s is not None and idle_s >= idle_min * 60:
                 row["decision"] = "release_stale_idle"
                 report["actions"].append(self.release(
-                    pod, name, f"no owner heartbeat for {hb_age_min:.0f} min and no /v1 request for "
-                               f"{idle_s / 60:.0f} min (owner `{rec.get('owner')}` {'alive' if alive else 'dead'})", rec))
+                    pod, name, f"no owner heartbeat for {hb_age_min:.0f} min, owner `{rec.get('owner')}` dead, "
+                               f"and no /v1 request for {idle_s / 60:.0f} min", rec))
             elif hb_age_min > stale_min and idle_s is None:
                 row["decision"] = "stale_no_idle_signal"
                 self.warn(f"stale:{name}", f"`{name}` ({rec.get('purpose')}, ${price:.2f}/h, age {age_h:.1f} h): "
