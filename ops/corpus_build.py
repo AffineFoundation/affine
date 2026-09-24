@@ -309,6 +309,110 @@ def decontaminated(env: dict) -> str | None:
 def is_backfill(env: dict, chunk_key: str = "") -> bool:
     pid = str((env.get("policy") or {}).get("id") or "")
     return pid.startswith(BACKFILL_POLICY_PREFIX) or str(chunk_key).startswith(BACKFILL_CHUNK_PREFIX)
+
+
+# -- bench_fail: the benchsuite's failed king trials as their own group ----------
+# Jacob 2026-09-24 17:53/17:56 UTC ("add the failure runs from the benchmarks
+# into the dataset ... upsampling the runs where we are doing badly"; mode (a)
+# DIRECT approved: "a fair backward pass at this point in the training").
+# ops/bench_fail/ingest.py publishes king-failed / teacher-passed benchmark
+# trials as envelopes with source `bench_<suite>` and policy `bench_<harness>`
+# into the SEPARATE prefix traces-bench/ (own manifest). The fold reads that
+# manifest only when `[decontamination].allow_bench_groups` names the group
+# and `[bench_fail].mode = "direct"`; every record of a `bench_*` source is
+# routed here (group bench_fail, stratum bench_fail:<suite>:NNNN with the
+# per-suite bucket share weighted toward the suites the sitting king does
+# worst on), and the corpus manifest stamps `trained_on[<suite>]` from the
+# first epoch that admitted rows -- the kingboard shows those columns as
+# "trained on since <epoch>". Knob off (default) = fail-closed: a `bench_*`
+# record that reaches the fold by any other path is dropped
+# (`bench_not_allowed`). Mode "variants" is the alternative (teacher-
+# synthesised variants of the failed tasks, like scicomp / terminal_gen):
+# direct rows are then refused and the variants enter through their own
+# generated source with [GEN:] uids -- not built yet, the knob exists so the
+# switch is one line.
+BENCH_SOURCE_PREFIX = "bench_"
+BENCH_FAIL: dict = {}
+
+
+def load_bench_fail() -> dict:
+    raw = tomllib.loads(SOURCES_TOML.read_text())
+    cfg = raw.get("bench_fail") or {}
+    allow = [str(g) for g in ((raw.get("decontamination") or {}).get("allow_bench_groups") or [])]
+    group = str(cfg.get("group") or "bench_fail")
+    return {
+        "group": group,
+        "enabled": bool(cfg.get("enabled", True)) and group in allow,
+        "mode": str(cfg.get("mode") or "direct"),
+        "traces_prefix": str(cfg.get("traces_prefix") or "traces-bench/"),
+        "strata_buckets": int(cfg.get("strata_buckets") or 0),
+        "min_reign": int(cfg.get("min_reign") or 0),
+        "suite_weights": cfg.get("suite_weights") or "auto",
+        "min_suite_buckets": int(cfg.get("min_suite_buckets") or 20),
+        "kingboard_matrix": str(cfg.get("kingboard_matrix") or "https://kings.affine.io/api/matrix.json"),
+    }
+
+
+def bench_suite_weights(cfg: dict, suites: list[str]) -> dict[str, float]:
+    """Share of the group's buckets per suite. "auto" = proportional to
+    (1 - sitting king's score / 100) on that benchmark column (upsample where
+    the king does worst; a suite without a cell gets the mean weight); a
+    table {suite: w} is used as given. Normalised to sum 1."""
+    w: dict[str, float] = {}
+    sw = cfg.get("suite_weights")
+    if isinstance(sw, dict):
+        w = {str(k): float(v) for k, v in sw.items() if str(k) in suites}
+    else:
+        scores: dict[str, float] = {}
+        try:
+            import httpx
+            m = httpx.get(cfg["kingboard_matrix"], headers={"User-Agent": "affine-fold-bench-fail/0.1"}, timeout=30).json()
+            row = next((r for r in m.get("rows", []) if r.get("kind") == "king" and r.get("current")), None)
+            cols = {c["key"]: c for c in m.get("columns", []) if c.get("kind") == "bench"}
+            for key, c in cols.items():
+                v = ((row or {}).get("cells") or {}).get(key) or {}
+                if isinstance(v.get("score"), (int, float)):
+                    scores[str(c.get("env") or key.split(":", 1)[-1]).replace("-", "_")] = float(v["score"])
+        except Exception as e:  # noqa: BLE001
+            log(f"bench_fail: kingboard matrix unreachable ({e!r}); equal suite weights")
+        mean_gap = (sum(1 - x / 100.0 for x in scores.values()) / len(scores)) if scores else 0.5
+        for s0 in suites:
+            slug = s0.removeprefix(BENCH_SOURCE_PREFIX)
+            w[s0] = max(0.05, 1 - scores[slug] / 100.0) if slug in scores else max(0.05, mean_gap)
+    tot = sum(w.values()) or 1.0
+    return {k: v / tot for k, v in w.items()}
+
+
+def route_bench_fail(records: list[dict], cfg: dict, drops: dict[str, int]) -> list[dict]:
+    """Records of `bench_*` sources -> group bench_fail with a per-suite
+    bucketed stratum; everything else passes through. Fail-closed when the
+    knob is off or the mode is not direct."""
+    bench = [r for r in records if str(r.get("source") or "").startswith(BENCH_SOURCE_PREFIX)]
+    if not bench:
+        return records
+    out = [r for r in records if not str(r.get("source") or "").startswith(BENCH_SOURCE_PREFIX)]
+    if not cfg.get("enabled") or cfg.get("mode") != "direct" or cfg["strata_buckets"] <= 0:
+        drops["bench_not_allowed"] = drops.get("bench_not_allowed", 0) + len(bench)
+        return out
+    suites = sorted({str(r["source"]) for r in bench})
+    weights = bench_suite_weights(cfg, suites)
+    buckets = {s0: max(cfg["min_suite_buckets"], int(round(cfg["strata_buckets"] * weights.get(s0, 0.0)))) for s0 in suites}
+    log(f"bench_fail: suites {suites}, weights { {k: round(v, 3) for k, v in weights.items()} }, buckets {buckets}")
+    for rec in bench:
+        if (rec.get("outcome") or "unscored") != "failed":
+            drops["bench_not_failed"] = drops.get("bench_not_failed", 0) + 1
+            continue
+        reign = (rec.get("task") or {}).get("reign") if isinstance(rec.get("task"), dict) else None
+        if cfg["min_reign"] and isinstance(reign, int) and reign < cfg["min_reign"]:
+            drops["bench_old_reign"] = drops.get("bench_old_reign", 0) + 1
+            continue
+        src = str(rec["source"])
+        key = str(rec.get("instance_id") or rec.get("traj_id"))
+        h = int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:8], 16)
+        rec["stratum"] = f"{cfg['group']}:{src.removeprefix(BENCH_SOURCE_PREFIX)}:{h % buckets[src]:04d}"
+        rec["fold_group"] = cfg["group"]
+        out.append(rec)
+    return out
 KING_GROUPS = ("king_fail", KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_DIVERGENCE_GROUP,
                KING_TOOLUSE_GROUP, KING_PIVOT_GROUP, KING_LOOP_GROUP, COMPLETION_PRE_GROUP,
                KING_COACHED_GROUP)
@@ -3723,6 +3827,21 @@ def main() -> None:
     state = load_state()
 
     traces_manifest, traces_sha = pub.manifest(cfg.dataset.traces_manifest_key)
+    BENCH_FAIL.clear(); BENCH_FAIL.update(load_bench_fail())
+    bench_sha = None
+    if BENCH_FAIL.get("enabled") and BENCH_FAIL.get("mode") == "direct":
+        try:
+            bench_manifest, bench_sha = pub.manifest(BENCH_FAIL["traces_prefix"] + "manifest.json")
+            extra_chunks = [c for c in bench_manifest.get("chunks", [])
+                            if c["key"] not in {x["key"] for x in traces_manifest["chunks"]}]
+            traces_manifest["chunks"] = list(traces_manifest["chunks"]) + extra_chunks
+            log(f"bench_fail: direct mode ON -- {len(bench_manifest.get('chunks', []))} bench trace chunk(s) "
+                f"({bench_manifest.get('n_rollouts')} rollouts) from {BENCH_FAIL['traces_prefix']} joined the fold "
+                f"(manifest {str(bench_sha)[:12]})")
+        except Exception as e:  # noqa: BLE001
+            log(f"bench_fail: {BENCH_FAIL['traces_prefix']}manifest.json unreadable ({e!r}); no bench rows this fold")
+    else:
+        log(f"bench_fail: off (allow_bench_groups={'on' if BENCH_FAIL.get('enabled') else 'off'}, mode={BENCH_FAIL.get('mode')})")
     legacy_manifest, legacy_sha = pub.manifest("turns/manifest.json")
 
     if state["pending"]:
@@ -4088,6 +4207,16 @@ def main() -> None:
         f"({sum(len(r['turns']) for r in candidates if r.get('fold_group') == 'king_fail')} turns), "
         f"dropped {n_before - len(candidates)} {king_drops or ''}")
     for k, v in king_drops.items():
+        drops[k] = drops.get(k, 0) + v
+    n_before = len(candidates)
+    bench_drops: dict[str, int] = {}
+    candidates = route_bench_fail(candidates, BENCH_FAIL, bench_drops)
+    n_bench = sum(1 for r in candidates if r.get("fold_group") == BENCH_FAIL.get("group"))
+    if n_bench or bench_drops:
+        log(f"bench_fail: {n_bench} failed benchmark trials -> {BENCH_FAIL.get('group')} "
+            f"({sum(len(r['turns']) for r in candidates if r.get('fold_group') == BENCH_FAIL.get('group'))} turns), "
+            f"dropped {n_before - len(candidates)} {bench_drops or ''}")
+    for k, v in bench_drops.items():
         drops[k] = drops.get(k, 0) + v
     n_before = len(candidates)
     candidates = drop_excluded_routed(candidates, routed, drops)
@@ -4545,6 +4674,19 @@ def main() -> None:
         log("yield (accepted turns this fold / strata over target): " + ", ".join(
             f"{g} {v['accepted_turns_this_fold']}/{v['strata_over_target']}" for g, v in yrep["groups"].items()
             if v["accepted_turns_this_fold"] or (v["strata_over_target"] or 0) < 1))
+        # trained_on: any bench_* source with admitted records this fold flips
+        # its suite (once; the first epoch stays).
+        epoch_next = (int(live["corpus_epoch"]) if live else 0) + 1
+        if BENCH_FAIL.get("enabled"):
+            tr = dict(state.get("trained_on") or {})
+            for src0, y0 in (yrep.get("sources") or {}).items():
+                if str(src0).startswith(BENCH_SOURCE_PREFIX) and int((y0 or {}).get("records") or 0) > 0:
+                    suite = str(src0).removeprefix(BENCH_SOURCE_PREFIX)
+                    tr.setdefault(suite, {"since_epoch": epoch_next, "since": datetime.now(timezone.utc).date().isoformat(),
+                                          "group": BENCH_FAIL.get("group"), "mode": BENCH_FAIL.get("mode")})
+            if tr != (state.get("trained_on") or {}):
+                log(f"trained_on: {sorted(set(tr) - set(state.get('trained_on') or {}))} flip this fold")
+            state["trained_on"] = tr
         write_fold_stats((int(live["corpus_epoch"]) if live else 0) + 1, after, turns_by_group, recurrence,
                          curriculum, mix, sum(turns_by_group.values()), None if args.no_publish else publisher,
                          sim_rows=sim_rows_src, src2grp=src2grp,
@@ -4552,7 +4694,8 @@ def main() -> None:
                                 "yield": {**yrep, "gate_state": (gate_report or {}).get("gate_state"),
                                           "gate_reason": (gate_report or {}).get("gate_reason")},
                                 "admission_gate": gate_report or None,
-                                "band_filter": band_report or None})
+                                "band_filter": band_report or None,
+                                "trained_on": state.get("trained_on") or {}})
 
     n_new = sum(len(r["turns"]) for r in selected)
     stale = False
@@ -4605,6 +4748,11 @@ def main() -> None:
         "yield_sources": yrep["sources"] if STRATA_BUDGET else None,
         "admission_gate": gate_report or None,
         "band_filter": band_report or None,
+        # Benchmark columns whose failed trials enter D directly (bench_fail):
+        # {suite: {since_epoch, since, group, mode}} -- persists from the first
+        # admitting fold on; the kingboard renders "trained on since <epoch>".
+        "trained_on": state.get("trained_on") or {},
+        "bench_traces_manifest_sha256": bench_sha,
         "gate_enforced": sorted(gate["apply_groups"]) if gate else None,
         "budget_signature": budget_cfg.get("signature") if budget_cfg else None,
         "budget_migrated": budget_migrated,
