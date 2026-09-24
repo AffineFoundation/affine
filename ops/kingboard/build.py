@@ -173,6 +173,28 @@ GENESIS_MODEL = "Qwen/Qwen3.6-35B-A3B"
 # paid). Rendered as a reference row just above Genesis. Notes per label.
 REFERENCE_NOTES = {
     "occamy-1.0": "Accio-Lab/occamy-1.0 — Alibaba, Qwen3.6-35B-A3B post-train, admissible reference; not a king",
+    "albedo-cxxvii": ("reference: SN97 king — Albedo (Bittensor subnet 97) sitting king CXXVII, "
+                      "dendriteholdings/albedo-qwen3.6-35b-king-CXXVII @ e920362b460a…; mirror of the "
+                      "private-store model sha256:9c4d837a…; crowned on Albedo 2026-09-20 with 0.762 vs 0.725 "
+                      "over CXXVI; not an Affine reign, never paid"),
+}
+# Display names for reference rows whose card label is a machine key.
+REFERENCE_LABELS = {
+    "albedo-cxxvii": "Albedo CXXVII",
+}
+# Reference rows sit between the kings and Genesis; higher = closer to Genesis
+# (operator 2026-09-24: Albedo directly above Genesis, below Occamy).
+REFERENCE_ORDER = {
+    "occamy-1.0": 0,
+    "albedo-cxxvii": 1,
+}
+# Reference rows that exist before (or without) a benchmark card: the row is
+# created from this registry so its env cells (king seat / backfill rollouts
+# under `king-<digest12>`) and in-flight pass markers show while the card is
+# still publishing. A card with the same label merges into the same row.
+REFERENCE_ROWS = {
+    "albedo-cxxvii": {"hf_repo": "dendriteholdings/albedo-qwen3.6-35b-king-CXXVII",
+                      "hf_revision": "e920362b460ae6b2a33c9cb298aa7f14a38d5584"},
 }
 GENESIS_DIGEST12 = "995ad96eacd9"     # HF revision 995ad96e… = reign 0 (seed)
 TEACHER_DIGEST12 = "1d4bf0f2ff60"     # HF revision 1d4bf0f2… of Qwen/Qwen3.8-27B (cards that bench the teacher itself)
@@ -1673,15 +1695,18 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
     reign_envs = {r["digest12"]: {e["source"]: e for e in r.get("envs") or []}
                   for r in stats.get("reigns") or []}
     rows = matrix_rows_meta(stats)
-    for i, (label, lst) in enumerate(sorted(reference_cards.items())):
-        kb = lst[0].get("king") or {}
-        rev = str(kb.get("hf_revision") or "")
+    ref_labels = set(reference_cards) | set(REFERENCE_ROWS)
+    for i, label in enumerate(sorted(ref_labels, key=lambda l: (REFERENCE_ORDER.get(l, 50), l))):
+        lst = reference_cards.get(label) or []
+        kb = (lst[0].get("king") if lst else None) or {}
+        reg = REFERENCE_ROWS.get(label) or {}
+        rev = str(kb.get("hf_revision") or reg.get("hf_revision") or "")
         rows.append({
-            "key": f"ref:{label}", "kind": "reference", "label": label[:1].upper() + label[1:],
-            "model": kb.get("hf_repo") or kb.get("repo") or label, "hf_revision": rev,
-            "digest12": card_digest12(lst[0]),
-            "sub": f"{kb.get('hf_repo') or label}{' @ ' + rev[:8] if rev else ''}",
-            "tip": REFERENCE_NOTES.get(label, f"{kb.get('hf_repo') or label} — reference model (open checkpoint "
+            "key": f"ref:{label}", "kind": "reference", "label": REFERENCE_LABELS.get(label, label[:1].upper() + label[1:]),
+            "model": kb.get("hf_repo") or kb.get("repo") or reg.get("hf_repo") or label, "hf_revision": rev,
+            "digest12": (card_digest12(lst[0]) if lst else (rev[:12] or None)),
+            "sub": f"{kb.get('hf_repo') or reg.get('hf_repo') or label}{' @ ' + rev[:8] if rev else ''}",
+            "tip": REFERENCE_NOTES.get(label, f"{kb.get('hf_repo') or reg.get('hf_repo') or label} — reference model (open checkpoint "
                                               "of the genesis family, benchmarked for comparison); not a king, never paid"),
             "order": 1000 + i,
         })
@@ -1761,7 +1786,7 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
               and not r["current"]]
     rows = [r for r in rows if r not in hidden]
     genesis_row = next((r for r in rows if r["kind"] == "genesis"), None)
-    refs = [r for r in rows if r["kind"] == "reference"]
+    refs = sorted([r for r in rows if r["kind"] == "reference"], key=lambda r: r["order"])
     rows = [r for r in rows if r["kind"] != "reference" and r is not genesis_row] + refs \
         + ([genesis_row] if genesis_row else [])
     for i, r in enumerate(rows):
