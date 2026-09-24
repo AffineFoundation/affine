@@ -43,6 +43,7 @@ from affine import dialects
 from affine.corpus.materialize import materialize_turn
 from affine.corpus.trace import (TURN_CAP_STOP, real_errors,
                                  trace_conversations, trace_error_type)
+from affine.corpus.upstream import prefix_has_upstream_fetch
 from datagen.slicer import MAX_PREFIX_CHARS, slice_messages
 
 VIEW_SPEC = "duel_turns@v4"
@@ -347,7 +348,9 @@ def validate_turns(records: list[dict], *, panel: PanelKeys | None = None,
     dialect outside it is refused; None admits every REGISTERED dialect
     (staging semantics: a not-yet-admitted dialect builds its backlog).
     `leak_check=False` waives `reference_leaked_into_prefix` only (the
-    fold's `king_loop_onset` turns); every other rule still applies."""
+    fold's `king_loop_onset` turns); every other rule still applies.
+    `upstream_fetch` still applies in that case: a prefix that already
+    holds a GitHub patch or an upstream clone is not a fair reference."""
     panel_ids, panel_repos, panel_bare = panel or (set(), set(), set())
     kinds = tuple(allowed_kinds) if allowed_kinds is not None \
         else tuple(dialects.DIALECTS)
@@ -396,6 +399,9 @@ def validate_turns(records: list[dict], *, panel: PanelKeys | None = None,
             continue
         if leak_check and reference_leaks(prefix, action):
             drop("reference_leaked_into_prefix")
+            continue
+        if prefix_has_upstream_fetch(prefix):
+            drop("upstream_fetch")
             continue
         seen.add(turn_id)
         kept.append(rec)

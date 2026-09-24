@@ -1248,12 +1248,16 @@ def yield_report(after: dict[str, int], mix: dict[str, float], group_turns: dict
                         "top_drops": [{"reason": k, "n": v} for k, v in top]}
     subl = {k[len("king_divergence_sublabel_"):]: v for k, v in (NOTES_GLOBAL or {}).items()
             if k.startswith("king_divergence_sublabel_")}
+    upstream_fetch_turns = sum(y["drops"].get("upstream_fetch", 0) for y in YIELD.values())
     return {"groups": groups, "sources": sources, "by_king": dict(YIELD_BY_KING),
             # tau2-airline read (2026-09-18): "acted with a schema example value
             # where the teacher asked", per fold and per king digest, so the
             # rate can be tracked reign over reign.
             "divergence_sublabels": subl,
-            "interactive_prose_turns": int((NOTES_GLOBAL or {}).get("interactive_prose_turns", 0))}
+            "interactive_prose_turns": int((NOTES_GLOBAL or {}).get("interactive_prose_turns", 0)),
+            # Turns whose prefix already held a successful GitHub / upstream
+            # fetch (affine.corpus.upstream). New derivations drop them.
+            "upstream_fetch_turns": upstream_fetch_turns}
 
 
 def write_fold_stats(epoch: int, after: dict[str, int], turns_by_group: dict[str, int],
@@ -3536,6 +3540,15 @@ def yield_line(info: dict) -> str:
         "; full per-source table in corpus/fold_stats.json.\n"
 
 
+def upstream_line(info: dict) -> str:
+    extra = info.get("yield_extra") or {}
+    if "upstream_fetch_turns" not in extra:
+        return ""
+    n = int(extra.get("upstream_fetch_turns") or 0)
+    return (f"Upstream fetch: {n} new turns dropped because the prefix already "
+            "held a GitHub fetch, an upstream clone, or a package download.\n")
+
+
 def sublabel_line(info: dict) -> str:
     y = info.get("yield_extra") or {}
     subl = y.get("divergence_sublabels") or {}
@@ -3592,7 +3605,7 @@ def announce(state: dict, public_base: str) -> None:
            if info.get("n_backfill_excluded") else "")
         + budget_note(info)
         + (f"{info['curriculum_line']}\n" if info.get("curriculum_line") else "")
-        + floors_line(info) + yield_line(info) + gate_line(info) + sublabel_line(info)
+        + floors_line(info) + yield_line(info) + upstream_line(info) + gate_line(info) + sublabel_line(info)
         + "\n"
         f"- corpus_epoch: **{epoch}**\n"
         f"- schema_version: **3** (view `{VIEW_SPEC}`: one record per rollout "
@@ -4587,7 +4600,8 @@ def main() -> None:
         "yield_groups": yrep["groups"] if STRATA_BUDGET else None,
         "yield_extra": {"divergence_sublabels": yrep.get("divergence_sublabels"),
                         "interactive_prose_turns": yrep.get("interactive_prose_turns"),
-                        "by_king": yrep.get("by_king")} if STRATA_BUDGET else None,
+                        "by_king": yrep.get("by_king"),
+                        "upstream_fetch_turns": yrep.get("upstream_fetch_turns", 0)} if STRATA_BUDGET else None,
         "yield_sources": yrep["sources"] if STRATA_BUDGET else None,
         "admission_gate": gate_report or None,
         "band_filter": band_report or None,
