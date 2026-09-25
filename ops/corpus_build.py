@@ -350,6 +350,14 @@ def load_bench_fail() -> dict:
         "suite_weights": cfg.get("suite_weights") or "auto",
         "min_suite_buckets": int(cfg.get("min_suite_buckets") or 20),
         "kingboard_matrix": str(cfg.get("kingboard_matrix") or "https://kings.affine.io/api/matrix.json"),
+        # Outcomes the router admits. The ingest already keeps only graded-0,
+        # non-infra trials; the fold's generic rollout_outcome files a
+        # harness end state it does not know (BFCL "done" / "user_closed",
+        # tau2 "user_completed" / "tau2_too_many_errors", a mini-swe trial
+        # that hit ContextWindowExceeded) under `errored`. Those are king
+        # failures, so "errored" is admitted by default -- 7,778 of the
+        # first 13,846 routed trials (2026-09-25).
+        "accept_outcomes": frozenset(str(x) for x in (cfg.get("accept_outcomes") or ["failed", "errored"])),
     }
 
 
@@ -398,10 +406,15 @@ def route_bench_fail(records: list[dict], cfg: dict, drops: dict[str, int]) -> l
     weights = bench_suite_weights(cfg, suites)
     buckets = {s0: max(cfg["min_suite_buckets"], int(round(cfg["strata_buckets"] * weights.get(s0, 0.0)))) for s0 in suites}
     log(f"bench_fail: suites {suites}, weights { {k: round(v, 3) for k, v in weights.items()} }, buckets {buckets}")
+    by_stop: dict[str, int] = {}
     for rec in bench:
-        if (rec.get("outcome") or "unscored") != "failed":
+        oc = rec.get("outcome") or "unscored"
+        if oc not in cfg["accept_outcomes"]:
             drops["bench_not_failed"] = drops.get("bench_not_failed", 0) + 1
             continue
+        if oc != "failed":
+            k = f"{oc}/{rec.get('stop_condition') or '-'}"
+            by_stop[k] = by_stop.get(k, 0) + 1
         reign = (rec.get("task") or {}).get("reign") if isinstance(rec.get("task"), dict) else None
         if cfg["min_reign"] and isinstance(reign, int) and reign < cfg["min_reign"]:
             drops["bench_old_reign"] = drops.get("bench_old_reign", 0) + 1
@@ -412,6 +425,8 @@ def route_bench_fail(records: list[dict], cfg: dict, drops: dict[str, int]) -> l
         rec["stratum"] = f"{cfg['group']}:{src.removeprefix(BENCH_SOURCE_PREFIX)}:{h % buckets[src]:04d}"
         rec["fold_group"] = cfg["group"]
         out.append(rec)
+    if by_stop:
+        log(f"bench_fail: non-`failed` outcomes admitted by stop condition {by_stop}")
     return out
 KING_GROUPS = ("king_fail", KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_DIVERGENCE_GROUP,
                KING_TOOLUSE_GROUP, KING_PIVOT_GROUP, KING_LOOP_GROUP, COMPLETION_PRE_GROUP,
@@ -2117,11 +2132,29 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         text_replies = frozenset(i for i, k in kind_stamp.items() if k == dialects.TEXT_KIND) | frozenset(divergence_waive)
         for i in divergence_waive:
             kind_stamp[i] = kind           # slicer admits via text; meta reverts to the policy dialect
+        # bench_fail chat suites (2026-09-25, PR #72 stamps): the benchsuite
+        # prompt states the answer format in the first USER turn
+        # (`task.mandate_ok`, `mandate_role = "user"`) -> the first-system-
+        # message marker check is skipped; a reasoning-only failure
+        # (`task.reply_visible_empty`: thinks until the cap, never answers)
+        # is recorded for its PREFIX like a king_divergence row -- the duel
+        # samples fresh teacher refs and the miner's reply, the stored one
+        # is never scored.
+        _task0 = env.get("task") if isinstance(env.get("task"), dict) else {}
+        bench_rec = str(env.get("source") or "").startswith(BENCH_SOURCE_PREFIX)
+        bench_mandate = bool(bench_rec and _task0.get("mandate_ok"))
+        bench_waived = frozenset(range(10_000)) if bench_rec and _task0.get("reply_visible_empty") else frozenset()
+        if bench_mandate:
+            _count(notes, "bench_mandate_exempt")
+        if bench_waived:
+            _count(notes, "bench_reasoning_only")
+            _count(notes, f"bench_reasoning_only_{env.get('source')}")
         try:
             rec = build_view_record(env, baker=baker,
                                     generated_at=env.get("stored_at"),
                                     convs=convs, leak_exempt=leak_exempt,
-                                    text_replies=text_replies)
+                                    text_replies=text_replies,
+                                    waived_replies=bench_waived)
         except (ToolParityError, TraceShapeError) as e:
             _count(drops, type(e).__name__)
             continue
@@ -2168,7 +2201,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         if n_later:
             _count(drops, "king_later_onset", n_later)
         kept, d = validate_turns(rest, panel=panel, allowed_kinds=allowed_kinds,
-                                 leak_check=not leak_exempt_all)
+                                 leak_check=not leak_exempt_all,
+                                 mandate_exempt=bench_mandate, reference_waived=bool(bench_waived))
         for k, v in d.items():
             _count(drops, k, v)
         kept_routed: list[dict] = []
@@ -2177,7 +2211,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             if not gturns:
                 continue
             kg, d = validate_turns(gturns, panel=panel, allowed_kinds=allowed_kinds,
-                                   leak_check=not cfgs[g]["leak_exempt"])
+                                   leak_check=not cfgs[g]["leak_exempt"],
+                                   mandate_exempt=bench_mandate, reference_waived=bool(bench_waived))
             kept_routed += kg
             for k, v in d.items():
                 _count(drops, k, v)
@@ -2222,6 +2257,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             _count(drops, "king_fail_cap", len(keep_idx) - len(capped))
             keep_idx = capped
         metas = rec["turns"]
+        if bench_waived:
+            metas = [{**m, "bench": {"reasoning_only": True}} for m in metas]
         rec["turns"] = [m for m in metas if m["turn_idx"] in keep_idx]
         if is_king_fail:
             rec["n_replies"] = len(main)
