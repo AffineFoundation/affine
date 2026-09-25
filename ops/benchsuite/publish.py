@@ -128,6 +128,10 @@ def scorecard(run_dir: Path) -> dict:
                                             + float(m2.get("prime_spent_usd") or 0), 2)
     cells = {}
     for summ_path in sorted(run_dir.glob("*/*/summary.json")):
+        try:
+            float(summ_path.parent.name.rpartition("__t")[2])
+        except ValueError:
+            continue   # moved-aside cell (__t0.dead-18, __t0.contended-HHMM): its summary must not shadow the live cell
         s = json.loads(summ_path.read_text())
         s = {k: v for k, v in s.items() if k != "rollouts"}
         cells.setdefault(s["env"], {}).setdefault(f"t{s['temperature']:g}", {})[s["model"]] = s
@@ -200,6 +204,10 @@ def scorecard(run_dir: Path) -> dict:
         out = {"score": None if (failed or infra_cut) else x["score"], "ci95": None if (failed or infra_cut) else x["ci95"], "n": x["n"],
                "n_errored": x["n_errored"], "n_timeout": x.get("n_timeout"), "n_context_overflow": x.get("n_context_overflow"),
                "n_infra_env": x.get("n_infra_env"), "n_live": x.get("n_live"), "served_gpu": x.get("served_gpu"),
+               # 2026-09-24 network-leak audit (sandboxes had outbound internet): the cell stays, flagged
+               "contaminated": bool(x.get("contaminated")), "leak_audit": x.get("leak_audit"),
+               # harbor cells since 2026-09-24: {"mode": "agent-allowlist" | "public", "allowed_hosts": [...]}
+               "network": x.get("network"),
                "finished_only": None if (failed or infra_cut) else x.get("finished_only"), "completion_tokens": x["completion_tokens"],
                "prompt_tokens": x["prompt_tokens"], "wall_seconds": x.get("wall_seconds"),
                "finish_length_frac": x.get("finish_length_frac"),

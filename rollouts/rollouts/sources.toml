@@ -52,8 +52,8 @@
 # derived mass: >= 25 % of every slice (16.8 % at epoch 44), taken from the
 # coding / terminal teacher-trajectory turns (floor 40 % kept: buckets 6030 /
 # 3700 -> 4000 / 2600), k = 3 sub-strata on every stop-state group.
-coding = 0.23   # 0.36 -> 0.34 (king_coached) -> 0.28 (phase 10) -> 0.25 (2026-09-21 agentic_ops / long_context) -> 0.24 (2026-09-21 22:25: 0.01 to completion so the static stop-state block meets its 0.25 floor) -> 0.23 (2026-09-22 sci_code; coding + terminal = 0.40 = floor)
-terminal = 0.17 # 0.22 -> 0.18 (phase 10) -> 0.17 (2026-09-21)
+coding = 0.21   # 0.36 -> 0.34 (king_coached) -> 0.28 (phase 10) -> 0.25 (2026-09-21 agentic_ops / long_context) -> 0.24 (2026-09-21 22:25: 0.01 to completion so the static stop-state block meets its 0.25 floor) -> 0.23 (2026-09-22 sci_code; coding + terminal = 0.40 = floor) -> 0.21 (2026-09-24 bench_fail 0.02)
+terminal = 0.15 # 0.22 -> 0.18 (phase 10) -> 0.17 (2026-09-21) -> 0.15 (2026-09-24 bench_fail 0.02)
 nl2repo = 0.01
 math = 0.02
 tool_use = 0.02
@@ -125,6 +125,18 @@ long_context = 0.03
 # pre-pass rollouts publish.
 science = 0.05
 sci_code = 0.02
+# 2026-09-24 17:53/17:56 UTC (Jacob: "add the failure runs from the benchmarks
+# into the dataset ... upsampling the runs where we are doing badly"; mode (a)
+# DIRECT approved -- "a fair backward pass at this point in the training"):
+# `bench_fail` = the benchsuite's king-failed / teacher-passed benchmark trials
+# (SWE-bench Verified, Terminal-Bench 2, the chat / tool suites) as their own
+# group, per-suite buckets weighted toward the suites the sitting king does
+# worst on ([bench_fail]). Paid by coding -0.02 / terminal -0.02 (their
+# over-supply; bench_fail is SWE / terminal content and counts toward the
+# coding+terminal floor in ops/curriculum/rule.py). Data event, no wvk;
+# forward-only. Benchmark columns feeding D are stamped `trained_on` in the
+# corpus manifest and marked on the kingboard.
+bench_fail = 0.04
 
 # Per-source flag `interactive = true` (tau2-airline read, 2026-09-18): the
 # harness talks to a simulated user mid-trajectory, so a teacher reply that
@@ -312,6 +324,7 @@ min_refs_valid = 2
 # under any persona also counts). Airline / retail bench ids are bare numbers
 # (no name overlap by construction) -- the marker is the guard there.
 # Drop reasons: decontam_no_gen_marker, bench_panel_overlap.
+allow_bench_groups = ["bench_fail"]   # 2026-09-24 17:56 UTC Jacob "I am ok going for it" -- see the bench_fail notes below; [] = off (fail-closed)
 [decontamination.affine_tau2_gen]
 bench_ids = "rollouts/envs/affine_tau2_gen_v1/affine_tau2_gen_v1/data/e61/bench_task_ids.json"
 require_gen_marker = true
@@ -383,6 +396,42 @@ retire_published = true
 # carries [GEN:e<epoch>] by construction (affine_gen_v1.gen_uid); requiring
 # the marker guarantees that a benchmark row (SciCode, HLE, AA-LCR) can never
 # fold through these sources even if someone loads it into the taskset.
+# Benchmark rows in D (Jacob 2026-09-24 17:56 UTC, direct mode). The
+# generated-source rule above (require_gen_marker) keeps benchmark ids out of
+# the teacher-generated sources; this knob is the ONLY way benchmark trials
+# themselves enter D: the fold reads traces-bench/ and routes `bench_*`
+# sources to the listed group. Empty list = off (fail-closed: a bench_*
+# record is dropped as bench_not_allowed). Flipped ON 2026-09-24 on Jacob's
+# word ("I am ok going for it"); flipping OFF stops new admissions -- retiring
+# the published rows is one fold with the fold worker's retire machinery.
+# (`allow_bench_groups` itself lives in the [decontamination] table above.)
+
+[bench_fail]
+# ops/bench_fail/ingest.py publishes the trials to traces-bench/ (own manifest,
+# chunk keys bench_<suite>-...); the fold joins that manifest only while the
+# group is in allow_bench_groups AND mode = "direct". mode = "variants" is the
+# alternative Jacob kept in reserve: direct rows are refused and teacher-
+# synthesised variants of the failed tasks enter through their own [GEN:]
+# source (generator not built yet). Per-suite bucket weights: "auto" =
+# proportional to (1 - sitting king's score) on the kingboard column, floor
+# 0.05 -- the suites the king does worst on get the most strata; or a table
+# {suite = w}. min_reign: trials of older reigns are dropped.
+enabled = true
+mode = "direct"
+traces_prefix = "traces-bench/"
+group = "bench_fail"
+strata_buckets = 520
+min_suite_buckets = 20
+suite_weights = "auto"
+min_reign = 12
+# Outcomes the router admits (2026-09-25). The ingest keeps only graded-0,
+# non-infra trials; the fold's generic rollout_outcome files harness end
+# states it does not know (BFCL "done" / "user_closed", tau2 "user_completed"
+# / "tau2_too_many_errors", mini-swe ContextWindowExceeded) under "errored".
+# They are king failures: first fold routed 6,068 and dropped 7,778 of them
+# as bench_not_failed (bfcl 6,983, swebench 1,949, tau2/tau3 1,099).
+accept_outcomes = ["failed", "errored"]
+
 [decontamination.affine_scicomp]
 require_gen_marker = true
 domain_field = "repo"
@@ -419,6 +468,8 @@ agentic_ops = 650    # 2026-09-21: 0.05 of ~13k strata
 long_context = 400   # 2026-09-21: 0.03 of ~13k strata
 science = 1500       # 400 -> 650 (2026-09-22 17:00, 0.05 of ~13k) -> 1500 (2026-09-23: budget buckets re-hash the raw strata, populated = n(1-e^(-raw/n)); at 650 the 569 raw science strata would populate only ~380. The source-level strata_buckets (1000) is the binding cap; this one must not bind)
 sci_code = 260       # 2026-09-22: 0.02 of ~13k strata
+# bench_fail: NO budget bucket -- [bench_fail].strata_buckets (520, split per suite) already
+# sets its strata; a second hash here would populate only ~63 % of them (n(1-e^-1)).
 
 [strata_budget.sub_strata]
 king_fail = 3

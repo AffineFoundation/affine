@@ -37,6 +37,14 @@ owner_dead_warn_h = 2.0
 # (`registry.py extend NAME --hours H` raises it).
 heartbeat_stale_min = 60
 idle_min = 30
+# 2026-09-24 21:25 (benchsuite): rule (b) released two LIVE pods -- Albedo's
+# chat1 mid-BFCL (chat cells call 127.0.0.1, the front port sees no traffic)
+# and reign 12's fenced @4h250 at 499/500 (multi-replica /metrics hide the
+# busy replica). A stale heartbeat now releases only when the owner is dead
+# too; owner alive / unknown pages instead. passlog owners count as alive
+# while their pass-<run>.pid process lives. benchsuite touches its pods every
+# 5 min (bench-heartbeat), so their heartbeats should never go stale anyway.
+require_owner_dead_for_idle_release = true
 ceiling_page_frac = 0.9
 # a pod marked released in the registry but still in the Lium listing after
 # this many minutes: release again + warn (a failed `lium rm` bills on)

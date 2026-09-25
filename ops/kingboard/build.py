@@ -225,6 +225,28 @@ CAP_BOUND_FRAC = 0.20            # share of replies cut at the completion cap th
 TRAINED_MARK = "†"
 TRAINED_LEGEND = ("a datagen source in D uses this benchmark's environment (policy, tools, scorer) on "
                   "generated, disjoint tasks; the cell is in-distribution generalisation, not zero-shot")
+# Direct benchmark rows in D (bench_fail, Jacob 2026-09-24 17:56 UTC): the
+# corpus manifest's `trained_on` {suite_slug: {since_epoch, since, group,
+# mode}} is merged here at build time (load_trained_on) -- a suite listed
+# there is marked "trained on since epoch N (<date>)" on its column and card
+# tooltip, with a stronger legend than the environment-reuse mark below.
+TRAINED_DIRECT_MARK = "‡"
+TRAINED_DIRECT_LEGEND = ("the king-failed / teacher-passed trials of THIS benchmark enter the dataset D directly "
+                         "(bench_fail group) from the epoch shown; cells of kings crowned after that date are "
+                         "trained on the benchmark's own tasks, not zero-shot")
+TRAINED_DIRECT: dict[str, dict] = {}
+
+
+def load_trained_on(manifest: dict | None) -> dict[str, dict]:
+    """{base env: {since_epoch, since, group, mode}} from the corpus manifest;
+    suite slugs (swebench_verified) map to the board's env ids (swebench-verified)."""
+    out: dict[str, dict] = {}
+    for slug, v in ((manifest or {}).get("trained_on") or {}).items():
+        if isinstance(v, dict):
+            out[str(slug).replace("_", "-")] = dict(v)
+    return out
+
+
 BENCH_TRAINED_ENVS = {
     # env: (since — crown time from which a king counts as trained, note)
     "tau2-airline": ("2026-09-21T11:47:00+00:00",
@@ -1643,7 +1665,14 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
             "variant_note": (f"{tag}: the cell's completion cap / sandbox budget before 2026-09-19 (kept for continuity; "
                              f"the plain {labels.get(b, b)} column is the current cap)") if tag else None,
             "kind": "bench", "env": e,
-            "trained": ({"mark": TRAINED_MARK, "since": BENCH_TRAINED_ENVS[b][0], "note": BENCH_TRAINED_ENVS[b][1],
+            "trained": ({"mark": TRAINED_DIRECT_MARK, "direct": True,
+                         "since": f"{TRAINED_DIRECT[b].get('since')}T00:00:00+00:00",
+                         "since_epoch": TRAINED_DIRECT[b].get("since_epoch"),
+                         "note": (f"trained on since epoch {TRAINED_DIRECT[b].get('since_epoch')} ({TRAINED_DIRECT[b].get('since')}): "
+                                  f"this benchmark's king-failed trials enter D directly (group {TRAINED_DIRECT[b].get('group')}, "
+                                  f"mode {TRAINED_DIRECT[b].get('mode')})"),
+                         "legend": TRAINED_DIRECT_LEGEND} if b in TRAINED_DIRECT else
+                        {"mark": TRAINED_MARK, "since": BENCH_TRAINED_ENVS[b][0], "note": BENCH_TRAINED_ENVS[b][1],
                          "legend": TRAINED_LEGEND} if b in BENCH_TRAINED_ENVS else None),
             "group": meta.get("group"), "n": meta.get("n"), "note": meta.get("note"),
             "metric": "finished_only" if b in BENCH_FINISHED_ONLY else "score",
@@ -2131,6 +2160,12 @@ def write_matrix(stats: dict) -> dict:
     # written by an older builder has no revoked_kings
     stats = {**stats, "kings": load_kings() or stats.get("kings") or [],
              "revoked_kings": load_revoked_kings()}
+    try:
+        TRAINED_DIRECT.clear(); TRAINED_DIRECT.update(load_trained_on(fetch_json(Fetcher(), CORPUS_MANIFEST_KEY)))
+        if TRAINED_DIRECT:
+            log.info("trained_on (direct bench rows in D): %s", sorted(TRAINED_DIRECT))
+    except Exception as e:  # noqa: BLE001 -- the badge is additive; the board builds without it
+        log.warning("trained_on stamp unreadable: %s", e)
     matrix = build_matrix(stats, load_cards(), load_inflight_passes())
     tmp = MATRIX_PATH.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(matrix, separators=(",", ":")))

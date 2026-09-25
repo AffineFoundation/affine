@@ -344,7 +344,8 @@ def admission_reason(action_kind: str | None,
 
 
 def reference_check(prefix: list[dict], reference_turn: str,
-                    action_kind: str | None) -> tuple[str | None, str]:
+                    action_kind: str | None,
+                    mandate_exempt: bool = False) -> tuple[str | None, str]:
     """Dialect-dependent half of the fold prefilter.
 
     Returns (drop_reason, action). drop_reason is None when the turn is a
@@ -355,7 +356,7 @@ def reference_check(prefix: list[dict], reference_turn: str,
     in later prefixes) but not references.
     """
     d = get(action_kind)
-    if not d.mandate_ok(prefix):
+    if not mandate_exempt and not d.mandate_ok(prefix):
         return f"system_msg_no_{d.id}_mandate", ""
     acts = d.actions(reference_turn)
     if len(acts) != 1:
