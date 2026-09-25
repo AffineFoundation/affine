@@ -1246,10 +1246,18 @@ scored the king against all k, which handicapped the teacher by construction); \
 king turns that forfeited or sat on the content floor are excluded (the teacher \
 never forfeits, so the floor only ever entered one side). Pre-fork values on the \
 last 30 verdicts: overall −0.13 sd (z −2.5, all negative), R −0.19 (z −4.2, all \
-negative: kings' thoughts predict the teacher's actions better than the teacher's \
-own held-out thoughts do), typicality −0.03 (z −0.4, mixed), A +0.16 (z +4.3, all \
-positive). Telemetry only; it is the rollback signal for this fork (a sign flip \
-against those values).
+negative), typicality −0.03 (z −0.4, mixed), A +0.16 (z +4.3, all positive). \
+**Correction (2026-09-25):** the R figure was still a construction artefact — the \
+king's R was a tempered log-mean-exp over all 3 references while the held-out \
+reference's R used the other 2, and a max-like aggregate over more draws is \
+larger by construction. Scored with the same 2 references on both sides, R is \
+at parity (median +0.01 sd, z +0.5, 20 pos / 16 neg over 36 verdicts) and the \
+teacher's lead on A is larger (+0.29 sd, z +11). The sentence "kings' thoughts \
+predict the teacher's actions better than the teacher's own" that stood here \
+from 09-23 to 09-25 was wrong. The fully matched (2-reference) form of \
+`control_kmatched` replaces the shipped one at the next telemetry deploy; the \
+rollback signal for this fork is read on the fully matched values. Telemetry \
+only.
 
 **What you see.** `duel_params.sd_meter.forfeit_sd = -6`, `ref_min_content = 10`, \
 `typ_min_refs = 2`; verdict SE about 10 % smaller for the same slice; \

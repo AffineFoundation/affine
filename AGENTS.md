@@ -705,6 +705,18 @@ Full writeups: `research/docs/REDTEAM.md`.
   held-out reference, king forfeits / content-floor turns dropped, overall +
   per leg; pre-fork: all −0.13 (z −2.5, 30/30 neg), R −0.19 (z −4.2, 30/30
   neg), Gc −0.03 (mixed), A +0.16 (z +4.3, 30/30 pos) — the rollback signal
+  **Correction 2026-09-25 (`internal/wvk25/floor-asymmetry-reconciliation.md`):**
+  the R figure was a 3-vs-2-reference LME artefact — with the king's R
+  computed over the same 2 references as the held-out teacher reference, R is
+  at parity (median +0.01 sd, z +0.5, 20 pos / 16 neg over 36 verdicts) and the
+  teacher's lead on A is +0.29 (z +11). `control_kmatched` still ships the
+  3-ref form; the 2-ref form is the telemetry fix to deploy. Also from that
+  reconciliation: 4 of the 6 wvk-22/23 crowns (reigns 17–20) were paid by
+  the empty-thought floor asymmetry (king with more < 10-content-token
+  thoughts than the challenger, each ≈ −10 sd at −12 / ≈ −4.5 at −6); their
+  normal-turn contributions were +0.03…+0.10 sd, below δ; a symmetric miner
+  empty-thought rule (min(z_R, z_A) on < 10 content tokens) would have blocked
+  all of 17–21 and kept 16 — the wvk-25 candidate.
   is a sign flip vs these. Nothing else changed; forward-only, reign 21
   stands. First full-bundle verdict
   `chal-00679 (uid 211, 22:20 UTC)`: 2271 (pre-fork 1985) s, forfeits chal 0.2 % / king 0.2 %, SE 0.030 (pre-fork verdicts 0.045 / 0.027),
