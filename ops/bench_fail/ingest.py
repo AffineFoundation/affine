@@ -65,6 +65,19 @@ MATRIX_URL = "https://kings.affine.io/api/matrix.json"
 RUN_RE = re.compile(r"^\d{8}T\d{4,6}Z-([0-9a-f]{12})(?:-([a-z0-9]+))?$")
 CELL_RE = re.compile(r"^(?P<suite>[^_]+(?:@[^_]+)?)__t(?P<temp>[0-9.]+)(?:\.(?P<tag>.+))?$")
 SUITE_LANGUAGE = {"swebench-verified": "python", "swebench-pro": "python", "terminal-bench-2": "shell"}
+# Single-turn chat suites: the benchsuite prompt is a bare USER message that
+# states the answer format (no system message), so the dialect is fixed per
+# suite here and stamped with `task.mandate_ok` + `task.mandate_role = "user"`
+# — the fold skips its first-system-message marker check for bench_* records
+# carrying the stamp (fold worker, requests.md 2026-09-25 00:35, option i).
+# Verified 2026-09-25 on the stored cells: aime25 / math500 / mmlu-pro prompts
+# say "final answer in \boxed{}" (mmlu-pro: "ONLY give the letter ... within
+# \boxed{}"), gpqa says "Answer: $LETTER", ifeval / ifbench / humaneval are
+# free text / code-only replies.
+SUITE_DIALECT = {"aime25": "boxed", "math500": "boxed", "mmlu-pro": "boxed",
+                 "gpqa-diamond": "text", "ifeval": "text", "ifbench": "text", "humaneval": "text",
+                 "livecodebench": "text", "graphwalks": "text", "mrcr-v2": "text", "oolong-synth": "text",
+                 "bfcl-v3": "tool_call", "when2call": "tool_call"}
 # Harbor's ATIF stores the Terminus JSON reply parsed; rebuild the dialect.
 TERMINUS_KEYS = ("analysis", "plan", "commands")
 
@@ -174,6 +187,7 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--publish", action="store_true", help="write the TraceStore and mirror to R2 (DATA_R2_* creds)")
     ap.add_argument("--prefix", default="traces-bench/", help="R2 prefix (own manifest); never traces/ -- see the docstring")
+    ap.add_argument("--replace", action="store_true", help="with --suites: remove the listed suites' old chunks from the prefix before publishing the new ones")
     ap.add_argument("--stats", default=str(REPO / "affine" / "state" / "bench_fail" / "ingest_stats.json"))
     a = ap.parse_args()
     runs = Path(a.runs)
@@ -287,14 +301,27 @@ def main() -> int:
                         continue
                     seen_trials.add(trial_key)
                     harness = ((tr.get("agent") or {}).get("config") or {}).get("harness", {}).get("id") or "null"
-                    action_kind = "boxed" if "boxed" in json.dumps((tr.get("nodes") or [{}])[0])[:2000] else ("tool_call" if tr.get("tools") else "text")
+                    nodes0 = tr.get("nodes") or []
+                    action_kind = SUITE_DIALECT.get(suite) or ("tool_call" if tr.get("tools") else
+                                                               ("boxed" if "boxed" in json.dumps(nodes0[:1])[:3000] else "text"))
+                    last_asst = next(((nd.get("message") or {}) for nd in reversed(nodes0)
+                                      if (nd.get("message") or {}).get("role") == "assistant"), {})
+                    visible_empty = not str(last_asst.get("content") or "").strip()
+                    has_system = any((nd.get("message") or {}).get("role") == "system" for nd in nodes0)
                     tr.setdefault("info", {})["upstream_fetch"] = rollout_has_upstream_fetch(tr.get("nodes") or [])
                     if tr["info"]["upstream_fetch"]:
                         stats[key]["leaked_dropped"] += 1; continue
                     tr["info"].update({"bench": suite_full, "cell": cell.name, "reign": reign})
                     tr["rewards"] = {**(tr.get("rewards") or {}), "solved": {"score": 0.0, "weight": 1.0}}
                     meta = {"uid": f"{suite}/{name}", "sid": f"bench_{slug}__{name}", "repo": f"bench/{suite}", "language": "chat",
-                            "bench": suite_full, "king_digest": digest, "reign": reign, "cell": cell.name, "trial": name, "temp": temp, "teacher_passed": tp}
+                            "bench": suite_full, "king_digest": digest, "reign": reign, "cell": cell.name, "trial": name, "temp": temp, "teacher_passed": tp,
+                            # dialect mandate lives in the first USER message on these suites (no system message)
+                            "mandate_ok": True, "mandate_role": "system" if has_system else "user",
+                            # reasoning-only failure: the king never produced visible text (AIME 11/30 at T=0);
+                            # the fold decides whether such a reply is a text final or a drop (bench_reasoning_only)
+                            "reply_visible_empty": visible_empty}
+                    if visible_empty:
+                        stats[key]["reasoning_only"] += 1
                     stamp = PolicyStamp(policy_id=f"bench_{harness}", model=f"king/king-{digest}", harness=harness, endpoint="bench", action_kind=action_kind, temperature=temp)
                     envelopes.append(make_envelope(source=source, env_id=f"bench-{slug}", task=meta, policy=stamp, trace=tr))
                     stats[key]["eligible"] += 1
@@ -341,6 +368,33 @@ def main() -> int:
                        prefix=a.prefix)
     if a.prefix == "traces/":
         sys.exit("refusing to publish bench envelopes into traces/ (the fold would take them as coding teacher rows); use traces-bench/")
+    if a.replace and by_source:
+        # Re-ingest of listed suites: drop their old chunks from the pointer manifest (and the
+        # objects) first, so the union publish below carries only the new stamps.
+        import posixpath, boto3 as _b3
+        s3 = _b3.client("s3", endpoint_url=env_value("DATA_R2_ENDPOINT"), region_name="auto",
+                        aws_access_key_id=env_value("DATA_R2_ACCESS_KEY_ID"), aws_secret_access_key=env_value("DATA_R2_SECRET_ACCESS_KEY"))
+        bucket = env_value("DATA_R2_BUCKET") or "affine-data"
+        pointer = posixpath.join(a.prefix, "manifest.json")
+        try:
+            cur = json.loads(s3.get_object(Bucket=bucket, Key=pointer)["Body"].read())
+        except Exception:  # noqa: BLE001
+            cur = None
+        if cur:
+            gone = [c for c in cur["chunks"] if set(c.get("sources") or []) <= set(by_source)]
+            keep = [c for c in cur["chunks"] if c not in gone]
+            for c in gone:
+                try:
+                    s3.delete_object(Bucket=bucket, Key=c["key"])
+                except Exception as e:  # noqa: BLE001
+                    print(f"delete {c['key']}: {e!r}")
+            cur["chunks"] = keep; cur["n_chunks"] = len(keep); cur["n_rollouts"] = sum(c["n_rollouts"] for c in keep)
+            cur["published_at"] = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
+            body = json.dumps(cur, indent=1, sort_keys=True).encode()
+            sha = hashlib.sha256(body).hexdigest()
+            s3.put_object(Bucket=bucket, Key=posixpath.join(a.prefix, "manifests", f"{sha}.json"), Body=body, ContentType="application/json")
+            s3.put_object(Bucket=bucket, Key=pointer, Body=body, ContentType="application/json", CacheControl="no-cache")
+            print(f"replaced: removed {len(gone)} old chunk(s) of {sorted(by_source)} from {a.prefix} ({len(keep)} kept)")
     n = r2.mirror(store)
     print(f"published {n} chunk(s) to {a.prefix} (keys bench_*)")
     return 0
