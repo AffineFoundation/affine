@@ -226,6 +226,17 @@ def scorecard(run_dir: Path) -> dict:
         for key in ("sandbox", "harness", "harness_change", "harness_note", "budget", "served_by"):
             if x.get(key) is not None:
                 out[key] = x[key]
+        # a summary-level note (stamped by hand or by a runner) and the cap-bound warning: a cell where a quarter or
+        # more of the replies ended on `length` measures the completion cap as much as the model (2026-09-25: Genesis
+        # @8k / @16k = 50–82 % cap hits vs 16–33 % at the current caps; Albedo miniF2F 57 %)
+        flf = x.get("finish_length_frac")
+        cap_note = (f"cap-bound: {round(100 * float(flf))} % of replies hit the {x.get('max_tokens') or (x.get('budget') or {}).get('max_tokens') or '?'}-token completion cap"
+                    if isinstance(flf, (int, float)) and flf >= 0.25 else None)
+        extra = " · ".join(s for s in (x.get("note"), cap_note) if s)
+        if extra and not out.get("note"):
+            out["note"] = extra
+        elif extra:
+            out["note"] = out["note"] + " · " + extra
         if failed:
             out["raw_score"] = x["score"]
             out["failure"] = f"{n_err}/{n} rollouts errored (run failure, not a model score)"
