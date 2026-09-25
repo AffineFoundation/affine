@@ -121,6 +121,7 @@ function cellTip(row, col, cell, teacherCell) {
     lines.push(`n = ${num(cell.n)} tasks · greedy T=0${cell.metric === "finished_only" ? " · finished-only" : ""}`);
     if (cell.all_rollouts != null) lines.push(`all rollouts (timeouts count as failed): ${fmt(cell.all_rollouts)}`);
     if (cell.cap_bound) lines.push(`‡ cap-bound: ${Math.round(100 * cell.cap_frac)}% of rollouts hit the completion cap (scored 0); lower bound`);
+    if (cell.note) lines.push(`note: ${cell.note}`);
     if (cell.graded === "llm_judge") lines.push(`⚖ judge-graded: ${judgeText(cell.judge)} — advisory, never part of the score`);
     if (cell.contaminated && cell.excl_unavailable) {
       lines.push(`⚠ contaminated — leak rate from a sibling attempt: ${num(cell.leaked)} of ${num(cell.leak_scanned)} trials fetched upstream code (sandboxes had outbound internet); per-trial exclusion unavailable, the score shown is the original`
