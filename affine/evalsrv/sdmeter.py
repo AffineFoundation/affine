@@ -175,6 +175,26 @@ def ref_loo_terms(refs: list[dict], tau: float | None, a_norm_bytes: float,
     return {"R": R, "A": A, "Mc": M}
 
 
+def side_legs_subset(row: dict, tau: float | None, a_norm_bytes: float,
+                     idx: list[int]) -> dict | None:
+    """Raw legs of one side computed over a SUBSET of its reference pairs
+    (pairs are in reference order): R and A as tempered LMEs over the pairs
+    in ``idx`` only. Used by the fully matched control, where the king must
+    be scored over the same k−1 references as the held-out teacher
+    reference. None for a forfeit row or when the subset is incomplete."""
+    if is_forfeit(row):
+        return None
+    pairs = row["pairs"]
+    if any(i >= len(pairs) for i in idx) or not idx:
+        return None
+    sub = [pairs[i] for i in idx]
+    R = centered_reason(sub, tau)
+    A = action_leg(sub, tau, a_norm_bytes)
+    p0 = pairs[0]
+    return {"R": R, "A": A, "mc": p0.get("mc_za"),
+            "n_content": p0.get("n_content_za"), "n_tokens": p0.get("n_tokens_za")}
+
+
 def side_legs(row: dict, tau: float | None, a_norm_bytes: float) -> dict | None:
     """Raw legs of one side on one turn: R, A (summed), m_c + content counts.
     None for a forfeit row."""
@@ -476,6 +496,53 @@ def shadow_verdict(chall_rows: list[dict], king_rows: list[dict],
                 res[leg] = {"margin": None, "se": None, "z": None, "n": len(d)}
         return res
 
+    def matched_control(sig_of) -> dict:
+        """Fully matched control (2026-09-25): for each turn and each left-out
+        reference j, the held-out reference AND the king are both scored over
+        the same k−1 references — the king's R and A recomputed as LMEs over
+        those k−1 pairs (the k-matched form kept the king's k-reference LMEs,
+        which are larger by construction) — against the mean of those k−1
+        references; king forfeits / content-floor turns dropped. Overall =
+        min over legs; per leg = each standardised leg alone. This is the
+        rollback signal from 2026-09-25 on."""
+        out = {leg: [] for leg in ("all", "R", "Gc", "A")}
+        for tid, refs in turn_refs.items():
+            t = ref_loo_terms(refs, tau, a_norm, cfg["ref_min_content"])
+            krow = k_rows_by.get(tid)
+            if t is None or krow is None or is_forfeit(krow):
+                continue
+            sig = sig_of(tid)
+            k = len(refs)
+            per_t, per_k = {leg: [] for leg in out}, {leg: [] for leg in out}
+            for j in range(k):
+                oth = [i for i in range(k) if i != j]
+                kl = side_legs_subset(krow, tau, a_norm, oth)
+                if kl is None or (kl.get("n_content") is not None and kl["n_content"] < cfg["content_min_tokens"]):
+                    continue
+                others = {leg: [v for i, v in enumerate(t[leg]) if i != j and v is not None] for leg in ("R", "A", "Mc")}
+                mu_j = {leg: st.mean(v) for leg, v in others.items() if v}
+                tj = turn_score({"R": t["R"][j], "A": t["A"][j], "mc": t["Mc"][j],
+                                 "n_content": refs[j].get("n_content_thought"), "n_tokens": None}, mu_j, sig, cfg)
+                kj = turn_score(kl, mu_j, sig, cfg)
+                if tj["score"] is None or kj["score"] is None:
+                    continue
+                for leg, key in (("R", "z_R"), ("Gc", "typ_c"), ("A", "z_A")):
+                    if tj.get(key) is not None and kj.get(key) is not None:
+                        per_t[leg].append(tj[key]); per_k[leg].append(kj[key])
+                per_t["all"].append(tj["score"]); per_k["all"].append(kj["score"])
+            for leg in out:
+                if per_t[leg]:
+                    out[leg].append(st.mean(per_t[leg]) - st.mean(per_k[leg]))
+        res = {}
+        for leg, d in out.items():
+            if len(d) >= 2:
+                m = st.mean(d); se = st.stdev(d) / math.sqrt(len(d))
+                res[leg] = {"margin": m, "se": se, "z": (m / se) if se > 0 else None, "n": len(d)}
+            else:
+                res[leg] = {"margin": None, "se": None, "z": None, "n": len(d)}
+        return res
+
+    k_rows_by = {r["turn_id"]: r for r in king_rows}
     by_anchor = {}
     for mode in ("loo", "frozen"):
         if mode == "frozen" and not frozen:
@@ -500,6 +567,8 @@ def shadow_verdict(chall_rows: list[dict], king_rows: list[dict],
             "teacher_vs_king": {k: t_vs_k.get(k) for k in ("margin", "se", "z", "n_paired_turns")},
             # wvk 24 control: k-matched anchors, king forfeits / content-floor turns dropped
             "control_kmatched": kmatched_control(lambda tid: anchors_for(mode, tid)[1]),
+            # 2026-09-25 fully matched control (2-ref both sides) — the rollback signal
+            "control_matched": matched_control(lambda tid: anchors_for(mode, tid)[1]),
             **paired,
             "would_crown": would,
             "would_crown_rule_only": paired["rule_passes"],
