@@ -134,7 +134,12 @@ function cellTip(row, col, cell, teacherCell) {
         ? `network: ${cell.network.mode} — fenced sandbox, only ${(cell.network.allowed_hosts || []).length ? (cell.network.allowed_hosts || []).join(", ") : "the serving box"} reachable in the agent phase (clean by construction)`
         : `network: ${cell.network.mode} — sandbox had outbound internet`);
     }
-    if (col.trained) lines.push(`${col.trained.mark} trained environment${cell.trained ? " (this king was crowned after the admission)" : " (column; this model predates the admission or is not a king)"}: ${col.trained.legend}. ${col.trained.note}`);
+    if (col.trained && col.trained.direct) {
+      lines.push(`${col.trained.mark} trained on since ${(col.trained.since || "").slice(0, 10)} (epoch ${col.trained.since_epoch}): king-failed trials from this suite enter the dataset; `
+        + (cell.trained ? "this king was crowned after that date, so its cell is trained-on, not zero-shot" : "this cell is from a card / model before that date — a held-out measurement"));
+    } else if (col.trained) {
+      lines.push(`${col.trained.mark} trained environment${cell.trained ? " (this king was crowned after the admission)" : " (column; this model predates the admission or is not a king)"}: ${col.trained.legend}. ${col.trained.note}`);
+    }
     lines.push(`card ${cell.run_id}${cell.mode ? ` · ${cell.mode}` : ""}`);
   } else {
     lines.push(`${num(cell.solved)} solved / ${num(cell.n)} graded (${num(cell.rollouts)} rollouts, ${num(cell.errored)} errored)${cell.temp ? ` · ${cell.temp} T=0.8` : ""}`);
@@ -262,9 +267,11 @@ function renderTable(m, spec) {
     + cols.map((c) => {
       const cls = ["col", c.kind, sepAt.has(c.key) ? "sep" : "", sort.key === c.key ? "sorted" : ""].filter(Boolean).join(" ");
       const judge = c.advisory ? `\n⚖ judge-graded: ${judgeText(c.judge)} — advisory, never part of the score` : "";
-      const trained = c.trained ? `\n${c.trained.mark} trained environment: ${c.trained.legend}. ${c.trained.note}. Cells of kings crowned after the admission carry the mark; the teacher, the genesis and reference models never trained on D` : "";
+      const trained = c.trained && c.trained.direct
+        ? `\n${c.trained.mark} trained on since ${(c.trained.since || "").slice(0, 10)} (epoch ${c.trained.since_epoch}): king-failed trials from this suite enter the dataset; cells from cards before that date are held-out measurements. ${c.trained.legend}`
+        : c.trained ? `\n${c.trained.mark} trained environment: ${c.trained.legend}. ${c.trained.note}. Cells of kings crowned after the admission carry the mark; the teacher, the genesis and reference models never trained on D` : "";
       const title = `${c.label}${c.kind === "env" && c.group ? ` · ${c.group}` : ""}${c.kind === "bench" && c.group ? ` · ${c.group}` : ""}${c.kind === "bench" && c.n ? ` · n = ${c.n}` : ""}${judge}${trained}${c.note ? `\n${c.note}` : ""}\nclick to sort`;
-      return `<th class="${cls}${c.advisory ? " advisory" : ""}${c.trained ? " trained" : ""}" data-sort="${esc(c.key)}" title="${esc(title)}">${esc(c.short || c.abbr || c.label)}${c.advisory ? `<span class="mk judge">⚖</span>` : ""}${c.trained ? `<span class="mk trained">${esc(c.trained.mark)}</span>` : ""}${mark(c.key)}</th>`;
+      return `<th class="${cls}${c.advisory ? " advisory" : ""}${c.trained ? " trained" : ""}${c.trained && c.trained.direct ? " trained-direct" : ""}" data-sort="${esc(c.key)}" title="${esc(title)}">${esc(c.short || c.abbr || c.label)}${c.advisory ? `<span class="mk judge">⚖</span>` : ""}${c.trained ? `<span class="mk trained${c.trained.direct ? " direct" : ""}">${esc(c.trained.mark)}</span>` : ""}${mark(c.key)}</th>`;
     }).join("") + "</tr>";
 
   const body = rows.map((r) => {

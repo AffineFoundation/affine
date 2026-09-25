@@ -1670,7 +1670,8 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                          "since_epoch": TRAINED_DIRECT[b].get("since_epoch"),
                          "note": (f"trained on since epoch {TRAINED_DIRECT[b].get('since_epoch')} ({TRAINED_DIRECT[b].get('since')}): "
                                   f"this benchmark's king-failed trials enter D directly (group {TRAINED_DIRECT[b].get('group')}, "
-                                  f"mode {TRAINED_DIRECT[b].get('mode')})"),
+                                  f"mode {TRAINED_DIRECT[b].get('mode')})"
+                                  + (f"; also environment reuse: {BENCH_TRAINED_ENVS[b][1]}" if b in BENCH_TRAINED_ENVS else "")),
                          "legend": TRAINED_DIRECT_LEGEND} if b in TRAINED_DIRECT else
                         {"mark": TRAINED_MARK, "since": BENCH_TRAINED_ENVS[b][0], "note": BENCH_TRAINED_ENVS[b][1],
                          "legend": TRAINED_LEGEND} if b in BENCH_TRAINED_ENVS else None),
@@ -1891,6 +1892,9 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                        "⚠ = contaminated (leak audit): a share of the SWE trials fetched upstream code "
                        "(sandboxes had outbound internet); the value shown is the score over the trials "
                        "that did not leak, the raw score is in the tooltip; "
+                       f"{TRAINED_DIRECT_MARK} on a column header = trained on since the date / epoch in the column's "
+                       f"`trained` block: {TRAINED_DIRECT_LEGEND}; cells from cards before that date are held-out "
+                       "measurements; nothing is removed from totals; "
                        f"{TRAINED_MARK} = trained environment: {TRAINED_LEGEND} (column header: the environment is in D; "
                        "cell: the king was crowned after the admission, so it may have trained on it; "
                        + ", ".join(f"{e} since {v[0][:10]}" for e, v in BENCH_TRAINED_ENVS.items()) + ")",
