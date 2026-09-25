@@ -3561,6 +3561,18 @@ def publish_pending(state: dict, publisher: CorpusPublisher,
         extra["yield"] = {"groups": pending["yield_groups"],
                           "sources": {k: {kk: vv for kk, vv in v.items() if kk != "top_drops"} | {
                               "top_drops": v["top_drops"]} for k, v in (pending.get("yield_sources") or {}).items()}}
+    if pending.get("yield_extra") and isinstance(extra.get("yield"), dict):
+        # divergence sublabels, interactive prose, upstream_fetch_turns,
+        # unknown_source_turns / unknown_sources, by_king -- the announce
+        # already carried them; the manifest now does too (2026-09-25).
+        extra["yield"]["extra"] = pending["yield_extra"]
+    if pending.get("trained_on") is not None:
+        # Benchmark suites whose failed trials enter D directly (bench_fail):
+        # {suite: {since_epoch, since, group, mode}}. The kingboard renders
+        # "trained on since epoch N" from THIS block; it was missing from the
+        # manifest at epoch 82 (only fold_stats.json and the state had it).
+        extra["trained_on"] = pending["trained_on"]
+        extra["bench_traces_manifest_sha256"] = pending.get("bench_traces_manifest_sha256")
     if pending.get("admission_gate"):
         ag = pending["admission_gate"]
         extra["admission_gate"] = {"apply_groups": ag.get("apply_groups"), "retired": ag.get("retired"),
