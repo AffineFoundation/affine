@@ -1249,6 +1249,9 @@ def bench_value(side: dict | None, env: str) -> dict | None:
         # above CAP_BOUND_FRAC the number is a lower bound, not a measure
         "cap_frac": None if cap is None else round(cap, 4),
         "cap_bound": bool(cap is not None and cap > CAP_BOUND_FRAC),
+        # publisher's per-cell note (2026-09-25: "cap-bound: N % of replies hit the
+        # <cap>-token completion cap", hand-stamped old-cap explanations, infra notes)
+        "note": (str(side.get("note")).strip() if side.get("note") else None),
     }
     # Leak audit (benchsuite 2026-09-24): SWE sandboxes had outbound internet and a
     # share of trials fetched upstream code. The cell's VALUE becomes the score over

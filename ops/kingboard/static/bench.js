@@ -149,7 +149,7 @@
               : k && k.contaminated && k.leak_audit && k.leak_audit.score_excl_leaked !== undefined && k.leak_audit.score_excl_leaked !== null
                 ? el("td", { class: "num king-col", title: `⚠ contaminated: ${k.leak_audit.n_leaked} of ${k.leak_audit.n_trials_scanned || k.n} trials fetched upstream code (sandboxes had outbound internet); raw score ${pct(k.score)}; shown: ${pct(k.leak_audit.score_excl_leaked)} over the ${k.leak_audit.n_excl_leaked} trials that did not leak` },
                     pct(k.leak_audit.score_excl_leaked), el("span", { class: "cap-mark" }, " ⚠leak"), capMark(k))
-                : el("td", { class: "num king-col", title: k && k.network && k.network.mode ? `network: ${k.network.mode}${k.network.mode === "public" ? " (sandbox had outbound internet)" : " (fenced: only the serving box reachable)"}` : "" }, k ? pct(k.score) + ci(k) : "–", capMark(k)),
+                : el("td", { class: "num king-col", title: [k && k.note ? `note: ${k.note}` : "", k && k.network && k.network.mode ? `network: ${k.network.mode}${k.network.mode === "public" ? " (sandbox had outbound internet)" : " (fenced: only the serving box reachable)"}` : ""].filter(Boolean).join("\n") }, k ? pct(k.score) + ci(k) : "–", capMark(k)),
         el("td", { class: "num teacher-col" + (t && t.status === "failed" ? " run-failed" : t && t.status === "unverified" ? " unverified" : ""),
           title: t && t.status === "failed" ? (t.failure || "run failed")
             : t && t.status === "unverified" ? `unverified — grader result not trusted, not counted. ${row.unverified || ""}${t.raw_score !== undefined && t.raw_score !== null ? ` (raw ${pct(t.raw_score)})` : ""}`
