@@ -2132,11 +2132,29 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         text_replies = frozenset(i for i, k in kind_stamp.items() if k == dialects.TEXT_KIND) | frozenset(divergence_waive)
         for i in divergence_waive:
             kind_stamp[i] = kind           # slicer admits via text; meta reverts to the policy dialect
+        # bench_fail chat suites (2026-09-25, PR #72 stamps): the benchsuite
+        # prompt states the answer format in the first USER turn
+        # (`task.mandate_ok`, `mandate_role = "user"`) -> the first-system-
+        # message marker check is skipped; a reasoning-only failure
+        # (`task.reply_visible_empty`: thinks until the cap, never answers)
+        # is recorded for its PREFIX like a king_divergence row -- the duel
+        # samples fresh teacher refs and the miner's reply, the stored one
+        # is never scored.
+        _task0 = env.get("task") if isinstance(env.get("task"), dict) else {}
+        bench_rec = str(env.get("source") or "").startswith(BENCH_SOURCE_PREFIX)
+        bench_mandate = bool(bench_rec and _task0.get("mandate_ok"))
+        bench_waived = frozenset(range(10_000)) if bench_rec and _task0.get("reply_visible_empty") else frozenset()
+        if bench_mandate:
+            _count(notes, "bench_mandate_exempt")
+        if bench_waived:
+            _count(notes, "bench_reasoning_only")
+            _count(notes, f"bench_reasoning_only_{env.get('source')}")
         try:
             rec = build_view_record(env, baker=baker,
                                     generated_at=env.get("stored_at"),
                                     convs=convs, leak_exempt=leak_exempt,
-                                    text_replies=text_replies)
+                                    text_replies=text_replies,
+                                    waived_replies=bench_waived)
         except (ToolParityError, TraceShapeError) as e:
             _count(drops, type(e).__name__)
             continue
@@ -2183,7 +2201,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         if n_later:
             _count(drops, "king_later_onset", n_later)
         kept, d = validate_turns(rest, panel=panel, allowed_kinds=allowed_kinds,
-                                 leak_check=not leak_exempt_all)
+                                 leak_check=not leak_exempt_all,
+                                 mandate_exempt=bench_mandate, reference_waived=bool(bench_waived))
         for k, v in d.items():
             _count(drops, k, v)
         kept_routed: list[dict] = []
@@ -2192,7 +2211,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             if not gturns:
                 continue
             kg, d = validate_turns(gturns, panel=panel, allowed_kinds=allowed_kinds,
-                                   leak_check=not cfgs[g]["leak_exempt"])
+                                   leak_check=not cfgs[g]["leak_exempt"],
+                                   mandate_exempt=bench_mandate, reference_waived=bool(bench_waived))
             kept_routed += kg
             for k, v in d.items():
                 _count(drops, k, v)
@@ -2237,6 +2257,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             _count(drops, "king_fail_cap", len(keep_idx) - len(capped))
             keep_idx = capped
         metas = rec["turns"]
+        if bench_waived:
+            metas = [{**m, "bench": {"reasoning_only": True}} for m in metas]
         rec["turns"] = [m for m in metas if m["turn_idx"] in keep_idx]
         if is_king_fail:
             rec["n_replies"] = len(main)
