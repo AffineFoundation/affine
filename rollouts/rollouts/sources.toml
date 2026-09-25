@@ -424,6 +424,13 @@ strata_buckets = 520
 min_suite_buckets = 20
 suite_weights = "auto"
 min_reign = 12
+# Outcomes the router admits (2026-09-25). The ingest keeps only graded-0,
+# non-infra trials; the fold's generic rollout_outcome files harness end
+# states it does not know (BFCL "done" / "user_closed", tau2 "user_completed"
+# / "tau2_too_many_errors", mini-swe ContextWindowExceeded) under "errored".
+# They are king failures: first fold routed 6,068 and dropped 7,778 of them
+# as bench_not_failed (bfcl 6,983, swebench 1,949, tau2/tau3 1,099).
+accept_outcomes = ["failed", "errored"]
 
 [decontamination.affine_scicomp]
 require_gen_marker = true

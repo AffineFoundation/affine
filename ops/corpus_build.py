@@ -350,6 +350,14 @@ def load_bench_fail() -> dict:
         "suite_weights": cfg.get("suite_weights") or "auto",
         "min_suite_buckets": int(cfg.get("min_suite_buckets") or 20),
         "kingboard_matrix": str(cfg.get("kingboard_matrix") or "https://kings.affine.io/api/matrix.json"),
+        # Outcomes the router admits. The ingest already keeps only graded-0,
+        # non-infra trials; the fold's generic rollout_outcome files a
+        # harness end state it does not know (BFCL "done" / "user_closed",
+        # tau2 "user_completed" / "tau2_too_many_errors", a mini-swe trial
+        # that hit ContextWindowExceeded) under `errored`. Those are king
+        # failures, so "errored" is admitted by default -- 7,778 of the
+        # first 13,846 routed trials (2026-09-25).
+        "accept_outcomes": frozenset(str(x) for x in (cfg.get("accept_outcomes") or ["failed", "errored"])),
     }
 
 
@@ -398,10 +406,15 @@ def route_bench_fail(records: list[dict], cfg: dict, drops: dict[str, int]) -> l
     weights = bench_suite_weights(cfg, suites)
     buckets = {s0: max(cfg["min_suite_buckets"], int(round(cfg["strata_buckets"] * weights.get(s0, 0.0)))) for s0 in suites}
     log(f"bench_fail: suites {suites}, weights { {k: round(v, 3) for k, v in weights.items()} }, buckets {buckets}")
+    by_stop: dict[str, int] = {}
     for rec in bench:
-        if (rec.get("outcome") or "unscored") != "failed":
+        oc = rec.get("outcome") or "unscored"
+        if oc not in cfg["accept_outcomes"]:
             drops["bench_not_failed"] = drops.get("bench_not_failed", 0) + 1
             continue
+        if oc != "failed":
+            k = f"{oc}/{rec.get('stop_condition') or '-'}"
+            by_stop[k] = by_stop.get(k, 0) + 1
         reign = (rec.get("task") or {}).get("reign") if isinstance(rec.get("task"), dict) else None
         if cfg["min_reign"] and isinstance(reign, int) and reign < cfg["min_reign"]:
             drops["bench_old_reign"] = drops.get("bench_old_reign", 0) + 1
@@ -412,6 +425,8 @@ def route_bench_fail(records: list[dict], cfg: dict, drops: dict[str, int]) -> l
         rec["stratum"] = f"{cfg['group']}:{src.removeprefix(BENCH_SOURCE_PREFIX)}:{h % buckets[src]:04d}"
         rec["fold_group"] = cfg["group"]
         out.append(rec)
+    if by_stop:
+        log(f"bench_fail: non-`failed` outcomes admitted by stop condition {by_stop}")
     return out
 KING_GROUPS = ("king_fail", KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_DIVERGENCE_GROUP,
                KING_TOOLUSE_GROUP, KING_PIVOT_GROUP, KING_LOOP_GROUP, COMPLETION_PRE_GROUP,
