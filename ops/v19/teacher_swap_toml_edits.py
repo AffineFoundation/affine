@@ -59,7 +59,7 @@ PATCH = REPO / "ops" / "v19" / "teacher_swap.patch"
 NEW_TEACHER = "zai-org/GLM-5.3-Flash"
 NEW_ENGY_ID = "glm-5.3-flash"
 OLD_ENGY_ID = "qwen3.8-27b"
-VLLM_VERSION_GLM53 = "0.29.0"
+VLLM_VERSION_GLM53 = "0.30.0"
 WINDOW_NEW = 262144
 
 # -- affine.toml -----------------------------------------------------------------
@@ -89,14 +89,16 @@ WINDOW_NEW_TXT = (
     "# 5120 − 768 − 512 = 255,744 tokens, measured with the teacher AND the\n"
     "# genesis tokenizer) and the teacher swarm moves in lockstep.\n"
     f"max_model_len = {WINDOW_NEW}\n")
-WVK_HIST_ANCHOR = "# stands, min_submission_block unchanged. ~3x duel cost accepted.\n#\n"
+WVK_HIST_ANCHOR = "# (ref_min_content / typ_min_refs) distinguishes the two.\n#\n"
 WVK_HIST_NEW = (
-    "# stands, min_submission_block unchanged. ~3x duel cost accepted.\n"
+    "# (ref_min_content / typ_min_refs) distinguishes the two.\n"
     "# {a}→{b} teacher swap ({date}): Qwen/Qwen3.8-27B → zai-org/GLM-5.3-Flash and\n"
     "# the serving window 131072 → 262144 (see [teacher] / [miner_serving]).\n"
     "# The scoring rule is unchanged; every anchor (μ, σ) is the new teacher's\n"
     "# own leave-one-out statistic, so scores re-baseline but the formula does\n"
-    "# not. Forward-only: {reign_clause}; min_submission_block {msb_clause}.\n"
+    "# not. The scoring bundle (miner empty-thought rule + gate, sequential stopping, R cap)\n"
+    "# and the 256k context admission rule ride the same fork: ops/v20/wvk25_rules_toml_edits.py.\n"
+    "# Forward-only: {reign_clause}; min_submission_block {msb_clause}.\n"
     "#\n")
 
 # -- swarm.toml -------------------------------------------------------------------
@@ -143,7 +145,8 @@ def edit_contract(s: str, date: str, a: int, b: int, reign_clause: str, msb_clau
     if not re.search(rf"^weight_version_key = {a}$", s, re.M):
         raise SystemExit(f"weight_version_key is not {a}")
     for must in ('score_mode = "sd_min_rga"\n', "max_thought_tokens = 4096\n",
-                 "ref_max_tokens = 4864\n", "thought_cap_ratio = 1.25\n"):
+                 "ref_max_tokens = 4864\n", "thought_cap_ratio = 1.25\n",
+                 "forfeit_sd = -6\n", "min_context_tokens = 0\n"):
         if must not in s:
             raise SystemExit(f"expected pre-flip anchor missing: {must!r}")
     s = sub1(s, TEACHER_OLD, TEACHER_NEW.format(date=date, a=a, b=b), "[teacher].repo")
@@ -211,7 +214,7 @@ def main() -> None:
     ap.add_argument("--apply", metavar="YYYY-MM-DD",
                     help="the dated operator directive; writes every file")
     ap.add_argument("--wvk-to", type=int, default=None)
-    ap.add_argument("--reign-stands", default="reign 21 stands, no re-verdicts",
+    ap.add_argument("--reign-stands", default="the sitting king (reign 22) stands, no re-verdicts",
                     help="or e.g. 'throne reset: reign 0 re-seeded from the untouched genesis'")
     ap.add_argument("--min-submission-block", default="unchanged",
                     help="or 'bumped to the finney tip at the flip'")
