@@ -48,6 +48,9 @@ LOG=$HERE/deploy_teacher_swap.log
 PAUSE=/home/const/.affine/deadman.pause
 : "${DIRECTIVE_DATE:?set DIRECTIVE_DATE=YYYY-MM-DD (the dated operator directive)}"
 : "${WVK_TO:=25}"
+# SCOPE=window-only (option E, 2026-09-26): wvk 25 = scoring bundle + 262k window on the Qwen teacher;
+# the teacher / swarm-model / policy / band steps and the GLM preflights are skipped.
+: "${SCOPE:=teacher-swap}"
 exec > >(tee -a "$LOG") 2>&1
 cd "$REPO"
 source .venv/bin/activate
@@ -58,10 +61,11 @@ echo "$(ts) === deploy_teacher_swap.sh start (GLM-5.3-Flash, 262k) HEAD $(git re
 WVK_FROM=$((WVK_TO - 1))
 grep -q "^weight_version_key = $WVK_FROM\$" affine/affine.toml || { echo "$(ts) toml is not at wvk $WVK_FROM; abort"; exit 1; }
 grep -q '^repo = "Qwen/Qwen3.8-27B"$' affine/affine.toml || { echo "$(ts) [teacher].repo is not Qwen3.8-27B; abort"; exit 1; }
+if [[ "$SCOPE" == "window-only" ]]; then echo "$(ts) SCOPE=window-only: teacher stays Qwen; GLM preflights skipped"; fi
 grep -q '^max_model_len = 131072$' affine/affine.toml || { echo "$(ts) max_model_len is not 131072; abort"; exit 1; }
 python -m py_compile ops/corpus_build.py affine/datagen/slicer.py affine/affine/toolbake.py
-python ops/v19/teacher_swap_toml_edits.py --preview >/dev/null
-python - <<'PY' || { echo "$(ts) ToolBaker cannot bake under the GLM template — the re-bake port is not done; abort"; exit 1; }
+python ops/v19/teacher_swap_toml_edits.py --preview --scope "$SCOPE" >/dev/null
+[[ "$SCOPE" == "window-only" ]] || python - <<'PY' || { echo "$(ts) ToolBaker cannot bake under the GLM template — the re-bake port is not done; abort"; exit 1; }
 from affine.toolbake import ToolBaker
 b = ToolBaker.from_pretrained("zai-org/GLM-5.3-Flash")
 tools = [{"name": "bash", "description": "run", "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}}}]
@@ -73,7 +77,12 @@ print("toolbake parity ok under GLM-5.3-Flash")
 PY
 ROUTER_MODELS=$(curl -s -m 8 http://127.0.0.1:9100/v1/models | python3 -c 'import json,sys;print(",".join(m["id"] for m in json.load(sys.stdin).get("data",[])))' || true)
 echo "$(ts) router serves: ${ROUTER_MODELS:-<dark>}"
-[[ "$ROUTER_MODELS" == *"zai-org/GLM-5.3-Flash"* ]] || { echo "$(ts) GLM swarm not on the router yet (pre-warm first); abort"; exit 1; }
+if [[ "$SCOPE" == "window-only" ]]; then
+  [[ "$ROUTER_MODELS" == *"Qwen/Qwen3.8-27B"* ]] || { echo "$(ts) Qwen swarm not on the router; abort"; exit 1; }
+  echo "$(ts) NOTE: the Qwen swarm must already serve max_model_len 262144 (swarm.toml flipped + replicas relaunched by the datagen worker BEFORE this window) — verify: curl router /v1/models max_model_len"
+else
+  [[ "$ROUTER_MODELS" == *"zai-org/GLM-5.3-Flash"* ]] || { echo "$(ts) GLM swarm not on the router yet (pre-warm first); abort"; exit 1; }
+fi
 echo "$(ts) preflight ok"
 
 POD_SSH_STR=$(python3 -c 'import json;print(json.load(open("affine/state/state.json"))["eval_machine"]["ssh"])')
@@ -148,7 +157,7 @@ if [[ -n "$cid" ]] && has_verdict "$cid"; then
 fi
 
 # --- 5. contract flip: teacher / window / swarm / slicer / policies / band, then the wvk-25 scoring knobs
-python ops/v19/teacher_swap_toml_edits.py --apply "$DIRECTIVE_DATE" --wvk-to "$WVK_TO"
+python ops/v19/teacher_swap_toml_edits.py --apply "$DIRECTIVE_DATE" --wvk-to "$WVK_TO" --scope "$SCOPE"
 # fork worker's rules script (box main b03fc00d/816af3d1): asserts the eight fixed knobs, flips
 # miner_empty_rule / empty_gate_ratio / r_cap_teacher / seq_enabled, sets min_context_tokens 262144
 # (idempotent), adds its history paragraph, mirrors the toml. Runs AFTER the wvk bump above.
@@ -159,7 +168,8 @@ else
 fi
 grep -E '^(weight_version_key|repo|max_model_len|score_mode|max_thought_tokens|ref_max_tokens|miner_empty_rule|empty_gate_ratio|r_cap_teacher|seq_enabled|seq_look_every|seq_k|seq_consecutive|seq_shadow_full_first_n|min_context_tokens) ' affine/affine.toml
 
-# --- 6. teacher swarm: the Qwen manager's targets -> 0 (its boxes drain), router must be GLM-only
+# --- 6. teacher swarm: (teacher-swap) the Qwen manager's targets -> 0 (its boxes drain), router must be GLM-only
+if [[ "$SCOPE" != "window-only" ]]; then
 pm2 restart affine-swarm-manager >/dev/null 2>&1 || true
 for i in $(seq 1 60); do
   ROUTER_MODELS=$(curl -s -m 8 http://127.0.0.1:9100/v1/models | python3 -c 'import json,sys;print(",".join(sorted(set(m["id"] for m in json.load(sys.stdin).get("data",[])))))' || true)
@@ -168,6 +178,7 @@ for i in $(seq 1 60); do
 done
 [[ "$ROUTER_MODELS" == "zai-org/GLM-5.3-Flash" ]] || { echo "$(ts) router still lists $ROUTER_MODELS; abort before the pod redeploy (toml flipped — revert with git checkout if you stop here)"; exit 1; }
 echo "$(ts) router GLM-only"
+fi
 
 # --- 7. llms.txt
 [[ -f ops/v20/llms_wvk25_notice_edits.py ]] && python ops/v20/llms_wvk25_notice_edits.py --flip >/dev/null 2>&1 && echo "$(ts) llms 'Upcoming fork' -> 'Fork history: wvk 25'" || echo "$(ts) (llms flip: run ops/v20/llms_wvk25_notice_edits.py --flip by hand if the flag is absent)"
@@ -187,8 +198,12 @@ pm2 restart affine-dash >/dev/null 2>&1 || true
 echo "$(ts) validator started"
 
 # --- 10. corpus re-derive (tool turns re-baked under the GLM template) + datagen pods
-python ops/corpus_build.py --rederive && echo "$(ts) fold --rederive done"
-bash ops/king-datagen/deploy_pods.sh --restart --all && echo "$(ts) datagen pods restarted with the GLM teacher seat"
+if [[ "$SCOPE" == "window-only" ]]; then
+  echo "$(ts) window-only: no re-bake (teacher template unchanged); next 16:00 fold picks up the 255,744-token prefix cap"
+else
+  python ops/corpus_build.py --rederive && echo "$(ts) fold --rederive done"
+  bash ops/king-datagen/deploy_pods.sh --restart --all && echo "$(ts) datagen pods restarted with the GLM teacher seat"
+fi
 # --- 11. green watch: 6-hourly + the fork worker posts the live line after the first wvk-25 verdict
 pm2 delete affine-green-watch >/dev/null 2>&1 || true
 pm2 start --name affine-green-watch --cron-restart "0 */6 * * *" --no-autorestart -- .venv/bin/python ops/v19/green_watch.py --box >/dev/null && echo "$(ts) green watch scheduled (6-hourly); first read after the first wvk-$WVK_TO verdict: .venv/bin/python ops/v19/green_watch.py --box"

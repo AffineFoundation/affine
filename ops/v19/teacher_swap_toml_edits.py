@@ -198,7 +198,42 @@ def edit_policies(s: str) -> str:
     return s2
 
 
-def build(date: str, a: int, b: int, reign_clause: str, msb_clause: str) -> dict[Path, str]:
+WVK_HIST_WINDOW_ONLY = (
+    "# (ref_min_content / typ_min_refs) distinguishes the two.\n"
+    "# {a}→{b} scoring bundle + 262k window ({date}): the serving window 131072 → 262144\n"
+    "# (see [miner_serving]; prefix cap 255,744 tokens) with the wvk-25 rules (miner\n"
+    "# empty-thought rule + gate, sequential stopping, R cap, 256k context admission —\n"
+    "# ops/v20/wvk25_rules_toml_edits.py). Teacher unchanged (Qwen/Qwen3.8-27B): the\n"
+    "# GLM-5.3-Flash swap is deferred to its own fork until a deterministic echo path\n"
+    "# exists (2026-09-26 probes: sparse top-k and fp8-MoE batch variance).\n"
+    "# Forward-only: {reign_clause}; min_submission_block {msb_clause}.\n"
+    "#\n")
+SWARM_WINDOW_ONLY = [("max_model_len = 131072\n", f"max_model_len = {WINDOW_NEW}\n")]
+
+
+def edit_contract_window_only(s: str, date: str, a: int, b: int, reign_clause: str, msb_clause: str) -> str:
+    if not re.search(rf"^weight_version_key = {a}$", s, re.M):
+        raise SystemExit(f"weight_version_key is not {a}")
+    s = sub1(s, WINDOW_OLD, WINDOW_NEW_TXT.format(date=date).replace(
+        "with the GLM-5.3-Flash swap", "with the wvk-25 scoring bundle; teacher unchanged"), "[miner_serving].max_model_len")
+    s = sub1(s, WVK_HIST_ANCHOR, WVK_HIST_WINDOW_ONLY.format(a=a, b=b, date=date, reign_clause=reign_clause,
+                                                             msb_clause=msb_clause), "wvk history")
+    return re.sub(rf"^weight_version_key = {a}$", f"weight_version_key = {b}", s, flags=re.M)
+
+
+def build(date: str, a: int, b: int, reign_clause: str, msb_clause: str,
+          scope: str = "teacher-swap") -> dict[Path, str]:
+    if scope == "window-only":
+        # Option E (2026-09-26): wvk 25 = scoring bundle + 262k on the Qwen teacher.
+        # Teacher repo, swarm model / layout, datagen policies and band attribution untouched.
+        sw = SWARM.read_text()
+        for old, new in SWARM_WINDOW_ONLY:
+            sw = sub1(sw, old, new, "swarm max_model_len")
+        return {
+            TOML: edit_contract_window_only(TOML.read_text(), date, a, b, reign_clause, msb_clause),
+            SWARM: sw,
+            SLICER: sub1(SLICER.read_text(), SLICER_OLD, SLICER_NEW, "slicer cap"),
+        }
     return {
         TOML: edit_contract(TOML.read_text(), date, a, b, reign_clause, msb_clause),
         SWARM: edit_swarm(SWARM.read_text()),
@@ -218,6 +253,8 @@ def main() -> None:
                     help="or e.g. 'throne reset: reign 0 re-seeded from the untouched genesis'")
     ap.add_argument("--min-submission-block", default="unchanged",
                     help="or 'bumped to the finney tip at the flip'")
+    ap.add_argument("--scope", choices=["teacher-swap", "window-only"], default="teacher-swap",
+                    help="window-only = option E: 262k window + caps + wvk bump on the Qwen teacher; no teacher / swarm / policy / band change")
     ap.add_argument("--band-new-only", action="store_true",
                     help="post-transition: teacher_models -> the new id alone")
     args = ap.parse_args()
@@ -231,7 +268,7 @@ def main() -> None:
     cur = int(re.search(r"^weight_version_key = (\d+)$", TOML.read_text(), re.M).group(1))
     b = args.wvk_to or cur + 1
     date = args.apply or "YYYY-MM-DD"
-    files = build(date, cur, b, args.reign_stands, args.min_submission_block)
+    files = build(date, cur, b, args.reign_stands, args.min_submission_block, args.scope)
     if args.preview or not args.apply:
         chunks = []
         for p, new in files.items():
@@ -249,7 +286,7 @@ def main() -> None:
     if MIRROR.exists():
         shutil.copyfile(TOML, MIRROR)
         print("mirrored", MIRROR.relative_to(REPO))
-    print(f"weight_version_key {cur} -> {b}; teacher -> {NEW_TEACHER}; window -> {WINDOW_NEW}")
+    print(f"weight_version_key {cur} -> {b}; scope {args.scope}; teacher -> {NEW_TEACHER if args.scope == 'teacher-swap' else 'unchanged'}; window -> {WINDOW_NEW}")
 
 
 if __name__ == "__main__":
