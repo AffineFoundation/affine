@@ -266,6 +266,22 @@ allow_auto_map = false
 # Metadata-intake guards on attacker-controlled repos.
 max_repo_files = 5000
 max_config_bytes = 1048576   # 1 MiB; config.json larger than this is rejected
+# Context-window admission rule (wvk 25 fork, T0 2026-09-30 14:00 UTC; Jacob
+# 2026-09-26 09:18 UTC "The new models should be required to have a 256k
+# sequence length"). config.json must declare an effective context window
+# >= this many tokens, derived the way vLLM derives max_model_len: the
+# smallest of max_position_embeddings / n_positions / seq_length /
+# max_seq_len / max_sequence_length / model_max_length present (text_config
+# when the root has none) x rope_scaling.factor for linear / dynamic / yarn
+# (yarn: original_max_position_embeddings x factor); no multiplier for
+# llama3 / su / longrope / default / absent. Genesis declares
+# text_config.max_position_embeddings = 262144 with no rope_scaling and
+# passes. Enforced pre-download at dispatch, prefetch and the R2 intake
+# (validator._hygiene_reason -> model_store.validate_repo_context;
+# decision rejected_context_too_short). Admission rule, not a scoring
+# change. 0 = off; the T0 flip (ops/v20/wvk25_toml_edits.py --knobs-only)
+# sets 262144 together with [miner_serving].max_model_len = 262144.
+min_context_tokens = 0
 
 # Private submissions over Cloudflare R2 (affine2 reveals; affine/r2protocol.py
 # is the byte-level contract, scripts/submit.py the miner client). Miners

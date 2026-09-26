@@ -835,7 +835,11 @@ ids stay free). Since 2026-09-04 the text-only extraction of the genesis \
 the root, `model_type = qwen3_5_moe_text`) is admitted too — see \
 `[[submission.pinned_arch_alt]]`. Any other architecture — including the \
 teacher `Qwen/Qwen3.8-27B` itself — is rejected (`validate_repo_arch` in \
-`code/affine/model_store.py`).
+`code/affine/model_store.py`). **Context rule (from the wvk-25 fork, \
+{WVK25_T0}):** `config.json` must also declare an effective context window of \
+at least 262,144 tokens (`[submission].min_context_tokens`; `validate_repo_context` \
+— see the upcoming-fork section for the derivation). "Rope stays free" means \
+theta and type; scaling the window below 262,144 is a rejection.
 
 **Step 2 — pre-flight the checkpoint directory (offline, free).** Your \
 checkpoint is a bare directory: `config.json`, tokenizer files, and \
@@ -1251,6 +1255,22 @@ a problem.
 - **Control.** The fully matched teacher-vs-king control (`control_matched`: king \
 scored on the same k−1 references as the held-out reference) is published on \
 every verdict and is the rollback signal.
+- **Admission rule — 256k context** (`[submission].min_context_tokens = 262144`; \
+operator directive 2026-09-26 09:18 UTC "the new models should be required to \
+have a 256k sequence length"). A submission's `config.json` must declare an \
+effective context window of at least 262,144 tokens, derived the way vLLM \
+derives `max_model_len`: the smallest of `max_position_embeddings` / \
+`n_positions` / `seq_length` / `max_seq_len` / `max_sequence_length` / \
+`model_max_length` present (`text_config` when the root has none), multiplied by \
+`rope_scaling.factor` for `linear` / `dynamic` / `yarn` (yarn: \
+`original_max_position_embeddings × factor`); no multiplier for `llama3`, `su`, \
+`longrope`, `default` or no rope scaling. The genesis declares \
+`text_config.max_position_embeddings = 262144` with default rope and passes; a \
+config that shortens the window (e.g. 131,072) or scales it below 262,144 is \
+rejected before any download — at the R2 intake (`affine2|ready`), at dispatch \
+and at prefetch — with the decision `rejected_context_too_short`. Admission rule, \
+not a scoring change; `python affine/scripts/submit.py check <dir>` prints the \
+derived window. Verdicts stamp `duel_params.min_context_tokens`.
 
 **What does NOT change.** δ = 0.2 sd, k_sigma = 2, forfeit floor −6, miner caps \
 (thought 4,096 with the 1.25× teacher-relative rule, action 768), reference cap \
@@ -1260,7 +1280,8 @@ thought-length floor, the protocol probe.
 **Pre-flight for miners.** `vllm serve <your checkpoint> --max-model-len 262144 \
 --tensor-parallel-size 2` must load and answer `/v1/completions` with finite \
 logprobs on an echo request. The genesis family is native 262k; do not shorten \
-rope in your config. Nothing else changes in what you submit.
+rope in your config — `config.json` must derive to ≥ 262,144 tokens or the \
+submission is refused at intake. Nothing else changes in what you submit.
 
 **Numbers behind it** (stored verdicts + a 404-turn GLM shadow): fully matched \
 teacher−king control +0.39 sd under Qwen → +0.80 under GLM (typicality +0.40 → \

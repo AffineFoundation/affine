@@ -1173,6 +1173,10 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
                 turn_ids = [turn_id(rec) for rec in turns]
                 slices[0]["turn_ids"] = list(turn_ids)
                 slice_info["n_scored"] = n_done
+            # Names the post-T0 green watch reads (ops/v19/green_watch.py).
+            seq_stamp["stop_reason"] = seq_stamp["reason"]
+            seq_stamp["n_turns_scored"] = n_done
+            seq_stamp["n_looks"] = len(seq_stamp["looks"])
         else:
             king_rows, chall_rows = await score_slice(turns, 0)
         result = decide(chall_rows, king_rows)
@@ -1440,6 +1444,10 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "seq_k": seq["k"],
             "seq_consecutive": seq["consecutive"],
             "seq_shadow_full_first_n": seq["shadow_full_first_n"],
+            # wvk 25 admission rule: minimum declared context window (0 = off)
+            # and the window the miner slots actually serve.
+            "min_context_tokens": int((engine_cfg.get("submission") or {}).get("min_context_tokens", 0) or 0),
+            "miner_max_model_len": int((engine_cfg.get("miner_serving") or {}).get("max_model_len", 0) or 0),
             # Decaying crown margin (staged 2026-09-12): `min_margin` above
             # is already the effective δ; these say where it came from.
             **margin_stamp,
@@ -1457,6 +1465,13 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         verdict["shadow"] = {"sd_meter": sd_block}
         verdict["duel_params"]["sd_meter"] = {
             "role": sd_block["role"], "anchor": sd["anchor"], **sd_block["knobs"]}
+    if seq_stamp.get("shadow_full") is not None:
+        # Full-slice decision next to the sequential one (green-watch name).
+        sf = seq_stamp["shadow_full"]
+        verdict.setdefault("shadow", {})["full_slice"] = {
+            "margin": sf["margin"], "se": sf["se"], "z": sf["z"],
+            "crown": sf["challenger_wins"], "n_paired_turns": sf["n_paired_turns"],
+            "agrees_with_sequential": sf["agrees_with_sequential"]}
     if protocol is not None:
         verdict["protocol_probe"] = _probe_public(protocol)
     if confirm:

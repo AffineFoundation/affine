@@ -2,8 +2,11 @@
 AFTER the teacher/window flip and the weight_version_key 24 -> 25 bump).
 
   --apply DATE : miner_empty_rule floor -> drop_typ, empty_gate_ratio 0.0 -> 2.0,
-                 r_cap_teacher false -> true, seq_enabled false -> true (+ history paragraph)
-  --revert DATE: the four knobs back (rollback; wvk integer handled by the lead's script)
+                 r_cap_teacher false -> true, seq_enabled false -> true (+ history paragraph);
+                 [submission].min_context_tokens 0 -> 262144 (idempotent: already 262144 = fine,
+                 so the lead's --knobs-only script may set it first)
+  --revert DATE: the four knobs back (+ min_context_tokens -> 0; rollback; wvk integer
+                 handled by the lead's script)
   --preview    : write ops/v20/wvk25_rules.patch
 Asserted, not edited: seq_look_every 100, seq_k 2.6, seq_consecutive 2, min_margin_sd 0.2,
 forfeit_sd -6, ref_min_content 10, typ_min_refs 2, content_prefix refs_max.
@@ -20,6 +23,9 @@ FLIPS = (('miner_empty_rule = "floor"\n', 'miner_empty_rule = "drop_typ"\n'),
          ("empty_gate_ratio = 0.0\n", "empty_gate_ratio = 2.0\n"),
          ("r_cap_teacher = false\n", "r_cap_teacher = true\n"),
          ("seq_enabled = false\n", "seq_enabled = true\n"))
+# Admission knob (Jacob 2026-09-26 09:18 UTC, 256k): flipped when still off, accepted when
+# the lead's teacher-swap script already set it.
+CONTEXT = ("min_context_tokens = 0\n", "min_context_tokens = 262144\n")
 BANNER = "# ############################################################################\n"
 HIST = ("# 25 scoring bundle ({date}, with the GLM-5.3-Flash teacher swap + 262k window;\n"
         "# explicit dated operator directive 2026-09-26 09:09 UTC \"lets do this switch\",\n"
@@ -29,7 +35,10 @@ HIST = ("# 25 scoring bundle ({date}, with the GLM-5.3-Flash teacher swap + 262k
         "# empty_gate_ratio 2.0 (a side above 2× the teacher's empty share keeps the floor\n"
         "# on those turns), r_cap_teacher (z_R capped at 0), seq_enabled (looks every 100\n"
         "# turns, crown when margin − 2.6·SE > δ on two consecutive looks, futility stop,\n"
-        "# else the full slice). Counterfactual on the last 40 Qwen-ref verdicts: parity\n"
+        "# else the full slice), plus the admission rule [submission].min_context_tokens =\n"
+        "# 262144 (Jacob 2026-09-26 09:18 UTC \"256k sequence length\"; config.json must\n"
+        "# declare an effective window >= 262,144 tokens — rejected_context_too_short).\n"
+        "# Counterfactual on the last 40 Qwen-ref verdicts: parity\n"
         "# 40/40 at the old knobs; bundle flips 1/40 (chal-00662's crown → +0.14 < δ, the\n"
         "# empty-thought asymmetry), paired sd −14 %, control_matched −0.24 → +0.37.\n"
         "# Forward-only, reign 21 stands, min_submission_block unchanged.\n")
@@ -48,6 +57,13 @@ def render(s, date, revert=False):
     for old, new in FLIPS:
         if revert: old, new = new, old
         _check(out, old); out = out.replace(old, new)
+    off, on = CONTEXT
+    if revert:
+        if out.count(on) == 1: out = out.replace(on, off)
+        elif out.count(off) != 1: raise SystemExit("min_context_tokens: neither 262144 nor 0 exactly once")
+    else:
+        if out.count(off) == 1: out = out.replace(off, on)
+        elif out.count(on) != 1: raise SystemExit("min_context_tokens: neither 0 nor 262144 exactly once")
     return _hist(out, (REVERT_HIST if revert else HIST).format(date=date))
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--toml", type=Path, default=TOML)

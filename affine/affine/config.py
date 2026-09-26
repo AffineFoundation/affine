@@ -117,6 +117,9 @@ class SubmissionCfg:
     # passes if it matches pinned_arch OR any of these (text-only extraction
     # of the genesis family, 2026-09-04).
     pinned_arch_alt: list[dict]
+    # Minimum effective context window config.json must declare
+    # (model_store.validate_repo_context; wvk 25: 262144). 0 = off.
+    min_context_tokens: int
     # Private R2 submission flow ([submission.r2]); see R2Cfg.
     r2: "R2Cfg"
 
@@ -497,8 +500,16 @@ def _submission(raw: dict) -> SubmissionCfg:
         max_config_bytes=int(s["max_config_bytes"]),
         pinned_arch=dict(s.get("pinned_arch") or {}),
         pinned_arch_alt=[dict(p) for p in (s.get("pinned_arch_alt") or [])],
+        min_context_tokens=_min_context_tokens(s),
         r2=_r2(s.get("r2") or {}),
     )
+
+
+def _min_context_tokens(s: dict) -> int:
+    v = int(s.get("min_context_tokens", 0) or 0)
+    if v < 0:
+        raise ValueError(f"[submission] min_context_tokens must be >= 0 (0 = off), got {v}")
+    return v
 
 
 def _ref_max_tokens(d: dict) -> int | None:

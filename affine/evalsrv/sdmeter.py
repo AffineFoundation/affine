@@ -584,6 +584,8 @@ def shadow_verdict(chall_rows: list[dict], king_rows: list[dict],
         gate[side] = {"empty_share": share, "n_empty": n_e, "n_valid": n_v,
                       "teacher_share": teacher_share, "ratio": cfg["empty_gate_ratio"],
                       "over_gate": bool(over),
+                      # the gate bit only while the rule is drop_typ (green-watch name)
+                      "empty_gate_applied": bool(over and cfg["miner_empty_rule"] != "floor"),
                       # what the side's empty turns score: floor by rule or by gate; else typ dropped
                       "empty_floor": bool(cfg["miner_empty_rule"] == "floor" or over)}
 
