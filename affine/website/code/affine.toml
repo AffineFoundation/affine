@@ -996,6 +996,18 @@ concurrency = 192
 # Whole-duel wall clock budget on the eval server before the validator
 # classifies the eval as a transient failure and requeues.
 timeout_s = 7200
+# wvk 25 sequential stopping (STAGED 2026-09-26, off; flip at T0). When on, the
+# running paired margin is checked every seq_look_every turns in slice order;
+# the crown is decided early when margin − seq_k·SE > δ on seq_consecutive looks
+# in a row, the duel stops early as a loss when margin + seq_k·SE < δ (the bar
+# is unreachable), otherwise the full slice is scored and the standard rule
+# applies. k = 2.6 ≈ the Pocock constant for 10 looks (null false-crown 0.5 %
+# per duel on the replay, vs 2.6 % at k = 2); the two-consecutive-looks rule
+# stops a margin ≈ δ from crowning on one lucky look.
+seq_enabled = false
+seq_look_every = 100
+seq_k = 2.6
+seq_consecutive = 2
 
 # sd-meter — min(z_R, typ_c, z_A) in teacher-sd units (docs: god-equation
 # finalist; staged as a SHADOW 2026-09-18 on Jacob's directive "I like it
@@ -1045,6 +1057,21 @@ content_prefix = "refs_max"
 # ~4.8 % of turns. 0 = every reference anchors (the wvk 22/23 rule).
 ref_min_content = 10
 typ_min_refs = 2
+# wvk 25 knobs (STAGED 2026-09-26, off; flip at T0 = 2026-09-30 14:00 UTC with the
+# GLM teacher swap, explicit dated operator directive 2026-09-26 09:09 UTC "lets
+# do this switch"; docs/glm-cutover-plan.md §2). miner_empty_rule: "floor" (wvk
+# 22–24) = a miner thought with < content_min_tokens content tokens has typ_c
+# set to forfeit_sd; "drop_typ" = the typicality leg is dropped and the turn
+# scores min(z_R, z_A), the same treatment wvk 24 gives the teacher's own empty
+# references (closes the empty-thought floor channel that paid 4 of the 6
+# wvk-22/23 crowns). empty_gate_ratio (companion gate, 0 = off): a side whose
+# share of empty-thought turns exceeds this multiple of the teacher's own share
+# on the slice keeps the floor on those turns — "never think" is not free.
+# r_cap_teacher: z_R := min(z_R, 0) before the min — no credit for predicting
+# the teacher's action better than the teacher's own alternative thoughts do.
+miner_empty_rule = "floor"
+empty_gate_ratio = 0.0
+r_cap_teacher = false
 content_lift_nats = 1.0
 content_min_tokens = 10
 typicality_width = 2.0

@@ -228,6 +228,15 @@ class DuelCfg:
     # content_lift_nats, content_min_tokens, typicality_width, a_norm_bytes,
     # forfeit_sd, k_sigma, min_margin_sd, frozen.<dialect>.{R,A,Mc}_{mu,sigma}.
     sd_meter: dict = field(default_factory=dict)
+    # wvk 25 (staged 2026-09-26): sequential stopping — look at the running
+    # paired margin every seq_look_every turns; crown early when
+    # margin − seq_k·SE > δ on seq_consecutive looks in a row, stop early as a
+    # loss when margin + seq_k·SE < δ; otherwise the full slice + the standard
+    # rule. False = one decision on the full slice (wvk ≤ 24).
+    seq_enabled: bool = False
+    seq_look_every: int = 100
+    seq_k: float = 2.6
+    seq_consecutive: int = 2
     # Staged 2026-09-10 (inert unless score_mode="min_rga"): the A leg's
     # summed action lift is divided by this many bytes instead of the
     # action's own length. None = per-byte (the length-biased 09-04 probe).
@@ -572,6 +581,14 @@ def _duel(raw: dict) -> DuelCfg:
     thought_rendering = str(d.get("thought_rendering", "canonical"))
     if thought_rendering not in ("canonical", "as_generated"):
         raise ValueError(f"[duel] thought_rendering {thought_rendering!r} unknown")
+    for k, v in (("miner_empty_rule", ("floor", "drop_typ")),):
+        if k in sd_meter and str(sd_meter[k]) not in v:
+            raise ValueError(f"[duel.sd_meter] {k} must be one of {v}, got {sd_meter[k]!r}")
+    if "empty_gate_ratio" in sd_meter and float(sd_meter["empty_gate_ratio"]) < 0:
+        raise ValueError("[duel.sd_meter] empty_gate_ratio must be >= 0")
+    seq_look_every = int(d.get("seq_look_every", 100)); seq_k = float(d.get("seq_k", 2.6)); seq_consecutive = int(d.get("seq_consecutive", 2))
+    if seq_look_every <= 0 or seq_k <= 0 or seq_consecutive < 1:
+        raise ValueError("[duel] seq_look_every > 0, seq_k > 0, seq_consecutive >= 1 required")
     score_mode = str(d.get("score_mode", "reason"))
     if score_mode not in ("reason", "min_rg", "min_rga", "sd_min_rga"):
         raise ValueError(f"[duel] score_mode {score_mode!r} unknown")
@@ -604,6 +621,8 @@ def _duel(raw: dict) -> DuelCfg:
                             if d.get("forfeit_turn_score") is not None else None),
         sd_meter=sd_meter,
         thought_rendering=thought_rendering,
+        seq_enabled=bool(d.get("seq_enabled", False)),
+        seq_look_every=seq_look_every, seq_k=seq_k, seq_consecutive=seq_consecutive,
         action_norm_bytes=(float(d["action_norm_bytes"])
                            if d.get("action_norm_bytes") is not None else None),
         require_think_close=bool(d.get("require_think_close", False)),

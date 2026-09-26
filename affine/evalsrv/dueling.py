@@ -177,6 +177,68 @@ def check_dialects(turns: list[dict], allowed: list[str]) -> None:
             f"allowed_action_kinds={allowed}")
 
 
+def sequential_settings(duel_cfg: dict) -> dict:
+    """`[duel].seq_*` as one dict (wvk 25, staged 2026-09-26). Absent keys =
+    off: the whole slice is scored and the standard rule decides once.
+    enabled: look at the running paired margin every `look_every` turns (in
+    slice order); crown-stop when margin − k·SE > δ on `consecutive` looks in
+    a row; futility-stop when margin + k·SE < δ (the bar is unreachable);
+    otherwise run to n_turns and apply the standard rule."""
+    enabled = bool(duel_cfg.get("seq_enabled", False))
+    look_every = int(duel_cfg.get("seq_look_every", 100) or 100)
+    k = float(duel_cfg.get("seq_k", 2.6) or 2.6)
+    consecutive = int(duel_cfg.get("seq_consecutive", 2) or 2)
+    if look_every <= 0 or k <= 0 or consecutive < 1:
+        raise ValueError("[duel] seq_look_every > 0, seq_k > 0, seq_consecutive >= 1")
+    return {"enabled": enabled, "look_every": look_every, "k": k, "consecutive": consecutive}
+
+
+async def sequential_run(turns: list[dict], score_slice, decide, seq: dict,
+                         stamp: dict, abort_event=None
+                         ) -> tuple[list[dict], list[dict], int]:
+    """wvk 25 sequential stopping loop. Scores `turns` in slice order in
+    batches of seq["look_every"] (both sides concurrently within a batch via
+    `score_slice(batch, done_before)`), calls `decide(chall_rows, king_rows)`
+    after each batch and applies the stop rule:
+      crown-stop   when margin − k·SE > δ on seq["consecutive"] looks in a row
+      futility-stop when margin + k·SE < δ (the bar is unreachable)
+    Returns the rows scored so far and how many turns were scored; `stamp`
+    receives the looks and the stop (stopped_at / reason = crown | futility,
+    None when the whole slice was scored)."""
+    king_rows: list[dict] = []
+    chall_rows: list[dict] = []
+    passes = 0
+    n_done = 0
+    for start in range(0, len(turns), seq["look_every"]):
+        if abort_event is not None and abort_event.is_set():
+            raise DuelAborted("superseded by a new duel request")
+        batch = turns[start:start + seq["look_every"]]
+        k_b, c_b = await score_slice(batch, n_done)
+        king_rows += k_b
+        chall_rows += c_b
+        n_done = start + len(batch)
+        look = decide(chall_rows, king_rows)
+        delta = look.min_margin
+        fin = math.isfinite(look.margin) and math.isfinite(look.se)
+        over = fin and (look.margin - seq["k"] * look.se > delta)
+        futile = fin and (look.margin + seq["k"] * look.se < delta)
+        passes = passes + 1 if over else 0
+        stamp["looks"].append({
+            "n": n_done, "margin": look.margin if fin else None, "se": look.se if fin else None,
+            "z": look.z if fin else None, "over_bar": over, "futile": futile, "passes": passes})
+        log.info("sequential look n=%d margin=%.4f se=%.4f over=%s futile=%s passes=%d",
+                 n_done, look.margin, look.se, over, futile, passes)
+        if n_done >= len(turns):
+            break
+        if passes >= seq["consecutive"]:
+            stamp.update(stopped_at=n_done, reason="crown")
+            break
+        if futile:
+            stamp.update(stopped_at=n_done, reason="futility")
+            break
+    return king_rows, chall_rows, n_done
+
+
 def near_miss_settings(duel_cfg: dict) -> dict:
     """`[duel].near_miss_*` as one dict: enabled, low, high, extra_slices.
 
@@ -1050,7 +1112,24 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
                            abort_event=abort_event),
             )
 
-        king_rows, chall_rows = await score_slice(turns, 0)
+        seq = sequential_settings(duel_cfg)
+        seq_stamp = {"enabled": seq["enabled"], "look_every": seq["look_every"], "k": seq["k"],
+                     "consecutive": seq["consecutive"], "looks": [], "stopped_at": None, "reason": None}
+        if seq["enabled"] and not confirm:
+            # wvk 25 sequential stopping: score the slice in slice order in
+            # batches of look_every turns (both sides concurrently within a
+            # batch), decide on everything scored so far after each batch.
+            king_rows, chall_rows, n_done = await sequential_run(
+                turns, score_slice, decide, seq, seq_stamp, abort_event)
+            if seq_stamp["stopped_at"] is not None:
+                # The verdict is decided on the turns scored so far; the
+                # unscored tail of the slice is recorded, not scored.
+                turns = turns[:n_done]
+                turn_ids = [turn_id(rec) for rec in turns]
+                slices[0]["turn_ids"] = list(turn_ids)
+                slice_info["n_scored"] = n_done
+        else:
+            king_rows, chall_rows = await score_slice(turns, 0)
         result = decide(chall_rows, king_rows)
         slice_results = [_slice_stats(slice_info, result)]
         # Sequential near-miss (2026-09-11): a first-slice margin inside the
@@ -1222,6 +1301,12 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             f"{margin_stamp.get('blocks_since_crown')} blocks since crown)")
     if min_z > 0:
         ranking_formula += f"; a crown also needs z ≥ {min_z:g}"
+    if seq["enabled"]:
+        ranking_formula += (
+            f"; sequential: the paired margin is checked every {seq['look_every']} turns in slice "
+            f"order — the crown is decided early when margin − {seq['k']:g}·SE > δ on "
+            f"{seq['consecutive']} consecutive looks, the duel stops early as a loss when "
+            f"margin + {seq['k']:g}·SE < δ, otherwise the full slice is scored and the standard rule applies")
 
     # Sequential near-miss stamp: the window, what each slice said on its
     # own, and (when pooled) the pooled decision — the top-level margin /
@@ -1304,11 +1389,18 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "near_miss_extra_slices": near_miss["extra_slices"],
             "near_miss_window_mode": near_miss["window_mode"],
             "min_z": min_z,
+            # wvk 25 sequential stopping knobs (staged 2026-09-26).
+            "seq_enabled": seq["enabled"],
+            "seq_look_every": seq["look_every"],
+            "seq_k": seq["k"],
+            "seq_consecutive": seq["consecutive"],
             # Decaying crown margin (staged 2026-09-12): `min_margin` above
             # is already the effective δ; these say where it came from.
             **margin_stamp,
         },
         "near_miss": near_miss_stamp,
+        # wvk 25 sequential stopping (staged 2026-09-26): looks and stop.
+        "sequential": seq_stamp,
         "king": king_sum,
         "challenger": chall_sum,
         "teacher": teacher_sum,
