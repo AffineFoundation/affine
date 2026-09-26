@@ -86,7 +86,9 @@ from affine.corpus.publish import CorpusPublisher  # noqa: E402
 from affine.corpus.trace import (  # noqa: E402
     ToolParityError,
     TraceShapeError,
+    has_tool_traffic,
     message_text,
+    sampled_paths,
     trace_conversations,
 )
 from affine.corpus.view import (  # noqa: E402
@@ -1820,6 +1822,40 @@ def token_cache() -> PrefixTokenCache:
     return _TOKEN_CACHE
 
 
+# -- re-bake (teacher swap, wvk 25) ---------------------------------------------
+# `--rebake-tools`: every tool-using rollout is re-derived with the CURRENT
+# teacher's baker and its published rows are replaced -- same turn ids, same
+# strata (the stratum is a function of the task / route, not of the bytes),
+# so the slice shares do not move; the old rows retire in the same revision.
+# Rollouts without tool traffic (mini-swe bash, boxed, terminus JSON) bake
+# identically under any template and keep their rows. The band filter,
+# gates and probes are untouched (they key on turn ids / tasks).
+REBAKE: dict = {"on": False, "ids": set(), "rollouts": 0}
+
+
+def baker_style_hint() -> str:
+    try:
+        return f"{ToolBaker.from_pretrained().style.id} ({teacher_repo_name()})"
+    except Exception:  # noqa: BLE001
+        return "teacher"
+
+
+def teacher_repo_name() -> str:
+    try:
+        return str(tomllib.loads((REPO / "affine" / "affine.toml").read_text())["teacher"]["repo"])
+    except Exception:  # noqa: BLE001
+        return "?"
+
+
+def rollout_has_tool_traffic(trace: dict) -> bool:
+    if trace.get("tools"):
+        return True
+    try:
+        return any(has_tool_traffic(trace, msgs) for msgs in sampled_paths(trace))
+    except Exception:  # noqa: BLE001 -- unwalkable graph: derive_chunk reports it
+        return False
+
+
 _GUARD: dict = {}
 
 
@@ -2285,10 +2321,18 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                 _count(drops, k, v)
         keep_idx: set[int] = set()
         keep_routed: dict[str, set[int]] = {}
+        rebake_env = bool(REBAKE["on"]) and rollout_has_tool_traffic(env["trace"])
+        if rebake_env:
+            REBAKE["rollouts"] += 1
         for t in [*kept, *kept_routed]:
             tid = f"{t['traj_id']}:{t['turn_idx']}"
             g = route.get(t["turn_idx"])
-            if tid in published:
+            if rebake_env and tid in published:
+                # re-baked under the new teacher template: the old row retires,
+                # this record replaces it (same turn id, same stratum)
+                REBAKE["ids"].add(tid)
+                _count(notes, "rebaked_turns")
+            elif tid in published:
                 old_ns = (published_king_ns or {}).get(tid)
                 rank = {grp: i for i, grp in enumerate(ROUTED_GROUPS)}
                 if (g in KING_GROUPS and old_ns in KING_GROUPS and old_ns != g
@@ -3917,6 +3961,12 @@ def main() -> None:
                          "admit enter. Used once at the wvk 13 flip (2026-09-09) "
                          "to back-fill the `text` turns of trajectories folded "
                          "under wvk 11/12.")
+    ap.add_argument("--rebake-tools", action="store_true",
+                    help="teacher swap: implies --rederive and REPLACES the published rows of "
+                         "every tool-using rollout with records baked under the current "
+                         "teacher's chat template (same turn ids and strata; the old rows "
+                         "retire in the same revision, shares do not move). Rollouts "
+                         "without tool traffic keep their rows. wvk 25, 2026-09-30.")
     ap.add_argument("--rederive-since", default=None, metavar="ISO8601",
                     help="like --rederive, but only for published chunks "
                          "created at or after this time (plus the unfolded "
@@ -4019,6 +4069,11 @@ def main() -> None:
                if args.allowed_kinds else tuple(cfg.dataset.allowed_action_kinds))
     log(f"allowed action kinds: {list(allowed)}")
 
+    if args.rebake_tools:
+        args.rederive = True
+        REBAKE.update({"on": True, "ids": set(), "rollouts": 0})
+        log(f"--rebake-tools: tool-using rollouts re-baked under the {baker_style_hint()} template; "
+            "their published rows are replaced in this revision")
     if sum(bool(x) for x in (args.rederive, args.rederive_since, args.rederive_chunks)) > 1:
         fatal("--rederive, --rederive-since and --rederive-chunks are exclusive")
     since = (datetime.fromisoformat(args.rederive_since)
@@ -4735,6 +4790,15 @@ def main() -> None:
         have_groups[src2grp.get(math_cfg["source"], DEFAULT_GROUP)] = set(math_surviving)
     for src_g, surv in retire_surviving.items():
         have_groups[src_g] = set(surv)
+    if REBAKE["on"] and REBAKE["ids"]:
+        # The re-baked rows leave the index in this revision and their
+        # replacements enter with the same turn ids and strata: the retire
+        # is index-only (not a share move), so `have_groups` keeps the live
+        # strata (the replacements are not "new strata" for the catch-up
+        # budget) and the guard sees no shift.
+        pivot_retire = sorted(set(pivot_retire) | set(REBAKE["ids"]))
+        log(f"--rebake-tools: {REBAKE['rollouts']} tool-using rollouts re-baked, "
+            f"{len(REBAKE['ids'])} published rows replaced (retired + re-admitted with the same turn ids)")
     budgets = {g: catchup_budget(state.get("group_strata") or {}, g)
                for g, v in mix.items() if v > 0}
     selected, deferred, group_added = cap_fill(

@@ -230,13 +230,20 @@ class ToolBaker:
             body = body[len(self.style.empty_think):]
         return body
 
-    def baked_tool_results(self, results: list[dict]) -> str:
+    def baked_tool_results(self, results: list[dict],
+                           tool_calls: list[dict] | None = None) -> str:
         """One user turn standing in for a run of consecutive `role=tool`
         messages (both templates merge them into a single block: qwen a
         `user` block, glm an `<|observation|>` block whose body is the
-        `<tool_response>…</tool_response>` text)."""
+        `<tool_response>…</tool_response>` text). `tool_calls` = the calls
+        of the assistant turn these results answer: GLM's template emits
+        the results in the ORDER OF THE CALLS (matching `tool_call_id`),
+        and Claude Code returns parallel results in completion order, so
+        the synthetic render must carry the calls to reproduce that order
+        (2026-09-26 parity harness: 405 of 3,540 claude_code paths)."""
+        calls = [openai_tool_call(c) for c in (tool_calls or [])]
         msgs = [{"role": "user", "content": _SENTINEL_USER},
-                {"role": "assistant", "content": "a"},
+                {"role": "assistant", "content": "a", **({"tool_calls": calls} if calls else {})},
                 *[{"role": "tool", "content": r.get("content") or "",
                    **({"tool_call_id": r["tool_call_id"]} if r.get("tool_call_id") else {}),
                    **({"name": r["name"]} if r.get("name") else {})}
@@ -257,6 +264,7 @@ class ToolBaker:
         out: list[dict] = []
         i = 0
         saw_system = False
+        last_calls: list[dict] = []
         while i < len(messages):
             m = messages[i]
             role = m.get("role")
@@ -274,11 +282,12 @@ class ToolBaker:
                 while j < len(messages) and messages[j].get("role") == "tool":
                     j += 1
                 out.append({"role": "user",
-                            "content": self.baked_tool_results(messages[i:j])})
+                            "content": self.baked_tool_results(messages[i:j], last_calls)})
                 i = j
                 continue
             if role == "assistant":
                 calls = m.get("tool_calls") or []
+                last_calls = list(calls)
                 content = m.get("content") or ""
                 out.append({"role": "assistant",
                             "content": self.baked_assistant(content, calls)
