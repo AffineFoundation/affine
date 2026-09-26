@@ -79,6 +79,8 @@ WVK20_EFFECTIVE = "2026-09-16"
 WVK21_EFFECTIVE = "2026-09-17"
 WVK22_NOTICE = "2026-09-18"
 WVK22_EFFECTIVE = "2026-09-18"
+WVK25_NOTICE = "2026-09-26"
+WVK25_T0 = "2026-09-30 14:00 UTC"
 WVK24_EFFECTIVE = "2026-09-23"
 WVK23_EFFECTIVE = "2026-09-22"
 
@@ -208,6 +210,8 @@ def _margin_subs() -> dict[str, str]:
         "{WVK22_EFFECTIVE}": WVK22_EFFECTIVE,
         "{WVK23_EFFECTIVE}": WVK23_EFFECTIVE,
         "{WVK24_EFFECTIVE}": WVK24_EFFECTIVE,
+        "{WVK25_NOTICE}": WVK25_NOTICE,
+        "{WVK25_T0}": WVK25_T0,
         "{CAP_RATIO}": f"{float(d.get('thought_cap_ratio', 0.0)):g}",
         "{CAP_RULE}": (f" Per turn the thought cap is `max({int(d['max_thought_tokens'])}, "
                        f"floor({float(d.get('thought_cap_ratio', 0.0)):g} × L_T))`, L_T = the longest "
@@ -478,6 +482,15 @@ the slot
 - Sequential near-miss (2026-09-11, no fork; OFF since wvk 16) — a \
 first-slice margin in the near-miss window drew a second seeded slice; one \
 seeded slice decides again
+- **Upcoming fork: wvk 25 — teacher → GLM-5.3-Flash, 262k context, miner \
+empty-thought rule, sequential stopping, R cap (notice {WVK25_NOTICE}, effective \
+{WVK25_T0} at the first duel boundary after that time)** — the frozen teacher moves \
+from `Qwen/Qwen3.8-27B` to `zai-org/GLM-5.3-Flash`; serving window 131,072 → \
+262,144 tokens (miners: serve `--max-model-len 262144`); a miner thought with < 10 \
+content tokens scores `min(z_R, z_A)` with an admission gate at 2× the teacher's \
+share; the paired margin is checked every 100 turns (crown when `margin − 2.6·SE > \
+δ` on two consecutive looks, futility stop, else 1,000); `z_R` capped at 0; fully \
+matched control published. Reign 21 stands; forward-only
 - **Fork history: wvk 24 — forfeit floor −12 → −6 sd (effective {WVK24_EFFECTIVE})** \
 — a turn with no parseable action (or a thought with fewer than 10 content \
 tokens) scores −6 sd instead of −12; still strictly below the 1st percentile \
@@ -1193,6 +1206,72 @@ Knobs: `[duel] near_miss_enabled / near_miss_low / near_miss_high / \
 near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
 `near_miss_triggered` in `code/affine/score.py`; the draw is \
 `duel_seed(block_hash, hotkey, slice_index)` in `code/evalsrv/dueling.py`.
+
+---
+
+## Upcoming fork: wvk 25 — teacher → GLM-5.3-Flash, 262k context, scoring bundle (notice {WVK25_NOTICE}, effective {WVK25_T0})
+
+**Notice {WVK25_NOTICE} (explicit dated operator directive, Jacob Steeves \
+2026-09-26 09:09 UTC "lets do this switch"). Effective {WVK25_T0}, at the first \
+duel boundary after that time. `weight_version_key` 24 → 25. Forward-only — \
+reign 21 stands, no re-verdicts, `min_submission_block` unchanged.** This \
+section becomes "Fork history: wvk 25" at the flip. Plan: the cutover sheet \
+published with the notice; live line on Discord after the first wvk-25 verdict.
+
+**What changes.**
+- **Teacher.** The frozen model the duel scores against moves from \
+`Qwen/Qwen3.8-27B` to `zai-org/GLM-5.3-Flash` (320B MoE, 18B active, MIT). Every \
+anchor (μ, σ) is the teacher's own leave-one-out statistic, so the rule \
+re-baselines itself; scores are not comparable across the fork.
+- **Context.** Serving window 131,072 → 262,144 tokens on the eval pod and the \
+teacher swarm; prefix cap in D 110,000 → 255,744 tokens, measured with both the \
+teacher and the genesis tokenizer. Deep-trajectory turns dropped at the old cap \
+enter D over the following folds. Tool-call turns of D are re-derived under the \
+new teacher's chat template; bash / text turns are byte-identical.
+- **Miner empty-thought rule** (`[duel.sd_meter].miner_empty_rule = "drop_typ"`). A \
+miner turn whose thought has fewer than 10 content tokens scores `min(z_R, z_A)` — \
+the typicality leg is dropped — instead of the −6 floor, the same rule wvk 24 \
+applies to the teacher's own references. Forfeits (no parseable action) keep the \
+−6 floor. **Admission gate** (`empty_gate_ratio = 2.0`): a side whose share of \
+such turns exceeds 2× the teacher's own share on the slice has those turns scored \
+at the floor. Why: since wvk 22 most of every crown margin came from the king \
+having more empty-thought turns than the challenger — a channel noise patches \
+could move; nothing about turn quality had to be better.
+- **Sequential stopping** (`[duel].seq_enabled = true`, `seq_look_every = 100`, \
+`seq_k = 2.6`, `seq_consecutive = 2`). The paired margin is checked every 100 \
+scored turns in slice order; a duel stops with a crown when `margin − 2.6·SE > δ` \
+on two consecutive checks, stops for futility when even a 2.6·SE upward move \
+cannot reach δ, and otherwise runs to 1,000 turns and applies the standard rule. \
+Offline: 29/30 verdicts agree with the full slice, about twice the verdicts per \
+day. The verdict stamps every look (`sequential.looks`) and the stop.
+- **R cap** (`r_cap_teacher = true`). `z_R := min(z_R, 0)` — a thought earns no \
+credit for predicting the teacher's action better than the teacher's own \
+alternative thoughts do. Ships unless the pre-flip probe on the final code shows \
+a problem.
+- **Control.** The fully matched teacher-vs-king control (`control_matched`: king \
+scored on the same k−1 references as the held-out reference) is published on \
+every verdict and is the rollback signal.
+
+**What does NOT change.** δ = 0.2 sd, k_sigma = 2, forfeit floor −6, miner caps \
+(thought 4,096 with the 1.25× teacher-relative rule, action 768), reference cap \
+4,864, as-generated rendering, the architecture pin, the B licence, the \
+thought-length floor, the protocol probe.
+
+**Pre-flight for miners.** `vllm serve <your checkpoint> --max-model-len 262144 \
+--tensor-parallel-size 2` must load and answer `/v1/completions` with finite \
+logprobs on an echo request. The genesis family is native 262k; do not shorten \
+rope in your config. Nothing else changes in what you submit.
+
+**Numbers behind it** (stored verdicts + a 404-turn GLM shadow): fully matched \
+teacher−king control +0.39 sd under Qwen → +0.80 under GLM (typicality +0.40 → \
++1.68, action +0.29 → +0.53, R ≈ 0 under both); GLM reference yield 2.9 of 3 per \
+turn. Miner empty-thought rule on the wvk-22/23 crowns: reigns 17–21 all fall \
+under δ, reign 16 keeps its crown.
+
+**Timeline.** {WVK25_NOTICE}: this notice; the datagen teacher seat moves to GLM \
+(data event). 2026-09-29: GLM teacher swarm pre-warmed next to the Qwen one. \
+**{WVK25_T0}: flip** at the first duel boundary; the first wvk-25 verdict stamps \
+`teacher.repo = zai-org/GLM-5.3-Flash`, `max_model_len 262144` and the new knobs.
 
 ---
 
