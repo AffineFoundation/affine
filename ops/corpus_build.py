@@ -3962,7 +3962,8 @@ def main() -> None:
                          "to back-fill the `text` turns of trajectories folded "
                          "under wvk 11/12.")
     ap.add_argument("--rebake-tools", action="store_true",
-                    help="teacher swap: implies --rederive and REPLACES the published rows of "
+                    help="teacher swap: re-derives every chunk that carries tool traffic (like "
+                         "--rederive-chunks on that list) and REPLACES the published rows of "
                          "every tool-using rollout with records baked under the current "
                          "teacher's chat template (same turn ids and strata; the old rows "
                          "retire in the same revision, shares do not move). Rollouts "
@@ -4070,7 +4071,6 @@ def main() -> None:
     log(f"allowed action kinds: {list(allowed)}")
 
     if args.rebake_tools:
-        args.rederive = True
         REBAKE.update({"on": True, "ids": set(), "rollouts": 0})
         log(f"--rebake-tools: tool-using rollouts re-baked under the {baker_style_hint()} template; "
             "their published rows are replaced in this revision")
@@ -4087,6 +4087,25 @@ def main() -> None:
         known = {c["key"] for c in traces_manifest["chunks"]}
         if listed - known:
             fatal(f"--rederive-chunks: {len(listed - known)} key(s) not in the traces manifest")
+    if args.rebake_tools:
+        # Only the chunks that hold tool traffic need re-baking: a chunk is one
+        # datagen batch of one policy, so its first envelope tells (tools
+        # schemas present, or a tool_call action_kind). The others keep their
+        # rows and their deferred copies, like --rederive-chunks.
+        tool_chunks: set[str] = set()
+        for c in traces_manifest["chunks"]:
+            path = pub.cached(c["key"], c["sha256"], gz_sha=True)
+            try:
+                first = next(iter_jsonl_gz(path))
+            except StopIteration:
+                continue
+            pol = first.get("policy") or {}
+            if (first.get("trace") or {}).get("tools") or str(pol.get("action_kind") or "") == "tool_call" \
+                    or rollout_has_tool_traffic(first.get("trace") or {}):
+                tool_chunks.add(c["key"])
+        listed |= tool_chunks
+        log(f"--rebake-tools: {len(tool_chunks)} of {len(traces_manifest['chunks'])} chunks carry tool traffic "
+            f"and are re-derived; the rest keep their rows")
     unfolded = [c for c in traces_manifest["chunks"]
                 if args.rederive or c["key"] not in state["folded_chunks"]
                 or c["key"] in listed
