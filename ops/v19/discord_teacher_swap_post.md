@@ -43,3 +43,16 @@ wvk 25 (effective 2026-09-30 14:00 UTC): teacher `Qwen/Qwen3.8-27B` → `zai-org
 ## Dashboard banner (`#fork-notice`, remove at T0)
 
 Upcoming fork wvk 25 — Wed 2026-09-30 14:00 UTC: teacher → GLM-5.3-Flash, 262k context, miner empty-thought rule, sequential stopping, R cap. Reign 21 stands. Miners: your config must declare ≥ 262,144 tokens of context and serve at that window.
+
+## AMENDMENT (draft 2026-09-26 23:30 UTC — post only on Jacob's decision) — teacher swap deferred; wvk 25 ships as the scoring bundle + 262k on the current teacher
+
+**Amendment to the wvk 25 notice.** During pre-flip testing we found that GLM-5.3-Flash's teacher echo log-probabilities are not run-to-run reproducible on our serving stack at duel lengths (sparse-attention top-k selection and fp8-MoE batch variance; dense mode fixes it only at a 64k window, which would cap the dataset). We will not put a non-reproducible teacher into the contract. Therefore:
+
+- **wvk 25 on Wednesday 2026-09-30 14:00 UTC ships without the teacher change.** Teacher stays `Qwen/Qwen3.8-27B` (echoes bit-exact today).
+- **Everything else in the notice stands:** the serving window 131,072 → 262,144 tokens (prefix cap 255,744), the 256k-context admission rule (`config.json` effective window ≥ 262,144; `rejected_context_too_short`; `submit.py check`), the miner empty-thought rule + admission gate, sequential stopping (looks every 100 turns, `margin − 2.6·SE > δ` on two consecutive looks), the R cap, the fully matched control on every verdict. Reign 22 (the sitting king) stands; forward-only; `min_submission_block` unchanged.
+- **The tool-call format change does NOT happen at T0.** D stays baked under the Qwen template; keep emitting Qwen-style tool calls. Ignore the 09-26 addendum about GLM's `<tool_call>name<arg_key>…` form until a future teacher notice.
+- The teacher swap moves to its own fork with its own ≥ 48-hour notice once a deterministic echo path exists (dense prefill at 262k in vLLM, or a candidate whose echoes are exact under load). Nothing about that fork is decided.
+
+## Alternative amendment (option B′ — only if Jacob accepts the noise)
+
+- Teacher → GLM-5.3-Flash proceeds as noticed. **Known property:** the teacher's echo log-probabilities on our serving stack are not run-to-run reproducible above 2,048 prompt tokens (sparse-attention top-k / fp8-MoE batch variance). Measured on 200 stored turns re-echoed twice: turn-score repeat sd ≈ 0.4–0.6 sd; on a 1,000-turn paired margin ≈ 0.016 sd — about 0.45 of a verdict's SE. **What this means for you:** the stored echo values on the verdict are the contract and the scoring rule replays exactly from them; if you re-run the echoes yourself you will get different per-turn numbers and a margin within ≈ 0.02 sd of the published one; a verdict whose margin sits within that of the bar could have gone the other way on a re-run — we publish the measured `teacher_echo_repeat_sd` on every verdict and re-measure it weekly. No verdict is re-judged on a re-echo.
