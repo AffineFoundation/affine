@@ -1,0 +1,385 @@
+--- affine/affine.toml
++++ affine/affine.toml
+@@ -204,6 +204,11 @@
+ # +0.07 sd on average, typicality-leg teacher-vs-king control +0.36 → +0.27 sd
+ # (z 3.8 → 3.0). Everything else in [duel] unchanged; forward-only, reign 21
+ # stands, min_submission_block unchanged. ~3x duel cost accepted.
++# 23→24 teacher swap (YYYY-MM-DD): Qwen/Qwen3.8-27B → zai-org/GLM-5.3-Flash and
++# the serving window 131072 → 262144 (see [teacher] / [miner_serving]).
++# The scoring rule is unchanged; every anchor (μ, σ) is the new teacher's
++# own leave-one-out statistic, so scores re-baseline but the formula does
++# not. Forward-only: reign 21 stands, no re-verdicts; min_submission_block unchanged.
+ #
+ # ############################################################################
+ # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
+@@ -211,7 +216,7 @@
+ # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
+ # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
+ # ############################################################################
+-weight_version_key = 23
++weight_version_key = 24
+ 
+ [wallet]
+ name = "default"
+@@ -356,7 +361,19 @@
+ # weight_version_key event. teacher_serveds returns only this remote slot
+ # (extra_urls unused). Rollback: unset base_url, restore local GPU map,
+ # restart evalsrv.
+-repo = "Qwen/Qwen3.8-27B"
++# YYYY-MM-DD (weight_version_key 23→24, explicit dated operator directive):
++# teacher Qwen/Qwen3.8-27B → zai-org/GLM-5.3-Flash (320B MoE, 18B active,
++# FP8, MIT; TB2.1 84.3 / DeepSWE 63.4 / NL2Repo 56.3 vs the 27B's 73.0 /
++# 42.2 / 42.3). Why: the teacher-vs-king control went negative under the
++# 27B (kings beat its held-out replies at z −5…−8 on the last 30 verdicts)
++# — no headroom left in the meter. Serving: vLLM ≥ 0.29 (glm53 build),
++# TP4 per replica on 8-GPU boxes, FP8 KV on Blackwell; vocab 154,880 so
++# the echo spike shrinks (4.7 GiB at chunk 8192). Chat template differs
++# from Qwen's: tool turns of D are re-derived (ops/corpus_build.py
++# --rederive) and the fold's prefix guard measures BOTH tokenizers. The
++# ranked rule (sd-meter) is unchanged; anchors are the new teacher's own
++# leave-one-out values, so no per-byte re-calibration is needed.
++repo = "zai-org/GLM-5.3-Flash"
+ base_url = "http://127.0.0.1:9100/v1"
+ port = 8000
+ tp = 2
+@@ -397,7 +414,13 @@
+ # entry (pod-wide infra, no penalty), so chal-00290 looped 25x at ~26 min
+ # each — 14.5 h with zero verdicts. Teacher swarm raised in lockstep
+ # (ops/teacher-swarm/swarm.toml). 2xH200 TP2 has ample KV for 128k.
+-max_model_len = 131072
++# 131072 → 262144 (YYYY-MM-DD, with the GLM-5.3-Flash swap): the genesis
++# family's native window; a 262k sequence is ~5 GB of KV on the miner
++# slots (10 full-attention layers × 2 KV heads × 256 dims). The fold's
++# prefix cap follows (ops/corpus_build.py prefix_token_cap: window −
++# 5120 − 768 − 512 = 255,744 tokens, measured with the teacher AND the
++# genesis tokenizer) and the teacher swarm moves in lockstep.
++max_model_len = 262144
+ # 0.80 (not the usual 0.85–0.90): teacher-forcing echo+logprobs materializes
+ # an fp32 log_softmax over (step_tokens x vocab) OUTSIDE vLLM's budgeted pool
+ # — ~5 GB transient at 8192x151k — so the duel pod needs real headroom.
+--- ops/teacher-swarm/swarm.toml
++++ ops/teacher-swarm/swarm.toml
+@@ -20,11 +20,11 @@
+ # Qwen/Qwen3.8-27B since 2026-08-27 (teacher swap bundled into the wvk-10
+ # fork; GLM-4.5-Air-FP8 served eras wvk <= 9). ~51 GB BF16 pull vs GLM's
+ # 110 GB — fits TP1 everywhere GLM did, with more KV headroom.
+-model = "Qwen/Qwen3.8-27B"
++model = "zai-org/GLM-5.3-Flash"
+ # 0.22.x cannot load Qwen3.8 (GDN kernels ICE the cutlass-DSL JIT; verified
+ # on B200 2026-08-27 with every backend-flag combo + eager). 0.28.0 probed
+ # clean on the same box.
+-vllm_version = "0.28.0"
++vllm_version = "0.29.0"
+ pod_prefix = "swarm-t-"          # manager only ever touches pods with this prefix
+ template_id = "345273fa-4818-46f7-a8fa-32f0e331713c"  # Pytorch (Cuda+DinD) cu13.0.2
+ budget_usd_hr = 240.0            # hard cap on aggregate swarm $/hr
+@@ -56,7 +56,7 @@
+ # 65,536 by one token. Fault.CONTEXT_LIMIT is a pod-wide infra requeue, so
+ # chal-00290 looped 25x (~26 min each, 14.5 h, zero verdicts). Must match
+ # affine.toml [miner_serving].max_model_len. KV 1.14M tok/replica -> 8.7x.
+-max_model_len = 131072
++max_model_len = 262144
+ gpu_memory_utilization = 0.70
+ max_num_batched_tokens = 8192
+ 
+@@ -73,8 +73,8 @@
+ [types.pro6000-8x]           # 768 GB/box: the throughput king so far
+ match = "RTX PRO 6000 Blackwell Server"
+ gpu_count = 8
+-tp = 2
+-replicas = 4
++tp = 4
++replicas = 2
+ # Stand-in for b200-8x (2026-09-17, see h200-8x): second box while B200 x8
+ # is out of stock, released automatically when it is back.
+ target = 1
+@@ -85,8 +85,8 @@
+ [types.pro6000-4x]           # 384 GB/box: 2 replicas TP2
+ match = "RTX PRO 6000 Blackwell Server"
+ gpu_count = 4
+-tp = 2
+-replicas = 2
++tp = 4
++replicas = 1
+ target = 0
+ max_price = 8.0
+ est_tps = 0.25
+@@ -108,8 +108,8 @@
+ # has it if the manager ever lands there.
+ match = "B200"
+ gpu_count = 8
+-tp = 1
+-replicas = 8
++tp = 4
++replicas = 2
+ target = 1
+ max_price = 48.0
+ est_tps = 4.0                # prior: 8x the measured 0.5 of b200-1x
+@@ -128,8 +128,8 @@
+ # while we keep sweeping knobs against the box IPs.
+ match = "B200"
+ gpu_count = 8
+-tp = 1
+-replicas = 8
++tp = 4
++replicas = 2
+ # 2026-09-03 (explicit operator directive): released. Measured value of the
+ # second box on live duels: median 30.8 min (16 replicas, n=154) vs 33.3 min
+ # (8 replicas, n=21) — ~2.5 min/duel, ~1.7 extra duels/day for $48/h. The
+@@ -166,8 +166,8 @@
+ [types.h100-8x]              # 8x80 GB: 4 replicas TP2, proven arch
+ match = "H100"
+ gpu_count = 8
+-tp = 2
+-replicas = 4
++tp = 8
++replicas = 1
+ target = 0
+ max_price = 14.0
+ est_tps = 0.8
+@@ -177,8 +177,8 @@
+ # never delete it (lium_api.remove enforces the swarm-t- prefix).
+ match = "H200"
+ gpu_count = 8
+-tp = 2
+-replicas = 4
++tp = 4
++replicas = 2
+ # Stand-in for b200-8x (2026-09-17): wanted (1 box, cap $36 — stock sat at
+ # $33.20 during the B200 x8 drought) only while b200-8x has no healthy
+ # replica; released automatically once b200-8x has served for
+@@ -194,8 +194,8 @@
+ [types.h200-4x]              # production-style TP2 pairs
+ match = "H200"
+ gpu_count = 4
+-tp = 2
+-replicas = 2
++tp = 4
++replicas = 1
+ target = 0
+ max_price = 17.0
+ est_tps = 1.0
+--- affine/datagen/slicer.py
++++ affine/datagen/slicer.py
+@@ -54,7 +54,7 @@
+ # coarse cut becomes MAX_PREFIX_CHARS_262K (~255k tokens at ~3.9 chars per
+ # token on code); ops/v19/teacher_swap_toml_edits.py --apply moves the live
+ # value in lockstep with [miner_serving].max_model_len. Until then 300_000.
+-MAX_PREFIX_CHARS = 300_000
++MAX_PREFIX_CHARS = 1_000_000
+ MAX_PREFIX_CHARS_262K = 1_000_000
+ # Reference-leakage predicate, byte-for-byte the ops/datagen_refresh.py
+ # prefilter (which drops such records downstream anyway — 4.6-5% of early
+--- rollouts/rollouts/policies.toml
++++ rollouts/rollouts/policies.toml
+@@ -20,6 +20,12 @@
+ out_per_m = 0.32
+ cached_in_per_m = 0.015
+ 
++# Engy list price for glm-5.3-flash (read 2026-09-21 from /v1/models).
++[pricing.engy-glm53]
++in_per_m = 0.135
++out_per_m = 0.45
++cached_in_per_m = 0.027
++
+ # Frontier seat (2026-09-22, Jacob "FIND IT"): rollouts.backfill --frontier
+ # <model> runs each source's teacher_* policies with the Engy endpoint swapped
+ # (endpoint frontier-<slug>, policy ids frontier_<slug>_<harness>), publishes
+@@ -61,8 +67,8 @@
+ temperature = 0.8
+ 
+ [[policy.teacher_textbased.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+@@ -99,8 +105,8 @@
+ temperature = 0.8
+ 
+ [[policy.teacher_bashtool.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+@@ -136,8 +142,8 @@
+ temperature = 0.8
+ 
+ [[policy.teacher_pi.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+@@ -170,8 +176,8 @@
+ temperature = 0.8
+ 
+ [[policy.teacher_boxed.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+@@ -198,8 +204,8 @@
+ temperature = 0.8
+ 
+ [[policy.teacher_toolcall.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+@@ -270,8 +276,8 @@
+ temperature = 0.8
+ 
+ [[policy.teacher_codex.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+@@ -284,8 +290,8 @@
+ temperature = 0.8
+ 
+ [[policy.teacher_claude_code.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+@@ -441,8 +447,8 @@
+ [policy.teacher_hermes.sampling]
+ temperature = 0.8
+ [[policy.teacher_hermes.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+@@ -465,8 +471,8 @@
+ [policy.teacher_kimi.sampling]
+ temperature = 0.8
+ [[policy.teacher_kimi.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+@@ -489,8 +495,8 @@
+ [policy.teacher_terminus.sampling]
+ temperature = 0.8
+ [[policy.teacher_terminus.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+@@ -526,8 +532,8 @@
+ [policy.teacher_stirrup.sampling]
+ temperature = 0.8
+ [[policy.teacher_stirrup.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+@@ -561,8 +567,8 @@
+ # completions are p50 0.3-5k tokens. Same cap as king_boxed / king_toolcall.
+ max_tokens = 16384
+ [[policy.teacher_text.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+@@ -741,8 +747,8 @@
+ temperature = 0.8
+ max_tokens = 16384
+ [[policy.teacher_when2call.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+@@ -787,8 +793,8 @@
+ temperature = 0.8
+ max_tokens = 8192
+ [[policy.teacher_tau2.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+@@ -828,8 +834,8 @@
+ temperature = 0.8
+ max_tokens = 8192
+ [[policy.teacher_tau2_synth.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+@@ -868,8 +874,8 @@
+ temperature = 0.8
+ max_tokens = 8192
+ [[policy.teacher_kb_synth.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+@@ -909,8 +915,8 @@
+ temperature = 0.8
+ max_tokens = 8192
+ [[policy.teacher_tau2_gen.endpoints]]
+-name = "engy"
+-model = "qwen3.8-27b"
++name = "engy-glm53"
++model = "glm-5.3-flash"
+ base_url = "https://api.engy.ai/v1"
+ key_env = "ENGY"
+ 
+--- rollouts/rollouts/sources.toml
++++ rollouts/rollouts/sources.toml
+@@ -365,7 +365,7 @@
+ # counted"), then ["glm-5.3-flash"] once teacher_min_attempts is met on
+ # the new model for the live sources. Changing the list re-scans the band
+ # cache (rows are tagged with the rule they were scanned under).
+-teacher_models = []
++teacher_models = ["qwen3.8-27b", "glm-5.3-flash"]
+ 
+ [band_filter.affine_science]
+ # Item 1 block (15:24 UTC): same rule, absolute m = 1 of n >= 2 (the plan's
