@@ -41,7 +41,7 @@ from bittensor.wallet import Keypair
 
 from . import r2, r2protocol as proto
 from .config import Config
-from .model_store import R2Reader, RepoInfo
+from .model_store import R2Reader, RepoInfo, hygiene_fault_code
 from .state import QueueEntry, State, now_iso
 
 log = logging.getLogger("affine.registrations")
@@ -447,7 +447,9 @@ class AccessController:
             manifest, info = self._verify_upload(rec, prefix, manifest_sha256)
             reason = self.hygiene_check(info)
             if reason:
-                raise _MinerFault("repo_hygiene_rejected", reason)
+                # repo_hygiene_rejected, or context_too_short (wvk 25 rule) →
+                # intake decision rejected_context_too_short.
+                raise _MinerFault(hygiene_fault_code(reason), reason)
         except _MinerFault as f:
             self._reject(rec, hotkey, block, ref_repo, f.code, f.detail)
             return
