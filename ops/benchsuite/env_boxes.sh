@@ -32,6 +32,7 @@ case "$REIGN" in
   13) DRV=root@73.139.34.205:20008; EXIST="_";   NEW="";  KEEP_SESS="";  KEEP_SRC=""; PAR=3 ;;    # driver completed 18:39 with a stale list; box 67c0 idle since
   12) DRV=root@73.139.34.205:20008; EXIST="_";   NEW="";  KEEP_SESS="";  KEEP_SRC=""; PAR=4 ;;
   20) DRV=root@73.139.34.205:20008; EXIST="";    NEW="_";   KEEP_SESS=""; KEEP_SRC=""; PAR=4 ;;    # added 2026-09-24 (the abstain chain skipped 20: no case block)
+  22) DRV=root@73.139.34.205:20008; EXIST="";    NEW="_ b"; KEEP_SESS=""; KEEP_SRC=""; PAR=5 ;;   # crowned 2026-09-26 19:24 (chal-00687)
   21) DRV=root@73.139.34.205:20008; EXIST="";    NEW="_ b"; KEEP_SESS=""; KEEP_SRC=""; PAR=5 ;;   # crowned 2026-09-22 13:03; king seat serves datagen, these serve the backfill driver
   11) DRV=root@73.139.34.205:20008; EXIST="";    NEW="_";   KEEP_SESS=""; KEEP_SRC=""; PAR=5 ;;
   # reference rows (Jacob 2026-09-24 06:16: every king x every env, plus teacher and genesis). kingpod serves an HF model
