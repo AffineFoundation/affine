@@ -59,7 +59,7 @@ from evalsrv.chat import (  # noqa: E402
 )
 from evalsrv.corpus import CorpusSync  # noqa: E402
 from evalsrv.dueling import ref_token_caps, token_caps, turn_id  # noqa: E402
-from evalsrv.terms import miner_terms, teacher_reference  # noqa: E402
+from evalsrv.terms import miner_terms, score_teacher_rollouts, teacher_reference  # noqa: E402
 from evalsrv.vllm_client import Served, VllmModel  # noqa: E402
 
 log = logging.getLogger("shadow_glm53")
@@ -231,6 +231,29 @@ class EngyTeacher(VllmModel):
                 "finish": dict(self.finish)}
 
 
+class LocalTeacher(VllmModel):
+    """A vLLM replica (e.g. the GLM probe box) through the production client;
+    same counters as EngyTeacher so run() can print them (cost = 0)."""
+
+    def __init__(self, base_url: str, repo: str, model_name: str | None, concurrency: int):
+        cfg = Served(name="teacher", repo=repo, revision=None, port=0,
+                     base_url=base_url, model_name=model_name)
+        client = httpx.AsyncClient(timeout=httpx.Timeout(900.0, connect=15.0),
+                                   limits=httpx.Limits(max_connections=concurrency + 8,
+                                                       max_keepalive_connections=concurrency + 8))
+        super().__init__(cfg, client, asyncio.Semaphore(concurrency))
+        self.n_429 = 0
+        self.finish = {"stop": 0, "length": 0, "other": 0}
+
+    def cost_usd(self) -> float:
+        return 0.0
+
+    def stats(self) -> dict:
+        return {"cost_usd": 0.0, "requests": sum(v.get("requests", 0) for v in self.echo_stats().values()),
+                "samples": self.n_samples, "think_closed": self.n_think_closed,
+                "echo_stats": self.echo_stats()}
+
+
 # -- data -------------------------------------------------------------------------------
 
 def load_key() -> str:
@@ -271,9 +294,12 @@ def rows_by_tid(rows: list[dict]) -> dict[str, dict]:
 
 # -- run --------------------------------------------------------------------------------
 
-async def score_turn(teacher: EngyTeacher, rec: dict, duel_cfg: dict, sd: dict,
-                     sides: dict[str, tuple[str, str] | None]) -> dict:
-    """Fresh refs + production echo set for the stored rollouts of each side."""
+async def score_turn(teacher, rec: dict, duel_cfg: dict, sd: dict,
+                     sides: dict[str, tuple[str, str] | None],
+                     fixed_refs: list[tuple[str, str]] | None = None) -> dict:
+    """Fresh refs (or `fixed_refs` re-echoed) + production echo set for the
+    stored rollouts of each side. fixed_refs = the (z, y) of a previous pass:
+    every echo is recomputed, nothing is resampled — the repeat-echo probe."""
     tid = turn_id(rec)
     kind = rec.get("action_kind")
     caps = token_caps(duel_cfg)
@@ -283,11 +309,16 @@ async def score_turn(teacher: EngyTeacher, rec: dict, duel_cfg: dict, sd: dict,
     temperature = float(duel_cfg["temperature"])
     k = int(duel_cfg["n_teacher_samples"])
     t0 = time.monotonic()
-    ref = await teacher_reference(
-        teacher, rec["prefix"], k, temperature, ref_thought, ref_action,
-        thought_echo=True, cross_echo=True, content_echo=True,
-        content_lift_nats=sd["content_lift_nats"], sticky_key=tid,
-        action_kind=kind)
+    if fixed_refs is not None:
+        ref = await score_teacher_rollouts(
+            teacher, rec["prefix"], fixed_refs, thought_echo=True, cross_echo=True,
+            content_echo=True, content_lift_nats=sd["content_lift_nats"], sticky_key=tid)
+    else:
+        ref = await teacher_reference(
+            teacher, rec["prefix"], k, temperature, ref_thought, ref_action,
+            thought_echo=True, cross_echo=True, content_echo=True,
+            content_lift_nats=sd["content_lift_nats"], sticky_key=tid,
+            action_kind=kind)
     out = {"turn_id": tid, "action_kind": kind or dialects.DEFAULT_KIND,
            "refs": ref, "n_refs": len(ref), "rows": {}, "seconds": 0.0}
     if not ref:
@@ -326,10 +357,24 @@ async def run(args: argparse.Namespace) -> None:
     tok = get_tokenizer(repo, None)
     if tok.chat_template is None:
         raise SystemExit(f"{repo} ships no chat_template")
-    teacher = EngyTeacher(args.teacher, repo, load_key(), args.concurrency, args.budget_usd)
+    if args.base_url:
+        teacher = LocalTeacher(args.base_url, repo, args.model_name, args.concurrency)
+    else:
+        teacher = EngyTeacher(args.teacher, repo, load_key(), args.concurrency, args.budget_usd)
+    fixed: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    if args.refs_from:
+        for line in Path(args.refs_from).open():
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if r.get("refs"):
+                fixed[(r["chal"], r["turn_id"])] = [(x["z"], x["y"]) for x in r["refs"]]
+        log.info("re-echo mode: %d turns with fixed references from %s", len(fixed), args.refs_from)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = OUT_DIR / f"turns_{args.teacher}.jsonl"
+    tag = f"_{args.out_tag}" if args.out_tag else ""
+    out_path = OUT_DIR / f"turns_{args.teacher}{tag}.jsonl"
     done: set[tuple[str, str]] = set()
     if out_path.exists():
         for line in out_path.open():
@@ -372,6 +417,8 @@ async def run(args: argparse.Namespace) -> None:
             if tid not in by_tid:
                 log.warning("%s %s: turn not in current corpus index; skipped", chal, tid)
                 continue
+            if fixed and (chal, tid) not in fixed:
+                continue
             jobs.append((chal, tid, krows[tid], crows[tid]))
         if args.smoke and len(jobs) >= 2:
             break
@@ -388,7 +435,8 @@ async def run(args: argparse.Namespace) -> None:
         try:
             res = await score_turn(teacher, rec, duel_cfg, sd,
                                    {"king": side_rollout(krow),
-                                    "challenger": side_rollout(crow)})
+                                    "challenger": side_rollout(crow)},
+                                   fixed_refs=fixed.get((chal, tid)))
         except BudgetExceeded:
             raise
         except FatalRequestError as e:
@@ -421,7 +469,7 @@ async def run(args: argparse.Namespace) -> None:
         log.warning("budget reached: %s", e)
     stats = teacher.stats()
     stats.update({"turns_scored": n_done, "wall_s": time.monotonic() - t_start})
-    (OUT_DIR / f"run_stats_{args.teacher}.json").write_text(json.dumps(stats, indent=1))
+    (OUT_DIR / f"run_stats_{args.teacher}{tag}.json").write_text(json.dumps(stats, indent=1, default=str))
     log.info("done: %s", json.dumps(stats))
     await teacher.http.aclose()
 
@@ -703,6 +751,109 @@ def render(rep: dict) -> str:
     return "\n".join(L)
 
 
+def repeat(args: argparse.Namespace) -> None:
+    """Repeat-echo probe: two passes over the same turns with the SAME
+    references (pass B re-echoed with --refs-from pass A). Reports the
+    run-to-run repeat sd of every leg and of the turn score in teacher-sd
+    units, the paired margin / z of each pass, and the extrapolated margin
+    noise at n = 1000 against the verdict SE and δ."""
+    import tomllib
+    duel_cfg = tomllib.loads((REPO / "affine/affine.toml").read_text())["duel"]
+    cfg = sdmeter.settings(duel_cfg)
+    tau = float(duel_cfg["tau"])
+
+    def load(path: str) -> dict[str, dict]:
+        out = {}
+        for line in Path(path).open():
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if r.get("error") or not r.get("refs"):
+                continue
+            out[f"{r['chal']}|{r['turn_id']}"] = r
+        return out
+
+    A, B = load(args.pass_a), load(args.pass_b)
+    keys = sorted(set(A) & set(B))
+    kinds = {k: A[k]["action_kind"] for k in keys}
+
+    def score_pass(P: dict) -> dict:
+        refs = {k: P[k]["refs"] for k in keys}
+        rows_c = {k: {**P[k]["rows"].get("challenger", {"valid": False}), "turn_id": k} for k in keys}
+        rows_k = {k: {**P[k]["rows"].get("king", {"valid": False}), "turn_id": k} for k in keys}
+        g = score_group(refs, rows_c, rows_k, kinds, tau, cfg)
+        return g
+
+    ga, gb = score_pass(A), score_pass(B)
+
+    def legs(g: dict, side: str) -> dict[str, dict]:
+        return g["_scores"][side]
+
+    def rep_sd(vals_a: list, vals_b: list) -> float | None:
+        d = [b - a for a, b in zip(vals_a, vals_b) if a is not None and b is not None
+             and math.isfinite(a) and math.isfinite(b)]
+        return (st.stdev(d) / math.sqrt(2)) if len(d) > 2 else None  # per-pass sd of one measurement
+
+    out = {"n_turns": len(keys)}
+    for leg in ("score", "z_R", "typ_c", "z_A"):
+        va, vb = [], []
+        for side in ("k", "c"):
+            sa, sb = legs(ga, side), legs(gb, side)
+            for k in keys:
+                a, b = sa.get(k, {}).get(leg), sb.get(k, {}).get(leg)
+                # floor / forfeit rows are identical by construction; keep only scored rows
+                if a is None or b is None or a <= cfg["forfeit_sd"] + 1 or b <= cfg["forfeit_sd"] + 1:
+                    continue
+                va.append(a); vb.append(b)
+        out[f"repeat_sd_{leg}"] = rep_sd(va, vb)
+        out[f"n_{leg}"] = len(va)
+    # per-turn paired diffs (challenger - king) under each pass
+    da, db = {}, {}
+    for k in keys:
+        for g, dst in ((ga, da), (gb, db)):
+            c, kk = g["_scores"]["c"].get(k, {}).get("score"), g["_scores"]["k"].get(k, {}).get("score")
+            if c is not None and kk is not None:
+                dst[k] = c - kk
+    common = sorted(set(da) & set(db))
+    d_a = [da[k] for k in common]; d_b = [db[k] for k in common]
+    delta = [db[k] - da[k] for k in common]
+    n = len(common)
+    sd_d = st.stdev(d_a + d_b) if n > 2 else None
+    sd_delta = st.stdev(delta) if n > 2 else None
+    out.update({
+        "paired_pass_a": {"margin": st.mean(d_a), "se": sd_d / math.sqrt(n), "z": st.mean(d_a) / (st.stdev(d_a) / math.sqrt(n))} if n > 2 else None,
+        "paired_pass_b": {"margin": st.mean(d_b), "se": sd_d / math.sqrt(n), "z": st.mean(d_b) / (st.stdev(d_b) / math.sqrt(n))} if n > 2 else None,
+        "margin_diff_between_passes_n": (st.mean(delta) if n else None),
+        "sd_per_turn_paired_diff": sd_d,
+        "sd_per_turn_pass_delta": sd_delta,
+        # echo noise carried by a 1000-turn margin (one pass): sd(delta)/sqrt(2)/sqrt(1000)
+        "echo_noise_se_margin_n1000": (sd_delta / math.sqrt(2) / math.sqrt(1000)) if sd_delta else None,
+        "verdict_se_n1000": (sd_d / math.sqrt(1000)) if sd_d else None,
+        "delta_sd": cfg["min_margin_sd"],
+        # z shift a re-run would show at n=1000, in SE units
+        "z_shift_n1000": ((sd_delta / math.sqrt(2)) / sd_d) if (sd_delta and sd_d) else None,
+        "per_verdict": {},
+    })
+    for chal in sorted({k.split("|")[0] for k in common}):
+        ks = [k for k in common if k.startswith(chal + "|")]
+        if len(ks) < 3:
+            continue
+        ma, mb = st.mean(da[k] for k in ks), st.mean(db[k] for k in ks)
+        out["per_verdict"][chal] = {"n": len(ks), "margin_a": ma, "margin_b": mb, "same_sign": (ma > 0) == (mb > 0)}
+    rep_path = OUT_DIR / "repeat_echo_report.json"
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    rep_path.write_text(json.dumps(out, indent=1, default=str))
+    L = [f"Repeat-echo probe: {n} turns, same references re-echoed twice",
+         f"per-measurement repeat sd (teacher-sd units): turn score {_f(out['repeat_sd_score'])}  z_R {_f(out['repeat_sd_z_R'])}  typ_c {_f(out['repeat_sd_typ_c'])}  z_A {_f(out['repeat_sd_z_A'])}  (n {out['n_score']} scored side-turns)",
+         f"paired challenger−king: pass A margin {_f(out['paired_pass_a']['margin'])} z {_f(out['paired_pass_a']['z'],6,2)} | pass B margin {_f(out['paired_pass_b']['margin'])} z {_f(out['paired_pass_b']['z'],6,2)} | mean shift {_f(out['margin_diff_between_passes_n'])} at n={n}",
+         f"per-turn paired-diff sd {_f(out['sd_per_turn_paired_diff'])} | per-turn pass-to-pass delta sd {_f(out['sd_per_turn_pass_delta'])}",
+         f"at n=1000: verdict SE {_f(out['verdict_se_n1000'],7,4)} | echo-noise SE on the margin {_f(out['echo_noise_se_margin_n1000'],7,4)} | z shift between re-runs ≈ {_f(out['z_shift_n1000'],5,2)} SE | δ {cfg['min_margin_sd']}",
+         "per verdict (n≈20): " + ", ".join(f"{c}: {v['margin_a']:+.2f}/{v['margin_b']:+.2f}{'' if v['same_sign'] else ' SIGN'}" for c, v in out["per_verdict"].items())]
+    print("\n".join(L))
+    (OUT_DIR / "repeat_echo_report.txt").write_text("\n".join(L) + "\n")
+
+
 def self_check(args: argparse.Namespace) -> None:
     """Re-derive a published verdict's margin / z / control from its stored
     rows with the same functions analyze() uses (σ per duel, as production).
@@ -737,7 +888,7 @@ def self_check(args: argparse.Namespace) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("stage", choices=["run", "analyze", "check"])
+    ap.add_argument("stage", choices=["run", "analyze", "check", "repeat"])
     ap.add_argument("--teacher", default="glm-5.3-flash", choices=sorted(TEACHERS))
     ap.add_argument("--first", type=int, default=640)
     ap.add_argument("--last", type=int, default=670)
@@ -747,12 +898,20 @@ def main() -> None:
     ap.add_argument("--concurrency", type=int, default=12, help="Engy requests in flight")
     ap.add_argument("--turn-concurrency", type=int, default=6)
     ap.add_argument("--smoke", action="store_true")
+    ap.add_argument("--base-url", default="", help="score against a vLLM replica instead of Engy (e.g. http://127.0.0.1:8000/v1)")
+    ap.add_argument("--model-name", default=None, help="served model name on that replica (default: the repo)")
+    ap.add_argument("--refs-from", default="", help="re-echo mode: reuse the (z, y) references of this pass's jsonl")
+    ap.add_argument("--out-tag", default="", help="suffix for the output files, e.g. pass1 / pass2")
+    ap.add_argument("--pass-a", default="", help="repeat stage: first pass jsonl")
+    ap.add_argument("--pass-b", default="", help="repeat stage: second pass jsonl")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.stage == "run":
         asyncio.run(run(args))
     elif args.stage == "check":
         self_check(args)
+    elif args.stage == "repeat":
+        repeat(args)
     else:
         analyze(args)
 
