@@ -296,6 +296,35 @@ unchanged.**
   2026-09-07 (through `chal-00359`) drained, projected 2026-09-09 — met.
   llms.txt "Upcoming changes" → "Fork history: wvk 13".
 
+### Operator crown — reign 22 (2026-09-26 19:24 UTC, no wvk, no scoring change)
+Explicit dated operator directive, Jacob Steeves 2026-09-26 18:51 UTC: "Tell
+the validator to crown the last miner model who scored the best against the
+king and set weights to it immediately while we consider the cut over."
+Executed on the reign-14 path (`ops/v16/retro_crown_00556.py` pattern →
+`ops/v20/operator_crown_00687.{py,sh}`): every challenger verdict since reign
+21's crown (`chal-00662`, 09-22 13:03; 38 scored duels, 8 positive, none over
+δ = 0.20 sd) ranked by paired margin → `chal-00687` (uid 62, hotkey
+`5EzaX8pVDyqC…`, digest `7f066f2c5f95…`, 09-24 19:46): **+0.073 sd, SE 0.027,
+z +2.73** — cleared 2·SE (0.053), missed δ; runner-ups `chal-00677` +0.054 /
+`chal-00682` +0.047. Probe 0.90 pass, forfeits 0.3 %, B 0.51, arch pin +
+hygiene passed. Copy check (file hashes vs reigns 14–21 + a seeded tensor
+sample vs 21 via R2 range reads, `/tmp/nearcopy_check.py` on the box): 0/18
+shard hashes shared; 693/693 tensors same shape, sampled tensors differ densely
+(median 30 % of elements, ‖Δ‖/‖king‖ ≈ 1e-3) — a small continued-training step
+on the public reign-21 copy from a different coldkey (`5GZN8Aqm…` vs the grpo
+lineage `5EUzVgKZ…` that held 15/20/21). Validator stopped at an empty
+boundary (queue 0, no in_flight), deadman paused, no pod redeploy; private
+prefix promoted to `models.affine.io/models/sha256/7f066f2c…/`; one `crowned`
+row with `via = "operator_crown"` + `operator_crown{directive, directive_date,
+note = "operator crown 2026-09-26; did not clear δ under wvk 24", …}`; the
+original `verdict` row untouched; `crown_block` 9154011; weights set to uid 62
+(1.0) at 19:26:38 UTC (reign 21's 72 h window had expired 09-25 13:03, so
+weights had been burning); kingctl rented `king-dg-7f066f2c5f95-3fd8` on its
+own; dashboard tags the row (`crown_note`), llms.txt has an "Operator crown
+2026-09-26" section. Discord public `…/1553488914311028836`, private
+`…/1553488915430641746`. Box commit `8d9171c9`. **Reign 22 stands at the wvk-25
+T0 (not 21)** — the lead's plan/notice wording needs that one word.
+
 ### v9: window-best crown — LIVE 2026-09-12 17:01 UTC (wvk 14→15)
 Operator directive 2026-09-12 16:39 UTC (Jacob Steeves: "best positive
 margin of the last 12 hours"; confirmed 16:43 UTC "Yes I want to make this
