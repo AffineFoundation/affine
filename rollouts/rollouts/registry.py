@@ -18,6 +18,7 @@ from rollouts.schema import Endpoint, Policy
 
 RUNNERS = ("verifiers", "verifiers_chat", "mini_swe")
 KING_POLICY_PREFIX = "king_"
+TEACHER_POLICY_PREFIX = "teacher_"
 CATALOG_KINDS = ("hf", "hf_swebench", "swesmith", "terminal_lego",
                  "terminal_bench_2", "harbor_swe", "nl2repobench",
                  "general_agent", "procedural", "tmax", "terminal_gen", "longcot", "autobench",
@@ -120,10 +121,20 @@ def _load_policies(path: Path) -> dict[str, Policy]:
     # 1M tokens) is attached to every endpoint of that name (one table for
     # the 17 engy blocks).
     pricing = {name: p for name, p in (raw.get("pricing") or {}).items() if isinstance(p, dict)}
+    # Teacher-seat switch knob (wvk-25 GLM-5.3-Flash cutover, D2 data event):
+    # ROLLOUTS_TEACHER_MODEL_OVERRIDE=glm-5.3-flash [+ ROLLOUTS_TEACHER_ENDPOINT_NAME=
+    # engy-glm53] rewrites the `engy` endpoint of every teacher_* policy at load
+    # (model + endpoint name -> its [pricing.<name>] block). Unset = the toml as
+    # written (today's qwen3.8-27b). Set in the pods' .rollouts_env + RESTART;
+    # the T0 flip script rewrites the toml itself and the knob becomes a no-op.
+    teacher_model = os.environ.get("ROLLOUTS_TEACHER_MODEL_OVERRIDE", "").strip()
+    teacher_epname = os.environ.get("ROLLOUTS_TEACHER_ENDPOINT_NAME", "").strip() or ("engy-glm53" if teacher_model else "")
     policies: dict[str, Policy] = {}
     for pid, cfg in raw.get("policy", {}).items():
         endpoints = []
         for e in cfg.get("endpoints", ()):
+            if teacher_model and pid.startswith(TEACHER_POLICY_PREFIX) and e.get("name") == "engy":
+                e = {**e, "model": teacher_model, "name": teacher_epname}
             model_env = str(e.get("model_env", ""))
             base_url_env = str(e.get("base_url_env", ""))
             if not (e.get("model") or model_env):

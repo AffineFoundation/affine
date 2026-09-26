@@ -20,6 +20,13 @@ in_per_m = 0.045
 out_per_m = 0.32
 cached_in_per_m = 0.015
 
+# GLM-5.3-Flash on Engy (wvk-25 teacher, D2 seat switch behind ROLLOUTS_TEACHER_MODEL_OVERRIDE;
+# the T0 flip script renames the teacher_* endpoints to this block). Engy list 2026-09-26.
+[pricing.engy-glm53]
+in_per_m = 0.135
+out_per_m = 0.45
+cached_in_per_m = 0.027
+
 # Frontier seat (2026-09-22, Jacob "FIND IT"): rollouts.backfill --frontier
 # <model> runs each source's teacher_* policies with the Engy endpoint swapped
 # (endpoint frontier-<slug>, policy ids frontier_<slug>_<harness>), publishes
