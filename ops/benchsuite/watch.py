@@ -73,14 +73,28 @@ def current_king() -> dict | None:
             "repo": k.get("repo"), "crowned_at": k.get("crowned_at")}
 
 
+def is_king_card(c: dict) -> bool:
+    """A card produced by a KING pass (crown / weekly / operator pass on the
+    sitting king): `king.reign` set, not a challenger card. Challenger cards
+    carry the challenger under `king` with a `label` and `reign = None`.
+    2026-09-26: chal-00687's near-miss challenger card (chat-only, 09-25) had
+    the same digest as the model crowned reign 22 by operator directive, so
+    `latest_card_for` treated it as reign 22's run and the watcher never
+    started the crown pass. Only king cards count as "a run for this king"."""
+    k = c.get("king") or {}
+    return bool(k.get("digest")) and k.get("reign") is not None and c.get("mode") != "challenger"
+
+
 def latest_card_for(digest: str) -> dict | None:
+    """Newest KING card for this digest (see is_king_card) — challenger cards
+    for the same weights never satisfy a crown."""
     best = None
     for p in CARDS_DIR.glob("*.json"):
         try:
             c = json.loads(p.read_text())
         except (OSError, ValueError):
             continue
-        if (c.get("king") or {}).get("digest") == digest:
+        if (c.get("king") or {}).get("digest") == digest and is_king_card(c):
             if best is None or (c.get("created_at") or "") > (best.get("created_at") or ""):
                 best = c
     return best
@@ -99,11 +113,10 @@ def latest_card() -> dict | None:
             c = json.loads(p.read_text())
         except (OSError, ValueError):
             continue
-        k = c.get("king") or {}
         # kings only: challenger / comparable / genesis cards carry a label, not a reign,
         # and their weights are not on the public copy (2026-09-15: a challenger card was
         # picked as "previous king" and the identity check 404'd)
-        if c.get("status") in ("complete", "partial") and k.get("digest") and k.get("reign") is not None:
+        if c.get("status") in ("complete", "partial") and is_king_card(c):
             if best is None or (c.get("created_at") or "") > (best.get("created_at") or ""):
                 best = c
     return best
@@ -249,6 +262,13 @@ def tick(a: argparse.Namespace) -> None:
     if not running and start_challenger_if_due(w, a):   # challenger cards wait for a quiet watcher; a crown does not
         return
     card = latest_card_for(king["digest"])
+    # One line per crown seen (normal or operator — both only change state.json),
+    # so a silent log never hides a crown the watcher decided not to bench.
+    if w.get("last_seen_king") != king["digest"]:
+        log(f"king now reign {king['reign']} ({king['digest'][:12]}, crowned_at {king.get('crowned_at')}); "
+            f"king card: {card['run_id'] if card else 'none'}")
+        w["last_seen_king"] = king["digest"]
+        save_watch(w)
     why = None
     if card is None:
         why = f"no run for reign {king['reign']} ({king['digest'][:12]})"
