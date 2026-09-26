@@ -149,12 +149,15 @@ fi
 
 # --- 5. contract flip: teacher / window / swarm / slicer / policies / band, then the wvk-25 scoring knobs
 python ops/v19/teacher_swap_toml_edits.py --apply "$DIRECTIVE_DATE" --wvk-to "$WVK_TO"
-if [[ -f ops/v20/wvk25_toml_edits.py ]]; then
-  python ops/v20/wvk25_toml_edits.py --apply "$DIRECTIVE_DATE" --knobs-only && echo "$(ts) wvk-25 scoring knobs applied"
+# fork worker's rules script (box main b03fc00d/816af3d1): asserts the eight fixed knobs, flips
+# miner_empty_rule / empty_gate_ratio / r_cap_teacher / seq_enabled, sets min_context_tokens 262144
+# (idempotent), adds its history paragraph, mirrors the toml. Runs AFTER the wvk bump above.
+if [[ -f ops/v20/wvk25_rules_toml_edits.py ]]; then
+  python ops/v20/wvk25_rules_toml_edits.py --apply "$DIRECTIVE_DATE" && echo "$(ts) wvk-25 scoring knobs + context rule applied"
 else
-  echo "$(ts) WARNING: ops/v20/wvk25_toml_edits.py missing — scoring bundle NOT applied; abort unless Jacob waived it"; exit 1
+  echo "$(ts) ops/v20/wvk25_rules_toml_edits.py missing — scoring bundle NOT applied; abort"; exit 1
 fi
-grep -E '^(weight_version_key|repo|max_model_len|score_mode|max_thought_tokens|ref_max_tokens|miner_min_content_rule|empty_share_gate|r_cap|enabled|look_every|k_look|consecutive_looks) ' affine/affine.toml
+grep -E '^(weight_version_key|repo|max_model_len|score_mode|max_thought_tokens|ref_max_tokens|miner_empty_rule|empty_gate_ratio|r_cap_teacher|seq_enabled|seq_look_every|seq_k|seq_consecutive|seq_shadow_full_first_n|min_context_tokens) ' affine/affine.toml
 
 # --- 6. teacher swarm: the Qwen manager's targets -> 0 (its boxes drain), router must be GLM-only
 pm2 restart affine-swarm-manager >/dev/null 2>&1 || true
@@ -167,7 +170,10 @@ done
 echo "$(ts) router GLM-only"
 
 # --- 7. llms.txt
+[[ -f ops/v20/llms_wvk25_notice_edits.py ]] && python ops/v20/llms_wvk25_notice_edits.py --flip >/dev/null 2>&1 && echo "$(ts) llms 'Upcoming fork' -> 'Fork history: wvk 25'" || echo "$(ts) (llms flip: run ops/v20/llms_wvk25_notice_edits.py --flip by hand if the flag is absent)"
 python affine/scripts/build_llms_txt.py >/dev/null && echo "$(ts) llms.txt rebuilt"
+[[ -f ops/v20/banner_wvk25.py ]] && python ops/v20/banner_wvk25.py --remove >/dev/null 2>&1 && echo "$(ts) #fork-notice banner removed" || true
+[[ -f ops/v20/verify_pod_max_model_len.sh ]] && bash ops/v20/verify_pod_max_model_len.sh && echo "$(ts) pod max_model_len verified" || true
 
 # --- 8. eval pod
 cd affine && python scripts/redeploy_pods.py --all && cd ..
