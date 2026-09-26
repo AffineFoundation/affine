@@ -109,6 +109,8 @@ def main() -> None:
     ap.add_argument("--budget-usd", type=float, default=0.0,
                     help="stop the teacher-side (paid) policies once their summed cost_usd reaches this (0 = no cap)")
     ap.add_argument("--shard", default="0/1", help="i/n: roll only the tasks hashed into shard i (split across pods)")
+    ap.add_argument("--uids-file", default="", help="restrict the pool to the task uids listed in this file (one per line; "
+                                                    "e.g. the datagen pods' teacher-solved tasks still under the band's attempt target)")
     ap.add_argument("--parallel", type=int, default=2, help="worker threads (batches in flight)")
     ap.add_argument("--worker-batch", type=int, default=0, help="rollouts per batch (default: source.max_batch or ROLLOUTS_BATCH_SIZE)")
     ap.add_argument("--dry-run", action="store_true")
@@ -137,8 +139,13 @@ def main() -> None:
 
     env = dict(os.environ)
     refresh_king_env(env)
+    only: set[str] | None = None
+    if args.uids_file:
+        only = {ln.strip() for ln in Path(args.uids_file).read_text(encoding="utf-8").splitlines() if ln.strip()}
     pool = [r for r in ordered_rows(cfg, args.source, load_catalog_or_empty(cfg, source))
-            if in_shard(r["uid"], (shard_i, shard_n))]
+            if in_shard(r["uid"], (shard_i, shard_n)) and (only is None or r["uid"] in only)]
+    if only is not None:
+        log.info("prepass %s: --uids-file lists %d uids, %d found in this shard of the catalog", args.source, len(only), len(pool))
     log.info("prepass %s: %d tasks in shard %d/%d, targets %s, budget USD %.0f, prefix %s",
              args.source, len(pool), shard_i, shard_n, targets, args.budget_usd, cfg.r2_prefix)
     if args.dry_run:

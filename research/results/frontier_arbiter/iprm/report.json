@@ -1,0 +1,670 @@
+{
+ "n_states": 67,
+ "n_rows": 1235,
+ "training": {
+  "summary": {
+   "steps": 199,
+   "micro": 1596,
+   "windows": 1596,
+   "tokens_seen": 14012411,
+   "minutes": 98.94185417493185,
+   "final_ema": 0.24830987537712035,
+   "args": {
+    "data": "train.jsonl",
+    "out": "/root/iprm/cplus",
+    "epochs": 1.0,
+    "accum": 8,
+    "lr": 0.0001,
+    "rank": 32,
+    "alpha": 64,
+    "dropout": 0.0,
+    "max_tokens": 12400,
+    "max_minutes": 110.0,
+    "warmup": 10,
+    "seed": 0,
+    "limit": 0,
+    "filter": "",
+    "save_every": 40
+   }
+  },
+  "meta": {
+   "n_traj": 993,
+   "n_windows": 1596,
+   "n_tokens": 14012411,
+   "n_loss_tokens": 3831015,
+   "n_failed": 5,
+   "max_tokens": 12288,
+   "max_windows": 2,
+   "cap_per_cell": 70,
+   "seed": 7,
+   "cells": {
+    "affine_deshuffle|mini_swe_textbased": 4,
+    "affine_deshuffle|pi": 9,
+    "affine_numina|mini_swe_textbased": 21,
+    "affine_numina|pi": 5,
+    "affine_oolong|bash": 22,
+    "affine_oolong|mini_swe_textbased": 40,
+    "affine_oolong|pi": 39,
+    "affine_prolog|mini_swe_textbased": 19,
+    "affine_sql|bash": 3,
+    "affine_sql|mini_swe_textbased": 13,
+    "affine_sql|pi": 18,
+    "affine_tmax|bash": 35,
+    "affine_tmax|mini_swe_textbased": 31,
+    "affine_tmax|pi": 29,
+    "affine_tmax|terminus_2": 39,
+    "affine_uuidctf|bash": 30,
+    "affine_uuidctf|mini_swe_textbased": 59,
+    "affine_uuidctf|pi": 32,
+    "multiswe|bash": 73,
+    "multiswe|mini_swe_textbased": 61,
+    "multiswe|pi": 42,
+    "r2e_gym|mini_swe_textbased": 116,
+    "r2e_gym|pi": 67,
+    "r2e_gym|terminus_2": 44,
+    "scaleswe|bash": 66,
+    "scaleswe|mini_swe_textbased": 71,
+    "scaleswe|pi": 43,
+    "swelego|bash": 47,
+    "swelego|mini_swe_textbased": 29,
+    "swelego|pi": 63,
+    "swerebench_v2|bash": 26,
+    "swerebench_v2|mini_swe_textbased": 24,
+    "swerebench_v2|pi": 80,
+    "swesmith|bash": 41,
+    "swesmith|mini_swe_textbased": 71,
+    "swesmith|pi": 72,
+    "terminal_bench_2|bash": 7,
+    "terminal_bench_2|terminus_2": 4,
+    "terminal_lego|bash": 33,
+    "terminal_lego|mini_swe_textbased": 32,
+    "terminal_lego|pi": 36
+   },
+   "holdout_sids": 246
+  },
+  "loss_first5": 0.3178858097588645,
+  "loss_last5": 0.24172630712531015
+ },
+ "auc": {
+  "T+F1": {
+   "term": {
+    "pooled": 0.45438328236493375,
+    "within_mean": 0.5461538461538462,
+    "n_states": 13,
+    "per_state": [
+     1.0,
+     0.5,
+     1.0,
+     0.75,
+     0.5,
+     0.4,
+     0.0,
+     0.2,
+     0.5,
+     1.0,
+     0.75,
+     0.0,
+     0.5
+    ],
+    "ci95": [
+     0.36538461538461536,
+     0.7269230769230769
+    ]
+   },
+   "term_pb": {
+    "pooled": 0.4510703363914373,
+    "within_mean": 0.5948717948717949,
+    "n_states": 13,
+    "per_state": [
+     0.8333333333333334,
+     0.5,
+     1.0,
+     0.75,
+     0.5,
+     0.4,
+     0.0,
+     1.0,
+     0.5,
+     1.0,
+     0.25,
+     0.0,
+     1.0
+    ],
+    "ci95": [
+     0.39743589743589747,
+     0.7807692307692308
+    ]
+   },
+   "lpC": {
+    "pooled": 0.5725450220863065,
+    "within_mean": 0.38846153846153847,
+    "n_states": 13,
+    "per_state": [
+     0.0,
+     0.5,
+     0.4,
+     0.0,
+     0.5,
+     0.4,
+     0.0,
+     0.0,
+     0.5,
+     0.0,
+     0.75,
+     1.0,
+     1.0
+    ],
+    "ci95": [
+     0.2076923076923077,
+     0.5884615384615385
+    ]
+   },
+   "lpC_pb": {
+    "pooled": 0.5644750254841998,
+    "within_mean": 0.49230769230769234,
+    "n_states": 13,
+    "per_state": [
+     0.8333333333333334,
+     0.5,
+     0.4,
+     0.0,
+     0.5,
+     1.0,
+     0.0,
+     1.0,
+     0.5,
+     0.0,
+     0.25,
+     0.6666666666666666,
+     0.75
+    ],
+    "ci95": [
+     0.30641025641025643,
+     0.6730769230769231
+    ]
+   },
+   "lpCp": {
+    "pooled": 0.5683826027862725,
+    "within_mean": 0.38846153846153847,
+    "n_states": 13,
+    "per_state": [
+     0.0,
+     0.5,
+     0.4,
+     0.0,
+     0.5,
+     0.4,
+     0.0,
+     0.0,
+     0.5,
+     0.0,
+     0.75,
+     1.0,
+     1.0
+    ],
+    "ci95": [
+     0.2076923076923077,
+     0.5884615384615385
+    ]
+   },
+   "plaus": {
+    "pooled": 0.5919130139313625,
+    "within_mean": 0.49230769230769234,
+    "n_states": 13,
+    "per_state": [
+     0.8333333333333334,
+     0.5,
+     0.4,
+     0.0,
+     0.5,
+     1.0,
+     0.0,
+     1.0,
+     0.5,
+     0.0,
+     0.25,
+     0.6666666666666666,
+     0.75
+    ],
+    "ci95": [
+     0.30641025641025643,
+     0.6730769230769231
+    ]
+   },
+   "term_act": {
+    "pooled": 0.4496262317363235,
+    "within_mean": 0.4115384615384615,
+    "n_states": 13,
+    "per_state": [
+     1.0,
+     0.5,
+     1.0,
+     0.0,
+     0.5,
+     0.4,
+     0.0,
+     0.2,
+     0.5,
+     0.0,
+     0.25,
+     0.0,
+     1.0
+    ],
+    "ci95": [
+     0.21923076923076923,
+     0.6269230769230769
+    ]
+   }
+  },
+  "T only": {
+   "term": {
+    "pooled": 0.4662280701754386,
+    "within_mean": 0.4583333333333333,
+    "n_states": 8,
+    "per_state": [
+     0.5,
+     0.6666666666666666,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.0,
+     0.5
+    ],
+    "ci95": [
+     0.3125,
+     0.5625
+    ]
+   },
+   "term_pb": {
+    "pooled": 0.4558479532163743,
+    "within_mean": 0.5208333333333334,
+    "n_states": 8,
+    "per_state": [
+     0.5,
+     0.6666666666666666,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.0,
+     1.0
+    ],
+    "ci95": [
+     0.3333333333333333,
+     0.7083333333333334
+    ]
+   },
+   "lpC": {
+    "pooled": 0.541374269005848,
+    "within_mean": 0.53125,
+    "n_states": 8,
+    "per_state": [
+     0.5,
+     0.0,
+     0.5,
+     0.25,
+     0.5,
+     0.5,
+     1.0,
+     1.0
+    ],
+    "ci95": [
+     0.3125,
+     0.75
+    ]
+   },
+   "lpC_pb": {
+    "pooled": 0.5527777777777778,
+    "within_mean": 0.5520833333333334,
+    "n_states": 8,
+    "per_state": [
+     0.5,
+     0.0,
+     0.5,
+     1.0,
+     0.5,
+     0.5,
+     0.6666666666666666,
+     0.75
+    ],
+    "ci95": [
+     0.3645833333333333,
+     0.7291666666666666
+    ]
+   },
+   "lpCp": {
+    "pooled": 0.5356725146198831,
+    "within_mean": 0.53125,
+    "n_states": 8,
+    "per_state": [
+     0.5,
+     0.0,
+     0.5,
+     0.25,
+     0.5,
+     0.5,
+     1.0,
+     1.0
+    ],
+    "ci95": [
+     0.3125,
+     0.75
+    ]
+   },
+   "plaus": {
+    "pooled": 0.6059941520467836,
+    "within_mean": 0.5520833333333334,
+    "n_states": 8,
+    "per_state": [
+     0.5,
+     0.0,
+     0.5,
+     1.0,
+     0.5,
+     0.5,
+     0.6666666666666666,
+     0.75
+    ],
+    "ci95": [
+     0.3645833333333333,
+     0.7291666666666666
+    ]
+   },
+   "term_act": {
+    "pooled": 0.45263157894736844,
+    "within_mean": 0.4375,
+    "n_states": 8,
+    "per_state": [
+     0.5,
+     0.0,
+     0.5,
+     0.5,
+     0.5,
+     0.5,
+     0.0,
+     1.0
+    ],
+    "ci95": [
+     0.25,
+     0.625
+    ]
+   }
+  }
+ },
+ "term_dist": {
+  "p5": -4.519305044261273,
+  "p25": -1.013601502909296,
+  "median": 0.021013711579144,
+  "p75": 1.1418039943481162,
+  "p95": 4.746240201027597,
+  "median_abs": 1.0721279092885538
+ },
+ "ceiling": [
+  {
+   "state": "2f4d4ef3ee024338ab9c654a8f9e0ab4:6",
+   "kind": "terminus_json",
+   "n_teacher_failed": 1,
+   "beats_term": 1.0,
+   "top_term": true,
+   "beats_term_pb": 1.0,
+   "top_term_pb": true,
+   "beats_lpC": 0.0,
+   "top_lpC": false,
+   "beats_lpC_pb": 0.0,
+   "top_lpC_pb": false,
+   "beats_plaus": 0.0,
+   "top_plaus": false,
+   "proposal": "[\n    {\n      \"keystrokes\": \"pip install torch --index-url https://download.pytorch.org/whl/cpu 2>&1"
+  },
+  {
+   "state": "8bee1f3117134d2d800008fbbe9bf087:5",
+   "kind": "bash",
+   "n_teacher_failed": 4,
+   "beats_term": 1.0,
+   "top_term": true,
+   "beats_term_pb": 1.0,
+   "top_term_pb": true,
+   "beats_lpC": 0.25,
+   "top_lpC": false,
+   "beats_lpC_pb": 0.25,
+   "top_lpC_pb": false,
+   "beats_plaus": 0.25,
+   "top_plaus": false,
+   "proposal": "git log --oneline -10 && echo \"=====\" && cat fuel-crypto/Cargo.toml && echo \"=====\" && cat fuel-vm/C"
+  },
+  {
+   "state": "9d3fd174f99742e287b3e060cdbbb2c6:14",
+   "kind": "bash",
+   "n_teacher_failed": 4,
+   "beats_term": 1.0,
+   "top_term": true,
+   "beats_term_pb": 0.75,
+   "top_term_pb": false,
+   "beats_lpC": 0.0,
+   "top_lpC": false,
+   "beats_lpC_pb": 1.0,
+   "top_lpC_pb": true,
+   "beats_plaus": 1.0,
+   "top_plaus": true,
+   "proposal": "mkdir -p /tmp/repro && cat <<'EOF' > /tmp/repro/reproduce.py\nimport sys\nfrom pathlib import Path\n\nsy"
+  },
+  {
+   "state": "ca99dd9d809c4896a3ec8d0a170a37d8:12",
+   "kind": "tool_call",
+   "n_teacher_failed": 1,
+   "beats_term": 0.0,
+   "top_term": false,
+   "beats_term_pb": 1.0,
+   "top_term_pb": true,
+   "beats_lpC": 0.0,
+   "top_lpC": false,
+   "beats_lpC_pb": 1.0,
+   "top_lpC_pb": true,
+   "beats_plaus": 1.0,
+   "top_plaus": true,
+   "proposal": "{\"name\": \"bash\", \"arguments\": {\"command\": \"cd /tcomb && find node_modules -name \\\"declare.js\\\" -path"
+  }
+ ],
+ "attacks": {
+  "attack_generic": {
+   "term": 0.47806422433288104,
+   "term_beats_median_labelled": 0.3283582089552239,
+   "term_pb": 0.5308231569425599,
+   "term_pb_beats_median_labelled": 0.4925373134328358,
+   "plaus": 0.06527589326096789,
+   "plaus_beats_median_labelled": 0.13432835820895522,
+   "lpC_pb": 0.06527589326096789,
+   "lpC_pb_beats_median_labelled": 0.13432835820895522
+  },
+  "attack_repeat": {
+   "term": 0.5950394133229954,
+   "term_beats_median_labelled": 0.4626865671641791,
+   "term_pb": 0.6105775236372252,
+   "term_pb_beats_median_labelled": 0.4925373134328358,
+   "plaus": 0.6949823393853245,
+   "plaus_beats_median_labelled": 0.6119402985074627,
+   "lpC_pb": 0.6949823393853245,
+   "lpC_pb_beats_median_labelled": 0.6119402985074627
+  }
+ },
+ "king": {
+  "primary (36)": {
+   "n_states": 36,
+   "mean_king": 0.25411966640276723,
+   "mean_teacher": 0.088408608448738,
+   "paired": 0.2126775480621528,
+   "se": 0.2979356540720905
+  },
+  "all": {
+   "n_states": 67,
+   "mean_king": 0.41746599713679017,
+   "mean_teacher": 0.23003480160919784,
+   "paired": 0.34949611036639333,
+   "se": 0.21070356370322355
+  }
+ },
+ "prefix_swap": {
+  "earlier": {
+   "n": 366,
+   "mean_abs_prefix_shift": 2.6378379624011448,
+   "mean_abs_action_diff": 1.73954438643456,
+   "var_prefix": 29.119386108171412,
+   "within_state_var_actions": 2.560984706881303,
+   "corr": -0.12018683716042824
+  },
+  "other_task": {
+   "n": 366,
+   "mean_abs_prefix_shift": 3.1431671752271164,
+   "mean_abs_action_diff": 1.73954438643456,
+   "var_prefix": 20.595253097871087,
+   "within_state_var_actions": 2.560984706881303,
+   "corr": 0.1720925304687877
+  }
+ },
+ "parity_engy": [
+  {
+   "row_id": "4e33b2a2a9cb",
+   "kind": "bash",
+   "engy_lpC": -7.249813042581081,
+   "n_body": 3,
+   "n_ids": 9480,
+   "pod_lpC": -6.604262933135033,
+   "pod_n_body": 3
+  },
+  {
+   "row_id": "ed6ad191522c",
+   "kind": "bash",
+   "engy_lpC": -11.919389204017989,
+   "n_body": 42,
+   "n_ids": 9505,
+   "pod_lpC": -10.015551963205667,
+   "pod_n_body": 42
+  },
+  {
+   "row_id": "034b162a4524",
+   "kind": "bash",
+   "engy_lpC": -21.306235069132526,
+   "n_body": 30,
+   "n_ids": 8000,
+   "pod_lpC": -20.18509165470823,
+   "pod_n_body": 30
+  },
+  {
+   "row_id": "ebc2744c9368",
+   "kind": "bash",
+   "engy_lpC": -13.705469155822357,
+   "n_body": 26,
+   "n_ids": 18717,
+   "pod_lpC": -9.888466200471157,
+   "pod_n_body": 26
+  },
+  {
+   "row_id": "4f7d7af9cfaa",
+   "kind": "terminus_json",
+   "engy_lpC": -11.494120643699539,
+   "n_body": 183,
+   "n_ids": 8656,
+   "pod_lpC": -10.467731277163587,
+   "pod_n_body": 183
+  },
+  {
+   "row_id": "de334ebae58b",
+   "kind": "terminus_json",
+   "engy_lpC": -29.480820717397265,
+   "n_body": 180,
+   "n_ids": 10885,
+   "pod_lpC": -30.399550650467454,
+   "pod_n_body": 180
+  },
+  {
+   "row_id": "daaf731de7e9",
+   "kind": "terminus_json",
+   "engy_lpC": -0.0038640848360955715,
+   "n_body": 1,
+   "n_ids": 5956,
+   "pod_lpC": -9.440929716220126e-05,
+   "pod_n_body": 1
+  },
+  {
+   "row_id": "de5e24751452",
+   "kind": "terminus_json",
+   "engy_lpC": -2.31269285844877,
+   "n_body": 53,
+   "n_ids": 3263,
+   "pod_lpC": -2.5396155696438427,
+   "pod_n_body": 53
+  },
+  {
+   "row_id": "b30f20c36cab",
+   "kind": "tool_call",
+   "engy_lpC": -2.8629100285685496,
+   "n_body": 51,
+   "n_ids": 8467,
+   "pod_lpC": -3.2014691554586676,
+   "pod_n_body": 51
+  },
+  {
+   "row_id": "b5bdd9dc9561",
+   "kind": "tool_call",
+   "engy_lpC": -277.426402738647,
+   "n_body": 1370,
+   "n_ids": 6139,
+   "pod_lpC": -269.5127713336561,
+   "pod_n_body": 1370
+  },
+  {
+   "row_id": "eed5fcde54ca",
+   "kind": "tool_call",
+   "engy_lpC": -92.06214352918434,
+   "n_body": 244,
+   "n_ids": 9661,
+   "pod_lpC": -87.74098991699424,
+   "pod_n_body": 244
+  },
+  {
+   "row_id": "0925ee12e7e4",
+   "kind": "tool_call",
+   "engy_lpC": -165.05796546735473,
+   "n_body": 181,
+   "n_ids": 9490,
+   "pod_lpC": -161.206654486763,
+   "pod_n_body": 181
+  }
+ ],
+ "cost": {
+  "lium_pod": "1x B200 (iprm-probe-b200-1, $5.50/h), rented 2026-09-21 22:00 UTC, deleted 00:28 UTC; Lium statement billed 8,921 s = $13.63",
+  "pod_time_breakdown_min": {
+   "setup+weights+deps": 22,
+   "smoke (train 4 steps + score 24 rows)": 12,
+   "lora_train": 98.9,
+   "scoring": 16.3,
+   "idle/transfer": 10
+  },
+  "engy_usd": 0.005117,
+  "engy_note": "12 parity echoes (114k prompt tokens); king samples came from the reign-20 king vLLM box on our fleet (no Engy charge)",
+  "total_usd": 13.64,
+  "train_throughput": "14.0M tokens in 99 min = 2361 tok/s (bf16 LoRA r32, grad ckpt, 12k windows, micro-batch 1, accum 8)",
+  "echo_cost": "3934 teacher-forced echoes (median 9.5k-token prefix, prefix KV shared per state) in 16.3 min = 0.25 s/echo = $0.00038/echo",
+  "per_duel_projection": "ranking one candidate action needs 2 echoes (C, C+); a 1300-turn duel with 1 candidate per side = 5,200 echoes = ~22 min B200 = ~$2/duel on top of today's echoes (fewer with the swarm's echo prefix cache)",
+  "refit_projection": "full solved agentic teacher set = ~11.1k trajectories (claude_code 3083, pi 2882, bash 2571, mini_swe 1998, terminus_2 442, hermes 67, kimi 65; math/wiki 'null' harness 29k excluded) = 11.2x this run -> ~157M window tokens at the same <=2 windows/traj -> ~18.5 h on 1x B200 = ~$100 per refit (1 epoch); a per-fold refit (5 folds) = ~$500 and ~4 days of single-GPU time, or ~$130 on 4x B200 in ~5 h. Scoring a 1300-turn duel adds ~$2."
+ },
+ "verdict": {
+  "within_auc": 0.5461538461538462,
+  "pooled_auc": 0.45438328236493375,
+  "generic_beats_median_plaus": 0.13432835820895522,
+  "repeat_beats_median_plaus": 0.6119402985074627,
+  "prefix_swap": {
+   "n": 366,
+   "mean_abs_prefix_shift": 3.1431671752271164,
+   "mean_abs_action_diff": 1.73954438643456,
+   "var_prefix": 20.595253097871087,
+   "within_state_var_actions": 2.560984706881303,
+   "corr": 0.1720925304687877
+  },
+  "kill_auc": true,
+  "kill_attack": true,
+  "kill_prefix": true,
+  "dead": true
+ }
+}

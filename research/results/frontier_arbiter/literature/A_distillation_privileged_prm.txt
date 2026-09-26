@@ -1,0 +1,516 @@
+FRONTIER ARBITER — LITERATURE NOTES A
+Distillation / privileged-information self-teachers / process reward models / expert iteration
+Question asked of every source: can this mechanism define a TURN SCORE or a DATA PIPELINE whose
+maximiser sits ABOVE a fixed teacher T (here Qwen3.8-27B), and what evidence does it give?
+Read 2026-09-21 from the primary pages (arXiv abs+HTML, vendor blogs). Numbers quoted are the
+papers' own; "[mem]" marks a figure recalled from an earlier reading where the live page could not
+be fetched. Our setting, for reference (AGENTS.md §2): turn = min(R, G[, A]) under teacher-forced
+logprobs of a FROZEN teacher; R rewards thoughts that predict the teacher's own sampled next
+actions; G is a two-sided typicality band around the teacher's own thought likelihoods; crown =
+paired mean > max(2·SE, 0.002). Maximiser of every leg = the teacher itself; kings sit at teacher
+parity; benchmarks plateau at teacher level. Failed first attempt (2026-09-20): reward closeness to
+a frontier model where it disagrees with the teacher — per-turn disagreement is sampling noise
+(teacher agrees with its own resample 36 %, with the frontier 25 %) and closeness-to-frontier does
+not track benchmarks across kings.
+
+Notation used below: x = turn prefix; z = thought; y = action; T(.|x) = blind teacher;
+T(.|x, p) = the same teacher given privileged context p (hint, hindsight, solution, feedback);
+"duel-time" = a per-turn score computed on the eval pod; "fold-time" = a change to how D (or the
+reference distribution attached to D) is built; "miner-side" = something miners do to train.
+
+======================================================================================================
+1. Cursor — "Introducing Composer 2.5" (May 18, 2026) https://cursor.com/blog/composer-2-5
+   + "Introducing Composer 2" (Mar 19, 2026) https://cursor.com/blog/composer-2
+   + "Composer: Building a fast frontier model with RL" (Oct 29, 2025) https://cursor.com/blog/composer
+------------------------------------------------------------------------------------------------------
+(1) What it does. Composer 2.5 (Kimi K2.5 base) is trained with large-scale RL on verifiable coding
+tasks; three additions: (a) "Targeted RL with textual feedback": for a flagged model message, write a
+short hint describing the desired improvement, insert it into the LOCAL context, take the model's own
+distribution under the hinted context as TEACHER, keep the un-hinted policy as STUDENT, add an
+on-policy-distillation KL loss moving student token probabilities toward the teacher FOR THAT TURN
+ONLY, alongside the ordinary trajectory-level RL reward. (b) Dynamic hard-task selection + 25x more
+synthetic verified tasks (e.g. "feature deletion": delete a tested feature, task = reimplement, tests
+= reward). (c) Agentic monitoring for reward hacking (model reverse-engineered a type-checker cache
+and decompiled Java bytecode to recover deleted code). Composer 1 (Oct 2025): RL with production
+tools in hundreds of thousands of sandboxed environments, Cursor Bench of real requests with curated
+solutions. Composer 2 (Mar 2026): continued pretraining + long-horizon RL; Terminal-Bench 2.0 61.7,
+SWE-bench Multilingual 73.7 (Composer 1: 40.0 / 56.9). The blog's own footnote grounds the hint
+mechanism in SDFT, SDPO and OPSD (sources 3a–c below).
+(2) Signal/target and producer. Target = pi_theta(.|x, hint) — the SAME model, more context;
+producer of the hint = a human/agent reviewer or an automatic detector (e.g. "Tool not found" error
+=> hint "Reminder: available tools are ..."). No external teacher. Trajectory reward stays the
+verifier.
+(3) Why the optimum exceeds the base. The teacher is not a fixed external model; it is the current
+policy plus information it lacked at decision time. Because the hint is inserted at the failing
+turn, the hinted distribution lowers the wrong tool and raises a valid replacement; distilling that
+back removes a localized failure that the sparse final reward could never attribute ("one error in
+hundreds of tool calls has minimal impact on final reward"). The ceiling moves with the policy (the
+policy is its own teacher) and with the hint source, not with any fixed model.
+(4) Gains/conditions. No per-component numbers published; qualitative: applied to "coding style to
+model communication". Conditions: needs a way to FIND the turn to hint (error strings, monitors,
+reviewers) and a hint that changes the distribution in the right direction.
+(5) KOTH mapping.
+  (a) Duel-time turn score: YES in principle — replace the k blind teacher refs (z_C^i, y_C^i) ~ T(.|x)
+      by hinted refs ~ T(.|x, p) where p is a per-turn privileged context that the teacher, not the
+      miner, sees: hindsight from the stored trajectory (what the next observations were, whether the
+      trajectory later solved the task), the environment's error string for the recorded action, or a
+      verified end-state summary. R_priv(z_A) = centered tempered LME of a_i = lpT(y_i^p | z_A) - lpT(y_i^p | 0).
+      Maximiser = the miner whose thought best predicts what the teacher WOULD do knowing p: strictly
+      above blind-teacher behaviour wherever p changes the teacher's action. This directly repairs the
+      failed frontier attempt: the comparison is no longer frontier-sample vs teacher-sample (two
+      noisy draws from different models) but T(.|x) vs T(.|x,p) on the SAME prefix under the SAME
+      model — the disagreement is caused by p, not by sampling. Must-measure before adopting: teacher
+      self-agreement WITH p (SDFT reports demo-conditioned teacher 100 % correct vs 42 % blind on
+      ToolAlpaca — i.e. p can collapse the multi-modality that gives 36 % self-agreement today).
+  (b) Fold-time: attach p to every D turn at fold (we already store full traces + outcomes; king-
+      failure datagen supplies failed trajectories whose downstream turns are natural hints).
+  (c) Miner-side: miners can run the identical construction themselves (SDPO-style) — desirable.
+  Goodhart surface when public: if p contains the literal gold action, T(.|x,p) degenerates toward
+  pasting it and R_priv becomes "predict the recorded action" (RT-10 leakage amplification, and a
+  memorisation target for RT-6); PS-OPSD (source 7a) shows literal-solution conditioning leaks
+  reference-specific dependence (3.0 % explicit "per the reference…" invocations). Prefer structural
+  hindsight (outcome, error text, state deltas) over the gold action; keep refs per-duel fresh; keep
+  B leakage check; compute G against BLIND refs (hinted thoughts reference unseen info and would
+  shift the band). Cost: +1 teacher-sampling pass per ref with a longer prompt; no new model.
+
+======================================================================================================
+2. Thinking Machines Lab — "On-Policy Distillation" (Kevin Lu et al., Oct 27, 2025)
+   https://thinkingmachines.ai/blog/on-policy-distillation  (DOI 10.64434/tml.20251026)
+------------------------------------------------------------------------------------------------------
+(1) Student samples its own trajectories; teacher scores every token with log-probs; loss = per-token
+reverse KL, advantage = -(log pi_student - log pi_teacher) plugged into an RL importance-sampling
+loss; discount 0 (only the immediate token). "One-line change on top of RL with KL regularization —
+swap the regularizer model."
+(2) Signal = teacher log-prob of the STUDENT's tokens; producer = a fixed stronger model
+(Qwen3-32B / Qwen3-8B for a Qwen3-8B-Base student; Qwen3-235B for the illustration).
+(3) Ceiling. Explicit in the post: reverse KL "is zero when the student behaves identically to the
+teacher"; the loss is "unhackable in the sense that low KL always corresponds to high probability of
+desirable behaviour from the teacher's point of view"; "since the teacher stays fixed, the student
+converges on the teacher's desirable behaviour". Nothing here exceeds the teacher — the maximiser IS
+the teacher. This is precisely our current meter's property (our R/G legs are teacher-forced echoes
+of the same kind). The only lever the post offers for going beyond a fixed model is the phase-
+alternating recipe: RL/search finds a better strategy (RL "spends compute on search"), then
+distillation compresses it — i.e. the teacher must be a MOVED model.
+(4) Gains. Qwen3 tech report Table 21 (as quoted): off-policy distill 55.0 AIME'24 -> +RL 67.6
+(17,920 GPU-h) -> +on-policy distill 74.4 (1,800 GPU-h). Own replication: SFT-400K 60 % -> 70 % in
+~150 steps / 77K prompts; 9–30x FLOP saving vs SFT-2M, ~50–100x vs RL when distilling an RL-trained
+policy back into its own base (reverse KL ~0 and AIME recovered in <10 steps vs 70 RL steps).
+Continual learning: midtrain 70 % docs drops IF-eval 85 -> 79, distill from the pre-midtrain model
+restores 83 with QA 41 %. Warning result: SFT on a model's OWN samples (KL=0 data) degrades IF-eval
+at any lr > 0 — finite-batch drift turns self-SFT off-policy.
+(5) KOTH mapping. (a) Our duel score already is on-policy distillation in evaluation form; this source
+is the cleanest statement of WHY kings plateau at the teacher. (b) Fold-time: none by itself. (c)
+Miner-side: it is what miners do (SFT/RL toward T on D). Goodhart: low. Cost: n/a. Takeaway: any
+target of the form "teacher log-prob of the miner's tokens under the blind teacher" has maximiser =
+teacher; the teacher must be conditioned on something extra (sources 1, 3) or replaced by an outcome
+(source 5) for the maximiser to move.
+
+======================================================================================================
+3a. "Self-Distillation Enables Continual Learning" (SDFT) — Shenfeld, Damani, Hübotter, Agrawal
+    (MIT/ETH), arXiv 2601.19897, v1 Jan 27 2026, v2 Aug 7 2026. https://arxiv.org/abs/2601.19897
+------------------------------------------------------------------------------------------------------
+(1) Learn from expert DEMONSTRATIONS on-policy: teacher = same model conditioned on (query + one
+demonstration for that query + "now answer with a response of your own, including the thinking
+process"); student = same model on the query alone; sample from the student, minimise per-token
+divergence to the teacher (theory says reverse KL; in practice forward KL + analytic per-token
+estimator worked best; teacher = EMA of student). Shown equivalent to on-policy RL maximising the
+implicit reward log pi(.|x,demo) - log pi(.|x) (an IRL reading: the in-context-conditioned model
+approximates the trust-region-optimal next policy).
+(2) Signal = pi(.|x, demonstration); producer = the model itself + a per-instance demonstration
+(GPT-4o answers filtered for correctness; ToolAlpaca gold calls; HuatuoGPT answers).
+(3) Why above base. "ICL assumption": the demo-conditioned teacher (i) is near-optimal — on ToolAlpaca
+the blind model solves 42 %, the demo-conditioned teacher 100 %, with valid reasoning in 50/50
+inspected traces (it reconstructs a correct process rather than copying) — and (ii) stays close to
+the base: KL to base 0.68 nats vs 1.26 for an SFT model. The teacher is strictly above the student
+because it has instance-specific information the student lacks; the student's optimum is "behave as
+if you had seen the demo", which is above the blind model wherever the blind model errs.
+(4) Gains/conditions. Qwen2.5-7B-Instruct: Science QA 32.1 -> 70.2 (SFT 66.2) with prior-capability
+avg 64.5 vs base 65.5 (SFT 53.4); Tool use 42.9 -> 70.6 (SFT 63.2); Medical 30.1 -> 40.2 (SFT 35.5).
+Knowledge acquisition (2025 disasters): strict 89 % vs SFT 80 %, OOD 98 % vs 80 %, oracle-RAG 91/100.
+Olmo-3-7B-Think with answer-only supervision: 31.2 -> 43.7 (SFT 23.5, which collapsed reasoning
+length 4612 -> 3273 tokens). pass@k gains persist to k=128 (not entropy collapse). Scale dependence:
+3B < SFT; 7B +4 pts over SFT; 14B +7 pts. On-policy is essential: offline distillation from the SAME
+teacher underperforms (Fig 6). Cost ~2.5x FLOPs, ~4x wall-clock vs SFT. Failure modes: "learned
+artifacts" (student says "Based on the text…" without having any text — fixed by masking loss on the
+first tokens); cannot induce a fundamentally new generation pattern (non-reasoning -> reasoning).
+Teacher choice: frozen base teacher stable but weak; student-as-teacher diverges; EMA best.
+(5) KOTH mapping. (a) Duel-time: the demonstration is exactly the privileged context p of source 1.
+For a coding turn the natural per-turn demonstration is the REST OF THE RECORDED TRAJECTORY (what was
+done next and whether it worked) — hindsight — or a frontier model's completed solution for the same
+task (not its next-turn sample). Refs y_i^p ~ T(.|x, p) then define R_priv as in §1(5). The
+"reconstructs rather than copies" finding is the argument that T(.|x,p) is a legitimate target rather
+than a paste: measure it on our teacher (fraction of hinted refs whose action equals the gold action
+verbatim; B leakage rate). (b) Fold-time: store p per turn in D. (c) Miner-side: SDFT is the recipe
+miners would use to climb toward T(.|x,p). Goodhart when public: literal-demo p => memorisation/paste
+(RT-6, RT-10); artifact tokens ("as shown in the reference") in miner thoughts would raise R_priv
+only if the teacher's hinted refs also carry them — mask/strip them, and score G against blind refs.
+Cost: one longer teacher prompt per ref.
+
+======================================================================================================
+3b. "Reinforcement Learning via Self-Distillation" (SDPO) — Hübotter et al. (ETH/MIT/Stanford/MPI),
+    arXiv 2601.20802, v1 Jan 28 2026, v2 Feb 16 2026. https://arxiv.org/abs/2601.20802
+------------------------------------------------------------------------------------------------------
+(1) RL with RICH FEEDBACK: after a rollout, re-prompt the SAME model with (question + a correct
+solution from the rollout group if one exists + the environment's textual feedback on the failed
+attempt) and re-score the ORIGINAL attempt's tokens under that context; the self-teacher's log-probs
+minus the student's give per-token (top-100 logit-level) advantages; train with a standard RLVR loop
+by swapping advantages. Teacher regularised (EMA or trust-region interpolation with the initial
+model); JSD for stability; "no sampling overhead — one extra forward pass".
+(2) Signal = pi(.|x, feedback, [sample solution], original attempt); producer = the environment
+(runtime errors, failing tests, judge text) + the model's own successful siblings.
+(3) Why above base. The self-teacher "should have higher accuracy than the student since it sees
+additional information in-context"; crucially the teacher is UPDATED with the student, and the paper
+shows the student's accuracy eventually SURPASSES the INITIAL teacher's (Fig 10 right) — "true
+bootstrapping of a weak model to a strong model, without the initial self-teacher's performance
+limiting the final student". Even sequence-level SDPO (rich feedback, no dense credit) beats GRPO,
+so the information in the feedback, not only the density, moves the ceiling. Test-time: on LCB
+questions with pass@64 < 0.03 the initial self-teacher solves ~0 % (Table 11), yet iterated SDPO
+finds solutions — the teacher need not be able to solve the task for its credit assignment to help.
+(4) Gains/conditions. LCBv6 Qwen3-8B: 48.8 % vs GRPO 41.2 %, above Claude Sonnet 4 (40.5) / Opus 4
+(39.7) on that subset; GRPO's final accuracy reached with fewer generations (abstract: "3x fewer
+attempts" for test-time discovery). Scalar-only RLVR envs (SciKnowEval, ToolAlpaca): 70.2 % vs 66.6 %
+aggregate; Olmo3-7B chemistry 22.8 -> 80.0 (GRPO 56.7) and reaches GRPO's 5-h accuracy in 50 min;
+responses shorter (GRPO 5,549 vs SDPO 764 tokens example). Scale: gains grow with model size; SDPO
+UNDERPERFORMS GRPO on Qwen2.5-1.5B; SDPO+GRPO hybrid rescues 0.6B but slightly hurts 8B. Ablations:
+including the student's own attempt in the teacher prompt biases the teacher toward it and reduces
+entropy; environment output and sample solutions are complementary. Forgetting: better than GRPO
+on IFEval/ArenaHard/MMLU-Pro; SFT on self-teacher samples needs 2x generations and forgets more.
+(5) KOTH mapping. (a) Duel-time: two options. (i) p = environment feedback that the RECORDED action
+produced (already in the trace: tool output, test failures) — cheap, no execution at duel time. (ii)
+p = execute the MINER's action in the sandbox and feed the observation back to the teacher — turns
+the duel into an environment-anchored scorer (expensive; see §5). (b) Fold-time: SDPO's "successful
+sibling as feedback for a failed attempt" maps onto king-failure datagen: for a failed king turn,
+p = the teacher's or frontier's successful continuation of the same task; refs ~ T(.|x, p) are the
+above-teacher target for that turn. (c) Miner-side: SDPO is exactly what a miner would run against
+Prime environments. Goodhart when public: the ceiling now depends on the feedback quality ("if the
+environment provides misleading feedback, a model may not learn") — miners could try to induce
+feedback that flatters them if p depends on THEIR action (option ii); with option (i) p is fixed by
+the trace, so the surface is the same as §3a. Cost: (i) ~free; (ii) one sandbox step per turn per side.
+
+======================================================================================================
+3c. "Self-Distilled Reasoner: On-Policy Self-Distillation for LLMs" (OPSD) — Zhao, Xie, Liu, Huang,
+    Pang, Chen, Grover (UCLA/HKU/Meta), arXiv 2601.18734, v1 Jan 26 2026, v3 Mar 20 2026.
+    https://arxiv.org/abs/2601.18734
+------------------------------------------------------------------------------------------------------
+(1) Teacher = same model given (problem + verified reference solution + "after understanding the
+reference, solve it your own way"); student = problem only; student samples ONE 1024-token rollout;
+full-vocabulary forward-KL per token (beats reverse KL and JSD: AIME25 1.7B 36.7 -> 43.9 fwd vs 37.5
+rev vs 36.9 JSD) with per-token POINTWISE CLIPPING because stylistic tokens ("Wait", connectives)
+carry larger divergence than math tokens; teacher FROZEN at the initial checkpoint (stabilises).
+Best mode pairing: thinking-OFF student / thinking-ON teacher.
+(2) Signal = pi_0(.|x, reference solution); producer = the dataset's verified solution (OpenThoughts
+math, 30K pairs) — "rationalisation is easier than generation".
+(3) Why above base. A capable model can rationalise a correct solution it could not produce; the
+conditioned distribution is a better next-token predictor along the student's own prefixes. Note the
+teacher is FROZEN here, so the ceiling is pi_0(.|x, solution) — fixed but above pi_0(.|x); OPSD shows
+this alone yields gains, the moving-teacher of SDPO is not required.
+(4) Gains. Avg@12 over AIME24/25 + HMMT25: Qwen3-1.7B 37.1 -> 43.4 (GRPO 37.7, SFT 35.8); 4B 61.2 ->
+63.6 (GRPO 62.7); 8B 61.8 -> 64.8 (GRPO 64.0). One rollout of 1,024 tokens per problem, 100 steps vs
+GRPO's 8 x 16k-token rollouts, 500 steps; >50 % of GRPO batches had zero reward std within 100
+steps. Full-vocab logit distillation > sampled-token (pass@8 AIME25 84.1 vs 82.1). Longer student
+rollouts (4096) did not help — early tokens matter most (later tokens predictable given the prefix).
+(5) KOTH mapping. (a) Duel-time: identical construction to §3a with p = verified solution of the TASK
+(for coding turns: the merged PR / gold patch / passing test set; for math: the boxed answer). The
+"early tokens carry the signal" finding means a per-turn thought/action score (our unit) is the right
+granularity. (b) Fold-time: many D sources already carry gold outcomes (SWE tasks with patches, math
+answers). (c) Miner-side: yes. Goodhart when public: literal-solution conditioning is the most
+leak-prone p (see 7a: 3.0 % explicit reference invocations; the teacher's refs may paste the patch);
+B leakage check + two-sided G are the existing guards. Cost: as §3a.
+
+======================================================================================================
+4. Learning Using Privileged Information lineage
+   Vapnik & Vashist, "A new learning paradigm: LUPI" (Neural Networks 2009); Vapnik & Izmailov, JMLR
+   2015. Lopez-Paz, Bottou, Schölkopf, Vapnik, "Unifying distillation and privileged information",
+   arXiv 1511.03643 (Nov 2015; ICLR 2016) https://arxiv.org/abs/1511.03643
+   Pinto, Andrychowicz, Welinder, Zaremba, Abbeel, "Asymmetric Actor Critic for Image-Based Robot
+   Learning", arXiv 1710.06542 (Oct 18 2017) https://arxiv.org/abs/1710.06542
+   Andrychowicz et al., "Hindsight Experience Replay", arXiv 1707.01495 (Jul 2017) https://arxiv.org/abs/1707.01495
+   Zhang, Liu, Wong, Abbeel, Gonzalez, "The Wisdom of Hindsight Makes Language Models Better
+   Instruction Followers" (HIR), arXiv 2302.05206 (Feb 10 2023) https://arxiv.org/abs/2302.05206
+------------------------------------------------------------------------------------------------------
+(1) LUPI: at training time a teacher provides extra features x* per example (never at test); SVM+
+uses x* to model slack; generalised distillation (Lopez-Paz 2015) shows Hinton distillation and LUPI
+are one thing — train f_t on (x*, y), then train the student on x with softened teacher labels; the
+theory gives a fast O(1/n) rate when the privileged teacher is easy to learn. Asymmetric actor-critic:
+critic sees the simulator's full state, actor sees only rendered images; "significantly improves
+performance" on Fetch pick/push/move tasks and transfers to a real robot with domain randomisation.
+HER: replay failed episodes relabelled with the goal actually achieved; makes binary-reward pushing/
+sliding/pick-and-place learnable where plain DDPG fails ("a crucial ingredient which makes training
+possible"). HIR: relabel the INSTRUCTION of a language-model output in hindsight to match what the
+output actually did (goal-conditioned view of alignment), then supervised fine-tune; two phases
+(online sampling, offline relabelled SFT), uses HER-style relabelling of failures + contrastive
+instruction labelling; FLAN-T5 on 12 BigBench reasoning tasks outperforms PPO and Final-Answer RL and
+is "comparable to or even surpasses" SFT.
+(2) Signal producers: LUPI — a training-time-only feature provider; asymmetric AC — the simulator's
+privileged state feeding the VALUE function only; HER/HIR — the environment's realised outcome used to
+rewrite the goal/instruction.
+(3) Why above base/teacher. All four move the target by giving the LEARNING SIGNAL (critic, label,
+relabelled goal) information the deployed policy cannot see. The critic in asymmetric AC is a
+legitimate above-policy judge because value estimation with full state is easier and less biased than
+from partial observations; the actor's optimum is the best partially-observed policy under a
+correctly-estimated value — above what a critic on partial observations would induce. HER/HIR turn
+every trajectory into a positive example of SOMETHING, so the data distribution covers states the
+expert never visited (learner-state coverage, cf. DAgger) and the target is "the instruction this
+output satisfies", produced by the environment, not by a fixed model.
+(4) Gains: HER pick-and-place: ~0 -> near-complete success with binary reward [mem]; asymmetric AC:
+tasks unsolvable with a symmetric image critic become solvable [mem]; HIR: average over 12 BigBench
+tasks above PPO/FA-RL, near SFT (Fig 1; exact numbers not re-fetched).
+(5) KOTH mapping. (a) Duel-time: the asymmetric-critic idea is the cleanest template for our A leg:
+score the MINER's action with a value function that is trained on privileged information (full
+trajectory outcome, hidden tests, gold patch) but evaluated on (x, y_A). The A-leg probe (AGENTS.md
+v6) failed because per-byte teacher likelihood is not a value; a critic trained on outcomes is.
+(b) Fold-time: HER/HIR relabelling = for every failed king trajectory in D, attach the goal it DID
+achieve (or the instruction it did follow), giving positive-labelled turns from learner states; and
+for trajectory turns before the failure point, attach hindsight "this path fails at step t because
+…" as p. (c) Miner-side: miners can do HIR themselves. Goodhart when public: a learned critic is a
+public reward model => hackable (see §5 AgentPRM Fig 3: process reward keeps rising while success
+falls); must be re-fit each fold from fresh rollouts (moving target) and kept teacher-sized to be
+replayable. Cost: a critic training run per fold + one forward pass per turn per side at duel time.
+
+======================================================================================================
+5. Process reward models from Monte-Carlo rollouts and agent-step credit
+------------------------------------------------------------------------------------------------------
+5a. Lightman et al. (OpenAI), "Let's Verify Step by Step", arXiv 2305.20050 (May 31 2023)
+    https://arxiv.org/abs/2305.20050
+ Human step labels (PRM800K, 800K labels); PRM best-of-1860 solves 78 % of MATH500 vs ORM 72.4 %
+ and majority 69.6 % [mem for the latter two]; active learning (label the convincing wrong answers)
+ gives ~2.6x label efficiency [mem]. Supervising up to the FIRST error suffices. Ceiling: human
+ judgement of step correctness — above the generator, but the labeler cost is prohibitive; it is the
+ reference for what MC labels approximate.
+
+5b. Wang et al. (PKU/DeepSeek), "Math-Shepherd: Verify and Reinforce LLMs Step-by-step without Human
+    Annotations", arXiv 2312.08935 (Dec 14 2023; v3 Feb 2024) https://arxiv.org/abs/2312.08935
+ (1) Label a step by its POTENTIAL to reach the gold answer: a fixed "completer" LLM decodes N
+ continuations from the step; hard estimate HE = 1 if any reaches the gold answer, soft estimate SE =
+ fraction that do. Train a PRM on these labels; use it for best-of-256 reranking and step-by-step PPO
+ (reward at the end of each step). (2) Signal = MC success frequency under a FIXED completer
+ (Llemma-7B, N = 8; generator samples 15 solutions/problem; RM trained on LLaMA2-70B/Llemma-34B);
+ producer = the environment's answer check + the completer. (3) Above base: the label is anchored to
+ the OUTCOME, not to any model's likelihood; a step is good if it leads to success under the
+ completer, so the maximiser of the PRM is "take steps from which the completer succeeds" — above the
+ generator and, if the completer is strong, at or above the completer's own greedy behaviour (the
+ PRM-guided policy exploits the completer's pass@N, not its pass@1). (4) Gains: Mistral-7B greedy
+ 77.9 -> 84.1 GSM8K, 28.6 -> 33.0 MATH with step-PPO; 89.1 / 43.5 with verification; DeepSeek-67B
+ 93.3 / 48.1 with verification. Label noise: on a hand-annotated sample of GSM8K steps, HE accuracy 86 %
+ at N = 4 with a 70B completer, and it DECLINES with larger N (false positives: a wrong step can
+ still be rescued); larger completers give better labels; a completer that has not seen the
+ questions labels badly. Cost: N x (remaining trajectory) completions per step.
+
+5c. Luo et al. (Google DeepMind), "Improve Mathematical Reasoning in Language Models by Automated
+    Process Supervision" (OmegaPRM), arXiv 2406.06592 (Jun 2024) https://arxiv.org/abs/2406.06592
+ (1) Binary-search for the FIRST error (rollouts from the midpoint; if any succeeds the error is
+ later) inside an MCTS that reuses rollouts as new tree nodes, with a selection heuristic favouring
+ rollouts whose MC value is near 0.5 (convincing wrong answers) and short length. (2) Same signal as
+ Math-Shepherd (MC success under the policy itself as completer, k completions per node, Gemini Pro /
+ Gemma2-27B). (3) Same reason; efficiency lets the label set be ~1.5 M annotations. (4) Gemini Pro
+ MATH500 51 -> 69.4 %, GSM8K 86.4 -> 93.6 % with PRM-weighted self-consistency; Gemma2-27B 42.3 ->
+ 58.2 / 74.0 -> 92.2; OmegaPRM-trained PRM > PRM trained on human PRM800K; brute-force per-step MC at
+ the same budget yields far fewer labels (paper: "-times efficiency improvement", figure stripped in
+ the HTML). Limitations stated: labels are noisy (false positives/negatives), needs question + gold
+ answer pairs ("human supervision is still necessary").
+
+5d. Choudhury (Cornell), "Process Reward Models for LLM Agents: Practical Framework and Directions"
+    (AgentPRM / InversePRM), arXiv 2502.10325 (Feb 14 2025) https://arxiv.org/abs/2502.10325
+ (1) Actor-critic policy iteration for agents: roll out the current policy asynchronously, compute Q
+ targets per (state, action) as discounted outcome returns normalised to [0,1] (explicitly simpler
+ than MCTS), train a PRM by soft BCE, then online DPO against the PRM with a KL to the CURRENT
+ policy (conservative policy iteration — the PRM is only valid near the data policy). InversePRM:
+ no outcome reward — PRM = classifier of expert vs learner transitions (IRL as a no-regret game),
+ then the same RL step. (2) Signal = MC outcome return of the policy's own rollouts (~10k) /
+ expert-vs-learner discrimination. (3) Above base because the target is the outcome; iteration
+ moves the ceiling: ALFWorld success 64.9 -> 73.9 -> 85.8 -> 88.1 over iterations with a 3B
+ Llama3.2, surpassing GPT-4o and claude-3.5-sonnet prompting baselines; InversePRM reaches near-expert
+ in ONE iteration. (4) Reward hacking measured directly (Fig 3): with a PRM trained on 10k rollouts,
+ validation process reward keeps rising while true success peaks then falls — over-optimisation past
+ the PRM's data distribution; re-training the PRM on the new policy's rollouts is the fix; best-of-N
+ gains shrink for later policies for the same reason. "An open question remains how to reliably
+ detect over-optimization without evaluating the success rate."
+
+5e. Khalifa et al., "Process Reward Models That Think" (ThinkPRM), arXiv 2504.16828 (Apr 2025; v5
+    Dec 2025) https://arxiv.org/abs/2504.16828
+ Generative long-CoT verifier fine-tuned on ~1 % of PRM800K's process labels (synthetic verification
+ CoTs filtered against gold step labels); beats discriminative PRMs trained on full PRM800K on
+ ProcessBench / MATH-500 / AIME'24 best-of-N and reward-guided search; OOD GPQA-Diamond +8 %, LCB
+ +4.5 %; scales verification compute better than LLM-as-judge (+7.2 % ProcessBench at equal tokens).
+ Relevance: a verbalised step judge is a way to turn a strong model's judgement into a step score
+ with few labels — but it is a fixed model again (ceiling = the verifier), and a public generative
+ judge is the SN97 failure mode we exist to avoid.
+
+5f. Agent-step credit assignment for SWE / multi-turn agents
+ - SWE-RL (Wei et al., Meta), arXiv 2502.18449 (Feb 2025; v2 Dec 2025) https://arxiv.org/abs/2502.18449:
+   NO step value at all — reward = difflib.SequenceMatcher similarity between the predicted patch and
+   the oracle PR patch (0..1; -1 for bad format), GRPO on Llama-3.3-70B-Instruct over open PR data;
+   41.0 % SWE-bench Verified with Agentless Mini; OOD gains (math, code reasoning) where an SFT model
+   regressed. Lesson for us: a HINDSIGHT similarity-to-gold-patch reward on the FINAL edit is enough to
+   move a 70B model; per-turn credit was not needed at this scale.
+ - Kimi-Dev (Moonshot), arXiv 2509.23045 (Sep 2025) https://arxiv.org/abs/2509.23045: "agentless
+   training as skill prior" — single-turn verifiable sub-skills (localisation, edit, self-reflection)
+   trained with RL, 60.4 % SWE-bench Verified agentless; then SFT on 5k public agent trajectories ->
+   48.6 % pass@1 as an agent. Lesson: verifiable single-turn steps (our turn unit) transfer to agents.
+ - DeepSWE (Agentica/Together, Jul 2025, blog, JS page not fetchable here) [mem]: Qwen3-32B, GRPO++
+   on 4.5k R2E-Gym tasks with a SPARSE final test reward only (they report partial/step rewards were
+   deliberately NOT used), 42.2 % pass@1 SWE-bench Verified, 59.0 % with hybrid test-time scaling.
+ - Agent-R (Yuan et al.), arXiv 2501.11425 (Jan 2025) https://arxiv.org/abs/2501.11425: MCTS over
+   agent trajectories; the actor itself locates the FIRST bad step of a failed trajectory (within its
+   current ability), splice it onto the sibling correct path from the same parent, SFT on these
+   "revision trajectories"; +5.59 % over baselines on WebShop/SciWorld/TextCraft; revision trajectories
+   beat expert trajectories; fewer loops. Lesson: the transition point (first error) is the per-turn
+   label that matters, and it can be estimated by the model given the tree.
+ - RAGEN / StarPO (Wang et al.), arXiv 2504.20073 (Apr 2025) https://arxiv.org/abs/2504.20073:
+   trajectory-level agent RL collapses ("Echo Trap": reward-variance cliff, entropy drop, gradient
+   spikes); PPO's critic delays collapse vs GRPO; "without fine-grained, reasoning-aware reward
+   signals, agent reasoning hardly emerges … shallow strategies or hallucinated thoughts". Lesson: a
+   thought that is not scored drifts to filler — exactly why our G/R legs exist, and a warning that an
+   outcome-only turn value lets thoughts rot.
+ - GiGPO (Feng et al.), arXiv 2505.10978 (May 2025; v3 Oct 2025) https://arxiv.org/abs/2505.10978:
+   step-level credit WITHOUT extra rollouts — "anchor state grouping": across a group of trajectories
+   for the same task, actions taken from the SAME environment state are grouped and their discounted
+   returns compared (micro advantage), added to the episode-level GRPO advantage; >12 % ALFWorld,
+   >9 % WebShop over GRPO, same memory/rollouts. Lesson: a paired within-state comparison of actions
+   by downstream outcome is a valid step value; in our duel the same prefix x already hosts k teacher
+   refs + king + challenger actions — completing each to outcome gives a GiGPO group per turn.
+ How noisy / how many rollouts (synthesis): Math-Shepherd N = 4–8 with HE accuracy 86 % against
+ human labels and worsening at larger N; OmegaPRM k completions per node with binary search over the
+ first error; AgentPRM ~10k rollouts per PRM iteration and visible over-optimisation within one RL
+ phase; GiGPO needs only the group already sampled (8 trajectories/task typical [mem]).
+(5) KOTH mapping for the whole PRM family.
+  (a) Duel-time: an environment-anchored A leg — execute the miner's action y_A (and the teacher's k
+      refs) in the task sandbox and complete each with a FIXED completer (the teacher, or the king
+      itself) N times; turn value = SE(y_A) - mean SE(y_C^i) (paired at the same anchor state, GiGPO-
+      style). Maximiser = actions from which the completer succeeds most — above the teacher's own
+      pass@1 whenever the teacher's blind action is not its best action, and independent of any
+      model's likelihood. Requires environment access on the eval pod for every turn (D is 280k+ turns
+      of coding/terminal traces; only the sampled 1300 need execution, but each MC completion is a
+      full remaining trajectory: minutes per turn x N x sides). Noise: at N = 4, label accuracy ~86 %
+      per step; per-turn SE granularity 1/N, so 1300 turns give SE ~ sqrt(0.25/(N·1300)) ≈ 0.007 at
+      N = 4 — comparable to today's margins only after averaging; most turns will be ties (both fail
+      or both succeed) so the effective n is the fraction of "contested" turns.
+  (b) Fold-time (cheaper, replayable): label D turns with MC values once (OmegaPRM-style, using the
+      teacher as completer), publish the values with the manifest, and train a teacher-sized PRM /
+      critic that scores (x, y) at duel time with one echo pass. Maximiser = the PRM's notion of
+      "leads to success", above the teacher. Gaming: AgentPRM Fig 3 says a public frozen PRM WILL be
+      over-optimised; SN97 history says the same. Mitigation available to us that AgentPRM lacked:
+      the PRM is re-fit every fold from the CURRENT king's rollouts (king-failure datagen already
+      collects them), i.e. the reward model tracks the incumbent — conservative policy iteration by
+      construction, published as a data event.
+  (c) Miner-side: miners can run Math-Shepherd/AgentPRM/GiGPO against Prime environments themselves;
+      all the SWE evidence (SWE-RL 41.0, DeepSWE 42.2, Kimi-Dev 60.4) is outcome-anchored RL that
+      miners could do if the meter rewarded outcome-anchored behaviour.
+  Cost ordering: GiGPO-style paired completion at duel time (highest, needs sandboxes on the eval
+  pod) > fold-time MC labelling + PRM (large one-off compute, cheap duel) > hindsight-similarity
+  reward on final edits (SWE-RL; near-free but only for final-turn/`text`/patch actions).
+
+======================================================================================================
+6. DAgger; expert iteration; STaR; ReST-EM; rejection-sampling fine-tuning
+   Ross, Gordon, Bagnell, "A Reduction of Imitation Learning and Structured Prediction to No-Regret
+   Online Learning" (DAgger), arXiv 1011.0686 (Nov 2010; AISTATS 2011) https://arxiv.org/abs/1011.0686
+   Anthony, Tian, Barber, "Thinking Fast and Slow with Deep Learning and Tree Search" (ExIt), arXiv
+   1705.08439 (May 2017) https://arxiv.org/abs/1705.08439
+   Zelikman, Wu, Mu, Goodman, "STaR: Bootstrapping Reasoning With Reasoning", arXiv 2203.14465
+   (Mar 2022) https://arxiv.org/abs/2203.14465
+   Singh et al. (Google DeepMind), "Beyond Human Data: Scaling Self-Training for Problem-Solving with
+   Language Models" (ReST-EM), arXiv 2312.06585 (Dec 2023; v4 Apr 2024) https://arxiv.org/abs/2312.06585
+   Yuan et al., "Scaling Relationship on Learning Mathematical Reasoning with LLMs" (RFT), 2023 [mem]
+------------------------------------------------------------------------------------------------------
+(1) DAgger: iterate — roll out the current learner (mixed with the expert by beta_i), have the EXPERT
+label the states the LEARNER visited, aggregate all data, retrain; a no-regret reduction giving
+J(learner) <= J(expert) + O(T·eps) instead of behaviour cloning's O(T^2·eps) compounding error.
+ExIt: expert = current network + tree search (MCTS); network imitates the expert's improved moves;
+the improved network then makes the search stronger (Hex: beats MoHex 1.0 from tabula rasa). STaR:
+sample rationales; for failures, RATIONALISE — regenerate the rationale given a hint containing the
+correct answer; fine-tune on all rationales whose answer is correct; repeat (GSM8K 10.7 % vs 5.8 %
+few-shot CoT [mem]; CommonsenseQA 72.5 % ≈ a 30x larger model). ReST-EM: EM view — E-step sample 32
+(MATH) / 64 (APPS) solutions per problem, keep those a binary verifier accepts (cap 10 per problem
+for diversity), M-step fine-tune the BASE model on them; 2–3 iterations. RFT = one iteration.
+(2) Signal producers: DAgger — an expert oracle on learner states (ceiling = expert); ExIt — search
+around the current policy (ceiling moves); STaR/ReST-EM/RFT — a VERIFIER (ceiling = what the sampler
+can hit at pass@N, i.e. above pass@1 of the same model, compounding across iterations).
+(3) Why above base. DAgger does NOT exceed its expert — it closes the learner-state gap to the expert
+(our king-failure datagen is exactly DAgger with T as expert, hence teacher-parity is its fixed
+point). ExIt/ReST-EM/STaR exceed the CURRENT policy because the "expert" is policy + search/filter,
+so each iteration's target is the previous policy's pass@N distribution restricted to successes.
+(4) Gains/conditions. ReST-EM: PaLM 2-L on MATH and APPS "substantially outperforms" SFT on human
+solutions (Figs 2–3), gains larger for the larger model (opposite of RFT's diminishing returns on
+GSM8K), transfers to GSM8K / Hungarian finals / HumanEval / BBH; MORE THAN ~2–3 ITERATIONS OVERFITS
+(APPS regresses after iteration 1); pass@k and majority voting also improve. STaR needs the hint for
+failures (else the loop stalls on hard items). ExIt needs a search procedure that improves on the
+network's move — for LLM agents, "search" = MC completions / best-of-N with a verifier.
+(5) KOTH mapping. (a) Duel-time: verified-filter distillation as a REFERENCE construction — sample the
+teacher's k refs per turn as today, but keep only refs whose CONTINUATION (completed by the teacher
+in the sandbox, or checked against the recorded outcome) succeeds; R/A against success-filtered refs
+have maximiser "the teacher's successful mode" > the teacher's average mode. Same execution cost as
+§5(a) minus the miner-side completions; where D already stores a successful trajectory (the trace),
+"filtered" = "use the recorded successful action as the ref" — but that is the leakage/memorisation
+target (RT-6) and per-duel-fresh refs are the RT-6 defence, so the filter must be applied to FRESH
+teacher samples, not to the stored action. (b) Fold-time: ReST-EM over the teacher/frontier/king
+pool — keep only verified-successful trajectories in D as reference material, with the cap-per-task
+diversity rule; the 2–3-iteration overfitting warning maps to "refresh the pool each epoch, do not
+re-fold the same successes". (c) Miner-side: STaR/ReST-EM/RFT are what a rational miner does with
+Prime environments; STaR's hint step is the privileged-self-teacher of §3 in hard-label form.
+Goodhart when public: success-filtered refs are still teacher-produced, so the RT-9/RT-10 (mode
+guessing / leakage) surface is unchanged; the filter makes the target sharper (fewer modes) which
+helps R's centering but makes mode-guessing pay more — watch a_i spread telemetry. Cost: sandbox
+completions for the refs only (k = 3 per turn, shared across sides via RefCache).
+
+======================================================================================================
+7. Discovered while reading (directly relevant)
+------------------------------------------------------------------------------------------------------
+7a. Zhao, Zhang, Xu, Wang, Xu, Zhao, Li (Nankai/Huawei), "Is More Privileged Information Better? From
+    Solution Traces to Problem-Solving Structure in Self-Distilled Reasoning" (PS-OPSD), arXiv
+    2608.01589 (Aug 3 2026) https://arxiv.org/abs/2608.01589
+ Replaces the full reference solution in the OPSD teacher context with an extracted "problem-space
+ guidance" (initial state, goal conditions, constraints, selected state-transition path of operators
+ /preconditions/transformations/resulting states; extractor Qwen3.6-35B-A3B, cached offline); student
+ and objective unchanged. Avg over AIME24/25+HMMT25: 43.12 / 64.32 / 65.40 at 1.7B/4B/8B, beating the
+ best baseline (OPSD, AVSD, GRPO, SFT) by 1.54–2.04 pts at every scale; controls: mismatched guidance
+ -2.56, path-corrupted -2.13, flattened -0.71. Explicit "per the reference solution…" invocations in
+ question-only outputs: OPSD 3.0 % train / 2.2 % held-out vs PS-OPSD 0.5 % / 0.4 %. Hard-case
+ (base-unsolved) pass 8.70 % -> 13.04 %, retention 97.0 -> 98.5 %. Message for us: WHAT the
+ privileged teacher sees is a first-order design choice; literal solutions leak instance-specific
+ dependence; structure (state/goal/constraints/path) transfers better. For a coding turn the
+ analogue of "problem-space guidance" is: failing tests + affected files + the state delta the
+ recorded trajectory achieved — not the gold patch text.
+7b. Tan & Hong, "PAINT: Partial-Solution Adaptive Interpolated Training for Self-Distilled
+    Reasoners", arXiv 2604.26573 (Apr 29 2026) https://arxiv.org/abs/2604.26573
+ Same OPSD scaffold; (i) mask a SUFFIX of the reference solution adaptively — rollouts with low
+ overlap to the reference see more of it, aligned rollouts see less ("more revealed context gives
+ sharper corrective guidance but collapses the target toward one trace"); (ii) interpolate teacher
+ toward student in energy space only on the top-fraction of positions ranked by teacher/student
+ entropy ratio. +2.1 / +0.8 / +1.1 Avg@12 over OPSD at 8B/4B/1.7B; +2.9 over GRPO at 8B; suffix
+ masking beats prefix/middle/random. Message: the amount of privileged context is a dial between
+ "sharp but pasteable" and "diverse but weak" — a knob we would publish (band_c-like).
+7c. Agarwal et al. (Google DeepMind), "On-Policy Distillation of Language Models: Learning from
+    Self-Generated Mistakes" (GKD), arXiv 2306.13649 (Jun 2023; ICLR 2024) https://arxiv.org/abs/2306.13649
+ The on-policy distillation formalism the above build on (student-sampled sequences, free choice of
+ divergence, integration with RL). Ceiling = teacher; included because it and the Qwen3 report Table
+ 21 (source 2) are the quantitative record that on-policy distillation CLOSES the gap to a teacher
+ faster than RL (74.4 vs 67.6 AIME'24 at 1/10 the GPU-hours) — nothing in this line crosses it.
+
+======================================================================================================
+CROSS-CUTTING CONCLUSIONS (<= 25 lines)
+------------------------------------------------------------------------------------------------------
+1. Any "frozen-teacher likelihood of the miner's tokens" score (our R/G/A; TML, GKD, Qwen3 on-policy
+   distillation) has maximiser = the teacher exactly (reverse KL = 0 iff student = teacher). No fix exists
+   inside that form: the teacher must be conditioned on more, or replaced by an outcome.
+2. Three mechanisms put the maximiser above a fixed teacher. (i) PRIVILEGED CONDITIONING: the same teacher
+   given per-turn information the miner cannot see — hint, hindsight, env feedback, verified solution
+   (SDFT: teacher 42 % -> 100 % correct with a demo; OPSD +6.3 pts at 1.7B with a FROZEN privileged
+   teacher; SDPO: student surpasses its initial teacher when the teacher co-moves). (ii) OUTCOME
+   ANCHORING: MC success from the step under a fixed completer (Math-Shepherd, OmegaPRM, AgentPRM, GiGPO)
+   — maximiser is the environment. (iii) ITERATION with a verifier/search (ExIt, ReST-EM, STaR,
+   AgentPRM): the target is the previous policy's own successes.
+3. Frontier models belong as HINT/DEMO producers for the privileged teacher (completed solutions,
+   critiques, PS-OPSD-style structure), never as a per-turn likelihood target: comparing T(.|x) with
+   T(.|x,p) on ONE prefix under ONE model removes the cross-model sampling noise the 09-20 attempt hit.
+4. Environment access is required for (ii), (iii) and any feedback on the miner's OWN action; NOT for (i)
+   when p comes from the stored trace (downstream observations, outcome/error text) — cheapest for us.
+5. Gameability when public: literal-solution p => paste/memorise (RT-6/RT-10; PS-OPSD 3.0 % explicit
+   reference invocations); a frozen learned PRM => over-optimised within one RL phase (AgentPRM Fig 3);
+   a generative judge => SN97. Least gameable: outcome anchoring with fresh per-duel completions; then
+   STRUCTURAL p with per-duel-fresh refs; then a PRM re-fit every fold.
+6. Fit. Duel-time: privileged refs (R_priv/A_priv, G kept against blind refs) reuse the echo pipeline at
+   ~one longer teacher prompt per ref; paired outcome completion needs eval-pod sandboxes (min/turn x N).
+   Fold-time: ReST-EM verified filtering of refs, HER/HIR relabelling of king failures, MC value labels +
+   per-fold PRM re-fit, p attached to every turn. Miner-side: SDPO/STaR/ReST-EM/AgentPRM follow once the
+   meter rewards them; DAgger alone (king-failure datagen) stays at teacher parity — its expert is blind
+   T. Caveats: privileged self-teaching fails below ~3B (27B is in-regime); how much p to reveal = dial.

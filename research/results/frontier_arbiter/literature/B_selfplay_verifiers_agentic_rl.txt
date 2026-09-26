@@ -1,0 +1,672 @@
+FRONTIER ARBITER — LITERATURE NOTES B: self-play, verifiers, agentic RL, consensus targets, data ratchets, competition mechanisms
+Written 2026-09-20 (UTC) for Affine / SN120 (AGENTS.md §1–2). Sources were fetched as arXiv HTML/abs pages (or the vendor page) on
+2026-09-20; numbers marked (mem) are recalled from prior reading, not re-read from the fetched text — treat as approximate.
+
+Question every section answers: how could this mechanism anchor a TURN SCORE (duel-time), a DATA PIPELINE for D (fold-time), or
+miner-side training to something ABOVE a fixed teacher (Qwen3.8-27B), given: score must replay from published artifacts; public
+targets get memorised (RT-6 lesson: a published per-turn target IS the target); a static judge gets Goodharted (Albedo SN97 GLM
+checklist: every judge-crowned king below genesis on swe-rebench, MOTIVATION.md); budget ~$10s and ~1 h per duel; live duel today =
+~1000 turns, 2 sides, teacher-forced logprob legs (R/typicality/A), crown at paired margin > max(2·SE, δ).
+
+Notation for the mappings: (a) duel-time turn score, (b) fold-time data mechanism for D, (c) miner-side training; "gaming" = what
+a miner who sees the published rule + artifacts can do; "cost" = per duel unless stated.
+
+==========================================================================================================================
+PART 1 — VERIFIABLE-REWARD AGENTIC RL FOR CODING AGENTS (how verifiable task supply is made, what reward shape was used)
+==========================================================================================================================
+
+1.1 DeepSWE-Preview (Agentica × Together AI, 2025-07-01) — https://www.together.ai/blog/deepswe
+(1) Qwen3-32B trained with pure RL (no SFT/distillation) as a multi-turn SWE agent on 4.5k R2E-Gym tasks; 200 RL steps, 6 days on
+    64 H100; 42.2% pass@1 SWE-bench Verified (from 23%), 71.0% pass@16, 59% with hybrid best@16 test-time scaling.
+(2) Reward: sparse OUTCOME only — 1 if the submitted patch passes the sampled F2P+P2P tests inside 5 min, else 0. Produced by the
+    repository test suite (ground truth), not by any model. No per-step/turn reward. "Compact filtering": trajectories that hit
+    max context / max steps / timeout are masked from the loss, so a lucky mid-trajectory pass without a deliberate submit earns
+    nothing — this was needed to stop reward collapse ("patch random files after having fixed it").
+(3) Optimum is the environment's pass rate, not any model's behaviour: the target is executable truth; more RL compute kept raising
+    it; RL beat SFT/distillation from stronger proprietary teachers on comparable data.
+(4) 4.5k tasks; 512 containers per RL step (BS 64 × 8 rollouts); Kubernetes because Docker daemon crashed; reward sparsity was OK
+    at 32B because the base could already solve ~23%. Emergent behaviours: edge-case tests, regression-test search, adaptive
+    per-step thinking (~2k tokens on localisation steps vs ~100–200 on navigation).
+(5)(a) Duel-time: the only outcome-anchored turn score is "continue the trajectory from this turn with a FIXED continuation
+    policy and grade the env" (a counterfactual value V(x, a_miner)). Cost is the blocker: 1000 turns × 2 sides × k continuations ×
+    ~20 steps × ~2k tokens ≈ 10^8–10^9 generated tokens + 10^3–10^4 container-minutes; fits ~1 h only on a SUBSET (e.g. 100–200
+    late-depth turns where the remaining horizon is short) or with a cheap continuation policy. Replay: store env image digest,
+    seed, continuation transcript, grader log → replayable bit-for-bit only if the env is deterministic (mini-swe/verifiers
+    envs mostly are; flaky tests must be filtered as SWE-rebench does).
+    (b) Fold-time: outcome labels per ROLLOUT (already in D as `outcome`); DeepSWE's compact-filtering lesson says: exclude
+    trajectories that hit caps from the "solved" bucket (already: `stop_condition` filter).
+    (c) Miner-side: exactly this recipe is what a miner would run; the KOTH's job is to make the ranked quantity agree with it.
+    Gaming: none on the outcome itself; the surface is the CONTINUATION policy (if it is the teacher, its blind spots cap the score;
+    if it is the miner itself, the miner controls both action and continuation → must be the same fixed public policy for both
+    sides, or paired-with-king continuation). Cost: $10–30 CPU + GPU generation dominated; see 1.6/1.7 for task supply.
+
+1.2 SWE-RL (Meta FAIR, 2025-02-25) — https://arxiv.org/abs/2502.18449
+(1) RL on 11M GitHub PR seeds (from 24M aggregated PRs): given issue + code context, produce search/replace edits; Llama-3.3-70B →
+    Llama3-SWE-RL-70B, 41.0% SWE-bench Verified with Agentless Mini (500 repair samples, 30 tests); OOD gains on math/code
+    reasoning while the matched SFT baseline degraded.
+(2) Reward: difflib.SequenceMatcher similarity ∈ [0,1] between predicted and ORACLE patch; −1 for malformed output. Target = the
+    human developer's merged patch (ground truth by proxy, per-PR). GRPO. Ablation: a discrete exact-match reward stayed ≈ 0 all
+    training (real patches are too diverse to match exactly) — the continuous partial-credit reward is what trained.
+(3) Not capped by a model: the target is the human PR corpus (11M distinct targets). But it IS capped by the corpus: the optimum is
+    "reproduce human patches", not "better than humans", and similarity ≠ correctness.
+(4) Scale mattered: 24M → 11M PR instances, 70B policy; repair pass rate rose 33.6 → 40.0 → 41.0 with 20 → 160 → 500 samples
+    (plateau past 160). No execution during RL (cheap), execution only at eval.
+(5)(a) Duel-time analogue: score a miner's action by similarity to a hidden gold action — this is exactly the "published target"
+    hole (RT-6) unless the gold is fresh per duel. Our teacher-anchored R is the logprob version of this idea with the TEACHER as
+    the gold; SWE-RL shows the gold can be a HUMAN artifact instead (PR patch for coding turns). Similarity rewards are gameable by
+    surface mimicry (whitespace/ordering hacks) — the paper accepted that risk because the seeds were private during training.
+    (b) Fold-time: D turns whose task has a merged-PR oracle (swerebench/multiswe/scaleswe sources) could carry a `gold_patch`
+    field; a turn's action can be scored on "does this edit move toward the gold diff" (execution-free, cheap, replayable).
+    (c) Miner: the cheapest of all recipes (no containers). Gaming when public: memorise gold patches for public repos (contamination
+    = the SWE-bench Verified problem, §1.8). Cost: ~0 compute beyond the echo; needs the oracle patch stored per task.
+
+1.3 Kimi K2 technical report (Moonshot, 2025-07-28) — https://arxiv.org/abs/2507.20534
+(1) 1T-param MoE; post-training built on (i) a large-scale agentic tool-use data synthesis pipeline and (ii) joint RL mixing
+    verifiable rewards (RLVR gym) with a SELF-CRITIQUE RUBRIC reward for non-verifiable tasks. 65.8 SWE-bench Verified (71.6 with
+    internal-verifier best-of-N), 66.1 τ²-bench, 76.5 ACEBench.
+(2) Targets: (a) tool-use SFT data — 3,000+ real MCP tools + 20,000+ evolved synthetic tools, thousands of synthetic agents, tasks
+    with explicit RUBRICS, a stateful LLM tool SIMULATOR ("world model") with controlled stochasticity, LLM user simulators, an
+    LLM JUDGE filtering trajectories against the rubric (= large-scale rejection sampling); real sandboxes for coding where
+    authenticity matters (test pass rates). (b) RL: deterministic verifiers where possible + LLM-judge with an anti-"claims
+    compliance" hack-check layer; a sentence-level faithfulness judge; (c) self-critic pairwise comparisons against core +
+    "prescriptive" (anti-reward-hacking) + human rubrics. The critic is CONTINUOUSLY REFINED on RLVR on-policy rollouts
+    ("closed-loop critic refinement": objective signals from verifiable tasks are distilled into the judge that scores the
+    subjective ones).
+(3) Why not capped: the verifiable part is env truth; the subjective part is capped by the critic, but the critic co-evolves with
+    the policy and is re-grounded on verifiable data — the fix Kimi used for the static-judge Goodhart problem is "judge moves
+    with the policy and is re-anchored on ground truth every step" (cf. Intuitor §4.6 online vs offline reward).
+(4) Tens of thousands of synthetic tool-use examples; only rubric-passing trajectories kept. No public ablation of critic drift.
+(5)(a) Duel-time: a rubric judge as the turn score is the Albedo failure mode unless it is (i) re-anchored on verifiable outcomes
+    each epoch and (ii) accompanied by a hack-check leg. Kimi's design says: keep the judge OFF the ranked quantity, or make it a
+    gate re-trained per fold on env outcomes. (b) Fold-time: rubric-based task generation + simulator is how to get τ²/tool-use
+    supply without real APIs (our tool_use/τ² axis moved with the wvk-22 shape change; simulator-generated tasks can renew D
+    cheaply). (c) Miner: same recipe. Gaming: LLM-judge legs (verbosity, claim-of-compliance — Kimi needed an explicit hack-check).
+    Cost: simulator tasks are API-token-only (~$ per 1k trajectories); rubric judging per turn ~1 API call/turn ($1–3/duel at
+    flash-class prices per feasibility/recommendation.txt).
+
+1.4 Kimi-Dev (Moonshot, 2025-09-27) — https://arxiv.org/abs/2509.23045
+(1) 72B "Agentless" SWE model: mid-training 150B tokens of GitHub issue/PR data, R1 cold start, RL on two roles — BugFixer and
+    TestWriter — then test-time SELF-PLAY between them (40 patches × 40 tests, execution cross-matrix); 60.4% SWE-bench Verified
+    (workflow SOTA); +5k agent trajectories SFT → 48.6% as an agent.
+(2) Reward: OUTCOME ONLY, 0/1 from execution. BugFixer: passes ground-truth tests. TestWriter: test FAILS on buggy repo AND PASSES
+    with the gold fix applied (both conditions). At test time the two roles verify each other: score(patch) = reproduction-test
+    pass count + regression (P2P) count, no gold needed.
+(3) Why not capped: the anchor is execution; the self-play at inference uses the model's own tests as a verifier, which improves
+    with the model — but training still needed gold patches/tests (the TestWriter reward references the gold fix).
+(4) Mid-training tokens scale monotonically (50B → 100B → 150B improves BugFixer pass@1); RL only on the edit stage; 40×40 execution
+    matrix per instance at inference (expensive: 1,600 test runs/instance).
+(5)(a) Duel-time: the TestWriter idea gives a GOLD-FREE turn verifier for coding turns: a miner's patch-action can be scored by
+    tests written by a fixed public test-writer (fail-before/pass-after on the miner's edit) — verifiable, replayable, no
+    published target text. Gaming: miner edits that pass generated tests while wrong (tests are weak; R2E-Gym §1.7 measured low
+    test distinguishability). (b) Fold-time: TestWriter-style F2P tests for tasks that lack them (issue-only PR mirrors) is how to
+    make more of D verifiable. (c) Miner: BugFixer/TestWriter RL is a strong recipe; expect miners to adopt it once actions are
+    graded by execution. Cost: 2 test runs per scored action (~1–3 CPU-min) → 1000 turns × 2 sides ≈ 70–100 CPU-hours/duel
+    (~$5–10) if containers are pre-built; only coding/terminal turns with an executable env qualify.
+
+1.5 SWE-Gym (Pan et al., 2024-12-30) — https://arxiv.org/abs/2412.21139
+(1) First real-repo SWE training env: 2,438 Python tasks from 11 repos with executable envs + unit tests (~200 human hours to build);
+    rejection-sampling FT of Qwen2.5-Coder-32B on 491 successful OpenHands trajectories → +12.3 Lite / +13.6 Verified; trained a
+    trajectory VERIFIER (outcome RM) → best@N 32.0% Verified (log-linear in N).
+(2) Reward: env unit tests (ground truth) label trajectories; the learned verifier is a proxy trained on those labels.
+(3) Not capped: the env test signal is truth; gains were compute-limited (no saturation at 491 trajectories), not task-limited.
+(4) 2,438 tasks were enough for a 32B; 491 trajectories moved 13 points; verifier best@8–16 adds ~+11.
+(5)(a) Duel-time: a trajectory/turn verifier trained on env outcomes is a cheap replayable turn score (one forward pass) BUT it is a
+    learned proxy → Goodhart curve (Gao §3.5) once miners optimise against it; R2E-Gym found such verifiers "rely on stylistic
+    features" and agent thoughts. Use only as a gate, re-trained per fold. (b) Fold-time: 200 human hours for 11 repos is the
+    cost SWE-smith/SWE-rebench removed (§1.6, §1.9). (c) Miner: RFT from env success is the baseline recipe. Cost: verifier
+    scoring ≈ 1 echo/turn, negligible.
+
+1.6 SWE-smith (Yang et al., 2025-04-30) — https://arxiv.org/abs/2504.21798
+(1) Task synthesis at scale: build the env FIRST (SWE-agent installs the repo, human checks install/test parsing ~min per repo),
+    then break it — LM Modify / LM Rewrite of functions, procedural AST mutation, combining bugs, PR Mirror (undo PRs) — keep only
+    candidates that break ≥1 passing test (F2P) within 2 min; LM writes issue text from the F2P test + failure output. 50k
+    instances / 128 repos for $1,360 total ($1,000 bugs, $160 installs, $200 issue text for 10k). 5,016 Claude-3.7 trajectories →
+    SWE-agent-LM-32B 40.2% Verified.
+(2) Reward/target: hidden test suite of the real repo (ground truth); tasks are synthetic but verification is real execution.
+(3) Not capped: unlimited fresh tasks per repo; difficulty rating comparable to SWE-bench (5.27–5.72 vs 5.01, SWE-Gym 5.62); LM
+    Rewrite and PR Mirror gave the most useful expert trajectories; more instances/bug types/repos all helped.
+(4) Storage/labour collapse vs SWE-bench-style curation; difficulty classifier 75.3% test acc; LM issue text ≈ real issue text.
+(5)(a) Duel-time: not a turn score, but the SUPPLY of fresh verifiable tasks the outcome score needs; fresh-per-duel tasks are the
+    structural RT-6 defence (a task minted after the reveal cannot be memorised). (b) Fold-time: SWE-smith on any Python repo ⇒
+    hundreds–thousands of graded tasks per repo at ~$0.03/task; D's coding share could be renewed each epoch and the KING-FAILURE
+    seat can be run on synthetic tasks disjoint from public benchmarks. (c) Miner: same pipeline at home — the point is the
+    verifier is not the target. Gaming: the four bug generators leave fingerprints (single-function edits, PR mirror = a known
+    historical diff) → a miner can learn "revert the last function edit" priors; mix generators and use PR Mirror sparingly.
+    Cost: ~$1.4k per 50k tasks (2025 prices); env images dominate storage.
+
+1.7 R2E-Gym / AgentGym (Jain et al., 2025-04-09) — https://arxiv.org/abs/2504.07164
+(1) 8.7k procedurally curated executable tasks via SWEGEN (commit back-translation → synthetic issue + test generation, no human
+    issues/tests); 32B agent 34.4% pass@1 Verified; HYBRID test-time scaling: execution-based verifier (agent-written tests) and
+    execution-free verifier (Qwen2.5-Coder-14B YES/NO on trajectory + patch) each saturate at 42–43% best@K; combined 51% best@26.
+(2) Targets: env tests for training; at inference (a) generated tests (execution-based) and (b) a learned discriminator
+    (execution-free). Finding: test-based verifiers have LOW DISTINGUISHABILITY (for most problems <~20% (mem) of generated tests
+    separate the top correct from top incorrect patch); execution-free verifiers DISCRIMINATE better but are BIASED toward
+    stylistic features and agent thoughts rather than the patch.
+(3) Not capped for training (env truth). For selection, each verifier alone plateaus; hybrid raises the ceiling — evidence that
+    two DIFFERENT error models are worth more than one better one.
+(4) 26 trajectories/problem at inference; pass@26 ≫ best@26 (selection, not coverage, is the bottleneck — same as Monkeys §4.2).
+(5)(a) Duel-time: an execution-free turn verifier alone will be gamed on style (our G/typicality leg already shows style dominance
+    on the live board: reigns 16–19 crowned on typicality only, notes.md). Pair it with an executable leg (tests/continuation) and
+    take min or require both — the R2E "hybrid" result is the empirical case for min(R, G, A)-style conjunction over legs with
+    orthogonal failure modes. (b) Fold-time: SWEGEN-style commit back-translation = tasks from ANY commit, not only issue-linked
+    PRs (SWE-rebench needs issue links) → more supply per repo. (c) Miner: hybrid best-of-N is how miners will pick submissions.
+    Gaming: execution-free verifier → thought-styling; execution-based → overfit to the generated tests. Cost: EF verifier ≈ one
+    echo/turn; EB ≈ test generation + 2 runs/candidate.
+
+1.8 SWE-Bench Pro (Scale AI, 2025-09-21) — https://arxiv.org/abs/2509.16941
+(1) 1,865 long-horizon tasks from 41 repos: public set (11 GPL/copyleft repos), held-out set (12 repos, private, for overfitting
+    checks against the public set), commercial set (18 purchased startup codebases; results released, code not). Human
+    augmentation: requirements + interface spec grounded in tests; tests human-reviewed; flaky-test runs dropped. Frontier
+    pass@1: public Claude Sonnet 4 42.7 / GPT-5-high 41.8; commercial Opus 4.1 17.8 / GPT-5-high 15.7 (a 2–2.5× gap = contamination
+    + realism).
+(2) Target = human-reviewed F2P/P2P tests; contamination resistance from LICENCE (copyleft excluded from commercial pretraining
+    corpora) + ACCESS (private repos).
+(3) Not model-capped; the point is a REFERENCE that stays honest because it is held out, not because it is hard.
+(4) 161/500 SWE-bench Verified tasks are 1–2 line edits; Pro requires multi-file edits; public-vs-commercial gap is the cleanest
+    published contamination estimate for agentic SWE.
+(5)(a) Duel-time: not usable directly (fixed benchmark = Goodhart target), but the held-out-set design is the template for an
+    OPERATOR-PRIVATE audit pool run on each new king (like our bench role today) — advisory, never in the ranked score.
+    (b) Fold-time: prefer copyleft/less-crawled repos for D's renewal to reduce miner pretraining leakage; keep a rotating held-out
+    repo set to measure "public-set overfit" of kings (public − heldout gap as a Goodhart telemetry).
+    (c) Miner: nothing. Gaming: publishing the held-out results but not the tasks leaks ~nothing per round. Cost: human-verified
+    tasks are expensive (Pro is a purchased dataset); use only for the audit pool.
+
+1.9 SWE-rebench (Nebius, 2025-05-26) — https://arxiv.org/abs/2505.20411  [discovered; renewing task supply + contamination]
+(1) Fully automated pipeline: ~450k issue-linked PRs from 30k permissive-licence Python repos → LLM (Qwen2.5-72B) writes install
+    recipes (≤3 candidates, error-log-driven repair) → execution verification (≥1 F2P fails before / all F2P pass after / P2P
+    stable) → LLM quality labels (clarity, complexity, test correctness; 81% acc on complexity). Result: 21,336 tasks / 3,468
+    repos; install works for ≥1 task in 31% of repos. A continuously refreshed 294-task/169-repo benchmark with issue-date vs
+    model-release-date contamination flags.
+(2) Target = repo tests (ground truth); freshness = tasks created after a model's release date.
+(3) Not capped by any model; the supply RENEWS monthly, which is what makes it un-memorisable at the time of scoring.
+(4) 21k tasks from 450k PRs (~5% yield); some models' SWE-bench Verified scores "might be inflated" vs fresh tasks.
+(5)(a) Duel-time: fresh tasks minted between reveal and duel (or a private buffer released only at duel time) are the outcome-
+    score's supply; their outcome is replayable because the env image + tests are published WITH the verdict (after the duel).
+    (b) Fold-time: this IS the D renewal engine for coding (D already draws from `swerebench_v2`); the date-stamp lets the fold
+    prefer tasks newer than the king's submission block for the audit/outcome slice. (c) Miner: can run the same pipeline; that is
+    fine — the tasks in the duel are ones they have not seen. Gaming: repo-level priors (repo-specific memorisation) → cap tasks
+    per repo (Pro caps 50–100/repo). Cost: pipeline is CPU + one 72B LLM pass per repo; per-task marginal cost ≈ cents.
+
+==========================================================================================================================
+PART 2 — SELF-PLAY / PROPOSER–SOLVER TASK GENERATION (why self-play can exceed a fixed teacher; what stops it in language)
+==========================================================================================================================
+
+2.1 Absolute Zero Reasoner (Zhao et al., 2025-05-06) — https://arxiv.org/abs/2505.03335
+(1) One model plays PROPOSER (writes code-reasoning tasks: deduction/abduction/induction over (program, input, output) triplets) and
+    SOLVER; a Python EXECUTOR validates tasks and grades answers; zero external data. Qwen2.5-Coder-7B: coding SOTA among zero
+    models, math +15.2 (coder) / +10.9 (base); gains scale 3B +5.7 → 7B +10.2 → 14B +13.2.
+(2) Solver reward: executor correctness (ground truth). Proposer reward: LEARNABILITY = 1 − mean solver success over n Monte-Carlo
+    rollouts, zero if all-solve or none-solve — i.e., tasks at the solver's frontier. Both produced by the model itself + executor.
+(3) Not capped: the environment (executor) is the arbiter, and the task distribution moves with the solver (autocurriculum), so
+    the optimum is bounded only by what the executor can verify. Still bounded to executor-checkable domains.
+(4) TRR++ advantage estimator; buffer of past triplets seeds proposals; "uh-oh moment" (unsafe CoT in Llama-3.1-8B) — no filter on
+    proposed content; token counts grow (trial-and-error in abduction).
+(5)(a) Duel-time: not directly (the loop is training). (b) Fold-time: a PROPOSER seat — the teacher/king/frontier writes tasks whose
+    learnability for the current king is ~0.5 (measured by k rollouts), executor-validated → D's math/code-reasoning share
+    renews at the king's frontier automatically; this is a principled version of the king-failure seat (which uses a noisy 0/1
+    outcome filter). (c) Miner: AZR-style self-play on executor-checkable tasks. Gaming: a miner who knows proposals come from a
+    public proposer prompt can pre-train on its distribution — mitigated because tasks are fresh per fold and the executor, not the
+    proposer, grades. Cost: n=8 solver rollouts per proposal to score learnability (~8× generation), cheap on small tasks.
+
+2.2 R-Zero (Huang et al., 2025-08-07) — https://arxiv.org/abs/2508.05004
+(1) Two copies of one base: CHALLENGER (GRPO; reward = solver uncertainty 1 − 2|p̂ − 0.5| with p̂ = majority-agreement of 10 solver
+    samples, + BLEU repetition penalty) and SOLVER (GRPO on challenger questions kept in the informative band 3 ≤ #majority ≤ 7 of
+    10, pseudo-label = MAJORITY VOTE). Qwen3-4B-Base +6.49 math / +7.54 general (MMLU-Pro, SuperGPQA); 8B 49.18 → 54.69 over 3
+    iterations.
+(2) Target: the solver's own majority vote (no executor). Producer: the solver.
+(3) Claimed uncapped by external data — but the label is self-consensus, so the ceiling is "what the majority already gets right".
+    Measured: pseudo-label accuracy vs GPT-4o oracle on challenger questions FALLS 79.0% → 69.0% → 63.0% over iterations 1–3
+    (Table 5) — the curriculum gets harder faster than the labeler gets better; gains shrink per iteration. Appendix E: instability
+    roots beyond label noise.
+(4) 3 iterations; 10 samples/question; math domain chosen because answers are checkable by string match.
+(5)(a) Duel-time: uncertainty-of-the-king as a TURN SELECTOR (not a score): sample the turn slice where king rollouts disagree
+    (contested turns) — feasibility/outcome/report.txt already measures ~47% contested turns; scoring only contested turns
+    concentrates SE budget where the crown can be decided. (b) Fold-time: R-Zero's band filter (30–70% success) is the cheap
+    difficulty gate for king-failure data (replace "failed" with "solved 3–7 of 10"). (c) Miner: majority-vote self-training.
+    Gaming when public: majority targets are collusion/mode-hugging targets (see §4.3–4.4); label accuracy decays → do NOT use
+    majority as the ranked quantity. Cost: 10 rollouts/turn for the band.
+
+2.3 SPIRAL (Liu et al., 2025-06-30) — https://arxiv.org/abs/2506.24119
+(1) Self-play on two-player ZERO-SUM language games (TicTacToe, Kuhn Poker, Simple Negotiation) with a fully online multi-agent RL
+    system + Role-conditioned Advantage Estimation (RAE). Transfers to reasoning: Qwen3-4B-Base 34.0 → 44.5 avg over 8 benchmarks
+    (+10.5), 8B 39.5 → 49.6; beats SFT on 25k expert game trajectories; fixed-opponent RL (Mistral, Gemini) FAILS where self-play
+    keeps improving.
+(2) Reward: terminal game OUTCOME (rules), zero-sum; opponent = current self. No labels.
+(3) Not capped: the opponent improves with the policy (autocurriculum), the rule-based outcome is exact; fixed opponents are
+    exploited (static strategy overfit) — the same mechanism that makes a static judge/teacher a ceiling.
+(4) Without RAE "thinking collapse" after ~200 steps (empty CoT); multi-game > single-game; instruction-tuned models gain less
+    (+2.0 Llama-3.1-8B-Instruct).
+(5)(a) Duel-time: the KOTH itself is a zero-sum game between king and challenger, but today the PAYOFF is teacher-measured, so
+    the "opponent" never moves the target. A self-play-anchored payoff = the two miners' actions are compared by an OUTCOME the
+    other cannot influence (env continuation, tests) → the target moves with the field, not with the teacher. (b) Fold-time:
+    game-like envs (negotiation, hidden-info) are cheap renewable verifiable sources with exact rules. (c) Miner: self-play RL.
+    Gaming: zero-sum with a rule outcome has no judge to fool; collusion (two miners sharing a coldkey throwing games) is the
+    residual — pay by coldkey (notes.md already proposes). Cost: game rollouts are short (~10 turns).
+
+2.4 SPIN — Self-Play Fine-Tuning (Chen et al., 2024-01-02) — https://arxiv.org/abs/2401.01335
+(1) Iterative DPO-like self-play: the new model learns to distinguish HUMAN SFT responses from its previous iteration's responses;
+    the previous iteration is the opponent; no extra labels beyond the SFT set. zephyr-7b-sft-full 58.14 → ~63.2 (mem) Open LLM
+    Leaderboard over 3 iterations on a 50k Ultrachat subset; MT-Bench 5.94 → ~6.78 (mem); beats DPO with extra GPT-4 preferences.
+(2) Target: the human SFT data distribution. Theorem: global optimum ⇔ policy = target distribution — so the optimum is CAPPED at
+    the demonstrator (converges when the discriminator cannot tell model from human).
+(3) Not above a fixed target; it squeezes more out of a fixed target than SFT does (continued SFT plateaued/declined).
+(4) 3 iterations; gains shrink each iteration.
+(5) Mapping: SPIN is the formal statement of our situation — a distribution-matching objective's optimum is the reference
+    distribution. Our R/G legs are teacher-distribution-matching legs ⇒ optimum = teacher, observed as the parity plateau
+    (teacher-vs-king control z 12.9 → 1.3, notes.md). Replace the SFT set with FRONTIER samples and SPIN gives "match the
+    frontier" — a higher ceiling but still a ceiling, and the frontier samples become RT-6 targets if published at fold time
+    (feasibility rec: fresh per duel, $1.8–27/duel). Gaming: same as today (mode-hugging the reference).
+
+2.5 Language Self-Play (Kuba et al., Meta, 2025-09-09) — https://arxiv.org/abs/2509.07414
+(1) One model as CHALLENGER (prompted to write hard instructions, minimises solver reward) and SOLVER (maximises); minimax with
+    GRPO group trick; KL to reference stops adversarial nonsense; a QUALITY SELF-REWARD (reference model judging) is added to both
+    players (game becomes non-zero-sum) because pure zero-sum degenerated. Llama-3.2-3B-Instruct on AlpacaEval vs base: Base
+    26.5%, RL with data 38.8%, LSP-Zero 32.0%, LSP 36.4% — data-free ≈ data-backed RL.
+(2) Reward: an external RM (OpenAssistant deberta RM in early runs) or verifier + self-reward. The RM was hacked ("answer everything
+    in Python"). Producer: fixed RM + reference-model judge.
+(3) Capped by the RM/judge — LSP demonstrates the ceiling and the hacking, not an escape from it. Its contribution is that a
+    challenger can generate the PROMPT distribution for free.
+(4) 3B model; instruction-following; no verifiable domain result reported beyond math/coding benchmarks in the abstract.
+(5)(a) Duel-time: challenger-generated prompts are a renewable D source for chat/IF turns (our `text` dialect), but the score
+    must not be the self-reward (hackable). (b) Fold-time: use LSP-style challengers to write instruction prefixes; grade with
+    verifiable IF checks (IFEval-style constraints) not a judge. (c) Miner: same. Gaming: RM hacking demonstrated in-paper.
+
+2.6 AlphaZero (Silver et al., 2017-12-05) — https://arxiv.org/abs/1712.01815
+(1) Tabula-rasa self-play + MCTS; single network updated continuously (no best-player gating, unlike AlphaGo Zero); chess surpassed
+    Stockfish after 4 h (300k steps), shogi > Elmo <2 h, Go > AlphaGo Lee 8 h; 700k steps, 5,000 TPUv1 for self-play, 64 TPUv2
+    for training; 100-game matches: 0 losses to Stockfish.
+(2) Reward: game RESULT under the RULES — exact, un-gameable, unbounded above by any fixed player; opponent = self.
+(3) THE canonical proof that self-play exceeds any fixed teacher: the target (winning) is defined by rules, not by a model; the
+    curriculum is the improving self; search (MCTS) turns the current policy into a stronger "expert" whose moves are imitated
+    (this amplification step is what a pure policy-gradient loop lacks).
+(4) Massive compute; deterministic rules; perfect information; short horizons per decision; cheap simulators — none of which
+    language agents have except partially (executors/tests).
+(5) KOTH analogue: king vs challenger IS AlphaZero's evaluator match; what is missing is a rules-defined WIN. Language-domain
+    blockers: (i) no exact rules for most turns → need executors/tests/consensus as rule surrogates; (ii) no cheap simulator →
+    continuation rollouts are expensive; (iii) evaluation by a fixed model = fixed opponent = exploitable (SPIRAL). Debate (§3.2)
+    is the attempt to turn a judged task into a rules-like game. Gaming: none where a rule grader exists. Cost: prohibitive at
+    AlphaZero scale; the KOTH version only needs the WIN to be rules-defined per turn on a sample.
+
+==========================================================================================================================
+PART 3 — VERIFIER / JUDGE ROBUSTNESS, GOODHART, WEAK-TO-STRONG, SCALABLE OVERSIGHT
+==========================================================================================================================
+
+3.1 Prover-Verifier Games improve legibility (Kirchner et al., OpenAI, 2024-07-18) — https://arxiv.org/abs/2407.13692
+(1) Checkability training on GSM8K: iterate (verifier SL on solutions from all previous provers) → (prover RL, role-sampled
+    HELPFUL = correct & convincing, SNEAKY = incorrect & convincing). Verifier robustness rises each round (sneaky needs more RL
+    steps to find an exploit); helpful-prover accuracy rises; human time-constrained accuracy tracks the verifier's.
+(2) Reward: ground-truth correctness (labels needed) + verifier acceptance; the verifier is SMALL (~10^-3–10^-2 of prover compute
+    (mem)); verifier-leading Stackelberg equilibrium ⇔ perfectly legible protocol (Thm 1).
+(3) Not above ground truth (needs labels) — its contribution is a VERIFIER that stays hard to fool under optimisation pressure
+    because it is trained against the current best attacker every round. Too-small verifier (~10^-4×) is unstable; SAME-SIZE
+    verifier fails to become robust (the sneaky prover "simulates the verifier's mistakes", citing Burns et al.). Legibility TAX:
+    checkable provers are less accurate than correctness-only provers.
+(4) Adversaries: sneaky-only, Goodharting (optimise prover on verifier score), CGC; robustness measured as steps-to-exploit and
+    balanced best-of-n accuracy.
+(5)(a) Duel-time: a judge leg is defensible ONLY if it is re-trained each epoch against the best current attacker (the king's own
+    rollouts and adversarial "sneaky" variants) and is much SMALLER than the miners (so miners cannot simulate its errors) — the
+    opposite of Albedo's frozen frontier judge. (b) Fold-time: the "sneaky prover" = deliberately wrong-but-plausible actions
+    (from king failures or perturbed gold) as negatives for verifier training per fold. (c) Miner: miners become the sneaky
+    prover by construction; the loop is adversarial by design. Gaming: Goodharting the verifier; measured cost to attacker rises
+    with rounds. Cost: verifier training per fold on published rollouts (GPU-hours), scoring 1 echo/turn.
+
+3.2 AI safety via debate (Irving, Christiano, Amodei, 2018-05-02) — https://arxiv.org/abs/1805.00899
+(1) Two agents argue for answers, a weaker judge decides; complexity analogy: debate with optimal play decides PSPACE with a
+    polynomial judge (direct judging = NP). MNIST toy: sparse 6-pixel classifier 59.4% → 88.9% with debate (4 pixels 48.2% → 85.2%).
+(2) Reward: judge's verdict, zero-sum between debaters; self-play finds approximate Nash. Producer: the (weak) judge.
+(3) Above the judge's unaided ability, in theory unboundedly (the judge only checks the last step of a recursive argument); the
+    AlphaZero analogy is explicit: a novice judges a Go debate by playing it out. Fails if lying is easier than refuting (§5.3 of
+    the paper), if the judge is biased/persuadable, or if the equilibrium is unstable.
+(4) Toy scale only in 2018; see Khan et al. for LLM evidence.
+(5)(a) Duel-time: a DEBATE turn — king and challenger each propose an action; each gets one round to critique the other's action
+    (with executable evidence: run a command, show a test); a small fixed judge (or the teacher) picks. Turns the ranked quantity
+    into a zero-sum game the field plays against itself rather than against a fixed reference; replayable (store both transcripts).
+    (b) Fold-time: critique transcripts are training data for the verifier. (c) Miner: train to argue/critique. Gaming: judge
+    biases (§3.4/3.5) — persuasion ≠ truth; collusion between sides of one coldkey (throw the debate). Cost: 2 extra model calls
+    + judge call per turn; on a 200-turn subset ≈ $2–5 with a flash-class judge.
+
+3.3 Debating with More Persuasive LLMs Leads to More Truthful Answers (Khan et al., 2024-02-09) — https://arxiv.org/abs/2402.06782
+(1) Information-asymmetric QuALITY: expert debaters (GPT-4-Turbo, read the story, best-of-16, verified quotes) vs non-expert judges
+    (no story). Debate: LLM judges 76%, humans 88% (naive 48% / 60%; consultancy 54% / 78%). Optimising debaters for PERSUASIVENESS
+    (best-of-N, critique-and-refine, no labels) RAISES judge accuracy in debate and LOWERS it in consultancy; generalises to
+    unseen judges; humans well calibrated.
+(2) Target: judge approval (unsupervised); truth enters only through the adversary's ability to expose the weaker side with
+    verified quotes.
+(3) Weak judge exceeds its own knowledge (48 → 76) — evidence for scalable oversight ABOVE the judge; but the setting has a
+    verifiable-quote tool (ground-truth evidence exists), and "human judges outperform LLM judges" (LLM judges are the weak link).
+(4) >1,000 annotator hours; best-of-16 experts; no RL training of debaters.
+(5) Mapping: strongest empirical case that a ZERO-SUM protocol with VERIFIABLE EVIDENCE lifts a weak judge above a fixed level —
+    our agent turns have exactly such evidence (command outputs, tests). Gaming: consultancy (one-sided argument) gets WORSE with
+    persuasiveness → never let one miner argue alone to a judge; always paired. Cost as §3.2.
+
+3.4 Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena (Zheng et al., 2023-06-09) — https://arxiv.org/abs/2306.05685
+(1) GPT-4 judge agrees with humans >80% (human-human level) but: POSITION bias (only GPT-4 consistent in >60% of swapped pairs;
+    Claude-v1 name bias), VERBOSITY bias ("repetitive list" attack fools GPT-3.5/Claude-v1 in 91.3% of 23 answers; GPT-4 much less),
+    SELF-ENHANCEMENT bias, weak math/reasoning grading (judge fails to see errors when it cannot solve).
+(2) Target = judge preference; producer = a frozen frontier model.
+(3) Capped at the judge and gameable along measurable axes.
+(4) 3k expert + 3k crowd votes.
+(5) The Albedo failure in general form: a frozen judge + a public rule = a fixed exploitable target. Mitigations (position swap,
+    reference-guided grading, CoT judging) reduce but do not remove bias. For KOTH: judge legs only as re-trained gates; log the
+    length/position telemetry; never as the ranked quantity.
+
+3.5 Justice or Prejudice? CALM — 12 judge biases (Ye et al., 2024-10-03) — https://arxiv.org/abs/2410.02736  [discovered]
+(1) Automated attack-and-detect framework over 12 biases (position, verbosity, compassion-fade, bandwagon, distraction, fallacy
+    oversight, authority, sentiment, diversity, chain-of-thought, self-enhancement, refinement-aware); robustness/consistency rates
+    across 6 judges; advanced judges still fail on specific biases (e.g., fallacy oversight in math grading).
+(5) Use as the checklist for any judge/verifier leg: run CALM-style perturbations on the leg before it goes live; publish the
+    robustness rate with each fold. Directly relevant to the "in-band mimicry" (RT-13) watch item.
+
+3.6 Scaling Laws for Reward Model Overoptimization (Gao, Schulman, Hilton, 2022-10-19) — https://arxiv.org/abs/2210.10760
+(1) Synthetic gold RM (6B) labels data for proxy RMs (3M–3B); optimise policy against the proxy by BoN or RL; gold score rises then
+    FALLS with KL distance d = sqrt(KL): BoN gold = d(α − βd), RL gold = d(α − β log d); coefficients scale smoothly (log) with
+    proxy-RM size and data; larger policies gain less but overoptimise about the same; KL penalty did not improve the gold–KL
+    frontier.
+(2) Target = proxy RM (a fixed learned model of a fixed gold). Goodhart in closed form.
+(3) Capped and then negative: optimising a fixed proxy past its trust region REDUCES true quality. This is the law behind Albedo's
+    kings falling BELOW genesis on swe-rebench.
+(4) BoN reaches the peak at small KL; RL is far less KL-efficient; ensembles help modestly (later work).
+(5) Mapping: any FIXED learned leg (judge, EF verifier, even the teacher-echo legs once miners train on them) sits on this curve;
+    the KOTH ratchet pushes each reign further out in KL from the reference → predicted gold decline after the peak (observed:
+    kings at teacher parity on the meter while benchmarks plateau). Defences the law implies: re-fit the proxy each epoch on fresh
+    gold (moving target), bound KL from a moving reference (δ does this weakly), or anchor on gold itself where gold is executable.
+
+3.7 Weak-to-Strong Generalization (Burns et al., OpenAI, 2023-12-14) — https://arxiv.org/abs/2312.09390
+(1) Finetune a STRONG pretrained model on labels from a WEAK supervisor (GPT-2-level → GPT-4-level; 7 OOMs of compute) on NLP
+    tasks, chess puzzles, and ChatGPT reward modeling. Naive: the student consistently BEATS the supervisor — NLP recovers ~50% of
+    the weak→strong-ceiling gap (PGR ≈ 0.5); with an auxiliary CONFIDENCE loss (trust own predictions where confident) PGR ≈ 0.8
+    (GPT-2-level supervisor → near GPT-3.5-level student); chess: bootstrapping through intermediate sizes helps; REWARD MODELING:
+    PGR only ~10%, almost never >20%, even for small gaps.
+(2) Target: weak labels (an imperfect fixed teacher). Producer: the weak model.
+(3) Why the student exceeds the teacher: the strong model's pretrained representations make the TRUE concept more salient than
+    the teacher's error pattern, so naive imitation generalises to the truth instead of the mistakes — as long as the errors are
+    not easy to imitate. Students OVERFIT to weak labels with longer training (Fig. 7: imitation of supervisor mistakes); the
+    confidence loss is a regulariser against imitating the teacher where the student is sure the teacher is wrong. Caveat: future
+    superhuman students may find imitating the supervisor MORE salient ("imitation saliency" disanalogy).
+(4) Gains largest where the task is salient in pretraining (NLP, chess), smallest where the target is a preference judgment (RM).
+(5) IMPLICATIONS FOR A TEACHER-ANCHORED METER: (i) a student trained toward the teacher's labels can end above the teacher on the
+    TRUE task — but our meter would score that student BELOW a perfect imitator, because the meter measures agreement with the
+    teacher, not truth; the meter caps what the ratchet rewards, not what training can achieve. (ii) The regime where exceeding
+    the teacher happens is "student disagrees confidently where the teacher is wrong" — exactly the turns our R/typicality legs
+    penalise (out-of-band thought, low-likelihood action). (iii) Reward-modeling PGR ≈ 10% says a judge/preference leg is the
+    worst place to hope for weak-to-strong lift. (iv) Practical: score DISAGREEMENT turns by an outcome/frontier anchor, and only
+    AGREEMENT turns by the teacher — the AGENTS.md "contested/agreed" split (~47% contested) is where the lift would show.
+    (b) Fold-time: weak labels (teacher outcome guesses) + confidence-weighted acceptance of king disagreements = the W2S
+    "bootstrap" recipe for D. Gaming: none intrinsic; the risk is the opposite (a meter that punishes the W2S winner).
+
+3.8 Measuring Progress on Scalable Oversight (Bowman et al., Anthropic, 2022-11-04) — https://arxiv.org/abs/2211.03540
+(1) SANDWICHING: pick tasks where the model beats non-experts but not experts; non-experts must align the model without expert help;
+    experts only grade at the end. Baseline: humans chatting with an unreliable assistant beat the model alone by ~10 points on
+    MMLU/timed QuALITY and their own unaided score by up to 36 points.
+(2) Target: expert ground truth (held out for evaluation only).
+(3) The paradigm for TESTING whether a weak-supervision protocol exceeds a fixed level: sandwich the meter between a weak signal
+    (teacher) and an expert (frontier/outcome on held-out tasks).
+(5) Mapping: the operator's frontier panel + env outcomes are the "experts"; the teacher-anchored duel is the non-expert protocol;
+    the sandwiching test = does crowning by protocol X raise the expert-graded score of the king? That is the exact experiment the
+    coordinator's outcome/ and panel/ artifacts run. Keep experts OUT of the ranked score to preserve the test.
+
+3.9 LLM Critics Help Catch LLM Bugs — CriticGPT (McAleese et al., OpenAI, 2024-06-28) — https://arxiv.org/abs/2407.00215
+(1) RLHF-trained critic writes natural-language bug reports on ChatGPT code; on human-inserted bugs, critiques preferred over human
+    contractor critiques in 63% of cases (>80% (mem) on inserted bugs), catches more bugs than paid reviewers; finds hundreds of
+    errors in "flawless"-rated training data; hallucinated bugs are the failure mode; human+critic teams hallucinate less; FSBS
+    (Force Sampling Beam Search) trades comprehensiveness vs nitpicks.
+(2) Target: human preference over critiques + "tampering" labels (contractors insert bugs and record them = ground truth for
+    recall). Producer: humans + tampering.
+(3) Above the human reviewer on recall; capped by the critic's own hallucinations and by human preference for the critique.
+(5)(a) Duel-time: a critic that must point to a CONCRETE, CHECKABLE defect in the opponent's action (a failing command, a
+    reproduction) is the debate protocol's evidence layer; critiques without checkable evidence get zero. (b) Fold-time:
+    tampering — insert known bugs into gold actions to create labelled negatives for verifier training (also §3.1's sneaky data).
+    Gaming: nitpick spam / hallucinated bugs → require execution evidence. Cost: 1 critic call per contested turn.
+
+==========================================================================================================================
+PART 4 — CONSENSUS / MAJORITY AS A TARGET (does the model's own majority exceed the base? what breaks when public?)
+==========================================================================================================================
+
+4.1 Self-Consistency (Wang et al., 2022-03-21) — https://arxiv.org/abs/2203.11171
+(1) Sample many CoTs, majority-vote the final answer: PaLM-540B/GPT-3 GSM8K +17.9, SVAMP +11.0, AQuA +12.2, StrategyQA +6.4,
+    ARC-c +3.9 absolute.
+(2) Target: the model's own modal answer; producer: the model. (3) Exceeds greedy decoding of the SAME model (coverage of the
+    correct mode), never exceeds the model's own pass@k; saturates with ~40 samples. (5) Mapping: majority-of-teacher is a
+    higher-quality teacher label than one teacher sample (our k=3 refs already approximate it); a majority-of-FRONTIER-panel label
+    is higher still — the panel's modal action is a cheaper "expert" than an outcome rollout. Gaming: known modal answer → hug the
+    mode (RT-9 mode-guessing); safe only if the panel is fresh per duel.
+
+4.2 Large Language Monkeys (Brown et al., 2024-07-31) — https://arxiv.org/abs/2407.21787
+(1) Coverage (any-sample-correct) grows ~log-linearly over 4 orders of magnitude of samples (exponentiated power law); SWE-bench
+    Lite DeepSeek-Coder-V2 15.9% @1 → 56% @250 (SOTA single-sample was 43%); CodeContests Gemma-2B 0.02% → 7.1% @10k. Without a
+    verifier, MAJORITY VOTE and REWARD MODELS PLATEAU beyond a few hundred samples and stop tracking coverage.
+(2) Target for the headline: unit tests / proof checkers (truth). For the negative result: majority/RM (proxies).
+(3) A weak model + verifier exceeds a strong model's single sample; a weak model + majority does not scale past its own mode.
+(5) Mapping: PRECISION is the binding constraint — an outcome/test verifier converts sampling into capability, a consensus target
+    does not. For the KOTH: a king with a verifier-in-the-loop harness beats a smarter king without one on outcome; this argues
+    for scoring OUTCOMES of whole (short) continuations rather than single-step likelihoods. Cost: verifier runs dominate.
+
+4.3 TTRL — Test-Time RL (Zuo et al., 2025-04-22) — https://arxiv.org/abs/2504.16084
+(1) RL on UNLABELED test prompts with reward = agreement with the MAJORITY answer of the model's own samples. Qwen2.5-Math-7B AIME
+    2024 16.7 → 43.3 (+211% rel.), avg +~50% rel. over AIME/AMC/MATH-500/GPQA; final pass@1 SURPASSES the initial model's maj@n
+    "upper bound" and approaches RL with ground-truth labels.
+(2) Target: self-majority (pseudo-label). Why it works despite wrong labels: "LUCKY HIT" — when the majority is wrong, most rollouts
+    that disagree with it are ALSO wrong, so the 0-reward they receive is still correct; reward accuracy stays high even when label
+    accuracy is low (Fig. 9). RL tolerates reward noise more than SFT.
+(3) It exceeds the base's maj@n because training sharpens the distribution AND improves it (the majority moves); but it is bounded
+    by the prior — §4.3 failures: LLaMA-3.1-8B on AIME ≈ no gain ("lack of prior knowledge on target task"), sensitive to
+    temperature/batch, collapse risk.
+(4) Small unlabeled sets (30–500 problems); many episodes; math only.
+(5)(a) Duel-time: a "panel-majority" turn score (frontier panel or king+challenger+teacher pooled) is TTRL's reward — cheap and
+    replayable if the samples are stored — but when PUBLIC the majority is a collusion target (a coldkey running king AND
+    challenger shapes the majority) and a mode-hugging target; TTRL's own failure mode (no prior → no signal) is the "kings at
+    0/25" regime. Use majority only over FRESH frontier samples, never over the contestants. (b) Fold-time: pseudo-labelling
+    unlabeled turns by frontier majority gives D outcome-like labels at ~$0.5–2 per 1000 turns (deepseek/flash prices,
+    feasibility). (c) Miner: TTRL on D is a free capability lift (and is what miners will do). Cost: n samples per turn.
+
+4.4 Self-Rewarding Language Models (Yuan et al., Meta, 2024-01-18) — https://arxiv.org/abs/2401.10020
+(1) Llama-2-70B judges its own responses (LLM-as-a-Judge prompt), builds preference pairs, iterative DPO; AlpacaEval 2.0 LC win rate
+    9.94 → 15.38 → 20.44 over M1→M3 (beats Claude 2, Gemini Pro, GPT-4-0613 at the time); reward-modeling ability also improves
+    with iterations.
+(2) Target: self-judgment. (3) Rises for 3 iterations because both generator and judge improve; authors expect saturation; no
+    ground-truth domain — the gains are on a judge-graded benchmark (partly self-referential). Length grows (mem).
+(5) Mapping: co-evolving judge > frozen judge (same lesson as Kimi K2 closed loop, Intuitor online), but a self-judge is the
+    ultimate self-preference target — publicly, a miner that is its own judge maximises its own bias. Use only as a data
+    filter with an external gate, never as a ranked quantity.
+
+4.5 Intuitor — RL from Internal Feedback (Zhao et al., 2025-05-26) — https://arxiv.org/abs/2505.19590
+(1) GRPO with reward = SELF-CERTAINTY (mean KL of the token distribution from uniform); Qwen2.5-3B on MATH matches GRPO with gold
+    answers in-domain and generalises better OOD (LiveCodeBench, CRUXEval-O). KEY ABLATION §5.4: OFFLINE self-certainty (from a
+    FIXED base model) is hacked at ~step 100 (the policy appends an already-solved problem to inflate confidence; length spikes,
+    accuracy collapses); ONLINE self-certainty (from the evolving policy) is stable.
+(2) Target: own confidence. (3) Not above the prior; sharpening only.
+(5) Mapping: the offline/online ablation is the cleanest micro-demonstration that ANY fixed scorer (a frozen teacher's likelihood
+    included) gets exploited by appended content, while a scorer that moves with the policy resists — our G/typicality band is a
+    frozen-scorer leg; centering + band close the known flat-lift attack, but the law says the next appended-content exploit is a
+    matter of time. Confidence-style legs must be OFF the ranked quantity.
+
+4.6 RENT — RL via Entropy Minimization (Prabhudesai et al., 2025-05-28) — https://arxiv.org/abs/2505.22660  and
+    The Unreasonable Effectiveness of Entropy Minimization (Agarwal et al., 2025-05-21) — https://arxiv.org/abs/2505.15134
+(1) Reward = negative token entropy (RENT: last-token / answer-span entropy most predictive); EM-RL on Qwen-7B matches GRPO/RLOO
+    trained on 60k labeled examples; EM-INF (inference-time logit sharpening) lets Qwen-32B match/exceed GPT-4o/Claude-3-Opus on
+    SciCode (mem, from abstract). Limitations sections: gains depend on the base being "confidently correct"; Llama-3.1-8B gains
+    much smaller.
+(2) Target: own entropy. (3) Sharpening the prior — cannot exceed what the prior already ranks first.
+(5) Mapping: entropy legs are trivially gameable when public (emit deterministic filler) and add nothing above the prior.
+
+4.7 Spurious Rewards: Rethinking Training Signals in RLVR (Shao et al., 2025-06-12) — https://arxiv.org/abs/2506.10947  [discovered]
+(1) Qwen2.5-Math-7B MATH-500 improves +21.4 with RANDOM rewards vs +29.1 with ground truth (also with incorrect labels, format-only
+    rewards); mechanism = GRPO clipping bias amplifying high-prior behaviours (code reasoning); Llama3/OLMo2 get ~nothing or
+    degrade.
+(3) Devastating for "consensus/self" targets as evidence of capability: large gains from contentless rewards are model-specific
+    prior elicitation, not learning.
+(5) Mapping: any turn score whose optimiser could be satisfied by "elicit the base model's priors harder" (entropy, confidence,
+    self-majority, typicality-to-a-fixed-teacher) will show benchmark gains at first and then plateau at the prior — which is the
+    observed live board. Require the anchor to contain information the prior does not (env outcome, frontier action, fresh task).
+
+==========================================================================================================================
+PART 5 — DATA-CENTRIC RATCHETS (amplification, expert iteration, STaR/ReST, rejection sampling at scale, difficulty curricula)
+==========================================================================================================================
+
+5.1 Iterated Distillation and Amplification (Christiano, Shlegeris, Amodei, 2018-10-19) — https://arxiv.org/abs/1810.08575
+(1) Train a model to imitate AMPLIFY(H, model) — a human/algorithm decomposing a task into subtasks answered by the current model;
+    then distil; iterate. No external reward function ("closely related to Expert Iteration except it uses no external reward").
+    Results on algorithmic tasks (permutation powering, shortest path, wildcard search, …) match supervised baselines with only
+    decomposition supervision.
+(3) Exceeds the fixed overseer because the overseer + the current model, given more compute/decomposition, is a stronger target
+    than the overseer alone; the target moves each iteration (an "amplified" teacher).
+(5) Mapping: an AMPLIFIED TEACHER as the anchor — teacher with tools/search/multiple samples/critique (best-of-k with a test
+    runner, or teacher continuing the trajectory and grading) is a higher-ceiling reference than one greedy teacher sample, and
+    can be re-amplified each epoch. Cost: k× teacher compute per turn; replayable if samples stored. Gaming: still a reference-
+    matching target (mode-hugging), but the mode moves.
+
+5.2 Expert Iteration (Anthony, Tian, Barber, 2017-05-23) — https://arxiv.org/abs/1705.08439
+(1) Apprentice (NN) imitates an EXPERT (MCTS guided by the apprentice); expert improves as apprentice improves; Hex 9×9: beats
+    MoHex (Computer Olympiad champion since 2009) tabula rasa; imitation-learning framing where "the best known experts are unable
+    to achieve satisfactory performance".
+(3) Not capped by the initial expert because the expert = search over the apprentice; ceiling is the game's rule outcome.
+(5) Mapping: same as 5.1 with search = sampling + verifier. For coding turns "expert" = teacher/king × k samples × test runner;
+    the imitation target is the VERIFIED best sample. Fold-time this is the "hybrid verifier best@k" label per state. Cost k×.
+
+5.3 STaR (Zelikman et al., 2022-03-28) — https://arxiv.org/abs/2203.14465
+(1) Generate rationales; keep those that reach the correct answer; for failures, RATIONALIZE given the answer (hint) and keep;
+    fine-tune from the base each iteration; GPT-J matches a 30× larger model on CommonsenseQA; GSM8K gains.
+(2) Target: gold answers (labels required); rationales self-generated. (3) Bounded by label availability and by the base's
+    pass@k (rationalization extends coverage); plateaus when no new correct rationales appear.
+(5) Mapping: rationalization = "given the frontier/outcome-verified action, write the thought" — a fold-time way to generate
+    THOUGHTS for D's frontier-anchored turns without a frontier thought (frontier APIs hide CoT). Gaming: n/a (data). Cost: 1 call
+    per turn.
+
+5.4 ReST (Gulcehre et al., 2023-08-17) — https://arxiv.org/abs/2308.08998  and  ReST-EM (Singh et al., 2023-12-11) —
+    https://arxiv.org/abs/2312.06585
+(1) Grow (sample) / Improve (filter by reward, fine-tune) loops. ReST: MT with a learned reward model; multiple Improve steps
+    raise RM score but the RM is a proxy (human eval gains smaller). ReST-EM: binary VERIFIABLE feedback (MATH, APPS) on PaLM-2;
+    self-generated data beats fine-tuning on human data, scales with model size, improves pass@k and majority vote, transfers to
+    held-out tasks — but "exceeding a couple of iterations leads to diminishing improvement, indicating potential overfitting on
+    small amount of training problems".
+(3) Uncapped only with verifiable rewards AND a large fresh problem supply; with a learned RM it is the Gao curve; with a small
+    problem set it overfits after ~2–3 iterations.
+(5) Mapping: the iteration cap is a TASK-SUPPLY cap → every ratchet needs renewing tasks (Part 1). Fold-time: ReST-EM with env
+    grading on fresh SWE-smith/rebench tasks is the D ratchet; keep the set growing, re-fine-tune from base.
+
+5.5 Llama 3 post-training (Meta, 2024-07-31) — https://arxiv.org/abs/2407.21783
+(1) Six rounds of rejection sampling (10–30 samples/prompt, RM picks best) + SFT + DPO; code: a 1T-token code expert used to
+    annotate; ~1M synthetic coding dialogues with EXECUTION FEEDBACK because "training Llama 3 405B on its own generated data is
+    not helpful (and can even degrade performance)" — static analysis + unit tests filter, error-correction rounds; "learning from
+    feedback and mistakes" for reasoning.
+(2) Targets: RM (preference) for chat; execution for code; the model's own samples otherwise.
+(3) The 405B self-distillation failure is the industry-scale statement that a model cannot lift itself on its own samples without
+    an external truth source; execution feedback restored the gain.
+(5) Mapping: rejection sampling under an RM = Gao curve; under execution = ratchet. For KOTH: the king's own rollouts are useless
+    as D unless graded by something the king does not control (env, frontier). Cost: 10–30 samples/prompt.
+
+5.6 DART-Math — Difficulty-Aware Rejection Tuning (Tong et al., 2024-06-18) — https://arxiv.org/abs/2407.13690
+(1) Vanilla rejection tuning is biased to EASY queries (hard ones yield zero correct samples); DART allocates more trials to hard
+    queries (Uniform: same #correct per query; Prop2Diff: proportional to difficulty); 590k examples synthesised with a 7B
+    open model (DeepSeekMath-7B-RL), no GPT-4; DART-Math-Llama3-70B ~53–55% MATH (mem for exact), beating VRT at equal size.
+(3) Better use of a fixed verifier by spending sampling budget where the model fails — the RT-6/DAgger idea in sampling form.
+(5) Mapping: fold-time SAMPLING policy for D — spend teacher/frontier/outcome budget on turns where the king fails or the panel is
+    contested (the ~47% contested turns), not uniformly; duel-time: weight or restrict the slice to contested/hard strata (fixed
+    n → more SE where it matters). Cost: k× more samples on hard strata.
+
+5.7 Self-Evolving Curriculum (Chen et al., 2025-05-20) — https://arxiv.org/abs/2505.14970
+(1) Curriculum as a non-stationary multi-armed bandit over problem categories; reward = |advantage| (proxy for learning gain);
+    TD(0) update; beats random curriculum on Countdown/Zebra/math; a reverse (hard→easy) curriculum badly hurts generalisation.
+(5) Mapping: the fold's `[mix]` shares could be set by a bandit on king learning signal (e.g., variance of king outcomes per
+    stratum) instead of fixed targets; duel-time n/a.
+
+==========================================================================================================================
+PART 6 — COMPETITION / TOURNAMENT MECHANISMS (Bittensor and beyond): Goodhart, copy-attacks, proper scoring
+==========================================================================================================================
+
+6.1 Albedo SN97 (GLM-5.2 judge checklist; documented in research/docs/MOTIVATION.md, data albedo.tech/data/model-scores.json,
+    2026-08-02; albedo.ai did not respond to fetch 2026-09-20)
+(1) KOTH duels on coding-trajectory turns; GLM-5.2 writes 50 yes/no checklist questions anchored on a GLM reference trajectory;
+    judge answers per side; 3% win margin. Outcome: GLM reference 73.8 swe-rebench, genesis 58.2, first dethroner 38.4, typical
+    kings 26–37, worst 11.6–16.0 — every judge-crowned king below genesis.
+(2) Target: frozen frontier judge + its own reference. (3) Capped and inverted (Gao curve past the peak): kings optimised checklist
+    compliance. (5) Lesson set: frozen judge + public rubric + no ground truth + margin-only crown = Goodhart within ~50 reigns;
+    nothing in the rule asked whether the code worked.
+
+6.2 Affine SN120's own board (AGENTS.md §3b, notes.md): teacher-anchored likelihood legs → live Spearman(duel margin, swe_lite)
+    −0.42 (n=29, p=0.024); three S-crowned kings 0/25; later kings converge to the teacher's shape (typicality-only crowns, teacher-
+    vs-king control z 12.9 → 1.3 → −1.5). This is SPIN's theorem observed: a distribution-matching leg's optimum is the reference.
+    Held-out benchmarks did move on the IF/general axis and the τ² ask axis after a rule change (wvk-22), coding/terminal did not.
+
+6.3 Templar / Gauntlet — Incentivizing Permissionless Distributed Learning of LLMs (2025-05-27) — https://arxiv.org/abs/2505.21684,
+    docs https://docs.tplr.ai/
+(1) Bittensor incentive for distributed PRE-TRAINING: peers submit DeMo pseudo-gradients; validator scores LossScore = loss before −
+    loss after applying a peer's gradient (scaled step) on a random data subset; OpenSkill ratings over sampled peers per round
+    (raw loss scores are noisy across iterates, RANKS are stable); Sync Score (uptime/synchronisation); UNIQUENESS: peers are
+    assigned data; a compliant peer has lower loss on its assigned subset than on a random one, which detects copying ("Peer
+    Copying — copy another's pseudo-gradient and post it before the window closes") and free-riding. Trained a 1.2B LLM
+    permissionlessly.
+(2) Target: held-out loss decrease (ground truth for the training objective), fresh random subset per evaluation.
+(3) Not capped by a model; the ratchet is the global model's loss.
+(5) Lessons for KOTH: (i) rank-based ratings smooth a noisy per-round score (our z-test is per duel; an OpenSkill-style rating
+    across duels would dampen winner's-curse churn); (ii) copy-attack detection by ASSIGNED work — e.g., each miner must show
+    lower error on a private subset assigned at reveal → a king-copy has no such asymmetry; (iii) score with a fresh random
+    subset each round, never a fixed set. Cost: validator-side evaluation dominates (as ours).
+
+6.4 Taoshi / Proprietary Trading Network (SN8) — https://github.com/taoshidev/proprietary-trading-network (README, fetched 2026-09-20)
+(1) Miners submit trade signals; validators track portfolio returns; rewards by risk-adjusted return under hard drawdown limits (5%
+    intraday, 8% end-of-day from high-water mark → ELIMINATION); PLAGIARISM elimination — an order-uniqueness analysis detects
+    miners copying other miners' trades; probation; inactivity elimination; debt-based weekly payout.
+(2) Target: realised market returns (exogenous ground truth, unforgeable, renewing every day).
+(3) Not capped; the market is the arbiter.
+(5) Lessons: exogenous, time-stamped outcomes + explicit COPY detection + hard risk gates. For KOTH: our analogue of "market" is
+    env outcome on tasks minted after reveal; copy detection = weight/tensor fingerprint gate (notes.md "tensor-fingerprint gate
+    on") plus behavioural fingerprint (action-level similarity to the king on the slice).
+
+6.5 Numerai tournament — https://docs.numer.ai/numerai-tournament/scoring (fetched 2026-09-20)
+(1) Weekly predictions on obfuscated features; payouts on CORR (correlation with a 20/60-day realised target) and MMC = covariance
+    with the target AFTER neutralising the submission against the stake-weighted META MODEL (only the ORTHOGONAL component is
+    paid); staking with burn on negative scores; reputation = trailing 1-year stake-weighted average; permanent round history.
+(2) Target: realised returns (exogenous, resolves weeks later); MMC anchors on the field's consensus but pays only what the
+    consensus does not already have.
+(3) Uncapped (market truth); MMC explicitly makes "copy the meta model" worth ZERO.
+(5) Lessons for KOTH: (i) an MMC-style leg — pay the challenger only for the component of its action distribution ORTHOGONAL to
+    the king's/teacher's that correlates with outcome — kills king-copy and teacher-mimicry in one stroke (a perfect teacher
+    imitator has zero MMC); (ii) delayed resolution + staking with burn punishes lucky/noisy wins (winner's-curse fix); (iii)
+    scores are replayable from the published predictions + the realised target.
+
+6.6 Proper scoring rules — Gneiting & Raftery 2007 (JASA 102:359–378, doi:10.1198/016214506000001437), summary fetched from
+    https://en.wikipedia.org/wiki/Scoring_rule; peer prediction / Bayesian Truth Serum from memory (Miller, Resnick & Zeckhauser
+    2005 Mgmt Sci; Prelec 2004 Science 306:462)
+(1) A STRICTLY PROPER rule (log score, Brier) is maximised in expectation only by reporting one's true belief — but only when the
+    outcome RESOLVES independently of the reports. Peer-prediction rules (score a report by how well it predicts OTHER reporters'
+    reports) are incentive-compatible for private information WITHOUT ground truth only under common-prior assumptions and are
+    known to have uninformative colluding equilibria (everyone reports the same thing).
+(5) Mapping: our logprob legs are log scores of the TEACHER's belief about the miner's text — not a proper score of the MINER's
+    belief about anything that resolves. A proper-scoring turn leg would ask the miner for a probabilistic claim that resolves
+    (e.g., "P(this test passes after my edit)") and log-score it on execution. Consensus targets (§4.3, §4.4) are peer-prediction
+    rules and inherit the colluding equilibrium — with one coldkey holding both seats (reigns 17–19 were one coldkey), the
+    equilibrium is reachable today.
+
+==========================================================================================================================
+CROSS-CUTTING CONCLUSIONS (≤ 25 lines)
+==========================================================================================================================
+1. Anchors whose optimum is ABOVE a fixed teacher: (i) executable/environment outcome on renewing tasks (DeepSWE, Kimi-Dev,
+   SWE-Gym/smith/rebench, ReST-EM, Llama-3 code); (ii) rules-defined zero-sum self-play (AlphaZero, SPIRAL — fixed opponents get
+   exploited, self-play does not); (iii) debate/prover-verifier with verifiable evidence (Khan: weak judge 48→76%, humans 60→88%);
+   (iv) amplified/moving references (IDA, ExIt, Kimi K2's re-grounded critic, Intuitor's ONLINE scorer); (v) fresh frontier
+   samples (higher ceiling, still a ceiling — SPIN's theorem: a distribution-matching objective converges TO the reference).
+2. Anchors whose optimum is AT OR BELOW the prior: self-majority (TTRL — bounded by the prior; R-Zero label accuracy 79→69→63%),
+   self-judge (Yuan), confidence/entropy (Intuitor/RENT/EM), similarity to a fixed sample set (SWE-RL, SPIN, our R/G legs).
+   Spurious-rewards shows +21.4 MATH from random rewards on Qwen — "gains" from contentless anchors are prior elicitation.
+3. Public-target gaming: any FIXED learned scorer sits on Gao's overoptimisation curve (gold rises then falls with KL) — Albedo
+   (judge-crowned kings 11–38 vs genesis 58) and SN120's live inversion (ρ = −0.42) are both on the falling side. Resistant
+   designs share one property: the target is either exogenous and fresh (tests on post-reveal tasks; realised returns in
+   Taoshi/Numerai; random held-out subsets in Templar) or moves with the field (self-play, re-trained verifiers, online critics).
+   Consensus over the CONTESTANTS is a peer-prediction rule with a colluding equilibrium; one coldkey already held both seats.
+4. Verifier hygiene from the literature: small re-trained verifiers resist Goodhart better than same-size ones (PVG); execution-free
+   verifiers key on style/thoughts and saturate (R2E 42–43%), execution-based ones lack distinguishability — the HYBRID (51%) is the
+   case for conjunctions of legs with orthogonal failure modes; run CALM-style bias attacks before any judge leg ships.
+5. Verifiable-task supply is solved at ~cents/task and renews: SWE-smith 50k tasks/128 repos for $1.36k; SWE-rebench 21k tasks from
+   450k PRs fully automated with date stamps; R2E-Gym from arbitrary commits; Kimi-K2 simulator+rubric for tool-use; AZR/R-Zero
+   proposers for executor-checkable reasoning at the king's ~50% frontier. The binding costs are containers per scored action and
+   continuation tokens, not tasks — so outcome anchoring fits ~1 h/$10s only on a SUBSET of turns (short remaining horizon or
+   contested states, ~47% of states are contested) with a fixed public continuation policy shared by both sides.
+6. Weak-to-strong implies: a student trained toward the teacher can end above it on truth (PGR ≈ 0.5 naive, ≈ 0.8 with a confidence
+   loss) precisely by disagreeing confidently where the teacher is wrong — the turns a teacher-agreement meter penalises. A teacher-
+   anchored meter therefore caps the RATCHET, not the miners; the fix is to score DISAGREEMENT turns by an outcome/frontier/debate
+   anchor and reserve teacher agreement for the agreed set. PGR ≈ 10% for reward modelling says a preference/judge leg is the worst
+   place to expect lift. Sandwiching (Bowman) is the test: does the protocol raise the held-out expert score of the crowned king?
+7. Mechanism-design transfers: pay only the component ORTHOGONAL to the incumbent/teacher that correlates with outcome (Numerai
+   MMC — makes copying worth zero); rank-based ratings across duels (Templar OpenSkill) against winner's-curse churn; delayed
+   resolution with staking/burn; assigned-work asymmetry as copy detection; proper log scores only on claims that RESOLVE.

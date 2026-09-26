@@ -1,0 +1,138 @@
+RUN NOTES
+Split-states probe, 2026-09-21 10:47 -> ~16:45 UTC, datagen pod dg5 only (dg1 lost 2026-09-20).
+Design: 36 states from the 245 cheap candidates of 2026-09-20 (states.jsonl): 24 failed-origin (8 per harness) x 4
+teacher continuations + 12 solved-origin (4 per harness) x 3; terminal_lego excluded (its env errored on dg5 on
+2026-09-20); states whose arm T errored on 2026-09-20 excluded; preference order kept+T-ok (image pulled, one
+continuation banked) > kept > other candidates, round-robin over sources; 30 of 36 states re-use the 2026-09-20 arm-T
+continuation as one of their N (seeded into out/split/results). Y2: arm F1 (proposal forced, teacher finishes) once
+per distinct frontier proposal (glm-5.3 greedy = F1, glm-5.3 T0.8 = F1b, one extra T0.8 sample = F1c when <2 distinct)
+at up to 16 states: the 0/N ceilings as they completed (two waves) + the 2026-09-20 contested states whose single T
+continuation failed. Concurrency: 6 workers at launch, restarted at 11:52 with 8 (pod load 0.3, 64 GB free, CPU 65-75 %
+idle throughout) + a concurrent 3-worker F1 driver in its own container namespace (RECOVERABLE_SHADOW_NS) from 13:26.
+Engy qwen3.8-27b outages: 11:05-11:46 (504 "miner timeout or disconnect", 429/502 "per-model concurrency limit")
+cost the first 6 continuations their 3,600 s budget and errored 4 more later as ProviderError; a second bout ~16:00-16:30
+errored the 4 retried slots again. Per-origin N was reduced to 3 for solved-origin at the 11:52 restart to stay inside
+the wall budget. Systematic errors, not retried: 3 terminus states hit the 3,600 s verifiers budget (0dab9904 x3,
+b98315ff x2, d072da96 x1, 23bf7fd4 F1/F1b), fff3d932 (swesmith grader "checkout HEAD~1 failed", every continuation).
+2 solved-origin continuations were never started (arm-T deadline 15:37). Arm-T driver exited 17:04 (last retries:
+87ac83de c1 solved, 1b23a2c4 c2 solved, 1b23a2c4 c1 errored at the 3,600 s budget). Final collect 17:11 UTC: 162 rows
+(126 new today + 36 seeded). Still running on dg5 at 17:12: 2 F1 wave-2 units (0dab9904 F1b — every prior run of this
+terminus state hit the 3,600 s budget — and 06706134 F1b, an N<3 ceiling); the F1 driver's 17:15 deadline blocks new
+units, it exits and removes its own containers when they finish (<= 17:50). To fold them in:
+`ONLY=dg5 run_pods.sh collect split /tmp/fa_split/collect` + split_yield.py (--out is a PREFIX: pass
+.../split_states/report). Wall 10:47 -> 17:11 = 6.4 h (6 h budget exceeded by the two Engy outages, ~1.2 h of dead
+container time). Traces: /tmp/fa_split/collect/traces.
+
+==============================================================================
+Y1. SPLIT STATES — 36 states (24 failed-origin x 4 + 12 solved-origin x 3 teacher continuations @T0.8; one of them = yesterday's arm T where it existed; solved = env grader primary reward >= 1.0; errored excluded)
+==============================================================================
+states with >= 3 OK continuations: 30 / 36; errored continuations: 13; s/N histogram: 0/3 x1, 0/4 x11, 1/4 x1, 2/4 x2, 3/3 x11, 3/4 x4
+-- split rate (0 < s < N) by origin x harness --
+  origin failed mini_swe_textbased   split 2/7 =  28.6% [  8– 64]       ceiling(0/N)  5  always(N/N)  0  mean s/N 0.21
+  origin failed bash                 split 3/8 =  37.5% [ 14– 69]       ceiling(0/N)  4  always(N/N)  1  mean s/N 0.34
+  origin failed terminus_2           split 2/6 =  33.3% [ 10– 70]       ceiling(0/N)  3  always(N/N)  1  mean s/N 0.33
+  origin failed ALL                  split 7/21 =  33.3% [ 17– 55]      ceiling(0/N) 12  always(N/N)  2  mean s/N 0.30
+  origin solved mini_swe_textbased   split 0/4 =   0.0% [  0– 49]       ceiling(0/N)  0  always(N/N)  4  mean s/N 1.00
+  origin solved bash                 split 0/2 =   0.0% [  0– 66]       ceiling(0/N)  0  always(N/N)  2  mean s/N 1.00
+  origin solved terminus_2           split 0/3 =   0.0% [  0– 56]       ceiling(0/N)  0  always(N/N)  3  mean s/N 1.00
+  origin solved ALL                  split 0/9 =   0.0% [  0– 30]       ceiling(0/N)  0  always(N/N)  9  mean s/N 1.00
+  origin ALL    mini_swe_textbased   split 2/11 =  18.2% [  5– 48]      ceiling(0/N)  5  always(N/N)  4  mean s/N 0.50
+  origin ALL    bash                 split 3/10 =  30.0% [ 11– 60]      ceiling(0/N)  4  always(N/N)  3  mean s/N 0.47
+  origin ALL    terminus_2           split 2/9 =  22.2% [  6– 55]       ceiling(0/N)  3  always(N/N)  4  mean s/N 0.56
+  origin ALL    ALL                  split 7/30 =  23.3% [ 12– 41]      ceiling(0/N) 12  always(N/N) 11  mean s/N 0.51
+-- split rate by depth --
+  depth  3– 5: split 0/9 =   0.0% [  0– 30]  (failed-origin 0/4 =   0.0% [  0– 49])
+  depth  6– 9: split 1/10 =  10.0% [  2– 40]  (failed-origin 1/7 =  14.3% [  3– 51])
+  depth 10–15: split 6/11 =  54.5% [ 28– 79]  (failed-origin 6/10 =  60.0% [ 31– 83])
+-- versus yesterday's single continuation (prev_T) and the frontier classification --
+  by prev_T: None→ceiling 2, None→split 2, failed→ceiling 10, failed→split 1, solved→always 11, solved→split 4
+  by kept_class: None→split 1, agreed→always 4, agreed→ceiling 5, agreed→split 1, contested→always 7, contested→ceiling 7, contested→split 5
+-- decision classes among the first actions (N continuations; +3 = with the 3 cheap API samples of the same state) --
+  classes_strict     mean 3.13  hist 1:3, 2:4, 3:9, 4:14   (split states: mean 3.57; ceiling: 3.42)
+  classes_loose      mean 2.37  hist 1:6, 2:13, 3:5, 4:6   (split states: mean 2.86; ceiling: 2.42)
+  classes_strict_7   mean 5.47  hist 1:2, 2:2, 3:2, 5:3, 6:10, 7:11   (split states: mean 6.14; ceiling: 5.67)
+  classes_loose_7    mean 3.13  hist 1:5, 2:8, 3:8, 4:1, 5:4, 6:3, 7:1   (split states: mean 3.86; ceiling: 3.42)
+-- first-action divergence in split states (solved vs failed continuations share no decision class) --
+  strict: diverge at the state 6/7 =  85.7% [ 49– 97]; diverge later 1
+      mini_swe_textbased   2/2 = 100.0% [ 34–100]
+      bash                 3/3 = 100.0% [ 44–100]
+      terminus_2           1/2 =  50.0% [  9– 91]
+  loose : diverge at the state 3/7 =  42.9% [ 16– 75]; diverge later 4
+      mini_swe_textbased   1/2 =  50.0% [  9– 91]
+      bash                 1/3 =  33.3% [  6– 79]
+      terminus_2           1/2 =  50.0% [  9– 91]
+-- implied yield (candidate origin mix from the 245 cheap candidates; N-cap = 4) --
+  failed-origin: P(split|N=4) 0.33 → kept per 100 candidates 33, continuations per kept 12.0 (fixed N); sequential: 3.40 cont/state, P(found) 0.33 → 10.2 per kept
+  solved-origin: P(split|N=3) 0.00 → kept per 100 candidates 0, continuations per kept inf (fixed N); sequential: 3.00 cont/state, P(found) 0.00 → inf per kept
+  candidate mix failed 118 / solved 127: P(split) 0.16 → 16 kept per 100 candidates, 24.9 continuations per kept (fixed N); failed-only candidates: 33 per 100, 12.0 per kept
+-- per state (s/N, strict/loose decision classes among the N first actions, divergence for splits) --
+    failed bash               scaleswe         d=12 30be2fbf  s/N 0/4 err 0  classes 4/2  CEIL      
+    failed bash               terminal_bench_2 d= 3 7aa0fc31  s/N 0/4 err 0  classes 4/2  CEIL      
+    failed bash               swerebench_v2    d= 8 3a9986a1  s/N 0/4 err 0  classes 4/3  CEIL      
+    failed bash               swesmith         d=12 cd542722  s/N 2/4 err 0  classes 4/3  SPLIT      diverge strict=True loose=False
+    failed bash               scaleswe         d=14 f1e5d484  s/N 2/4 err 0  classes 4/4  SPLIT      diverge strict=True loose=True
+    failed bash               swerebench_v2    d=14 913f7a01  s/N 3/4 err 0  classes 4/2  SPLIT      diverge strict=True loose=False
+    failed bash               swerebench_v2    d=12 ca99dd9d  s/N 0/3 err 1  classes 3/1  CEIL      
+    failed bash               swesmith         d= 3 5661d770  s/N 3/3 err 1  classes 3/1  ALL       
+    failed mini_swe_textbased swerebench_v2    d= 6 8ddd2d89  s/N 0/4 err 0  classes 4/4  CEIL      
+    failed mini_swe_textbased multiswe         d= 7 a079281f  s/N 0/4 err 0  classes 3/2  CEIL      
+    failed mini_swe_textbased scaleswe         d=14 9d3fd174  s/N 0/4 err 0  classes 4/4  CEIL      
+    failed mini_swe_textbased swerebench_v2    d= 5 8bee1f31  s/N 0/4 err 0  classes 4/2  CEIL      
+    failed mini_swe_textbased scaleswe         d= 4 2a10d948  s/N 0/4 err 0  classes 4/4  CEIL      
+    failed mini_swe_textbased swelego          d=15 3cab611b  s/N 3/4 err 0  classes 4/4  SPLIT      diverge strict=True loose=True
+    failed mini_swe_textbased multiswe         d= 8 48e27ac1  s/N 3/4 err 0  classes 4/2  SPLIT      diverge strict=True loose=False
+    failed mini_swe_textbased swesmith         d=11 fff3d932  s/N 0/2 err 2  classes 2/2  incomplete
+    failed terminus_2         terminal_bench_2 d= 7 eeacceec  s/N 0/4 err 0  classes 4/2  CEIL      
+    failed terminus_2         terminal_bench_2 d=14 23bf7fd4  s/N 0/4 err 0  classes 2/2  CEIL      
+    failed terminus_2         terminal_bench_2 d= 6 37feff8f  s/N 0/4 err 0  classes 1/1  CEIL      
+    failed terminus_2         terminal_bench_2 d=12 a785cb84  s/N 1/4 err 0  classes 4/4  SPLIT      diverge strict=True loose=True
+    failed terminus_2         terminal_bench_2 d=13 3665be60  s/N 3/4 err 0  classes 1/1  SPLIT      diverge strict=False loose=False
+    failed terminus_2         terminal_bench_2 d= 8 d072da96  s/N 3/3 err 1  classes 3/3  ALL       
+    failed terminus_2         terminal_bench_2 d= 7 b98315ff  s/N 2/2 err 2  classes 2/2  ALL       
+    failed terminus_2         terminal_bench_2 d= 8 0dab9904  s/N 0/1 err 3  classes 1/1  incomplete
+    solved bash               multiswe         d= 9 701bd65d  s/N 3/3 err 0  classes 2/2  ALL       
+    solved bash               scaleswe         d= 4 4c0cc415  s/N 3/3 err 0  classes 2/2  ALL       
+    solved bash               terminal_bench_2 d=10 4ab938c9  s/N 1/2 err 1  classes 2/2  SPLIT      diverge strict=True loose=True
+    solved bash               swelego          d= 8 83719a04  s/N 2/2 err 1  classes 2/1  ALL       
+    solved mini_swe_textbased terminal_bench_2 d= 4 5773d34e  s/N 3/3 err 0  classes 3/2  ALL       
+    solved mini_swe_textbased multiswe         d= 5 87ac83de  s/N 3/3 err 0  classes 3/3  ALL       
+    solved mini_swe_textbased swelego          d= 9 d5e82856  s/N 3/3 err 0  classes 3/2  ALL       
+    solved mini_swe_textbased swesmith         d= 8 3de46d10  s/N 3/3 err 0  classes 3/3  ALL       
+    solved terminus_2         terminal_bench_2 d= 3 84ca3035  s/N 3/3 err 0  classes 1/1  ALL       
+    solved terminus_2         terminal_bench_2 d= 3 cf69135d  s/N 3/3 err 0  classes 3/1  ALL       
+    solved terminus_2         terminal_bench_2 d=13 85315778  s/N 3/3 err 0  classes 2/2  ALL       
+    solved terminus_2         terminal_bench_2 d= 8 1b23a2c4  s/N 2/2 err 1  classes 2/2  ALL       
+
+==============================================================================
+Y2. FRONTIER PROPOSALS AT TEACHER-CEILING STATES (arm F1: proposal executed, teacher finishes)
+==============================================================================
+ceiling states with an F1 result: 14 / 16 proposed (teacher 0/N with N>=3: 11; N<3: 3)
+  states where SOME frontier proposal solved (above the ceiling): 3/14 =  21.4% [  8– 48]
+    teacher 0/N, N>=3         : 3/11 =  27.3% [ 10– 57]
+    teacher 0/N, N<3 (yesterday's 0/1 + errored-heavy): 0/3 =   0.0% [  0– 56]
+  per proposal: solved 3/24 =  12.5% [  4– 31]
+    by source  : extra 0/1; greedy 2/13; t08 1/10
+    by relation: act_or_finish 1/4; different_target 1/8; same 1/12
+    by a_type  : act 1/7; explore 2/15; finish 0/2
+    by novel   : False 0/1; True 3/23
+    by novel_loose: False 2/10; True 1/14
+    mini_swe_textbased  : states above ceiling 2/8 =  25.0% [  7– 59]
+    bash                : states above ceiling 1/4 =  25.0% [  5– 70]
+    terminus_2          : states above ceiling 0/2 =   0.0% [  0– 66]
+  per state:
+    30be2fbf008b…:12 bash               scaleswe         T 0/4   F1[greedy,same/act,near-teacher]=failed  F1b[t08,same/act,near-teacher]=failed
+    7aa0fc310c7e…: 3 bash               terminal_bench_2 T 0/4   F1[greedy,different_target/explore,novel]=failed  F1b[t08,same/explore,novel]=failed
+    3a9986a18340…: 8 bash               swerebench_v2    T 0/4   F1[greedy,same/explore,near-teacher]=failed  F1b[t08,same/explore,near-teacher]=?
+    8ddd2d89cea6…: 6 mini_swe_textbased swerebench_v2    T 0/4   F1[greedy,different_target/explore,novel]=failed  F1b[t08,same/explore,novel]=failed
+    a079281ff9b9…: 7 mini_swe_textbased multiswe         T 0/4   F1[greedy,same/explore,near-teacher]=failed  F1b[t08,same/explore,near-teacher]=failed
+    9d3fd174f997…:14 mini_swe_textbased scaleswe         T 0/4   F1[greedy,act_or_finish/act,novel]=SOLVED  F1b[t08,different_target/explore,novel]=failed
+    8bee1f311713…: 5 mini_swe_textbased swerebench_v2    T 0/4   F1[greedy,different_target/explore,novel]=?  F1b[t08,same/explore,near-teacher]=SOLVED
+    2a10d948893a…: 4 mini_swe_textbased scaleswe         T 0/4   F1[greedy,act_or_finish/act,novel]=failed  F1b[t08,same/explore,novel]=failed
+    eeacceec7da9…: 7 terminus_2         terminal_bench_2 T 0/4   F1[greedy,same/act,near-teacher]=failed  F1b[t08,act_or_finish/act,novel]=failed
+    37feff8f9eee…: 6 terminus_2         terminal_bench_2 T 0/4   F1[greedy,same/finish,=teacher]=failed  F1c[extra,same/finish,novel]=failed
+    ca99dd9d809c…:12 bash               swerebench_v2    T 0/3   F1[greedy,different_target/explore,near-teacher]=SOLVED  F1b[t08,different_target/explore,near-teacher]=failed
+    fff3d932236d…:11 mini_swe_textbased swesmith         T 0/2   F1[greedy,act_or_finish/act,novel]=failed  F1b[t08,same/explore,novel]=?
+    b6e6a32fd620…:14 mini_swe_textbased scaleswe         T 0/1 (yesterday)  F1[greedy,different_target/explore,novel]=failed  F1b[t08,different_target/explore,novel]=failed
+    06706134ab59…: 3 mini_swe_textbased scaleswe         T 0/1 (yesterday)  F1[greedy,different_target/explore,novel]=failed  F1b[t08,different_target/explore,novel]=?
+
+COST  today's continuations 126: $3.87 (Engy list price from trace usage), proposal sampling + judge $0.01, total $3.89; container-time 43.4 h (mean 1241 s/continuation); first start 2026-09-21T10:47:08Z, last start 2026-09-21T16:45:19Z

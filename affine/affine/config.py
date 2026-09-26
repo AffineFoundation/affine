@@ -117,6 +117,9 @@ class SubmissionCfg:
     # passes if it matches pinned_arch OR any of these (text-only extraction
     # of the genesis family, 2026-09-04).
     pinned_arch_alt: list[dict]
+    # Minimum effective context window config.json must declare
+    # (model_store.validate_repo_context; wvk 25: 262144). 0 = off.
+    min_context_tokens: int
     # Private R2 submission flow ([submission.r2]); see R2Cfg.
     r2: "R2Cfg"
 
@@ -228,6 +231,17 @@ class DuelCfg:
     # content_lift_nats, content_min_tokens, typicality_width, a_norm_bytes,
     # forfeit_sd, k_sigma, min_margin_sd, frozen.<dialect>.{R,A,Mc}_{mu,sigma}.
     sd_meter: dict = field(default_factory=dict)
+    # wvk 25 (staged 2026-09-26): sequential stopping — look at the running
+    # paired margin every seq_look_every turns; crown early when
+    # margin − seq_k·SE > δ on seq_consecutive looks in a row, stop early as a
+    # loss when margin + seq_k·SE < δ; otherwise the full slice + the standard
+    # rule. False = one decision on the full slice (wvk ≤ 24).
+    seq_enabled: bool = False
+    seq_look_every: int = 100
+    seq_k: float = 2.6
+    seq_consecutive: int = 2
+    # first N sequential duels also score the full slice in shadow (stamped).
+    seq_shadow_full_first_n: int = 0
     # Staged 2026-09-10 (inert unless score_mode="min_rga"): the A leg's
     # summed action lift is divided by this many bytes instead of the
     # action's own length. None = per-byte (the length-biased 09-04 probe).
@@ -486,8 +500,16 @@ def _submission(raw: dict) -> SubmissionCfg:
         max_config_bytes=int(s["max_config_bytes"]),
         pinned_arch=dict(s.get("pinned_arch") or {}),
         pinned_arch_alt=[dict(p) for p in (s.get("pinned_arch_alt") or [])],
+        min_context_tokens=_min_context_tokens(s),
         r2=_r2(s.get("r2") or {}),
     )
+
+
+def _min_context_tokens(s: dict) -> int:
+    v = int(s.get("min_context_tokens", 0) or 0)
+    if v < 0:
+        raise ValueError(f"[submission] min_context_tokens must be >= 0 (0 = off), got {v}")
+    return v
 
 
 def _ref_max_tokens(d: dict) -> int | None:
@@ -572,6 +594,14 @@ def _duel(raw: dict) -> DuelCfg:
     thought_rendering = str(d.get("thought_rendering", "canonical"))
     if thought_rendering not in ("canonical", "as_generated"):
         raise ValueError(f"[duel] thought_rendering {thought_rendering!r} unknown")
+    for k, v in (("miner_empty_rule", ("floor", "drop_typ")),):
+        if k in sd_meter and str(sd_meter[k]) not in v:
+            raise ValueError(f"[duel.sd_meter] {k} must be one of {v}, got {sd_meter[k]!r}")
+    if "empty_gate_ratio" in sd_meter and float(sd_meter["empty_gate_ratio"]) < 0:
+        raise ValueError("[duel.sd_meter] empty_gate_ratio must be >= 0")
+    seq_look_every = int(d.get("seq_look_every", 100)); seq_k = float(d.get("seq_k", 2.6)); seq_consecutive = int(d.get("seq_consecutive", 2))
+    if seq_look_every <= 0 or seq_k <= 0 or seq_consecutive < 1:
+        raise ValueError("[duel] seq_look_every > 0, seq_k > 0, seq_consecutive >= 1 required")
     score_mode = str(d.get("score_mode", "reason"))
     if score_mode not in ("reason", "min_rg", "min_rga", "sd_min_rga"):
         raise ValueError(f"[duel] score_mode {score_mode!r} unknown")
@@ -604,6 +634,9 @@ def _duel(raw: dict) -> DuelCfg:
                             if d.get("forfeit_turn_score") is not None else None),
         sd_meter=sd_meter,
         thought_rendering=thought_rendering,
+        seq_enabled=bool(d.get("seq_enabled", False)),
+        seq_look_every=seq_look_every, seq_k=seq_k, seq_consecutive=seq_consecutive,
+        seq_shadow_full_first_n=int(d.get("seq_shadow_full_first_n", 0)),
         action_norm_bytes=(float(d["action_norm_bytes"])
                            if d.get("action_norm_bytes") is not None else None),
         require_think_close=bool(d.get("require_think_close", False)),

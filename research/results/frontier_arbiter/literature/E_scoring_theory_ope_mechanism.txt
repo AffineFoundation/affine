@@ -1,0 +1,520 @@
+FRONTIER ARBITER — LITERATURE NOTES E
+Scoring theory under noisy references · off-policy evaluation as a score · on/off-policy modulation · incentive design
+Written 2026-09-21 (UTC) for Affine / SN120. Companion to A_distillation_privileged_prm.txt (privileged teachers, PRMs,
+expert iteration) and B_selfplay_verifiers_agentic_rl.txt (self-play, verifiers, Goodhart, Numerai/Templar, TTRL, spurious
+rewards, Gneiting–Raftery proper scores, BTS/peer prediction basics) — none of that is re-summarised here. Sources were read
+from arXiv abs/HTML or the venue PDF on 2026-09-21; numbers are the papers' own unless marked [mem] (recalled, not re-read).
+
+THE PROBLEM THIS SWEEP IS READ AGAINST (store doc dataset-rule-solutions.md §0–1, §3a, §3d, §6.1, §6b.5, §7)
+  One published per-turn rule on stored prefixes x; today turn = min(R, G[, A]) under the frozen teacher C's likelihood of
+  the miner's tokens ⇒ maximiser = C. Available noisy proxies of "the right action at x": k = 3 fresh teacher samples
+  (same-class self-agreement 0.36; 0.55 same-class at N draws on the 30 graded states), frontier samples (0.25–0.30 with the
+  teacher; wrong where they disagree; the frontier's deliberated k = 10 consensus is correct 0/10 on graded ceiling states and
+  equals the teacher's own failed action at 9/11), and environment outcomes on a subset (135k trajectories with outcomes;
+  continuation-verified split states cost ~12 continuations ≈ $0.35 + ~4 container-hours per kept state). Measured hazards:
+  one frontier draw vs one teacher draw is sampling noise; informed refs make the action leg score hint-following (`ls -la`
+  beats the king 64 %); surface similarity mis-files ~25 % of actions (Jaccard recall 0.80 / precision 0.24 vs judge); the
+  typicality leg is spent (fair control z +12.9 → −2.8) and every wvk-22 crown vanishes without it. Needed: (a) optimum above
+  C, (b) proper / incentive-compatible under the noisy references, (c) no gain from hedging, filler, parroting a published
+  target, copying the incumbent, generic exploration, (d) replay from published artifacts.
+
+Notation: x prefix; z thought; y action; C teacher; lpC(a|b) teacher per-byte log-lik; A miner; y* a correct action (one
+whose continuation solves); S+ / S− verified-solved / verified-failed action classes at x; V(c) verified solve rate of class
+c; B(x) = teacher's mean V at x; "graded" = a turn that carries such a table. "Ceiling state" = teacher 0/N; "split state" =
+0 < s < N. "Proxy" = any teacher-likelihood leg (R, G, A) or teacher-agreement term. "Gate" = pass/fail, no ranking.
+
+======================================================================================================================
+PART 1 — PROPER SCORING WITH NOISY / MISSING GROUND TRUTH
+======================================================================================================================
+
+1.1 Surrogate Scoring Rules — Liu, Wang, Chen (arXiv 1802.09158, v1 2018-02, ACM TEAC 2023, doi 10.1145/3565559)
+    https://arxiv.org/abs/1802.09158
+(1) Mechanism. Principal scores a probabilistic report q for a binary y against a NOISY copy z of y with false-positive /
+    false-negative rates e+, e−. For any strictly proper S, SSR_α(q, z) = [S(q,1) − S(q,0)]/(1 − e+ − e−) · (z − e+) + S(q,0).
+    Then E_{z|y}[R(q,z)] = S(q,y) exactly (Thm 4.7/4.8): the bias of z is removed in expectation and the score keeps
+    properness and the same information-quantification (Bregman-divergence) reading as S. Without ground truth (IEWV), a
+    random peer's report is used as z and e+, e− are ESTIMATED from cross-agent matching statistics over many tasks (first-,
+    second-, third-order matching probabilities α, β, γ; three equations, needs one bit about the prior p — Assumption 3).
+(2) Assumes. z ⟂ the agent's private signal conditional on y (Thm 4.6); e+ + e− ≠ 1 ("z informative"); noise rates constant
+    across tasks for a given peer (Lemma: same error rates across tasks); agents use one strategy across tasks; many tasks M
+    and agents N. The prior bit is needed because relabelling 0↔1 gives an indistinguishable world (§5.5): "everyone wrong the
+    same way" and "everyone right" produce identical report statistics.
+(3) Guarantees. Strictly proper w.r.t. the true y (dominant-strategy truthful in the IEWV mechanism, Cor. 5.6); finite-sample
+    score error ε(M,N) = O(1/N + √(ln M / M)) (Thm 5.10); VARIANCE (Thm 4.9) = 2 p_z(1−p_z)/(1 − e+ − e−)² · (S(q,1)−S(q,0))²
+    — the price of debiasing is a 1/(1 − e+ − e−)² variance factor.
+(4) Numbers. 14 human-forecast datasets (GJP, IARPA HFC, MIT): SSR mean score vs true SPSR score regresses with slope ≈ 0.8,
+    intercept ≈ 0; Pearson > 0.8 on 9/14 datasets (Brier, log), the best alternative (proxy scoring, extremized mean) ≤ 6/14;
+    PTS / CA never > 0.8; DMI ≤ 2/14. Spearman version similar (App. Fig 5).
+(5) MAPPING. Reference = teacher sample class; "truth" = y* ∈ S+. Per-turn term: T = [1[class(y_A) = class(y_ref)] − e+_b] /
+    (1 − e+_b − e−_b), with e± estimated per difficulty bucket b from the graded subset (e−_b = P(teacher class ∉ S+ | b) =
+    1 − teacher solve rate). Failure modes: (i) the conditional-independence assumption is FALSE for us — the miner is a
+    fine-tune of the teacher's family and shares its biases, which is precisely the same-family / similarity-to-incumbent
+    mechanism (RT-7); properness w.r.t. y* does not follow. (ii) At ceiling states e− → 1 so 1 − e+ − e− → ≤ 0: the correction
+    is undefined exactly where lift is needed; at split states with teacher solve rate 0.3–0.7 the variance factor is
+    1/(1−e+−e−)² ≈ 3–10× — the debiased teacher-agreement term is 3–10× noisier than raw agreement. (iii) A bucket with
+    negative coefficient pays for "not the teacher's class" — an unbounded set that includes `ls -la`; only positive
+    (S+-anchored) labels are safe. (iv) The relabelling argument is the theory behind §6b.5: agreement statistics among
+    teacher/frontier samples (0.36 / 0.62–0.69 same-class) can never reveal whether the consensus is right; one bit of outcome
+    per state is the minimum, and a full outcome where the teacher is at ceiling. Replayable (rates in manifest); cost 0 per
+    duel. Verdict: closes the "correct a known teacher bias without outcomes" route; keeps the variance formula as the
+    budget for any debiased proxy.
+
+1.2 Proxy scoring rules — Witkowski, Atanasov, Ungar, Krause (AAAI 2017) [cited via 1.1 §1; not re-read]
+    Score against an UNBIASED proxy of the truth (e.g. extremized crowd mean) with any SPSR; recovers expected scores up to
+    an affine map (Frankel & Kamenica 2019). Mapping: our proxy (teacher mode) is biased, not unbiased, at the states that
+    matter — proxy scoring is the "frontier/deliberated consensus as target" idea and inherits §6b.5's verdict.
+
+1.3 Elicitability of the mode and of sets — Gneiting, "Making and Evaluating Point Forecasts" (JASA 106:746–762, 2011,
+    https://www.bundesbank.de/resource/blob/635562/.../gneiting-paper-data.pdf); Heinrich, "The mode functional is not
+    elicitable" (Biometrika 101:245–251, 2014, doi 10.1093/biomet/ast048); Brehmer & Gneiting, "Scoring interval forecasts"
+    (Bernoulli 27(3), 2021, doi 10.3150/20-BEJ1298); Fissler, Frongillo, Hlavinová, Rudloff, "Forecast evaluation of
+    quantiles, prediction intervals, and other set-valued functionals" (EJS 15:1034–1084, 2021; arXiv 1910.07912).
+(1) Mechanism. A functional T is elicitable iff some scoring function has T(F) as its unique expected-score minimiser. For
+    FINITE outcome spaces the mode is elicited by 0–1 loss and 0–1 loss is essentially the ONLY consistent score for it
+    (Lambert & Shoham; Gneiting 2011 §3.5; Brehmer–Gneiting Thm 3.9). For distributions with densities (rich classes) the
+    mode is NOT elicitable at all (Heinrich 2014) despite having convex level sets. Set-valued functionals: "selective"
+    elicitation (report one point of the set) and "exhaustive" elicitation (report the whole set) are MUTUALLY EXCLUSIVE
+    (Fissler et al. Thm 3.7): a set-valued functional is selectively elicitable, or exhaustively elicitable, or neither.
+(2) Assumes. Rich enough class of distributions; single-point (selective) vs set-valued (exhaustive) report type fixed.
+(3) Guarantees. Existence / non-existence of consistent scores; uniqueness of 0–1 loss for the discrete mode.
+(4) Numbers. Theoretical.
+(5) MAPPING. Our per-byte likelihood legs score a POINT (the sampled y_A or z_A) with a log-density under the teacher; on an
+    effectively continuous space (text) no scoring function makes "the teacher's most likely action" the Bayes act (Heinrich),
+    so the R/G/A legs are not eliciting the teacher's mode — they elicit a density value, which is why length, fence bytes
+    and shape (typicality) dominate and why kings can "out-typical" the teacher. What IS elicitable: after quotienting actions
+    into decision CLASSES (finite), the modal class is elicited by 0–1 loss and by nothing else — the VAV rule (§6.3 of the
+    store doc) is that unique score with the modal class replaced by the verified-best class. Fissler: the set S+(x) of
+    correct classes is set-valued; a miner emitting ONE action can be scored consistently for "y_A ∈ S+(x)" (selective), and
+    it is then impossible to ALSO reward covering every correct mode — so "hedging to cover modes" is not a design goal a
+    consistent point score can have; committing is the only elicitable behaviour. Guidance: quotient first (class matcher or
+    executable-semantics kernel), score 0–1 or its expectation, never a density.
+
+1.4 Energy score / kernel scores with k reference draws — Gneiting & Raftery 2007 §4.3 (JASA 102:359–378; listed in B 6.6)
+(1) Mechanism. ES(P, y) = E_P‖X − y‖^β − ½ E_P‖X − X′‖^β, strictly proper for β ∈ (0,2); with k draws from P the
+    plug-in (mean_i d(y, X_i) − ½ mean_{i≠j} d(X_i, X_j)) is unbiased for ES. Any negative-definite kernel d gives a proper
+    kernel score; with d = 1[different class] the score is P(y ∉ class(X)) − ½ P(two draws differ).
+(5) MAPPING. Reading the k = 3 teacher refs as draws from the target distribution, the kernel score with class-distance is
+    proper FOR THE TEACHER'S DISTRIBUTION — its maximiser is the teacher's modal class (the ceiling again). Its useful part is
+    the second term: subtracting ½·(1 − self-agreement) removes the reference's OWN multi-modality from the score so a miner
+    is not charged for the teacher's spread (self-agreement 0.36 ⇒ a constant 0.32 offset). Our centred R subtracts the mean
+    lift (flat-lift channel); the energy-score centering subtracts the reference spread — orthogonal, both cheap. Only
+    worth it if the reference distribution is the S+ (outcome-weighted) set rather than the blind teacher (candidate M3/M4).
+
+======================================================================================================================
+PART 2 — LEARNING / EVALUATING WITH NOISY LABELS (teacher samples as noisy labels of the correct action)
+======================================================================================================================
+
+2.1 Natarajan, Dhillon, Ravikumar, Tewari, "Learning with Noisy Labels" (NeurIPS 2013)
+    https://papers.nips.cc/paper/2013/hash/3871bd64012152bfb53fdf04b401193f-Abstract.html
+(1) Mechanism. Class-conditional noise: label flipped with rate ρ+ (for +) / ρ− (for −), independent of x. Method of
+    unbiased estimators (Lemma 1): ℓ̃(t, y) = [(1 − ρ_{−y}) ℓ(t, y) − ρ_y ℓ(t, −y)] / (1 − ρ+ − ρ−) satisfies
+    E[ℓ̃(t, Ỹ) | Y = y] = ℓ(t, y) for any bounded loss. Second method: weighted 0–1 reduction (biased SVM / weighted
+    logistic regression are provably noise-tolerant).
+(2) Assumes. Noise rates known (tuned by CV in practice); noise class-conditional and INDEPENDENT OF x; ρ+ + ρ− < 1.
+(3) Guarantees. Risk of the noisy-ERM minimiser ≤ min clean risk + 4 L_ρ R(F) + 2√(log(1/δ)/2n), with Lipschitz price
+    L_ρ ≤ 2L/(1 − ρ+ − ρ−) (Thm 3) — same 1/(1 − ρ+ − ρ−) blow-up as SSR's variance.
+(4) Numbers. Synthetic non-separable data: > 88 % accuracy with 40 % labels corrupted; competitive on UCI benchmarks.
+(5) MAPPING. Identical algebra to 1.1 for a 0–1 "agreement with the teacher class" loss. The binding assumption fails: the
+    teacher's error is INSTANCE-dependent (it fails at hard states, not at random) — class-conditional correction is then
+    biased, and the fix (bucket by estimated difficulty, e.g. teacher solve-rate bucket from the graded subset) needs graded
+    coverage per bucket. Per-turn term as in 1.1(5). Verdict: only sign-preserving buckets (coefficient > 0) are safe; the
+    correction never lifts the optimum above the teacher's class at ceiling states (ρ− → 1). Cost 0/duel, replayable.
+
+2.2 Liu & Tao, "Classification with Noisy Labels by Importance Reweighting" (TPAMI 38(3):447–461, 2016; arXiv 1411.7718)
+    https://arxiv.org/abs/1411.7718
+(1) Mechanism. Any surrogate loss reweighted by β(x, ỹ) = P_D(y|x)/P_Dρ(ỹ|x) is consistent for the clean risk (Thm 1).
+    Noise rates: ρ_y ≤ P_Dρ(−ỹ | x) for all x, with equality at "anchor" points where the clean posterior is 0 (Thm 4) ⇒
+    ρ̂ = min_x P̂(ỹ | x).
+(2) Assumes. Random class-conditional noise ρ ∈ [0, 0.5); existence of anchor points; a good estimate of P_Dρ(ỹ|x).
+(3) Guarantees. Consistency of reweighted ERM; noise-rate estimator exact under the anchor condition (criticised later for
+    producing 0 estimates in practice — Northcutt et al. 2017 §2).
+(4) Numbers. Synthetic + UCI; the contribution is the estimator, not headline accuracy.
+(5) MAPPING. "Anchor points" = states where the teacher is certainly wrong (ceiling, 0/N) or certainly right (N/N): the
+    graded harvest already finds both. Estimating a per-stratum teacher noise rate from anchors is feasible; but the
+    reweighting form (divide by the teacher's own probability of its label) is the same lpC-ratio a miner can inflate. Use
+    only to CALIBRATE bucket rates for 1.1/2.1, not as a live term.
+
+2.3 Northcutt, Jiang, Chuang, "Confident Learning: Estimating Uncertainty in Dataset Labels" (JAIR 70, 2021-04-14;
+    arXiv 1911.00068) https://arxiv.org/abs/1911.00068 ; Northcutt, Athalye, Mueller, "Pervasive Label Errors in Test Sets
+    Destabilize ML Benchmarks" (NeurIPS D&B 2021; arXiv 2103.14749)
+(1) Mechanism. Count-based estimate of the joint Q(ỹ, y*) between given and latent labels: an example is "confidently" of
+    class j if its out-of-sample predicted p(j|x) exceeds a per-class threshold (mean predicted prob of that class); counts
+    calibrated to the noisy class marginals; prune by rank (normalised margin); retrain with per-class reweighting.
+(2) Assumes. Class-conditional noise; a reasonably calibrated model whose out-of-sample probabilities are informative.
+(3) Guarantees. Exact recovery of label errors under sufficient conditions (diagonally dominant noise + "perfect" per-class
+    calibration up to a margin); consistency of the joint estimate.
+(4) Numbers. Beats 7 noisy-label methods on CIFAR-10 at 20–70 % noise; ImageNet: 645 "missile" labelled "projectile";
+    test-set audit of 10 benchmarks: average 3.4 % label errors, ImageNet val 2,916 (≈ 6 %), QuickDraw ≈ 10 %; benchmark
+    rankings flip once errors are corrected.
+(5) MAPPING. The CL joint is the right OBJECT to publish per stratum: Q(teacher class, verified class) estimated from the
+    graded subset tells, per harness × depth bucket, how often the teacher's modal class is a verified-failed class. Two
+    uses: (a) a calibration table for M1/M2 coefficients; (b) a fold-time filter — states where CL flags the teacher label
+    as confidently wrong are the decision states to harvest (cheaper than continuing everything). Not a ranking term.
+
+======================================================================================================================
+PART 3 — OFF-POLICY EVALUATION AS THE SCORE ITSELF
+======================================================================================================================
+
+3.1 Jiang & Li, "Doubly Robust Off-policy Value Evaluation for RL" (ICML 2016; arXiv 1511.03722, v3 2016-05-26)
+    https://arxiv.org/abs/1511.03722
+(1) Mechanism. Recursive DR: V_DR^{H+1−t} = V̂(s_t) + ρ_t (r_t + γ V_DR^{H−t} − Q̂(s_t, a_t)), ρ_t = π_1(a_t|s_t)/π_0(a_t|s_t);
+    horizon-1 case is the Dudík–Langford–Li contextual-bandit DR: V̂(s) + ρ (r − R̂(s,a)). Unbiased for any Q̂ if ρ is exact;
+    variance shrinks with Q̂ accuracy.
+(2) Assumes. Known behaviour propensities π_0(a|s) > 0 wherever π_1 > 0 (coverage / absolute continuity); Q̂ independent of
+    the evaluation data (or a data split); rewards observed on the logged actions only.
+(3) Guarantees. Unbiasedness (Thm 1) with recursive variance; Cramér–Rao lower bound for discrete tree MDPs
+    Σ_t E[ρ²_{1:t−1} Var_t(V(s_t))] (Thm 2), attained by DR with Q̂ = Q (Obs. 1); DAG MDPs are easier (occupancy ratios,
+    Thm 3, supp.).
+(4) Numbers. Mountain Car (H = 100, 5,000 traj), Sailing (2,500), KDD-98 donation (22 steps, 12 actions): DR far below IS
+    and WIS in MSE, unbiased where regression is not; a 3:2 data split for Q̂ vs evaluation was best on Sailing; safe policy
+    improvement gains in Mountain Car.
+(5) MAPPING. Per turn (horizon 1 at the scored step, then a fixed continuation policy = the teacher): V̂(x, y_A) =
+    Q̂(x, y_A) + Σ_j w_j (r_j − Q̂(x, y_j)) over the state's logged actions y_j with outcomes r_j, w_j = π_A(y_j|x)/π_C(y_j|x).
+    What is special for us: BOTH propensities are computable exactly (the teacher and the miner are LMs we serve) — the
+    usual "unknown logging policy" problem is absent. What breaks: (i) coverage — r_j exists only for actions that were
+    EXECUTED (the one recorded next action per D turn, plus the N continuations at harvested states); the miner's sampled
+    y_A is almost never one of them (text action space), so the IS term is empty and DR collapses to the direct method Q̂ —
+    a learned value model, i.e. §6(e)'s public PRM. (ii) The Cramér–Rao term ρ² Var(V): per-turn ρ between two LMs on
+    50–400-byte actions spans many orders of magnitude ⇒ effective sample size ≈ 1 unless clipped / self-normalised (3.4).
+    (iii) Where logged actions ARE the table (harvested states), DR with Q̂ ≡ B(x) gives exactly V(class) − B(x) weighted by
+    how much of the miner's mass sits on each stored action — the soft, matcher-free VAV (candidate M5), with the caveat of
+    3.4. Replayable (stored r_j, stored propensities). Cost: |table| extra echoes per decision turn on the miner engine.
+
+3.2 Thomas & Brunskill, "Data-Efficient Off-Policy Policy Evaluation for RL" (ICML 2016; arXiv 1604.00923)
+    https://arxiv.org/abs/1604.00923
+(1) Mechanism. WDR = DR with self-normalised (weighted) importance weights (small bias, large variance cut); MAGIC = blend
+    the model-based estimate with WDR partial returns of horizon j (the "guided" returns), choosing convex weights by
+    minimising an estimated MSE (covariance from the data, bias from a bootstrap CI of the model's error) — "BIM".
+(2) Assumes. Bounded importance weights; a model that may be wrong (its bias is estimated, not assumed 0).
+(3) Guarantees. WDR strongly consistent (AM plateaus at a non-zero MSE under misspecification, WDR does not); MAGIC strongly
+    consistent if at least one blended return is; picks the model when it is good and IS when it is not.
+(4) Numbers. Gridworld / Mountain Car / a hybrid domain: "orders of magnitude lower MSE" than IS, WIS, DR at moderate n;
+    plots in log–log n.
+(5) MAPPING. The BIM idea is the principled version of "the live meter at low weight as a tie-break" (store §5.4): blend a
+    biased-but-low-variance proxy (teacher legs) with an unbiased-but-noisy outcome term by an MSE-optimal weight estimated
+    on the graded subset, and publish the weight in the verdict. Guardrail: the weight must be a function of the SLICE, not of
+    the miner, or it is a new lever. Prediction-powered inference (7.1) gives the same blend with a guarantee and a closed
+    form — prefer 7.1.
+
+3.3 OPE for LLM agents 2025–2026 — Liu et al. (Emory), "Autoregressive Diffusion World Models for Off-Policy Evaluation of
+    LLM Agents" (arXiv 2606.05558, v2 2026) https://arxiv.org/abs/2606.05558 ; Gonuguntla (CMU), "The Replay Gap: Static
+    Evaluation of Model Switching in LLM Agents Scores the Wrong World" (arXiv 2608.08239, 2026-08) https://arxiv.org/abs/2608.08239
+(1) Mechanism. ADWM: learn a latent diffusion world model of environment responses from logged multi-turn trajectories,
+    roll out the NEW policy step by step with policy-conditioned score guidance, average returns. Replay Gap: fork live
+    mini-SWE-agent trajectories on SWE-bench Verified at controlled depths, rebuild the container, continue with another
+    model (Qwen3-4B ↔ Qwen3-14B), compare to same-model control forks; then test a log-stitching replay evaluator against the
+    branched truth.
+(2) Assumes. ADWM: the world model generalises to the new policy's states. Replay: nothing — it is the measurement.
+(3) Guarantees. None formal; both are empirical indictments of trajectory-level IS/DR for text agents (unbounded action
+    space ⇒ coverage violated; horizon ⇒ weights collapse).
+(4) Numbers. ADWM (5 seeds, HotpotQA / ScienceWorld / ALFWorld / WebShop): Spearman between estimated and true policy
+    ordering +0.67 … +0.90 (mean +0.82); classical IS / WIS / DR / FQE / DM GIVEN EXACT behaviour-LLM token logprobs: ρ = 0.00
+    on both ALFWorld cells, −0.82 / −0.70 / −0.90 on others, FQE +0.90 on one cell and 0 elsewhere. Replay Gap (~900
+    rollouts, 717 branch pairs): swaps rewrite 61–94 % of post-fork actions, +0.25 to +0.66 normalised edit distance over
+    matched controls; 74–77 % of early swaps diverge at the FIRST post-fork action (controls 6–35 %); only 3–8 % of replayed
+    states are valid; all 5 outcome flips are in swap arms, 0 in 359 control forks; the replay evaluator mispredicts EVERY
+    success-relevant outcome and predicts patches with 0.00–0.11 similarity to what was produced; temperature-0 determinism
+    is serving-config-dependent (FP8 controls diverge on > 90 % of forks, AWQ near-identical).
+(5) MAPPING. This is the setting of D exactly (mini-swe scaffold, SWE-bench-style tasks, forks at depth). Consequences:
+    (i) importance weighting over logged continuations from "similar states" to value a miner's action WITHOUT execution is
+    dead on arrival — the first post-fork action already diverges 3/4 of the time and the behaviour policy assigns vanishing
+    mass to the target's text; ADWM's own baselines confirm ρ ≈ 0 even with exact propensities. (ii) A learned world model /
+    value model (ADWM, FQE) is the only OPE route that produced a positive ranking — and that is §6(e)'s public PRM with all
+    its Goodhart exposure; if ever used, ADWM's protocol (rank correlation of policies vs branched ground truth) is the
+    acceptance test. (iii) Branched execution with a FIXED continuation policy — what the harvest does — is validated here as
+    the only trustworthy label; the Replay Gap's control-fork noise (6–35 % divergence at action 0 for the same model) is the
+    floor our N = 3–4 tables are fighting, and argues for AWQ/bf16-style deterministic serving of the continuation policy.
+    (iv) Depth matters in the same direction as probe Y: divergence falls with fork depth in both directions.
+
+3.4 Swaminathan & Joachims, "The Self-Normalized Estimator for Counterfactual Learning" (NeurIPS 2015)
+    https://papers.nips.cc/paper/2015/hash/39027dfad5138c9ca0c474d71db915c3-Abstract.html
+(1) Mechanism. Learning a policy h by minimising the IPS risk Σ δ_i h(y_i|x_i)/p_i suffers PROPENSITY OVERFITTING: the learner
+    puts mass on logged actions with favourable (δ_i, p_i) rather than good actions — the control variate Ŝ(h) = mean
+    h(y_i|x_i)/p_i (which should be 1) drifts. Fix: self-normalised R̂_SN = Σ δ_i w_i / Σ w_i.
+(2) Assumes. Logged propensities; bounded weights (clipping).
+(3) Guarantees. R̂_SN biased, asymptotically consistent, lower variance, equivariant to additive loss shifts, bounded by
+    the observed losses.
+(4) Numbers. Multi-label datasets: Norm-POEM beats POEM (e.g. TMC Hamming loss 2.07 vs 3.61; Yeast 3.88 vs 3.91).
+(5) MAPPING. This is the OPE name for the lpA attack the project retired (RT-3): a miner that CONTROLS its own propensities
+    can inflate w_j on the stored solved action without being able to produce it (a classifier over stored strings, not an
+    actor). Self-normalisation caps the scale but not the ranking — a model can still learn to rank published S+ above S−
+    by likelihood. Any miner-likelihood term over stored actions (candidate M5) must therefore be gated by the miner's SAMPLED
+    action agreeing with its own top-weighted stored class (the "acts what it ranks" check), or dropped.
+
+======================================================================================================================
+PART 4 — ON- vs OFF-POLICY MODULATION: TILTING A REFERENCE BY A NOISY VALUE
+======================================================================================================================
+
+4.1 Peng, Kumar, Zhang, Levine, "Advantage-Weighted Regression" (arXiv 1910.00177, 2019-10) https://arxiv.org/abs/1910.00177
+(1) Mechanism. max_π E_{s∼d_μ, a∼π}[A^μ(s,a)] s.t. E_s KL(π‖μ) ≤ ε has the closed form π*(a|s) = μ(a|s) exp(A^μ(s,a)/β) / Z(s),
+    Z(s) = ∫ μ exp(A/β) (eq. 8); projected onto a parametric policy by weighted max-likelihood E[exp(A/β) log π(a|s)]
+    (eq. 10). Advantage vs return-weighting is the difference from RWR/REPS and matters empirically.
+(2) Assumes. The surrogate η̂ matches the true improvement to first order only if π stays KL-close to μ (Kakade–Langford /
+    TRPO bound); advantages estimated from logged returns (TD(λ)) — noisy.
+(3) Guarantees. Monotone-improvement-style bound inherited from the KL constraint; β trades improvement vs trust.
+(4) Numbers. OpenAI Gym: competitive with SAC/TD3/PPO online; on static datasets more effective than most off-policy methods
+    (paper's Table/Fig, not re-quoted).
+(5) MAPPING. Rule sketch (candidate M3): T(x, y_A) = log π*(y_A|x) = lpC(y_A|x) + Â(x, y_A)/β − log Ẑ(x), with Â read from the
+    verified table (Â = V(class) − B(x); unmatched → 0) and Ẑ over the table's actions weighted by lpC. β = ∞ recovers the
+    live A-leg (teacher ceiling); β → 0 recovers argmax Â (pure VAV). The Gibbs form is the ONE principled way the two
+    demands meet: the teacher likelihood stays as a support/regulariser (blocks garbage, generic, off-support), the outcome
+    tilt moves the mode. Noise control: Â at N = 3–4 flips sign on near-identical actions (§6.5 `sed -n 350,450p` vs
+    `350,460p` → ±0.67); with β chosen so max exp(Â/β) ≤ ~e^2–e^4 the tilt cannot dominate a per-turn term by more than that
+    factor — IQL's clip (4.2) is the same knob. Hazards: per-byte length bias of the lpC term (use the wvk-22 summed,
+    byte-normalised A), Ẑ estimated from ≤ 8 stored actions, and the fact that ANY lpC term keeps a shape channel open —
+    which is why the store's §5.4 wants the likelihood legs as gates, not additive terms. Replayable; cost = A-leg echoes.
+
+4.2 Kostrikov, Nair, Levine, "Offline RL with Implicit Q-Learning" (ICLR 2022; arXiv 2110.06169) https://arxiv.org/abs/2110.06169
+(1) Mechanism. Never query Q on unseen actions: fit V_ψ(s) as the τ-EXPECTILE of Q(s, a) over dataset actions
+    (L_2^τ(u) = |τ − 1(u<0)| u²), back up Q ← r + γ V(s′), extract the policy by advantage-weighted BC
+    exp(β (Q − V)) log π(a|s) with the weight clipped (100).
+(2) Assumes. In-support actions only; the upper expectile as a proxy for max over in-support actions; hyper-parameters
+    τ = 0.7 (0.9 on AntMaze), β = 3 (10 on AntMaze) [values from the paper's implementation notes; mem for the AntMaze pair].
+(3) Guarantees. τ → 1 approaches the in-support optimum (argmax over dataset actions) without OOD queries; τ = 0.5 is SARSA.
+(4) Numbers. D4RL AntMaze total 378.0 vs CQL 303.6, TD3+BC 163.8, AWAC 107.7, BC 100.2; medium/large-play 71.2 / 39.6 where
+    one-step methods score ≈ 0; competitive on locomotion; faster than baselines; fine-tunes online.
+(5) MAPPING. Two transfers. (a) The UPPER EXPECTILE of the table's solve rates is the right "value of the best in-support
+    action" B*(x) — robust to a single lucky continuation (τ = 0.7–0.9 over N ≥ 8 continuations) where max is not; use it in
+    place of "highest-V class" in the store's S6 so that a singleton solved class (the §6.5 LOO problem) does not define the
+    target. (b) Weight clipping at 100 is the concrete "keep the tilt from being dominated by noise" rule: the outcome term
+    may move a per-turn score by at most log 100 ≈ 4.6 nats relative to the reference. In-support-only scoring is also the
+    literature's answer to "novel correct miner action gets 0": IQL accepts that loss deliberately because OOD credit is
+    where extrapolation error and gaming live — same call as VAV's "unmatched → 0 + re-verification queue".
+
+4.3 Mode-seeking vs mode-covering when the reference is multi-modal — Ke, Choudhury, Barnes, Boots, Bagnell,
+    "Imitation Learning as f-Divergence Minimization" (arXiv 1905.12888, 2019-05; WAFR 2020) https://arxiv.org/abs/1905.12888
+    [GKD / on-policy distillation itself is covered in A §2, §7c — not repeated]
+(1) Mechanism. BC minimises forward KL (M-projection, mode-covering), GAIL minimises JS, DAgger TV; reverse KL (I-projection)
+    is mode-seeking. With multi-modal demonstrations (go left OR right of the tree) forward-KL/JS learners INTERPOLATE
+    between modes (crash into the tree); RKL collapses onto one mode. f-VIM estimates any f-divergence with a discriminator;
+    with an interactive expert the RKL objective reduces to a DAgger-like density-ratio policy gradient.
+(2) Assumes. Any one expert mode is acceptable (task-dependent); the expert is right in every mode.
+(3) Guarantees. Exact policy enumeration on a bandit and a gridworld: the global RKL optimum sits on a single demonstrator
+    mode, KL/JS optima interpolate (Table 2a–b); policy-gradient local optima reproduce it (2c–d).
+(4) Numbers. Bandit control noise 0.28; gridworld noise 0.14/0.15; qualitative collapse-vs-interpolate results.
+(5) MAPPING. Our tempered LME (τ = 0.03) over k refs is a soft-max = a mode-SEEKING score on the teacher's sample set: it
+    rewards committing to one sampled teacher mode and gives ≈ 0 to hedges — the right shape against interpolation/hedging
+    (RT-2/A9) and validated by the v4 calibration. The literature adds the caveat the reference-swap probes hit: mode-seeking
+    on a reference that is PARTIALLY WRONG commits the miner to the reference's wrong mode with full credit and gives a
+    correct minority action (not among the k draws) ≈ 0 — so the objective caps at the teacher's modal decision precisely at
+    decision states. The fix is not to switch to mode-covering (that pays hedging) but to change the SET the soft-max runs
+    over: S+ (verified-solved) refs, or advantage-tilted refs (4.1). Everything that made τ = 0.03 right carries over to a
+    soft-max over S+.
+
+======================================================================================================================
+PART 5 — MECHANISM DESIGN FOR EVALUATION CONTESTS
+======================================================================================================================
+
+5.1 Blum & Hardt, "The Ladder: A Reliable Leaderboard for Machine Learning Competitions" (ICML 2015; arXiv 1502.04585)
+    https://arxiv.org/abs/1502.04585
+(1) Mechanism. Release a new leaderboard score only if the submission's holdout loss beats the current best by a margin η;
+    otherwise repeat the previous best (never reveal the new estimate). Parameter-free variant: accept iff the paired
+    t-statistic of (new loss vector − best loss vector) exceeds 1, i.e. improvement > s/√n, and round released scores to 1/n.
+(2) Assumes. Fixed holdout of size n re-used for all k adaptive submissions; adversarial analyst; scores in [0,1].
+(3) Guarantees. Leaderboard error O((log(k)/n)^{1/3}) for ANY adaptive sequence (Thm 3.1), vs the Kaggle mechanism whose
+    error grows as √k; lower bound Ω(√(log k / n)) for any estimator (Thm 3.3). Boosting attack (Thm 5.1): with rounding
+    α ≤ 1/√n (Kaggle uses 10⁻⁵) an analyst achieves 1/2 − Ω(√(k/n)) error from k random submissions; against the parameter-
+    free Ladder only O(log k) threshold crossings are possible ⇒ bias O(√(log k / n)).
+(4) Numbers. Kaggle "Photo Quality Prediction" submission files: Ladder tracks the private leaderboard; boosting attack
+    degrades Kaggle rapidly with k, Ladder barely. Paired t-tests among the top 10 show most neighbours are not
+    significantly different — which the Ladder's "no release unless significant" reflects.
+(5) MAPPING. Our crown rule paired mean > max(2·SE, δ) IS the parameter-free Ladder with a 2× stricter threshold plus a
+    floor; the store doc's winner's-curse history (δ = 0.001 → 4 lucky crowns → revert) is Blum–Hardt's √k vs O(log k)
+    story. Two differences worth acting on: (i) the Ladder NEVER RELEASES a non-improving score, we publish every verdict's
+    full telemetry (margins, per-leg z, per-dialect) — that is the fine-grained feedback the boosting attack needs; with
+    per-duel fresh slices (reveal-hash seeded) the attack cannot overfit one holdout, so what remains is pure winner's curse
+    across k hotkeys: max of k noise draws ≈ SE·√(2 ln k) (k = 50 → 2.8 SE > our 2 SE bar; δ is what stops it). Releasing
+    only {crown / no crown, king's running score} would remove the boosting channel entirely at no cost to replay (verdict
+    artifacts can stay private-until-fold). (ii) Their rounding to 1/n suggests quantising published margins to the slice's
+    SE. A published PER-TURN target cannot be made incentive-compatible by release policy alone — the Ladder protects the
+    ESTIMATE, not the target; for the target see 5.2 and 7.1.
+
+5.2 Gao, Wright, Leyton-Brown, "Incentivizing Evaluation via Limited Access to Ground Truth: Peer-Prediction Makes Things
+    Worse" (arXiv 1606.07042, 2016-06; journal version AIJ 275:618–638, 2019) https://arxiv.org/abs/1606.07042
+(1) Mechanism. Agents evaluate objects; effort yields a high-quality signal, no effort yields a cheap correlated signal;
+    the designer can SPOT-CHECK a fraction p of reports against noisy-but-unbiased ground truth. Compare: peer-insensitive
+    mechanism (pay only on spot checks) vs spot-checking peer-prediction (pay peer agreement + spot checks).
+(2) Assumes. Finite quality set; risk-neutral agents; a low-effort signal that is informative enough to be coordinated on
+    (e.g. hash of the object description — "essentially without loss of generality").
+(3) Guarantees. Thm 1: without ground truth NO universal mechanism makes the truthful equilibrium Pareto-dominant when
+    agents have several signals. Thm 3: the spot-check probability p_ds that makes truthfulness DOMINANT under the peer-
+    insensitive mechanism is ≤ the probability p_Pareto any spot-checking peer-prediction mechanism needs merely to make
+    truthfulness Pareto-dominant, for every universal peer-prediction mechanism in the literature (Cor. 1: Faltings,
+    Witkowski, Dasgupta–Ghosh, Waggoner–Chen, Kamble, Radanovic…). I.e. adding the peer term INCREASES the ground truth
+    needed. (Later work — Measurement Integrity, Spot Check Equivalence 2024 — qualifies this under other metrics; the
+    effort/coordination result stands.)
+(4) Numbers. Theoretical (inequalities on p).
+(5) MAPPING. Direct translation: the teacher is the peer, "agreement with the teacher's habit" is the cheap low-effort signal
+    (a fine-tune reproduces it without solving anything), outcomes are the spot checks. Gao et al. say a rule that keeps the
+    peer term in the RANKING needs MORE outcome coverage to make effort dominant than a rule that pays on outcomes alone —
+    theory for the store's §3a/§5.4 decision to demote R/G/A to gates and rank on outcomes only, and a warning against
+    "live meter at low weight as tie-break" (it re-introduces the cheap signal). It also says how much: the outcome term must
+    be large enough that E[pay | solve] − effort cost > E[pay | mimic]; with kings at 0.72 vs teacher 0.85 on identical tasks
+    (D2) the outcome gap per decision turn is ~0.13 — the graded share of the slice, not the proxy, sets whether that clears
+    the crown bar.
+
+5.3 Agarwal, Mandal, Parkes, Shah, "Peer Prediction with Heterogeneous Users" (EC 2017; arXiv 1703.04885)
+    https://arxiv.org/abs/1703.04885
+(1) Mechanism. Correlated Agreement (Shnayder et al. 2016) pays 1 when two agents' reports on a shared task agree MORE than
+    their marginal frequencies predict (score matrix from the Δ = joint − product-of-marginals matrix) minus a penalty on
+    non-shared tasks. Heterogeneous agents: cluster agents by reporting behaviour (Dawid–Skene latent types), estimate Δ per
+    cluster pair, score with the cluster matrix (CAHU).
+(2) Assumes. Many shared tasks; agents' signal distributions constant within a cluster; impossibility otherwise (Radanovic &
+    Faltings 2015: no strict truthfulness for heterogeneous agents without knowing their signal distributions).
+(3) Guarantees. (ε1 + ε2)-informed truthfulness — no (even coordinated) strategy beats truth by more than ε, and uninformed
+    reporting earns strictly less — with clustering error ε1 and Δ-estimation error ε2; sample complexity linear in the
+    number of agents (Table 1 of the paper; Thm 4.8 for the shared-task universe size).
+(4) Numbers. Real crowdsourcing data (Stanford Dogs, Waterbird): the incentive approximation is reasonable with few clusters.
+(5) MAPPING. CA's "pay agreement above what the marginals predict" is the peer-prediction twin of our centred R: it removes
+    the ref-independent (flat-lift) channel and gives informed truthfulness relative to the PEER — the peer is still the
+    ceiling, and the colluding equilibrium (report what the peer reports) is exactly RT-7 when the peer is the incumbent's
+    own teacher. The heterogeneous-users result is a caution for the routed-pool idea (store §3f): correlation structure
+    must be estimated per family before agreement can be paid — the R1 probe's control flip is what happens without it.
+
+======================================================================================================================
+PART 6 — COMMIT vs HEDGE (covered by 1.3, 1.4, 4.3; cross-reference only)
+======================================================================================================================
+  Elicitability (1.3): a single-action report can be scored consistently for membership in the correct set (selective) and
+  cannot simultaneously be scored for covering the set (exhaustive); the discrete mode is elicited by 0–1 loss only;
+  densities do not elicit the mode. Energy/kernel scores (1.4): proper for the REFERENCE distribution, so they inherit its
+  ceiling; their spread term is a free correction for reference multi-modality. f-divergence view (4.3): our soft-max is
+  mode-seeking and should stay so; change the reference set, not the divergence. Together: commit-incentives are right
+  and cheap; the reference must be outcome-selected, and any hedging credit is provably outside what a consistent point
+  score can offer.
+
+======================================================================================================================
+PART 7 — DISCOVERED WHILE READING
+======================================================================================================================
+
+7.1 Angelopoulos, Bates, Fannjiang, Jordan, Zrnic, "Prediction-Powered Inference" (Science 382(6671):669–674, 2023-11-09;
+    arXiv 2301.09633) https://arxiv.org/abs/2301.09633
+(1) Mechanism. A small gold-labelled set (X_i, Y_i), i ≤ n, plus a large unlabelled set X̃_j, j ≤ N, and any predictor f.
+    Mean estimation: θ̂_PP = (1/N) Σ_j f(X̃_j) − (1/n) Σ_i (f(X_i) − Y_i); the second term is the RECTIFIER Δ̂ (an estimate of
+    the predictor's bias). General convex estimands via a rectifier on the subgradient; CIs from standard mean CIs.
+(2) Assumes. Gold and unlabelled samples are random draws from the same population; NO assumption on f.
+(3) Guarantees. Valid CIs / unbiasedness for any f (Thm 1); width shrinks as f improves: Var ≈ Var(f)/N + Var(f − Y)/n vs
+    Var(Y)/n classical. Naive imputation (score f only) is biased.
+(4) Numbers. Proteomics (AlphaFold), astronomy, genomics, remote sensing (deforestation), census, ecology: valid intervals
+    that are narrower than gold-only; imputation intervals invalid.
+(5) MAPPING. This is the missing estimator for "correct a proxy with occasional outcomes" AS A SCORE (candidate M1):
+    side score = mean over all turns of T_proxy − mean over graded turns of (T_proxy − T_true). Its expectation is
+    E[T_true] — the OUTCOME maximiser — for ANY proxy, so the teacher legs become a control variate, not the target, and the
+    optimum sits above the teacher wherever the graded tables do. The proxy only buys variance: with proxy–truth correlation
+    r, Var ≈ (1 − r²) Var(T_true)/n_graded + …; at n_graded = 300 and sd(T_true) ≈ 0.4 the SE is ≈ 0.023 in solve-rate units,
+    ≈ the S4 estimate; if r ≈ 0 the rule IS outcomes-only (VAV). Incentive caveat PPI does not cover: the gold set must be
+    unpredictable to the miner or it acts well on graded x and mimics elsewhere (a fixed model can memorise which x carry
+    tables). Fix: commit the epoch's graded set (hash in the manifest), score with it, reveal at the next fold — replayable
+    after reveal, un-targetable during the epoch, and the revealed tables become the next epoch's training data (the
+    "leaking is knowing" loop, one epoch delayed). Cost: harvest only; 0 per duel.
+
+7.2 (grouped) Shnayder, Agarwal, Frongillo, Parkes 2016 "Informed truthfulness in multi-task peer prediction" (EC 2016) —
+    the CA mechanism used in 5.3; Kong & Schoenebeck 2019/2020 DMI — dominantly truthful categorical elicitation from finite
+    tasks (SSR compares against it, 1.1(4): DMI Pearson > 0.8 on ≤ 2/14 datasets). Mapping as 5.3: peer = ceiling.
+
+======================================================================================================================
+CROSS-CUTTING CONCLUSIONS (≤ 25 lines)
+======================================================================================================================
+1. No debiasing of teacher agreement can create lift where the teacher is at ceiling: SSR/Natarajan corrections divide by
+   (1 − e+ − e−), which → 0 there, and cost 3–10× variance at split states; relabelling symmetry (SSR §5.5) proves that
+   agreement statistics among model samples cannot tell "consensus right" from "consensus wrong" — the theory behind §6b.5.
+2. Properness w.r.t. the correct action needs the reference noise to be conditionally independent of the miner's signal; a
+   same-family fine-tune violates it by construction (RT-7 in scoring-rule language). Outcomes are the only reference that
+   is independent of every miner.
+3. Gao et al.: keeping a peer/teacher term in the RANKING raises the outcome coverage needed to make effort dominant; the
+   cheap signal ("act like the teacher") is exactly what a fine-tune supplies. Rank on outcomes; gate on the teacher.
+4. Elicitability: quotient actions into finite classes, then 0–1 membership is the unique consistent score for "the right
+   decision"; densities over text elicit shape (the typicality drift). Selective and exhaustive elicitation are exclusive,
+   so commit-incentives (τ = 0.03 soft-max) are correct and hedging credit is provably unavailable; change the reference SET
+   to S+ / tilted refs, not the divergence.
+5. OPE without execution is dead for text agents: IS/WIS/DR ρ ≈ 0 or negative with exact propensities (ADWM); replay
+   mispredicts every outcome and 74–77 % of forks diverge at the first action (Replay Gap, mini-swe on SWE-bench). What
+   survives is (a) branched execution with a fixed continuation policy — the harvest — and (b) in-support scoring only
+   (IQL): unmatched actions get the reference term, never extrapolated value.
+6. The Gibbs tilt π_ref · exp(Â/β) is the principled bridge between "teacher likelihood" and "verified value": β = ∞ is the
+   live rule, β → 0 is VAV; a weight clip (IQL: 100) bounds how far noise in Â can move a turn; the upper expectile over
+   N ≥ 8 continuations is the noise-robust "best in-support value".
+7. Any miner-likelihood weight over stored actions re-opens propensity overfitting = the RT-3 lpA channel; only usable
+   behind an "acts what it ranks" gate.
+8. Prediction-powered inference makes the outcome the TARGET and the proxy a control variate: unbiased for the outcome mean
+   for any proxy, variance ∝ (1 − r²)/n_graded. Incentive-compatible only if the graded subset is unpredictable →
+   commit-then-reveal per epoch, which also turns each revealed table into next epoch's training data.
+9. Our crown rule is the parameter-free Ladder + floor; the residual attack is winner's curse across hotkeys (max of k
+   draws ≈ SE√(2 ln k)); publishing every margin is the Kaggle mechanism — release {crown/no-crown, king score} only.
+
+======================================================================================================================
+CANDIDATE MECHANISMS (≤ 6 rule sketches)
+======================================================================================================================
+Common to all: gates as today (think-close, length floor, B licence, typicality-within-width vs fresh blind refs, R ≥ floor,
+no-repeat); classes via body-level matcher (norm-exact → body Jaccard → stored equivalence verdicts); forfeit floor kept;
+crown = paired mean > max(2·SE, δ_T). "Table" = per-state {class → (solved, total)} from N ≥ 8 teacher continuations + 2
+frontier proposals, teacher-finished, env-graded (store §6.3 recipe). Costs are per 1,000-turn duel unless stated.
+
+M1  PPI-rectified score (7.1 + 5.1).  side = mean_all(T_proxy) − mean_G(T_proxy − T_true); T_proxy = today's z-scaled
+    min(R,G,A) (or any teacher leg), T_true = V(class(y_A)) − B(x) on the graded set G; G = the epoch's tables, committed by
+    hash in the manifest, revealed at the next fold.
+    Maximiser: E[T_true] over D — the verified-best class wherever tables exist, teacher-indifferent elsewhere; above the
+    teacher iff tables hold frontier-verified or minority-teacher successes. Gaming: (i) learn which x are graded — blocked
+    during the epoch by the commit (a fixed model cannot tell graded x apart), open after reveal (intended); (ii) inflate
+    proxy variance to swamp the rectifier — bounded by z-scaling and by publishing Var(T_proxy − T_true); (iii) all VAV
+    surfaces (generic never a class; repeat-last → S−). Cost: 0 per duel; harvest ~300 graded states/epoch ≈ $150 + ~2.5k
+    container-hours; CI width ∝ √((1 − r²)/n_G). Killing experiment ($0, stored data): on the 33 wvk-22 verdicts' turns that
+    fall on the 30 graded states + D2's 17k identical-task outcomes, compute r = corr(T_proxy, T_true) per turn. If r ≤ 0.1
+    the rectifier variance equals outcomes-only variance and M1 is VAV with a commit — decide n_G from Var(T_true)/n_G vs the
+    0.13 teacher–king outcome gap; if r < 0 (proxy anti-aligned, the RT-7 sign) the proxy must go to gates only.
+
+M2  Noise-corrected teacher agreement (1.1, 2.1, 2.3).  T = [1[class(y_A) = class(y_ref)] − e+_b] / (1 − e+_b − e−_b),
+    e±_b per (harness × teacher-solve-rate bucket) from the confident-learning joint Q(teacher class, verified class).
+    Maximiser: the teacher's class in buckets with coefficient > 0; undefined/negative at ceiling buckets (e− → 1) — so
+    optimum ≤ teacher everywhere it is defined. Gaming: negative-coefficient buckets pay "anything but the teacher" → generic
+    exploration; same-family bias means the miner's class is not conditionally independent of the teacher's → not proper.
+    Cost: 0 per duel; buckets from the graded harvest. Killing experiment ($0, the 30 graded states): estimate e+, e− per
+    teacher-solve-rate bucket; if 1 − e+ − e− > 0.2 only in buckets where the teacher already solves ≥ 0.6, M2 has no lift
+    anywhere and is dropped (expected).
+
+M3  Tilted-teacher log score (4.1, 4.2, 1.4).  T = lpC_sum(y_A|x, ∅) + Â(x, y_A)/β − log Σ_j lpC-weighted exp(Â_j/β) over the
+    table's actions; Â = V_τ-expectile-centred solve rate of class(y_A) (unmatched → 0); β set so max exp(Â/β) ≤ 100; lpC in
+    the wvk-22 summed byte-normalised form.
+    Maximiser: argmax of the Gibbs-tilted teacher — verified-best class where tables exist, teacher elsewhere; smooth in β
+    between the live A-leg (β = ∞) and VAV (β → 0). Gaming: per-byte/short-action bias of the lpC term (the A-leg lesson —
+    normalise), the shape channel any lpC term keeps open (mitigated by min with the gates), Ẑ noise from ≤ 8 stored
+    actions, parroting stored S+ actions (= the goal). Cost: A-leg echoes as today + table lookup. Killing experiment ($0,
+    §6.5 data): sweep β ∈ {∞, 3, 1, 0.3, 0.1, → 0} on the 18 harvested states with teacher-LOO / king / `ls -la` /
+    repeat-last; alive iff some β gives teacher − king z > 1.4 (VAV's) with `ls -la` and repeat-last below the king.
+
+M4  Soft-max over S+ refs with spread centering (4.3, 1.4, store S1b).  Keep the live R form but run the centred tempered
+    LME (τ = 0.03) over VERIFIED-SOLVED reference actions y_i⁺ only, and subtract the S+ set's own spread term
+    ½·mean_{i≠j} 1[class(y_i⁺) ≠ class(y_j⁺)] scaled to R units; blind refs feed the typicality GATE only.
+    Maximiser: a thought that makes the teacher take an action that WORKED here — C conditioned on success, above C at every
+    split state; unchanged elsewhere. Gaming: publishing S+ thoughts → parroting (publish y⁺ only; R needs no z⁺); filler
+    ≈ 0 by centering; mode-guessing on published y⁺ (RT-9 — is the intended lesson); no lift at ceiling states without
+    frontier-verified y⁺. Cost: k echoes per decision turn as today (refs from the table, not fresh) — zero extra GPU; fresh
+    blind refs still sampled for the gate. Killing experiment (~$3): on the 7 split states, R over S+ vs R over blind refs
+    for teacher-LOO-solved / teacher-LOO-failed / king / filler: alive iff R_S+ separates solved-from-failed teacher thoughts
+    (blind R does not — X2: band 0.84 vs 0.85) and filler stays ≈ 0.
+
+M5  Self-normalised IS over the table with miner propensities (3.1, 3.4).  T = Σ_j w_j (V_j − B(x)) / Σ_j w_j,
+    w_j = exp(lpA_sum(y_j|x) − lpC_sum(y_j|x)) clipped, over the state's stored actions y_j; gate: the miner's SAMPLED action
+    must class-match its own top-w_j stored action ("acts what it ranks"), else T = 0.
+    Maximiser: put likelihood mass on the verified-best stored class AND produce it — VAV without a matcher on the miner's
+    sample, with the miner's own distribution scored (n_miner_samples = 1 noise gone). Gaming: propensity overfitting /
+    RT-3 — a ranker over published strings that cannot act (blocked only by the gate, which re-introduces the matcher);
+    memorising the table (intended); exact propensities let a miner shape lpA arbitrarily. Cost: |table| ≈ 6–10 echoes per
+    decision turn on the MINER engine (cheap, no teacher). Killing experiment (~$1, 18 states): compute w-ranking of
+    solved vs failed stored actions under the king engine vs teacher engine; dead if lpA-rank does not separate them
+    (AUC ≈ 0.5) or if the king out-ranks the teacher without out-acting it.
+
+M6  Release policy + committed labels (5.1, 5.2, 7.1) — layer over any of M1–M5.  Publish per verdict only {crown / no
+    crown, king running score, slice digest}; challenger margins and per-leg telemetry quantised to the slice SE and released
+    at the next fold together with the epoch's committed tables; the ranking term never contains a teacher-likelihood leg
+    (Gao: peer term only as a gate).
+    Maximiser: unchanged from the underlying rule; removes the boosting/winner's-curse information channel (max of k hotkey
+    draws ≈ SE√(2 ln k)) and the graded-set targeting channel. Gaming: sybil hotkeys still buy lottery tickets against δ
+    (unchanged); operators lose live telemetry for a fold cadence. Cost: 0. Killing experiment ($0, verdict history): count
+    submissions per coldkey that are ε-perturbations of the incumbent (weight-distance / identical actions on shared turns)
+    and the fraction of crowns at z ∈ [2, 2.8]; if both are ≈ 0 the channel is not being used and M6 is deferred.
+
+Ranking for the next spend: M1 (theory-complete, zero duel cost, decides itself from stored data) ≥ M4 (reuses the live
+pipeline, tests the one open question — does R over verified refs carry signal that blind R does not) > M3 (needs N ≥ 8
+tables before β can be read) > M6 (cheap hygiene, independent) > M5 (RT-3 surface) > M2 (expected dead; run the $0 check to
+close it). Every mechanism above still depends on the harvest at N ≥ 8 (store §7): none of the literature offers a way to
+manufacture the outcome label from model samples, and 1.1/§6b.5 together say why none can.

@@ -1,0 +1,2145 @@
+{
+ "duels": [
+  "chal-00614",
+  "chal-00613",
+  "chal-00615",
+  "chal-00621",
+  "chal-00623",
+  "chal-00625"
+ ],
+ "definitions": "contested        king action != challenger action on the same turn, by one of the\n                   rules below (norm-exact differs; token-Jaccard < 0.5; < 0.3).\n  norm-exact       common.norm_action equality (whitespace / quotes unified, dialect body).\n  jaccard          token-set Jaccard of the two action bodies (common.jaccard).\n  decision-contested  the judge (glm-5.3-flash, T=0) says the two actions are NOT the\n                   same decision; the calibrated rate per Jaccard bin converts a\n                   surface rule into an expected number of decision-contested turns.\n  resumable        the turn's rollout harness can be rebuilt + resumed by ops/recoverable:\n                   mini_swe_textbased, verifiers bash, terminus_2 (NOT pi / claude_code /\n                   kimi_code / hermes_agent / null).\n  graded           the environment scores the finished episode: coding (swesmith, multiswe,\n                   scaleswe, swerebench_v2, swelego, r2e_gym), terminal (terminal_lego,\n                   terminal_bench_2), math (single-turn, gradable directly), tau2.\n  eligible         resumable AND graded AND the action has an environment effect (not a\n                   `text` final report, whose content never changes the grade).\n  continuation     one teacher-policy run from the forced state to episode end (+ grade).\n  k                continuations per forced action (each contested turn costs 2k).\n  q = E[p(1-p)]    within-state Bernoulli noise of one continuation; the only power knob\n                   besides n and k.\n  SE_o(n,k)        sqrt(2 q / (k n)): SE of the mean paired solve difference over n turns.\n  min edge         2 * SE_o: the smallest true per-contested-turn solve-rate edge (in\n                   probability points) that clears a 2-sigma bar.\n  sd unit          the wvk-22 dense meter's per-turn unit (turn = min(z_R, typ_c, z_A));\n                   the crown bar is margin > max(2*SE, 0.2 sd) at n = 1000.",
+ "per_duel": {
+  "chal-00614": {
+   "margin_sd": 0.45966140915160925,
+   "z": 6.113080013576414,
+   "se": 0.07519309548227025,
+   "n_paired": 984,
+   "sd_turn_diff": 2.3587152398020663,
+   "n_both": 986,
+   "exact_diff": 803,
+   "j_lt_05": 443,
+   "j_lt_03": 207,
+   "eligible": 375,
+   "eligible_j_lt_05": 156,
+   "eligible_j_lt_03": 100,
+   "eligible_exact_diff": 289
+  },
+  "chal-00613": {
+   "margin_sd": 0.19656421423290127,
+   "z": 2.5543105786439,
+   "se": 0.0769539209038779,
+   "n_paired": 990,
+   "sd_turn_diff": 2.4212985943611938,
+   "n_both": 981,
+   "exact_diff": 749,
+   "j_lt_05": 339,
+   "j_lt_03": 147,
+   "eligible": 399,
+   "eligible_j_lt_05": 127,
+   "eligible_j_lt_03": 73,
+   "eligible_exact_diff": 259
+  },
+  "chal-00615": {
+   "margin_sd": -0.3653418838944745,
+   "z": -5.040963200759853,
+   "se": 0.0724746183109221,
+   "n_paired": 981,
+   "sd_turn_diff": 2.2699716878469833,
+   "n_both": 975,
+   "exact_diff": 836,
+   "j_lt_05": 505,
+   "j_lt_03": 222,
+   "eligible": 351,
+   "eligible_j_lt_05": 148,
+   "eligible_j_lt_03": 91,
+   "eligible_exact_diff": 266
+  },
+  "chal-00621": {
+   "margin_sd": -0.03646104027159798,
+   "z": -0.6916833439888861,
+   "se": 0.05271348600261196,
+   "n_paired": 986,
+   "sd_turn_diff": 1.6552370356102784,
+   "n_both": 990,
+   "exact_diff": 721,
+   "j_lt_05": 307,
+   "j_lt_03": 134,
+   "eligible": 365,
+   "eligible_j_lt_05": 114,
+   "eligible_j_lt_03": 65,
+   "eligible_exact_diff": 217
+  },
+  "chal-00623": {
+   "margin_sd": 0.010849871470303784,
+   "z": 0.19876412373664357,
+   "se": 0.054586669195289664,
+   "n_paired": 991,
+   "sd_turn_diff": 1.7183966695008057,
+   "n_both": 989,
+   "exact_diff": 797,
+   "j_lt_05": 374,
+   "j_lt_03": 158,
+   "eligible": 375,
+   "eligible_j_lt_05": 133,
+   "eligible_j_lt_03": 76,
+   "eligible_exact_diff": 272
+  },
+  "chal-00625": {
+   "margin_sd": -0.017281247824343874,
+   "z": -0.40059234235131136,
+   "se": 0.04313923656880233,
+   "n_paired": 984,
+   "sd_turn_diff": 1.3532249746554588,
+   "n_both": 989,
+   "exact_diff": 749,
+   "j_lt_05": 321,
+   "j_lt_03": 136,
+   "eligible": 350,
+   "eligible_j_lt_05": 110,
+   "eligible_j_lt_03": 58,
+   "eligible_exact_diff": 230
+  }
+ },
+ "rates": {
+  "all": {
+   "ALL both-valid": {
+    "n": 5910,
+    "exact_diff": 4655,
+    "j_lt_05": 2289,
+    "j_lt_03": 1004,
+    "ref_pair_diff": 0.8411912082906274,
+    "ref_pair_jaccard": 0.5315822150666039
+   }
+  },
+  "kind": {
+   "bash": {
+    "n": 1959,
+    "exact_diff": 1402,
+    "j_lt_05": 760,
+    "j_lt_03": 487,
+    "ref_pair_diff": 0.8096713130270177,
+    "ref_pair_jaccard": 0.5321686675120927
+   },
+   "text": {
+    "n": 1923,
+    "exact_diff": 1790,
+    "j_lt_05": 914,
+    "j_lt_03": 286,
+    "ref_pair_diff": 0.9483446004506847,
+    "ref_pair_jaccard": 0.4486898173910279
+   },
+   "tool_call": {
+    "n": 1691,
+    "exact_diff": 1340,
+    "j_lt_05": 544,
+    "j_lt_03": 211,
+    "ref_pair_diff": 0.839253461770018,
+    "ref_pair_jaccard": 0.6053012306951736
+   },
+   "terminus_json": {
+    "n": 201,
+    "exact_diff": 79,
+    "j_lt_05": 62,
+    "j_lt_03": 18,
+    "ref_pair_diff": 0.4377104377104377,
+    "ref_pair_jaccard": 0.48265452580348733
+   },
+   "boxed": {
+    "n": 136,
+    "exact_diff": 44,
+    "j_lt_05": 9,
+    "j_lt_03": 2,
+    "ref_pair_diff": 0.3827160493827161,
+    "ref_pair_jaccard": 0.8686675473500364
+   }
+  },
+  "source": {
+   "terminal/terminal_lego": {
+    "n": 1014,
+    "exact_diff": 776,
+    "j_lt_05": 371,
+    "j_lt_03": 191,
+    "ref_pair_diff": 0.8285335981463091,
+    "ref_pair_jaccard": 0.5530213661743114
+   },
+   "coding/scaleswe": {
+    "n": 660,
+    "exact_diff": 568,
+    "j_lt_05": 316,
+    "j_lt_03": 151,
+    "ref_pair_diff": 0.934560327198364,
+    "ref_pair_jaccard": 0.45425445596825004
+   },
+   "coding/swesmith": {
+    "n": 609,
+    "exact_diff": 478,
+    "j_lt_05": 238,
+    "j_lt_03": 124,
+    "ref_pair_diff": 0.8533114395183361,
+    "ref_pair_jaccard": 0.5251697950988572
+   },
+   "other/affine_when2call": {
+    "n": 558,
+    "exact_diff": 531,
+    "j_lt_05": 335,
+    "j_lt_03": 84,
+    "ref_pair_diff": 0.9767025089605734,
+    "ref_pair_jaccard": 0.41331506133007484
+   },
+   "coding/multiswe": {
+    "n": 512,
+    "exact_diff": 409,
+    "j_lt_05": 194,
+    "j_lt_03": 79,
+    "ref_pair_diff": 0.8919814446653413,
+    "ref_pair_jaccard": 0.537933876688533
+   },
+   "coding/swelego": {
+    "n": 319,
+    "exact_diff": 256,
+    "j_lt_05": 138,
+    "j_lt_03": 73,
+    "ref_pair_diff": 0.889589905362776,
+    "ref_pair_jaccard": 0.4769505846414685
+   },
+   "coding/swerebench_v2": {
+    "n": 311,
+    "exact_diff": 261,
+    "j_lt_05": 137,
+    "j_lt_03": 73,
+    "ref_pair_diff": 0.8951434878587197,
+    "ref_pair_jaccard": 0.4899864753319617
+   },
+   "other/affine_sql": {
+    "n": 304,
+    "exact_diff": 291,
+    "j_lt_05": 99,
+    "j_lt_03": 16,
+    "ref_pair_diff": 0.9757174392935982,
+    "ref_pair_jaccard": 0.5275228086249235
+   },
+   "other/affine_tmax": {
+    "n": 244,
+    "exact_diff": 175,
+    "j_lt_05": 85,
+    "j_lt_03": 37,
+    "ref_pair_diff": 0.7285513361462729,
+    "ref_pair_jaccard": 0.5295503624902826
+   },
+   "coding/r2e_gym": {
+    "n": 185,
+    "exact_diff": 124,
+    "j_lt_05": 66,
+    "j_lt_03": 30,
+    "ref_pair_diff": 0.7531531531531531,
+    "ref_pair_jaccard": 0.5135039219874072
+   },
+   "other/affine_agent": {
+    "n": 127,
+    "exact_diff": 69,
+    "j_lt_05": 17,
+    "j_lt_03": 5,
+    "ref_pair_diff": 0.5328083989501312,
+    "ref_pair_jaccard": 0.7726987893437285
+   },
+   "terminal/terminal_bench_2": {
+    "n": 113,
+    "exact_diff": 86,
+    "j_lt_05": 41,
+    "j_lt_03": 15,
+    "ref_pair_diff": 0.7807807807807807,
+    "ref_pair_jaccard": 0.4755346802904025
+   },
+   "math/affine_math": {
+    "n": 81,
+    "exact_diff": 12,
+    "j_lt_05": 1,
+    "j_lt_03": 0,
+    "ref_pair_diff": 0.25416666666666665,
+    "ref_pair_jaccard": 0.940009867583397
+   },
+   "other/affine_eog": {
+    "n": 80,
+    "exact_diff": 62,
+    "j_lt_05": 21,
+    "j_lt_03": 10,
+    "ref_pair_diff": 0.8083333333333333,
+    "ref_pair_jaccard": 0.6360005029131979
+   },
+   "other/affine_prolog": {
+    "n": 78,
+    "exact_diff": 57,
+    "j_lt_05": 27,
+    "j_lt_03": 14,
+    "ref_pair_diff": 0.7316017316017316,
+    "ref_pair_jaccard": 0.6604428401483018
+   },
+   "other/affine_wikispeedia": {
+    "n": 76,
+    "exact_diff": 54,
+    "j_lt_05": 11,
+    "j_lt_03": 1,
+    "ref_pair_diff": 0.6929824561403508,
+    "ref_pair_jaccard": 0.6823138354744019
+   },
+   "other/nl2repobench": {
+    "n": 71,
+    "exact_diff": 54,
+    "j_lt_05": 19,
+    "j_lt_03": 12,
+    "ref_pair_diff": 0.8826291079812206,
+    "ref_pair_jaccard": 0.4868419913626247
+   },
+   "other/affine_nl2lib": {
+    "n": 64,
+    "exact_diff": 59,
+    "j_lt_05": 36,
+    "j_lt_03": 20,
+    "ref_pair_diff": 0.9482758620689655,
+    "ref_pair_jaccard": 0.44553151986763107
+   },
+   "other/affine_uuidctf": {
+    "n": 64,
+    "exact_diff": 51,
+    "j_lt_05": 36,
+    "j_lt_03": 24,
+    "ref_pair_diff": 0.890625,
+    "ref_pair_jaccard": 0.46810059055443376
+   },
+   "other/affine_autobench": {
+    "n": 55,
+    "exact_diff": 48,
+    "j_lt_05": 13,
+    "j_lt_03": 4,
+    "ref_pair_diff": 0.9030303030303031,
+    "ref_pair_jaccard": 0.5904857416127238
+   },
+   "tau2/affine_tau2": {
+    "n": 45,
+    "exact_diff": 39,
+    "j_lt_05": 10,
+    "j_lt_03": 3,
+    "ref_pair_diff": 0.9185185185185185,
+    "ref_pair_jaccard": 0.5243800181969971
+   },
+   "other/affine_oolong": {
+    "n": 43,
+    "exact_diff": 28,
+    "j_lt_05": 17,
+    "j_lt_03": 6,
+    "ref_pair_diff": 0.6341463414634146,
+    "ref_pair_jaccard": 0.5933579492601608
+   },
+   "math/affine_i3math": {
+    "n": 37,
+    "exact_diff": 19,
+    "j_lt_05": 3,
+    "j_lt_03": 0,
+    "ref_pair_diff": 0.4864864864864865,
+    "ref_pair_jaccard": 0.8297254546519813
+   },
+   "tau2/affine_tau2_synth": {
+    "n": 35,
+    "exact_diff": 19,
+    "j_lt_05": 4,
+    "j_lt_03": 0,
+    "ref_pair_diff": 0.5714285714285714,
+    "ref_pair_jaccard": 0.6964619221276345
+   },
+   "other/affine_trivia": {
+    "n": 30,
+    "exact_diff": 2,
+    "j_lt_05": 2,
+    "j_lt_03": 2,
+    "ref_pair_diff": 0.1777777777777778,
+    "ref_pair_jaccard": 0.8259793846926927
+   },
+   "other/affine_logic": {
+    "n": 25,
+    "exact_diff": 11,
+    "j_lt_05": 6,
+    "j_lt_03": 6,
+    "ref_pair_diff": 0.36,
+    "ref_pair_jaccard": 0.7798497813897081
+   },
+   "other/affine_unscramble": {
+    "n": 21,
+    "exact_diff": 7,
+    "j_lt_05": 0,
+    "j_lt_03": 0,
+    "ref_pair_diff": 0.47619047619047616,
+    "ref_pair_jaccard": 0.7679226151150843
+   },
+   "other/affine_rcore": {
+    "n": 20,
+    "exact_diff": 9,
+    "j_lt_05": 6,
+    "j_lt_03": 5,
+    "ref_pair_diff": 0.3833333333333333,
+    "ref_pair_jaccard": 0.7413158501245563
+   },
+   "other/affine_science": {
+    "n": 18,
+    "exact_diff": 13,
+    "j_lt_05": 5,
+    "j_lt_03": 2,
+    "ref_pair_diff": 0.7407407407407407,
+    "ref_pair_jaccard": 0.6316382035255471
+   },
+   "other/affine_deshuffle": {
+    "n": 18,
+    "exact_diff": 15,
+    "j_lt_05": 5,
+    "j_lt_03": 2,
+    "ref_pair_diff": 0.8518518518518519,
+    "ref_pair_jaccard": 0.45877052778846805
+   },
+   "other/affine_i3code": {
+    "n": 17,
+    "exact_diff": 17,
+    "j_lt_05": 5,
+    "j_lt_03": 2,
+    "ref_pair_diff": 0.9803921568627451,
+    "ref_pair_jaccard": 0.5395272678148748
+   },
+   "other/affine_ifeval": {
+    "n": 15,
+    "exact_diff": 13,
+    "j_lt_05": 7,
+    "j_lt_03": 5,
+    "ref_pair_diff": 0.8666666666666667,
+    "ref_pair_jaccard": 0.5361208506062808
+   },
+   "other/affine_pydantic": {
+    "n": 15,
+    "exact_diff": 15,
+    "j_lt_05": 4,
+    "j_lt_03": 1,
+    "ref_pair_diff": 1.0,
+    "ref_pair_jaccard": 0.5322870275653833
+   },
+   "other/affine_verbatim": {
+    "n": 13,
+    "exact_diff": 5,
+    "j_lt_05": 0,
+    "j_lt_03": 0,
+    "ref_pair_diff": 0.6666666666666667,
+    "ref_pair_jaccard": 0.7386583859678025
+   },
+   "other/affine_rgym": {
+    "n": 12,
+    "exact_diff": 7,
+    "j_lt_05": 5,
+    "j_lt_03": 1,
+    "ref_pair_diff": 0.4722222222222222,
+    "ref_pair_jaccard": 0.7698705746978105
+   },
+   "other/affine_notool": {
+    "n": 9,
+    "exact_diff": 5,
+    "j_lt_05": 5,
+    "j_lt_03": 4,
+    "ref_pair_diff": 0.40740740740740744,
+    "ref_pair_jaccard": 0.6173510466988728
+   },
+   "math/affine_numina": {
+    "n": 7,
+    "exact_diff": 7,
+    "j_lt_05": 3,
+    "j_lt_03": 2,
+    "ref_pair_diff": 0.5714285714285714,
+    "ref_pair_jaccard": 0.7586786609646666
+   },
+   "other/affine_wiki": {
+    "n": 5,
+    "exact_diff": 3,
+    "j_lt_05": 1,
+    "j_lt_03": 0,
+    "ref_pair_diff": 0.6,
+    "ref_pair_jaccard": 0.6964037210369793
+   }
+  },
+  "harness": {
+   "mini_swe_textbased": {
+    "n": 2166,
+    "exact_diff": 1604,
+    "j_lt_05": 845,
+    "j_lt_03": 512,
+    "ref_pair_diff": 0.8272699004975125,
+    "ref_pair_jaccard": 0.5199026510464547
+   },
+   "null": {
+    "n": 1214,
+    "exact_diff": 902,
+    "j_lt_05": 447,
+    "j_lt_03": 132,
+    "ref_pair_diff": 0.7658697444352844,
+    "ref_pair_jaccard": 0.5849553673035363
+   },
+   "claude_code": {
+    "n": 921,
+    "exact_diff": 850,
+    "j_lt_05": 455,
+    "j_lt_03": 197,
+    "ref_pair_diff": 0.9455409356725146,
+    "ref_pair_jaccard": 0.4572465379416733
+   },
+   "pi": {
+    "n": 760,
+    "exact_diff": 661,
+    "j_lt_05": 272,
+    "j_lt_03": 87,
+    "ref_pair_diff": 0.9254327563249001,
+    "ref_pair_jaccard": 0.5554017566523524
+   },
+   "bash": {
+    "n": 450,
+    "exact_diff": 395,
+    "j_lt_05": 142,
+    "j_lt_03": 40,
+    "ref_pair_diff": 0.9189189189189189,
+    "ref_pair_jaccard": 0.5830431004676894
+   },
+   "terminus_2": {
+    "n": 201,
+    "exact_diff": 79,
+    "j_lt_05": 62,
+    "j_lt_03": 18,
+    "ref_pair_diff": 0.4377104377104377,
+    "ref_pair_jaccard": 0.48265452580348733
+   },
+   "kimi_code": {
+    "n": 80,
+    "exact_diff": 73,
+    "j_lt_05": 32,
+    "j_lt_03": 14,
+    "ref_pair_diff": 0.9692982456140351,
+    "ref_pair_jaccard": 0.45119689591065976
+   },
+   "affine-tau2-v1": {
+    "n": 45,
+    "exact_diff": 39,
+    "j_lt_05": 10,
+    "j_lt_03": 3,
+    "ref_pair_diff": 0.9185185185185185,
+    "ref_pair_jaccard": 0.5243800181969971
+   },
+   "hermes_agent": {
+    "n": 38,
+    "exact_diff": 33,
+    "j_lt_05": 20,
+    "j_lt_03": 1,
+    "ref_pair_diff": 0.962962962962963,
+    "ref_pair_jaccard": 0.4678782185861314
+   },
+   "affine-tau2-synth-v1": {
+    "n": 35,
+    "exact_diff": 19,
+    "j_lt_05": 4,
+    "j_lt_03": 0,
+    "ref_pair_diff": 0.5714285714285714,
+    "ref_pair_jaccard": 0.6964619221276345
+   }
+  },
+  "depth": {
+   "depth  0-2": {
+    "n": 1650,
+    "exact_diff": 1225,
+    "j_lt_05": 600,
+    "j_lt_03": 188,
+    "ref_pair_diff": 0.7899432278994323,
+    "ref_pair_jaccard": 0.593333614746155
+   },
+   "depth 16-25": {
+    "n": 833,
+    "exact_diff": 687,
+    "j_lt_05": 336,
+    "j_lt_03": 163,
+    "ref_pair_diff": 0.8939024390243903,
+    "ref_pair_jaccard": 0.4827107971389856
+   },
+   "depth  3-5": {
+    "n": 780,
+    "exact_diff": 632,
+    "j_lt_05": 268,
+    "j_lt_03": 112,
+    "ref_pair_diff": 0.8492268041237113,
+    "ref_pair_jaccard": 0.54515422273834
+   },
+   "depth 26-40": {
+    "n": 698,
+    "exact_diff": 565,
+    "j_lt_05": 302,
+    "j_lt_03": 145,
+    "ref_pair_diff": 0.873847646773411,
+    "ref_pair_jaccard": 0.500778047206418
+   },
+   "depth 10-15": {
+    "n": 671,
+    "exact_diff": 555,
+    "j_lt_05": 268,
+    "j_lt_03": 138,
+    "ref_pair_diff": 0.8545454545454545,
+    "ref_pair_jaccard": 0.5158332043631193
+   },
+   "depth  6-9": {
+    "n": 662,
+    "exact_diff": 510,
+    "j_lt_05": 250,
+    "j_lt_03": 122,
+    "ref_pair_diff": 0.8249363867684478,
+    "ref_pair_jaccard": 0.5267971174496908
+   },
+   "depth 41+": {
+    "n": 616,
+    "exact_diff": 481,
+    "j_lt_05": 265,
+    "j_lt_03": 136,
+    "ref_pair_diff": 0.8643790849673203,
+    "ref_pair_jaccard": 0.4706580859775889
+   }
+  },
+  "eligible": {
+   "ELIGIBLE": {
+    "n": 2215,
+    "exact_diff": 1533,
+    "j_lt_05": 788,
+    "j_lt_03": 463,
+    "ref_pair_diff": 0.7806176783812566,
+    "ref_pair_jaccard": 0.5530698484359274
+   }
+  },
+  "eligible_harness": {
+   "mini_swe_textbased/bash": {
+    "n": 1672,
+    "exact_diff": 1208,
+    "j_lt_05": 659,
+    "j_lt_03": 426,
+    "ref_pair_diff": 0.8220475614671503,
+    "ref_pair_jaccard": 0.520593099037864
+   },
+   "bash/tool_call": {
+    "n": 299,
+    "exact_diff": 249,
+    "j_lt_05": 91,
+    "j_lt_03": 27,
+    "ref_pair_diff": 0.8866213151927438,
+    "ref_pair_jaccard": 0.6223337704223582
+   },
+   "terminus_2/terminus_json": {
+    "n": 126,
+    "exact_diff": 45,
+    "j_lt_05": 34,
+    "j_lt_03": 10,
+    "ref_pair_diff": 0.41005291005291,
+    "ref_pair_jaccard": 0.4908594633454103
+   },
+   "null/boxed": {
+    "n": 118,
+    "exact_diff": 31,
+    "j_lt_05": 4,
+    "j_lt_03": 0,
+    "ref_pair_diff": 0.32763532763532766,
+    "ref_pair_jaccard": 0.9051336002461117
+   }
+  },
+  "eligible_source": {
+   "terminal/terminal_lego": {
+    "n": 805,
+    "exact_diff": 580,
+    "j_lt_05": 281,
+    "j_lt_03": 161,
+    "ref_pair_diff": 0.801418439716312,
+    "ref_pair_jaccard": 0.5617002095749701
+   },
+   "coding/swesmith": {
+    "n": 343,
+    "exact_diff": 244,
+    "j_lt_05": 130,
+    "j_lt_03": 84,
+    "ref_pair_diff": 0.8036929057337221,
+    "ref_pair_jaccard": 0.5373689750758175
+   },
+   "coding/scaleswe": {
+    "n": 236,
+    "exact_diff": 181,
+    "j_lt_05": 103,
+    "j_lt_03": 62,
+    "ref_pair_diff": 0.9037356321839081,
+    "ref_pair_jaccard": 0.45564285717683006
+   },
+   "coding/multiswe": {
+    "n": 228,
+    "exact_diff": 172,
+    "j_lt_05": 84,
+    "j_lt_03": 44,
+    "ref_pair_diff": 0.8303571428571428,
+    "ref_pair_jaccard": 0.5561039000874729
+   },
+   "coding/swelego": {
+    "n": 170,
+    "exact_diff": 114,
+    "j_lt_05": 66,
+    "j_lt_03": 46,
+    "ref_pair_diff": 0.8115079365079365,
+    "ref_pair_jaccard": 0.5260412893526374
+   },
+   "coding/swerebench_v2": {
+    "n": 137,
+    "exact_diff": 108,
+    "j_lt_05": 61,
+    "j_lt_03": 35,
+    "ref_pair_diff": 0.8794871794871795,
+    "ref_pair_jaccard": 0.46731997940369263
+   },
+   "coding/r2e_gym": {
+    "n": 110,
+    "exact_diff": 60,
+    "j_lt_05": 40,
+    "j_lt_03": 19,
+    "ref_pair_diff": 0.6151515151515152,
+    "ref_pair_jaccard": 0.5042723910837412
+   },
+   "math/affine_math": {
+    "n": 81,
+    "exact_diff": 12,
+    "j_lt_05": 1,
+    "j_lt_03": 0,
+    "ref_pair_diff": 0.25416666666666665,
+    "ref_pair_jaccard": 0.940009867583397
+   },
+   "terminal/terminal_bench_2": {
+    "n": 62,
+    "exact_diff": 37,
+    "j_lt_05": 17,
+    "j_lt_03": 10,
+    "ref_pair_diff": 0.6129032258064516,
+    "ref_pair_jaccard": 0.5415438182033822
+   },
+   "math/affine_i3math": {
+    "n": 37,
+    "exact_diff": 19,
+    "j_lt_05": 3,
+    "j_lt_03": 0,
+    "ref_pair_diff": 0.4864864864864865,
+    "ref_pair_jaccard": 0.8297254546519813
+   },
+   "math/affine_numina": {
+    "n": 6,
+    "exact_diff": 6,
+    "j_lt_05": 2,
+    "j_lt_03": 2,
+    "ref_pair_diff": 0.6666666666666667,
+    "ref_pair_jaccard": 0.718458437792111
+   }
+  },
+  "eligible_depth": {
+   "depth  0-2": {
+    "n": 527,
+    "exact_diff": 306,
+    "j_lt_05": 126,
+    "j_lt_03": 57,
+    "ref_pair_diff": 0.6704980842911877,
+    "ref_pair_jaccard": 0.6990069048834127
+   },
+   "depth  3-5": {
+    "n": 321,
+    "exact_diff": 247,
+    "j_lt_05": 113,
+    "j_lt_03": 61,
+    "ref_pair_diff": 0.8322916666666667,
+    "ref_pair_jaccard": 0.5361446864994445
+   },
+   "depth 16-25": {
+    "n": 313,
+    "exact_diff": 232,
+    "j_lt_05": 122,
+    "j_lt_03": 74,
+    "ref_pair_diff": 0.8554476806903991,
+    "ref_pair_jaccard": 0.48358574290626194
+   },
+   "depth  6-9": {
+    "n": 285,
+    "exact_diff": 208,
+    "j_lt_05": 119,
+    "j_lt_03": 77,
+    "ref_pair_diff": 0.7990543735224587,
+    "ref_pair_jaccard": 0.5088966075202503
+   },
+   "depth 26-40": {
+    "n": 284,
+    "exact_diff": 199,
+    "j_lt_05": 117,
+    "j_lt_03": 67,
+    "ref_pair_diff": 0.7841043890865955,
+    "ref_pair_jaccard": 0.5228071973505657
+   },
+   "depth 10-15": {
+    "n": 264,
+    "exact_diff": 205,
+    "j_lt_05": 106,
+    "j_lt_03": 70,
+    "ref_pair_diff": 0.8488372093023255,
+    "ref_pair_jaccard": 0.48528989671027656
+   },
+   "depth 41+": {
+    "n": 221,
+    "exact_diff": 136,
+    "j_lt_05": 85,
+    "j_lt_03": 57,
+    "ref_pair_diff": 0.7534246575342466,
+    "ref_pair_jaccard": 0.5035510511810393
+   }
+  },
+  "eligible_outcome": {
+   "None": {
+    "n": 1681,
+    "exact_diff": 1218,
+    "j_lt_05": 601,
+    "j_lt_03": 364,
+    "ref_pair_diff": 0.822289156626506,
+    "ref_pair_jaccard": 0.5509457240826915
+   },
+   "failed": {
+    "n": 341,
+    "exact_diff": 260,
+    "j_lt_05": 145,
+    "j_lt_03": 72,
+    "ref_pair_diff": 0.8333333333333334,
+    "ref_pair_jaccard": 0.5125094041306915
+   },
+   "solved": {
+    "n": 193,
+    "exact_diff": 55,
+    "j_lt_05": 42,
+    "j_lt_03": 27,
+    "ref_pair_diff": 0.3298791018998273,
+    "ref_pair_jaccard": 0.6423728360086817
+   }
+  }
+ },
+ "not_eligible_why": {
+  "non-resumable harness + ungraded source": 346,
+  "ungraded source (nl2repobench)": 61,
+  "non-resumable harness (pi)": 464,
+  "ungraded source (affine_nl2lib)": 6,
+  "non-resumable harness (claude_code)": 465,
+  "text action (no env effect)": 1923,
+  "non-resumable harness (hermes_agent)": 21,
+  "non-resumable harness (kimi_code)": 47,
+  "ungraded source (affine_prolog)": 71,
+  "ungraded source (affine_sql)": 33,
+  "ungraded source (affine_oolong)": 27,
+  "ungraded source (affine_tmax)": 152,
+  "ungraded source (affine_uuidctf)": 47,
+  "ungraded source (affine_deshuffle)": 11,
+  "non-resumable harness (affine-tau2-v1)": 6,
+  "non-resumable harness (affine-tau2-synth-v1)": 15
+ },
+ "graded_nonresumable": 1136,
+ "math_turns": {
+  "n": 125,
+  "diff": 38
+ },
+ "judge": {
+  "exact": {
+   "n": 10,
+   "p_diff": 0.0,
+   "p_outcome_relevant": 0.0
+  },
+  "J>=0.5": {
+   "n": 40,
+   "p_diff": 0.225,
+   "p_outcome_relevant": 0.05
+  },
+  "0.3<=J<0.5": {
+   "n": 39,
+   "p_diff": 0.41025641025641024,
+   "p_outcome_relevant": 0.1282051282051282
+  },
+  "J<0.3": {
+   "n": 60,
+   "p_diff": 0.6833333333333333,
+   "p_outcome_relevant": 0.3
+  }
+ },
+ "mutating_rule": {
+  "n": 464,
+  "per_1000": 77.33333333333333,
+  "tp": 20,
+  "fp": 62,
+  "fn": 5
+ },
+ "per_1000": {
+  "norm-exact differs": 255.5,
+  "Jaccard < 0.5": 131.33333333333334,
+  "Jaccard < 0.3": 77.16666666666667,
+  "decision-contested (judge-calibrated)": 106.38579059829219,
+  "outcome-relevant (judge-calibrated)": 40.986965811966975,
+  "J<0.5 AND a state-changing action (rule)": 77.33333333333333
+ },
+ "continuations": {
+  "ALL": {
+   "wall_s": {
+    "n": 24,
+    "mean": 629.075,
+    "median": 601.6,
+    "p90": 1085.7,
+    "max": 1444.1
+   },
+   "cost_usd": {
+    "n": 24,
+    "mean": 0.0289125,
+    "median": 0.033645,
+    "p90": 0.06097,
+    "max": 0.07329
+   },
+   "n_turns": {
+    "n": 24,
+    "mean": 38.791666666666664,
+    "median": 38.0,
+    "p90": 71,
+    "max": 76
+   }
+  },
+  "harness bash": {
+   "wall_s": {
+    "n": 5,
+    "mean": 400.14,
+    "median": 512.6,
+    "p90": 589.0,
+    "max": 589.0
+   },
+   "cost_usd": {
+    "n": 5,
+    "mean": 0.015364,
+    "median": 0.00534,
+    "p90": 0.0426,
+    "max": 0.0426
+   },
+   "n_turns": {
+    "n": 5,
+    "mean": 23.4,
+    "median": 14,
+    "p90": 56,
+    "max": 56
+   }
+  },
+  "harness mini_swe_textbased": {
+   "wall_s": {
+    "n": 17,
+    "mean": 757.5176470588235,
+    "median": 759.7,
+    "p90": 1182.6,
+    "max": 1444.1
+   },
+   "cost_usd": {
+    "n": 17,
+    "mean": 0.03611176470588235,
+    "median": 0.03574,
+    "p90": 0.06274,
+    "max": 0.07329
+   },
+   "n_turns": {
+    "n": 17,
+    "mean": 47.470588235294116,
+    "median": 57,
+    "p90": 72,
+    "max": 76
+   }
+  },
+  "harness terminus_2": {
+   "wall_s": {
+    "n": 2,
+    "mean": 109.65,
+    "median": 109.65,
+    "p90": 140.4,
+    "max": 140.4
+   },
+   "cost_usd": {
+    "n": 2,
+    "mean": 0.00159,
+    "median": 0.00159,
+    "p90": 0.00202,
+    "max": 0.00202
+   },
+   "n_turns": {
+    "n": 2,
+    "mean": 3.5,
+    "median": 3.5,
+    "p90": 4,
+    "max": 4
+   }
+  },
+  "outcome failed": {
+   "wall_s": {
+    "n": 9,
+    "mean": 715.1888888888889,
+    "median": 674.3,
+    "p90": 1444.1,
+    "max": 1444.1
+   },
+   "cost_usd": {
+    "n": 9,
+    "mean": 0.03314444444444444,
+    "median": 0.03574,
+    "p90": 0.07329,
+    "max": 0.07329
+   },
+   "n_turns": {
+    "n": 9,
+    "mean": 43.333333333333336,
+    "median": 57,
+    "p90": 72,
+    "max": 72
+   }
+  },
+  "outcome solved": {
+   "wall_s": {
+    "n": 15,
+    "mean": 577.4066666666666,
+    "median": 589.0,
+    "p90": 903.1,
+    "max": 1182.6
+   },
+   "cost_usd": {
+    "n": 15,
+    "mean": 0.026373333333333335,
+    "median": 0.03363,
+    "p90": 0.05248,
+    "max": 0.06274
+   },
+   "n_turns": {
+    "n": 15,
+    "mean": 36.06666666666667,
+    "median": 31,
+    "p90": 69,
+    "max": 76
+   }
+  },
+  "stop agent_completed": {
+   "wall_s": {
+    "n": 19,
+    "mean": 526.0421052631579,
+    "median": 561.9,
+    "p90": 928.6,
+    "max": 1085.7
+   },
+   "cost_usd": {
+    "n": 19,
+    "mean": 0.02276842105263158,
+    "median": 0.01485,
+    "p90": 0.05295,
+    "max": 0.07329
+   },
+   "n_turns": {
+    "n": 19,
+    "mean": 30.68421052631579,
+    "median": 23,
+    "p90": 69,
+    "max": 71
+   }
+  },
+  "stop max_turns": {
+   "wall_s": {
+    "n": 5,
+    "mean": 1020.5999999999999,
+    "median": 1042.3,
+    "p90": 1444.1,
+    "max": 1444.1
+   },
+   "cost_usd": {
+    "n": 5,
+    "mean": 0.05226,
+    "median": 0.05248,
+    "p90": 0.06274,
+    "max": 0.06274
+   },
+   "n_turns": {
+    "n": 5,
+    "mean": 69.6,
+    "median": 68,
+    "p90": 76,
+    "max": 76
+   }
+  }
+ },
+ "pods": [
+  {
+   "rule": "J<0.5",
+   "contested": 131.33333333333334,
+   "k": 1,
+   "n_cont": 263,
+   "container_hours": 45.95742361111111,
+   "engy_usd": 7.603987500000001,
+   "pods": {
+    "60": 13,
+    "90": 9,
+    "120": 6
+   },
+   "pod_usd_90m": 13.5
+  },
+  {
+   "rule": "J<0.5",
+   "contested": 131.33333333333334,
+   "k": 2,
+   "n_cont": 525,
+   "container_hours": 91.74010416666667,
+   "engy_usd": 15.1790625,
+   "pods": {
+    "60": 25,
+    "90": 16,
+    "120": 12
+   },
+   "pod_usd_90m": 24.0
+  },
+  {
+   "rule": "J<0.5",
+   "contested": 131.33333333333334,
+   "k": 3,
+   "n_cont": 788,
+   "container_hours": 137.6975277777778,
+   "engy_usd": 22.78305,
+   "pods": {
+    "60": 37,
+    "90": 24,
+    "120": 18
+   },
+   "pod_usd_90m": 36.0
+  },
+  {
+   "rule": "decision",
+   "contested": 106.38579059829219,
+   "k": 1,
+   "n_cont": 213,
+   "container_hours": 37.22027083333334,
+   "engy_usd": 6.1583625,
+   "pods": {
+    "60": 11,
+    "90": 7,
+    "120": 5
+   },
+   "pod_usd_90m": 10.5
+  },
+  {
+   "rule": "decision",
+   "contested": 106.38579059829219,
+   "k": 2,
+   "n_cont": 426,
+   "container_hours": 74.44054166666668,
+   "engy_usd": 12.316725,
+   "pods": {
+    "60": 20,
+    "90": 13,
+    "120": 10
+   },
+   "pod_usd_90m": 19.5
+  },
+  {
+   "rule": "decision",
+   "contested": 106.38579059829219,
+   "k": 3,
+   "n_cont": 638,
+   "container_hours": 111.48606944444445,
+   "engy_usd": 18.446175,
+   "pods": {
+    "60": 30,
+    "90": 20,
+    "120": 15
+   },
+   "pod_usd_90m": 30.0
+  },
+  {
+   "rule": "mutating",
+   "contested": 77.33333333333333,
+   "k": 1,
+   "n_cont": 155,
+   "container_hours": 27.08517361111111,
+   "engy_usd": 4.4814375,
+   "pods": {
+    "60": 8,
+    "90": 5,
+    "120": 4
+   },
+   "pod_usd_90m": 7.5
+  },
+  {
+   "rule": "mutating",
+   "contested": 77.33333333333333,
+   "k": 2,
+   "n_cont": 309,
+   "container_hours": 53.99560416666667,
+   "engy_usd": 8.9339625,
+   "pods": {
+    "60": 15,
+    "90": 10,
+    "120": 8
+   },
+   "pod_usd_90m": 15.0
+  },
+  {
+   "rule": "mutating",
+   "contested": 77.33333333333333,
+   "k": 3,
+   "n_cont": 464,
+   "container_hours": 81.0807777777778,
+   "engy_usd": 13.4154,
+   "pods": {
+    "60": 22,
+    "90": 15,
+    "120": 11
+   },
+   "pod_usd_90m": 22.5
+  },
+  {
+   "rule": "relevant",
+   "contested": 40.986965811966975,
+   "k": 1,
+   "n_cont": 82,
+   "container_hours": 14.328930555555557,
+   "engy_usd": 2.370825,
+   "pods": {
+    "60": 4,
+    "90": 3,
+    "120": 2
+   },
+   "pod_usd_90m": 4.5
+  },
+  {
+   "rule": "relevant",
+   "contested": 40.986965811966975,
+   "k": 2,
+   "n_cont": 164,
+   "container_hours": 28.657861111111114,
+   "engy_usd": 4.74165,
+   "pods": {
+    "60": 8,
+    "90": 6,
+    "120": 4
+   },
+   "pod_usd_90m": 9.0
+  },
+  {
+   "rule": "relevant",
+   "contested": 40.986965811966975,
+   "k": 3,
+   "n_cont": 246,
+   "container_hours": 42.98679166666667,
+   "engy_usd": 7.112475,
+   "pods": {
+    "60": 12,
+    "90": 8,
+    "120": 6
+   },
+   "pod_usd_90m": 12.0
+  },
+  {
+   "rule": "exact-diff",
+   "contested": 255.5,
+   "k": 1,
+   "n_cont": 511,
+   "container_hours": 89.29370138888889,
+   "engy_usd": 14.7742875,
+   "pods": {
+    "60": 24,
+    "90": 16,
+    "120": 12
+   },
+   "pod_usd_90m": 24.0
+  },
+  {
+   "rule": "exact-diff",
+   "contested": 255.5,
+   "k": 2,
+   "n_cont": 1022,
+   "container_hours": 178.58740277777778,
+   "engy_usd": 29.548575,
+   "pods": {
+    "60": 47,
+    "90": 31,
+    "120": 23
+   },
+   "pod_usd_90m": 46.5
+  },
+  {
+   "rule": "exact-diff",
+   "contested": 255.5,
+   "k": 3,
+   "n_cont": 1533,
+   "container_hours": 267.8811041666667,
+   "engy_usd": 44.3228625,
+   "pods": {
+    "60": 70,
+    "90": 46,
+    "120": 35
+   },
+   "pod_usd_90m": 69.0
+  }
+ ],
+ "power": [
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 50,
+   "k": 1,
+   "se": 0.09682458365518543,
+   "min_edge": 0.19364916731037085,
+   "extra_solves": 9.682458365518542,
+   "pods_90m": 4,
+   "engy_usd": 2.89125
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 50,
+   "k": 2,
+   "se": 0.06846531968814576,
+   "min_edge": 0.13693063937629152,
+   "extra_solves": 6.846531968814576,
+   "pods_90m": 7,
+   "engy_usd": 5.7825
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 50,
+   "k": 3,
+   "se": 0.05590169943749474,
+   "min_edge": 0.11180339887498948,
+   "extra_solves": 5.5901699437494745,
+   "pods_90m": 10,
+   "engy_usd": 8.67375
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 100,
+   "k": 1,
+   "se": 0.06846531968814576,
+   "min_edge": 0.13693063937629152,
+   "extra_solves": 13.693063937629152,
+   "pods_90m": 7,
+   "engy_usd": 5.7825
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 100,
+   "k": 2,
+   "se": 0.04841229182759271,
+   "min_edge": 0.09682458365518543,
+   "extra_solves": 9.682458365518542,
+   "pods_90m": 13,
+   "engy_usd": 11.565
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 100,
+   "k": 3,
+   "se": 0.03952847075210474,
+   "min_edge": 0.07905694150420949,
+   "extra_solves": 7.905694150420948,
+   "pods_90m": 19,
+   "engy_usd": 17.3475
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 106,
+   "k": 1,
+   "se": 0.06649939707486643,
+   "min_edge": 0.13299879414973287,
+   "extra_solves": 14.097872179871684,
+   "pods_90m": 7,
+   "engy_usd": 6.12945
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 106,
+   "k": 2,
+   "se": 0.04702217461645492,
+   "min_edge": 0.09404434923290984,
+   "extra_solves": 9.968701018688444,
+   "pods_90m": 13,
+   "engy_usd": 12.2589
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 106,
+   "k": 3,
+   "se": 0.03839344480212195,
+   "min_edge": 0.0767868896042439,
+   "extra_solves": 8.139410298049853,
+   "pods_90m": 20,
+   "engy_usd": 18.38835
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 131,
+   "k": 1,
+   "se": 0.05981842755212778,
+   "min_edge": 0.11963685510425556,
+   "extra_solves": 15.67242801865748,
+   "pods_90m": 9,
+   "engy_usd": 7.575075
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 131,
+   "k": 2,
+   "se": 0.04229801576202576,
+   "min_edge": 0.08459603152405153,
+   "extra_solves": 11.08208012965075,
+   "pods_90m": 17,
+   "engy_usd": 15.15015
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 131,
+   "k": 3,
+   "se": 0.0345361852497211,
+   "min_edge": 0.0690723704994422,
+   "extra_solves": 9.048480535426929,
+   "pods_90m": 24,
+   "engy_usd": 22.725225000000002
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 200,
+   "k": 1,
+   "se": 0.04841229182759271,
+   "min_edge": 0.09682458365518543,
+   "extra_solves": 19.364916731037084,
+   "pods_90m": 13,
+   "engy_usd": 11.565
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 200,
+   "k": 2,
+   "se": 0.03423265984407288,
+   "min_edge": 0.06846531968814576,
+   "extra_solves": 13.693063937629152,
+   "pods_90m": 25,
+   "engy_usd": 23.13
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 200,
+   "k": 3,
+   "se": 0.02795084971874737,
+   "min_edge": 0.05590169943749474,
+   "extra_solves": 11.180339887498949,
+   "pods_90m": 37,
+   "engy_usd": 34.695
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 400,
+   "k": 1,
+   "se": 0.03423265984407288,
+   "min_edge": 0.06846531968814576,
+   "extra_solves": 27.386127875258303,
+   "pods_90m": 25,
+   "engy_usd": 23.13
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 400,
+   "k": 2,
+   "se": 0.024206145913796356,
+   "min_edge": 0.04841229182759271,
+   "extra_solves": 19.364916731037084,
+   "pods_90m": 49,
+   "engy_usd": 46.26
+  },
+  {
+   "scenario": "S1 no state info, common p=0.6 (worst)",
+   "q": 0.234375,
+   "n": 400,
+   "k": 3,
+   "se": 0.01976423537605237,
+   "min_edge": 0.03952847075210474,
+   "extra_solves": 15.811388300841896,
+   "pods_90m": 72,
+   "engy_usd": 69.39
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 50,
+   "k": 1,
+   "se": 0.0735798885565886,
+   "min_edge": 0.1471597771131772,
+   "extra_solves": 7.357988855658861,
+   "pods_90m": 4,
+   "engy_usd": 2.89125
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 50,
+   "k": 2,
+   "se": 0.05202883815731425,
+   "min_edge": 0.1040576763146285,
+   "extra_solves": 5.202883815731425,
+   "pods_90m": 7,
+   "engy_usd": 5.7825
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 50,
+   "k": 3,
+   "se": 0.0424813684650891,
+   "min_edge": 0.0849627369301782,
+   "extra_solves": 4.24813684650891,
+   "pods_90m": 10,
+   "engy_usd": 8.67375
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 100,
+   "k": 1,
+   "se": 0.05202883815731425,
+   "min_edge": 0.1040576763146285,
+   "extra_solves": 10.40576763146285,
+   "pods_90m": 7,
+   "engy_usd": 5.7825
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 100,
+   "k": 2,
+   "se": 0.0367899442782943,
+   "min_edge": 0.0735798885565886,
+   "extra_solves": 7.357988855658861,
+   "pods_90m": 13,
+   "engy_usd": 11.565
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 100,
+   "k": 3,
+   "se": 0.03003886371574886,
+   "min_edge": 0.06007772743149772,
+   "extra_solves": 6.007772743149772,
+   "pods_90m": 19,
+   "engy_usd": 17.3475
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 106,
+   "k": 1,
+   "se": 0.05053487493707351,
+   "min_edge": 0.10106974987414702,
+   "extra_solves": 10.713393486659584,
+   "pods_90m": 7,
+   "engy_usd": 6.12945
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 106,
+   "k": 2,
+   "se": 0.035733552754418786,
+   "min_edge": 0.07146710550883757,
+   "extra_solves": 7.575513183936783,
+   "pods_90m": 13,
+   "engy_usd": 12.2589
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 106,
+   "k": 3,
+   "se": 0.029176323648383462,
+   "min_edge": 0.058352647296766924,
+   "extra_solves": 6.185380613457294,
+   "pods_90m": 20,
+   "engy_usd": 18.38835
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 131,
+   "k": 1,
+   "se": 0.04545780696140607,
+   "min_edge": 0.09091561392281214,
+   "extra_solves": 11.90994542388839,
+   "pods_90m": 9,
+   "engy_usd": 7.575075
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 131,
+   "k": 2,
+   "se": 0.03214352356027928,
+   "min_edge": 0.06428704712055856,
+   "extra_solves": 8.421603172793171,
+   "pods_90m": 16,
+   "engy_usd": 15.15015
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 131,
+   "k": 3,
+   "se": 0.02624507708593784,
+   "min_edge": 0.05249015417187568,
+   "extra_solves": 6.876210196515713,
+   "pods_90m": 24,
+   "engy_usd": 22.725225000000002
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 200,
+   "k": 1,
+   "se": 0.0367899442782943,
+   "min_edge": 0.0735798885565886,
+   "extra_solves": 14.715977711317722,
+   "pods_90m": 13,
+   "engy_usd": 11.565
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 200,
+   "k": 2,
+   "se": 0.026014419078657126,
+   "min_edge": 0.05202883815731425,
+   "extra_solves": 10.40576763146285,
+   "pods_90m": 25,
+   "engy_usd": 23.13
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 200,
+   "k": 3,
+   "se": 0.02124068423254455,
+   "min_edge": 0.0424813684650891,
+   "extra_solves": 8.49627369301782,
+   "pods_90m": 37,
+   "engy_usd": 34.695
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 400,
+   "k": 1,
+   "se": 0.026014419078657126,
+   "min_edge": 0.05202883815731425,
+   "extra_solves": 20.8115352629257,
+   "pods_90m": 25,
+   "engy_usd": 23.13
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 400,
+   "k": 2,
+   "se": 0.01839497213914715,
+   "min_edge": 0.0367899442782943,
+   "extra_solves": 14.715977711317722,
+   "pods_90m": 48,
+   "engy_usd": 46.26
+  },
+  {
+   "scenario": "S2 bimodal by orig outcome 0.27/0.92 (data-implied upper bound)",
+   "q": 0.13535,
+   "n": 400,
+   "k": 3,
+   "se": 0.01501943185787443,
+   "min_edge": 0.03003886371574886,
+   "extra_solves": 12.015545486299544,
+   "pods_90m": 72,
+   "engy_usd": 69.39
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 50,
+   "k": 1,
+   "se": 0.060000000000000005,
+   "min_edge": 0.12000000000000001,
+   "extra_solves": 6.000000000000001,
+   "pods_90m": 4,
+   "engy_usd": 2.89125
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 50,
+   "k": 2,
+   "se": 0.042426406871192854,
+   "min_edge": 0.08485281374238571,
+   "extra_solves": 4.242640687119286,
+   "pods_90m": 7,
+   "engy_usd": 5.7825
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 50,
+   "k": 3,
+   "se": 0.034641016151377546,
+   "min_edge": 0.06928203230275509,
+   "extra_solves": 3.4641016151377544,
+   "pods_90m": 10,
+   "engy_usd": 8.67375
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 100,
+   "k": 1,
+   "se": 0.042426406871192854,
+   "min_edge": 0.08485281374238571,
+   "extra_solves": 8.485281374238571,
+   "pods_90m": 7,
+   "engy_usd": 5.7825
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 100,
+   "k": 2,
+   "se": 0.030000000000000002,
+   "min_edge": 0.060000000000000005,
+   "extra_solves": 6.000000000000001,
+   "pods_90m": 13,
+   "engy_usd": 11.565
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 100,
+   "k": 3,
+   "se": 0.024494897427831782,
+   "min_edge": 0.048989794855663564,
+   "extra_solves": 4.898979485566357,
+   "pods_90m": 19,
+   "engy_usd": 17.3475
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 106,
+   "k": 1,
+   "se": 0.04120816918460671,
+   "min_edge": 0.08241633836921342,
+   "extra_solves": 8.736131867136622,
+   "pods_90m": 7,
+   "engy_usd": 6.12945
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 106,
+   "k": 2,
+   "se": 0.029138575870717928,
+   "min_edge": 0.058277151741435856,
+   "extra_solves": 6.177378084592201,
+   "pods_90m": 13,
+   "engy_usd": 12.2589
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 106,
+   "k": 3,
+   "se": 0.023791547571544325,
+   "min_edge": 0.04758309514308865,
+   "extra_solves": 5.043808085167397,
+   "pods_90m": 20,
+   "engy_usd": 18.38835
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 131,
+   "k": 1,
+   "se": 0.03706812379291293,
+   "min_edge": 0.07413624758582586,
+   "extra_solves": 9.711848433743189,
+   "pods_90m": 9,
+   "engy_usd": 7.575075
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 131,
+   "k": 2,
+   "se": 0.02621112169983114,
+   "min_edge": 0.05242224339966228,
+   "extra_solves": 6.867313885355759,
+   "pods_90m": 16,
+   "engy_usd": 15.15015
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 131,
+   "k": 3,
+   "se": 0.02140129125019265,
+   "min_edge": 0.0428025825003853,
+   "extra_solves": 5.607138307550475,
+   "pods_90m": 24,
+   "engy_usd": 22.725225000000002
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 200,
+   "k": 1,
+   "se": 0.030000000000000002,
+   "min_edge": 0.060000000000000005,
+   "extra_solves": 12.000000000000002,
+   "pods_90m": 13,
+   "engy_usd": 11.565
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 200,
+   "k": 2,
+   "se": 0.021213203435596427,
+   "min_edge": 0.042426406871192854,
+   "extra_solves": 8.485281374238571,
+   "pods_90m": 25,
+   "engy_usd": 23.13
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 200,
+   "k": 3,
+   "se": 0.017320508075688773,
+   "min_edge": 0.034641016151377546,
+   "extra_solves": 6.928203230275509,
+   "pods_90m": 37,
+   "engy_usd": 34.695
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 400,
+   "k": 1,
+   "se": 0.021213203435596427,
+   "min_edge": 0.042426406871192854,
+   "extra_solves": 16.970562748477143,
+   "pods_90m": 25,
+   "engy_usd": 23.13
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 400,
+   "k": 2,
+   "se": 0.015000000000000001,
+   "min_edge": 0.030000000000000002,
+   "extra_solves": 12.000000000000002,
+   "pods_90m": 48,
+   "engy_usd": 46.26
+  },
+  {
+   "scenario": "S3 near-deterministic states p in {0.1,0.9}",
+   "q": 0.09000000000000001,
+   "n": 400,
+   "k": 3,
+   "se": 0.012247448713915891,
+   "min_edge": 0.024494897427831782,
+   "extra_solves": 9.797958971132713,
+   "pods_90m": 72,
+   "engy_usd": 69.39
+  }
+ ],
+ "dilution": {
+  "f_outcome_relevant": 0.31208349603020535
+ },
+ "confirmation": [
+  {
+   "n_c": 131,
+   "k": 1,
+   "se": 0.04545780696140607,
+   "thr": "0",
+   "p_pass": {
+    "-0.05": 0.1356832551971799,
+    "0.0": 0.5,
+    "0.03": 0.7453578910087556,
+    "0.05": 0.8643167448028202,
+    "0.1": 0.9860909520055583
+   }
+  },
+  {
+   "n_c": 131,
+   "k": 1,
+   "se": 0.04545780696140607,
+   "thr": "-1 SE",
+   "p_pass": {
+    "-0.05": 0.4602034914542974,
+    "0.0": 0.8413447460685429,
+    "0.03": 0.9515380104111779,
+    "0.05": 0.9821321078408237,
+    "0.1": 0.9993124856491823
+   }
+  },
+  {
+   "n_c": 131,
+   "k": 1,
+   "se": 0.04545780696140607,
+   "thr": "+1 SE",
+   "p_pass": {
+    "-0.05": 0.01786789215917628,
+    "0.0": 0.15865525393145707,
+    "0.03": 0.3669104336865525,
+    "0.05": 0.5397965085457026,
+    "0.1": 0.8848996754597693
+   }
+  },
+  {
+   "n_c": 131,
+   "k": 1,
+   "se": 0.04545780696140607,
+   "thr": "+2 SE",
+   "p_pass": {
+    "-0.05": 0.0009678610712777203,
+    "0.0": 0.02275013194817921,
+    "0.03": 0.09011497512830441,
+    "0.05": 0.18403912589881422,
+    "0.1": 0.5791979840940021
+   }
+  },
+  {
+   "n_c": 131,
+   "k": 2,
+   "se": 0.03214352356027928,
+   "thr": "0",
+   "p_pass": {
+    "-0.05": 0.05991074432224158,
+    "0.0": 0.5,
+    "0.03": 0.8246710611970796,
+    "0.05": 0.9400892556777585,
+    "0.1": 0.9990678724449438
+   }
+  },
+  {
+   "n_c": 131,
+   "k": 2,
+   "se": 0.03214352356027928,
+   "thr": "-1 SE",
+   "p_pass": {
+    "-0.05": 0.28926838709928815,
+    "0.0": 0.8413447460685429,
+    "0.03": 0.9734012348475328,
+    "0.05": 0.9946985869605034,
+    "0.1": 0.999980306516338
+   }
+  },
+  {
+   "n_c": 131,
+   "k": 2,
+   "se": 0.03214352356027928,
+   "thr": "+1 SE",
+   "p_pass": {
+    "-0.05": 0.00530141303949655,
+    "0.0": 0.15865525393145707,
+    "0.03": 0.4734158331532289,
+    "0.05": 0.7107316129007119,
+    "0.1": 0.9826158471030204
+   }
+  },
+  {
+   "n_c": 131,
+   "k": 2,
+   "se": 0.03214352356027928,
+   "thr": "+2 SE",
+   "p_pass": {
+    "-0.05": 0.00018861375171919104,
+    "0.0": 0.02275013194817921,
+    "0.03": 0.1430568217076792,
+    "0.05": 0.3283489872142877,
+    "0.1": 0.866725856409366
+   }
+  },
+  {
+   "n_c": 131,
+   "k": 3,
+   "se": 0.02624507708593784,
+   "thr": "0",
+   "p_pass": {
+    "-0.05": 0.028382289723110132,
+    "0.0": 0.5,
+    "0.03": 0.8734955498624727,
+    "0.05": 0.9716177102768899,
+    "0.1": 0.9999305835697079
+   }
+  },
+  {
+   "n_c": 131,
+   "k": 3,
+   "se": 0.02624507708593784,
+   "thr": "-1 SE",
+   "p_pass": {
+    "-0.05": 0.18270112338241223,
+    "0.0": 0.8413447460685429,
+    "0.03": 0.9839463217961957,
+    "0.05": 0.9981644336383149,
+    "0.1": 0.9999992462479992
+   }
+  },
+  {
+   "n_c": 131,
+   "k": 3,
+   "se": 0.02624507708593784,
+   "thr": "+1 SE",
+   "p_pass": {
+    "-0.05": 0.0018355663616850815,
+    "0.0": 0.15865525393145707,
+    "0.03": 0.5568831490039122,
+    "0.05": 0.8172988766175877,
+    "0.1": 0.9975247590807992
+   }
+  },
+  {
+   "n_c": 131,
+   "k": 3,
+   "se": 0.02624507708593784,
+   "thr": "+2 SE",
+   "p_pass": {
+    "-0.05": 4.7089477737127794e-05,
+    "0.0": 0.02275013194817921,
+    "0.03": 0.19574220431345485,
+    "0.05": 0.4622047495817809,
+    "0.1": 0.9648705859147901
+   }
+  }
+ ],
+ "dense_today": {
+  "se_mean": 0.0625101710772957,
+  "sd_turn_mean": 1.9628073669627977,
+  "bar_sd": 0.2,
+  "fp_per_duel": 0.0006883803063155725
+ },
+ "combined": [
+  {
+   "n_c": 131,
+   "k": 1,
+   "edge": 0.05,
+   "z_outcome_alone": 1.0999210771969328,
+   "z_combined_n1000": 0.39810457830089074
+  },
+  {
+   "n_c": 131,
+   "k": 1,
+   "edge": 0.1,
+   "z_outcome_alone": 2.1998421543938655,
+   "z_combined_n1000": 0.7962091566017815
+  },
+  {
+   "n_c": 131,
+   "k": 1,
+   "edge": 0.2,
+   "z_outcome_alone": 4.399684308787731,
+   "z_combined_n1000": 1.592418313203563
+  },
+  {
+   "n_c": 131,
+   "k": 3,
+   "edge": 0.05,
+   "z_outcome_alone": 1.9051191900209772,
+   "z_combined_n1000": 0.6895373563429252
+  },
+  {
+   "n_c": 131,
+   "k": 3,
+   "edge": 0.1,
+   "z_outcome_alone": 3.8102383800419544,
+   "z_combined_n1000": 1.3790747126858505
+  },
+  {
+   "n_c": 131,
+   "k": 3,
+   "edge": 0.2,
+   "z_outcome_alone": 7.620476760083909,
+   "z_combined_n1000": 2.758149425371701
+  },
+  {
+   "n_c": 106,
+   "k": 1,
+   "edge": 0.05,
+   "z_outcome_alone": 0.9894157265108594,
+   "z_combined_n1000": 0.32213042213659865
+  },
+  {
+   "n_c": 106,
+   "k": 1,
+   "edge": 0.1,
+   "z_outcome_alone": 1.9788314530217188,
+   "z_combined_n1000": 0.6442608442731973
+  },
+  {
+   "n_c": 106,
+   "k": 1,
+   "edge": 0.2,
+   "z_outcome_alone": 3.9576629060434376,
+   "z_combined_n1000": 1.2885216885463946
+  },
+  {
+   "n_c": 106,
+   "k": 3,
+   "edge": 0.05,
+   "z_outcome_alone": 1.7137183081244816,
+   "z_combined_n1000": 0.557946257804199
+  },
+  {
+   "n_c": 106,
+   "k": 3,
+   "edge": 0.1,
+   "z_outcome_alone": 3.427436616248963,
+   "z_combined_n1000": 1.115892515608398
+  },
+  {
+   "n_c": 106,
+   "k": 3,
+   "edge": 0.2,
+   "z_outcome_alone": 6.854873232497926,
+   "z_combined_n1000": 2.231785031216796
+  }
+ ],
+ "mechanism_notes": [
+  "Copy-the-king everywhere: zero contested turns -> outcome branch empty -> the score is the dense meter alone, where an epsilon-copy cannot clear max(2 SE, 0.2 sd) (RT-4). So agreement is safe but cannot win; a challenger can only win by DISAGREEING somewhere and being right there. Good: the branch rewards differing-and-better.",
+  "Cheap-win actions: the challenger picks actions that make the TEACHER continuation succeed (e.g. dump the whole failing test and the diff at once; write the fix the teacher would recognise) rather than actions it would take itself. That IS the target quantity (the continuation policy is fixed = a distillation meter on actions, dual of R), but a miner can also learn the teacher's blind spots: emit a leading comment / plan text inside the action that steers the teacher (prompt injection through the observation). Mitigation: score only the executed command's effect, strip non-executable text from the forced action (dialect body), cap action bytes.",
+  "Grader gaming: actions that edit / delete tests, print expected outputs, or `git checkout` the gold patch when it is reachable in the image. The env grade is the same one datagen trusts, so this is the datagen threat model too; the king suffers it equally only if it takes the same action. Mitigation: outcome branch only on sources whose graders run hidden tests in a fresh container (swesmith / swerebench / multiswe / terminal-bench do), and forbid actions touching the test tree (harness-level block list already exists in the recoverable plugin).",
+  "Continuation-policy weaknesses: the teacher loops at depth (max_turns on 5/24 sibling runs); an action that leaves the environment in a state the teacher handles badly (long outputs, deleted files) drags the KING's arm down if the king took it, so both sides face the same policy \u2014 symmetric noise, not a bias. But the paired test is one-sided on the challenger's benefit: pick contested turns adversarially? The miner does not choose which turns are contested (the king's action is unknown to it at inference), only its own action.",
+  "Selection: a miner can choose to disagree ONLY on states it judges easy (p_t near 1 for any sensible action) and copy the king elsewhere, making d_t ~ 0 with tiny variance and inflating nothing \u2014 that's harmless. Disagreeing on hopeless states (p_t ~ 0) is also harmless. The dangerous case is a miner that knows the king's action distribution (public verdict artefacts) and disagrees exactly where the king is wrong \u2014 which is legitimate skill.",
+  "Replayability: the verdict must store, per contested turn, both forced actions, the container image + task id, the continuation traces (messages + tool outputs) and the grader's reward JSON, plus the continuation model / temperature / seed. At ~0.15 MB per trace, 2k continuations = ~300 MB per verdict (today ~3.7 MB): ship to R2 next to the record. Non-determinism: T=0.8 continuations are not bit-replayable; publish k traces and the grader output so a third party can re-grade the stored end state, and re-run for a fresh sample.",
+  "Non-resumable harnesses (pi / Claude Code / Kimi / Hermes, tool_call) and ungraded sources hold 63% of both-valid turns: they keep the dense meter (the branch is a per-turn override, never a requirement). Making the outcome branch matter therefore also means steering the curriculum toward resumable+graded turns or porting the recoverable plugin to the ACP harnesses.",
+  "Composition with the confirmation precedent (wvk 19, removed wvk 21 as 'too difficult'): the branch fits better as a CROWN CONFIRMATION than a per-turn score \u2014 run it only after a dense pass, on the contested eligible turns of the winning slice (~131 turns, 2k continuations, 9 pods at k=1 for 90 min), require the paired solve difference >= 0 (or > -2 SE_o) to crown. Cost is paid only on the ~3% of verdicts that pass; the honest improver waits ~90 min more (the wvk-19 objection was +40 min)."
+ ],
+ "verdict": [
+  "Per-turn score: NOT powerful enough. ~131 of 1000 turns are eligible+contested (J<0.5), only ~41 outcome-relevant; the branch's own 2-sigma edge is 0.091 solve-probability per contested turn (k=1, S2) = +0.29 on the relevant turns \u2014 larger than any plausible king-vs-challenger action gap; in the combined standardised score it moves the slice z by < 1 unless the edge is >= 0.2.",
+  "Affordable per duel only at k=1: 263 continuations, 46 container-hours, ~$8 Engy + 9 CPU pods for +90 min (or 13 for +60) \u2014 tripling today's ~29 min verdict wall; k=3 needs 24 pods. The eligible pool is 37% of the slice (text finals 33%, non-resumable ACP harnesses 16%, ungraded curriculum envs 8% are out).",
+  "Confirmation stage: affordable AND meaningful. Run only after a dense pass (~3% of verdicts), on the winning slice's ~131 contested turns with k=1-2 (9-16 pods, +90 min, ~$8-15 Engy); require mean paired solve difference >= 0: halves noise crowns (0.07% -> 0.03%), passes an honest improver with a +0.05 action edge 86-94% of the time, and \u2014 its real value \u2014 rejects a dense-meter mimic whose actions are WORSE (e = -0.05 passes 14%/6%).",
+  "It tests a different null than the dense meter ('the teacher finishes equally well from either action' vs 'looks like the teacher'), so as a gate it is orthogonal evidence, not more of the same; as a score it is too noisy and too diluted by exploration-order differences.",
+  "Prerequisites before any flip: measure q (the D1 F1 arm), extend the recoverable plugin to pi/claude_code (adds 19% of turns), a rule filter for state-changing actions (77/1000, recall 80% of judged-relevant), store both continuation traces + grader JSON in the verdict (~300 MB)."
+ ]
+}

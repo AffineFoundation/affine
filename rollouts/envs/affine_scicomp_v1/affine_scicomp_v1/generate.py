@@ -24,6 +24,11 @@ Throughput: items run in --workers threads (Engy handles the concurrency;
 the spend ledger is locked). ~2.5 min per item sequential on the probe, so
 8 workers ≈ 20 items/h... plan for ~1,200 items ≈ 6 h.
 
+Order: topics are interleaved round-robin over the six domains and every
+topic gets variant k before any topic gets variant k+1, so the kept set
+spans all domains from the first hour (the fold's share flip needs >= 4 of
+6 domains; the first run, in TOPICS order, was physics-only after 6 h).
+
 Budget: --budget-usd (default 30 at Engy's 0.045 / 0.32 per 1M rates the
 runner exports; the count caps bind first). Output: data/e<epoch>/
 tasks.jsonl.gz + spend.json + rejects.jsonl.gz (with the pytest tail of
@@ -38,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+import hashlib
 import json
 import os
 import random
@@ -221,6 +227,27 @@ def stub_of(signature: str) -> str:
     return signature.strip().rstrip(":") + ":\n    return None\n"
 
 
+def interleave_by_domain(topics: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Round-robin over domains: physics, chemistry, biology, ... then the second
+    topic of each, and so on. TOPICS is grouped by domain for readability, so
+    running it in order gave 95 kept items that were ALL physics after 6 h
+    (2026-09-22 19:33 UTC) and the ">= 4 of 6 domains" share-flip threshold
+    was never reached. Every prefix of the interleaved list spans all domains."""
+    by_domain: dict[str, list[tuple[str, str]]] = {}
+    for d, m in topics:
+        by_domain.setdefault(d, []).append((d, m))
+    out: list[tuple[str, str]] = []
+    for i in range(max(len(v) for v in by_domain.values())):
+        out.extend(v[i] for v in by_domain.values() if i < len(v))
+    return out
+
+
+def item_rng(seed: int, domain: str, method: str, k: int) -> random.Random:
+    """Stable per-item RNG (`hash()` of a str tuple changes per process)."""
+    key = f"{seed}|{domain}|{method}|{k}".encode()
+    return random.Random(int.from_bytes(hashlib.sha256(key).digest()[:4], "big"))
+
+
 class Gen:
     def __init__(self, a, py: str, store: GenTaskStore) -> None:
         self.a, self.py, self.store = a, py, store
@@ -323,17 +350,24 @@ def main() -> None:
     ap.add_argument("--per-topic", type=int, default=6)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--budget-usd", type=float, default=30.0)
-    ap.add_argument("--topics", type=int, default=0, help="limit to the first N topics (pilot)")
+    ap.add_argument("--topics", type=int, default=0,
+                    help="limit to the first N topics of the domain-interleaved list (pilot; N=6 = one per domain)")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
     store = GenTaskStore(SOURCE, PACKAGE_DIR, a.epoch)
     g = Gen(a, _venv(), store)
-    topics = TOPICS[: a.topics] if a.topics else TOPICS
-    items = [(d, m, k) for d, m in topics for k in range(a.per_topic)]
-    print(f"{len(topics)} topics × {a.per_topic} = {len(items)} items, {a.workers} workers, budget USD {a.budget_usd}", file=sys.stderr)
+    topics = interleave_by_domain(TOPICS)
+    if a.topics:
+        topics = topics[: a.topics]
+    # Variant k of EVERY topic before variant k+1 of any: the first
+    # len(topics) items already cover all six domains once.
+    items = [(d, m, k) for k in range(a.per_topic) for d, m in topics]
+    domains = sorted({d for d, _ in topics})
+    print(f"{len(topics)} topics × {a.per_topic} = {len(items)} items over {len(domains)} domains ({', '.join(domains)}), "
+          f"{a.workers} workers, budget USD {a.budget_usd}", file=sys.stderr)
     try:
         with cf.ThreadPoolExecutor(a.workers) as ex:
-            list(ex.map(lambda t: g.item(t[0], t[1], t[2], random.Random(hash((a.seed, t[0], t[1], t[2])) & 0xFFFFFFFF)), items))
+            list(ex.map(lambda t: g.item(t[0], t[1], t[2], item_rng(a.seed, t[0], t[1], t[2])), items))
     finally:
         # Items and rejects were appended as they happened; only the ledger + summary here.
         g.spend.write(store.local_dir / "spend.json")

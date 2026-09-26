@@ -1,0 +1,181 @@
+Privileged teacher references — probe report
+turns 150 {'bash': 61, 'tool_call': 61, 'terminus_json': 28} outcomes {'failed': 77, 'solved': 73}; sample errors 0, echo errors 0
+p_fr notes ok 150/150 (rejections {'empty': 18, 'path': 4, 'code_like': 6}); template families {None: 140, 'done': 8, 'repeat': 2}
+$ spent (all stages, all runs): 8.68
+
+Terms: exact/jac to blind = share of p-refs whose normalised action equals one of / best token-Jaccard to the 3 stored blind refs;
+       p_none = fresh blind refs = the sampling-noise floor; drop z = paired (p_none − variant) over turns, mean/SE;
+       self = within-family pairwise exact / Jaccard; ident = all parsed refs share one action; judge = glm-5.3-flash SAME rate (ref0 vs blind ref0, ref1 vs blind1);
+       R_priv(z) = centered tempered LME (tau .03) of a_i = lpC(y_i^p|x,z) − lpC(y_i^p|x,∅) over the variant's refs, 2-ref LOO-matched;
+       own = the variant's own thoughts, blind-own = stored blind thoughts, king = the stored king thought; hz = paired z of the difference;
+       R_blind = same under the stored blind refs (blind-own from lp_cross, king from the verdict pairs, v-own from new echoes);
+       in-band(live) = |m_c(z) − mean_3 m_c(blind)| ≤ 2·σ_Mc(dialect) AND ≥10 content tokens (live typ_c ≥ 0); in-band(turn) uses the per-turn sd of the 3 blind m_c;
+       leak = ≥30-char substring of the note in z / y; B pass = lpC(y|x,z) − lpC(y|x,∅) ≥ 0.02; cap = finish_reason length at 4096.
+
+== POOLED (n turns 150) ==
+blind stored refs: self exact  0.164 self jac  0.524 B pass  0.644 R_blind(blind-own)  0.0087 R_blind(king)  0.0094 z(blind-own − king)  -0.72 | m_c parity Engy−live -0.042 (abs 0.069) | blind LOO in-band(live)  0.831 king in-band(live)  0.800 | len z p50 351.5
+-- (a) action change
+variant     n exactB   jacB exactC   jacC dropJz dropEz   self  selfJ  ident   =rec  judge
+p_none    150  0.272  0.662    n/a    n/a    n/a    n/a  0.184  0.527  0.133  0.167  0.675/120
+p_obs     150  0.211  0.593  0.207  0.585   4.70   2.58  0.142  0.504  0.098  0.139  0.570/114
+p_out     150  0.215  0.622  0.231  0.632   3.28   2.64  0.176  0.534  0.129  0.149  0.664/113
+p_fr      150  0.185  0.528  0.195  0.543   8.02   3.76  0.161  0.549  0.113  0.122  0.466/116
+p_tpl      10  0.300  0.526  0.300  0.490   0.51   0.43  0.300  0.542  0.300  0.200  0.600/10
+   judge blind-vs-blind (ref1 vs ref2) SAME rate 0.650 / n 60
+-- (b) headroom  (R per byte; hz = paired z over turns; d/σ = mean diff in live σ_R(dialect) units; n = turns with 3/3 parsed refs)
+variant     n   Rp_own  Rp_bown  Rp_king hz o-b   d/σ hz b-k   d/σ hz o-k   d/σ |  Rb_vown  Rb_bown  Rb_king hz v-b hz v-k
+p_none    143   0.0096   0.0099   0.0110  -0.26 -0.04  -0.96 -0.03  -0.91 -0.07 |   0.0084   0.0087   0.0094  -0.33  -0.97
+p_obs     131   0.0107   0.0095   0.0102   1.25  0.18  -0.70 -0.06   0.34  0.12 |   0.0090   0.0087   0.0094  -0.01  -0.74
+p_out     122   0.0101   0.0088   0.0099   1.43  0.15  -1.15 -0.10   0.15  0.05 |   0.0092   0.0087   0.0094   0.28  -0.43
+p_fr      129   0.0143   0.0083   0.0071   2.73  0.49   1.35  0.06   3.26  0.55 |   0.0083   0.0087   0.0094  -0.64  -1.21
+p_tpl      10   0.0028   0.0030   0.0017  -0.28 -0.01   1.69  0.13   1.43  0.12 |   0.0055   0.0087   0.0094   1.40   0.91
+-- (c) typicality under the live content mask; (d) leakage + B; (e) parse / cap / length
+variant  inband   inbT  |z|mn |z|p50  zmean  <10ct |  leakZ  leakY  Bpass |  parse   yld2    cap  think  txtfb   lenZ   lenY   ctok    ptok  note
+p_none    0.818  0.811   1.09   0.88   0.13  0.060 |    n/a    n/a  0.621 |  0.984  1.000  0.009  1.000  0.011    347    188    401   12141     0
+p_obs     0.526  0.499   2.66   1.83  -2.15  0.016 |  0.287  0.203  0.733 |  0.938  0.953  0.062  1.000  0.009    644    183    889   12349   635
+p_out     0.739  0.701   1.41   0.99  -0.63  0.030 |  0.076  0.000  0.699 |  0.902  0.933  0.096  1.000  0.004    714    176   1122   12172    89
+p_fr      0.300  0.317   4.48   3.58  -4.18  0.018 |  0.443  0.027  0.766 |  0.927  0.940  0.071  1.000  0.009    701    178    934   12225   382
+p_tpl     0.567  0.467   2.09   1.69  -1.42  0.000 |  0.067  0.100  0.600 |  1.000  1.000  0.000  1.000  0.200    372    566    442   10469   163
+
+== DIALECT bash (n turns 61) ==
+blind stored refs: self exact  0.060 self jac  0.371 B pass  0.869 R_blind(blind-own)  0.0170 R_blind(king)  0.0187 z(blind-own − king)  -0.65 | m_c parity Engy−live -0.044 (abs 0.069) | blind LOO in-band(live)  0.798 king in-band(live)  0.820 | len z p50 354
+-- (a) action change
+variant     n exactB   jacB exactC   jacC dropJz dropEz   self  selfJ  ident   =rec  judge
+p_none     61  0.180  0.596    n/a    n/a    n/a    n/a  0.093  0.403  0.049  0.060  0.524/42
+p_obs      61  0.142  0.542  0.134  0.540   2.30   1.31  0.049  0.421  0.016  0.060  0.571/42
+p_out      61  0.137  0.544  0.164  0.567   2.02   1.53  0.102  0.455  0.034  0.044  0.643/42
+p_fr       61  0.111  0.436  0.133  0.454   4.74   1.84  0.098  0.472  0.052  0.022  0.415/41
+p_tpl       3  0.000  0.589  0.000  0.372  -0.92    n/a  0.000  0.545  0.000  0.000  1.000/2
+   judge blind-vs-blind (ref1 vs ref2) SAME rate 0.429 / n 21
+-- (b) headroom  (R per byte; hz = paired z over turns; d/σ = mean diff in live σ_R(dialect) units; n = turns with 3/3 parsed refs)
+variant     n   Rp_own  Rp_bown  Rp_king hz o-b   d/σ hz b-k   d/σ hz o-k   d/σ |  Rb_vown  Rb_bown  Rb_king hz v-b hz v-k
+p_none     61   0.0183   0.0187   0.0220  -0.14 -0.01  -1.25 -0.13  -1.05 -0.14 |   0.0163   0.0170   0.0187  -0.35  -0.91
+p_obs      59   0.0182   0.0171   0.0178   0.55  0.06  -0.35 -0.02   0.13  0.03 |   0.0163   0.0170   0.0187  -0.37  -1.01
+p_out      54   0.0185   0.0161   0.0175   1.34  0.09  -0.75 -0.07   0.34  0.02 |   0.0180   0.0170   0.0187   0.48  -0.27
+p_fr       54   0.0271   0.0157   0.0133   2.21  0.46   1.23  0.11   2.73  0.56 |   0.0153   0.0170   0.0187  -0.89  -1.29
+p_tpl       3   0.0058   0.0066   0.0027  -0.21 -0.05   1.75  0.18   1.37  0.13 |   0.0173   0.0170   0.0187   7.71   0.99
+-- (c) typicality under the live content mask; (d) leakage + B; (e) parse / cap / length
+variant  inband   inbT  |z|mn |z|p50  zmean  <10ct |  leakZ  leakY  Bpass |  parse   yld2    cap  think  txtfb   lenZ   lenY   ctok    ptok  note
+p_none    0.825  0.792   1.16   0.89   0.23  0.027 |    n/a    n/a  0.847 |  1.000  1.000  0.000  1.000  0.000    335    124    333   12243     0
+p_obs     0.481  0.495   2.90   2.07  -2.33  0.000 |  0.191  0.153  0.885 |  0.989  1.000  0.011  1.000  0.000    489    136    545   12442   609
+p_out     0.732  0.723   1.38   0.95  -0.14  0.017 |  0.041  0.000  0.890 |  0.951  0.967  0.049  1.000  0.000    530    112    735   12274    89
+p_fr      0.256  0.276   4.81   4.06  -4.50  0.006 |  0.447  0.000  0.908 |  0.940  0.951  0.060  1.000  0.000    630    109    772   12329   390
+p_tpl     0.778  0.556   1.88   1.52  -1.31  0.000 |  0.111  0.000  1.000 |  1.000  1.000  0.000  1.000  0.000    579    195    269    8234   206
+
+== DIALECT tool_call (n turns 61) ==
+blind stored refs: self exact  0.251 self jac  0.686 B pass  0.470 R_blind(blind-own)  0.0039 R_blind(king)  0.0041 z(blind-own − king)  -0.30 | m_c parity Engy−live -0.042 (abs 0.071) | blind LOO in-band(live)  0.863 king in-band(live)  0.820 | len z p50 302
+-- (a) action change
+variant     n exactB   jacB exactC   jacC dropJz dropEz   self  selfJ  ident   =rec  judge
+p_none     61  0.331  0.782    n/a    n/a    n/a    n/a  0.240  0.679  0.180  0.279  0.700/50
+p_obs      61  0.303  0.721  0.297  0.704   2.53   0.91  0.256  0.653  0.196  0.242  0.543/46
+p_out      61  0.300  0.743  0.306  0.746   1.94   1.37  0.241  0.651  0.207  0.264  0.574/47
+p_fr       61  0.292  0.671  0.295  0.687   4.99   1.36  0.232  0.661  0.169  0.235  0.420/50
+p_tpl       4  0.250  0.518  0.250  0.565   1.01   1.00  0.250  0.596  0.250  0.250  0.500/6
+   judge blind-vs-blind (ref1 vs ref2) SAME rate 0.680 / n 25
+-- (b) headroom  (R per byte; hz = paired z over turns; d/σ = mean diff in live σ_R(dialect) units; n = turns with 3/3 parsed refs)
+variant     n   Rp_own  Rp_bown  Rp_king hz o-b   d/σ hz b-k   d/σ hz o-k   d/σ |  Rb_vown  Rb_bown  Rb_king hz v-b hz v-k
+p_none     58   0.0041   0.0042   0.0035  -0.37 -0.03   0.82  0.10   0.50  0.07 |   0.0037   0.0039   0.0041  -0.34  -0.67
+p_obs      51   0.0055   0.0040   0.0052   1.73  0.25  -1.03 -0.20   0.23  0.05 |   0.0045   0.0039   0.0041   0.97   0.41
+p_out      49   0.0037   0.0038   0.0050  -0.21 -0.01  -1.28 -0.18  -0.95 -0.19 |   0.0032   0.0039   0.0041  -1.01  -1.17
+p_fr       54   0.0062   0.0037   0.0034   2.42  0.36   0.78  0.06   2.43  0.42 |   0.0042   0.0039   0.0041   0.29  -0.04
+p_tpl       4   0.0016   0.0018   0.0018  -0.96 -0.02   0.68  0.01  -1.09 -0.01 |   0.0006   0.0039   0.0041  -1.04  -1.34
+-- (c) typicality under the live content mask; (d) leakage + B; (e) parse / cap / length
+variant  inband   inbT  |z|mn |z|p50  zmean  <10ct |  leakZ  leakY  Bpass |  parse   yld2    cap  think  txtfb   lenZ   lenY   ctok    ptok  note
+p_none    0.842  0.809   1.02   0.86   0.05  0.066 |    n/a    n/a  0.478 |  0.984  1.000  0.016  1.000  0.027    335    194    388   10463     0
+p_obs     0.601  0.530   2.28   1.48  -1.73  0.042 |  0.353  0.133  0.554 |  0.913  0.918  0.087  1.000  0.022    689    178   1000   10649   576
+p_out     0.782  0.687   1.38   1.00  -0.92  0.029 |  0.092  0.000  0.543 |  0.913  0.951  0.087  1.000  0.011    927    178   1243   10494    89
+p_fr      0.367  0.364   3.52   2.81  -3.23  0.023 |  0.445  0.000  0.633 |  0.951  0.967  0.055  1.000  0.022    735    175    892   10548   381
+p_tpl     0.417  0.417   2.67   2.26  -2.44  0.000 |  0.000  0.000  0.333 |  1.000  1.000  0.000  1.000  0.500    195    743    344    7850    97
+
+== DIALECT terminus_json (n turns 28) ==
+blind stored refs: self exact  0.202 self jac  0.502 B pass  0.536 R_blind(blind-own)  0.0009 R_blind(king)  0.0010 z(blind-own − king)  -0.45 | m_c parity Engy−live -0.040 (abs 0.063) | blind LOO in-band(live)  0.833 king in-band(live)  0.714 | len z p50 448.5
+-- (a) action change
+variant     n exactB   jacB exactC   jacC dropJz dropEz   self  selfJ  ident   =rec  judge
+p_none     28  0.345  0.545    n/a    n/a    n/a    n/a  0.262  0.465  0.214  0.155  0.857/28
+p_obs      28  0.160  0.423  0.173  0.425   4.16   2.47  0.115  0.379  0.077  0.086  0.615/26
+p_out      28  0.203  0.516  0.217  0.505   2.66   1.82  0.203  0.444  0.174  0.130  0.875/24
+p_fr       28  0.103  0.407  0.103  0.412   6.68   3.43  0.139  0.456  0.125  0.090  0.640/25
+p_tpl       3  0.667  0.475  0.667  0.510   4.15  -1.00  0.667  0.468  0.667  0.333  0.500/2
+   judge blind-vs-blind (ref1 vs ref2) SAME rate 0.929 / n 14
+-- (b) headroom  (R per byte; hz = paired z over turns; d/σ = mean diff in live σ_R(dialect) units; n = turns with 3/3 parsed refs)
+variant     n   Rp_own  Rp_bown  Rp_king hz o-b   d/σ hz b-k   d/σ hz o-k   d/σ |  Rb_vown  Rb_bown  Rb_king hz v-b hz v-k
+p_none     24   0.0009   0.0012   0.0013  -1.30 -0.12  -0.15 -0.11  -1.08 -0.23 |   0.0013   0.0009   0.0010   1.14   0.86
+p_obs      21   0.0022   0.0013   0.0011   1.71  0.36   1.32  0.19   2.17  0.55 |   0.0016   0.0009   0.0010   3.03   2.65
+p_out      19   0.0031   0.0012   0.0010   1.85  0.72   0.72  0.02   1.90  0.75 |   0.0018   0.0009   0.0010   3.42   2.57
+p_fr       21   0.0024   0.0007   0.0008   2.60  0.90  -0.43 -0.05   2.72  0.86 |   0.0014   0.0009   0.0010   1.43   1.37
+p_tpl       3   0.0012   0.0011   0.0005   0.52  0.03   1.20  0.25   1.05  0.27 |   0.0003   0.0009   0.0010  -0.44   0.14
+-- (c) typicality under the live content mask; (d) leakage + B; (e) parse / cap / length
+variant  inband   inbT  |z|mn |z|p50  zmean  <10ct |  leakZ  leakY  Bpass |  parse   yld2    cap  think  txtfb   lenZ   lenY   ctok    ptok  note
+p_none    0.750  0.857   1.08   0.82   0.07  0.119 |    n/a    n/a  0.440 |  0.952  1.000  0.012  1.000  0.000    486    658    573   15575     0
+p_obs     0.468  0.442   2.89   2.32  -2.61  0.000 |  0.358  0.469  0.763 |  0.881  0.929  0.119  1.000  0.000   1089    758   1399   15850   819
+p_out     0.652  0.681   1.58   0.98  -1.20  0.065 |  0.130  0.000  0.601 |  0.774  0.821  0.214  1.000  0.000    985    708   1699   15605    89
+p_fr      0.243  0.299   6.08   5.11  -5.76  0.035 |  0.429  0.154  0.750 |  0.845  0.857  0.131  1.000  0.000    796    799   1380   15653   364
+p_tpl     0.556  0.444   1.54   1.38  -0.16  0.000 |  0.111  0.333  0.556 |  1.000  1.000  0.000  1.000  0.000    706    887    746   16196   208
+
+== OUTCOME solved (n turns 73) ==
+blind stored refs: self exact  0.164 self jac  0.518 B pass  0.763 R_blind(blind-own)  0.0091 R_blind(king)  0.0101 z(blind-own − king)  -0.56 | m_c parity Engy−live -0.040 (abs 0.065) | blind LOO in-band(live)  0.840 king in-band(live)  0.808 | len z p50 342
+-- (a) action change
+variant     n exactB   jacB exactC   jacC dropJz dropEz   self  selfJ  ident   =rec  judge
+p_none     73  0.315  0.688    n/a    n/a    n/a    n/a  0.224  0.539  0.164  0.192  0.700/50
+p_obs      73  0.288  0.661  0.242  0.630   1.25   0.83  0.196  0.557  0.151  0.174  0.700/50
+p_out      73  0.282  0.677  0.289  0.685   0.74   1.34  0.221  0.565  0.155  0.181  0.755/49
+p_fr       73  0.213  0.544  0.208  0.549   5.49   2.98  0.200  0.576  0.143  0.144  0.580/50
+p_tpl       9  0.333  0.531  0.333  0.491   0.40   0.43  0.333  0.555  0.333  0.222  0.625/8
+   judge blind-vs-blind (ref1 vs ref2) SAME rate 0.680 / n 25
+-- (b) headroom  (R per byte; hz = paired z over turns; d/σ = mean diff in live σ_R(dialect) units; n = turns with 3/3 parsed refs)
+variant     n   Rp_own  Rp_bown  Rp_king hz o-b   d/σ hz b-k   d/σ hz o-k   d/σ |  Rb_vown  Rb_bown  Rb_king hz v-b hz v-k
+p_none     71   0.0088   0.0107   0.0126  -1.57 -0.04  -1.00 -0.09  -1.64 -0.14 |   0.0103   0.0091   0.0101   1.13   0.17
+p_obs      71   0.0093   0.0093   0.0090  -0.01 -0.00   0.22  0.08   0.16  0.08 |   0.0094   0.0091   0.0101   0.33  -0.43
+p_out      66   0.0096   0.0095   0.0104   0.03 -0.02  -0.68 -0.08  -0.49 -0.10 |   0.0103   0.0091   0.0101   1.03   0.00
+p_fr       66   0.0167   0.0101   0.0078   1.74  0.38   1.64  0.08   2.39  0.46 |   0.0079   0.0091   0.0101  -0.98  -1.14
+p_tpl       9   0.0028   0.0031   0.0018  -0.32 -0.03   1.49  0.08   1.18  0.05 |   0.0061   0.0091   0.0101   1.41   0.90
+-- (c) typicality under the live content mask; (d) leakage + B; (e) parse / cap / length
+variant  inband   inbT  |z|mn |z|p50  zmean  <10ct |  leakZ  leakY  Bpass |  parse   yld2    cap  think  txtfb   lenZ   lenY   ctok    ptok  note
+p_none    0.863  0.795   0.98   0.83   0.14  0.037 |    n/a    n/a  0.712 |  0.991  1.000  0.005  1.000  0.018    333    177    312   11431     0
+p_obs     0.555  0.505   2.46   1.62  -1.94  0.023 |  0.194  0.189  0.742 |  0.991  1.000  0.009  1.000  0.018    411    168    424   11641   626
+p_out     0.822  0.754   1.20   0.84  -0.45  0.014 |  0.014  0.000  0.707 |  0.954  0.973  0.046  1.000  0.009    455    155    587   11462    89
+p_fr      0.217  0.238   5.05   4.55  -4.94  0.014 |  0.451  0.023  0.810 |  0.950  0.959  0.055  1.000  0.018    566    162    753   11515   379
+p_tpl     0.630  0.519   2.05   1.53  -1.49  0.000 |  0.037  0.000  0.593 |  1.000  1.000  0.000  1.000  0.222    331    317    351    9401   133
+
+== OUTCOME failed (n turns 77) ==
+blind stored refs: self exact  0.165 self jac  0.529 B pass  0.532 R_blind(blind-own)  0.0083 R_blind(king)  0.0088 z(blind-own − king)  -0.47 | m_c parity Engy−live -0.045 (abs 0.072) | blind LOO in-band(live)  0.823 king in-band(live)  0.792 | len z p50 357
+-- (a) action change
+variant     n exactB   jacB exactC   jacC dropJz dropEz   self  selfJ  ident   =rec  judge
+p_none     77  0.232  0.637    n/a    n/a    n/a    n/a  0.147  0.515  0.104  0.143  0.657/70
+p_obs      77  0.136  0.527  0.173  0.542   5.75   2.86  0.086  0.449  0.043  0.104  0.469/64
+p_out      77  0.148  0.567  0.174  0.579   3.81   2.50  0.130  0.503  0.101  0.118  0.594/64
+p_fr       77  0.158  0.513  0.182  0.538   5.88   2.35  0.122  0.522  0.085  0.102  0.379/66
+p_tpl       1  0.000  0.483  0.000  0.482    n/a    n/a  0.000  0.423  0.000  0.000  0.500/2
+   judge blind-vs-blind (ref1 vs ref2) SAME rate 0.629 / n 35
+-- (b) headroom  (R per byte; hz = paired z over turns; d/σ = mean diff in live σ_R(dialect) units; n = turns with 3/3 parsed refs)
+variant     n   Rp_own  Rp_bown  Rp_king hz o-b   d/σ hz b-k   d/σ hz o-k   d/σ |  Rb_vown  Rb_bown  Rb_king hz v-b hz v-k
+p_none     72   0.0105   0.0091   0.0094   0.83 -0.03  -0.25  0.03   0.53 -0.00 |   0.0066   0.0083   0.0088  -1.38  -1.45
+p_obs      60   0.0124   0.0096   0.0117   1.68  0.40  -1.45 -0.22   0.37  0.17 |   0.0086   0.0083   0.0088  -0.28  -0.65
+p_out      56   0.0107   0.0080   0.0093   1.89  0.35  -0.95 -0.12   0.68  0.23 |   0.0081   0.0083   0.0088  -0.38  -0.70
+p_fr       63   0.0118   0.0064   0.0064   2.53  0.61  -0.03  0.04   2.37  0.65 |   0.0087   0.0083   0.0088  -0.05  -0.50
+p_tpl       1   0.0026   0.0023   0.0007    n/a  0.14    n/a  0.59    n/a  0.73 |   0.0004   0.0083   0.0088    n/a    n/a
+-- (c) typicality under the live content mask; (d) leakage + B; (e) parse / cap / length
+variant  inband   inbT  |z|mn |z|p50  zmean  <10ct |  leakZ  leakY  Bpass |  parse   yld2    cap  think  txtfb   lenZ   lenY   ctok    ptok  note
+p_none    0.775  0.827   1.20   0.94   0.12  0.082 |    n/a    n/a  0.535 |  0.978  1.000  0.013  1.000  0.004    401    200    485   12815     0
+p_obs     0.495  0.493   2.88   2.01  -2.37  0.010 |  0.378  0.216  0.724 |  0.887  0.909  0.113  1.000  0.000   1220    194   1331   13021   643
+p_out     0.655  0.647   1.64   1.26  -0.83  0.046 |  0.139  0.000  0.691 |  0.853  0.896  0.143  1.000  0.000   2058    194   1629   12845    89
+p_fr      0.383  0.394   3.91   2.63  -3.42  0.021 |  0.436  0.031  0.723 |  0.905  0.922  0.087  1.000  0.000    826    189   1106   12898   384
+p_tpl     0.000  0.000   2.43   2.45  -0.72  0.000 |  0.333  1.000  0.667 |  1.000  1.000  0.000  1.000  0.000   4150    997   1261   20077   429
+
+== DECISION TABLE (pooled) — change = action-change beyond the fresh-blind noise floor (paired Jaccard-drop z ≥ 2 AND judge SAME below p_none);
+   headroom = R_priv(p-own) − R_priv(blind-own) paired z ≥ 2; band = p-thoughts inside the live blind band ≥ 0.80; leak = note quoted in z or y ≤ 0.05 ==
+variant  dropJz  judge change | hz o-b headrm | inband   band |  leakZ  leakY   leak |  verdict
+p_obs     4.698  0.570    yes |  1.249     no |  0.526     no |  0.287  0.203     no |     FAIL
+p_out     3.281  0.664    yes |  1.435     no |  0.739     no |  0.076  0.000     no |     FAIL
+p_fr      8.023  0.466    yes |  2.727    yes |  0.300     no |  0.443  0.027     no |     FAIL
+p_tpl     0.509  0.600     no | -0.284     no |  0.567     no |  0.067  0.100     no |     FAIL
+
+== COST per turn (tokens; k=3 refs) — duel-time = refs sampled with the note in the prompt (echo work unchanged vs today);
+   fold-time = producing the note once per D turn: p_obs/p_out read the stored trace (free), p_fr = one glm-5.3 call per turn ==
+variant   ref prompt tok/turn  ref compl tok/turn note chars note calls note prompt tok note compl tok note $/turn
+p_none                  36424                1202          0        n/a             n/a            n/a         n/a
+p_obs                   37047                2668        635        n/a             n/a            n/a         n/a
+p_out                   36515                3365         89        n/a             n/a            n/a         n/a
+p_fr                    36676                2803        382       1.19           13121            817      0.0112
+p_tpl                   31407                1326        163        n/a             n/a            n/a         n/a
+Engy $ by stage (last run): {'sample': 0.9514179999999995, 'echo': 1.2859510000000063, 'notes': 1.2447279999999992, 'judge': 0.11196499999999986}

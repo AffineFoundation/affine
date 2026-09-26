@@ -25,5 +25,6 @@ case "${1:-}" in
   autofill) "$PY" coverage.py --json "$HERE/state/coverage.json" --markdown "$HERE/state/coverage.md"
            exec "$PY" autofill.py ;;             # every 4 h (pm2 cron): new cards / new columns get filled the same day
   check)   exec "$PY" coverage.py --json "$HERE/state/coverage.json" --markdown "$HERE/state/coverage.md" ;;
-  *) echo "usage: run.sh queue|nightly|autofill|check" >&2; exit 2 ;;
+  outcomes) exec "$PY" backfill_outcomes.py ;;   # hourly (pm2 cron): per-task king outcomes from traces-backfill/ -> data.affine.io/backfill/task_outcomes.jsonl (fold band filter)
+  *) echo "usage: run.sh queue|nightly|autofill|check|outcomes" >&2; exit 2 ;;
 esac

@@ -1,0 +1,2440 @@
+{
+ "generated_at": "2026-09-22T10:27:49Z",
+ "cost_usd_total": 12.060285999999987,
+ "targets": {
+  "bash": {
+   "turns": 50,
+   "samples": 250,
+   "parsed": 0.968,
+   "cap": 0.016,
+   "fb_model": 0,
+   "fb_parse": 0,
+   "classes_per_turn": 1.68,
+   "modal_share": 0.8336666666666667,
+   "one_class": 0.56,
+   "judge_per_turn": 1.76,
+   "usd_per_turn": 0.02784814,
+   "usd_per_sample": 0.005569628,
+   "tok_in": 9522.08,
+   "tok_out": 626.404,
+   "cached": 0.7426411036244182,
+   "think_share": 0.54,
+   "think_tokens_when_thinking": 417.9925925925926,
+   "no_parsed_turns": 0
+  },
+  "tool_call": {
+   "turns": 50,
+   "samples": 250,
+   "parsed": 0.72,
+   "cap": 0,
+   "fb_model": 0,
+   "fb_parse": 0,
+   "classes_per_turn": 1.872340425531915,
+   "modal_share": 0.7602836879432624,
+   "one_class": 0.3829787234042553,
+   "judge_per_turn": 1.7,
+   "usd_per_turn": 0.02728228,
+   "usd_per_sample": 0.005456456,
+   "tok_in": 15339.52,
+   "tok_out": 268.688,
+   "cached": 0.8477970627503337,
+   "think_share": 0.504,
+   "think_tokens_when_thinking": 164.34126984126985,
+   "no_parsed_turns": 3
+  },
+  "terminus_json": {
+   "turns": 50,
+   "samples": 250,
+   "parsed": 0.964,
+   "cap": 0.02,
+   "fb_model": 0,
+   "fb_parse": 0,
+   "classes_per_turn": 1.68,
+   "modal_share": 0.847,
+   "one_class": 0.56,
+   "judge_per_turn": 1.58,
+   "usd_per_turn": 0.04290798,
+   "usd_per_sample": 0.008581595999999999,
+   "tok_in": 13727.1,
+   "tok_out": 1192.148,
+   "cached": 0.7768154963539277,
+   "think_share": 0.412,
+   "think_tokens_when_thinking": 706.8155339805825,
+   "no_parsed_turns": 0
+  },
+  "text": {
+   "turns": 50,
+   "samples": 250,
+   "parsed": 0.976,
+   "cap": 0.024,
+   "fb_model": 0,
+   "fb_parse": 0,
+   "classes_per_turn": 1.2244897959183674,
+   "modal_share": 0.9387755102040817,
+   "one_class": 0.8163265306122449,
+   "judge_per_turn": 1.8,
+   "usd_per_turn": 0.01954226,
+   "usd_per_sample": 0.003908452,
+   "tok_in": 4896.22,
+   "tok_out": 753.784,
+   "cached": 0.8198324421696738,
+   "think_share": 0.436,
+   "think_tokens_when_thinking": 579.3761467889908,
+   "no_parsed_turns": 1
+  },
+  "all": {
+   "turns": 200,
+   "samples": 1000,
+   "parsed": 0.907,
+   "cap": 0.015,
+   "fb_model": 0,
+   "fb_parse": 0,
+   "classes_per_turn": 1.6122448979591837,
+   "modal_share": 0.845748299319728,
+   "one_class": 0.5816326530612245,
+   "judge_per_turn": 1.71,
+   "usd_per_turn": 0.029395165,
+   "usd_per_sample": 0.005879033,
+   "tok_in": 10871.23,
+   "tok_out": 710.256,
+   "cached": 0.7992148082599669,
+   "think_share": 0.473,
+   "think_tokens_when_thinking": 450.507399577167,
+   "no_parsed_turns": 4
+  }
+ },
+ "judge": {
+  "verdicts": 2807,
+  "yes": 826,
+  "no": 1981,
+  "none": 0,
+  "cost_usd": 0.682471
+ },
+ "n_scored_turns": 196,
+ "scores": {
+  "teacher": {
+   "bash": {
+    "mean_T": 0.7108333333333333,
+    "credited": 0.9,
+    "n": 50
+   },
+   "tool_call": {
+    "mean_T": 0.6119976359338062,
+    "credited": 0.8936170212765957,
+    "n": 47
+   },
+   "terminus_json": {
+    "mean_T": 0.6673333333333333,
+    "credited": 0.86,
+    "n": 50
+   },
+   "text": {
+    "mean_T": 0.8789115646258503,
+    "credited": 0.9795918367346939,
+    "n": 49
+   },
+   "all": {
+    "mean_T": 0.7180555555555556,
+    "credited": 0.9081632653061225,
+    "n": 196
+   }
+  },
+  "king": {
+   "bash": {
+    "mean_T": 0.668,
+    "credited": 0.72,
+    "n": 50
+   },
+   "tool_call": {
+    "mean_T": 0.48156028368794324,
+    "credited": 0.574468085106383,
+    "n": 47
+   },
+   "terminus_json": {
+    "mean_T": 0.666,
+    "credited": 0.72,
+    "n": 50
+   },
+   "text": {
+    "mean_T": 0.8224489795918367,
+    "credited": 0.8571428571428571,
+    "n": 49
+   },
+   "all": {
+    "mean_T": 0.6613945578231293,
+    "credited": 0.7193877551020408,
+    "n": 196
+   }
+  },
+  "challenger": {
+   "bash": {
+    "mean_T": 0.722,
+    "credited": 0.74,
+    "n": 50
+   },
+   "tool_call": {
+    "mean_T": 0.5035460992907801,
+    "credited": 0.5957446808510638,
+    "n": 47
+   },
+   "terminus_json": {
+    "mean_T": 0.746,
+    "credited": 0.8,
+    "n": 50
+   },
+   "text": {
+    "mean_T": 0.8653061224489796,
+    "credited": 0.8979591836734694,
+    "n": 49
+   },
+   "all": {
+    "mean_T": 0.7115646258503401,
+    "credited": 0.7602040816326531,
+    "n": 196
+   }
+  },
+  "genesis": {
+   "bash": {
+    "mean_T": 0.524,
+    "credited": 0.56,
+    "n": 25
+   },
+   "tool_call": {
+    "mean_T": 0.4391304347826087,
+    "credited": 0.4782608695652174,
+    "n": 23
+   },
+   "terminus_json": {
+    "mean_T": 0.684,
+    "credited": 0.72,
+    "n": 25
+   },
+   "text": {
+    "mean_T": 0.764,
+    "credited": 0.8,
+    "n": 25
+   },
+   "all": {
+    "mean_T": 0.6061224489795919,
+    "credited": 0.6428571428571429,
+    "n": 98
+   }
+  },
+  "filler": {
+   "bash": {
+    "mean_T": 0.668,
+    "credited": 0.72,
+    "n": 50
+   },
+   "tool_call": {
+    "mean_T": 0.48156028368794324,
+    "credited": 0.574468085106383,
+    "n": 47
+   },
+   "terminus_json": {
+    "mean_T": 0.666,
+    "credited": 0.72,
+    "n": 50
+   },
+   "text": {
+    "mean_T": 0.8224489795918367,
+    "credited": 0.8571428571428571,
+    "n": 49
+   },
+   "all": {
+    "mean_T": 0.6613945578231293,
+    "credited": 0.7193877551020408,
+    "n": 196
+   }
+  },
+  "ls": {
+   "bash": {
+    "mean_T": 0.102,
+    "credited": 0.12,
+    "n": 50
+   },
+   "tool_call": {
+    "mean_T": 0.02127659574468085,
+    "credited": 0.02127659574468085,
+    "n": 47
+   },
+   "terminus_json": {
+    "mean_T": 0.02,
+    "credited": 0.02,
+    "n": 50
+   },
+   "text": {
+    "mean_T": 0.0,
+    "credited": 0,
+    "n": 49
+   },
+   "all": {
+    "mean_T": 0.036224489795918365,
+    "credited": 0.04081632653061224,
+    "n": 196
+   }
+  },
+  "repeat": {
+   "bash": {
+    "mean_T": 0.2090909090909091,
+    "credited": 0.22727272727272727,
+    "n": 44
+   },
+   "tool_call": {
+    "mean_T": 0.06976744186046512,
+    "credited": 0.06976744186046512,
+    "n": 43
+   },
+   "terminus_json": {
+    "mean_T": 0.3851063829787234,
+    "credited": 0.40425531914893614,
+    "n": 47
+   },
+   "text": {
+    "mean_T": 0.1413793103448276,
+    "credited": 0.1724137931034483,
+    "n": 29
+   },
+   "all": {
+    "mean_T": 0.21104294478527608,
+    "credited": 0.22699386503067484,
+    "n": 163
+   }
+  }
+ },
+ "match_paths": {
+  "king": {
+   "jaccard": 48,
+   "exact": 38,
+   "none": 55,
+   "judge": 55
+  },
+  "challenger": {
+   "jaccard": 57,
+   "exact": 40,
+   "judge": 52,
+   "none": 47
+  },
+  "teacher": {
+   "jaccard": 172,
+   "exact": 130,
+   "none": 122,
+   "judge": 164
+  },
+  "ls": {
+   "none": 188,
+   "judge": 6,
+   "jaccard": 2
+  },
+  "repeat": {
+   "none": 126,
+   "exact": 17,
+   "judge": 5,
+   "jaccard": 15
+  },
+  "filler": {
+   "exact": 38,
+   "jaccard": 48,
+   "none": 55,
+   "judge": 55
+  },
+  "genesis": {
+   "jaccard": 22,
+   "exact": 16,
+   "none": 32,
+   "judge": 25,
+   "forfeit": 3
+  }
+ },
+ "contrasts": {
+  "teacher-king": {
+   "bash": {
+    "n": 50,
+    "mean": 0.04283333333333333,
+    "se": 0.05313313296422585,
+    "z": 0.8061510952529883,
+    "pos": 11,
+    "neg": 9,
+    "ties": 30,
+    "p": 0.8238029479980469
+   },
+   "tool_call": {
+    "n": 47,
+    "mean": 0.13043735224586286,
+    "se": 0.06926031491531089,
+    "z": 1.883291353863423,
+    "pos": 17,
+    "neg": 8,
+    "ties": 22,
+    "p": 0.10775214433670044
+   },
+   "terminus_json": {
+    "n": 50,
+    "mean": 0.0013333333333333242,
+    "se": 0.050313844945474785,
+    "z": 0.02650032679431,
+    "pos": 7,
+    "neg": 10,
+    "ties": 33,
+    "p": 0.629058837890625
+   },
+   "text": {
+    "n": 49,
+    "mean": 0.0564625850340136,
+    "se": 0.04261621079537008,
+    "z": 1.3249086199880498,
+    "pos": 6,
+    "neg": 5,
+    "ties": 38,
+    "p": 1.0
+   },
+   "all": {
+    "n": 196,
+    "mean": 0.0566609977324263,
+    "se": 0.02715341002511615,
+    "z": 2.0866991541768214,
+    "pos": 41,
+    "neg": 32,
+    "ties": 123,
+    "p": 0.3491818381705883
+   }
+  },
+  "king-ls": {
+   "bash": {
+    "n": 50,
+    "mean": 0.566,
+    "se": 0.06955309233284472,
+    "z": 8.137668377006445,
+    "pos": 31,
+    "neg": 0,
+    "ties": 19,
+    "p": 9.313225746154785e-10
+   },
+   "tool_call": {
+    "n": 47,
+    "mean": 0.4602836879432624,
+    "se": 0.0717434693620739,
+    "z": 6.415687616392084,
+    "pos": 26,
+    "neg": 0,
+    "ties": 21,
+    "p": 2.9802322387695312e-08
+   },
+   "terminus_json": {
+    "n": 50,
+    "mean": 0.646,
+    "se": 0.06750419488098952,
+    "z": 9.569775643408585,
+    "pos": 35,
+    "neg": 0,
+    "ties": 15,
+    "p": 5.820766091346741e-11
+   },
+   "text": {
+    "n": 49,
+    "mean": 0.8224489795918367,
+    "se": 0.05418421794056226,
+    "z": 15.178755195729273,
+    "pos": 42,
+    "neg": 0,
+    "ties": 7,
+    "p": 4.547473508864641e-13
+   },
+   "all": {
+    "n": 196,
+    "mean": 0.6251700680272109,
+    "se": 0.03409569720308387,
+    "z": 18.335746716177013,
+    "pos": 134,
+    "neg": 0,
+    "ties": 62,
+    "p": 9.183549615799121e-41
+   }
+  },
+  "king-repeat": {
+   "bash": {
+    "n": 44,
+    "mean": 0.41363636363636364,
+    "se": 0.09800283192023551,
+    "z": 4.220657255833405,
+    "pos": 24,
+    "neg": 5,
+    "ties": 15,
+    "p": 0.0005461126565933228
+   },
+   "tool_call": {
+    "n": 43,
+    "mean": 0.41007751937984493,
+    "se": 0.08652638562899262,
+    "z": 4.739334902282561,
+    "pos": 23,
+    "neg": 2,
+    "ties": 18,
+    "p": 1.9431114196777344e-05
+   },
+   "terminus_json": {
+    "n": 47,
+    "mean": 0.25957446808510637,
+    "se": 0.08288616484404365,
+    "z": 3.131698379017953,
+    "pos": 17,
+    "neg": 3,
+    "ties": 27,
+    "p": 0.0025768280029296875
+   },
+   "text": {
+    "n": 29,
+    "mean": 0.6275862068965518,
+    "se": 0.08904204903116517,
+    "z": 7.0482004145804575,
+    "pos": 20,
+    "neg": 0,
+    "ties": 9,
+    "p": 1.9073486328125e-06
+   },
+   "all": {
+    "n": 163,
+    "mean": 0.4063394683026585,
+    "se": 0.045811873380388224,
+    "z": 8.869741364399427,
+    "pos": 84,
+    "neg": 10,
+    "ties": 69,
+    "p": 1.032699183755085e-15
+   }
+  },
+  "teacher-challenger": {
+   "bash": {
+    "n": 50,
+    "mean": -0.011166666666666677,
+    "se": 0.059151027922669186,
+    "z": -0.18878229269769184,
+    "pos": 9,
+    "neg": 12,
+    "ties": 29,
+    "p": 0.6636238098144531
+   },
+   "tool_call": {
+    "n": 47,
+    "mean": 0.108451536643026,
+    "se": 0.07480798109660108,
+    "z": 1.4497321683227928,
+    "pos": 17,
+    "neg": 9,
+    "ties": 21,
+    "p": 0.16863754391670227
+   },
+   "terminus_json": {
+    "n": 50,
+    "mean": -0.07866666666666668,
+    "se": 0.03986098291793208,
+    "z": -1.973525510613469,
+    "pos": 3,
+    "neg": 12,
+    "ties": 35,
+    "p": 0.03515625
+   },
+   "text": {
+    "n": 49,
+    "mean": 0.013605442176870743,
+    "se": 0.03635559615823838,
+    "z": 0.37423240476246944,
+    "pos": 4,
+    "neg": 7,
+    "ties": 38,
+    "p": 0.548828125
+   },
+   "all": {
+    "n": 196,
+    "mean": 0.006490929705215411,
+    "se": 0.02732731062190132,
+    "z": 0.2375253750734363,
+    "pos": 33,
+    "neg": 40,
+    "ties": 123,
+    "p": 0.4827885568440213
+   }
+  },
+  "challenger-king": {
+   "bash": {
+    "n": 50,
+    "mean": 0.054,
+    "se": 0.05960482106237339,
+    "z": 0.905966984507709,
+    "pos": 6,
+    "neg": 4,
+    "ties": 40,
+    "p": 0.75390625
+   },
+   "tool_call": {
+    "n": 47,
+    "mean": 0.02198581560283688,
+    "se": 0.06475263934650109,
+    "z": 0.3395354355393528,
+    "pos": 7,
+    "neg": 6,
+    "ties": 34,
+    "p": 1.0
+   },
+   "terminus_json": {
+    "n": 50,
+    "mean": 0.08,
+    "se": 0.05598833697790121,
+    "z": 1.4288690166235207,
+    "pos": 6,
+    "neg": 2,
+    "ties": 42,
+    "p": 0.2890625
+   },
+   "text": {
+    "n": 49,
+    "mean": 0.04285714285714286,
+    "se": 0.041032590332414486,
+    "z": 1.0444659357341872,
+    "pos": 4,
+    "neg": 2,
+    "ties": 43,
+    "p": 0.6875
+   },
+   "all": {
+    "n": 196,
+    "mean": 0.050170068027210885,
+    "se": 0.027779519340813855,
+    "z": 1.8060092189392452,
+    "pos": 23,
+    "neg": 14,
+    "ties": 159,
+    "p": 0.18774155899882317
+   }
+  },
+  "teacher-genesis": {
+   "bash": {
+    "n": 25,
+    "mean": 0.10033333333333333,
+    "se": 0.10191735940529537,
+    "z": 0.9844577402593131,
+    "pos": 7,
+    "neg": 6,
+    "ties": 12,
+    "p": 1.0
+   },
+   "tool_call": {
+    "n": 23,
+    "mean": 0.16509661835748793,
+    "se": 0.10307228900185242,
+    "z": 1.6017556217706663,
+    "pos": 10,
+    "neg": 3,
+    "ties": 10,
+    "p": 0.09228515625
+   },
+   "terminus_json": {
+    "n": 25,
+    "mean": -0.008000000000000005,
+    "se": 0.06594835240690389,
+    "z": -0.12130704874383663,
+    "pos": 3,
+    "neg": 3,
+    "ties": 19,
+    "p": 1.0
+   },
+   "text": {
+    "n": 25,
+    "mean": 0.136,
+    "se": 0.06365183073216005,
+    "z": 2.1366235414700507,
+    "pos": 5,
+    "neg": 0,
+    "ties": 20,
+    "p": 0.0625
+   },
+   "all": {
+    "n": 98,
+    "mean": 0.09699546485260771,
+    "se": 0.04237456248536925,
+    "z": 2.289002155151396,
+    "pos": 25,
+    "neg": 12,
+    "ties": 61,
+    "p": 0.04703102743951604
+   }
+  },
+  "king-genesis": {
+   "bash": {
+    "n": 25,
+    "mean": 0.088,
+    "se": 0.12292545166346418,
+    "z": 0.7158810385413072,
+    "pos": 6,
+    "neg": 4,
+    "ties": 15,
+    "p": 0.75390625
+   },
+   "tool_call": {
+    "n": 23,
+    "mean": 0.011594202898550723,
+    "se": 0.12336962567640077,
+    "z": 0.09397939594112398,
+    "pos": 5,
+    "neg": 4,
+    "ties": 14,
+    "p": 1.0
+   },
+   "terminus_json": {
+    "n": 25,
+    "mean": -0.076,
+    "se": 0.09717338455907906,
+    "z": -0.782107161799987,
+    "pos": 2,
+    "neg": 4,
+    "ties": 19,
+    "p": 0.6875
+   },
+   "text": {
+    "n": 25,
+    "mean": 0.08,
+    "se": 0.09865765724632494,
+    "z": 0.8108848540793832,
+    "pos": 4,
+    "neg": 2,
+    "ties": 19,
+    "p": 0.6875
+   },
+   "all": {
+    "n": 98,
+    "mean": 0.02619047619047619,
+    "se": 0.054953667363738405,
+    "z": 0.4765919627733194,
+    "pos": 17,
+    "neg": 14,
+    "ties": 67,
+    "p": 0.720100131817162
+   }
+  },
+  "teacher-ls": {
+   "bash": {
+    "n": 50,
+    "mean": 0.6088333333333333,
+    "se": 0.061890295928834674,
+    "z": 9.837298791290445,
+    "pos": 40,
+    "neg": 1,
+    "ties": 9,
+    "p": 3.8198777474462986e-11
+   },
+   "tool_call": {
+    "n": 47,
+    "mean": 0.5907210401891253,
+    "se": 0.05941390814673259,
+    "z": 9.942470687675364,
+    "pos": 41,
+    "neg": 0,
+    "ties": 6,
+    "p": 9.094947017729282e-13
+   },
+   "terminus_json": {
+    "n": 50,
+    "mean": 0.6473333333333333,
+    "se": 0.05719117005248965,
+    "z": 11.318763591288924,
+    "pos": 42,
+    "neg": 0,
+    "ties": 8,
+    "p": 4.547473508864641e-13
+   },
+   "text": {
+    "n": 49,
+    "mean": 0.8789115646258503,
+    "se": 0.037792620936270546,
+    "z": 23.256168607833608,
+    "pos": 48,
+    "neg": 0,
+    "ties": 1,
+    "p": 7.105427357601002e-15
+   },
+   "all": {
+    "n": 196,
+    "mean": 0.6818310657596371,
+    "se": 0.028483621352897483,
+    "z": 23.937653759404373,
+    "pos": 171,
+    "neg": 1,
+    "ties": 24,
+    "p": 5.779853685574373e-50
+   }
+  }
+ },
+ "agreement": {
+  "bash": {
+   "ref_in_modal": 0.7,
+   "turn_any_ref_modal": 0.8,
+   "turn_all_refs_modal": 0.56,
+   "turn_any_ref_credited": 0.9,
+   "n_turns": 50,
+   "side_in_modal": {
+    "king": 0.66,
+    "challenger": 0.72,
+    "genesis": 0.52
+   }
+  },
+  "tool_call": {
+   "ref_in_modal": 0.5957446808510638,
+   "turn_any_ref_modal": 0.7659574468085106,
+   "turn_all_refs_modal": 0.46808510638297873,
+   "turn_any_ref_credited": 0.8936170212765957,
+   "n_turns": 47,
+   "side_in_modal": {
+    "king": 0.46808510638297873,
+    "challenger": 0.48936170212765956,
+    "genesis": 0.43478260869565216
+   }
+  },
+  "terminus_json": {
+   "ref_in_modal": 0.66,
+   "turn_any_ref_modal": 0.8,
+   "turn_all_refs_modal": 0.52,
+   "turn_any_ref_credited": 0.86,
+   "n_turns": 50,
+   "side_in_modal": {
+    "king": 0.66,
+    "challenger": 0.74,
+    "genesis": 0.68
+   }
+  },
+  "text": {
+   "ref_in_modal": 0.8707482993197279,
+   "turn_any_ref_modal": 0.9183673469387755,
+   "turn_all_refs_modal": 0.7755102040816326,
+   "turn_any_ref_credited": 0.9795918367346939,
+   "n_turns": 49,
+   "side_in_modal": {
+    "king": 0.8163265306122449,
+    "challenger": 0.8571428571428571,
+    "genesis": 0.76
+   }
+  },
+  "all": {
+   "ref_in_modal": 0.7074829931972789,
+   "turn_any_ref_modal": 0.8214285714285714,
+   "turn_all_refs_modal": 0.5816326530612245,
+   "turn_any_ref_credited": 0.9081632653061225,
+   "n_turns": 196,
+   "side_in_modal": {
+    "king": 0.6530612244897959,
+    "challenger": 0.7040816326530612,
+    "genesis": 0.6020408163265306
+   }
+  }
+ },
+ "panel": {
+  "rows": [
+   {
+    "model": "king11",
+    "key": "0ce59769300c",
+    "n": 49,
+    "mean_T": 0.445578231292517,
+    "excess": -0.17006802721088435,
+    "excess_se": 0.07271057354333335,
+    "credited": 0.5306122448979592,
+    "total": -12.15858005050505,
+    "agentic": -22.16514862914863,
+    "agentic_no_tau2": -4.010885101010101,
+    "chat": -2.5510700757575746
+   },
+   {
+    "model": "king12",
+    "key": "6c877fd2242d",
+    "n": 49,
+    "mean_T": 0.5,
+    "excess": -0.1564625850340136,
+    "excess_se": 0.05263669803673648,
+    "credited": 0.5510204081632653,
+    "total": -12.81758005050505,
+    "agentic": -23.5765772005772,
+    "agentic_no_tau2": -6.480885101010102,
+    "chat": -3.2335700757575765
+   },
+   {
+    "model": "king13",
+    "key": "6d0ee567e33e",
+    "n": 49,
+    "mean_T": 0.7040816326530612,
+    "excess": 0.01020408163265307,
+    "excess_se": 0.05147712770681356,
+    "credited": 0.7551020408163265,
+    "total": -19.92908005050505,
+    "agentic": -22.449434343434344,
+    "agentic_no_tau2": -4.5083851010101,
+    "chat": -9.374820075757576
+   },
+   {
+    "model": "king14",
+    "key": "0f4029fd59ed",
+    "n": 47,
+    "mean_T": 0.5460992907801419,
+    "excess": -0.15484633569739953,
+    "excess_se": 0.06456268482615299,
+    "credited": 0.6170212765957447,
+    "total": -11.75258005050505,
+    "agentic": -21.5065772005772,
+    "agentic_no_tau2": -2.858385101010099,
+    "chat": -2.3360700757575747
+   },
+   {
+    "model": "king15",
+    "key": "5b1679a0db66",
+    "n": 46,
+    "mean_T": 0.5072463768115942,
+    "excess": -0.15096618357487923,
+    "excess_se": 0.078617942162328,
+    "credited": 0.5434782608695652,
+    "total": -11.670015993265993,
+    "agentic": -25.11730303030303,
+    "agentic_no_tau2": -3.863772727272727,
+    "chat": 0.5251799242424253
+   },
+   {
+    "model": "king16",
+    "key": "6ea86b6e1868",
+    "n": 47,
+    "mean_T": 0.5851063829787234,
+    "excess": -0.06501182033096926,
+    "excess_se": 0.0573340356202364,
+    "credited": 0.6382978723404256,
+    "total": 6.753419949494951,
+    "agentic": 14.227708513708516,
+    "agentic_no_tau2": 2.041614898989902,
+    "chat": -1.094820075757574
+   },
+   {
+    "model": "king17",
+    "key": "e416aab8599d",
+    "n": 48,
+    "mean_T": 0.7083333333333334,
+    "excess": -0.04050925925925925,
+    "excess_se": 0.04958951719183938,
+    "credited": 0.7083333333333334,
+    "total": 10.400507575757578,
+    "agentic": 22.8375,
+    "agentic_no_tau2": -2.0275000000000034,
+    "chat": 2.9528333333333365
+   },
+   {
+    "model": "king18",
+    "key": "73dd5bbcf1f7",
+    "n": 49,
+    "mean_T": 0.6428571428571429,
+    "excess": -0.05782312925170067,
+    "excess_se": 0.05741317930396463,
+    "credited": 0.6938775510204082,
+    "total": 10.14941994949495,
+    "agentic": 15.873422799422798,
+    "agentic_no_tau2": 1.629114898989899,
+    "chat": 1.9214299242424273
+   },
+   {
+    "model": "king19",
+    "key": "f82deda2ffbd",
+    "n": 47,
+    "mean_T": 0.6773049645390071,
+    "excess": -0.03664302600472812,
+    "excess_se": 0.047711069912660775,
+    "credited": 0.7659574468085106,
+    "total": 10.36691994949495,
+    "agentic": 15.291994227994229,
+    "agentic_no_tau2": 0.5116148989899001,
+    "chat": 3.798929924242425
+   },
+   {
+    "model": "king20",
+    "key": "50e3c081ab1c",
+    "n": 22,
+    "mean_T": 0.8257575757575758,
+    "excess": -0.012626262626262617,
+    "excess_se": 0.061592599915537206,
+    "credited": 0.8636363636363636,
+    "total": 10.89530808080808,
+    "agentic": 23.69363636363636,
+    "agentic_no_tau2": 5.885340909090903,
+    "chat": 2.5126799242424243
+   },
+   {
+    "model": "genesis",
+    "key": "genesis",
+    "n": 225,
+    "mean_T": 0.6118518518518519,
+    "excess": -0.06493827160493826,
+    "excess_se": 0.027688991950220395,
+    "credited": 0.6488888888888888,
+    "total": 10.85791994949495,
+    "agentic": 18.749137085137086,
+    "agentic_no_tau2": 5.356614898989902,
+    "chat": 0.34392992424242497
+   },
+   {
+    "model": "teacher",
+    "key": "teacher",
+    "n": 239,
+    "mean_T": 0.6859600185960019,
+    "excess": 0.0,
+    "excess_se": 0.0,
+    "credited": 0.8368200836820083,
+    "total": 15.66141994949495,
+    "agentic": 17.110565656565658,
+    "agentic_no_tau2": 8.7816148989899,
+    "chat": 7.642679924242427
+   }
+  ],
+  "spearman": {
+   "mean_T": {
+    "total": {
+     "rho": 0.5804195804195804,
+     "p": 0.05638872225554889,
+     "n": 12,
+     "rho_kings_only": 0.6363636363636364,
+     "n_kings_only": 10
+    },
+    "agentic": {
+     "rho": 0.7132867132867133,
+     "p": 0.012397520495900819,
+     "n": 12,
+     "rho_kings_only": 0.7333333333333333,
+     "n_kings_only": 10
+    },
+    "agentic_no_tau2": {
+     "rho": 0.5104895104895105,
+     "p": 0.09458108378324336,
+     "n": 12,
+     "rho_kings_only": 0.5636363636363636,
+     "n_kings_only": 10
+    },
+    "chat": {
+     "rho": 0.5454545454545454,
+     "p": 0.07058588282343531,
+     "n": 12,
+     "rho_kings_only": 0.5393939393939394,
+     "n_kings_only": 10
+    }
+   },
+   "excess": {
+    "total": {
+     "rho": 0.4825174825174825,
+     "p": 0.11437712457508498,
+     "n": 12,
+     "rho_kings_only": 0.4303030303030303,
+     "n_kings_only": 10
+    },
+    "agentic": {
+     "rho": 0.5034965034965035,
+     "p": 0.09618076384723055,
+     "n": 12,
+     "rho_kings_only": 0.503030303030303,
+     "n_kings_only": 10
+    },
+    "agentic_no_tau2": {
+     "rho": 0.46853146853146854,
+     "p": 0.1277744451109778,
+     "n": 12,
+     "rho_kings_only": 0.41818181818181815,
+     "n_kings_only": 10
+    },
+    "chat": {
+     "rho": 0.48951048951048953,
+     "p": 0.10917816436712657,
+     "n": 12,
+     "rho_kings_only": 0.3939393939393939,
+     "n_kings_only": 10
+    }
+   }
+  },
+  "axes": {
+   "total": [
+    "aime25",
+    "bfcl-v3",
+    "gpqa-diamond",
+    "graphwalks",
+    "humaneval",
+    "ifbench",
+    "ifeval",
+    "livecodebench",
+    "math500",
+    "minif2f",
+    "mmlu-pro",
+    "mrcr-v2",
+    "oolong-synth",
+    "swebench-verified",
+    "tau2-airline",
+    "tau2-retail",
+    "tau2-telecom",
+    "tau3-banking",
+    "terminal-bench-2",
+    "when2call"
+   ],
+   "agentic": [
+    "swebench-verified",
+    "terminal-bench-2",
+    "tau2-airline",
+    "tau2-retail",
+    "tau2-telecom",
+    "bfcl-v3",
+    "when2call"
+   ],
+   "agentic_no_tau2": [
+    "swebench-verified",
+    "terminal-bench-2",
+    "bfcl-v3",
+    "when2call"
+   ],
+   "chat": [
+    "mmlu-pro",
+    "gpqa-diamond",
+    "math500",
+    "aime25",
+    "ifeval",
+    "ifbench",
+    "humaneval",
+    "livecodebench"
+   ]
+  },
+  "matrix_generated_at": "2026-09-20T14:33:02+00:00"
+ },
+ "panel_targets": {
+  "turns": 243,
+  "classes_per_turn": 1.4032921810699588,
+  "modal_share": 0.8652949245541838,
+  "usd_per_turn": 0.021794798353909465,
+  "by_kind": {
+   "terminus_json": 31,
+   "text": 53,
+   "bash": 73,
+   "tool_call": 62,
+   "boxed": 24
+  }
+ },
+ "truth": {
+  "per_state": [
+   {
+    "state_id": "06706134ab594db883e8f291ed08c6d0:3:frontier",
+    "class": "outcome",
+    "harness": "mini_swe_textbased",
+    "kind": "bash",
+    "depth": 3,
+    "n_frontier": 10,
+    "n_labelled": 2,
+    "n_teacher_labelled": 1,
+    "n_harvest_added": 0,
+    "judge_calls": 2,
+    "any_solved_label": false,
+    "frontier_modal_share": 1.0,
+    "frontier_n_classes": 1,
+    "frontier_modal_outcome": "wrong",
+    "frontier_modal_rate": 0.0,
+    "frontier_any_class_solved": false,
+    "frontier_random_rate": 0.0,
+    "teacher_random_rate": 0.0,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "wrong",
+    "teacher_modal_rate": 0.0,
+    "teacher_any_class_solved": false
+   },
+   {
+    "state_id": "21bc74b278844c9c8d29cfbe2d389553:3:frontier",
+    "class": "outcome",
+    "harness": "bash",
+    "kind": "tool_call",
+    "depth": 3,
+    "n_frontier": 10,
+    "n_labelled": 3,
+    "n_teacher_labelled": 1,
+    "n_harvest_added": 0,
+    "judge_calls": 5,
+    "any_solved_label": true,
+    "frontier_modal_share": 0.7,
+    "frontier_n_classes": 2,
+    "frontier_modal_outcome": "correct",
+    "frontier_modal_rate": 1.0,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 1.0,
+    "teacher_random_rate": 1.0,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "correct",
+    "teacher_modal_rate": 1.0,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "2a10d948893a4f56a647ebf778b2b3fb:4:frontier",
+    "class": "ceiling",
+    "harness": "mini_swe_textbased",
+    "kind": "bash",
+    "depth": 4,
+    "n_frontier": 10,
+    "n_labelled": 15,
+    "n_teacher_labelled": 10,
+    "n_harvest_added": 8,
+    "judge_calls": 37,
+    "any_solved_label": false,
+    "frontier_modal_share": 0.5,
+    "frontier_n_classes": 5,
+    "frontier_modal_outcome": "wrong",
+    "frontier_modal_rate": 0.0,
+    "frontier_any_class_solved": false,
+    "frontier_random_rate": 0.0,
+    "teacher_random_rate": 0.0,
+    "teacher_modal_share": 0.6,
+    "teacher_modal_outcome": "wrong",
+    "teacher_modal_rate": 0.0,
+    "teacher_any_class_solved": false
+   },
+   {
+    "state_id": "2f4d4ef3ee024338ab9c654a8f9e0ab4:6:frontier",
+    "class": "outcome",
+    "harness": "terminus_2",
+    "kind": "terminus_json",
+    "depth": 6,
+    "n_frontier": 9,
+    "n_labelled": 2,
+    "n_teacher_labelled": 1,
+    "n_harvest_added": 0,
+    "judge_calls": 4,
+    "any_solved_label": true,
+    "frontier_modal_share": 0.7777777777777778,
+    "frontier_n_classes": 2,
+    "frontier_modal_outcome": "mixed",
+    "frontier_modal_rate": 0.5,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 0.5,
+    "teacher_random_rate": 0.0,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "mixed",
+    "teacher_modal_rate": 0.5,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "30be2fbf008b480197d49ebf7b93a545:12:frontier",
+    "class": "ceiling",
+    "harness": "bash",
+    "kind": "tool_call",
+    "depth": 12,
+    "n_frontier": 10,
+    "n_labelled": 14,
+    "n_teacher_labelled": 10,
+    "n_harvest_added": 8,
+    "judge_calls": 1,
+    "any_solved_label": false,
+    "frontier_modal_share": 1.0,
+    "frontier_n_classes": 1,
+    "frontier_modal_outcome": "wrong",
+    "frontier_modal_rate": 0.0,
+    "frontier_any_class_solved": false,
+    "frontier_random_rate": 0.0,
+    "teacher_random_rate": 0.0,
+    "teacher_modal_share": 0.9,
+    "teacher_modal_outcome": "wrong",
+    "teacher_modal_rate": 0.0,
+    "teacher_any_class_solved": false
+   },
+   {
+    "state_id": "3665be6010bf456ca018c12d94ea0e05:13:frontier",
+    "class": "split",
+    "harness": "terminus_2",
+    "kind": "terminus_json",
+    "depth": 13,
+    "n_frontier": 10,
+    "n_labelled": 5,
+    "n_teacher_labelled": 4,
+    "n_harvest_added": 0,
+    "judge_calls": 0,
+    "any_solved_label": true,
+    "frontier_modal_share": 1.0,
+    "frontier_n_classes": 1,
+    "frontier_modal_outcome": "mixed",
+    "frontier_modal_rate": 0.8,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 0.8,
+    "teacher_random_rate": 0.75,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "mixed",
+    "teacher_modal_rate": 0.8,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "37feff8f9eee47e1b3b8b2787040d3b7:6:frontier",
+    "class": "ceiling",
+    "harness": "terminus_2",
+    "kind": "terminus_json",
+    "depth": 6,
+    "n_frontier": 10,
+    "n_labelled": 7,
+    "n_teacher_labelled": 4,
+    "n_harvest_added": 1,
+    "judge_calls": 2,
+    "any_solved_label": false,
+    "frontier_modal_share": 0.9,
+    "frontier_n_classes": 2,
+    "frontier_modal_outcome": "wrong",
+    "frontier_modal_rate": 0.0,
+    "frontier_any_class_solved": false,
+    "frontier_random_rate": 0.0,
+    "teacher_random_rate": 0.0,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "wrong",
+    "teacher_modal_rate": 0.0,
+    "teacher_any_class_solved": false
+   },
+   {
+    "state_id": "3a9986a1834041c686ca12fd0243d9a3:8:frontier",
+    "class": "ceiling",
+    "harness": "bash",
+    "kind": "tool_call",
+    "depth": 8,
+    "n_frontier": 10,
+    "n_labelled": 13,
+    "n_teacher_labelled": 10,
+    "n_harvest_added": 8,
+    "judge_calls": 8,
+    "any_solved_label": false,
+    "frontier_modal_share": 0.5,
+    "frontier_n_classes": 2,
+    "frontier_modal_outcome": "wrong",
+    "frontier_modal_rate": 0.0,
+    "frontier_any_class_solved": false,
+    "frontier_random_rate": 0.0,
+    "teacher_random_rate": 0.0,
+    "teacher_modal_share": 0.5,
+    "teacher_modal_outcome": "wrong",
+    "teacher_modal_rate": 0.0,
+    "teacher_any_class_solved": false
+   },
+   {
+    "state_id": "3cab611bfbee455d861881e0496a425f:15:frontier",
+    "class": "split",
+    "harness": "mini_swe_textbased",
+    "kind": "bash",
+    "depth": 15,
+    "n_frontier": 10,
+    "n_labelled": 9,
+    "n_teacher_labelled": 8,
+    "n_harvest_added": 4,
+    "judge_calls": 0,
+    "any_solved_label": true,
+    "frontier_modal_share": 1.0,
+    "frontier_n_classes": 1,
+    "frontier_modal_outcome": "mixed",
+    "frontier_modal_rate": 0.8888888888888888,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 0.8888888888888888,
+    "teacher_random_rate": 0.875,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "mixed",
+    "teacher_modal_rate": 0.8888888888888888,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "48e27ac1ac2e478f92b42bd91e32ce3a:8:frontier",
+    "class": "split",
+    "harness": "mini_swe_textbased",
+    "kind": "bash",
+    "depth": 8,
+    "n_frontier": 10,
+    "n_labelled": 8,
+    "n_teacher_labelled": 8,
+    "n_harvest_added": 4,
+    "judge_calls": 21,
+    "any_solved_label": true,
+    "frontier_modal_share": 0.3,
+    "frontier_n_classes": 6,
+    "frontier_modal_outcome": "mixed",
+    "frontier_modal_rate": 0.5,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 0.41666666666666663,
+    "teacher_random_rate": 0.625,
+    "teacher_modal_share": 0.375,
+    "teacher_modal_outcome": "mixed",
+    "teacher_modal_rate": 0.3333333333333333,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "6a1f2d81f00542e196167931c3364c76:12:frontier",
+    "class": "outcome",
+    "harness": "mini_swe_textbased",
+    "kind": "bash",
+    "depth": 12,
+    "n_frontier": 10,
+    "n_labelled": 2,
+    "n_teacher_labelled": 1,
+    "n_harvest_added": 0,
+    "judge_calls": 14,
+    "any_solved_label": true,
+    "frontier_modal_share": 0.6,
+    "frontier_n_classes": 5,
+    "frontier_modal_outcome": "correct",
+    "frontier_modal_rate": 1.0,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 1.0,
+    "teacher_random_rate": 1.0,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "correct",
+    "teacher_modal_rate": 1.0,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "701bd65d85774058b804b2021bd3bb2c:9:frontier",
+    "class": "outcome",
+    "harness": "bash",
+    "kind": "tool_call",
+    "depth": 9,
+    "n_frontier": 10,
+    "n_labelled": 4,
+    "n_teacher_labelled": 3,
+    "n_harvest_added": 0,
+    "judge_calls": 0,
+    "any_solved_label": true,
+    "frontier_modal_share": 1.0,
+    "frontier_n_classes": 1,
+    "frontier_modal_outcome": "correct",
+    "frontier_modal_rate": 1.0,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 1.0,
+    "teacher_random_rate": 1.0,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "correct",
+    "teacher_modal_rate": 1.0,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "7497273ee72d4a2fbaafc4a82016cf98:4:frontier",
+    "class": "outcome",
+    "harness": "mini_swe_textbased",
+    "kind": "bash",
+    "depth": 4,
+    "n_frontier": 10,
+    "n_labelled": 2,
+    "n_teacher_labelled": 1,
+    "n_harvest_added": 0,
+    "judge_calls": 1,
+    "any_solved_label": true,
+    "frontier_modal_share": 0.8,
+    "frontier_n_classes": 2,
+    "frontier_modal_outcome": "mixed",
+    "frontier_modal_rate": 0.5,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 0.5,
+    "teacher_random_rate": 1.0,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "mixed",
+    "teacher_modal_rate": 0.5,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "7aa0fc310c7e4346a2f9a3a4f7241794:3:frontier",
+    "class": "ceiling",
+    "harness": "bash",
+    "kind": "tool_call",
+    "depth": 3,
+    "n_frontier": 10,
+    "n_labelled": 14,
+    "n_teacher_labelled": 10,
+    "n_harvest_added": 8,
+    "judge_calls": 3,
+    "any_solved_label": false,
+    "frontier_modal_share": 1.0,
+    "frontier_n_classes": 1,
+    "frontier_modal_outcome": "wrong",
+    "frontier_modal_rate": 0.0,
+    "frontier_any_class_solved": false,
+    "frontier_random_rate": 0.0,
+    "teacher_random_rate": 0.0,
+    "teacher_modal_share": 0.8,
+    "teacher_modal_outcome": "wrong",
+    "teacher_modal_rate": 0.0,
+    "teacher_any_class_solved": false
+   },
+   {
+    "state_id": "8bee1f3117134d2d800008fbbe9bf087:5:frontier",
+    "class": "ceiling",
+    "harness": "mini_swe_textbased",
+    "kind": "bash",
+    "depth": 5,
+    "n_frontier": 10,
+    "n_labelled": 12,
+    "n_teacher_labelled": 9,
+    "n_harvest_added": 7,
+    "judge_calls": 4,
+    "any_solved_label": true,
+    "frontier_modal_share": 0.9,
+    "frontier_n_classes": 2,
+    "frontier_modal_outcome": "mixed",
+    "frontier_modal_rate": 0.2727272727272727,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 0.2727272727272727,
+    "teacher_random_rate": 0.2222222222222222,
+    "teacher_modal_share": 0.8888888888888888,
+    "teacher_modal_outcome": "mixed",
+    "teacher_modal_rate": 0.2727272727272727,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "8ddd2d89cea6401ba840e399b962a226:6:frontier",
+    "class": "ceiling",
+    "harness": "mini_swe_textbased",
+    "kind": "bash",
+    "depth": 6,
+    "n_frontier": 10,
+    "n_labelled": 15,
+    "n_teacher_labelled": 10,
+    "n_harvest_added": 8,
+    "judge_calls": 11,
+    "any_solved_label": true,
+    "frontier_modal_share": 1.0,
+    "frontier_n_classes": 1,
+    "frontier_modal_outcome": "mixed",
+    "frontier_modal_rate": 0.125,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 0.125,
+    "teacher_random_rate": 0.0,
+    "teacher_modal_share": 0.5,
+    "teacher_modal_outcome": "wrong",
+    "teacher_modal_rate": 0.0,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "913f7a01d1d14336a156331a4cf11204:14:frontier",
+    "class": "split",
+    "harness": "bash",
+    "kind": "tool_call",
+    "depth": 14,
+    "n_frontier": 10,
+    "n_labelled": 9,
+    "n_teacher_labelled": 8,
+    "n_harvest_added": 4,
+    "judge_calls": 3,
+    "any_solved_label": true,
+    "frontier_modal_share": 1.0,
+    "frontier_n_classes": 1,
+    "frontier_modal_outcome": "mixed",
+    "frontier_modal_rate": 0.6666666666666666,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 0.6666666666666666,
+    "teacher_random_rate": 0.75,
+    "teacher_modal_share": 0.75,
+    "teacher_modal_outcome": "mixed",
+    "teacher_modal_rate": 0.6666666666666666,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "9d3fd174f99742e287b3e060cdbbb2c6:14:frontier",
+    "class": "ceiling",
+    "harness": "mini_swe_textbased",
+    "kind": "bash",
+    "depth": 14,
+    "n_frontier": 10,
+    "n_labelled": 15,
+    "n_teacher_labelled": 10,
+    "n_harvest_added": 8,
+    "judge_calls": 99,
+    "any_solved_label": true,
+    "frontier_modal_share": 0.5,
+    "frontier_n_classes": 5,
+    "frontier_modal_outcome": "wrong",
+    "frontier_modal_rate": 0.0,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 0.08333333333333333,
+    "teacher_random_rate": 0.1,
+    "teacher_modal_share": 0.2,
+    "teacher_modal_outcome": "wrong",
+    "teacher_modal_rate": 0.0,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "a079281ff9b942faaab7896cbe0388b4:7:frontier",
+    "class": "ceiling",
+    "harness": "mini_swe_textbased",
+    "kind": "bash",
+    "depth": 7,
+    "n_frontier": 10,
+    "n_labelled": 12,
+    "n_teacher_labelled": 9,
+    "n_harvest_added": 6,
+    "judge_calls": 2,
+    "any_solved_label": false,
+    "frontier_modal_share": 1.0,
+    "frontier_n_classes": 1,
+    "frontier_modal_outcome": "wrong",
+    "frontier_modal_rate": 0.0,
+    "frontier_any_class_solved": false,
+    "frontier_random_rate": 0.0,
+    "teacher_random_rate": 0.0,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "wrong",
+    "teacher_modal_rate": 0.0,
+    "teacher_any_class_solved": false
+   },
+   {
+    "state_id": "a785cb844bd440f2ae269f95190a859c:12:frontier",
+    "class": "split",
+    "harness": "terminus_2",
+    "kind": "terminus_json",
+    "depth": 12,
+    "n_frontier": 9,
+    "n_labelled": 8,
+    "n_teacher_labelled": 8,
+    "n_harvest_added": 4,
+    "judge_calls": 52,
+    "any_solved_label": true,
+    "frontier_modal_share": 0.3333333333333333,
+    "frontier_n_classes": 5,
+    "frontier_modal_outcome": "novel",
+    "frontier_modal_rate": null,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 0.3333333333333333,
+    "teacher_random_rate": 0.125,
+    "teacher_modal_share": 0.625,
+    "teacher_modal_outcome": "wrong",
+    "teacher_modal_rate": 0.0,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "aa37825860364857b3afea74d7766a19:12:frontier",
+    "class": "outcome",
+    "harness": "mini_swe_textbased",
+    "kind": "bash",
+    "depth": 12,
+    "n_frontier": 10,
+    "n_labelled": 2,
+    "n_teacher_labelled": 1,
+    "n_harvest_added": 0,
+    "judge_calls": 11,
+    "any_solved_label": true,
+    "frontier_modal_share": 0.7,
+    "frontier_n_classes": 4,
+    "frontier_modal_outcome": "correct",
+    "frontier_modal_rate": 1.0,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 1.0,
+    "teacher_random_rate": 1.0,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "correct",
+    "teacher_modal_rate": 1.0,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "acfca5b914134cb4808924fba8b6a4f0:10:frontier",
+    "class": "outcome",
+    "harness": "mini_swe_textbased",
+    "kind": "bash",
+    "depth": 10,
+    "n_frontier": 10,
+    "n_labelled": 3,
+    "n_teacher_labelled": 1,
+    "n_harvest_added": 0,
+    "judge_calls": 28,
+    "any_solved_label": true,
+    "frontier_modal_share": 0.3,
+    "frontier_n_classes": 6,
+    "frontier_modal_outcome": "correct",
+    "frontier_modal_rate": 1.0,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 0.8,
+    "teacher_random_rate": 1.0,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "correct",
+    "teacher_modal_rate": 1.0,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "b3ea21bb2e3844bf9adf8fd5bd8e6662:5:frontier",
+    "class": "outcome",
+    "harness": "terminus_2",
+    "kind": "terminus_json",
+    "depth": 5,
+    "n_frontier": 10,
+    "n_labelled": 2,
+    "n_teacher_labelled": 1,
+    "n_harvest_added": 0,
+    "judge_calls": 0,
+    "any_solved_label": true,
+    "frontier_modal_share": 1.0,
+    "frontier_n_classes": 1,
+    "frontier_modal_outcome": "correct",
+    "frontier_modal_rate": 1.0,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 1.0,
+    "teacher_random_rate": 1.0,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "correct",
+    "teacher_modal_rate": 1.0,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "b6e6a32fd6204d2c89f9a8bdf682ecfc:14:frontier",
+    "class": "outcome",
+    "harness": "mini_swe_textbased",
+    "kind": "bash",
+    "depth": 14,
+    "n_frontier": 10,
+    "n_labelled": 3,
+    "n_teacher_labelled": 1,
+    "n_harvest_added": 0,
+    "judge_calls": 22,
+    "any_solved_label": false,
+    "frontier_modal_share": 0.6,
+    "frontier_n_classes": 5,
+    "frontier_modal_outcome": "novel",
+    "frontier_modal_rate": null,
+    "frontier_any_class_solved": false,
+    "frontier_random_rate": null,
+    "teacher_random_rate": 0.0,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "wrong",
+    "teacher_modal_rate": 0.0,
+    "teacher_any_class_solved": false
+   },
+   {
+    "state_id": "ca99dd9d809c4896a3ec8d0a170a37d8:12:frontier",
+    "class": "ceiling",
+    "harness": "bash",
+    "kind": "tool_call",
+    "depth": 12,
+    "n_frontier": 8,
+    "n_labelled": 5,
+    "n_teacher_labelled": 3,
+    "n_harvest_added": 0,
+    "judge_calls": 1,
+    "any_solved_label": true,
+    "frontier_modal_share": 0.875,
+    "frontier_n_classes": 2,
+    "frontier_modal_outcome": "mixed",
+    "frontier_modal_rate": 0.2,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 0.2,
+    "teacher_random_rate": 0.0,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "mixed",
+    "teacher_modal_rate": 0.2,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "cd54272236014427bc71ea1d0a2fdbd7:12:frontier",
+    "class": "split",
+    "harness": "bash",
+    "kind": "tool_call",
+    "depth": 12,
+    "n_frontier": 10,
+    "n_labelled": 9,
+    "n_teacher_labelled": 8,
+    "n_harvest_added": 4,
+    "judge_calls": 1,
+    "any_solved_label": true,
+    "frontier_modal_share": 0.6,
+    "frontier_n_classes": 2,
+    "frontier_modal_outcome": "mixed",
+    "frontier_modal_rate": 0.3333333333333333,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 0.3333333333333333,
+    "teacher_random_rate": 0.375,
+    "teacher_modal_share": 0.75,
+    "teacher_modal_outcome": "mixed",
+    "teacher_modal_rate": 0.3333333333333333,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "cfa692cfc20d44a5859c88d4655e196d:15:frontier",
+    "class": "outcome",
+    "harness": "mini_swe_textbased",
+    "kind": "bash",
+    "depth": 15,
+    "n_frontier": 10,
+    "n_labelled": 2,
+    "n_teacher_labelled": 1,
+    "n_harvest_added": 0,
+    "judge_calls": 8,
+    "any_solved_label": true,
+    "frontier_modal_share": 0.4,
+    "frontier_n_classes": 4,
+    "frontier_modal_outcome": "correct",
+    "frontier_modal_rate": 1.0,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 1.0,
+    "teacher_random_rate": 1.0,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "correct",
+    "teacher_modal_rate": 1.0,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "d072da96f1304bb59fdbff5a37293852:8:frontier",
+    "class": "outcome",
+    "harness": "terminus_2",
+    "kind": "terminus_json",
+    "depth": 8,
+    "n_frontier": 9,
+    "n_labelled": 4,
+    "n_teacher_labelled": 3,
+    "n_harvest_added": 0,
+    "judge_calls": 4,
+    "any_solved_label": true,
+    "frontier_modal_share": 0.8888888888888888,
+    "frontier_n_classes": 2,
+    "frontier_modal_outcome": "correct",
+    "frontier_modal_rate": 1.0,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 1.0,
+    "teacher_random_rate": 1.0,
+    "teacher_modal_share": 1.0,
+    "teacher_modal_outcome": "correct",
+    "teacher_modal_rate": 1.0,
+    "teacher_any_class_solved": true
+   },
+   {
+    "state_id": "eeacceec7da94bec8597fc4cea38d0ff:7:frontier",
+    "class": "ceiling",
+    "harness": "terminus_2",
+    "kind": "terminus_json",
+    "depth": 7,
+    "n_frontier": 7,
+    "n_labelled": 14,
+    "n_teacher_labelled": 10,
+    "n_harvest_added": 8,
+    "judge_calls": 5,
+    "any_solved_label": false,
+    "frontier_modal_share": 0.5714285714285714,
+    "frontier_n_classes": 2,
+    "frontier_modal_outcome": "wrong",
+    "frontier_modal_rate": 0.0,
+    "frontier_any_class_solved": false,
+    "frontier_random_rate": 0.0,
+    "teacher_random_rate": 0.0,
+    "teacher_modal_share": 0.9,
+    "teacher_modal_outcome": "wrong",
+    "teacher_modal_rate": 0.0,
+    "teacher_any_class_solved": false
+   },
+   {
+    "state_id": "f1e5d484b2a5457594858b512377d3d7:14:frontier",
+    "class": "split",
+    "harness": "bash",
+    "kind": "tool_call",
+    "depth": 14,
+    "n_frontier": 9,
+    "n_labelled": 8,
+    "n_teacher_labelled": 8,
+    "n_harvest_added": 4,
+    "judge_calls": 6,
+    "any_solved_label": true,
+    "frontier_modal_share": 0.6666666666666666,
+    "frontier_n_classes": 2,
+    "frontier_modal_outcome": "mixed",
+    "frontier_modal_rate": 0.6666666666666666,
+    "frontier_any_class_solved": true,
+    "frontier_random_rate": 0.611111111111111,
+    "teacher_random_rate": 0.625,
+    "teacher_modal_share": 0.375,
+    "teacher_modal_outcome": "mixed",
+    "teacher_modal_rate": 0.6666666666666666,
+    "teacher_any_class_solved": true
+   }
+  ],
+  "harvest_only": {
+   "n_states": 38,
+   "T_solved": 64,
+   "T_n": 291,
+   "F_solved": 1,
+   "F_n": 32,
+   "X_solved": 1,
+   "X_n": 32,
+   "states_with_any_solve": 20,
+   "states_F_solved_where_T_zero": 1,
+   "states_T_zero": 19
+  }
+ },
+ "truth_summary": {
+  "all": {
+   "n": 30,
+   "frontier_modal": {
+    "correct": 8,
+    "mixed": 11,
+    "wrong": 9,
+    "novel": 2,
+    "p_solved_class": 0.6785714285714286,
+    "p_strict_correct": 0.2857142857142857,
+    "n_labelled_modal": 28
+   },
+   "teacher_modal": {
+    "correct": 8,
+    "mixed": 10,
+    "wrong": 12,
+    "novel": 0,
+    "p_solved_class": 0.6,
+    "p_strict_correct": 0.26666666666666666,
+    "n_labelled_modal": 30
+   },
+   "frontier_modal_rate": 0.4804743867243867,
+   "frontier_random_rate": 0.46658829676071056,
+   "teacher_random_rate": 0.4482407407407407,
+   "teacher_modal_rate": 0.43872053872053873,
+   "frontier_any_class_solved": 0.7,
+   "teacher_any_class_solved": 0.7,
+   "any_solved_label": 0.7
+  },
+  "split": {
+   "n": 7,
+   "frontier_modal": {
+    "correct": 0,
+    "mixed": 6,
+    "wrong": 0,
+    "novel": 1,
+    "p_solved_class": 1.0,
+    "p_strict_correct": 0.0,
+    "n_labelled_modal": 6
+   },
+   "teacher_modal": {
+    "correct": 0,
+    "mixed": 6,
+    "wrong": 1,
+    "novel": 0,
+    "p_solved_class": 0.8571428571428571,
+    "p_strict_correct": 0.0,
+    "n_labelled_modal": 7
+   },
+   "frontier_modal_rate": 0.6425925925925926,
+   "frontier_random_rate": 0.5785714285714285,
+   "teacher_random_rate": 0.5892857142857143,
+   "teacher_modal_rate": 0.526984126984127,
+   "frontier_any_class_solved": 1,
+   "teacher_any_class_solved": 1,
+   "any_solved_label": 1
+  },
+  "ceiling": {
+   "n": 11,
+   "frontier_modal": {
+    "correct": 0,
+    "mixed": 3,
+    "wrong": 8,
+    "novel": 0,
+    "p_solved_class": 0.2727272727272727,
+    "p_strict_correct": 0.0,
+    "n_labelled_modal": 11
+   },
+   "teacher_modal": {
+    "correct": 0,
+    "mixed": 2,
+    "wrong": 9,
+    "novel": 0,
+    "p_solved_class": 0.18181818181818182,
+    "p_strict_correct": 0.0,
+    "n_labelled_modal": 11
+   },
+   "frontier_modal_rate": 0.05433884297520661,
+   "frontier_random_rate": 0.061914600550964184,
+   "teacher_random_rate": 0.02929292929292929,
+   "teacher_modal_rate": 0.04297520661157025,
+   "frontier_any_class_solved": 0.36363636363636365,
+   "teacher_any_class_solved": 0.36363636363636365,
+   "any_solved_label": 0.36363636363636365
+  },
+  "outcome": {
+   "n": 12,
+   "frontier_modal": {
+    "correct": 8,
+    "mixed": 2,
+    "wrong": 1,
+    "novel": 1,
+    "p_solved_class": 0.9090909090909091,
+    "p_strict_correct": 0.7272727272727273,
+    "n_labelled_modal": 11
+   },
+   "teacher_modal": {
+    "correct": 8,
+    "mixed": 2,
+    "wrong": 2,
+    "novel": 0,
+    "p_solved_class": 0.8333333333333334,
+    "p_strict_correct": 0.6666666666666666,
+    "n_labelled_modal": 12
+   },
+   "frontier_modal_rate": 0.8181818181818182,
+   "frontier_random_rate": 0.8,
+   "teacher_random_rate": 0.75,
+   "teacher_modal_rate": 0.75,
+   "frontier_any_class_solved": 0.8333333333333334,
+   "teacher_any_class_solved": 0.8333333333333334,
+   "any_solved_label": 0.8333333333333334
+  }
+ },
+ "ceiling": {
+  "matrix_generated_at": "2026-09-22T09:26:51+00:00",
+  "teacher_row": {
+   "aime25": 93.33,
+   "bfcl-v3": 73.34,
+   "gpqa-diamond": 81.31,
+   "graphwalks": 99.4,
+   "humaneval": 93.9,
+   "ifbench": 63.0,
+   "ifeval": 87.06,
+   "livecodebench": 63.0,
+   "math500": 98.2,
+   "minif2f": 45.49,
+   "mmlu-pro": 83.34,
+   "mrcr-v2": 96.94,
+   "oolong-synth": 28.75,
+   "swebench-verified@4h250": 73.6,
+   "swebench-verified": 78.33,
+   "tau2-airline": 72.0,
+   "tau2-retail": 78.95,
+   "tau2-telecom": 72.81,
+   "tau3-banking": 29.17,
+   "terminal-bench-2": 50.57,
+   "when2call": 67.28,
+   "gpqa-diamond@16k": 74.75,
+   "livecodebench@16k": 48.24,
+   "math500@16k": 96.6,
+   "mmlu-pro@8k": 77.6
+  },
+  "public": {
+   "_note": "Published numbers collected 2026-09-22 by web search; harnesses differ from the kingboard's (matrix teacher row = our own runs: swebench-verified, terminal-bench-2 = TB 2.0-style, tau2-*, bfcl-v3, livecodebench, gpqa-diamond, aime25, ifbench). Vendor self-reports marked 'vendor'; independent runs marked with the runner. GLM-5.3 weights were still closed at report time (2026-08-14 blog; open weights 'in ~2 wks'), so most GLM-5.3 rows are vendor or aggregator runs. DeepSeek-V4 = DeepSeek-V4-Pro (Max effort) HF model card (2026-04-24) unless noted; the 0813 refresh adds TB 2.1 = 87.9.",
+   "glm-5.3": {
+    "SWE-bench Verified": {
+     "score": 95.4,
+     "note": "vals.ai independent run, mini-swe-agent bash-only harness (board 2026-08-19/20); Zhipu docs list 77.8 inherited from GLM-5 \u2014 attribution contested",
+     "source": "https://themodelgap.com/models/glm-5-3 ; https://aichoiceengine.com/ai-models/glm-5-3 (both citing vals.ai)"
+    },
+    "Terminal-Bench 2": {
+     "score": 88.2,
+     "note": "Terminal-Bench 2.1, vendor run under Claude Code harness (blog/HF card 2026-08-14); Artificial Analysis independent TB 2.1 = 83.9; vals.ai TB 2.1 = 71.5; our matrix key is terminal-bench-2 (2.0 tasks, own harness) \u2014 not the same harness",
+     "source": "https://z.ai/blog/glm-5.3 ; https://huggingface.co/zai-org/GLM-5.3 ; https://benchlm.ai/models/glm-5-3"
+    },
+    "tau2-airline": {
+     "score": null,
+     "note": "not reported by Z.ai or any aggregator found (only AA Tau3-Banking 50.3)",
+     "source": "https://benchmarklist.com/models/z-ai-glm-5.3/"
+    },
+    "tau2-retail": {
+     "score": null,
+     "note": "not reported",
+     "source": null
+    },
+    "tau2-telecom": {
+     "score": null,
+     "note": "not reported",
+     "source": null
+    },
+    "BFCL v3": {
+     "score": null,
+     "note": "not reported",
+     "source": null
+    },
+    "LiveCodeBench": {
+     "score": 80.5,
+     "note": "vals.ai independent run (2026-08-20); LCB version/window differs from ours",
+     "source": "https://themodelgap.com/models/glm-5-3 ; https://benchlm.ai/models/glm-5-3"
+    },
+    "GPQA Diamond": {
+     "score": 91.7,
+     "note": "Artificial Analysis independent (2026-08-20); vals.ai 88.1",
+     "source": "https://themodelgap.com/models/glm-5-3 ; https://benchlm.ai/models/glm-5-3"
+    },
+    "AIME 2025": {
+     "score": null,
+     "note": "not reported (AA math index '\u2014')",
+     "source": "https://graysoft.dev/benchmarks/zai-glm-5-3.html"
+    },
+    "IFBench": {
+     "score": null,
+     "note": "not reported (AA ifbench '\u2014')",
+     "source": "https://graysoft.dev/benchmarks/zai-glm-5-3.html"
+    }
+   },
+   "deepseek-v4": {
+    "SWE-bench Verified": {
+     "score": 80.6,
+     "note": "DeepSeek-V4-Pro Max, vendor HF model card (2026-04-24)",
+     "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro"
+    },
+    "Terminal-Bench 2": {
+     "score": 67.9,
+     "note": "Terminal-Bench 2.0, vendor HF card (V4-Pro Max); V4-Pro-0813 TB 2.1 = 87.9 (0813 card)",
+     "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro ; https://inferencex.semianalysis.com/model/deepseek-v4"
+    },
+    "tau2-airline": {
+     "score": null,
+     "note": "not in the V4-Pro / 0813 result tables (only tau2 Telecom 96.2 via evals.report)",
+     "source": "https://inferencex.semianalysis.com/model/deepseek-v4"
+    },
+    "tau2-retail": {
+     "score": null,
+     "note": "not reported",
+     "source": null
+    },
+    "tau2-telecom": {
+     "score": 96.2,
+     "note": "pass^1, listed as Official on evals.report / aiflashreport",
+     "source": "https://evals.report/models/deepseek-v4-pro ; https://aiflashreport.com/models/deepseek-v4-pro/"
+    },
+    "BFCL v3": {
+     "score": null,
+     "note": "not reported",
+     "source": null
+    },
+    "LiveCodeBench": {
+     "score": 93.5,
+     "note": "vendor HF card (V4-Pro Max); aiflashreport 'LiveCodeBench Reasoning' 66.3 (AA)",
+     "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro"
+    },
+    "GPQA Diamond": {
+     "score": 90.1,
+     "note": "vendor HF card (V4-Pro Max); AA 88.8",
+     "source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro"
+    },
+    "AIME 2025": {
+     "score": null,
+     "note": "not reported; math via HMMT Feb 2026 = 95.2, AIME 2026 = 95.83 (evals.report)",
+     "source": "https://evals.report/models/deepseek-v4-pro"
+    },
+    "IFBench": {
+     "score": 76.5,
+     "note": "Official per evals.report / aiflashreport",
+     "source": "https://evals.report/models/deepseek-v4-pro"
+    }
+   }
+  },
+  "table": [
+   {
+    "bench": "SWE-bench Verified",
+    "matrix_key": "swebench-verified",
+    "teacher": 78.33,
+    "glm-5.3": 95.4,
+    "glm-5.3_note": "vals.ai independent run, mini-swe-agent bash-only harness (board 2026-08-19/20); Zhipu docs list 77.8 inherited from GLM-5 \u2014 attribution contested",
+    "glm-5.3_source": "https://themodelgap.com/models/glm-5-3 ; https://aichoiceengine.com/ai-models/glm-5-3 (both citing vals.ai)",
+    "glm-5.3_margin": 17.070000000000007,
+    "deepseek-v4": 80.6,
+    "deepseek-v4_note": "DeepSeek-V4-Pro Max, vendor HF model card (2026-04-24)",
+    "deepseek-v4_source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro",
+    "deepseek-v4_margin": 2.269999999999996
+   },
+   {
+    "bench": "Terminal-Bench 2",
+    "matrix_key": "terminal-bench-2",
+    "teacher": 50.57,
+    "glm-5.3": 88.2,
+    "glm-5.3_note": "Terminal-Bench 2.1, vendor run under Claude Code harness (blog/HF card 2026-08-14); Artificial Analysis independent TB 2.1 = 83.9; vals.ai TB 2.1 = 71.5; our matrix key is terminal-bench-2 (2.0 tasks, own harness) \u2014 not the same harness",
+    "glm-5.3_source": "https://z.ai/blog/glm-5.3 ; https://huggingface.co/zai-org/GLM-5.3 ; https://benchlm.ai/models/glm-5-3",
+    "glm-5.3_margin": 37.63,
+    "deepseek-v4": 67.9,
+    "deepseek-v4_note": "Terminal-Bench 2.0, vendor HF card (V4-Pro Max); V4-Pro-0813 TB 2.1 = 87.9 (0813 card)",
+    "deepseek-v4_source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro ; https://inferencex.semianalysis.com/model/deepseek-v4",
+    "deepseek-v4_margin": 17.330000000000005
+   },
+   {
+    "bench": "tau2-airline",
+    "matrix_key": "tau2-airline",
+    "teacher": 72.0,
+    "glm-5.3": null,
+    "glm-5.3_note": "not reported by Z.ai or any aggregator found (only AA Tau3-Banking 50.3)",
+    "glm-5.3_source": "https://benchmarklist.com/models/z-ai-glm-5.3/",
+    "glm-5.3_margin": null,
+    "deepseek-v4": null,
+    "deepseek-v4_note": "not in the V4-Pro / 0813 result tables (only tau2 Telecom 96.2 via evals.report)",
+    "deepseek-v4_source": "https://inferencex.semianalysis.com/model/deepseek-v4",
+    "deepseek-v4_margin": null
+   },
+   {
+    "bench": "tau2-retail",
+    "matrix_key": "tau2-retail",
+    "teacher": 78.95,
+    "glm-5.3": null,
+    "glm-5.3_note": "not reported",
+    "glm-5.3_source": null,
+    "glm-5.3_margin": null,
+    "deepseek-v4": null,
+    "deepseek-v4_note": "not reported",
+    "deepseek-v4_source": null,
+    "deepseek-v4_margin": null
+   },
+   {
+    "bench": "tau2-telecom",
+    "matrix_key": "tau2-telecom",
+    "teacher": 72.81,
+    "glm-5.3": null,
+    "glm-5.3_note": "not reported",
+    "glm-5.3_source": null,
+    "glm-5.3_margin": null,
+    "deepseek-v4": 96.2,
+    "deepseek-v4_note": "pass^1, listed as Official on evals.report / aiflashreport",
+    "deepseek-v4_source": "https://evals.report/models/deepseek-v4-pro ; https://aiflashreport.com/models/deepseek-v4-pro/",
+    "deepseek-v4_margin": 23.39
+   },
+   {
+    "bench": "BFCL v3",
+    "matrix_key": "bfcl-v3",
+    "teacher": 73.34,
+    "glm-5.3": null,
+    "glm-5.3_note": "not reported",
+    "glm-5.3_source": null,
+    "glm-5.3_margin": null,
+    "deepseek-v4": null,
+    "deepseek-v4_note": "not reported",
+    "deepseek-v4_source": null,
+    "deepseek-v4_margin": null
+   },
+   {
+    "bench": "LiveCodeBench",
+    "matrix_key": "livecodebench",
+    "teacher": 63.0,
+    "glm-5.3": 80.5,
+    "glm-5.3_note": "vals.ai independent run (2026-08-20); LCB version/window differs from ours",
+    "glm-5.3_source": "https://themodelgap.com/models/glm-5-3 ; https://benchlm.ai/models/glm-5-3",
+    "glm-5.3_margin": 17.5,
+    "deepseek-v4": 93.5,
+    "deepseek-v4_note": "vendor HF card (V4-Pro Max); aiflashreport 'LiveCodeBench Reasoning' 66.3 (AA)",
+    "deepseek-v4_source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro",
+    "deepseek-v4_margin": 30.5
+   },
+   {
+    "bench": "GPQA Diamond",
+    "matrix_key": "gpqa-diamond",
+    "teacher": 81.31,
+    "glm-5.3": 91.7,
+    "glm-5.3_note": "Artificial Analysis independent (2026-08-20); vals.ai 88.1",
+    "glm-5.3_source": "https://themodelgap.com/models/glm-5-3 ; https://benchlm.ai/models/glm-5-3",
+    "glm-5.3_margin": 10.39,
+    "deepseek-v4": 90.1,
+    "deepseek-v4_note": "vendor HF card (V4-Pro Max); AA 88.8",
+    "deepseek-v4_source": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro",
+    "deepseek-v4_margin": 8.789999999999992
+   },
+   {
+    "bench": "AIME 2025",
+    "matrix_key": "aime25",
+    "teacher": 93.33,
+    "glm-5.3": null,
+    "glm-5.3_note": "not reported (AA math index '\u2014')",
+    "glm-5.3_source": "https://graysoft.dev/benchmarks/zai-glm-5-3.html",
+    "glm-5.3_margin": null,
+    "deepseek-v4": null,
+    "deepseek-v4_note": "not reported; math via HMMT Feb 2026 = 95.2, AIME 2026 = 95.83 (evals.report)",
+    "deepseek-v4_source": "https://evals.report/models/deepseek-v4-pro",
+    "deepseek-v4_margin": null
+   },
+   {
+    "bench": "IFBench",
+    "matrix_key": "ifbench",
+    "teacher": 63.0,
+    "glm-5.3": null,
+    "glm-5.3_note": "not reported (AA ifbench '\u2014')",
+    "glm-5.3_source": "https://graysoft.dev/benchmarks/zai-glm-5-3.html",
+    "glm-5.3_margin": null,
+    "deepseek-v4": 76.5,
+    "deepseek-v4_note": "Official per evals.report / aiflashreport",
+    "deepseek-v4_source": "https://evals.report/models/deepseek-v4-pro",
+    "deepseek-v4_margin": 13.5
+   }
+  ],
+  "traces_join": {
+   "families": {
+    "teacher": 55658,
+    "glm": 14100
+   },
+   "glm_models_seen": {
+    "engy/glm-5.2": 14100,
+    "openrouter/z-ai/glm-4.5-air": 55
+   },
+   "by_group": {
+    "math": {
+     "tasks": 1990,
+     "glm_p1": 0.9758793969849247,
+     "teacher_p1": 0.9678391959798995,
+     "diff": 0.008040201005025126,
+     "se": 0.0038237360225232752,
+     "glm_rollouts": 1990,
+     "teacher_rollouts": 1993,
+     "pos": 37,
+     "neg": 21,
+     "ties": 1932,
+     "p": 0.04794032407166697
+    },
+    "terminal": {
+     "tasks": 66,
+     "glm_p1": 0.5151515151515151,
+     "teacher_p1": 0.6136363636363636,
+     "diff": -0.09848484848484848,
+     "se": 0.07014777688942668,
+     "glm_rollouts": 66,
+     "teacher_rollouts": 85,
+     "pos": 9,
+     "neg": 18,
+     "ties": 39,
+     "p": 0.12207812070846558
+    }
+   },
+   "by_source": {
+    "affine_math": {
+     "tasks": 1990,
+     "glm_p1": 0.9758793969849247,
+     "teacher_p1": 0.9678391959798995,
+     "diff": 0.008040201005025126,
+     "se": 0.0038237360225232752,
+     "glm_rollouts": 1990,
+     "teacher_rollouts": 1993,
+     "pos": 37,
+     "neg": 21,
+     "ties": 1932,
+     "p": 0.04794032407166697
+    },
+    "terminal_bench_2": {
+     "tasks": 66,
+     "glm_p1": 0.5151515151515151,
+     "teacher_p1": 0.6136363636363636,
+     "diff": -0.09848484848484848,
+     "se": 0.07014777688942668,
+     "glm_rollouts": 66,
+     "teacher_rollouts": 85,
+     "pos": 9,
+     "neg": 18,
+     "ties": 39,
+     "p": 0.12207812070846558
+    }
+   },
+   "by_harness": {
+    "mini_swe_textbased": {
+     "tasks": 66,
+     "glm_p1": 0.5151515151515151,
+     "teacher_p1": 0.6136363636363636,
+     "diff": -0.09848484848484848,
+     "se": 0.07014777688942668,
+     "glm_rollouts": 66,
+     "teacher_rollouts": 85,
+     "pos": 9,
+     "neg": 18,
+     "ties": 39,
+     "p": 0.12207812070846558
+    },
+    "null": {
+     "tasks": 1990,
+     "glm_p1": 0.9758793969849247,
+     "teacher_p1": 0.9678391959798995,
+     "diff": 0.008040201005025126,
+     "se": 0.0038237360225232752,
+     "glm_rollouts": 1990,
+     "teacher_rollouts": 1993,
+     "pos": 37,
+     "neg": 21,
+     "ties": 1932,
+     "p": 0.04794032407166697
+    }
+   },
+   "unpaired_by_source": {
+    "affine_math/null": {
+     "glm_p1": 0.9758793969849247,
+     "glm_n": 1990,
+     "teacher_p1": 0.9664892330026615,
+     "teacher_n": 8266,
+     "diff": 0.009390163982263111,
+     "se": 0.003968215839069114,
+     "group": "math"
+    },
+    "multiswe/mini_swe_textbased": {
+     "glm_p1": 0.3080568720379147,
+     "glm_n": 211,
+     "teacher_p1": 0.42704626334519574,
+     "teacher_n": 281,
+     "diff": -0.11898939130728103,
+     "se": 0.04337010538603014,
+     "group": "coding"
+    },
+    "scaleswe/mini_swe_textbased": {
+     "glm_p1": 0.5637795275590551,
+     "glm_n": 635,
+     "teacher_p1": 0.5502645502645502,
+     "teacher_n": 189,
+     "diff": 0.013514977294504904,
+     "se": 0.04119075411278112,
+     "group": "coding"
+    },
+    "swelego/mini_swe_textbased": {
+     "glm_p1": 0.900398406374502,
+     "glm_n": 502,
+     "teacher_p1": 0.9224137931034483,
+     "teacher_n": 116,
+     "diff": -0.022015386728946318,
+     "se": 0.02820639965324758,
+     "group": "coding"
+    },
+    "swerebench_v2/mini_swe_textbased": {
+     "glm_p1": 0.26107226107226106,
+     "glm_n": 429,
+     "teacher_p1": 0.35714285714285715,
+     "teacher_n": 98,
+     "diff": -0.09607059607059609,
+     "se": 0.05284369163229598,
+     "group": "coding"
+    },
+    "swesmith/mini_swe_textbased": {
+     "glm_p1": 0.7210526315789474,
+     "glm_n": 1330,
+     "teacher_p1": 0.857487922705314,
+     "teacher_n": 414,
+     "diff": -0.13643529112636665,
+     "se": 0.02112829189799209,
+     "group": "coding"
+    },
+    "terminal_bench_2/mini_swe_textbased": {
+     "glm_p1": 0.5147058823529411,
+     "glm_n": 68,
+     "teacher_p1": 0.6039603960396039,
+     "teacher_n": 101,
+     "diff": -0.08925451368666282,
+     "se": 0.07772728099772724,
+     "group": "terminal"
+    },
+    "terminal_lego/mini_swe_textbased": {
+     "glm_p1": 0.9026807839603515,
+     "glm_n": 8878,
+     "teacher_p1": 0.9182763744427934,
+     "teacher_n": 673,
+     "diff": -0.015595590482441968,
+     "se": 0.01101830424271818,
+     "group": "terminal"
+    }
+   },
+   "all": {
+    "tasks": 2056,
+    "glm_p1": 0.9610894941634242,
+    "teacher_p1": 0.9564688715953308,
+    "diff": 0.004620622568093385,
+    "se": 0.004343384955592476,
+    "glm_rollouts": 2056,
+    "teacher_rollouts": 2078,
+    "pos": 46,
+    "neg": 39,
+    "ties": 1971,
+    "p": 0.5154257318839004
+   }
+  },
+  "public_sources_note": "Published numbers collected 2026-09-22 by web search; harnesses differ from the kingboard's (matrix teacher row = our own runs: swebench-verified, terminal-bench-2 = TB 2.0-style, tau2-*, bfcl-v3, livecodebench, gpqa-diamond, aime25, ifbench). Vendor self-reports marked 'vendor'; independent runs marked with the runner. GLM-5.3 weights were still closed at report time (2026-08-14 blog; open weights 'in ~2 wks'), so most GLM-5.3 rows are vendor or aggregator runs. DeepSeek-V4 = DeepSeek-V4-Pro (Max effort) HF model card (2026-04-24) unless noted; the 0813 refresh adds TB 2.1 = 87.9."
+ },
+ "cost": {
+  "usd_per_turn_k5_sampling": 0.029395165,
+  "usd_per_turn_cluster_judge": 0.0003970089887640449,
+  "usd_per_turn_total": 0.029792173988764045,
+  "usd_per_candidate_score_judge": 0.00016170140664961648,
+  "usd_per_duel_scoring_1300x2": 0.42042365728900283,
+  "fold_per_day": 193.64913092696628,
+  "all_D": 18918.030482865168,
+  "spent_total": 12.060285999999987,
+  "by_stage": {
+   "truth_judge": 0.04351799999999998,
+   "sample": 11.272874999999988,
+   "genesis": 0.061422000000000025,
+   "targets_judge": 0.17666899999999996,
+   "score_judge": 0.5058020000000003
+  }
+ },
+ "verdict": [
+  "1. Separation today: FT-match separates acting from not-acting (king-ls +0.625 z 18.3; king-repeat +0.406 z 8.9) but barely separates real policies: teacher-king 0.057 (z 2.1, sign p 0.35), challenger-king 0.050 (p 0.19), king-genesis 0.026 (p 0.72); per-turn SD of T ~0.47 -> the paired 2-sigma bar at n=1300 is ~0.037, so the teacher-king gap would clear it and the live king-challenger gaps would not.",
+  "2. What the targets are: 71% of teacher ref actions already sit in the frontier's modal class (60% tool_call .. 87% text); the modal class holds 0.85 of frontier samples (1.61 classes/turn). On live D turns a frontier target set is ~70% 'what the teacher does anyway' plus a ~30% frontier-only decision.",
+  "3. Is the target right where truth exists (30 graded states): frontier modal class is a solved class 67.9% vs teacher modal 60.0%; a random frontier sample's class solves 0.47 vs a random teacher action 0.45; execution-verified ceiling identical (70.0% both). On the 11 teacher-fails states the frontier modal touches a solve on 3 vs 2 states; harvest: 1/32 forced frontier proposals rescued a failed state. The frontier's target is about as right as the teacher's, not more.",
+  "4. Panel: mean_T tracks the agentic axis (rho 0.71, p 0.012, n=12) but the turn-controlled excess does not reach significance (rho 0.50, p 0.096); kings 11-15 sit ~-0.16 under the teacher refs, 16-20 ~-0.04 \u2014 consistent with, not proof of, the mechanism; no king was trained on these targets, so a null here would not falsify the frame.",
+  "5. Ceiling: published frontier margins over the teacher are large on agentic axes (TB2 +17..+38, tau2-telecom +23 DS-V4, LCB +17..+30, SWE-V +2..+17 with harness caveats, GPQA +9..+10, IFBench +13; tau2 airline/retail, BFCL, AIME unreported) \u2014 but the internal proxy inverts: GLM-5.2 as datagen policy is BELOW the teacher on our own coding/terminal sources (swesmith -13.6, multiswe -11.9, swerebench -9.6, TB2 -8.9 pts; math +0.9). The affordable target generator (GLM-5.x via Engy) is not above the teacher on D's tasks.",
+  "6. A miner trained to reproduce these targets: on the ~70% agreeing turns it learns the teacher (what min(R,G) already rewards); on the ~30% divergent turns it learns GLM-5.3's decision, whose measured truth rate equals the teacher's. Plausible gains: format/decision compliance on text and terminus (modal 0.85-0.94, but the teacher is already credited 86-98% there) and whatever GLM-5.3's SWE/terminal edge is on tasks where it IS stronger \u2014 not demonstrable from D's own traces today. Cost $0.030/turn ($194/day fold, $18,918 for all D) is affordable; the binding constraint is the generator's margin, not the price."
+ ]
+}

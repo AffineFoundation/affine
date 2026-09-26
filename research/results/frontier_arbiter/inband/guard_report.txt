@@ -1,0 +1,51 @@
+X1.2 — guarded resample: N=6 p_fr refs per turn with the paraphrase guard prefixed to the note
+turns 60 {'bash': 24, 'tool_call': 24, 'terminus_json': 12}; sample errors 0, echo errors 32; $ this probe (all stages) 1.18
+sampled 360 parsed 333 (0.925) cap 0.072 think-closed 360 text-fallback 7 compl tok/ref 890 | leak among parsed 146 (0.438; z 141, y 12; guard-text quoted 0) -> rejected
+-- guarded refs (clean = parsed & no leak; in/out split clean refs by the live band; judge on the 30-turn subsample, ref i vs blind i mod 3)
+group            n change exactB   jacB exactC   jacC  judge   jn   leak  leakZ lenZp50 lenZmn lenYp50   Bmean  Bpass    cap |z|p50  zmean  visib
+g_in            31  0.387  0.129  0.556  0.097  0.547  0.444   18  0.000  0.000    1031   3305     176  0.0756  0.710  0.000   0.96  -0.61  0.419
+g_out          156  0.436  0.154  0.543  0.135  0.554  0.667   87  0.000  0.000     356    632     232  0.0628  0.712  0.000   5.73  -6.46  0.449
+g_clean        187  0.428  0.150  0.545  0.128  0.553  0.629  105  0.000  0.000     392   1075     206  0.0649  0.711  0.000   4.75  -5.49  0.444
+g_all_parsed   333  0.502  0.108  0.511  0.099  0.516  0.571  170  0.438  0.423     570   1887     211  0.0649  0.711  0.003   5.10  -5.76  0.538
+g_leaked       146  0.596  0.055  0.468  0.062  0.468  0.477   65  1.000  0.966    1082   2927     216     n/a    n/a  0.007   5.50  -6.11  0.658
+-- guarded refs dialect bash
+group            n change exactB   jacB exactC   jacC  judge   jn   leak  leakZ lenZp50 lenZmn lenYp50   Bmean  Bpass    cap |z|p50  zmean  visib
+g_in             8  0.500  0.000  0.437  0.000  0.361  0.500    4  0.000  0.000     565   1369      88  0.1679  0.875  0.000   1.11  -0.46  0.625
+g_out           65  0.585  0.123  0.482  0.108  0.506  0.588   34  0.000  0.000     375    517     130  0.0994  0.800  0.000   5.80  -6.28  0.815
+g_clean         73  0.575  0.110  0.477  0.096  0.490  0.579   38  0.000  0.000     379    611     110  0.1069  0.808  0.000   5.15  -5.64  0.795
+-- guarded refs dialect tool_call
+group            n change exactB   jacB exactC   jacC  judge   jn   leak  leakZ lenZp50 lenZmn lenYp50   Bmean  Bpass    cap |z|p50  zmean  visib
+g_in            19  0.316  0.211  0.610  0.158  0.619  0.200   10  0.000  0.000    2158   3569     178  0.0450  0.632  0.000   0.96  -0.87  0.421
+g_out           64  0.266  0.156  0.633  0.125  0.642  0.548   31  0.000  0.000     410    837     194  0.0345  0.594  0.000   4.33  -5.57  0.172
+g_clean         83  0.277  0.169  0.628  0.133  0.637  0.463   41  0.000  0.000     475   1462     187  0.0369  0.602  0.000   3.53  -4.49  0.229
+-- guarded refs dialect terminus_json
+group            n change exactB   jacB exactC   jacC  judge   jn   leak  leakZ lenZp50 lenZmn lenYp50   Bmean  Bpass    cap |z|p50  zmean  visib
+g_in             4  0.500  0.000  0.538  0.000  0.578  1.000    4  0.000  0.000    5891   5924     772  0.0364  0.750  0.000   1.01   0.33  0.000
+g_out           27  0.481  0.222  0.473  0.222  0.462  0.955   22  0.000  0.000     196    424     670  0.0417  0.778  0.000   9.79  -9.00  0.222
+g_clean         31  0.484  0.194  0.481  0.194  0.477  0.962   26  0.000  0.000     207   1134     670  0.0410  0.774  0.000   8.39  -7.79  0.194
+in-band x change 2x2 (clean): in&change 12 in&same 19 | out&change 68 out&same 88 | odds ratio   0.82 | z(change_in − change_out)  -0.50
+judge: 170 comparisons on 30 turns; SAME rate clean  0.629 in-band  0.444 out-of-band  0.667 (p_none floor 0.675, stored p_fr 0.466)
+
+-- headroom: clean = all non-leak guarded refs (up to 6), in = in-band clean refs, in3 = first 3 in-band clean refs (k=3-matched), out/out3 = out-of-band  (R per byte; own needs |S|>=3; blind-own/king need |S|>=2; hz = paired z; d/σ = mean diff / σ_R(dialect))
+set        n>=2 n>=3    R_own  R_bown3  R_king3 hz o-b   d/σ hz o-k   d/σ |   R_bown   R_king hz b-k   d/σ
+h_clean      44   36   0.0065   0.0058   0.0075   0.52  0.14  -0.42  0.08 |   0.0060   0.0070  -0.64 -0.01
+h_in          6    1   0.0001   0.0013   0.0001    n/a -0.15    n/a  0.00 |   0.0033   0.0003   2.09  0.41
+h_in3         6    1   0.0001   0.0013   0.0001    n/a -0.15    n/a  0.00 |   0.0033   0.0003   2.09  0.41
+h_out        41   29   0.0064   0.0051   0.0049   1.11  0.15   0.94  0.13 |   0.0055   0.0067  -0.71 -0.05
+h_out3       41   29   0.0060   0.0048   0.0048   0.63  0.17   0.59  0.11 |   0.0053   0.0067  -0.81 -0.07
+-- headroom dialect bash  (R per byte; own needs |S|>=3; blind-own/king need |S|>=2; hz = paired z; d/σ = mean diff / σ_R(dialect))
+set        n>=2 n>=3    R_own  R_bown3  R_king3 hz o-b   d/σ hz o-k   d/σ |   R_bown   R_king hz b-k   d/σ
+h_clean      17   15   0.0115   0.0111   0.0151   0.18  0.02  -0.61 -0.14 |   0.0122   0.0154  -0.79 -0.14
+h_in          0    0      n/a      n/a      n/a    n/a   n/a    n/a   n/a |      n/a      n/a    n/a   n/a
+-- headroom dialect tool_call  (R per byte; own needs |S|>=3; blind-own/king need |S|>=2; hz = paired z; d/σ = mean diff / σ_R(dialect))
+set        n>=2 n>=3    R_own  R_bown3  R_king3 hz o-b   d/σ hz o-k   d/σ |   R_bown   R_king hz b-k   d/σ
+h_clean      20   15   0.0034   0.0026   0.0027   0.45  0.17   0.34  0.17 |   0.0026   0.0022   0.76  0.06
+h_in          5    1   0.0001   0.0013   0.0001    n/a -0.15    n/a  0.00 |   0.0037   0.0001   2.19  0.48
+-- headroom dialect terminus_json  (R per byte; own needs |S|>=3; blind-own/king need |S|>=2; hz = paired z; d/σ = mean diff / σ_R(dialect))
+set        n>=2 n>=3    R_own  R_bown3  R_king3 hz o-b   d/σ hz o-k   d/σ |   R_bown   R_king hz b-k   d/σ
+h_clean       7    6   0.0015   0.0008   0.0006   3.76  0.34   1.93  0.41 |   0.0007   0.0005   0.67  0.07
+h_in          1    0      n/a      n/a      n/a    n/a   n/a    n/a   n/a |   0.0014   0.0011    n/a  0.09
+
+coverage at N=6 (in-band & clean): >=1 0.400 >=2 0.100 >=3 0.017 | in-band incl. leaked: 0.417 / 0.167 / 0.100 | in-band per clean ref 0.166 (per parsed ref 0.138); mean in-band clean refs/turn 0.52
+same 60 turns, stored unguarded p_fr (k=3): per-ref in-band 0.247 leak 0.476 turns >=2 in-band 0.200 >=3 0.050
+change rate guarded − stored p_fr (paired over turns): mean  0.006 z   0.17

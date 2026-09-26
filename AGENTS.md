@@ -31,7 +31,7 @@ evalsrv package under `affine/`.
 
 ---
 
-## 2. Frozen production scoring — sd-meter min(z_R, typ_c, z_A) since wvk 22 (2026-09-18; wvk 23 2026-09-22: thought cap 4096, typicality on the first K content tokens); min(R,G) v5 below is the wvk 10–21 rule
+## 2. Frozen production scoring — sd-meter min(z_R, typ_c, z_A) since wvk 22 (2026-09-18; wvk 23 2026-09-22: thought cap 4096, typicality on the first K content tokens; wvk 24 2026-09-23: forfeit floor −6 sd); min(R,G) v5 below is the wvk 10–21 rule
 
 **Live rule since wvk 22 (2026-09-18):** `score_mode = "sd_min_rga"`, `n_turns =
 1000` — turn = min(z_R, typ_c, z_A) in teacher-sd units (definition, knobs and
@@ -295,6 +295,35 @@ unchanged.**
   history paragraph). Notice as published: effective once the queue as of
   2026-09-07 (through `chal-00359`) drained, projected 2026-09-09 — met.
   llms.txt "Upcoming changes" → "Fork history: wvk 13".
+
+### Operator crown — reign 22 (2026-09-26 19:24 UTC, no wvk, no scoring change)
+Explicit dated operator directive, Jacob Steeves 2026-09-26 18:51 UTC: "Tell
+the validator to crown the last miner model who scored the best against the
+king and set weights to it immediately while we consider the cut over."
+Executed on the reign-14 path (`ops/v16/retro_crown_00556.py` pattern →
+`ops/v20/operator_crown_00687.{py,sh}`): every challenger verdict since reign
+21's crown (`chal-00662`, 09-22 13:03; 38 scored duels, 8 positive, none over
+δ = 0.20 sd) ranked by paired margin → `chal-00687` (uid 62, hotkey
+`5EzaX8pVDyqC…`, digest `7f066f2c5f95…`, 09-24 19:46): **+0.073 sd, SE 0.027,
+z +2.73** — cleared 2·SE (0.053), missed δ; runner-ups `chal-00677` +0.054 /
+`chal-00682` +0.047. Probe 0.90 pass, forfeits 0.3 %, B 0.51, arch pin +
+hygiene passed. Copy check (file hashes vs reigns 14–21 + a seeded tensor
+sample vs 21 via R2 range reads, `/tmp/nearcopy_check.py` on the box): 0/18
+shard hashes shared; 693/693 tensors same shape, sampled tensors differ densely
+(median 30 % of elements, ‖Δ‖/‖king‖ ≈ 1e-3) — a small continued-training step
+on the public reign-21 copy from a different coldkey (`5GZN8Aqm…` vs the grpo
+lineage `5EUzVgKZ…` that held 15/20/21). Validator stopped at an empty
+boundary (queue 0, no in_flight), deadman paused, no pod redeploy; private
+prefix promoted to `models.affine.io/models/sha256/7f066f2c…/`; one `crowned`
+row with `via = "operator_crown"` + `operator_crown{directive, directive_date,
+note = "operator crown 2026-09-26; did not clear δ under wvk 24", …}`; the
+original `verdict` row untouched; `crown_block` 9154011; weights set to uid 62
+(1.0) at 19:26:38 UTC (reign 21's 72 h window had expired 09-25 13:03, so
+weights had been burning); kingctl rented `king-dg-7f066f2c5f95-3fd8` on its
+own; dashboard tags the row (`crown_note`), llms.txt has an "Operator crown
+2026-09-26" section. Discord public `…/1553488914311028836`, private
+`…/1553488915430641746`. Box commit `8d9171c9`. **Reign 22 stands at the wvk-25
+T0 (not 21)** — the lead's plan/notice wording needs that one word.
 
 ### v9: window-best crown — LIVE 2026-09-12 17:01 UTC (wvk 14→15)
 Operator directive 2026-09-12 16:39 UTC (Jacob Steeves: "best positive
@@ -684,6 +713,44 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
+- `weight_version_key = 24` (2026-09-23 20:45 UTC (floor) / 21:33 UTC (addendum), explicit dated operator directive
+  Jacob Steeves 2026-09-23 20:17 UTC "Lets do this", on the training-speed
+  probe `internal/wvk23/training-speed-probe-2026-09-23.md`): `[duel.sd_meter].
+  forfeit_sd` −12 → **−6** (also the typ_c floor for < 10 content tokens).
+  Why: 2.0 % of side-turns at −12 carried 48 % of the per-turn score variance.
+  −6 stays strictly below the genuine valid-turn p1 (−4.64; p0.5 −5.48); 0.32 %
+  of valid turns score below it, oracle forfeit-seeking gain 0.007 sd/turn
+  (3.5 % of δ). Counterfactual on the last 30 verdicts (`ops/v19/
+  floor_counterfactual.md`): 0 flips, SE ×0.89 median (×0.78 best), z shifts
+  within ±0.5 (one +0.99); a 2 % forfeit gap now costs ≈ 0.09 sd (half a δ).
+  **Two-step flip at consecutive boundaries (same wvk):** floor live 20:45 UTC
+  (`chal-00678` judged with the floor only); addendum (directive 20:47 "do
+  it") from the next boundary, `chal-00679` on: (6) `ref_min_content = 10`,
+  `typ_min_refs = 2` — a reference thought with < 10 content tokens does not
+  anchor typicality, < 2 content-bearing refs → min(z_R, z_A) (7.5 % of refs,
+  ~4.8 % of turns; combined counterfactual 0 flips / 30, `ops/v19/
+  combined_counterfactual.md`); (3) `control_kmatched` on every verdict —
+  teacher-vs-king with the king scored against the same k−1 refs as the
+  held-out reference, king forfeits / content-floor turns dropped, overall +
+  per leg; pre-fork: all −0.13 (z −2.5, 30/30 neg), R −0.19 (z −4.2, 30/30
+  neg), Gc −0.03 (mixed), A +0.16 (z +4.3, 30/30 pos) — the rollback signal
+  **Correction 2026-09-25 (`internal/wvk25/floor-asymmetry-reconciliation.md`):**
+  the R figure was a 3-vs-2-reference LME artefact — with the king's R
+  computed over the same 2 references as the held-out teacher reference, R is
+  at parity (median +0.01 sd, z +0.5, 20 pos / 16 neg over 36 verdicts) and the
+  teacher's lead on A is +0.29 (z +11). `control_kmatched` still ships the
+  3-ref form; the 2-ref form is the telemetry fix to deploy. Also from that
+  reconciliation: 4 of the 6 wvk-22/23 crowns (reigns 17–20) were paid by
+  the empty-thought floor asymmetry (king with more < 10-content-token
+  thoughts than the challenger, each ≈ −10 sd at −12 / ≈ −4.5 at −6); their
+  normal-turn contributions were +0.03…+0.10 sd, below δ; a symmetric miner
+  empty-thought rule (min(z_R, z_A) on < 10 content tokens) would have blocked
+  all of 17–21 and kept 16 — the wvk-25 candidate.
+  is a sign flip vs these. Nothing else changed; forward-only, reign 21
+  stands. First full-bundle verdict
+  `chal-00679 (uid 211, 22:20 UTC)`: 2271 (pre-fork 1985) s, forfeits chal 0.2 % / king 0.2 %, SE 0.030 (pre-fork verdicts 0.045 / 0.027),
+  control k-matched all −0.12 sd z −2.6, R −0.23 z −5.4, Gc −0.12 z −2.0, A +0.14 z +3.9 (same signs as pre-fork); legacy −0.16 z −3.3. Rollback = control z sign flip
+  (`ops/v19/rollback_wvk24.sh`).
 - `weight_version_key = 23` (2026-09-22 17:20 UTC, explicit dated operator directive
   Jacob Steeves 2026-09-22 17:00 UTC "all of them and also 3 flipped", after
   the benchsuite thought-shrink audit `internal/benchsuite/thought-shrink-
@@ -1208,6 +1275,16 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 - Don’t run two teacher-heavy jobs concurrently on one pod.
 - Chain scripts: wait on **result line counts**, not “process absent”.
 - Validator/CPU host needs no GPU; rent GPUs only for evalsrv / scoring.
+- **Validator box (ArbosLife) supervision, 2026-09-13** (`ops/box/`): pm2 runs
+  under `pm2-const.service` (`Restart=always`; `systemctl stop pm2-const` =
+  `pm2 kill`, use `pm2 stop <app>` for one app), `needrestart` is told never to
+  restart it (an `apt-get install` restarted every app mid-duel on 09-13 09:15),
+  and `affine-deadman.timer` (2 min) restarts `affine-validator` if it is not
+  online for two ticks and posts one line to the PRIVATE Arbos channel. Before a
+  deliberate `pm2 stop affine-validator` (redeploy flow) run
+  `touch ~/.affine/deadman.pause` (auto-expires after 6 h) and delete it after
+  `pm2 start`. `/usr/bin/kill -9 -<pid>` without `--` is `kill(-1)` = every
+  process of the user — the 09-13 00:24 and 03:09 wipes (`arbos-qa`, now off).
 
 ---
 

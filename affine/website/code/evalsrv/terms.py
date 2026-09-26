@@ -222,6 +222,7 @@ async def miner_terms(teacher: TeacherClient, miner: MinerClient, prefix: list[d
                       action_echo: bool = False,
                       content_echo: bool = False,
                       content_lift_nats: float = 1.0,
+                      content_prefix: str = "none",
                       shadow_action_echo: bool = False,
                       sticky_key: str | None = None,
                       action_kind: str | None = None,
@@ -334,13 +335,26 @@ async def miner_terms(teacher: TeacherClient, miner: MinerClient, prefix: list[d
             a_shadow[i] = res[s_base + i]["lp_per_byte"]
         s_base += n_pairs
     c_by_rollout: dict[int, dict] = {}
+    # wvk 23 content_prefix = "refs_max": score only the first K content
+    # tokens of the miner's thought, K = the largest content-token count
+    # among the turn's references (the teacher's longest thought sets how
+    # much deliberation is judged; the rest is neither penalised nor paid).
+    k_ref = max([r.get("n_content_thought") or 0 for r in ref] + [0])
     for t, j in enumerate(u_rollouts):
         tok_x = res[g_base + g_rollouts.index(j)].get("tokens") or []
         stats = sdmeter.content_stats(tok_x, res[s_base + t].get("tokens") or [],
                                       content_lift_nats)
+        mc, n_c = stats["mc"], stats["n_content"]
+        if content_prefix == "refs_max" and k_ref and n_c > k_ref:
+            kept = stats["kept"][:k_ref]
+            mc, n_c = sum(kept) / len(kept), len(kept)
         c_by_rollout[j] = {
             "lpC_za_e": res[s_base + t]["lp_per_byte"],
-            "mc_za": stats["mc"], "n_content_za": stats["n_content"],
+            "mc_za": mc, "n_content_za": n_c,
+            # untruncated statistic and count (telemetry / replay of the
+            # wvk-22 rule on wvk-23 rows)
+            "mc_za_full": stats["mc"], "n_content_za_full": stats["n_content"],
+            "k_ref_content": k_ref,
             "n_tokens_za": stats["n_tokens"], "mean_lift_za": stats["mean_lift"],
         }
 

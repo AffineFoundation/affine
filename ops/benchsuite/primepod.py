@@ -161,9 +161,13 @@ def cmd_rent(a: argparse.Namespace) -> int:
         cmd = ["prime", "--plain", "pods", "create", "--cloud-id", pick["cloudId"], "--gpu-type", plan["gpu_type"],
                "--gpu-count", str(plan["gpu_count"]), "--name", name, "--image", image, "-y",
                "--disk-size", str(int(plan.get("disk_gb", 200)))]     # CPU nodes prompt for disk / vcpus / memory otherwise
-        if plan.get("role") == "docker":
-            cmd += ["--vcpus", str(int((pick.get("vcpu") or {}).get("defaultCount") or plan.get("min_vcpu", 0))),
-                    "--memory", str(int((pick.get("memory") or {}).get("defaultCount") or 0))]
+        # any offer that carries vcpu / memory defaults prompts for them (2026-09-22: nebius H200 GPU offers
+        # asked "Number of vCPUs (min: 16, max: 16)" and the create was cancelled) -> pass them explicitly
+        vc = int((pick.get("vcpu") or {}).get("defaultCount") or plan.get("min_vcpu", 0) or 0)
+        mem = int((pick.get("memory") or {}).get("defaultCount") or 0)
+        if plan.get("role") == "docker" or vc or mem:
+            if vc: cmd += ["--vcpus", str(vc)]
+            if mem: cmd += ["--memory", str(mem)]
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL, env={**os.environ, "PRIME_DISABLE_VERSION_CHECK": "1"})
         out = p.stdout + p.stderr
         pod_id = next((tok for tok in out.split() if len(tok) == 32 and all(c in "0123456789abcdef" for c in tok)), None)

@@ -65,14 +65,19 @@ pod_runtime() { [ "$(podf "$1" provider lium)" = prime ] && echo prime || echo d
 role_wanted() { [[ -n "${FAST_ONLY_ROLES:-}" ]] && [[ ",$FAST_ONLY_ROLES," != *",$1,"* ]] && return 1; [[ ",${FAST_SKIP_ROLES:-}," == *",$1,"* ]] && return 1; return 0; }
 # ---- roles: chat1..N, agentic, swe
 ROLES=(); for i in $(seq 1 "$N_SHARDS"); do role_wanted "chat$i" && ROLES+=("chat$i"); done
-{ has_group agentic || has_group tb2 || has_group gaia2; } && role_wanted agentic && ROLES+=(agentic)
+{ has_group agentic || has_group gaia2; } && role_wanted agentic && ROLES+=(agentic)
+# TB2 gets its OWN serving pod: on the shared agentic pod (tau2 x3 + tau3 + gaia2 + TB2 at once) Terminus steps took
+# 82 s vs 28-34 s and reign 21's TB2 read 18 % instead of 38 % (2026-09-23) -- the per-task timeouts are wall-clock
+has_group tb2 && role_wanted tb2 && ROLES+=(tb2)
 has_group swe && role_wanted swe && ROLES+=(swe)
 has_role() { [[ " ${ROLES[*]} " == *" $1 "* ]]; }
 declare -A POD PLANS
 for i in $(seq 1 "$N_SHARDS"); do PLANS[chat$i]="${FAST_CHAT_PLANS:-$(toml fast.chat_plans | tr "," " ")}"; done   # FAST_CHAT_PLANS: e.g. "prime-a100-2x" to keep Lium for other work
-PLANS[agentic]=$(toml fast.agentic_plans | tr "," " "); PLANS[swe]=$(toml fast.swe_plans | tr "," " ")
-POD[agentic]=""; POD[swe]=""
-release_role() { local r="$1" pod="${POD[$r]:-}"; [ -n "$pod" ] || return 0; log "releasing $pod ($r)"; "$PY" "$(tool_for_pod "$pod")" release "$pod" >/dev/null 2>&1 || true; POD[$r]=""; }
+PLANS[agentic]=$(toml fast.agentic_plans | tr "," " "); PLANS[tb2]=$(toml fast.agentic_plans | tr "," " "); PLANS[swe]=$(toml fast.swe_plans | tr "," " ")
+POD[agentic]=""; POD[tb2]=""; POD[swe]=""
+release_role() { local r="$1" pod="${POD[$r]:-}"; [ -n "$pod" ] || return 0
+  [ -f "$HERE/state/fast-$RUN_ID-$r.released" ] && { POD[$r]=""; return 0; }   # finish_role runs in a subshell: the marker makes the release idempotent across it, the tail and cleanup()
+  log "releasing $pod ($r)"; "$PY" "$(tool_for_pod "$pod")" release "$pod" >/dev/null 2>&1 || true; echo "$pod" > "$HERE/state/fast-$RUN_ID-$r.released"; POD[$r]=""; }
 cleanup() {
   for r in "${ROLES[@]}"; do
     # a pod still in the rent phase is only named in its .pod file (2026-09-19: a kill during
@@ -135,7 +140,8 @@ MISSING_ROLES=""
 for r in "${ROLES[@]}"; do [ -n "${POD[$r]:-}" ] && continue; MISSING_ROLES="$MISSING_ROLES,$r"
   case "$r" in
     chat*) i="${r#chat}"; envs="$(toml "fast.chat_shards.$((i-1))" | tr -d '[]" ' | tr ',' ' ') $(toml "fast.shard_after.$((i-1))" | tr -d '[]" ' | tr ',' ' ')";;
-    agentic) envs="$(toml fast.agentic_envs_on_pod | tr ',' ' ') terminal-bench-2 gaia2-ambiguity";;
+    agentic) envs="$(toml fast.agentic_envs_on_pod | tr ',' ' ') gaia2-ambiguity";;
+    tb2) envs="terminal-bench-2";;
     swe) envs="swebench-verified";;
   esac
   for e in $envs; do
@@ -163,10 +169,10 @@ install_pod() {
   [ -n "${DOCKERHUB_TOKEN:-}" ] && printf '%s' "$DOCKERHUB_TOKEN" | ssh_pod "$pod" "docker login -u '$DOCKERHUB_USER' --password-stdin >/dev/null 2>&1" || true
   ssh_pod "$pod" "cd /root/affine/ops/benchsuite && export PATH=\$HOME/.local/bin:\$PATH && /root/benchsuite/verifiers/.venv/bin/python lock.py check --bench-home /root/benchsuite" || { log "LOCK MISMATCH on $pod"; return 10; }
 }
-for r in "${ROLES[@]}"; do [ "$r" = swe ] && continue; [ -n "${POD[$r]:-}" ] && { install_pod "${POD[$r]}" > "$RUN_DIR/install-$r.log" 2>&1 & }; done
+for r in "${ROLES[@]}"; do [ "$r" = swe ] || [ "$r" = tb2 ] && continue; [ -n "${POD[$r]:-}" ] && { install_pod "${POD[$r]}" > "$RUN_DIR/install-$r.log" 2>&1 & }; done
 wait
 rm -f "/tmp/benchsuite-$RUN_ID.tgz"
-for r in "${ROLES[@]}"; do [ "$r" = swe ] && continue; [ -n "${POD[$r]:-}" ] || continue
+for r in "${ROLES[@]}"; do [ "$r" = swe ] || [ "$r" = tb2 ] && continue; [ -n "${POD[$r]:-}" ] || continue
   grep -q "INSTALL_DONE" "$RUN_DIR/install-$r.log" || { log "$r: install failed (see install-$r.log); dropping the pod"; "$PY" "$HERE/kingpod.py" release "${POD[$r]}" >/dev/null 2>&1; POD[$r]=""; }
 done
 T_INST=$(date +%s); log "installs done after $(( (T_INST - T_START) / 60 )) min"
@@ -214,9 +220,9 @@ suite_on_pod() {  # role envs runtime temps concurrency manifest parallel
   local pod="${POD[$1]}" url="http://127.0.0.1:$(podf "${POD[$1]}" front_internal)/v1" served="$(podf "${POD[$1]}" served)"
   ssh_pod "$pod" "$(pod_env "$1") && $PYR run_suite.py run --run-id $RUN_ID --key-env BENCH_API_KEY --king-url $url --king-model $served --models king --teacher-from $TEACHER_FROM --verifiers-dir /root/benchsuite/verifiers --out /root/benchsuite/runs --runtime $3 --envs $2 --temps $4 --concurrency $5 --parallel-envs $7 --manifest $6 --push"
 }
-pull_light_all() { for r in "${ROLES[@]}"; do [ "$r" = swe ] && continue; [ -n "${POD[$r]:-}" ] || continue
+pull_light_all() { for r in "${ROLES[@]}"; do [ "$r" = swe ] || [ "$r" = tb2 ] && continue; [ -n "${POD[$r]:-}" ] || continue
   ssh_pod "${POD[$r]}" "cd /root/benchsuite/runs && tar czf - --exclude='*/logs' --exclude='*/traces.jsonl*' --exclude='*/eval.log' --exclude='*/harbor' --exclude='*/are' --exclude='manifest.json' $RUN_ID 2>/dev/null" 2>/dev/null | tar xzf - -C "$BENCH_HOME/runs" 2>/dev/null; done; }
-pull_all() { for r in "${ROLES[@]}"; do [ "$r" = swe ] && continue; [ -n "${POD[$r]:-}" ] || continue
+pull_all() { for r in "${ROLES[@]}"; do [ "$r" = swe ] || [ "$r" = tb2 ] && continue; [ -n "${POD[$r]:-}" ] || continue
   ssh_pod "${POD[$r]}" "cd /root/benchsuite/runs && tar czf - --exclude='*/logs/attempt_*' --exclude='manifest.json' $RUN_ID 2>/dev/null" 2>/dev/null | tar xzf - -C "$BENCH_HOME/runs" 2>/dev/null; done; }
 publish_partial() { "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" --only-state --partial --eta >/dev/null 2>&1 || true; }
 
@@ -239,19 +245,18 @@ if [ -n "${POD[agentic]:-}" ]; then
     PIDS+=($!); ROLE_PIDS[agentic]="${ROLE_PIDS[agentic]:-} $!"
   fi
   AURL="$(podf "${POD[agentic]}" base_url)"; ASERVED="$(podf "${POD[agentic]}" served)"
-  # TB2 (Daytona) and Gaia2 (ARE) run CONCURRENTLY against the agentic pod (the first run
-  # chained them and Gaia2 only started after TB2's long tail)
-  if has_group tb2; then
-    # shellcheck disable=SC2086
-    ( export BENCH_API_KEY="$(podf "${POD[agentic]}" key)"
-      [ -n "${DAYTONA_API_KEY:-}" ] && "$PY" "$HERE/harbor_cell.py" run --env terminal-bench-2 --model "$ASERVED" --model-label king --model-url "$AURL" --model-key-env BENCH_API_KEY --out "$RUN_DIR/king" --concurrency "${FAST_TB2_IN_FLIGHT:-$(toml fast.tb2_in_flight)}" --agent-timeout-s "${FAST_TB2_TIMEOUT_S:-3600}" ${FAST_TB2_ARGS:-} ) > "$RUN_DIR/agentic-box.log" 2>&1 &
-    PIDS+=($!); ROLE_PIDS[agentic]="${ROLE_PIDS[agentic]:-} $!"
-  fi
+  # Gaia2 (ARE) runs against the agentic pod; TB2 has its own pod below
   if has_group gaia2; then
     ( export BENCH_API_KEY="$(podf "${POD[agentic]}" key)"
       [ -n "${PRIME_API_KEY:-}" ] && "$PY" "$HERE/gaia2_cell.py" run --model "$ASERVED" --model-label king --model-url "$AURL" --model-key-env BENCH_API_KEY --judge-key-env PRIME_API_KEY --concurrency "$(toml fast.gaia2_in_flight)" --out "$RUN_DIR/king" ) > "$RUN_DIR/gaia2-box.log" 2>&1 &
     PIDS+=($!); ROLE_PIDS[agentic]="${ROLE_PIDS[agentic]:-} $!"
   fi
+fi
+if [ -n "${POD[tb2]:-}" ] && has_group tb2; then
+  # shellcheck disable=SC2086
+  ( export BENCH_API_KEY="$(podf "${POD[tb2]}" key)"
+    [ -n "${DAYTONA_API_KEY:-}" ] && "$PY" "$HERE/harbor_cell.py" run --env terminal-bench-2 --model "$(podf "${POD[tb2]}" served)" --model-label king --model-url "$(podf "${POD[tb2]}" base_url)" --model-key-env BENCH_API_KEY --out "$RUN_DIR/king" --concurrency "${FAST_TB2_IN_FLIGHT:-$(toml fast.tb2_in_flight)}" --agent-timeout-s "${FAST_TB2_TIMEOUT_S:-3600}" ${FAST_TB2_ARGS:-} ) > "$RUN_DIR/tb2-box.log" 2>&1 &
+  PIDS+=($!); ROLE_PIDS[tb2]="${ROLE_PIDS[tb2]:-} $!"
 fi
 if [ -n "${POD[swe]:-}" ] && [ -n "${DAYTONA_API_KEY:-}" ]; then
   # in flight = 64 per served replica (reign 18: 200 agents on ONE B200 replica spent the
@@ -279,18 +284,27 @@ finish_role() {  # pull everything from the pod, retry infra errors, pull again,
   }
   log "$r: all groups ended after $(( ($(date +%s) - T_START) / 60 )) min"; release_role "$r"
 }
+# finish_role runs in the BACKGROUND per role (2026-09-24): its `run_suite.py retry` ssh can take hours
+# (Albedo chat3's miniF2F retry ran 4 h+) and, inline, it stalled the whole loop — the TB2 pod sat idle 3 h
+# after its cell finished and chat1's pass log went silent long enough for the pod reaper to release it
+# mid-BFCL. Each finishing role is marked so it is finished exactly once; the tail waits for them.
+declare -A FINISHING
+start_finish() { local r="$1"; [ -n "${FINISHING[$r]:-}" ] && return 0; FINISHING[$r]=1; ( finish_role "$r" ) & FINISH_PIDS+=($!); }
+FINISH_PIDS=()
 while :; do
   alive=0; for p in "${PIDS[@]}"; do kill -0 "$p" 2>/dev/null && alive=$((alive+1)); done
   pull_light_all; publish_partial
-  for r in "${ROLES[@]}"; do [ -n "${POD[$r]:-}" ] && [ -n "${ROLE_PIDS[$r]:-}" ] && role_done "$r" && finish_role "$r"; done
+  for r in "${ROLES[@]}"; do [ -n "${POD[$r]:-}" ] && [ -n "${ROLE_PIDS[$r]:-}" ] && [ -z "${FINISHING[$r]:-}" ] && role_done "$r" && start_finish "$r"; done
+  log "poll: $alive group(s) alive, finishing [${!FINISHING[*]}]"   # a line every poll keeps the passlog owner visibly alive for the reaper
   [ "$alive" -eq 0 ] && break
   sleep "$(toml fast.poll_s)"
 done
+for p in "${FINISH_PIDS[@]:-}"; do [ -n "$p" ] && wait "$p"; done
 wait
 T_CELLS=$(date +%s); log "all groups ended after $(( (T_CELLS - T_START) / 60 )) min"
 
-# ---- tail: whatever is still held (a role with no group pid), summarize, publish, release
-for r in "${ROLES[@]}"; do [ -n "${POD[$r]:-}" ] && finish_role "$r"; done
+# ---- tail: whatever is still held (a role with no group pid, or one never finished above), summarize, publish, release
+for r in "${ROLES[@]}"; do [ -n "${POD[$r]:-}" ] && [ -z "${FINISHING[$r]:-}" ] && finish_role "$r"; done
 "$PY" "$HERE/run_suite.py" summarize --run-id "$RUN_ID" --out "$BENCH_HOME/runs" >/dev/null 2>&1 || true
 "$PY" - "$RUN_DIR/manifest.json" "$T_START" "$T_READY" "$T_INST" "$T_CELLS" "$(date +%s)" <<'PY'
 import json, sys

@@ -173,6 +173,28 @@ GENESIS_MODEL = "Qwen/Qwen3.6-35B-A3B"
 # paid). Rendered as a reference row just above Genesis. Notes per label.
 REFERENCE_NOTES = {
     "occamy-1.0": "Accio-Lab/occamy-1.0 — Alibaba, Qwen3.6-35B-A3B post-train, admissible reference; not a king",
+    "albedo-cxxvii": ("reference: SN97 king — Albedo (Bittensor subnet 97) sitting king CXXVII, "
+                      "dendriteholdings/albedo-qwen3.6-35b-king-CXXVII @ e920362b460a…; mirror of the "
+                      "private-store model sha256:9c4d837a…; crowned on Albedo 2026-09-20 with 0.762 vs 0.725 "
+                      "over CXXVI; not an Affine reign, never paid"),
+}
+# Display names for reference rows whose card label is a machine key.
+REFERENCE_LABELS = {
+    "albedo-cxxvii": "Albedo CXXVII",
+}
+# Reference rows sit between the kings and Genesis; higher = closer to Genesis
+# (operator 2026-09-24: Albedo directly above Genesis, below Occamy).
+REFERENCE_ORDER = {
+    "occamy-1.0": 0,
+    "albedo-cxxvii": 1,
+}
+# Reference rows that exist before (or without) a benchmark card: the row is
+# created from this registry so its env cells (king seat / backfill rollouts
+# under `king-<digest12>`) and in-flight pass markers show while the card is
+# still publishing. A card with the same label merges into the same row.
+REFERENCE_ROWS = {
+    "albedo-cxxvii": {"hf_repo": "dendriteholdings/albedo-qwen3.6-35b-king-CXXVII",
+                      "hf_revision": "e920362b460ae6b2a33c9cb298aa7f14a38d5584"},
 }
 GENESIS_DIGEST12 = "995ad96eacd9"     # HF revision 995ad96e… = reign 0 (seed)
 TEACHER_DIGEST12 = "1d4bf0f2ff60"     # HF revision 1d4bf0f2… of Qwen/Qwen3.8-27B (cards that bench the teacher itself)
@@ -203,6 +225,28 @@ CAP_BOUND_FRAC = 0.20            # share of replies cut at the completion cap th
 TRAINED_MARK = "†"
 TRAINED_LEGEND = ("a datagen source in D uses this benchmark's environment (policy, tools, scorer) on "
                   "generated, disjoint tasks; the cell is in-distribution generalisation, not zero-shot")
+# Direct benchmark rows in D (bench_fail, Jacob 2026-09-24 17:56 UTC): the
+# corpus manifest's `trained_on` {suite_slug: {since_epoch, since, group,
+# mode}} is merged here at build time (load_trained_on) -- a suite listed
+# there is marked "trained on since epoch N (<date>)" on its column and card
+# tooltip, with a stronger legend than the environment-reuse mark below.
+TRAINED_DIRECT_MARK = "‡"
+TRAINED_DIRECT_LEGEND = ("the king-failed / teacher-passed trials of THIS benchmark enter the dataset D directly "
+                         "(bench_fail group) from the epoch shown; cells of kings crowned after that date are "
+                         "trained on the benchmark's own tasks, not zero-shot")
+TRAINED_DIRECT: dict[str, dict] = {}
+
+
+def load_trained_on(manifest: dict | None) -> dict[str, dict]:
+    """{base env: {since_epoch, since, group, mode}} from the corpus manifest;
+    suite slugs (swebench_verified) map to the board's env ids (swebench-verified)."""
+    out: dict[str, dict] = {}
+    for slug, v in ((manifest or {}).get("trained_on") or {}).items():
+        if isinstance(v, dict):
+            out[str(slug).replace("_", "-")] = dict(v)
+    return out
+
+
 BENCH_TRAINED_ENVS = {
     # env: (since — crown time from which a king counts as trained, note)
     "tau2-airline": ("2026-09-21T11:47:00+00:00",
@@ -1193,7 +1237,7 @@ def bench_value(side: dict | None, env: str) -> dict | None:
     ci = src.get("ci95") or [None, None]
     cap = side.get("finish_length_frac")
     cap = float(cap) if isinstance(cap, (int, float)) and not isinstance(cap, bool) else None
-    return {
+    out = {
         "score": round(100.0 * float(src["score"]), 2),
         "lo": None if ci[0] is None else round(100.0 * float(ci[0]), 2),
         "hi": None if ci[1] is None else round(100.0 * float(ci[1]), 2),
@@ -1205,7 +1249,59 @@ def bench_value(side: dict | None, env: str) -> dict | None:
         # above CAP_BOUND_FRAC the number is a lower bound, not a measure
         "cap_frac": None if cap is None else round(cap, 4),
         "cap_bound": bool(cap is not None and cap > CAP_BOUND_FRAC),
+        # publisher's per-cell note (2026-09-25: "cap-bound: N % of replies hit the
+        # <cap>-token completion cap", hand-stamped old-cap explanations, infra notes)
+        "note": (str(side.get("note")).strip() if side.get("note") else None),
     }
+    # Leak audit (benchsuite 2026-09-24): SWE sandboxes had outbound internet and a
+    # share of trials fetched upstream code. The cell's VALUE becomes the score over
+    # the trials that did not leak (`leak_audit.score_excl_leaked`, Wilson on
+    # n_excl_leaked); the raw score and the leaked count go to the tooltip.
+    # The excl-leaked field must match the column's metric: a finished-only
+    # cell takes `finished_only_excl_leaked` (score + n over finished, non-leaked
+    # trials), an all-trials cell takes `score_excl_leaked` / `n_excl_leaked`
+    # (benchsuite 2026-09-24 09:05; mixing bases put 31.1 next to 84.6).
+    audit = side.get("leak_audit") or {}
+    excl, n_excl = audit.get("score_excl_leaked"), int(audit.get("n_excl_leaked") or 0)
+    if metric == "finished_only":
+        fo_excl = audit.get("finished_only_excl_leaked") or {}
+        excl, n_excl = fo_excl.get("score"), int(fo_excl.get("n") or 0)
+    net = side.get("network") if isinstance(side.get("network"), dict) else None
+    if net:
+        # Harbor cells stamp how the sandbox was fenced: `agent-allowlist` = only the
+        # serving box reachable in the agent phase (clean by construction), `public` = open
+        out["network"] = {"mode": net.get("mode"), "allowed_hosts": net.get("allowed_hosts")}
+    if side.get("contaminated") and not (isinstance(excl, (int, float)) and not isinstance(excl, bool)):
+        # rate known, per-trial exclusion impossible (King 11: the stored traces are a
+        # sibling attempt of the same run) — keep the score, badge + rate in the tooltip
+        sib = audit.get("sibling_attempt") or {}
+        out.update({
+            "contaminated": True, "excl_unavailable": True,
+            "raw_score": out["score"], "raw_n": out["n"],
+            "leaked": audit.get("n_leaked"), "leaked_resolved": audit.get("n_leaked_resolved"),
+            "leak_scanned": audit.get("n_trials_scanned") or audit.get("n_scanned") or sib.get("n"),
+            "leak_kinds": audit.get("by_kind"), "leak_note": audit.get("note"),
+            "leak_date": audit.get("date"),
+            "sibling": ({"n": sib.get("n"), "score_all": sib.get("score_all"),
+                         "score_excl_leaked": sib.get("score_excl_leaked")} if sib else None),
+        })
+    if side.get("contaminated") and isinstance(excl, (int, float)) and not isinstance(excl, bool):
+        k_excl = int(round(float(excl) * n_excl)) if n_excl else 0
+        _, lo, hi = wilson(k_excl, n_excl) if n_excl else (None, None, None)
+        out.update({
+            "score": round(100.0 * float(excl), 2),
+            "lo": None if lo is None else round(100.0 * lo, 2),
+            "hi": None if hi is None else round(100.0 * hi, 2),
+            "n": n_excl or out["n"],
+            "metric": f"{metric}_excl_leaked",
+            "contaminated": True,
+            "raw_score": round(100.0 * float(src["score"]), 2),
+            "raw_n": src.get("n") or side.get("n"),
+            "leaked": audit.get("n_leaked"), "leaked_resolved": audit.get("n_leaked_resolved"),
+            "leak_scanned": audit.get("n_trials_scanned") or audit.get("n_scanned"), "leak_kinds": audit.get("by_kind"),
+            "leak_rule": audit.get("rule"), "leak_date": audit.get("date"),
+        })
+    return out
 
 
 OLDCAP_RUN_MARK = "-oldcap"
@@ -1259,10 +1355,35 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
     for card in cards:
         for row in card.get("rows") or []:
             env = row.get("env")
-            if not env or env in out or row.get("temperature") != BENCH_TEMPERATURE:
+            if not env or row.get("temperature") != BENCH_TEMPERATURE:
                 continue
             side_rec = row.get(side) or {}
             if not is_current_cap_row(card, row, side_rec, caps):
+                continue
+            if env in out:
+                # an older card may carry the leak-audited stamp of the SAME measurement
+                # (re-published cards copy the cell without the audit): the audited
+                # version wins over an unaudited copy with the same raw score and n
+                cur = out[env]
+                if (side_rec.get("contaminated") and not cur.get("contaminated")
+                        and cur.get("score") is not None):
+                    val = bench_value(side_rec, env)
+                    if val and val.get("contaminated") and val.get("raw_score") == cur.get("score") \
+                            and (val.get("raw_n") or None) == (cur.get("n") or None):
+                        val.update(run_id=card.get("run_id"), mode=card.get("mode"),
+                                   created_at=card.get("created_at"), kind="bench")
+                        out[env] = val
+                continue
+            if side_rec.get("status") == "running":
+                # started cell whose Harbor job is alive (publish.py 2026-09-23): n of
+                # n_expected trials done — "running (n/N)", grey, out of the means
+                out.setdefault(f"__running__{env}", {
+                    "score": None, "running": True, "progress": True, "kind": "bench",
+                    "n": side_rec.get("n"), "n_expected": side_rec.get("n_expected"),
+                    "state": side_rec.get("failure") or f"running: {side_rec.get('n')} of {side_rec.get('n_expected')} trials done",
+                    "reason": side_rec.get("failure") or "benchmark job running",
+                    "run_id": card.get("run_id"), "mode": card.get("mode"),
+                    "created_at": card.get("created_at")})
                 continue
             if side_rec.get("status") == "partial":
                 # a Harbor job interrupted mid-run (2026-09-22): n_live of n_expected
@@ -1308,7 +1429,7 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
     # placeholders only where no card has a verified value: a partial run (some
     # trials measured) beats an unverified cell (grader mismatch), which beats a
     # failed run (nothing measured), for the slot
-    for prefix in ("__partial__", "__unverified__", "__failed__"):
+    for prefix in ("__running__", "__partial__", "__unverified__", "__failed__"):
         for k in [k for k in out if k.startswith(prefix)]:
             env = k[len(prefix):]
             val = out.pop(k)
@@ -1547,7 +1668,15 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
             "variant_note": (f"{tag}: the cell's completion cap / sandbox budget before 2026-09-19 (kept for continuity; "
                              f"the plain {labels.get(b, b)} column is the current cap)") if tag else None,
             "kind": "bench", "env": e,
-            "trained": ({"mark": TRAINED_MARK, "since": BENCH_TRAINED_ENVS[b][0], "note": BENCH_TRAINED_ENVS[b][1],
+            "trained": ({"mark": TRAINED_DIRECT_MARK, "direct": True,
+                         "since": f"{TRAINED_DIRECT[b].get('since')}T00:00:00+00:00",
+                         "since_epoch": TRAINED_DIRECT[b].get("since_epoch"),
+                         "note": (f"trained on since epoch {TRAINED_DIRECT[b].get('since_epoch')} ({TRAINED_DIRECT[b].get('since')}): "
+                                  f"this benchmark's king-failed trials enter D directly (group {TRAINED_DIRECT[b].get('group')}, "
+                                  f"mode {TRAINED_DIRECT[b].get('mode')})"
+                                  + (f"; also environment reuse: {BENCH_TRAINED_ENVS[b][1]}" if b in BENCH_TRAINED_ENVS else "")),
+                         "legend": TRAINED_DIRECT_LEGEND} if b in TRAINED_DIRECT else
+                        {"mark": TRAINED_MARK, "since": BENCH_TRAINED_ENVS[b][0], "note": BENCH_TRAINED_ENVS[b][1],
                          "legend": TRAINED_LEGEND} if b in BENCH_TRAINED_ENVS else None),
             "group": meta.get("group"), "n": meta.get("n"), "note": meta.get("note"),
             "metric": "finished_only" if b in BENCH_FINISHED_ONLY else "score",
@@ -1599,15 +1728,18 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
     reign_envs = {r["digest12"]: {e["source"]: e for e in r.get("envs") or []}
                   for r in stats.get("reigns") or []}
     rows = matrix_rows_meta(stats)
-    for i, (label, lst) in enumerate(sorted(reference_cards.items())):
-        kb = lst[0].get("king") or {}
-        rev = str(kb.get("hf_revision") or "")
+    ref_labels = set(reference_cards) | set(REFERENCE_ROWS)
+    for i, label in enumerate(sorted(ref_labels, key=lambda l: (REFERENCE_ORDER.get(l, 50), l))):
+        lst = reference_cards.get(label) or []
+        kb = (lst[0].get("king") if lst else None) or {}
+        reg = REFERENCE_ROWS.get(label) or {}
+        rev = str(kb.get("hf_revision") or reg.get("hf_revision") or "")
         rows.append({
-            "key": f"ref:{label}", "kind": "reference", "label": label[:1].upper() + label[1:],
-            "model": kb.get("hf_repo") or kb.get("repo") or label, "hf_revision": rev,
-            "digest12": card_digest12(lst[0]),
-            "sub": f"{kb.get('hf_repo') or label}{' @ ' + rev[:8] if rev else ''}",
-            "tip": REFERENCE_NOTES.get(label, f"{kb.get('hf_repo') or label} — reference model (open checkpoint "
+            "key": f"ref:{label}", "kind": "reference", "label": REFERENCE_LABELS.get(label, label[:1].upper() + label[1:]),
+            "model": kb.get("hf_repo") or kb.get("repo") or reg.get("hf_repo") or label, "hf_revision": rev,
+            "digest12": (card_digest12(lst[0]) if lst else (rev[:12] or None)),
+            "sub": f"{kb.get('hf_repo') or reg.get('hf_repo') or label}{' @ ' + rev[:8] if rev else ''}",
+            "tip": REFERENCE_NOTES.get(label, f"{kb.get('hf_repo') or reg.get('hf_repo') or label} — reference model (open checkpoint "
                                               "of the genesis family, benchmarked for comparison); not a king, never paid"),
             "order": 1000 + i,
         })
@@ -1672,7 +1804,8 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                                                     "running_env", "n_done", "n_planned")}, "eta": eta_iso}
         for e in p["planned"]:
             key = f"bench:{e}"
-            if target["cells"].get(key, {}).get("score") is None:
+            cur = target["cells"].get(key, {})
+            if cur.get("score") is None and not cur.get("progress"):   # the card's own running (n/N) cell wins
                 target["cells"][key] = {"score": None, "running": True, "kind": "bench",
                                         "run_id": p["run_id"], "eta": eta_iso,
                                         "state": ("running now" if e == p["running_env"]
@@ -1686,7 +1819,7 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
               and not r["current"]]
     rows = [r for r in rows if r not in hidden]
     genesis_row = next((r for r in rows if r["kind"] == "genesis"), None)
-    refs = [r for r in rows if r["kind"] == "reference"]
+    refs = sorted([r for r in rows if r["kind"] == "reference"], key=lambda r: r["order"])
     rows = [r for r in rows if r["kind"] != "reference" and r is not genesis_row] + refs \
         + ([genesis_row] if genesis_row else [])
     for i, r in enumerate(rows):
@@ -1759,6 +1892,12 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
             "markers": f"‡ = cap-bound: more than {int(CAP_BOUND_FRAC * 100)}% of the model's replies hit the "
                        "completion cap and scored 0, so the number is a lower bound; ⚖ = judge-graded "
                        "(graded = llm_judge): an LLM judge graded the rollouts — advisory, never part of the score; "
+                       "⚠ = contaminated (leak audit): a share of the SWE trials fetched upstream code "
+                       "(sandboxes had outbound internet); the value shown is the score over the trials "
+                       "that did not leak, the raw score is in the tooltip; "
+                       f"{TRAINED_DIRECT_MARK} on a column header = trained on since the date / epoch in the column's "
+                       f"`trained` block: {TRAINED_DIRECT_LEGEND}; cells from cards before that date are held-out "
+                       "measurements; nothing is removed from totals; "
                        f"{TRAINED_MARK} = trained environment: {TRAINED_LEGEND} (column header: the environment is in D; "
                        "cell: the king was crowned after the admission, so it may have trained on it; "
                        + ", ".join(f"{e} since {v[0][:10]}" for e, v in BENCH_TRAINED_ENVS.items()) + ")",
@@ -2028,6 +2167,12 @@ def write_matrix(stats: dict) -> dict:
     # written by an older builder has no revoked_kings
     stats = {**stats, "kings": load_kings() or stats.get("kings") or [],
              "revoked_kings": load_revoked_kings()}
+    try:
+        TRAINED_DIRECT.clear(); TRAINED_DIRECT.update(load_trained_on(fetch_json(Fetcher(), CORPUS_MANIFEST_KEY)))
+        if TRAINED_DIRECT:
+            log.info("trained_on (direct bench rows in D): %s", sorted(TRAINED_DIRECT))
+    except Exception as e:  # noqa: BLE001 -- the badge is additive; the board builds without it
+        log.warning("trained_on stamp unreadable: %s", e)
     matrix = build_matrix(stats, load_cards(), load_inflight_passes())
     tmp = MATRIX_PATH.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(matrix, separators=(",", ":")))

@@ -1,0 +1,24 @@
+N1 stage-2 scorer — set B; rendering no_thought; span level body; metric term
+base = engy:qwen3.8-27b; plus = mock:base+N(0,0.05); rows 12; candidates 43; unique echoes 39; echo errors {'base': 0, 'plus': 0}; terms 43/43; engy cost $0.0278
+!! DRY RUN: plus side is base + noise; every statistic below is pipeline exercise only !!
+
+===== SET B — N1 term (term) per model vs benchmark cards =====
+mean = mean term over the model's turns; excess = mean over turns of (model term − mean of the 3 ref terms on the same turn);
+teacher row = leave-one-out (ref_i − mean of the other two); bench axes centered as panel.py (score − panel mean per cell)
+
+===== PER-MODEL: ALL turns =====
+model        n      mean      se    excess      se   bench(centered): total agentic noTau2 chat
+teacher     36   -0.0995  0.0754    0.0000  0.1027     15.7    17.1    8.8    7.6
+genesis      1    0.5014       -    0.7606       -     10.9    18.7    5.4    0.3
+king19       1   -0.0431       -    0.0000       -     10.4    15.3    0.5    3.8
+king17       1    0.9368       -    0.6233       -     10.4    22.8   -2.0    3.0
+king16       1   -0.1722       -   -0.1347       -      6.8    14.2    2.0   -1.1
+king14       1   -0.3350       -   -0.1777       -    -11.8   -21.5   -2.9   -2.3
+king12       1   -0.0973       -   -0.2412       -    -12.8   -23.6   -6.5   -3.2
+king11       1   -0.4270       -   -0.4168       -    -12.2   -22.2   -4.0   -2.6
+-- alignment (ALL turns): Spearman(stat, centered bench axis) over n=8 models [king11, king12, king14, king16, king17, king19, genesis, teacher]; perm p two-sided; 95% CI bootstrap over models --
+mean       total: +0.52 p0.20 [-0.21,+1.00]  agentic: +0.71 p0.06 [-0.05,+1.00]  agentic_no_tau2: +0.29 p0.51 [-0.58,+0.97]  chat: +0.48 p0.25 [-0.24,+1.00]  
+excess     total: +0.87 p0.01 [+0.39,+1.00]  agentic: +0.95 p0.00 [+0.62,+1.00]  agentic_no_tau2: +0.73 p0.05 [-0.09,+1.00]  chat: +0.75 p0.04 [-0.11,+1.00]  
+-- alignment (ALL turns — sub-panel kings 16–20 + teacher + genesis): Spearman(stat, centered bench axis) over n=5 models [king16, king17, king19, genesis, teacher]; perm p two-sided; 95% CI bootstrap over models --
+mean       total: +0.30 p0.68 [-1.00,+1.00]  agentic: +0.90 p0.08 [+0.11,+1.00]  agentic_no_tau2: -0.50 p0.45 [-1.00,+1.00]  chat: +0.10 p0.95 [-1.00,+1.00]  
+excess     total: +0.56 p0.37 [-0.88,+1.00]  agentic: +0.87 p0.06 [+0.11,+1.00]  agentic_no_tau2: -0.05 p1.00 [-1.00,+1.00]  chat: +0.05 p1.00 [-1.00,+1.00]  

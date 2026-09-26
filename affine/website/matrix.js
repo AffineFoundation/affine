@@ -66,6 +66,10 @@ function rowTip(r) {
 
 function cellTip(row, col, cell, teacherCell) {
   const head = `${rowName(row)} · ${col.label}${col.kind === "env" && col.group ? ` (${col.group})` : ""}`;
+  if (cell && cell.running && cell.progress) {
+    return `${head}\nrunning — ${num(cell.n)} of ${num(cell.n_expected)} trials done; the number lands when the job finishes; not counted in total / full`
+      + (cell.run_id ? `\ncard ${cell.run_id}${cell.mode ? ` · ${cell.mode}` : ""}` : "");
+  }
   if (cell && cell.running) {
     return `${head}\n${col.kind === "bench" ? "benchmark set" : "cell"} ${cell.state || "running"}`
       + (cell.eta ? `\nETA ≈ ${when(cell.eta)} (pass average per cell; sandbox sets take longer)` : "\nETA: first cell not finished yet")
@@ -117,8 +121,26 @@ function cellTip(row, col, cell, teacherCell) {
     lines.push(`n = ${num(cell.n)} tasks · greedy T=0${cell.metric === "finished_only" ? " · finished-only" : ""}`);
     if (cell.all_rollouts != null) lines.push(`all rollouts (timeouts count as failed): ${fmt(cell.all_rollouts)}`);
     if (cell.cap_bound) lines.push(`‡ cap-bound: ${Math.round(100 * cell.cap_frac)}% of rollouts hit the completion cap (scored 0); lower bound`);
+    if (cell.note) lines.push(`note: ${cell.note}`);
     if (cell.graded === "llm_judge") lines.push(`⚖ judge-graded: ${judgeText(cell.judge)} — advisory, never part of the score`);
-    if (col.trained) lines.push(`${col.trained.mark} trained environment${cell.trained ? " (this king was crowned after the admission)" : " (column; this model predates the admission or is not a king)"}: ${col.trained.legend}. ${col.trained.note}`);
+    if (cell.contaminated && cell.excl_unavailable) {
+      lines.push(`⚠ contaminated — leak rate from a sibling attempt: ${num(cell.leaked)} of ${num(cell.leak_scanned)} trials fetched upstream code (sandboxes had outbound internet); per-trial exclusion unavailable, the score shown is the original`
+        + (cell.sibling && cell.sibling.score_excl_leaked != null ? ` (the sibling attempt scored ${fmt(100 * cell.sibling.score_all)} all trials, ${fmt(100 * cell.sibling.score_excl_leaked)} excluding its leaks)` : "")
+        + (cell.leak_date ? ` (audit ${cell.leak_date})` : ""));
+    } else if (cell.contaminated) {
+      lines.push(`⚠ contaminated: ${num(cell.leaked)} of ${num(cell.leak_scanned || cell.raw_n)} trials fetched upstream code (sandboxes had outbound internet)${cell.leaked_resolved != null ? `, ${num(cell.leaked_resolved)} of them resolved` : ""}; raw score ${fmt(cell.raw_score)} — shown and counted: ${fmt(cell.score)} over the ${num(cell.n)} trials that did not leak${cell.leak_date ? ` (audit ${cell.leak_date})` : ""}`);
+    }
+    if (cell.network && cell.network.mode) {
+      lines.push(cell.network.mode === "agent-allowlist" || cell.network.mode === "allowlist"
+        ? `network: ${cell.network.mode} — fenced sandbox, only ${(cell.network.allowed_hosts || []).length ? (cell.network.allowed_hosts || []).join(", ") : "the serving box"} reachable in the agent phase (clean by construction)`
+        : `network: ${cell.network.mode} — sandbox had outbound internet`);
+    }
+    if (col.trained && col.trained.direct) {
+      lines.push(`${col.trained.mark} trained on since ${(col.trained.since || "").slice(0, 10)} (epoch ${col.trained.since_epoch}): king-failed trials from this suite enter the dataset; `
+        + (cell.trained ? "this king was crowned after that date, so its cell is trained-on, not zero-shot" : "this cell is from a card / model before that date — a held-out measurement"));
+    } else if (col.trained) {
+      lines.push(`${col.trained.mark} trained environment${cell.trained ? " (this king was crowned after the admission)" : " (column; this model predates the admission or is not a king)"}: ${col.trained.legend}. ${col.trained.note}`);
+    }
     lines.push(`card ${cell.run_id}${cell.mode ? ` · ${cell.mode}` : ""}`);
   } else {
     lines.push(`${num(cell.solved)} solved / ${num(cell.n)} graded (${num(cell.rollouts)} rollouts, ${num(cell.errored)} errored)${cell.temp ? ` · ${cell.temp} T=0.8` : ""}`);
@@ -246,9 +268,11 @@ function renderTable(m, spec) {
     + cols.map((c) => {
       const cls = ["col", c.kind, sepAt.has(c.key) ? "sep" : "", sort.key === c.key ? "sorted" : ""].filter(Boolean).join(" ");
       const judge = c.advisory ? `\n⚖ judge-graded: ${judgeText(c.judge)} — advisory, never part of the score` : "";
-      const trained = c.trained ? `\n${c.trained.mark} trained environment: ${c.trained.legend}. ${c.trained.note}. Cells of kings crowned after the admission carry the mark; the teacher, the genesis and reference models never trained on D` : "";
+      const trained = c.trained && c.trained.direct
+        ? `\n${c.trained.mark} trained on since ${(c.trained.since || "").slice(0, 10)} (epoch ${c.trained.since_epoch}): king-failed trials from this suite enter the dataset; cells from cards before that date are held-out measurements. ${c.trained.legend}`
+        : c.trained ? `\n${c.trained.mark} trained environment: ${c.trained.legend}. ${c.trained.note}. Cells of kings crowned after the admission carry the mark; the teacher, the genesis and reference models never trained on D` : "";
       const title = `${c.label}${c.kind === "env" && c.group ? ` · ${c.group}` : ""}${c.kind === "bench" && c.group ? ` · ${c.group}` : ""}${c.kind === "bench" && c.n ? ` · n = ${c.n}` : ""}${judge}${trained}${c.note ? `\n${c.note}` : ""}\nclick to sort`;
-      return `<th class="${cls}${c.advisory ? " advisory" : ""}${c.trained ? " trained" : ""}" data-sort="${esc(c.key)}" title="${esc(title)}">${esc(c.short || c.abbr || c.label)}${c.advisory ? `<span class="mk judge">⚖</span>` : ""}${c.trained ? `<span class="mk trained">${esc(c.trained.mark)}</span>` : ""}${mark(c.key)}</th>`;
+      return `<th class="${cls}${c.advisory ? " advisory" : ""}${c.trained ? " trained" : ""}${c.trained && c.trained.direct ? " trained-direct" : ""}" data-sort="${esc(c.key)}" title="${esc(title)}">${esc(c.short || c.abbr || c.label)}${c.advisory ? `<span class="mk judge">⚖</span>` : ""}${c.trained ? `<span class="mk trained${c.trained.direct ? " direct" : ""}">${esc(c.trained.mark)}</span>` : ""}${mark(c.key)}</th>`;
     }).join("") + "</tr>";
 
   const body = rows.map((r) => {
@@ -289,11 +313,14 @@ function renderTable(m, spec) {
       // interrupted Harbor job: n_live of n_expected trials ran — provisional, grey, never a final number
       const partial = !has && !running && cell && cell.partial;
       const partialText = partial ? `partial (${num(cell.n_live)}/${num(cell.n_expected)})` : "";
-      const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? (cell.low_n ? "lown" : "") : running ? "running" : failed ? "failed" : unverified ? "unverified" : partial ? "partialcell" : erroredOnly ? "failed" : "blank"].filter(Boolean).join(" ");
+      // a started cell whose job is alive (status running, publish.py 2026-09-23): "running (n/N)"
+      const progress = running && cell.progress && cell.n_expected;
+      const runningText = progress ? `running (${num(cell.n)}/${num(cell.n_expected)})` : "…";
+      const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? (cell.low_n ? "lown" : "") : running ? (progress ? "partialcell" : "running") : failed ? "failed" : unverified ? "unverified" : partial ? "partialcell" : erroredOnly ? "failed" : "blank"].filter(Boolean).join(" ");
       const style = has && r.kind !== "teacher" ? tint(cell.delta) : "";
-      const marks = has ? `${cell.cap_bound ? `<span class="mk cap">‡</span>` : ""}${cell.graded === "llm_judge" ? `<span class="mk judge">⚖</span>` : ""}${cell.trained && c.trained ? `<span class="mk trained">${esc(c.trained.mark)}</span>` : ""}` : "";
+      const marks = has ? `${cell.cap_bound ? `<span class="mk cap">‡</span>` : ""}${cell.graded === "llm_judge" ? `<span class="mk judge">⚖</span>` : ""}${cell.contaminated ? `<span class="mk leak" title="contaminated: leaked trials excluded">⚠</span>` : ""}${cell.trained && c.trained ? `<span class="mk trained">${esc(c.trained.mark)}</span>` : ""}` : "";
       return `<td class="${tcls} duel-hit" data-tip="${esc(cellTip(r, c, cell, teacher.cells[c.key]))}"`
-        + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) + marks : running ? "…" : failed ? "run failed" : unverified ? "unverified" : partial ? partialText : erroredOnly ? "errored" : "·"}</td>`;
+        + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) + marks : running ? runningText : failed ? "run failed" : unverified ? "unverified" : partial ? partialText : erroredOnly ? "errored" : "·"}</td>`;
     }).join("");
     const rowTitle = r.kind === "king" ? `${kingName(r.reign)} = reign ${r.reign} · king-${r.digest12}` : r.label;
     return `<tr class="${cls}"><td class="model duel-hit" data-tip="${esc(rowTip(r))}" title="${esc(rowTitle)}">`

@@ -8,8 +8,17 @@ chal-00596 (dent1s2) with `eval_infra_exhausted` before the fixes landed.
 The checkpoint itself was never judged; give it a fresh slot.
 
 Do NOT call State.enqueue(): the hotkey is already in seen_hotkeys /
-intake_decided and would be skipped. Direct queue inject, new challenge id
-via next_id() — same pattern as ops/requeue_shortz_fork.py.
+intake_decided and would be skipped. Direct queue inject.
+
+The entry keeps its ORIGINAL challenge id (`from_challenge`). Queue order is
+canonical by challenge sequence (QueueEntry.order_key), so re-injecting
+under the old id puts the submission back exactly where it was; a fresh
+next_id() would put it behind everything revealed since. That is what
+happened on 2026-09-01: eleven `unservable` victims of the 07:03-13:19 pod
+fault were re-injected as chal-00170.. behind chal-00169 (revealed 13:36),
+so `iambackkk/...-cr7` (originally chal-00156, 07:03) dueled AFTER the model
+that had copied it, and the copy took reign 4 first. Miners called this
+"the queue-order bug".
 
 Usage (STOP the validator first, or pass --apply which stops it):
 
@@ -152,8 +161,12 @@ def main() -> None:
     print(f"backed up {bak}")
 
     for v, block in todo:
+        cid = v.get("from_challenge") or state.next_id()
+        if any(e.challenge_id == cid for e in state.queue):
+            print(f"  {cid} already on the queue, skip: {v['repo']}")
+            continue
         entry = QueueEntry(
-            challenge_id=state.next_id(),
+            challenge_id=cid,
             hotkey=v["hotkey"],
             repo=v["repo"],
             revision=v["revision"],
@@ -164,6 +177,8 @@ def main() -> None:
         state.queue.append(entry)
         state.stats["queued"] = int(state.stats.get("queued", 0)) + 1
         print(f"  injected {entry.challenge_id} {entry.repo}")
+    state.queue.sort(key=lambda e: e.order_key)
+    print("queue order now:", [e.challenge_id for e in state.queue][:12])
     state.flush()
     print(f"\nqueue now {len(state.queue)}")
     print("next: pm2 start affine-validator")

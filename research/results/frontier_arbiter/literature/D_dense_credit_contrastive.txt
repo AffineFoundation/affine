@@ -1,0 +1,855 @@
+FRONTIER ARBITER — LITERATURE NOTES D
+Dense per-turn credit from delayed outcomes / contrastive and log-ratio scorers / pairs from failures /
+off-policy evaluation from logged data / verifier generalisation across the coverage gap
+Read 2026-09-21 from the primary pages (arXiv abs + HTML). Numbers are the papers' own. Sources
+covered by notes A/B (Math-Shepherd, OmegaPRM, AgentPRM, GiGPO, ReST-EM, STaR, SDFT/SDPO/OPSD, TML
+on-policy distillation, DeepSWE, SWE-smith) are referenced, not re-summarised.
+
+What we are designing around (AGENTS.md §1–2; store doc dataset-rule-solutions.md §0–1, §3g, §3i,
+§6.5, §6b.5, §7):
+  F1  Any rule built only from teacher likelihoods of the miner's tokens has the teacher as maximiser
+      (kings sit at parity). One term must be anchored to something the teacher does not define: a
+      verified outcome, or information the teacher was not given — computed into D at fold time.
+  F2  "Which action" is noise on ~90 % of turns (41 outcome-relevant turns per 1,000); an anchored
+      term has content only at decision states, so D must be shaped dense in them or the term dilutes.
+  F3  Dead on measurement: frontier opinion in any form (similarity, hinted refs on the thought leg →
+      out of band; hindsight refs as action-leg context → plan-agreement, `ls -la` beats the king,
+      teacher-vs-king separation 1.84 → 0.00; frontier preference judge 42 % accuracy; deliberated
+      frontier consensus correct 0/18 at decision states — the consensus IS the teacher's failure).
+  F4  Alive: (S1) decision-state dataset with continuation-verified S+/S− actions, ~10–12
+      continuations per kept state, only where a grader can be rebuilt (≈ 40 % of turns); (S2)
+      frontier proposals verified by the teacher's continuation (27 % of ceiling states); (S9) R /
+      typicality / A demoted to gates. VAV (verified action value) is directionally right but starved
+      at N = 3–4 per state — needs N ≈ 8–16 or pooled classes.
+  F5  Gaming surface a new term must survive: filler / flat lift (centering kills it on R, band kills it
+      on G), parroting a published target, splicing a Qwen thought onto a foreign action, generic
+      exploration (`ls -la`, repeat-last), memorising published (x → label) pairs, incumbency
+      (anything anchored to the king rewards king-likeness).
+  F6  Replayability: every term must recompute bit-identically from published D + published weights
+      + a verdict's stamps. A learned scorer is replayable only if its weights are pinned in the
+      manifest per fold.
+
+Notation: x prefix; z thought; y action; C = frozen teacher Qwen3.8-27B; lpC(a|b) per-byte log-lik;
+C+ / C− = the same teacher fine-tuned on solved / failed trajectories of D; μ = a prover/continuation
+policy; V^μ(x) = P(task solved | continue from x with μ); Q^μ(x,y) = same after taking y at x;
+A^μ(x,y) = Q^μ − V^μ (advantage under the prover). Trajectory outcome o ∈ {solved, failed} exists for
+all 135k trajectories; per-state continuation labels exist only where harvested (S1/S2).
+
+The unifying identity used throughout (Bayes on the trajectory outcome, exact when C+ is the
+success-conditioned teacher and every turn is sampled by C):
+    log C+(y|x) − log C(y|x) = log P(o=1|x,y) − log P(o=1|x) = log Q^C(x,y) − log V^C(x)      (★)
+    log C+(y|x) − log C−(y|x) = logit P(o=1|x,y) − logit P(o=1|x)                             (★★)
+So the implicit PRM (§1.1), the hindsight ratio of HCA (§2.2), the value term of VAS (§5.5), Setlur's
+advantage-under-a-prover (§1.3), and the store doc's VAV table (S6) are estimates of the SAME quantity:
+the teacher's own continuation advantage of the miner's action. They differ in producer (learned
+density ratio vs Monte-Carlo table vs learned value net), in where they have support, and in how they
+fail under optimisation. Maximiser of any of them = argmax_y Q^C(x,y): the policy that always takes
+the action from which the TEACHER finishes best — strictly above the teacher wherever the teacher's
+sampled action is not its own best continuation (i.e. at every split state; ≈ 0 elsewhere by F2).
+
+======================================================================================================
+PART 1 — IMPLICIT / OUTCOME-DERIVED PROCESS REWARDS
+======================================================================================================
+
+1.1 Yuan et al., "Free Process Rewards without Process Labels" (arXiv 2412.01981, Dec 2024)
+    https://arxiv.org/abs/2412.01981
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Train an ORM on response-level labels with the reward PARAMETRISED as a log-ratio,
+    r_θ(y) = β·log π_θ(y|x)/π_ref(y|x) (either CE on correct/incorrect or DPO on pairs). The partial
+    sums q_θ^t = Σ_{i≤t} β·log π_θ(y_i|y_<i)/π_ref(y_i|y_<i) are then exact step Q-values of the
+    implied reward, and r^t = q^t − q^{t−1} is a per-step (per-token) reward — no step labels, no MC
+    rollouts. Proposition: the ORM's optimal solution under this parametrisation equals the exponential
+    of a Q-function, so step credit is a by-product of outcome training.
+(2) Signal/target/producer. Target = response correctness (math final answer). Producer = ONE
+    forward pass of π_θ and π_ref per response; π_θ trained on ~29k instructions × 8 responses.
+(3) Optimum vs fixed teacher. The score is an advantage under π_θ's induced Q; its argmax is the
+    action with highest predicted success, not the reference's habit — above π_ref where π_ref's
+    habit is not its best action (★). With CE on outcome labels the term is exactly the log
+    success-likelihood ratio; with DPO it is the same up to the pairing.
+(4) Numbers. Trained on 33k math instructions × 8 outcome-labelled responses; on MATH best-of-N the
+    implicit PRM (CE loss) beats Math-Shepherd (MC step labels) and RLHFlow PRMs while using less
+    than 1/38 of Math-Shepherd's training data; further gains with weighted majority voting.
+    Scaling RESPONSES per instruction helps more than scaling instructions (instructions must be
+    task-relevant; response diversity matters little). Adding real step labels on top brought NO
+    further gain. Dropping π_ref (scoring with log π_θ alone) did not hurt accuracy.
+    Over-optimisation: not studied here (offline BoN only) — see PRIME.
+(5) MAPPING. Fold-time: SFT the frozen teacher on the solved trajectories of D (all 135k have o;
+    ~0 marginal data cost) → C+; pin weights in the manifest. Duel-time per turn:
+        IPRM(y_A) = lpC+(y_A|x) − lpC(y_A|x)            (action only; per-byte or per-turn sum)
+        IPRM_z(z_A,y_A) = lpC+(z_A,y_A|x) − lpC(z_A,y_A|x)   (thought+action)
+    Dense (every turn), no continuations, replayable given pinned C+. Avoids: filler/flat lift (a
+    constant lift cancels in the ratio only if C+ and C agree on filler — they will, filler is not
+    predictive of success); generic exploration scores ≈ 0 (`ls -la` is equally likely under C+
+    and C). Re-opens: (a) MEMORISATION — C+ is public; a miner can fit C+ directly (it is a fixed,
+    published target: the rule's maximiser is "sample where C+/C is largest", which is a model a
+    miner can distil). This is S7's objection (public learned scorer on the over-optimisation
+    curve). (b) Ratio pathology: log-ratios are maximised on tokens RARE under C — a miner shifts
+    mass to low-probability tokens that C+ happens to up-weight (spurious features of solved
+    trajectories: task difficulty, harness, repo). Needs a plausibility gate (§3.3 contrastive
+    decoding's α-mask = "lpC(y) within band of C's own samples" — the live A/typicality leg as a
+    GATE). (c) Confounding: solved trajectories are easier tasks; C+ learns "easy-task style".
+    Centering per state (★ subtracts log V^C(x) automatically) handles a per-state constant but not
+    per-token style. Cost at duel: +1 echo per rollout per side (C+ forward over the miner's
+    tokens) ≈ +15 % echo work; fold: one SFT of a 27B on ~70k solved trajectories per fold.
+
+1.2 Cui et al., "PRIME: Process Reinforcement through Implicit Rewards" (arXiv 2502.01456, Feb 2025)
+    https://arxiv.org/abs/2502.01456
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Online RL where the implicit PRM of 1.1 (initialised FROM THE POLICY/SFT model, so no
+    separate RM pretraining) is updated every step on the policy's fresh rollouts + outcome verifier
+    labels, and its per-token log-ratio rewards are combined with the outcome reward in RLOO/GRPO-
+    style advantages. Reward = r_outcome + β·Σ_t log π_φ/π_ref over tokens.
+(2) Signal/target/producer. Outcome verifier (math answer, code tests) → implicit PRM update →
+    dense token rewards. Producer = the PRM's own forward pass; no MC.
+(3) Optimum above base. Yes — the policy is RL-trained against verifiers; the PRM is a variance-
+    reduction/credit device. Its optimum is the verifier's, not a fixed model's.
+(4) Numbers. Eurus-2-7B-PRIME: +15.1 % average over the SFT start on 7 reasoning benchmarks
+    (AIME24 26.7 %, +20 points over SFT), 2.5× sample efficiency vs outcome-only RL, +6.9 % final
+    performance over outcome-only; surpasses Qwen2.5-Math-7B-Instruct with 10 % of its data.
+    OVER-OPTIMISATION: with the PRM FROZEN (no online update) training is unstable and rewards are
+    hacked — PRM accuracy on the shifting policy distribution collapses; the online update is
+    reported as ESSENTIAL ("the PRM must be updated online to mitigate distribution shift and
+    reward hacking"). Initialising the PRM from the SFT policy beats a separately trained PRM.
+(5) MAPPING. The direct lesson for a KOTH rule: a FROZEN public implicit PRM is a hackable target;
+    PRIME's remedy (online update on the optimiser's own samples) translates to (i) re-fitting C+
+    every fold on D INCLUDING the king-seat and challenger rollouts (S8 DAgger states — the king's
+    own failures enter D, so C+/C− learn the current exploit), and (ii) a moving target that is
+    still replayable because each fold pins its C±. Failure mode that stays open: between folds the
+    scorer is fixed and the fold cadence (weeks) is slower than a miner's RL loop (hours). Cost:
+    fold-time SFT; no duel-time change beyond 1.1.
+
+1.3 Setlur et al., "Rewarding Progress: Scaling Automated Process Verifiers for LLM Reasoning"
+    (arXiv 2410.08146, Oct 2024) https://arxiv.org/abs/2410.08146
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Define the process reward for step y at prefix x as the ADVANTAGE under a PROVER
+    policy μ: A^μ(x,y) = Q^μ(x,y) − V^μ(x), estimated by MC rollouts of μ from x and from x∘y. Train a
+    PAV (process advantage verifier) to regress it; use PAV as a dense reward in beam search and in
+    online RL alongside the outcome reward.
+(2) Signal/target/producer. Target = whether the prover μ finishes correctly; producer = MC rollouts
+    of μ (a fixed, usually WEAKER or complementary model), then a regressed verifier.
+(3) Optimum above the base — and above the prover. Theory (their §4): rewarding the base policy π's
+    own advantages is uninformative (a strong π has ≈ 0 advantage on most steps and 0 where it cannot
+    finish); a prover μ that is (a) distinct from π and (b) able to distinguish steps — "not too
+    strong, not too weak" — gives informative dense signal. The maximiser of Q^μ ranks π's actions by
+    what μ can do with them, which is above μ wherever μ's own sampled step is not μ's best step.
+(4) Numbers. Test-time beam search with PAV: > 8 % more accurate and 1.5–5× more compute-efficient
+    than an ORM at equal budget; online RL with PAV dense rewards: 5–6× sample efficiency and > 6 %
+    accuracy over ORM-only RL (Gemma 2B/9B/27B; MATH). Ablation: prover = base policy itself gives
+    the smallest gain; a weaker prover often beats a stronger one. Over-optimisation: dense PAV
+    rewards did not degrade final accuracy in their runs (they are combined with outcome reward).
+(5) MAPPING. This is the theoretical licence for the store doc's VAV (S6/§6.3) with μ = C: score the
+    miner's action by the TEACHER's continuation advantage, A^C(x, class(y_A)) — exactly F4's
+    surviving mechanism — and it says the anchor should be a prover DISTINCT from the scored
+    policy (the teacher is distinct from every miner) and possibly WEAKER for informativeness: at
+    ceiling states (V^C = 0) C as prover has zero advantage everywhere; a weaker/cheaper prover
+    (Qwen3.6-35B genesis, or the king seat) gives non-zero advantages on the same states and is
+    cheaper to run. Two-prover tables (C and genesis) would cover more states. Cost: MC continuations
+    (the ~12 per state the doc quotes; §7 recommends N = 8 on ≥ 8 containers). Failure modes: the
+    doc's own — table sparsity, action-equivalence matcher, coverage 40 %. Re-opens nothing new;
+    memorisation of published (x → best class) is the accepted lesson at that state.
+
+1.4 Zhang et al. (Qwen), "The Lessons of Developing Process Reward Models in Mathematical Reasoning"
+    (arXiv 2501.07301, Jan 2025) https://arxiv.org/abs/2501.07301
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Audit of PRM data synthesis: MC-estimated step labels (Math-Shepherd/OmegaPRM style)
+    vs LLM-as-judge vs human; propose CONSENSUS FILTERING — keep a step label only when MC estimate
+    and LLM judge agree — and evaluate on ProcessBench (locate the first erroneous step) instead of
+    best-of-N.
+(2) Signal/target/producer. Step correctness; producers = MC completions (8 per step) + a judge.
+(3) Optimum. Not a training method; a labelling audit. Relevant claim: MC labels conflate "this step
+    is correct" with "the completion model can finish from here" — a step can be correct and still
+    MC-labelled bad if the completer is weak, and wrong steps get MC-labelled good if the completer
+    recovers.
+(4) Numbers. MC-only PRMs under-perform LLM-judge- and human-labelled PRMs on ProcessBench
+    (error-step location F1) and generalise worse; consensus filtering (keep only steps where MC
+    and judge agree) discards a large share of MC data yet improves both BoN and ProcessBench and is
+    more data-efficient; the released Qwen2.5-Math-PRM-7B/72B lead open PRMs on ProcessBench. BoN
+    accuracy is shown to be a misleading PRM metric (ORM-like PRMs that only judge the final answer
+    do well on BoN while locating no step errors).
+(5) MAPPING. Their criticism of MC labels is, for us, the DEFINITION of the wanted quantity: we do
+    not want "step correctness" in the abstract, we want "the teacher finishes from here" — a
+    teacher-relative value (★). So MC noise (their objection) is our signal; their real warning is
+    label variance at small N (matches §6.5: N = 3–4 cannot rank). The consensus idea transfers as
+    an agreement FILTER on which decision states enter the `decision` group (keep a state only where
+    the MC split is stable across the sequential harvest AND a cheap detector — h_causal §3i — flags
+    it), not as a scoring term. Also: publish ProcessBench-style "first-bad-turn" evaluation of any
+    learned scorer on held-out split states before it ranks miners.
+
+1.5 [discovered] Luo/Liu et al. (Tongyi), "Agentic Reinforcement Learning with Implicit Step
+    Rewards" — iStar (arXiv 2509.19199, Sep 2025) https://arxiv.org/abs/2509.19199
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Implicit PRM for multi-turn AGENTS: reward model π_φ initialised from the policy,
+    trained by a trajectory-level DPO objective on pairs of the policy's own rollouts (solved vs
+    failed on the same task); implicit step reward r_φ(a_t) = β·log π_φ(a_t|h_t)/π_θold(a_t|h_t) per
+    turn; step advantages (group-normalised within a trajectory) added to episode advantages in GRPO.
+    Alternating updates of policy and π_φ.
+(2) Signal/target/producer. Trajectory success only; step credit falls out of the log-ratio. No MC.
+(3) Optimum above base. RL against the environment; step term is credit assignment.
+(4) Numbers. WebShop and VisualSokoban: beats GRPO/RLOO/PRIME-style baselines and frontier LLMs
+    listed in the paper; SOTOPIA goal completion up to +15 %; faster convergence than outcome-only
+    GRPO; ablation: removing the online RM update or step-level advantages each hurts.
+(5) MAPPING. Same as 1.1 at TURN granularity with the pair unit we already have (same task, solved vs
+    failed trajectory — 135k trajectories, multiple per task): train C+ by trajectory-DPO instead of
+    SFT so that C+/C is explicitly the outcome contrast (★★ with π_ref = C). The DPO form is less
+    confounded by task difficulty than SFT-on-solved (pairs are within task). Same public-target
+    and rare-token gaming as 1.1; cost identical.
+
+1.6 [discovered] Wang et al., "SPA-RL: Reinforcing LLM Agents via Stepwise Progress Attribution"
+    (arXiv 2505.20732, May 2025) https://arxiv.org/abs/2505.20732
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. A progress estimator (LLM encoder + MLP head) outputs a scalar per step, trained so
+    that the SUM of step contributions over a trajectory regresses the final reward (return
+    decomposition, RUDDER-like, no value bootstrapping); step reward = contribution + a grounding
+    term (was the action valid/executable); PPO on the redistributed reward.
+(2) Signal/target/producer. Final task reward only; producer = the trained estimator (one pass).
+(3) Optimum above base. RL against the environment with denser credit.
+(4) Numbers. WebShop / ALFWorld / VirtualHome: +2.5 % success and +1.9 % grounding accuracy on
+    average over GRPO/PPO/RLOO baselines; ablations show both progress and grounding terms matter.
+(5) MAPPING. A return-decomposition head trained on D's 135k outcomes gives a per-turn contribution
+    c(x,z,y) for EVERY turn (dense, coverage 100 %) with no continuations. As a RULE it is S7 (public
+    learned scorer, weights pinned per fold) with the RUDDER guarantee that the redistribution is
+    return-equivalent only in expectation over the training distribution — off-distribution (a
+    miner's novel action) the head is unconstrained. Use: as a decision-state DETECTOR (|c| large ⇒
+    the turn mattered) to steer where continuations are spent — cheaper than h_causal ($0), and
+    trainable now. Not as the ranking term.
+
+======================================================================================================
+PART 2 — RETURN DECOMPOSITION / HINDSIGHT / COUNTERFACTUAL CREDIT
+======================================================================================================
+
+2.1 Arjona-Medina et al., "RUDDER: Return Decomposition for Delayed Rewards" (arXiv 1806.07857,
+    Jun 2018; NeurIPS 2019) https://arxiv.org/abs/1806.07857
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Learn g(τ_{≤t}) (an LSTM) to predict the episode return from the prefix; redistribute
+    reward r̃_t = g(τ_{≤t}) − g(τ_{≤t−1}) (contribution analysis). Return-equivalent MDPs share
+    optimal policies; the redistribution makes expected future reward ≈ 0 at every step so credit
+    is immediate.
+(2) Signal/target/producer. Episode return; producer = the return predictor on logged episodes.
+(3) Optimum. Preserves the environment's optimal policy (theorem); its accuracy is that of the
+    return predictor on the data distribution.
+(4) Numbers. Delayed-reward grid tasks: exponentially faster than TD(λ)/MC in delay length;
+    Atari with delayed rewards (Bowling, Venture …): PPO+RUDDER beats PPO. No LLM numbers.
+(5) MAPPING. r̃_t = g(x_{t+1}) − g(x_t) with g fitted on D's 636k turns → per-turn credit for the
+    LOGGED turn. Gives a "which turns mattered in this trajectory" field for D (decision-state
+    detector; also a first-wrong-turn locator on failed trajectories: the turn with the largest
+    negative r̃). Cannot score a MINER's alternative action (g never saw it) — same limit as 1.6.
+    Cost: one small model fit per fold; $0 at duel.
+
+2.2 Harutyunyan et al., "Hindsight Credit Assignment" (arXiv 1912.02503, Dec 2019; NeurIPS 2019)
+    https://arxiv.org/abs/1912.02503
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Learn the HINDSIGHT distribution h(a | x, z): probability that action a was taken at
+    state x given a future statistic z (a future state, or the return). Then
+    Q^π(x,a) − V^π(x) = E_z[ (h(a|x,z)/π(a|x) − 1) · z ]  (return-conditional form) — credit for a is
+    how much more likely a is in hindsight of the outcome than it was a priori.
+(2) Signal/target/producer. Future outcome z; producer = a classifier of "which action, given the
+    outcome" trained on the behaviour policy's own data.
+(3) Optimum. Exact for the behaviour policy on its own support; the ratio h/π is the importance
+    weight that converts outcomes into per-action credit.
+(4) Numbers. Toy/delayed-effect chains and small tasks: faster/unbiased credit vs MC/TD baselines. No
+    scale numbers.
+(5) MAPPING. THIS IS (★): h(y | x, o=1) is what SFT-on-solved learns (C+), π is C, and the ratio
+    h/π = C+/C is the hindsight credit of action y for success. HCA states the exact condition
+    under which the implicit-PRM term is a true advantage: y must be in the BEHAVIOUR support (the
+    teacher's own actions at x). A miner action C never takes has h estimated by extrapolation — no
+    guarantee, which is precisely the rare-token gaming of 1.1(5b). Concrete: define the ranking
+    term only over the class of actions with C-support (lpC(y_A|x) above a floor = A as a GATE),
+    and let the ratio rank within that class. Dataset field: per turn, store lpC and lpC+ of the
+    LOGGED action so that the hindsight credit of every stored turn is published (dense, 636k) —
+    memorisable but only for actions already in D.
+
+2.3 Mesnard et al., "Counterfactual Credit Assignment in Model-Free RL" (arXiv 2011.09464, Nov 2020;
+    ICML 2021) https://arxiv.org/abs/2011.09464
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Future-conditional value functions V(x, φ) where φ is a hindsight statistic of the
+    future that is trained to be INDEPENDENT of the action taken (an adversarial/independence
+    constraint); the counterfactual baseline separates luck (what the future would have been under
+    any action) from skill (the action's own effect). Advantage = return − V(x, φ).
+(2) Signal/target/producer. Return + a learned hindsight feature that must not encode the action.
+(3) Optimum. Unbiased policy gradient with provably lower variance when independence holds; biased if
+    φ leaks the action (then all credit is absorbed by the baseline).
+(4) Numbers. Bandit-with-distractor tasks and "Key-to-Door": large variance reduction vs vanilla
+    baselines; no LLM numbers.
+(5) MAPPING. The LUCK term for us is TASK DIFFICULTY: D holds many trajectories per task, so
+    V_task = teacher solve rate on that task is a hindsight-derived baseline that is independent of
+    the action at any one turn. Every outcome-anchored term should be reported as
+    (outcome or Q) − V_task, not raw — otherwise easy tasks mint credit for every action on them.
+    Second lesson (independence): a hindsight note that quotes the action (h_answer, §3i) or a
+    verifier that sees the miner's action while forming φ is biased by construction — the W1/W3
+    plan-agreement failure is the CCA bias in words: the hindsight feature was not independent of
+    the action, so the baseline absorbed the skill. Cost: $0 (a per-task field in D).
+
+2.4 Yuan et al. (ByteDance), "Agent-R: Training Language Model Agents to Reflect via Iterative
+    Self-Training" (arXiv 2501.11425, Jan 2025) https://arxiv.org/abs/2501.11425
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. MCTS over agent tasks yields good and bad trajectories sharing a parent node; the
+    ACTOR itself judges each step of the bad trajectory and names the first error it can recognise
+    ("within its current capability"); splice: bad prefix up to that step + a reflection sentence +
+    the good sibling branch → revision trajectory; SFT on revisions; iterate (threshold for "good"
+    rises 0.5 → 0.7 → 1.0 over 3 iterations).
+(2) Signal/target/producer. Environment reward on leaves (WebShop/SciWorld/TextCraft) for good/bad;
+    the actor's self-critique for WHERE to splice (cheap; no MC per step).
+(3) Optimum above base. The actor is trained on revisions of its own failures verified by the env;
+    ceiling = the env, not a fixed model. Revision trajectories beat expert trajectories.
+(4) Numbers. Llama-3.1-8B-Instruct, 300/200/200 MCTS seeds: +5.59 % average over the best baseline
+    across the three environments; beats GPT-4-Turbo/Claude-3 on average; fewer loops; earlier
+    correction with iterations. Training on revision trajectories > training on optimal trajectories.
+(5) MAPPING. Locating the first wrong step WITHOUT full MC: Agent-R uses (a) the sibling structure
+    (same parent node) for the ground truth of "a better branch existed" and (b) a model's opinion
+    only to pick the splice point. For us (a) = split states; (b) says a cheap detector may choose
+    WHERE to spend the ~12 continuations but must never define WHAT is right (F3). Dataset use:
+    revision trajectories (king failure prefix → reflection → teacher-verified good branch) are
+    the coached `king_coached` shape already alive; as scoring, nothing new.
+
+======================================================================================================
+PART 3 — CONTRASTIVE EXPERTS / LOG-RATIO STEERING AS A SCORER
+======================================================================================================
+
+3.1 Liu et al., "Tuning Language Models by Proxy" (arXiv 2401.08565, Jan 2024)
+    https://arxiv.org/abs/2401.08565
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Decode a large base M with logits z_M + α(z_E+ − z_E−) where E+ is a small TUNED model
+    and E− its untuned base. The logit difference of the small pair transfers the tuning to the
+    large model without touching its weights.
+(2) Signal/target/producer. Whatever E+ was tuned on (chat, code, math); producer = two extra small
+    forward passes per token.
+(3) Optimum above base? Above the LARGE base M, yes (it gains E's tuning); at most ≈ the directly
+    tuned large model. It is a steering operator; the "expert" defines the target.
+(4) Numbers. Llama-2-70B base + 7B chat/base pair closes 88 % of the gap to Llama-2-70B-Chat on
+    aggregate (AlpacaFarm, GSM, Toxigen 0 % toxicity, TruthfulQA — exceeds the chat model on truth);
+    analysis: the shift lands mostly on reasoning/style tokens, not facts.
+(5) MAPPING. As a SCORER: the per-token quantity z_E+ − z_E− summed over the miner's tokens is the
+    implicit-PRM term (★★) with E± = C±. Proxy-tuning adds one idea: the pair need not be the
+    27B teacher — a SMALL pair (e.g. 4B) fine-tuned on solved/failed D gives the same ratio at
+    ~1/7 the echo cost, and the paper shows the ratio transfers across scale. Gaming when E± are
+    public: the miner sets its own decoding to M + α(E+ − E−) — i.e. runs proxy-tuning against
+    our published pair — and reaches the maximiser directly with no capability change. That is
+    the definition of a distilable public target: the rule would be crowned by "teacher decoded
+    with our own contrast", which is above the teacher (fine) but reachable by anyone for the cost
+    of a fine-tune (the incentive collapses to a one-time race). Mitigation = PRIME's: re-fit every
+    fold on data that includes the current king's rollouts.
+
+3.2 Liu et al., "DExperts: Decoding-Time Controlled Text Generation with Experts and Anti-Experts"
+    (arXiv 2105.03023, May 2021) https://arxiv.org/abs/2105.03023
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. P̃(x_t) ∝ P(x_t) · (P+(x_t)/P−(x_t))^α — base LM times the ratio of an expert LM
+    (fine-tuned on desired-attribute text) and an anti-expert (undesired); α controls strength.
+(2) Signal/target/producer. Attribute labels (toxicity, sentiment) on training text; two small LMs.
+(3) Optimum above base. Above the base on the attribute; quality (fluency) degrades with α.
+(4) Numbers. Detoxification (Perspective API, max toxicity over 25 generations; GPT-2 base 0.527):
+    lowest toxicity of all compared methods (PPLM, GeDi, DAPT) at comparable fluency; sentiment
+    steering beats PPLM/GeDi in automatic and human evaluation; works with small (anti-)experts
+    (GPT-2 small) steering GPT-3.
+(5) MAPPING. Same ratio as 3.1; the anti-expert is the new ingredient: a FAILURE-tuned C− makes the
+    term (★★) a logit of success rather than a log-probability ratio, which removes the per-state
+    constant AND is symmetric under filler (a flat lift that both C+ and C− assign equally cancels).
+    Re-opens: with public C−, a miner learns to avoid what C− likes — including legitimate but
+    failure-correlated behaviour (long repro heredocs on failed trajectories, deep states). C−
+    learns "the style of losing", which is largely "the style of hard tasks". Must be within-task
+    paired (1.5) or task-baselined (2.3).
+
+3.3 Li et al., "Contrastive Decoding: Open-ended Text Generation as Optimization" (arXiv 2210.15097,
+    Oct 2022) https://arxiv.org/abs/2210.15097
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Maximise log p_expert(y) − log p_amateur(y) subject to the PLAUSIBILITY constraint
+    p_expert(y_t) ≥ α · max_v p_expert(v) (α-mask). The constraint is what stops the ratio from
+    picking implausible tokens the amateur dislikes even more.
+(2) Signal/target/producer. No labels; expert = large LM, amateur = small LM of the same family.
+(3) Optimum. Above the expert on their quality metrics because the amateur cancels generic/
+    repetitive mass; the α-mask is load-bearing (without it: degenerate).
+(4) Numbers. OPT-13B vs 125M amateur, GPT-2 XL vs small: higher coherence and human preference than
+    nucleus/typical decoding; no training. Follow-ups (O'Brien & Lewis 2023) show +6 points GSM8K.
+(5) MAPPING. The α-mask is the exact shape the store doc arrived at from the other side (S9: A and
+    typicality as pass/fail gates; §5.4 rule). Contrastive decoding tells us WHY the gate is
+    necessary for any ratio term: unconstrained log-ratios reward improbable tokens. Concrete rule
+    shape: turn = ratio(y_A) if lpC(y_A|x) ≥ log α + max-over-refs lpC(y_C^i|x) (miner action at
+    least α-plausible relative to the teacher's own samples) else forfeit. Also the reverse
+    "amateur" trick without labels: expert = C, amateur = the KING — ratio C/king rewards what the
+    teacher likes and the king does not; maximiser = C decoded away from the king; anchored to the
+    incumbent (F5 incumbency, inverted) — cute, but it cannot exceed C.
+
+3.4 Mitchell et al., "An Emulator for Fine-Tuning Large Language Models using Small Language Models"
+    (EFT, arXiv 2310.12962, Oct 2023) https://arxiv.org/abs/2310.12962
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Fine-tuning = KL-regularised RL whose implicit reward is r(x,y) = log π_ft(y|x) −
+    log π_ref(y|x); apply the small-scale reward to a large base: π(y) ∝ π_base_L(y)·(π_ft_S/π_ref_S)^β.
+    "Up-scaling" (small fine-tune, large base) and "down-scaling" decouple pretraining knowledge
+    from fine-tuning behaviour; β interpolates at test time.
+(2) Signal/target/producer. Same as 3.1; framed as a REWARD: log-ratio = implicit reward of the
+    fine-tune (the DPO identity).
+(3) Optimum. Optimal policy of the implicit reward under KL to the base — above the base by
+    construction of RL, capped by what the fine-tune encoded.
+(4) Numbers. Llama-2/Llama/Falcon families: up-scaling recovers most of the large fine-tuned
+    model's helpfulness; scaling pretraining mainly raises factuality, scaling fine-tuning mainly
+    helpfulness; speculative-decoding variant ~2.5× faster sampling.
+(5) MAPPING. EFT closes the loop: our (★) is the implicit reward of "fine-tuning C on solved D",
+    and the KL-regularised optimum for that reward is exactly VAS's π ∝ C·exp(β·V^C) (§5.5). So a
+    rule turn = lpC(y_A|x) + β·[lpC+(y_A|x) − lpC(y_A|x)] with β ∈ (0,1] is an interpolation between
+    "be the teacher" (β = 0, today) and "be the success-conditioned teacher" (β = 1); β < 1 is a
+    built-in plausibility regulariser (the KL term). Replayable, dense, one extra echo. Gaming as
+    in 3.1 (public pair → proxy-tune to the target).
+
+3.5 Sanchez et al., "Stay on topic with Classifier-Free Guidance" (arXiv 2306.17806, Jun 2023)
+    https://arxiv.org/abs/2306.17806
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. log p̃(y_t) = log p(y_t|∅) + γ·[log p(y_t|c) − log p(y_t|∅)]: amplify the effect of a
+    conditioning c (prompt, instruction) by contrasting conditional and unconditional logits of the
+    SAME model; γ > 1 over-weights prompt adherence.
+(2) Signal/target/producer. No labels; the "expert" is the model conditioned on more context.
+(3) Optimum. Above the model's own conditional decoding on adherence; degrades past γ ≈ 1.5–3.
+(4) Numbers. GPT-2/Pythia/LLaMA: gains on Q&A, reasoning, code (HumanEval), MT; "equivalent to
+    a model with twice the parameters" on some benchmarks (e.g. LLaMA-7B + CFG ≈ 13B); stacks with
+    other inference methods.
+(5) MAPPING. c = PRIVILEGED context p (hindsight note, verified end state) and the same teacher:
+    lpC(y|x,p) − lpC(y|x) is the CFG term — and it is EXACTLY what W1/W3 measured as the informed
+    action leg (§3g/§3i): it scores hint-following, `ls -la` wins, control → 0. CFG's own failure
+    (over-adherence to c at high γ) is the plan-agreement failure at γ = 1. Nothing to rescue for
+    the action leg; the note is a data tool. One variant not yet measured: c = the OUTCOME TOKEN
+    alone ("this trajectory was solved") prepended as a one-bit privileged context — the minimal p
+    that cannot leak a plan; lpC(y|x, o=1) − lpC(y|x) is a zero-training approximation of (★) if C
+    can condition on the bit (it cannot without fine-tuning → this is C+ again).
+
+======================================================================================================
+PART 4 — PAIRS FROM FAILURES (TRAINING AND SCORING)
+======================================================================================================
+
+4.1 Song et al., "Trial and Error: Exploration-Based Trajectory Optimization for LLM Agents" (ETO,
+    arXiv 2403.02502, Mar 2024) https://arxiv.org/abs/2403.02502
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. SFT on expert trajectories → explore (roll the agent on training tasks) → pair each
+    FAILED own trajectory with the EXPERT success on the same task → trajectory-level DPO → iterate.
+(2) Signal/target/producer. Task reward for failure; expert trajectory as the winner. Pair unit =
+    whole trajectory of the same task.
+(3) Optimum above base. Above SFT-on-expert (learns from own failures); bounded by the expert
+    winners' quality (they are the positive side of every pair).
+(4) Numbers. WebShop / ScienceWorld / ALFWorld, Llama-2-7B/13B: +8 – 9.5 % average reward over
+    SFT; +20 % on ScienceWorld-Unseen (OOD); further iterations add ~1–2 %; using self-generated
+    successes as winners also works.
+(5) MAPPING. Pair unit we can build at $0: D has multiple rollouts per task (teacher, king seat,
+    coached) → (solved, failed) trajectory pairs per task without any same-state requirement. That
+    is the training set for C± by trajectory-DPO (1.5) — within-task pairing removes the difficulty
+    confound of SFT-on-solved. As a SCORER, trajectory pairs are too coarse (credit spreads over
+    all turns; F2 says 90 % of them are noise). Cost: fold-time DPO only.
+
+4.2 Lai et al., "Step-DPO: Step-wise Preference Optimization for Long-chain Reasoning" (arXiv
+    2406.18629, Jun 2024) https://arxiv.org/abs/2406.18629
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. For a wrong solution, locate the FIRST erroneous step (GPT-4 judges against the
+    ground-truth answer/solution), keep the correct prefix, sample corrections from the policy
+    until one reaches the right answer; DPO on (prefix, correct step, wrong step).
+(2) Signal/target/producer. Final-answer correctness + a judge for the first error; policy-sampled
+    positives ("in-distribution" winners beat GPT-4-written ones).
+(3) Optimum above base. Above SFT; the positive step must be reachable by the policy and verified by
+    the final answer — so the ceiling is the policy's best-of-many, verified.
+(4) Numbers. 10k pairs: +~3 % MATH for > 70B models; Qwen2-72B-Instruct-Step-DPO 70.8 % MATH /
+    94.0 % GSM8K, above GPT-4-1106/Claude-3-Opus at the time; self-generated data > human/GPT-4
+    corrections.
+(5) MAPPING. "First wrong step" via a judge is F3's dead route in our domain (the frontier judge is
+    at chance at decision states); what transfers is the PAIR SHAPE: same prefix, verified-good vs
+    failed step — our split states, with the winner verified by continuation rather than by a
+    judge. Step-DPO's observation that in-policy positives beat foreign positives matches §3f/§3g:
+    a foreign (frontier) action as the positive re-targets to the foreign style; the positive at a
+    split state should be a TEACHER action that solved (S1), with frontier proposals only where the
+    teacher has none (S2).
+
+4.3 Xie et al., "Monte Carlo Tree Search Boosts Reasoning via Iterative Preference Learning"
+    (MCTS-DPO, arXiv 2405.00451, May 2024) https://arxiv.org/abs/2405.00451
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. MCTS over reasoning steps with value = outcome validation (final answer) blended
+    with the model's own step self-evaluation; per-node Q-values yield step-level preference pairs
+    (high-Q vs low-Q sibling under the same parent); DPO; iterate on-policy.
+(2) Signal/target/producer. Outcome check + self-evaluation; MC via tree rollouts.
+(3) Optimum above base. Above SFT; bounded by what the tree finds and the outcome checker.
+(4) Numbers. Mistral-7B SFT baseline: GSM8K → 81.8 % (+5.9), MATH → 34.7 % (+5.8), ARC-C → 76.4 %
+    (+15.8); on-policy iteration beats offline pair collection; step-level > instance-level pairs.
+(5) MAPPING. The sibling-under-same-parent Q-contrast IS the VAV table with N from tree visits;
+    their finding "step-level pairs > instance-level" is F2 in their words. Their blend of outcome
+    with self-evaluation would, for us, import a model opinion into the value — F3 says no; keep
+    the value pure MC (teacher continuation).
+
+4.4 Pang et al., "Iterative Reasoning Preference Optimization" (IRPO, arXiv 2404.19733, Apr 2024)
+    https://arxiv.org/abs/2404.19733
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Sample many CoTs per problem, label by final answer, build (correct, incorrect) pairs,
+    DPO + an NLL term on the winner; iterate with the new model as sampler.
+(2) Signal/target/producer. Final-answer correctness; policy's own samples.
+(3) Optimum above base. Self-improvement bounded by pass@k of the current sampler (like STaR/ReST-EM
+    in notes A, plus negatives).
+(4) Numbers. Llama-2-70B-Chat: GSM8K 55.6 → 81.6 (88.7 with maj@32), MATH 12.5 → 20.8, ARC-C 77.8 →
+    86.7; the NLL term matters (DPO alone plateaus).
+(5) MAPPING. Instance-level pairs — coarse for scoring (F2). Its lesson for C+ training: DPO on
+    outcome pairs WITHOUT an NLL anchor drifts (the winner's likelihood can fall while the margin
+    grows) — a C+ trained by pure DPO may not be a proper "success-conditioned teacher" density, so
+    (★) would be off; add the NLL term (or use SFT-on-solved) so lpC+ stays a calibrated density.
+
+4.5 Hwang et al., "Self-Explore: Enhancing Mathematical Reasoning in Language Models with
+    Fine-grained Rewards" (arXiv 2404.10346, Apr 2024) https://arxiv.org/abs/2404.10346
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. For each wrong rationale, walk step by step; from each step's prefix sample k = 4
+    completions; the FIRST step from which NO completion reaches the correct answer is the "first
+    pit"; pair (correct rationale) vs (prefix + pit step) at step granularity; DPO.
+(2) Signal/target/producer. Final-answer check; MC completions with tiny k — the pit is a
+    small-N MC estimate of "V(prefix) = 0".
+(3) Optimum above base. Above outcome-only DPO; bounded by the policy's own successes.
+(4) Numbers. +11.57 GSM8K / +2.89 MATH over SFT (Mistral-7B, DeepSeek-Math-7B, Llemma); step-level
+    pairs > outcome-level pairs; RAISING k (more exploration) did not help — k = 4 suffices to find
+    the pit because it only needs V ≈ 0, not a ranking.
+(5) MAPPING. How to locate the first wrong turn CHEAPLY: sequential small-N continuations from
+    successive prefixes of a failed trajectory, stop at the first state where 0/k succeed after a
+    state where ≥ 1/k succeeded — the transition IS the split state and the pit's action is the
+    failed first action. This is the store doc's "sequential N ≤ 4, stop at first split" harvest
+    (§5.3 S1) independently rediscovered; Self-Explore's data point (k = 4 is enough to LOCATE, and
+    more k does not help location) separates two budgets: ~4 per prefix to FIND the state, then
+    N ≈ 8–16 at that state only to RANK actions (§6.5). Coverage stays 40 % (grader needed).
+
+======================================================================================================
+PART 5 — OFF-POLICY EVALUATION OF AN ACTION FROM LOGGED DATA
+======================================================================================================
+
+5.1 Gonuguntla (CMU), "The Replay Gap: Static Evaluation of Model Switching in LLM Agents Scores
+    the Wrong World" (arXiv, 2026; Efficient Reasoning Workshop @ COLM 2026) — arXiv title search
+------------------------------------------------------------------------------------------------------
+(1) Mechanism (position + measurement). Replaying logged agent trajectories to score a different
+    model at each step evaluates the new model on states the OLD model produced ("the wrong
+    world"); with text actions the overlap needed by importance sampling is near zero and doubly
+    robust estimators inherit the value model's extrapolation error.
+(2) Signal/target/producer. Logged trajectories + outcomes; estimators IS/WIS/DR.
+(3) Optimum. n/a. Message: static replay ranks routers/models incorrectly when the switched model
+    would have changed the trajectory.
+(4) Numbers. Reported rank inversions between replay and live evaluation on their agent suites;
+    IS weights degenerate (effective sample size → 1) with free-text actions.
+(5) MAPPING. Our duel IS static replay by design (miner scored on teacher/king-produced prefixes),
+    and it is acceptable for a distillation meter because the score is defined ON those states. The
+    warning applies to any V(x, y_miner) estimate: if the value model has never seen y_miner at x,
+    its number is extrapolation. Hence the store doc's action-CLASS table (only actions with logged
+    continuations get a value; unmatched → 0) is the honest OPE here; S8 (harvest the king's and
+    challengers' own states into D) is the paper's remedy (put the right world into the log).
+
+5.2 Liu, Xiong, Zhang, Tang, "Autoregressive Diffusion World Models for Off-Policy Evaluation of LLM
+    Agents" (ADWM, arXiv 2026) — https://arxiv.org/abs/ (id not captured; title search)
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Learn a latent diffusion world model of environment responses from logged
+    trajectories; evaluate a NEW policy by sampling its actions and diffusing the environment's
+    replies autoregressively; average simulated returns.
+(2) Signal/target/producer. Logged transitions; producer = the world model (training cost) + policy
+    samples (no real environment).
+(3) Optimum. n/a; estimator quality only.
+(4) Numbers. Across multi-turn agent tasks ADWM is the only estimator with strictly positive
+    Spearman between estimated and true policy values in every configuration (mean ρ ≈ +0.82);
+    classical DM / IS / WIS / FQE / DR are near zero or NEGATIVE in several configurations
+    (long horizon + unbounded action space).
+(5) MAPPING. A learned world model of the container (observations given actions) would let us score
+    ANY miner action at ANY state without a grader — Code World Model territory (notes B). Not
+    replayable in our sense (a generative simulator's stochastic outcome is not bit-reproducible
+    unless seeded and pinned) and a public simulator is a gameable target (the miner learns what
+    the simulator rewards, not what the container does). Keep as the long-horizon coverage route;
+    its own evidence says every classical OPE estimator fails in our regime, which retires "DR-OPE
+    from logged transitions" as a rule.
+
+5.3 Zhou et al., "ArCHer: Training Language Model Agents via Hierarchical Multi-Turn RL" (arXiv
+    2402.19446, Feb 2024) https://arxiv.org/abs/2402.19446
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Two-level actor-critic: an utterance-level critic Q(x, y_turn) trained OFF-POLICY by
+    TD on turn transitions (from a replay buffer), and a token-level policy improved by the critic's
+    advantage; works from offline data or online.
+(2) Signal/target/producer. Environment reward at episode end; TD bootstrapping over turns.
+(3) Optimum above base. RL against the environment; the critic is an off-policy value estimate.
+(4) Numbers. Twenty Questions / Guess-my-City / WebShop / Maze: ~100× sample efficiency over
+    single-turn-adapted PPO/ILQL baselines; can start from offline data then go online.
+(5) MAPPING. ArCHer's critic is exactly "V(x, y_miner) from D's logged transitions" (fitted Q
+    evaluation over turns). It would give a dense value on 100 % of turns from the 636k transitions
+    and outcomes. Same objection as 5.1/1.6: off-support actions are extrapolations, and a public
+    critic is S7's over-optimisation target. Use only inside a gate (α-mask) and re-fit per fold;
+    cheaper than continuations, less trustworthy where it matters most (novel good actions).
+
+5.4 Hong et al., "Q-SFT: Q-Learning for Language Models via Supervised Fine-Tuning" (arXiv
+    2411.05193, Nov 2024) https://arxiv.org/abs/2411.05193
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Represent Q-values as token probabilities: a weighted SFT loss whose targets are
+    bootstrapped from the next state's max token-probability, with a conservative term keeping the
+    learned probabilities ≥ the behaviour policy's on logged actions; no separate value head.
+(2) Signal/target/producer. Sparse task reward on logged data; offline.
+(3) Optimum above base. Offline RL optimum (bounded by data support, conservative by design).
+(4) Numbers. Chess / Wordle / 20Q / ALFWorld / WebShop: matches or beats ILQL, CQL-style baselines
+    and SFT; benefits more from stronger pretrained initialisation than value-head methods.
+(5) MAPPING. Q-SFT's parametrisation means "fine-tune C on D with outcome-weighted targets" yields a
+    model whose token probabilities ARE Q-values — a principled version of C+ that is conservative
+    on off-support actions (probability never pushed above the behaviour's for unseen actions).
+    This directly addresses the rare-token gaming of 1.1(5b): a Q-SFT-trained C+ cannot assign
+    high value to actions absent from D. Replayable (pinned weights); one extra echo. Public target
+    memorisation remains.
+
+5.5 Han et al., "Value Augmented Sampling for Language Model Alignment and Personalization" (VAS,
+    arXiv 2405.06639, May 2024) https://arxiv.org/abs/2405.06639
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. KL-regularised RL closed form: π*(x_t|s) ∝ π_0(x_t|s)·exp(β·Q^{π_0}(s,x_t)); since
+    transitions are deterministic Q^{π_0}(s,x) = V^{π_0}(s∘x); learn V^{π_0} by TD(λ) on samples of
+    the FROZEN π_0 scored by the reward; decode by re-weighting π_0's top-k tokens by exp(β·V).
+    No policy weights touched.
+(2) Signal/target/producer. Reward model on complete responses; value net = separate LM trained on
+    π_0's own rollouts.
+(3) Optimum above base. It IS the KL-regularised optimum for the reward, above π_0 by construction;
+    keeping π_0's top-k support limits reward hacking.
+(4) Numbers. TL;DR summarisation: better KL–reward frontier than PPO and FUDGE; GPT-4 win rate ~60 %
+    head-to-head, ≈ Best-of-128 quality at a fraction of the cost; Anthropic HH: 55 % win over DPO,
+    ≈ Best-of-128; where PPO reaches higher raw reward (Conciseness) GPT-4 judges it worse — VAS
+    hacks less because π_0's support is preserved.
+(5) MAPPING. The cleanest statement of the target rule: the maximiser we want is
+        π* ∝ C(y|x) · exp(β·V^C(x∘y))
+    "the teacher, re-weighted by where the teacher itself finishes best". Ranking term for a miner
+    action: lpC(y_A|x) + β·V̂^C(x∘y_A). V̂^C is the thing to produce — by MC table (S6, exact on
+    support, 40 % coverage, costly), by learned TD value (5.3/5.4, dense, extrapolates), or by the
+    density-ratio identity (★) (C+, dense, extrapolates differently). VAS's top-k support rule is,
+    once more, the plausibility gate. Cost as in the producer chosen.
+
+5.6 Li et al., "Off-Policy Evaluation from Logged Human Feedback" (arXiv, Jun 2024; title search);
+    Liu et al., "Don't throw away your value model! … Value-Guided MCTS decoding" (PPO-MCTS, arXiv
+    2309.15028, Sep 2023) https://arxiv.org/abs/2309.15028
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Li et al.: IPS over SETS of ranked responses (instead of lists) and DR variants to
+    evaluate a new response-ranking policy from logged human preferences; variance reduction by
+    set-level propensities. PPO-MCTS: tree search at decode time guided by the PPO value net.
+(2)–(4) Bandit-scale gains in estimator variance (Li); PPO-MCTS improves preference win-rates over
+    plain PPO sampling on sentiment/toxicity/commonsense tasks by using the value net as a
+    look-ahead. Neither has agent-trajectory numbers.
+(5) MAPPING. IPS/DR over responses needs propensities for the MINER's action under the logging
+    policy — lpC(y_A|x) is available (the teacher logged most of D), so an IPS-style estimate
+    V̂(y_A) = Σ_logged 1[class(y)=class(y_A)]·o / Σ 1[class(y)=class(y_A)] IS the class table; the
+    DR correction would be the learned V. Nothing beyond 5.5 + the table.
+
+======================================================================================================
+PART 6 — VERIFIER GENERALISATION ACROSS THE COVERAGE GAP
+======================================================================================================
+
+6.1 Sun et al., "Easy-to-Hard Generalization: Scalable Alignment Beyond Human Supervision" (arXiv
+    2403.09472, Mar 2024) https://arxiv.org/abs/2403.09472
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Train evaluators (ORM, PRM, and OPRM = both) ONLY on MATH levels 1–3 (PRM800K human
+    step labels, or Math-Shepherd MC labels), then re-rank (weighted voting) or RL the generator on
+    levels 4–5; the claim is that evaluation transfers across difficulty better than generation.
+(2) Signal/target/producer. Human step labels / MC labels on easy problems; verifier scores on hard.
+(3) Optimum above base. The generator trained by RL against the easy-trained PRM exceeds SFT and
+    final-answer RL trained on ALL levels — the evaluator supervises beyond its training range.
+(4) Numbers. Llemma-7B: SFT 19.8 → PPO with easy PRM 27.4 (hard subset 12.2 → 14.1); Llemma-34B
+    reranking@1024 with OPRM 52.5 % MATH500 vs majority voting well below; MetaMath/Math-Shepherd
+    base: iterative DPO / PPO with easy-PRM 34.0 vs full-data SFT SoTA 31.4; the 34B evaluator lifts
+    the 7B generator and vice versa. OVER-OPTIMISATION: Best-of-n (argmax reward) under-performs
+    weighted voting on hard problems — read by the authors as reward over-optimisation of the
+    evaluator on the harder distribution; OPRM > PRM > ORM for re-ranking, but ORM extras added
+    nothing when labels were MC-generated (Math-Shepherd), i.e. MC labels already encode outcome.
+    APPS: ORM trained on Introductory improves Best-of-N on Interview/Competition.
+(5) MAPPING. The coverage-gap plan: fit a verifier on the 40 % of turns that have continuation
+    tables (where a grader exists) and apply it to the 60 % that do not. E2H says transfer of
+    EVALUATION across difficulty is real but that argmax-selection against the transferred
+    evaluator over-optimises — and a duel is argmax-selection (miners optimise the score). So a
+    transferred verifier can be a GATE or a tie-breaker weighted by its own confidence, not the
+    sole ranking term on uncovered turns. Test before use: train on mini-swe/bash resumable
+    states, measure AUC on held-out resumable states of OTHER harnesses (the real gap is harness,
+    not difficulty).
+
+6.2 Zhang et al., "Generative Verifiers: Reward Modeling as Next-Token Prediction" (GenRM, arXiv
+    2408.15240, Aug 2024) https://arxiv.org/abs/2408.15240
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Train the verifier with next-token prediction to output "Yes/No" (GenRM) or a CoT
+    rationale then Yes/No (GenRM-CoT), jointly with solution generation; score = P("Yes"); majority
+    vote over sampled rationales adds test-time compute. Rationales for training synthesised by a
+    stronger model (Gemini 1.0 Pro) and filtered by the known label.
+(2) Signal/target/producer. Correctness labels (final answer) + synthetic rationales; the verifier
+    is the same family as the generator (Gemma 2B/9B).
+(3) Optimum above base. Verifier-side only; as a BoN selector it exceeds the generator's own
+    majority vote.
+(4) Numbers. BoN: algorithmic tasks 5 → 45.3 %, GSM8K 73 → 93.4 %; easy-to-hard (train GSM8K, test
+    MATH500) 28 → 44.6 %, MMLU abstract algebra 37.9 → 53.5 %; 6.4× better sample efficiency than a
+    discriminative RM in the easy-to-hard setting; beats DPO-verifier and LLM-as-judge; scales with
+    model size and number of rationales.
+(5) MAPPING. A GenRM fine-tuned from C on the S1/S2 tables (input: x, y; output: Yes/No = "teacher
+    finishes from here") would be the verifier for the coverage gap and the equivalence judge in
+    one model, replayable at T = 0 with pinned weights. F3's failure (frontier judge 42 %,
+    deliberated consensus 0/18) was PROMPTED judges with no in-domain labels; GenRM is TRAINED on
+    the exact labels. Still: a public generative verifier is Albedo's judge one step removed; over-
+    optimisation is certain if it ranks alone; cost at duel = one short generation per turn per
+    side (cheap). Killing experiment: train on 300 harvested states, test on held-out harvested
+    states — if AUC ≤ 0.6 it is not better than the frontier judge and the 60 % stays uncovered.
+
+6.3 Wang et al. (Meta), "Self-Taught Evaluators" (arXiv 2408.02666, Aug 2024)
+    https://arxiv.org/abs/2408.02666
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. No human labels: for a prompt, generate a good response and a deliberately worse
+    one (via a modified/"similar but different" instruction), sample judgments from the current
+    model, keep those that pick the known-better response, fine-tune the judge on its own correct
+    judgments; iterate.
+(2) Signal/target/producer. Synthetic preference pairs whose label is known by construction.
+(3) Optimum. A judge as good as the label-construction trick allows; no external ceiling beyond the
+    seed model's generation.
+(4) Numbers. Llama-3-70B-Instruct judge: RewardBench 75.4 → 88.3 (88.7 with majority vote), matching
+    GPT-4 judges and top reward models trained on human labels; gains over 2–3 iterations.
+(5) MAPPING. Label-by-construction pairs for the coverage gap: at a state x we can construct a KNOWN-
+    worse action (repeat-last, `ls -la`, an action from a different task, a syntactically broken
+    command) to teach a verifier what "generic/invalid" looks like without continuations — this is
+    the cheap NEGATIVE side of every pair (F5's generic-exploration surface) and it exists on 100 %
+    of turns. The POSITIVE side still needs an outcome; but a verifier trained on (verified-good vs
+    constructed-bad) is at least immune to the `ls -la` failure that broke every informed-reference
+    probe. Cost: fold-time only.
+
+6.4 Wang et al., "Critique Fine-Tuning: Learning to Critique is More Effective than Learning to
+    Imitate" (CFT, arXiv 2501.17703, Jan 2025) https://arxiv.org/abs/2501.17703
+------------------------------------------------------------------------------------------------------
+(1) Mechanism. Instead of SFT on responses, train the model to generate a CRITIQUE of a noisy
+    response: maximise P(c | x, y) with critiques written by GPT-4o; 50k examples.
+(2) Signal/target/producer. Teacher-written critiques of noisy student answers.
+(3) Optimum above base. Above SFT-on-the-same-data for reasoning; ceiling is the critique teacher.
+(4) Numbers. Qwen2.5-Math-7B-CFT: +4–10 absolute over SFT variants on six math benchmarks; 1 h on
+    8×H100 for 50k examples; matches SimpleRL (trained with 140× more compute); robust to noisy
+    response sources and to the critique model.
+(5) MAPPING. Only indirectly: critiques are opinions (F3) unless anchored to an outcome. A CFT-style
+    verifier that must output "this action's continuation solved / failed" plus a rationale, trained
+    on the S1/S2 tables, is GenRM-CoT (6.2). Nothing more.
+
+======================================================================================================
+CROSS-CUTTING READINGS FOR THE RULE
+======================================================================================================
+C1  One quantity, five producers. Every dense scorer in this list estimates Q^μ(x,y) − V^μ(x) for a
+    prover μ (★). Producers: (P1) MC table from continuations — exact on support, coverage 40 %,
+    ~12 continuations/state to find + N ≈ 8–16 to rank; (P2) success-conditioned teacher C+ (SFT or
+    DPO or Q-SFT on D's outcomes) — dense, one echo, extrapolates off-support, public target;
+    (P3) TD value/critic (ArCHer/VAS) — dense, extrapolates, public target; (P4) return-decomposition
+    head (RUDDER/SPA-RL) — dense on LOGGED turns only, cannot score novel actions; (P5) trained
+    generative verifier (GenRM) — dense, one generation, over-optimisable, but trained on in-domain
+    labels unlike the prompted judges that failed.
+C2  Support is the whole game. HCA's condition (y in the behaviour support), CD's α-mask, VAS's top-k,
+    Q-SFT's conservatism, and the store doc's "unmatched class → 0" are the same rule: rank only
+    among actions the teacher itself could produce; outside, forfeit or 0. This is what kills
+    rare-token ratio gaming and generic-exploration wins at once, and it is already the shape of S9
+    (A / typicality as gates).
+C3  Public learned scorers are hackable between folds (PRIME: frozen implicit PRM collapses; E2H:
+    argmax over a transferred evaluator over-optimises; Albedo). Remedies in the literature are all
+    "update on the optimiser's own samples" — for us: re-fit C± / verifier every fold on D that
+    includes the king seat's and queued challengers' rollouts (S8), pin weights per fold for replay,
+    and keep a non-learned anchor (P1) as the term that decides at the states that matter.
+C4  Task-level luck must be baselined (CCA): every outcome-anchored number is reported relative to
+    the task's teacher solve rate in D; SFT-on-solved without this learns "easy-task style".
+C5  Locate cheaply, rank expensively (Self-Explore, Agent-R): k = 4 sequential continuations find the
+    split state; detectors (h_causal 37 % flag rate, RUDDER/SPA-RL heads, a small C+/C ratio) may
+    choose WHERE to spend; only the environment decides WHAT is right (F3).
+C6  Coverage gap: transfer of a TRAINED verifier across difficulty is real (E2H, GenRM 6.4× sample
+    efficiency), but no paper shows transfer across HARNESS/grader availability, and every result
+    is under argmax over the generator's own samples, not adversarial miners. Treat the 60 % as
+    gate-only until a held-out-harness AUC is measured.
+
+======================================================================================================
+CANDIDATE MECHANISMS (≤ 6 rule sketches)
+======================================================================================================
+Common frame for all six: on turns of the `decision` group (F2 shaping), R / typicality / A are
+PASS-FAIL gates (S9; C2), plus length floor, B licence, think-close, and the plausibility gate
+    PLAUS(y_A) := lpC(y_A|x) ≥ log α + max_i lpC(y_C^i|x)   (α-mask over fresh blind teacher refs)
+so that a ranking term is read only inside the teacher's own support. Non-decision turns keep the
+live rule. Every term below is centred by the task baseline V_task (teacher solve rate on the task in
+D, C4). "Cost/duel" is on top of today's ~27 min; "cost/fold" is the extra build.
+
+M1  IPRM — implicit process reward from the success-conditioned teacher (P2; §1.1, §2.2, §3.4, §5.4)
+    term   = lpC+(y_A|x) − lpC(y_A|x), C+ = C fine-tuned each fold by Q-SFT (conservative) or
+             SFT+NLL-anchored DPO on D's solved-vs-failed trajectories within task; weights pinned in
+             the manifest; per-byte over the action body (fence bytes excluded).
+    maximiser: argmax_y Q^C(x,y) within C's support ≈ "the teacher decoded toward its own successes"
+             (VAS π* with β = 1) — above the teacher at every split state, ≈ teacher elsewhere.
+    gaming:  public C+ is a distillable target (proxy-tune to C+/C; one-time race, then parity); rare-
+             token drift (bounded by PLAUS + Q-SFT conservatism); easy-task style (bounded by within-
+             task pairs + V_task); memorising D's logged (x, y) pairs where C+ is high — those are the
+             intended lesson.
+    cost:    duel +1 echo per rollout per side (≈ +15 % echo); fold: one 27B fine-tune (or a 4B pair
+             per §3.1 at ~1/7 duel cost) — no continuations, coverage 100 % of turns.
+    killing experiment ($ ≈ 20, 1 GPU-day): fit C+ once on today's D; on the 18 + 30 harvested states
+             with continuation ground truth (§6.5/§6b.5) compute the term for every labelled action;
+             if AUC(solved vs failed first actions) ≤ 0.6, or if `ls -la` / repeat-last score above the
+             median labelled action under PLAUS, M1 is dead as a ranking term (demote to detector).
+
+M2  VAV-N — verified action value table at rankable N (P1; §1.3, §4.3, §4.5, §5.6; store §6.3)
+    term   = solve rate of class(y_A) in the state's continuation table − V_task; unmatched → 0
+             (equivalence matcher on action BODIES: exact → Jaccard ≥ 0.5 → stored judge verdict).
+    maximiser: the action from which the TEACHER's continuation solves most often = Setlur's A^μ with
+             μ = C; strictly above the teacher at split states; the frontier enters only as verified
+             proposals (S2) at ceiling states. Add a second, weaker prover (genesis) for non-zero
+             advantages at teacher-ceiling states.
+    gaming:  memorising the published best class per state (accepted: it is the right action at that
+             state; fresh-ref typicality + a re-verification queue for novel miner actions); matcher
+             errors (~25 % surface) — judge verdicts stored and replayed; sparsity if N is small.
+    cost:    duel ≈ $0.43 (judge) + 0 echoes; fold: locate with k = 4 sequential continuations, rank
+             with N = 8–16 at kept states (~$150 + ~2.5k container-hours per 300 states); coverage
+             ≈ 40 % of turns (grader must exist).
+    killing experiment (the §7 spend, ~$150): re-run §6.5 at N = 8 on ~300 failed-origin depth ≥ 10
+             states; if held-out teacher vs king separation is not z ≥ 3 with `ls -la`/repeat-last at
+             ≤ 0, the anchor is too noisy at any affordable N and M2 falls back to a gate.
+
+M3  CONTRAST — signed expert/anti-expert logit of success (P2 with C−; §3.2, §3.3, §1.5)
+    term   = lpC+(y_A|x) − lpC−(y_A|x), C± fine-tuned on within-task solved / failed trajectories
+             (DExperts form of ★★); optionally scored on (z_A, y_A) jointly so the thought is inside
+             the contrast (filler lifts both sides equally → cancels).
+    maximiser: argmax of logit P(success | x, y) under the teacher's continuation — same top as M1,
+             sharper where C+ ≈ C (both trained), symmetric under flat lift.
+    gaming:  everything in M1 plus "avoid what C− likes" — C− learns the style of hard tasks and deep
+             states (long heredocs, retries), so a miner is paid for looking like an easy run; needs
+             V_task and within-task pairs; public C− also tells miners exactly which failure surface
+             is penalised (fine — that is the lesson) and which is not (the gap they will use).
+    cost:    duel +2 echoes per rollout per side (C+ and C−) — or one 4B pair; fold: two fine-tunes.
+    killing experiment ($ ≈ 25): same 48 ground-truth states as M1; additionally score the same
+             action bodies transplanted to a solved-origin prefix of the same task — if the term moves
+             more with the PREFIX than with the ACTION (prefix-swap variance > action-swap variance),
+             C± are scoring trajectory difficulty, not the decision.
+
+M4  KL-OPT — teacher re-weighted by its own value (P3 or P1 inside the VAS closed form; §5.5, §3.4)
+    term   = lpC(y_A|x) + β·V̂^C(x ∘ y_A), β ∈ (0, 1]; V̂^C from the table where it exists (M2) and
+             from a per-fold TD critic (ArCHer-style, initialised from C, trained on D's 636k turn
+             transitions + outcomes) elsewhere; β = contract knob, β = 0 replays today's A leg.
+    maximiser: π* ∝ C · exp(β V^C), the KL-regularised optimum of "teacher finishes" — provably above
+             the teacher for any β > 0 with non-constant V^C; the KL term is the built-in plausibility
+             regulariser.
+    gaming:  the critic is a public learned scorer (S7) — over-optimisation between folds (PRIME),
+             extrapolation on novel actions (Replay Gap; ADWM shows FQE/DR fail in this regime), so
+             the critic must be capped: |β V̂| ≤ the table's range, and forfeits outside PLAUS.
+    cost:    duel +1 value forward per rollout per side; fold: one critic fit (cheap) + the M2 table.
+    killing experiment ($ ≈ 30): fit the critic on D minus the harvested states; on the 48 harvested
+             states compare V̂^C(x∘y) against the continuation solve rates — if Spearman < 0.5 across
+             actions WITHIN a state (not across states, where task difficulty carries it), the
+             critic adds nothing over the table and M4 collapses to M2.
+
+M5  HINDSIGHT-CREDIT FIELDS — dense per-turn credit on LOGGED turns as a D field, not a scorer
+    (P4/HCA; §2.1, §2.2, §1.6, §3i)
+    field  = for every stored turn: c_t = g(x_{t+1}) − g(x_t) from a return-decomposition head fitted
+             per fold on D (RUDDER/SPA-RL), plus lpC+(y_t|x_t) − lpC(y_t|x_t) of the LOGGED action
+             (HCA ratio). Use: (i) `decision` shaping — sample slice strata by |c_t| so the slice is
+             dense in turns that mattered (F2); (ii) locate the first wrong turn of failed
+             trajectories (largest negative c_t) → where the k = 4 continuation locator starts
+             (C5) — cuts the ~12 continuations/state toward ~6; (iii) R-leg REFERENCE selection:
+             at a decision turn, restrict the k teacher refs to actions of the state's high-credit
+             class (S6's "teacher-with-search" R+).
+    maximiser: unchanged for (i)–(ii) (data shaping); for (iii) the thought that predicts the
+             teacher's SUCCESSFUL action — above the blind teacher's thought where its refs split.
+    gaming:  none new for (i)–(ii); (iii) publishes which class is credited (memorisable, accepted).
+    cost:    fold-only; duel $0.
+    killing experiment ($ ≈ 5): on the failed trajectories that already have a continuation-located
+             split state (§5.3 harvest), check whether argmin_t c_t lands within ±2 turns of it on
+             ≥ 60 % — if not, the head does not locate and only (i) survives.
+
+M6  GATE-VERIFIER — a trained generative verifier for the 60 % uncovered turns, gate-only
+    (P5; §6.1, §6.2, §6.3)
+    term   = none; GV(x, y_A) ∈ {pass, fail} from a GenRM fine-tuned from C on (x, y, label) where
+             label = continuation-verified (S1/S2) for positives and constructed known-bad actions
+             (repeat-last, `ls -la`, off-task command, broken syntax; §6.3) for negatives; T = 0,
+             pinned weights, replayable; fail → forfeit_turn_score on that turn.
+    maximiser: unchanged (the ranking term comes from M1–M4); the gate removes the generic-
+             exploration and splice surfaces on turns with no table.
+    gaming:  a public verifier is over-optimisable, but as a GATE the payoff of beating it is only
+             "not forfeit", not rank — the E2H/PRIME argmax failure does not apply.
+    cost:    duel +1 short generation per rollout per side; fold: one fine-tune once ≥ ~1k labelled
+             states exist.
+    killing experiment ($ ≈ 15): train on harvested mini-swe/bash states, test on held-out states of
+             a DIFFERENT harness (Terminus / pi / tool_call) with continuation labels; if AUC ≤ 0.65
+             or if it passes > 20 % of constructed-bad actions, the coverage gap stays uncovered and
+             the 60 % remain on the live rule.
+
+Ordering by evidence and by what F3–F4 allow: M2 (the only anchor that survived measurement; needs
+the N = 8 spend) → M1 as the dense companion (cheapest to falsify: one fine-tune, 48 states already
+labelled) → M5 fields to cut harvest cost → M4 only if M1's critic-free ratio fails but a TD critic
+ranks within states → M3 only if M1 is prefix-confounded → M6 last, once labels exist at scale.
+Nothing here re-admits frontier opinion into the score; the frontier stays a proposal generator whose
+proposals enter M2's table only after the teacher's continuation verifies them.

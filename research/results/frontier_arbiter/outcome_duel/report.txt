@@ -1,0 +1,332 @@
+====================================================================================================
+1. CONTESTED RATE king vs challenger — 6 wvk-22 duels, 6000 slice turns, 5910 with both sides valid (98.5%)
+====================================================================================================
+  chal-00614: margin +0.460 sd  z +6.11  SE 0.0752  per-turn sd of paired diff 2.36 sd | both-valid 986: exact-diff 803  J<0.5 443  J<0.3 207 | eligible 375: exact-diff 289  J<0.5 156  J<0.3 100
+  chal-00613: margin +0.197 sd  z +2.55  SE 0.0770  per-turn sd of paired diff 2.42 sd | both-valid 981: exact-diff 749  J<0.5 339  J<0.3 147 | eligible 399: exact-diff 259  J<0.5 127  J<0.3 73
+  chal-00615: margin -0.365 sd  z -5.04  SE 0.0725  per-turn sd of paired diff 2.27 sd | both-valid 975: exact-diff 836  J<0.5 505  J<0.3 222 | eligible 351: exact-diff 266  J<0.5 148  J<0.3 91
+  chal-00621: margin -0.036 sd  z -0.69  SE 0.0527  per-turn sd of paired diff 1.66 sd | both-valid 990: exact-diff 721  J<0.5 307  J<0.3 134 | eligible 365: exact-diff 217  J<0.5 114  J<0.3 65
+  chal-00623: margin +0.011 sd  z +0.20  SE 0.0546  per-turn sd of paired diff 1.72 sd | both-valid 989: exact-diff 797  J<0.5 374  J<0.3 158 | eligible 375: exact-diff 272  J<0.5 133  J<0.3 76
+  chal-00625: margin -0.017 sd  z -0.40  SE 0.0431  per-turn sd of paired diff 1.35 sd | both-valid 989: exact-diff 749  J<0.5 321  J<0.3 136 | eligible 350: exact-diff 230  J<0.5 110  J<0.3 58
+-- all --
+                                         n   exact-diff        J<0.5        J<0.3  ref-pair exact ref-pair J
+  ALL both-valid                      5910        78.8%        38.7%        17.0%           84.1%       0.53
+-- by dialect (action_kind) --
+                                         n   exact-diff        J<0.5        J<0.3  ref-pair exact ref-pair J
+  bash                                1959        71.6%        38.8%        24.9%           81.0%       0.53
+  text                                1923        93.1%        47.5%        14.9%           94.8%       0.45
+  tool_call                           1691        79.2%        32.2%        12.5%           83.9%       0.61
+  terminus_json                        201        39.3%        30.8%         9.0%           43.8%       0.48
+  boxed                                136        32.4%         6.6%         1.5%           38.3%       0.87
+-- by group/source --
+                                         n   exact-diff        J<0.5        J<0.3  ref-pair exact ref-pair J
+  terminal/terminal_lego              1014        76.5%        36.6%        18.8%           82.9%       0.55
+  coding/scaleswe                      660        86.1%        47.9%        22.9%           93.5%       0.45
+  coding/swesmith                      609        78.5%        39.1%        20.4%           85.3%       0.53
+  other/affine_when2call               558        95.2%        60.0%        15.1%           97.7%       0.41
+  coding/multiswe                      512        79.9%        37.9%        15.4%           89.2%       0.54
+  coding/swelego                       319        80.3%        43.3%        22.9%           89.0%       0.48
+  coding/swerebench_v2                 311        83.9%        44.1%        23.5%           89.5%       0.49
+  other/affine_sql                     304        95.7%        32.6%         5.3%           97.6%       0.53
+  other/affine_tmax                    244        71.7%        34.8%        15.2%           72.9%       0.53
+  coding/r2e_gym                       185        67.0%        35.7%        16.2%           75.3%       0.51
+  other/affine_agent                   127        54.3%        13.4%         3.9%           53.3%       0.77
+  terminal/terminal_bench_2            113        76.1%        36.3%        13.3%           78.1%       0.48
+  math/affine_math                      81        14.8%         1.2%         0.0%           25.4%       0.94
+  other/affine_eog                      80        77.5%        26.2%        12.5%           80.8%       0.64
+  other/affine_prolog                   78        73.1%        34.6%        17.9%           73.2%       0.66
+  other/affine_wikispeedia              76        71.1%        14.5%         1.3%           69.3%       0.68
+  other/nl2repobench                    71        76.1%        26.8%        16.9%           88.3%       0.49
+  other/affine_nl2lib                   64        92.2%        56.2%        31.2%           94.8%       0.45
+  other/affine_uuidctf                  64        79.7%        56.2%        37.5%           89.1%       0.47
+  other/affine_autobench                55        87.3%        23.6%         7.3%           90.3%       0.59
+  tau2/affine_tau2                      45        86.7%        22.2%         6.7%           91.9%       0.52
+  other/affine_oolong                   43        65.1%        39.5%        14.0%           63.4%       0.59
+  math/affine_i3math                    37        51.4%         8.1%         0.0%           48.6%       0.83
+  tau2/affine_tau2_synth                35        54.3%        11.4%         0.0%           57.1%       0.70
+  other/affine_trivia                   30         6.7%         6.7%         6.7%           17.8%       0.83
+  other/affine_logic                    25        44.0%        24.0%        24.0%           36.0%       0.78
+  other/affine_unscramble               21        33.3%         0.0%         0.0%           47.6%       0.77
+  other/affine_rcore                    20        45.0%        30.0%        25.0%           38.3%       0.74
+  other/affine_science                  18        72.2%        27.8%        11.1%           74.1%       0.63
+  other/affine_deshuffle                18        83.3%        27.8%        11.1%           85.2%       0.46
+  other/affine_i3code                   17       100.0%        29.4%        11.8%           98.0%       0.54
+  other/affine_ifeval                   15        86.7%        46.7%        33.3%           86.7%       0.54
+  other/affine_pydantic                 15       100.0%        26.7%         6.7%          100.0%       0.53
+  other/affine_verbatim                 13        38.5%         0.0%         0.0%           66.7%       0.74
+  other/affine_rgym                     12        58.3%        41.7%         8.3%           47.2%       0.77
+  other/affine_notool                    9        55.6%        55.6%        44.4%           40.7%       0.62
+  math/affine_numina                     7       100.0%        42.9%        28.6%           57.1%       0.76
+  other/affine_wiki                      5        60.0%        20.0%         0.0%           60.0%       0.70
+-- by harness --
+                                         n   exact-diff        J<0.5        J<0.3  ref-pair exact ref-pair J
+  mini_swe_textbased                  2166        74.1%        39.0%        23.6%           82.7%       0.52
+  null                                1214        74.3%        36.8%        10.9%           76.6%       0.58
+  claude_code                          921        92.3%        49.4%        21.4%           94.6%       0.46
+  pi                                   760        87.0%        35.8%        11.4%           92.5%       0.56
+  bash                                 450        87.8%        31.6%         8.9%           91.9%       0.58
+  terminus_2                           201        39.3%        30.8%         9.0%           43.8%       0.48
+  kimi_code                             80        91.2%        40.0%        17.5%           96.9%       0.45
+  affine-tau2-v1                        45        86.7%        22.2%         6.7%           91.9%       0.52
+  hermes_agent                          38        86.8%        52.6%         2.6%           96.3%       0.47
+  affine-tau2-synth-v1                  35        54.3%        11.4%         0.0%           57.1%       0.70
+-- by prefix depth (assistant turns in prefix) --
+                                         n   exact-diff        J<0.5        J<0.3  ref-pair exact ref-pair J
+  depth  0-2                          1650        74.2%        36.4%        11.4%           79.0%       0.59
+  depth 16-25                          833        82.5%        40.3%        19.6%           89.4%       0.48
+  depth  3-5                           780        81.0%        34.4%        14.4%           84.9%       0.55
+  depth 26-40                          698        80.9%        43.3%        20.8%           87.4%       0.50
+  depth 10-15                          671        82.7%        39.9%        20.6%           85.5%       0.52
+  depth  6-9                           662        77.0%        37.8%        18.4%           82.5%       0.53
+  depth 41+                            616        78.1%        43.0%        22.1%           86.4%       0.47
+
+-- ELIGIBLE = (resumable harness AND graded source AND non-text action) OR single-turn math: 2215/5910 both-valid turns (37.5%), i.e. 369 per 1000-turn slice; 2097 need a continuation, 118 are math (graded directly) --
+-- eligible --
+                                         n   exact-diff        J<0.5        J<0.3  ref-pair exact ref-pair J
+  ELIGIBLE                            2215        69.2%        35.6%        20.9%           78.1%       0.55
+-- eligible by harness/dialect --
+                                         n   exact-diff        J<0.5        J<0.3  ref-pair exact ref-pair J
+  mini_swe_textbased/bash             1672        72.2%        39.4%        25.5%           82.2%       0.52
+  bash/tool_call                       299        83.3%        30.4%         9.0%           88.7%       0.62
+  terminus_2/terminus_json             126        35.7%        27.0%         7.9%           41.0%       0.49
+  null/boxed                           118        26.3%         3.4%         0.0%           32.8%       0.91
+-- eligible by source --
+                                         n   exact-diff        J<0.5        J<0.3  ref-pair exact ref-pair J
+  terminal/terminal_lego               805        72.0%        34.9%        20.0%           80.1%       0.56
+  coding/swesmith                      343        71.1%        37.9%        24.5%           80.4%       0.54
+  coding/scaleswe                      236        76.7%        43.6%        26.3%           90.4%       0.46
+  coding/multiswe                      228        75.4%        36.8%        19.3%           83.0%       0.56
+  coding/swelego                       170        67.1%        38.8%        27.1%           81.2%       0.53
+  coding/swerebench_v2                 137        78.8%        44.5%        25.5%           87.9%       0.47
+  coding/r2e_gym                       110        54.5%        36.4%        17.3%           61.5%       0.50
+  math/affine_math                      81        14.8%         1.2%         0.0%           25.4%       0.94
+  terminal/terminal_bench_2             62        59.7%        27.4%        16.1%           61.3%       0.54
+  math/affine_i3math                    37        51.4%         8.1%         0.0%           48.6%       0.83
+  math/affine_numina                     6       100.0%        33.3%        33.3%           66.7%       0.72
+-- eligible by depth --
+                                         n   exact-diff        J<0.5        J<0.3  ref-pair exact ref-pair J
+  depth  0-2                           527        58.1%        23.9%        10.8%           67.0%       0.70
+  depth  3-5                           321        76.9%        35.2%        19.0%           83.2%       0.54
+  depth 16-25                          313        74.1%        39.0%        23.6%           85.5%       0.48
+  depth  6-9                           285        73.0%        41.8%        27.0%           79.9%       0.51
+  depth 26-40                          284        70.1%        41.2%        23.6%           78.4%       0.52
+  depth 10-15                          264        77.7%        40.2%        26.5%           84.9%       0.49
+  depth 41+                            221        61.5%        38.5%        25.8%           75.3%       0.50
+-- eligible by original rollout outcome --
+                                         n   exact-diff        J<0.5        J<0.3  ref-pair exact ref-pair J
+  None                                1681        72.5%        35.8%        21.7%           82.2%       0.55
+  failed                               341        76.2%        42.5%        21.1%           83.3%       0.51
+  solved                               193        28.5%        21.8%        14.0%           33.0%       0.64
+-- why both-valid turns are NOT eligible --
+  text action (no env effect)                                   1923  (32.5%)
+  non-resumable harness (claude_code)                            465  (7.9%)
+  non-resumable harness (pi)                                     464  (7.9%)
+  non-resumable harness + ungraded source                        346  (5.9%)
+  ungraded source (affine_tmax)                                  152  (2.6%)
+  ungraded source (affine_prolog)                                 71  (1.2%)
+  ungraded source (nl2repobench)                                  61  (1.0%)
+  non-resumable harness (kimi_code)                               47  (0.8%)
+  ungraded source (affine_uuidctf)                                47  (0.8%)
+  ungraded source (affine_sql)                                    33  (0.6%)
+  ungraded source (affine_oolong)                                 27  (0.5%)
+  non-resumable harness (hermes_agent)                            21  (0.4%)
+  non-resumable harness (affine-tau2-synth-v1)                    15  (0.3%)
+  ungraded source (affine_deshuffle)                              11  (0.2%)
+  ungraded source (affine_nl2lib)                                  6  (0.1%)
+  non-resumable harness (affine-tau2-v1)                           6  (0.1%)
+  graded but on a non-resumable harness (pi / claude_code / kimi / hermes): 1136 (19.2% of both-valid) — the fallback pool if those harnesses became resumable
+  math (single-turn, directly gradable, no continuation): 125 both-valid turns, 38 with a different boxed answer
+
+-- JUDGE calibration (glm-5.3-flash, T=0): P(NOT same decision | surface bin), eligible turns only; n=150 --
+  exact        n= 10  different decision 0/10 =   0.0% [0-28]   judge says outcome-relevant 0/10 =   0.0%
+  J>=0.5       n= 40  different decision 9/40 =  22.5% [12-38]   judge says outcome-relevant 2/40 =   5.0%
+  0.3<=J<0.5   n= 39  different decision 16/39 =  41.0% [27-57]   judge says outcome-relevant 5/39 =  12.8%
+  J<0.3        n= 60  different decision 41/60 =  68.3% [56-79]   judge says outcome-relevant 18/60 =  30.0%
+  judge errors: 1
+
+-- PER 1000-TURN SLICE: turns entering the outcome branch under each rule (eligible turns only) --
+  norm-exact differs      1533 / 6000 slice turns  ->  255.5 per 1000
+  Jaccard < 0.5            788 / 6000 slice turns  ->  131.3 per 1000
+  Jaccard < 0.3            463 / 6000 slice turns  ->   77.2 per 1000
+  decision-contested       638 / 6000 slice turns  ->  106.4 per 1000 (sum over eligible turns of P(different | bin))
+  outcome-relevant         246 / 6000 slice turns  ->   41.0 per 1000 (judge: 'would the FINAL RESULT plausibly differ because of this choice?'; math answer differences count 1)
+  J<0.5 & mutating         464 / 6000 slice turns  ->   77.3 per 1000 (rule, no judge: either action edits / installs / tests / finishes rather than reads)
+    rule vs judge outcome-relevant on the 139 judged non-exact turns: recall 20/25 =  80.0%, precision 20/82 =  24.4%
+  => of the 131 J<0.5 turns per slice only ~41 (31%) can carry any outcome signal; the rest differ in exploration order (which file to read first) and dilute the paired estimate with pure Bernoulli noise.
+  noise floor — teacher's own 3 refs on the same eligible turns: pairwise norm-exact differ 78.1%, mean pairwise Jaccard 0.55: two teacher-level miners would be 'contested' on roughly as many turns as king vs challenger (exact-diff 69.2%).
+
+====================================================================================================
+2. COST / TIME per continuation — 24 sibling continuations (teacher via Engy, one per state)
+====================================================================================================
+                                 n  wall mean   median      p90      max |   $ mean    $ max | turns mean   max
+  ALL                           24       629s     602s    1086s    1444s |   0.0289   0.0733 |       38.8    76
+  harness bash                   5       400s     513s     589s     589s |   0.0154   0.0426 |       23.4    56
+  harness mini_swe_textbased    17       758s     760s    1183s    1444s |   0.0361   0.0733 |       47.5    76
+  harness terminus_2             2       110s     110s     140s     140s |   0.0016   0.0020 |        3.5     4
+  outcome failed                 9       715s     674s    1444s    1444s |   0.0331   0.0733 |       43.3    72
+  outcome solved                15       577s     589s     903s    1183s |   0.0264   0.0627 |       36.1    76
+  stop agent_completed          19       526s     562s     929s    1086s |   0.0228   0.0733 |       30.7    71
+  stop max_turns                 5      1021s    1042s    1444s    1444s |   0.0523   0.0627 |       69.6    76
+  wall includes the prefix replay in a fresh container; the sibling's states were depth 3-15 and the per-rollout budget 3600 s (max seen 1444s). Terminus states end in 3-4 turns (cheap); mini-swe runs to the 75-turn cap on 5/24.
+
+-- pods needed per duel (containers/pod = 4; greedy longest-first list scheduling, walls bootstrapped from the 24 empirical walls, 90th-percentile makespan <= T_max) --
+  contested turns per slice: J<0.5 rule = 131, decision-calibrated = 106; continuations = contested x 2 actions x k
+  Engy teacher cost per continuation $0.0289 (mean); pod cost ASSUMED $1.00/h per CPU pod
+  contested  k  n_cont cont-hours  Engy $ | pods@60m pods@90m pods@120m | pod $@90m
+  J<0.5 131  1     263       46.0    7.60 |       13        9         6 |     13.50
+  J<0.5 131  2     525       91.7   15.18 |       25       16        12 |     24.00
+  J<0.5 131  3     788      137.7   22.78 |       37       24        18 |     36.00
+  decision 106  1     213       37.2    6.16 |       11        7         5 |     10.50
+  decision 106  2     426       74.4   12.32 |       20       13        10 |     19.50
+  decision 106  3     638      111.5   18.45 |       30       20        15 |     30.00
+  mutating 77  1     155       27.1    4.48 |        8        5         4 |      7.50
+  mutating 77  2     309       54.0    8.93 |       15       10         8 |     15.00
+  mutating 77  3     464       81.1   13.42 |       22       15        11 |     22.50
+  relevant 41  1      82       14.3    2.37 |        4        3         2 |      4.50
+  relevant 41  2     164       28.7    4.74 |        8        6         4 |      9.00
+  relevant 41  3     246       43.0    7.11 |       12        8         6 |     12.00
+  exact-diff 256  1     511       89.3   14.77 |       24       16        12 |     24.00
+  exact-diff 256  2    1022      178.6   29.55 |       47       31        23 |     46.50
+  exact-diff 256  3    1533      267.9   44.32 |       70       46        35 |     69.00
+  today's dense duel: ~27 min scoring + swap, ~29 min per verdict on the eval box; T_max here is ADDITIONAL wall unless the outcome branch overlaps the dense pass (it cannot: it needs the contested set).
+
+====================================================================================================
+3. STATISTICAL POWER of the paired outcome estimate
+====================================================================================================
+  Model: contested turn t has state solve-probability p_t for a teacher continuation; s_K, s_C ~ Bernoulli(p_t)
+  under H0 (the two actions are equally good). d_t = mean_k(s_C) - mean_k(s_K); Var(d_t | p_t) = 2 p_t(1-p_t)/k.
+  SE_o(n,k) = sqrt(2 q / (k n)), q = E_t[p_t(1-p_t)] = within-state Bernoulli noise. Sibling data (24 T-arm runs):
+  solve 15/24 = 0.625 overall, 3/11 = 0.27 from originally-failed states, 12/13 = 0.92 from originally-solved.
+  q scenarios: S1 0.234 = p(1-p) with no per-state information; S2 0.135 = the split by original
+  outcome (Var(s)=0.24 = q + Var(p) with Var(p) >= 0.105 from the two-group split => q <= 0.135); S3 0.090.
+  No D1 action-sensitivity file (research/results/frontier_arbiter/outcome/sensitivity*.jsonl) — q is assumed, not measured;
+  the sibling's F1 arm (same state, frontier action) never ran, so P(solve | action) vs P(solve | state) is unmeasured.
+
+  scenario     n  k    SE_o min edge (2SE) solves needed | pods@90m  Engy $
+        S1    50  1  0.0968          0.194           9.7 |        4    2.89
+        S1    50  2  0.0685          0.137           6.8 |        7    5.78
+        S1    50  3  0.0559          0.112           5.6 |       10    8.67
+        S1   100  1  0.0685          0.137          13.7 |        7    5.78
+        S1   100  2  0.0484          0.097           9.7 |       13   11.56
+        S1   100  3  0.0395          0.079           7.9 |       19   17.35
+        S1   106  1  0.0665          0.133          14.1 |        7    6.13
+        S1   106  2  0.0470          0.094          10.0 |       13   12.26
+        S1   106  3  0.0384          0.077           8.1 |       20   18.39
+        S1   131  1  0.0598          0.120          15.7 |        9    7.58
+        S1   131  2  0.0423          0.085          11.1 |       17   15.15
+        S1   131  3  0.0345          0.069           9.0 |       24   22.73
+        S1   200  1  0.0484          0.097          19.4 |       13   11.56
+        S1   200  2  0.0342          0.068          13.7 |       25   23.13
+        S1   200  3  0.0280          0.056          11.2 |       37   34.70
+        S1   400  1  0.0342          0.068          27.4 |       25   23.13
+        S1   400  2  0.0242          0.048          19.4 |       49   46.26
+        S1   400  3  0.0198          0.040          15.8 |       72   69.39
+        S2    50  1  0.0736          0.147           7.4 |        4    2.89
+        S2    50  2  0.0520          0.104           5.2 |        7    5.78
+        S2    50  3  0.0425          0.085           4.2 |       10    8.67
+        S2   100  1  0.0520          0.104          10.4 |        7    5.78
+        S2   100  2  0.0368          0.074           7.4 |       13   11.56
+        S2   100  3  0.0300          0.060           6.0 |       19   17.35
+        S2   106  1  0.0505          0.101          10.7 |        7    6.13
+        S2   106  2  0.0357          0.071           7.6 |       13   12.26
+        S2   106  3  0.0292          0.058           6.2 |       20   18.39
+        S2   131  1  0.0455          0.091          11.9 |        9    7.58
+        S2   131  2  0.0321          0.064           8.4 |       16   15.15
+        S2   131  3  0.0262          0.052           6.9 |       24   22.73
+        S2   200  1  0.0368          0.074          14.7 |       13   11.56
+        S2   200  2  0.0260          0.052          10.4 |       25   23.13
+        S2   200  3  0.0212          0.042           8.5 |       37   34.70
+        S2   400  1  0.0260          0.052          20.8 |       25   23.13
+        S2   400  2  0.0184          0.037          14.7 |       48   46.26
+        S2   400  3  0.0150          0.030          12.0 |       72   69.39
+        S3    50  1  0.0600          0.120           6.0 |        4    2.89
+        S3    50  2  0.0424          0.085           4.2 |        7    5.78
+        S3    50  3  0.0346          0.069           3.5 |       10    8.67
+        S3   100  1  0.0424          0.085           8.5 |        7    5.78
+        S3   100  2  0.0300          0.060           6.0 |       13   11.56
+        S3   100  3  0.0245          0.049           4.9 |       19   17.35
+        S3   106  1  0.0412          0.082           8.7 |        7    6.13
+        S3   106  2  0.0291          0.058           6.2 |       13   12.26
+        S3   106  3  0.0238          0.048           5.0 |       20   18.39
+        S3   131  1  0.0371          0.074           9.7 |        9    7.58
+        S3   131  2  0.0262          0.052           6.9 |       16   15.15
+        S3   131  3  0.0214          0.043           5.6 |       24   22.73
+        S3   200  1  0.0300          0.060          12.0 |       13   11.56
+        S3   200  2  0.0212          0.042           8.5 |       25   23.13
+        S3   200  3  0.0173          0.035           6.9 |       37   34.70
+        S3   400  1  0.0212          0.042          17.0 |       25   23.13
+        S3   400  2  0.0150          0.030          12.0 |       48   46.26
+        S3   400  3  0.0122          0.024           9.8 |       72   69.39
+  'min edge' = per-contested-turn solve-probability advantage the challenger's actions must have (under the
+  teacher continuation) to clear 2 sigma; 'solves needed' = the same edge as extra solved episodes per slice.
+  Dilution: only ~31% of J<0.5 contested turns are judged outcome-relevant, so a challenger whose
+  relevant actions solve +X more often shows a per-contested-turn edge of only ~0.31 X; the S2 k=1 min edge
+  of 0.091 then means +0.29 solve probability on the relevant turns (the teacher's own solve rate from these states is ~0.6).
+  Caveat on walls: the sibling's states were depth 3-15; eligible contested turns run to depth 41+ (median 11), and the wall includes the prefix replay, so the pod counts above are optimistic for deep turns.
+
+-- CONFIRMATION-STAGE power: outcome branch only after a dense pass, on the winning slice's contested turns --
+  pass rule: mean paired solve difference over n_c turns >= threshold. P(pass | true edge e) = Phi((e - thr) / SE_o). S2 q.
+   n_c  k   SE_o |     thr | e=-0.05 e=+0.00 e=+0.03 e=+0.05 e=+0.10
+   131  1  0.045 |       0 |     14%     50%     75%     86%     99%
+   131  1  0.045 |   -1 SE |     46%     84%     95%     98%    100%
+   131  1  0.045 |   +1 SE |      2%     16%     37%     54%     88%
+   131  1  0.045 |   +2 SE |      0%      2%      9%     18%     58%
+   131  2  0.032 |       0 |      6%     50%     82%     94%    100%
+   131  2  0.032 |   -1 SE |     29%     84%     97%     99%    100%
+   131  2  0.032 |   +1 SE |      1%     16%     47%     71%     98%
+   131  2  0.032 |   +2 SE |      0%      2%     14%     33%     87%
+   131  3  0.026 |       0 |      3%     50%     87%     97%    100%
+   131  3  0.026 |   -1 SE |     18%     84%     98%    100%    100%
+   131  3  0.026 |   +1 SE |      0%     16%     56%     82%    100%
+   131  3  0.026 |   +2 SE |      0%      2%     20%     46%     96%
+  e = the challenger's true per-contested-turn solve edge under the teacher continuation (e = 0: a dense-meter
+  king-clone or a 'looks like the teacher' improver with no action edge; e < 0: dense pass with worse actions).
+
+-- today's crown bar (wvk 22, sd meter): margin > max(2*SE, 0.2 sd) at n = 1000 --
+  measured over the 6 duels: SE 0.0431-0.0770 sd (mean 0.0625); per-turn sd of the paired dense difference 1.35-2.42 sd (mean 1.96).
+  the 0.2-sd floor = 3.20 SE > 2 SE, so the floor binds: a null challenger crowns with P = 0.07% per duel (vs 2.28% at a bare 2 sigma).
+
+-- combined score: common unit proposal + false-positive rate --
+  Proposal: standardise each branch by its NULL per-turn sd. Agree turn: u_t = (dense_c - dense_k) / sd_dense
+  (sd_dense = 1.96 sd measured above); contested turn: v_t = d_t / sqrt(2 q / k). The slice score is the
+  mean of u and v over all n turns; under H0 every turn has unit variance, so SE = 1/sqrt(n) whatever the
+  contested share, and margin > max(2 SE, floor) keeps the z-test's false-positive rate EXACTLY as today
+  (2.28% at bare 2 sigma; the 0.2-sd floor translates to 0.2/sd_dense = 0.102 standardised units = 3.22 SE at n=1000 -> 0.06%).
+  What changes is not the FP rate but WHICH null is tested: on contested turns the dense meter's null is
+  'looks like the teacher'; the outcome null is 'the teacher finishes equally well from either action'. A miner
+  that is the teacher on agree turns and better-than-teacher on contested turns gains z ~ sqrt(n_c) * edge / sqrt(2q/k).
+    n_c=131 k=1 true edge 0.05: outcome branch alone z =  1.10; its contribution to the combined slice z (n=1000, S2) =  0.40  (bar: 2.0, or 3.22 with the floor)
+    n_c=131 k=1 true edge 0.10: outcome branch alone z =  2.20; its contribution to the combined slice z (n=1000, S2) =  0.80  (bar: 2.0, or 3.22 with the floor)
+    n_c=131 k=1 true edge 0.20: outcome branch alone z =  4.40; its contribution to the combined slice z (n=1000, S2) =  1.59  (bar: 2.0, or 3.22 with the floor)
+    n_c=131 k=3 true edge 0.05: outcome branch alone z =  1.91; its contribution to the combined slice z (n=1000, S2) =  0.69  (bar: 2.0, or 3.22 with the floor)
+    n_c=131 k=3 true edge 0.10: outcome branch alone z =  3.81; its contribution to the combined slice z (n=1000, S2) =  1.38  (bar: 2.0, or 3.22 with the floor)
+    n_c=131 k=3 true edge 0.20: outcome branch alone z =  7.62; its contribution to the combined slice z (n=1000, S2) =  2.76  (bar: 2.0, or 3.22 with the floor)
+    n_c=106 k=1 true edge 0.05: outcome branch alone z =  0.99; its contribution to the combined slice z (n=1000, S2) =  0.32  (bar: 2.0, or 3.22 with the floor)
+    n_c=106 k=1 true edge 0.10: outcome branch alone z =  1.98; its contribution to the combined slice z (n=1000, S2) =  0.64  (bar: 2.0, or 3.22 with the floor)
+    n_c=106 k=1 true edge 0.20: outcome branch alone z =  3.96; its contribution to the combined slice z (n=1000, S2) =  1.29  (bar: 2.0, or 3.22 with the floor)
+    n_c=106 k=3 true edge 0.05: outcome branch alone z =  1.71; its contribution to the combined slice z (n=1000, S2) =  0.56  (bar: 2.0, or 3.22 with the floor)
+    n_c=106 k=3 true edge 0.10: outcome branch alone z =  3.43; its contribution to the combined slice z (n=1000, S2) =  1.12  (bar: 2.0, or 3.22 with the floor)
+    n_c=106 k=3 true edge 0.20: outcome branch alone z =  6.85; its contribution to the combined slice z (n=1000, S2) =  2.23  (bar: 2.0, or 3.22 with the floor)
+  Alternative weightings (outcome in dense units via a fixed exchange rate, or outcome-overrides-dense) change
+  the FP rate only through mis-estimated variance; with the empirical SE they too stay at the nominal rate.
+  As an AND gate (dense pass AND outcome > 0 on the winning slice's contested turns): FP = 0.03%; dense pass AND outcome at 2 sigma: 0.002%.
+
+====================================================================================================
+4. MECHANISM DESIGN NOTES
+====================================================================================================
+  1. Copy-the-king everywhere: zero contested turns -> outcome branch empty -> the score is the dense meter alone, where an epsilon-copy cannot clear max(2 SE, 0.2 sd) (RT-4). So agreement is safe but cannot win; a challenger can only win by DISAGREEING somewhere and being right there. Good: the branch rewards differing-and-better.
+  2. Cheap-win actions: the challenger picks actions that make the TEACHER continuation succeed (e.g. dump the whole failing test and the diff at once; write the fix the teacher would recognise) rather than actions it would take itself. That IS the target quantity (the continuation policy is fixed = a distillation meter on actions, dual of R), but a miner can also learn the teacher's blind spots: emit a leading comment / plan text inside the action that steers the teacher (prompt injection through the observation). Mitigation: score only the executed command's effect, strip non-executable text from the forced action (dialect body), cap action bytes.
+  3. Grader gaming: actions that edit / delete tests, print expected outputs, or `git checkout` the gold patch when it is reachable in the image. The env grade is the same one datagen trusts, so this is the datagen threat model too; the king suffers it equally only if it takes the same action. Mitigation: outcome branch only on sources whose graders run hidden tests in a fresh container (swesmith / swerebench / multiswe / terminal-bench do), and forbid actions touching the test tree (harness-level block list already exists in the recoverable plugin).
+  4. Continuation-policy weaknesses: the teacher loops at depth (max_turns on 5/24 sibling runs); an action that leaves the environment in a state the teacher handles badly (long outputs, deleted files) drags the KING's arm down if the king took it, so both sides face the same policy — symmetric noise, not a bias. But the paired test is one-sided on the challenger's benefit: pick contested turns adversarially? The miner does not choose which turns are contested (the king's action is unknown to it at inference), only its own action.
+  5. Selection: a miner can choose to disagree ONLY on states it judges easy (p_t near 1 for any sensible action) and copy the king elsewhere, making d_t ~ 0 with tiny variance and inflating nothing — that's harmless. Disagreeing on hopeless states (p_t ~ 0) is also harmless. The dangerous case is a miner that knows the king's action distribution (public verdict artefacts) and disagrees exactly where the king is wrong — which is legitimate skill.
+  6. Replayability: the verdict must store, per contested turn, both forced actions, the container image + task id, the continuation traces (messages + tool outputs) and the grader's reward JSON, plus the continuation model / temperature / seed. At ~0.15 MB per trace, 2k continuations = ~300 MB per verdict (today ~3.7 MB): ship to R2 next to the record. Non-determinism: T=0.8 continuations are not bit-replayable; publish k traces and the grader output so a third party can re-grade the stored end state, and re-run for a fresh sample.
+  7. Non-resumable harnesses (pi / Claude Code / Kimi / Hermes, tool_call) and ungraded sources hold 63% of both-valid turns: they keep the dense meter (the branch is a per-turn override, never a requirement). Making the outcome branch matter therefore also means steering the curriculum toward resumable+graded turns or porting the recoverable plugin to the ACP harnesses.
+  8. Composition with the confirmation precedent (wvk 19, removed wvk 21 as 'too difficult'): the branch fits better as a CROWN CONFIRMATION than a per-turn score — run it only after a dense pass, on the contested eligible turns of the winning slice (~131 turns, 2k continuations, 9 pods at k=1 for 90 min), require the paired solve difference >= 0 (or > -2 SE_o) to crown. Cost is paid only on the ~3% of verdicts that pass; the honest improver waits ~90 min more (the wvk-19 objection was +40 min).
+
+====================================================================================================
+5. VERDICT
+====================================================================================================
+  1. Per-turn score: NOT powerful enough. ~131 of 1000 turns are eligible+contested (J<0.5), only ~41 outcome-relevant; the branch's own 2-sigma edge is 0.091 solve-probability per contested turn (k=1, S2) = +0.29 on the relevant turns — larger than any plausible king-vs-challenger action gap; in the combined standardised score it moves the slice z by < 1 unless the edge is >= 0.2.
+  2. Affordable per duel only at k=1: 263 continuations, 46 container-hours, ~$8 Engy + 9 CPU pods for +90 min (or 13 for +60) — tripling today's ~29 min verdict wall; k=3 needs 24 pods. The eligible pool is 37% of the slice (text finals 33%, non-resumable ACP harnesses 16%, ungraded curriculum envs 8% are out).
+  3. Confirmation stage: affordable AND meaningful. Run only after a dense pass (~3% of verdicts), on the winning slice's ~131 contested turns with k=1-2 (9-16 pods, +90 min, ~$8-15 Engy); require mean paired solve difference >= 0: halves noise crowns (0.07% -> 0.03%), passes an honest improver with a +0.05 action edge 86-94% of the time, and — its real value — rejects a dense-meter mimic whose actions are WORSE (e = -0.05 passes 14%/6%).
+  4. It tests a different null than the dense meter ('the teacher finishes equally well from either action' vs 'looks like the teacher'), so as a gate it is orthogonal evidence, not more of the same; as a score it is too noisy and too diluted by exploration-order differences.
+  5. Prerequisites before any flip: measure q (the D1 F1 arm), extend the recoverable plugin to pi/claude_code (adds 19% of turns), a rule filter for state-changing actions (77/1000, recall 80% of judged-relevant), store both continuation traces + grader JSON in the verdict (~300 MB).

@@ -103,6 +103,21 @@
         <span class="market-item dim">SN120 market…</span>
       </div>
     </div>
+    <!-- wvk 25 fork notice (posted 2026-09-26; REMOVE AT T0 2026-09-30 14:00 UTC:
+         python ops/v20/banner_wvk25.py --remove). Static so the notice shows even
+         when the dashboard API is down. -->
+    <div class="fork-notice" id="fork-notice" role="note">
+      <div class="fork-notice-inner">
+        <span class="fork-notice-tag">FORK NOTICE</span>
+        <span class="fork-notice-text">
+          Upcoming fork wvk 25 — <b>Wed 2026-09-30 14:00 UTC</b>: teacher →
+          <code>GLM-5.3-Flash</code>, 262k context, miner empty-thought rule,
+          sequential stopping, R cap. Reign 21 stands. Miners: serve
+          <code>--max-model-len 262144</code>.
+        </span>
+        <a class="fork-notice-link" href="./llms.txt">spec: llms.txt § Upcoming fork: wvk 25 →</a>
+      </div>
+    </div>
   </header>
 
   <!-- Top charts, 2×2: score + Margin (σ) over Margin (abs) + reg price —
@@ -205,7 +220,7 @@
          kings newest first, genesis. Explanations live in tooltips only. -->
     <section class="section" id="kings">
       <div class="section-head">
-        <h2 class="section-title">Benchmarks <span class="info" title="Held-out benchmarks, greedy T=0, never in the duel corpus D; score = share of tasks passed (SWE-bench Verified: finished-only). Rows: the teacher, then kings newest first, then reference models (italic: open checkpoints of the genesis family benchmarked for comparison, not kings), then the genesis seed. Cell tint = gap to the teacher (green above, red below). total = mean over the cells the row has, with its n/N coverage when partial; full = mean over all columns, only for complete rows. … = benchmark pass running; · = never run. ‡ = cap-bound (over 20% of the model's replies hit the completion cap and scored 0: a lower bound); ⚖ = judge-graded (an LLM judge graded the rollouts: advisory, never part of the score). † = trained environment (a datagen source in D uses this benchmark's environment — policy, tools, scorer — on generated, disjoint tasks; the cell is in-distribution generalisation, not zero-shot: τ² airline / retail / telecom; τ³ banking and Gaia2 stay clean held-outs). On the header the mark means the environment is in D; on a cell it means the king was crowned after the admission. The agentic set (Terminal-Bench 2, τ²/τ³-bench, SWE-bench Pro) forms its own column group as cards land. Hover any cell for the 95% interval, n and source.">ⓘ</span></h2>
+        <h2 class="section-title">Benchmarks <span class="info" title="Held-out benchmarks, greedy T=0, never in the duel corpus D; score = share of tasks passed (SWE-bench Verified: finished-only). Rows: the teacher, then kings newest first, then reference models (italic: open checkpoints of the genesis family benchmarked for comparison, not kings), then the genesis seed. Cell tint = gap to the teacher (green above, red below). total = mean over the cells the row has, with its n/N coverage when partial; full = mean over all columns, only for complete rows. … = benchmark pass running; · = never run. ‡ = cap-bound (over 20% of the model's replies hit the completion cap and scored 0: a lower bound); ⚖ = judge-graded (an LLM judge graded the rollouts: advisory, never part of the score). † = trained environment (a datagen source in D uses this benchmark's environment — policy, tools, scorer — on generated, disjoint tasks; the cell is in-distribution generalisation, not zero-shot: τ² airline / retail / telecom; τ³ banking and Gaia2 stay clean held-outs). On the header the mark means the environment is in D; on a cell it means the king was crowned after the admission. ‡ on a column header = trained on since the date in its tooltip (epoch N): king-failed trials from that suite enter the dataset D directly (bench_fail group); cells from cards before that date are held-out measurements, cells of kings crowned after it are trained-on (nothing is removed from totals). ‡ on a cell value stays the cap-bound mark. ⚠ = contaminated (leak audit): some SWE-bench trials fetched upstream code because the sandboxes had outbound internet; the number shown and counted is the score over the trials that did not leak, the raw score is in the tooltip. The agentic set (Terminal-Bench 2, τ²/τ³-bench, SWE-bench Pro) forms its own column group as cards land. Hover any cell for the 95% interval, n and source.">ⓘ</span></h2>
       </div>
       <div class="table-scroll" id="kings-bench-wrap"><div class="empty">loading…</div></div>
     </section>

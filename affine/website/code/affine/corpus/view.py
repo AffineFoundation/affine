@@ -186,6 +186,7 @@ def build_view_record(envelope: dict, *, baker=None,
                       convs: list[list[dict]] | None = None,
                       leak_exempt: frozenset[int] | set[int] = frozenset(),
                       text_replies: frozenset[int] | set[int] = frozenset(),
+                      waived_replies: frozenset[int] | set[int] = frozenset(),
                       ) -> dict | None:
     """View record for one envelope, or None when nothing is scorable
     (errored rollout, no reply passes the slicer). Raises ToolParityError /
@@ -227,6 +228,7 @@ def build_view_record(envelope: dict, *, baker=None,
         recs = slice_messages(conv, turn=(i, len(convs)),
                               text_final=(i == final_idx or i in text_replies),
                               leak_check=i not in leak_exempt,
+                              reference_waived=i in waived_replies,
                               **common)
         if not recs:
             continue
@@ -339,6 +341,8 @@ def view_turns(record: dict) -> list[dict]:
 def validate_turns(records: list[dict], *, panel: PanelKeys | None = None,
                    allowed_kinds: tuple[str, ...] | list[str] | None = None,
                    leak_check: bool = True,
+                   mandate_exempt: bool = False,
+                   reference_waived: bool = False,
                    ) -> tuple[list[dict], dict[str, int]]:
     """The fold's per-turn admission contract (was ops/datagen_refresh.py's
     prefilter + rollouts validate_records). Returns (kept, drop counts).
@@ -389,12 +393,16 @@ def validate_turns(records: list[dict], *, panel: PanelKeys | None = None,
         if sum(len(m["content"]) for m in prefix) > MAX_PREFIX_CHARS:
             drop("prefix_too_long")
             continue
-        reason, action = dialects.reference_check(
-            prefix, rec.get("reference_turn") or "", kind)
-        if reason:
-            drop(reason)
-            continue
-        if leak_check and reference_leaks(prefix, action):
+        if reference_waived:
+            action = ""
+        else:
+            reason, action = dialects.reference_check(
+                prefix, rec.get("reference_turn") or "", kind,
+                mandate_exempt=mandate_exempt)
+            if reason:
+                drop(reason)
+                continue
+        if leak_check and action and reference_leaks(prefix, action):
             drop("reference_leaked_into_prefix")
             continue
         seen.add(turn_id)

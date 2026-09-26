@@ -1,0 +1,221 @@
+Verified-action-value (VAV) rule simulation — §6 candidate (a)+(d) — 2026-09-21
+states 18 (split 7, ceiling 11); king king-50e3c081ab1c (reign 20) at http://167.150.153.180:3000/v1; judge glm-5.3-flash T0; $ spent (Engy) 0.421
+
+Terms: state = rollout_id:turn_idx prefix; table = {class -> (solved,total)} over graded continuations whose FIRST action is in the class
+       (T = teacher continuations @T0.8, F1/F1b/F1c = forced frontier proposals, teacher finishes); class = norm_action-exact group;
+       V = solved/total; B = mean V over the teacher's own N first actions (with themselves); term = V(class(y)) − B, unmatched → 0;
+       LOO = the scored action's own continuation removed from the table (and B) first; credited = joined a class (exact / Jaccard>=.5 / judge YES);
+       teacher_heldout = mean over the N teacher first actions (LOO); frontier_loo = graded frontier proposals (LOO; ceiling states);
+       king = mean over 3 fresh reign-20 samples (forfeit = no </think> or no action, term 0); generic = `ls -la` in the dialect;
+       repeat = previous assistant action re-issued; filler = king's action with a content-free thought (same V; only a thought gate differs);
+       sign = exact two-sided binomial on per-state sign of the difference (ties dropped); z = paired mean/SE over states.
+
+== 1. TABLES per state ==
+tag     state    harness              d T s/N F s/n cls      B  classes (s/n : action)
+ceiling 2a10d948 mini_swe_textbased   4 0/4   0/2     6  0.000
+                                                   0/1 [T0          ] ```bash cd /tmp && rm -rf idna_test && mkdir idna_test && cd idna_test && cp -r /testbed/idna . && mkdir tools
+                                                   0/1 [T1          ] ```bash ls -la .github/ .github/workflows/ 2>/dev/null && git log --oneline -5 && grep -rn "idna-data\|intrang
+                                                   0/1 [T2          ] ```bash nl -ba tools/idna-data | sed -n '460,560p' ```
+                                                   0/1 [T3          ] ```bash git log --oneline -5 && git log --diff-filter=A --oneline -- tools/intranges.py && echo "=====" && sed
+                                                   0/1 [F0          ] ```bash mkdir -p /tmp/repro && cat <<'EOF' > /tmp/repro/reproduce.sh #!/bin/bash # Simulate a source tree expo
+                                                   0/1 [F1          ] ```bash cat <<'EOF' > /tmp/repro.sh #!/bin/bash # Simulate a source tree export that does not preserve symlink
+ceiling 30be2fbf bash                12 0/4   0/2     6  0.000
+                                                   0/1 [T0          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /workspace/simple-settings && cat > simple_settings/
+                                                   0/1 [T1          ] <tool_call> {"name": "edit", "arguments": {"path": "/workspace/simple-settings/simple_settings/strategies/__in
+                                                   0/1 [T2          ] <tool_call> {"name": "edit", "arguments": {"path": "/workspace/simple-settings/simple_settings/strategies/__in
+                                                   0/1 [T3          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /workspace/simple-settings && cat simple_settings/st
+                                                   0/1 [F0          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /workspace/simple-settings && cat > simple_settings/
+                                                   0/1 [F1          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /workspace/simple-settings && cat > simple_settings/
+split   3665be60 terminus_2          13 3/4   0/0     1  0.750
+                                                   3/4 [T0,T1,T2,T3 ] {   "analysis": "The RStan installation is still in progress. It takes a long time to compile. Let me wait for
+ceiling 37feff8f terminus_2           6 0/4   0/2     2  0.000
+                                                   0/5 [T0,T1,T2,T3,F0] {   "analysis": "All edge cases pass correctly for both the Rust and C++ binaries: f(0)=1, f(1)=1, f(2)=2, f(3
+                                                   0/1 [F1          ] {   "analysis": "The polyglot source is complete. Both Rust and C++ builds passed, and all tested Fibonacci va
+ceiling 3a9986a1 bash                 8 0/4   0/1     5  0.000
+                                                   0/1 [T0          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /tmp/helmresearch/helm && echo \"=== main: pkg/lint/
+                                                   0/1 [T1          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /tmp/helmresearch/helm && echo \"=== which tags cont
+                                                   0/1 [T2          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /tmp/helmresearch/helm && echo \"=== v3.1.2 funcs.go
+                                                   0/1 [T3          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /tmp/helmresearch/helm && echo \"=== which release t
+                                                   0/1 [F0          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /tmp/helmresearch/helm && git show bf9c64f4 --stat &
+split   3cab611b mini_swe_textbased  15 3/4   0/0     4  0.750
+                                                   1/1 [T0          ] ```bash cd /testbed && python -c "import dwave.cloud; print(dwave.cloud.__file__)" 2>&1; pip install -e /testb
+                                                   1/1 [T1          ] ```bash cd /testbed && /root/.cache/uv/environments-v2/*/bin/pip list 2>/dev/null | grep -i -E "dwave|plucky|h
+                                                   1/1 [T2          ] ```bash cd /testbed && pip list 2>/dev/null | head -40 ```
+                                                   0/1 [T3          ] ```bash cd /testbed && pip install -e . 2>&1 | tail -10 ```
+split   48e27ac1 mini_swe_textbased   8 3/4   0/0     4  0.750
+                                                   1/1 [T0          ] ```bash sed -n '150,230p' resources/page/page.go ```
+                                                   1/1 [T1          ] ```bash grep -rn "Scratcher" --include="*.go" . | grep -v "_test" && echo "=====" && grep -rn "func.*Scratch()
+                                                   1/1 [T3          ] ```bash sed -n '150,230p' resources/page/page.go && echo "=====" && head -100 resources/page/page_wrappers.aut
+                                                   0/1 [T2          ] ```bash grep -rn "func.*Scratch()" --include="*.go" | grep -v "_test" && echo "=== Scratcher refs ===" && grep
+ceiling 7aa0fc31 bash                 3 0/4   0/2     6  0.000
+                                                   0/1 [T0          ] <tool_call> {"name": "edit", "arguments": {"path": "/workspace/plus_comm.v", "old_str": "  - simpl.\n    (* Ne
+                                                   0/1 [T1          ] <tool_call> {"name": "edit", "arguments": {"path": "/workspace/plus_comm.v", "old_str": "  - simpl.\n    (* Ne
+                                                   0/1 [T2          ] <tool_call> {"name": "edit", "arguments": {"path": "/workspace/plus_comm.v", "old_str": "  - simpl.\n    (* Ne
+                                                   0/1 [T3          ] <tool_call> {"name": "bash", "arguments": {"command": "coqc --version"}} </tool_call>
+                                                   0/1 [F0          ] <tool_call> {"name": "bash", "arguments": {"command": "coqc --version; echo \"---\"; cat > /tmp/check.v <<'EOF
+                                                   0/1 [F1          ] <tool_call> {"name": "bash", "arguments": {"command": "coqc --version; echo \"---\"; cat > /tmp/check.v <<'EOF
+ceiling 8bee1f31 mini_swe_textbased   5 0/4   1/1     5  0.000
+                                                   1/1 [F0          ] ```bash git log --oneline -10 && echo "=====" && cat fuel-crypto/Cargo.toml && echo "=====" && cat fuel-vm/Car
+                                                   0/1 [T0          ] ```bash sed -n '1,40p' fuel-vm/src/interpreter/crypto/tests.rs && echo "===== tests/crypto.rs imports =====" &
+                                                   0/1 [T1          ] ```bash cat fuel-crypto/Cargo.toml && echo "=====" && cat fuel-vm/Cargo.toml ```
+                                                   0/1 [T2          ] ```bash cat fuel-crypto/Cargo.toml && echo "=====" && cat fuel-vm/Cargo.toml && echo "=====" && git log --onel
+                                                   0/1 [T3          ] ```bash cat fuel-crypto/Cargo.toml && echo "=========" && cat fuel-vm/Cargo.toml ```
+ceiling 8ddd2d89 mini_swe_textbased   6 0/4   0/2     6  0.000
+                                                   0/1 [T0          ] ```bash grep -n "func checkHeader\|func checkMagic\|errCorruptState\|errBadMagic\|errBadVersion" server/filest
+                                                   0/1 [T1          ] ```bash grep -n "func checkHeader\|func (mb \*msgBlock) rebuildStateLocked\|func (mb \*msgBlock) generatePerSu
+                                                   0/1 [T2          ] ```bash grep -n "readPerSubjectInfo\|generatePerSubjectInfo\|writePerSubjectInfo" server/filestore.go ```
+                                                   0/1 [T3          ] ```bash cd /root 2>/dev/null; git -C $(find / -name "filestore.go" -not -path "*/vendor/*" 2>/dev/null | head 
+                                                   0/1 [F0          ] ```bash cd /root 2>/dev/null; cd - >/dev/null 2>&1; git log --oneline -5 && git status | head -5 ```
+                                                   0/1 [F1          ] ```bash cd /  2>/dev/null; cd $(pwd) && git log --oneline -5 && cat go.mod ```
+split   913f7a01 bash                14 3/4   0/0     4  0.750
+                                                   1/1 [T0          ] <tool_call> {"name": "bash", "arguments": {"command": "sed -n 350,450p /pyxform/pyxform/survey_element.py"}} <
+                                                   1/1 [T1          ] <tool_call> {"name": "bash", "arguments": {"command": "grep -n \"xml_bindings\\|_xml_bindings\\|def xml_bindin
+                                                   1/1 [T2          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /tmp && cat > repro.py << 'EOF'\nimport pyxform\nfro
+                                                   0/1 [T3          ] <tool_call> {"name": "bash", "arguments": {"command": "sed -n 350,460p /pyxform/pyxform/survey_element.py"}} <
+ceiling 9d3fd174 mini_swe_textbased  14 0/4   1/2     6  0.000
+                                                   1/1 [F0          ] ```bash mkdir -p /tmp/repro && cat <<'EOF' > /tmp/repro/reproduce.py import sys from pathlib import Path  sys.
+                                                   0/1 [T0          ] ```bash python --version && pip show ariadne-codegen 2>/dev/null | head -3; which python3.8 python3.9 2>/dev/n
+                                                   0/1 [T1          ] ```bash cat tests/client_generators/conftest.py ```
+                                                   0/1 [T2          ] ```bash grep -rn "dict\[" ariadne_codegen/ tests/ --include="*.py" | grep -v "Dict\[" | grep -v "\.dict\[" | g
+                                                   0/1 [T3          ] ```bash grep -n "base_client\|exceptions\|dependencies\|copy\|read_text\|Path" ariadne_codegen/client_generato
+                                                   0/1 [F1          ] ```bash mkdir -p /tmp/repro && cat <<'EOF' > /tmp/repro/reproduce.py import sys sys.path.insert(0, "/app" if _
+ceiling a079281f mini_swe_textbased   7 0/4   0/2     5  0.000
+                                                   0/2 [T2,T3       ] ```bash nl -ba modules/client.go | sed -n '560,700p' ```
+                                                   0/1 [T0          ] ```bash nl -ba modules/collect.go ```
+                                                   0/1 [T1          ] ```bash nl -ba modules/collect.go | sed -n '1,150p' ```
+                                                   0/1 [F0          ] ```bash nl -ba modules/collect.go | sed -n '150,330p' ```
+                                                   0/1 [F1          ] ```bash nl -ba modules/collect.go | sed -n '150,400p' ```
+split   a785cb84 terminus_2          12 1/4   0/0     4  0.250
+                                                   1/1 [T2          ] {   "analysis": "My solution's output looks correct (top words have many senses/distinct domains). The referen
+                                                   0/1 [T0          ] {   "analysis": "My solution output looks correct (e.g., 'break' has 75 synsets/senses, top synset 483 with 1 
+                                                   0/1 [T1          ] {   "analysis": "My solution's output looks sensible. The original query is still running in the background (C
+                                                   0/1 [T3          ] {   "analysis": "My solution is correct and 50x faster. The reference output is still empty (buffered until co
+ceiling ca99dd9d bash                12 0/3   1/2     5  0.000
+                                                   1/1 [F0          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /tcomb && find node_modules -name \"declare.js\" -pa
+                                                   0/1 [T0          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /tcomb && sed -n '1,80p' index.d.ts"}} </tool_call>
+                                                   0/1 [T1          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /tcomb && grep -rn \"dispatch\\|define\" test/union.
+                                                   0/1 [T2          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /tcomb && cat .travis.yml && ls test/util.js && cat 
+                                                   0/1 [F1          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /tcomb && head -60 CHANGELOG.md"}} </tool_call>
+split   cd542722 bash                12 2/4   0/0     4  0.500
+                                                   1/1 [T2          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /testbed && /opt/miniconda3/envs/testbed/bin/python 
+                                                   1/1 [T3          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /testbed && /opt/miniconda3/envs/testbed/bin/python 
+                                                   0/1 [T0          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /testbed && /opt/miniconda3/envs/testbed/bin/python 
+                                                   0/1 [T1          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /testbed && grep -rn \"replace_ellipsis\" dask/ | gr
+ceiling eeacceec terminus_2           7 0/4   0/2     6  0.000
+                                                   0/1 [T0          ] {   "analysis": "Critical bug found: the self-closing <script/> tag matched the block-opening pattern, causing
+                                                   0/1 [T1          ] {   "analysis": "A critical bug was found: the self-closing <script/> tag was mis-matched by SCRIPT_BLOCK_RE a
+                                                   0/1 [T2          ] {   "analysis": "Bug found: the self-closing <script/> tag is matched by SCRIPT_BLOCK_RE's opening pattern, ca
+                                                   0/1 [T3          ] {   "analysis": "A major bug: large chunks of legitimate HTML (div, svg, h2, p, ul, li, header, main, article,
+                                                   0/1 [F0          ] {   "analysis": "Critical bug found: `<script/>` was treated as an opening tag by SCRIPT_BLOCK_RE, causing it 
+                                                   0/1 [F1          ] {   "analysis": "Found a critical content-preservation bug: SCRIPT_BLOCK_RE matches `<script/>` as an opening 
+split   f1e5d484 bash                14 2/4   0/0     4  0.500
+                                                   1/1 [T0          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /workspace/py4vasp && /root/.cache/pypoetry/virtuale
+                                                   1/1 [T1          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /workspace/py4vasp && /root/.cache/pypoetry/virtuale
+                                                   0/1 [T2          ] <tool_call> {"name": "bash", "arguments": {"command": "grep -ri \"nics\" /workspace/py4vasp/docs -l 2>/dev/nul
+                                                   0/1 [T3          ] <tool_call> {"name": "bash", "arguments": {"command": "cd /workspace/py4vasp && /root/.cache/pypoetry/virtuale
+
+== 2. MINERS — per state term (V − B) and how the action was credited ==
+tag     state    harness                  B | teacherLOO    king frontLOO generic  repeat | king how / forfeits
+ceiling 2a10d948 mini_swe_textbased   0.000 |      0.000   0.000    0.000   0.000   0.000 | {'judge': 3} forfeit 0.00
+ceiling 30be2fbf bash                 0.000 |      0.000   0.000    0.000   0.000   0.000 | {'jaccard': 3} forfeit 0.00
+split   3665be60 terminus_2           0.750 |      0.000   0.000      n/a   0.000   0.000 | {'exact': 3} forfeit 0.00
+ceiling 37feff8f terminus_2           0.000 |      0.000   0.000    0.000   0.000   0.000 | {'exact': 3} forfeit 0.00
+ceiling 3a9986a1 bash                 0.000 |      0.000   0.000    0.000   0.000   0.000 | {'jaccard': 1, 'judge': 2} forfeit 0.00
+split   3cab611b mini_swe_textbased   0.750 |      0.000  -0.750      n/a   0.000   0.250 | {'jaccard': 3} forfeit 0.00
+split   48e27ac1 mini_swe_textbased   0.750 |      0.000  -0.250      n/a   0.000   0.250 | {'judge': 2, 'jaccard': 1} forfeit 0.00
+ceiling 7aa0fc31 bash                 0.000 |      0.000   0.000    0.000   0.000   0.000 | {'jaccard': 1, 'judge': 1, 'none': 1} forfeit 0.00
+ceiling 8bee1f31 mini_swe_textbased   0.000 |      0.250   0.000    0.000   0.000   0.000 | {'jaccard': 3} forfeit 0.00
+ceiling 8ddd2d89 mini_swe_textbased   0.000 |      0.000   0.000    0.000   0.000   0.000 | {'jaccard': 2, 'none': 1} forfeit 0.00
+split   913f7a01 bash                 0.750 |     -0.167   0.250      n/a   0.000   0.000 | {'jaccard': 3} forfeit 0.00
+ceiling 9d3fd174 mini_swe_textbased   0.000 |      0.000   0.000    0.500   0.000   0.000 | {'judge': 1, 'none': 2} forfeit 0.00
+ceiling a079281f mini_swe_textbased   0.000 |      0.000   0.000    0.000   0.000   0.000 | {'jaccard': 3} forfeit 0.00
+split   a785cb84 terminus_2           0.250 |      0.167  -0.250      n/a   0.000   0.000 | {'judge': 3} forfeit 0.00
+ceiling ca99dd9d bash                 0.000 |      0.000   0.000    0.000   0.000   0.000 | {'exact': 3} forfeit 0.00
+split   cd542722 bash                 0.500 |      0.000  -0.167      n/a   0.000   0.000 | {'jaccard': 1, 'none': 2} forfeit 0.00
+ceiling eeacceec terminus_2           0.000 |      0.000   0.000    0.000   0.000   0.000 | {'none': 1, 'jaccard': 1, 'forfeit': 1} forfeit 0.33
+split   f1e5d484 bash                 0.500 |      0.000   0.000      n/a   0.000  -0.500 | {'none': 3} forfeit 0.00
+
+-- POOLED (n states 18) -- mean term per miner, credited share, positive-state share
+miner            states  acts     term      se credited/act credited/state  term>0  how (actions) | forfeit
+teacher_heldout      18    71   0.0139  0.0194         0.64           0.83    0.28  {'judge': 10, 'none': 25, 'jaccard': 26, 'exact': 10} | 
+king                 18    54  -0.0648  0.0479         0.80           0.94    0.06  {'judge': 12, 'jaccard': 22, 'exact': 9, 'none': 10, 'forfeit': 1} | 0.02
+frontier_loo         11    20   0.0455  0.0455         0.77           0.82    0.09  {'judge': 4, 'jaccard': 11, 'exact': 1, 'none': 4} | 
+generic              18    18   0.0000  0.0000         0.00           0.00    0.00  {'none': 18} | 
+repeat               18    18   0.0000  0.0350         0.39           0.39    0.11  {'none': 11, 'judge': 1, 'jaccard': 6} | 
+filler               18    54  -0.0648  0.0479         0.80           0.94    0.06  {'judge': 12, 'jaccard': 22, 'exact': 9, 'none': 10, 'forfeit': 1} | 0.02
+   paired contrasts (a − b): mean, z, sign test pos/neg/ties, p
+     teacher_heldout-king             mean   0.0787 z   1.41 sign +5/−1/=12 p  0.219
+     teacher_heldout-generic          mean   0.0139 z   0.72 sign +5/−1/=12 p  0.219
+     teacher_heldout-repeat           mean   0.0139 z   0.35 sign +4/−3/=11 p  1.000
+     king-generic                     mean  -0.0648 z  -1.35 sign +1/−4/=13 p  0.375
+     king-repeat                      mean  -0.0648 z  -0.90 sign +2/−4/=12 p  0.688
+     frontier_loo-king                mean   0.0455 z   1.00 sign +1/−0/=10 p  1.000
+     frontier_loo-teacher_heldout     mean   0.0227 z   0.43 sign +1/−1/=9 p  1.000
+
+-- SPLIT (n states 7) -- mean term per miner, credited share, positive-state share
+miner            states  acts     term      se credited/act credited/state  term>0  how (actions) | forfeit
+teacher_heldout       7    28   0.0000  0.0364         0.64           0.86    0.57  {'exact': 4, 'judge': 4, 'jaccard': 10, 'none': 10} | 
+king                  7    21  -0.1667  0.1179         0.76           0.86    0.14  {'exact': 3, 'jaccard': 8, 'judge': 5, 'none': 5} | 0.00
+generic               7     7   0.0000  0.0000         0.00           0.00    0.00  {'none': 7} | 
+repeat                7     7   0.0000  0.0945         0.43           0.43    0.29  {'none': 4, 'judge': 1, 'jaccard': 2} | 
+filler                7    21  -0.1667  0.1179         0.76           0.86    0.14  {'exact': 3, 'jaccard': 8, 'judge': 5, 'none': 5} | 0.00
+   paired contrasts (a − b): mean, z, sign test pos/neg/ties, p
+     teacher_heldout-king             mean   0.1667 z   1.20 sign +4/−1/=2 p  0.375
+     teacher_heldout-generic          mean   0.0000 z   0.00 sign +4/−1/=2 p  0.375
+     teacher_heldout-repeat           mean   0.0000 z   0.00 sign +3/−3/=1 p  1.000
+     king-generic                     mean  -0.1667 z  -1.41 sign +1/−4/=2 p  0.375
+     king-repeat                      mean  -0.1667 z  -0.89 sign +2/−4/=1 p  0.688
+     frontier_loo-king                mean      n/a z    n/a sign +0/−0/=0 p    n/a
+     frontier_loo-teacher_heldout     mean      n/a z    n/a sign +0/−0/=0 p    n/a
+
+-- CEILING (n states 11) -- mean term per miner, credited share, positive-state share
+miner            states  acts     term      se credited/act credited/state  term>0  how (actions) | forfeit
+teacher_heldout      11    43   0.0227  0.0227         0.64           0.82    0.09  {'judge': 6, 'none': 15, 'jaccard': 16, 'exact': 6} | 
+king                 11    33   0.0000  0.0000         0.82           1.00    0.00  {'judge': 7, 'jaccard': 14, 'exact': 6, 'none': 5, 'forfeit': 1} | 0.03
+frontier_loo         11    20   0.0455  0.0455         0.77           0.82    0.09  {'judge': 4, 'jaccard': 11, 'exact': 1, 'none': 4} | 
+generic              11    11   0.0000  0.0000         0.00           0.00    0.00  {'none': 11} | 
+repeat               11    11   0.0000  0.0000         0.36           0.36    0.00  {'none': 7, 'jaccard': 4} | 
+filler               11    33   0.0000  0.0000         0.82           1.00    0.00  {'judge': 7, 'jaccard': 14, 'exact': 6, 'none': 5, 'forfeit': 1} | 0.03
+   paired contrasts (a − b): mean, z, sign test pos/neg/ties, p
+     teacher_heldout-king             mean   0.0227 z   1.00 sign +1/−0/=10 p  1.000
+     teacher_heldout-generic          mean   0.0227 z   1.00 sign +1/−0/=10 p  1.000
+     teacher_heldout-repeat           mean   0.0227 z   1.00 sign +1/−0/=10 p  1.000
+     king-generic                     mean   0.0000 z    n/a sign +0/−0/=11 p    n/a
+     king-repeat                      mean   0.0000 z    n/a sign +0/−0/=11 p    n/a
+     frontier_loo-king                mean   0.0455 z   1.00 sign +1/−0/=10 p  1.000
+     frontier_loo-teacher_heldout     mean   0.0227 z   0.43 sign +1/−1/=9 p  1.000
+
+   filler note: the ranking term never reads the thought, so a king action under a content-free thought scores exactly the king row;
+   an 80+-char filler passes the live length floor (min_thought_chars 80) — only a thought GATE (G band / B license) can separate filler from king.
+
+-- POOLED WITHOUT the equivalence judge (surface cascade only: exact → Jaccard>=.5) --
+miner                term credited/act credited/state  how
+teacher_heldout    0.0139         0.50           0.67  {'none': 35, 'jaccard': 26, 'exact': 10}
+king              -0.0509         0.57           0.78  {'none': 22, 'jaccard': 22, 'exact': 9, 'forfeit': 1}
+frontier_loo       0.0455         0.59           0.64  {'none': 8, 'jaccard': 11, 'exact': 1}
+generic            0.0000         0.00           0.00  {'none': 18}
+repeat            -0.0139         0.33           0.33  {'none': 12, 'jaccard': 6}
+filler            -0.0509         0.57           0.78  {'none': 22, 'jaccard': 22, 'exact': 9, 'forfeit': 1}
+   teacher_heldout − king without judge: mean   0.0648 z   1.24 sign +5/−1/=12 p  0.219
+
+== 3. JUDGES ==
+-- equivalence judge (glm-5.3-flash T0, 'same decision?') vs surface matching: YES rate by surface relation of the pair --
+   surface exact    judge YES 15/15 =  1.00
+   surface jaccard  judge YES 106/142 =  0.75
+   surface none     judge YES 65/600 =  0.11
+   king actions parsed 53: surface-credited 31, credited ONLY via judge 12, judge YES to some class 40
+   how by miner: {'teacher_heldout': {'judge': 10, 'none': 25, 'jaccard': 26, 'exact': 10}, 'frontier_loo': {'judge': 4, 'jaccard': 11, 'exact': 1, 'none': 4}, 'king': {'judge': 12, 'jaccard': 22, 'exact': 9, 'none': 10, 'forfeit': 1}, 'generic': {'none': 18}, 'repeat': {'none': 11, 'judge': 1, 'jaccard': 6}}
+   surface-unmatched rate by miner: {'teacher_heldout': 0.493, 'frontier_loo': 0.4, 'king': 0.415, 'generic': 1.0, 'repeat': 0.667}
+   actions Jaccard-matched ONLY on the JSON envelope (would be credited by envelope-Jaccard, not by body-Jaccard): {'generic': 6, 'frontier_loo': 2, 'repeat': 3, 'king': 2, 'teacher_heldout': 4}
+-- preference judge (glm-5.3-flash T0, 'which is the better next step?', both orders) vs env outcome --
+pair kind                      pairs consist correct wrong flip acc(strict) acc|consist pos-bias 1-call acc  flips→A / flips→B
+ALL                               33      21      14     7   12        0.42        0.67     0.36       0.61  9 / 3
+ceiling_Fsolved_vs_Ffailed         2       2       2     0    0        1.00        1.00     0.00       1.00  0 / 0
+ceiling_Fsolved_vs_Tfailed        11       6       5     1    5        0.45        0.83     0.45       0.68  4 / 1
+split_T_vs_T                      20      13       7     6    7        0.35        0.54     0.35       0.53  5 / 2
+   (strict = both orders agree AND pick the env-solved action; flip = the two orders disagree = position-dependent verdict; chance = 0.25 strict / 0.5 per call)
+
+== 4. COST ==
+judge $0.00026/call (prompt   2183 tok, completion   336 tok, 725 calls logged); king actions surface-unmatched 0.42; classes/state 4.61 → 2.08 judge calls per decision turn per side;
+per 1000-turn duel at 40% decision share = 400 decision turns: $0.217 one side (challenger only), $0.434 both sides (king re-sampled per duel)
+$ spent this probe (Engy, judges only; king sampling free): 0.421

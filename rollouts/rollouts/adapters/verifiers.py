@@ -1,9 +1,10 @@
 """Wrap verifiers trace-v1 episodes in envelopes (near-passthrough).
 
 A verifiers eval writes traces.jsonl: one episode per line, each carrying
-`traces: [trace, ...]`. The trace dicts are stored verbatim inside the
-envelope — content hashes (e.g. the view's run_tag over the sorted-keys
-dump) stay identical to what the trace file contained.
+`traces: [trace, ...]`. The trace dicts are stored inside the envelope.
+One field is added before that: `trace.info.upstream_fetch`, true when a
+command fetched upstream code and the tool response came back with
+content. Message text is not rewritten.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import json
 import logging
 from pathlib import Path
 
+from affine.corpus.upstream import rollout_has_upstream_fetch
 from rollouts.schema import PolicyStamp, make_envelope, trace_task_name
 
 log = logging.getLogger("rollouts.adapters.verifiers")
@@ -88,6 +90,14 @@ def envelopes_from_traces(traces_path: Path, *, source: str, env_id: str,
             if meta is None:
                 unknown.append(uid)
                 continue
+            # Miners train on traces/ as well as on D. The flag is the
+            # successful-fetch detector (affine.corpus.upstream). Old traces
+            # are not rewritten.
+            info = trace.get("info")
+            if not isinstance(info, dict):
+                info = {}
+                trace["info"] = info
+            info["upstream_fetch"] = rollout_has_upstream_fetch(trace.get("nodes") or [])
             envelopes.append(make_envelope(
                 source=source, env_id=env_id, task=meta,
                 policy=policy, trace=trace))

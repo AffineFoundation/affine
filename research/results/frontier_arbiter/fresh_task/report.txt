@@ -1,0 +1,296 @@
+G2 fresh-task confirmation — sizing from live datagen rollouts (2026-09-21)
+source: /tmp/ft/rollouts.sqlite + matrix 2026-09-21T00:04:09+00:00
+
+== §1 generator inventory (FRESH = mints new instances on demand; POOL = large pre-minted pool; FIXED = not eligible) ==
+- swesmith [coding] POOL→FRESH
+    gen: SWE-smith bug injection (lm_rewrite, func_pm_* AST mutators, PR-revert) on a repo snapshot with a passing test suite; HF shards hold pre-minted instances; the mutators re-run on any cached image
+    grader: hidden tests FAIL→PASS (PASS→PASS kept) | supply: 6,960 uids used of ~50k shards (py/go/java/ts/rs); fresh mint ≈ 1 container-min per candidate + a test run to validate
+    runtime: docker per task (430 repo images cached on pods) | in D / king seat: yes (share 4.0, king seat all 7 harnesses)
+- r2e_gym [coding] FIXED (pool) / FRESH via SWE-Gen
+    gen: R2E-Gym-Subset-Verified: commit-derived tasks with synthesized tests (R2E pipeline = backtranslated issue + LLM tests); HF is a fixed 3.9k list; the R2E/SWE-Gen recipe mints from any commit history
+    grader: repo tests (docker) | supply: 3,876 uids on 9 repos — fixed; new mint needs the R2E pipeline (LLM test synthesis ≈ $0.05–0.2/task + validation run)
+    runtime: docker per task | in D / king seat: yes (king seat)
+- swelego [coding] FIXED
+    gen: SWE-Lego-Real-Data-Verified: curated real PR tasks (868 repos)
+    grader: repo tests | supply: 1,625 uids — fixed HF list
+    runtime: docker | in D / king seat: yes
+- multiswe / scaleswe / swerebench_v2 [coding] FIXED
+    gen: curated real-PR datasets
+    grader: repo tests | supply: fixed lists (1k–2.5k)
+    runtime: docker | in D / king seat: yes
+- feature-deletion (Cursor recipe) [coding] BUILD
+    gen: pick a repo image with a green test suite (swesmith / multiswe / tmax images already cached); pick a feature = set of functions whose deleting turns k ≥ 1 tests red while the rest stay green; delete implementation, keep signatures/docs; task = re-implement so the red tests pass; issue text generated from the tests' names + docstrings (or the removed docstring)
+    grader: the k red tests → green; rest of suite stays green (PASS→PASS) | supply: unbounded: every (repo, function-set) is a new instance; mint cost = 2 test runs (~1–3 container-min); no LLM needed for the minimal variant
+    runtime: docker per task (same images as swesmith) | in D / king seat: no — ~300 lines: static call-graph + coverage map + deleter + verifiers taskset
+- terminal_lego [terminal] POOL
+    gen: Prime's Terminal-Lego: LLM-generated terminal tasks (task.toml + tests + Dockerfile) — pre-minted HF checkout; the generator is Prime's, not ours
+    grader: Harbor verifier (test script) | supply: 12,915 uids used of ~23k; ~10k still unseen by every king
+    runtime: docker build per task (local_docker_build) | in D / king seat: yes (share 3.0, king seat)
+- affine_tmax [terminal] POOL
+    gen: Prime TMax: 14,600 Harbor terminal tasks (public prime-tasks repo), pre-minted
+    grader: Harbor verifier | supply: 14,600 dirs; ~13k unseen
+    runtime: docker build per task (2 GB images, 8 concurrent) | in D / king seat: yes (share 1.0, king seat)
+- terminal_bench_2 [terminal] FIXED
+    gen: 89 hand-written tasks (benchmark)
+    grader: Harbor verifier | supply: 89 — fixed, public benchmark
+    runtime: docker | in D / king seat: yes
+- procedural terminal (BUILD) [terminal] BUILD
+    gen: seeded generators over our images: file-system forensics (uuidctf pattern), log-parsing with a hidden answer, build-fix with injected compile error, data-wrangling with a generated CSV and hidden checksum
+    grader: exact answer / test script | supply: unbounded; ≈ 0 mint cost (pure code)
+    runtime: docker | in D / king seat: partly: affine_uuidctf IS this (3,000-seed pool, `standard` tier, king seat)
+- affine_tau2_synth [tool_use] FRESH (generator in repo)
+    gen: τ²-synth: issue-combination × persona × variant over 10 synthetic customer-service domains; the domain generator (mikasenghaas/tau2-synth) is seedable — new issue combos / personas / db rows per seed; DeepSeek customer sim on Engy
+    grader: τ² final-state DB check + action set (deterministic) | supply: ≈ 11,600 pre-minted; 753 uids used; new combos = code + a few $ of Engy user-sim per rollout ($0.001–0.003)
+    runtime: no container (in-process orchestrator + user-sim API) | in D / king seat: yes (share 3.0, king seat, king floor 8/h)
+- affine_kb_synth [tool_use] FRESH (same generator)
+    gen: τ²-synth domains with policy moved into a BM25 knowledge base (tau3 KB_search shape)
+    grader: τ² final-state check | supply: same pool as tau2_synth (284 uids used)
+    runtime: none | in D / king seat: yes (share 2.0, king seat)
+- affine_when2call [tool_use] FIXED
+    gen: NVIDIA When2Call train_pref (8,154 rows)
+    grader: gold tool name + args / class | supply: fixed list
+    runtime: none | in D / king seat: yes
+- affine_agent [tool_use] FIXED
+    gen: Prime general_agent toolbench (4,417 tasks, per-task DB)
+    grader: DB-hash | supply: fixed list
+    runtime: host-served tool DB | in D / king seat: yes
+- affine_eog / autobench [general/tool_use] FIXED
+    gen: EnterpriseOps-Gym 649 / AutomationBench 600 oracle tasks
+    grader: final-state SQL / assertions | supply: fixed lists
+    runtime: service containers / in-process | in D / king seat: yes
+- affine_rgym (reasoning-gym) [general] FRESH
+    gen: ~100 procedural puzzle generators, identity = (generator, index, level); infinite by construction
+    grader: per-generator exact scorer | supply: unbounded; 0 mint cost; level 1 live (levels 2–3 hit the 16k cap)
+    runtime: none (chat) | in D / king seat: yes (share 1.0, king seat)
+- affine_rcore (reasoning-core) [general] FRESH
+    gen: formally verified planning / logic / regex / math generators
+    grader: reasoning_core verifier | supply: unbounded (20k rows cached)
+    runtime: none | in D / king seat: yes
+- affine_prolog / uuidctf / deshuffle / verbatim / wikispeedia [general] FRESH
+    gen: per-index seeded procedural pools (3,000–5,000 seeds; the seed space is the generator)
+    grader: exact / solved | supply: unbounded by seed; live pools 3k–5k
+    runtime: swipl / sandbox / none | in D / king seat: yes (king seat)
+- affine_math / i3math / logic / science / trivia / ifeval / pydantic / i3code / sql [math/general] FIXED
+    gen: HF train splits
+    grader: boxed / exact / tests / JSON schema | supply: fixed lists (2k–100k rows)
+    runtime: none or docker | in D / king seat: yes
+- affine-repo-qa-v1 (hub-survey proposal C) [coding] BUILD
+    gen: generated question about a cached repo image whose answer is extracted by static analysis (raises X? call sites of Y? default of Z?)
+    grader: exact match after normalisation | supply: unbounded over cached images; 0 LLM cost
+    runtime: docker (any shell harness) | in D / king seat: no — ~150 lines
+- affine-resume-v1 (proposal B) [coding/terminal] BUILD
+    gen: continue from a king failure state (replayed shell history) — grader = original tests
+    grader: original verifier | supply: bounded by king failures (thousands)
+    runtime: docker | in D / king seat: no; not fresh-by-construction (states come from the king's own runs)
+- affine-compaction-v1 (proposal A) [chat] BUILD
+    gen: summarise a real datagen transcript, TEXT ONLY
+    grader: IFEval-style checks (paths mentioned, no tool call, ≤ N words) | supply: unbounded over traces
+    runtime: none | in D / king seat: no
+- Prime hub: synlogic / enigmata / absolute-zero / kakuro / nonogram [general] FRESH (hub)
+    gen: procedural puzzle envs with verifiers
+    grader: exact | supply: infinite
+    runtime: none | in D / king seat: no (survey rank 27+)
+- Prime hub: swe-gen / SWE-smith-live style repo-task synth [coding] FRESH (hub, needs port)
+    gen: issue-synthesis on arbitrary GitHub repos (LLM-authored tests)
+    grader: synthesized tests | supply: unbounded; LLM cost per task
+    runtime: docker | in D / king seat: no
+
+== §2a separation power — king-to-king PAIRED deltas (reigns 11-20, same tasks, sampled rollouts) ==
+family     pairs taskpairs  |Δ| med |Δ| mean  |Δ| max  discord  var_d | tasks for Δ=3/5/10 pts: n(2SE) [n(80%)]
+coding        41      1767      9.1      9.8     37.0    0.288  0.269 | 1196 [2346] / 431 [845] / 108 [212]
+general      112      7403      6.1      9.3     54.5    0.190  0.169 | 750 [1472] / 270 [530] / 68 [133]
+math           6       425     18.1     18.1     47.9    0.294  0.236 | 1049 [2058] / 378 [741] / 95 [186]
+terminal       3       148     13.9     11.1     16.0    0.257  0.237 | 1055 [2070] / 380 [745] / 95 [187]
+tool_use     111     12109      5.1     21.4    100.0    0.285  0.176 | 781 [1531] / 281 [552] / 71 [138]
+
+   restricted to generators that can mint UNSEEN tasks today (READY_TODAY):
+   tool_use      21      1556      7.5     22.0     60.0    0.357  0.244 | 1087 [2132] / 391 [768] / 98 [192]  (affine_tau2_synth)
+   general       25      1951      6.5      8.4     33.6    0.194  0.181 | 803 [1575] / 289 [567] / 73 [142]  (affine_rcore, affine_prolog, affine_uuidctf, affine_deshuffle, affine_verbatim, affine_wikispeedia)
+   coding         8       314     12.7     20.1     37.0    0.334  0.283 | 1257 [2465] / 453 [888] / 114 [222]  (swesmith)
+   terminal       1        65      6.2      6.2      6.2    0.185  0.181 | 804 [1578] / 290 [568] / 73 [142]  (terminal_lego)
+   ALL_READY     55      3886      8.3     14.8     60.0    0.270  0.214 | 953 [1870] / 343 [673] / 86 [169]
+
+   per-source pairs (n ≥ 30 shared tasks):
+   multiswe             [coding] K11-K16 n=66 Δ=-0.8 q=0.50; K16-K17 n=62 Δ=+4.8 q=0.15; K16-K20 n=59 Δ=-13.6 q=0.41; K15-K16 n=55 Δ=+1.8 q=0.38; K15-K20 n=55 Δ=-9.1 q=0.35; K17-K20 n=42 Δ=-28.6 q=0.43
+   scaleswe             [coding] K17-K18 n=59 Δ=-1.7 q=0.36; K16-K20 n=52 Δ=-5.8 q=0.21; K14-K17 n=51 Δ=+9.8 q=0.22; K14-K18 n=50 Δ=+6.0 q=0.26; K17-K20 n=36 Δ=+5.6 q=0.17; K14-K20 n=35 Δ=+5.7 q=0.17
+   swelego              [coding] K15-K20 n=59 Δ=+0.0 q=0.07; K15-K19 n=58 Δ=+12.1 q=0.12; K19-K20 n=56 Δ=-10.7 q=0.14; K11-K13 n=44 Δ=-6.8 q=0.20; K13-K15 n=40 Δ=-12.5 q=0.12; K11-K15 n=34 Δ=-17.6 q=0.29
+   swerebench_v2        [coding] K19-K20 n=60 Δ=+3.3 q=0.30
+   swesmith             [coding] K13-K14 n=51 Δ=-21.6 q=0.65; K14-K17 n=47 Δ=-34.0 q=0.38; K13-K15 n=46 Δ=-37.0 q=0.46; K14-K15 n=46 Δ=-10.9 q=0.28; K16-K17 n=33 Δ=-12.1 q=0.18; K13-K17 n=31 Δ=-9.7 q=0.10
+   affine_autobench     [general] K13-K20 n=162 Δ=-2.5 q=0.09; K16-K18 n=108 Δ=+0.0 q=0.07; K15-K20 n=84 Δ=-6.0 q=0.08; K14-K16 n=83 Δ=-2.4 q=0.07; K14-K18 n=83 Δ=+0.0 q=0.10; K12-K13 n=72 Δ=+0.0 q=0.06
+   affine_deshuffle     [general] K13-K20 n=44 Δ=-18.2 q=0.18
+   affine_eog           [general] K13-K20 n=192 Δ=-1.0 q=0.14; K12-K20 n=89 Δ=+4.5 q=0.13; K12-K13 n=63 Δ=+1.6 q=0.17; K13-K16 n=62 Δ=-1.6 q=0.15; K12-K16 n=53 Δ=+0.0 q=0.11; K14-K15 n=48 Δ=-2.1 q=0.19
+   affine_i3code        [general] K13-K20 n=39 Δ=-12.8 q=0.49
+   affine_ifeval        [general] K11-K20 n=105 Δ=-15.2 q=0.25
+   affine_logic         [general] K11-K13 n=147 Δ=+36.7 q=0.41; K11-K20 n=37 Δ=-8.1 q=0.35
+   affine_numina        [general] K13-K20 n=32 Δ=-20.3 q=0.25
+   affine_oolong        [general] K13-K20 n=36 Δ=-34.3 q=0.56
+   affine_prolog        [general] K13-K20 n=106 Δ=-33.6 q=0.44
+   affine_pydantic      [general] K13-K20 n=50 Δ=-10.0 q=0.26; K11-K20 n=35 Δ=-5.7 q=0.23
+   affine_rcore         [general] K13-K20 n=40 Δ=+0.0 q=0.30; K11-K13 n=36 Δ=+0.0 q=0.22
+   affine_science       [general] K11-K20 n=47 Δ=+2.1 q=0.23
+   affine_sql           [general] K13-K20 n=178 Δ=-54.5 q=0.61; K12-K15 n=125 Δ=-8.0 q=0.24; K12-K14 n=108 Δ=-19.4 q=0.23; K12-K17 n=108 Δ=-9.3 q=0.26; K14-K17 n=108 Δ=+10.2 q=0.14; K12-K20 n=103 Δ=-17.5 q=0.25
+   affine_trivia        [general] K11-K13 n=173 Δ=+5.2 q=0.11; K11-K20 n=60 Δ=+1.7 q=0.12
+   affine_unscramble    [general] K11-K20 n=79 Δ=-8.9 q=0.22; K13-K20 n=36 Δ=+8.3 q=0.19
+   affine_uuidctf       [general] K13-K20 n=48 Δ=-22.9 q=0.23
+   affine_verbatim      [general] K13-K20 n=48 Δ=-14.6 q=0.27
+   affine_wikispeedia   [general] K13-K20 n=249 Δ=-12.4 q=0.17; K12-K15 n=108 Δ=-3.7 q=0.19; K13-K15 n=108 Δ=+0.9 q=0.12; K15-K19 n=108 Δ=-6.5 q=0.25; K15-K20 n=108 Δ=-4.6 q=0.12; K17-K19 n=108 Δ=-6.5 q=0.19
+   affine_i3math        [math] K11-K20 n=100 Δ=-6.0 q=0.20; K16-K20 n=84 Δ=-10.7 q=0.23; K13-K20 n=73 Δ=-47.9 q=0.53; K11-K16 n=66 Δ=-1.5 q=0.17; K11-K13 n=63 Δ=+25.4 q=0.35; K13-K16 n=39 Δ=-25.6 q=0.36
+   terminal_bench_2     [terminal] K11-K20 n=47 Δ=-16.0 q=0.32; K13-K20 n=36 Δ=-13.9 q=0.31
+   terminal_lego        [terminal] K11-K13 n=65 Δ=+6.2 q=0.18
+   affine_agent         [tool_use] K13-K20 n=281 Δ=-1.4 q=0.11; K16-K20 n=120 Δ=-0.8 q=0.11; K12-K13 n=108 Δ=-0.9 q=0.08; K16-K18 n=108 Δ=-2.8 q=0.08; K12-K16 n=99 Δ=-5.1 q=0.11; K12-K20 n=99 Δ=-4.0 q=0.12
+   affine_tau2          [tool_use] K16-K20 n=128 Δ=+1.6 q=0.05; K14-K15 n=96 Δ=+0.0 q=0.00; K19-K20 n=96 Δ=+3.1 q=0.03; K17-K20 n=80 Δ=-5.0 q=0.07; K18-K19 n=80 Δ=-2.5 q=0.03; K18-K20 n=80 Δ=+0.0 q=0.05
+   affine_tau2_synth    [tool_use] K16-K20 n=112 Δ=-0.9 q=0.31; K17-K19 n=96 Δ=+2.1 q=0.23; K17-K20 n=96 Δ=+5.2 q=0.32; K19-K20 n=96 Δ=+3.1 q=0.28; K17-K18 n=95 Δ=+3.2 q=0.22; K18-K19 n=95 Δ=-1.1 q=0.20
+   affine_when2call     [tool_use] K13-K20 n=642 Δ=-40.8 q=0.45; K12-K13 n=312 Δ=-0.3 q=0.04; K12-K15 n=249 Δ=-2.0 q=0.07; K12-K20 n=229 Δ=-41.9 q=0.46; K13-K15 n=227 Δ=+0.9 q=0.03; K15-K20 n=216 Δ=-38.0 q=0.44
+
+== §2b solve rates by family (sampled rollouts pooled over the family's envs; % solved) ==
+family      teacher  genesis  kings μ kings spread n_kings | per king (rate/n)
+coding         64.4     47.4     62.2         34.1      10 | K11:43/974 K12:59/195 K13:57/537 K14:73/151 K15:74/259 K16:62/233 K17:65/234 K18:52/173 K19:61/222 K20:77/378
+general        64.2     49.8     50.0         21.4      10 | K11:53/2219 K12:45/889 K13:44/4302 K14:54/263 K15:48/536 K16:39/406 K17:60/328 K18:44/437 K19:57/675 K20:56/2745
+math           86.1     44.0     71.6         52.2       5 | K11:93/10171 K12:74/43 K13:41/516 K15:71/24 K16:68/84 K18:62/24 K20:81/132
+nl2repo         6.4      1.2      7.4          9.2       5 | K11:6/93 K12:2/94 K13:7/69 K16:32/25 K18:14/29 K19:10/72 K20:11/106
+terminal       81.8     70.8     62.1         36.7       8 | K11:69/291 K12:69/51 K13:77/391 K14:100/6 K15:62/45 K16:40/40 K17:92/12 K18:61/44 K19:52/94 K20:67/125
+tool_use       78.3     83.0     58.5         69.1      10 | K11:15/613 K12:45/588 K13:49/3254 K14:31/410 K15:33/632 K16:84/832 K17:84/468 K18:82/547 K19:82/468 K20:80/2414
+
+== §2c teacher vs king, PAIRED on shared tasks (teacher − king, points) ==
+coding     n=  1579 pairs= 28 T−K=+23.4 discord=0.30 teacher ahead in 96% of pairs | K11:+14.8 K12:+7.7 K13:+17.9 K14:+33.7 K15:+24.6 K16:+33.9 K17:+30.1 K18:+27.3 K19:+36.8 K20:+26.3
+general    n=  7991 pairs= 67 T−K=+17.7 discord=0.26 teacher ahead in 91% of pairs | K11:+5.8 K12:+15.8 K13:+26.8 K14:+22.7 K15:+18.9 K16:+17.4 K17:+24.3 K18:+31.2 K19:+16.5 K20:+17.6
+math       n=  8419 pairs=  5 T−K=+6.5 discord=0.10 teacher ahead in 100% of pairs | K11:+2.7 K13:+55.8 K16:+32.1 K20:+18.9
+nl2repo    n=    36 pairs=  1 T−K=+4.2 discord=0.06 teacher ahead in 100% of pairs | K13:+4.2
+terminal   n=   352 pairs=  6 T−K=+18.4 discord=0.45 teacher ahead in 100% of pairs | K11:+22.5 K13:+15.2 K19:+31.9 K20:+17.5
+tool_use   n=  9360 pairs= 34 T−K=+27.3 discord=0.32 teacher ahead in 91% of pairs | K11:+36.5 K12:+33.3 K13:+33.8 K14:+63.7 K15:+62.7 K16:+14.8 K17:+14.7 K18:+16.4 K19:+16.7 K20:+10.8
+
+== §2d matrix env cells: spread across kings 11-20 (unpaired solve rates, low_n cells excluded) ==
+   swerebench_v2        [coding  ] kings=8 min=3 max=69 spread=66 sd=23.0 teacher=35
+   multiswe             [coding  ] kings=9 min=26 max=73 spread=47 sd=14.5 teacher=42
+   scaleswe             [coding  ] kings=9 min=40 max=82 spread=42 sd=15.8 teacher=62
+   swesmith             [coding  ] kings=10 min=54 max=94 spread=40 sd=12.1 teacher=85
+   r2e_gym              [coding  ] kings=5 min=47 max=86 spread=40 sd=13.3 teacher=74
+   swelego              [coding  ] kings=6 min=63 max=92 spread=29 sd=10.2 teacher=90
+   affine_sql           [general ] kings=9 min=17 max=93 spread=75 sd=22.3 teacher=85
+   affine_science       [general ] kings=3 min=17 max=62 spread=45 sd=20.8 teacher=19
+   affine_oolong        [general ] kings=3 min=38 max=79 spread=41 sd=17.6 teacher=67
+   affine_logic         [general ] kings=3 min=44 max=83 spread=39 sd=16.0 teacher=70
+   affine_wikispeedia   [general ] kings=9 min=39 max=77 spread=38 sd=10.6 teacher=74
+   affine_eog           [general ] kings=9 min=27 max=58 spread=31 sd=10.1 teacher=35
+   affine_unscramble    [general ] kings=3 min=35 max=66 spread=31 sd=14.7 teacher=38
+   affine_prolog        [general ] kings=2 min=20 max=51 spread=31 sd=15.4 teacher=82
+   affine_pydantic      [general ] kings=3 min=54 max=77 spread=22 sd=9.5 teacher=79
+   affine_uuidctf       [general ] kings=2 min=0 max=22 spread=22 sd=11.1 teacher=98
+   affine_ifeval        [general ] kings=3 min=76 max=95 spread=20 sd=8.2 teacher=95
+   affine_i3code        [general ] kings=3 min=54 max=72 spread=18 sd=7.4 teacher=49
+   affine_trivia        [general ] kings=3 min=71 max=87 spread=16 sd=6.4 teacher=68
+   affine_numina        [general ] kings=3 min=12 max=25 spread=13 sd=6.1 teacher=64
+   affine_verbatim      [general ] kings=2 min=62 max=73 spread=11 sd=5.5 teacher=64
+   affine_deshuffle     [general ] kings=3 min=0 max=10 spread=10 sd=4.9 teacher=35
+   affine_rcore         [general ] kings=3 min=62 max=69 spread=7 sd=3.2 teacher=72
+   affine_autobench     [general ] kings=9 min=3 max=10 spread=7 sd=2.7 teacher=18
+   affine_rgym          [general ] kings=2 min=71 max=71 spread=0 sd=0.1 teacher=69
+   affine_i3math        [math    ] kings=5 min=41 max=85 spread=44 sd=16.3 teacher=68
+   affine_math          [math    ] kings=5 min=93 max=98 spread=5 sd=1.9 teacher=97
+   nl2repobench         [nl2repo ] kings=5 min=4 max=26 spread=22 sd=7.0 teacher=8
+   affine_nl2lib        [nl2repo ] kings=4 min=0 max=0 spread=0 sd=0.0 teacher=6
+   affine_tmax          [terminal] kings=3 min=53 max=83 spread=30 sd=13.9 teacher=76
+   terminal_bench_2     [terminal] kings=4 min=28 max=44 spread=17 sd=7.2 teacher=59
+   terminal_lego        [terminal] kings=2 min=82 max=82 spread=0 sd=0.0 teacher=89
+   affine_tau2          [tool_use] kings=7 min=0 max=100 spread=100 sd=44.0 teacher=75
+   affine_tau2_synth    [tool_use] kings=8 min=0 max=60 spread=60 sd=27.9 teacher=76
+   affine_when2call     [tool_use] kings=10 min=33 max=91 spread=57 sd=24.1 teacher=76
+   affine_agent         [tool_use] kings=9 min=86 max=96 spread=11 sd=2.9 teacher=90
+
+== §3 cost / time (king agent loop, sampled graded rollouts; pod = 1×H200 $3/h, containers on the pod) ==
+family          n wall p50     p90    mean     ptok    ctok conc ro/pod-h $/rollout
+coding       5390      402    1367     606  1543068   19450   32      133    0.0225
+   swesmith               n= 1179 p50=  268s p90=  726s ptok=1003803 ctok= 13153 ro/pod-h=  220 $/ro=0.0137
+   multiswe               n= 1165 p50=  722s p90= 2011s ptok=2407084 ctok= 28052 ro/pod-h=   86 $/ro=0.0350
+   scaleswe               n= 1010 p50=  354s p90= 1117s ptok=1626221 ctok= 19197 ro/pod-h=  152 $/ro=0.0197
+   swerebench_v2          n=  706 p50=  422s p90= 1418s ptok=1730450 ctok= 20527 ro/pod-h=  127 $/ro=0.0236
+   r2e_gym                n=  667 p50=  382s p90= 1191s ptok=1015790 ctok= 16627 ro/pod-h=  144 $/ro=0.0208
+   swelego                n=  663 p50=  375s p90= 1396s ptok=1188067 ctok= 17609 ro/pod-h=  141 $/ro=0.0212
+general     21543       52     354     141   183365    7317   32      574    0.0052
+   affine_wikispeedia     n= 3598 p50=   84s p90=  289s ptok=  78675 ctok=  6562 ro/pod-h=  643 $/ro=0.0047
+   affine_sql             n= 3001 p50=   29s p90=   79s ptok=  22914 ctok=  1672 ro/pod-h= 1710 $/ro=0.0018
+   affine_autobench       n= 2269 p50=  328s p90=  736s ptok= 619534 ctok= 14592 ro/pod-h=  206 $/ro=0.0145
+   affine_eog             n= 2082 p50=   64s p90=  223s ptok= 392096 ctok=  6826 ro/pod-h=  761 $/ro=0.0039
+   affine_logic           n= 1199 p50=   53s p90=  214s ptok=    642 ctok=  5553 ro/pod-h=  910 $/ro=0.0033
+   affine_trivia          n= 1126 p50=   10s p90=   20s ptok=     83 ctok=  1354 ro/pod-h= 3952 $/ro=0.0008
+   affine_rcore           n=  932 p50=   22s p90=  124s ptok=    341 ctok=  2944 ro/pod-h= 1744 $/ro=0.0017
+   affine_i3code          n=  918 p50=   68s p90=  183s ptok=    636 ctok=  7989 ro/pod-h=  893 $/ro=0.0034
+   affine_pydantic        n=  908 p50=   29s p90=   65s ptok=   1215 ctok=  2109 ro/pod-h= 2055 $/ro=0.0015
+   affine_ifeval          n=  768 p50=   24s p90=   84s ptok=    310 ctok=  2744 ro/pod-h= 2025 $/ro=0.0015
+   affine_unscramble      n=  768 p50=   24s p90=   50s ptok=    201 ctok=  1565 ro/pod-h= 2745 $/ro=0.0011
+   affine_rgym            n=  756 p50=   25s p90=  210s ptok=    383 ctok=  4749 ro/pod-h= 1185 $/ro=0.0025
+   affine_science         n=  721 p50=   31s p90=  130s ptok=    146 ctok=  3402 ro/pod-h= 1533 $/ro=0.0020
+   affine_verbatim        n=  672 p50=   33s p90=   55s ptok=    909 ctok=  2086 ro/pod-h= 2348 $/ro=0.0013
+   affine_prolog          n=  476 p50=  572s p90= 1509s ptok= 948920 ctok= 30562 ro/pod-h=  109 $/ro=0.0276
+   affine_deshuffle       n=  313 p50=  310s p90=  783s ptok= 789344 ctok= 31340 ro/pod-h=  184 $/ro=0.0163
+   affine_uuidctf         n=  309 p50=  331s p90=  883s ptok= 809260 ctok= 29073 ro/pod-h=  174 $/ro=0.0172
+   affine_numina          n=  308 p50=  294s p90= 1179s ptok= 983648 ctok= 38048 ro/pod-h=  159 $/ro=0.0189
+   affine_oolong          n=  301 p50=  124s p90=  607s ptok= 363545 ctok= 17494 ro/pod-h=  321 $/ro=0.0093
+   affine_mrcr            n=  118 p50=   49s p90=   76s ptok=  91978 ctok=  3653 ro/pod-h= 1543 $/ro=0.0019
+math        13959       15      98      37      136    2493   64     4310    0.0007
+   affine_math            n=11789 p50=   13s p90=   50s ptok=    133 ctok=  1661 ro/pod-h= 6329 $/ro=0.0005
+   affine_i3math          n= 2170 p50=   71s p90=  232s ptok=    153 ctok=  7013 ro/pod-h= 1577 $/ro=0.0019
+nl2repo       832      682    1558     809  2891933   31872   16       50    0.0602
+   nl2repobench           n=  461 p50=  768s p90= 1822s ptok=3336497 ctok= 39829 ro/pod-h=   42 $/ro=0.0708
+   affine_nl2lib          n=  371 p50=  543s p90= 1067s ptok=2339524 ctok= 21985 ro/pod-h=   64 $/ro=0.0470
+terminal     2036      119     747     309   592122   16758   32      261    0.0115
+   terminal_lego          n=  916 p50=   77s p90=  404s ptok= 482664 ctok= 12539 ro/pod-h=  464 $/ro=0.0065
+   affine_tmax            n=  561 p50=   99s p90=  347s ptok= 281707 ctok= 14287 ro/pod-h=  414 $/ro=0.0073
+   terminal_bench_2       n=  559 p50=  404s p90= 1661s ptok=1083008 ctok= 26152 ro/pod-h=  125 $/ro=0.0241
+tool_use    15960       34     193      85   126304    3015   32      951    0.0032
+   affine_when2call       n= 7858 p50=   19s p90=   37s ptok=   2778 ctok=   883 ro/pod-h= 3380 $/ro=0.0009
+   affine_agent           n= 3423 p50=  112s p90=  320s ptok= 202352 ctok=  6278 ro/pod-h=  534 $/ro=0.0056
+   affine_tau2_synth      n= 1695 p50=   70s p90=  132s ptok=  72963 ctok=  4059 ro/pod-h=  981 $/ro=0.0031
+   affine_tau2            n= 1663 p50=  113s p90=  214s ptok= 190050 ctok=  3717 ro/pod-h=  652 $/ro=0.0046
+   affine_notool          n=  638 p50=   12s p90=   19s ptok=   3367 ctok=  1153 ro/pod-h= 4771 $/ro=0.0006
+   affine_wiki            n=  481 p50=  613s p90=  914s ptok=1757094 ctok= 10452 ro/pod-h=  140 $/ro=0.0214
+   affine_kb_synth        n=  202 p50=   77s p90=  121s ptok=  70793 ctok=  4284 ro/pod-h=  987 $/ro=0.0030
+
+   pods × 2 models inside 2 h (tasks per model → pods total, rental $ for the window, marginal compute $):
+   coding     Δ3: 1196t→10pods $60 ($54) | 80%: 2346t→18pods $108 ($106) || Δ5: 431t→4pods $24 ($19) | 80%: 845t→8pods $48 ($38) || Δ10: 108t→2pods $12 ($5) | 80%: 212t→2pods $12 ($10)
+   general    Δ3: 750t→2pods $12 ($8) | 80%: 1472t→4pods $24 ($15) || Δ5: 270t→2pods $12 ($3) | 80%: 530t→2pods $12 ($6) || Δ10: 68t→2pods $12 ($1) | 80%: 133t→2pods $12 ($1)
+   math       Δ3: 1049t→2pods $12 ($1) | 80%: 2058t→2pods $12 ($3) || Δ5: 378t→2pods $12 ($1) | 80%: 741t→2pods $12 ($1) || Δ10: 95t→2pods $12 ($0) | 80%: 186t→2pods $12 ($0)
+   terminal   Δ3: 1055t→6pods $36 ($24) | 80%: 2070t→8pods $48 ($48) || Δ5: 380t→2pods $12 ($9) | 80%: 745t→4pods $24 ($17) || Δ10: 95t→2pods $12 ($2) | 80%: 187t→2pods $12 ($4)
+   tool_use   Δ3: 781t→2pods $12 ($5) | 80%: 1531t→2pods $12 ($10) || Δ5: 281t→2pods $12 ($2) | 80%: 552t→2pods $12 ($3) || Δ10: 71t→2pods $12 ($0) | 80%: 138t→2pods $12 ($1)
+
+== §4 mechanism design ==
+(a) gaming surface
+  - reward hacking on synthetic tasks: the graders are the same tests the agent can read; a miner can special-case
+    (edit tests, hard-code expected outputs, `pytest -p no:...`, delete the failing test). Mitigations already in
+    our harnesses: tests re-copied from the task image before grading (SWE-smith / Harbor pattern), PASS→PASS set
+    must stay green, network_allow=[] for chat-shaped sets, time/turn budgets. Feature-deletion adds: grade on the
+    ORIGINAL test files (not the working tree), reject diffs that touch test paths, require the removed symbols'
+    signatures to be present (a stub that returns the expected constant fails on ≥ 2 red tests by construction if
+    the k tests exercise ≥ 2 distinct inputs — pick features with k ≥ 3).
+  - generator predictability: a public generator with a private per-duel seed is FINE — training on the
+    distribution IS the skill (rgym, tau2-synth personas, mutator families). NOT fine: finite pools that repeat
+    (terminal_lego / tmax / swesmith shards: a miner can SFT the whole pool; ~23k+14k+50k public tasks). Rule:
+    an instance may enter a confirmation at most once, ever (published task ids make this auditable), and the seed
+    = block hash of the crown candidate's reveal, like the duel slice seed.
+  - king-copy: an ε-copy ties (Δ≈0, discordance ≈ sampling noise only) → cannot win at 2·SE → no crown. Good.
+    Side effect: under `must-win` a genuinely equal model never crowns either — that is the intent (δ analogue).
+  - difficulty drift between duels: paired design cancels it (both models see the same instances); the published
+    yardstick (teacher solve rate on the same instances) makes the drift visible across verdicts.
+  - variance games: a challenger can raise its own per-task variance (T=0.8 sampling) — irrelevant for the paired
+    Δ but raises SE; must-win therefore favours DETERMINISTIC-ish challengers. Fix: one rollout per task per model
+    at T=0 for the confirmation, or k=2 and average.
+  - harness games: the confirmation must run the challenger through the SAME harness set the datagen king seat
+    uses (textbased / bash / pi / claude_code / terminus / toolcall), otherwise a miner tunes to one scaffold.
+(b) composition with the dense meter
+  - filter: dense duel must be won at 2·SE + δ on 1,300 turns (unchanged) — cheap, ~30 min.
+  - gate (must not lose): confirmation Δ ≥ −2·SE. Blocks regressions only; a plateaued equal model still crowns
+    on the dense meter alone → does not break the plateau. Cheapest in tasks (Δ=0 needs no power, only the SE).
+  - must-win: Δ ≥ +2·SE (like the wvk-19 turn slice). Breaks the plateau: crowns only real capability gains of
+    ≥ ~5 pts on ~500–850 tasks. Risk: the board freezes when nobody beats the king on tasks — acceptable if the
+    king is at teacher level (then the freeze is the honest state); pair with the decaying-δ idea for liveness.
+  - blend: rank = dense z + λ·task z. Re-opens Goodhart on the dense side (a big dense margin buys a task loss);
+    not recommended.
+  - recommendation: gate first (one crown cycle, no contract risk), then must-win once the ready families have
+    published yardsticks.
+(c) replayability: per verdict publish task ids + seeds + generator commit + task images' digests, both models'
+    full traces (already the datagen trace envelope), grader outputs and the Δ / SE / n; anyone can re-run.
+(d) 'frontier level': the teacher runs the same fresh instances (3rd model, +50 % cost) and its solve rate is
+    published next to king/challenger; 'frontier' = challenger − teacher ≥ 0 at 2·SE on the paired tasks. Today the
+    teacher is ahead of every king on every family (§2c: +6 math … +27 tool_use), so this yardstick has room.
+
+definitions: paired_delta = mean over shared tasks of solved_A − solved_B (one sampled T=0.8 rollout per task per model unless the seat replayed); discordance = share of shared tasks where the two models disagree (exactly one solved) = var of d when Δ≈0; n_2se = tasks for Δ to sit exactly on the 2·SE crown bar (≈50 % power); n_80pct = tasks for 80 % power at the one-sided 2·SE bar; rollouts_per_pod_hour = concurrency × 3600 / mean wall × 0.7 utilisation, king agent loop on one 1×H200 pod; usd_per_rollout_pod = pod $/h ÷ rollouts per pod-hour (containers run on the pod; no sandbox fee); plan_2h = pods for N tasks × 2 models inside 2 h and their rental cost; usd_rollouts_only = marginal compute if the pods are shared

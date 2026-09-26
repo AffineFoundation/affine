@@ -136,7 +136,7 @@ chat_shards = [
 shard_after = [["graphwalks"], ["oolong-synth", "mrcr-v2"], ["minif2f"]]   # after each shard: docker long-context cells (prime for minif2f)
 chat_plans = ["h200-1x", "pro6000-1x", "b200-1x", "prime-h200-1x", "prime-h100-2x", "prime-a100-2x"]   # prime-* = Prime pods when Lium is out
 agentic_envs_on_pod = ["tau2-airline", "tau2-retail", "tau2-telecom", "tau3-banking"]
-agentic_plans = ["h200-1x", "b200-1x", "pro6000-1x"]
+agentic_plans = ["h200-1x", "b200-1x"]   # never PRO6000: Terminus/TB2 steps ran 82 s vs 28-34 s on H200/B200 (reign 21, 2026-09-23) and the per-task timeouts are wall-clock
 swe_plans = ["h200-2x", "b200-2x", "b200-1x", "h200-1x"]
 swe_in_flight = 200
 tb2_in_flight = 89
@@ -576,7 +576,7 @@ concurrency = 48            # fixed: 48 tasks in flight, run alone on the pod (p
 note = "SWE-bench Verified, all 500, mini-swe-agent harness, prebuilt swebench/sweb.eval images; the task's own hidden tests grade."
 # sandbox = "daytona" route (harbor_cell.py): same 500 tasks from the Harbor registry, containers on
 # Daytona, Harbor's mini-swe-agent adapter (upstream mini-swe-agent v2 in the sandbox) = harness change.
-harbor = { dataset = "swebench-verified@1.0", agent = "mini-swe-agent", task_agent_timeout_s = 3000 }
+harbor = { dataset = "swebench-verified@1.0", agent = "mini-swe-agent", task_agent_timeout_s = 3000, network = "agent-allowlist" }
 
 # ------------------------------------------------------------ agentic set
 # Added 2026-09-15 (Jacob: "kings comparable to public agentic releases",
@@ -599,8 +599,11 @@ secondary = false
 max_turns = 200
 rollout_timeout = 3600
 concurrency = 16
-note = "Terminal-Bench 2.0, all 89 tasks (Harbor dataset terminal-bench/terminal-bench-2, alexgshaw/* Docker Hub images), Terminus 2 harness = the public leaderboard's reference agent; each task's hidden verifier grades pass/fail. Fixed 1 h budget per task. Occamy reports 'Terminal-Bench 2.1' (same task set, harness release 2.1)."
-harbor = { dataset = "terminal-bench@2.0", agent = "terminus-2", task_agent_timeout_s = 3600 }
+note = "Terminal-Bench 2.0, all 89 tasks (Harbor dataset terminal-bench/terminal-bench-2, alexgshaw/* Docker Hub images), Terminus 2 harness = the public leaderboard's reference agent; each task's hidden verifier grades pass/fail. Official per-task agent timeouts from each task.toml (p50 15 min, 60 min for 12 tasks, max 200 min; 3600 s is only a ceiling on the two longest) — the leaderboard's own rule, wall-clock, so the serving GPU matters (served_gpu is recorded per cell). Occamy reports 'Terminal-Bench 2.1' (same task set, harness release 2.1)."
+# network = "public": the official TB2 harness gives the agent internet (the Harbor tasks carry no
+# network_mode, i.e. Harbor's default public; ~10/89 instructions clone / install from the net), so an
+# allowlist would change the benchmark. SWE-bench cells run "agent-allowlist" (2026-09-24 leak audit).
+harbor = { dataset = "terminal-bench@2.0", agent = "terminus-2", task_agent_timeout_s = 3600, network = "public" }
 
 [[envs]]
 id = "swebench-pro"
@@ -617,7 +620,7 @@ max_turns = 300
 rollout_timeout = 3600
 concurrency = 48
 note = "SWE-bench Pro public split, all 731 (Harbor dataset scale-ai/swe-bench-pro, SWEAP jefzda/* images), mini-swe-agent harness like our SWE-bench Verified row (the public leaderboard uses SWE-agent; not directly comparable). ~16 h on one H200; read finished-only next to the full score."
-harbor = { dataset = "swebenchpro@1.0", agent = "mini-swe-agent", task_agent_timeout_s = 3000 }
+harbor = { dataset = "swebenchpro@1.0", agent = "mini-swe-agent", task_agent_timeout_s = 3000, network = "agent-allowlist" }
 
 [[envs]]
 id = "tau2-airline"

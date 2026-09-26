@@ -370,6 +370,11 @@ def cmd_release(args: argparse.Namespace) -> int:
     mem = pods.get(args.name)
     if mem is None:
         raise SystemExit(f"unknown pod {args.name}")
+    if mem.get("released_at"):
+        # already released: a second release (fast-pass tail / cleanup, a by-hand release after a reaper kill) must
+        # not move released_at forward -- 2026-09-24 it inflated the Albedo pass's pod cost by ~$90
+        log(f"{args.name}: already released at {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(mem['released_at']))}; nothing to do")
+        return 0
     ok = lium_api.remove(args.name, POD_PREFIX)
     if args.strike and mem.get("executor_id"):
         STATE_DIR.mkdir(parents=True, exist_ok=True)

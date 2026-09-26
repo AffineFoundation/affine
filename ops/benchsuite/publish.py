@@ -29,6 +29,20 @@ import tomllib
 # docker pulls failed ("Unable to find image", Docker Hub cap) and a 70.4 finished-only over
 # 54 tasks on the board (2026-09-17 18:18 UTC); half the tasks missing is not a score.
 FAILED_CELL_ERROR_SHARE = 0.50
+DATASET_SIZE = {"swebench-verified": 500, "terminal-bench-2": 89}
+
+
+def job_running(run_dir, model: str, env_id: str):
+    """A launcher / Harbor job for this cell is alive (the watcher's SWE and TB2 jobs run outside the pass)."""
+    import subprocess
+    base, _, tag = env_id.partition("@")
+    d12 = run_dir.name.split("-")[1][:12] if "-" in run_dir.name else ""
+    out = subprocess.run(["pgrep", "-fa", f"harbor_cell.py (run|resume) --env {base} .*--model (king-)?{d12}"], capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        tagged = "--budget-tag" in line
+        if (tag and f"--budget-tag {tag}" in line) or (not tag and not tagged):
+            return {"n_expected": DATASET_SIZE.get(base)}
+    return None
 from pathlib import Path
 
 import boto3
@@ -114,6 +128,10 @@ def scorecard(run_dir: Path) -> dict:
                                             + float(m2.get("prime_spent_usd") or 0), 2)
     cells = {}
     for summ_path in sorted(run_dir.glob("*/*/summary.json")):
+        try:
+            float(summ_path.parent.name.rpartition("__t")[2])
+        except ValueError:
+            continue   # moved-aside cell (__t0.dead-18, __t0.contended-HHMM): its summary must not shadow the live cell
         s = json.loads(summ_path.read_text())
         s = {k: v for k, v in s.items() if k != "rollouts"}
         cells.setdefault(s["env"], {}).setdefault(f"t{s['temperature']:g}", {})[s["model"]] = s
@@ -128,12 +146,25 @@ def scorecard(run_dir: Path) -> dict:
             if not PARTIAL:
                 model = d.parent.name
                 env_id, _, t = d.name.rpartition("__t")
+                try:
+                    float(t)
+                except ValueError:
+                    continue   # a moved-aside cell dir (__t0.contended-HHMM, .dead-...) is not a live cell
                 why = (d / "cmd.txt").read_text(errors="replace").strip().splitlines()
-                cells.setdefault(env_id, {}).setdefault(f"t{float(t):g}", {}).setdefault(model, {
-                    "env": env_id, "temperature": float(t), "model": model, "n": 0, "n_errored": 0, "score": None, "ci95": None,
-                    "completion_tokens": 0, "prompt_tokens": 0, "run_failed": True,
-                    "failure_note": ("no pod (stock)" if why and why[0].startswith("no pod") else "the pass ended without a result for this cell"),
-                })
+                # a Harbor job still running under this cell (the watcher's SWE / TB2 jobs share the run dir) is not
+                # a failure: publish it as RUNNING with its trial count (Jacob 2026-09-23: "failed" placeholders were
+                # shown for reign 21's @4h250 while it was 400/500 in)
+                running = job_running(run_dir, model, env_id)
+                n_done = len(list((d / "harbor").glob("*/result.json"))) if (d / "harbor").is_dir() else 0
+                entry = {"env": env_id, "temperature": float(t), "model": model, "n": n_done, "n_errored": 0, "score": None, "ci95": None,
+                         "completion_tokens": 0, "prompt_tokens": 0}
+                if running:
+                    entry.update(running=True, n_expected=running.get("n_expected"),
+                                 failure_note=f"running: {n_done} of {running.get('n_expected') or '?'} trials done")
+                else:
+                    entry.update(run_failed=True,
+                                 failure_note=("no pod (stock)" if why and why[0].startswith("no pod") else "the pass ended without a result for this cell"))
+                cells.setdefault(env_id, {}).setdefault(f"t{float(t):g}", {}).setdefault(model, entry)
     by_id = {e["id"]: e for e in SUITE["envs"]}
 
     def side(x: dict | None, teacher: bool = False) -> dict | None:
@@ -145,6 +176,10 @@ def scorecard(run_dir: Path) -> dict:
         the record so the gap check can retry the cell."""
         if not x:
             return None
+        if x.get("running"):
+            return {"score": None, "ci95": None, "n": x.get("n", 0), "n_errored": 0, "status": "running", "running": True,
+                    "n_expected": x.get("n_expected"), "failure": x.get("failure_note"), "finished_only": None, "by_class": None,
+                    "completion_tokens": 0, "prompt_tokens": 0, "wall_seconds": None, "finish_length_frac": None}
         if x.get("run_failed"):
             return {"score": None, "ci95": None, "n": 0, "n_errored": 0, "status": "failed", "run_failed": True,
                     "failure": f"run failed: {x.get('failure_note')}", "finished_only": None, "by_class": None,
@@ -163,15 +198,24 @@ def scorecard(run_dir: Path) -> dict:
         # with its n, but the cell is not final — the watcher resumes the job (2026-09-22: reign 15's
         # @4h250 published 0.389 on 216 of 500 live trials after a Daytona capacity stop)
         n_exp = x.get("n_expected")
-        partial = bool(n_exp) and n_live < int(n_exp) and not (failed or infra_cut)
+        # <= 2 % of the task set never reaching a live model is noise-level (reign 15: 5 of 500 after three resumes) --
+        # publish as final with the count in the note instead of holding the cell "partial" forever
+        partial = bool(n_exp) and (int(n_exp) - n_live) > max(2, 0.02 * int(n_exp)) and not (failed or infra_cut)   # <= 2 trials or <= 2 % missing = final
         out = {"score": None if (failed or infra_cut) else x["score"], "ci95": None if (failed or infra_cut) else x["ci95"], "n": x["n"],
                "n_errored": x["n_errored"], "n_timeout": x.get("n_timeout"), "n_context_overflow": x.get("n_context_overflow"),
-               "n_infra_env": x.get("n_infra_env"), "n_live": x.get("n_live"),
+               "n_infra_env": x.get("n_infra_env"), "n_live": x.get("n_live"), "served_gpu": x.get("served_gpu"),
+               # 2026-09-24 network-leak audit (sandboxes had outbound internet): the cell stays, flagged
+               "contaminated": bool(x.get("contaminated")), "leak_audit": x.get("leak_audit"),
+               # harbor cells since 2026-09-24: {"mode": "agent-allowlist" | "public", "allowed_hosts": [...]}
+               "network": x.get("network"),
                "finished_only": None if (failed or infra_cut) else x.get("finished_only"), "completion_tokens": x["completion_tokens"],
                "prompt_tokens": x["prompt_tokens"], "wall_seconds": x.get("wall_seconds"),
                "finish_length_frac": x.get("finish_length_frac"),
                "by_class": x.get("by_class") or None,
                "status": "failed" if (failed or infra_cut) else ("partial" if partial else "ok")}
+        if n_exp and not partial and n_live < int(n_exp) and not (failed or infra_cut):
+            out["n_expected"] = int(n_exp)
+            out["note"] = f"{int(n_exp) - n_live} of {n_exp} trials never ran against a live model (infrastructure); scored on {n_live}"
         if partial:
             out["n_expected"] = int(n_exp)
             out["failure"] = f"partial: {n_live} of {n_exp} trials ran against a live model; the job is being resumed"
@@ -182,6 +226,17 @@ def scorecard(run_dir: Path) -> dict:
         for key in ("sandbox", "harness", "harness_change", "harness_note", "budget", "served_by"):
             if x.get(key) is not None:
                 out[key] = x[key]
+        # a summary-level note (stamped by hand or by a runner) and the cap-bound warning: a cell where a quarter or
+        # more of the replies ended on `length` measures the completion cap as much as the model (2026-09-25: Genesis
+        # @8k / @16k = 50–82 % cap hits vs 16–33 % at the current caps; Albedo miniF2F 57 %)
+        flf = x.get("finish_length_frac")
+        cap_note = (f"cap-bound: {round(100 * float(flf))} % of replies hit the {x.get('max_tokens') or (x.get('budget') or {}).get('max_tokens') or '?'}-token completion cap"
+                    if isinstance(flf, (int, float)) and flf >= 0.25 else None)
+        extra = " · ".join(s for s in (x.get("note"), cap_note) if s)
+        if extra and not out.get("note"):
+            out["note"] = extra
+        elif extra:
+            out["note"] = out["note"] + " · " + extra
         if failed:
             out["raw_score"] = x["score"]
             out["failure"] = f"{n_err}/{n} rollouts errored (run failure, not a model score)"

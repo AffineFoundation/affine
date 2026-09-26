@@ -1,0 +1,2858 @@
+{
+ "n_states": 67,
+ "n_stuck": 28,
+ "n_stuck_with_verified_better": 12,
+ "n_stuck_with_verified_better_incl_F": 12,
+ "n_verified_better_actions": 24,
+ "n_echoes_usable": 4895,
+ "n_echo_errors": 0,
+ "usd": 0.8960940000000018,
+ "sigmas": {
+  "pooled": {
+   "bash": 0.19623880809060873,
+   "tool_call": 0.2014657813907563,
+   "terminus_json": 0.1648213254555373
+  },
+  "live": {
+   "bash": 0.15454488384920756,
+   "tool_call": 0.19752957740282823,
+   "terminus_json": 0.13367035251839565
+  }
+ },
+ "plausibility": {
+  "lp0_pb|failed|ALL verified-better (T\u222aF1)": {
+   "n": 24,
+   "n_states": 12,
+   "in_range": 0.25,
+   "in_range_ci": [
+    0.1199920347934233,
+    0.4489982531210644
+   ],
+   "n_ref2": 8,
+   "in_range_ref2": 0.75,
+   "ge_floor": 0.6666666666666666,
+   "ge_floor_ci": [
+    0.4670595949408046,
+    0.8202802131162036
+   ],
+   "gt_max": 0.4166666666666667,
+   "z_mean": -0.06634016541686137,
+   "z_p50": 0.10456058441261541,
+   "n_z": 8,
+   "delta_best_failed_mean": 0.011146189010259017,
+   "delta_best_failed_p50": -0.00953771511187997,
+   "same_as_teacher": 0.20833333333333334
+  },
+  "lp0_pb|failed|mini_swe_textbased": {
+   "n": 9,
+   "n_states": 4,
+   "in_range": 0.1111111111111111,
+   "in_range_ci": [
+    0.019890371327130535,
+    0.4350062147680601
+   ],
+   "n_ref2": 2,
+   "in_range_ref2": 0.5,
+   "ge_floor": 0.7777777777777778,
+   "ge_floor_ci": [
+    0.4525833436728054,
+    0.9367762376877727
+   ],
+   "gt_max": 0.6666666666666666,
+   "z_mean": 0.511046930668839,
+   "z_p50": 0.511046930668839,
+   "n_z": 2,
+   "delta_best_failed_mean": 0.060979616764754496,
+   "delta_best_failed_p50": 0.07550476316789537,
+   "same_as_teacher": 0.0
+  },
+  "lp0_pb|failed|bash": {
+   "n": 9,
+   "n_states": 5,
+   "in_range": 0.4444444444444444,
+   "in_range_ci": [
+    0.188775429471914,
+    0.7333526542559703
+   ],
+   "n_ref2": 5,
+   "in_range_ref2": 0.8,
+   "ge_floor": 0.6666666666666666,
+   "ge_floor_ci": [
+    0.35419734749908977,
+    0.879418401317257
+   ],
+   "gt_max": 0.2222222222222222,
+   "z_mean": -0.23910476843000691,
+   "z_p50": 0.1161476983951249,
+   "n_z": 5,
+   "delta_best_failed_mean": -0.02287192139901191,
+   "delta_best_failed_p50": -0.021267755419211117,
+   "same_as_teacher": 0.0
+  },
+  "lp0_pb|failed|terminus_2": {
+   "n": 6,
+   "n_states": 3,
+   "in_range": 0.16666666666666666,
+   "in_range_ci": [
+    0.03005258587173032,
+    0.563509436563646
+   ],
+   "n_ref2": 1,
+   "in_range_ref2": 1.0,
+   "ge_floor": 0.5,
+   "ge_floor_ci": [
+    0.18761280689940868,
+    0.8123871931005913
+   ],
+   "gt_max": 0.3333333333333333,
+   "z_mean": -0.3572913425225343,
+   "z_p50": -0.3572913425225343,
+   "n_z": 1,
+   "delta_best_failed_mean": -0.012576787007577818,
+   "delta_best_failed_p50": -0.010643707656059834,
+   "same_as_teacher": 0.8333333333333334
+  },
+  "lp0_pb|failed|tier T (teacher-solved first actions)": {
+   "n": 18,
+   "n_states": 8,
+   "in_range": 0.2222222222222222,
+   "in_range_ci": [
+    0.09000781913382,
+    0.4521502645230549
+   ],
+   "n_ref2": 5,
+   "in_range_ref2": 0.8,
+   "ge_floor": 0.6666666666666666,
+   "ge_floor_ci": [
+    0.4374906934425036,
+    0.8372144563633714
+   ],
+   "gt_max": 0.4444444444444444,
+   "z_mean": -0.37840993688952557,
+   "z_p50": 0.09297347043010593,
+   "n_z": 5,
+   "delta_best_failed_mean": 0.007544129764846528,
+   "delta_best_failed_p50": -0.008896021810643986,
+   "same_as_teacher": 0.16666666666666666
+  },
+  "lp0_pb|failed|tier F1 (frontier proposals, teacher finished)": {
+   "n": 6,
+   "n_states": 6,
+   "in_range": 0.3333333333333333,
+   "in_range_ci": [
+    0.09676933255921683,
+    0.7000116786584712
+   ],
+   "n_ref2": 3,
+   "in_range_ref2": 0.6666666666666666,
+   "ge_floor": 0.6666666666666666,
+   "ge_floor_ci": [
+    0.29998832134152864,
+    0.9032306674407831
+   ],
+   "gt_max": 0.3333333333333333,
+   "z_mean": 0.45377612037091225,
+   "z_p50": 0.33923449977505893,
+   "n_z": 3,
+   "delta_best_failed_mean": 0.021952366746496484,
+   "delta_best_failed_p50": -0.01708287648911338,
+   "same_as_teacher": 0.3333333333333333
+  },
+  "lp0_pb|failed|tier F (frontier own continuation solved)": {
+   "n": 0,
+   "n_states": 0,
+   "in_range": null,
+   "in_range_ci": null,
+   "n_ref2": 0,
+   "in_range_ref2": null,
+   "ge_floor": null,
+   "ge_floor_ci": null,
+   "gt_max": null,
+   "z_mean": null,
+   "z_p50": null,
+   "n_z": 0,
+   "delta_best_failed_mean": null,
+   "delta_best_failed_p50": null,
+   "same_as_teacher": null
+  },
+  "lp0_pb|failed+blind|ALL verified-better (T\u222aF1)": {
+   "n": 24,
+   "n_states": 12,
+   "in_range": 0.625,
+   "in_range_ci": [
+    0.42709619037907065,
+    0.7884086656636855
+   ],
+   "n_ref2": 23,
+   "in_range_ref2": 0.6521739130434783,
+   "ge_floor": 0.9583333333333334,
+   "ge_floor_ci": [
+    0.7975777375115778,
+    0.992606734645195
+   ],
+   "gt_max": 0.3333333333333333,
+   "z_mean": 0.6707477100541955,
+   "z_p50": 0.6344591896569236,
+   "n_z": 23,
+   "delta_best_failed_mean": 0.011146189010259017,
+   "delta_best_failed_p50": -0.00953771511187997,
+   "same_as_teacher": 0.20833333333333334
+  },
+  "lp0_pb|failed+blind|mini_swe_textbased": {
+   "n": 9,
+   "n_states": 4,
+   "in_range": 0.4444444444444444,
+   "in_range_ci": [
+    0.188775429471914,
+    0.7333526542559703
+   ],
+   "n_ref2": 9,
+   "in_range_ref2": 0.4444444444444444,
+   "ge_floor": 1.0,
+   "ge_floor_ci": [
+    0.7008472464490407,
+    1.0
+   ],
+   "gt_max": 0.5555555555555556,
+   "z_mean": 1.1134761732463498,
+   "z_p50": 1.5127667047225104,
+   "n_z": 9,
+   "delta_best_failed_mean": 0.060979616764754496,
+   "delta_best_failed_p50": 0.07550476316789537,
+   "same_as_teacher": 0.0
+  },
+  "lp0_pb|failed+blind|bash": {
+   "n": 9,
+   "n_states": 5,
+   "in_range": 0.8888888888888888,
+   "in_range_ci": [
+    0.5649937852319399,
+    0.9801096286728695
+   ],
+   "n_ref2": 9,
+   "in_range_ref2": 0.8888888888888888,
+   "ge_floor": 1.0,
+   "ge_floor_ci": [
+    0.7008472464490407,
+    1.0
+   ],
+   "gt_max": 0.1111111111111111,
+   "z_mean": 0.32323388508676726,
+   "z_p50": 0.2313483048931396,
+   "n_z": 9,
+   "delta_best_failed_mean": -0.02287192139901191,
+   "delta_best_failed_p50": -0.021267755419211117,
+   "same_as_teacher": 0.0
+  },
+  "lp0_pb|failed+blind|terminus_2": {
+   "n": 6,
+   "n_states": 3,
+   "in_range": 0.5,
+   "in_range_ci": [
+    0.18761280689940868,
+    0.8123871931005913
+   ],
+   "n_ref2": 5,
+   "in_range_ref2": 0.6,
+   "ge_floor": 0.8333333333333334,
+   "ge_floor_ci": [
+    0.43649056343635395,
+    0.9699474141282697
+   ],
+   "gt_max": 0.3333333333333333,
+   "z_mean": 0.4993613612496886,
+   "z_p50": 0.4696481988252211,
+   "n_z": 5,
+   "delta_best_failed_mean": -0.012576787007577818,
+   "delta_best_failed_p50": -0.010643707656059834,
+   "same_as_teacher": 0.8333333333333334
+  },
+  "lp0_pb|failed+blind|tier T (teacher-solved first actions)": {
+   "n": 18,
+   "n_states": 8,
+   "in_range": 0.6666666666666666,
+   "in_range_ci": [
+    0.4374906934425036,
+    0.8372144563633714
+   ],
+   "n_ref2": 18,
+   "in_range_ref2": 0.6666666666666666,
+   "ge_floor": 1.0,
+   "ge_floor_ci": [
+    0.8241154494176252,
+    1.0
+   ],
+   "gt_max": 0.3333333333333333,
+   "z_mean": 0.6208801887373807,
+   "z_p50": 0.5945087065480934,
+   "n_z": 18,
+   "delta_best_failed_mean": 0.007544129764846528,
+   "delta_best_failed_p50": -0.008896021810643986,
+   "same_as_teacher": 0.16666666666666666
+  },
+  "lp0_pb|failed+blind|tier F1 (frontier proposals, teacher finished)": {
+   "n": 6,
+   "n_states": 6,
+   "in_range": 0.5,
+   "in_range_ci": [
+    0.18761280689940868,
+    0.8123871931005913
+   ],
+   "n_ref2": 5,
+   "in_range_ref2": 0.6,
+   "ge_floor": 0.8333333333333334,
+   "ge_floor_ci": [
+    0.43649056343635395,
+    0.9699474141282697
+   ],
+   "gt_max": 0.3333333333333333,
+   "z_mean": 0.8502707867947288,
+   "z_p50": 0.6688921952543433,
+   "n_z": 5,
+   "delta_best_failed_mean": 0.021952366746496484,
+   "delta_best_failed_p50": -0.01708287648911338,
+   "same_as_teacher": 0.3333333333333333
+  },
+  "lp0_pb|failed+blind|tier F (frontier own continuation solved)": {
+   "n": 0,
+   "n_states": 0,
+   "in_range": null,
+   "in_range_ci": null,
+   "n_ref2": 0,
+   "in_range_ref2": null,
+   "ge_floor": null,
+   "ge_floor_ci": null,
+   "gt_max": null,
+   "z_mean": null,
+   "z_p50": null,
+   "n_z": 0,
+   "delta_best_failed_mean": null,
+   "delta_best_failed_p50": null,
+   "same_as_teacher": null
+  },
+  "lp0_sum|failed|ALL verified-better (T\u222aF1)": {
+   "n": 24,
+   "n_states": 12,
+   "in_range": 0.125,
+   "in_range_ci": [
+    0.04344255039315584,
+    0.3100428814785757
+   ],
+   "n_ref2": 8,
+   "in_range_ref2": 0.375,
+   "ge_floor": 0.5,
+   "ge_floor_ci": [
+    0.31427131627763083,
+    0.6857286837223692
+   ],
+   "gt_max": 0.375,
+   "z_mean": -6.605365410619373,
+   "z_p50": -0.7538054458022837,
+   "n_z": 8,
+   "delta_best_failed_mean": -7.421156772150811,
+   "delta_best_failed_p50": -1.5652196179700653,
+   "same_as_teacher": 0.20833333333333334
+  },
+  "lp0_sum|failed|mini_swe_textbased": {
+   "n": 9,
+   "n_states": 4,
+   "in_range": 0.1111111111111111,
+   "in_range_ci": [
+    0.019890371327130535,
+    0.4350062147680601
+   ],
+   "n_ref2": 2,
+   "in_range_ref2": 0.5,
+   "ge_floor": 0.6666666666666666,
+   "ge_floor_ci": [
+    0.35419734749908977,
+    0.879418401317257
+   ],
+   "gt_max": 0.5555555555555556,
+   "z_mean": -3.7948551619541093,
+   "z_p50": -3.7948551619541093,
+   "n_z": 2,
+   "delta_best_failed_mean": -5.4927364705850845,
+   "delta_best_failed_p50": 5.232616511986123,
+   "same_as_teacher": 0.0
+  },
+  "lp0_sum|failed|bash": {
+   "n": 9,
+   "n_states": 5,
+   "in_range": 0.1111111111111111,
+   "in_range_ci": [
+    0.019890371327130535,
+    0.4350062147680601
+   ],
+   "n_ref2": 5,
+   "in_range_ref2": 0.2,
+   "ge_floor": 0.3333333333333333,
+   "ge_floor_ci": [
+    0.12058159868274293,
+    0.6458026525009102
+   ],
+   "gt_max": 0.2222222222222222,
+   "z_mean": -9.050023834475773,
+   "z_p50": -0.8391686979262926,
+   "n_z": 5,
+   "delta_best_failed_mean": -9.861421125239268,
+   "delta_best_failed_p50": -7.942525694571067,
+   "same_as_teacher": 0.0
+  },
+  "lp0_sum|failed|terminus_2": {
+   "n": 6,
+   "n_states": 3,
+   "in_range": 0.16666666666666666,
+   "in_range_ci": [
+    0.03005258587173032,
+    0.563509436563646
+   ],
+   "n_ref2": 1,
+   "in_range_ref2": 1.0,
+   "ge_floor": 0.5,
+   "ge_floor_ci": [
+    0.18761280689940868,
+    0.8123871931005913
+   ],
+   "gt_max": 0.3333333333333333,
+   "z_mean": -0.0030937886678976756,
+   "z_p50": -0.0030937886678976756,
+   "n_z": 1,
+   "delta_best_failed_mean": -6.6533906948667125,
+   "delta_best_failed_p50": -1.1721154510973903,
+   "same_as_teacher": 0.8333333333333334
+  },
+  "lp0_sum|failed|tier T (teacher-solved first actions)": {
+   "n": 18,
+   "n_states": 8,
+   "in_range": 0.05555555555555555,
+   "in_range_ci": [
+    0.009874935830924525,
+    0.2575779980200754
+   ],
+   "n_ref2": 5,
+   "in_range_ref2": 0.2,
+   "ge_floor": 0.5,
+   "ge_floor_ci": [
+    0.2903070395897999,
+    0.7096929604102
+   ],
+   "gt_max": 0.4444444444444444,
+   "z_mean": -8.951736861041393,
+   "z_p50": -0.8391686979262926,
+   "n_z": 5,
+   "delta_best_failed_mean": -4.172326476985614,
+   "delta_best_failed_p50": -1.133567799849935,
+   "same_as_teacher": 0.16666666666666666
+  },
+  "lp0_sum|failed|tier F1 (frontier proposals, teacher finished)": {
+   "n": 6,
+   "n_states": 6,
+   "in_range": 0.3333333333333333,
+   "in_range_ci": [
+    0.09676933255921683,
+    0.7000116786584712
+   ],
+   "n_ref2": 3,
+   "in_range_ref2": 0.6666666666666666,
+   "ge_floor": 0.5,
+   "ge_floor_ci": [
+    0.18761280689940868,
+    0.8123871931005913
+   ],
+   "gt_max": 0.16666666666666666,
+   "z_mean": -2.6947463265826714,
+   "z_p50": -0.6684421936782748,
+   "n_z": 3,
+   "delta_best_failed_mean": -17.167647657646402,
+   "delta_best_failed_p50": -8.663130627948124,
+   "same_as_teacher": 0.3333333333333333
+  },
+  "lp0_sum|failed|tier F (frontier own continuation solved)": {
+   "n": 0,
+   "n_states": 0,
+   "in_range": null,
+   "in_range_ci": null,
+   "n_ref2": 0,
+   "in_range_ref2": null,
+   "ge_floor": null,
+   "ge_floor_ci": null,
+   "gt_max": null,
+   "z_mean": null,
+   "z_p50": null,
+   "n_z": 0,
+   "delta_best_failed_mean": null,
+   "delta_best_failed_p50": null,
+   "same_as_teacher": null
+  },
+  "lp0_sum|failed+blind|ALL verified-better (T\u222aF1)": {
+   "n": 24,
+   "n_states": 12,
+   "in_range": 0.5833333333333334,
+   "in_range_ci": [
+    0.3883433764938864,
+    0.7553265275346177
+   ],
+   "n_ref2": 23,
+   "in_range_ref2": 0.6086956521739131,
+   "ge_floor": 0.875,
+   "ge_floor_ci": [
+    0.6899571185214243,
+    0.9565574496068442
+   ],
+   "gt_max": 0.2916666666666667,
+   "z_mean": 0.2573757294121753,
+   "z_p50": 0.5488258907676784,
+   "n_z": 23,
+   "delta_best_failed_mean": -7.421156772150811,
+   "delta_best_failed_p50": -1.5652196179700653,
+   "same_as_teacher": 0.20833333333333334
+  },
+  "lp0_sum|failed+blind|mini_swe_textbased": {
+   "n": 9,
+   "n_states": 4,
+   "in_range": 0.3333333333333333,
+   "in_range_ci": [
+    0.12058159868274293,
+    0.6458026525009102
+   ],
+   "n_ref2": 9,
+   "in_range_ref2": 0.3333333333333333,
+   "ge_floor": 0.8888888888888888,
+   "ge_floor_ci": [
+    0.5649937852319399,
+    0.9801096286728695
+   ],
+   "gt_max": 0.5555555555555556,
+   "z_mean": 0.44066142081559984,
+   "z_p50": 1.2926231756795958,
+   "n_z": 9,
+   "delta_best_failed_mean": -5.4927364705850845,
+   "delta_best_failed_p50": 5.232616511986123,
+   "same_as_teacher": 0.0
+  },
+  "lp0_sum|failed+blind|bash": {
+   "n": 9,
+   "n_states": 5,
+   "in_range": 0.8888888888888888,
+   "in_range_ci": [
+    0.5649937852319399,
+    0.9801096286728695
+   ],
+   "n_ref2": 9,
+   "in_range_ref2": 0.8888888888888888,
+   "ge_floor": 0.8888888888888888,
+   "ge_floor_ci": [
+    0.5649937852319399,
+    0.9801096286728695
+   ],
+   "gt_max": 0.0,
+   "z_mean": -0.1543603457378679,
+   "z_p50": 0.17437651014474928,
+   "n_z": 9,
+   "delta_best_failed_mean": -9.861421125239268,
+   "delta_best_failed_p50": -7.942525694571067,
+   "same_as_teacher": 0.0
+  },
+  "lp0_sum|failed+blind|terminus_2": {
+   "n": 6,
+   "n_states": 3,
+   "in_range": 0.5,
+   "in_range_ci": [
+    0.18761280689940868,
+    0.8123871931005913
+   ],
+   "n_ref2": 5,
+   "in_range_ref2": 0.6,
+   "ge_floor": 0.8333333333333334,
+   "ge_floor_ci": [
+    0.43649056343635395,
+    0.9699474141282697
+   ],
+   "gt_max": 0.3333333333333333,
+   "z_mean": 0.6685864201560888,
+   "z_p50": 0.6650039497092337,
+   "n_z": 5,
+   "delta_best_failed_mean": -6.6533906948667125,
+   "delta_best_failed_p50": -1.1721154510973903,
+   "same_as_teacher": 0.8333333333333334
+  },
+  "lp0_sum|failed+blind|tier T (teacher-solved first actions)": {
+   "n": 18,
+   "n_states": 8,
+   "in_range": 0.6111111111111112,
+   "in_range_ci": [
+    0.3861866858065617,
+    0.7969500807306884
+   ],
+   "n_ref2": 18,
+   "in_range_ref2": 0.6111111111111112,
+   "ge_floor": 0.9444444444444444,
+   "ge_floor_ci": [
+    0.7424220019799247,
+    0.9901250641690756
+   ],
+   "gt_max": 0.3333333333333333,
+   "z_mean": 0.641483715417922,
+   "z_p50": 0.7062402855531662,
+   "n_z": 18,
+   "delta_best_failed_mean": -4.172326476985614,
+   "delta_best_failed_p50": -1.133567799849935,
+   "same_as_teacher": 0.16666666666666666
+  },
+  "lp0_sum|failed+blind|tier F1 (frontier proposals, teacher finished)": {
+   "n": 6,
+   "n_states": 6,
+   "in_range": 0.5,
+   "in_range_ci": [
+    0.18761280689940868,
+    0.8123871931005913
+   ],
+   "n_ref2": 5,
+   "in_range_ref2": 0.6,
+   "ge_floor": 0.6666666666666666,
+   "ge_floor_ci": [
+    0.29998832134152864,
+    0.9032306674407831
+   ],
+   "gt_max": 0.16666666666666666,
+   "z_mean": -1.1254130202085129,
+   "z_p50": 0.43238432126685666,
+   "n_z": 5,
+   "delta_best_failed_mean": -17.167647657646402,
+   "delta_best_failed_p50": -8.663130627948124,
+   "same_as_teacher": 0.3333333333333333
+  },
+  "lp0_sum|failed+blind|tier F (frontier own continuation solved)": {
+   "n": 0,
+   "n_states": 0,
+   "in_range": null,
+   "in_range_ci": null,
+   "n_ref2": 0,
+   "in_range_ref2": null,
+   "ge_floor": null,
+   "ge_floor_ci": null,
+   "gt_max": null,
+   "z_mean": null,
+   "z_p50": null,
+   "n_z": 0,
+   "delta_best_failed_mean": null,
+   "delta_best_failed_p50": null,
+   "same_as_teacher": null
+  },
+  "lpB_pb|failed|ALL verified-better (T\u222aF1)": {
+   "n": 24,
+   "n_states": 12,
+   "in_range": 0.25,
+   "in_range_ci": [
+    0.1199920347934233,
+    0.4489982531210644
+   ],
+   "n_ref2": 8,
+   "in_range_ref2": 0.75,
+   "ge_floor": 0.5833333333333334,
+   "ge_floor_ci": [
+    0.3883433764938864,
+    0.7553265275346177
+   ],
+   "gt_max": 0.3333333333333333,
+   "z_mean": -0.1473673199622545,
+   "z_p50": 0.23869225283659123,
+   "n_z": 8,
+   "delta_best_failed_mean": -0.015024987070147293,
+   "delta_best_failed_p50": -0.011192244937487706,
+   "same_as_teacher": 0.20833333333333334
+  },
+  "lpB_pb|failed|mini_swe_textbased": {
+   "n": 9,
+   "n_states": 4,
+   "in_range": 0.1111111111111111,
+   "in_range_ci": [
+    0.019890371327130535,
+    0.4350062147680601
+   ],
+   "n_ref2": 2,
+   "in_range_ref2": 0.5,
+   "ge_floor": 0.6666666666666666,
+   "ge_floor_ci": [
+    0.35419734749908977,
+    0.879418401317257
+   ],
+   "gt_max": 0.5555555555555556,
+   "z_mean": 0.08860993461864353,
+   "z_p50": 0.08860993461864353,
+   "n_z": 2,
+   "delta_best_failed_mean": -0.01386395323654701,
+   "delta_best_failed_p50": 0.0323821909639687,
+   "same_as_teacher": 0.0
+  },
+  "lpB_pb|failed|bash": {
+   "n": 9,
+   "n_states": 5,
+   "in_range": 0.4444444444444444,
+   "in_range_ci": [
+    0.188775429471914,
+    0.7333526542559703
+   ],
+   "n_ref2": 5,
+   "in_range_ref2": 0.8,
+   "ge_floor": 0.6666666666666666,
+   "ge_floor_ci": [
+    0.35419734749908977,
+    0.879418401317257
+   ],
+   "gt_max": 0.2222222222222222,
+   "z_mean": -0.08830468451257431,
+   "z_p50": 0.24376987926955984,
+   "n_z": 5,
+   "delta_best_failed_mean": -0.008866379302627264,
+   "delta_best_failed_p50": -0.011492980918857629,
+   "same_as_teacher": 0.0
+  },
+  "lpB_pb|failed|terminus_2": {
+   "n": 6,
+   "n_states": 3,
+   "in_range": 0.16666666666666666,
+   "in_range_ci": [
+    0.03005258587173032,
+    0.563509436563646
+   ],
+   "n_ref2": 1,
+   "in_range_ref2": 1.0,
+   "ge_floor": 0.3333333333333333,
+   "ge_floor_ci": [
+    0.09676933255921683,
+    0.7000116786584712
+   ],
+   "gt_max": 0.16666666666666666,
+   "z_mean": -0.9146350063724515,
+   "z_p50": -0.9146350063724515,
+   "n_z": 1,
+   "delta_best_failed_mean": -0.02600444947182776,
+   "delta_best_failed_p50": -0.01208501660178568,
+   "same_as_teacher": 0.8333333333333334
+  },
+  "lpB_pb|failed|tier T (teacher-solved first actions)": {
+   "n": 18,
+   "n_states": 8,
+   "in_range": 0.2222222222222222,
+   "in_range_ci": [
+    0.09000781913382,
+    0.4521502645230549
+   ],
+   "n_ref2": 5,
+   "in_range_ref2": 0.8,
+   "ge_floor": 0.5555555555555556,
+   "ge_floor_ci": [
+    0.3371606942825164,
+    0.7544076889861088
+   ],
+   "gt_max": 0.3333333333333333,
+   "z_mean": -0.31795461106778916,
+   "z_p50": 0.24376987926955984,
+   "n_z": 5,
+   "delta_best_failed_mean": -0.014227974175626157,
+   "delta_best_failed_p50": -0.012385752583155604,
+   "same_as_teacher": 0.16666666666666666
+  },
+  "lpB_pb|failed|tier F1 (frontier proposals, teacher finished)": {
+   "n": 6,
+   "n_states": 6,
+   "in_range": 0.3333333333333333,
+   "in_range_ci": [
+    0.09676933255921683,
+    0.7000116786584712
+   ],
+   "n_ref2": 3,
+   "in_range_ref2": 0.6666666666666666,
+   "ge_floor": 0.6666666666666666,
+   "ge_floor_ci": [
+    0.29998832134152864,
+    0.9032306674407831
+   ],
+   "gt_max": 0.3333333333333333,
+   "z_mean": 0.1369448318803032,
+   "z_p50": 0.2336146264036226,
+   "n_z": 3,
+   "delta_best_failed_mean": -0.0174160257537107,
+   "delta_best_failed_p50": -0.00725002423436592,
+   "same_as_teacher": 0.3333333333333333
+  },
+  "lpB_pb|failed|tier F (frontier own continuation solved)": {
+   "n": 0,
+   "n_states": 0,
+   "in_range": null,
+   "in_range_ci": null,
+   "n_ref2": 0,
+   "in_range_ref2": null,
+   "ge_floor": null,
+   "ge_floor_ci": null,
+   "gt_max": null,
+   "z_mean": null,
+   "z_p50": null,
+   "n_z": 0,
+   "delta_best_failed_mean": null,
+   "delta_best_failed_p50": null,
+   "same_as_teacher": null
+  },
+  "lpB_pb|failed+blind|ALL verified-better (T\u222aF1)": {
+   "n": 24,
+   "n_states": 12,
+   "in_range": 0.5833333333333334,
+   "in_range_ci": [
+    0.3883433764938864,
+    0.7553265275346177
+   ],
+   "n_ref2": 23,
+   "in_range_ref2": 0.6086956521739131,
+   "ge_floor": 0.7916666666666666,
+   "ge_floor_ci": [
+    0.5952915551476452,
+    0.9075531089521192
+   ],
+   "gt_max": 0.20833333333333334,
+   "z_mean": 0.06959880938572542,
+   "z_p50": 0.23093968503521403,
+   "n_z": 23,
+   "delta_best_failed_mean": -0.015024987070147293,
+   "delta_best_failed_p50": -0.011192244937487706,
+   "same_as_teacher": 0.20833333333333334
+  },
+  "lpB_pb|failed+blind|mini_swe_textbased": {
+   "n": 9,
+   "n_states": 4,
+   "in_range": 0.3333333333333333,
+   "in_range_ci": [
+    0.12058159868274293,
+    0.6458026525009102
+   ],
+   "n_ref2": 9,
+   "in_range_ref2": 0.3333333333333333,
+   "ge_floor": 0.6666666666666666,
+   "ge_floor_ci": [
+    0.35419734749908977,
+    0.879418401317257
+   ],
+   "gt_max": 0.3333333333333333,
+   "z_mean": 0.01794032530442639,
+   "z_p50": -0.3895807462862574,
+   "n_z": 9,
+   "delta_best_failed_mean": -0.01386395323654701,
+   "delta_best_failed_p50": 0.0323821909639687,
+   "same_as_teacher": 0.0
+  },
+  "lpB_pb|failed+blind|bash": {
+   "n": 9,
+   "n_states": 5,
+   "in_range": 0.7777777777777778,
+   "in_range_ci": [
+    0.4525833436728054,
+    0.9367762376877727
+   ],
+   "n_ref2": 9,
+   "in_range_ref2": 0.7777777777777778,
+   "ge_floor": 0.8888888888888888,
+   "ge_floor_ci": [
+    0.5649937852319399,
+    0.9801096286728695
+   ],
+   "gt_max": 0.1111111111111111,
+   "z_mean": 0.08175426432839285,
+   "z_p50": 0.02130815787891805,
+   "n_z": 9,
+   "delta_best_failed_mean": -0.008866379302627264,
+   "delta_best_failed_p50": -0.011492980918857629,
+   "same_as_teacher": 0.0
+  },
+  "lpB_pb|failed+blind|terminus_2": {
+   "n": 6,
+   "n_states": 3,
+   "in_range": 0.6666666666666666,
+   "in_range_ci": [
+    0.29998832134152864,
+    0.9032306674407831
+   ],
+   "n_ref2": 5,
+   "in_range_ref2": 0.8,
+   "ge_floor": 0.8333333333333334,
+   "ge_floor_ci": [
+    0.43649056343635395,
+    0.9699474141282697
+   ],
+   "gt_max": 0.16666666666666666,
+   "z_mean": 0.14070426183526233,
+   "z_p50": 0.4352855969850944,
+   "n_z": 5,
+   "delta_best_failed_mean": -0.02600444947182776,
+   "delta_best_failed_p50": -0.01208501660178568,
+   "same_as_teacher": 0.8333333333333334
+  },
+  "lpB_pb|failed+blind|tier T (teacher-solved first actions)": {
+   "n": 18,
+   "n_states": 8,
+   "in_range": 0.5555555555555556,
+   "in_range_ci": [
+    0.3371606942825164,
+    0.7544076889861088
+   ],
+   "n_ref2": 18,
+   "in_range_ref2": 0.5555555555555556,
+   "ge_floor": 0.7777777777777778,
+   "ge_floor_ci": [
+    0.5478497354769452,
+    0.90999218086618
+   ],
+   "gt_max": 0.2222222222222222,
+   "z_mean": -0.12261809524028743,
+   "z_p50": 0.12612392145706605,
+   "n_z": 18,
+   "delta_best_failed_mean": -0.014227974175626157,
+   "delta_best_failed_p50": -0.012385752583155604,
+   "same_as_teacher": 0.16666666666666666
+  },
+  "lpB_pb|failed+blind|tier F1 (frontier proposals, teacher finished)": {
+   "n": 6,
+   "n_states": 6,
+   "in_range": 0.6666666666666666,
+   "in_range_ci": [
+    0.29998832134152864,
+    0.9032306674407831
+   ],
+   "n_ref2": 5,
+   "in_range_ref2": 0.8,
+   "ge_floor": 0.8333333333333334,
+   "ge_floor_ci": [
+    0.43649056343635395,
+    0.9699474141282697
+   ],
+   "gt_max": 0.16666666666666666,
+   "z_mean": 0.7615796660393717,
+   "z_p50": 0.4352855969850944,
+   "n_z": 5,
+   "delta_best_failed_mean": -0.0174160257537107,
+   "delta_best_failed_p50": -0.00725002423436592,
+   "same_as_teacher": 0.3333333333333333
+  },
+  "lpB_pb|failed+blind|tier F (frontier own continuation solved)": {
+   "n": 0,
+   "n_states": 0,
+   "in_range": null,
+   "in_range_ci": null,
+   "n_ref2": 0,
+   "in_range_ref2": null,
+   "ge_floor": null,
+   "ge_floor_ci": null,
+   "gt_max": null,
+   "z_mean": null,
+   "z_p50": null,
+   "n_z": 0,
+   "delta_best_failed_mean": null,
+   "delta_best_failed_p50": null,
+   "same_as_teacher": null
+  }
+ },
+ "paired_solved_minus_failed": {
+  "lp0_pb": {
+   "ALL": {
+    "n": 8,
+    "mean": 0.012584689839912878,
+    "p50": 0.004587942294017915,
+    "se": 0.01615702454665028,
+    "share_pos": 0.625
+   },
+   "terminus_2": {
+    "n": 2,
+    "mean": -0.005529379877016721,
+    "p50": -0.005529379877016721,
+    "se": 0.011367506940632101,
+    "share_pos": 0.5
+   },
+   "mini_swe_textbased": {
+    "n": 2,
+    "mean": 0.059518307010286625,
+    "p50": 0.059518307010286625,
+    "se": 0.05618054948586617,
+    "share_pos": 1.0
+   },
+   "bash": {
+    "n": 4,
+    "mean": -0.0018250838868091972,
+    "p50": -0.0046925516354654785,
+    "se": 0.013402381174843816,
+    "share_pos": 0.5
+   }
+  },
+  "lp0_sum": {
+   "ALL": {
+    "n": 8,
+    "mean": -1.6978282898378751,
+    "p50": -0.5482265485849922,
+    "se": 3.188610481991293,
+    "share_pos": 0.375
+   },
+   "terminus_2": {
+    "n": 2,
+    "mean": 1.4634604456760956,
+    "p50": 1.4634604456760956,
+    "se": 1.5946142724872814,
+    "share_pos": 0.5
+   },
+   "mini_swe_textbased": {
+    "n": 2,
+    "mean": 5.958741278398122,
+    "p50": 5.958741278398122,
+    "se": 6.9240405487569205,
+    "share_pos": 0.5
+   },
+   "bash": {
+    "n": 4,
+    "mean": -7.106757441712859,
+    "p50": -10.315641115283336,
+    "se": 4.224288208342157,
+    "share_pos": 0.25
+   }
+  },
+  "lpB_pb": {
+   "ALL": {
+    "n": 8,
+    "mean": -0.0036844931408715215,
+    "p50": -0.0015890634094493268,
+    "se": 0.010101344936337301,
+    "share_pos": 0.5
+   },
+   "terminus_2": {
+    "n": 2,
+    "mean": -0.02283196988374524,
+    "p50": -0.02283196988374524,
+    "se": 0.016201852753753555,
+    "share_pos": 0.0
+   },
+   "mini_swe_textbased": {
+    "n": 2,
+    "mean": -0.014253347587987429,
+    "p50": -0.014253347587987429,
+    "se": 0.030205554134146415,
+    "share_pos": 0.5
+   },
+   "bash": {
+    "n": 4,
+    "mean": 0.011173672454123292,
+    "p50": 0.01207704271948988,
+    "se": 0.011271708638558564,
+    "share_pos": 0.75
+   }
+  }
+ },
+ "frontier_verified": [
+  {
+   "sid": "1a29993d8c9d4df2846ec66e5fcc4b41:10",
+   "harness": "terminus_2",
+   "kind": "terminus_json",
+   "stuck": false,
+   "depth": 10,
+   "arm": "F1",
+   "z_src": "frontier_greedy",
+   "judge": null,
+   "lp0_pb": -0.10535243302903828,
+   "lp0_sum": -24.757821761823998,
+   "n_bytes": 235,
+   "lpB_pb": -0.14374125742468535,
+   "failed_range_pb": [
+    null,
+    null
+   ],
+   "failed_range_sum": [
+    null,
+    null
+   ],
+   "all_range_pb": [
+    -0.08948008844689632,
+    -0.07821596845345505
+   ],
+   "failed_lpB_range": [
+    null,
+    null
+   ],
+   "n_failed": 0,
+   "n_blind": 3,
+   "mc": -3.962142904599508,
+   "nc": 3,
+   "z_live": -27.341496469816484,
+   "inband_live": false,
+   "mc_vis": null,
+   "z_live_vis": null,
+   "inband_live_vis": null,
+   "mu_c": -0.3073954330986683,
+   "blind_mc": [
+    -0.3622969175170207,
+    -0.21715171718287146,
+    -0.34273766459611277
+   ],
+   "y": "{\n  \"analysis\": \"Verified /app/results.txt contains exactly `FLAG{b4ff3r_0v3rfl0w_m4st3r_k3y_2024}` followed by a newline. The task is complete.\",\n  \"plan\": \"No further commands are needed.\",\n  \"comma"
+  },
+  {
+   "sid": "1fa9c7e240864e9da4dbf9530e803155:4",
+   "harness": "terminus_2",
+   "kind": "terminus_json",
+   "stuck": false,
+   "depth": 4,
+   "arm": "F1",
+   "z_src": "frontier_greedy",
+   "judge": null,
+   "lp0_pb": -0.19903471523905936,
+   "lp0_sum": -165.19881364841928,
+   "n_bytes": 830,
+   "lpB_pb": -0.24224487012726567,
+   "failed_range_pb": [
+    null,
+    null
+   ],
+   "failed_range_sum": [
+    null,
+    null
+   ],
+   "all_range_pb": [
+    -0.11204234786510546,
+    -0.08665584057348198
+   ],
+   "failed_lpB_range": [
+    null,
+    null
+   ],
+   "n_failed": 0,
+   "n_blind": 3,
+   "mc": -2.5276191007775055,
+   "nc": 171,
+   "z_live": -13.043132272131933,
+   "inband_live": false,
+   "mc_vis": null,
+   "z_live_vis": null,
+   "inband_live_vis": null,
+   "mu_c": -0.784139012017567,
+   "blind_mc": [
+    -0.9613799816717065,
+    -0.751694536374252,
+    -0.6393425180067425
+   ],
+   "y": "{\n  \"analysis\": \"The active Python is a uv-managed virtual environment, but `pip` may resolve to the system pip. No C/C++ compiler or make is currently available, and PyStan requires one to compile th"
+  },
+  {
+   "sid": "21bc74b278844c9c8d29cfbe2d389553:3",
+   "harness": "bash",
+   "kind": "tool_call",
+   "stuck": false,
+   "depth": 3,
+   "arm": "F1",
+   "z_src": "frontier_greedy",
+   "judge": null,
+   "lp0_pb": -0.10263385745036943,
+   "lp0_sum": -442.6598271834434,
+   "n_bytes": 4313,
+   "lpB_pb": -0.10362341872879356,
+   "failed_range_pb": [
+    null,
+    null
+   ],
+   "failed_range_sum": [
+    null,
+    null
+   ],
+   "all_range_pb": [
+    -0.07811294255759786,
+    -0.058048115045159346
+   ],
+   "failed_lpB_range": [
+    null,
+    null
+   ],
+   "n_failed": 0,
+   "n_blind": 3,
+   "mc": -1.7172669030647172,
+   "nc": 388,
+   "z_live": -5.986536752077028,
+   "inband_live": false,
+   "mc_vis": -1.0312879280275808,
+   "z_live_vis": -2.5137455678069474,
+   "inband_live_vis": false,
+   "mu_c": -0.534748828320442,
+   "blind_mc": [
+    -0.44440912285487383,
+    -0.6056232503420599,
+    -0.5542141117643925
+   ],
+   "y": "<tool_call>\n{\"name\": \"bash\", \"arguments\": {\"command\": \"cat << 'PYEOF' > /tmp/test3.py\\nimport re\\n\\nOCT = r'(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])'\\nIP = r'(?<![0-9A-Za-z])' + OCT + r'\\\\"
+  },
+  {
+   "sid": "22dfccc28c874ba18384923d4667016a:13",
+   "harness": "mini_swe_textbased",
+   "kind": "bash",
+   "stuck": false,
+   "depth": 13,
+   "arm": "F1",
+   "z_src": "frontier_greedy",
+   "judge": null,
+   "lp0_pb": -0.09836419884154497,
+   "lp0_sum": -6.590401322383514,
+   "n_bytes": 67,
+   "lpB_pb": -0.0006978227361251578,
+   "failed_range_pb": [
+    null,
+    null
+   ],
+   "failed_range_sum": [
+    null,
+    null
+   ],
+   "all_range_pb": [
+    -0.09836419884154497,
+    -0.09836419884154497
+   ],
+   "failed_lpB_range": [
+    null,
+    null
+   ],
+   "n_failed": 0,
+   "n_blind": 3,
+   "mc": -0.5878239706158638,
+   "nc": 5,
+   "z_live": 0.6322267400631911,
+   "inband_live": false,
+   "mc_vis": -0.6361312850989634,
+   "z_live_vis": 0.3196488450211654,
+   "inband_live_vis": true,
+   "mu_c": -0.6855313787252928,
+   "blind_mc": [
+    -0.5335337368198907,
+    -0.47711567270259064,
+    -1.045944726653397
+   ],
+   "y": "```bash\ncd /testbed && PYTHONPATH=/testbed python /tmp/repro.py\n```"
+  },
+  {
+   "sid": "2f4d4ef3ee024338ab9c654a8f9e0ab4:6",
+   "harness": "terminus_2",
+   "kind": "terminus_json",
+   "stuck": true,
+   "depth": 6,
+   "arm": "F1",
+   "z_src": "frontier_greedy",
+   "judge": null,
+   "lp0_pb": -0.0611525088229151,
+   "lp0_sum": -24.644461055634785,
+   "n_bytes": 403,
+   "lpB_pb": -0.08142736298587785,
+   "failed_range_pb": [
+    -0.03532575345905001,
+    -0.03532575345905001
+   ],
+   "failed_range_sum": [
+    -15.260725494309604,
+    -15.260725494309604
+   ],
+   "all_range_pb": [
+    -0.04514975303388518,
+    -0.031178890806996852
+   ],
+   "failed_lpB_range": [
+    -0.030686750533344062,
+    -0.030686750533344062
+   ],
+   "n_failed": 1,
+   "n_blind": 3,
+   "mc": -1.3886771357075,
+   "nc": 15,
+   "z_live": -7.962124442010039,
+   "inband_live": false,
+   "mc_vis": null,
+   "z_live_vis": null,
+   "inband_live_vis": null,
+   "mu_c": -0.3243771547486838,
+   "blind_mc": [
+    -0.3953469747964066,
+    -0.3143858335987752,
+    -0.2633986558508695
+   ],
+   "y": "{\n  \"analysis\": \"gcc and g++ have been installed successfully. Now I need to install PyTorch to load model.pth and extract the weights.\",\n  \"plan\": \"Install PyTorch CPU-only version via pip, then load"
+  },
+  {
+   "sid": "3665be6010bf456ca018c12d94ea0e05:13",
+   "harness": "terminus_2",
+   "kind": "terminus_json",
+   "stuck": true,
+   "depth": 13,
+   "arm": "F1",
+   "z_src": "frontier_greedy",
+   "judge": null,
+   "lp0_pb": -0.06598924996045862,
+   "lp0_sum": -16.101376990351902,
+   "n_bytes": 244,
+   "lpB_pb": -0.05776386613687076,
+   "failed_range_pb": [
+    -0.053091252401442975,
+    -0.053091252401442975
+   ],
+   "failed_range_sum": [
+    -15.608828206024235,
+    -15.608828206024235
+   ],
+   "all_range_pb": [
+    -0.103055453521788,
+    -0.053091252401442975
+   ],
+   "failed_lpB_range": [
+    -0.04687235718075298,
+    -0.04687235718075298
+   ],
+   "n_failed": 1,
+   "n_blind": 3,
+   "mc": -1.0092369606951253,
+   "nc": 10,
+   "z_live": -2.889013670668288,
+   "inband_live": false,
+   "mc_vis": null,
+   "z_live_vis": null,
+   "inband_live_vis": null,
+   "mu_c": -0.623061484906431,
+   "blind_mc": [
+    -0.6634414502080869,
+    -0.6520262553643149,
+    -0.5537167491468912
+   ],
+   "y": "{\n  \"analysis\": \"The rstan installation is still running. It's compiling dependencies which can take a while.\",\n  \"plan\": \"Wait for the installation to complete.\",\n  \"commands\": [\n    {\n      \"keystro"
+  },
+  {
+   "sid": "3cab611bfbee455d861881e0496a425f:15",
+   "harness": "mini_swe_textbased",
+   "kind": "bash",
+   "stuck": true,
+   "depth": 15,
+   "arm": "F1",
+   "z_src": "frontier_greedy",
+   "judge": null,
+   "lp0_pb": -0.10414569466681495,
+   "lp0_sum": -6.040450290675267,
+   "n_bytes": 58,
+   "lpB_pb": -0.08495675503074764,
+   "failed_range_pb": [
+    -0.2507834149844758,
+    -0.2507834149844758
+   ],
+   "failed_range_sum": [
+    -14.796221484084072,
+    -14.796221484084072
+   ],
+   "all_range_pb": [
+    -0.2507834149844758,
+    -0.14034987563430149
+   ],
+   "failed_lpB_range": [
+    -0.13269624617704578,
+    -0.13269624617704578
+   ],
+   "n_failed": 1,
+   "n_blind": 3,
+   "mc": -1.0276846890337765,
+   "nc": 8,
+   "z_live": -0.7905861094653557,
+   "inband_live": false,
+   "mc_vis": -0.2052817703526251,
+   "z_live_vis": 4.530864191559076,
+   "inband_live_vis": false,
+   "mu_c": -0.9055036505736562,
+   "blind_mc": [
+    -0.8218235080073913,
+    -1.048277632310942,
+    -0.8464098114026355
+   ],
+   "y": "```bash\ncd /testbed && pip install -e . 2>&1 | tail -5\n```"
+  },
+  {
+   "sid": "6a1f2d81f00542e196167931c3364c76:12",
+   "harness": "mini_swe_textbased",
+   "kind": "bash",
+   "stuck": false,
+   "depth": 12,
+   "arm": "F1",
+   "z_src": "frontier_greedy",
+   "judge": null,
+   "lp0_pb": -0.36853246443690585,
+   "lp0_sum": -30.21966208382628,
+   "n_bytes": 82,
+   "lpB_pb": -0.3605548991255107,
+   "failed_range_pb": [
+    null,
+    null
+   ],
+   "failed_range_sum": [
+    null,
+    null
+   ],
+   "all_range_pb": [
+    -0.14448505456936633,
+    -0.13387213177593776
+   ],
+   "failed_lpB_range": [
+    null,
+    null
+   ],
+   "n_failed": 0,
+   "n_blind": 3,
+   "mc": -1.4394754371591136,
+   "nc": 28,
+   "z_live": -5.5757738508808465,
+   "inband_live": false,
+   "mc_vis": -0.8092441921418702,
+   "z_live_vis": -1.4977919124287633,
+   "inband_live_vis": true,
+   "mu_c": -0.5777681150052845,
+   "blind_mc": [
+    -0.6890285132949598,
+    -0.6659764835451336,
+    -0.37829934817576005
+   ],
+   "y": "```bash\ngit log --oneline -10; echo \"---\"; cat tests/test_config.py | head -60\n```"
+  },
+  {
+   "sid": "701bd65d85774058b804b2021bd3bb2c:9",
+   "harness": "bash",
+   "kind": "tool_call",
+   "stuck": false,
+   "depth": 9,
+   "arm": "F1",
+   "z_src": "frontier_greedy",
+   "judge": null,
+   "lp0_pb": -0.11134744235428451,
+   "lp0_sum": -23.048920567336893,
+   "n_bytes": 207,
+   "lpB_pb": -0.12896001271857646,
+   "failed_range_pb": [
+    null,
+    null
+   ],
+   "failed_range_sum": [
+    null,
+    null
+   ],
+   "all_range_pb": [
+    -0.153593864505933,
+    -0.11329076014394038
+   ],
+   "failed_lpB_range": [
+    null,
+    null
+   ],
+   "n_failed": 0,
+   "n_blind": 3,
+   "mc": -2.784739431469301,
+   "nc": 17,
+   "z_live": -7.513065643912998,
+   "inband_live": false,
+   "mc_vis": -2.4088072375192757,
+   "z_live_vis": -5.609896514039476,
+   "inband_live_vis": false,
+   "mu_c": -1.3006867498274588,
+   "blind_mc": [
+    -1.3117021637129553,
+    -1.3369944706286996,
+    -1.2533636151407213
+   ],
+   "y": "<tool_call>\n{\"name\": \"bash\", \"arguments\": {\"command\": \"cat /home/commander.js/examples/custom-help /home/commander.js/examples/pizza 2>/dev/null; ls /home/commander.js/examples\"}}\n</tool_call>"
+  },
+  {
+   "sid": "8bee1f3117134d2d800008fbbe9bf087:5",
+   "harness": "mini_swe_textbased",
+   "kind": "bash",
+   "stuck": true,
+   "depth": 5,
+   "arm": "F1b",
+   "z_src": "frontier_t08",
+   "judge": "same",
+   "lp0_pb": -0.18185493479795706,
+   "lp0_sum": -22.004447110552803,
+   "n_bytes": 121,
+   "lpB_pb": -0.14793962876163677,
+   "failed_range_pb": [
+    -0.18965338366414353,
+    -0.15141916013347156
+   ],
+   "failed_range_sum": [
+    -25.74790955852106,
+    -12.113532810677725
+   ],
+   "all_range_pb": [
+    -0.18965338366414353,
+    -0.15141916013347156
+   ],
+   "failed_lpB_range": [
+    -0.15220555931720764,
+    -0.024823704548205802
+   ],
+   "n_failed": 4,
+   "n_blind": 3,
+   "mc": -1.832934268604102,
+   "nc": 43,
+   "z_live": -7.667802251223046,
+   "inband_live": false,
+   "mc_vis": -0.8104544910402183,
+   "z_live_vis": -1.0517322002627238,
+   "inband_live_vis": false,
+   "mu_c": -0.6479146603101441,
+   "blind_mc": [
+    -0.5582414881598083,
+    -0.5665777982124401,
+    -0.8189246945581838
+   ],
+   "y": "```bash\ngit log --oneline -10 && echo \"=====\" && cat fuel-crypto/Cargo.toml && echo \"=====\" && cat fuel-vm/Cargo.toml\n```"
+  },
+  {
+   "sid": "9d3fd174f99742e287b3e060cdbbb2c6:14",
+   "harness": "mini_swe_textbased",
+   "kind": "bash",
+   "stuck": true,
+   "depth": 14,
+   "arm": "F1",
+   "z_src": "frontier_greedy",
+   "judge": "act_or_finish",
+   "lp0_pb": -0.09613276884820274,
+   "lp0_sum": -99.59354852673803,
+   "n_bytes": 1036,
+   "lpB_pb": -0.09646071606064077,
+   "failed_range_pb": [
+    -0.3047375632852903,
+    -0.1716375320160981
+   ],
+   "failed_range_sum": [
+    -38.275169639589876,
+    -15.541615727549804
+   ],
+   "all_range_pb": [
+    -0.3047375632852903,
+    -0.1716375320160981
+   ],
+   "failed_lpB_range": [
+    -0.35681914069046766,
+    -0.13258165552677503
+   ],
+   "n_failed": 4,
+   "n_blind": 3,
+   "mc": -0.6430607918885016,
+   "nc": 16,
+   "z_live": 1.1655924118823662,
+   "inband_live": true,
+   "mc_vis": -0.2993871712048806,
+   "z_live_vis": 3.389371110496227,
+   "inband_live_vis": false,
+   "mu_c": -0.8231971357983796,
+   "blind_mc": [
+    -0.7293013444071675,
+    -0.8623260808775675,
+    -0.8779639821104038
+   ],
+   "y": "```bash\nmkdir -p /tmp/repro && cat <<'EOF' > /tmp/repro/reproduce.py\nimport sys\nfrom pathlib import Path\n\nsys.path.insert(0, \"/app\")\n\nfrom graphql import build_schema, parse\n\nfrom ariadne_codegen.clie"
+  },
+  {
+   "sid": "aa37825860364857b3afea74d7766a19:12",
+   "harness": "mini_swe_textbased",
+   "kind": "bash",
+   "stuck": false,
+   "depth": 12,
+   "arm": "F1",
+   "z_src": "frontier_greedy",
+   "judge": null,
+   "lp0_pb": -0.45475329697273337,
+   "lp0_sum": -23.647171442582135,
+   "n_bytes": 52,
+   "lpB_pb": -0.40951631283601275,
+   "failed_range_pb": [
+    null,
+    null
+   ],
+   "failed_range_sum": [
+    null,
+    null
+   ],
+   "all_range_pb": [
+    -0.3380009878001796,
+    -0.14750735856694483
+   ],
+   "failed_lpB_range": [
+    null,
+    null
+   ],
+   "n_failed": 0,
+   "n_blind": 3,
+   "mc": -1.1628349907696247,
+   "nc": 13,
+   "z_live": -2.714568823109048,
+   "inband_live": false,
+   "mc_vis": -0.5226946967345855,
+   "z_live_vis": 1.4275307281102378,
+   "inband_live_vis": true,
+   "mu_c": -0.7433122673015569,
+   "blind_mc": [
+    -0.509807448606125,
+    -0.6494589396325167,
+    -1.0706704136660288
+   ],
+   "y": "```bash\ngit log --oneline -10 && cat CHANGES.rst\n```"
+  },
+  {
+   "sid": "acfca5b914134cb4808924fba8b6a4f0:10",
+   "harness": "mini_swe_textbased",
+   "kind": "bash",
+   "stuck": false,
+   "depth": 10,
+   "arm": "F1",
+   "z_src": "frontier_greedy",
+   "judge": null,
+   "lp0_pb": -0.22116399891507116,
+   "lp0_sum": -11.058199945753557,
+   "n_bytes": 50,
+   "lpB_pb": -0.4546842238959198,
+   "failed_range_pb": [
+    null,
+    null
+   ],
+   "failed_range_sum": [
+    null,
+    null
+   ],
+   "all_range_pb": [
+    -0.3836686431568776,
+    -0.11401305259372264
+   ],
+   "failed_lpB_range": [
+    null,
+    null
+   ],
+   "n_failed": 0,
+   "n_blind": 3,
+   "mc": -1.5917176664401527,
+   "nc": 21,
+   "z_live": -5.241075374032301,
+   "inband_live": false,
+   "mc_vis": -0.7660679512309263,
+   "z_live_vis": 0.10138368798898735,
+   "inband_live_vis": true,
+   "mu_c": -0.7817362815153887,
+   "blind_mc": [
+    -0.4481553239851842,
+    -1.088769971152866,
+    -0.8082835494081156
+   ],
+   "y": "```bash\ncat src/Sentry/Laravel/Integration.php\n```"
+  },
+  {
+   "sid": "b3ea21bb2e3844bf9adf8fd5bd8e6662:5",
+   "harness": "terminus_2",
+   "kind": "terminus_json",
+   "stuck": false,
+   "depth": 5,
+   "arm": "F1",
+   "z_src": "frontier_greedy",
+   "judge": null,
+   "lp0_pb": -0.21108495502444158,
+   "lp0_sum": -110.81960138783182,
+   "n_bytes": 525,
+   "lpB_pb": -0.20936431898796024,
+   "failed_range_pb": [
+    null,
+    null
+   ],
+   "failed_range_sum": [
+    null,
+    null
+   ],
+   "all_range_pb": [
+    -0.08716555967881982,
+    -0.06870137021164816
+   ],
+   "failed_lpB_range": [
+    null,
+    null
+   ],
+   "n_failed": 0,
+   "n_blind": 3,
+   "mc": -1.879361966435927,
+   "nc": 74,
+   "z_live": -11.716668416673954,
+   "inband_live": false,
+   "mc_vis": null,
+   "z_live_vis": null,
+   "inband_live_vis": null,
+   "mu_c": -0.3131907688379667,
+   "blind_mc": [
+    -0.28894775962435854,
+    -0.4936261351740864,
+    -0.15699841171545528
+   ],
+   "y": "{\n  \"analysis\": \"All required counts have been independently verified. The final /app/summary.csv exists with the correct header and all 15 rows in the required order. Counts for today, last 7 days, l"
+  },
+  {
+   "sid": "ca99dd9d809c4896a3ec8d0a170a37d8:12",
+   "harness": "bash",
+   "kind": "tool_call",
+   "stuck": true,
+   "depth": 12,
+   "arm": "F1",
+   "z_src": "frontier_greedy",
+   "judge": "different_target",
+   "lp0_pb": -0.07368505586929014,
+   "lp0_sum": -14.442270950380866,
+   "n_bytes": 196,
+   "lpB_pb": -0.13166722981013634,
+   "failed_range_pb": [
+    -0.0987095800710346,
+    -0.05241730045007902
+   ],
+   "failed_range_sum": [
+    -15.102565750868294,
+    -6.499745255809799
+   ],
+   "all_range_pb": [
+    -0.0987095800710346,
+    -0.05241730045007902
+   ],
+   "failed_lpB_range": [
+    -0.1435389643844563,
+    -0.1280586902975223
+   ],
+   "n_failed": 3,
+   "n_blind": 3,
+   "mc": -1.118456431272788,
+   "nc": 532,
+   "z_live": -1.0110733085386838,
+   "inband_live": true,
+   "mc_vis": -3.475589774396352,
+   "z_live_vis": -12.944138594840535,
+   "inband_live_vis": false,
+   "mu_c": -0.9187395479138625,
+   "blind_mc": [
+    -0.7231906503450541,
+    -0.8309583161513485,
+    -1.2020696772451849
+   ],
+   "y": "<tool_call>\n{\"name\": \"bash\", \"arguments\": {\"command\": \"cd /tcomb && find node_modules -name \\\"declare.js\\\" -path \\\"*tcomb*\\\" 2>/dev/null; ls node_modules | grep -i tcomb\"}}\n</tool_call>"
+  },
+  {
+   "sid": "cfa692cfc20d44a5859c88d4655e196d:15",
+   "harness": "mini_swe_textbased",
+   "kind": "bash",
+   "stuck": false,
+   "depth": 15,
+   "arm": "F1",
+   "z_src": "frontier_greedy",
+   "judge": null,
+   "lp0_pb": -0.19042979288926304,
+   "lp0_sum": -21.137707010708198,
+   "n_bytes": 111,
+   "lpB_pb": -0.24164802692928355,
+   "failed_range_pb": [
+    null,
+    null
+   ],
+   "failed_range_sum": [
+    null,
+    null
+   ],
+   "all_range_pb": [
+    -0.11509044470668962,
+    -0.08358153721254649
+   ],
+   "failed_lpB_range": [
+    null,
+    null
+   ],
+   "n_failed": 0,
+   "n_blind": 3,
+   "mc": -1.3316758911229651,
+   "nc": 36,
+   "z_live": -5.476705391357994,
+   "inband_live": false,
+   "mc_vis": -0.5964528795220445,
+   "z_live_vis": -0.7193624545430031,
+   "inband_live_vis": true,
+   "mu_c": -0.48527909253921525,
+   "blind_mc": [
+    -0.4107907769436331,
+    -0.5927284210471073,
+    -0.4523180796269053
+   ],
+   "y": "```bash\ncd /testbed && git log --oneline -5 -- cache.go && git log -S \"keyEvict) + 1\" --oneline -- cache.go\n```"
+  },
+  {
+   "sid": "d0949dbf66b047069fcd03e44ce6922a:3",
+   "harness": "terminus_2",
+   "kind": "terminus_json",
+   "stuck": false,
+   "depth": 3,
+   "arm": "F1",
+   "z_src": "frontier_greedy",
+   "judge": null,
+   "lp0_pb": -0.1133543511624838,
+   "lp0_sum": -1337.9214067707962,
+   "n_bytes": 11803,
+   "lpB_pb": -0.11262088852715849,
+   "failed_range_pb": [
+    null,
+    null
+   ],
+   "failed_range_sum": [
+    null,
+    null
+   ],
+   "all_range_pb": [
+    -0.07633040144331212,
+    -0.021401481672150825
+   ],
+   "failed_lpB_range": [
+    null,
+    null
+   ],
+   "n_failed": 0,
+   "n_blind": 3,
+   "mc": -3.2882313302656545,
+   "nc": 876,
+   "z_live": -20.834879673748976,
+   "inband_live": false,
+   "mc_vis": null,
+   "z_live_vis": null,
+   "inband_live_vis": null,
+   "mu_c": -0.5032256195972724,
+   "blind_mc": [
+    -0.3852541755308646,
+    -0.5472439104205002,
+    -0.5771787728404524
+   ],
+   "y": "{\n  \"analysis\": \"The initial implementation works for basic commands and Ctrl-C, but it has a SyntaxWarning, does not robustly consume output while commands run, and its cleanup can leave child proces"
+  }
+ ],
+ "thought_typicality": {
+  "teacher first thought, solved": {
+   "n": 65,
+   "n_states": 32,
+   "inband_live": 0.7692307692307693,
+   "inband_live_ci": [
+    0.6535506019179673,
+    0.8548629154901115
+   ],
+   "inband_pooled": 0.8461538461538461,
+   "z_live_mean": 0.08969864185530599,
+   "z_live_p50": 0.040154092632228126,
+   "abs_z_live_p50": 0.8309287900751838,
+   "below": 0.046875,
+   "above": 0.109375,
+   "lt_min_content": 0.09230769230769231,
+   "mc_mean": -0.7449251305947169,
+   "len_p50": 490
+  },
+  "teacher first thought, failed": {
+   "n": 61,
+   "n_states": 25,
+   "inband_live": 0.8360655737704918,
+   "inband_live_ci": [
+    0.7238692567544832,
+    0.9084408651425705
+   ],
+   "inband_pooled": 0.9016393442622951,
+   "z_live_mean": 0.12548922122746953,
+   "z_live_p50": 0.12591200486854803,
+   "abs_z_live_p50": 0.7525231001721032,
+   "below": 0.06557377049180328,
+   "above": 0.08196721311475409,
+   "lt_min_content": 0.03278688524590164,
+   "mc_mean": -0.7518109939605364,
+   "len_p50": 611
+  },
+  "teacher first thought, solved @stuck (split states)": {
+   "n": 17,
+   "n_states": 8,
+   "inband_live": 0.8235294117647058,
+   "inband_live_ci": [
+    0.5897007098262422,
+    0.9380898628745101
+   ],
+   "inband_pooled": 0.8235294117647058,
+   "z_live_mean": 0.2647044217637395,
+   "z_live_p50": -0.22674721445814092,
+   "abs_z_live_p50": 1.2632892492656287,
+   "below": 0.0,
+   "above": 0.11764705882352941,
+   "lt_min_content": 0.17647058823529413,
+   "mc_mean": -0.7437654557619966,
+   "len_p50": 389
+  },
+  "frontier proposal thought (GLM latent+visible), solved": {
+   "n": 17,
+   "n_states": 17,
+   "inband_live": 0.11764705882352941,
+   "inband_live_ci": [
+    0.03287908001292092,
+    0.3433684249770991
+   ],
+   "inband_pooled": 0.11764705882352941,
+   "z_live_mean": -7.29215784104126,
+   "z_live_p50": -5.5757738508808465,
+   "abs_z_live_p50": 5.5757738508808465,
+   "below": 0.7647058823529411,
+   "above": 0.0,
+   "lt_min_content": 0.17647058823529413,
+   "mc_mean": -1.7231141099954193,
+   "len_p50": 228
+  },
+  "frontier proposal thought (GLM latent+visible), failed": {
+   "n": 24,
+   "n_states": 17,
+   "inband_live": 0.375,
+   "inband_live_ci": [
+    0.21159133433631458,
+    0.5729038096209293
+   ],
+   "inband_pooled": 0.375,
+   "z_live_mean": -3.707982290406541,
+   "z_live_p50": -3.07545169013848,
+   "abs_z_live_p50": 3.07545169013848,
+   "below": 0.625,
+   "above": 0.0,
+   "lt_min_content": 0.08333333333333333,
+   "mc_mean": -1.3693530230728623,
+   "len_p50": 464.5
+  },
+  "frontier proposal thought (GLM latent+visible), solved @stuck": {
+   "n": 6,
+   "n_states": 6,
+   "inband_live": 0.3333333333333333,
+   "inband_live_ci": [
+    0.09676933255921683,
+    0.7000116786584712
+   ],
+   "inband_pooled": 0.3333333333333333,
+   "z_live_mean": -3.1925012283371745,
+   "z_live_p50": -1.9500434896034857,
+   "abs_z_live_p50": 2.027303041275327,
+   "below": 0.5,
+   "above": 0.0,
+   "lt_min_content": 0.16666666666666666,
+   "mc_mean": -1.1700083795336322,
+   "len_p50": 103.0
+  },
+  "frontier proposal thought (GLM latent+visible), failed @stuck": {
+   "n": 21,
+   "n_states": 14,
+   "inband_live": 0.42857142857142855,
+   "inband_live_ci": [
+    0.24469699486521043,
+    0.6345378370296754
+   ],
+   "inband_pooled": 0.42857142857142855,
+   "z_live_mean": -3.57489460423187,
+   "z_live_p50": -2.8887338850678135,
+   "abs_z_live_p50": 2.8887338850678135,
+   "below": 0.5714285714285714,
+   "above": 0.0,
+   "lt_min_content": 0.09523809523809523,
+   "mc_mean": -1.3665006837779996,
+   "len_p50": 504
+  },
+  "frontier proposal visible text only, solved": {
+   "n": 11,
+   "n_states": 11,
+   "inband_live": 0.45454545454545453,
+   "inband_live_ci": [
+    0.21270957543988045,
+    0.7199122443100118
+   ],
+   "inband_pooled": 0.45454545454545453,
+   "z_live_mean": -1.324351698249614,
+   "z_live_p50": -0.7193624545430031,
+   "abs_z_live_p50": 1.4977919124287633,
+   "below": 0.2727272727272727,
+   "above": 0.18181818181818182,
+   "lt_min_content": 0.09090909090909091,
+   "mc_mean": -1.051036307024484,
+   "len_p50": 228
+  },
+  "frontier proposal visible text only, failed": {
+   "n": 22,
+   "n_states": 15,
+   "inband_live": 0.5909090909090909,
+   "inband_live_ci": [
+    0.38734477382893806,
+    0.7674444033117963
+   ],
+   "inband_pooled": 0.6818181818181818,
+   "z_live_mean": -0.9907962248465623,
+   "z_live_p50": 0.12347051253687549,
+   "abs_z_live_p50": 1.5314033029035783,
+   "below": 0.22727272727272727,
+   "above": 0.13636363636363635,
+   "lt_min_content": 0.09090909090909091,
+   "mc_mean": -0.9564795489884609,
+   "len_p50": 877.5
+  },
+  "frontier own-continuation first thought, solved": {
+   "n": 1,
+   "n_states": 1,
+   "inband_live": 1.0,
+   "inband_live_ci": [
+    0.20654329147389294,
+    1.0
+   ],
+   "inband_pooled": 1.0,
+   "z_live_mean": -0.5185526307826406,
+   "z_live_p50": -0.5185526307826406,
+   "abs_z_live_p50": 0.5185526307826406,
+   "below": 0.0,
+   "above": 0.0,
+   "lt_min_content": 0.0,
+   "mc_mean": -0.6084322661323768,
+   "len_p50": 606
+  },
+  "frontier own-continuation first thought, failed": {
+   "n": 0,
+   "n_states": 0,
+   "inband_live": null,
+   "inband_live_ci": [
+    0.0,
+    1.0
+   ],
+   "inband_pooled": null,
+   "z_live_mean": null,
+   "z_live_p50": null,
+   "abs_z_live_p50": null,
+   "below": null,
+   "above": null,
+   "lt_min_content": null,
+   "mc_mean": null,
+   "len_p50": null
+  },
+  "blind ref LOO (band's own hit rate)": {
+   "n": 192,
+   "n_states": 64,
+   "inband_live": 0.8177083333333334,
+   "inband_live_ci": [
+    0.7570445489899875,
+    0.8659078778692701
+   ],
+   "inband_pooled": null,
+   "z_live_mean": null,
+   "z_live_p50": null,
+   "abs_z_live_p50": null,
+   "below": null,
+   "above": null,
+   "lt_min_content": 0.041666666666666664,
+   "mc_mean": -0.7059958174917218,
+   "len_p50": null
+  },
+  "teacher first thought, solved | mini_swe_textbased": {
+   "n": 23,
+   "n_states": 13,
+   "inband_live": 0.7391304347826086,
+   "inband_live_ci": [
+    0.5352960945624944,
+    0.8745155411075104
+   ],
+   "inband_pooled": 0.8695652173913043,
+   "z_live_mean": -0.24435627220759648,
+   "z_live_p50": -0.07863715230170386,
+   "abs_z_live_p50": 1.0353340294988727,
+   "below": 0.13043478260869565,
+   "above": 0.13043478260869565,
+   "lt_min_content": 0.0,
+   "mc_mean": -0.7716307179905171,
+   "len_p50": 446
+  },
+  "teacher first thought, solved | bash": {
+   "n": 22,
+   "n_states": 11,
+   "inband_live": 0.9090909090909091,
+   "inband_live_ci": [
+    0.7218461934161421,
+    0.9747051037171622
+   ],
+   "inband_pooled": 0.9090909090909091,
+   "z_live_mean": -0.1908440981880849,
+   "z_live_p50": -0.24706852060791096,
+   "abs_z_live_p50": 0.6869488890888684,
+   "below": 0.0,
+   "above": 0.0,
+   "lt_min_content": 0.045454545454545456,
+   "mc_mean": -0.900323130033856,
+   "len_p50": 716.5
+  },
+  "teacher first thought, solved | terminus_2": {
+   "n": 20,
+   "n_states": 8,
+   "inband_live": 0.65,
+   "inband_live_ci": [
+    0.43285051021946463,
+    0.8188104521320554
+   ],
+   "inband_pooled": 0.75,
+   "z_live_mean": 0.7684316700732042,
+   "z_live_p50": 0.2969790964419438,
+   "abs_z_live_p50": 0.6963156219048376,
+   "below": 0.0,
+   "above": 0.2,
+   "lt_min_content": 0.25,
+   "mc_mean": -0.5432759057064936,
+   "len_p50": 447.0
+  },
+  "teacher first thought, failed | mini_swe_textbased": {
+   "n": 25,
+   "n_states": 10,
+   "inband_live": 0.84,
+   "inband_live_ci": [
+    0.6534598601976183,
+    0.9359665239142201
+   ],
+   "inband_pooled": 0.92,
+   "z_live_mean": 0.7136514252904264,
+   "z_live_p50": 0.5337304558810035,
+   "abs_z_live_p50": 0.6921670941088679,
+   "below": 0.0,
+   "above": 0.16,
+   "lt_min_content": 0.0,
+   "mc_mean": -0.6768851364152497,
+   "len_p50": 372
+  },
+  "teacher first thought, failed | bash": {
+   "n": 21,
+   "n_states": 8,
+   "inband_live": 0.9047619047619048,
+   "inband_live_ci": [
+    0.7108541613925933,
+    0.9734817912030528
+   ],
+   "inband_pooled": 0.9523809523809523,
+   "z_live_mean": -0.401724267339372,
+   "z_live_p50": -0.38373681387610786,
+   "abs_z_live_p50": 0.7525231001721032,
+   "below": 0.09523809523809523,
+   "above": 0.0,
+   "lt_min_content": 0.0,
+   "mc_mean": -0.9192739828967168,
+   "len_p50": 1429
+  },
+  "teacher first thought, failed | terminus_2": {
+   "n": 15,
+   "n_states": 7,
+   "inband_live": 0.7333333333333333,
+   "inband_live_ci": [
+    0.4804911034231324,
+    0.8910272389681718
+   ],
+   "inband_pooled": 0.8,
+   "z_live_mean": -0.11668223488388035,
+   "z_live_p50": -0.026335943620674162,
+   "abs_z_live_p50": 0.8281635322938651,
+   "below": 0.13333333333333333,
+   "above": 0.06666666666666667,
+   "lt_min_content": 0.13333333333333333,
+   "mc_mean": -0.6422392386920286,
+   "len_p50": 346
+  },
+  "frontier proposal thought (GLM latent+visible), solved | mini_swe_textbased": {
+   "n": 8,
+   "n_states": 8,
+   "inband_live": 0.125,
+   "inband_live_ci": [
+    0.02241690886329617,
+    0.4708948057698615
+   ],
+   "inband_pooled": 0.125,
+   "z_live_mean": -3.2085865810153793,
+   "z_live_p50": -3.977822098570674,
+   "abs_z_live_p50": 3.977822098570674,
+   "below": 0.625,
+   "above": 0.0,
+   "lt_min_content": 0.25,
+   "mc_mean": -1.2021509632042624,
+   "len_p50": 168.0
+  },
+  "frontier proposal thought (GLM latent+visible), solved | bash": {
+   "n": 3,
+   "n_states": 3,
+   "inband_live": 0.3333333333333333,
+   "inband_live_ci": [
+    0.0614903152761605,
+    0.7923450448735121
+   ],
+   "inband_pooled": 0.3333333333333333,
+   "z_live_mean": -4.83689190150957,
+   "z_live_p50": -5.986536752077028,
+   "abs_z_live_p50": 5.986536752077028,
+   "below": 0.6666666666666666,
+   "above": 0.0,
+   "lt_min_content": 0.0,
+   "mc_mean": -1.8734875886022686,
+   "len_p50": 12813
+  },
+  "frontier proposal thought (GLM latent+visible), solved | terminus_2": {
+   "n": 6,
+   "n_states": 6,
+   "inband_live": 0.0,
+   "inband_live_ci": [
+    0.0,
+    0.3903430336530645
+   ],
+   "inband_pooled": 0.0,
+   "z_live_mean": -13.964552490841612,
+   "z_live_p50": -12.379900344402945,
+   "abs_z_live_p50": 12.379900344402945,
+   "below": 1.0,
+   "above": 0.0,
+   "lt_min_content": 0.16666666666666666,
+   "mc_mean": -2.34254489974687,
+   "len_p50": 431.0
+  },
+  "frontier proposal thought (GLM latent+visible), failed | mini_swe_textbased": {
+   "n": 14,
+   "n_states": 10,
+   "inband_live": 0.35714285714285715,
+   "inband_live_ci": [
+    0.16344490737202735,
+    0.6123599531785959
+   ],
+   "inband_pooled": 0.35714285714285715,
+   "z_live_mean": -3.597810448757166,
+   "z_live_p50": -3.07545169013848,
+   "abs_z_live_p50": 3.07545169013848,
+   "below": 0.6428571428571429,
+   "above": 0.0,
+   "lt_min_content": 0.0,
+   "mc_mean": -1.3371955060598886,
+   "len_p50": 464.5
+  },
+  "frontier proposal thought (GLM latent+visible), failed | bash": {
+   "n": 7,
+   "n_states": 5,
+   "inband_live": 0.5714285714285714,
+   "inband_live_ci": [
+    0.2504542304090258,
+    0.8417830777373732
+   ],
+   "inband_pooled": 0.5714285714285714,
+   "z_live_mean": -2.5043140004581446,
+   "z_live_p50": -1.0668108482409464,
+   "abs_z_live_p50": 1.0668108482409464,
+   "below": 0.42857142857142855,
+   "above": 0.0,
+   "lt_min_content": 0.14285714285714285,
+   "mc_mean": -1.303549219726313,
+   "len_p50": 277
+  },
+  "frontier proposal thought (GLM latent+visible), failed | terminus_2": {
+   "n": 3,
+   "n_states": 2,
+   "inband_live": 0.0,
+   "inband_live_ci": [
+    0.0,
+    0.5615060804490177
+   ],
+   "inband_pooled": 0.0,
+   "z_live_mean": -7.030676894649882,
+   "z_live_p50": -6.324850954244523,
+   "abs_z_live_p50": 6.324850954244523,
+   "below": 1.0,
+   "above": 0.0,
+   "lt_min_content": 0.3333333333333333,
+   "mc_mean": -1.6729636436086885,
+   "len_p50": 17693
+  },
+  "frontier proposal visible text only, solved | mini_swe_textbased": {
+   "n": 8,
+   "n_states": 8,
+   "inband_live": 0.625,
+   "inband_live_ci": [
+    0.30573785458380187,
+    0.863158240538479
+   ],
+   "inband_pooled": 0.625,
+   "z_live_mean": 0.8124889994926505,
+   "z_live_p50": 0.21051626650507638,
+   "abs_z_live_p50": 1.239631464186481,
+   "below": 0.0,
+   "above": 0.25,
+   "lt_min_content": 0.125,
+   "mc_mean": -0.5807143046657642,
+   "len_p50": 168.0
+  },
+  "frontier proposal visible text only, solved | bash": {
+   "n": 3,
+   "n_states": 3,
+   "inband_live": 0.0,
+   "inband_live_ci": [
+    0.0,
+    0.5615060804490177
+   ],
+   "inband_pooled": 0.0,
+   "z_live_mean": -7.022593558895653,
+   "z_live_p50": -5.609896514039476,
+   "abs_z_live_p50": 5.609896514039476,
+   "below": 1.0,
+   "above": 0.0,
+   "lt_min_content": 0.0,
+   "mc_mean": -2.305228313314403,
+   "len_p50": 12813
+  },
+  "frontier proposal visible text only, solved | terminus_2": {
+   "n": 0,
+   "n_states": 0,
+   "inband_live": null,
+   "inband_live_ci": [
+    0.0,
+    1.0
+   ],
+   "inband_pooled": null,
+   "z_live_mean": null,
+   "z_live_p50": null,
+   "abs_z_live_p50": null,
+   "below": null,
+   "above": null,
+   "lt_min_content": null,
+   "mc_mean": null,
+   "len_p50": null
+  },
+  "frontier proposal visible text only, failed | mini_swe_textbased": {
+   "n": 14,
+   "n_states": 10,
+   "inband_live": 0.7142857142857143,
+   "inband_live_ci": [
+    0.4535045882751561,
+    0.882788120898909
+   ],
+   "inband_pooled": 0.8571428571428571,
+   "z_live_mean": 0.35069671469533287,
+   "z_live_p50": 0.20160613670646654,
+   "abs_z_live_p50": 1.3919697047400579,
+   "below": 0.07142857142857142,
+   "above": 0.14285714285714285,
+   "lt_min_content": 0.07142857142857142,
+   "mc_mean": -0.7269739251063582,
+   "len_p50": 464.5
+  },
+  "frontier proposal visible text only, failed | bash": {
+   "n": 6,
+   "n_states": 4,
+   "inband_live": 0.5,
+   "inband_live_ci": [
+    0.18761280689940868,
+    0.8123871931005913
+   ],
+   "inband_pooled": 0.5,
+   "z_live_mean": -2.104117987778902,
+   "z_live_p50": 0.3350703414411252,
+   "abs_z_live_p50": 1.3307890084027982,
+   "below": 0.3333333333333333,
+   "above": 0.16666666666666666,
+   "lt_min_content": 0.16666666666666666,
+   "mc_mean": -1.1967464799154606,
+   "len_p50": 950.0
+  },
+  "frontier proposal visible text only, failed | terminus_2": {
+   "n": 2,
+   "n_states": 1,
+   "inband_live": 0.0,
+   "inband_live_ci": [
+    0.0,
+    0.6576280471103807
+   ],
+   "inband_pooled": 0.0,
+   "z_live_mean": -7.04128151284281,
+   "z_live_p50": -7.04128151284281,
+   "abs_z_live_p50": 7.04128151284281,
+   "below": 1.0,
+   "above": 0.0,
+   "lt_min_content": 0.0,
+   "mc_mean": -1.8422181233821813,
+   "len_p50": 30210.0
+  }
+ },
+ "coached_picks": [
+  {
+   "sid": "2f4d4ef3ee024338ab9c654a8f9e0ab4:6",
+   "harness": "terminus_2",
+   "kind": "terminus_json",
+   "depth": 6,
+   "n_T_failed": 1,
+   "n_verified": 1,
+   "coached_src": "F1",
+   "coached_arm": "F1",
+   "coached_cont": 0,
+   "coached_lp0_pb": -0.0611525088229151,
+   "coached_lp0_sum": -24.644461055634785,
+   "coached_bytes": 403,
+   "coached_same_by_sum": true,
+   "best_failed_lp0_pb": -0.03532575345905001,
+   "delta_pb": -0.02582675536386509,
+   "delta_sum": -9.383735561325182,
+   "ge_floor_failed": false,
+   "ge_floor_all": false,
+   "coached_inband_live": false,
+   "coached_z_live": -7.962124442010039,
+   "coached_mc_known": true,
+   "band_unchanged": false,
+   "n_T_solved_inband": 0,
+   "n_T_solved": 0,
+   "teacher_only_pick": false,
+   "teacher_only_ge_floor_failed": null,
+   "teacher_only_inband_live": null,
+   "teacher_only_delta_pb": null,
+   "coached_y": "{\n  \"analysis\": \"gcc and g++ have been installed successfully. Now I need to install PyTorch to load model.pth and extract the weights.\",\n  \"plan\": \"Install PyT"
+  },
+  {
+   "sid": "3665be6010bf456ca018c12d94ea0e05:13",
+   "harness": "terminus_2",
+   "kind": "terminus_json",
+   "depth": 13,
+   "n_T_failed": 1,
+   "n_verified": 4,
+   "coached_src": "T",
+   "coached_arm": "T",
+   "coached_cont": 3,
+   "coached_lp0_pb": -0.03335748209850796,
+   "coached_lp0_sum": -8.039153185740417,
+   "coached_bytes": 241,
+   "coached_same_by_sum": true,
+   "best_failed_lp0_pb": -0.053091252401442975,
+   "delta_pb": 0.019733770302935015,
+   "delta_sum": 7.5696750202838174,
+   "ge_floor_failed": true,
+   "ge_floor_all": true,
+   "coached_inband_live": false,
+   "coached_z_live": -0.4866470705151435,
+   "coached_mc_known": true,
+   "band_unchanged": true,
+   "n_T_solved_inband": 0,
+   "n_T_solved": 3,
+   "teacher_only_pick": true,
+   "teacher_only_ge_floor_failed": true,
+   "teacher_only_inband_live": false,
+   "teacher_only_delta_pb": 0.019733770302935015,
+   "coached_y": "{\n  \"analysis\": \"The R installation command is still running. I need to wait for it to complete.\",\n  \"plan\": \"Wait for the R package installation to complete.\","
+  },
+  {
+   "sid": "3cab611bfbee455d861881e0496a425f:15",
+   "harness": "mini_swe_textbased",
+   "kind": "bash",
+   "depth": 15,
+   "n_T_failed": 1,
+   "n_verified": 4,
+   "coached_src": "F1",
+   "coached_arm": "F1",
+   "coached_cont": 0,
+   "coached_lp0_pb": -0.10414569466681495,
+   "coached_lp0_sum": -6.040450290675267,
+   "coached_bytes": 58,
+   "coached_same_by_sum": true,
+   "best_failed_lp0_pb": -0.2507834149844758,
+   "delta_pb": 0.14663772031766087,
+   "delta_sum": 8.755771193408805,
+   "ge_floor_failed": true,
+   "ge_floor_all": true,
+   "coached_inband_live": false,
+   "coached_z_live": -0.7905861094653557,
+   "coached_mc_known": true,
+   "band_unchanged": false,
+   "n_T_solved_inband": 2,
+   "n_T_solved": 3,
+   "teacher_only_pick": true,
+   "teacher_only_ge_floor_failed": true,
+   "teacher_only_inband_live": true,
+   "teacher_only_delta_pb": 0.1309126099269909,
+   "coached_y": "```bash\ncd /testbed && pip install -e . 2>&1 | tail -5\n```"
+  },
+  {
+   "sid": "48e27ac1ac2e478f92b42bd91e32ce3a:8",
+   "harness": "mini_swe_textbased",
+   "kind": "bash",
+   "depth": 8,
+   "n_T_failed": 1,
+   "n_verified": 3,
+   "coached_src": "T",
+   "coached_arm": "T",
+   "coached_cont": 1,
+   "coached_lp0_pb": -0.17808798980104,
+   "coached_lp0_sum": -31.343486204983037,
+   "coached_bytes": 176,
+   "coached_same_by_sum": false,
+   "best_failed_lp0_pb": -0.22547403534636756,
+   "delta_pb": 0.047386045545327576,
+   "delta_sum": 5.85972962716761,
+   "ge_floor_failed": true,
+   "ge_floor_all": true,
+   "coached_inband_live": true,
+   "coached_z_live": -1.324153899011004,
+   "coached_mc_known": true,
+   "band_unchanged": true,
+   "n_T_solved_inband": 3,
+   "n_T_solved": 3,
+   "teacher_only_pick": true,
+   "teacher_only_ge_floor_failed": true,
+   "teacher_only_inband_live": true,
+   "teacher_only_delta_pb": 0.047386045545327576,
+   "coached_y": "```bash\ngrep -rn \"Scratcher\" --include=\"*.go\" . | grep -v \"_test\" && echo \"=====\" && grep -rn \"func.*Scratch() \\*maps.Scratch\\|func.*Scratch() \\*Scratch\" --incl"
+  },
+  {
+   "sid": "4ab938c937f2492a99e7bd4e8672705c:10",
+   "harness": "bash",
+   "kind": "tool_call",
+   "depth": 10,
+   "n_T_failed": 1,
+   "n_verified": 1,
+   "coached_src": "T",
+   "coached_arm": "T",
+   "coached_cont": 0,
+   "coached_lp0_pb": -0.0494979809265999,
+   "coached_lp0_sum": -25.788448062758548,
+   "coached_bytes": 521,
+   "coached_same_by_sum": true,
+   "best_failed_lp0_pb": -0.08105235945929844,
+   "delta_pb": 0.03155437853269854,
+   "delta_sum": 5.3356579696120505,
+   "ge_floor_failed": true,
+   "ge_floor_all": true,
+   "coached_inband_live": true,
+   "coached_z_live": 0.6869488890888684,
+   "coached_mc_known": true,
+   "band_unchanged": true,
+   "n_T_solved_inband": 1,
+   "n_T_solved": 1,
+   "teacher_only_pick": true,
+   "teacher_only_ge_floor_failed": true,
+   "teacher_only_inband_live": true,
+   "teacher_only_delta_pb": 0.03155437853269854,
+   "coached_y": "<tool_call>\n{\"name\": \"bash\", \"arguments\": {\"command\": \"env | grep -i -E \\\"proxy|http\\\" ; cd /tmp && /usr/local/bin/python3 - <<'EOF'\\nimport requests\\nfor url i"
+  },
+  {
+   "sid": "8bee1f3117134d2d800008fbbe9bf087:5",
+   "harness": "mini_swe_textbased",
+   "kind": "bash",
+   "depth": 5,
+   "n_T_failed": 4,
+   "n_verified": 1,
+   "coached_src": "F1",
+   "coached_arm": "F1b",
+   "coached_cont": 0,
+   "coached_lp0_pb": -0.18185493479795706,
+   "coached_lp0_sum": -22.004447110552803,
+   "coached_bytes": 121,
+   "coached_same_by_sum": true,
+   "best_failed_lp0_pb": -0.15141916013347156,
+   "delta_pb": -0.030435774664485493,
+   "delta_sum": -9.890914299875078,
+   "ge_floor_failed": true,
+   "ge_floor_all": true,
+   "coached_inband_live": false,
+   "coached_z_live": -7.667802251223046,
+   "coached_mc_known": true,
+   "band_unchanged": false,
+   "n_T_solved_inband": 0,
+   "n_T_solved": 0,
+   "teacher_only_pick": false,
+   "teacher_only_ge_floor_failed": null,
+   "teacher_only_inband_live": null,
+   "teacher_only_delta_pb": null,
+   "coached_y": "```bash\ngit log --oneline -10 && echo \"=====\" && cat fuel-crypto/Cargo.toml && echo \"=====\" && cat fuel-vm/Cargo.toml\n```"
+  },
+  {
+   "sid": "913f7a01d1d14336a156331a4cf11204:14",
+   "harness": "bash",
+   "kind": "tool_call",
+   "depth": 14,
+   "n_T_failed": 1,
+   "n_verified": 3,
+   "coached_src": "T",
+   "coached_arm": "T",
+   "coached_cont": 2,
+   "coached_lp0_pb": -0.027068385411803376,
+   "coached_lp0_sum": -31.263985150632898,
+   "coached_bytes": 1155,
+   "coached_same_by_sum": false,
+   "best_failed_lp0_pb": -0.03317323430997481,
+   "delta_pb": 0.006104848898171436,
+   "delta_sum": -26.752425284476324,
+   "ge_floor_failed": true,
+   "ge_floor_all": true,
+   "coached_inband_live": true,
+   "coached_z_live": -1.6978738971702991,
+   "coached_mc_known": true,
+   "band_unchanged": true,
+   "n_T_solved_inband": 3,
+   "n_T_solved": 3,
+   "teacher_only_pick": true,
+   "teacher_only_ge_floor_failed": true,
+   "teacher_only_inband_live": true,
+   "teacher_only_delta_pb": 0.006104848898171436,
+   "coached_y": "<tool_call>\n{\"name\": \"bash\", \"arguments\": {\"command\": \"cd /tmp && cat > repro.py << 'EOF'\\nimport pyxform\\nfrom pyxform.builder import create_survey_element_fro"
+  },
+  {
+   "sid": "9d3fd174f99742e287b3e060cdbbb2c6:14",
+   "harness": "mini_swe_textbased",
+   "kind": "bash",
+   "depth": 14,
+   "n_T_failed": 4,
+   "n_verified": 1,
+   "coached_src": "F1",
+   "coached_arm": "F1",
+   "coached_cont": 0,
+   "coached_lp0_pb": -0.09613276884820274,
+   "coached_lp0_sum": -99.59354852673803,
+   "coached_bytes": 1036,
+   "coached_same_by_sum": true,
+   "best_failed_lp0_pb": -0.1716375320160981,
+   "delta_pb": 0.07550476316789537,
+   "delta_sum": -61.31837888714816,
+   "ge_floor_failed": true,
+   "ge_floor_all": true,
+   "coached_inband_live": true,
+   "coached_z_live": 1.1655924118823662,
+   "coached_mc_known": true,
+   "band_unchanged": false,
+   "n_T_solved_inband": 0,
+   "n_T_solved": 0,
+   "teacher_only_pick": false,
+   "teacher_only_ge_floor_failed": null,
+   "teacher_only_inband_live": null,
+   "teacher_only_delta_pb": null,
+   "coached_y": "```bash\nmkdir -p /tmp/repro && cat <<'EOF' > /tmp/repro/reproduce.py\nimport sys\nfrom pathlib import Path\n\nsys.path.insert(0, \"/app\")\n\nfrom graphql import build_"
+  },
+  {
+   "sid": "a785cb844bd440f2ae269f95190a859c:12",
+   "harness": "terminus_2",
+   "kind": "terminus_json",
+   "depth": 12,
+   "n_T_failed": 3,
+   "n_verified": 1,
+   "coached_src": "T",
+   "coached_arm": "T",
+   "coached_cont": 2,
+   "coached_lp0_pb": -0.13063538713654135,
+   "coached_lp0_sum": -129.8515748137221,
+   "coached_bytes": 994,
+   "coached_same_by_sum": true,
+   "best_failed_lp0_pb": -0.07638503682310904,
+   "delta_pb": -0.05425035031343231,
+   "delta_sum": -6.1078151602854405,
+   "ge_floor_failed": true,
+   "ge_floor_all": true,
+   "coached_inband_live": true,
+   "coached_z_live": -0.8288751246848322,
+   "coached_mc_known": true,
+   "band_unchanged": true,
+   "n_T_solved_inband": 1,
+   "n_T_solved": 1,
+   "teacher_only_pick": true,
+   "teacher_only_ge_floor_failed": true,
+   "teacher_only_inband_live": true,
+   "teacher_only_delta_pb": -0.05425035031343231,
+   "coached_y": "{\n  \"analysis\": \"My solution's output looks correct (top words have many senses/distinct domains). The reference is still computing. I want to validate that my "
+  },
+  {
+   "sid": "ca99dd9d809c4896a3ec8d0a170a37d8:12",
+   "harness": "bash",
+   "kind": "tool_call",
+   "depth": 12,
+   "n_T_failed": 3,
+   "n_verified": 1,
+   "coached_src": "F1",
+   "coached_arm": "F1",
+   "coached_cont": 0,
+   "coached_lp0_pb": -0.07368505586929014,
+   "coached_lp0_sum": -14.442270950380866,
+   "coached_bytes": 196,
+   "coached_same_by_sum": true,
+   "best_failed_lp0_pb": -0.05241730045007902,
+   "delta_pb": -0.021267755419211117,
+   "delta_sum": -7.942525694571067,
+   "ge_floor_failed": true,
+   "ge_floor_all": true,
+   "coached_inband_live": true,
+   "coached_z_live": -1.0110733085386838,
+   "coached_mc_known": true,
+   "band_unchanged": false,
+   "n_T_solved_inband": 0,
+   "n_T_solved": 0,
+   "teacher_only_pick": false,
+   "teacher_only_ge_floor_failed": null,
+   "teacher_only_inband_live": null,
+   "teacher_only_delta_pb": null,
+   "coached_y": "<tool_call>\n{\"name\": \"bash\", \"arguments\": {\"command\": \"cd /tcomb && find node_modules -name \\\"declare.js\\\" -path \\\"*tcomb*\\\" 2>/dev/null; ls node_modules | grep"
+  },
+  {
+   "sid": "cd54272236014427bc71ea1d0a2fdbd7:12",
+   "harness": "bash",
+   "kind": "tool_call",
+   "depth": 12,
+   "n_T_failed": 2,
+   "n_verified": 2,
+   "coached_src": "T",
+   "coached_arm": "T",
+   "coached_cont": 2,
+   "coached_lp0_pb": -0.04450088460606395,
+   "coached_lp0_sum": -30.92811480121445,
+   "coached_bytes": 695,
+   "coached_same_by_sum": false,
+   "best_failed_lp0_pb": -0.013909239338711162,
+   "delta_pb": -0.030591645267352793,
+   "delta_sum": -22.387841847245795,
+   "ge_floor_failed": true,
+   "ge_floor_all": true,
+   "coached_inband_live": true,
+   "coached_z_live": 1.2632892492656287,
+   "coached_mc_known": true,
+   "band_unchanged": true,
+   "n_T_solved_inband": 2,
+   "n_T_solved": 2,
+   "teacher_only_pick": true,
+   "teacher_only_ge_floor_failed": true,
+   "teacher_only_inband_live": true,
+   "teacher_only_delta_pb": -0.030591645267352793,
+   "coached_y": "<tool_call>\n{\"name\": \"bash\", \"arguments\": {\"command\": \"cd /testbed && /opt/miniconda3/envs/testbed/bin/python -c \\\"\\nimport dask.array as da\\nimport numpy as np"
+  },
+  {
+   "sid": "f1e5d484b2a5457594858b512377d3d7:14",
+   "harness": "bash",
+   "kind": "tool_call",
+   "depth": 14,
+   "n_T_failed": 2,
+   "n_verified": 2,
+   "coached_src": "T",
+   "coached_arm": "T",
+   "coached_cont": 1,
+   "coached_lp0_pb": -0.043662184558290525,
+   "coached_lp0_sum": -10.566248663106308,
+   "coached_bytes": 242,
+   "coached_same_by_sum": true,
+   "best_failed_lp0_pb": -0.02339677366577255,
+   "delta_pb": -0.020265410892517974,
+   "delta_sum": 6.723967075899608,
+   "ge_floor_failed": true,
+   "ge_floor_all": true,
+   "coached_inband_live": true,
+   "coached_z_live": -1.5779984737964177,
+   "coached_mc_known": true,
+   "band_unchanged": true,
+   "n_T_solved_inband": 2,
+   "n_T_solved": 2,
+   "teacher_only_pick": true,
+   "teacher_only_ge_floor_failed": true,
+   "teacher_only_inband_live": true,
+   "teacher_only_delta_pb": -0.020265410892517974,
+   "coached_y": "<tool_call>\n{\"name\": \"bash\", \"arguments\": {\"command\": \"cd /workspace/py4vasp && /root/.cache/pypoetry/virtualenvs/py4vasp-v2fkWPRv-py3.11/bin/python -m pytest t"
+  }
+ ],
+ "coached_summary": {
+  "T_F1": {
+   "n_states": 12,
+   "coached_is_teacher": 7,
+   "coached_is_frontier": 5,
+   "ge_floor_failed": 11,
+   "ge_floor_all": 11,
+   "below_floor_failed": 1,
+   "below_floor_failed_share": 0.08333333333333333,
+   "below_floor_all_share": 0.08333333333333333,
+   "delta_pb_mean": 0.012023652903652001,
+   "delta_pb_p50": -0.007080280997173269,
+   "delta_pos": 6,
+   "delta_sum_mean": -9.12823632071293,
+   "coached_inband_live": 8,
+   "coached_mc_known": 12,
+   "band_unchanged": 7,
+   "band_unchanged_and_inband": 6,
+   "same_pick_by_sum": 9,
+   "teacher_only_available": 8,
+   "teacher_only_ge_floor": 8,
+   "teacher_only_inband": 7,
+   "teacher_only_ge_floor_and_inband": 7,
+   "by_harness": {
+    "mini_swe_textbased": {
+     "n": 4,
+     "teacher": 1,
+     "ge_floor_failed": 4,
+     "inband": 2
+    },
+    "bash": {
+     "n": 5,
+     "teacher": 4,
+     "ge_floor_failed": 5,
+     "inband": 5
+    },
+    "terminus_2": {
+     "n": 3,
+     "teacher": 2,
+     "ge_floor_failed": 2,
+     "inband": 1
+    }
+   }
+  },
+  "T_F1_F": {
+   "n_states": 12,
+   "coached_is_teacher": 7,
+   "coached_is_frontier": 5,
+   "ge_floor_failed": 11,
+   "ge_floor_all": 11,
+   "below_floor_failed": 1,
+   "below_floor_failed_share": 0.08333333333333333,
+   "below_floor_all_share": 0.08333333333333333,
+   "delta_pb_mean": 0.012023652903652001,
+   "delta_pb_p50": -0.007080280997173269,
+   "delta_pos": 6,
+   "delta_sum_mean": -9.12823632071293,
+   "coached_inband_live": 8,
+   "coached_mc_known": 12,
+   "band_unchanged": 7,
+   "band_unchanged_and_inband": 6,
+   "same_pick_by_sum": 9,
+   "teacher_only_available": 8,
+   "teacher_only_ge_floor": 8,
+   "teacher_only_inband": 7,
+   "teacher_only_ge_floor_and_inband": 7,
+   "by_harness": {
+    "mini_swe_textbased": {
+     "n": 4,
+     "teacher": 1,
+     "ge_floor_failed": 4,
+     "inband": 2
+    },
+    "bash": {
+     "n": 5,
+     "teacher": 4,
+     "ge_floor_failed": 5,
+     "inband": 5
+    },
+    "terminus_2": {
+     "n": 3,
+     "teacher": 2,
+     "ge_floor_failed": 2,
+     "inband": 1
+    }
+   }
+  }
+ },
+ "kill_line": {
+  "threshold_below_floor_share": 0.7,
+  "below_floor_share": 0.08333333333333333,
+  "dead": false
+ },
+ "verdict": [
+  "1. Plausibility: verified-better actions sit at/above the blind teacher's own lp0/B floor at 67% vs the failed first actions and 96% vs failed+blind refs (n=24 actions / 12 stuck states); strictly inside the range at 25% vs failed (75% where the teacher has >= 2 distinct failed actions, n=8) and 62% vs failed+blind \u2014 42% sit ABOVE every failed action; z vs failed+blind mean 0.67 (teacher-solved tier 67% >= failed floor, n=18; frontier F1 tier 67%, n=6).",
+  "2. Thoughts: teacher-solved first thoughts in band 77% (n=65) vs teacher-failed 84% (n=61); blind LOO 82% \u2014 no solved/failed gap, X2's 0.84/0.85 confirmed; frontier proposal thoughts (GLM latent+visible) in band 27% (n=41; solved ones 12%, n=17) \u2014 out of band as expected.",
+  "3. Coached pick: 12 stuck states have one; it is a teacher action at 7/12 (band unchanged) and a frontier action at 5/12 (action-only); a teacher-only coached set exists at 8/12 and is >= floor AND in band at 7/8; \u0394 vs the best teacher-failed action is positive at 6/12 (p50 -0.0071/B); the pick lies BELOW the teacher's failed-action floor at 1/12 = 8%.",
+  "4. Kill line (dead if the best verified action is below the teacher floor at > 70% of stuck states): NOT DEAD \u2014 8% below; a coached reference can be built at these 12 states without leaving the teacher's band in most cases; caveats: n is small (12 stuck states with a verified action, 28 stuck in total \u2192 16 stuck states have NO verified-better action at all), the 'better' label is one graded continuation per action, and frontier-derived picks bring no in-band thought."
+ ],
+ "terms": {
+  "lp0": "lpC(y|x,\u2205): blind teacher logprob of the action bytes (per byte / summed)",
+  "lpB": "mean_j lpC(y|x,z_blind_j) over the 3 stored blind teacher thoughts",
+  "teacher range": "[min,max] lp0 over the teacher's own actions at x: failed first actions (F) or failed + blind refs (F+B)",
+  "in-range / >= floor": "verified action inside the range / at or above its min",
+  "z": "(lp0(v) \u2212 mean)/sd over the teacher's own actions (>= 2 needed)",
+  "m_c": "content-masked mean token logprob of a thought under x (tokens with |lp(x) \u2212 lp(\u2205)| > 1 nat)",
+  "band": "\u03bc_c \u00b1 2\u03c3_c, \u03bc_c = mean m_c of the blind refs at x, \u03c3_c = live verdict \u03c3_Mc(dialect) (or pooled here)",
+  "coached pick": "verified-better action with the highest lp0 per byte at a stuck state",
+  "\u0394best": "lp0(coached) \u2212 max lp0(teacher-failed) at the same state",
+  "stuck state": ">= 1 teacher-failed first action at x",
+  "verified-better": "teacher-solved first action (tier T) or F1-family frontier proposal whose teacher-finished continuation solved (tier F1); arm F = frontier's own continuation (tier F, secondary)"
+ }
+}

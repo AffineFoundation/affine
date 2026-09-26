@@ -1,0 +1,27 @@
+{
+ "budget_usd": 30.0,
+ "usd": 5.85,
+ "input_tokens": 1999052,
+ "output_tokens": 18006897,
+ "calls": 2917,
+ "elapsed_s": 19447,
+ "price_in_per_m": 0.045,
+ "price_out_per_m": 0.32,
+ "by_stage": {
+  "generate": {
+   "input_tokens": 427378,
+   "output_tokens": 13964853,
+   "calls": 1336
+  },
+  "blind_solve": {
+   "input_tokens": 1329772,
+   "output_tokens": 3647861,
+   "calls": 1512
+  },
+  "repair": {
+   "input_tokens": 241902,
+   "output_tokens": 394183,
+   "calls": 69
+  }
+ }
+}

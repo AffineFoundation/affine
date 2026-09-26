@@ -25,6 +25,14 @@ rows) so publish.py / report.py / the kingboard read it unchanged. The
 summary records sandbox = "daytona", harness = "harbor:<agent>", the budget
 (agent timeout, step limit, max_tokens, temperature) and harness_change.
 
+Network: since 2026-09-24 the SWE-bench cells run the agent phase under Harbor's
+`allowlist` policy with only the serving box reachable (a local dataset export
+with `[agent] network_mode = "allowlist"` + `--allow-agent-host <box>`; the
+leak audit found 1–13 % of trials fetching upstream fixes from github / PyPI
+on open sandboxes). Setup and verifier phases stay public. Terminal-Bench 2
+stays `public` (suite.toml harbor.network): the official harness gives the
+agent internet. The summary stamps `network.mode`.
+
 Budget tag: a cell run at a non-default budget is written as
 <env>@<tag>__t<T> (e.g. swebench-verified@4h250__t0) — a separate column on
 the cards, never overwriting the 1-h cell.
@@ -82,10 +90,67 @@ def mini_swe_config(step_limit: int, temperature: float, top_p: float | None) ->
     return json.dumps(cfg)  # YAML-compatible JSON
 
 
+DATASETS_DIR = Path(os.environ.get("BENCH_DATASETS_DIR", str(Path.home() / "benchsuite" / "datasets")))
+
+
+def network_mode(env: dict, a: argparse.Namespace) -> str:
+    """`agent-allowlist` (default for SWE-bench: the sandbox reaches only the serving box
+    while the agent runs) or `public` (Harbor's default; Terminal-Bench 2 keeps it: the
+    official harness gives the agent internet and ~10/89 tasks clone / install)."""
+    m = getattr(a, "network", None) or env["harbor"].get("network") or "agent-allowlist"
+    if m not in ("agent-allowlist", "public"):
+        raise SystemExit(f"unknown network mode {m!r} (agent-allowlist | public)")
+    return m
+
+
+def model_host(model_url: str) -> str:
+    return re.sub(r"^https?://([^/:]+).*$", r"\1", model_url or "")
+
+
+def allowlist_dataset(dataset: str) -> Path:
+    """A local export of <name>@<version> whose every task.toml carries
+    `[agent] network_mode = "allowlist"` (empty host list — the serving box is merged in per
+    job with --allow-agent-host). Phase-scoped on purpose: [environment] stays public, so
+    Harbor's agent setup (uv + mini-swe-agent from PyPI) and the verifier still work; only
+    agent.run() is fenced (2026-09-24 leak audit: 1–13 % of SWE trials fetched upstream code
+    from github / PyPI on open Daytona sandboxes). Built once, shared by every job."""
+    name, _, version = dataset.partition("@")
+    out = DATASETS_DIR / f"{dataset}.agent-allowlist"
+    done = out / ".patched"
+    if done.exists():
+        return next(p for p in out.iterdir() if p.is_dir())
+    tmp = out.with_name(out.name + ".tmp")
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True)
+    log(f"exporting {dataset} to {tmp} (once)")
+    subprocess.run([str(HARBOR_BIN), "datasets", "download", dataset, "--export", "-o", str(tmp)], check=True)
+    root = next(p for p in tmp.iterdir() if p.is_dir())
+    n = 0
+    for toml_path in sorted(root.glob("*/task.toml")):
+        s = toml_path.read_text()
+        if re.search(r"^\[agent\]\s*$", s, re.M):
+            s = re.sub(r"^\[agent\]\s*$", '[agent]\nnetwork_mode = "allowlist"\nallowed_hosts = []', s, count=1, flags=re.M)
+        else:
+            s = s.rstrip("\n") + '\n\n[agent]\nnetwork_mode = "allowlist"\nallowed_hosts = []\n'
+        toml_path.write_text(s)
+        n += 1
+    if not n:
+        raise SystemExit(f"no task.toml under {root}")
+    shutil.rmtree(out, ignore_errors=True)
+    tmp.rename(out)
+    done.write_text(f"{dataset} {n} tasks {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n")
+    log(f"allowlist dataset ready: {out} ({n} tasks)")
+    return out / root.name
+
+
 def build_cmd(env: dict, a: argparse.Namespace, job_dir: Path, cfg_path: Path | None) -> list[str]:
     hb = env["harbor"]
     model_key = os.environ.get(a.model_key_env, "")
-    cmd = [str(HARBOR_BIN), "run", "-d", hb["dataset"], "-a", hb["agent"], "-e", "daytona",
+    if network_mode(env, a) == "agent-allowlist":
+        dataset_args = ["-p", str(allowlist_dataset(hb["dataset"])), "--allow-agent-host", model_host(a.model_url)]
+    else:
+        dataset_args = ["-d", hb["dataset"]]
+    cmd = [str(HARBOR_BIN), "run", *dataset_args, "-a", hb["agent"], "-e", "daytona",
            "-m", f"openai/{a.model}", "-n", str(a.concurrency), "-y", "-q",
            "-o", str(job_dir.parent), "--job-name", job_dir.name,
            "--ae", f"OPENAI_API_BASE={a.model_url}", "--ae", f"OPENAI_BASE_URL={a.model_url}",
@@ -146,6 +211,33 @@ def is_infra_env(etype: str, emsg: str, agent_result: dict) -> bool:
 
 
 DATASET_SIZE = {"swebench-verified": 500, "terminal-bench-2": 89}   # full task sets; a job below this is partial
+
+
+def job_network(job_dir: Path) -> dict:
+    """What the job actually ran under, from Harbor's saved config (survives resumes and
+    serving-box swaps): agent-allowlist when the tasks come from an allowlist export."""
+    try:
+        cfg = json.loads((job_dir / "config.json").read_text())
+    except (OSError, ValueError):
+        return {"mode": "unknown", "allowed_hosts": []}
+    paths = [str(t.get("path") or "") for t in (cfg.get("datasets") or []) + (cfg.get("tasks") or [])]
+    hosts = sorted({h for ag in (cfg.get("agents") or [cfg.get("agent") or {}]) for h in ag.get("extra_allowed_hosts") or []})
+    if paths and all(".agent-allowlist" in p for p in paths):
+        return {"mode": "agent-allowlist", "allowed_hosts": hosts}
+    return {"mode": "public", "allowed_hosts": hosts}
+
+
+def served_gpu(model_url: str) -> str | None:
+    """The GPU class that served the model, from kingpod / primepod state (by base_url)."""
+    try:
+        pods = json.loads((Path(__file__).resolve().parent / "state" / "pods.json").read_text())
+    except (OSError, ValueError):
+        return None
+    for v in pods.values():
+        if v.get("base_url") and model_url and v["base_url"].rstrip("/") == model_url.rstrip("/"):
+            plan = v.get("plan") or {}
+            return plan.get("match") or plan.get("name") or v.get("machine")
+    return None
 
 
 def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit_code: int) -> dict:
@@ -211,6 +303,7 @@ def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit
         "n_infra_env": sum(1 for r in rows if r["error_class"] == "infra_env"),
         "n_live": sum(1 for r in rows if r["error_class"] != "infra_env"),   # trials that ran against a live model
         "n_expected": int(a.n_tasks) if a.n_tasks and a.n_tasks > 0 else DATASET_SIZE.get(a.env),
+        "served_gpu": served_gpu(getattr(a, "model_url", "") or ""),
         "n_timeout": sum(1 for r in rows if r["error_class"] == "timeout"),
         "n_context_overflow": sum(1 for r in rows if r["error_class"] == "context_overflow"),
         "score": round(k / len(scored), 4) if scored else 0.0, "ci95": [round(lo, 4), round(hi, 4)],
@@ -237,6 +330,10 @@ def summarize(job_dir: Path, env: dict, a: argparse.Namespace, wall: float, exit
         "task_subset": {"n": int(a.n_tasks)} if a.n_tasks and a.n_tasks > 0 else {"n": "all"},
         "harbor": {"dataset": hb["dataset"], "agent": hb["agent"], "job_dir": str(job_dir),
                    "harbor_version": harbor_version()},
+        # agent-phase sandbox network: `agent-allowlist` = only the serving box is reachable
+        # while the agent runs (clean by construction); `public` = open internet (pre-2026-09-24
+        # SWE cells; leak_audit / contaminated stamps come from the trajectory scan)
+        "network": job_network(job_dir),
         "rollouts": rows,
     }
 
@@ -246,6 +343,16 @@ def harbor_version() -> str:
         return subprocess.run([str(HARBOR_BIN), "--version"], capture_output=True, text=True, timeout=60).stdout.strip()
     except Exception:
         return "?"
+
+
+def sweep_job_sandboxes(job_dir: Path) -> None:
+    """Delete Daytona sandboxes of this job's finished trials (harbor leaves them behind on SIGHUP / errors;
+    2026-09-23: the org's 100-sandbox cap is the binding limit, so every leak starves the next job)."""
+    try:
+        subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "daytona_sweep.py"), "--job", str(job_dir), "--min-age-min", "0"],
+                       timeout=600, check=False)
+    except (OSError, subprocess.SubprocessError) as e:
+        log(f"daytona sweep skipped: {e!r}")
 
 
 def cmd_run(a: argparse.Namespace) -> int:
@@ -267,12 +374,14 @@ def cmd_run(a: argparse.Namespace) -> int:
         cfg_path.write_text(mini_swe_config(int(a.step_limit or 0) or 10**9, a.temperature, a.top_p))
     os.environ["OPENAI_API_KEY"] = os.environ.get(a.model_key_env, "")   # host-side agents (terminus-2)
     cmd = build_cmd(env, a, job_dir, cfg_path)
+    log(f"network: {network_mode(env, a)} (agent phase; serving host {model_host(a.model_url)})")
     (d / "cmd.txt").write_text(" ".join(c if "API_KEY" not in c else c.split("=")[0] + "=***" for c in cmd) + "\n")
     log(f"start {a.model_label}/{cell}: {(d / 'cmd.txt').read_text().strip()}")
     t0 = time.time()
     with (d / "harbor.log").open("a") as fh:
         p = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, env=os.environ.copy())
     wall = time.time() - t0
+    sweep_job_sandboxes(job_dir)
     if not (job_dir / "result.json").exists() and not list(job_dir.glob("*/result.json")):
         log(f"FAIL {cell}: exit={p.returncode}, no results (see {d / 'harbor.log'})")
         return 1
@@ -301,6 +410,7 @@ def cmd_resume(a: argparse.Namespace) -> int:
     os.environ["OPENAI_API_KEY"] = key
     os.environ["MSWEA_API_KEY"] = key
     n_conc = int(a.concurrency) if a.concurrency else int(cfg.get("n_concurrent_trials") or 0)
+    host = model_host(a.model_url)
 
     def patch(o) -> bool:
         # harbor refuses to resume unless job config, job lock and every trial's
@@ -312,6 +422,9 @@ def cmd_resume(a: argparse.Namespace) -> int:
                     o[k] = "${" + k + "}"; changed = True
                 elif k == "n_concurrent_trials" and n_conc and o[k] != n_conc:
                     o[k] = n_conc; changed = True
+                elif k == "extra_allowed_hosts" and isinstance(v, list) and v and host and v != [host]:
+                    # the agent-phase allowlist names the serving box; a resume on a new pod moves with it
+                    o[k] = [host]; changed = True
                 else:
                     changed |= patch(v)
         elif isinstance(o, list):
@@ -334,6 +447,7 @@ def cmd_resume(a: argparse.Namespace) -> int:
     t0 = time.time()
     with (d / "harbor.log").open("a") as fh:
         p = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, env=os.environ.copy())
+    sweep_job_sandboxes(job_dir)
     prev = json.loads((d / "summary.json").read_text()) if (d / "summary.json").exists() else {}
     wall = float(prev.get("wall_seconds") or 0) + time.time() - t0
     summ = summarize(job_dir, env, a, wall, p.returncode)
@@ -378,6 +492,8 @@ def main() -> int:
         s.add_argument("--attempts", type=int, default=1, help="attempts per task (vendor rows average >= 2)")
         s.add_argument("--sandbox-cpus", type=int, default=0, help="override the task's sandbox vCPUs")
         s.add_argument("--sandbox-mem-mb", type=int, default=0, help="override the task's sandbox memory (MB)")
+        s.add_argument("--network", default=None, choices=["agent-allowlist", "public"],
+                       help="agent-phase sandbox network (default: suite.toml harbor.network, else agent-allowlist)")
         s.add_argument("--force", action="store_true")
     a = ap.parse_args()
     if a.concurrency is None and a.cmd != "resume":

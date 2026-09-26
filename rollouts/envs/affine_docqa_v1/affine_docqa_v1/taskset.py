@@ -9,8 +9,9 @@ reasoning over real documents.
 
 Tasks are TEACHER-GENERATED and verified (`generate.py`): questions need
 >= 2 documents (a removal test proves it), the teacher re-answers them
-blind with the documents shuffled. Documents: SEC EDGAR filings, GOV.UK
-consultation outcomes (OGL v3), Europe PMC CC-BY articles (`fetch.py`).
+blind with the documents shuffled. Documents: SEC EDGAR filings (~400
+filers), GOV.UK publications + HTML attachments (OGL v3), US Federal
+Register rules (public domain), Europe PMC CC-BY articles (`fetch.py`).
 Uids carry `[GEN:e<epoch>]` (fold decontamination). Bundles are published
 to data.affine.io (`publish.py`); the taskset fetches them on first use.
 

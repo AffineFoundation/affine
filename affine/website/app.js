@@ -585,8 +585,15 @@ function retiredTag(title) {
 
 function outcomeBadge(r) {
   if (r.event === "crowned") {
-    return badge("crowned", `crowned #${r.reign_number ?? "?"}`)
-      + (isRetiredWindowRow(r) ? retiredTag("crowned by the 12 h window rule, retired 2026-09-13 13:01 UTC (wvk 16)") : "");
+    let tag = "";
+    if (isRetiredWindowRow(r)) tag = retiredTag("crowned by the 12 h window rule, retired 2026-09-13 13:01 UTC (wvk 16)");
+    else if (r.via === "operator_crown") {
+      const note = r.crown_note || "operator crown";
+      tag = ` <span class="dim" title="${esc(note)}">${esc(note)}</span>`;
+    } else if (r.via === "retroactive_wvk21") {
+      tag = ` <span class="dim" title="${esc(r.crown_note || "retroactive crown (wvk 21)")}">retroactive crown (wvk 21)</span>`;
+    }
+    return badge("crowned", `crowned #${r.reign_number ?? "?"}`) + tag;
   }
   if (r.event === "crown_revoked") {
     const code = r.revoked_code || String(r.revoked_reason || "").split(":")[0] || "revoked";

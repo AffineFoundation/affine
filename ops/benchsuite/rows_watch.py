@@ -62,8 +62,8 @@ def infra_exit(info: dict, job: dict, code: int) -> str:
     """Why this launcher exit was OUR infrastructure (empty string = the model / harness result stands)."""
     if code in (2, 3):
         return {2: "no stock / no job dir", 3: "pod never served"}[code]
-    if job["kind"] in ("swe", "swe4h"):
-        cell = "swebench-verified@4h250__t0" if job["kind"] == "swe4h" else "swebench-verified__t0"
+    if job["kind"] in ("swe", "swe4h", "tb2"):
+        cell = {"swe4h": "swebench-verified@4h250__t0", "swe": "swebench-verified__t0", "tb2": "terminal-bench-2__t0"}[job["kind"]]
         summ = BENCH_HOME / "runs" / info["run_id"] / "king" / cell / "summary.json"
         try:
             x = json.loads(summ.read_text())
@@ -74,7 +74,7 @@ def infra_exit(info: dict, job: dict, code: int) -> str:
             return "empty job"
         if env_n / n >= INFRA_ENV_SHARE:
             return f"{env_n}/{n} trials never ran against a live model (reaped box / Daytona)"
-        if n < 500 and x.get("exit_code", 0) != 0:
+        if n < int(x.get("n_expected") or 500) and x.get("exit_code", 0) != 0:
             return f"harbor exited {x.get('exit_code')} at {n}/500"
     return ""
 # typical wall time per job kind (minutes), for the ETA projection
@@ -206,6 +206,13 @@ def pass_alive(run_id: str) -> bool:
         except (OSError, ValueError):
             continue
         if subprocess.run(["kill", "-0", str(pid)], capture_output=True).returncode == 0:
+            # a zombie (state Z) answers kill -0 but is dead: reign 21's tb2 pass left one for 12 h and
+            # blocked its own SWE 1-h / cells re-queue behind "(pass)" (2026-09-23)
+            try:
+                if open(f"/proc/{pid}/stat").read().rsplit(")", 1)[-1].split()[0] == "Z":
+                    continue
+            except OSError:
+                continue
             return True
     return False
 
@@ -218,10 +225,13 @@ def harbor_busy(d12: str, env: str) -> bool:
     if "@" in env:
         base, tag = env.split("@", 1)
         pat = f"harbor_cell.py (run|resume) --env {base} --budget-tag {tag} .*--model king-{d12}"
-    else:
-        pat = f"harbor_cell.py (run|resume) --env {env} --model king-{d12}"
-    out = subprocess.run(["pgrep", "-f", pat], capture_output=True, text=True).stdout.strip()
-    return bool(out)
+        out = subprocess.run(["pgrep", "-f", pat], capture_output=True, text=True).stdout.strip()
+        return bool(out)
+    # plain cell: the tagged job's command line also starts `--env <env> --model king-<d12>` (the budget tag comes
+    # later) — it must not count, or the 1-h cell never launches while the @4h250 job runs (reign 21, 2026-09-23)
+    pat = f"harbor_cell.py (run|resume) --env {env} --model king-{d12}"
+    out = subprocess.run(["pgrep", "-fa", pat], capture_output=True, text=True).stdout
+    return any("--budget-tag" not in line for line in out.splitlines())
 
 
 def swe_jobs_running() -> int:
@@ -273,8 +283,15 @@ def launch(info: dict, job: dict) -> subprocess.Popen:
         env.update(CAP_ENVS=",".join(job["envs"]))
         cmd = ["bash", str(HERE / "cap_backfill.sh"), ref, label, info["run_id"], info["side"]]
     elif kind == "tb2":
-        env.update(FAST_ONLY_ROLES="agentic", FAST_GROUPS="tb2")
-        cmd = ["bash", str(HERE / "pass.sh"), ref, label, info["run_id"], "fast"]
+        # an interrupted / infra-cut job is RESUMED on its own H200/B200 (a fresh pass would skip on the
+        # existing summary — 2026-09-23: three pods rented for nothing); a cell with no harbor job gets the
+        # fast pass's dedicated tb2 role
+        harbor = run_dir / "king" / "terminal-bench-2__t0" / "harbor"
+        if (harbor / "config.json").exists():
+            cmd = ["bash", str(HERE / "tb2_resume.sh"), ref, label, info["run_id"]]
+        else:
+            env.update(FAST_ONLY_ROLES="tb2", FAST_GROUPS="tb2")
+            cmd = ["bash", str(HERE / "pass.sh"), ref, label, info["run_id"], "fast"]
     elif kind == "agentic":
         env.update(FAST_ONLY_ROLES="agentic", FAST_GROUPS="agentic", FAST_AGENTIC_ENVS=",".join(job["envs"]))
         cmd = ["bash", str(HERE / "pass.sh"), ref, label, info["run_id"], "fast"]
@@ -336,7 +353,7 @@ def main() -> int:
                 except (OSError, ValueError):
                     continue
                 n_exp = x.get("n_expected")
-                if n_exp and int(x.get("n_live") if x.get("n_live") is not None else x.get("n") or 0) < int(n_exp) \
+                if n_exp and (int(n_exp) - int(x.get("n_live") if x.get("n_live") is not None else x.get("n") or 0)) > max(2, 0.02 * int(n_exp)) \
                         and cell_env not in missing and cell_env not in failed:
                     failed.append(cell_env)
             todo = missing + failed

@@ -108,7 +108,8 @@ def slice_messages(messages: list[dict], *, instance_id: str, repo: str,
                    action_kind: str = dialects.DEFAULT_KIND,
                    turn: tuple[int, int] | None = None,
                    text_final: bool = False,
-                   leak_check: bool = True) -> list[dict]:
+                   leak_check: bool = True,
+                   reference_waived: bool = False) -> list[dict]:
     """Turn records from one conversation: every assistant message whose
     prefix ends in a user message and that holds exactly one action.
 
@@ -130,7 +131,15 @@ def slice_messages(messages: list[dict], *, instance_id: str, repo: str,
     `king_loop_onset` group uses it (2026-09-11): the first turn of a loop
     repeats an earlier command by definition, and under min(R,G) the stored
     reference is never scored (the duel samples fresh teacher references),
-    so the rule protects corpus hygiene there, not the score."""
+    so the rule protects corpus hygiene there, not the score.
+
+    `reference_waived` (single-reply mode only, 2026-09-25): the caller
+    vouches that the stored reply is a failure state whose PREFIX is the
+    turn -- the benchsuite's reasoning-only king replies (thinks until the
+    cap, never answers). The reply is recorded in the policy's dialect even
+    with no action in it; the duel samples fresh teacher references and the
+    miner's own reply, so the stored one is never scored. No leak check
+    (there is no action to leak)."""
     dialect = dialects.get(action_kind)
     text_dialect = dialects.get(dialects.TEXT_KIND)
     msgs: list[dict] = []
@@ -174,13 +183,14 @@ def slice_messages(messages: list[dict], *, instance_id: str, repo: str,
                 and dialect.ends_in_text):
             actions = text_dialect.actions(ref)
             rec_kind = text_dialect.id
-        if len(actions) != 1:
+        waived = reference_waived and turn is not None and len(actions) != 1
+        if len(actions) != 1 and not waived:
             continue
         # Reference leaked into the prefix: the turn would be dropped by the
         # corpus-refresh prefilter and leakage-gated at duel time. The turn
         # stays in later records' prefix history (it is real history).
-        body = _norm_ws(actions[0])
-        if (leak_check and len(body) > LEAK_MIN_CHARS
+        body = "" if waived else _norm_ws(actions[0])
+        if (leak_check and not waived and len(body) > LEAK_MIN_CHARS
                 and any(body in norm for norm in norm_contents[:pos])):
             n_leaked += 1
             continue

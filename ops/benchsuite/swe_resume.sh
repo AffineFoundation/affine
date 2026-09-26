@@ -10,13 +10,15 @@ source "$HERE/env.sh"
 export LIUM_API_KEY="${LIUM_API_KEY:-${LIUM:-}}"; export HARBOR_BIN="${HARBOR_BIN:-$BENCH_HOME/harborenv/bin/harbor}"
 [ -n "${DAYTONA_API_KEY:-}" ] || export DAYTONA_API_KEY=$(op read --no-newline "op://Arbos/fywmj6vtq5delybw5c7a53l2qa/notesPlain" 2>/dev/null | grep -o 'dtn_[A-Za-z0-9_-]*' | head -1)
 DIGEST="$1" LABEL="$2" INTO="$BENCH_HOME/runs/$3" TAG="${4:-}"
+# hf://repo@rev (teacher, genesis): rent through kingpod's HF path (coverage worker 2026-09-23)
+HFFLAG=(); if [[ "$DIGEST" == hf://* ]]; then SPEC="${DIGEST#hf://}"; HFFLAG=(--hf "$SPEC"); DIGEST="${SPEC#*@}"; fi
 AGENT_TIMEOUT_S=3600; [ "$TAG" = 4h250 ] && AGENT_TIMEOUT_S=14400
 log() { echo "[swe-resume] $(date -u +%FT%TZ) $*"; }
 CELL="$INTO/king/swebench-verified${TAG:+@$TAG}__t0"
 [ -d "$CELL/harbor" ] || { log "$LABEL: no harbor job under $CELL"; exit 2; }
 POD=""; T0=$(date +%s)
 while [ $(( $(date +%s) - T0 )) -lt "${SWE_RENT_DEADLINE_S:-14400}" ]; do
-  for PLAN in ${SWE_PLANS:-h200-2x b200-2x h200-1x b200-1x pro6000-1x}; do POD=$("$PY" "$HERE/kingpod.py" rent --plan "$PLAN" --digest "$DIGEST" 2>/dev/null | tail -1) && [ -n "$POD" ] && break; POD=""; done
+  for PLAN in ${SWE_PLANS:-h200-2x b200-2x h200-1x b200-1x pro6000-1x}; do POD=$("$PY" "$HERE/kingpod.py" rent --plan "$PLAN" --digest "$DIGEST" "${HFFLAG[@]}" 2>/dev/null | tail -1) && [ -n "$POD" ] && break; POD=""; done
   [ -n "$POD" ] && break; log "$LABEL: no stock; retry in 3 min"; sleep 180
 done
 [ -n "$POD" ] || { log "$LABEL: no stock within the rent deadline"; exit 2; }
@@ -39,7 +41,7 @@ def patch(o):
     ch = False
     if isinstance(o, dict):
         for k, v in list(o.items()):
-            if k in ("OPENAI_API_BASE", "OPENAI_BASE_URL") and isinstance(v, str) and v != url: o[k] = url; ch = True
+            if k in ("OPENAI_API_BASE", "OPENAI_BASE_URL", "ANTHROPIC_BASE_URL", "api_base", "base_url") and isinstance(v, str) and v != url: o[k] = url; ch = True
             elif k == "model_name" and isinstance(v, str) and v.startswith("openai/") and v != f"openai/{served}": o[k] = f"openai/{served}"; ch = True
             else: ch |= patch(v)
     elif isinstance(o, list):

@@ -1,0 +1,418 @@
+{
+ "records": {
+  "chal-00614": {
+   "record": "chal-00614",
+   "king": "f82deda2ffbd",
+   "challenger": "50e3c081ab1c",
+   "n_turns": 100,
+   "n_candidates": 911,
+   "n_dropped_long": 76,
+   "n_no_repeat_last": 14,
+   "by_dialect": {
+    "text": 25,
+    "bash": 25,
+    "tool_call": 25,
+    "terminus_json": 25
+   },
+   "n_candidate_rows": 686,
+   "body_kinds": {
+    "stripped_reply": 166,
+    "fence_inner": 173,
+    "xml_parameter_values": 174,
+    "keystrokes_values": 120,
+    "commands_array": 53
+   },
+   "n_text_fallback": 0,
+   "n_terminus_empty_batch": 53,
+   "n_attack_ls_tool_missing": 2,
+   "manifest_sha256": "aca5fd7b013fc1920183b4bda20386e057899de8957bc44bb809492e42d4f9b1",
+   "score_mode": "sd_min_rga",
+   "thought_rendering": "as_generated",
+   "tau": 0.03,
+   "sd_meter": {
+    "shadow": false,
+    "anchor": "loo",
+    "cross_echo": true,
+    "content_lift_nats": 1.0,
+    "content_min_tokens": 10,
+    "typicality_width": 2.0,
+    "a_norm_bytes": 1.0,
+    "forfeit_sd": -12.0,
+    "k_sigma": 2.0,
+    "min_margin_sd": 0.2,
+    "frozen": {},
+    "role": "rule"
+   },
+   "margin": 0.45966140915160925,
+   "z": 6.113080013576414,
+   "challenger_wins": true,
+   "sigma_by_dialect": {
+    "text": {
+     "R": 0.07482562132777079,
+     "A": 14.321519888116512,
+     "Mc": 0.18682860603102194
+    },
+    "bash": {
+     "R": 0.03133683318832184,
+     "A": 6.203236259205062,
+     "Mc": 0.15454488384920756
+    },
+    "tool_call": {
+     "R": 0.006380529865112888,
+     "A": 6.015134327808616,
+     "Mc": 0.19752957740282823
+    },
+    "boxed": {
+     "R": 0.16444072960110886,
+     "A": 5.487220785008576,
+     "Mc": 0.11680609338684801
+    },
+    "terminus_json": {
+     "R": 0.002690311208784163,
+     "A": 9.975322044129243,
+     "Mc": 0.13367035251839565
+    }
+   }
+  },
+  "chal-00621": {
+   "record": "chal-00621",
+   "king": "50e3c081ab1c",
+   "challenger": "71cdfbcfe0f1",
+   "n_turns": 100,
+   "n_candidates": 931,
+   "n_dropped_long": 73,
+   "n_no_repeat_last": 18,
+   "by_dialect": {
+    "text": 25,
+    "bash": 25,
+    "tool_call": 25,
+    "terminus_json": 25
+   },
+   "n_candidate_rows": 682,
+   "body_kinds": {
+    "stripped_reply": 173,
+    "fence_inner": 170,
+    "xml_parameter_values": 166,
+    "commands_array": 83,
+    "keystrokes_values": 90
+   },
+   "n_text_fallback": 5,
+   "n_terminus_empty_batch": 83,
+   "n_attack_ls_tool_missing": 5,
+   "manifest_sha256": "ce506c1a77a407c46b93abe237df55a6ef9b9518db4d73f2f05b9840ac454344",
+   "score_mode": "sd_min_rga",
+   "thought_rendering": "as_generated",
+   "tau": 0.03,
+   "sd_meter": {
+    "shadow": false,
+    "anchor": "loo",
+    "cross_echo": true,
+    "content_lift_nats": 1.0,
+    "content_min_tokens": 10,
+    "typicality_width": 2.0,
+    "a_norm_bytes": 1.0,
+    "forfeit_sd": -12.0,
+    "k_sigma": 2.0,
+    "min_margin_sd": 0.2,
+    "frozen": {},
+    "role": "rule"
+   },
+   "margin": -0.03646104027159798,
+   "z": -0.6916833439888861,
+   "challenger_wins": false,
+   "sigma_by_dialect": {
+    "text": {
+     "R": 0.18405288239485623,
+     "A": 14.170416461038196,
+     "Mc": 0.18705130406102233
+    },
+    "bash": {
+     "R": 0.021189641895589792,
+     "A": 5.790305173262201,
+     "Mc": 0.16677980586830446
+    },
+    "tool_call": {
+     "R": 0.008049276065042287,
+     "A": 5.257558031862886,
+     "Mc": 0.19289045123850773
+    },
+    "terminus_json": {
+     "R": 0.002633187285024514,
+     "A": 9.49636504704743,
+     "Mc": 0.11881713748132819
+    },
+    "boxed": {
+     "R": 0.0973973303577682,
+     "A": 3.3250590720824285,
+     "Mc": 0.13531737512456019
+    }
+   }
+  },
+  "chal-00623": {
+   "record": "chal-00623",
+   "king": "50e3c081ab1c",
+   "challenger": "799eceb8db50",
+   "n_turns": 100,
+   "n_candidates": 933,
+   "n_dropped_long": 72,
+   "n_no_repeat_last": 16,
+   "by_dialect": {
+    "bash": 25,
+    "text": 25,
+    "tool_call": 25,
+    "terminus_json": 25
+   },
+   "n_candidate_rows": 684,
+   "body_kinds": {
+    "fence_inner": 170,
+    "stripped_reply": 170,
+    "xml_parameter_values": 168,
+    "envelope_inner": 1,
+    "keystrokes_values": 92,
+    "commands_array": 83
+   },
+   "n_text_fallback": 5,
+   "n_terminus_empty_batch": 83,
+   "n_attack_ls_tool_missing": 7,
+   "manifest_sha256": "ce506c1a77a407c46b93abe237df55a6ef9b9518db4d73f2f05b9840ac454344",
+   "score_mode": "sd_min_rga",
+   "thought_rendering": "as_generated",
+   "tau": 0.03,
+   "sd_meter": {
+    "shadow": false,
+    "anchor": "loo",
+    "cross_echo": true,
+    "content_lift_nats": 1.0,
+    "content_min_tokens": 10,
+    "typicality_width": 2.0,
+    "a_norm_bytes": 1.0,
+    "forfeit_sd": -12.0,
+    "k_sigma": 2.0,
+    "min_margin_sd": 0.2,
+    "frozen": {},
+    "role": "rule"
+   },
+   "margin": 0.010849871470303784,
+   "z": 0.19876412373664357,
+   "challenger_wins": false,
+   "sigma_by_dialect": {
+    "bash": {
+     "R": 0.021377081077232254,
+     "A": 5.625114016201446,
+     "Mc": 0.15082722420424016
+    },
+    "text": {
+     "R": 0.04394388377802737,
+     "A": 17.205689379112364,
+     "Mc": 0.19087944068474463
+    },
+    "boxed": {
+     "R": 0.11269555659042074,
+     "A": 4.2620459323529545,
+     "Mc": 0.11293875463327231
+    },
+    "tool_call": {
+     "R": 0.006049977052164296,
+     "A": 5.422411656637557,
+     "Mc": 0.2002686854698376
+    },
+    "terminus_json": {
+     "R": 0.0015103391452807038,
+     "A": 7.121941758375911,
+     "Mc": 0.13972604702380526
+    }
+   }
+  },
+  "chal-00625": {
+   "record": "chal-00625",
+   "king": "50e3c081ab1c",
+   "challenger": "9ce31f787f27",
+   "n_turns": 100,
+   "n_candidates": 936,
+   "n_dropped_long": 83,
+   "n_no_repeat_last": 16,
+   "by_dialect": {
+    "tool_call": 25,
+    "bash": 25,
+    "text": 25,
+    "terminus_json": 25
+   },
+   "n_candidate_rows": 684,
+   "body_kinds": {
+    "xml_parameter_values": 169,
+    "fence_inner": 172,
+    "stripped_reply": 170,
+    "keystrokes_values": 98,
+    "commands_array": 75
+   },
+   "n_text_fallback": 0,
+   "n_terminus_empty_batch": 75,
+   "n_attack_ls_tool_missing": 10,
+   "manifest_sha256": "23926299d989d1ae0ea144c87039105822c702cc9390f781b9e48f2bfb6573fa",
+   "score_mode": "sd_min_rga",
+   "thought_rendering": "as_generated",
+   "tau": 0.03,
+   "sd_meter": {
+    "shadow": false,
+    "anchor": "loo",
+    "cross_echo": true,
+    "content_lift_nats": 1.0,
+    "content_min_tokens": 10,
+    "typicality_width": 2.0,
+    "a_norm_bytes": 1.0,
+    "forfeit_sd": -12.0,
+    "k_sigma": 2.0,
+    "min_margin_sd": 0.2,
+    "frozen": {},
+    "role": "rule"
+   },
+   "margin": -0.017281247824343874,
+   "z": -0.40059234235131136,
+   "challenger_wins": false,
+   "sigma_by_dialect": {
+    "tool_call": {
+     "R": 0.012268213089079875,
+     "A": 5.9106769808121715,
+     "Mc": 0.19197039471880906
+    },
+    "bash": {
+     "R": 0.02356709577248315,
+     "A": 6.062576263233123,
+     "Mc": 0.16033257058249653
+    },
+    "text": {
+     "R": 0.021838747098419063,
+     "A": 24.879183767635617,
+     "Mc": 0.18434540472468344
+    },
+    "boxed": {
+     "R": 0.13819176106909004,
+     "A": 4.1643303726971945,
+     "Mc": 0.09663421527366908
+    },
+    "terminus_json": {
+     "R": 0.00316592056757442,
+     "A": 8.331473410602495,
+     "Mc": 0.11004990666134508
+    }
+   }
+  },
+  "chal-00630": {
+   "record": "chal-00630",
+   "king": "50e3c081ab1c",
+   "challenger": "c76c2c7e2d81",
+   "n_turns": 100,
+   "n_candidates": 935,
+   "n_dropped_long": 69,
+   "n_no_repeat_last": 17,
+   "by_dialect": {
+    "text": 25,
+    "tool_call": 25,
+    "terminus_json": 25,
+    "bash": 25
+   },
+   "n_candidate_rows": 683,
+   "body_kinds": {
+    "stripped_reply": 165,
+    "xml_parameter_values": 165,
+    "envelope_inner": 6,
+    "keystrokes_values": 96,
+    "commands_array": 77,
+    "fence_inner": 174
+   },
+   "n_text_fallback": 4,
+   "n_terminus_empty_batch": 77,
+   "n_attack_ls_tool_missing": 3,
+   "manifest_sha256": "e6aa63a4cdac56db670cb653c32357fdc0014ea7655edaaadde0e3370f22a4cf",
+   "score_mode": "sd_min_rga",
+   "thought_rendering": "as_generated",
+   "tau": 0.03,
+   "sd_meter": {
+    "shadow": false,
+    "anchor": "loo",
+    "cross_echo": true,
+    "content_lift_nats": 1.0,
+    "content_min_tokens": 10,
+    "typicality_width": 2.0,
+    "a_norm_bytes": 1.0,
+    "forfeit_sd": -12.0,
+    "k_sigma": 2.0,
+    "min_margin_sd": 0.2,
+    "frozen": {},
+    "role": "rule"
+   },
+   "margin": 0.06892777557817803,
+   "z": 1.3313671096117636,
+   "challenger_wins": false,
+   "sigma_by_dialect": {
+    "text": {
+     "R": 0.04298448872396755,
+     "A": 18.22350008389197,
+     "Mc": 0.17151763867730815
+    },
+    "boxed": {
+     "R": 0.1629479706816136,
+     "A": 3.3651274490356955,
+     "Mc": 0.14842918100946081
+    },
+    "tool_call": {
+     "R": 0.008654319795526834,
+     "A": 5.676259076553286,
+     "Mc": 0.17623244767886484
+    },
+    "bash": {
+     "R": 0.022998189536290035,
+     "A": 6.9267975912622575,
+     "Mc": 0.15491922463469537
+    },
+    "terminus_json": {
+     "R": 0.0011772723226371829,
+     "A": 6.903856653891775,
+     "Mc": 0.12793210564079244
+    }
+   }
+  }
+ },
+ "by_dialect": {
+  "text": 125,
+  "bash": 125,
+  "tool_call": 125,
+  "terminus_json": 125
+ },
+ "n_turns": 500,
+ "per_record": 100,
+ "per_dialect": 25,
+ "seed": 20260921,
+ "max_prefix_chars": 160000,
+ "renderings": [
+  "no_thought",
+  "with_thought"
+ ],
+ "candidate_roles": [
+  "king",
+  "challenger",
+  "ref_0",
+  "ref_1",
+  "ref_2",
+  "attack_ls",
+  "attack_repeat"
+ ],
+ "n_candidate_rows": 3419,
+ "body_kinds": {
+  "stripped_reply": 844,
+  "fence_inner": 859,
+  "xml_parameter_values": 842,
+  "keystrokes_values": 496,
+  "commands_array": 371,
+  "envelope_inner": 7
+ },
+ "n_text_fallback": 14,
+ "n_terminus_empty_batch": 371,
+ "n_attack_ls_tool_missing": 27,
+ "notes": [
+  "tool_call actions are Qwen3 XML (<function=\u2026><parameter=\u2026>), body = every parameter value (list of spans)",
+  "terminus empty batches ('commands': []) have a one-token body: the scorer's overlap fallback scores the ' [],' token; use --level action as a sensitivity check",
+  "y_kind != turn dialect marks a text fallback reply on a tool_call turn (text_fallback_at_tool_turns)",
+  "live legs: evalsrv.sdmeter side_legs/turn_score with LOO anchors over the whole duel; refs carry their own LOO legs"
+ ]
+}

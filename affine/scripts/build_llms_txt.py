@@ -79,6 +79,12 @@ WVK20_EFFECTIVE = "2026-09-16"
 WVK21_EFFECTIVE = "2026-09-17"
 WVK22_NOTICE = "2026-09-18"
 WVK22_EFFECTIVE = "2026-09-18"
+WVK25_NOTICE = "2026-09-26"
+WVK25_T0 = "2026-09-30 14:00 UTC"
+# Operator crown of chal-00687 as reign 22 (Jacob Steeves, 2026-09-26 18:51 UTC).
+OPCROWN_DATE = "2026-09-26"
+OPCROWN_NOTE = "operator crown 2026-09-26; did not clear δ under wvk 24"
+WVK24_EFFECTIVE = "2026-09-23"
 WVK23_EFFECTIVE = "2026-09-22"
 
 
@@ -206,6 +212,11 @@ def _margin_subs() -> dict[str, str]:
         "{WVK22_NOTICE}": WVK22_NOTICE,
         "{WVK22_EFFECTIVE}": WVK22_EFFECTIVE,
         "{WVK23_EFFECTIVE}": WVK23_EFFECTIVE,
+        "{WVK24_EFFECTIVE}": WVK24_EFFECTIVE,
+        "{WVK25_NOTICE}": WVK25_NOTICE,
+        "{WVK25_T0}": WVK25_T0,
+        "{OPCROWN_DATE}": OPCROWN_DATE,
+        "{OPCROWN_NOTE}": OPCROWN_NOTE,
         "{CAP_RATIO}": f"{float(d.get('thought_cap_ratio', 0.0)):g}",
         "{CAP_RULE}": (f" Per turn the thought cap is `max({int(d['max_thought_tokens'])}, "
                        f"floor({float(d.get('thought_cap_ratio', 0.0)):g} × L_T))`, L_T = the longest "
@@ -476,6 +487,25 @@ the slot
 - Sequential near-miss (2026-09-11, no fork; OFF since wvk 16) — a \
 first-slice margin in the near-miss window drew a second seeded slice; one \
 seeded slice decides again
+- **Operator crown {OPCROWN_DATE} — reign 22 (`chal-00687`, uid 62)** — crowned \
+by explicit dated operator directive from its stored wvk-24 verdict (paired \
+margin +0.073 sd, z +2.73: cleared 2·SE, did not clear δ = 0.20 sd); the best \
+challenger against reign 21 since its crown; `via = "operator_crown"`; no \
+scoring change, no `weight_version_key` change
+- **Upcoming fork: wvk 25 — teacher → GLM-5.3-Flash, 262k context, miner \
+empty-thought rule, sequential stopping, R cap (notice {WVK25_NOTICE}, effective \
+{WVK25_T0} at the first duel boundary after that time)** — the frozen teacher moves \
+from `Qwen/Qwen3.8-27B` to `zai-org/GLM-5.3-Flash`; serving window 131,072 → \
+262,144 tokens (miners: serve `--max-model-len 262144`); a miner thought with < 10 \
+content tokens scores `min(z_R, z_A)` with an admission gate at 2× the teacher's \
+share; the paired margin is checked every 100 turns (crown when `margin − 2.6·SE > \
+δ` on two consecutive looks, futility stop, else 1,000); `z_R` capped at 0; fully \
+matched control published. Reign 21 stands; forward-only
+- **Fork history: wvk 24 — forfeit floor −12 → −6 sd (effective {WVK24_EFFECTIVE})** \
+— a turn with no parseable action (or a thought with fewer than 10 content \
+tokens) scores −6 sd instead of −12; still strictly below the 1st percentile \
+of valid turns, so skipping a turn never pays; verdict SE falls ~11 %; nothing \
+else changes; forward-only, reign 21 stands
 - **Fork history: wvk 23 — thought cap 4,096 + typicality one-sided on the \
 long end (effective {WVK23_EFFECTIVE})** — `max_thought_tokens` 2,048 → 4,096 \
 (teacher references 4,096 → 4,864 so they can think the full cap and act); the \
@@ -815,7 +845,11 @@ ids stay free). Since 2026-09-04 the text-only extraction of the genesis \
 the root, `model_type = qwen3_5_moe_text`) is admitted too — see \
 `[[submission.pinned_arch_alt]]`. Any other architecture — including the \
 teacher `Qwen/Qwen3.8-27B` itself — is rejected (`validate_repo_arch` in \
-`code/affine/model_store.py`).
+`code/affine/model_store.py`). **Context rule (from the wvk-25 fork, \
+{WVK25_T0}):** `config.json` must also declare an effective context window of \
+at least 262,144 tokens (`[submission].min_context_tokens`; `validate_repo_context` \
+— see the upcoming-fork section for the derivation). "Rope stays free" means \
+theta and type; scaling the window below 262,144 is a rejection.
 
 **Step 2 — pre-flight the checkpoint directory (offline, free).** Your \
 checkpoint is a bare directory: `config.json`, tokenizer files, and \
@@ -933,6 +967,16 @@ resubmitted, by anyone.
 - Current king's hotkey is skipped (already crowned).
 - Infra faults (dead eval pod, busy server, chain hiccup, R2 outage) requeue \
 without burning a failure record; miner-attributable failures burn.
+- **Queue order is your challenge number.** `chal-NNNNN` is assigned when \
+your `ready` is verified, in on-chain block order; the validator always \
+duels the lowest number waiting. An infra fault puts you back in the same \
+place (uncounted). One exception: a fault that is specific to *your* \
+checkpoint (the pod cannot fetch, fit or load it) and repeats 6 times \
+defers you behind everything queued at that moment, so one broken upload \
+cannot hold the head; arrivals after that still queue behind you. The \
+validator never reorders otherwise. (Before 2026-09-05 a pod-wide fault \
+could rotate the whole queue one entry at a time — that was the \
+"queue-order bug" of 2026-09-05 and is fixed.)
 
 ---
 
@@ -1176,6 +1220,199 @@ Knobs: `[duel] near_miss_enabled / near_miss_low / near_miss_high / \
 near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
 `near_miss_triggered` in `code/affine/score.py`; the draw is \
 `duel_seed(block_hash, hotkey, slice_index)` in `code/evalsrv/dueling.py`.
+
+---
+
+## Operator crown {OPCROWN_DATE} — reign 22 (`chal-00687`, uid 62)
+
+**Explicit dated operator directive, Jacob Steeves {OPCROWN_DATE} 18:51 UTC: \
+"Tell the validator to crown the last miner model who scored the best against \
+the king and set weights to it immediately while we consider the cut over."** \
+Executed the same evening on the reign-14 path (a crown from a stored verdict, \
+no re-duel). No scoring change, no `weight_version_key` change; wvk 24 stays \
+the rule for every duel.
+
+**Pick.** Every challenger verdict since reign 21's crown (`chal-00662`, \
+2026-09-22 13:03 UTC) was ranked by its paired margin against reign 21: 38 \
+scored duels, 8 with a positive margin, none above δ = 0.20 sd. The best is \
+`chal-00687` (uid 62, hotkey `5EzaX8pVDyqC…`, digest `7f066f2c5f95…`, duelled \
+2026-09-24 19:46 UTC): margin **+0.073 sd**, SE 0.027, **z +2.73** — the only \
+one that cleared the 2·SE statistical bar (0.053); it missed only the δ floor. \
+Runner-ups `chal-00677` (+0.054, z 1.22) and `chal-00682` (+0.047, z 1.32). \
+Gates as stored: protocol probe 0.90 (pass), forfeits 0.3 % (king 0.2 %), B \
+licence 0.51, median thought 698 chars, architecture pin and hygiene passed at \
+dispatch. Copy check: 0/18 weight shards share a hash with any of reigns 14–21; \
+against reign 21 all 693 tensors match in name and shape and a seeded sample \
+differs densely (median 30 % of elements changed, relative update ≈ 1e-3) — a \
+small continued-training step on the public reign-21 copy, from a different \
+coldkey than the lineage that held reigns 15, 20 and 21. Not a byte or ε-copy.
+
+**What was written.** The stored `verdict` row of `chal-00687` stays untouched; \
+one new `crowned` row carries the same verdict with `challenger_wins = true`, \
+`via = "operator_crown"` and an `operator_crown` block (directive text and date, \
+the note **"{OPCROWN_NOTE}"**, the original outcome, the runner-ups). Reign 22's \
+payout window (72 h) starts at the crown; reign 21's window had expired on \
+2026-09-25 13:03 UTC, so weights had been burning until this crown. The model is \
+copied to `{MODELS_URL}/models/sha256/7f066f2c5f95b34105c23faa313e25908c8610fbb65091e797e8b9391e926dfc/`; \
+the king seat (datagen) follows the new king from `state.json`. Every duel from \
+here on runs against reign 22 under the unchanged wvk-24 rule until the wvk-25 \
+fork below.
+
+## Upcoming fork: wvk 25 — teacher → GLM-5.3-Flash, 262k context, scoring bundle (notice {WVK25_NOTICE}, effective {WVK25_T0})
+
+**Notice {WVK25_NOTICE} (explicit dated operator directive, Jacob Steeves \
+2026-09-26 09:09 UTC "lets do this switch"). Effective {WVK25_T0}, at the first \
+duel boundary after that time. `weight_version_key` 24 → 25. Forward-only — \
+reign 21 stands, no re-verdicts, `min_submission_block` unchanged.** This \
+section becomes "Fork history: wvk 25" at the flip. Plan: the cutover sheet \
+published with the notice; live line on Discord after the first wvk-25 verdict.
+
+**What changes.**
+- **Teacher.** The frozen model the duel scores against moves from \
+`Qwen/Qwen3.8-27B` to `zai-org/GLM-5.3-Flash` (320B MoE, 18B active, MIT). Every \
+anchor (μ, σ) is the teacher's own leave-one-out statistic, so the rule \
+re-baselines itself; scores are not comparable across the fork.
+- **Context.** Serving window 131,072 → 262,144 tokens on the eval pod and the \
+teacher swarm; prefix cap in D 110,000 → 255,744 tokens, measured with both the \
+teacher and the genesis tokenizer. Deep-trajectory turns dropped at the old cap \
+enter D over the following folds. Tool-call turns of D are re-derived under the \
+new teacher's chat template; bash / text turns are byte-identical.
+- **Miner empty-thought rule** (`[duel.sd_meter].miner_empty_rule = "drop_typ"`). A \
+miner turn whose thought has fewer than 10 content tokens scores `min(z_R, z_A)` — \
+the typicality leg is dropped — instead of the −6 floor, the same rule wvk 24 \
+applies to the teacher's own references. Forfeits (no parseable action) keep the \
+−6 floor. **Admission gate** (`empty_gate_ratio = 2.0`): a side whose share of \
+such turns exceeds 2× the teacher's own share on the slice has those turns scored \
+at the floor. Why: since wvk 22 most of every crown margin came from the king \
+having more empty-thought turns than the challenger — a channel noise patches \
+could move; nothing about turn quality had to be better.
+- **Sequential stopping** (`[duel].seq_enabled = true`, `seq_look_every = 100`, \
+`seq_k = 2.6`, `seq_consecutive = 2`). The paired margin is checked every 100 \
+scored turns in slice order; a duel stops with a crown when `margin − 2.6·SE > δ` \
+on two consecutive checks, stops for futility when even a 2.6·SE upward move \
+cannot reach δ, and otherwise runs to 1,000 turns and applies the standard rule. \
+Offline: 29/30 verdicts agree with the full slice, about twice the verdicts per \
+day. The verdict stamps every look (`sequential.looks`) and the stop.
+- **R cap** (`r_cap_teacher = true`). `z_R := min(z_R, 0)` — a thought earns no \
+credit for predicting the teacher's action better than the teacher's own \
+alternative thoughts do. Ships unless the pre-flip probe on the final code shows \
+a problem.
+- **Control.** The fully matched teacher-vs-king control (`control_matched`: king \
+scored on the same k−1 references as the held-out reference) is published on \
+every verdict and is the rollback signal.
+- **Admission rule — 256k context** (`[submission].min_context_tokens = 262144`; \
+operator directive 2026-09-26 09:18 UTC "the new models should be required to \
+have a 256k sequence length"). A submission's `config.json` must declare an \
+effective context window of at least 262,144 tokens, derived the way vLLM \
+derives `max_model_len`: the smallest of `max_position_embeddings` / \
+`n_positions` / `seq_length` / `max_seq_len` / `max_sequence_length` / \
+`model_max_length` present (`text_config` when the root has none), multiplied by \
+`rope_scaling.factor` for `linear` / `dynamic` / `yarn` (yarn: \
+`original_max_position_embeddings × factor`); no multiplier for `llama3`, `su`, \
+`longrope`, `default` or no rope scaling. The genesis declares \
+`text_config.max_position_embeddings = 262144` with default rope and passes; a \
+config that shortens the window (e.g. 131,072) or scales it below 262,144 is \
+rejected before any download — at the R2 intake (`affine2|ready`), at dispatch \
+and at prefetch — with the decision `rejected_context_too_short`. Admission rule, \
+not a scoring change; `python affine/scripts/submit.py check <dir>` prints the \
+derived window. Verdicts stamp `duel_params.min_context_tokens`.
+
+**What does NOT change.** δ = 0.2 sd, k_sigma = 2, forfeit floor −6, miner caps \
+(thought 4,096 with the 1.25× teacher-relative rule, action 768), reference cap \
+4,864, as-generated rendering, the architecture pin, the B licence, the \
+thought-length floor, the protocol probe.
+
+**Pre-flight for miners.** `vllm serve <your checkpoint> --max-model-len 262144 \
+--tensor-parallel-size 2` must load and answer `/v1/completions` with finite \
+logprobs on an echo request. The genesis family is native 262k; do not shorten \
+rope in your config — `config.json` must derive to ≥ 262,144 tokens or the \
+submission is refused at intake. Nothing else changes in what you submit.
+
+**Numbers behind it** (stored verdicts + a 404-turn GLM shadow): fully matched \
+teacher−king control +0.39 sd under Qwen → +0.80 under GLM (typicality +0.40 → \
++1.68, action +0.29 → +0.53, R ≈ 0 under both); GLM reference yield 2.9 of 3 per \
+turn. Miner empty-thought rule on the wvk-22/23 crowns: reigns 17–21 all fall \
+under δ, reign 16 keeps its crown.
+
+**Timeline.** {WVK25_NOTICE}: this notice; the datagen teacher seat moves to GLM \
+(data event). 2026-09-29: GLM teacher swarm pre-warmed next to the Qwen one. \
+**{WVK25_T0}: flip** at the first duel boundary; the first wvk-25 verdict stamps \
+`teacher.repo = zai-org/GLM-5.3-Flash`, `max_model_len 262144` and the new knobs.
+
+---
+
+## Fork history: wvk 24 — forfeit floor −12 → −6 sd (effective {WVK24_EFFECTIVE})
+
+**Effective {WVK24_EFFECTIVE} at the first duel dispatched after the eval pod \
+redeploy (explicit dated operator directive, Jacob Steeves 2026-09-23 20:17 \
+UTC: "Lets do this").** `weight_version_key = 24`; `[duel.sd_meter].forfeit_sd` \
+**−12 → −6**. Nothing else changes (δ = 0.2 sd, k_sigma = 2, 1,000-turn slices, \
+caps 4,096 / 4,864, as-generated rendering, `content_prefix = refs_max`, gates). \
+Forward-only — reign 21 stands, no re-verdicts, `min_submission_block` unchanged.
+
+**Why.** At −12 the 2 % of turns that forfeit carried 48 % of the per-turn \
+score variance: a handful of forfeits dominated a verdict's standard error and \
+a miner's training signal. −6 is still strictly worse than any honest turn in \
+practice — the 1st percentile of valid turn scores is −4.6 sd (0.5th: −5.5), \
+only 0.3 % of valid turns score below −6, and even a miner that could predict \
+those turns perfectly and forfeited them would gain 0.007 sd per turn (3.5 % of \
+δ) — so skipping a turn still never pays, which is what the floor exists for. \
+Counterfactual on the last 30 verdicts: no decision changes, SE × 0.89 (median; \
+× 0.78 at best), z shifts within ± 0.5. A 2 % forfeit gap now costs ≈ 0.09 sd \
+(half a δ; it was one δ).
+
+**What you must do.** Nothing new. Answer every turn with a parseable action \
+and close `</think>`; a forfeit costs −6 sd, worse than 99 % of valid turns. \
+The same value floors the typicality leg for a thought with fewer than 10 \
+content tokens.
+
+**wvk 24 flipped in two steps at consecutive duel boundaries.** The forfeit \
+floor went live at 20:45 UTC; the addendum below (operator directive 20:47 UTC, \
+"same fork") arrived two minutes later, after the flip had landed and `chal-00678` \
+had been dispatched — a rule change is only ever applied at a duel boundary, so \
+`chal-00678` was judged with the floor only and the addendum took effect at the \
+next boundary, from `chal-00679` onward. Both steps are wvk 24; \
+`duel_params.sd_meter` (`ref_min_content` / `typ_min_refs` present or absent) \
+tells the two apart and both replay from their own stamps.
+- **Empty-thought reference rule** — `[duel.sd_meter].ref_min_content = 10`, \
+`typ_min_refs = 2`: a teacher reference whose thought has fewer than 10 content \
+tokens does not anchor the typicality leg (it is left out of μ_c and σ_c instead \
+of entering them as a mean over a handful of tokens), and a turn with fewer than \
+2 content-bearing references scores `min(z_R, z_A)` — the typicality leg is \
+dropped for that turn (counted in `n_leg_dropped.Gc`). Live data: 7.5 % of \
+references, ~4.8 % of turns. Counterfactual on the last 30 verdicts (with the \
+−6 floor): no decision changes.
+- **Teacher-vs-king control, k-matched and floor-dropped** — published on every \
+verdict as `shadow.sd_meter.by_anchor.loo.control_kmatched` (`all`, `R`, `Gc`, \
+`A`: margin, SE, z, n), next to the legacy `teacher_vs_king`. Construction: for \
+each turn and each left-out reference j, the held-out reference and the king are \
+both scored against the mean of the other k−1 references (the legacy control \
+scored the king against all k, which handicapped the teacher by construction); \
+king turns that forfeited or sat on the content floor are excluded (the teacher \
+never forfeits, so the floor only ever entered one side). Pre-fork values on the \
+last 30 verdicts: overall −0.13 sd (z −2.5, all negative), R −0.19 (z −4.2, all \
+negative), typicality −0.03 (z −0.4, mixed), A +0.16 (z +4.3, all positive). \
+**Correction (2026-09-25):** the R figure was still a construction artefact — the \
+king's R was a tempered log-mean-exp over all 3 references while the held-out \
+reference's R used the other 2, and a max-like aggregate over more draws is \
+larger by construction. Scored with the same 2 references on both sides, R is \
+at parity (median +0.01 sd, z +0.5, 20 pos / 16 neg over 36 verdicts) and the \
+teacher's lead on A is larger (+0.29 sd, z +11). The sentence "kings' thoughts \
+predict the teacher's actions better than the teacher's own" that stood here \
+from 09-23 to 09-25 was wrong. **Since the telemetry deploy of 2026-09-25 every \
+verdict also carries `shadow.sd_meter.by_anchor.loo.control_matched`** (`all`, \
+`R`, `Gc`, `A`: margin, SE, z, n): for each turn and each left-out reference j, \
+the held-out reference and the king are both scored over the *same* k−1 \
+references — the king's R and A recomputed as tempered log-mean-exps over those \
+k−1 pairs — against the mean of those k−1 references, with king forfeits and \
+content-floor turns excluded. `control_kmatched` (the king's R and A over all k \
+references) stays for continuity. **`control_matched` is the rollback signal from \
+2026-09-25 on** (a sign flip against its pre-deploy values: overall mixed, R at \
+parity, A strongly positive, typicality mixed). Telemetry only.
+
+**What you see.** `duel_params.sd_meter.forfeit_sd = -6`, `ref_min_content = 10`, \
+`typ_min_refs = 2`; verdict SE about 10 % smaller for the same slice; \
+`control_kmatched` on every verdict.
 
 ---
 

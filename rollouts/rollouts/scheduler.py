@@ -79,6 +79,17 @@ KING_BURST_SHARE = float(os.environ.get("ROLLOUTS_KING_BURST_SHARE", "0.7"))
 # one batch every hour whatever the floor says; over 6 h the floor sets how
 # many batches land per 6 h (floor x 6 / batch size).
 KING_FLOOR_WINDOW_S = 6 * 3600.0
+# King-seat replay for the fold's [band_filter] (Jacob 2026-09-23 20:47 "do"
+# on slice composition): while any source with king_attempts >= 2 still has
+# band-relevant tasks under its attempt target, the king takes this share of
+# picks (a floor) and those sources come first on king cycles. The king side
+# of the band only bites where the seat has tried the task (5-28 % of the
+# coding / terminal pools at epoch 71).
+KING_REPLAY_SHARE = float(os.environ.get("ROLLOUTS_KING_REPLAY_SHARE", "0.65"))
+# Optional per-source list of task sids the fold currently keeps in D
+# (ops/king-datagen/king_replay_targets.py writes it from the public index);
+# those tasks join the pod's own teacher-solved set as the replay target.
+KING_REPLAY_DIR = Path(os.environ.get("ROLLOUTS_KING_REPLAY_DIR", "/root/rollouts/.king_replay"))
 
 
 def is_king_policy(policy_id: str) -> bool:
@@ -143,6 +154,12 @@ class UnifiedState:
         # for the per-source king floor (king_rollouts_per_hour).
         self.kept_by_seat: dict[tuple[str, str], int] = {}
         self.king_times: dict[tuple[str, str], list[float]] = {}
+        # source -> uid -> king attempts over EVERY king seat (all reigns):
+        # the fold's [band_filter] counts a task's king_* envelopes the same
+        # way, so the replay target (Source.king_attempts) is measured here.
+        # An errored row without a model call is infrastructure, not an
+        # attempt (same rule as rollouts.backfill.graded_counts).
+        self.king_attempts: dict[str, dict[str, int]] = {}
         # source -> tasks some TEACHER-side seat solved (outcome resolved):
         # the king's first picks (phase 10, 2026-09-16). A king that keeps
         # going after the point where the teacher stopped, or calls a tool
@@ -165,6 +182,9 @@ class UnifiedState:
         harness = str(rec.get("harness") or self.harness_of.get(pid, ""))
         seat = seat_of(pid, model, harness)
         self.done.setdefault((source, seat), set()).add(uid)
+        if is_king_seat(seat) and not (rec.get("outcome") == "error" and not rec.get("n_calls")):
+            per = self.king_attempts.setdefault(source, {})
+            per[uid] = per.get(uid, 0) + 1
         if is_king_seat(seat) and harness:
             self.king_done.setdefault((source, harness), set()).add(uid)
         elif not is_king_seat(seat) and rec.get("outcome") == "resolved" \
@@ -221,6 +241,51 @@ class Scheduler:
         self.picks_total = 0
         self.picks_king = 0
         self.king_cycle = False
+        self._replay_sids: dict[str, tuple[float, set[str]]] = {}   # source -> (mtime, sids)
+        # source -> (owed rollouts, target tasks) from the last remaining() pass;
+        # any owed > 0 raises the king share to KING_REPLAY_SHARE and puts
+        # those sources first on king cycles.
+        self._replay: dict[str, tuple[int, int]] = {}
+        self._replay_due = False
+
+    # -- king-seat replay (band filter coverage) ---------------------------------
+
+    def replay_sids(self, source: str) -> set[str]:
+        """Task sids the fold keeps in D for `source` (KING_REPLAY_DIR/<source>.txt,
+        one sid per line; re-read when the file changes). Empty = none listed."""
+        path = KING_REPLAY_DIR / f"{source}.txt"
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            self._replay_sids.pop(source, None)
+            return set()
+        cached = self._replay_sids.get(source)
+        if cached and cached[0] == mtime:
+            return cached[1]
+        try:
+            sids = {ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()}
+        except OSError:
+            sids = set()
+        self._replay_sids[source] = (mtime, sids)
+        return sids
+
+    def replay_targets(self, source: str, rows: list[dict]) -> list[dict]:
+        """Band-relevant rows of the source: tasks the pod's teacher solved
+        plus the fold's kept-in-D list, in pool order."""
+        if self.registry.sources[source].king_attempts < 1:
+            return []
+        solved = self.state.teacher_solved.get(source, set())
+        sids = self.replay_sids(source)
+        return [r for r in rows if r["uid"] in solved or (sids and r.get("sid") in sids)]
+
+    def replay_backlog(self, source: str, rows: list[dict]) -> tuple[int, int]:
+        """(rollouts still owed, target tasks) for the king replay on `source`."""
+        want = self.registry.sources[source].king_attempts
+        targets = self.replay_targets(source, rows)
+        if not targets:
+            return 0, 0
+        att = self.state.king_attempts.get(source, {})
+        return sum(max(0, want - att.get(r["uid"], 0)) for r in targets), len(targets)
 
     # -- source pick -------------------------------------------------------------
 
@@ -250,6 +315,8 @@ class Scheduler:
         if self.king_share <= 0:
             return False
         share = KING_BURST_SHARE if self.env.get("KING_BURST") == "1" else self.king_share
+        if self._replay_due:
+            share = max(share, KING_REPLAY_SHARE)
         return self.picks_king / (self.picks_total + 1) < share
 
     def pick_source(self, remaining: dict[str, int],
@@ -305,6 +372,13 @@ class Scheduler:
         self.king_cycle = True
         self.picks_total += 1
         self.picks_king += 1
+        replay = [n for n in king_cands if self._replay.get(n, (0, 0))[0] > 0]
+        if replay:
+            # King seat first on the band sources, smallest backlog first:
+            # terminal_bench_2 / multiswe / swerebench_v2 / swelego reach
+            # 90 % coverage in hours and the fold can tighten their king
+            # side while the big pools (terminal_lego, swesmith) fill.
+            return min(replay, key=lambda n: (self._replay[n][0], self._replay[n][1], n))
         return self._rank_pick(king_cands, self._king_kept)
 
     def _rank_pick(self, cands: list[str], kept_of) -> str:
@@ -399,6 +473,18 @@ class Scheduler:
         done = self.state.done_for(source, policy_seat(policy, self.env))
         todo = [r for r in rows if r["uid"] not in done]
         if policy.id.startswith(KING_POLICY_PREFIX):
+            # King-seat replay (king_attempts >= 2): band-relevant tasks whose
+            # king attempts over every seat are still under the target come
+            # first, fewest attempts first, and the CURRENT seat may roll a
+            # task it already did once (that is the second attempt).
+            want = self.registry.sources[source].king_attempts
+            if want >= 1:
+                att = self.state.king_attempts.get(source, {})
+                owed = [r for r in self.replay_targets(source, rows) if att.get(r["uid"], 0) < want]
+                if owed:
+                    owed.sort(key=lambda r: att.get(r["uid"], 0))
+                    seen = {r["uid"] for r in owed}
+                    return owed + [r for r in todo if r["uid"] not in seen]
             # Teacher-solved tasks first (phase 10): the king's stop-state
             # failures need a teacher that finished the same task.
             solved = self.state.teacher_solved.get(source, set())
@@ -427,7 +513,15 @@ class Scheduler:
         if not seats:
             return 0
         dones = [self.state.done_for(source, s) for s in seats]
-        return sum(1 for r in rows if any(r["uid"] not in d for d in dones))
+        n = sum(1 for r in rows if any(r["uid"] not in d for d in dones))
+        if any(is_king_seat(s) for s in seats):
+            owed, targets = self.replay_backlog(source, rows)
+            self._replay[source] = (owed, targets)
+            self._replay_due = any(v[0] > 0 for v in self._replay.values())
+            if king_only:
+                # replay rollouts are king work even when the seat has "done" the task once
+                n = max(n, owed)
+        return n
 
     def pick_policy(self, source: str, rows: list[dict] | None = None,
                     king_only: bool = False, teacher_only: bool = False) -> Policy:

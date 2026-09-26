@@ -52,8 +52,8 @@
 # derived mass: >= 25 % of every slice (16.8 % at epoch 44), taken from the
 # coding / terminal teacher-trajectory turns (floor 40 % kept: buckets 6030 /
 # 3700 -> 4000 / 2600), k = 3 sub-strata on every stop-state group.
-coding = 0.23   # 0.36 -> 0.34 (king_coached) -> 0.28 (phase 10) -> 0.25 (2026-09-21 agentic_ops / long_context) -> 0.24 (2026-09-21 22:25: 0.01 to completion so the static stop-state block meets its 0.25 floor) -> 0.23 (2026-09-22 sci_code; coding + terminal = 0.40 = floor)
-terminal = 0.17 # 0.22 -> 0.18 (phase 10) -> 0.17 (2026-09-21)
+coding = 0.21   # 0.36 -> 0.34 (king_coached) -> 0.28 (phase 10) -> 0.25 (2026-09-21 agentic_ops / long_context) -> 0.24 (2026-09-21 22:25: 0.01 to completion so the static stop-state block meets its 0.25 floor) -> 0.23 (2026-09-22 sci_code; coding + terminal = 0.40 = floor) -> 0.21 (2026-09-24 bench_fail 0.02)
+terminal = 0.15 # 0.22 -> 0.18 (phase 10) -> 0.17 (2026-09-21) -> 0.15 (2026-09-24 bench_fail 0.02)
 nl2repo = 0.01
 math = 0.02
 tool_use = 0.02
@@ -125,6 +125,18 @@ long_context = 0.03
 # pre-pass rollouts publish.
 science = 0.05
 sci_code = 0.02
+# 2026-09-24 17:53/17:56 UTC (Jacob: "add the failure runs from the benchmarks
+# into the dataset ... upsampling the runs where we are doing badly"; mode (a)
+# DIRECT approved -- "a fair backward pass at this point in the training"):
+# `bench_fail` = the benchsuite's king-failed / teacher-passed benchmark trials
+# (SWE-bench Verified, Terminal-Bench 2, the chat / tool suites) as their own
+# group, per-suite buckets weighted toward the suites the sitting king does
+# worst on ([bench_fail]). Paid by coding -0.02 / terminal -0.02 (their
+# over-supply; bench_fail is SWE / terminal content and counts toward the
+# coding+terminal floor in ops/curriculum/rule.py). Data event, no wvk;
+# forward-only. Benchmark columns feeding D are stamped `trained_on` in the
+# corpus manifest and marked on the kingboard.
+bench_fail = 0.04
 
 # Per-source flag `interactive = true` (tau2-airline read, 2026-09-18): the
 # harness talks to a simulated user mid-trajectory, so a teacher reply that
@@ -312,6 +324,7 @@ min_refs_valid = 2
 # under any persona also counts). Airline / retail bench ids are bare numbers
 # (no name overlap by construction) -- the marker is the guard there.
 # Drop reasons: decontam_no_gen_marker, bench_panel_overlap.
+allow_bench_groups = ["bench_fail"]   # 2026-09-24 17:56 UTC Jacob "I am ok going for it" -- see the bench_fail notes below; [] = off (fail-closed)
 [decontamination.affine_tau2_gen]
 bench_ids = "rollouts/envs/affine_tau2_gen_v1/affine_tau2_gen_v1/data/e61/bench_task_ids.json"
 require_gen_marker = true
@@ -366,6 +379,16 @@ retire_published = true
 # the new model for the live sources. Changing the list re-scans the band
 # cache (rows are tagged with the rule they were scanned under).
 teacher_models = []
+# Env-backfill outcome table (datagen worker, 2026-09-23 21:40 UTC;
+# internal/king-seat-replay-band-coverage.md): one row per (source, sid,
+# seat model) with n / n_solved from traces-backfill/**, republished hourly.
+# Its `king` rows add to the seat counts k_n / k_s (all reigns, like the
+# traces; "current" = the validator's king only). Only drops can come of
+# it -- no backfill turn enters D. The manifest stamps the merge (sha,
+# rows) and per-source king coverage seat-only vs merged. Empty = off.
+backfill_outcomes = "backfill/task_outcomes.jsonl"
+backfill_seats = ["king"]
+backfill_kings = "all"
 
 [band_filter.affine_science]
 # Item 1 block (15:24 UTC): same rule, absolute m = 1 of n >= 2 (the plan's
@@ -382,6 +405,42 @@ retire_published = true
 # carries [GEN:e<epoch>] by construction (affine_gen_v1.gen_uid); requiring
 # the marker guarantees that a benchmark row (SciCode, HLE, AA-LCR) can never
 # fold through these sources even if someone loads it into the taskset.
+# Benchmark rows in D (Jacob 2026-09-24 17:56 UTC, direct mode). The
+# generated-source rule above (require_gen_marker) keeps benchmark ids out of
+# the teacher-generated sources; this knob is the ONLY way benchmark trials
+# themselves enter D: the fold reads traces-bench/ and routes `bench_*`
+# sources to the listed group. Empty list = off (fail-closed: a bench_*
+# record is dropped as bench_not_allowed). Flipped ON 2026-09-24 on Jacob's
+# word ("I am ok going for it"); flipping OFF stops new admissions -- retiring
+# the published rows is one fold with the fold worker's retire machinery.
+# (`allow_bench_groups` itself lives in the [decontamination] table above.)
+
+[bench_fail]
+# ops/bench_fail/ingest.py publishes the trials to traces-bench/ (own manifest,
+# chunk keys bench_<suite>-...); the fold joins that manifest only while the
+# group is in allow_bench_groups AND mode = "direct". mode = "variants" is the
+# alternative Jacob kept in reserve: direct rows are refused and teacher-
+# synthesised variants of the failed tasks enter through their own [GEN:]
+# source (generator not built yet). Per-suite bucket weights: "auto" =
+# proportional to (1 - sitting king's score) on the kingboard column, floor
+# 0.05 -- the suites the king does worst on get the most strata; or a table
+# {suite = w}. min_reign: trials of older reigns are dropped.
+enabled = true
+mode = "direct"
+traces_prefix = "traces-bench/"
+group = "bench_fail"
+strata_buckets = 520
+min_suite_buckets = 20
+suite_weights = "auto"
+min_reign = 12
+# Outcomes the router admits (2026-09-25). The ingest keeps only graded-0,
+# non-infra trials; the fold's generic rollout_outcome files harness end
+# states it does not know (BFCL "done" / "user_closed", tau2 "user_completed"
+# / "tau2_too_many_errors", mini-swe ContextWindowExceeded) under "errored".
+# They are king failures: first fold routed 6,068 and dropped 7,778 of them
+# as bench_not_failed (bfcl 6,983, swebench 1,949, tau2/tau3 1,099).
+accept_outcomes = ["failed", "errored"]
+
 [decontamination.affine_scicomp]
 require_gen_marker = true
 domain_field = "repo"
@@ -418,6 +477,8 @@ agentic_ops = 650    # 2026-09-21: 0.05 of ~13k strata
 long_context = 400   # 2026-09-21: 0.03 of ~13k strata
 science = 1500       # 400 -> 650 (2026-09-22 17:00, 0.05 of ~13k) -> 1500 (2026-09-23: budget buckets re-hash the raw strata, populated = n(1-e^(-raw/n)); at 650 the 569 raw science strata would populate only ~380. The source-level strata_buckets (1000) is the binding cap; this one must not bind)
 sci_code = 260       # 2026-09-22: 0.02 of ~13k strata
+# bench_fail: NO budget bucket -- [bench_fail].strata_buckets (520, split per suite) already
+# sets its strata; a second hash here would populate only ~63 % of them (n(1-e^-1)).
 
 [strata_budget.sub_strata]
 king_fail = 3
@@ -787,6 +848,9 @@ swe_eval = true          # swebench verdict as rewards.solved telemetry
 share = 0.0
 
 [source.scaleswe]
+king_attempts = 2   # 2026-09-23 20:47 UTC Jacob "do" (slice composition): king-seat replay so the fold's
+                    # [band_filter] king side (>= 2 seat attempts) covers every teacher-solved task; the seat
+                    # replays the band sources first (scheduler KING_REPLAY_SHARE 0.65)
 group = "coding"
 runner = "verifiers"
 taskset_id = "scaleswe-v1"
@@ -800,6 +864,9 @@ share = 3.0
 extra_flags = ["--env.taskset.filter-unavailable-images", "False"]
 
 [source.swerebench_v2]
+king_attempts = 2   # 2026-09-23 20:47 UTC Jacob "do" (slice composition): king-seat replay so the fold's
+                    # [band_filter] king side (>= 2 seat attempts) covers every teacher-solved task; the seat
+                    # replays the band sources first (scheduler KING_REPLAY_SHARE 0.65)
 group = "coding"
 runner = "verifiers"
 taskset_id = "swerebench-v2-full"
@@ -821,6 +888,9 @@ row_meta = "r2e"
 share = 1.0
 
 [source.multiswe]
+king_attempts = 2   # 2026-09-23 20:47 UTC Jacob "do" (slice composition): king-seat replay so the fold's
+                    # [band_filter] king side (>= 2 seat attempts) covers every teacher-solved task; the seat
+                    # replays the band sources first (scheduler KING_REPLAY_SHARE 0.65)
 group = "coding"
 runner = "verifiers"
 taskset_id = "multiswe-v1"
@@ -833,6 +903,9 @@ row_meta = "multiswe"
 share = 3.0
 
 [source.swesmith]
+king_attempts = 1   # 2026-09-23 21:31 UTC (coordinator, "15 days is too slow"): ONE seat pass -- the fold's
+                    # [band_filter.defaults] king_min_attempts is 1 and the king solves 0.80-0.86 of what it
+                    # tries here, so one attempt already retires what the king solves; halves the owed work
 group = "coding"
 runner = "verifiers"
 taskset_id = "swesmith-v1"
@@ -841,6 +914,9 @@ pass_dataset = false
 share = 4.0
 
 [source.swelego]
+king_attempts = 2   # 2026-09-23 20:47 UTC Jacob "do" (slice composition): king-seat replay so the fold's
+                    # [band_filter] king side (>= 2 seat attempts) covers every teacher-solved task; the seat
+                    # replays the band sources first (scheduler KING_REPLAY_SHARE 0.65)
 group = "coding"
 runner = "verifiers"
 taskset_id = "swelego-v1"
@@ -898,6 +974,9 @@ share = 0.0
 # -- terminal ------------------------------------------------------------------
 
 [source.terminal_lego]
+king_attempts = 1   # 2026-09-23 21:31 UTC (coordinator, "15 days is too slow"): ONE seat pass -- the fold's
+                    # [band_filter.defaults] king_min_attempts is 1 and the king solves 0.80-0.86 of what it
+                    # tries here, so one attempt already retires what the king solves; halves the owed work
 group = "terminal"
 runner = "verifiers"
 taskset_id = "terminal-lego-v1"
@@ -908,6 +987,9 @@ local_docker_build = true
 share = 3.0
 
 [source.terminal_bench_2]
+king_attempts = 2   # 2026-09-23 20:47 UTC Jacob "do" (slice composition): king-seat replay so the fold's
+                    # [band_filter] king side (>= 2 seat attempts) covers every teacher-solved task; the seat
+                    # replays the band sources first (scheduler KING_REPLAY_SHARE 0.65)
 group = "terminal"
 runner = "verifiers"
 taskset_id = "terminal-bench-2-v1"
@@ -998,6 +1080,9 @@ strata_buckets = 470
 share = 1.0
 
 [source.affine_agent]
+king_attempts = 2   # 2026-09-23 20:47 UTC Jacob "do" (slice composition): king-seat replay so the fold's
+                    # [band_filter] king side (>= 2 seat attempts) covers every teacher-solved task; the seat
+                    # replays the band sources first (scheduler KING_REPLAY_SHARE 0.65)
 # general-agent toolbench (PrimeIntellect research-environments,
 # tool_use/general_agent_v1): 4,417 multi-turn tasks, each with its own
 # database + tool set served on the host per rollout, DB-hash graded
@@ -1566,6 +1651,9 @@ king_rollouts_per_hour = 6   # king_tooluse persist-state feeder (2026-09-14); 0
 # no king material there).
 
 [source.affine_tmax]
+king_attempts = 2   # 2026-09-23 20:47 UTC Jacob "do" (slice composition): king-seat replay so the fold's
+                    # [band_filter] king side (>= 2 seat attempts) covers every teacher-solved task; the seat
+                    # replays the band sources first (scheduler KING_REPLAY_SHARE 0.65)
 # TMax (research-environments tmax@2026-07-01): 14,600 Harbor terminal
 # tasks from the PUBLIC PrimeIntellect-ai/prime-tasks repo, each with its
 # Dockerfile context. The upstream taskset pins Prime-internal images that
@@ -1717,6 +1805,9 @@ max_concurrency = 6
 share = 0.5
 
 [source.affine_sql]
+king_attempts = 2   # 2026-09-23 20:47 UTC Jacob "do" (slice composition): king-seat replay so the fold's
+                    # [band_filter] king side (>= 2 seat attempts) covers every teacher-solved task; the seat
+                    # replays the band sources first (scheduler KING_REPLAY_SHARE 0.65)
 # Text-to-SQL over Spider train (7,000 questions / 146 sqlite databases,
 # CC-BY-SA-4.0; dev split held out): the task database in a python:3.12-slim
 # sandbox with the sqlite3 CLI, schema + question in the prompt, final reply
@@ -1853,7 +1944,7 @@ strata_buckets = 260
 strata_offset = 0     # sci_code namespace
 max_batch = 16
 max_concurrency = 8
-share = 0.0            # flip to 1.0 when data/e1/tasks.jsonl.gz exists (generate.py); admitted by Jacob 15:24 UTC once verified
+share = 1.0            # 2026-09-23 12:40 UTC: e1 committed (387 tasks over 6 domains, all [GEN:e1]; 8x12 run finished 23:49) -- AA-worker threshold >= 130 over >= 4 domains met
 
 [source.affine_i3math]
 # INTELLECT-3-RL math (train), \boxed{} + math-verify in the runtime; the
@@ -2048,8 +2139,10 @@ share = 1.0
 [source.affine_docqa]
 # 2026-09-22 (aa-gap-fill-plan §4.1, Jacob "go" 15:24 UTC, full-run spend
 # approved): AA-LCR-shaped questions over bundles of REAL public documents
-# (SEC EDGAR 10-Ks, GOV.UK consultation outcomes under OGL v3, Europe PMC
-# CC-BY papers), 60-95k tokens INLINE in the user turn, one visible reply
+# (SEC EDGAR filings of ~400 filers, GOV.UK publications under OGL v3, US
+# Federal Register rules, Europe PMC CC-BY papers; widened 2026-09-23 after
+# the e1/e2 lists capped the supply at 75 bundles), 60-95k tokens INLINE in
+# the user turn, one visible reply
 # ending `Answer: <value>`; solved = normalised exact match (numbers 1 %,
 # dates by day). Questions are teacher-written and verified: blind
 # re-answer 2x with shuffled documents must match, removing a required
@@ -2066,8 +2159,8 @@ select = "tasks"
 pass_dataset = false
 extra_flags = ["--env.taskset.epoch", "1"]
 policies = ["teacher_text", "king_text", "king_text_greedy"]
-strata_buckets = 300
-strata_offset = 345   # long_context namespace, after mrcr 0-229 and oolong 230-344
+strata_buckets = 600   # 300 -> 600 (2026-09-23: the e2 run targets >= 600 bundles; 300 hashed buckets would populate <= 260 strata against the group's ~424 target. Published `long_context:345..644` strata keep their key)
+strata_offset = 345   # long_context namespace, after mrcr 0-229 and oolong 230-344; 345-944 since 2026-09-23
 max_batch = 8
 max_concurrency = 4
 share = 1.0            # 2026-09-22 19:40 UTC: e1 published to data.affine.io/envs/affine_docqa/e1 (107 questions, 47 bundles) -- AA-worker threshold >= 100 met; the full run goes to e2

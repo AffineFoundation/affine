@@ -1,0 +1,120 @@
+ROUTED REFERENCES PROBE (Alan's multi-teacher router) — summary, 2026-09-21
+script research/scripts/frontier_arbiter/routed_refs.py · full tables report.txt / report.json · per-turn turn_metrics.jsonl
+
+TERMS (one line each)
+  z_R    centred tempered LME (tau 0.03) of the miner thought's lift on the REF actions, lpC(y_ref|x,z_miner)-lpC(y_ref|x,0),
+         minus the arm's LOO anchor mean, over the arm x dialect pooled LOO sd  ("does the thought predict the refs' actions")
+  z_A    tempered LME of the summed lift of the MINER action under each REF thought, [lpC(y_miner|x,z_ref)-lpC(y_miner|x,0)]*bytes,
+         anchored/standardised the same way  ("would the teacher, thinking the ref's thought, take this action")
+  typ_c  2 - |m_c - mu_c|/sigma_c where m_c = content-masked (theta 1.0) mean token logprob of the miner thought under Qwen;
+         anchor mu_c/sigma_c ALWAYS from the stored Qwen refs (LOO for a Qwen ref itself); >= 0 = "in band"
+  min    turn score = min(z_R, typ_c, z_A); "bind" = which leg is the minimum
+  arms   Q3 = 3 stored Qwen refs (today's meter); G3 = 3 fresh Genesis (Qwen3.6-35B-A3B) refs; MIX = 2 Qwen + 1 Genesis;
+         O3 = 3 fresh Occamy (Accio-Lab/occamy-1.0) refs.  All echoes under Qwen3.8-27B (rented vLLM pod, echo-cache plugin).
+  miners teacher = stored Qwen ref held out (LOO when Qwen refs are the arm); king = stored z_a,y_a (reign at chal-00600..630);
+         genesis_fresh = 4th Genesis sample (never a ref); occamy_fresh = 4th Occamy sample; hybrid_qz_ga = VIRTUAL miner
+         "think like Qwen, do what Genesis does" = stored teacher thought q_j + genesis_fresh action (scored from existing echoes,
+         LOO on q_j when it is a ref).  Family rows are means over members; paired = per-turn difference of family means.
+  canon  Genesis emits JSON tool calls inside <tool_call>; teacher / king / Occamy emit the Qwen3 XML form. Genesis tool calls were
+         re-rendered to XML before echoing (147/150) — without this, Genesis-vs-Qwen norm-exact on tool_call turns was 0.00 (format),
+         with it 0.86 (semantic).  Genesis JSON-vs-XML is a real deployment issue for any routed-ref implementation.
+
+TURN MIX (180 turns, wvk-22 verdicts chal-00600..00630, prefixes <= 80k chars, valid king row + 3 stored refs with lp fields)
+  tau2 120: affine_tau2 93 (text 80, tool_call 13; fault classes mms_issue 81, mobile_data_issue 12) + affine_tau2_synth 27
+            (tool_call; vet_clinic 9, auto_repair 9, online_shopping 3, library 2, tech_support 2, travel_agency 1, fitness_gym 1)
+            turn came from a teacher rollout 66 / king rollout 54; own rollout solved 88 / failed 32
+            rollouts.sqlite join: 18 turns from tasks the teacher failed at least once, 101 from tasks it always solved (the
+            "Genesis solved, teacher failed" preference could only be honoured on those 18; all telecom mms/data turns included)
+  bash  60: swesmith 6, scaleswe 7, multiswe 7, swerebench_v2 7, r2e_gym 7, swelego 7, nl2repobench 7, terminal_lego 6, terminal_bench_2 6
+  samples: Genesis 720/720 parsed (T0.8, 4096 cap, 0 cap hits; 10/160 tool_call replies were prose to the user = legit tau2 move);
+           Occamy 718/720.  Arms available: Q3 180, G3 178, MIX 180, O3 180.  Echoes 32,226 + 2,008 re-echoes, 0 errors.
+  sigma_R (arm x dialect) 0.004-0.026 nat/byte; sigma_A 2.6-17.7 nat; sigma_c text 0.141 / tool_call 0.124 / bash 0.179 nat/tok.
+
+(a) HEADROOM — family mean of min(.) ; paired vs teacher held-out (mean, z)
+  tau2 (n=118-120)            teacher   genesis_fresh          occamy_fresh           king      hybrid_qz_ga
+    Q3                         -0.48    -2.31 (-1.83, z-7.8)   -2.30 (-1.82, z-8.5)   -1.31     -1.39 (-0.90, z-7.9)
+    G3                         -1.76    -1.74 (+0.02, z+0.1)   -2.37 (-0.61, z-2.6)   -1.49     -0.39 (+1.37, z+6.4)
+    MIX                        -0.18    -1.75 (-1.56, z-6.2)   -2.03 (-1.86, z-8.4)   -0.72     -0.14 (+0.04, z+1.3)
+    O3                         -0.57    -1.83 (-1.26, z-6.8)   -2.02 (-1.45, z-6.6)   -0.75     -0.56 (+0.02, z+0.3)
+  per leg, genesis_fresh - teacher under G3 (tau2): z_R +0.36 (z+1.7) · typ_c -2.25 (z-7.9) · z_A +1.68 (z+6.3)
+  per leg, teacher under G3 vs under Q3 (tau2):     z_R -0.15 · typ_c unchanged · z_A -1.62  → the teacher's whole loss is z_A
+  bash (n=58-60)
+    Q3                         -0.57    -1.55 (-0.98, z-4.0)   -2.37 (-1.80, z-7.2)   -0.75     -1.47 (-0.90, z-3.9)
+    G3                         -3.08    -0.88 (+2.20, z+4.7)   -3.08 (-0.04, z-0.1)   -2.58     -0.42 (+2.66, z+6.1)
+    MIX                        -0.29    -0.67 (-0.38, z-2.3)   -1.66 (-1.39, z-5.6)   -0.34     -0.23 (+0.06, z+1.3)
+    O3                         -0.96    -1.10 (-0.14, z-0.7)   -1.70 (-0.82, z-3.1)   -0.74     -0.60 (+0.36, z+2.5)
+  MIX lifts EVERY family +0.3..0.9 vs Q3 (teacher +0.30 z6.7, king +0.59 z5.6, genesis +0.57): the LOO anchor set mixes families,
+  so mu drops for everyone — anchor degradation, not headroom.
+
+(b) SEPARATION — control, teacher held-out minus king, min(.) (mean, z)
+                 Q3                 G3                  MIX                O3
+  tau2/all       +0.83 (z+6.5)      -0.27 (z-2.1)       +0.54 (z+5.5)      +0.18 (z+1.9)
+  tau2/text      +1.04 (z+6.9)      -0.55 (z-3.3)       +0.65 (z+6.9)      +0.12 (z+1.1)
+  tau2/tool_call +0.40 (z+1.8)      +0.31 (z+1.7)       +0.30 (z+1.4)      +0.30 (z+1.6)
+  bash           +0.19 (z+0.9)      -0.51 (z-1.7)       +0.06 (z+0.5)      -0.22 (z-1.5)
+  Under Genesis refs the king out-scores the teacher on tau2 (the leg that flips is z_A: teacher-king z_A +0.82 → -0.49).
+
+(c) TENSION — typ_c of member thoughts against the Qwen anchor (scored on Q3), and where min(.) binds
+                  tau2: mean typ_c / in-band / m_c-anchor (nat/tok) / share below band    bash: same
+  Genesis+fresh   -1.23 / 0.43 / -0.43 / 0.93                                             -0.01 / 0.59 / -0.29 / 0.78
+  Occamy+fresh    -1.47 / 0.40 / -0.46 / 0.92                                             -1.11 / 0.37 / -0.53 / 0.89
+  king            +0.35 / 0.65 / -0.18 / 0.77                                             +0.71 / 0.85 / -0.07 / 0.58
+  teacher (LOO)   +1.03 / 0.88                                                            +0.99 / 0.89
+  Genesis thoughts are LESS Qwen-likely, not more (93 % below band): Qwen-family lineage does not make them typ_c-safe.
+  bind rates under G3 (tau2): typ_c binds Genesis 55 % · z_A binds teacher 64 %, king 62 %, Genesis 19 %, hybrid 42 %
+  bind rates under G3 (bash): typ_c binds Genesis 42 % · z_A binds teacher 71 %, king 68 %, Genesis 23 %, hybrid 34 %
+  Can a Qwen-typical thought license a pool action?  Yes, trivially — z_A does not look at the miner's thought at all
+  (it conditions on the REF thoughts), so hybrid = Qwen thought + Genesis action gets typ_c +1.03, z_A = Genesis's, z_R = the
+  teacher's: it tops every arm that contains Genesis refs.
+
+(d) INCUMBENCY / RT-14 — under G3 (fair: genesis_fresh, teacher, king, hybrid are all non-members scored at k=3)
+  tau2: genesis_fresh -1.74 vs teacher -1.76 (+0.02, z+0.1) vs king -1.49 (-0.25, z-1.1)  → does NOT top: typ_c caps it
+  bash: genesis_fresh -0.88 vs teacher -3.08 (+2.20, z+4.7) vs king -2.58 (+1.70, z+3.9)   → tops by a wide margin
+  hybrid_qz_ga tops both: tau2 +1.37 over teacher (z6.4), +1.10 over king (z7.7), +1.35 over Genesis; bash +2.66 / +2.16 / +0.46.
+  self-agreement (norm-exact / best Jaccard): Genesis sample vs Genesis refs 0.82 / 0.94 (tau2), 0.80 / 0.94 (bash);
+  king vs Genesis refs 0.25 / 0.59 (tau2), 0.12 / 0.41 (bash); Genesis refs among themselves 0.74 / 0.91 (0.96 on tool_call);
+  Qwen refs among themselves 0.29 / 0.65 (0.81 tool_call), Occamy 0.32 / 0.69.  Genesis at T0.8 is near-deterministic, so a
+  G3 ref set has almost no spread: sigma_R collapses and the meter becomes "did you take Genesis's action" (z_A).
+
+(e) ROUTING VALUE — arm minus Q3, same family, min(.) (mean, z)
+                 tau2 (Genesis > teacher on env)          bash (teacher > Genesis on env)
+  teacher        G3 -1.27 (z-5.4)  O3 -0.09 (z-0.8)         G3 -2.51 (z-5.8)  O3 -0.39 (z-2.0)
+  genesis_fresh  G3 +0.57 (z+5.0)                           G3 +0.67 (z+3.0)
+  king           G3 -0.18 (z-1.0)  O3 +0.56 (z+4.1)         G3 -1.82 (z-4.5)  O3 +0.01 (z+0.1)
+  hybrid_qz_ga   G3 +1.00 (z+6.6)                           G3 +1.05 (z+4.4)
+  within tau2, tasks the teacher failed (n18) vs always solved (n99): genesis_fresh - teacher under G3 = -0.02 vs +0.08 — no signal.
+  The pool arm moves scores the same way (and harder on bash) whether or not the env says the member is better.
+
+(f) ACTION AGREEMENT baseline (norm-exact any-of-refs / best token Jaccard)
+  tau2/all: Qwen self 0.29/0.65 · Genesis-vs-Qwen 0.29/0.59 · Occamy-vs-Qwen 0.31/0.61 · king-vs-Qwen 0.28/0.60 · Genesis self 0.74/0.91
+  tau2/tool_call: Qwen self 0.81/0.91 · Genesis-vs-Qwen 0.86/0.93 (after canon; 0.00 before) · Genesis self 0.96/0.98
+  tau2/text: all exact ~0 (prose), Jaccard Qwen self 0.52, Genesis-vs-Qwen 0.42, king-vs-Qwen 0.43
+  bash: Qwen self 0.20/0.58 · Genesis-vs-Qwen 0.12/0.49 · king-vs-Qwen 0.22/0.61 · Genesis self 0.81/0.93 · Occamy-vs-Qwen 0.08/0.44
+
+P3 ARM — SKIPPED: research/results/frontier_arbiter/split_states/continuations.jsonl does not exist; outcome/continuations.jsonl
+  holds 109 states with exactly 1 continuation each (0 states with >= 2), so S+/S- per state cannot be formed.
+
+COST  Engy $0.33 (720 Genesis samples + an aborted Engy echo start) · Lium: Occamy 1xH200 0.76 h $2.28 · Qwen echo pod 1.42 h $4.25
+      + 0.16 h $0.49 (re-echo after tool-call canonicalisation) → ~$7.35 total, all pods released.  Echo values from the pod differ
+      from Engy's teacher serving by a few % of |sum lp| (token counts identical), so every probe echo is pod-only; the pod
+      reproduces the stored verdict quantities: R_king +0.0000 (z1.2), A_king +0.02 nat (z0.5), m_c king +0.002 (z0.6) on Q3.
+
+VERDICT
+ 1. No headroom for the member itself where the env says it is better: with Genesis refs under Qwen echoes on tau2, Genesis-as-miner
+    ties the teacher held-out (+0.02, z0.1) — its z_A gain (+1.68) is capped by typ_c (thoughts 0.43 nat/tok below the Qwen band,
+    in-band 43 %), and the teacher loses exactly on z_A (-1.62): the arm re-targets the meter, it does not raise the ceiling.
+ 2. The only miner G3 rewards is the router's literal ask — Qwen thought + Genesis action — which tops teacher (+1.37, z6.4), king
+    (+1.10) and Genesis itself (+1.35) with z_R flat (-0.15): the credit is for reproducing the pool member's action, not for a
+    thought that leads to it; z_A never reads the miner's thought.
+ 3. Not routing-conditional: on bash, where the teacher beats Genesis on the env, the same arm gives Genesis +2.20 (z4.7) and the
+    hybrid +2.66 over the teacher — larger than on tau2 — and teacher-failed vs teacher-solved tau2 tasks do not differ. The lift is
+    family-similarity to the ref source (the RT-7 mechanism), so per-stratum routing from env verdicts buys nothing measurable.
+ 4. The control does not survive Genesis refs: teacher-king +0.83 (z6.5) under Q3 becomes -0.27 (z-2.1) under G3 on tau2 (text -0.55,
+    z-3.3), -0.51 on bash; it holds under MIX (+0.54) — but MIX lifts every family by anchor degradation — and is weak under O3 (+0.18).
+ 5. Pool-member upload (RT-14) is binding wherever the member's thoughts are Qwen-typical (bash: Genesis tops by 2.2 z-units) and is
+    blunted by the Qwen typ_c anchor where they are not (tau2); the sharper attack needs no upload: an ensemble/fine-tune that thinks
+    like Qwen and acts like the member tops every pool arm, and near-deterministic member refs (self-exact 0.74-0.96) leave z_A as the
+    whole meter.  Any implementation must also canonicalise the member's tool-call dialect (Genesis JSON vs Qwen XML) or it measures format.
+ 6. Occamy refs (O3) are the least harmful arm (teacher ~ Q3, control +0.18) because Occamy is a Qwen3.8 fine-tune whose actions agree
+    with Qwen at Qwen's own self-agreement rate (0.31 vs 0.29) — i.e. they add little beyond Q3.  P3 (outcome-filtered Qwen refs) could
+    not be tested; that arm, not a foreign-member pool, is where outcome information can enter without moving the ref family.

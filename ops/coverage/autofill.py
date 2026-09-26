@@ -161,6 +161,21 @@ def driver_pod_reachable() -> bool:
     return r.returncode == 0
 
 
+def live_pass_for(digest12: str) -> bool:
+    """Any ops/benchsuite pass (watcher, by hand, fast, cap backfill) for this digest
+    whose pid file names a live process."""
+    if not digest12:
+        return False
+    for pidf in (REPO / "ops" / "benchsuite" / "state").glob(f"pass-*{digest12}*.pid"):
+        try:
+            pid = int(pidf.read_text().strip())
+            os.kill(pid, 0)
+            return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
 def live_env_drivers() -> set[str]:
     """digest12s with an unreleased serving box in the ledger."""
     try:
@@ -196,6 +211,26 @@ def main() -> int:
         merge_into = (row.get("cards") or [None])[0]
         merge_as = "teacher" if row["kind"] == "teacher" else "king"
         missing = set(r["missing_bench"]) - BENCH_EXCLUDE   # running cells are not in missing_bench
+        if row["kind"] != "king":
+            # reference rows (Albedo, Occamy), the teacher and the genesis are the benchsuite
+            # worker's cards (2026-09-24: three duplicate Albedo passes, $14); this launcher
+            # only fills kings
+            if missing:
+                print(f"{r['label']}: {row['kind']} row — benchmark cells are the benchsuite worker's ({len(missing)} open)")
+            missing = set()
+        if missing and live_pass_for(row.get("digest12") or ""):
+            print(f"{r['label']}: a benchsuite pass for this digest is alive (pass-*.pid); nothing queued")
+            missing = set()
+        if row.get("current"):
+            # the sitting king's card is the watcher's crown pass (fast mode, 5 pods): never
+            # queue a second pass for it; its gaps close when the watcher's pass ends
+            if missing:
+                print(f"{r['label']}: sitting king — {len(missing)} cells left to the watcher's pass")
+            missing = set()
+        if r.get("running_bench") and missing:
+            # a pass is still landing cells on this row: wait for it before judging gaps
+            print(f"{r['label']}: {len(r['running_bench'])} cells running; gap check deferred")
+            missing = set()
         if row.get("inflight"):
             # a benchsuite pass (watcher / by hand / fast) is running for this row: its
             # cells land on their own; queueing them again doubled reign 18 on 09-19
@@ -235,7 +270,9 @@ def main() -> int:
             n_bench += 1
         env_gaps = list(r["missing_env"]) + [x["env"] for x in r["low_env"]]
         d12 = row.get("digest12") or ""
-        if env_gaps and not args.no_env and row["kind"] != "teacher":
+        if env_gaps and row["kind"] == "reference":
+            print(f"{r['label']}: reference row — env cells are the benchsuite worker's ({len(env_gaps)} open)")
+        elif env_gaps and not args.no_env and row["kind"] != "teacher":
             if d12 in live:
                 print(f"{r['label']}: env driver live, {len(env_gaps)} gaps pending")
             elif not driver_ok:

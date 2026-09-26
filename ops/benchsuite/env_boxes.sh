@@ -31,7 +31,15 @@ case "$REIGN" in
   19) DRV=root@73.139.34.205:20008; EXIST="_";   NEW="";  KEEP_SESS="";  KEEP_SRC=""; PAR=4 ;;    # re-split only: stale list lacked kb_synth/tau2_gen/mrcr
   13) DRV=root@73.139.34.205:20008; EXIST="_";   NEW="";  KEEP_SESS="";  KEEP_SRC=""; PAR=3 ;;    # driver completed 18:39 with a stale list; box 67c0 idle since
   12) DRV=root@73.139.34.205:20008; EXIST="_";   NEW="";  KEEP_SESS="";  KEEP_SRC=""; PAR=4 ;;
+  20) DRV=root@73.139.34.205:20008; EXIST="";    NEW="_";   KEEP_SESS=""; KEEP_SRC=""; PAR=4 ;;    # added 2026-09-24 (the abstain chain skipped 20: no case block)
   21) DRV=root@73.139.34.205:20008; EXIST="";    NEW="_ b"; KEEP_SESS=""; KEEP_SRC=""; PAR=5 ;;   # crowned 2026-09-22 13:03; king seat serves datagen, these serve the backfill driver
+  11) DRV=root@73.139.34.205:20008; EXIST="";    NEW="_";   KEEP_SESS=""; KEEP_SRC=""; PAR=5 ;;
+  # reference rows (Jacob 2026-09-24 06:16: every king x every env, plus teacher and genesis). kingpod serves an HF model
+  # as king-<first 12 of the HF commit> when --digest <commit> --hf <repo@commit> are given, so the driver's --digest12 works.
+  genesis) DRV=root@73.139.34.205:20008; EXIST="";  NEW="_";   KEEP_SESS=""; KEEP_SRC=""; PAR=5; ROW="Genesis";    REV_FIXED=995ad96eacd98c81ed38be0c5b274b04031597b0; HF="Qwen/Qwen3.6-35B-A3B@995ad96eacd98c81ed38be0c5b274b04031597b0" ;;
+  # Albedo (SN97) sitting king CXXVII (Jacob 2026-09-24 11:14): reference row above Genesis
+  albedo)  DRV=root@73.139.34.205:20008; EXIST="";  NEW="_ b"; KEEP_SESS=""; KEEP_SRC=""; PAR=5; ROW="Albedo CXXVII"; REV_FIXED=e920362b460ae6b2a33c9cb298aa7f14a38d5584; HF="dendriteholdings/albedo-qwen3.6-35b-king-CXXVII@e920362b460ae6b2a33c9cb298aa7f14a38d5584" ;;
+  occamy)  DRV=root@73.139.34.205:20008; EXIST="";  NEW="_";   KEEP_SESS=""; KEEP_SRC=""; PAR=5; ROW="Occamy-1.0"; REV_FIXED=c1ce84770260c4137712cf22115574c4d06b993a; HF="Accio-Lab/occamy-1.0@c1ce84770260c4137712cf22115574c4d06b993a" ;;
   *) echo "no config for reign $REIGN"; exit 2 ;;
 esac
 # positional overrides: env_boxes.sh <reign> [EXIST] [NEW]  (e.g. `14 b _` = box A died, keep B, rent a new A)
@@ -42,6 +50,7 @@ STOCK_WAIT_S="${STOCK_WAIT_S:-21600}"   # keep polling Lium for stock this long 
 U=${DRV%%@*}; HP=${DRV#*@}; H=${HP%%:*}; P=${HP##*:}
 sshd() { ssh -n -o ConnectTimeout=20 -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p "$P" "$U@$H" "$@" 2>/dev/null | grep -v setlocale; }
 
+if [ -n "${REV_FIXED:-}" ]; then rev="$REV_FIXED"; else
 rev=$(python3 - "$REIGN" <<'PY'
 import json, sys
 s = json.load(open("/home/const/subnet120/affine/state/state.json"))["king"]
@@ -49,7 +58,9 @@ r = sys.argv[1]
 print(s["revision"] if str(s["reign_number"]) == r else next(p["revision"] for p in s["previous"] if str(p["reign_number"]) == r))
 PY
 )
-d12=${rev:0:12}
+fi
+[ ${#rev} -ge 40 ] || { say "could not resolve the model revision for $REIGN (got '$rev'); abort"; exit 2; }
+d12=${rev:0:12}; ROW="${ROW:-King $REIGN}"
 say "reign $REIGN = $d12; driver host $H; existing drivers [$EXIST]; new boxes [$NEW]"
 
 # ---- 1. rent the new boxes in parallel (weights pull + vLLM ≈ 15–25 min each)
@@ -58,7 +69,7 @@ rent_one() {  # suffix -> writes state/logs/env_boxes_<reign>_<suffix>.pod with 
   local suf="$1" pod="" plan t0=$(date +%s)
   while :; do
     for plan in $PLANS; do
-      pod=$($PY kingpod.py rent --plan "$plan" --digest "$rev" --expected-hours 36 2>>"$LOG" | tail -1)
+      pod=$($PY kingpod.py rent --plan "$plan" --digest "$rev" ${HF:+--hf "$HF"} --expected-hours 36 2>>"$LOG" | tail -1)
       [ -n "$pod" ] && [[ "$pod" == bench-king-* ]] && break; pod=""
     done
     [ -n "$pod" ] && break
@@ -92,14 +103,15 @@ DRIVERS="$EXIST$NEW_OK"
 [ -z "$(echo $NEW)" ] || [ -n "$(echo $NEW_OK)" ] || { say "no new box arrived; leaving the live drivers untouched (re-run to try again)"; exit 4; }
 
 # ---- 2. the row's remaining sources from the board (n < 24), most-behind first
-GAPS=$(python3 - "$REIGN" "$KEEP_SRC" <<'PY'
+GAPS=$(python3 - "$ROW" "$KEEP_SRC" <<'PY'
 import json, sys, urllib.request
 mx = json.load(urllib.request.urlopen("http://127.0.0.1:8790/api/matrix.json", timeout=60))
 cols = [c.get("key") if isinstance(c, dict) else c for c in mx["columns"]]
-envs = [c[4:] for c in cols if c.startswith("env:") and c not in ("env:affine_wiki", "env:affine_tau2", "env:affine_gdpval")]
+envs = [c[4:] for c in cols if c.startswith("env:") and c not in ("env:affine_wiki", "env:affine_tau2", "env:affine_gdpval", "env:affine_tau2_gen")]   # abstain columns admitted 2026-09-24 09:43 (datagen deploy 06:41); tau2_gen: driver env fails 2026-09-24 ("no tau2-gen task matched"), datagen worker asked
 keep = {s for s in sys.argv[2].split(",") if s}
-row = next(r for r in mx["rows"] if r.get("label") == f"King {sys.argv[1]}")
-cells = row.get("cells") or {}
+row = next((r for r in mx["rows"] if r.get("label") == (sys.argv[1] if not sys.argv[1].isdigit() else f"King {sys.argv[1]}")), None)
+# a reference row that has no card yet is not on the board: every env is a gap
+cells = (row.get("cells") or {}) if row else {}
 gaps = sorted(((cells.get("env:" + e) or {}).get("n") or 0, e) for e in envs if ((cells.get("env:" + e) or {}).get("n") or 0) < 24 and e not in keep)
 print(" ".join(e for _, e in gaps))
 PY

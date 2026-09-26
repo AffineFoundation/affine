@@ -43,6 +43,7 @@ from affine import dialects
 from affine.corpus.materialize import materialize_turn
 from affine.corpus.trace import (TURN_CAP_STOP, real_errors,
                                  trace_conversations, trace_error_type)
+from affine.corpus.upstream import prefix_has_upstream_fetch
 from datagen.slicer import MAX_PREFIX_CHARS, slice_messages
 
 VIEW_SPEC = "duel_turns@v4"
@@ -186,6 +187,7 @@ def build_view_record(envelope: dict, *, baker=None,
                       convs: list[list[dict]] | None = None,
                       leak_exempt: frozenset[int] | set[int] = frozenset(),
                       text_replies: frozenset[int] | set[int] = frozenset(),
+                      waived_replies: frozenset[int] | set[int] = frozenset(),
                       ) -> dict | None:
     """View record for one envelope, or None when nothing is scorable
     (errored rollout, no reply passes the slicer). Raises ToolParityError /
@@ -227,6 +229,7 @@ def build_view_record(envelope: dict, *, baker=None,
         recs = slice_messages(conv, turn=(i, len(convs)),
                               text_final=(i == final_idx or i in text_replies),
                               leak_check=i not in leak_exempt,
+                              reference_waived=i in waived_replies,
                               **common)
         if not recs:
             continue
@@ -339,6 +342,8 @@ def view_turns(record: dict) -> list[dict]:
 def validate_turns(records: list[dict], *, panel: PanelKeys | None = None,
                    allowed_kinds: tuple[str, ...] | list[str] | None = None,
                    leak_check: bool = True,
+                   mandate_exempt: bool = False,
+                   reference_waived: bool = False,
                    ) -> tuple[list[dict], dict[str, int]]:
     """The fold's per-turn admission contract (was ops/datagen_refresh.py's
     prefilter + rollouts validate_records). Returns (kept, drop counts).
@@ -347,7 +352,16 @@ def validate_turns(records: list[dict], *, panel: PanelKeys | None = None,
     dialect outside it is refused; None admits every REGISTERED dialect
     (staging semantics: a not-yet-admitted dialect builds its backlog).
     `leak_check=False` waives `reference_leaked_into_prefix` only (the
-    fold's `king_loop_onset` turns); every other rule still applies."""
+    fold's `king_loop_onset` turns); every other rule still applies.
+    `upstream_fetch` still applies in that case: a prefix that already
+    holds a GitHub patch or an upstream clone is not a fair reference.
+    `mandate_exempt` (2026-09-25, bench_* records stamped `task.mandate_ok`
+    by the ingest): the dialect's contract is stated in the first USER turn
+    (the benchsuite prompt has no system message), so the first-system-
+    message marker check is skipped; the exactly-one-action rule still
+    applies. `reference_waived`: the stored reply is a reasoning-only
+    failure recorded for its prefix (slicer `reference_waived`); the action
+    and leak checks are skipped -- the duel never scores that reply."""
     panel_ids, panel_repos, panel_bare = panel or (set(), set(), set())
     kinds = tuple(allowed_kinds) if allowed_kinds is not None \
         else tuple(dialects.DIALECTS)
@@ -389,13 +403,20 @@ def validate_turns(records: list[dict], *, panel: PanelKeys | None = None,
         if sum(len(m["content"]) for m in prefix) > MAX_PREFIX_CHARS:
             drop("prefix_too_long")
             continue
-        reason, action = dialects.reference_check(
-            prefix, rec.get("reference_turn") or "", kind)
-        if reason:
-            drop(reason)
-            continue
-        if leak_check and reference_leaks(prefix, action):
+        if reference_waived:
+            action = ""
+        else:
+            reason, action = dialects.reference_check(
+                prefix, rec.get("reference_turn") or "", kind,
+                mandate_exempt=mandate_exempt)
+            if reason:
+                drop(reason)
+                continue
+        if leak_check and action and reference_leaks(prefix, action):
             drop("reference_leaked_into_prefix")
+            continue
+        if prefix_has_upstream_fetch(prefix):
+            drop("upstream_fetch")
             continue
         seen.add(turn_id)
         kept.append(rec)
