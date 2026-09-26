@@ -19,6 +19,26 @@ span the template produced, so a template revision cannot silently
 diverge from what the corpus stores — the parity check would fail loudly
 instead.
 
+Two template families are known (`TemplateStyle`, detected from a bare
+render, never from the repo name):
+
+* **qwen** (`Qwen/Qwen3.8-27B`, the genesis family): `<|im_start|>{role}\\n
+  …<|im_end|>` blocks; the tools block is spliced into the system block;
+  tool results render as a `user` block, so parity is exact.
+* **glm** (`zai-org/GLM-5.3-Flash`, wvk 25): `<|system|>` / `<|user|>` /
+  `<|assistant|>` markers with no end marker; a `<|system|>Reasoning
+  Effort: …` preamble block of its own; the tools block is its OWN
+  `<|system|>` block placed before the conversation's system message (so a
+  baked GLM conversation carries two system messages); tool calls render
+  as `<tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>`
+  inside the assistant block; tool results render under `<|observation|>`
+  as `<tool_response>…</tool_response>` — a role plain messages cannot
+  reach. Option (a) of the cutover plan (2026-09-26): the baker stores the
+  `<tool_response>` text in a `user` turn and `parity_ok` compares
+  everything except that one role marker (`role_marker_exempt`). Option
+  (b) — a structured `duel_turns@v5` rendered with `tools=` at duel time —
+  is the next swap's backlog.
+
 Requires `transformers` (tokenizer only, no weights): the datagen box runs
 this at slice time; the eval pod never imports it.
 """
@@ -27,6 +47,7 @@ from __future__ import annotations
 
 import json
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 
 from transformers import AutoTokenizer
@@ -35,8 +56,46 @@ CONTRACT_TOML = Path(__file__).resolve().parents[1] / "affine.toml"
 
 IM_START = "<|im_start|>"
 IM_END = "<|im_end|>"
-EMPTY_THINK = "<think>\n\n</think>\n\n"
+EMPTY_THINK = "<think>\n\n</think>\n\n"          # Qwen's empty-reasoning stub (kept for callers)
 _SENTINEL_USER = "\u2063affine-toolbake-user\u2063"
+
+
+@dataclass(frozen=True)
+class TemplateStyle:
+    id: str
+    # role -> the marker that opens that role's block
+    role_markers: dict[str, str]
+    # closes every block (qwen) or None = a block runs to the next role marker (glm)
+    block_end: str | None
+    # what the template inserts for an assistant turn without reasoning
+    empty_think: str
+    # the tools block is its own system block placed before the conversation's system message
+    tools_own_system: bool
+    # native role of tool results; None when the template renders them as `user`
+    tool_result_role: str | None
+
+    def start(self, role: str) -> str:
+        return self.role_markers[role]
+
+
+QWEN_STYLE = TemplateStyle(
+    id="qwen",
+    role_markers={r: f"{IM_START}{r}\n" for r in ("system", "user", "assistant", "tool")},
+    block_end=IM_END,
+    empty_think=EMPTY_THINK,
+    tools_own_system=False,
+    tool_result_role=None,
+)
+GLM_STYLE = TemplateStyle(
+    id="glm",
+    role_markers={"system": "<|system|>", "user": "<|user|>", "assistant": "<|assistant|>",
+                  "observation": "<|observation|>"},
+    block_end=None,
+    empty_think="<think></think>",
+    tools_own_system=True,
+    tool_result_role="observation",
+)
+STYLES = (QWEN_STYLE, GLM_STYLE)
 
 
 def teacher_repo(toml_path: Path | None = None) -> str:
@@ -56,7 +115,7 @@ def openai_tool(tool: dict) -> dict:
 
 def openai_tool_call(call: dict) -> dict:
     """verifiers trace tool_call ({id, name, arguments: json-str}) → OpenAI
-    shape with `arguments` as a dict (Qwen's template iterates the pairs)."""
+    shape with `arguments` as a dict (the templates iterate the pairs)."""
     if "function" in call:
         fn = dict(call["function"])
     else:
@@ -71,23 +130,42 @@ def openai_tool_call(call: dict) -> dict:
     return {"id": call.get("id", ""), "type": "function", "function": fn}
 
 
-def _block(rendered: str, role: str, occurrence: int = 0) -> str:
-    """Body of the `occurrence`-th `<|im_start|>{role}\\n…<|im_end|>` block."""
-    marker = f"{IM_START}{role}\n"
+def detect_style(bare_render: str) -> TemplateStyle:
+    """The template family, from the render of a one-message conversation."""
+    if IM_START in bare_render:
+        return QWEN_STYLE
+    if GLM_STYLE.start("user") in bare_render:
+        return GLM_STYLE
+    raise ValueError("unknown chat template family; toolbake knows qwen (<|im_start|>) "
+                     "and glm (<|user|>) blocks only")
+
+
+def _block(rendered: str, role: str, occurrence: int = 0,
+           style: TemplateStyle = QWEN_STYLE) -> str:
+    """Body of the `occurrence`-th block of `role`."""
+    marker = style.start(role)
     pos = -1
     for _ in range(occurrence + 1):
         pos = rendered.index(marker, pos + 1)
     start = pos + len(marker)
-    return rendered[start:rendered.index(IM_END, start)]
+    if style.block_end is not None:
+        return rendered[start:rendered.index(style.block_end, start)]
+    ends = [rendered.find(m, start) for m in style.role_markers.values()]
+    ends = [e for e in ends if e >= 0]
+    return rendered[start:min(ends)] if ends else rendered[start:]
 
 
 class ToolBaker:
     def __init__(self, tokenizer) -> None:
         self.tok = tokenizer
-        # Whatever the template prepends to every system block on its own
-        # (Qwen3.8: the reasoning-effort preamble). It is already part of
-        # every bash duel prompt, so baked content must not repeat it.
-        self.preamble = self._system_body([{"role": "user", "content": "u"}])
+        bare = self.render([{"role": "user", "content": "u"}])
+        self.style = detect_style(bare)
+        # Whatever the template prepends on its own. Qwen3.8: a reasoning-
+        # effort preamble INSIDE the system block (baked content must not
+        # repeat it). GLM-5.3: a `<|system|>Reasoning Effort: …` block of its
+        # own, before the conversation's system block (never part of baked
+        # content; the conversation's system block is the NEXT one).
+        self.preamble = _block(bare, "system", 0, self.style)
 
     @classmethod
     def from_pretrained(cls, repo: str | None = None, **kw) -> "ToolBaker":
@@ -98,23 +176,48 @@ class ToolBaker:
         return self.tok.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=False, **kw)
 
-    def _system_body(self, messages: list[dict], tools=None) -> str:
-        return _block(self.render(messages, tools), "system")
+    def _body(self, rendered: str, role: str, occurrence: int = 0) -> str:
+        return _block(rendered, role, occurrence, self.style)
 
     # -- the three baked pieces --------------------------------------------------
 
-    def baked_system(self, system_content: str | None, tools: list[dict]) -> str:
-        """System content carrying the rendered tools block. Re-rendering it
-        without `tools=` must reproduce the tools-aware render."""
+    def baked_system_messages(self, system_content: str | None, tools: list[dict]) -> list[dict]:
+        """The system message(s) carrying the rendered tools block, so that
+        re-rendering them without `tools=` reproduces the tools-aware render.
+        qwen: one system message with the tools block spliced in. glm: the
+        tools block as its own system message, followed by the original
+        system message when there is one."""
         msgs = [{"role": "user", "content": "u"}]
         if system_content is not None:
             msgs.insert(0, {"role": "system", "content": system_content})
-        body = self._system_body(msgs, tools)
-        lead = self.preamble + "\n\n"
-        if not body.startswith(lead):
-            raise ValueError("template system block does not start with the "
-                             "bare preamble; baking rule no longer applies")
-        return body[len(lead):]
+        rendered = self.render(msgs, tools)
+        if not self.style.tools_own_system:
+            body = self._body(rendered, "system")
+            lead = self.preamble + "\n\n"
+            if not body.startswith(lead):
+                raise ValueError("template system block does not start with the "
+                                 "bare preamble; baking rule no longer applies")
+            return [{"role": "system", "content": body[len(lead):]}]
+        # glm: block 0 = preamble, block 1 = tools, block 2 = the conversation's system
+        if self._body(rendered, "system", 0) != self.preamble:
+            raise ValueError("template no longer opens with the bare preamble block; "
+                             "baking rule no longer applies")
+        out = [{"role": "system", "content": self._body(rendered, "system", 1)}]
+        if system_content is not None:
+            if self._body(rendered, "system", 2) != system_content:
+                raise ValueError("template altered the conversation's system content; "
+                                 "baking rule no longer applies")
+            out.append({"role": "system", "content": system_content})
+        return out
+
+    def baked_system(self, system_content: str | None, tools: list[dict]) -> str:
+        """Single-string form (qwen callers). glm callers use
+        `baked_system_messages`; here the pieces are joined by the template's
+        own system marker so the string still renders byte-identically."""
+        msgs = self.baked_system_messages(system_content, tools)
+        if len(msgs) == 1:
+            return msgs[0]["content"]
+        return self.style.start("system").join(m["content"] for m in msgs)
 
     def baked_assistant(self, content: str, tool_calls: list[dict]) -> str:
         """Assistant content with its tool calls rendered as the template's
@@ -122,21 +225,26 @@ class ToolBaker:
         msgs = [{"role": "user", "content": "u"},
                 {"role": "assistant", "content": content,
                  "tool_calls": [openai_tool_call(c) for c in tool_calls]}]
-        body = _block(self.render(msgs), "assistant")
-        if body.startswith(EMPTY_THINK):
-            body = body[len(EMPTY_THINK):]
+        body = self._body(self.render(msgs), "assistant")
+        if body.startswith(self.style.empty_think):
+            body = body[len(self.style.empty_think):]
         return body
 
     def baked_tool_results(self, results: list[dict]) -> str:
         """One user turn standing in for a run of consecutive `role=tool`
-        messages (the template merges them into a single user block)."""
+        messages (both templates merge them into a single block: qwen a
+        `user` block, glm an `<|observation|>` block whose body is the
+        `<tool_response>…</tool_response>` text)."""
         msgs = [{"role": "user", "content": _SENTINEL_USER},
                 {"role": "assistant", "content": "a"},
                 *[{"role": "tool", "content": r.get("content") or "",
                    **({"tool_call_id": r["tool_call_id"]} if r.get("tool_call_id") else {}),
                    **({"name": r["name"]} if r.get("name") else {})}
                   for r in results]]
-        return _block(self.render(msgs), "user", occurrence=1)
+        rendered = self.render(msgs)
+        if self.style.tool_result_role:
+            return self._body(rendered, self.style.tool_result_role, 0)
+        return self._body(rendered, "user", occurrence=1)
 
     # -- whole conversation -----------------------------------------------------
 
@@ -155,9 +263,10 @@ class ToolBaker:
             if role == "system":
                 saw_system = True
                 content = m.get("content") or ""
-                out.append({"role": "system",
-                            "content": self.baked_system(content, tools)
-                            if tools else content})
+                if tools:
+                    out.extend(self.baked_system_messages(content, tools))
+                else:
+                    out.append({"role": "system", "content": content})
                 i += 1
                 continue
             if role == "tool":
@@ -180,14 +289,30 @@ class ToolBaker:
                 out.append({"role": "user", "content": m.get("content") or ""})
             i += 1
         if tools and not saw_system:
-            out.insert(0, {"role": "system",
-                           "content": self.baked_system(None, tools)})
+            out[0:0] = self.baked_system_messages(None, tools)
         return out
 
+    def _normalize_role_markers(self, rendered: str) -> str:
+        """Fold the template's native tool-result role marker onto `user`
+        (glm: `<|observation|>` → `<|user|>`). Applied to BOTH sides of the
+        parity comparison, so a literal marker inside content compares
+        unchanged and only the block role is exempt."""
+        role = self.style.tool_result_role
+        if not role:
+            return rendered
+        return rendered.replace(self.style.start(role), self.style.start("user"))
+
     def parity_ok(self, messages: list[dict], tools: list[dict],
-                  baked: list[dict]) -> bool:
+                  baked: list[dict], role_marker_exempt: bool | None = None) -> bool:
         """The admission gate: the baked plain-text conversation renders to
-        exactly the bytes the structured, tools-aware conversation does."""
+        exactly the bytes the structured, tools-aware conversation does.
+
+        `role_marker_exempt` (cutover option (a), 2026-09-26): for a
+        template whose tool results live under a role plain messages cannot
+        express (glm `<|observation|>`), compare with that one role marker
+        folded onto `user` on both sides — everything else stays
+        byte-exact. None = the style's default (True for glm, False for
+        qwen, where plain equality already holds)."""
         structured = []
         for m in messages:
             mm = {"role": m["role"], "content": m.get("content") or ""}
@@ -198,4 +323,32 @@ class ToolBaker:
                     mm[k] = m[k]
             structured.append(mm)
         want = self.render(structured, [openai_tool(t) for t in tools] or None)
-        return self.render(baked) == want
+        got = self.render(baked)
+        if got == want:
+            return True
+        if role_marker_exempt is None:
+            role_marker_exempt = self.style.tool_result_role is not None
+        if not role_marker_exempt:
+            return False
+        return self._normalize_role_markers(got) == self._normalize_role_markers(want)
+
+    def parity_diff(self, messages: list[dict], tools: list[dict],
+                    baked: list[dict]) -> tuple[int, str, str] | None:
+        """First differing offset and the two 80-char windows after the role
+        marker exemption, or None when parity holds (debugging / the
+        parity harness)."""
+        structured = []
+        for m in messages:
+            mm = {"role": m["role"], "content": m.get("content") or ""}
+            if m.get("tool_calls"):
+                mm["tool_calls"] = [openai_tool_call(c) for c in m["tool_calls"]]
+            for k in ("tool_call_id", "name"):
+                if m.get("role") == "tool" and m.get(k):
+                    mm[k] = m[k]
+            structured.append(mm)
+        want = self._normalize_role_markers(self.render(structured, [openai_tool(t) for t in tools] or None))
+        got = self._normalize_role_markers(self.render(baked))
+        if want == got:
+            return None
+        i = next((k for k, (a, b) in enumerate(zip(want, got)) if a != b), min(len(want), len(got)))
+        return i, want[i:i + 80], got[i:i + 80]
