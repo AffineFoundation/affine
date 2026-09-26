@@ -68,6 +68,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
+from transformers import AutoTokenizer
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
@@ -85,7 +86,9 @@ from affine.corpus.publish import CorpusPublisher  # noqa: E402
 from affine.corpus.trace import (  # noqa: E402
     ToolParityError,
     TraceShapeError,
+    has_tool_traffic,
     message_text,
+    sampled_paths,
     trace_conversations,
 )
 from affine.corpus.view import (  # noqa: E402
@@ -1718,12 +1721,60 @@ def soft_lang_fill(records: list[dict], have: dict[str, set[str]], *,
 
 # -- derive ----------------------------------------------------------------------
 # The prefix cap in the unit that binds at duel time: the serving window is
-# max_model_len = 131072 tokens minus 1792 generated. MAX_PREFIX_CHARS (300k,
-# datagen/slicer.py) is the coarse cut; prefixes above TOKEN_GUARD_FROM_CHARS
-# are measured with the teacher tokenizer and dropped past MAX_PREFIX_TOKENS
-# (a 2026-09-10 data event; 300k chars ~ 78k tokens p50 / 90k p10).
+# [miner_serving].max_model_len minus what a duel generates on top of the
+# prefix. MAX_PREFIX_CHARS (datagen/slicer.py) is the coarse cut; prefixes
+# above TOKEN_GUARD_FROM_CHARS are measured and dropped past the cap (a
+# 2026-09-10 data event; 300k chars ~ 78k tokens p50 / 90k p10).
+#
+# Two tokenizers (teacher-swap staging, 2026-09-23, ported from PR #63 for
+# the wvk-25 GLM-5.3-Flash cutover): the miner engines tokenize with the
+# GENESIS family's tokenizer and the teacher swarm with the teacher's.
+# Under Qwen both are one vocabulary and one count serves; with a teacher
+# from another lab the miner-side count can exceed the window while the
+# teacher-side count passes (and vice versa), so the guard measures both
+# and keeps the larger. prefix_token_cap() derives the cap from the toml:
+#   max_model_len − (miner thought cap after the thought_cap_ratio
+#   relaxation) − max_action_tokens − PREFIX_CAP_SLACK
+# = 131072 − 5120 − 768 − 512 = 124,672 at the 131k window (the historical
+# 110,000 constant is kept there so today's fold is bit-identical);
+# 255,744 at 262,144. MAX_PREFIX_TOKENS is that historical floor.
 MAX_PREFIX_TOKENS = 110_000
 TOKEN_GUARD_FROM_CHARS = 120_000
+PREFIX_CAP_SLACK = 512
+
+
+def prefix_token_cap(contract: dict | None = None) -> int:
+    """Largest prefix (in tokens, under either tokenizer) a duel can serve."""
+    raw = contract if contract is not None else tomllib.loads(
+        (REPO / "affine" / "affine.toml").read_text())
+    duel = raw["duel"]
+    window = int(raw["miner_serving"]["max_model_len"])
+    thought = int(duel["max_thought_tokens"])
+    action = int(duel["max_action_tokens"])
+    ref_total = int(duel.get("ref_max_tokens") or (thought + action))
+    ratio = float(duel.get("thought_cap_ratio") or 0.0)
+    # wvk 20: cap_T = max(thought, ratio × longest reference thought); the
+    # longest reference thought is bounded by the teacher's own budget.
+    miner_thought = max(thought, int(ratio * max(ref_total - action, thought)))
+    if window <= 131072:
+        return MAX_PREFIX_TOKENS
+    return window - miner_thought - action - PREFIX_CAP_SLACK
+
+
+def guard_tokenizers(baker: ToolBaker, contract: dict | None = None) -> list:
+    """Tokenizers whose token count must fit the window: the teacher's (the
+    baker's) and the genesis family's (the miner engines'), deduplicated by
+    vocabulary so a same-family teacher costs one count as before."""
+    raw = contract if contract is not None else tomllib.loads(
+        (REPO / "affine" / "affine.toml").read_text())
+    seed = raw.get("seed_king") or {}
+    toks = [baker.tok]
+    repo, rev = seed.get("repo"), seed.get("revision")
+    if repo:
+        genesis = AutoTokenizer.from_pretrained(str(repo), revision=(str(rev) if rev else None))
+        if genesis.get_vocab() != baker.tok.get_vocab():
+            toks.append(genesis)
+    return toks
 
 
 class PrefixTokenCache:
@@ -1743,13 +1794,18 @@ class PrefixTokenCache:
         self.conn.commit()
         self.hits = self.misses = 0
 
-    def count(self, text: str, baker: ToolBaker) -> int:
-        k = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    def count(self, text: str, baker: ToolBaker, tokenizer=None) -> int:
+        """Token count of `text` under `tokenizer` (default: the baker's).
+        The cache key carries the vocabulary size of any other tokenizer so
+        counts from two tokenizers never collide."""
+        tok = tokenizer if tokenizer is not None else baker.tok
+        salt = "" if tok is baker.tok else f"|{len(tok)}"
+        k = hashlib.sha256((text + salt).encode("utf-8")).hexdigest()
         row = self.conn.execute("SELECT n FROM tok WHERE k = ?", (k,)).fetchone()
         if row is not None:
             self.hits += 1
             return int(row[0])
-        n = len(baker.tok(text, add_special_tokens=False)["input_ids"])
+        n = len(tok(text, add_special_tokens=False)["input_ids"])
         self.conn.execute("INSERT OR IGNORE INTO tok (k, n) VALUES (?, ?)", (k, n))
         self.conn.commit()
         self.misses += 1
@@ -1766,12 +1822,59 @@ def token_cache() -> PrefixTokenCache:
     return _TOKEN_CACHE
 
 
+# -- re-bake (teacher swap, wvk 25) ---------------------------------------------
+# `--rebake-tools`: every tool-using rollout is re-derived with the CURRENT
+# teacher's baker and its published rows are replaced -- same turn ids, same
+# strata (the stratum is a function of the task / route, not of the bytes),
+# so the slice shares do not move; the old rows retire in the same revision.
+# Rollouts without tool traffic (mini-swe bash, boxed, terminus JSON) bake
+# identically under any template and keep their rows. The band filter,
+# gates and probes are untouched (they key on turn ids / tasks).
+REBAKE: dict = {"on": False, "ids": set(), "rollouts": 0}
+
+
+def baker_style_hint() -> str:
+    try:
+        return f"{ToolBaker.from_pretrained().style.id} ({teacher_repo_name()})"
+    except Exception:  # noqa: BLE001
+        return "teacher"
+
+
+def teacher_repo_name() -> str:
+    try:
+        return str(tomllib.loads((REPO / "affine" / "affine.toml").read_text())["teacher"]["repo"])
+    except Exception:  # noqa: BLE001
+        return "?"
+
+
+def rollout_has_tool_traffic(trace: dict) -> bool:
+    if trace.get("tools"):
+        return True
+    try:
+        return any(has_tool_traffic(trace, msgs) for msgs in sampled_paths(trace))
+    except Exception:  # noqa: BLE001 -- unwalkable graph: derive_chunk reports it
+        return False
+
+
+_GUARD: dict = {}
+
+
+def _guard_state(baker: ToolBaker) -> tuple[list, int]:
+    if _GUARD.get("baker") is not baker:
+        _GUARD.update({"baker": baker, "toks": guard_tokenizers(baker), "cap": prefix_token_cap()})
+        log(f"prefix guard: cap {_GUARD['cap']} tokens, {len(_GUARD['toks'])} tokenizer(s) "
+            f"(teacher {baker.style.id}{' + genesis' if len(_GUARD['toks']) > 1 else ''})")
+    return _GUARD["toks"], _GUARD["cap"]
+
+
 def prefix_over_token_cap(turn: dict, baker: ToolBaker) -> bool:
     if int(turn.get("n_prefix_chars") or 0) <= TOKEN_GUARD_FROM_CHARS:
         return False
     text = "\n".join(m.get("content", "") for m in turn.get("prefix") or [])
-    n = token_cache().count(text, baker)
-    return n + 8 * len(turn.get("prefix") or []) > MAX_PREFIX_TOKENS
+    toks, cap = _guard_state(baker)
+    cache = token_cache()
+    n = max(cache.count(text, baker, tok) for tok in toks)
+    return n + 8 * len(turn.get("prefix") or []) > cap
 
 
 def _count(counter: dict[str, int], key: str, n: int = 1) -> None:
@@ -2218,10 +2321,18 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                 _count(drops, k, v)
         keep_idx: set[int] = set()
         keep_routed: dict[str, set[int]] = {}
+        rebake_env = bool(REBAKE["on"]) and rollout_has_tool_traffic(env["trace"])
+        if rebake_env:
+            REBAKE["rollouts"] += 1
         for t in [*kept, *kept_routed]:
             tid = f"{t['traj_id']}:{t['turn_idx']}"
             g = route.get(t["turn_idx"])
-            if tid in published:
+            if rebake_env and tid in published:
+                # re-baked under the new teacher template: the old row retires,
+                # this record replaces it (same turn id, same stratum)
+                REBAKE["ids"].add(tid)
+                _count(notes, "rebaked_turns")
+            elif tid in published:
                 old_ns = (published_king_ns or {}).get(tid)
                 rank = {grp: i for i, grp in enumerate(ROUTED_GROUPS)}
                 if (g in KING_GROUPS and old_ns in KING_GROUPS and old_ns != g
@@ -3145,15 +3256,31 @@ def band_coverage(stats: dict[str, list[int]], bands: dict[str, dict]) -> dict[s
     return out
 
 
-def _band_scan_chunk(path: Path) -> dict[str, list[int]]:
-    """{source\\tsid: [t_n, t_s, k_n, k_s]} for one trace chunk."""
+def band_teacher_models() -> tuple[str, ...]:
+    """`[band_filter.defaults].teacher_models`: endpoint model ids whose
+    `teacher_*` rollouts count as THE teacher's attempts. Empty = every
+    teacher_* / glm_* policy, whatever model served it. Set during a
+    teacher swap so the "teacher solved it" signal tracks the contract
+    teacher: both ids while the new teacher's pre-pass covers the pools
+    ("both counted"), then the new id alone (wvk 25, 2026-09-26)."""
+    raw = (tomllib.loads(SOURCES_TOML.read_text()).get("band_filter") or {}).get("defaults") or {}
+    return tuple(str(x) for x in (raw.get("teacher_models") or []))
+
+
+def _band_scan_chunk(path: Path, teacher_models: tuple[str, ...] = ()) -> dict[str, list[int]]:
+    """{source\\tsid: [t_n, t_s, k_n, k_s]} for one trace chunk. Teacher-side
+    rollouts count only when `policy.model` is in `teacher_models` (empty =
+    all)."""
     stats: dict[str, list[int]] = {}
     for env in iter_jsonl_gz(path):
         if is_backfill(env):
             continue
-        pid = str((env.get("policy") or {}).get("id") or "")
+        pol = env.get("policy") or {}
+        pid = str(pol.get("id") or "")
         side = 0 if pid.startswith(("teacher_", "glm_")) else (2 if pid.startswith("king_") else None)
         if side is None:
+            continue
+        if side == 0 and teacher_models and str(pol.get("model") or "") not in teacher_models:
             continue
         outcome = rollout_outcome(env["trace"])
         if outcome not in ("solved", "failed"):
@@ -3169,12 +3296,20 @@ def task_attempts(pub: PublicCorpus, traces_manifest: dict, sources: frozenset[s
     """{source\\tsid: [t_n, t_s, k_n, k_s]} over every graded teacher_* /
     king_* rollout in the traces. Per-chunk cache; only unseen chunks are
     scanned (a process pool: the work is gzip + json)."""
+    models = band_teacher_models()
+    # The per-chunk cache is only valid for the attribution rule it was
+    # scanned under; a changed teacher_models list re-scans (rows tagged
+    # with another rule, or untagged rows once a rule is set, are ignored
+    # and rewritten).
+    rule = ",".join(models)
     cached: dict[str, dict[str, list[int]]] = {}
     if BAND_CACHE.exists():
         with BAND_CACHE.open() as fh:
             for line in fh:
                 try:
                     row = json.loads(line)
+                    if str(row.get("rule") or "") != rule:
+                        continue
                     cached[row["key"]] = row["stats"]
                 except (ValueError, KeyError):
                     continue
@@ -3183,10 +3318,11 @@ def task_attempts(pub: PublicCorpus, traces_manifest: dict, sources: frozenset[s
         paths = {c["key"]: pub.cached(c["key"], c["sha256"], gz_sha=True) for c in want}
         BAND_CACHE.parent.mkdir(parents=True, exist_ok=True)
         with ProcessPoolExecutor(max_workers=8) as ex, BAND_CACHE.open("a") as fh:
-            for key, st in zip(paths, ex.map(_band_scan_chunk, paths.values())):
+            for key, st in zip(paths, ex.map(_band_scan_chunk, paths.values(), [models] * len(paths))):
                 cached[key] = st
-                fh.write(json.dumps({"key": key, "stats": st}) + "\n")
-        log(f"band filter: scanned {len(want)} new trace chunk(s) ({len(cached)} cached)")
+                fh.write(json.dumps({"key": key, "rule": rule, "stats": st}) + "\n")
+        log(f"band filter: scanned {len(want)} new trace chunk(s) ({len(cached)} cached; teacher attribution "
+            f"{'all teacher_* policies' if not models else 'models ' + rule})")
     live_keys = {c["key"] for c in traces_manifest["chunks"]}
     stats: dict[str, list[int]] = {}
     for key, st in cached.items():
@@ -3825,6 +3961,13 @@ def main() -> None:
                          "admit enter. Used once at the wvk 13 flip (2026-09-09) "
                          "to back-fill the `text` turns of trajectories folded "
                          "under wvk 11/12.")
+    ap.add_argument("--rebake-tools", action="store_true",
+                    help="teacher swap: re-derives every chunk that carries tool traffic (like "
+                         "--rederive-chunks on that list) and REPLACES the published rows of "
+                         "every tool-using rollout with records baked under the current "
+                         "teacher's chat template (same turn ids and strata; the old rows "
+                         "retire in the same revision, shares do not move). Rollouts "
+                         "without tool traffic keep their rows. wvk 25, 2026-09-30.")
     ap.add_argument("--rederive-since", default=None, metavar="ISO8601",
                     help="like --rederive, but only for published chunks "
                          "created at or after this time (plus the unfolded "
@@ -3927,6 +4070,10 @@ def main() -> None:
                if args.allowed_kinds else tuple(cfg.dataset.allowed_action_kinds))
     log(f"allowed action kinds: {list(allowed)}")
 
+    if args.rebake_tools:
+        REBAKE.update({"on": True, "ids": set(), "rollouts": 0})
+        log(f"--rebake-tools: tool-using rollouts re-baked under the {baker_style_hint()} template; "
+            "their published rows are replaced in this revision")
     if sum(bool(x) for x in (args.rederive, args.rederive_since, args.rederive_chunks)) > 1:
         fatal("--rederive, --rederive-since and --rederive-chunks are exclusive")
     since = (datetime.fromisoformat(args.rederive_since)
@@ -3940,6 +4087,25 @@ def main() -> None:
         known = {c["key"] for c in traces_manifest["chunks"]}
         if listed - known:
             fatal(f"--rederive-chunks: {len(listed - known)} key(s) not in the traces manifest")
+    if args.rebake_tools:
+        # Only the chunks that hold tool traffic need re-baking: a chunk is one
+        # datagen batch of one policy, so its first envelope tells (tools
+        # schemas present, or a tool_call action_kind). The others keep their
+        # rows and their deferred copies, like --rederive-chunks.
+        tool_chunks: set[str] = set()
+        for c in traces_manifest["chunks"]:
+            path = pub.cached(c["key"], c["sha256"], gz_sha=True)
+            try:
+                first = next(iter_jsonl_gz(path))
+            except StopIteration:
+                continue
+            pol = first.get("policy") or {}
+            if (first.get("trace") or {}).get("tools") or str(pol.get("action_kind") or "") == "tool_call" \
+                    or rollout_has_tool_traffic(first.get("trace") or {}):
+                tool_chunks.add(c["key"])
+        listed |= tool_chunks
+        log(f"--rebake-tools: {len(tool_chunks)} of {len(traces_manifest['chunks'])} chunks carry tool traffic "
+            f"and are re-derived; the rest keep their rows")
     unfolded = [c for c in traces_manifest["chunks"]
                 if args.rederive or c["key"] not in state["folded_chunks"]
                 or c["key"] in listed
@@ -4643,6 +4809,15 @@ def main() -> None:
         have_groups[src2grp.get(math_cfg["source"], DEFAULT_GROUP)] = set(math_surviving)
     for src_g, surv in retire_surviving.items():
         have_groups[src_g] = set(surv)
+    if REBAKE["on"] and REBAKE["ids"]:
+        # The re-baked rows leave the index in this revision and their
+        # replacements enter with the same turn ids and strata: the retire
+        # is index-only (not a share move), so `have_groups` keeps the live
+        # strata (the replacements are not "new strata" for the catch-up
+        # budget) and the guard sees no shift.
+        pivot_retire = sorted(set(pivot_retire) | set(REBAKE["ids"]))
+        log(f"--rebake-tools: {REBAKE['rollouts']} tool-using rollouts re-baked, "
+            f"{len(REBAKE['ids'])} published rows replaced (retired + re-admitted with the same turn ids)")
     budgets = {g: catchup_budget(state.get("group_strata") or {}, g)
                for g, v in mix.items() if v > 0}
     selected, deferred, group_added = cap_fill(
