@@ -37,14 +37,17 @@
 # manager's targets go to 0 and its boxes are released once the last Qwen
 # duel is decided.
 #
-# Run: DIRECTIVE_DATE=2026-09-XX WVK_TO=24 bash ops/v19/deploy_teacher_swap.sh
+# Directive: Jacob Steeves 2026-09-26 09:09 UTC ("lets do this switch"); T0 2026-09-30 14:00 UTC; wvk 24 -> 25.
+# Scoring bundle knobs (fork worker, ops/v20/wvk25_toml_edits.py) are applied right after the
+# teacher/window edits below; the wvk integer is bumped ONCE, here.
+# Run: DIRECTIVE_DATE=2026-09-26 WVK_TO=25 bash ops/v19/deploy_teacher_swap.sh
 set -euo pipefail
 HERE=/home/const/subnet120/ops/v19
 REPO=/home/const/subnet120
 LOG=$HERE/deploy_teacher_swap.log
 PAUSE=/home/const/.affine/deadman.pause
 : "${DIRECTIVE_DATE:?set DIRECTIVE_DATE=YYYY-MM-DD (the dated operator directive)}"
-: "${WVK_TO:?set WVK_TO=<N+1>}"
+: "${WVK_TO:=25}"
 exec > >(tee -a "$LOG") 2>&1
 cd "$REPO"
 source .venv/bin/activate
@@ -144,9 +147,14 @@ if [[ -n "$cid" ]] && has_verdict "$cid"; then
   echo "$(ts) cleared stale in_flight $cid (verdict in history)"
 fi
 
-# --- 5. contract flip
+# --- 5. contract flip: teacher / window / swarm / slicer / policies / band, then the wvk-25 scoring knobs
 python ops/v19/teacher_swap_toml_edits.py --apply "$DIRECTIVE_DATE" --wvk-to "$WVK_TO"
-grep -E '^(weight_version_key|repo|max_model_len|score_mode|max_thought_tokens|ref_max_tokens) ' affine/affine.toml
+if [[ -f ops/v20/wvk25_toml_edits.py ]]; then
+  python ops/v20/wvk25_toml_edits.py --apply "$DIRECTIVE_DATE" --knobs-only && echo "$(ts) wvk-25 scoring knobs applied"
+else
+  echo "$(ts) WARNING: ops/v20/wvk25_toml_edits.py missing — scoring bundle NOT applied; abort unless Jacob waived it"; exit 1
+fi
+grep -E '^(weight_version_key|repo|max_model_len|score_mode|max_thought_tokens|ref_max_tokens|miner_min_content_rule|empty_share_gate|r_cap|enabled|look_every|k_look|consecutive_looks) ' affine/affine.toml
 
 # --- 6. teacher swarm: the Qwen manager's targets -> 0 (its boxes drain), router must be GLM-only
 pm2 restart affine-swarm-manager >/dev/null 2>&1 || true
@@ -175,4 +183,7 @@ echo "$(ts) validator started"
 # --- 10. corpus re-derive (tool turns re-baked under the GLM template) + datagen pods
 python ops/corpus_build.py --rederive && echo "$(ts) fold --rederive done"
 bash ops/king-datagen/deploy_pods.sh --restart --all && echo "$(ts) datagen pods restarted with the GLM teacher seat"
-echo "$(ts) === done. Post the notice (ops/v19/discord_teacher_swap_post.md) after the first wvk-$WVK_TO verdict."
+# --- 11. green watch: 6-hourly + the fork worker posts the live line after the first wvk-25 verdict
+pm2 delete affine-green-watch >/dev/null 2>&1 || true
+pm2 start --name affine-green-watch --cron-restart "0 */6 * * *" --no-autorestart -- .venv/bin/python ops/v19/green_watch.py --box >/dev/null && echo "$(ts) green watch scheduled (6-hourly); first read after the first wvk-$WVK_TO verdict: .venv/bin/python ops/v19/green_watch.py --box"
+echo "$(ts) === done. Live line after the first wvk-$WVK_TO verdict; remove the #fork-notice banner and move llms.txt 'Upcoming fork' -> 'Fork history'."
