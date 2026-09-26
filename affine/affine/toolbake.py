@@ -28,8 +28,10 @@ render, never from the repo name):
 * **glm** (`zai-org/GLM-5.3-Flash`, wvk 25): `<|system|>` / `<|user|>` /
   `<|assistant|>` markers with no end marker; a `<|system|>Reasoning
   Effort: …` preamble block of its own; the tools block is its OWN
-  `<|system|>` block placed before the conversation's system message (so a
-  baked GLM conversation carries two system messages); tool calls render
+  `<|system|>` block placed before the conversation's system message (the
+  baker joins the two into ONE system message with the template's own
+  marker between them -- the miner engines' genesis template refuses a
+  second system message); tool calls render
   as `<tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>`
   inside the assistant block; tool results render under `<|observation|>`
   as `<tool_response>…</tool_response>` — a role plain messages cannot
@@ -211,9 +213,15 @@ class ToolBaker:
         return out
 
     def baked_system(self, system_content: str | None, tools: list[dict]) -> str:
-        """Single-string form (qwen callers). glm callers use
-        `baked_system_messages`; here the pieces are joined by the template's
-        own system marker so the string still renders byte-identically."""
+        """ONE system message carrying the tools block. qwen: the spliced
+        block. glm: the tools body and the original system content joined by
+        the template's own `<|system|>` marker (cut from the render, not
+        hand-written), so the single message renders byte-identically to
+        the two blocks the template emits. One message, not two, because
+        the same prefix is rendered by the MINER engines under the genesis
+        template, which refuses a second system message ("System message
+        must be at the beginning" -- the Codex CLI finding of 2026-09-07).
+        Under the genesis template the embedded marker is plain text."""
         msgs = self.baked_system_messages(system_content, tools)
         if len(msgs) == 1:
             return msgs[0]["content"]
@@ -271,10 +279,8 @@ class ToolBaker:
             if role == "system":
                 saw_system = True
                 content = m.get("content") or ""
-                if tools:
-                    out.extend(self.baked_system_messages(content, tools))
-                else:
-                    out.append({"role": "system", "content": content})
+                out.append({"role": "system",
+                            "content": self.baked_system(content, tools) if tools else content})
                 i += 1
                 continue
             if role == "tool":
@@ -298,7 +304,7 @@ class ToolBaker:
                 out.append({"role": "user", "content": m.get("content") or ""})
             i += 1
         if tools and not saw_system:
-            out[0:0] = self.baked_system_messages(None, tools)
+            out.insert(0, {"role": "system", "content": self.baked_system(None, tools)})
         return out
 
     def _normalize_role_markers(self, rendered: str) -> str:
