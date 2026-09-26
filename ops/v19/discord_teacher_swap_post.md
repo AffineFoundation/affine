@@ -12,12 +12,14 @@ What changes
   2. *Sequential stopping.* The paired margin is checked every 100 scored turns; a duel stops with a crown when `margin − 2.6·SE > δ` on two consecutive checks, stops for futility when even a 2.6·SE upward move cannot reach δ, and otherwise runs to 1,000 turns. Offline: 29/30 verdicts agree with the full slice, ~2× verdicts per day. The first five wvk-25 duels also score the full slice in shadow and publish both decisions.
   3. *R cap.* `z_R := min(z_R, 0)` — a thought earns no credit for predicting the teacher's action better than the teacher's own alternative thoughts do. (Ships unless the pre-flip probe on the final code shows a problem.)
   4. *Control.* The fully matched teacher-vs-king control (king scored on the same k−1 references as the held-out reference) is published on every verdict and is the rollback signal.
+- **Admission rule (like the architecture pin, same fork): 256k context required.** A submission's `config.json` must declare an effective context window of at least 262,144 tokens — `max_position_embeddings` (or the equivalent key), times the rope-scaling factor for `linear` / `dynamic` / `yarn` scaling, as vLLM derives `max_model_len`. Checked before download at dispatch and prefetch and at R2 intake; rejection reason `rejected_context_too_short`; `submit.py check` reports it before you upload. The genesis family is native 262,144 and passes unchanged; a config that shortens the window is rejected. Challengers are served and probed at `max_model_len 262144` from T0.
 
 What does NOT change
 - δ = 0.2 sd, k_sigma = 2, forfeit floor −6, miner caps (thought 4,096 with the 1.25× teacher-relative rule, action 768), ref cap 4,864, the architecture pin, the B licence, the thought-length floor.
 - **Reign 21 stands.** Forward-only; no re-verdicts; `min_submission_block` unchanged.
 
 Pre-flight for miners
+- Your `config.json` must declare ≥ 262,144 tokens of context (see the admission rule above); `python affine/scripts/submit.py check <repo>` shows the derived window.
 - `vllm serve <your checkpoint> --max-model-len 262144 --tensor-parallel-size 2` must load and answer `/v1/completions` with finite logprobs on an echo request. The genesis family is native 262k; do not shorten rope in your config.
 - Nothing else changes in what you submit.
 
@@ -30,8 +32,8 @@ Timeline
 
 ## llms.txt — "Upcoming fork: wvk 25" (until T0), then "Fork history: wvk 25"
 
-wvk 25 (effective 2026-09-30 14:00 UTC): teacher `Qwen/Qwen3.8-27B` → `zai-org/GLM-5.3-Flash`; serving window 131,072 → 262,144 tokens (prefix cap 255,744, both tokenizers); miner empty-thought rule (< 10 content tokens → `min(z_R, z_A)`, admission gate 2× the teacher's share); sequential stopping (looks every 100 turns, `margin − 2.6·SE > δ` on two consecutive looks, futility stop, else 1,000); `z_R` capped at 0; fully matched control published. Tool-call turns of D re-derived under the new teacher's chat template; bash / text turns byte-identical. Forward-only; reign 21 stands; `min_submission_block` unchanged.
+wvk 25 (effective 2026-09-30 14:00 UTC): teacher `Qwen/Qwen3.8-27B` → `zai-org/GLM-5.3-Flash`; serving window 131,072 → 262,144 tokens (prefix cap 255,744, both tokenizers); miner empty-thought rule (< 10 content tokens → `min(z_R, z_A)`, admission gate 2× the teacher's share); sequential stopping (looks every 100 turns, `margin − 2.6·SE > δ` on two consecutive looks, futility stop, else 1,000); `z_R` capped at 0; fully matched control published; admission rule `[submission].min_context_tokens = 262144` (effective context window from `config.json`, rope scaling applied as vLLM derives `max_model_len`; genesis passes; `rejected_context_too_short`). Tool-call turns of D re-derived under the new teacher's chat template; bash / text turns byte-identical. Forward-only; reign 21 stands; `min_submission_block` unchanged.
 
 ## Dashboard banner (`#fork-notice`, remove at T0)
 
-Upcoming fork wvk 25 — Wed 2026-09-30 14:00 UTC: teacher → GLM-5.3-Flash, 262k context, miner empty-thought rule, sequential stopping, R cap. Reign 21 stands. Miners: serve 262,144 tokens.
+Upcoming fork wvk 25 — Wed 2026-09-30 14:00 UTC: teacher → GLM-5.3-Flash, 262k context, miner empty-thought rule, sequential stopping, R cap. Reign 21 stands. Miners: your config must declare ≥ 262,144 tokens of context and serve at that window.
