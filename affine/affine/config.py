@@ -237,6 +237,8 @@ class DuelCfg:
     seq_look_every: int = 100
     seq_k: float = 2.6
     seq_consecutive: int = 2
+    # first N sequential duels also score the full slice in shadow (stamped).
+    seq_shadow_full_first_n: int = 0
     # Staged 2026-09-10 (inert unless score_mode="min_rga"): the A leg's
     # summed action lift is divided by this many bytes instead of the
     # action's own length. None = per-byte (the length-biased 09-04 probe).
@@ -623,6 +625,7 @@ def _duel(raw: dict) -> DuelCfg:
         thought_rendering=thought_rendering,
         seq_enabled=bool(d.get("seq_enabled", False)),
         seq_look_every=seq_look_every, seq_k=seq_k, seq_consecutive=seq_consecutive,
+        seq_shadow_full_first_n=int(d.get("seq_shadow_full_first_n", 0)),
         action_norm_bytes=(float(d["action_norm_bytes"])
                            if d.get("action_norm_bytes") is not None else None),
         require_think_close=bool(d.get("require_think_close", False)),

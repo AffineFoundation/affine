@@ -1008,6 +1008,11 @@ seq_enabled = false
 seq_look_every = 100
 seq_k = 2.6
 seq_consecutive = 2
+# The first N sequential duels this pod runs also score the rest of the slice
+# after an early stop and stamp the full-slice decision next to the sequential
+# one (verdict.sequential.shadow_full; green-watch criterion: agreement ≥ 9/10).
+# 0 = off.
+seq_shadow_full_first_n = 5
 
 # sd-meter — min(z_R, typ_c, z_A) in teacher-sd units (docs: god-equation
 # finalist; staged as a SHADOW 2026-09-18 on Jacob's directive "I like it
