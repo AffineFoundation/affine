@@ -81,6 +81,9 @@ WVK22_NOTICE = "2026-09-18"
 WVK22_EFFECTIVE = "2026-09-18"
 WVK25_NOTICE = "2026-09-26"
 WVK25_T0 = "2026-09-30 14:00 UTC"
+# Operator crown of chal-00687 as reign 22 (Jacob Steeves, 2026-09-26 18:51 UTC).
+OPCROWN_DATE = "2026-09-26"
+OPCROWN_NOTE = "operator crown 2026-09-26; did not clear δ under wvk 24"
 WVK24_EFFECTIVE = "2026-09-23"
 WVK23_EFFECTIVE = "2026-09-22"
 
@@ -212,6 +215,8 @@ def _margin_subs() -> dict[str, str]:
         "{WVK24_EFFECTIVE}": WVK24_EFFECTIVE,
         "{WVK25_NOTICE}": WVK25_NOTICE,
         "{WVK25_T0}": WVK25_T0,
+        "{OPCROWN_DATE}": OPCROWN_DATE,
+        "{OPCROWN_NOTE}": OPCROWN_NOTE,
         "{CAP_RATIO}": f"{float(d.get('thought_cap_ratio', 0.0)):g}",
         "{CAP_RULE}": (f" Per turn the thought cap is `max({int(d['max_thought_tokens'])}, "
                        f"floor({float(d.get('thought_cap_ratio', 0.0)):g} × L_T))`, L_T = the longest "
@@ -482,6 +487,11 @@ the slot
 - Sequential near-miss (2026-09-11, no fork; OFF since wvk 16) — a \
 first-slice margin in the near-miss window drew a second seeded slice; one \
 seeded slice decides again
+- **Operator crown {OPCROWN_DATE} — reign 22 (`chal-00687`, uid 62)** — crowned \
+by explicit dated operator directive from its stored wvk-24 verdict (paired \
+margin +0.073 sd, z +2.73: cleared 2·SE, did not clear δ = 0.20 sd); the best \
+challenger against reign 21 since its crown; `via = "operator_crown"`; no \
+scoring change, no `weight_version_key` change
 - **Upcoming fork: wvk 25 — teacher → GLM-5.3-Flash, 262k context, miner \
 empty-thought rule, sequential stopping, R cap (notice {WVK25_NOTICE}, effective \
 {WVK25_T0} at the first duel boundary after that time)** — the frozen teacher moves \
@@ -1212,6 +1222,41 @@ near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
 `duel_seed(block_hash, hotkey, slice_index)` in `code/evalsrv/dueling.py`.
 
 ---
+
+## Operator crown {OPCROWN_DATE} — reign 22 (`chal-00687`, uid 62)
+
+**Explicit dated operator directive, Jacob Steeves {OPCROWN_DATE} 18:51 UTC: \
+"Tell the validator to crown the last miner model who scored the best against \
+the king and set weights to it immediately while we consider the cut over."** \
+Executed the same evening on the reign-14 path (a crown from a stored verdict, \
+no re-duel). No scoring change, no `weight_version_key` change; wvk 24 stays \
+the rule for every duel.
+
+**Pick.** Every challenger verdict since reign 21's crown (`chal-00662`, \
+2026-09-22 13:03 UTC) was ranked by its paired margin against reign 21: 38 \
+scored duels, 8 with a positive margin, none above δ = 0.20 sd. The best is \
+`chal-00687` (uid 62, hotkey `5EzaX8pVDyqC…`, digest `7f066f2c5f95…`, duelled \
+2026-09-24 19:46 UTC): margin **+0.073 sd**, SE 0.027, **z +2.73** — the only \
+one that cleared the 2·SE statistical bar (0.053); it missed only the δ floor. \
+Runner-ups `chal-00677` (+0.054, z 1.22) and `chal-00682` (+0.047, z 1.32). \
+Gates as stored: protocol probe 0.90 (pass), forfeits 0.3 % (king 0.2 %), B \
+licence 0.51, median thought 698 chars, architecture pin and hygiene passed at \
+dispatch. Copy check: 0/18 weight shards share a hash with any of reigns 14–21; \
+against reign 21 all 693 tensors match in name and shape and a seeded sample \
+differs densely (median 30 % of elements changed, relative update ≈ 1e-3) — a \
+small continued-training step on the public reign-21 copy, from a different \
+coldkey than the lineage that held reigns 15, 20 and 21. Not a byte or ε-copy.
+
+**What was written.** The stored `verdict` row of `chal-00687` stays untouched; \
+one new `crowned` row carries the same verdict with `challenger_wins = true`, \
+`via = "operator_crown"` and an `operator_crown` block (directive text and date, \
+the note **"{OPCROWN_NOTE}"**, the original outcome, the runner-ups). Reign 22's \
+payout window (72 h) starts at the crown; reign 21's window had expired on \
+2026-09-25 13:03 UTC, so weights had been burning until this crown. The model is \
+copied to `{MODELS_URL}/models/sha256/7f066f2c5f95b34105c23faa313e25908c8610fbb65091e797e8b9391e926dfc/`; \
+the king seat (datagen) follows the new king from `state.json`. Every duel from \
+here on runs against reign 22 under the unchanged wvk-24 rule until the wvk-25 \
+fork below.
 
 ## Upcoming fork: wvk 25 — teacher → GLM-5.3-Flash, 262k context, scoring bundle (notice {WVK25_NOTICE}, effective {WVK25_T0})
 
