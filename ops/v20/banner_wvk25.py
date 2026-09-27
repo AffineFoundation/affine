@@ -11,12 +11,13 @@ BANNER = '''    <!-- wvk 25 fork notice (posted 2026-09-26; REMOVE AT T0 2026-09
       <div class="fork-notice-inner">
         <span class="fork-notice-tag">FORK NOTICE</span>
         <span class="fork-notice-text">
-          Upcoming fork wvk 25 — <b>Wed 2026-09-30 14:00 UTC</b>: teacher →
+          wvk 25 live 2026-09-27: crown floor δ 0.20 → 0.10 sd (operator directive).
+          Upcoming fork wvk 26 (announced as 25) — <b>Wed 2026-09-30 14:00 UTC</b>: teacher →
           <code>GLM-5.3-Flash</code>, 262k context, miner empty-thought rule,
-          sequential stopping, R cap. Reign 21 stands. Miners: serve
+          sequential stopping, R cap. Reign 22 stands. Miners: serve
           <code>--max-model-len 262144</code>.
         </span>
-        <a class="fork-notice-link" href="./llms.txt">spec: llms.txt § Upcoming fork: wvk 25 →</a>
+        <a class="fork-notice-link" href="./llms.txt">spec: llms.txt § Fork history: wvk 25 · § Upcoming fork: wvk 26 →</a>
       </div>
     </div>
 '''

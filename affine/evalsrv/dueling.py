@@ -1490,6 +1490,11 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         "teacher_refs": refs_used,
         "king_rows": king_rows,
         "challenger_rows": chall_rows,
+        # Per-turn action_kind as the duel saw it (σ is pooled per dialect, so
+        # an offline replay needs the same kinds; 2026-09-27: replays that
+        # inferred kinds from the reference actions drifted from the stamped
+        # margin by up to 0.02 sd).
+        "turn_kinds": kind_by_tid,
     }
     if shadow_rows is not None:
         # Shadow-full tail of a sequential duel (not part of the verdict).
