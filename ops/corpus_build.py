@@ -1741,6 +1741,21 @@ def soft_lang_fill(records: list[dict], have: dict[str, set[str]], *,
 MAX_PREFIX_TOKENS = 110_000
 TOKEN_GUARD_FROM_CHARS = 120_000
 PREFIX_CAP_SLACK = 512
+# Chars per token below which no real prefix falls (code / prose sit at
+# 3-4; base64-heavy tool output ~2.5). The guard tokenizes only prefixes
+# above cap × this ratio: at the 262k window that is 511k chars (the 120k
+# constant is kept at 131k so today's fold is bit-identical). Measured
+# 2026-09-26/27 re-bake rehearsal: tokenizing every > 120k-char prefix twice
+# (glm + genesis, cold cache) ran the scaleswe chunks at ~4 min per chunk,
+# 100 chunks in 6.5 h -- the 262k window makes almost all of them moot.
+GUARD_MIN_CHARS_PER_TOKEN = 2.0
+
+
+def token_guard_from_chars(cap: int) -> int:
+    """Prefix length (chars) above which the token count is measured."""
+    if cap <= MAX_PREFIX_TOKENS:
+        return TOKEN_GUARD_FROM_CHARS
+    return max(TOKEN_GUARD_FROM_CHARS, int(cap * GUARD_MIN_CHARS_PER_TOKEN))
 
 
 def prefix_token_cap(contract: dict | None = None) -> int:
@@ -1861,17 +1876,20 @@ _GUARD: dict = {}
 
 def _guard_state(baker: ToolBaker) -> tuple[list, int]:
     if _GUARD.get("baker") is not baker:
-        _GUARD.update({"baker": baker, "toks": guard_tokenizers(baker), "cap": prefix_token_cap()})
-        log(f"prefix guard: cap {_GUARD['cap']} tokens, {len(_GUARD['toks'])} tokenizer(s) "
-            f"(teacher {baker.style.id}{' + genesis' if len(_GUARD['toks']) > 1 else ''})")
+        cap = prefix_token_cap()
+        _GUARD.update({"baker": baker, "toks": guard_tokenizers(baker), "cap": cap,
+                       "from_chars": token_guard_from_chars(cap)})
+        log(f"prefix guard: cap {cap} tokens, measured above {_GUARD['from_chars']} chars, "
+            f"{len(_GUARD['toks'])} tokenizer(s) (teacher {baker.style.id}"
+            f"{' + genesis' if len(_GUARD['toks']) > 1 else ''})")
     return _GUARD["toks"], _GUARD["cap"]
 
 
 def prefix_over_token_cap(turn: dict, baker: ToolBaker) -> bool:
-    if int(turn.get("n_prefix_chars") or 0) <= TOKEN_GUARD_FROM_CHARS:
+    toks, cap = _guard_state(baker)
+    if int(turn.get("n_prefix_chars") or 0) <= _GUARD["from_chars"]:
         return False
     text = "\n".join(m.get("content", "") for m in turn.get("prefix") or [])
-    toks, cap = _guard_state(baker)
     cache = token_cache()
     n = max(cache.count(text, baker, tok) for tok in toks)
     return n + 8 * len(turn.get("prefix") or []) > cap
