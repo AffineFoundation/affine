@@ -50,21 +50,30 @@ APT_RETRY = (
 
 PATCHES = [
     {
-        "name": "swesmith_v1: retry HEAD~1 checkout after removing the untracked test files git names",
+        "name": "swesmith_v1: HEAD~1 only from a \"Remove F2P Tests\" HEAD (2-commit branches stay), retry after removing untracked test copies",
         "file": RE / "swe/swesmith_v1/swesmith_v1/taskset.py",
-        "marker": "affine-pod-patch: untracked F2P copies",
+        "marker": "affine-pod-patch: untracked F2P copies + 2-commit branches",
         "old": (
             '        result = await runtime.run(["git", "checkout", "HEAD~1"], ENV)\n'
             '        if result.exit_code != 0:\n'
             '            raise RuntimeError(f"swesmith checkout HEAD~1 failed ({self.data.name}): {result.stderr.strip()[-500:]}")\n'
         ),
         "new": (
+            '        # affine-pod-patch: untracked F2P copies + 2-commit branches (2026-09-27).\n'
+            '        # cpp / ts (and some rs / js / java) instance branches are 2 commits\n'
+            '        # ("Bug Patch" on "Initial commit"): the tests are already visible at HEAD\n'
+            '        # and HEAD~1 is the PRE-BUG base -- checking it out either conflicts with\n'
+            '        # the agent\'s edit of the buggy file ("local changes would be overwritten",\n'
+            '        # 390 king errors in 2 days) or silently reverts the bug and passes the\n'
+            '        # tests (a false "resolved"). Step back only from a "Remove F2P Tests" HEAD.\n'
+            '        head = await runtime.run(["git", "log", "-1", "--format=%s"], ENV)\n'
+            '        if "Remove F2P Tests" not in (head.stdout or ""):\n'
+            '            return\n'
             '        result = await runtime.run(["git", "checkout", "HEAD~1"], ENV)\n'
             '        if result.exit_code != 0 and "untracked working tree files would be overwritten" in (result.stderr or ""):\n'
-            '            # affine-pod-patch: untracked F2P copies (2026-09-27). The agent re-created, as\n'
-            '            # untracked files, tests that HEAD~1 restores; git lists them tab-indented. The\n'
-            '            # official copies come back from the commit and revert_test_files(), so drop\n'
-            '            # the agent\'s and retry instead of erroring the rollout.\n'
+            '            # The agent re-created, as untracked files, tests that HEAD~1 restores; git\n'
+            '            # lists them tab-indented. The official copies come back from the commit\n'
+            '            # and revert_test_files(), so drop the agent\'s and retry.\n'
             '            names = [ln.strip() for ln in (result.stderr or "").splitlines() if ln.startswith("\\t") and ln.strip()]\n'
             '            if names:\n'
             '                await runtime.run(["rm", "-rf", "--", *names], ENV)\n'
