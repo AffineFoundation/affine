@@ -713,7 +713,7 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
-- `weight_version_key = 25` (2026-09-27 FLIP_TIME UTC, explicit dated operator
+- `weight_version_key = 25` (2026-09-27 08:35 UTC, explicit dated operator
   directive 2026-09-27 08:22 UTC, Jacob Steeves: "Lower the validator margin to
   0.1"): **crown floor δ `[duel.sd_meter].min_margin_sd` 0.2 → 0.1 sd**, its own
   fork; nothing else changes (k_sigma 2, n_turns 1000, forfeit −6, caps,
