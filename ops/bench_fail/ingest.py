@@ -233,6 +233,12 @@ def main() -> int:
     def excluded(run_name: str, cell_name: str) -> bool:
         return any(fnmatch.fnmatch(run_name, rg) and fnmatch.fnmatch(cell_name, cg) for rg, cg in excludes)
 
+    if a.publish and not a.dry_run:
+        # Fail before the 30-min scan, not after writing the store: the R2 creds come from the
+        # environment, <repo>/.env or ~/.affine-validator.env (a worktree has no .env, 2026-09-27).
+        missing_env = [k for k in ("DATA_R2_ENDPOINT", "DATA_R2_ACCESS_KEY_ID", "DATA_R2_SECRET_ACCESS_KEY") if not _env_value(k)]
+        if missing_env:
+            sys.exit(f"--publish needs {missing_env} in the environment, {REPO}/.env or ~/.affine-validator.env")
     reigns = reigns_by_digest()
 
     # teacher pass sets per suite: task -> True if any teacher trial passed
@@ -401,18 +407,7 @@ def main() -> int:
     for src, evs in by_source.items():
         for i in range(0, len(evs), 25):
             store.append_batch(evs[i:i + 25], tag=f"{src}-{stamp_t}-{i // 25:04d}")
-    def env_value(k):
-        if os.environ.get(k):
-            return os.environ[k]
-        for p in (REPO / ".env", Path.home() / ".affine-validator.env"):
-            try:
-                for line in p.read_text().splitlines():
-                    line = line.strip().removeprefix("export ").strip()
-                    if line.startswith(k + "="):
-                        return line.split("=", 1)[1].strip().strip('"').strip("'")
-            except OSError:
-                pass
-        return ""
+    env_value = _env_value
     r2 = R2TraceMirror(bucket=env_value("DATA_R2_BUCKET") or "affine-data", endpoint=env_value("DATA_R2_ENDPOINT"),
                        access_key_id=env_value("DATA_R2_ACCESS_KEY_ID"), secret_access_key=env_value("DATA_R2_SECRET_ACCESS_KEY"),
                        prefix=a.prefix)
@@ -448,6 +443,20 @@ def main() -> int:
     n = r2.mirror(store)
     print(f"published {n} chunk(s) to {a.prefix} (keys bench_*)")
     return 0
+
+
+def _env_value(k: str) -> str:
+    if os.environ.get(k):
+        return os.environ[k]
+    for p in (REPO / ".env", Path.home() / ".affine-validator.env"):
+        try:
+            for line in p.read_text().splitlines():
+                line = line.strip().removeprefix("export ").strip()
+                if line.startswith(k + "="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+        except OSError:
+            pass
+    return ""
 
 
 def verifiers_episodes(cell: Path):
