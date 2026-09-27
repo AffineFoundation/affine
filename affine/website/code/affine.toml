@@ -1242,11 +1242,21 @@ max_model_len = 131072
 # changes and flip the bit"). Shadow read on 18 verdicts (chal-00348..365):
 # pass_rate 0.00–1.00, median 0.6, 1/18 at ≥ 0.90; every failure was
 # no_think_close. Admission rule (no wvk); min_pass_rate is the dial.
+# 2026-09-27: six "code" cases added (one IDE "only a Python code block", five HumanEval-shaped "only the code") (reply with only a Python code
+# block; pass = exactly one balanced fenced block with a language tag; fails
+# on close-only / unbalanced fences). Why: reign 22's HumanEval fell 74.4 →
+# 57.9 on replies that end with a lone closing ``` and no opening
+# ```python (close-only replies genesis 0 → r20 4 → r21 35 → r22 61 of 164,
+# correct code inside) — the per-byte A leg is blind to a few fence bytes.
+# They run in SHADOW first (shadow_ids: published under
+# verdict.protocol_probe.shadow, not counted toward pass_rate / passed);
+# enforce = remove them from shadow_ids after the read. Admission rule, no wvk.
 mode = "enforce"
 min_pass_rate = 0.9
-n_samples = 2          # completions per prompt (10 prompts -> 20 replies)
+n_samples = 2          # completions per prompt (16 prompts -> 32 replies; 20 enforced + 12 shadow)
 temperature = 0.7
 max_tokens = 1024
+shadow_ids = ["ide_code_block_only", "assistant_code_block_only", "assistant_code_only_he70", "assistant_code_only_he134", "assistant_code_only_he69", "assistant_code_only_he103"]
 
 [eval_machine]
 # GPU pod hosting duel evalsrv. The provisioner keeps exactly one alive and
