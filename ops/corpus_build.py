@@ -1867,6 +1867,12 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             _count(drops, _dc)
             _count(drops, f"{_dc}_{env.get('source')}")
             continue
+        _ti = no_task_instruction(env)
+        if _ti:
+            _count(drops, _ti)
+            _count(drops, f"{_ti}_{env.get('source')}")
+            _count(notes, "no_task_instruction_rollouts")
+            continue
         _src = str(env.get("source") or "")
         YIELD.setdefault(_src, {"seen": 0, "accepted_turns": 0, "records": 0, "drops": {}})["seen"] += 1
         _pid = str((env.get("policy") or {}).get("id") or "")
@@ -2767,6 +2773,65 @@ NOTES_GLOBAL: dict[str, int] = {}   # the fold's `notes` counters, for the yield
 # those replies with kind `text`. Every other source keeps the final-reply
 # rule, so existing records do not change.
 INTERACTIVE_SOURCES: frozenset[str] = frozenset()
+
+# -- task-instruction gate (2026-09-27, datagen seat-error audit) -----------------
+# 80 % of SWE-smith-go and 22 % of -py catalog rows ship an EMPTY
+# problem_statement (lm_modify / func_pm_* / combine_* instances). Nobody
+# can solve a task that is never stated: the prompt-embedding harnesses (pi,
+# claude_code, terminus, hermes) ran the agent blind and its "failure" (and
+# the odd lucky "success") entered D -- 355 swesmith rollouts / 5,120 rows at
+# epoch 85. Two rules, both drops (a task with no instruction never becomes
+# valid, so nothing is deferred): (a) `[task_instruction].empty_sids`: a
+# JSON {source: [sid, ...]} of tasks known to have no instruction (built
+# from the catalog datasets by ops/task_instruction/swesmith_empty.py); (b)
+# generic: the conversation has no user message, or its first user message
+# is empty / whitespace. Reasons `no_task_instruction_listed` /
+# `no_task_instruction_empty_user`, counted per source.
+TASK_INSTRUCTION: dict = {"empty": {}, "generic": True}
+
+
+def load_task_instruction() -> dict:
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("task_instruction") or {}
+    out = {"empty": {}, "generic": bool(raw.get("generic_empty_user", True)), "path": None}
+    rel = str(raw.get("empty_sids") or "").strip()
+    if rel:
+        path = REPO / rel
+        out["path"] = str(path)
+        if path.exists():
+            try:
+                data = json.loads(path.read_text())
+                out["empty"] = {str(src): frozenset(str(x) for x in ids) for src, ids in (data.get("sids") or data).items()
+                                if isinstance(ids, list)}
+            except (OSError, ValueError) as e:
+                log(f"task_instruction: {path} unreadable ({e}); listed rule off")
+        else:
+            log(f"task_instruction: {path} missing; listed rule off (generic rule {'on' if out['generic'] else 'off'})")
+    return out
+
+
+def no_task_instruction(env: dict) -> str | None:
+    """Drop reason when the rollout's task carries no instruction, else None."""
+    src = str(env.get("source") or "")
+    sid = str((env.get("task") or {}).get("sid") or "")
+    listed = TASK_INSTRUCTION.get("empty") or {}
+    if sid and sid in listed.get(src, ()):
+        return "no_task_instruction_listed"
+    if TASK_INSTRUCTION.get("generic"):
+        nodes = (env.get("trace") or {}).get("nodes") or []
+        first_user = None
+        for n in nodes:
+            m = n.get("message") if isinstance(n.get("message"), dict) else n
+            if m.get("role") == "user":
+                first_user = m
+                break
+        if first_user is None:
+            return "no_task_instruction_no_user"
+        c = first_user.get("content")
+        if isinstance(c, list):
+            c = "".join(str(x.get("text", "")) for x in c if isinstance(x, dict))
+        if not str(c or "").strip():
+            return "no_task_instruction_empty_user"
+    return None
 
 
 def load_interactive_sources() -> frozenset[str]:
@@ -3825,6 +3890,11 @@ def main() -> None:
                          "admit enter. Used once at the wvk 13 flip (2026-09-09) "
                          "to back-fill the `text` turns of trajectories folded "
                          "under wvk 11/12.")
+    ap.add_argument("--retire-turn-ids", default=None, metavar="FILE",
+                    help="one-off index-only retire: JSON {\"turn_ids\": [...]} or one id per line. "
+                         "The rows leave the index in this revision (chunks and old manifests "
+                         "untouched, old verdicts replay); group strata are recounted. Used "
+                         "2026-09-27 for the instruction-less swesmith rows.")
     ap.add_argument("--rederive-since", default=None, metavar="ISO8601",
                     help="like --rederive, but only for published chunks "
                          "created at or after this time (plus the unfolded "
@@ -3995,6 +4065,9 @@ def main() -> None:
     mix, src2grp, lang_mix, buckets = load_mix(ignore_fold_mix=args.ignore_fold_mix)
     global INTERACTIVE_SOURCES
     INTERACTIVE_SOURCES = load_interactive_sources()      # before any derive_chunk call
+    TASK_INSTRUCTION.clear(); TASK_INSTRUCTION.update(load_task_instruction())
+    log(f"task_instruction gate: listed sids {sum(len(v) for v in TASK_INSTRUCTION['empty'].values())} "
+        f"over {sorted(TASK_INSTRUCTION['empty'])}; generic empty-user rule {'on' if TASK_INSTRUCTION['generic'] else 'off'}")
     DECONTAM.clear(); DECONTAM.update(load_decontamination())
     if DECONTAM:
         log("decontamination: " + "; ".join(f"{src} bench ids {sum(len(v) for v in c['bench'].values())} "
@@ -4333,6 +4406,26 @@ def main() -> None:
                 f"-> they stay where they are")
         log(f"{g}: retiring {sum(len([t for t in ids if t in readmitted]) for ids in plan.values())} "
             f"index rows, readmitted as {g}")
+    if args.retire_turn_ids:
+        # One-off index-only retire from a file, keyed to groups through the
+        # live index so the strata accounting sees it (2026-09-27: the
+        # instruction-less swesmith rows; the same path serves the
+        # upstream-fetch retire when Jacob calls it).
+        raw_ids = Path(args.retire_turn_ids).read_text()
+        try:
+            wanted = set(str(x) for x in (json.loads(raw_ids).get("turn_ids") or []))
+        except ValueError:
+            wanted = {l.strip() for l in raw_ids.split("\n") if l.strip()}
+        rt = index_table(pub, live, ["turn_id", "stratum_src", "source"])
+        by_g: dict[str, int] = {}
+        if rt is not None:
+            for tid, st, src in zip(*(rt.column(c).to_pylist() for c in ("turn_id", "stratum_src", "source"))):
+                if str(tid) in wanted:
+                    g0 = group_from_row(str(st), str(src), src2grp)
+                    extra_retire.setdefault(g0, set()).add(str(tid))
+                    by_g[g0] = by_g.get(g0, 0) + 1
+        log(f"--retire-turn-ids: {sum(by_g.values())} of {len(wanted)} listed rows are in the live index; "
+            f"retiring by group {by_g}")
     retire_surviving: dict[str, set[str]] = {}
     for src_g, ids in extra_retire.items():
         if ids:
@@ -4395,8 +4488,17 @@ def main() -> None:
             old_raw = old_sig.get("raw", old_sig) if isinstance(old_sig, dict) else None
             rename_only = (old_raw is not None and old_raw == new_sig.get("raw")
                            and (old_sig.get("m") if isinstance(old_sig, dict) else None) == new_sig.get("m"))
+            # The curriculum rule's `m` (sub-strata it RAISES) moves with
+            # its published vector; a change there is the rule doing its
+            # job, not an operator re-key -- 2026-09-27 00:00 and 06:00 UTC
+            # folds both died on this guard when the rule first raised
+            # bench_fail to 2 (D stale 10 h). Re-key without the operator
+            # guard; the per-group 5-point composition guard below still
+            # applies to the resulting move.
+            m_only = (old_raw is not None and old_raw == new_sig.get("raw") and not rename_only)
         except (ValueError, TypeError):
             rename_only = False
+            m_only = False
         # First fold under this budget: re-key the mix state from the live
         # index (the deliberate composition shift; --allow-shift required).
         live_rows = live_rows_for_budget(pub, live)
@@ -4421,7 +4523,10 @@ def main() -> None:
             budget_migrated = not rename_only
             if rename_only:
                 log("strata budget: naming-version change only (shares unchanged); re-keyed without a guard")
-            if not args.allow_shift and not rename_only:
+            if m_only:
+                log(f"strata budget: curriculum sub-strata change only ({(old_sig or {}).get('m')} -> {new_sig.get('m')}); "
+                    "re-keyed without the operator guard (the composition guard still applies)")
+            if not args.allow_shift and not rename_only and not m_only:
                 msg = "strata budget re-keys the live index (deliberate composition shift); rerun with --allow-shift"
                 if args.no_publish:
                     log(f"GUARD (dry run): {msg}")
