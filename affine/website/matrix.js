@@ -81,6 +81,11 @@ function cellTip(row, col, cell, teacherCell) {
       + (cell.raw_score != null ? `\nraw grader score: ${fmt(100 * Number(cell.raw_score))} (not a measurement)` : "")
       + (cell.run_id ? `\ncard ${cell.run_id}${cell.mode ? ` · ${cell.mode}` : ""}` : "");
   }
+  if (cell && cell.suspect && cell.score == null) {
+    return `${head}\n? harness-suspect — ${fmt(cell.suspect_score)} over ${num(cell.n)} tasks in this run, shown but NOT counted in total / full until a clean re-run replaces it`
+      + (cell.reason ? `\n${cell.reason}` : "")
+      + (cell.run_id ? `\ncard ${cell.run_id}${cell.mode ? ` · ${cell.mode}` : ""}` : "");
+  }
   if (cell && cell.partial && cell.score == null) {
     return `${head}\npartial — the benchmark job was interrupted: ${num(cell.n_live)} of ${num(cell.n_expected)} trials ran against a live model`
       + (cell.n_infra_env ? ` (${num(cell.n_infra_env)} never reached a live model: reaped box / sandbox / harness)` : "")
@@ -192,6 +197,7 @@ function totals(rows, cols, teacher) {
       failed: missing.filter((c) => (r.cells[c.key] || {}).failed),
       erroredCols: missing.filter((c) => (r.cells[c.key] || {}).errored_only),
       partialCols: missing.filter((c) => (r.cells[c.key] || {}).partial),
+      suspectCols: missing.filter((c) => (r.cells[c.key] || {}).suspect),
       runningCols: missing.filter((c) => (r.cells[c.key] || {}).running),
       teacherSame: tSame,
       totalDelta: total != null && tSame != null && r.kind !== "teacher" ? total - tSame : null,
@@ -285,8 +291,9 @@ function renderTable(m, spec) {
         ? `${fmt(t.total)} over ${t.n} of ${t.of} columns` + (t.n < t.of ? " — partial: not comparable with a full row" : "")
           + (t.totalDelta != null ? `\nteacher on the same ${t.n} columns: ${fmt(t.teacherSame)} → Δ ${signed(t.totalDelta)} pt` : "")
         : t.running ? "benchmark pass running — total appears when its first cells land" : "no scored cell yet")
-      + (t.missing.length ? `\nmissing (${t.missing.length}): ${t.missing.filter((c) => !t.failed.includes(c) && !t.runningCols.includes(c) && !t.erroredCols.includes(c) && !t.partialCols.includes(c)).map(short).join(", ") || "–"}` : "\nall columns present")
+      + (t.missing.length ? `\nmissing (${t.missing.length}): ${t.missing.filter((c) => !t.failed.includes(c) && !t.runningCols.includes(c) && !t.erroredCols.includes(c) && !t.partialCols.includes(c) && !t.suspectCols.includes(c)).map(short).join(", ") || "–"}` : "\nall columns present")
       + (t.partialCols.length ? `\npartial, not counted (${t.partialCols.length}): ${t.partialCols.map(short).join(", ")}` : "")
+      + (t.suspectCols.length ? `\nharness-suspect, not counted (${t.suspectCols.length}): ${t.suspectCols.map(short).join(", ")}` : "")
       + (t.failed.length ? `\nrun failed (${t.failed.length}): ${t.failed.map(short).join(", ")}` : "")
       + (t.erroredCols.length ? `\nerrored, nothing graded (${t.erroredCols.length}): ${t.erroredCols.map(short).join(", ")}` : "")
       + (t.runningCols.length ? `\nrunning (${t.runningCols.length}): ${t.runningCols.map(short).join(", ")}` : "")
@@ -310,17 +317,20 @@ function renderTable(m, spec) {
       const unverified = !has && !running && cell && cell.unverified;
       // env ran for the model but every rollout errored: "errored", not a 0 and not "never run"
       const erroredOnly = !has && !running && cell && cell.errored_only;
+      // harness misbehaved in that run (harness_suspect): the number is shown grey with ?, not counted
+      const suspect = !has && !running && cell && cell.suspect;
+      const suspectText = suspect ? `${fmt(cell.suspect_score, d)}<span class="mk suspect">?</span>` : "";
       // interrupted Harbor job: n_live of n_expected trials ran — provisional, grey, never a final number
       const partial = !has && !running && cell && cell.partial;
       const partialText = partial ? `partial (${num(cell.n_live)}/${num(cell.n_expected)})` : "";
       // a started cell whose job is alive (status running, publish.py 2026-09-23): "running (n/N)"
       const progress = running && cell.progress && cell.n_expected;
       const runningText = progress ? `running (${num(cell.n)}/${num(cell.n_expected)})` : "…";
-      const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? (cell.low_n ? "lown" : "") : running ? (progress ? "partialcell" : "running") : failed ? "failed" : unverified ? "unverified" : partial ? "partialcell" : erroredOnly ? "failed" : "blank"].filter(Boolean).join(" ");
+      const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? (cell.low_n ? "lown" : "") : running ? (progress ? "partialcell" : "running") : failed ? "failed" : unverified ? "unverified" : suspect ? "suspectcell" : partial ? "partialcell" : erroredOnly ? "failed" : "blank"].filter(Boolean).join(" ");
       const style = has && r.kind !== "teacher" ? tint(cell.delta) : "";
       const marks = has ? `${cell.cap_bound ? `<span class="mk cap">‡</span>` : ""}${cell.graded === "llm_judge" ? `<span class="mk judge">⚖</span>` : ""}${cell.contaminated ? `<span class="mk leak" title="contaminated: leaked trials excluded">⚠</span>` : ""}${cell.trained && c.trained ? `<span class="mk trained">${esc(c.trained.mark)}</span>` : ""}` : "";
       return `<td class="${tcls} duel-hit" data-tip="${esc(cellTip(r, c, cell, teacher.cells[c.key]))}"`
-        + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) + marks : running ? runningText : failed ? "run failed" : unverified ? "unverified" : partial ? partialText : erroredOnly ? "errored" : "·"}</td>`;
+        + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) + marks : running ? runningText : failed ? "run failed" : unverified ? "unverified" : suspect ? suspectText : partial ? partialText : erroredOnly ? "errored" : "·"}</td>`;
     }).join("");
     const rowTitle = r.kind === "king" ? `${kingName(r.reign)} = reign ${r.reign} · king-${r.digest12}` : r.label;
     return `<tr class="${cls}"><td class="model duel-hit" data-tip="${esc(rowTip(r))}" title="${esc(rowTitle)}">`

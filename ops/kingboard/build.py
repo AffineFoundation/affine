@@ -1374,6 +1374,18 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
                                    created_at=card.get("created_at"), kind="bench")
                         out[env] = val
                 continue
+            if side_rec.get("harness_suspect"):
+                # the harness (e.g. the τ² user simulator) misbehaved in this run: the
+                # number is shown grey with a mark but never counted; a clean re-run
+                # (newer card, real value) replaces it
+                val = bench_value(side_rec, env)
+                if val is not None and val.get("score") is not None:
+                    out.setdefault(f"__suspect__{env}", {
+                        **val, "score": None, "suspect": True, "suspect_score": val["score"],
+                        "reason": str(side_rec.get("note") or "harness-suspect run"),
+                        "run_id": card.get("run_id"), "mode": card.get("mode"),
+                        "created_at": card.get("created_at"), "kind": "bench"})
+                    continue
             if side_rec.get("status") == "running":
                 # started cell whose Harbor job is alive (publish.py 2026-09-23): n of
                 # n_expected trials done — "running (n/N)", grey, out of the means
@@ -1429,7 +1441,7 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
     # placeholders only where no card has a verified value: a partial run (some
     # trials measured) beats an unverified cell (grader mismatch), which beats a
     # failed run (nothing measured), for the slot
-    for prefix in ("__running__", "__partial__", "__unverified__", "__failed__"):
+    for prefix in ("__suspect__", "__running__", "__partial__", "__unverified__", "__failed__"):
         for k in [k for k in out if k.startswith(prefix)]:
             env = k[len(prefix):]
             val = out.pop(k)
@@ -1886,7 +1898,8 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                      "'errored' = the environment ran for the model but every rollout errored "
                      "(nothing graded); 'run failed' = a benchmark pass ended without a result; "
                      "'partial (n/N)' = a benchmark job interrupted after n of N trials ran against a "
-                     "live model (status partial) — provisional, never a final number",
+                     "live model (status partial) — provisional, never a final number; a grey number with ? = "
+                     "harness-suspect (the harness misbehaved in that run; shown, not counted, replaced by a clean re-run)",
             "colour": "cell tint = score minus the teacher's score in the same column: green above, "
                       "red below, stronger with the gap",
             "markers": f"‡ = cap-bound: more than {int(CAP_BOUND_FRAC * 100)}% of the model's replies hit the "
