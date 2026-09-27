@@ -36,11 +36,18 @@ prefix = auditable and removable in one fold.
 
     .venv/bin/python ops/bench_fail/ingest.py --dry-run          # counts only
     .venv/bin/python ops/bench_fail/ingest.py --publish          # store + R2
-Options: --runs DIR, --min-reign N, --suites a,b, --out DIR (store dir).
+Options: --runs DIR, --min-reign N, --suites a,b, --out DIR (store dir),
+--exclude RUN_GLOB/CELL_GLOB (repeatable; cells of a card known to be a
+harness fault rather than model failures, on the king AND teacher side —
+first use 2026-09-27: `20260926T2215Z-7f066f2c5f95/tau2-*` and
+`.../tau3-*`, the reign-22 τ² cells run with a role-confused user
+simulator; the benchsuite's re-run with the 09-22 user-sim config carries
+the same cell names in a new run dir and is taken instead).
 """
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import gzip
 import hashlib
 import json
@@ -189,16 +196,34 @@ def main() -> int:
     ap.add_argument("--prefix", default="traces-bench/", help="R2 prefix (own manifest); never traces/ -- see the docstring")
     ap.add_argument("--replace", action="store_true", help="with --suites: remove the listed suites' old chunks from the prefix before publishing the new ones")
     ap.add_argument("--stats", default=str(REPO / "affine" / "state" / "bench_fail" / "ingest_stats.json"))
+    ap.add_argument("--exclude", action="append", default=[], metavar="RUN_GLOB/CELL_GLOB",
+                    help="skip cells (king AND teacher side) whose run dir and cell name match these fnmatch "
+                         "globs, e.g. '20260926T2215Z-7f066f2c5f95/tau2-*' for a card whose cells are a harness "
+                         "fault, not model failures (the re-run's cells of the same names are then taken instead); "
+                         "repeatable")
     a = ap.parse_args()
     runs = Path(a.runs)
     want_suites = {s.strip() for s in a.suites.split(",") if s.strip()}
+    excludes = []
+    for pat in a.exclude:
+        if "/" not in pat:
+            sys.exit(f"--exclude wants RUN_GLOB/CELL_GLOB, got {pat!r}")
+        excludes.append(tuple(pat.split("/", 1)))
+
+    def excluded(run_name: str, cell_name: str) -> bool:
+        return any(fnmatch.fnmatch(run_name, rg) and fnmatch.fnmatch(cell_name, cg) for rg, cg in excludes)
+
     reigns = reigns_by_digest()
 
     # teacher pass sets per suite: task -> True if any teacher trial passed
     teacher_pass: dict[str, dict[str, bool]] = defaultdict(dict)
+    n_excluded_teacher = 0
     for cell in sorted(runs.glob("*/teacher/*")):
         m = CELL_RE.match(cell.name)
         if not m:
+            continue
+        if excluded(cell.parent.parent.name, cell.name):
+            n_excluded_teacher += 1
             continue
         suite = m.group("suite").split("@")[0]
         if (cell / "harbor").is_dir():
@@ -234,6 +259,9 @@ def main() -> int:
             if want_suites and suite not in want_suites:
                 continue
             key = f"{suite}|reign {reign if reign is not None else digest}"
+            if excluded(run.name, cell.name):
+                stats[key]["cells_excluded"] += 1
+                continue
             slug = suite_slug(suite)
             source = f"bench_{slug}"
             if (cell / "harbor").is_dir():
@@ -332,12 +360,15 @@ def main() -> int:
         by_suite[k.split("|")[0]].update(v)
     summary = {"generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "min_reign": a.min_reign,
                "by_suite_reign": table, "by_suite": {k: dict(v) for k, v in sorted(by_suite.items())},
-               "eligible_total": len(envelopes), "teacher_pass_sets": {s: len(v) for s, v in teacher_pass.items()}}
+               "eligible_total": len(envelopes), "teacher_pass_sets": {s: len(v) for s, v in teacher_pass.items()},
+               "exclude": a.exclude, "excluded_teacher_cells": n_excluded_teacher}
     Path(a.stats).parent.mkdir(parents=True, exist_ok=True)
     Path(a.stats).write_text(json.dumps(summary, indent=1))
-    print(f"{'suite | reign':34} {'trials':>6} {'k_fail':>6} {'t_fail':>6} {'leak':>5} {'elig':>5}")
+    print(f"{'suite | reign':34} {'trials':>6} {'k_fail':>6} {'t_fail':>6} {'leak':>5} {'elig':>5} {'excl':>4}")
     for k, v in table.items():
-        print(f"{k:34} {v.get('trials',0):6d} {v.get('king_failed',0):6d} {v.get('teacher_failed_too',0):6d} {v.get('leaked_dropped',0):5d} {v.get('eligible',0):5d}")
+        print(f"{k:34} {v.get('trials',0):6d} {v.get('king_failed',0):6d} {v.get('teacher_failed_too',0):6d} {v.get('leaked_dropped',0):5d} {v.get('eligible',0):5d} {v.get('cells_excluded',0):4d}")
+    if a.exclude:
+        print(f"excluded: {a.exclude} ({n_excluded_teacher} teacher cell(s) skipped too)")
     print(f"eligible envelopes: {len(envelopes)}; stats -> {a.stats}")
     if a.dry_run or not a.publish:
         return 0
