@@ -89,6 +89,26 @@ SUITE_DIALECT = {"aime25": "boxed", "math500": "boxed", "mmlu-pro": "boxed",
 TERMINUS_KEYS = ("analysis", "plan", "commands")
 
 
+def run_digest(run: Path) -> str | None:
+    """digest12 of the model a run dir benched: the run's manifest.json
+    (`king.digest`, written for every card since 09-22) first, else the run
+    name. The manifest also covers CHALLENGER cards (`<stamp>-chal-NNNNN`) of a
+    model that was crowned later — same weights, same T=0 eval, and the
+    benchsuite's crown pass reuses their chat cells by copying only
+    summary.json (2026-09-27, reign 22: humaneval / aime25 / gpqa / ifeval /
+    ifbench / livecodebench / math500 in `20260926T2215Z-7f066f2c5f95` have no
+    traces; `20260925T0004Z-chal-00687` has them). A challenger card of a
+    model that never sat on the board is still skipped by the reign filter."""
+    try:
+        d = ((json.loads((run / "manifest.json").read_text()).get("king") or {}).get("digest") or "")
+    except (OSError, ValueError):
+        d = ""
+    if re.fullmatch(r"[0-9a-f]{64}|[0-9a-f]{12}", d):
+        return d[:12]
+    m = RUN_RE.match(run.name)
+    return m.group(1) if m else None
+
+
 def suite_slug(suite: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", suite.split("@")[0].lower()).strip("_")
 
@@ -242,10 +262,9 @@ def main() -> int:
     envelopes: list[dict] = []
     seen_trials: set[str] = set()
     for run in sorted(runs.iterdir()):
-        m = RUN_RE.match(run.name)
-        if not m:
+        digest = run_digest(run)
+        if not digest:
             continue
-        digest = m.group(1)
         info = reigns.get(digest) or {}
         reign = info.get("reign")
         if info.get("kind") != "king" or reign is None or int(reign) < a.min_reign:
