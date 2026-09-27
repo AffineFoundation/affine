@@ -139,6 +139,8 @@
           ? el("td", { class: "num king-col run-failed", title: k.failure || "run failed: the benchmark pass ended without a result (infrastructure, not a model score)" }, "run failed")
           : k && k.status === "unverified"
             ? el("td", { class: "num king-col unverified", title: `unverified — grader result not trusted, not counted. ${row.unverified || ""}${k.raw_score !== undefined && k.raw_score !== null ? ` (raw ${pct(k.raw_score)})` : ""}` }, "unverified")
+            : k && k.harness_suspect
+              ? el("td", { class: "num king-col unverified", title: `? harness-suspect — shown, not counted; a clean re-run replaces it. ${k.note || ""}` }, pct(k.score) + " ?")
             : k && k.status === "running"
               ? el("td", { class: "num king-col unverified", title: `${k.failure || "running"} — the job is alive; the number lands when it finishes` }, `running (${k.n ?? "?"}/${k.n_expected ?? "?"})`)
             : k && k.status === "partial"

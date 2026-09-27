@@ -2050,6 +2050,8 @@ table.data-table.kings td.total .cov { display: block; font-size: 0.68em; line-h
 table.data-table.kings td.total.partial { font-style: italic; }
 table.data-table.kings td.unverified { color: var(--color-fg-4); text-align: center; font-size: 0.72em; letter-spacing: 0.02em; white-space: nowrap; font-style: italic; }
 table.data-table.kings td.partialcell { color: var(--color-fg-4); text-align: center; font-size: 0.72em; letter-spacing: 0.02em; white-space: nowrap; }
+table.data-table.kings td.suspectcell { color: var(--color-fg-4); font-style: italic; }
+table.data-table.kings .mk.suspect { color: var(--color-warn); }
 table.data-table.kings td.failed { color: var(--color-warn); text-align: center; font-size: 0.72em; letter-spacing: 0.02em; white-space: nowrap; opacity: 0.85; }
 table.data-table.kings td.lown { color: var(--color-fg-3); font-style: italic; }
 table.data-table.kings tr.teacher td { color: var(--color-fg-2); border-bottom: 1px solid var(--color-border-hover); }
