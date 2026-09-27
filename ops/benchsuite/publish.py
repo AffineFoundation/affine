@@ -223,7 +223,7 @@ def scorecard(run_dir: Path) -> dict:
             out["failure"] = f"infrastructure: {n_env} of {n} trials never ran against a live model (serving box / Daytona); resuming"
         # cloud-sandbox / harness-change provenance (harbor_cell.py cells): the kingboard
         # flags a cell whose harness differs from the card's default for that env
-        for key in ("sandbox", "harness", "harness_change", "harness_note", "budget", "served_by"):
+        for key in ("sandbox", "harness", "harness_change", "harness_note", "budget", "served_by", "harness_suspect"):
             if x.get(key) is not None:
                 out[key] = x[key]
         # a summary-level note (stamped by hand or by a runner) and the cap-bound warning: a cell where a quarter or
