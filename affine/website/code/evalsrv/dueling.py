@@ -33,6 +33,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import random
 import statistics as st
 import time
@@ -175,6 +176,94 @@ def check_dialects(turns: list[dict], allowed: list[str]) -> None:
         raise RuntimeError(
             f"slice contains inadmissible action_kind(s) {bad}; "
             f"allowed_action_kinds={allowed}")
+
+
+def sequential_settings(duel_cfg: dict) -> dict:
+    """`[duel].seq_*` as one dict (wvk 25, staged 2026-09-26). Absent keys =
+    off: the whole slice is scored and the standard rule decides once.
+    enabled: look at the running paired margin every `look_every` turns (in
+    slice order); crown-stop when margin − k·SE > δ on `consecutive` looks in
+    a row; futility-stop when margin + k·SE < δ (the bar is unreachable);
+    otherwise run to n_turns and apply the standard rule."""
+    enabled = bool(duel_cfg.get("seq_enabled", False))
+    look_every = int(duel_cfg.get("seq_look_every", 100) or 100)
+    k = float(duel_cfg.get("seq_k", 2.6) or 2.6)
+    consecutive = int(duel_cfg.get("seq_consecutive", 2) or 2)
+    # shadow_full_first_n: for the first N sequential duels this pod runs
+    # (persistent counter under AFFINE_DATA_DIR), an early stop still scores
+    # the rest of the slice in shadow and stamps the full-slice decision next
+    # to the sequential one (green-watch criterion: agreement >= 9/10).
+    shadow_full_first_n = int(duel_cfg.get("seq_shadow_full_first_n", 0) or 0)
+    if look_every <= 0 or k <= 0 or consecutive < 1 or shadow_full_first_n < 0:
+        raise ValueError("[duel] seq_look_every > 0, seq_k > 0, seq_consecutive >= 1, seq_shadow_full_first_n >= 0")
+    return {"enabled": enabled, "look_every": look_every, "k": k, "consecutive": consecutive,
+            "shadow_full_first_n": shadow_full_first_n}
+
+
+SEQ_COUNTER = Path(os.environ.get("AFFINE_DATA_DIR", "/root/affine_data")) / "seq_duel_counter.json"
+
+
+def seq_duel_index() -> int:
+    """Persistent count of sequential duels started on this pod (1-based
+    index of the current one). Survives evalsrv restarts, not a pod re-rent —
+    the verdict stamps the index so the watch counts stamped verdicts."""
+    try:
+        n = int(json.loads(SEQ_COUNTER.read_text()).get("n", 0))
+    except Exception:
+        n = 0
+    n += 1
+    try:
+        SEQ_COUNTER.parent.mkdir(parents=True, exist_ok=True)
+        SEQ_COUNTER.write_text(json.dumps({"n": n}))
+    except Exception as e:  # noqa: BLE001
+        log.warning("seq counter not persisted: %s", e)
+    return n
+
+
+async def sequential_run(turns: list[dict], score_slice, decide, seq: dict,
+                         stamp: dict, abort_event=None
+                         ) -> tuple[list[dict], list[dict], int]:
+    """wvk 25 sequential stopping loop. Scores `turns` in slice order in
+    batches of seq["look_every"] (both sides concurrently within a batch via
+    `score_slice(batch, done_before)`), calls `decide(chall_rows, king_rows)`
+    after each batch and applies the stop rule:
+      crown-stop   when margin − k·SE > δ on seq["consecutive"] looks in a row
+      futility-stop when margin + k·SE < δ (the bar is unreachable)
+    Returns the rows scored so far and how many turns were scored; `stamp`
+    receives the looks and the stop (stopped_at / reason = crown | futility,
+    None when the whole slice was scored)."""
+    king_rows: list[dict] = []
+    chall_rows: list[dict] = []
+    passes = 0
+    n_done = 0
+    for start in range(0, len(turns), seq["look_every"]):
+        if abort_event is not None and abort_event.is_set():
+            raise DuelAborted("superseded by a new duel request")
+        batch = turns[start:start + seq["look_every"]]
+        k_b, c_b = await score_slice(batch, n_done)
+        king_rows += k_b
+        chall_rows += c_b
+        n_done = start + len(batch)
+        look = decide(chall_rows, king_rows)
+        delta = look.min_margin
+        fin = math.isfinite(look.margin) and math.isfinite(look.se)
+        over = fin and (look.margin - seq["k"] * look.se > delta)
+        futile = fin and (look.margin + seq["k"] * look.se < delta)
+        passes = passes + 1 if over else 0
+        stamp["looks"].append({
+            "n": n_done, "margin": look.margin if fin else None, "se": look.se if fin else None,
+            "z": look.z if fin else None, "over_bar": over, "futile": futile, "passes": passes})
+        log.info("sequential look n=%d margin=%.4f se=%.4f over=%s futile=%s passes=%d",
+                 n_done, look.margin, look.se, over, futile, passes)
+        if n_done >= len(turns):
+            break
+        if passes >= seq["consecutive"]:
+            stamp.update(stopped_at=n_done, reason="crown")
+            break
+        if futile:
+            stamp.update(stopped_at=n_done, reason="futility")
+            break
+    return king_rows, chall_rows, n_done
 
 
 def near_miss_settings(duel_cfg: dict) -> dict:
@@ -1050,7 +1139,46 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
                            abort_event=abort_event),
             )
 
-        king_rows, chall_rows = await score_slice(turns, 0)
+        seq = sequential_settings(duel_cfg)
+        shadow_rows = None
+        seq_stamp = {"enabled": seq["enabled"], "look_every": seq["look_every"], "k": seq["k"],
+                     "consecutive": seq["consecutive"], "looks": [], "stopped_at": None, "reason": None}
+        if seq["enabled"] and not confirm:
+            # wvk 25 sequential stopping: score the slice in slice order in
+            # batches of look_every turns (both sides concurrently within a
+            # batch), decide on everything scored so far after each batch.
+            seq_stamp["duel_index"] = seq_duel_index()
+            seq_stamp["shadow_full_first_n"] = seq["shadow_full_first_n"]
+            king_rows, chall_rows, n_done = await sequential_run(
+                turns, score_slice, decide, seq, seq_stamp, abort_event)
+            if seq_stamp["stopped_at"] is not None:
+                seq_result = decide(chall_rows, king_rows)
+                if seq_stamp["duel_index"] <= seq["shadow_full_first_n"]:
+                    # Shadow full slice: score the unscored tail too and stamp
+                    # the full-slice decision; the verdict stays sequential.
+                    log.info("sequential shadow-full (duel %d of the first %d): scoring the remaining %d turns",
+                             seq_stamp["duel_index"], seq["shadow_full_first_n"], len(turns) - n_done)
+                    k_rest, c_rest = await score_slice(turns[n_done:], n_done)
+                    full = decide(chall_rows + c_rest, king_rows + k_rest)
+                    fin = math.isfinite(full.margin) and math.isfinite(full.se)
+                    seq_stamp["shadow_full"] = {
+                        "n_paired_turns": full.n_paired_turns,
+                        "margin": full.margin if fin else None, "se": full.se if fin else None,
+                        "z": full.z if fin else None, "challenger_wins": full.challenger_wins,
+                        "agrees_with_sequential": bool(full.challenger_wins == seq_result.challenger_wins)}
+                    shadow_rows = (k_rest, c_rest)
+                # The verdict is decided on the turns scored before the stop;
+                # the unscored (or shadow-scored) tail is recorded, not scored.
+                turns = turns[:n_done]
+                turn_ids = [turn_id(rec) for rec in turns]
+                slices[0]["turn_ids"] = list(turn_ids)
+                slice_info["n_scored"] = n_done
+            # Names the post-T0 green watch reads (ops/v19/green_watch.py).
+            seq_stamp["stop_reason"] = seq_stamp["reason"]
+            seq_stamp["n_turns_scored"] = n_done
+            seq_stamp["n_looks"] = len(seq_stamp["looks"])
+        else:
+            king_rows, chall_rows = await score_slice(turns, 0)
         result = decide(chall_rows, king_rows)
         slice_results = [_slice_stats(slice_info, result)]
         # Sequential near-miss (2026-09-11): a first-slice margin inside the
@@ -1222,6 +1350,12 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             f"{margin_stamp.get('blocks_since_crown')} blocks since crown)")
     if min_z > 0:
         ranking_formula += f"; a crown also needs z ≥ {min_z:g}"
+    if seq["enabled"]:
+        ranking_formula += (
+            f"; sequential: the paired margin is checked every {seq['look_every']} turns in slice "
+            f"order — the crown is decided early when margin − {seq['k']:g}·SE > δ on "
+            f"{seq['consecutive']} consecutive looks, the duel stops early as a loss when "
+            f"margin + {seq['k']:g}·SE < δ, otherwise the full slice is scored and the standard rule applies")
 
     # Sequential near-miss stamp: the window, what each slice said on its
     # own, and (when pooled) the pooled decision — the top-level margin /
@@ -1304,11 +1438,23 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "near_miss_extra_slices": near_miss["extra_slices"],
             "near_miss_window_mode": near_miss["window_mode"],
             "min_z": min_z,
+            # wvk 25 sequential stopping knobs (staged 2026-09-26).
+            "seq_enabled": seq["enabled"],
+            "seq_look_every": seq["look_every"],
+            "seq_k": seq["k"],
+            "seq_consecutive": seq["consecutive"],
+            "seq_shadow_full_first_n": seq["shadow_full_first_n"],
+            # wvk 25 admission rule: minimum declared context window (0 = off)
+            # and the window the miner slots actually serve.
+            "min_context_tokens": int((engine_cfg.get("submission") or {}).get("min_context_tokens", 0) or 0),
+            "miner_max_model_len": int((engine_cfg.get("miner_serving") or {}).get("max_model_len", 0) or 0),
             # Decaying crown margin (staged 2026-09-12): `min_margin` above
             # is already the effective δ; these say where it came from.
             **margin_stamp,
         },
         "near_miss": near_miss_stamp,
+        # wvk 25 sequential stopping (staged 2026-09-26): looks and stop.
+        "sequential": seq_stamp,
         "king": king_sum,
         "challenger": chall_sum,
         "teacher": teacher_sum,
@@ -1319,6 +1465,13 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         verdict["shadow"] = {"sd_meter": sd_block}
         verdict["duel_params"]["sd_meter"] = {
             "role": sd_block["role"], "anchor": sd["anchor"], **sd_block["knobs"]}
+    if seq_stamp.get("shadow_full") is not None:
+        # Full-slice decision next to the sequential one (green-watch name).
+        sf = seq_stamp["shadow_full"]
+        verdict.setdefault("shadow", {})["full_slice"] = {
+            "margin": sf["margin"], "se": sf["se"], "z": sf["z"],
+            "crown": sf["challenger_wins"], "n_paired_turns": sf["n_paired_turns"],
+            "agrees_with_sequential": sf["agrees_with_sequential"]}
     if protocol is not None:
         verdict["protocol_probe"] = _probe_public(protocol)
     if confirm:
@@ -1338,6 +1491,9 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         "king_rows": king_rows,
         "challenger_rows": chall_rows,
     }
+    if shadow_rows is not None:
+        # Shadow-full tail of a sequential duel (not part of the verdict).
+        artifact["sequential_shadow_full_rows"] = {"king_rows": shadow_rows[0], "challenger_rows": shadow_rows[1]}
     if protocol is not None:
         artifact["protocol_probe"] = protocol
     return verdict, artifact

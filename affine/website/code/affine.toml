@@ -231,6 +231,22 @@ min_submission_block = 8938619
 # (20:47) arrived two minutes after the floor flip had landed, and a rule
 # change is applied only at a duel boundary. duel_params.sd_meter
 # (ref_min_content / typ_min_refs) distinguishes the two.
+# 24→25 crown floor δ 0.20 → 0.10 sd (2026-09-27): explicit dated operator directive
+# 2026-09-27 08:22 UTC (Jacob Steeves, "Lower the validator margin to 0.1"). Own
+# fork; the GLM-5.3-Flash teacher / 262k / scoring bundle noticed for 2026-09-30
+# 14:00 UTC becomes wvk 26. Counterfactual on the 108 sd-meter verdicts since wvk
+# 22 (each vs its own then-king): 8 more crowns (chal-00613/631/643/649/651/652/
+# 653/655; margins +0.11…+0.20, z 2.5…4.1), the 7 real crowns stand, chal-00687
+# (+0.073, reign 22 by operator crown) stays under. Known risk, accepted by the
+# operator: SE at n ≈ 1000 is median 0.047 (p10 0.030 / p90 0.110), so δ 0.10 is
+# ≈ 2.1 SE (0.9–3.3 across duels; δ 0.20 was 4.2) and binds on 59/108 verdicts
+# instead of 94/108 — the noisier half of duels is decided by the 2σ test alone.
+# That is the 2026-08-21/22 configuration (δ 0.002 → 0.001 at the v4 noise
+# floor: 4 near-noise crowns in 18 h, the winners' measured score drifting down
+# across the chain = winner's-curse churn; reverted wvk 8→9 the next day). If
+# churn returns, `--revert` puts 0.2 back as its own fork. Nothing else changes:
+# k_sigma 2, n_turns 1000, forfeit −6, caps, rendering, content_prefix, empty-
+# ref rule. Forward-only, reign 22 stands, min_submission_block unchanged.
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -238,7 +254,7 @@ min_submission_block = 8938619
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 24
+weight_version_key = 25
 
 [wallet]
 name = "default"
@@ -266,6 +282,22 @@ allow_auto_map = false
 # Metadata-intake guards on attacker-controlled repos.
 max_repo_files = 5000
 max_config_bytes = 1048576   # 1 MiB; config.json larger than this is rejected
+# Context-window admission rule (wvk 25 fork, T0 2026-09-30 14:00 UTC; Jacob
+# 2026-09-26 09:18 UTC "The new models should be required to have a 256k
+# sequence length"). config.json must declare an effective context window
+# >= this many tokens, derived the way vLLM derives max_model_len: the
+# smallest of max_position_embeddings / n_positions / seq_length /
+# max_seq_len / max_sequence_length / model_max_length present (text_config
+# when the root has none) x rope_scaling.factor for linear / dynamic / yarn
+# (yarn: original_max_position_embeddings x factor); no multiplier for
+# llama3 / su / longrope / default / absent. Genesis declares
+# text_config.max_position_embeddings = 262144 with no rope_scaling and
+# passes. Enforced pre-download at dispatch, prefetch and the R2 intake
+# (validator._hygiene_reason -> model_store.validate_repo_context;
+# decision rejected_context_too_short). Admission rule, not a scoring
+# change. 0 = off; the T0 flip (ops/v20/wvk25_toml_edits.py --knobs-only)
+# sets 262144 together with [miner_serving].max_model_len = 262144.
+min_context_tokens = 0
 
 # Private submissions over Cloudflare R2 (affine2 reveals; affine/r2protocol.py
 # is the byte-level contract, scripts/submit.py the miner client). Miners
@@ -996,6 +1028,23 @@ concurrency = 192
 # Whole-duel wall clock budget on the eval server before the validator
 # classifies the eval as a transient failure and requeues.
 timeout_s = 7200
+# wvk 25 sequential stopping (STAGED 2026-09-26, off; flip at T0). When on, the
+# running paired margin is checked every seq_look_every turns in slice order;
+# the crown is decided early when margin − seq_k·SE > δ on seq_consecutive looks
+# in a row, the duel stops early as a loss when margin + seq_k·SE < δ (the bar
+# is unreachable), otherwise the full slice is scored and the standard rule
+# applies. k = 2.6 ≈ the Pocock constant for 10 looks (null false-crown 0.5 %
+# per duel on the replay, vs 2.6 % at k = 2); the two-consecutive-looks rule
+# stops a margin ≈ δ from crowning on one lucky look.
+seq_enabled = false
+seq_look_every = 100
+seq_k = 2.6
+seq_consecutive = 2
+# The first N sequential duels this pod runs also score the rest of the slice
+# after an early stop and stamp the full-slice decision next to the sequential
+# one (verdict.sequential.shadow_full; green-watch criterion: agreement ≥ 9/10).
+# 0 = off.
+seq_shadow_full_first_n = 5
 
 # sd-meter — min(z_R, typ_c, z_A) in teacher-sd units (docs: god-equation
 # finalist; staged as a SHADOW 2026-09-18 on Jacob's directive "I like it
@@ -1045,6 +1094,21 @@ content_prefix = "refs_max"
 # ~4.8 % of turns. 0 = every reference anchors (the wvk 22/23 rule).
 ref_min_content = 10
 typ_min_refs = 2
+# wvk 25 knobs (STAGED 2026-09-26, off; flip at T0 = 2026-09-30 14:00 UTC with the
+# GLM teacher swap, explicit dated operator directive 2026-09-26 09:09 UTC "lets
+# do this switch"; docs/glm-cutover-plan.md §2). miner_empty_rule: "floor" (wvk
+# 22–24) = a miner thought with < content_min_tokens content tokens has typ_c
+# set to forfeit_sd; "drop_typ" = the typicality leg is dropped and the turn
+# scores min(z_R, z_A), the same treatment wvk 24 gives the teacher's own empty
+# references (closes the empty-thought floor channel that paid 4 of the 6
+# wvk-22/23 crowns). empty_gate_ratio (companion gate, 0 = off): a side whose
+# share of empty-thought turns exceeds this multiple of the teacher's own share
+# on the slice keeps the floor on those turns — "never think" is not free.
+# r_cap_teacher: z_R := min(z_R, 0) before the min — no credit for predicting
+# the teacher's action better than the teacher's own alternative thoughts do.
+miner_empty_rule = "floor"
+empty_gate_ratio = 0.0
+r_cap_teacher = false
 content_lift_nats = 1.0
 content_min_tokens = 10
 typicality_width = 2.0
@@ -1058,7 +1122,11 @@ a_norm_bytes = 1.0
 # typ_c floor for thoughts with < content_min_tokens content tokens.
 forfeit_sd = -6
 k_sigma = 2.0
-min_margin_sd = 0.2
+# 2026-09-27 (wvk 24→25, explicit dated operator directive 2026-09-27 08:22 UTC "Lower
+# the validator margin to 0.1"): 0.2 → 0.1. At the live noise (SE median 0.047 at
+# n ≈ 1000) δ = 0.10 is ≈ 2.1 SE — the bar the 2026-08-21/22 δ-at-noise experiment
+# reverted after winner's-curse crown churn; the operator chose it knowingly.
+min_margin_sd = 0.1
 
 # Frozen per-dialect anchors (phase-2 slice, 1,287 turns, teacher
 # Qwen/Qwen3.8-27B, leave-one-out over k = 3 refs; god/out/sigma_gpu.csv).

@@ -1,0 +1,55 @@
+--- a/affine/affine.toml
++++ b/affine/affine.toml
+@@ -231,6 +231,21 @@
+ # (20:47) arrived two minutes after the floor flip had landed, and a rule
+ # change is applied only at a duel boundary. duel_params.sd_meter
+ # (ref_min_content / typ_min_refs) distinguishes the two.
++# 25 scoring bundle (YYYY-MM-DD, with the GLM-5.3-Flash teacher swap + 262k window;
++# explicit dated operator directive 2026-09-26 09:09 UTC "lets do this switch",
++# T0 2026-09-30 14:00 UTC): miner_empty_rule drop_typ (a miner thought with < 10
++# content tokens scores min(z_R, z_A) — the wvk-24 reference rule applied to the
++# miner; closes the empty-thought floor channel that paid reigns 17–20),
++# empty_gate_ratio 2.0 (a side above 2× the teacher's empty share keeps the floor
++# on those turns), r_cap_teacher (z_R capped at 0), seq_enabled (looks every 100
++# turns, crown when margin − 2.6·SE > δ on two consecutive looks, futility stop,
++# else the full slice), plus the admission rule [submission].min_context_tokens =
++# 262144 (Jacob 2026-09-26 09:18 UTC "256k sequence length"; config.json must
++# declare an effective window >= 262,144 tokens — rejected_context_too_short).
++# Counterfactual on the last 40 Qwen-ref verdicts: parity
++# 40/40 at the old knobs; bundle flips 1/40 (chal-00662's crown → +0.14 < δ, the
++# empty-thought asymmetry), paired sd −14 %, control_matched −0.24 → +0.37.
++# Forward-only, reign 21 stands, min_submission_block unchanged.
+ #
+ # ############################################################################
+ # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
+@@ -281,7 +296,7 @@
+ # decision rejected_context_too_short). Admission rule, not a scoring
+ # change. 0 = off; the T0 flip (ops/v20/wvk25_toml_edits.py --knobs-only)
+ # sets 262144 together with [miner_serving].max_model_len = 262144.
+-min_context_tokens = 0
++min_context_tokens = 262144
+ 
+ # Private submissions over Cloudflare R2 (affine2 reveals; affine/r2protocol.py
+ # is the byte-level contract, scripts/submit.py the miner client). Miners
+@@ -1020,7 +1035,7 @@
+ # applies. k = 2.6 ≈ the Pocock constant for 10 looks (null false-crown 0.5 %
+ # per duel on the replay, vs 2.6 % at k = 2); the two-consecutive-looks rule
+ # stops a margin ≈ δ from crowning on one lucky look.
+-seq_enabled = false
++seq_enabled = true
+ seq_look_every = 100
+ seq_k = 2.6
+ seq_consecutive = 2
+@@ -1090,9 +1105,9 @@
+ # on the slice keeps the floor on those turns — "never think" is not free.
+ # r_cap_teacher: z_R := min(z_R, 0) before the min — no credit for predicting
+ # the teacher's action better than the teacher's own alternative thoughts do.
+-miner_empty_rule = "floor"
+-empty_gate_ratio = 0.0
+-r_cap_teacher = false
++miner_empty_rule = "drop_typ"
++empty_gate_ratio = 2.0
++r_cap_teacher = true
+ content_lift_nats = 1.0
+ content_min_tokens = 10
+ typicality_width = 2.0

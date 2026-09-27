@@ -64,6 +64,19 @@ DEFAULTS = {
     # wvk 22/23 rule (every reference enters the anchor).
     "ref_min_content": 0,
     "typ_min_refs": 2,
+    # wvk 25 (staged 2026-09-26): how a MINER thought with fewer than
+    # content_min_tokens content tokens is scored. "floor" (wvk 22–24) =
+    # typ_c set to forfeit_sd; "drop_typ" = the typicality leg is dropped and
+    # the turn scores min(z_R, z_A) — the same treatment wvk 24 gives the
+    # teacher's own empty references. empty_gate_ratio (companion admission
+    # gate, 0 = off): a side whose share of empty-thought turns exceeds
+    # empty_gate_ratio × the teacher's own share on the slice keeps the floor
+    # on those turns ("never think" must not be free). r_cap_teacher: z_R is
+    # capped at 0 before the min — a thought earns no credit for predicting
+    # the teacher's action better than the teacher's own alternative thoughts.
+    "miner_empty_rule": "floor",
+    "empty_gate_ratio": 0.0,
+    "r_cap_teacher": False,
     "content_lift_nats": 1.0,
     "content_min_tokens": 10,
     "typicality_width": 2.0,
@@ -92,6 +105,11 @@ def settings(duel_cfg: dict) -> dict:
     out["content_prefix"] = str(out["content_prefix"])
     out["ref_min_content"] = int(out["ref_min_content"])
     out["typ_min_refs"] = int(out["typ_min_refs"])
+    out["miner_empty_rule"] = str(out["miner_empty_rule"])
+    if out["miner_empty_rule"] not in ("floor", "drop_typ"):
+        raise ValueError(f"[duel.sd_meter] miner_empty_rule must be floor|drop_typ, got {out['miner_empty_rule']!r}")
+    out["empty_gate_ratio"] = float(out["empty_gate_ratio"])
+    out["r_cap_teacher"] = bool(out["r_cap_teacher"])
     if out["content_prefix"] not in ("none", "refs_max"):
         raise ValueError(f"[duel.sd_meter] content_prefix must be none|refs_max, got {out['content_prefix']!r}")
     out["frozen"] = dict(out["frozen"] or {})
@@ -175,6 +193,26 @@ def ref_loo_terms(refs: list[dict], tau: float | None, a_norm_bytes: float,
     return {"R": R, "A": A, "Mc": M}
 
 
+def side_legs_subset(row: dict, tau: float | None, a_norm_bytes: float,
+                     idx: list[int]) -> dict | None:
+    """Raw legs of one side computed over a SUBSET of its reference pairs
+    (pairs are in reference order): R and A as tempered LMEs over the pairs
+    in ``idx`` only. Used by the fully matched control, where the king must
+    be scored over the same k−1 references as the held-out teacher
+    reference. None for a forfeit row or when the subset is incomplete."""
+    if is_forfeit(row):
+        return None
+    pairs = row["pairs"]
+    if any(i >= len(pairs) for i in idx) or not idx:
+        return None
+    sub = [pairs[i] for i in idx]
+    R = centered_reason(sub, tau)
+    A = action_leg(sub, tau, a_norm_bytes)
+    p0 = pairs[0]
+    return {"R": R, "A": A, "mc": p0.get("mc_za"),
+            "n_content": p0.get("n_content_za"), "n_tokens": p0.get("n_tokens_za")}
+
+
 def side_legs(row: dict, tau: float | None, a_norm_bytes: float) -> dict | None:
     """Raw legs of one side on one turn: R, A (summed), m_c + content counts.
     None for a forfeit row."""
@@ -255,7 +293,7 @@ def _z(x: float | None, mu: float | None, sigma: float | None) -> float | None:
 
 
 def turn_score(legs: dict | None, mu: dict | None, sigma: dict | None,
-               cfg: dict) -> dict:
+               cfg: dict, *, empty_floor: bool | None = None) -> dict:
     """One side's sd-meter turn score with the binding leg.
 
     legs: side_legs() output (None = forfeit). mu/sigma: {R, A, Mc} for the
@@ -268,11 +306,16 @@ def turn_score(legs: dict | None, mu: dict | None, sigma: dict | None,
     mu = mu or {}
     sigma = sigma or {}
     zr = _z(legs["R"], mu.get("R"), sigma.get("R"))
+    if zr is not None and cfg.get("r_cap_teacher"):
+        zr = min(zr, 0.0)          # wvk 25: no credit above the teacher's own level on R
     za = _z(legs["A"], mu.get("A"), sigma.get("A"))
     typ = None
     n_c = legs.get("n_content")
     if n_c is not None and n_c < cfg["content_min_tokens"]:
-        typ = floor
+        # Empty-thought miner turn. empty_floor overrides the knob per side
+        # (the companion gate: a side over the teacher's share keeps the floor).
+        use_floor = (cfg.get("miner_empty_rule", "floor") == "floor") if empty_floor is None else empty_floor
+        typ = floor if use_floor else None      # None → leg dropped → min(z_R, z_A)
     else:
         d = _z(legs.get("mc"), mu.get("Mc"), sigma.get("Mc"))
         if d is not None:
@@ -476,6 +519,76 @@ def shadow_verdict(chall_rows: list[dict], king_rows: list[dict],
                 res[leg] = {"margin": None, "se": None, "z": None, "n": len(d)}
         return res
 
+    def matched_control(sig_of) -> dict:
+        """Fully matched control (2026-09-25): for each turn and each left-out
+        reference j, the held-out reference AND the king are both scored over
+        the same k−1 references — the king's R and A recomputed as LMEs over
+        those k−1 pairs (the k-matched form kept the king's k-reference LMEs,
+        which are larger by construction) — against the mean of those k−1
+        references; king forfeits / content-floor turns dropped. Overall =
+        min over legs; per leg = each standardised leg alone. This is the
+        rollback signal from 2026-09-25 on."""
+        out = {leg: [] for leg in ("all", "R", "Gc", "A")}
+        for tid, refs in turn_refs.items():
+            t = ref_loo_terms(refs, tau, a_norm, cfg["ref_min_content"])
+            krow = k_rows_by.get(tid)
+            if t is None or krow is None or is_forfeit(krow):
+                continue
+            sig = sig_of(tid)
+            k = len(refs)
+            per_t, per_k = {leg: [] for leg in out}, {leg: [] for leg in out}
+            for j in range(k):
+                oth = [i for i in range(k) if i != j]
+                kl = side_legs_subset(krow, tau, a_norm, oth)
+                if kl is None or (kl.get("n_content") is not None and kl["n_content"] < cfg["content_min_tokens"]):
+                    continue
+                others = {leg: [v for i, v in enumerate(t[leg]) if i != j and v is not None] for leg in ("R", "A", "Mc")}
+                mu_j = {leg: st.mean(v) for leg, v in others.items() if v}
+                tj = turn_score({"R": t["R"][j], "A": t["A"][j], "mc": t["Mc"][j],
+                                 "n_content": refs[j].get("n_content_thought"), "n_tokens": None}, mu_j, sig, cfg)
+                kj = turn_score(kl, mu_j, sig, cfg)
+                if tj["score"] is None or kj["score"] is None:
+                    continue
+                for leg, key in (("R", "z_R"), ("Gc", "typ_c"), ("A", "z_A")):
+                    if tj.get(key) is not None and kj.get(key) is not None:
+                        per_t[leg].append(tj[key]); per_k[leg].append(kj[key])
+                per_t["all"].append(tj["score"]); per_k["all"].append(kj["score"])
+            for leg in out:
+                if per_t[leg]:
+                    out[leg].append(st.mean(per_t[leg]) - st.mean(per_k[leg]))
+        res = {}
+        for leg, d in out.items():
+            if len(d) >= 2:
+                m = st.mean(d); se = st.stdev(d) / math.sqrt(len(d))
+                res[leg] = {"margin": m, "se": se, "z": (m / se) if se > 0 else None, "n": len(d)}
+            else:
+                res[leg] = {"margin": None, "se": None, "z": None, "n": len(d)}
+        return res
+
+    k_rows_by = {r["turn_id"]: r for r in king_rows}
+    # wvk 25 companion gate: empty-thought share per side vs the teacher's share of
+    # empty references on the slice; a side above empty_gate_ratio × teacher keeps
+    # the floor on its empty turns.
+    def empty_share(legs_by: dict) -> tuple[float | None, int, int]:
+        valid = [l for l in legs_by.values() if l is not None]
+        n_e = sum(1 for l in valid if (l.get("n_content") or 0) < cfg["content_min_tokens"])
+        return (n_e / len(valid) if valid else None), n_e, len(valid)
+    ref_list = [r for rl in turn_refs.values() for r in rl]
+    t_e = sum(1 for r in ref_list if (r.get("n_content_thought") or 0) < cfg["content_min_tokens"])
+    teacher_share = t_e / len(ref_list) if ref_list else None
+    gate = {}
+    for side, legs_by in (("challenger", c_legs), ("king", k_legs)):
+        share, n_e, n_v = empty_share(legs_by)
+        over = (cfg["empty_gate_ratio"] > 0 and share is not None and teacher_share is not None
+                and share > cfg["empty_gate_ratio"] * teacher_share)
+        gate[side] = {"empty_share": share, "n_empty": n_e, "n_valid": n_v,
+                      "teacher_share": teacher_share, "ratio": cfg["empty_gate_ratio"],
+                      "over_gate": bool(over),
+                      # the gate bit only while the rule is drop_typ (green-watch name)
+                      "empty_gate_applied": bool(over and cfg["miner_empty_rule"] != "floor"),
+                      # what the side's empty turns score: floor by rule or by gate; else typ dropped
+                      "empty_floor": bool(cfg["miner_empty_rule"] == "floor" or over)}
+
     by_anchor = {}
     for mode in ("loo", "frozen"):
         if mode == "frozen" and not frozen:
@@ -484,8 +597,10 @@ def shadow_verdict(chall_rows: list[dict], king_rows: list[dict],
         if mode == "loo" and not loo.mu:
             by_anchor[mode] = {"available": False, "reason": "no cross echoes (lp_cross)"}
             continue
-        c_scores = {tid: turn_score(l, *anchors_for(mode, tid), cfg) for tid, l in c_legs.items()}
-        k_scores = {tid: turn_score(l, *anchors_for(mode, tid), cfg) for tid, l in k_legs.items()}
+        c_scores = {tid: turn_score(l, *anchors_for(mode, tid), cfg, empty_floor=gate["challenger"]["empty_floor"])
+                    for tid, l in c_legs.items()}
+        k_scores = {tid: turn_score(l, *anchors_for(mode, tid), cfg, empty_floor=gate["king"]["empty_floor"])
+                    for tid, l in k_legs.items()}
         paired = _paired(c_scores, k_scores, cfg)
         would = paired["rule_passes"] and (live_gates_pass is not False)
         t_scores = teacher_scores(mode)
@@ -500,6 +615,8 @@ def shadow_verdict(chall_rows: list[dict], king_rows: list[dict],
             "teacher_vs_king": {k: t_vs_k.get(k) for k in ("margin", "se", "z", "n_paired_turns")},
             # wvk 24 control: k-matched anchors, king forfeits / content-floor turns dropped
             "control_kmatched": kmatched_control(lambda tid: anchors_for(mode, tid)[1]),
+            # 2026-09-25 fully matched control (2-ref both sides) — the rollback signal
+            "control_matched": matched_control(lambda tid: anchors_for(mode, tid)[1]),
             **paired,
             "would_crown": would,
             "would_crown_rule_only": paired["rule_passes"],
@@ -513,6 +630,10 @@ def shadow_verdict(chall_rows: list[dict], king_rows: list[dict],
                     f"(< {cfg['content_min_tokens']} such tokens → typ_c = floor"
                     + ("; only the first K content tokens of the miner's thought are scored, "
                        "K = max_i n_content(z_C^i)" if cfg["content_prefix"] == "refs_max" else "")
+                    + ("; a miner thought with fewer content tokens scores min(z_R, z_A) unless the side's "
+                       f"empty-thought share exceeds {cfg['empty_gate_ratio']:g}× the teacher's (then the floor)"
+                       if cfg["miner_empty_rule"] == "drop_typ" else "")
+                    + ("; z_R is capped at 0 (no credit above the teacher's own level)" if cfg["r_cap_teacher"] else "")
                     + (f"; references with < {cfg['ref_min_content']} content tokens do not anchor "
                        f"typicality and a turn with < {cfg['typ_min_refs']} content-bearing references "
                        "scores min(z_R, z_A)" if cfg["ref_min_content"] else "")
@@ -525,7 +646,9 @@ def shadow_verdict(chall_rows: list[dict], king_rows: list[dict],
         "knobs": {k: cfg[k] for k in ("content_lift_nats", "content_min_tokens",
                                        "typicality_width", "a_norm_bytes", "forfeit_sd",
                                        "k_sigma", "min_margin_sd", "cross_echo",
-                                       "content_prefix", "ref_min_content", "typ_min_refs")},
+                                       "content_prefix", "ref_min_content", "typ_min_refs",
+                                       "miner_empty_rule", "empty_gate_ratio", "r_cap_teacher")},
+        "empty_gate": gate,
         "tau": tau,
         "sigma_by_dialect": loo.sigma,
         "mu_mean_by_dialect": loo.mu_mean,

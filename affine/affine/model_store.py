@@ -409,6 +409,94 @@ def validate_repo_arch(info: RepoInfo, pinned: dict,
     return f"arch not pinned to the genesis family: {fault}"
 
 
+# Context-window admission rule (wvk 25, Jacob 2026-09-26 09:18 UTC "The new
+# models should be required to have a 256k sequence length"). Keep the
+# derivation in step with scripts/submit.py (miner-side mirror).
+CONTEXT_CODE = "context_too_short"
+# config.json keys vLLM reads for the model's native context length; the
+# smallest one present wins (vllm/config: _get_and_verify_max_len).
+CONTEXT_LEN_KEYS = ("max_position_embeddings", "n_positions", "seq_length",
+                    "max_seq_len", "max_sequence_length", "model_max_length")
+# rope_scaling types whose factor multiplies the native window into the
+# servable one. llama3 / su / longrope / default / absent: no multiplier.
+ROPE_SCALED_TYPES = ("linear", "dynamic", "yarn")
+
+
+def effective_context_window(config: dict) -> tuple[int | None, dict]:
+    """Servable context window a config.json declares, derived the way vLLM
+    derives `max_model_len`: the smallest native length key present
+    (`text_config` is consulted when the root has none) × `rope_scaling.factor`
+    for linear / dynamic / yarn (yarn: `original_max_position_embeddings` ×
+    factor). Returns (window or None when no length key exists, details for
+    the rejection message)."""
+    src = config if isinstance(config, dict) else {}
+    if not any(k in src for k in CONTEXT_LEN_KEYS):
+        tc = src.get("text_config")
+        if isinstance(tc, dict) and any(k in tc for k in CONTEXT_LEN_KEYS):
+            src = tc
+    lengths = {}
+    for key in CONTEXT_LEN_KEYS:
+        v = src.get(key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+            lengths[key] = int(v)
+    # vLLM also accepts the newer `rope_parameters` table as the rope config.
+    rope = src.get("rope_scaling")
+    if not isinstance(rope, dict):
+        rope = src.get("rope_parameters") if isinstance(src.get("rope_parameters"), dict) else None
+    details = {"lengths": lengths, "rope_scaling": rope}
+    if not lengths:
+        return None, details
+    key, native = min(lengths.items(), key=lambda kv: kv[1])
+    details["native_key"] = key
+    window = native
+    if isinstance(rope, dict):
+        rtype = str(rope.get("rope_type") or rope.get("type") or "").lower()
+        factor = rope.get("factor")
+        if rtype in ROPE_SCALED_TYPES and isinstance(factor, (int, float)) and factor > 0:
+            base = native
+            if rtype == "yarn":
+                orig = rope.get("original_max_position_embeddings")
+                if isinstance(orig, (int, float)) and orig > 0:
+                    base = int(orig)
+            window = int(base * float(factor))
+    return window, details
+
+
+def validate_repo_context(info: RepoInfo, min_tokens: int) -> str | None:
+    """Return a rejection reason or None. A submission must declare an
+    effective context window >= `min_tokens` (262,144 from the wvk-25 fork:
+    the duel serves miners at `[miner_serving].max_model_len = 262144` and D
+    carries prefixes up to that window). `min_tokens <= 0` disables the check.
+    Metadata-only, admission rule — verdicts and replays are untouched."""
+    if min_tokens <= 0:
+        return None
+    window, d = effective_context_window(info.config)
+    native = (f"{d['native_key']}={d['lengths'][d['native_key']]}" if d.get("native_key")
+              else "no context length key in config.json")
+    rope = d.get("rope_scaling")
+    rope_s = json.dumps(rope, sort_keys=True) if isinstance(rope, dict) else "none"
+    if window is None:
+        return (f"{CONTEXT_CODE}: effective window unknown < {min_tokens} "
+                f"({native}, rope_scaling={rope_s})")
+    if window < min_tokens:
+        return (f"{CONTEXT_CODE}: effective window {window} < {min_tokens} "
+                f"({native}, rope_scaling={rope_s})")
+    return None
+
+
+def hygiene_fault_code(reason: str) -> str:
+    """Intake code for a hygiene reason: the context rule gets its own code
+    (`rejected_context_too_short` after the intake's `rejected_` prefix);
+    every other reason keeps `repo_hygiene_rejected`."""
+    return CONTEXT_CODE if reason.startswith(CONTEXT_CODE + ":") else "repo_hygiene_rejected"
+
+
+def hygiene_history_code(reason: str) -> str:
+    """History `error_code` for a hygiene rejection at dispatch."""
+    code = hygiene_fault_code(reason)
+    return f"rejected_{code}" if code == CONTEXT_CODE else code
+
+
 @dataclass
 class CopyVerdict:
     action: str  # "reject" | "crown_earlier"

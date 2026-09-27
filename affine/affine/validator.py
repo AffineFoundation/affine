@@ -849,6 +849,11 @@ class Validator:
         if reason is None and sub.pinned_arch:
             reason = model_store.validate_repo_arch(
                 info, sub.pinned_arch, sub.pinned_arch_alt)
+        # wvk 25 context rule: config.json must declare an effective window
+        # >= min_context_tokens (0 = off). Same definition covers dispatch,
+        # prefetch and the R2 intake (registrations.hygiene_check).
+        if reason is None and sub.min_context_tokens > 0:
+            reason = model_store.validate_repo_context(info, sub.min_context_tokens)
         return reason
 
     async def _prefetch_next(self, nxt: QueueEntry) -> None:
@@ -913,8 +918,10 @@ class Validator:
             return
         reason = self._hygiene_reason(info)
         if reason:
-            self.state.record_failure(entry, "repo_hygiene_rejected", reason,
-                                      **self._history_meta(entry, t0))
+            # `repo_hygiene_rejected`, or `rejected_context_too_short` for the
+            # wvk-25 context rule (model_store.hygiene_history_code).
+            self.state.record_failure(entry, model_store.hygiene_history_code(reason),
+                                      reason, **self._history_meta(entry, t0))
             return
 
         # Proactive king liveness (the fix for a king that takes its model off

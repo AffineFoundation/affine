@@ -114,6 +114,19 @@ PINNED_ARCH_ALT: list[dict] = [{
     **{k: v for k, v in PINNED_ARCH["text_config"].items() if k != "model_type"},
 }]
 
+# Context-window rule (affine.toml [submission].min_context_tokens; wvk 25 fork,
+# T0 2026-09-30 14:00 UTC): config.json must declare an effective context
+# window >= 262,144 tokens — the smallest native length key present
+# (text_config when the root has none) x rope_scaling.factor for linear /
+# dynamic / yarn (yarn: original_max_position_embeddings x factor); no
+# multiplier for llama3 / su / longrope / default / absent. The genesis
+# (text_config.max_position_embeddings = 262144, no rope_scaling) passes.
+# Mirror of affine/model_store.py effective_context_window — keep in sync.
+MIN_CONTEXT_TOKENS = 262144
+CONTEXT_LEN_KEYS = ("max_position_embeddings", "n_positions", "seq_length",
+                    "max_seq_len", "max_sequence_length", "model_max_length")
+ROPE_SCALED_TYPES = ("linear", "dynamic", "yarn")
+
 # ---------------------------------------------------------------------------
 # Protocol (verbatim mirror of affine/r2protocol.py — keep in sync)
 # ---------------------------------------------------------------------------
@@ -334,6 +347,48 @@ def check_pinned_arch(config: dict, pinned: dict, path: str = "") -> str | None:
     return None
 
 
+def effective_context_window(config: dict) -> tuple[int | None, str]:
+    """(effective window or None, human note) — same derivation as the validator."""
+    src = config if isinstance(config, dict) else {}
+    if not any(k in src for k in CONTEXT_LEN_KEYS):
+        tc = src.get("text_config")
+        if isinstance(tc, dict) and any(k in tc for k in CONTEXT_LEN_KEYS):
+            src = tc
+    lengths = {k: int(src[k]) for k in CONTEXT_LEN_KEYS
+               if isinstance(src.get(k), (int, float)) and not isinstance(src.get(k), bool)
+               and src[k] > 0}
+    rope = src.get("rope_scaling")
+    if not isinstance(rope, dict):
+        rope = src.get("rope_parameters") if isinstance(src.get("rope_parameters"), dict) else None
+    if not lengths:
+        return None, "no context length key in config.json"
+    key, native = min(lengths.items(), key=lambda kv: kv[1])
+    window = native
+    note = f"{key}={native}"
+    if isinstance(rope, dict):
+        rtype = str(rope.get("rope_type") or rope.get("type") or "").lower()
+        factor = rope.get("factor")
+        if rtype in ROPE_SCALED_TYPES and isinstance(factor, (int, float)) and factor > 0:
+            base = native
+            orig = rope.get("original_max_position_embeddings")
+            if rtype == "yarn" and isinstance(orig, (int, float)) and orig > 0:
+                base = int(orig)
+            window = int(base * float(factor))
+            note += f", rope_scaling {rtype} x{factor:g}"
+        elif rtype:
+            note += f", rope_scaling {rtype} (no multiplier)"
+    return window, note
+
+
+def check_context_window(config: dict, min_tokens: int = MIN_CONTEXT_TOKENS) -> str | None:
+    window, note = effective_context_window(config)
+    if window is None:
+        return f"context_too_short: effective window unknown < {min_tokens} ({note})"
+    if window < min_tokens:
+        return f"context_too_short: effective window {window} < {min_tokens} ({note})"
+    return None
+
+
 def scan_model_dir(model_dir: Path) -> tuple[list[dict], list[str]]:
     """Inventory of the checkpoint dir + the problems the validator would
     reject on. sizes only here; sha256 happens at upload."""
@@ -376,6 +431,11 @@ def scan_model_dir(model_dir: Path) -> tuple[list[dict], list[str]]:
             if fault:
                 problems.append("arch not pinned to the genesis family (must be a "
                                 f"Qwen/Qwen3.6-35B-A3B fine-tune): {fault}")
+            ctx = check_context_window(config)
+            if ctx:
+                problems.append(f"{ctx} — the validator requires a declared context "
+                                f"window of at least {MIN_CONTEXT_TOKENS} tokens from the "
+                                "wvk-25 fork (2026-09-30 14:00 UTC)")
     st = [n for n in names if n.endswith(".safetensors")]
     if not st:
         problems.append("no .safetensors files")
@@ -455,6 +515,14 @@ def cmd_check(args) -> None:
     files, problems = scan_model_dir(Path(args.model_dir))
     total = sum(f["size"] for f in files)
     say(f"{len(files)} files, {total / 1e9:.2f} GB in {args.model_dir}")
+    cfg_path = Path(args.model_dir) / "config.json"
+    if cfg_path.is_file():
+        try:
+            window, note = effective_context_window(json.loads(cfg_path.read_bytes()))
+            say(f"declared context window: {window if window is not None else 'unknown'} tokens "
+                f"({note}); required >= {MIN_CONTEXT_TOKENS} from the wvk-25 fork")
+        except ValueError:
+            pass
     if problems:
         say("pre-flight FAILED — the validator would reject this checkpoint:")
         for p in problems:
