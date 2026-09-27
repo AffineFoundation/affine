@@ -4488,8 +4488,17 @@ def main() -> None:
             old_raw = old_sig.get("raw", old_sig) if isinstance(old_sig, dict) else None
             rename_only = (old_raw is not None and old_raw == new_sig.get("raw")
                            and (old_sig.get("m") if isinstance(old_sig, dict) else None) == new_sig.get("m"))
+            # The curriculum rule's `m` (sub-strata it RAISES) moves with
+            # its published vector; a change there is the rule doing its
+            # job, not an operator re-key -- 2026-09-27 00:00 and 06:00 UTC
+            # folds both died on this guard when the rule first raised
+            # bench_fail to 2 (D stale 10 h). Re-key without the operator
+            # guard; the per-group 5-point composition guard below still
+            # applies to the resulting move.
+            m_only = (old_raw is not None and old_raw == new_sig.get("raw") and not rename_only)
         except (ValueError, TypeError):
             rename_only = False
+            m_only = False
         # First fold under this budget: re-key the mix state from the live
         # index (the deliberate composition shift; --allow-shift required).
         live_rows = live_rows_for_budget(pub, live)
@@ -4514,7 +4523,10 @@ def main() -> None:
             budget_migrated = not rename_only
             if rename_only:
                 log("strata budget: naming-version change only (shares unchanged); re-keyed without a guard")
-            if not args.allow_shift and not rename_only:
+            if m_only:
+                log(f"strata budget: curriculum sub-strata change only ({(old_sig or {}).get('m')} -> {new_sig.get('m')}); "
+                    "re-keyed without the operator guard (the composition guard still applies)")
+            if not args.allow_shift and not rename_only and not m_only:
                 msg = "strata budget re-keys the live index (deliberate composition shift); rerun with --allow-shift"
                 if args.no_publish:
                     log(f"GUARD (dry run): {msg}")
