@@ -2862,7 +2862,7 @@ def fold_outcome(env: dict) -> str:
     """rollout_outcome, or `unscored` for a quarantined grade."""
     if quarantined(env):
         return "unscored"
-    return fold_outcome(env)
+    return rollout_outcome(env["trace"])
 
 
 def load_task_instruction() -> dict:
