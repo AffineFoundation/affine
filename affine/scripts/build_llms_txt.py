@@ -2093,7 +2093,19 @@ read (2026-09-08, 18 verdicts `chal-00348`…`chal-00365`):** pass rates \
 0.00–1.00, median 0.60, one model at ≥ 0.90; every failure was \
 `no_think_close`. **Enforced since 2026-09-09** with the fork. Every verdict \
 still carries `protocol_probe` (`pass_rate`, `think_close_rate`, \
-`by_reason`, `by_prompt`).
+`by_reason`, `by_prompt`). **Code-fence cases, shadow since 2026-09-27:** six \
+more prompts run with the set — one IDE prompt "reply with only a Python code \
+block" (pass = exactly one balanced fenced block with a language tag) and \
+five HumanEval-shaped "your response should only contain the code" prompts \
+(pass = bare code, or one balanced tagged block; a close-only ```` ``` ````, an \
+unbalanced, an untagged or a second fence fails). Why: reign 22's HumanEval \
+fell 74.4 → 57.9 on replies that end with a lone closing fence and no \
+opening ```` ```python ```` (close-only replies genesis 0 → r20 4 → r21 35 → \
+r22 61 of 164, correct code inside) — the per-byte action leg is blind to a \
+few fence bytes. They are published under `protocol_probe.shadow` \
+(`pass_rate`, `by_reason`) and do **not** count toward `pass_rate` / \
+`passed` until they leave `[protocol_probe].shadow_ids`; that promotion is an \
+admission decision (no wvk) and will be announced here.
 
 **3. IDE-agent prompts join D — data event, no wvk change.** Teacher \
 rollouts under two real IDE/CLI coding agents (OpenAI Codex CLI and Claude \
