@@ -80,6 +80,7 @@ WVK21_EFFECTIVE = "2026-09-17"
 WVK22_NOTICE = "2026-09-18"
 WVK22_EFFECTIVE = "2026-09-18"
 WVK25_NOTICE = "2026-09-26"
+WVK25_DELTA_EFFECTIVE = "2026-09-27 08:32 UTC"  # δ 0.20 → 0.10 sd (wvk 24→25)
 WVK25_T0 = "2026-09-30 14:00 UTC"
 # Operator crown of chal-00687 as reign 22 (Jacob Steeves, 2026-09-26 18:51 UTC).
 OPCROWN_DATE = "2026-09-26"
@@ -214,6 +215,7 @@ def _margin_subs() -> dict[str, str]:
         "{WVK23_EFFECTIVE}": WVK23_EFFECTIVE,
         "{WVK24_EFFECTIVE}": WVK24_EFFECTIVE,
         "{WVK25_NOTICE}": WVK25_NOTICE,
+        "{WVK25_DELTA_EFFECTIVE}": WVK25_DELTA_EFFECTIVE,
         "{WVK25_T0}": WVK25_T0,
         "{OPCROWN_DATE}": OPCROWN_DATE,
         "{OPCROWN_NOTE}": OPCROWN_NOTE,
@@ -487,12 +489,17 @@ the slot
 - Sequential near-miss (2026-09-11, no fork; OFF since wvk 16) — a \
 first-slice margin in the near-miss window drew a second seeded slice; one \
 seeded slice decides again
+- **Fork history: wvk 25 — crown floor δ 0.20 → 0.10 sd (effective \
+{WVK25_DELTA_EFFECTIVE})** — explicit dated operator directive 2026-09-27 08:22 UTC \
+("Lower the validator margin to 0.1"); a challenger crowns when its paired margin \
+clears `max(2·SE, 0.10)` sd; nothing else changes; reign 22 stands; the noticed \
+GLM / 262k / scoring bundle is renumbered wvk 26
 - **Operator crown {OPCROWN_DATE} — reign 22 (`chal-00687`, uid 62)** — crowned \
 by explicit dated operator directive from its stored wvk-24 verdict (paired \
 margin +0.073 sd, z +2.73: cleared 2·SE, did not clear δ = 0.20 sd); the best \
 challenger against reign 21 since its crown; `via = "operator_crown"`; no \
 scoring change, no `weight_version_key` change
-- **Upcoming fork: wvk 25 — teacher → GLM-5.3-Flash, 262k context, miner \
+- **Upcoming fork: wvk 26 (was announced as 25) — teacher → GLM-5.3-Flash, 262k context, miner \
 empty-thought rule, sequential stopping, R cap (notice {WVK25_NOTICE}, effective \
 {WVK25_T0} at the first duel boundary after that time)** — the frozen teacher moves \
 from `Qwen/Qwen3.8-27B` to `zai-org/GLM-5.3-Flash`; serving window 131,072 → \
@@ -845,7 +852,7 @@ ids stay free). Since 2026-09-04 the text-only extraction of the genesis \
 the root, `model_type = qwen3_5_moe_text`) is admitted too — see \
 `[[submission.pinned_arch_alt]]`. Any other architecture — including the \
 teacher `Qwen/Qwen3.8-27B` itself — is rejected (`validate_repo_arch` in \
-`code/affine/model_store.py`). **Context rule (from the wvk-25 fork, \
+`code/affine/model_store.py`). **Context rule (from the wvk-26 fork, \
 {WVK25_T0}):** `config.json` must also declare an effective context window of \
 at least 262,144 tokens (`[submission].min_context_tokens`; `validate_repo_context` \
 — see the upcoming-fork section for the derivation). "Rope stays free" means \
@@ -1223,6 +1230,47 @@ near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
 
 ---
 
+## Fork history: wvk 25 — crown floor δ 0.20 → 0.10 sd (effective {WVK25_DELTA_EFFECTIVE})
+
+**Explicit dated operator directive, Jacob Steeves 2026-09-27 08:22 UTC: "Lower \
+the validator margin to 0.1."** `weight_version_key` 24 → 25, flipped at the first \
+duel boundary after the directive. Forward-only — reign 22 stands, no \
+re-verdicts, `min_submission_block` unchanged. The GLM-5.3-Flash / 262k / scoring \
+bundle noticed on 2026-09-26 as "wvk 25" keeps its date (2026-09-30 14:00 UTC) and \
+content and becomes **wvk 26**.
+
+**What changes.** One number: `[duel.sd_meter].min_margin_sd` 0.2 → **0.1**. A \
+challenger is crowned when its paired mean margin over the slice clears \
+`max(k_sigma·SE, δ)` = `max(2·SE, 0.10 sd)` and the gates pass (thought-length \
+floor, B licence, protocol probe). Scores, legs, anchors, the forfeit floor (−6), \
+the caps (4,096 / 768 / 4,864), the rendering, the empty-reference rule and the \
+1,000-turn slice are unchanged; a stored verdict replays to the same margin, SE \
+and z — only the crown decision moves.
+
+**Counterfactual (108 sd-meter verdicts since wvk 22, each against its own \
+then-king).** 8 more crowns: `chal-00613` +0.197 (z 2.55), `00631` +0.154 (3.32), \
+`00643` +0.157 (3.56), `00649` +0.135 (3.20), `00651` +0.166 (3.45), `00652` \
++0.174 (4.07), `00653` +0.186 (3.55), `00655` +0.112 (2.46); the 7 real crowns \
+stand; `chal-00687` (+0.073, reign 22 by operator crown) stays under. 7 → 15 \
+crowns in 9 days is an upper bound (each crown changes the next king).
+
+**Known risk, accepted by the operator.** The slice SE at n ≈ 1000 is median \
+0.047 sd (p10 0.030, p90 0.110), so δ = 0.10 is ≈ 2.1 SE at the median (0.9–3.3 \
+across duels; δ = 0.20 was ≈ 4.2 SE) and binds on 59 of 108 verdicts instead of \
+94 — for the noisier half of duels the crown is decided by the 2σ test alone \
+(false-crown ≈ 2.3 % per duel for a zero-edge model, and an ε-copy of the king \
+crowns on noise at that rate). This is the shape of the 2026-08-21/22 experiment \
+(δ lowered to the v4 noise floor, wvk 7→8): 4 near-noise crowns in 18 h with the \
+winners' measured score drifting down across the chain — the winner's curse — \
+reverted the next day (wvk 8→9). δ = 0.20 was set on 2026-09-18 at ≈ 4 SE for that \
+reason. If churn returns, the revert is its own fork (`ops/v21/wvk25_delta_toml_edits.py \
+--revert`). Under the wvk-26 sequential rule the first look (n = 100) has SE ≈ 0.15, \
+so an early crown still needs `margin − 2.6·SE > 0.10` (≈ +0.49 at n = 100, +0.27 \
+at n = 500); δ = 0.10 bites at the full slice.
+
+**What you see.** `duel_params.sd_meter.min_margin_sd = 0.1`, verdict `min_margin` \
+= 0.1, `weight_version_key = 25`, `ranking_formula` ends in `max(2·SE, 0.1)`.
+
 ## Operator crown {OPCROWN_DATE} — reign 22 (`chal-00687`, uid 62)
 
 **Explicit dated operator directive, Jacob Steeves {OPCROWN_DATE} 18:51 UTC: \
@@ -1255,17 +1303,19 @@ payout window (72 h) starts at the crown; reign 21's window had expired on \
 2026-09-25 13:03 UTC, so weights had been burning until this crown. The model is \
 copied to `{MODELS_URL}/models/sha256/7f066f2c5f95b34105c23faa313e25908c8610fbb65091e797e8b9391e926dfc/`; \
 the king seat (datagen) follows the new king from `state.json`. Every duel from \
-here on runs against reign 22 under the unchanged wvk-24 rule until the wvk-25 \
+here on runs against reign 22 under the same scoring rule (δ 0.10 since wvk 25) until the wvk-26 \
 fork below.
 
-## Upcoming fork: wvk 25 — teacher → GLM-5.3-Flash, 262k context, scoring bundle (notice {WVK25_NOTICE}, effective {WVK25_T0})
+## Upcoming fork: wvk 26 — teacher → GLM-5.3-Flash, 262k context, scoring bundle (notice {WVK25_NOTICE} as "wvk 25", renumbered {WVK25_DELTA_EFFECTIVE}; effective {WVK25_T0})
 
 **Notice {WVK25_NOTICE} (explicit dated operator directive, Jacob Steeves \
 2026-09-26 09:09 UTC "lets do this switch"). Effective {WVK25_T0}, at the first \
-duel boundary after that time. `weight_version_key` 24 → 25. Forward-only — \
+duel boundary after that time. `weight_version_key` 25 → 26 (this bundle was noticed \
+as wvk 25; the δ fork of {WVK25_DELTA_EFFECTIVE} took that number — nothing else about \
+the bundle changed). Forward-only — \
 reign 21 stands, no re-verdicts, `min_submission_block` unchanged.** This \
-section becomes "Fork history: wvk 25" at the flip. Plan: the cutover sheet \
-published with the notice; live line on Discord after the first wvk-25 verdict.
+section becomes "Fork history: wvk 26" at the flip. Plan: the cutover sheet \
+published with the notice; live line on Discord after the first wvk-26 verdict.
 
 **What changes.**
 - **Teacher.** The frozen model the duel scores against moves from \
@@ -1336,7 +1386,7 @@ under δ, reign 16 keeps its crown.
 
 **Timeline.** {WVK25_NOTICE}: this notice; the datagen teacher seat moves to GLM \
 (data event). 2026-09-29: GLM teacher swarm pre-warmed next to the Qwen one. \
-**{WVK25_T0}: flip** at the first duel boundary; the first wvk-25 verdict stamps \
+**{WVK25_T0}: flip** at the first duel boundary; the first wvk-26 verdict stamps \
 `teacher.repo = zai-org/GLM-5.3-Flash`, `max_model_len 262144` and the new knobs.
 
 ---
