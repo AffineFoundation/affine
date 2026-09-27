@@ -148,6 +148,7 @@ SHIP_PATHS+=("$HARNESS_SRC")
 for p in "${ENV_PKGS[@]}"; do SHIP_PATHS+=("rollouts/envs/$p"); done
 for p in "${VENDOR_ENVS[@]}"; do SHIP_PATHS+=("rollouts/vendor/prime-envs/$p"); done
 for p in "${HARNESS_PKGS[@]}"; do SHIP_PATHS+=("rollouts/harnesses/$p"); done
+SHIP_PATHS+=("ops/king-datagen/patches/apply_pod_patches.py")
 HEAD_SHORT=$(git rev-parse --short HEAD)
 DIRTY=$(git status --porcelain --untracked-files=all -- "${SHIP_PATHS[@]}")
 if [ $WORKTREE = 1 ]; then
@@ -219,6 +220,10 @@ uv pip install --python .venv/bin/python -q --no-deps '"${RCORE_NODEPS[*]}"' || 
 for img in '"${ENV_IMAGES[*]}"'; do docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null || echo "WARNING: pull failed $img"; done' \
     || { echo "ENV-INSTALL-FAILED"; rc=1; continue; }
   $SSH "/root/prime-pilot/verifiers/.venv/bin/python -m py_compile $HARNESS_DST && echo HARNESS_OK" || { echo "HARNESS-COMPILE-FAILED (restored from .bak)"; $SSH "cp $(dirname "$HARNESS_DST")/.bak/__init__.py $HARNESS_DST"; rc=1; continue; }
+  # Upstream-checkout patches (verifiers / research-environments on the pod);
+  # idempotent, fails loud on anchor drift. See ops/king-datagen/patches/.
+  $SCP "$SRC/ops/king-datagen/patches/apply_pod_patches.py" "root@$H:/root/rollouts/apply_pod_patches.py" >/dev/null \
+    && $SSH 'python3 /root/rollouts/apply_pod_patches.py' || { echo "POD-PATCHES-FAILED"; rc=1; continue; }
   $SSH 'cd /root/rollouts && source /root/affine/.datagen_env && source /root/rollouts/.rollouts_env 2>/dev/null; PYTHONPATH=/root/affine:/root/rollouts /root/venv/bin/python - <<PY
 import os
 from rollouts.registry import load_registry
