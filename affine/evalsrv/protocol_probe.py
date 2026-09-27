@@ -386,6 +386,9 @@ def probe_settings(raw: dict | None) -> dict:
         "max_tokens": int(p.get("max_tokens", 1024)),
         # prompt ids published but not counted toward pass_rate / passed
         "shadow_ids": shadow_ids,
+        # completions per SHADOW prompt (0/absent = n_samples); a finer read per
+        # verdict while a case is being judged for promotion (2026-09-27: 4).
+        "shadow_n_samples": int(p.get("shadow_n_samples", 0) or 0),
     }
 
 
@@ -404,8 +407,11 @@ async def run_probe(model, settings: dict) -> dict:
                   "text_head": text[:200]})
         return r
 
+    shadow = set(settings.get("shadow_ids", ()))
+    n_shadow = int(settings.get("shadow_n_samples", 0) or 0) or settings["n_samples"]
     results = await asyncio.gather(*[
-        one(p, k) for p in PROMPTS for k in range(settings["n_samples"])])
+        one(p, k) for p in PROMPTS
+        for k in range(n_shadow if p["id"] in shadow else settings["n_samples"])])
     out = summarize(list(results), settings["min_pass_rate"], settings.get("shadow_ids", ()))
     out["settings"] = {k: (list(v) if isinstance(v, tuple) else v)
                        for k, v in settings.items() if k != "mode"}
@@ -421,9 +427,11 @@ async def _cli(args: argparse.Namespace) -> int:
                "Content-Type": "application/json", "User-Agent": "affine-probe"}
     results: list[dict] = []
     prompts = [p for p in PROMPTS if not args.only or p["id"] in set(args.only)]
+    shadow = set(args.shadow_ids or ())
     async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as http:
         for prompt in prompts:
-            for k in range(args.n_samples):
+            n_this = (args.shadow_n_samples or args.n_samples) if prompt["id"] in shadow else args.n_samples
+            for k in range(n_this):
                 body = {"model": args.model, "messages": prompt["messages"],
                         "temperature": args.temperature,
                         "max_tokens": args.max_tokens,
@@ -471,6 +479,7 @@ def main() -> None:
     ap.add_argument("--shadow-ids", nargs="*", default=list(DEFAULT_SHADOW_IDS),
                     help="prompt ids reported but not counted (default: the code_block cases)")
     ap.add_argument("--only", nargs="*", default=None, help="run only these prompt ids")
+    ap.add_argument("--shadow-n-samples", type=int, default=0, help="samples per shadow prompt (0 = --n-samples)")
     ap.add_argument("--json-out", default="")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO)

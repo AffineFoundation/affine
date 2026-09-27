@@ -1253,7 +1253,10 @@ max_model_len = 131072
 # enforce = remove them from shadow_ids after the read. Admission rule, no wvk.
 mode = "enforce"
 min_pass_rate = 0.9
-n_samples = 2          # completions per prompt (16 prompts -> 32 replies; 20 enforced + 12 shadow)
+n_samples = 2          # completions per ENFORCED prompt (10 prompts -> 20 replies)
+# 2026-09-27 (operator): 4 completions per SHADOW prompt (6 prompts -> 24 replies) so the
+# per-verdict read of the code-fence cases is less coarse; 0 = n_samples.
+shadow_n_samples = 4
 temperature = 0.7
 max_tokens = 1024
 shadow_ids = ["ide_code_block_only", "assistant_code_block_only", "assistant_code_only_he70", "assistant_code_only_he134", "assistant_code_only_he69", "assistant_code_only_he103"]

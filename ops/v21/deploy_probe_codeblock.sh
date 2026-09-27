@@ -13,7 +13,7 @@ cd "$REPO"
 source .venv/bin/activate
 ts() { date -u +%FT%TZ; }
 echo "$(ts) === deploy_probe_codeblock.sh start (HEAD $(git rev-parse --short HEAD))"
-grep -q '^shadow_ids = \["ide_code_block_only"' affine/affine.toml || { echo "$(ts) toml lacks shadow_ids; abort"; exit 1; }
+grep -q "^shadow_ids = \[\"ide_code_block_only\"" affine/affine.toml && grep -q "^shadow_n_samples = 4$" affine/affine.toml || { echo "$(ts) toml lacks shadow_ids / shadow_n_samples; abort"; exit 1; }
 python -c 'import sys; sys.path.insert(0,"affine"); from affine.config import load_config; from evalsrv.protocol_probe import probe_settings; c=load_config(); print("probe settings:", probe_settings(c.raw["protocol_probe"]))'
 KING_BEFORE=$(python3 -c 'import json;k=json.load(open("affine/state/state.json"))["king"];print(k["challenge_id"], k["reign_number"])')
 POD_SSH_STR=$(python3 -c 'import json;print(json.load(open("affine/state/state.json"))["eval_machine"]["ssh"])')
@@ -62,7 +62,7 @@ if [[ -n "$inf" ]]; then
 fi
 (cd affine && python scripts/build_llms_txt.py | tail -1)
 cd affine && python scripts/redeploy_pods.py --role eval && cd "$REPO"
-"${POD_SSH[@]}" 'grep -E "^(weight_version_key|shadow_ids) " /root/affine/affine.toml; grep -c "assistant_code_only_he" /root/affine/evalsrv/protocol_probe.py' || echo "$(ts) WARNING pod verify ssh failed"
+"${POD_SSH[@]}" 'grep -E "^(weight_version_key|shadow_ids|shadow_n_samples) " /root/affine/affine.toml; grep -c "assistant_code_only_he" /root/affine/evalsrv/protocol_probe.py' || echo "$(ts) WARNING pod verify ssh failed"
 pm2 start affine-validator >/dev/null; sleep 5
 pm2 restart affine-dash >/dev/null 2>&1 || true
 for i in $(seq 1 60); do h=$(health); [[ -n "$h" ]] && { echo "$(ts) pod health: ${h:0:120}"; break; }; sleep 5; done
