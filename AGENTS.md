@@ -31,7 +31,7 @@ evalsrv package under `affine/`.
 
 ---
 
-## 2. Frozen production scoring — sd-meter min(z_R, typ_c, z_A) since wvk 22 (2026-09-18; wvk 23 2026-09-22: thought cap 4096, typicality on the first K content tokens; wvk 24 2026-09-23: forfeit floor −6 sd); min(R,G) v5 below is the wvk 10–21 rule
+## 2. Frozen production scoring — sd-meter min(z_R, typ_c, z_A) since wvk 22 (2026-09-18; wvk 23 2026-09-22: thought cap 4096, typicality on the first K content tokens; wvk 25 2026-09-27: crown floor δ 0.20 → 0.10 sd; wvk 24 2026-09-23: forfeit floor −6 sd); min(R,G) v5 below is the wvk 10–21 rule
 
 **Live rule since wvk 22 (2026-09-18):** `score_mode = "sd_min_rga"`, `n_turns =
 1000` — turn = min(z_R, typ_c, z_A) in teacher-sd units (definition, knobs and
@@ -713,6 +713,31 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
+- `weight_version_key = 25` (2026-09-27 FLIP_TIME UTC, explicit dated operator
+  directive 2026-09-27 08:22 UTC, Jacob Steeves: "Lower the validator margin to
+  0.1"): **crown floor δ `[duel.sd_meter].min_margin_sd` 0.2 → 0.1 sd**, its own
+  fork; nothing else changes (k_sigma 2, n_turns 1000, forfeit −6, caps,
+  rendering, empty-ref rule). The GLM-5.3-Flash / 262k / scoring bundle noticed
+  2026-09-26 as "wvk 25" (T0 2026-09-30 14:00 UTC) is renumbered **wvk 26**
+  (llms.txt, banner, `ops/v20/wvk25_rules_toml_edits.py` asserts δ 0.1 and
+  writes the "26" history paragraph; the lead's PR-#63 scripts must bump 25→26).
+  Counterfactual (108 sd-meter verdicts since wvk 22, each vs its own then-king):
+  8 more crowns (chal-00613/631/643/649/651/652/653/655, +0.11…+0.20 sd, z
+  2.5…4.1), the 7 real crowns stand, chal-00687 (+0.073, reign 22 by operator
+  crown) stays under. **Known risk, operator's choice:** SE at n ≈ 1000 is median
+  0.047 (p10 0.030 / p90 0.110) → δ 0.10 ≈ 2.1 SE (was 4.2), binds on 59/108
+  verdicts (was 94/108); the noisier half of duels is decided by the 2σ test
+  alone — the 2026-08-21/22 shape (δ at the noise floor, 4 near-noise crowns in
+  18 h, winners' score drifting down = winner's-curse churn, reverted wvk 8→9).
+  Under the wvk-26 sequential rule the first look (n = 100, SE ≈ 0.15) still
+  needs margin − 2.6·SE > 0.10. Replay: δ only moves the decision — margins /
+  SE / z identical at 0.2 vs 0.1 on 25/25 stored verdicts. New additive artifact
+  field `turn_kinds` (per-turn action_kind: σ is pooled per dialect, and replays
+  that inferred kinds from the reference actions drifted from the stamped margin
+  by up to 0.02 sd). Tooling `ops/v21/` (`wvk25_delta_toml_edits.py --apply/
+  --revert/--preview`, `llms_wvk25_delta_edits.py [--rollback]`,
+  `deploy_wvk25_delta.sh`, `rollback_wvk25_delta.sh`). Forward-only, reign 22
+  stands, `min_submission_block` unchanged.
 - `weight_version_key = 24` (2026-09-23 20:45 UTC (floor) / 21:33 UTC (addendum), explicit dated operator directive
   Jacob Steeves 2026-09-23 20:17 UTC "Lets do this", on the training-speed
   probe `internal/wvk23/training-speed-probe-2026-09-23.md`): `[duel.sd_meter].
