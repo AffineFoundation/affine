@@ -7,7 +7,7 @@ What --apply changes (every anchor is asserted in its pre-flip state first):
   affine/affine.toml
     [teacher].repo                 Qwen/Qwen3.8-27B -> zai-org/GLM-5.3-Flash  (+ dated comment)
     [miner_serving].max_model_len  131072 -> 262144
-    weight_version_key             N -> N+1  (+ one history paragraph)
+    weight_version_key             25 -> 26  (+ one history paragraph; noticed as 25 before the 2026-09-27 δ flip)
     (asserted, not edited: score_mode = "sd_min_rga", max_thought_tokens 4096,
      ref_max_tokens 4864, thought_cap_ratio 1.25)
   ops/teacher-swarm/swarm.toml
@@ -34,7 +34,7 @@ window from the toml and guard_tokenizers() adds the genesis tokenizer
 automatically once the teacher's vocabulary differs.
 
     python ops/v19/teacher_swap_toml_edits.py --preview          # writes ops/v19/teacher_swap.patch
-    python ops/v19/teacher_swap_toml_edits.py --apply 2026-09-XX --wvk-to 24
+    python ops/v19/teacher_swap_toml_edits.py --apply 2026-09-30 --wvk-to 26
     python ops/v19/teacher_swap_toml_edits.py --band-new-only     # later: teacher_models = ["glm-5.3-flash"]
 """
 
@@ -89,15 +89,15 @@ WINDOW_NEW_TXT = (
     "# 5120 − 768 − 512 = 255,744 tokens, measured with the teacher AND the\n"
     "# genesis tokenizer) and the teacher swarm moves in lockstep.\n"
     f"max_model_len = {WINDOW_NEW}\n")
-WVK_HIST_ANCHOR = "# (ref_min_content / typ_min_refs) distinguishes the two.\n#\n"
+WVK_HIST_ANCHOR = "# ref rule. Forward-only, reign 22 stands, min_submission_block unchanged.\n#\n"
 WVK_HIST_NEW = (
-    "# (ref_min_content / typ_min_refs) distinguishes the two.\n"
+    "# ref rule. Forward-only, reign 22 stands, min_submission_block unchanged.\n"
     "# {a}→{b} teacher swap ({date}): Qwen/Qwen3.8-27B → zai-org/GLM-5.3-Flash and\n"
     "# the serving window 131072 → 262144 (see [teacher] / [miner_serving]).\n"
     "# The scoring rule is unchanged; every anchor (μ, σ) is the new teacher's\n"
     "# own leave-one-out statistic, so scores re-baseline but the formula does\n"
     "# not. The scoring bundle (miner empty-thought rule + gate, sequential stopping, R cap)\n"
-    "# and the 256k context admission rule ride the same fork: ops/v20/wvk25_rules_toml_edits.py.\n"
+    "# and the 256k context admission rule ride the same fork (wvk 26, noticed as 25 before the δ flip): ops/v20/wvk25_rules_toml_edits.py.\n"
     "# Forward-only: {reign_clause}; min_submission_block {msb_clause}.\n"
     "#\n")
 
@@ -146,7 +146,7 @@ def edit_contract(s: str, date: str, a: int, b: int, reign_clause: str, msb_clau
         raise SystemExit(f"weight_version_key is not {a}")
     for must in ('score_mode = "sd_min_rga"\n', "max_thought_tokens = 4096\n",
                  "ref_max_tokens = 4864\n", "thought_cap_ratio = 1.25\n",
-                 "forfeit_sd = -6\n", "min_context_tokens = 0\n"):
+                 "forfeit_sd = -6\n", "min_context_tokens = 0\n", "min_margin_sd = 0.1\n"):
         if must not in s:
             raise SystemExit(f"expected pre-flip anchor missing: {must!r}")
     s = sub1(s, TEACHER_OLD, TEACHER_NEW.format(date=date, a=a, b=b), "[teacher].repo")
@@ -199,7 +199,7 @@ def edit_policies(s: str) -> str:
 
 
 WVK_HIST_WINDOW_ONLY = (
-    "# (ref_min_content / typ_min_refs) distinguishes the two.\n"
+    "# ref rule. Forward-only, reign 22 stands, min_submission_block unchanged.\n"
     "# {a}→{b} scoring bundle + 262k window ({date}): the serving window 131072 → 262144\n"
     "# (see [miner_serving]; prefix cap 255,744 tokens) with the wvk-25 rules (miner\n"
     "# empty-thought rule + gate, sequential stopping, R cap, 256k context admission —\n"
@@ -214,6 +214,9 @@ SWARM_WINDOW_ONLY = [("max_model_len = 131072\n", f"max_model_len = {WINDOW_NEW}
 def edit_contract_window_only(s: str, date: str, a: int, b: int, reign_clause: str, msb_clause: str) -> str:
     if not re.search(rf"^weight_version_key = {a}$", s, re.M):
         raise SystemExit(f"weight_version_key is not {a}")
+    for must in ("min_margin_sd = 0.1\n", "forfeit_sd = -6\n", "min_context_tokens = 0\n"):
+        if must not in s:
+            raise SystemExit(f"expected pre-flip anchor missing: {must!r}")
     s = sub1(s, WINDOW_OLD, WINDOW_NEW_TXT.format(date=date).replace(
         "with the GLM-5.3-Flash swap", "with the wvk-25 scoring bundle; teacher unchanged"), "[miner_serving].max_model_len")
     s = sub1(s, WVK_HIST_ANCHOR, WVK_HIST_WINDOW_ONLY.format(a=a, b=b, date=date, reign_clause=reign_clause,

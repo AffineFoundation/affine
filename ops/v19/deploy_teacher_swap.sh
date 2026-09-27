@@ -37,17 +37,18 @@
 # manager's targets go to 0 and its boxes are released once the last Qwen
 # duel is decided.
 #
-# Directive: Jacob Steeves 2026-09-26 09:09 UTC ("lets do this switch"); T0 2026-09-30 14:00 UTC; wvk 24 -> 25.
+# Directive: Jacob Steeves 2026-09-26 09:09 UTC ("lets do this switch"); T0 2026-09-30 14:00 UTC; wvk 25 -> 26
+# (the bundle was noticed as wvk 25; the delta flip 0.20 -> 0.10 sd took 25 on 2026-09-27 08:32 UTC).
 # Scoring bundle knobs (fork worker, ops/v20/wvk25_toml_edits.py) are applied right after the
 # teacher/window edits below; the wvk integer is bumped ONCE, here.
-# Run: DIRECTIVE_DATE=2026-09-26 WVK_TO=25 bash ops/v19/deploy_teacher_swap.sh
+# Run: DIRECTIVE_DATE=2026-09-26 WVK_TO=26 [SCOPE=window-only] bash ops/v19/deploy_teacher_swap.sh
 set -euo pipefail
 HERE=/home/const/subnet120/ops/v19
 REPO=/home/const/subnet120
 LOG=$HERE/deploy_teacher_swap.log
 PAUSE=/home/const/.affine/deadman.pause
 : "${DIRECTIVE_DATE:?set DIRECTIVE_DATE=YYYY-MM-DD (the dated operator directive)}"
-: "${WVK_TO:=25}"
+: "${WVK_TO:=26}"
 # SCOPE=window-only (option E, 2026-09-26): wvk 25 = scoring bundle + 262k window on the Qwen teacher;
 # the teacher / swarm-model / policy / band steps and the GLM preflights are skipped.
 : "${SCOPE:=teacher-swap}"
@@ -63,6 +64,7 @@ grep -q "^weight_version_key = $WVK_FROM\$" affine/affine.toml || { echo "$(ts) 
 grep -q '^repo = "Qwen/Qwen3.8-27B"$' affine/affine.toml || { echo "$(ts) [teacher].repo is not Qwen3.8-27B; abort"; exit 1; }
 if [[ "$SCOPE" == "window-only" ]]; then echo "$(ts) SCOPE=window-only: teacher stays Qwen; GLM preflights skipped"; fi
 grep -q '^max_model_len = 131072$' affine/affine.toml || { echo "$(ts) max_model_len is not 131072; abort"; exit 1; }
+grep -q '^min_margin_sd = 0.1$' affine/affine.toml || { echo "$(ts) min_margin_sd is not 0.1 (wvk 25 delta flip missing?); abort"; exit 1; }
 python -m py_compile ops/corpus_build.py affine/datagen/slicer.py affine/affine/toolbake.py
 python ops/v19/teacher_swap_toml_edits.py --preview --scope "$SCOPE" >/dev/null
 [[ "$SCOPE" == "window-only" ]] || python - <<'PY' || { echo "$(ts) ToolBaker cannot bake under the GLM template — the re-bake port is not done; abort"; exit 1; }
@@ -156,13 +158,13 @@ if [[ -n "$cid" ]] && has_verdict "$cid"; then
   echo "$(ts) cleared stale in_flight $cid (verdict in history)"
 fi
 
-# --- 5. contract flip: teacher / window / swarm / slicer / policies / band, then the wvk-25 scoring knobs
+# --- 5. contract flip: teacher / window / swarm / slicer / policies / band, then the wvk-26 scoring knobs (fork worker's wvk25_rules script, renumbered)
 python ops/v19/teacher_swap_toml_edits.py --apply "$DIRECTIVE_DATE" --wvk-to "$WVK_TO" --scope "$SCOPE"
 # fork worker's rules script (box main b03fc00d/816af3d1): asserts the eight fixed knobs, flips
 # miner_empty_rule / empty_gate_ratio / r_cap_teacher / seq_enabled, sets min_context_tokens 262144
 # (idempotent), adds its history paragraph, mirrors the toml. Runs AFTER the wvk bump above.
 if [[ -f ops/v20/wvk25_rules_toml_edits.py ]]; then
-  python ops/v20/wvk25_rules_toml_edits.py --apply "$DIRECTIVE_DATE" && echo "$(ts) wvk-25 scoring knobs + context rule applied"
+  python ops/v20/wvk25_rules_toml_edits.py --apply "$DIRECTIVE_DATE" && echo "$(ts) wvk-26 scoring knobs (fork worker's wvk25_rules script, renumbered) + context rule applied"
 else
   echo "$(ts) ops/v20/wvk25_rules_toml_edits.py missing — scoring bundle NOT applied; abort"; exit 1
 fi

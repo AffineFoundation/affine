@@ -1,4 +1,4 @@
-"""Post-T0 green watch for the wvk-25 cutover (GLM-5.3-Flash + 262k + scoring bundle).
+"""Post-T0 green watch for the wvk-26 cutover (noticed as 25; δ 0.10 since wvk 25) (GLM-5.3-Flash + 262k + scoring bundle).
 
 Runs 6-hourly (pm2 cron on the box) and once right after the first wvk-25
 verdict. Prints a <= 8-line report and writes ops/v19/green_watch.jsonl.
@@ -42,7 +42,7 @@ EVALS = "https://s3.hippius.com/affine-sn120/evals"
 OUT = REPO / "ops" / "v19" / "green_watch.jsonl"
 CACHE = Path("/tmp/green_watch/evals")
 UA = {"User-Agent": "affine-green-watch/1.0"}
-WVK = 25
+WVK = 26
 TEACHER = "zai-org/GLM-5.3-Flash"
 WINDOW = 262144
 # pre-fork GLM shadow (internal/teacher-swap/shadow_glm53_report_glm-5.3-flash_v2.txt, k-matched floor-dropped)
@@ -119,7 +119,9 @@ def check_verdicts() -> dict:
         seq = v.get("sequential") or dp.get("sequential") or {}
         n_k = (v.get("king") or {}).get("n_turns") or 1
         n_c = (v.get("challenger") or {}).get("n_turns") or 1
+        kinds = art.get("turn_kinds") or {}
         post.append({
+            "n_turn_kinds": len(kinds),
             "chal": it["challenge_id"], "at": it.get("at"), "z": v.get("z"), "margin": v.get("margin"),
             "wins": v.get("challenger_wins"), "wvk": wvk, "teacher": teacher,
             "control": {leg: (ctrl.get(leg) or {}).get("margin") for leg in ("all", "R", "Gc", "A")},
@@ -162,8 +164,9 @@ def check_site() -> dict:
         "contract_wvk": c["subnet"]["weight_version_key"], "contract_teacher": c["teacher"]["repo"],
         "contract_ok": c["subnet"]["weight_version_key"] == WVK and c["teacher"]["repo"] == TEACHER,
         "llms_fork_history": f"Fork history: wvk {WVK}" in llms,
-        "llms_upcoming_removed": "Upcoming fork: wvk 25" not in llms and "Upcoming fork wvk 25" not in llms,
-        "banner_removed": "wvk 25" not in (html.split('id="fork-notice"')[1][:600] if 'id="fork-notice"' in html else ""),
+        "delta_sd": c["duel"]["sd_meter"]["min_margin_sd"] if isinstance(c.get("duel", {}).get("sd_meter"), dict) else None,
+        "llms_upcoming_removed": f"Upcoming fork: wvk {WVK}" not in llms and f"Upcoming fork wvk {WVK}" not in llms,
+        "banner_removed": f"wvk {WVK}" not in (html.split('id="fork-notice"')[1][:600] if 'id="fork-notice"' in html else ""),
     }
 
 
@@ -244,7 +247,7 @@ def main() -> None:
     cm = v.get("control_mean") or {}
     lines = [
         f"[{rep['at']}] {'GREEN' if rep['green'] else 'NOT GREEN'} — open: {', '.join(k for k, ok in crit.items() if not ok) or 'none'}",
-        f"contract wvk {s.get('contract_wvk')} teacher {str(s.get('contract_teacher'))[-22:]} | llms fork-history {s.get('llms_fork_history')} upcoming-removed {s.get('llms_upcoming_removed')} banner-removed {s.get('banner_removed')}",
+        f"contract wvk {s.get('contract_wvk')} δ {s.get('delta_sd')} teacher {str(s.get('contract_teacher'))[-22:]} | llms fork-history {s.get('llms_fork_history')} upcoming-removed {s.get('llms_upcoming_removed')} banner-removed {s.get('banner_removed')}",
         f"verdicts post-fork {v.get('n_post_fork')} | control all-leg+ {v.get('n_control_all_positive')} | mean all {cm.get('all')} R {cm.get('R')} typ {cm.get('Gc')} A {cm.get('A')} (shadow 0.80/0.04/1.68/0.50) | rollback triggers {v.get('rollback_triggers')}",
         f"forfeits median {v.get('forfeit_median')} max {v.get('forfeit_max')} | empty-gate hits {v.get('empty_gate_hits')} | seq agreement {v.get('seq_agreement')} turns-to-decision p50 {v.get('turns_to_decision_p50')} | duel min p50 {v.get('duel_min_p50')}",
     ]

@@ -1,8 +1,8 @@
-# Notice text — wvk 25: teacher swap + 262k + scoring bundle (directive 2026-09-26 09:09 UTC; post 2026-09-26)
+# Notice text — wvk 26 (announced as 25; δ 0.10 took wvk 25 on 2026-09-27): teacher swap + 262k + scoring bundle (directive 2026-09-26 09:09 UTC; posted 2026-09-26, renumbered 2026-09-27)
 
 ## Discord (announcements) — post today
 
-**Upcoming fork: weight_version_key 24 → 25, effective Wednesday 2026-09-30 14:00 UTC (at the first duel boundary after that time)**
+**Upcoming fork: weight_version_key 25 → 26 (announced as 25 before the 2026-09-27 δ flip), effective Wednesday 2026-09-30 14:00 UTC (at the first duel boundary after that time)**
 
 What changes
 - **Teacher.** The frozen model the duel scores against moves from `Qwen/Qwen3.8-27B` to `zai-org/GLM-5.3-Flash` (320B MoE, 18B active, MIT). Every anchor (μ, σ) is the teacher's own leave-one-out statistic, so the rule re-baselines itself; scores are not comparable across the fork.
@@ -15,8 +15,8 @@ What changes
 - **Admission rule (like the architecture pin, same fork): 256k context required.** A submission's `config.json` must declare an effective context window of at least 262,144 tokens — `max_position_embeddings` (or the equivalent key), times the rope-scaling factor for `linear` / `dynamic` / `yarn` scaling, as vLLM derives `max_model_len`. Checked before download at dispatch and prefetch and at R2 intake; rejection reason `rejected_context_too_short`; `submit.py check` reports it before you upload. The genesis family is native 262,144 and passes unchanged; a config that shortens the window is rejected. Challengers are served and probed at `max_model_len 262144` from T0.
 
 What does NOT change
-- δ = 0.2 sd, k_sigma = 2, forfeit floor −6, miner caps (thought 4,096 with the 1.25× teacher-relative rule, action 768), ref cap 4,864, the architecture pin, the B licence, the thought-length floor.
-- **Reign 21 stands.** Forward-only; no re-verdicts; `min_submission_block` unchanged.
+- δ = 0.1 sd (since wvk 25, 2026-09-27), k_sigma = 2, forfeit floor −6, miner caps (thought 4,096 with the 1.25× teacher-relative rule, action 768), ref cap 4,864, the architecture pin, the B licence, the thought-length floor.
+- **Reign 22 stands.** Forward-only; no re-verdicts; `min_submission_block` unchanged.
 
 Pre-flight for miners
 - Your `config.json` must declare ≥ 262,144 tokens of context (see the admission rule above); `python affine/scripts/submit.py check <repo>` shows the derived window.
@@ -28,7 +28,7 @@ Numbers behind it (stored verdicts + a 404-turn GLM shadow): fully matched teach
 Timeline
 - 2026-09-26: this notice; datagen teacher seat moves to GLM (data event).
 - 2026-09-29: GLM teacher swarm pre-warmed next to the Qwen one.
-- **2026-09-30 14:00 UTC: flip** at the first duel boundary; the first wvk-25 verdict stamps `teacher.repo = zai-org/GLM-5.3-Flash`, `max_model_len 262144`, the new knobs; a live line follows here.
+- **2026-09-30 14:00 UTC: flip** at the first duel boundary; the first wvk-26 verdict stamps `teacher.repo = zai-org/GLM-5.3-Flash`, `max_model_len 262144`, the new knobs; a live line follows here.
 
 ## Addendum (2026-09-26 17:40 UTC, post as a follow-up line under the notice) — tool-call format at T0
 
@@ -36,20 +36,20 @@ Timeline
 - The action parser is unchanged and accepts any `<tool_call>…</tool_call>` block, but the teacher's reference actions are in GLM's form and the action leg (A) and the B licence are scored by the GLM teacher — a Qwen-style call (`<function=…>` / JSON) on a tool-call turn is scored as an unlikely action. **Emit GLM's form on tool-call turns.**
 - Unaffected: the protocol probe (renders through your own template with `tools=`), the `</think>` think-close rule, the `text` fallback at tool turns, the thought-length floor.
 
-## llms.txt — "Upcoming fork: wvk 25" (until T0), then "Fork history: wvk 25"
+## llms.txt — "Upcoming fork: wvk 26" (until T0), then "Fork history: wvk 26"
 
-wvk 25 (effective 2026-09-30 14:00 UTC): teacher `Qwen/Qwen3.8-27B` → `zai-org/GLM-5.3-Flash`; serving window 131,072 → 262,144 tokens (prefix cap 255,744, both tokenizers); miner empty-thought rule (< 10 content tokens → `min(z_R, z_A)`, admission gate 2× the teacher's share); sequential stopping (looks every 100 turns, `margin − 2.6·SE > δ` on two consecutive looks, futility stop, else 1,000); `z_R` capped at 0; fully matched control published; admission rule `[submission].min_context_tokens = 262144` (effective context window from `config.json`, rope scaling applied as vLLM derives `max_model_len`; genesis passes; `rejected_context_too_short`). Tool-call turns of D re-derived under the new teacher's chat template (`<tools>` system block, `<tool_call>name<arg_key>…</arg_key><arg_value>…</arg_value></tool_call>`, `<tool_response>` results, GLM preamble as literal system text) — emit GLM's tool-call form on those turns; the parser accepts any `<tool_call>` block but A and B are scored by the GLM teacher. bash / boxed turns byte-identical. Forward-only; reign 21 stands; `min_submission_block` unchanged.
+wvk 26 (noticed as 25; effective 2026-09-30 14:00 UTC): teacher `Qwen/Qwen3.8-27B` → `zai-org/GLM-5.3-Flash`; serving window 131,072 → 262,144 tokens (prefix cap 255,744, both tokenizers); miner empty-thought rule (< 10 content tokens → `min(z_R, z_A)`, admission gate 2× the teacher's share); sequential stopping (looks every 100 turns, `margin − 2.6·SE > δ` on two consecutive looks, futility stop, else 1,000); `z_R` capped at 0; fully matched control published; admission rule `[submission].min_context_tokens = 262144` (effective context window from `config.json`, rope scaling applied as vLLM derives `max_model_len`; genesis passes; `rejected_context_too_short`). Tool-call turns of D re-derived under the new teacher's chat template (`<tools>` system block, `<tool_call>name<arg_key>…</arg_key><arg_value>…</arg_value></tool_call>`, `<tool_response>` results, GLM preamble as literal system text) — emit GLM's tool-call form on those turns; the parser accepts any `<tool_call>` block but A and B are scored by the GLM teacher. bash / boxed turns byte-identical. Forward-only; reign 22 stands; `min_submission_block` unchanged; δ 0.10 (wvk 25).
 
 ## Dashboard banner (`#fork-notice`, remove at T0)
 
-Upcoming fork wvk 25 — Wed 2026-09-30 14:00 UTC: teacher → GLM-5.3-Flash, 262k context, miner empty-thought rule, sequential stopping, R cap. Reign 21 stands. Miners: your config must declare ≥ 262,144 tokens of context and serve at that window.
+Upcoming fork wvk 26 — Wed 2026-09-30 14:00 UTC: teacher → GLM-5.3-Flash, 262k context, miner empty-thought rule, sequential stopping, R cap. Reign 22 stands. Miners: your config must declare ≥ 262,144 tokens of context and serve at that window.
 
-## AMENDMENT (draft 2026-09-26 23:30 UTC — post only on Jacob's decision) — teacher swap deferred; wvk 25 ships as the scoring bundle + 262k on the current teacher
+## AMENDMENT (draft 2026-09-26 23:30 UTC, renumbered 09-27 — post only on Jacob's decision) — teacher swap deferred; wvk 26 ships as the scoring bundle + 262k on the current teacher
 
-**Amendment to the wvk 25 notice.** During pre-flip testing we found that GLM-5.3-Flash's teacher echo log-probabilities are not run-to-run reproducible on our serving stack at duel lengths (sparse-attention top-k selection and fp8-MoE batch variance; dense mode fixes it only at a 64k window, which would cap the dataset). We will not put a non-reproducible teacher into the contract. Therefore:
+**Amendment to the wvk 25/26 notice.** During pre-flip testing we found that GLM-5.3-Flash's teacher echo log-probabilities are not run-to-run reproducible on our serving stack at duel lengths (sparse-attention top-k selection and fp8-MoE batch variance; dense mode fixes it only at a 64k window, which would cap the dataset). We will not put a non-reproducible teacher into the contract. Therefore:
 
-- **wvk 25 on Wednesday 2026-09-30 14:00 UTC ships without the teacher change.** Teacher stays `Qwen/Qwen3.8-27B` (echoes bit-exact today).
-- **Everything else in the notice stands:** the serving window 131,072 → 262,144 tokens (prefix cap 255,744), the 256k-context admission rule (`config.json` effective window ≥ 262,144; `rejected_context_too_short`; `submit.py check`), the miner empty-thought rule + admission gate, sequential stopping (looks every 100 turns, `margin − 2.6·SE > δ` on two consecutive looks), the R cap, the fully matched control on every verdict. Reign 22 (the sitting king) stands; forward-only; `min_submission_block` unchanged.
+- **wvk 26 on Wednesday 2026-09-30 14:00 UTC ships without the teacher change.** Teacher stays `Qwen/Qwen3.8-27B` (echoes bit-exact today).
+- **Everything else in the notice stands:** the serving window 131,072 → 262,144 tokens (prefix cap 255,744), the 256k-context admission rule (`config.json` effective window ≥ 262,144; `rejected_context_too_short`; `submit.py check`), the miner empty-thought rule + admission gate, sequential stopping (looks every 100 turns, `margin − 2.6·SE > δ` on two consecutive looks), the R cap, the fully matched control on every verdict. Reign 22 (the sitting king) stands; forward-only; `min_submission_block` unchanged. δ stays at the 0.10 sd set by wvk 25.
 - **The tool-call format change does NOT happen at T0.** D stays baked under the Qwen template; keep emitting Qwen-style tool calls. Ignore the 09-26 addendum about GLM's `<tool_call>name<arg_key>…` form until a future teacher notice.
 - The teacher swap moves to its own fork with its own ≥ 48-hour notice once a deterministic echo path exists (dense prefill at 262k in vLLM, or a candidate whose echoes are exact under load). Nothing about that fork is decided.
 
