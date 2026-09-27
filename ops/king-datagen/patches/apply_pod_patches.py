@@ -96,6 +96,7 @@ PATCHES = [
         "new": (
             "        || { apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null; } \\\n"
             "        " + APT_RETRY + "\n"
+            "    # affine-pod-patch: bullseye-security pool 404s (2026-09-27)\n"
         ),
     },
     {
@@ -108,6 +109,7 @@ PATCHES = [
         "new": (
             "command -v curl >/dev/null || { apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null; } \\\n"
             "  " + APT_RETRY + "\n"
+            "# affine-pod-patch: bullseye-security pool 404s (2026-09-27)\n"
         ),
     },
 ]
@@ -123,7 +125,7 @@ def main() -> int:
             rc = 2
             continue
         text = f.read_text()
-        if p["marker"] in text and p["old"] not in text:
+        if p["marker"] in text:
             print(f"ok       {p['name']}")
             continue
         if p["old"] not in text:
