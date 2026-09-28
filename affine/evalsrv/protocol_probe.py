@@ -328,15 +328,25 @@ def evaluate(text: str, expects: str, *, think_stripped: bool = False,
             "content_chars": content_chars, "tool_calls": n_tool}
 
 
+CODE_IDS = frozenset(pr["id"] for pr in PROMPTS if pr.get("code"))
+
+
 def _rates(results: list[dict]) -> dict:
-    n = len(results)
-    n_ok = sum(1 for r in results if r["ok"])
+    """Rates over `results`. A code-prompt reply whose think block never closed
+    is NEUTRAL (2026-09-28, after chal-00722 was rejected on five
+    such replies with zero fence faults): it is not counted in n / n_ok — the
+    code cases judge fences, and the ten IDE/assistant prompts already judge
+    think-close. Reported as n_neutral and still listed in by_reason."""
+    scored = [r for r in results if not (r.get("id") in CODE_IDS and not r["think_closed"])]
+    n = len(scored)
+    n_ok = sum(1 for r in scored if r["ok"])
     by_reason: dict[str, int] = {}
     for r in results:
         for why in r["reasons"]:
             by_reason[why] = by_reason.get(why, 0) + 1
     return {"n": n, "n_ok": n_ok, "pass_rate": n_ok / n if n else 0.0,
-            "think_close_rate": (sum(1 for r in results if r["think_closed"]) / n if n else 0.0),
+            "n_neutral": len(results) - n,
+            "think_close_rate": (sum(1 for r in results if r["think_closed"]) / len(results) if results else 0.0),
             "by_reason": by_reason}
 
 

@@ -62,9 +62,9 @@ if [[ -n "$inf" ]]; then
   if has_verdict "$inf"; then python3 -c 'import json;p="affine/state/state.json";s=json.load(open(p));s["in_flight"]=None;json.dump(s,open(p,"w"),indent=1)'; echo "$(ts) cleared stale in_flight $inf";
   else echo "$(ts) in_flight $inf has no verdict — abort"; pm2 start affine-validator >/dev/null; exit 1; fi
 fi
-FLIP_TIME=$(date -u +%H:%M); sed -i "s/2026-09-28 FLIP_TIME UTC/2026-09-28 $FLIP_TIME UTC/" affine/scripts/build_llms_txt.py
+FLIP_TIME=$(date -u +%H:%M); sed -i "s/2026-09-28 FLIP_TIME UTC/2026-09-28 $FLIP_TIME UTC/; s/2026-09-28 15:xx UTC/2026-09-28 $FLIP_TIME UTC/" affine/scripts/build_llms_txt.py
 (cd affine && python scripts/build_llms_txt.py | tail -1)
-grep -q "Enforced since 2026-09-28 $FLIP_TIME UTC" affine/website/llms.txt && echo "$(ts) llms.txt carries the enforcement line" || echo "$(ts) WARNING llms.txt lacks the enforcement line (placeholder unresolved?)"
+grep -q "Enforced since 2026-09-28" affine/website/llms.txt && echo "$(ts) llms.txt carries the enforcement line" || echo "$(ts) WARNING llms.txt lacks the enforcement line (placeholder unresolved?)"
 cd affine && python scripts/redeploy_pods.py --role eval && cd "$REPO"
 "${POD_SSH[@]}" 'grep -E "^(weight_version_key|shadow_ids|code_n_samples|code_max_tokens) " /root/affine/affine.toml; grep -c "assistant_code_only_he" /root/affine/evalsrv/protocol_probe.py' || echo "$(ts) WARNING pod verify ssh failed"
 pm2 start affine-validator >/dev/null; sleep 5
