@@ -13,7 +13,7 @@ cd "$REPO"
 source .venv/bin/activate
 ts() { date -u +%FT%TZ; }
 echo "$(ts) === deploy_probe_codeblock.sh start (HEAD $(git rev-parse --short HEAD))"
-grep -q "^shadow_ids = \[\"ide_code_block_only\"" affine/affine.toml && grep -q "^shadow_n_samples = 4$" affine/affine.toml || { echo "$(ts) toml lacks shadow_ids / shadow_n_samples; abort"; exit 1; }
+grep -q "^shadow_ids = \[\"ide_code_block_only\"\]$" affine/affine.toml && grep -q "^code_n_samples = 4$" affine/affine.toml && grep -q "^code_max_tokens = 2048$" affine/affine.toml || { echo "$(ts) toml lacks the promoted probe knobs; abort"; exit 1; }
 python -c 'import sys; sys.path.insert(0,"affine"); from affine.config import load_config; from evalsrv.protocol_probe import probe_settings; c=load_config(); print("probe settings:", probe_settings(c.raw["protocol_probe"]))'
 KING_BEFORE=$(python3 -c 'import json;k=json.load(open("affine/state/state.json"))["king"];print(k["challenge_id"], k["reign_number"])')
 POD_SSH_STR=$(python3 -c 'import json;print(json.load(open("affine/state/state.json"))["eval_machine"]["ssh"])')
@@ -60,11 +60,13 @@ if [[ -n "$inf" ]]; then
   if has_verdict "$inf"; then python3 -c 'import json;p="affine/state/state.json";s=json.load(open(p));s["in_flight"]=None;json.dump(s,open(p,"w"),indent=1)'; echo "$(ts) cleared stale in_flight $inf";
   else echo "$(ts) in_flight $inf has no verdict — abort"; pm2 start affine-validator >/dev/null; exit 1; fi
 fi
+FLIP_TIME=$(date -u +%H:%M); sed -i "s/2026-09-28 FLIP_TIME UTC/2026-09-28 $FLIP_TIME UTC/" affine/scripts/build_llms_txt.py
 (cd affine && python scripts/build_llms_txt.py | tail -1)
+grep -c "Enforced since 2026-09-28" affine/website/llms.txt
 cd affine && python scripts/redeploy_pods.py --role eval && cd "$REPO"
-"${POD_SSH[@]}" 'grep -E "^(weight_version_key|shadow_ids|shadow_n_samples) " /root/affine/affine.toml; grep -c "assistant_code_only_he" /root/affine/evalsrv/protocol_probe.py' || echo "$(ts) WARNING pod verify ssh failed"
+"${POD_SSH[@]}" 'grep -E "^(weight_version_key|shadow_ids|code_n_samples|code_max_tokens) " /root/affine/affine.toml; grep -c "assistant_code_only_he" /root/affine/evalsrv/protocol_probe.py' || echo "$(ts) WARNING pod verify ssh failed"
 pm2 start affine-validator >/dev/null; sleep 5
 pm2 restart affine-dash >/dev/null 2>&1 || true
 for i in $(seq 1 60); do h=$(health); [[ -n "$h" ]] && { echo "$(ts) pod health: ${h:0:120}"; break; }; sleep 5; done
 echo "$(ts) king after: $(python3 -c 'import json;k=json.load(open("affine/state/state.json"))["king"];print(k["challenge_id"], k["reign_number"])')"
-echo "$(ts) done. Next verdicts publish protocol_probe.shadow."
+echo "$(ts) done at $FLIP_TIME UTC: code_only cases ENFORCED. Next: first verdict probe block, Discord note, commit llms/builder."

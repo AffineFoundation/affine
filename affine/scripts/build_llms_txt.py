@@ -2105,7 +2105,20 @@ r22 61 of 164, correct code inside) — the per-byte action leg is blind to a \
 few fence bytes. They are published under `protocol_probe.shadow` \
 (`pass_rate`, `by_reason`) and do **not** count toward `pass_rate` / \
 `passed` until they leave `[protocol_probe].shadow_ids`; that promotion is an \
-admission decision (no wvk) and will be announced here.
+admission decision (no wvk) and will be announced here. **Enforced since \
+{PROBE_CODE_ENFORCED} (operator decision after an 11-verdict shadow read: \
+fence-clean models 0.95–1.00, close-only models 0.05–0.35):** the five \
+HumanEval-shaped "only the code" prompts count — **a code-only reply must not \
+carry a malformed fence: bare code, or exactly one balanced fenced block with a \
+language tag, passes; a lone closing ```` ``` ````, an unbalanced, an untagged or \
+a second fence fails.** They run 4 completions each with `max_tokens` 2,048 \
+(`code_n_samples`, `code_max_tokens`; a HumanEval task needs more reasoning \
+than the IDE prompts, and a think block cut before `</think>` is not the fence \
+habit), so the bar is **≥ 0.90 pooled over 40 replies** (20 IDE/assistant + 20 \
+code). The IDE "reply with only a Python code block" case stays in shadow \
+(4/4 on every verdict read). Pre-flight: `python -m evalsrv.protocol_probe \
+--base-url http://YOUR_VLLM/v1 --model YOUR_MODEL --code-n-samples 4` shows \
+your pooled rate and the fence reasons.
 
 **3. IDE-agent prompts join D — data event, no wvk change.** Teacher \
 rollouts under two real IDE/CLI coding agents (OpenAI Codex CLI and Claude \
