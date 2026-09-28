@@ -2120,7 +2120,7 @@ than the IDE prompts, and a think block cut before `</think>` is not the fence \
 habit), so the bar is **≥ 0.90 pooled over 40 replies** (20 IDE/assistant + 20 \
 code). A code-prompt reply whose think block never closes is **neutral** — not \
 counted for or against (`n_neutral`; the ten IDE/assistant prompts already judge \
-think-close) — since 2026-09-28 15:xx UTC, after the first enforced verdict \
+think-close) — since 2026-09-28 15:18 UTC, after the first enforced verdict \
 (`chal-00722`) was rejected on five such replies with zero fence faults. The IDE \
 "reply with only a Python code block" case stays in shadow \
 (4/4 on every verdict read). Pre-flight: `python -m evalsrv.protocol_probe \
