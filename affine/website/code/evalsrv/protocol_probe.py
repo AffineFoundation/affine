@@ -169,7 +169,7 @@ PROMPTS: list[dict] = [
                    "Reply with only a Python code block — no text before or "
                    "after it. Implement `def is_palindrome(s: str) -> bool` "
                    "that ignores case and non-alphanumeric characters."}]},
-    {"id": "assistant_code_block_only", "expects": "code_only",
+    {"id": "assistant_code_block_only", "expects": "code_only", "code": True,
      "messages": [{"role": "system", "content": ASSISTANT_SYSTEM},
                   {"role": "user", "content":
                    "Read the following function signature and docstring, and "
@@ -187,16 +187,16 @@ PROMPTS: list[dict] = [
     # reign-21/22 lineage (9/10, 8/10, 7/10, 7/10 of the last ten benched
     # models). One fixed task under-detects (reign 22 live: 1–2 of 12 replies
     # close-only on HumanEval/0 vs 37 % on the 164-task bench).
-    {"id": "assistant_code_only_he70", "expects": "code_only",
+    {"id": "assistant_code_only_he70", "expects": "code_only", "code": True,
      "messages": [{"role": "system", "content": ASSISTANT_SYSTEM},
                   {"role": "user", "content": "Read the following function signature and docstring, and fully implement the function described. Your response should only contain the code for this function.\n\ndef strange_sort_list(lst):\n    '''\n    Given list of integers, return list in strange order.\n    Strange sorting, is when you start with the minimum value,\n    then maximum of the remaining integers, then minimum and so on.\n\n    Examples:\n    strange_sort_list([1, 2, 3, 4]) == [1, 4, 2, 3]\n    strange_sort_list([5, 5, 5, 5]) == [5, 5, 5, 5]\n    strange_sort_list([]) == []\n    '''\n"}]},
-    {"id": "assistant_code_only_he134", "expects": "code_only",
+    {"id": "assistant_code_only_he134", "expects": "code_only", "code": True,
      "messages": [{"role": "system", "content": ASSISTANT_SYSTEM},
                   {"role": "user", "content": "Read the following function signature and docstring, and fully implement the function described. Your response should only contain the code for this function.\n\ndef check_if_last_char_is_a_letter(txt):\n    '''\n    Create a function that returns True if the last character\n    of a given string is an alphabetical character and is not\n    a part of a word, and False otherwise.\n    Note: \"word\" is a group of characters separated by space.\n\n    Examples:\n    check_if_last_char_is_a_letter(\"apple pie\") \u279e False\n    check_if_last_char_is_a_letter(\"apple pi e\") \u279e True\n    check_if_last_char_is_a_letter(\"apple pi e \") \u279e False\n    check_if_last_char_is_a_letter(\"\") \u279e False \n    '''\n"}]},
-    {"id": "assistant_code_only_he69", "expects": "code_only",
+    {"id": "assistant_code_only_he69", "expects": "code_only", "code": True,
      "messages": [{"role": "system", "content": ASSISTANT_SYSTEM},
                   {"role": "user", "content": "Read the following function signature and docstring, and fully implement the function described. Your response should only contain the code for this function.\n\ndef search(lst):\n    '''\n    You are given a non-empty list of positive integers. Return the greatest integer that is greater than \n    zero, and has a frequency greater than or equal to the value of the integer itself. \n    The frequency of an integer is the number of times it appears in the list.\n    If no such a value exist, return -1.\n    Examples:\n        search([4, 1, 2, 2, 3, 1]) == 2\n        search([1, 2, 2, 3, 3, 3, 4, 4, 4]) == 3\n        search([5, 5, 4, 4, 4]) == -1\n    '''\n"}]},
-    {"id": "assistant_code_only_he103", "expects": "code_only",
+    {"id": "assistant_code_only_he103", "expects": "code_only", "code": True,
      "messages": [{"role": "system", "content": ASSISTANT_SYSTEM},
                   {"role": "user", "content": "Read the following function signature and docstring, and fully implement the function described. Your response should only contain the code for this function.\n\ndef rounded_avg(n, m):\n    \"\"\"You are given two positive integers n and m, and your task is to compute the\n    average of the integers from n through m (including n and m). \n    Round the answer to the nearest integer and convert that to binary.\n    If n is greater than m, return -1.\n    Example:\n    rounded_avg(1, 5) => \"0b11\"\n    rounded_avg(7, 5) => -1\n    rounded_avg(10, 20) => \"0b1111\"\n    rounded_avg(20, 33) => \"0b11010\"\n    \"\"\"\n"}]},
 ]
@@ -205,9 +205,9 @@ PROMPTS: list[dict] = [
 # passed ([protocol_probe].shadow_ids). A new case starts here, gets read on a
 # few verdicts, and is promoted by removing it from the list (admission rule,
 # no weight_version_key event).
-DEFAULT_SHADOW_IDS = ("ide_code_block_only", "assistant_code_block_only",
-                      "assistant_code_only_he70", "assistant_code_only_he134",
-                      "assistant_code_only_he69", "assistant_code_only_he103")
+# 2026-09-28: the five code_only cases promoted to the enforced set (operator, after the
+# 11-verdict shadow read); the IDE strict case stays in shadow (4/4 on every verdict).
+DEFAULT_SHADOW_IDS = ("ide_code_block_only",)
 
 _FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*([^`~\s]*)[^\n]*$")
 
@@ -384,6 +384,14 @@ def probe_settings(raw: dict | None) -> dict:
         "n_samples": int(p.get("n_samples", 2)),
         "temperature": float(p.get("temperature", 0.7)),
         "max_tokens": int(p.get("max_tokens", 1024)),
+        # per-prompt override for the code_only cases (2026-09-28: 2048 — a
+        # HumanEval task needs more reasoning than the IDE prompts; at 1024 the
+        # think block was cut before </think> on 7/20 replies of chal-00721,
+        # which is not the fence habit the rule targets)
+        "code_max_tokens": int(p.get("code_max_tokens", 2048)),
+        # completions per code prompt (0/absent = n_samples); 4 keeps the read the
+        # shadow phase was judged on (20 code replies next to the 20 IDE/assistant ones)
+        "code_n_samples": int(p.get("code_n_samples", 0) or 0),
         # prompt ids published but not counted toward pass_rate / passed
         "shadow_ids": shadow_ids,
         # completions per SHADOW prompt (0/absent = n_samples); a finer read per
@@ -401,7 +409,8 @@ async def run_probe(model, settings: dict) -> dict:
         async with sem:
             text = await model.complete(
                 prompt["messages"], settings["temperature"],
-                settings["max_tokens"], tools=prompt.get("tools"))
+                (settings.get("code_max_tokens") or settings["max_tokens"]) if prompt.get("code") else settings["max_tokens"],
+                tools=prompt.get("tools"))
         r = evaluate(text, prompt["expects"])
         r.update({"id": prompt["id"], "sample": k,
                   "text_head": text[:200]})
@@ -409,9 +418,15 @@ async def run_probe(model, settings: dict) -> dict:
 
     shadow = set(settings.get("shadow_ids", ()))
     n_shadow = int(settings.get("shadow_n_samples", 0) or 0) or settings["n_samples"]
+    n_code = int(settings.get("code_n_samples", 0) or 0) or settings["n_samples"]
+
+    def n_for(p: dict) -> int:
+        if p["id"] in shadow:
+            return n_shadow
+        return n_code if p.get("code") else settings["n_samples"]
+
     results = await asyncio.gather(*[
-        one(p, k) for p in PROMPTS
-        for k in range(n_shadow if p["id"] in shadow else settings["n_samples"])])
+        one(p, k) for p in PROMPTS for k in range(n_for(p))])
     out = summarize(list(results), settings["min_pass_rate"], settings.get("shadow_ids", ()))
     out["settings"] = {k: (list(v) if isinstance(v, tuple) else v)
                        for k, v in settings.items() if k != "mode"}
@@ -430,11 +445,12 @@ async def _cli(args: argparse.Namespace) -> int:
     shadow = set(args.shadow_ids or ())
     async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as http:
         for prompt in prompts:
-            n_this = (args.shadow_n_samples or args.n_samples) if prompt["id"] in shadow else args.n_samples
+            n_this = ((args.shadow_n_samples or args.n_samples) if prompt["id"] in shadow
+                      else (args.code_n_samples or args.n_samples) if prompt.get("code") else args.n_samples)
             for k in range(n_this):
                 body = {"model": args.model, "messages": prompt["messages"],
                         "temperature": args.temperature,
-                        "max_tokens": args.max_tokens,
+                        "max_tokens": (args.code_max_tokens or args.max_tokens) if prompt.get("code") else args.max_tokens,
                         "skip_special_tokens": False}
                 if prompt.get("tools"):
                     body["tools"] = prompt["tools"]
@@ -480,6 +496,8 @@ def main() -> None:
                     help="prompt ids reported but not counted (default: the code_block cases)")
     ap.add_argument("--only", nargs="*", default=None, help="run only these prompt ids")
     ap.add_argument("--shadow-n-samples", type=int, default=0, help="samples per shadow prompt (0 = --n-samples)")
+    ap.add_argument("--code-max-tokens", type=int, default=2048, help="max_tokens for the code_only prompts (0 = --max-tokens)")
+    ap.add_argument("--code-n-samples", type=int, default=0, help="samples per code prompt (0 = --n-samples)")
     ap.add_argument("--json-out", default="")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO)

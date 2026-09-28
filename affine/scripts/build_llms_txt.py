@@ -85,7 +85,7 @@ WVK25_T0 = "2026-09-30 14:00 UTC"
 # Operator crown of chal-00687 as reign 22 (Jacob Steeves, 2026-09-26 18:51 UTC).
 OPCROWN_DATE = "2026-09-26"
 # Protocol probe: code-fence cases promoted to the enforced set (operator, 2026-09-28).
-PROBE_CODE_ENFORCED = "2026-09-28 FLIP_TIME UTC"
+PROBE_CODE_ENFORCED = "2026-09-28 12:25 UTC"
 OPCROWN_NOTE = "operator crown 2026-09-26; did not clear δ under wvk 24"
 WVK24_EFFECTIVE = "2026-09-23"
 WVK23_EFFECTIVE = "2026-09-22"
