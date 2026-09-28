@@ -15,6 +15,7 @@ ts() { date -u +%FT%TZ; }
 echo "$(ts) === deploy_probe_codeblock.sh start (HEAD $(git rev-parse --short HEAD))"
 grep -q "^shadow_ids = \[\"ide_code_block_only\"\]$" affine/affine.toml && grep -q "^code_n_samples = 4$" affine/affine.toml && grep -q "^code_max_tokens = 2048$" affine/affine.toml || { echo "$(ts) toml lacks the promoted probe knobs; abort"; exit 1; }
 python -c 'import sys; sys.path.insert(0,"affine"); from affine.config import load_config; from evalsrv.protocol_probe import probe_settings; c=load_config(); print("probe settings:", probe_settings(c.raw["protocol_probe"]))'
+[[ $(grep -c "PROBE_CODE_ENFORCED" affine/scripts/build_llms_txt.py) -ge 3 ]] || { echo "$(ts) builder lacks the PROBE_CODE_ENFORCED constant/placeholder; abort"; exit 1; }
 KING_BEFORE=$(python3 -c 'import json;k=json.load(open("affine/state/state.json"))["king"];print(k["challenge_id"], k["reign_number"])')
 POD_SSH_STR=$(python3 -c 'import json;print(json.load(open("affine/state/state.json"))["eval_machine"]["ssh"])')
 read -r POD_USERHOST _ POD_PORT <<<"$POD_SSH_STR"
@@ -53,7 +54,8 @@ done
 echo "$(ts) boundary reached -> pause deadman, pm2 stop affine-validator"
 mkdir -p "$(dirname "$PAUSE")" && touch "$PAUSE"
 unpause() { rm -f "$PAUSE"; echo "$(ts) deadman pause removed"; }
-trap 'unpause; reenable' EXIT
+# from here on any failure must leave the validator running
+trap 'pm2 start affine-validator >/dev/null 2>&1 || true; unpause; reenable' EXIT
 pm2 stop affine-validator >/dev/null; sleep 3
 inf=$(cur_cid)
 if [[ -n "$inf" ]]; then
@@ -62,7 +64,7 @@ if [[ -n "$inf" ]]; then
 fi
 FLIP_TIME=$(date -u +%H:%M); sed -i "s/2026-09-28 FLIP_TIME UTC/2026-09-28 $FLIP_TIME UTC/" affine/scripts/build_llms_txt.py
 (cd affine && python scripts/build_llms_txt.py | tail -1)
-grep -c "Enforced since 2026-09-28" affine/website/llms.txt
+grep -q "Enforced since 2026-09-28 $FLIP_TIME UTC" affine/website/llms.txt && echo "$(ts) llms.txt carries the enforcement line" || echo "$(ts) WARNING llms.txt lacks the enforcement line (placeholder unresolved?)"
 cd affine && python scripts/redeploy_pods.py --role eval && cd "$REPO"
 "${POD_SSH[@]}" 'grep -E "^(weight_version_key|shadow_ids|code_n_samples|code_max_tokens) " /root/affine/affine.toml; grep -c "assistant_code_only_he" /root/affine/evalsrv/protocol_probe.py' || echo "$(ts) WARNING pod verify ssh failed"
 pm2 start affine-validator >/dev/null; sleep 5

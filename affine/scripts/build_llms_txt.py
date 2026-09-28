@@ -84,6 +84,8 @@ WVK25_DELTA_EFFECTIVE = "2026-09-27 08:32 UTC"  # δ 0.20 → 0.10 sd (wvk 24→
 WVK25_T0 = "2026-09-30 14:00 UTC"
 # Operator crown of chal-00687 as reign 22 (Jacob Steeves, 2026-09-26 18:51 UTC).
 OPCROWN_DATE = "2026-09-26"
+# Protocol probe: code-fence cases promoted to the enforced set (operator, 2026-09-28).
+PROBE_CODE_ENFORCED = "2026-09-28 FLIP_TIME UTC"
 OPCROWN_NOTE = "operator crown 2026-09-26; did not clear δ under wvk 24"
 WVK24_EFFECTIVE = "2026-09-23"
 WVK23_EFFECTIVE = "2026-09-22"
@@ -218,6 +220,7 @@ def _margin_subs() -> dict[str, str]:
         "{WVK25_DELTA_EFFECTIVE}": WVK25_DELTA_EFFECTIVE,
         "{WVK25_T0}": WVK25_T0,
         "{OPCROWN_DATE}": OPCROWN_DATE,
+        "{PROBE_CODE_ENFORCED}": PROBE_CODE_ENFORCED,
         "{OPCROWN_NOTE}": OPCROWN_NOTE,
         "{CAP_RATIO}": f"{float(d.get('thought_cap_ratio', 0.0)):g}",
         "{CAP_RULE}": (f" Per turn the thought cap is `max({int(d['max_thought_tokens'])}, "
