@@ -1519,5 +1519,7 @@ def _probe_public(protocol: dict) -> dict:
             r["id"]: {"ok": r["ok"], "reasons": r["reasons"]}
             for r in sorted(protocol["results"], key=lambda r: (r["id"], -r["ok"]))
         },
+        # Shadow cases (published, not counted): rates over [protocol_probe].shadow_ids.
+        "shadow": protocol.get("shadow"),
         "settings": protocol["settings"],
     }

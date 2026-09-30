@@ -84,6 +84,8 @@ WVK25_DELTA_EFFECTIVE = "2026-09-27 08:32 UTC"  # δ 0.20 → 0.10 sd (wvk 24→
 WVK25_T0 = "2026-09-30 14:00 UTC"
 # Operator crown of chal-00687 as reign 22 (Jacob Steeves, 2026-09-26 18:51 UTC).
 OPCROWN_DATE = "2026-09-26"
+# Protocol probe: code-fence cases promoted to the enforced set (operator, 2026-09-28).
+PROBE_CODE_ENFORCED = "2026-09-28 12:25 UTC"
 OPCROWN_NOTE = "operator crown 2026-09-26; did not clear δ under wvk 24"
 WVK24_EFFECTIVE = "2026-09-23"
 WVK23_EFFECTIVE = "2026-09-22"
@@ -218,6 +220,7 @@ def _margin_subs() -> dict[str, str]:
         "{WVK25_DELTA_EFFECTIVE}": WVK25_DELTA_EFFECTIVE,
         "{WVK25_T0}": WVK25_T0,
         "{OPCROWN_DATE}": OPCROWN_DATE,
+        "{PROBE_CODE_ENFORCED}": PROBE_CODE_ENFORCED,
         "{OPCROWN_NOTE}": OPCROWN_NOTE,
         "{CAP_RATIO}": f"{float(d.get('thought_cap_ratio', 0.0)):g}",
         "{CAP_RULE}": (f" Per turn the thought cap is `max({int(d['max_thought_tokens'])}, "
@@ -2093,7 +2096,36 @@ read (2026-09-08, 18 verdicts `chal-00348`…`chal-00365`):** pass rates \
 0.00–1.00, median 0.60, one model at ≥ 0.90; every failure was \
 `no_think_close`. **Enforced since 2026-09-09** with the fork. Every verdict \
 still carries `protocol_probe` (`pass_rate`, `think_close_rate`, \
-`by_reason`, `by_prompt`).
+`by_reason`, `by_prompt`). **Code-fence cases, shadow since 2026-09-27:** six \
+more prompts run with the set — one IDE prompt "reply with only a Python code \
+block" (pass = exactly one balanced fenced block with a language tag) and \
+five HumanEval-shaped "your response should only contain the code" prompts \
+(pass = bare code, or one balanced tagged block; a close-only ```` ``` ````, an \
+unbalanced, an untagged or a second fence fails). Why: reign 22's HumanEval \
+fell 74.4 → 57.9 on replies that end with a lone closing fence and no \
+opening ```` ```python ```` (close-only replies genesis 0 → r20 4 → r21 35 → \
+r22 61 of 164, correct code inside) — the per-byte action leg is blind to a \
+few fence bytes. They are published under `protocol_probe.shadow` \
+(`pass_rate`, `by_reason`) and do **not** count toward `pass_rate` / \
+`passed` until they leave `[protocol_probe].shadow_ids`; that promotion is an \
+admission decision (no wvk) and will be announced here. **Enforced since \
+{PROBE_CODE_ENFORCED} (operator decision after an 11-verdict shadow read: \
+fence-clean models 0.95–1.00, close-only models 0.05–0.35):** the five \
+HumanEval-shaped "only the code" prompts count — **a code-only reply must not \
+carry a malformed fence: bare code, or exactly one balanced fenced block with a \
+language tag, passes; a lone closing ```` ``` ````, an unbalanced, an untagged or \
+a second fence fails.** They run 4 completions each with `max_tokens` 2,048 \
+(`code_n_samples`, `code_max_tokens`; a HumanEval task needs more reasoning \
+than the IDE prompts, and a think block cut before `</think>` is not the fence \
+habit), so the bar is **≥ 0.90 pooled over 40 replies** (20 IDE/assistant + 20 \
+code). A code-prompt reply whose think block never closes is **neutral** — not \
+counted for or against (`n_neutral`; the ten IDE/assistant prompts already judge \
+think-close) — since 2026-09-28 15:18 UTC, after the first enforced verdict \
+(`chal-00722`) was rejected on five such replies with zero fence faults. The IDE \
+"reply with only a Python code block" case stays in shadow \
+(4/4 on every verdict read). Pre-flight: `python -m evalsrv.protocol_probe \
+--base-url http://YOUR_VLLM/v1 --model YOUR_MODEL --code-n-samples 4` shows \
+your pooled rate and the fence reasons.
 
 **3. IDE-agent prompts join D — data event, no wvk change.** Teacher \
 rollouts under two real IDE/CLI coding agents (OpenAI Codex CLI and Claude \

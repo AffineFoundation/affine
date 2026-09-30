@@ -1242,11 +1242,34 @@ max_model_len = 131072
 # changes and flip the bit"). Shadow read on 18 verdicts (chal-00348..365):
 # pass_rate 0.00–1.00, median 0.6, 1/18 at ≥ 0.90; every failure was
 # no_think_close. Admission rule (no wvk); min_pass_rate is the dial.
+# 2026-09-27: six "code" cases added (one IDE "only a Python code block", five HumanEval-shaped "only the code") (reply with only a Python code
+# block; pass = exactly one balanced fenced block with a language tag; fails
+# on close-only / unbalanced fences). Why: reign 22's HumanEval fell 74.4 →
+# 57.9 on replies that end with a lone closing ``` and no opening
+# ```python (close-only replies genesis 0 → r20 4 → r21 35 → r22 61 of 164,
+# correct code inside) — the per-byte A leg is blind to a few fence bytes.
+# They run in SHADOW first (shadow_ids: published under
+# verdict.protocol_probe.shadow, not counted toward pass_rate / passed);
+# enforce = remove them from shadow_ids after the read. Admission rule, no wvk.
 mode = "enforce"
 min_pass_rate = 0.9
-n_samples = 2          # completions per prompt (10 prompts -> 20 replies)
+n_samples = 2          # completions per IDE/assistant prompt (10 -> 20 replies); code prompts use code_n_samples (5 x 4 = 20) -> 40 counted
+# 2026-09-27 (operator): 4 completions per SHADOW prompt (6 prompts -> 24 replies) so the
+# per-verdict read of the code-fence cases is less coarse; 0 = n_samples.
+shadow_n_samples = 4
 temperature = 0.7
 max_tokens = 1024
+# 2026-09-28 (operator, after the 11-verdict shadow read 2026-09-27 09:44 → 09-28 10:19 UTC:
+# fence-clean models 0.95–1.00, close-only models 0.05–0.35): the five HumanEval-shaped
+# "only the code" cases are ENFORCED — a code-only reply must not carry a malformed fence
+# (bare code or one balanced tagged block passes; close-only / unbalanced / untagged /
+# several fences fail) — at the pooled 0.90 bar over 20 + 20 replies. They run with
+# code_max_tokens so a long think on a HumanEval task is not cut before </think>
+# (chal-00721: 7/20 no_think_close at 1024, no fence fault). The IDE strict "only a Python
+# code block" case stays in shadow (4/4 on every verdict; no discrimination).
+shadow_ids = ["ide_code_block_only"]
+code_max_tokens = 2048
+code_n_samples = 4
 
 [eval_machine]
 # GPU pod hosting duel evalsrv. The provisioner keeps exactly one alive and

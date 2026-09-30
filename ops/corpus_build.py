@@ -71,7 +71,6 @@ import httpx
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
-from transformers import AutoTokenizer
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "affine"))
@@ -833,7 +832,7 @@ def king_loop_candidate(env: dict, cfg: dict) -> bool:
     next tool call is near-deterministic there, so centered R is ~0 and a
     loop prefix carries no signal (wvk-11 findings)."""
     return (_policy_ok(env, cfg) and king_multi_turn(env, cfg)
-            and rollout_outcome(env["trace"]) == "failed")
+            and fold_outcome(env) == "failed")
 
 
 def king_done_candidate(env: dict, cfg: dict) -> bool:
@@ -842,7 +841,7 @@ def king_done_candidate(env: dict, cfg: dict) -> bool:
     tool harness 2026-09-14: 49/90 loop-guard stops graded solved). Errored
     / unscored rollouts stay out."""
     return (_policy_ok(env, cfg) and king_multi_turn(env, cfg)
-            and rollout_outcome(env["trace"]) in ("failed", "solved"))
+            and fold_outcome(env) in ("failed", "solved"))
 
 
 def side_table_turns(env: dict, cfg: dict) -> dict[int, dict]:
@@ -852,7 +851,7 @@ def side_table_turns(env: dict, cfg: dict) -> dict[int, dict]:
     if not cfg or not _policy_ok(env, cfg) or not king_multi_turn(env, cfg):
         return {}
     rows = cfg["table"].get(str(env.get("rollout_id") or ""))
-    if not rows or rollout_outcome(env["trace"]) != "failed":
+    if not rows or fold_outcome(env) != "failed":
         return {}
     return dict(rows)
 
@@ -976,7 +975,7 @@ def completion_candidate(env: dict, cfg: dict) -> bool:
     least `min_replies` replies."""
     if not (_policy_ok(env, cfg)
             and env["trace"].get("stop_condition") == "agent_completed"
-            and rollout_outcome(env["trace"]) == "solved"):
+            and fold_outcome(env) == "solved"):
         return False
     n_replies = sum(1 for nd in env["trace"].get("nodes") or []
                     if nd.get("sampled")
@@ -1719,62 +1718,12 @@ def soft_lang_fill(records: list[dict], have: dict[str, set[str]], *,
 
 # -- derive ----------------------------------------------------------------------
 # The prefix cap in the unit that binds at duel time: the serving window is
-# [miner_serving].max_model_len minus what a duel generates on top of the
-# prefix. MAX_PREFIX_CHARS (datagen/slicer.py) is the coarse cut; prefixes
-# above TOKEN_GUARD_FROM_CHARS are measured and dropped past the cap (a
-# 2026-09-10 data event; 300k chars ~ 78k tokens p50 / 90k p10).
-#
-# Two tokenizers (teacher-swap staging, 2026-09-23): the miner engines
-# tokenize with the GENESIS family's tokenizer and the teacher swarm with
-# the teacher's. Today both are Qwen so one count served; with a teacher
-# from another lab the miner-side count can exceed the window while the
-# teacher-side count passes (and vice versa), so the guard measures both
-# and keeps the larger. prefix_token_cap() derives the cap from the toml:
-#   max_model_len − (miner thought cap after the 1.25× teacher-relative
-#   relaxation) − max_action_tokens − PREFIX_CAP_SLACK
-# = 131072 − 5120 − 768 − 512 = 124,672 today; 255,744 at 262,144.
-# MAX_PREFIX_TOKENS is the historical 131k-window value and the floor the
-# derived cap never drops below in a misconfigured toml.
+# max_model_len = 131072 tokens minus 1792 generated. MAX_PREFIX_CHARS (300k,
+# datagen/slicer.py) is the coarse cut; prefixes above TOKEN_GUARD_FROM_CHARS
+# are measured with the teacher tokenizer and dropped past MAX_PREFIX_TOKENS
+# (a 2026-09-10 data event; 300k chars ~ 78k tokens p50 / 90k p10).
 MAX_PREFIX_TOKENS = 110_000
 TOKEN_GUARD_FROM_CHARS = 120_000
-PREFIX_CAP_SLACK = 512
-
-
-def prefix_token_cap(contract: dict | None = None) -> int:
-    """Largest prefix (in tokens, either tokenizer) a duel can serve."""
-    raw = contract if contract is not None else tomllib.loads(
-        (REPO / "affine" / "affine.toml").read_text())
-    duel = raw["duel"]
-    window = int(raw["miner_serving"]["max_model_len"])
-    thought = int(duel["max_thought_tokens"])
-    action = int(duel["max_action_tokens"])
-    ref_total = int(duel.get("ref_max_tokens") or (thought + action))
-    ratio = float(duel.get("thought_cap_ratio") or 0.0)
-    # wvk 20: cap_T = max(thought, ratio × longest reference thought); the
-    # longest reference thought is bounded by the teacher's own budget.
-    miner_thought = max(thought, int(ratio * max(ref_total - action, thought)))
-    if window <= 131072:
-        # Pre-swap window: keep the historical constant so today's fold is
-        # bit-identical (110k carried a deliberate margin under 124,672).
-        return MAX_PREFIX_TOKENS
-    return window - miner_thought - action - PREFIX_CAP_SLACK
-
-
-def guard_tokenizers(baker: ToolBaker, contract: dict | None = None) -> list:
-    """Tokenizers whose token count must fit the window: the teacher's (the
-    baker's) and the genesis family's (the miner engines'), deduplicated by
-    vocabulary so a same-family teacher costs one count as before."""
-    raw = contract if contract is not None else tomllib.loads(
-        (REPO / "affine" / "affine.toml").read_text())
-    seed = raw.get("seed_king") or {}
-    toks = [baker.tok]
-    repo, rev = seed.get("repo"), seed.get("revision")
-    if repo:
-        genesis = AutoTokenizer.from_pretrained(str(repo), revision=(str(rev) if rev else None))
-        same = (genesis.get_vocab() == baker.tok.get_vocab())
-        if not same:
-            toks.append(genesis)
-    return toks
 
 
 class PrefixTokenCache:
@@ -1794,18 +1743,13 @@ class PrefixTokenCache:
         self.conn.commit()
         self.hits = self.misses = 0
 
-    def count(self, text: str, baker: ToolBaker, tokenizer=None) -> int:
-        """Token count of `text` under `tokenizer` (default: the baker's).
-        The cache key carries the tokenizer's vocabulary size so counts from
-        different tokenizers never collide (a swap-era guard measures two)."""
-        tok = tokenizer if tokenizer is not None else baker.tok
-        salt = "" if tok is baker.tok else f"|{len(tok)}"
-        k = hashlib.sha256((text + salt).encode("utf-8")).hexdigest()
+    def count(self, text: str, baker: ToolBaker) -> int:
+        k = hashlib.sha256(text.encode("utf-8")).hexdigest()
         row = self.conn.execute("SELECT n FROM tok WHERE k = ?", (k,)).fetchone()
         if row is not None:
             self.hits += 1
             return int(row[0])
-        n = len(tok(text, add_special_tokens=False)["input_ids"])
+        n = len(baker.tok(text, add_special_tokens=False)["input_ids"])
         self.conn.execute("INSERT OR IGNORE INTO tok (k, n) VALUES (?, ?)", (k, n))
         self.conn.commit()
         self.misses += 1
@@ -1822,24 +1766,12 @@ def token_cache() -> PrefixTokenCache:
     return _TOKEN_CACHE
 
 
-_GUARD: dict = {}
-
-
-def _guard_state(baker: ToolBaker) -> tuple[list, int]:
-    if _GUARD.get("baker") is not baker:
-        _GUARD.update({"baker": baker, "toks": guard_tokenizers(baker),
-                       "cap": prefix_token_cap()})
-    return _GUARD["toks"], _GUARD["cap"]
-
-
 def prefix_over_token_cap(turn: dict, baker: ToolBaker) -> bool:
     if int(turn.get("n_prefix_chars") or 0) <= TOKEN_GUARD_FROM_CHARS:
         return False
     text = "\n".join(m.get("content", "") for m in turn.get("prefix") or [])
-    toks, cap = _guard_state(baker)
-    cache = token_cache()
-    n = max(cache.count(text, baker, tok) for tok in toks)
-    return n + 8 * len(turn.get("prefix") or []) > cap
+    n = token_cache().count(text, baker)
+    return n + 8 * len(turn.get("prefix") or []) > MAX_PREFIX_TOKENS
 
 
 def _count(counter: dict[str, int], key: str, n: int = 1) -> None:
@@ -1935,6 +1867,12 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             _count(drops, _dc)
             _count(drops, f"{_dc}_{env.get('source')}")
             continue
+        _ti = no_task_instruction(env)
+        if _ti:
+            _count(drops, _ti)
+            _count(drops, f"{_ti}_{env.get('source')}")
+            _count(notes, "no_task_instruction_rollouts")
+            continue
         _src = str(env.get("source") or "")
         YIELD.setdefault(_src, {"seen": 0, "accepted_turns": 0, "records": 0, "drops": {}})["seen"] += 1
         _pid = str((env.get("policy") or {}).get("id") or "")
@@ -1951,10 +1889,10 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         kind = (env.get("policy") or {}).get("action_kind") or "bash"
         want_loop = bool(king_loop) and king_loop_candidate(env, king_loop)
         want_done_onset = (bool(king_done) and king_done.get("solved_onset") and _policy_ok(env, king_done)
-                           and king_multi_turn(env, king_done) and rollout_outcome(env["trace"]) == "solved")
+                           and king_multi_turn(env, king_done) and fold_outcome(env) == "solved")
         want_bad_finish = (bool(king_done) and str(env.get("source") or "") in king_done.get("final_output_sources", ())
                            and _policy_ok(env, king_done) and king_multi_turn(env, king_done)
-                           and rollout_outcome(env["trace"]) == "failed"
+                           and fold_outcome(env) == "failed"
                            and env["trace"].get("stop_condition") == "agent_completed")
         pivots = side_table_turns(env, king_pivot) if king_pivot else {}
         recoverable = side_table_turns(env, king_recoverable) if king_recoverable else {}
@@ -1973,9 +1911,9 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         want_pre = (bool(completion_pre) and _policy_ok(env, completion_pre)
                     and king_multi_turn(env, completion_pre)
                     and env["trace"].get("stop_condition") == "agent_completed"
-                    and rollout_outcome(env["trace"]) == "failed")
+                    and fold_outcome(env) == "failed")
         is_king_fail = (bool(king_fail_cfg) and _policy_ok(env, king_fail_cfg)
-                        and rollout_outcome(env["trace"]) == "failed")
+                        and fold_outcome(env) == "failed")
         one_reply_king = (is_king_fail and not king_multi_turn(env, king_fail_cfg))
         escapes: set[int] = set()
         want_completion = bool(completion) and completion_candidate(env, completion)
@@ -2231,6 +2169,11 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                 _count_leaked(route, convs, kind, leak_exempt, notes)
             _count(drops, "no_scorable_turn")
             continue
+        if quarantined(env):
+            rec["outcome"] = "unscored"
+            rec["outcome_quarantined"] = True
+            _count(notes, "outcome_quarantined_rollouts")
+            _count(notes, f"outcome_quarantined_{env.get('source')}_{(env.get('task') or {}).get('language')}")
         _pid0 = str((env.get("policy") or {}).get("id") or "")
         if _pid0.startswith("king_"):
             # Served king digest (policy.model `king/king-<digest12>`) on the
@@ -2493,7 +2436,7 @@ def math_keep_set(pub: PublicCorpus, traces_manifest: dict, cfg: dict
                 continue
             sid = str((env.get("task") or {}).get("sid") or "")
             pid = str((env.get("policy") or {}).get("id") or "")
-            outcome = rollout_outcome(env["trace"])
+            outcome = fold_outcome(env)
             row = per.setdefault(sid, {"answers": set(), "teacher_failed": False,
                                        "king_failed": False, "n_teacher": 0, "n_king": 0,
                                        "n_boxed_in_cap": 0})
@@ -2690,7 +2633,7 @@ def coached_decisive(env: dict, cfg: dict) -> bool:
         return False
     if cfg["envelope_ids"] is not None and str(env.get("rollout_id")) not in cfg["envelope_ids"]:
         return False
-    if rollout_outcome(env["trace"]) != "solved":
+    if fold_outcome(env) != "solved":
         return False
     if cfg["rule"] == "plain_0_of_n":
         if int(o.get("coached_n_solved") or 0) < cfg["min_coached_solved"]:
@@ -2715,7 +2658,7 @@ def coached_decisive(env: dict, cfg: dict) -> bool:
             return False
         if int(o.get("plain_n_solved") or 0) > cfg["max_plain_solved"] or int(o.get("plain_n") or 0) < 2:
             return False
-    return rollout_outcome(env["trace"]) == "solved"
+    return fold_outcome(env) == "solved"
 
 
 def coached_retire_ids(cfg: dict, pub: PublicCorpus, live: dict | None) -> tuple[list[str], set[str]]:
@@ -2836,6 +2779,135 @@ NOTES_GLOBAL: dict[str, int] = {}   # the fold's `notes` counters, for the yield
 # rule, so existing records do not change.
 INTERACTIVE_SOURCES: frozenset[str] = frozenset()
 
+# -- task-instruction gate (2026-09-27, datagen seat-error audit) -----------------
+# 80 % of SWE-smith-go and 22 % of -py catalog rows ship an EMPTY
+# problem_statement (lm_modify / func_pm_* / combine_* instances). Nobody
+# can solve a task that is never stated: the prompt-embedding harnesses (pi,
+# claude_code, terminus, hermes) ran the agent blind and its "failure" (and
+# the odd lucky "success") entered D -- 355 swesmith rollouts / 5,120 rows at
+# epoch 85. Two rules, both drops (a task with no instruction never becomes
+# valid, so nothing is deferred): (a) `[task_instruction].empty_sids`: a
+# JSON {source: [sid, ...]} of tasks known to have no instruction (built
+# from the catalog datasets by ops/task_instruction/swesmith_empty.py); (b)
+# generic: the conversation has no user message, or its first user message
+# is empty / whitespace. Reasons `no_task_instruction_listed` /
+# `no_task_instruction_empty_user`, counted per source.
+TASK_INSTRUCTION: dict = {"empty": {}, "generic": True}
+
+# -- outcome quarantine (2026-09-27, second swesmith grader bug) -------------------
+# The research-environments swesmith grader ran an unconditional `git
+# checkout HEAD~1`; on the 2-commit cpp / ts instance branches that steps
+# back to the PRE-BUG base, so a rollout that left the buggy file alone
+# passed the tests without fixing anything (false "resolved") and one that
+# edited it errored. Fixed on the pods 2026-09-27 12:10 UTC (PR #77). Every
+# grade of a matching rollout stored before the fix is unreliable, so the
+# fold treats it as `unscored`: it is neither a teacher solve nor a king
+# solve for the band, routes to no outcome-keyed group (completion,
+# king_fail, ...), and rows whose task has no other graded attempt retire.
+# [[outcome_quarantine]] rules: source, languages (empty = all), before
+# (ISO instant, exclusive), reason.
+OUTCOME_QUARANTINE: list[dict] = []
+
+
+def load_outcome_quarantine() -> list[dict]:
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("outcome_quarantine") or []
+    out = []
+    for r in raw:
+        if not isinstance(r, dict) or not r.get("source"):
+            continue
+        before = r.get("before")
+        try:
+            before_dt = datetime.fromisoformat(str(before)) if before else None
+        except ValueError:
+            before_dt = None
+        if before_dt is not None and before_dt.tzinfo is None:
+            before_dt = before_dt.replace(tzinfo=timezone.utc)
+        out.append({"source": str(r["source"]),
+                    "languages": frozenset(str(x).lower() for x in (r.get("languages") or [])),
+                    "before": before_dt, "reason": str(r.get("reason") or "")})
+    return out
+
+
+def quarantine_signature() -> str:
+    return ";".join(f"{r['source']}:{','.join(sorted(r['languages']))}<{r['before'].isoformat() if r['before'] else '*'}"
+                    for r in OUTCOME_QUARANTINE)
+
+
+def quarantined(env: dict) -> bool:
+    """True when the envelope's grade falls under an [[outcome_quarantine]] rule."""
+    if not OUTCOME_QUARANTINE:
+        return False
+    src = str(env.get("source") or "")
+    task = env.get("task") if isinstance(env.get("task"), dict) else {}
+    lang = str(task.get("language") or "").lower()
+    stored = env.get("stored_at") or (env.get("trace") or {}).get("info", {}).get("generated_at") or ""
+    try:
+        stored_dt = datetime.fromisoformat(str(stored)) if stored else None
+    except ValueError:
+        stored_dt = None
+    if stored_dt is not None and stored_dt.tzinfo is None:
+        stored_dt = stored_dt.replace(tzinfo=timezone.utc)
+    for r in OUTCOME_QUARANTINE:
+        if r["source"] != src:
+            continue
+        if r["languages"] and lang not in r["languages"]:
+            continue
+        if r["before"] is not None and stored_dt is not None and stored_dt >= r["before"]:
+            continue
+        return True
+    return False
+
+
+def fold_outcome(env: dict) -> str:
+    """rollout_outcome, or `unscored` for a quarantined grade."""
+    if quarantined(env):
+        return "unscored"
+    return rollout_outcome(env["trace"])
+
+
+def load_task_instruction() -> dict:
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("task_instruction") or {}
+    out = {"empty": {}, "generic": bool(raw.get("generic_empty_user", True)), "path": None}
+    rel = str(raw.get("empty_sids") or "").strip()
+    if rel:
+        path = REPO / rel
+        out["path"] = str(path)
+        if path.exists():
+            try:
+                data = json.loads(path.read_text())
+                out["empty"] = {str(src): frozenset(str(x) for x in ids) for src, ids in (data.get("sids") or data).items()
+                                if isinstance(ids, list)}
+            except (OSError, ValueError) as e:
+                log(f"task_instruction: {path} unreadable ({e}); listed rule off")
+        else:
+            log(f"task_instruction: {path} missing; listed rule off (generic rule {'on' if out['generic'] else 'off'})")
+    return out
+
+
+def no_task_instruction(env: dict) -> str | None:
+    """Drop reason when the rollout's task carries no instruction, else None."""
+    src = str(env.get("source") or "")
+    sid = str((env.get("task") or {}).get("sid") or "")
+    listed = TASK_INSTRUCTION.get("empty") or {}
+    if sid and sid in listed.get(src, ()):
+        return "no_task_instruction_listed"
+    if TASK_INSTRUCTION.get("generic"):
+        nodes = (env.get("trace") or {}).get("nodes") or []
+        first_user = None
+        for n in nodes:
+            m = n.get("message") if isinstance(n.get("message"), dict) else n
+            if m.get("role") == "user":
+                first_user = m
+                break
+        if first_user is None:
+            return "no_task_instruction_no_user"
+        c = first_user.get("content")
+        if isinstance(c, list):
+            c = "".join(str(x.get("text", "")) for x in c if isinstance(x, dict))
+        if not str(c or "").strip():
+            return "no_task_instruction_empty_user"
+    return None
+
 
 def load_interactive_sources() -> frozenset[str]:
     raw = tomllib.loads(SOURCES_TOML.read_text())
@@ -2919,7 +2991,7 @@ def teacher_solved_tasks(pub: PublicCorpus, traces_manifest: dict,
             if not sid:
                 continue
             seen.add(sid)
-            if rollout_outcome(env["trace"]) == "solved":
+            if fold_outcome(env) == "solved":
                 solved.add(sid)
     TEACHER_SOLVED_CACHE.parent.mkdir(parents=True, exist_ok=True)
     TEACHER_SOLVED_CACHE.write_text(json.dumps({"key": key, "solved": sorted(solved), "seen": sorted(seen)}))
@@ -3116,17 +3188,6 @@ def load_band_filters() -> dict[str, dict]:
     return out
 
 
-def band_teacher_models() -> tuple[str, ...]:
-    """`[band_filter.defaults].teacher_models`: endpoint model ids whose
-    `teacher_*` rollouts count as THE teacher's attempts. Empty (today) =
-    every teacher_* / glm_* policy, whatever model served it. Set during a
-    teacher swap so the "teacher solved it" signal tracks the contract
-    teacher: both ids while the new teacher's pre-pass covers the pools
-    ("both counted"), then the new id alone."""
-    raw = (tomllib.loads(SOURCES_TOML.read_text()).get("band_filter") or {}).get("defaults") or {}
-    return tuple(str(x) for x in (raw.get("teacher_models") or []))
-
-
 def load_band_backfill() -> dict:
     """[band_filter.defaults] backfill_outcomes = "<key under the public
     base>" (+ backfill_seats, backfill_kings = "all" | "current"): the env
@@ -3224,24 +3285,29 @@ def band_coverage(stats: dict[str, list[int]], bands: dict[str, dict]) -> dict[s
     return out
 
 
-def _band_scan_chunk(path: Path, teacher_models: tuple[str, ...] = ()) -> dict[str, list[int]]:
-    """{source\\tsid: [t_n, t_s, k_n, k_s]} for one trace chunk."""
+def _band_scan_chunk(path: Path) -> dict[str, list[int]]:
+    """{source\\tsid: [t_n, t_s, k_n, k_s, q_n]} for one trace chunk; q_n =
+    graded attempts (either side) whose grade is quarantined and therefore
+    counted nowhere (2026-09-27 swesmith cpp / ts grader bug)."""
     stats: dict[str, list[int]] = {}
     for env in iter_jsonl_gz(path):
         if is_backfill(env):
             continue
-        pol = env.get("policy") or {}
-        pid = str(pol.get("id") or "")
+        pid = str((env.get("policy") or {}).get("id") or "")
         side = 0 if pid.startswith(("teacher_", "glm_")) else (2 if pid.startswith("king_") else None)
         if side is None:
             continue
-        if side == 0 and teacher_models and str(pol.get("model") or "") not in teacher_models:
+        key = f"{env.get('source') or ''}\t{(env.get('task') or {}).get('sid') or ''}"
+        if quarantined(env) and rollout_outcome(env["trace"]) in ("solved", "failed"):
+            st = stats.setdefault(key, [0, 0, 0, 0, 0])
+            while len(st) < 5:
+                st.append(0)
+            st[4] += 1
             continue
-        outcome = rollout_outcome(env["trace"])
+        outcome = fold_outcome(env)
         if outcome not in ("solved", "failed"):
             continue
-        key = f"{env.get('source') or ''}\t{(env.get('task') or {}).get('sid') or ''}"
-        st = stats.setdefault(key, [0, 0, 0, 0])
+        st = stats.setdefault(key, [0, 0, 0, 0, 0])
         st[side] += 1
         st[side + 1] += int(outcome == "solved")
     return stats
@@ -3251,13 +3317,11 @@ def task_attempts(pub: PublicCorpus, traces_manifest: dict, sources: frozenset[s
     """{source\\tsid: [t_n, t_s, k_n, k_s]} over every graded teacher_* /
     king_* rollout in the traces. Per-chunk cache; only unseen chunks are
     scanned (a process pool: the work is gzip + json)."""
+    rule = quarantine_signature()
+    # The per-chunk cache is only valid for the grading rule it was scanned
+    # under; a changed [[outcome_quarantine]] list re-scans (rows tagged
+    # with another rule are ignored and rewritten).
     cached: dict[str, dict[str, list[int]]] = {}
-    models = band_teacher_models()
-    # The per-chunk cache is only valid for the attribution rule it was
-    # scanned under; a changed teacher_models list re-scans (rows tagged
-    # with a different rule, or untagged rows once a rule is set, are
-    # ignored and rewritten).
-    rule = ",".join(models)
     if BAND_CACHE.exists():
         with BAND_CACHE.open() as fh:
             for line in fh:
@@ -3273,8 +3337,7 @@ def task_attempts(pub: PublicCorpus, traces_manifest: dict, sources: frozenset[s
         paths = {c["key"]: pub.cached(c["key"], c["sha256"], gz_sha=True) for c in want}
         BAND_CACHE.parent.mkdir(parents=True, exist_ok=True)
         with ProcessPoolExecutor(max_workers=8) as ex, BAND_CACHE.open("a") as fh:
-            for key, st in zip(paths, ex.map(_band_scan_chunk, paths.values(),
-                                             [models] * len(paths))):
+            for key, st in zip(paths, ex.map(_band_scan_chunk, paths.values())):
                 cached[key] = st
                 fh.write(json.dumps({"key": key, "rule": rule, "stats": st}) + "\n")
         log(f"band filter: scanned {len(want)} new trace chunk(s) ({len(cached)} cached)")
@@ -3286,15 +3349,15 @@ def task_attempts(pub: PublicCorpus, traces_manifest: dict, sources: frozenset[s
         for k, v in st.items():
             if k.split("\t", 1)[0] not in sources:
                 continue
-            a = stats.setdefault(k, [0, 0, 0, 0])
-            for i in range(4):
+            a = stats.setdefault(k, [0, 0, 0, 0, 0])
+            for i in range(min(len(v), 5)):
                 a[i] += v[i]
     return stats
 
 
 def band_verdict(st: list[int] | None, cfg: dict) -> str:
     """admit | hold | teacher_unsolved | teacher_saturated | king_solved"""
-    t_n, t_s, k_n, k_s = st or (0, 0, 0, 0)
+    t_n, t_s, k_n, k_s = (list(st) + [0, 0, 0, 0])[:4] if st else (0, 0, 0, 0)
     if t_n < cfg["teacher_min_attempts"]:
         return "hold"
     if t_s < cfg["teacher_min_solved"]:
@@ -3371,9 +3434,14 @@ def band_published_retire(pub: PublicCorpus, live: dict | None, bands: dict[str,
             continue
         m = sha8.get(src) or {}
         key = next((m[p] for p in str(traj).split(".") if p in m), None)
-        v = band_verdict(stats.get(key) if key else None, bands[src])
+        st_row = stats.get(key) if key else None
+        v = band_verdict(st_row, bands[src])
+        if v == "hold" and st_row is not None and len(st_row) > 4 and st_row[4] > 0 and st_row[0] == 0:
+            # the task's only graded teacher attempts are quarantined: the
+            # admission rested on a grade the fold no longer trusts
+            v = "quarantined_solve"
         b = by_src.setdefault(src, {"kept": 0, "retired": 0})
-        if v in ("teacher_unsolved", "teacher_saturated", "king_solved"):
+        if v in ("teacher_unsolved", "teacher_saturated", "king_solved", "quarantined_solve"):
             out.setdefault(g, []).append(str(tid))
             b["retired"] += 1
             b[f"retired_{v}"] = b.get(f"retired_{v}", 0) + 1
@@ -3916,6 +3984,11 @@ def main() -> None:
                          "admit enter. Used once at the wvk 13 flip (2026-09-09) "
                          "to back-fill the `text` turns of trajectories folded "
                          "under wvk 11/12.")
+    ap.add_argument("--retire-turn-ids", default=None, metavar="FILE",
+                    help="one-off index-only retire: JSON {\"turn_ids\": [...]} or one id per line. "
+                         "The rows leave the index in this revision (chunks and old manifests "
+                         "untouched, old verdicts replay); group strata are recounted. Used "
+                         "2026-09-27 for the instruction-less swesmith rows.")
     ap.add_argument("--rederive-since", default=None, metavar="ISO8601",
                     help="like --rederive, but only for published chunks "
                          "created at or after this time (plus the unfolded "
@@ -4086,6 +4159,12 @@ def main() -> None:
     mix, src2grp, lang_mix, buckets = load_mix(ignore_fold_mix=args.ignore_fold_mix)
     global INTERACTIVE_SOURCES
     INTERACTIVE_SOURCES = load_interactive_sources()      # before any derive_chunk call
+    TASK_INSTRUCTION.clear(); TASK_INSTRUCTION.update(load_task_instruction())
+    OUTCOME_QUARANTINE[:] = load_outcome_quarantine()
+    if OUTCOME_QUARANTINE:
+        log(f"outcome quarantine: {[(r['source'], sorted(r['languages']), r['before'].isoformat() if r['before'] else '*', r['reason']) for r in OUTCOME_QUARANTINE]}")
+    log(f"task_instruction gate: listed sids {sum(len(v) for v in TASK_INSTRUCTION['empty'].values())} "
+        f"over {sorted(TASK_INSTRUCTION['empty'])}; generic empty-user rule {'on' if TASK_INSTRUCTION['generic'] else 'off'}")
     DECONTAM.clear(); DECONTAM.update(load_decontamination())
     if DECONTAM:
         log("decontamination: " + "; ".join(f"{src} bench ids {sum(len(v) for v in c['bench'].values())} "
@@ -4424,6 +4503,26 @@ def main() -> None:
                 f"-> they stay where they are")
         log(f"{g}: retiring {sum(len([t for t in ids if t in readmitted]) for ids in plan.values())} "
             f"index rows, readmitted as {g}")
+    if args.retire_turn_ids:
+        # One-off index-only retire from a file, keyed to groups through the
+        # live index so the strata accounting sees it (2026-09-27: the
+        # instruction-less swesmith rows; the same path serves the
+        # upstream-fetch retire when Jacob calls it).
+        raw_ids = Path(args.retire_turn_ids).read_text()
+        try:
+            wanted = set(str(x) for x in (json.loads(raw_ids).get("turn_ids") or []))
+        except ValueError:
+            wanted = {l.strip() for l in raw_ids.split("\n") if l.strip()}
+        rt = index_table(pub, live, ["turn_id", "stratum_src", "source"])
+        by_g: dict[str, int] = {}
+        if rt is not None:
+            for tid, st, src in zip(*(rt.column(c).to_pylist() for c in ("turn_id", "stratum_src", "source"))):
+                if str(tid) in wanted:
+                    g0 = group_from_row(str(st), str(src), src2grp)
+                    extra_retire.setdefault(g0, set()).add(str(tid))
+                    by_g[g0] = by_g.get(g0, 0) + 1
+        log(f"--retire-turn-ids: {sum(by_g.values())} of {len(wanted)} listed rows are in the live index; "
+            f"retiring by group {by_g}")
     retire_surviving: dict[str, set[str]] = {}
     for src_g, ids in extra_retire.items():
         if ids:
@@ -4486,8 +4585,17 @@ def main() -> None:
             old_raw = old_sig.get("raw", old_sig) if isinstance(old_sig, dict) else None
             rename_only = (old_raw is not None and old_raw == new_sig.get("raw")
                            and (old_sig.get("m") if isinstance(old_sig, dict) else None) == new_sig.get("m"))
+            # The curriculum rule's `m` (sub-strata it RAISES) moves with
+            # its published vector; a change there is the rule doing its
+            # job, not an operator re-key -- 2026-09-27 00:00 and 06:00 UTC
+            # folds both died on this guard when the rule first raised
+            # bench_fail to 2 (D stale 10 h). Re-key without the operator
+            # guard; the per-group 5-point composition guard below still
+            # applies to the resulting move.
+            m_only = (old_raw is not None and old_raw == new_sig.get("raw") and not rename_only)
         except (ValueError, TypeError):
             rename_only = False
+            m_only = False
         # First fold under this budget: re-key the mix state from the live
         # index (the deliberate composition shift; --allow-shift required).
         live_rows = live_rows_for_budget(pub, live)
@@ -4512,7 +4620,10 @@ def main() -> None:
             budget_migrated = not rename_only
             if rename_only:
                 log("strata budget: naming-version change only (shares unchanged); re-keyed without a guard")
-            if not args.allow_shift and not rename_only:
+            if m_only:
+                log(f"strata budget: curriculum sub-strata change only ({(old_sig or {}).get('m')} -> {new_sig.get('m')}); "
+                    "re-keyed without the operator guard (the composition guard still applies)")
+            if not args.allow_shift and not rename_only and not m_only:
                 msg = "strata budget re-keys the live index (deliberate composition shift); rerun with --allow-shift"
                 if args.no_publish:
                     log(f"GUARD (dry run): {msg}")

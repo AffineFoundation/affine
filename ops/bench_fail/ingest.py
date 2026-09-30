@@ -36,11 +36,18 @@ prefix = auditable and removable in one fold.
 
     .venv/bin/python ops/bench_fail/ingest.py --dry-run          # counts only
     .venv/bin/python ops/bench_fail/ingest.py --publish          # store + R2
-Options: --runs DIR, --min-reign N, --suites a,b, --out DIR (store dir).
+Options: --runs DIR, --min-reign N, --suites a,b, --out DIR (store dir),
+--exclude RUN_GLOB/CELL_GLOB (repeatable; cells of a card known to be a
+harness fault rather than model failures, on the king AND teacher side —
+first use 2026-09-27: `20260926T2215Z-7f066f2c5f95/tau2-*` and
+`.../tau3-*`, the reign-22 τ² cells run with a role-confused user
+simulator; the benchsuite's re-run with the 09-22 user-sim config carries
+the same cell names in a new run dir and is taken instead).
 """
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import gzip
 import hashlib
 import json
@@ -80,6 +87,26 @@ SUITE_DIALECT = {"aime25": "boxed", "math500": "boxed", "mmlu-pro": "boxed",
                  "bfcl-v3": "tool_call", "when2call": "tool_call"}
 # Harbor's ATIF stores the Terminus JSON reply parsed; rebuild the dialect.
 TERMINUS_KEYS = ("analysis", "plan", "commands")
+
+
+def run_digest(run: Path) -> str | None:
+    """digest12 of the model a run dir benched: the run's manifest.json
+    (`king.digest`, written for every card since 09-22) first, else the run
+    name. The manifest also covers CHALLENGER cards (`<stamp>-chal-NNNNN`) of a
+    model that was crowned later — same weights, same T=0 eval, and the
+    benchsuite's crown pass reuses their chat cells by copying only
+    summary.json (2026-09-27, reign 22: humaneval / aime25 / gpqa / ifeval /
+    ifbench / livecodebench / math500 in `20260926T2215Z-7f066f2c5f95` have no
+    traces; `20260925T0004Z-chal-00687` has them). A challenger card of a
+    model that never sat on the board is still skipped by the reign filter."""
+    try:
+        d = ((json.loads((run / "manifest.json").read_text()).get("king") or {}).get("digest") or "")
+    except (OSError, ValueError):
+        d = ""
+    if re.fullmatch(r"[0-9a-f]{64}|[0-9a-f]{12}", d):
+        return d[:12]
+    m = RUN_RE.match(run.name)
+    return m.group(1) if m else None
 
 
 def suite_slug(suite: str) -> str:
@@ -189,16 +216,40 @@ def main() -> int:
     ap.add_argument("--prefix", default="traces-bench/", help="R2 prefix (own manifest); never traces/ -- see the docstring")
     ap.add_argument("--replace", action="store_true", help="with --suites: remove the listed suites' old chunks from the prefix before publishing the new ones")
     ap.add_argument("--stats", default=str(REPO / "affine" / "state" / "bench_fail" / "ingest_stats.json"))
+    ap.add_argument("--exclude", action="append", default=[], metavar="RUN_GLOB/CELL_GLOB",
+                    help="skip cells (king AND teacher side) whose run dir and cell name match these fnmatch "
+                         "globs, e.g. '20260926T2215Z-7f066f2c5f95/tau2-*' for a card whose cells are a harness "
+                         "fault, not model failures (the re-run's cells of the same names are then taken instead); "
+                         "repeatable")
     a = ap.parse_args()
     runs = Path(a.runs)
     want_suites = {s.strip() for s in a.suites.split(",") if s.strip()}
+    excludes = []
+    for pat in a.exclude:
+        if "/" not in pat:
+            sys.exit(f"--exclude wants RUN_GLOB/CELL_GLOB, got {pat!r}")
+        excludes.append(tuple(pat.split("/", 1)))
+
+    def excluded(run_name: str, cell_name: str) -> bool:
+        return any(fnmatch.fnmatch(run_name, rg) and fnmatch.fnmatch(cell_name, cg) for rg, cg in excludes)
+
+    if a.publish and not a.dry_run:
+        # Fail before the 30-min scan, not after writing the store: the R2 creds come from the
+        # environment, <repo>/.env or ~/.affine-validator.env (a worktree has no .env, 2026-09-27).
+        missing_env = [k for k in ("DATA_R2_ENDPOINT", "DATA_R2_ACCESS_KEY_ID", "DATA_R2_SECRET_ACCESS_KEY") if not _env_value(k)]
+        if missing_env:
+            sys.exit(f"--publish needs {missing_env} in the environment, {REPO}/.env or ~/.affine-validator.env")
     reigns = reigns_by_digest()
 
     # teacher pass sets per suite: task -> True if any teacher trial passed
     teacher_pass: dict[str, dict[str, bool]] = defaultdict(dict)
+    n_excluded_teacher = 0
     for cell in sorted(runs.glob("*/teacher/*")):
         m = CELL_RE.match(cell.name)
         if not m:
+            continue
+        if excluded(cell.parent.parent.name, cell.name):
+            n_excluded_teacher += 1
             continue
         suite = m.group("suite").split("@")[0]
         if (cell / "harbor").is_dir():
@@ -217,10 +268,9 @@ def main() -> int:
     envelopes: list[dict] = []
     seen_trials: set[str] = set()
     for run in sorted(runs.iterdir()):
-        m = RUN_RE.match(run.name)
-        if not m:
+        digest = run_digest(run)
+        if not digest:
             continue
-        digest = m.group(1)
         info = reigns.get(digest) or {}
         reign = info.get("reign")
         if info.get("kind") != "king" or reign is None or int(reign) < a.min_reign:
@@ -234,6 +284,9 @@ def main() -> int:
             if want_suites and suite not in want_suites:
                 continue
             key = f"{suite}|reign {reign if reign is not None else digest}"
+            if excluded(run.name, cell.name):
+                stats[key]["cells_excluded"] += 1
+                continue
             slug = suite_slug(suite)
             source = f"bench_{slug}"
             if (cell / "harbor").is_dir():
@@ -332,12 +385,15 @@ def main() -> int:
         by_suite[k.split("|")[0]].update(v)
     summary = {"generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "min_reign": a.min_reign,
                "by_suite_reign": table, "by_suite": {k: dict(v) for k, v in sorted(by_suite.items())},
-               "eligible_total": len(envelopes), "teacher_pass_sets": {s: len(v) for s, v in teacher_pass.items()}}
+               "eligible_total": len(envelopes), "teacher_pass_sets": {s: len(v) for s, v in teacher_pass.items()},
+               "exclude": a.exclude, "excluded_teacher_cells": n_excluded_teacher}
     Path(a.stats).parent.mkdir(parents=True, exist_ok=True)
     Path(a.stats).write_text(json.dumps(summary, indent=1))
-    print(f"{'suite | reign':34} {'trials':>6} {'k_fail':>6} {'t_fail':>6} {'leak':>5} {'elig':>5}")
+    print(f"{'suite | reign':34} {'trials':>6} {'k_fail':>6} {'t_fail':>6} {'leak':>5} {'elig':>5} {'excl':>4}")
     for k, v in table.items():
-        print(f"{k:34} {v.get('trials',0):6d} {v.get('king_failed',0):6d} {v.get('teacher_failed_too',0):6d} {v.get('leaked_dropped',0):5d} {v.get('eligible',0):5d}")
+        print(f"{k:34} {v.get('trials',0):6d} {v.get('king_failed',0):6d} {v.get('teacher_failed_too',0):6d} {v.get('leaked_dropped',0):5d} {v.get('eligible',0):5d} {v.get('cells_excluded',0):4d}")
+    if a.exclude:
+        print(f"excluded: {a.exclude} ({n_excluded_teacher} teacher cell(s) skipped too)")
     print(f"eligible envelopes: {len(envelopes)}; stats -> {a.stats}")
     if a.dry_run or not a.publish:
         return 0
@@ -351,18 +407,7 @@ def main() -> int:
     for src, evs in by_source.items():
         for i in range(0, len(evs), 25):
             store.append_batch(evs[i:i + 25], tag=f"{src}-{stamp_t}-{i // 25:04d}")
-    def env_value(k):
-        if os.environ.get(k):
-            return os.environ[k]
-        for p in (REPO / ".env", Path.home() / ".affine-validator.env"):
-            try:
-                for line in p.read_text().splitlines():
-                    line = line.strip().removeprefix("export ").strip()
-                    if line.startswith(k + "="):
-                        return line.split("=", 1)[1].strip().strip('"').strip("'")
-            except OSError:
-                pass
-        return ""
+    env_value = _env_value
     r2 = R2TraceMirror(bucket=env_value("DATA_R2_BUCKET") or "affine-data", endpoint=env_value("DATA_R2_ENDPOINT"),
                        access_key_id=env_value("DATA_R2_ACCESS_KEY_ID"), secret_access_key=env_value("DATA_R2_SECRET_ACCESS_KEY"),
                        prefix=a.prefix)
@@ -398,6 +443,20 @@ def main() -> int:
     n = r2.mirror(store)
     print(f"published {n} chunk(s) to {a.prefix} (keys bench_*)")
     return 0
+
+
+def _env_value(k: str) -> str:
+    if os.environ.get(k):
+        return os.environ[k]
+    for p in (REPO / ".env", Path.home() / ".affine-validator.env"):
+        try:
+            for line in p.read_text().splitlines():
+                line = line.strip().removeprefix("export ").strip()
+                if line.startswith(k + "="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+        except OSError:
+            pass
+    return ""
 
 
 def verifiers_episodes(cell: Path):

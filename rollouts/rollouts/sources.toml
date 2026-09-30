@@ -338,6 +338,33 @@ domain_field = "repo"
 require_gen_marker = true
 domain_field = "repo"
 
+[task_instruction]
+# 2026-09-27 (datagen seat-error audit, PR #77): 80 % of SWE-smith-go and
+# 22 % of -py catalog rows have an EMPTY problem_statement; the prompt-
+# embedding harnesses ran the agent blind and its "failure" entered D
+# (355 swesmith rollouts / 5,120 rows at epoch 85, retired with
+# --retire-turn-ids). Two drop rules in the fold: `empty_sids` = tasks
+# known to carry no instruction ({source: [sid]}, built by
+# ops/task_instruction/swesmith_empty.py from the catalog datasets);
+# `generic_empty_user` = the conversation has no user message or its first
+# user message is empty. Drops, not holds: a task with no statement never
+# becomes valid. Reasons no_task_instruction_{listed,empty_user,no_user}.
+empty_sids = "affine/state/task_instruction/empty_problem_statement_sids.json"
+generic_empty_user = true
+
+# Grades the fold does not trust (treated as `unscored`: no teacher solve,
+# no king solve, no outcome-keyed routing; rows of tasks whose every graded
+# attempt is quarantined retire as `quarantined_solve`). 2026-09-27
+# (datagen worker, PR #77, fixed on the pods 12:10 UTC): the swesmith
+# grader's unconditional `git checkout HEAD~1` stepped 2-commit cpp / ts
+# branches back to the PRE-BUG base -- a rollout that left the buggy file
+# alone passed without fixing anything, one that edited it errored.
+[[outcome_quarantine]]
+source = "swesmith"
+languages = ["cpp", "ts"]
+before = "2026-09-27T12:10:00+00:00"
+reason = "swesmith grader HEAD~1 on 2-commit cpp/ts branches (PR #77, fixed 2026-09-27 12:10 UTC)"
+
 [band_filter.defaults]
 # Signal band on EVERY source (Jacob 2026-09-22 21:05 UTC "fold go"; first
 # on affine_science 15:24 UTC, aa-gap-fill-plan item 1). Context: reign 21

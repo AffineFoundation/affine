@@ -620,6 +620,15 @@ def _swesmith_meta(row: dict, lang_key: str, language: str) -> dict | None:
     image = row.get("image_name")
     if not iid or not image:
         return None
+    # 2026-09-27: 80 % of SWE-smith-go and 22 % of -py rows ship an EMPTY
+    # problem_statement (lm_modify / func_pm_* / combine_* instances never got
+    # an issue text). Nobody can solve a task that is never stated: the
+    # bash / kimi harnesses send a system-only conversation and the Qwen
+    # template 400s ("No user query found in messages", 447 king errors in
+    # 2 days), the prompt-embedding harnesses run the agent blind and its
+    # "failure" would enter D as a king_fail row. Drop them at the catalog.
+    if not str(row.get("problem_statement") or "").strip():
+        return None
     repo = (row.get("repo") or iid.rsplit(".", 1)[0]).lower()
     # sid: language-qualified stem so strata don't collide across langs
     m = _TRAILING_NUM_RE.search(iid)
