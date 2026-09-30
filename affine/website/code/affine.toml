@@ -233,8 +233,7 @@ min_submission_block = 8938619
 # (ref_min_content / typ_min_refs) distinguishes the two.
 # 24→25 crown floor δ 0.20 → 0.10 sd (2026-09-27): explicit dated operator directive
 # 2026-09-27 08:22 UTC (Jacob Steeves, "Lower the validator margin to 0.1"). Own
-# fork; the GLM-5.3-Flash teacher / 262k / scoring bundle noticed for 2026-09-30
-# 14:00 UTC becomes wvk 26. Counterfactual on the 108 sd-meter verdicts since wvk
+# fork; the GLM-5.3-Flash teacher / 262k / scoring bundle (wvk 26) is postponed, will not run at 14:00 UTC today, no new time yet, teacher swap stays deferred, crown floor stays 0.10 sd, reign 22 stands. Counterfactual on the 108 sd-meter verdicts since wvk
 # 22 (each vs its own then-king): 8 more crowns (chal-00613/631/643/649/651/652/
 # 653/655; margins +0.11…+0.20, z 2.5…4.1), the 7 real crowns stand, chal-00687
 # (+0.073, reign 22 by operator crown) stays under. Known risk, accepted by the
@@ -282,7 +281,7 @@ allow_auto_map = false
 # Metadata-intake guards on attacker-controlled repos.
 max_repo_files = 5000
 max_config_bytes = 1048576   # 1 MiB; config.json larger than this is rejected
-# Context-window admission rule (wvk 25 fork, T0 2026-09-30 14:00 UTC; Jacob
+# Context-window admission rule (wvk 26 fork; postponed, will not run at 14:00 UTC today, no new time yet, teacher swap stays deferred, crown floor stays 0.10 sd, reign 22 stands; Jacob
 # 2026-09-26 09:18 UTC "The new models should be required to have a 256k
 # sequence length"). config.json must declare an effective context window
 # >= this many tokens, derived the way vLLM derives max_model_len: the
@@ -1094,7 +1093,7 @@ content_prefix = "refs_max"
 # ~4.8 % of turns. 0 = every reference anchors (the wvk 22/23 rule).
 ref_min_content = 10
 typ_min_refs = 2
-# wvk 25 knobs (STAGED 2026-09-26, off; flip at T0 = 2026-09-30 14:00 UTC with the
+# wvk 26 knobs (STAGED 2026-09-26, off; postponed, will not run at 14:00 UTC today, no new time yet, teacher swap stays deferred, crown floor stays 0.10 sd, reign 22 stands. The
 # GLM teacher swap, explicit dated operator directive 2026-09-26 09:09 UTC "lets
 # do this switch"; docs/glm-cutover-plan.md §2). miner_empty_rule: "floor" (wvk
 # 22–24) = a miner thought with < content_min_tokens content tokens has typ_c

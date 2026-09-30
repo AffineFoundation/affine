@@ -114,8 +114,8 @@ PINNED_ARCH_ALT: list[dict] = [{
     **{k: v for k, v in PINNED_ARCH["text_config"].items() if k != "model_type"},
 }]
 
-# Context-window rule (affine.toml [submission].min_context_tokens; wvk 25 fork,
-# T0 2026-09-30 14:00 UTC): config.json must declare an effective context
+# Context-window rule (affine.toml [submission].min_context_tokens; wvk 26 fork
+# postponed, will not run at 14:00 UTC today, no new time yet, teacher swap stays deferred, crown floor stays 0.10 sd, reign 22 stands): config.json must declare an effective context
 # window >= 262,144 tokens — the smallest native length key present
 # (text_config when the root has none) x rope_scaling.factor for linear /
 # dynamic / yarn (yarn: original_max_position_embeddings x factor); no
@@ -435,7 +435,7 @@ def scan_model_dir(model_dir: Path) -> tuple[list[dict], list[str]]:
             if ctx:
                 problems.append(f"{ctx} — the validator requires a declared context "
                                 f"window of at least {MIN_CONTEXT_TOKENS} tokens from the "
-                                "wvk-25 fork (2026-09-30 14:00 UTC)")
+                                "wvk-26 fork (postponed, will not run at 14:00 UTC today, no new time yet, teacher swap stays deferred, crown floor stays 0.10 sd, reign 22 stands)")
     st = [n for n in names if n.endswith(".safetensors")]
     if not st:
         problems.append("no .safetensors files")

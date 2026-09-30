@@ -81,7 +81,8 @@ WVK22_NOTICE = "2026-09-18"
 WVK22_EFFECTIVE = "2026-09-18"
 WVK25_NOTICE = "2026-09-26"
 WVK25_DELTA_EFFECTIVE = "2026-09-27 08:32 UTC"  # δ 0.20 → 0.10 sd (wvk 24→25)
-WVK25_T0 = "2026-09-30 14:00 UTC"
+# The 2026-09-30 14:00 UTC slot was postponed the same day. Not an effective time.
+WVK25_T0 = "postponed, will not run at 14:00 UTC today, no new time yet, teacher swap stays deferred, crown floor stays 0.10 sd, reign 22 stands"
 # Operator crown of chal-00687 as reign 22 (Jacob Steeves, 2026-09-26 18:51 UTC).
 OPCROWN_DATE = "2026-09-26"
 # Protocol probe: code-fence cases promoted to the enforced set (operator, 2026-09-28).
@@ -503,8 +504,8 @@ margin +0.073 sd, z +2.73: cleared 2·SE, did not clear δ = 0.20 sd); the best 
 challenger against reign 21 since its crown; `via = "operator_crown"`; no \
 scoring change, no `weight_version_key` change
 - **Upcoming fork: wvk 26 (was announced as 25) — teacher → GLM-5.3-Flash, 262k context, miner \
-empty-thought rule, sequential stopping, R cap (notice {WVK25_NOTICE}, effective \
-{WVK25_T0} at the first duel boundary after that time)** — the frozen teacher moves \
+empty-thought rule, sequential stopping, R cap (notice {WVK25_NOTICE}, \
+postponed, will not run at 14:00 UTC today, no new time yet, teacher swap stays deferred, crown floor stays 0.10 sd, reign 22 stands)** — the frozen teacher moves \
 from `Qwen/Qwen3.8-27B` to `zai-org/GLM-5.3-Flash`; serving window 131,072 → \
 262,144 tokens (miners: serve `--max-model-len 262144`); a miner thought with < 10 \
 content tokens scores `min(z_R, z_A)` with an admission gate at 2× the teacher's \
@@ -855,8 +856,7 @@ ids stay free). Since 2026-09-04 the text-only extraction of the genesis \
 the root, `model_type = qwen3_5_moe_text`) is admitted too — see \
 `[[submission.pinned_arch_alt]]`. Any other architecture — including the \
 teacher `Qwen/Qwen3.8-27B` itself — is rejected (`validate_repo_arch` in \
-`code/affine/model_store.py`). **Context rule (from the wvk-26 fork, \
-{WVK25_T0}):** `config.json` must also declare an effective context window of \
+`code/affine/model_store.py`). **Context rule (from the wvk-26 fork; postponed, will not run at 14:00 UTC today, no new time yet, teacher swap stays deferred, crown floor stays 0.10 sd, reign 22 stands):** `config.json` must also declare an effective context window of \
 at least 262,144 tokens (`[submission].min_context_tokens`; `validate_repo_context` \
 — see the upcoming-fork section for the derivation). "Rope stays free" means \
 theta and type; scaling the window below 262,144 is a rejection.
@@ -1239,8 +1239,8 @@ near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
 the validator margin to 0.1."** `weight_version_key` 24 → 25, flipped at the first \
 duel boundary after the directive. Forward-only — reign 22 stands, no \
 re-verdicts, `min_submission_block` unchanged. The GLM-5.3-Flash / 262k / scoring \
-bundle noticed on 2026-09-26 as "wvk 25" keeps its date (2026-09-30 14:00 UTC) and \
-content and becomes **wvk 26**.
+bundle noticed on 2026-09-26 as "wvk 25" is postponed, will not run at 14:00 UTC today, no new time yet, teacher swap stays deferred, crown floor stays 0.10 sd, reign 22 stands, and \
+becomes **wvk 26**.
 
 **What changes.** One number: `[duel.sd_meter].min_margin_sd` 0.2 → **0.1**. A \
 challenger is crowned when its paired mean margin over the slice clears \
@@ -1309,11 +1309,10 @@ the king seat (datagen) follows the new king from `state.json`. Every duel from 
 here on runs against reign 22 under the same scoring rule (δ 0.10 since wvk 25) until the wvk-26 \
 fork below.
 
-## Upcoming fork: wvk 26 — teacher → GLM-5.3-Flash, 262k context, scoring bundle (notice {WVK25_NOTICE} as "wvk 25", renumbered {WVK25_DELTA_EFFECTIVE}; effective {WVK25_T0})
+## Upcoming fork: wvk 26 — teacher → GLM-5.3-Flash, 262k context, scoring bundle (notice {WVK25_NOTICE} as "wvk 25", renumbered {WVK25_DELTA_EFFECTIVE}; postponed, will not run at 14:00 UTC today, no new time yet, teacher swap stays deferred, crown floor stays 0.10 sd, reign 22 stands)
 
 **Notice {WVK25_NOTICE} (explicit dated operator directive, Jacob Steeves \
-2026-09-26 09:09 UTC "lets do this switch"). Effective {WVK25_T0}, at the first \
-duel boundary after that time. `weight_version_key` 25 → 26 (this bundle was noticed \
+2026-09-26 09:09 UTC "lets do this switch"). Postponed, will not run at 14:00 UTC today, no new time yet, teacher swap stays deferred, crown floor stays 0.10 sd, reign 22 stands. `weight_version_key` 25 → 26 (this bundle was noticed \
 as wvk 25; the δ fork of {WVK25_DELTA_EFFECTIVE} took that number — nothing else about \
 the bundle changed). Forward-only — \
 reign 21 stands, no re-verdicts, `min_submission_block` unchanged.** This \
@@ -1389,8 +1388,7 @@ under δ, reign 16 keeps its crown.
 
 **Timeline.** {WVK25_NOTICE}: this notice; the datagen teacher seat moves to GLM \
 (data event). 2026-09-29: GLM teacher swarm pre-warmed next to the Qwen one. \
-**{WVK25_T0}: flip** at the first duel boundary; the first wvk-26 verdict stamps \
-`teacher.repo = zai-org/GLM-5.3-Flash`, `max_model_len 262144` and the new knobs.
+**Postponed, will not run at 14:00 UTC today, no new time yet, teacher swap stays deferred, crown floor stays 0.10 sd, reign 22 stands.**
 
 ---
 
