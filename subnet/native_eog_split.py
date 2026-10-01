@@ -17,12 +17,12 @@ from pathlib import Path
 
 from subnet.native_eog_isolation import NativeEOGSession, canonical, logical_state, sha, validate_runtime
 
-REVISION='original-eog-public-actor-private-grader-v2'
+REVISION='original-eog-public-actor-private-grader-v3-terminal'
 LIMIT=2_000_000
 PUBLIC_FIELDS={'schema','revision','task_id','messages','tools','runtime','seed_sha256','source_files'}
 
 def validate_public(descriptor):
-    if set(descriptor)!=PUBLIC_FIELDS or descriptor['schema']!=2 or descriptor['revision']!=REVISION:
+    if set(descriptor)!=PUBLIC_FIELDS or descriptor['schema']!=3 or descriptor['revision']!=REVISION:
         raise ValueError('public EOG descriptor fields/revision')
     validate_runtime(descriptor['runtime'])
     if not isinstance(descriptor['messages'],list) or [m.get('role') for m in descriptor['messages']]!=['system','user']:
@@ -46,7 +46,7 @@ class OperatorBroker:
     def __init__(self,private_task,runtime):
         self.session=NativeEOGSession(private_task,runtime=runtime)
         initial=self.session.start()
-        self.public=validate_public({'schema':2,'revision':REVISION,'task_id':initial['task_id'],
+        self.public=validate_public({'schema':3,'revision':REVISION,'task_id':initial['task_id'],
              'messages':initial['messages'],'tools':initial['tools'],'runtime':copy.deepcopy(runtime),
              'seed_sha256':hashlib.sha256(Path(private_task['data']['services'][0]['seed_file']).read_bytes()).hexdigest(),
              'source_files':source_files()})
@@ -54,7 +54,8 @@ class OperatorBroker:
              'public_descriptor_sha256':sha(self.public),'source_files':source_files(),
              'verifiers':copy.deepcopy(private_task['data']['verifiers'])}
         self.actor_capability=secrets.token_hex(32);self.operator_capability=secrets.token_hex(32)
-        self.lock=threading.Lock();self.sealed=False;self.calls=0
+        self.session_id=secrets.token_hex(16)
+        self.lock=threading.Lock();self.sealed=False;self.calls=0;self.terminal=None
         owner=self
         class Handler(BaseHTTPRequestHandler):
             def log_message(self,*args):pass
@@ -90,6 +91,14 @@ class OperatorBroker:
                 return copy.deepcopy(self.public)
             if operation=='close' and set(value)=={'operation'}:
                 self.sealed=True;return {'sealed':True}
+            if operation=='finish' and set(value)=={'operation'}:
+                if self.terminal is None:
+                    self.sealed=True
+                    grade=self.session.grade()
+                    self.terminal={'sealed':True,'reward':grade['reward'],'task_id':self.public['task_id'],
+                        'session_id':self.session_id,'public_descriptor_sha256':sha(self.public),
+                        'transcript_sha256':sha(self.session.events)}
+                return copy.deepcopy(self.terminal)
             if operation=='call' and set(value)=={'operation','name','arguments'}:
                 if self.sealed or self.calls>=32:raise ValueError('sealed actor/call budget')
                 name=value['name'];arguments=value['arguments']
@@ -108,7 +117,8 @@ class OperatorBroker:
         if role=='operator' and operation=='grade' and set(value)=={'operation'}:
             result=self.session.grade()
             return {'grade':result,'logical_database_sha256':sha(logical_state(self.session.state())),
-                    'public_descriptor_sha256':sha(self.public),'calls':self.calls,'sealed':self.sealed}
+                    'public_descriptor_sha256':sha(self.public),'calls':self.calls,'sealed':self.sealed,
+                    'session_id':self.session_id,'transcript_sha256':sha(self.session.events)}
         raise PermissionError('operator operation not allowed')
 
     def close(self):
@@ -139,3 +149,8 @@ class PublicActor:
             raise ToolError(value['tool_error'])
         return value['observation']
     def close(self):return request(self.endpoint,self.capability,'actor',{'operation':'close'})
+    def finish(self):
+        value=request(self.endpoint,self.capability,'actor',{'operation':'finish'})
+        if set(value)!={'sealed','reward','task_id','session_id','public_descriptor_sha256','transcript_sha256'} or value['sealed'] is not True or value['public_descriptor_sha256']!=self.expected:
+            raise ValueError('approved native terminal outcome binding')
+        return value

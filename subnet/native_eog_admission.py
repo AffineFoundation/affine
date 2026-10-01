@@ -48,10 +48,12 @@ def admit(envelope,authority,public_bytes,approved_model,private_task,runtime):
         for event in artifact['events']:
             if actor.call(event['name'],event['arguments'])!=event['observation']:
                 raise ValueError('original native observation replay')
-        actor.close()
+        terminal=actor.finish()
         result=request(broker.endpoint,broker.operator_capability,'operator',{'operation':'grade'})
         if result['grade']['reward']!=artifact['claimed_reward']:raise ValueError('original native reward')
-        return {'kind':'controlled-original-eog-model-native-admission-v2','passed':True,
+        if terminal['reward']!=result['grade']['reward'] or terminal['transcript_sha256']!=result['transcript_sha256'] or terminal['session_id']!=result['session_id']:
+            raise ValueError('native terminal seal binding')
+        return {'kind':'controlled-original-eog-model-native-admission-v3-terminal','passed':True,
                 'public_trace_sha256':hashlib.sha256(public_bytes).hexdigest(),
                 'model_audit_sha256':sha(envelope),'model_authority':authority,
                 'checkpoint':payload['checkpoint'],'runtime_profile':payload['runtime_profile'],
@@ -60,6 +62,7 @@ def admit(envelope,authority,public_bytes,approved_model,private_task,runtime):
                 'original_seed_sha256':broker.public['seed_sha256'],
                 'exact_native_tool_calls':result['calls'],'original_reward':result['grade']['reward'],
                 'logical_database_sha256':result['logical_database_sha256'],
+                'terminal_public_response':terminal,
                 'independent_native_replay_performed_here':True,'model_recompute_performed_here':False,
                 'authenticated_model_verification_receipt':True,'shared_epoch_verified':False,
                 'optimizer_steps':0,'chain_submission':False}

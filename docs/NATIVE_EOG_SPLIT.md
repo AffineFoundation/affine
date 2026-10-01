@@ -1,4 +1,10 @@
-# EOG public actor / private original grader, version 2
+# EOG public actor / private original grader
+
+The original version-2 source is preserved at Git commit `3a0cfc09` and in
+`state/native-eog-split-v2-frozen/source`; its controls and independently verified
+native replay remain historical evidence. The current prospective
+`original-eog-public-actor-private-grader-v3-terminal` profile adds a terminal
+scalar outcome and writes separate reports under `state/native-eog-split-terminal-v3`.
 
 This prospective boundary leaves the frozen Calendar version-1 controls and
 active shared workers unchanged. It separates the miner-facing actor RPC from
@@ -26,6 +32,10 @@ The `/actor` RPC accepts only:
 - `reset`: returns the approved public descriptor before any action.
 - `call`: an original selected tool name and JSON arguments.
 - `close`: seals further actor writes; it does not expose a grade.
+- `finish` (version 3): seals writes and returns only the original scalar reward,
+  opaque session/task ID, public descriptor hash, and exact transcript hash.
+  Repeating finish returns the identical terminal response; raw verifier
+  results remain private. No intermediate reward-oracle operation exists.
 
 Selected native calls retain their original observation bytes. Unknown or
 unselected names return the exact pinned FastMCP `Unknown tool: NAME` error,
@@ -57,7 +67,7 @@ receipts are explicitly unit controls rather than real inference evidence.
 
 Run `.venv/bin/python -m ops.probe_native_eog_split` and
 `.venv/bin/python -m unittest discover -s tests -p test_native_eog_split.py`.
-Actual reports are in `state/native-eog-split`. Operator-private reports are
+Version-3 reports are in `state/native-eog-split-terminal-v3`. Operator-private reports are
 mode 0600. No capabilities are written to reports.
 
 ## Coupling independent model verification
@@ -82,5 +92,10 @@ itself recompute activations or constitute a cryptographic GPU execution proof.
 The old 8,192-token model profile cannot cover the full trajectory: its complete
 native contexts reach 16,973 tokens before the final output. A separately pinned
 larger-context model/profile is required. Neither source nor context may be
-silently truncated. Genuine full-model evidence, common epoch uploads/audits,
-proposed weights, training and held-out comparisons remain separate gates.
+silently truncated. Subsequent controlled Qwen model audits now cover both
+six-tool positive and negative traces under the exact frozen version-2 source.
+Fresh native admission reproduced their original rewards 1 and 0. These are
+curated target-model computation controls with complete contexts and probability
+records, rather than original sampling or version-3 terminal-output evidence.
+Common epoch uploads/audits, proposed weights, training and held-out comparisons
+remain separate gates.

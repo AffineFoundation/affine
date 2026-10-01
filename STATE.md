@@ -24,8 +24,10 @@ relative to the starting baseline three metrics increased and six stayed flat.
 That does not establish broad improvement. The continuing separately pinned
 i3math extension passed a full batch audit and three attributed full-model
 updates. Its six new R2 checkpoint files were independently hashed; the ten-family
-post-update held-out evaluation is still pending, so that epoch is not yet
-counted as complete. See [the paired wider results](docs/WIDE_EVALUATION_RESULTS.md).
+post-update held-out evaluation completed. This is the third fully checked wider
+epoch: three held-out metrics rose, two fell and five stayed flat; i3math itself
+stayed at zero. Trivia now runs from that trained checkpoint under a new pinned
+source. See [the paired wider results](docs/WIDE_EVALUATION_RESULTS.md).
 
 The controlled Tau2 tool-use positive/negative pair now passes independent
 model verification and replay through the original environment grader. The
@@ -39,7 +41,7 @@ tool/grader replay. This is a controlled outcome-conditioned training example;
 common epoch integration and held-out quality improvement remain unproven.
 
 The controlled original Agent fixtures now run through the shared GPU epoch
-pipeline. Four full epochs passed independent artifact, audit, score,
+pipeline. Five full epochs passed independent artifact, audit, score,
 optimizer attribution, checkpoint-publication and held-out evidence checks.
 One full-model update per epoch consumed its verified positive/negative pair; all six new
 checkpoint objects were independently hashed (272,585,280 bytes). Two fixed

@@ -1,5 +1,6 @@
 """Real original Calendar controls over actor-only RPC; no model assertions."""
 import copy
+import argparse
 import json
 import urllib.error
 from pathlib import Path
@@ -17,8 +18,12 @@ def owned(root,task,runtime,label,negative=False,expected=None):
             for event in expected['events']:
                 if actor.call(event['name'],event['arguments'])!=event['observation']:
                     raise ValueError('split original native observation mismatch')
-        actor.close()
+        terminal=actor.finish()
+        assert terminal==actor.finish()
         private=request(broker.endpoint,broker.operator_capability,'operator',{'operation':'grade'})
+        assert terminal['reward']==private['grade']['reward'] and terminal['session_id']==private['session_id']
+        assert terminal['transcript_sha256']==private['transcript_sha256']
+        assert not {'results','query','expected_value','database','operator_capability'}&set(terminal)
         if expected and (private['grade']['reward']!=expected['reward'] or private['logical_database_sha256']!=expected['logical_database_sha256']):
             raise ValueError('split original reward/state mismatch')
         artifact={'public_descriptor':public,'events':copy.deepcopy(broker.session.events),
@@ -29,7 +34,9 @@ def owned(root,task,runtime,label,negative=False,expected=None):
     finally:broker.close()
 
 def main():
-    original=Path('state/native-eog-isolation');root=Path('state/native-eog-split');root.mkdir(exist_ok=True)
+    parser=argparse.ArgumentParser();parser.add_argument('--state',type=Path,default=Path('state/native-eog-split-terminal-v3'))
+    args=parser.parse_args()
+    original=Path('state/native-eog-isolation');root=args.state;root.mkdir(exist_ok=True)
     task=json.loads((original/'original-calendar-relocation.private.json').read_text())
     runtime=json.loads((original/'runtime-descriptor.json').read_text())
     positive=owned(root,task,runtime,'positive')
@@ -57,7 +64,8 @@ def main():
             else:raise AssertionError('unselected tool accepted')
         initial=request(broker.endpoint,broker.operator_capability,'operator',{'operation':'grade'})
         assert initial['grade']['reward']==0 and initial['calls']==0
-        actor.close()
+        terminal=actor.finish()
+        assert terminal==actor.finish() and terminal['reward']==0
         try:actor.call('get_calendar_list',{})
         except urllib.error.HTTPError as error:assert error.code==400;denied.append('sealed-write')
         else:raise AssertionError('sealed actor accepted tool')
@@ -77,6 +85,7 @@ def main():
         'native_tool_calls_each':len(positive['events']),'exact_positive_replay':positive==replay,
         'public_descriptor_sha256':descriptor_sha,'private_grader_descriptor_sha256':grader_sha,
         'denied_actor_operations':denied,'falsifications':falsifications,
+        'terminal_scalar_outcome_only':True,'idempotent_finish_verified':True,
         'actor_exposes_private_seed_or_grader':False,'scope':'controlled co-located broker RPC, not host-root isolation',
         'model_proofs_verified':False,'shared_epoch_verified':False,'chain_submission':False}
     (root/'split-controls.json').write_text(json.dumps(report,indent=2))

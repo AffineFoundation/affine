@@ -1,0 +1,11 @@
+# Prospective EOG common adapter
+
+`subnet/native_eog_adapter.py` implements the common reset/step/terminal contract over scoped public actor sessions. It is not registered in the active dispatcher and has not completed a miner/audit/training epoch.
+
+The signed public spec contains approved public task descriptors, including original messages, selected tool schemas, runtime and source pins, and seed byte hashes. A trusted deployment supplies a fresh actor factory for each reset. Actor capabilities, private seed files and native SQL grader fixtures do not belong in that public spec. The operator owns broker startup and must close each broker after grading and actor cleanup. The current broker is a controlled co-located pilot; it does not establish isolation against host root or unrestricted external miner processes.
+
+Each tool observation is preserved exactly. Native MCP `ToolError` is an environment observation; transport and other infrastructure failures propagate. Terminal `finish` returns only the unchanged original scalar reward and sealed task/transcript bindings. The adapter checks those bindings and reward finiteness before classifying outcomes. It forbids further actions after termination. The broker and adapter versions are separate pinned contracts: the terminal broker is `original-eog-public-actor-private-grader-v3-terminal`, and this adapter is `controlled-native-eog-broker-common-v1`.
+
+Actual original Calendar relocation task54 conformance produced positive1, wrong-destination negative0, and fresh replay positive1 through six original tools, with exactly matching task and observation hashes. Four adapter tests cover terminal history substitution, Boolean/nonfinite rewards, and native errors versus infrastructure failures. These controls establish the adapter boundary, not model generation, training or generalized performance.
+
+The previous135M/8192 runtime cannot retain the complete trajectory. A separate pinned Qwen long-context runtime is being qualified, and genuine terminal output proofs are still required before common admission. Full-vocabulary log-probabilities for a positive/negative pair exceed the existing100MB compressed upload budget; a separately signed and bounded larger transport profile must be implemented without truncating or quantizing those probabilities.
