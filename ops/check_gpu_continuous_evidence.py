@@ -22,6 +22,31 @@ from ops.check_epoch_evidence import require
 # Later workers must report explicit per-update attribution; no silent downgrade.
 LEGACY_CYCLIC_WORKER='01d458b9f39312ddebc750482963c038f85aba335f75b51be2739adaee016d8a'
 
+LONG_CONTEXT_REVISION='cuda-bf16-sdpa-flash-sm86-selective-head-common-v1'
+LONG_CONTEXT_PROFILE=dict(device='cuda',dtype='bfloat16',attention='sdpa-flash-only',
+    sm=[8,6],tf32=False,deterministic_algorithms=True,cublas_workspace_config=':4096:8',
+    native_toploc_threads=2,torch_threads=2,max_context=32768,
+    output_head='output-prediction-rows-full-vocabulary',candidate_score_reduction='numpy-float32-sum')
+LONG_CONTEXT_NUMERICAL=dict(logprob_atol=1e-5,logprob_rtol=0,toploc_exp_mismatches=0,
+    toploc_mant_err_mean=0,toploc_mant_err_median=0)
+
+
+def unpack_authenticated_epoch(body, manifest):
+    """Caller must first authenticate the signed public manifest and receipt.
+
+    Historical epochs retain the 100 MB reader. Enlargement requires the exact
+    reviewed long-context profile; an arbitrary signed size declaration is insufficient.
+    """
+    if manifest.get('model_runtime_revision') == LONG_CONTEXT_REVISION:
+        require(canonical(manifest.get('backend_profile')) == canonical(LONG_CONTEXT_PROFILE) and
+            canonical(manifest.get('numerical_policy')) == canonical(LONG_CONTEXT_NUMERICAL) and
+            manifest.get('transport_policy') == 'direct-r2-v1' and
+            canonical(manifest.get('artifact_policy')) == canonical(dict(compressed_bytes=250_000_000,raw_bytes=500_000_000)),
+            'GPU qualified long-context artifact policy')
+        return unpack(body, max_upload=250_000_000)
+    require(not manifest.get('artifact_policy'), 'GPU unknown enlarged artifact policy')
+    return unpack(body)
+
 
 def check_source_bundle(body, descriptor, expected):
     require(len(body) == descriptor['size'] and len(body) <= 32*1024**2 and
@@ -107,7 +132,7 @@ def inspect(state, bucket, evaluations):
             raw = remote['audits'][0]
             require(all(audit.get(k) == v for k, v in raw.items()) and
                     audit['submission_sha256'] == receipt['sha256'], 'GPU independent audit report')
-            batches = [b for b, arrays in unpack(body)]
+            batches = [b for b, arrays in unpack_authenticated_epoch(body, manifest)]
             accepted = [batches[o['batch']] for o in audit['outcomes'] if o.get('valid')]
             require(accepted == audit['accepted'] and all(o.get('fully_audited')
                     for o in audit['outcomes'] if o.get('valid')), 'GPU accepted frozen batch binding')

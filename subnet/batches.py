@@ -46,8 +46,10 @@ def bounded_tensor(data):
     return value
 
 
-def unpack(data):
-    if len(data) > MAX_UPLOAD:
+def unpack(data, *, max_upload=MAX_UPLOAD):
+    if type(max_upload) is not int or not 0 < max_upload <= 250_000_000:
+        raise ValueError('compressed budget bounds')
+    if len(data) > max_upload:
         raise ValueError('compressed upload budget')
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         entries = z.infolist()
