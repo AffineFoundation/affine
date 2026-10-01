@@ -42,3 +42,21 @@ quality gain. The controller opened the next epoch with those new weights.
 Live affine.io JSON and desktop/phone browser checks matched the completed
 epoch, before/after records and UID grid. Private evidence is under
 `state/native-eog-common`, including `root-continuous-independent-evidence.json`.
+
+The second common epoch `nonpayable-native-eog-common-v4-1790854196-1`
+completed the same full seven-turn audit/training contract on the preceding
+checkpoint. Its new checkpoint is
+`09f3758908ce734a3baa337993cbaff061b132cdf35dc188b1195bb3b942a0f0`;
+all six R2 objects were independently streamed and hashed again
+(999,524,442 bytes). Root checked two complete common epochs, two optimizer
+steps, exact approved source archives, frozen batch/audit/score bindings and
+signed successor manifests. Both epochs' two fixed heldouts remain at zero
+before and after. The third epoch consumes the second updated checkpoint.
+
+The public dashboard matches all four completed paired evaluation records
+and both UID grids (`state/dashboard/common-eog-two-epoch-public-check.json`).
+A separate live browser check cycled all nineteen visible environment entries
+at 1440- and 390-pixel widths, preserving evaluation series boundaries and
+the 256-cell grid. Those visible entries include historical and research
+controls and do not imply nineteen trained original families. Browser evidence
+is `state/dashboard/all-environment-live-browser-evidence.json`.
