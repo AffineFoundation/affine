@@ -40,3 +40,26 @@ HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 PYTHONPATH=. .venv/bin/python \
 
 This bounded command fails if the pinned provider is not available offline; it
 does not silently switch datasets or fetch a replacement.
+
+A prospective common-pipeline configuration now adds this original taskset to
+the thirteen-family MRCR source without changing source code, existing
+environment definitions, held-out harnesses or prior training groups. It uses
+sixteen mining questions and sixteen disjoint held-out questions. The shared
+harness source binding remains unchanged. The new held-out policy is
+unrestricted autoregressive sampling with a 256-token budget; the mining policy
+is a disclosed abstention-versus-wrong candidate control.
+
+All sixty-four fresh native controls also passed under the staged approved
+adapter: abstention gives solved 1, correct 0, abstained 1 and omniscience 0;
+the wrong control gives solved 0, correct 0, abstained 0 and omniscience -1.
+Full public question/context inputs do not overlap between the prospective
+fourteen-family mining and held-out sets. Question-only checks must include
+public context files for tasks such as Oolong, where identical questions can
+refer to different original contexts.
+
+The prospective adapter source binding is
+`5dd2d6a402e66d0b92dcc10f2178669030bd30c0d160a7d1b6b08d65da621956`.
+The original snapshot remains unchanged. No remote model/proof qualification,
+shared training epoch or learned-performance gain is established by these
+preparation and grader checks. Existing historical evaluations are retained,
+and reward that includes abstention must not be described as factual accuracy.
