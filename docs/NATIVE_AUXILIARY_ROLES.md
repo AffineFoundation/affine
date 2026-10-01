@@ -1,0 +1,48 @@
+# Native model roles and public tool probe
+
+The separate native role adapter authenticates auxiliary-model observations without treating them as agent training targets. `subnet/native_auxiliary_roles.py` accepts an operator-signed role contract and a signed audit bound to the exact contract and receipt collection. Agent outputs receive a training mask; user-simulator outputs always receive a zero mask. Admission does not run training.
+
+The controlled Tau2 experiment uses the approved 135M checkpoint for both roles. This differs from the historical Engy user simulator. Both roles retain all native messages and tool schemas, commit the exact HTTP request, produce full-vocabulary log probabilities and TOPLOC fingerprints, and derive the OpenAI-compatible response from the captured tokens. Independent verification recomputes each role and replays the original tool database and ALL grader. User outputs cannot be substituted merely because an environment replay succeeds.
+
+The curated public policy only reads the public user goal, agent instructions, native tool schemas and actual visible tool responses. It does not import the database or evaluator. Its positive guidance asks the user to check network status, enable disabled roaming, and test speed. The user performs the actual native `check_network_status`, `toggle_roaming`, and `run_speed_test` tools. The negative guidance omits the roaming fix. Two semantically equivalent serializations are scored under the model; the selected serialization receives full computation evidence. This proves computation on curated trajectories; it does not claim unbiased autoregressive generation or hidden-answer discovery.
+
+Actual mocked-transport conformance evidence is in `state/native-tau2-probe/public-tool-feasibility-v2`: the positive trace scored 1 and ended with the native user stop after three tool calls; the negative scored 0 and reached MAX_STEPS after one tool call. Those controls have no model proofs and are not K/L training coverage. The subsequent model-backed probe and independent verification must complete before its contributions are described as verified.
+
+## Prospective common-pipeline bridge
+
+A future authenticated epoch manifest must declare each role's immutable checkpoint, source closure, numerical policy, rendering and curated/sampling policy, plus the native environment task revision and stop budget. The existing private upload capability can carry the complete native simulation, all role receipts, arrays, and proofs. A native auditor must validate the full role contract, independently recompute the model evidence, replay the original tool state and grader, and sign an audit bound to the frozen artifact hashes. The trainer consumes only agent-masked targets; auxiliary tokens authenticate observations but never enter the agent loss.
+
+This is a separate adapter experiment. The deployed GPU service does not yet admit this native artifact schema. Integration requires a prospective approved worker/schema/source version at an epoch boundary. A historical external Engy simulator would require a separate pinned model proof or operator-authenticated external response contract; these controlled same-model results do not establish that compatibility.
+
+## Commands
+
+Set the strict CPU profile before either command:
+
+```sh
+export MKL_CBWR=COMPATIBLE ATEN_CPU_CAPABILITY=default ONEDNN_MAX_CPU_ISA=SSE41
+export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 TOKENIZERS_PARALLELISM=false
+.venv/bin/python -m subnet.native_tau2_curated --out STATE --data DATA \
+  --checkpoint CHECKPOINT_DIRECTORY --manifest APPROVED_MANIFEST --seed-file OPERATOR_SEED_FILE
+.venv/bin/python -m subnet.native_tau2_curated --verify --out STATE --data DATA \
+  --checkpoint CHECKPOINT_DIRECTORY --authority OPERATOR_PUBLIC_KEY --seed-file OPERATOR_SEED_FILE
+```
+
+Use `--negative` for the failing public-guidance variant. The authority seed stays on the operator; it is never included in artifacts, remote jobs or logs. Tests use generated ephemeral authority keys and synthetic proof fixtures, not model-verification claims.
+
+`native_role_batch.describe_sample` creates a content-hashed prospective sample descriptor only after the signed full-role audit binds the native report, simulation task/reward, receipts, and probability arrays. `describe_batch` rejects mixed tasks/checkpoints, duplicate artifacts, and missing K/L. Its role masks identify which outputs belong to the agent; they are not an instruction to supervise failed outputs positively. `preference_pair` instead requires matching initial agent prompts and distinct success/failure outputs, and produces an explicit chosen/rejected agent pair. Auxiliary outputs remain verification evidence. Neither adapter runs training or admits these artifacts to the deployed service.
+
+A bounded continuation is available in `ops/run_native_tau2_tools_evidence.py`. It checks a running positive process's PID and start time, waits for a terminal report, and then runs independent positive verification, negative generation with the same native stop budget, independent negative verification, and a K/L descriptor. It fails closed on process identity changes, missing/failed reports, existing negative namespaces, or incomplete audits; it does not blindly regenerate a pending job.
+
+## Measured controlled positive
+
+`state/native-tau2-probe/public-tools-model-positive` completed the genuine curated-computation positive on the approved 135M checkpoint. It captured six roles with input/output token counts 3562/21, 7839/31, 3651/19, 3815/19, 3966/19, and 4081/17. The native user executed three actual tools, including the roaming state mutation. Fresh independent all-role probability/TOPLOC recomputation and original tool/grader replay passed with reward 1 and `user_stop`. The persisted signed `role-audit.json` binds the exact role contract, receipts and native verification report. The adapter produced one eligible agent target and five masked auxiliary outputs. This is a controlled same-model curated positive, not historical Engy or deployed GPU coverage.
+
+Three operator-resigned tool-bearing controls in `public-tools-model-positive-mutations/results.json` were rejected: substituted `toggle_roaming` response action, fabricated network-status observation, and falsified original-grader reward. The environment-only controls reused byte-identical already-audited model receipts and reran the native orchestrator and grader; the production verifier still recomputes every role. The same-stop-budget negative completed eleven real model roles, native reward 0 and `max_steps`. Fresh independent all-role probability/TOPLOC recomputation and original native replay passed. `state/native-tau2-probe/public-tools-model-K1L1.json` now records the admitted controlled K1/L1 pair; this is separate from deployed GPU epoch coverage.
+
+## Full optimizer control
+
+`subnet/native_role_optimizer.py` and `ops/run_native_role_training_control.py` provide a separate controlled follow-up. They wait for terminal K/L evidence, re-admit both signed samples, and select the matching first-agent prompt with the successful agent output chosen and the unsuccessful output rejected. The signed optimizer job pins source files, interpreter/package versions, the approved checkpoint, artifact descriptors, numerical profile and budgets before artifact/model reads.
+
+The requested update is one full-parameter FP32 reference-relative preference step with zero dropout, active gradient checkpointing, beta 0.1, learning rate 1e-5, zero weight decay and gradient clipping at 1. Reference scores come from the hash-checked independently audited arrays. Auxiliary outputs are never loss labels. The job must measure nonzero gradients and parameter changes, export the exact checkpoint file closure, and record loss, preference margin change, parameter delta counts/norms and peak memory. These are optimizer-fit measurements, not heldout quality gains.
+
+After an actual successful update, the operator publishes each next-checkpoint object without overwriting conflicting content, independently hashes every R2 object stream, and publishes the immutable signed checkpoint descriptor. A separate fresh native rollout and all-role verification follow under that checkpoint, with a distinct controlled baseline group. The full update completed in `state/native-tau2-training/full-agent-pair-1790838648`: 134,515,008 parameters, gradients and changes in all 272 parameter tensors, 132,554,135 changed parameter elements, delta L2 0.10443494, and peak resident memory 10,829,029,376 bytes. The agent-pair preference margin increased 0.50034738; this is optimizer fit, not heldout quality. The next checkpoint is `ad1f39e16f8ec51ad7472d6e7c6e737be0237ef7aae39143ec52b8043c3082d1`. Its six files (541,615,135 bytes) were independently R2-stream-hashed and the immutable authority descriptor published. The signed `training-receipt.json` and `checkpoint-publication.json` bind these measurements. Fresh post-update native generation completed six model roles, actual tool execution, reward 1 and `user_stop`. Independent new-model probability/TOPLOC checks for all roles and original native tool/grader replay passed. The signed `completion.json` binds the changed checkpoint, full update, R2 publication and fresh native audit, completed at UTC epoch timestamp 1790841382.5252416. Its controlled baseline group is `f4659e9f3b130e28fa643e701a75250aaf41bba80c596f88664e775a7f1ea259`; no quality improvement is claimed from the unchanged curated reward. The GPU service and its history remain separate.
