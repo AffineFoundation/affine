@@ -53,12 +53,18 @@ index remained authorized. The receipt is
 `state/gpu-wide/root-indexed-legacy-manifest-compatibility.json`, with module and
 manifest hashes. This did not load weights, execute inference or deploy.
 
-That check first exposed a mismatch in the current root/window-based prototype:
-it lacks the live worker's MRCR shell-candidate dispatch and original native MCP
-tool-error bridge. Their restoration and behavior checks are admission gates;
-passing the helper tests alone does not qualify that source for the existing
-sixteen-family loop. Preserve the live runtime and separately version the
-combined source rather than altering a sealed checkpoint cohort.
+That check first exposed a mismatch in the root/window-based prototype:
+it lacked the live worker's MRCR shell-candidate dispatch and original native MCP
+tool-error bridge. The isolated integration now restores them. An independent
+CPU control checks exact bytes for five native/model modules, AST identity for
+twelve existing harness functions, and identical normalized policies for all
+sixteen declared harnesses. Eight additional integration controls pass for
+index rotation, inactive definitions, registry tampering, local mining and both
+auditors. These checks qualify neither GPU execution nor deployment; complete
+replay/optimizer and lifecycle controls remain admission gates. The receipt is
+`state/gpu-wide/root-common-policy-preservation-check.json`. Preserve the live
+runtime and separately version the combined source rather than altering a
+sealed checkpoint cohort.
 
 ```sh
 PYTHONPATH=. .venv/bin/python -m unittest discover -s tests \
