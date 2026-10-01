@@ -23,5 +23,23 @@ The following epoch closed without a complete K1/L1 batch. Independent checks
 of signed R2 manifests, audit challenge and scores confirmed zero receipts,
 points and proposed weights, no optimizer run, and the unchanged checkpoint
 in the subsequent published epoch. Both retained the full ten-minute window.
-This demonstrates empty-epoch closure and publication recovery; a successful
-submission after that empty epoch is not yet established by this check.
+Subsequent independent checks established successful recovery: epochs
+`nonpayable-native-sql-common-v1-1790849077-2` and
+`nonpayable-native-sql-common-v1-1790850079-3` each accepted and audited a
+K1/L1 pair, proposed one point and normalized weight, and completed a
+full-model optimizer update. Their checkpoints are respectively
+`dc1e1672b8d1125b271050b913fe44c75d29b84efedf8bce64fd4d7a8210f639` and
+`52a46cf0107e95b52ea9fdf4e79413d97508e85e65f915ed3270e2d3f1ef2347`.
+All six objects of each checkpoint were independently streamed and hashed
+(272,585,280 bytes per checkpoint). Thus the recorded sequence includes
+three trained epochs and an intervening empty epoch, followed by resumed
+auditing and training. The sixteen fixed held-out tasks still scored zero
+before and after every update; recovery does not establish learning gains.
+
+At the completed third training boundary, the controller adopted a new
+immutable worker version for bounded empty searches. A search that finds no
+complete K/L pair now reports its observed outcome counts and exits normally
+without uploading a submission. Actual inference, environment and transport
+errors still fail. This avoids repeatedly executing a successful search merely
+because it could not assemble a qualifying pair. The new version's next
+epoch is a separate ongoing trial, not additional completed training evidence.
