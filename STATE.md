@@ -331,3 +331,13 @@ private R2 cumulative submission and signed final boundary selection. Before
 heldout evaluation is in progress. It has no completed optimizer claim yet.
 Signing keys and R2 account credentials remain on the operator. All these new
 experiments remain nonpayable and make no chain weight submissions.
+
+## 2026-10-01: verified common adapter expansion, staged only
+
+The root independent wide-loop audit confirms ten completed nonpayable epochs and thirty optimizer updates, with two authenticated aborted openings and no demonstrated empty wide epoch yet. The live v7f controller has fourteen environments and is collecting epoch `nonpayable-gpu-wide-v7f-balanced-replay-1790874860-7`. Actual affine.io HTTPS projection matches all ten completed epochs, their checkpoints/UID131 points, and 226 paired evaluation records. These checks do not establish improvement across all environments.
+
+Numina qualified its original index13 public-starter positive/negative pair under the shared adapter, with direct R2 hydration and separately reloaded full-logit/TOPLOC/native verification (`state/numina-model-control/1790874912/root-evidence-check.json`). Pydantic's preserved v1 found only positives; a new public-schema wrong-type v2 qualified original index0 K1/L1 (`state/pydantic-type-model-control/1790875093/root-evidence-check.json`). Neither family has completed a common training epoch yet.
+
+Separate undeployed expansion archives preserve every existing environment/harness and heldout identity: Numina15 archive `2e9a6e6481c8dd0040dfb794a6eef3c584279fdf0c1d2fa9a9c72c73eecb518b`, then Pydantic16 archive `211bdd956d83230c00c8251b4031af7f593f585ee1e7a7e81aa5612d62ed6fa3`. Both preserve existing compute source bytes. Their configs/preparation records are in `state/gpu-wide/numina-v7g-1790875313-*` and `state/gpu-wide/pydantic-v7i-1790875568-*`; subsequent signed empty-recovery control requires a new reviewed source, not modification of either frozen archive.
+
+The separate original native Tau2 common-service epoch completed all sixteen baseline tasks. Root checked all 148 signed role receipts against the exact approved role/task seed formulas (`root-before-seed-receipt-check.json`). Its optimizer, after-evaluation and successor remain pending; the historical heldout digest alone omits agent seeds, so completion still requires explicit before/after signed seed comparison.
