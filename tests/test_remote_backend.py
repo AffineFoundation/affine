@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from subnet.remote_backend import RemoteJobs,RemoteController,role_time_budget
 from nacl.signing import SigningKey
 import base64
-from subnet.backend_jobs import BACKEND_PROFILE,NUMERICAL_POLICY,canonical
+from subnet.backend_jobs import BACKEND_PROFILE,NUMERICAL_POLICY,canonical,signed
 import hashlib
 
 class RemoteReportBinding(unittest.TestCase):
@@ -50,6 +50,23 @@ class RemoteReportBinding(unittest.TestCase):
         (self.jobs.state/'same-job-job.json').write_text(json.dumps(changed))
         with self.assertRaisesRegex(ValueError,'original signed job binding'):
             self.jobs.checked(self.report,self.prior,self.manifest)
+    def test_new_evaluation_job_signs_configured_lifetime(self):
+        self.jobs.config={'job_ttl_seconds_by_role':{'evaluate':7200}}
+        self.jobs.metadata=dict(source_files=self.prior['source_files'],runtime_versions=self.prior['runtime_versions'])
+        self.jobs.workspace='/remote';self.jobs.code='/frozen';self.jobs.python='/python'
+        self.jobs.controller.signed=lambda payload:dict(payload=payload,signer=self.operator,signature=base64.b64encode(self.key.sign(canonical(payload)).signature).decode())
+        self.jobs.command=Mock();self.jobs.copy_to=Mock();self.jobs.remote_status=Mock(return_value={'phase':'complete'})
+        def fetch(remote,local):
+            path=next(self.jobs.state.glob('fresh-evaluation-*-job.json'))
+            job=signed(json.loads(path.read_text()),self.operator)
+            self.assertEqual(job['expires_at']-job['created_at'],7200)
+            report=dict(self.report,job_id=job['job_id'],role='evaluate',job_sha256=hashlib.sha256(canonical(job)).hexdigest(),completed_at=1100)
+            local.write_text(json.dumps(report))
+        self.jobs.copy_from=fetch
+        with patch('subnet.remote_backend.time.time',return_value=1000):
+            result=self.jobs.run('fresh-evaluation','evaluate',self.manifest)
+        self.assertEqual(result['completed_at'],1100)
+        self.jobs.copy_to.assert_called_once()
 
 class RoleTimeBudget(unittest.TestCase):
     def test_expanded_evaluation_does_not_extend_other_roles(self):
