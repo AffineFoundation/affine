@@ -13,44 +13,48 @@ and held-out evaluation records. Those updates consumed verified pairs from
 Math, Verbatim, Reasoning Gym, When2Call, IFEval, and Oolong. These measurements
 do not establish improvement across all environments.
 
-The wider series has eight independently checked completed epochs and twenty-four
-full-model updates. Each successor's six R2 objects were independently streamed
-and hashed (3,426,302,727 bytes). The latest paired evaluation covers twelve
-families and sixteen fixed held-out tasks per family. Math, When2Call and Oolong
-rose; Trivia and Reasoning Gym declined; seven other metrics stayed flat.
-Independent HTTPS checks matched all 174 public evaluation records and the
-checkpoint/256-UID grids on affine.io. These measurements do not establish
-improvement across all environments. See [paired results](docs/WIDE_EVALUATION_RESULTS.md).
+The wider series has eleven independently checked completed epochs and 41
+full-model updates. The latest completed epoch used fourteen original families,
+sixteen fixed held-out tasks per family, and eleven balanced fresh/replay updates
+with immutable reference probabilities and one persistent AdamW optimizer.
+Its successor is checkpoint
+`0081b0698c0ccc103edfca0506a2c60aeaf9d0a521716889e6a51fdef0a6513b`.
+Independent HTTPS checks matched all 254 public evaluation records and the
+checkpoint/256-UID grids. The latest comparison has three improved metrics,
+two declines and nine unchanged metrics; Math fell from 0.5 to 0.375 and Trivia
+from 0.5 to 0.4375. These measurements do not establish improvement across all
+environments. See [paired results](docs/WIDE_EVALUATION_RESULTS.md).
 
-MRCR's disjoint original snapshot passed 64 native grader controls. A prospective
-common source adds its public-shell candidate policy while preserving the existing
-twelve environment contracts. Two fresh staged native controls scored 1 and 0
-with comparable command lengths. A remote model search then produced one
-positive/negative pair at index 0 and one positive-only result at index 1. All
-three traces passed separate fresh probability/TOPLOC and original native replay
-checks; index 1 remains unqualified for scoring. The MRCR controller has now
-activated at a completed idle boundary, preserving the last checkpoint and
-starting a separate thirteen-family held-out cohort. This activation alone does
-not count MRCR as a common trained family.
+MRCR and TriviaAbstain have now completed genuine common training epochs.
+MRCR's public-shell retrieval policy remains a curated control over two disjoint
+conversation groups. TriviaAbstain's original grader rewards abstention, so its
+successful curated abstention batches do not establish factual knowledge gains.
+The balanced replay controller has consumed independently reverified historical
+pairs with exact optimizer attribution. Historical standalone qualifications and
+failed candidate searches remain preserved separately.
 
-The balanced historical replay helper requires complete held-out declarations
-and has fifteen passing signed-lineage controls. An isolated remote qualification
-now verified nine historical families against the current model, including
-probabilities, TOPLOC and original native replay, then completed nine full-model
-updates with one AdamW and immutable pre-update references. Root authenticated
-the signed reports and actual source/artifact hashes, then independently streamed
-and hashed all six published R2 checkpoint objects. Paired held-out evaluation
-is running; its results and continuous-controller integration remain separate
-gates. No performance gain is claimed. See
-[MRCR scope](docs/MRCR_PUBLIC_SHELL_PILOT.md) and
-[replay admission](docs/VERIFIED_REPLAY_POOL.md).
+The first sixteen-family controlled empty window honored its full published
+900-second deadline and froze zero submissions with no optimizer update. Its
+subsequent 256-task evaluation completed 658.770 seconds after the original
+signed one-hour lease. That report is preserved as diagnostic evidence and is
+rejected for epoch admission; the signed epoch status is `aborted_evaluation`.
+The checkpoint and cumulative 41 training steps are unchanged. A new immutable
+recovery source preserves all sixteen environment contracts and task assets,
+adds a three-hour signed evaluation budget, and its controller is activated to
+open a fresh controlled empty window. The intended sequence is that window, genuine Numina
+index 13 training, then Pydantic index 0 training. Neither new family's model
+qualification counts as completed common training or empty recovery.
 
-The additional original TriviaAbstain model probe completed 32 candidate-sampling
-attempts and two independent full-probability/TOPLOC/native verifications. Every
-attempt chose abstention; no negative was found, so no K1/L1 pair or training
-admission is claimed. Original grader controls qualify shorter wrong responses
-for a separately signed probability calibration. See
-[TriviaAbstain qualification](docs/TRIVIA_ABSTAIN_MODEL_QUALIFICATION.md).
+The separate mixed-runtime Tau2 common trial completed frozen proof auditing
+and an agent-only full optimizer update. Its original after-evaluation retained
+11 verified tasks and five infrastructure errors. A separately signed recovery
+attempt now verifies all five failed tasks under the same checkpoints, task
+seeds and fixed auxiliary user model; the original failed report is unchanged.
+A fresh successor contribution under the trained checkpoint passed six-role
+independent model verification, original native replay and exact private proof
+storage checks. These
+separate attempts must not be presented as an error-free original evaluation
+or as evidence of broad performance improvement.
 
 The controlled Tau2 tool-use positive/negative pair now passes independent
 model verification and replay through the original environment grader. The
@@ -108,11 +112,17 @@ public repo includes a guarded utility that reproduces its exact portable source
 variant in an independent checkout; actual Git-archive reproduction passed
 without accessing fixtures/models or starting services.
 
-The public source-level matrix records 45 imports, 38 resets, 23 original-reward
-and remote-proof milestones, 22 remote-replay milestones and 15 trained sources.
-Pydantic has verified negative-only traces, with no qualifying K/L pair or training.
-These flags describe specific demonstrated controls, rather than complete support
-or broad task mastery across each environment family.
+The canonical private source-level matrix records 45 imports and 17 trained
+original families, with versioned evidence distinguishing native controls,
+model/proof qualification and completed common training. Numina and Pydantic
+now have qualifying target-model positive/negative controls, but their new
+common epochs remain pending. Prolog has original isolated native controls over
+two problem geometries; its shared-model proof qualification is pending.
+RCore has a qualified public arithmetic control and explicit failures for
+other original graders; its dependency qualification is still in progress.
+The public coverage snapshot may precede these latest private qualifications.
+These flags describe demonstrated scopes, rather than complete support or broad
+task mastery across each environment family.
 
 See [environment coverage](docs/environment-coverage.json) for the source-level
 snapshot and [wide tasksets](docs/WIDE_TASKSETS.md) for measurement limitations.
