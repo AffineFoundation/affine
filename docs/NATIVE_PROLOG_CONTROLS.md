@@ -60,3 +60,37 @@ the qualification report. Fresh Docker builds produced different image IDs and
 therefore different environment source hashes; each report preserves its own
 runtime pin. This does not establish identical deployment images. Evidence:
 `state/native-prolog-session/root-native-v2-balanced/controls.json`.
+
+## Isolated common-model qualification probe
+
+`ops/probe_native_prolog_model.py` runs a bounded candidate search followed by a
+separate model reload and verification. It requires an operator-signed plan with
+the exact checkpoint, complete module inventory, probe and public-policy hashes,
+native runtime image, two-turn harness and artifact limits. Verification binds
+the frozen ZIP, environment index, actual retained positive/negative classes and
+all probability arrays; it does not trust the search report's K/L counts alone.
+Six refusal controls cover changed candidates, incomplete output budgets,
+checkpoint/index changes and altered classification or sample metadata.
+
+Run from the exact approved isolated source directory, using the operator's plan
+and trusted public key:
+
+```sh
+python -m ops.probe_native_prolog_model --plan /path/to/plan.json \
+  --authority TRUSTED_PUBLIC_KEY --out /path/to/new-proof-search
+python -m ops.probe_native_prolog_model --plan /path/to/plan.json \
+  --authority TRUSTED_PUBLIC_KEY --out /path/to/new-proof-search --verify
+```
+
+The reviewed qualification source archive is
+`c5390abe76933ebbe319d82459ecbc1c730cde58314dabac4fe373c1eb87d581`
+with 51 pinned modules. Its approved native image is
+`sha256:05a468b3b41348dd8534532f536475b70b70bae1aa0b876c8a626a7af98cad08`.
+Fresh remote CPU controls passed positive/negative original grades and exact
+replay for all three selected fixtures. Root checked the signed source plan,
+archive bytes, module digests and received control report:
+`state/native-prolog-model-qualification/root-signed-source-native-control-check.json`.
+This is still a prerequisite: model-proof qualification and a common training
+epoch have not completed. The public starter candidate policy is curated;
+successful proof verification would not establish autonomous program discovery.
+The active sixteen-family source remains unchanged.
