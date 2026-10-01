@@ -55,3 +55,15 @@ with the complete twelve-environment held-out map. Its pool SHA256 is
 private evidence is in `state/verified-replay-pool/currentd8-v3`. Current-model
 reference recomputation and actual pooled optimization are still separate,
 uncompleted qualification gates in this report.
+
+`subnet/replay_training.py` is the prospective current-job admission bridge. It
+checks the complete live environment/held-out inventory and runtime/checkpoint
+compatibility, verifies historical pairs again under the current model, then
+merges one pair per family with fresh epoch data preferred. Least-used historical
+targets rotate within a family; a fresh contribution shadows its historical
+candidate and must not increase historical reuse. Ten controls cover admission,
+current recomputation, rejected native verification, shadowing and rotation.
+The private controller stage additionally requires enough optimizer steps for
+every merged family and journals only consumed replay targets after checkpoint
+publication. These source contracts do not establish a completed live replay
+epoch or improved held-out performance.
