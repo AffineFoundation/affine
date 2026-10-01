@@ -89,3 +89,39 @@ They run without a model or native service and do not establish common pipeline
 coverage. Next gates are a trusted two-model endpoint/broker, independent role
 proof and native replay reports under this exact schema, and a real signed
 common epoch that consumes the admitted agent-only views.
+
+## Separate bounded-search contract and endpoint (v2)
+
+The new `native_tau2_common_search_contract.py` and
+`native_tau2_common_search_endpoint.py` preserve v1 and introduce a signed
+trajectory attempt. The agent seed adds `attempt * 256`; auxiliary seeds retain
+the original task-plus-role-ordinal rule. The signed maximum attempt count is
+bounded at 1,024. Receipts, reports and audits bind the exact attempt, so a
+successful trajectory cannot be substituted for another search attempt.
+
+The endpoint accepts two operator-owned approved runtimes. Before every model
+call it checks the role descriptor and declared source bytes. It renders the
+complete native request, records every emitted token, stores full finite float32
+log probabilities and TOPLOC fingerprints, and binds the derived text/tool-call
+response. Independent `verify_receipt` re-renders the context and recomputes both
+probabilities and fingerprints under the pinned tolerance; complete native
+trajectory replay and aggregate signed admission remain separate requirements.
+Neither one valid receipt nor a signed manifest establishes a complete rollout.
+
+User output loss masks are always false. Preference selection operates only on
+already admitted views within a trusted process and requires a divergent agent
+decision under an identical token prompt. Serialized views must be readmitted
+from the original signed receipts and independently verified audit; ordinary
+Python dictionaries are not proof objects. Source validators, renderers, framing
+validators and candidate-policy hooks are trusted injected operator dependencies,
+not values accepted from miner artifacts.
+
+Thirty-three synthetic contract/endpoint controls pass, covering lineage,
+independent user policy, attempt seeds, complete context, response mappings,
+probability/proof mutations and auxiliary loss masks. These controls do not
+constitute native model execution, a storage epoch, training or improved held-out
+performance. The actual native integration is being qualified separately.
+
+```sh
+.venv/bin/python -m unittest discover -s tests -p 'test_native_tau2_common_search*.py'
+```
