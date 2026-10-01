@@ -1,14 +1,35 @@
 # Nonpayable multi-environment experiment
 
-## Current direct transport and historical runner
+## Verified milestones as of 2026-10-01
+
+The direct-R2 service has completed three trained epochs, including original
+Oolong, and recovered two empty epochs without inventing training steps.
+A subsequent controlled-resource Verbatim epoch is running; its contract pins
+provider namespace bytes and explicitly discloses incomplete native dependency
+closure. These trials remain nonpayable.
+
+An isolated seven-job GPU control completed mining, full independent verification,
+real head training, complete R2 checkpoint publication and a fresh verified batch
+from the new weights. A separate full-model 1.7B optimizer measurement also passed
+on the retained RTX 3090, with about 14.16 GB peak allocated GPU memory. Its fixed
+128-token Oolong held-out results remained zero before and after training. This
+is evidence of execution and changed weights, not demonstrated learning gains.
+The continuous GPU controller and its finalized score ledger are being integrated.
+
+The ten-environment CPU evaluator is active with refreshed source pins. Earlier
+records remain immutable, and source/harness/runtime changes create separate
+comparison groups. The public dashboard projects completed measurements only.
+
+## Historical direct transport and research runner
 
 The research runner below describes the earlier seven-epoch experiment. It is
 paused at a configuration boundary. The production-capable `subnet.service` pilot
 subsequently completed two consecutive direct-R2 epochs with the same continuous
 remote miner, accepting two batches then one. Its trial tunnel is stopped. Only
 the dedicated owned UID131 test seed was provisioned remotely; operator coldkeys,
-validator keys and R2 credentials remain local. The service is paused after its
-completed checkpoint a88f352f while broader environment configuration is prepared.
+validator keys and R2 credentials remain local. The earlier service was paused after its
+completed checkpoint a88f352f for broader environment configuration; later
+Oolong and controlled-resource trials are described above.
 See LIVE_SUBNET.md for direct reads/uploads, atomic deadline snapshots and renewal.
 
 ## Historical research runner
