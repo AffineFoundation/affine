@@ -10,7 +10,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-PINS_SHA = '68ff484d5be8e7437216c92c07e86cb6ee556912f5aa3b0dcc4011f35ccb76d3'
+PINS_SHA = '09ccb51726e385c2e7cccb883f34482c4f2676d1f058853e3406faaf9b4cd6d8'
 
 
 def digest(path):

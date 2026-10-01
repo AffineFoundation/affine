@@ -6,12 +6,12 @@
   },
   "outputs": {
     "backend_jobs.py": "55e934e6688a625721794b0f60b50b8568cf6d057d1dc6b13e8e0d4845a6dae7",
-    "remote_backend.py": "b4f73118f6f7c98299a1e8131cf42f3a43446457564617dd3594b6203fa62ef9",
+    "remote_backend.py": "92cc5a9dc4bec311122475c518a48deb54fa9ebc72ec00106d1eca3a7bf39164",
     "gpu_service.py": "586fc7eed4dc6399778c57ebc41817123766cec6638a596280f6414c16892b55"
   },
   "patches": {
     "backend_jobs.py.patch": "452e5ae4301605952dc4ce4092f94f72cf259ea9835b4c6a4092d07e259f10a5",
-    "remote_backend.py.patch": "922e96f7029637de3455d5c0f2ebf86d40ba98ea7b787e284e8bfbfd078497a9",
+    "remote_backend.py.patch": "1a2cae796356f382a30e33aa9a2c9bd8735851f8eac293c55bab94b85881ec00",
     "gpu_service.py.patch": "c15a722ccbd9d1925cd3dd7fa62ab5bc64247ba9b82734d0c71e5fd5411c307e"
   },
   "helpers": {
