@@ -54,6 +54,17 @@ def authenticated_training_pairs(manifest, job, train, metrics, fresh, authority
     require(metrics['steps']>=len(pairs), 'every replay family consumed')
     return pairs
 
+def training_pair_index(batch, positive, negative):
+    """Historical replay carries an environment definition, not a fresh batch."""
+    index=positive.get('index')
+    require(type(index) is int and index >= 0 and
+        type(negative.get('index')) is int and negative['index']==index and
+        positive.get('env_id')==negative.get('env_id')==batch.get('env_id') and
+        ('index' not in batch or (type(batch['index']) is int and batch['index']==index)),
+        'GPU authenticated training pair environment/index binding')
+    return index
+
+
 LONG_CONTEXT_REVISION='cuda-bf16-sdpa-flash-sm86-selective-head-common-v1'
 LONG_CONTEXT_PROFILE=dict(device='cuda',dtype='bfloat16',attention='sdpa-flash-only',
     sm=[8,6],tf32=False,deterministic_algorithms=True,cublas_workspace_config=':4096:8',
@@ -333,7 +344,7 @@ def inspect(state, bucket, evaluations):
         for step,update in enumerate(metrics['updates']):
             batch,pos,neg=training_pairs[step%len(training_pairs)]
             expected=dict(attribution_revision='verified-pair-v1',optimizer_step=step+1,
-                env_id=batch['env_id'],index=batch['index'],
+                env_id=batch['env_id'],index=training_pair_index(batch,pos,neg),
                 positive_rollout_sha256=hashlib.sha256(canonical(pos)).hexdigest(),
                 negative_rollout_sha256=hashlib.sha256(canonical(neg)).hexdigest())
             if 'attribution_revision' in update:
