@@ -39,3 +39,25 @@ recoveries are visible as bounded metadata. Both completed means remain zero.
 The signed evidence and separate metadata approval are authenticated before
 export; no historical failed report is rewritten. See
 [TAU2_RECOVERY_DASHBOARD.md](../docs/TAU2_RECOVERY_DASHBOARD.md).
+
+The October 1 independent live-browser check selected all 22 available pilot
+environments and all 84 distinct dataset/harness/model/runtime cohorts. Each
+curve's point count and latest reward tooltip matched the actual public JSON.
+The chart and 256-cell grid passed at 1440px and 390px without horizontal
+overflow or JavaScript errors; the batches-per-epoch chart included only
+finalized pilot epochs. These observations do not establish improving reward
+or admission of environments that have only native or standalone controls.
+The separate authenticated wider-epoch check matched all 254 evaluation
+records and UID/checkpoint projections for the eleven completed training epochs.
+
+Re-run the public browser check using an installed Chrome and Playwright:
+
+```sh
+NODE_PATH=/path/to/node_modules node ops/check_dashboard_browser.cjs \
+  https://affine.io state/dashboard
+```
+
+Set `AFFINE_CHROME_BIN` if Chrome is outside `/usr/bin/google-chrome`.
+The command reads the public site, writes screenshots and a bounded evidence
+receipt in the output directory, and performs no uploads or chain operations.
+Its coverage reflects the cohorts present at execution time.
