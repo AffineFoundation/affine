@@ -1,4 +1,36 @@
-# Rewrite preparation
+# Affine rewrite status
+
+## Current verified state — October 1, 2026
+
+GitHub main now contains the inference-verification rewrite. The deployed public
+dashboard is affine.io; Arbos domains are unchanged. New-pipeline test epochs are
+nonpayable and do not submit chain weights. Older operational entries below are
+historical records, rather than instructions to re-enable their services.
+
+Five completed GPU epochs have independently checked frozen submissions,
+original-environment audits, 13 real optimizer updates, checkpoint publication,
+and held-out evaluation records. Those updates consumed verified pairs from
+Math, Verbatim, Reasoning Gym, When2Call, IFEval, and Oolong. These measurements
+do not establish improvement across all environments.
+
+The wider nine-environment run uses 32 distinct tasks per environment, with
+16 held-out tasks and a 256-token evaluation budget. Its first epoch was aborted
+without training after a native MCP tool error. The isolated, newly pinned v2
+worker preserves native tool-error observations and is running; its completed
+training and evaluations remain unproven.
+
+A controlled Tau2 tool-use trajectory has passed independent model verification
+for all six agent/user responses and replay through the original environment
+grader, with reward 1. Auxiliary user tokens are excluded from training targets.
+Its negative counterpart, qualifying batch, optimizer update, and production
+epoch integration are still pending.
+
+See [environment coverage](docs/environment-coverage.json) for the source-level
+snapshot and [wide tasksets](docs/WIDE_TASKSETS.md) for measurement limitations.
+Private operator evidence and the full completion audit remain under `state/`;
+the full multi-environment goal is not complete.
+
+## Historical implementation record
 
 ## Objective
 Rewrite Affine for inference verification through sampling. The previously planned Wednesday teacher-model switch was publicly postponed.
