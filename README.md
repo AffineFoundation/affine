@@ -33,3 +33,13 @@ Authority-scoped checkpoint descriptors preserve independent controller historie
 Missing after-training evaluation files remain pending rather than counting as
 completed epochs. These checks establish the recorded runs, not general model
 improvement or completion of all environment integrations.
+
+Isolated signed GPU role controls can be inspected with:
+
+```bash
+.venv/bin/python -m ops.check_gpu_role_evidence --state /private/operator-gpu-control-state
+```
+
+This binds signed jobs to operator-collected reports, verifies frozen R2 bytes and
+checkpoint handover, and requires an independent published checkpoint byte audit.
+It does not itself recompute inference or prove continuous controller integration.
