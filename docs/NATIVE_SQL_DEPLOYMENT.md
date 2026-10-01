@@ -18,3 +18,10 @@ from mining, ran with the same autoregressive harness and 128-token budget
 before and after: mean reward 0 in both. The following epoch consumes the
 new checkpoint. These are controlled common-pipeline measurements, not a
 claim of generalization, unrestricted successful mining, or weight submission.
+
+The following epoch closed without a complete K1/L1 batch. Independent checks
+of signed R2 manifests, audit challenge and scores confirmed zero receipts,
+points and proposed weights, no optimizer run, and the unchanged checkpoint
+in the subsequent published epoch. Both retained the full ten-minute window.
+This demonstrates empty-epoch closure and publication recovery; a successful
+submission after that empty epoch is not yet established by this check.

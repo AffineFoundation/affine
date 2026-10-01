@@ -6,7 +6,7 @@
     "original_reward": 22,
     "remote_proof": 22,
     "remote_replay": 21,
-    "training": 11
+    "training": 13
   },
   "independently_reexecuted_by_exporter": false,
   "rows": [
@@ -342,9 +342,9 @@
       "remote_proof": true,
       "remote_replay": true,
       "source": "affine_sql",
-      "status": "controlled_original_Spider_K1L1_fresh_proof_replay_verified",
+      "status": "controlled_original_Spider_common_full_optimizer_verified",
       "taskset_class": "SqlTaskset",
-      "training": false
+      "training": true
     },
     {
       "category": "multiturn_tool_simulator",
@@ -412,9 +412,9 @@
       "remote_proof": true,
       "remote_replay": true,
       "source": "affine_trivia",
-      "status": "genuine_autoregressive_K1L1_fresh_proof_replay_verified",
+      "status": "original_autoregressive_common_full_optimizer_verified",
       "taskset_class": "TriviaTaskset",
-      "training": false
+      "training": true
     },
     {
       "category": "singleturn_text",
@@ -644,6 +644,6 @@
   "schema": 1,
   "scope": "Recorded source-level operator evidence; each row is a milestone, not full production support or proof of performance improvement.",
   "source_count": 45,
-  "source_matrix_sha256": "c803bfae5ac19f865d8f15d272c8f6fb589f1093b539675bfadec4585a8d782d",
+  "source_matrix_sha256": "9220e86ceb87ffbec5af6a41fdd41162cf49a28f4841599006620958b8d6bc3b",
   "status_is_blocker_or_milestone": true
 }
