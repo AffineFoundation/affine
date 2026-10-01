@@ -1,0 +1,11 @@
+# Original Spider common environment contract
+
+`subnet.native_sql_adapter.NativeSQLAdapter` implements the common reset/step/close interface for original Spider SQL tasks. The version is `controlled-native-spider-common-v1`. It is prospective and is not registered in the active environment dispatcher.
+
+A trusted deployment supplies fresh `PublicSQLActor` sessions and an operator-only terminal grader. The public specification contains original question/schema messages, bash tools, database and original-source hashes, and an approved grader runtime descriptor. Reference SQL and private filesystem locations stay outside the public specification and actor image.
+
+Every tool observation uses the same `json.dumps` representation of exit code, stdout, and stderr as the original session. Intermediate calls do not grade. A final reply, or reaching the turn limit, runs the preserved original reward bodies against a fresh private database copy. The adapter checks the returned database hash, exact grader runtime, network/mount isolation, and binary reward. Transport or execution failures propagate and close the actor rather than becoming accepted negative samples. Terminal replies cannot be changed after scoring.
+
+Run `python -m ops.probe_native_sql_common` after the isolated grader and actor probes. This checks a public-question-derived positive answer, a negative answer, and an independent fresh positive replay through the actual containers. The resulting `state/native-sql-isolation/common-adapter-controls.json` is a harness/grading control, not evidence of model generation, TOPLOC verification, a shared epoch, or training. Unit controls run with `python -m unittest discover -s tests -p 'test_native_sql*.py'`.
+
+Remaining integration work: materialize an indexed public/private original task collection; bind the operator broker and source/runtime closure to signed model jobs; generate and independently verify model traces; register this adapter in a versioned inactive source fork; run the common private-upload, frozen-audit, scoring, optimizer, checkpoint-publication, and held-out evaluation pipeline. Cohost control does not protect against an operator with access to the host.
