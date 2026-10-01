@@ -4,13 +4,19 @@ The active source list is the actual live datagen `sources.toml`, not the count 
 
 Trusted original wrappers are vendored under `subnet/vendor/legacy/rollouts/envs`; upstream research environments are vendored at revision `b10db7640be3051650eef759e6ed80ddcadae220` under `subnet/vendor/research`. Original live verifiers checkout was `a298bcfe4a3a410b7287254d61a65947906c6a89`; the installed portable package exposes `verifiers.v1`. Each spec pins the adapter, bundled wrapper/upstream source bytes, config and recorded dependency versions. Production datasets must additionally be materialized with `snapshot_spec` into operator-trusted immutable task snapshots; mutable upstream dataset names alone are not a production pin. Snapshot paths are relative and portable.
 
+## Current recorded coverage
+
+[environment-coverage.json](environment-coverage.json) is the latest public snapshot of the operator execution matrix. It reports each source’s milestone or blocker code separately from imports, reset, original rewards, native tools, remote proofs, replay and training. Rebuild it with `.venv/bin/python -m ops.export_environment_coverage`; its source-matrix SHA binds the exact underlying evidence inventory. The exporter does not rerun the experiments or certify production readiness. Raw exceptions, upload capabilities and private nested probe metadata are excluded.
+
+The table below preserves the initial import probe. Some of its missing-package errors were resolved later; use the JSON snapshot for current flags. The controlled native Tau2 negative-only experiment is described in [NATIVE_TAU2_MODEL.md](NATIVE_TAU2_MODEL.md) and does not imply production K/L batches or training coverage.
+
 ## Actual conformance evidence
 
 `tests/test_environments.py`: 5 passing tests. Original Verbatim task reset, public-copy reward 1 and invalid-copy reward 0; original reasoning-gym `count_bits` reset and correct public-input-derived answer reward 1; original When2Call native tool execution, tool observation, final reply and reward 1. Source fingerprint corruption is rejected. No autonomous model success is implied by these oracle conformance tests. Independent remote proof and training evidence belongs to the controller's remote epoch reports, not this import matrix.
 
-When2Call uses the original `nvidia/When2Call` revision `0582f7749df63a96fdc3070932e83e72396ace53`, train split, 9000 original rows. Config is `build_spec('affine_when2call', {}, num_samples=2, max_turns=4)`; sample limit belongs to adapter, not dataset taskset config. Four tau2 sources need the original user-simulator/orchestrator bridge, not a single assistant-turn substitute, and currently explicitly refuse reset.
+When2Call uses the original `nvidia/When2Call` revision `0582f7749df63a96fdc3070932e83e72396ace53`, train split, 9000 original rows. Config is `build_spec('affine_when2call', {}, num_samples=2, max_turns=4)`; sample limit belongs to adapter, not dataset taskset config. Four tau2 sources need the original user-simulator/orchestrator bridge, not a single assistant-turn substitute, and the generic direct-tool adapter explicitly refuses to substitute for that native loop.
 
-## Active source import matrix
+## Historical initial source import probe
 
 Import success only establishes module/class availability; it does not establish dataset download, reset, tool execution, scoring, inference proof or training compatibility. Resource-heavy repository and terminal tasks still need isolated image/task/runtime validation.
 
