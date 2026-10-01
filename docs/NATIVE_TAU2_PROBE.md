@@ -89,3 +89,40 @@ work is faithful per-task service lifecycle, private seeded databases, merged MC
 catalog, isolated verifier execution and inference/transition receipt binding.
 No containers were started by this probe; Agent/EOG production integration is
 not claimed complete.
+
+## Follow-up: genuine negative-only model/proof run
+
+The mocked result above is retained as conformance evidence. A subsequent genuine
+controlled-user experiment is documented in [NATIVE_TAU2_MODEL.md](NATIVE_TAU2_MODEL.md).
+Approved 135M checkpoint `39818e714a6e4e47b3fdd07e4eeb9cac619cf010fcc83a30068708531eac7d06`
+generated all three native model requests (user/agent/user), eight tokens each,
+using complete original tool schemas/messages and an explicitly versioned
+same-approved-model user simulator. The native simulation terminated `max_steps`,
+original reward0, with zero model-generated tool calls. It is a genuine negative
+provenance experiment, **not K/L positive-batch or native training coverage**.
+
+Fresh strict v3 verification passed all role probability/TOPLOC checks and exact
+original native replay/grader checks. The original generation bytes and weaker
+v2 verification are preserved; an authority-signed verifier supplement authorizes
+stricter response/action binding and enforced interpreter/package/source checks.
+Current evidence is `state/native-tau2-probe/genuine-chat-model/independent-full-verification.json`;
+historical weaker evidence is `independent-full-verification-v2.json` in the same
+folder. The signed original plan, original source closure, historical generation
+source copies and `verifier-supplement.json` remain separate immutable artifacts.
+
+Replay the existing authentic artifact using its independently loaded weights:
+
+```sh
+MKL_CBWR=COMPATIBLE ATEN_CPU_CAPABILITY=default ONEDNN_MAX_CPU_ISA=SSE41 \
+OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 TOKENIZERS_PARALLELISM=false \
+.venv/bin/python -m subnet.native_tau2_replay \
+  --out state/native-tau2-probe/genuine-chat-model \
+  --checkpoint state/service-conformance/checkpoints/nonpayable-service-conformance-1790827619-9 \
+  --data state/native-tau2-probe/upstream/data \
+  --authority d54a3a345d0de3e2c7898f30c0942d78f931f8c4b8036ffdc6adffcd2525062f
+```
+
+The generation/source artifacts stay historical. A source change requires a new
+reviewed signed verifier supplement; changing their labels does not authorize
+new code. This experiment has not been added to the running GPU source or to
+production native-miner scoring.
