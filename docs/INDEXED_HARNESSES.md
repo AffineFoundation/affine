@@ -18,7 +18,10 @@ without adding environment-specific branches to mining, verification or training
 `subnet/sample_harness.py` validates exact coverage of the containing definition's
 signed mining indices. Keys use their canonical decimal representation. Extra,
 missing, aliased and nested mappings are rejected; there is no fallback. Ordinary
-harnesses retain their existing normalization. Resolution returns independent
+harnesses retain their existing normalization; `None` remains `None` so the
+runtime selects the historical environment policy. Explicit inactive definitions
+may declare no mining indices; their indexed mapping must be empty, and no index
+can be resolved from them. Resolution returns independent
 copies, so changes to one runtime cannot alter the signed manifest or another
 runtime's configuration.
 
@@ -29,9 +32,16 @@ training and historical replay must resolve the same configuration. Heldout
 suites use their own explicitly approved evaluation harness and are excluded
 from mining resolution.
 
-Five tests pass, including mutable candidate isolation, per-index choices,
+`project(config, selected_indices, approved_indices)` validates the complete
+approved registry before selecting a rotated mining subset for the signed
+manifest. It rejects unapproved indices and preserves the selected policies.
+The complete replay registry and this projected mining mapping have distinct
+scopes; replay admission must bind the resolved configuration for its index.
+
+Eight tests pass, including mutable candidate isolation, per-index choices,
 heldout/boolean-index refusal, missing/extra/aliased indices and silent legacy
-policy changes. This helper is prospective: integration into the shared loop
+policy changes, inactive populations, the actual legacy runtime policy and
+strict subset projection. This helper is prospective: integration into the shared loop
 and actual signed multi-index execution remain pending. It does not change the
 active v7k source or the separately sealed Wikispeedia probe.
 

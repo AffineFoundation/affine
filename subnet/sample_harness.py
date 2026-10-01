@@ -10,7 +10,7 @@ VERSION='indexed-harness-v1'
 
 
 def _indices(values):
-    if (not isinstance(values,list) or not 1<=len(values)<=10000
+    if (not isinstance(values,list) or not 0<=len(values)<=10000
         or any(type(i)is not int or i<0 for i in values)
         or len(set(values))!=len(values)):
         raise ValueError('exact bounded mining index population')
@@ -19,11 +19,14 @@ def _indices(values):
 
 def validate(config,indices):
     """Return a normalized copy; wrappers may not silently fall back."""
+    indices=_indices(indices)
+    # Runtime.configure(None) selects the environment's historical policy.
+    # Normalizing it here would replace that policy with the global default.
+    if config is None:return None
     if not isinstance(config,dict):raise ValueError('harness configuration required')
     if config.get('version')!=VERSION:
         if 'by_index' in config:raise ValueError('per-index choices need versioned wrapper')
         return normalize(copy.deepcopy(config))
-    indices=_indices(indices)
     if set(config)!={'version','by_index'} or not isinstance(config['by_index'],dict):
         raise ValueError('exact indexed harness fields')
     rows=config['by_index']
@@ -43,5 +46,18 @@ def resolve(config,index,indices):
     if type(index)is not int or index not in indices:
         raise ValueError('sample index not authorized for mining')
     normalized=validate(config,indices)
-    if normalized.get('version')==VERSION:return normalized['by_index'][str(index)]
+    if normalized is not None and normalized.get('version')==VERSION:return normalized['by_index'][str(index)]
+    return normalized
+
+
+def project(config,selected_indices,approved_indices):
+    """Project a complete approved registry before signing a mining subset."""
+    approved_indices=_indices(approved_indices)
+    selected_indices=_indices(selected_indices)
+    normalized=validate(config,approved_indices)
+    if not set(selected_indices)<=set(approved_indices):
+        raise ValueError('selected mining index not approved')
+    if normalized is not None and normalized.get('version')==VERSION:
+        return dict(version=VERSION,by_index={str(i):normalized['by_index'][str(i)]
+                                             for i in selected_indices})
     return normalized

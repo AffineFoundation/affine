@@ -1,6 +1,6 @@
 import copy
 import unittest
-from subnet.sample_harness import VERSION,validate,resolve
+from subnet.sample_harness import VERSION,validate,resolve,project
 
 class IndexedHarnessTests(unittest.TestCase):
     def config(self):
@@ -29,5 +29,38 @@ class IndexedHarnessTests(unittest.TestCase):
         p=dict(version='text-tools-v1',policy='autoregressive',max_output_tokens=128,temperature=.7,top_p=1.)
         self.assertEqual(resolve(p,3,[0,3]),validate(p,[0,3]))
         with self.assertRaises(ValueError):resolve(p,4,[0,3])
+
+    def test_inactive_population_cannot_resolve(self):
+        empty=dict(version=VERSION,by_index={})
+        self.assertEqual(validate(empty,[]),empty)
+        self.assertIsNone(validate(None,[]))
+        for config in [empty,None,dict(version='text-tools-v1')]:
+            with self.assertRaises(ValueError):resolve(config,0,[])
+        with self.assertRaises(ValueError):validate(self.config(),[])
+
+    def test_legacy_none_keeps_actual_runtime_policy(self):
+        from subnet.model import Runtime
+        from subnet.environments import legacy_spec,legacy_harness
+        from subnet.harness import normalize
+        spec=legacy_spec().to_dict()
+        runtime=Runtime.__new__(Runtime)
+        runtime.configure(spec,resolve(None,0,[0]))
+        self.assertEqual(runtime.harness,normalize(legacy_harness(spec['config'])))
+        self.assertEqual(runtime.harness['policy'],'candidates')
+        self.assertIsNone(project(None,[0],[0,3]))
+        with self.assertRaises(ValueError):resolve(None,4,[0,3])
+
+    def test_projection_preserves_only_approved_selected_rows(self):
+        config=self.config();original=copy.deepcopy(config)
+        selected=project(config,[3],[0,3])
+        self.assertEqual(set(selected['by_index']),{'3'})
+        self.assertEqual(resolve(selected,3,[3]),resolve(config,3,[0,3]))
+        self.assertEqual(project(config,[],[0,3]),dict(version=VERSION,by_index={}))
+        selected['by_index']['3']['candidates'].append('changed')
+        self.assertEqual(config,original)
+        for population in [[4],[False],[3,3],['3']]:
+            with self.assertRaises(ValueError):project(config,population,[0,3])
+        with self.assertRaises(ValueError):project(config,[3],[3])
+        with self.assertRaises(ValueError):resolve(project(config,[3],[0,3]),0,[3])
 
 if __name__=='__main__':unittest.main()
