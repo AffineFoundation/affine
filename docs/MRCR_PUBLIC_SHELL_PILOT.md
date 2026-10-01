@@ -56,3 +56,36 @@ Prospective integration must bind this policy source, original task definitions,
 container/runtime and complete tool trajectory; verify full model probabilities
 and fingerprints; and retain the separate disjoint evaluation group. Native
 conformance alone must not be presented as learned performance.
+
+A prospective common-source preparation helper is now available as
+`ops/prepare_mrcr_common_source.py`. It accepts an operator-owned, approved source
+package with the qualified harness and GPU-runtime hashes and creates a new
+package. It rejects changed pins, existing destinations, symlinks, model-file
+extensions, wallet/state directories and oversized inventories. Source files are
+recorded by hash. It does not copy the package's top-level state, models or
+configuration, publish an archive, migrate a controller or run a model. It is
+not a sanitizer for untrusted miner uploads.
+
+The new `public-mrcr-shell-candidates` policy constructs two comparable shell
+commands using the public question: one uses its exact prefix, and the other
+changes a single prefix character. Both retrieve the same public response and
+write the complete answer file. This avoids comparing a long correct command
+against a much shorter wrong-file command under summed sequence probabilities.
+A separate second-turn candidate override can finish with `Done` or `Finished`.
+The policy revision and source SHA256 are required, and the harness source hash
+also binds the public policy file. Existing sampling and rendering branches are
+preserved. Five preparation controls and the four public-shell controls pass.
+
+```sh
+.venv/bin/python ops/prepare_mrcr_common_source.py \
+  --source /path/to/approved-extracted-source \
+  --destination /path/to/new-prospective-source \
+  --policy-file subnet/native_mrcr_public_policy.py
+.venv/bin/python -m unittest discover -s tests -p 'test_prepare_mrcr_common_source.py'
+```
+
+Operator configuration must also stage the exact disjoint snapshots and bind
+its environment hash to the selected approved adapter. A changed code binding
+creates a new evaluation cohort; retain historical reports rather than silently
+merging those cohorts. Shared-pipeline model/proof qualification and a completed
+native epoch remain required before this can be counted as a trained family.
