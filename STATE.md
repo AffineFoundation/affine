@@ -64,13 +64,16 @@ fresh native admission with original rewards 1 and 0. See
 [terminal control scope](docs/NATIVE_EOG_BALANCED_TERMINAL.md). These controls do not establish original sampling,
 completed common Calendar epochs, or general quality gains.
 
-Calendar's new common long-context controller has now uploaded a seven-turn
-positive/negative pair to direct R2. Independent inspection authenticated the
-signed job, public epoch manifest, exact worker source and 175,247,173-byte
-staged artifact, retaining all full-vocabulary float32 probability arrays.
-Its original upload window remains open; the pair is not yet frozen, audited
-or trained in a completed common epoch. The independent auditor accepts this
-larger bundle only under the exact approved numerical and transport profile.
+Calendar's new common long-context controller completed its first full epoch.
+Independent checks authenticated the signed manifests, frozen 175,247,173-byte
+seven-turn positive/negative batch, full inference/native audit, normalized
+proposed weight and one full-model agent-only update. All six successor
+checkpoint objects were independently streamed and hashed (999,524,442 bytes).
+Two fixed, disjoint original held-out tasks scored zero before and after, so
+no quality gain is claimed. Its next epoch consumes the new checkpoint. Live
+affine.io JSON and desktop/phone browser checks confirmed the Calendar chart,
+exact evaluation records and 256-UID grid. The independent auditor accepts
+these larger bundles only under the exact approved numerical/transport profile.
 The newly published prospective worker rejects multi-step training until
 persistent optimizer behavior is separately qualified. The active trial uses
 one step and its frozen source remains unchanged. The public repo now includes
@@ -79,7 +82,7 @@ independent checkout; actual Git-archive reproduction passed without accessing
 fixtures/models or starting services.
 
 The public source-level matrix records 45 imports, 38 resets, 23 original-reward
-and remote-proof milestones, 22 remote-replay milestones and 14 trained sources.
+and remote-proof milestones, 22 remote-replay milestones and 15 trained sources.
 Pydantic has verified negative-only traces, with no qualifying K/L pair or training.
 These flags describe specific demonstrated controls, rather than complete support
 or broad task mastery across each environment family.

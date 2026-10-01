@@ -30,3 +30,15 @@ Transfers use signed direct R2 reads and cumulative private PUTs. The signed art
 Operator state is `state/native-eog-common`; configuration is `state/native-eog-common-config.json`. The running source is a separately pinned source archive, not the mutable checkout. Initial inference requires 12 GiB free VRAM and training requires 20 GiB before loading; jobs wait without restarting other roles. The full seven-turn optimizer was measured below its 8 GiB allocation cap. The retained machine remains running.
 
 Use `systemctl --user status affine-native-eog-common.service` to inspect the controller and `systemctl --user stop affine-native-eog-common.service` for maintenance. Preserve role liveness markers, frozen receipts, and checkpoint history when resuming. This service is permanently nonpayable and must not be connected to the live weight writer by treating its scores as production rewards.
+
+The first common epoch `nonpayable-native-eog-common-v4-1790851868-0` is
+independently checked through completed auditing, proposed normalized weights,
+one full-model optimizer step and checkpoint publication. Its successor is
+`a2caa7b6171412ef4eb5551026fa4aa52ebcee155c645bf7f8ab45eb25984ce6`;
+all six R2 files were independently streamed and hashed (999,524,442 bytes).
+The same two disjoint original held-out tasks scored zero before and after.
+This proves the controlled common loop, not broader Calendar solving or a
+quality gain. The controller opened the next epoch with those new weights.
+Live affine.io JSON and desktop/phone browser checks matched the completed
+epoch, before/after records and UID grid. Private evidence is under
+`state/native-eog-common`, including `root-continuous-independent-evidence.json`.
