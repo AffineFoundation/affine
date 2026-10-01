@@ -14,7 +14,7 @@ class GPUFixedHeldout(unittest.TestCase):
         with patch('subnet.gpu_service.definitions',return_value=[self.row]),self.assertRaisesRegex(ValueError,'fixed heldout binding'):heldout(self.config,self.manifest)
     def test_prospective_rotation_covers_training_and_preserves_other_groups(self):
         other=dict(self.row,spec=dict(self.row['spec'],id='other'),indices=[0,1])
-        config=dict(training_groups=[['env'],['other']],source_bundle={},indices_per_environment_per_epoch=1)
+        config=dict(heldout=[],training_groups=[['env'],['other']],source_bundle={},indices_per_environment_per_epoch=1)
         with patch('subnet.gpu_service.definitions',return_value=[self.row,other]):
             rounds=[contract(config,n)['environments'] for n in range(4)]
         self.assertEqual([rounds[n][0]['indices'] for n in range(4)],[[0],[],[1],[]])
@@ -22,7 +22,7 @@ class GPUFixedHeldout(unittest.TestCase):
         self.assertTrue(all(set(r['indices'])<={0,1} for rows in rounds for r in rows))
     def test_unconfigured_rotation_retains_historical_indices(self):
         with patch('subnet.gpu_service.definitions',return_value=[self.row]):
-            value=contract(dict(source_bundle={}),17)
+            value=contract(dict(source_bundle={},heldout=[]),17)
         self.assertEqual(value['environments'][0]['indices'],[0,1])
     def report(self):
         return dict(job_id='job',completed_at=77,runtime_versions={'torch':'approved'},source_files={n:'approved' for n in ('subnet/model.py','subnet/gpu_runtime.py','subnet/environments.py','subnet/harness.py','subnet/proofs.py')},heldout=[dict(env_id='env',index=i,seed=100+i*1000,task_hash=str(i)*64,verified=True,reward=0,classification='negative') for i in [2,3]])

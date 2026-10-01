@@ -26,6 +26,7 @@ SOURCE_FILES = tuple('subnet/'+n+'.py' for n in
 ROLES = {'mine','verify','train','evaluate','upload'}
 HEAD_POLICY='frozen-feature-head-adamw-v1'
 FULL_POLICY='bf16-full-adamw-checkpointed-v1'
+FIXED_POLICY='bf16-full-adamw-fixed-epoch-reference-v2'
 TRAINING_ATTRIBUTION='verified-pair-v1'
 
 def canonical(value):
@@ -40,10 +41,15 @@ def digest(path):
 def pair_attribution(definition,positive,negative,step):
     if positive['env_id']!=definition['env_id'] or negative['env_id']!=definition['env_id'] or positive['index']!=negative['index']:
         raise ValueError('training pair environment/index binding')
-    return dict(attribution_revision=TRAINING_ATTRIBUTION,optimizer_step=step+1,
+    result=dict(attribution_revision=TRAINING_ATTRIBUTION,optimizer_step=step+1,
         env_id=definition['env_id'],index=positive['index'],
         positive_rollout_sha256=hashlib.sha256(canonical(positive)).hexdigest(),
         negative_rollout_sha256=hashlib.sha256(canonical(negative)).hexdigest())
+    from .sample_harness import VERSION as INDEXED_VERSION
+    if isinstance(definition.get('harness'),dict)and definition['harness'].get('version')==INDEXED_VERSION:
+        from .protocol import harness_for
+        result['resolved_harness_sha256']=hashlib.sha256(canonical(harness_for(definition,positive['index']))).hexdigest()
+    return result
 
 def signed(value, authority):
     if value.get('signer')!=authority:raise ValueError('job authority')
@@ -81,7 +87,7 @@ def mine_cumulative(runtime,manifest,job,upload,clock=None,allow_empty=False):
     upload errors remain failures rather than pretending a PUT succeeded.
     """
     from .batches import pack
-    from .protocol import entries
+    from .protocol import entries,harness_for
     clock=clock or time.time
     mining_window(manifest,clock())
     batches=[];search=[];data=None;uploads=0;stopped=False
@@ -90,8 +96,8 @@ def mine_cumulative(runtime,manifest,job,upload,clock=None,allow_empty=False):
         return manifest['start']<=now<manifest['deadline']-10
     for definition in entries(manifest):
         if len(batches)>=manifest.get('max_batches',4) or not available():break
-        selected=runtime.for_environment(definition['spec'],definition['harness'])
         for index in definition['indices']:
+            selected=runtime.for_environment(definition['spec'],harness_for(definition,index))
             if not available():stopped=True;break
             classes={'positive':[],'negative':[]};fingerprints=set();attempts=0;observed={'positive':0,'negative':0}
             for attempt in range(job['search_budget']):
@@ -152,8 +158,13 @@ def validate(envelope, authority, now=None):
         if type(job.get('search_budget')) is not int or not 1<=job['search_budget']<=128 or type(job.get('seed_start')) is not int or job['seed_start']<0:raise ValueError('mining search budget')
         r2_url(job['capability']['put_url'],'PUT')
         if job['capability'].get('headers')!={'Content-Type':'application/octet-stream'}:raise ValueError('signed upload headers')
-    if job['role']=='train' and job.get('training_policy',HEAD_POLICY) not in (HEAD_POLICY,FULL_POLICY):raise ValueError('unapproved training objective')
+    if job['role']=='train' and job.get('training_policy',HEAD_POLICY) not in (HEAD_POLICY,FULL_POLICY,FIXED_POLICY):raise ValueError('unapproved training objective')
     if job['role']=='train' and (type(job.get('steps')) is not int or not 1<=job['steps']<=32):raise ValueError('training step budget')
+    if job.get('training_policy')==FIXED_POLICY and manifest.get('training_policy')!=FIXED_POLICY:raise ValueError('signed fixed-reference training policy')
+    if job.get('replay') is not None:
+        if job['role']!='train' or job.get('training_policy')!=FIXED_POLICY:raise ValueError('replay only in signed fixed optimizer job')
+        from .replay_training import admitted
+        admitted(manifest,job['replay'],authority)
     if job['role']=='evaluate':
         if not job.get('heldout') or len(job['heldout'])>64:raise ValueError('heldout budget')
         for row in job['heldout']:
@@ -194,7 +205,7 @@ def checkpoint(manifest, workspace, cache=None):
 
 def audit(data, manifest, runtime):
     from .batches import unpack
-    from .protocol import entries, entry, classification, sample_key
+    from .protocol import entries, entry, classification, sample_key,harness_for
     definitions=entries(manifest);records=unpack(data)
     if len(records)>manifest.get('max_batches',4):raise ValueError('batch quota')
     outcomes=[];accepted=[];pairs=[];seen=set()
@@ -202,7 +213,7 @@ def audit(data, manifest, runtime):
         try:
             definition=entry(manifest,batch.get('env_id'));index=batch['index'];key=sample_key(batch)
             if batch.get('schema')!=2 or batch['epoch']!=manifest['epoch'] or batch['checkpoint']!=manifest['checkpoint']['id'] or batch.get('sample_index')!=index or type(index) is not int or index not in definition['indices'] or key in seen:raise ValueError('batch binding')
-            selected=runtime.for_environment(definition['spec'],definition['harness'])
+            selected=runtime.for_environment(definition['spec'],harness_for(definition,index))
             if batch.get('environment_version')!=selected.spec.version:raise ValueError('environment version')
             seen.add(key);rolls=batch['rollouts'];tokens=set()
             if len(rolls)!=manifest['K']+manifest['L'] or len(arrays)!=len(rolls):raise ValueError('sample count')
@@ -210,7 +221,7 @@ def audit(data, manifest, runtime):
                 signature=tuple(tuple(t['output']) for t in rollout['turns'])
                 if signature in tokens or rollout['index']!=index or rollout.get('env_id')!=definition['env_id']:raise ValueError('sample binding/duplicate')
                 tokens.add(signature)
-                if not selected.verify(rollout,probs):raise ValueError('inference or replay')
+                if selected.verify(rollout,probs) is not True:raise ValueError('inference or replay')
             pos=[r for r in rolls if classification(r)=='positive'];neg=[r for r in rolls if classification(r)=='negative']
             if len(pos)!=manifest['K'] or len(neg)!=manifest['L']:raise ValueError('positive/negative quota')
             accepted.append(batch);pairs.extend((definition,p,n) for p,n in zip(pos,neg))
@@ -282,6 +293,16 @@ def install_source_loader(root):
             raise ValueError('GPU worker requires fresh process before runtime imports')
     sys.meta_path.insert(0,FreshSourceFinder(root))
 
+def initial_configuration(manifest,job):
+    from .protocol import entries,entry,harness_for
+    definitions=entries(manifest)
+    if job['role']=='evaluate':
+        suite=job['heldout'][0]
+        return entry(manifest,suite['env_id']),suite['harness']
+    first=next((row for row in definitions if row['indices']),None)
+    if first is None:raise ValueError('no authorized mining samples for model role')
+    return first,harness_for(first,first['indices'][0])
+
 def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     job,manifest=validate(envelope,authority)
     root=Path(__file__).resolve().parent.parent
@@ -307,10 +328,11 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
             if response.status_code not in (200,201,204):raise ValueError('R2 PUT status '+str(response.status_code))
         report['uploaded_files']=manifest['checkpoint']['files']
     else:
-        from .protocol import entries,entry
+        from .protocol import entries,entry,harness_for
         from .gpu_runtime import GPURuntime
-        factory=runtime_factory or GPURuntime;first=entries(manifest)[0]
-        runtime=factory(approved,manifest['checkpoint']['files'],first['spec'],first['harness'])
+        factory=runtime_factory or GPURuntime;definitions=entries(manifest)
+        first,initial_harness=initial_configuration(manifest,job)
+        runtime=factory(approved,manifest['checkpoint']['files'],first['spec'],initial_harness)
         if job['role']=='mine':
             from .batches import pack
             import requests
@@ -328,20 +350,31 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
             report['audits']=reports
             if job['role']=='train':
                 if not pairs:raise ValueError('no verified training pairs')
+                if job.get('replay') is not None:
+                    from .replay_training import verified_pairs,merge_pairs
+                    historical,replay_report=verified_pairs(runtime,manifest,job['replay'],authority)
+                    pairs,targets=merge_pairs(pairs,historical,job['replay']['reuse_counts'])
+                    replay_report['checks']=[row for row in replay_report['checks'] if row['target_sha256'] in targets]
+                    replay_report['proposed_reuse_increments']={target:1 for target in targets}
+                    report['replay_training']=replay_report
+                    if job['steps']<len(pairs):raise ValueError('each fresh/replay family needs an optimizer step')
                 metrics=[];destination=None
-                # Each update uses its batch's exact approved environment/harness.
-                for step in range(job['steps']):
-                    definition,pos,neg=pairs[step%len(pairs)]
-                    runtime.configure(definition['spec'],definition['harness'])
-                    destination=out/('checkpoint-step-'+str(step+1))
-                    policy=job.get('training_policy',HEAD_POLICY)
-                    update=full_parameter_train(runtime,[(pos,neg)],destination,steps=1) if policy==FULL_POLICY else runtime.train([(pos,neg)],destination,steps=1)
-                    update['training_policy']=policy
-                    update.update(pair_attribution(definition,pos,neg,step));metrics.append(update)
+                if job.get('training_policy')==FIXED_POLICY:
+                    from .epoch_optimizer import train_epoch
+                    destination,metrics=train_epoch(runtime,pairs,out,steps=job['steps'])
+                else:
+                    for step in range(job['steps']):
+                        definition,pos,neg=pairs[step%len(pairs)]
+                        runtime.configure(definition['spec'],harness_for(definition,pos['index']))
+                        destination=out/('checkpoint-step-'+str(step+1))
+                        policy=job.get('training_policy',HEAD_POLICY)
+                        update=full_parameter_train(runtime,[(pos,neg)],destination,steps=1) if policy==FULL_POLICY else runtime.train([(pos,neg)],destination,steps=1)
+                        update['training_policy']=policy
+                        update.update(pair_attribution(definition,pos,neg,step));metrics.append(update)
                 from .model import model_files
                 files=model_files(destination)
                 if files.get('model.safetensors')==manifest['checkpoint']['files'].get('model.safetensors'):raise ValueError('training did not change checkpoint weights')
-                report['training']=dict(steps=job['steps'],updates=metrics,training_policy=job.get('training_policy',HEAD_POLICY),full_model_finetune=job.get('training_policy',HEAD_POLICY)==FULL_POLICY)
+                report['training']=dict(steps=job['steps'],updates=metrics,training_policy=job.get('training_policy',HEAD_POLICY),full_model_finetune=job.get('training_policy',HEAD_POLICY) in (FULL_POLICY,FIXED_POLICY))
                 report['full_model_finetune']=report['training']['full_model_finetune']
                 report['new_checkpoint']=dict(id=file_map(files),files=files,path=str(destination))
         else:
@@ -353,7 +386,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                 for index,seed in zip(row['indices'],row['seeds']):
                     try:
                         doc,arrays=selected.rollout(index,seed)
-                        if not selected.verify(doc,arrays):raise ValueError('heldout audit')
+                        if selected.verify(doc,arrays) is not True:raise ValueError('heldout audit')
                         values.append(dict(env_id=row['env_id'],index=index,seed=seed,reward=doc['reward'],classification=doc['classification'],task_hash=doc['task_hash'],verified=True))
                     except (ValueError,RuntimeError,KeyError) as error:
                         failures.append(dict(env_id=row['env_id'],index=index,seed=seed,error_type=type(error).__name__,error=str(error)[:300]))

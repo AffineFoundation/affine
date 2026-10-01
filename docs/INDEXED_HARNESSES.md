@@ -41,8 +41,9 @@ scopes; replay admission must bind the resolved configuration for its index.
 Eight tests pass, including mutable candidate isolation, per-index choices,
 heldout/boolean-index refusal, missing/extra/aliased indices and silent legacy
 policy changes, inactive populations, the actual legacy runtime policy and
-strict subset projection. This helper is prospective: integration into the shared loop
-and actual signed multi-index execution remain pending. It does not change the
+strict subset projection. The helper is now integrated into the common miner,
+independent auditors, replay preparation, optimizer attribution and controller.
+Actual signed multi-index GPU execution remains pending. It does not change the
 active v7k source or the separately sealed Wikispeedia probe.
 
 An additional CPU compatibility check authenticated the actual signed
@@ -61,10 +62,30 @@ twelve existing harness functions, and identical normalized policies for all
 sixteen declared harnesses. Eight additional integration controls pass for
 index rotation, inactive definitions, registry tampering, local mining and both
 auditors. These checks qualify neither GPU execution nor deployment; complete
-replay/optimizer and lifecycle controls remain admission gates. The receipt is
+GPU replay/optimizer and lifecycle controls remain admission gates. The receipt is
 `state/gpu-wide/root-common-policy-preservation-check.json`. Preserve the live
 runtime and separately version the combined source rather than altering a
 sealed checkpoint cohort.
+
+The full approved per-index registry is signed separately from each epoch's
+rotated mining subset. Historical training resolves against that full registry;
+held-out evaluation uses its own approved configuration. Both uploaded harness
+overrides and an index missing from the approved registry are refused. Plain
+and `None` policies retain their original runtime defaults.
+
+Historical metadata auditing has a separate read-only admission path. The root
+auditor authenticates the original source archive and file inventory, derives
+the harness identity from its actual bytes without importing archived code,
+and requires that identity to match the signed manifest. Live workers continue
+to require their imported current source identity; submitted override flags
+cannot enable archived admission. With the new code, an actual R2 audit still
+passes all eleven completed wider training epochs, one completed empty epoch
+and the three preserved aborted epochs. Normal recovery epoch 10 remains
+pending, and this compatibility result does not prove new GPU qualification.
+
+The checked-in sixteen-policy fixture contains only public policy settings and
+minimal environment geometry. Tests do not require operator state, credentials,
+private manifests or a particular absolute checkout path.
 
 ```sh
 PYTHONPATH=. .venv/bin/python -m unittest discover -s tests \

@@ -98,6 +98,24 @@ class DurableRemoteLiveness(unittest.TestCase):
 if __name__=='__main__':unittest.main()
 
 class InitialManifestPublication(unittest.TestCase):
+    def test_heldout_registry_is_in_first_public_manifest(self):
+        with tempfile.TemporaryDirectory() as d:
+            controller=RemoteController.__new__(RemoteController);controller.state=Path(d)
+            bucket=SimpleNamespace(json=Mock());controller.bucket=bucket
+            controller.signed=lambda payload:dict(payload=payload)
+            rows=[dict(spec=dict(id='e',num_samples=4),indices=[0],harness=None)]
+            def base_open(instance,*args,**kwargs):
+                self.assertEqual(kwargs['environments'],rows)
+                manifest=dict(epoch='nonpayable-test',max_batches=4)
+                instance.bucket.json('public/nonpayable-test/manifest.json',instance.signed(manifest))
+                return manifest
+            with patch('subnet.controller.Controller.open',base_open):
+                controller.open('nonpayable-test',{},[],environments=rows,heldout_indices={'e':[1]})
+            self.assertEqual(bucket.json.call_args.args[1]['payload']['heldout_indices'],{'e':[1]})
+            bucket.json.reset_mock()
+            with self.assertRaises(ValueError):
+                controller.open('nonpayable-test',{},[],environments=rows,heldout_indices={'e':[0]})
+            bucket.json.assert_not_called()
     def test_quota_is_in_first_public_manifest(self):
         with tempfile.TemporaryDirectory() as d:
             controller=RemoteController.__new__(RemoteController);controller.state=Path(d);bucket=SimpleNamespace(json=Mock());controller.bucket=bucket;controller.signed=lambda payload:dict(payload=payload)

@@ -7,7 +7,7 @@ class ReplayOptimizerAdmission(unittest.TestCase):
     def setUp(self):
         self.key=SigningKey.generate();self.authority=self.key.verify_key.encode().hex()
         files={'config.json':'a'*64,'model.safetensors':'b'*64};cp={'files':files,'id':r.digest(files)}
-        self.manifest={'checkpoint':cp,'environments':[{'env_id':'e','spec':{'id':'e','num_samples':4},'indices':[0,1]}],'heldout_indices':{'e':[2,3]}}
+        self.manifest={'checkpoint':cp,'environments':[{'env_id':'e','spec':{'id':'e','num_samples':4},'harness':None,'indices':[0,1]}],'heldout_indices':{'e':[2,3]}}
         self.m=self.sign(self.manifest)
         entry={'version':r.VERSION,'current_manifest_sha256':r.digest(self.m),'current_checkpoint':cp,'family':'e','environment_id':'e','environment_index':0,'task_hash':'c'*64,'target_sha256':'d'*64}
         for label in ('positive','negative'):entry[label]={'classification':label,'env_id':'e','index':0,'task_hash':'c'*64}

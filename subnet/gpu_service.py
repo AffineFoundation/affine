@@ -6,7 +6,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from .backend_jobs import REVISION,NUMERICAL_POLICY,BACKEND_PROFILE
+from .backend_jobs import REVISION,NUMERICAL_POLICY,BACKEND_PROFILE,FIXED_POLICY as FULL_POLICY
 from .remote_backend import RemoteController,save
 from .storage import Bucket,Gateway,canonical
 from .chain import ChainAdapter
@@ -33,10 +33,16 @@ def contract(config,round_number):
             cycle=round_number//len(groups)
             start=(cycle*per_epoch)%len(indices)
             indices=[indices[(start+i)%len(indices)] for i in range(min(per_epoch,len(indices)))]
-        definitions_all.append(dict(row,indices=indices))
-    return dict(duration=config.get('duration',300),environments=definitions_all,audit_policy={'mode':'full','version':1},
-        source_bundle=config['source_bundle'],model_runtime_revision=REVISION,numerical_policy=NUMERICAL_POLICY,
+        from .sample_harness import project
+        definitions_all.append(dict(row,indices=indices,harness=project(row['harness'],indices,row['indices'])))
+    registry={row['spec']['id']:dict(indices=row['indices'],harness=row['harness']) for row in rows}
+    result=dict(sample_harness_registry=registry,heldout_indices={r['env_id']:r['indices'] for r in config['heldout']},duration=config.get('duration',300),environments=definitions_all,audit_policy={'mode':'full','version':1},
+        training_policy=FULL_POLICY,source_bundle=config['source_bundle'],model_runtime_revision=REVISION,numerical_policy=NUMERICAL_POLICY,
         backend_profile=BACKEND_PROFILE,model_id=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'))
+    from .empty_epoch_policy import selected
+    policy=selected(config,round_number)
+    if policy is not None:result['operator_test_policy']=policy
+    return result
 
 def heldout(config,manifest):
     rows=[];all_training={r['spec']['id']:set(r['indices']) for r in definitions(config)}
@@ -75,7 +81,7 @@ def evaluate(controller,manifest,cache,phase,steps,config):
 def initial_manifest(config,checkpoint):
     chosen=contract(config,0)
     from .harness import source_hash
-    return dict(epoch=config['epoch_prefix']+'-initial',payable=False,checkpoint=checkpoint,environments=[dict(env_id=r['spec']['id'],**r) for r in chosen['environments']],K=1,L=1,max_batches=config.get('max_batches',3),audit_policy={'mode':'full','version':1},harness_source_hash=source_hash(),model_runtime_revision=REVISION,numerical_policy=NUMERICAL_POLICY,backend_profile=BACKEND_PROFILE,model_id=chosen['model_id'],transport_policy='direct-r2-v1')
+    return dict(sample_harness_registry=chosen['sample_harness_registry'],epoch=config['epoch_prefix']+'-initial',payable=False,training_policy=FULL_POLICY,checkpoint=checkpoint,environments=[dict(env_id=r['spec']['id'],**r) for r in chosen['environments']],K=1,L=1,max_batches=config.get('max_batches',3),audit_policy={'mode':'full','version':1},harness_source_hash=source_hash(),model_runtime_revision=REVISION,numerical_policy=NUMERICAL_POLICY,backend_profile=BACKEND_PROFILE,model_id=chosen['model_id'],transport_policy='direct-r2-v1')
 
 def run(config,once=False):
     prefix=config.get('epoch_prefix','nonpayable-gpu-continuous')
@@ -114,7 +120,8 @@ def run(config,once=False):
                 active['phase']='mine';save(statuspath,status)
             manifest=json.loads(manifestpath.read_text())
             if active['phase']=='mine':
-                if time.time()<manifest['deadline']:
+                from .empty_epoch_policy import dispatch_allowed
+                if dispatch_allowed(manifest) and time.time()<manifest['deadline']:
                     for miner in active['identities']:
                         capability=dict(put_url=bucket.presign('private/'+epoch+'/staging/'+miner+'.zip','put_object',max(1,manifest['deadline']-int(time.time()))),headers={'Content-Type':'application/octet-stream'})
                         controller.jobs.run(epoch+'-mine-'+miner[:8],'mine',manifest,None,miner_id=miner,capability=capability,search_budget=config.get('search_budget',64),seed_start=100+status['round']*1000)
@@ -124,6 +131,8 @@ def run(config,once=False):
                 if time.time()<manifest['deadline']:
                     save(state/'health.json',dict(status='collecting',epoch=epoch,deadline=manifest['deadline'],time=time.time()));time.sleep(min(10,max(1,manifest['deadline']-time.time())));continue
                 result,reports=controller.finalize(manifest,status['checkpoint_path']);save(state/(epoch+'-verified.json'),reports)
+                from .empty_epoch_policy import validate_empty_completion
+                validate_empty_completion(manifest,result,reports)
                 ledger=json.loads(ledgerpath.read_text()) if ledgerpath.exists() else []
                 if not any(r['epoch_id']==epoch for r in ledger):ledger.append(dict(result,points={active['identities'][m]:p for m,p in result['points'].items()}))
                 save(ledgerpath,ledger);active['phase']='before';save(statuspath,status)
@@ -133,7 +142,24 @@ def run(config,once=False):
                 active['phase']='train';save(statuspath,status)
             if active['phase']=='train':
                 if any(r['accepted'] for r in reports.values()):
-                    cp,metrics=controller.train(manifest,reports,status['checkpoint_path'],steps=config.get('training_steps',1))
+                    replay=None;steps=config.get('training_steps',1)
+                    if config.get('balanced_replay'):
+                        from .replay_pool_preparation import prepare
+                        from .replay_training import admitted
+                        folder=state/(epoch+'-replay-pool')
+                        if not folder.exists():prepare(config,state,epoch,folder,max_pairs=16)
+                        request=folder/'job-replay.json'
+                        if request.exists():replay=json.loads(request.read_bytes())
+                        else:
+                            replay={'manifest':json.loads((folder/'current-manifest.json').read_bytes()),'pool':json.loads((folder/'pool.json').read_bytes()),'reuse_counts':json.loads((state/'replay-reuse-ledger.json').read_bytes())['counts'] if (state/'replay-reuse-ledger.json').exists() else {}}
+                            save(request,replay)
+                        _,selection=admitted(manifest,replay,controller.authority.id)
+                        families={r['environment_id'] for r in selection['selected']}|{b['env_id'] for r in reports.values() for b in r['accepted']}
+                        steps=len(families)
+                    cp,metrics=controller.train(manifest,reports,status['checkpoint_path'],steps=steps,replay=replay)
+                    if replay is not None:
+                        from .replay_commit import commit
+                        commit(state/'replay-reuse-ledger.json',epoch,metrics)
                     active['next_checkpoint']=cp;active['next_path']=metrics['checkpoint_path'];active['next_steps']=status['training_steps']+metrics['steps']
                 else:
                     save(state/(epoch+'-empty-closed.json'),dict(epoch=epoch,status='closed_no_accepted_batches',payable=False,checkpoint=status['checkpoint']['id']))

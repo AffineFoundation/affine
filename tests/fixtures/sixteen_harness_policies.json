@@ -1,0 +1,403 @@
+[
+  {
+    "env_id": "affine_logic",
+    "spec": {
+      "id": "affine_logic",
+      "num_samples": 32
+    },
+    "indices": [],
+    "harness": {
+      "candidates": [
+        "[['X', 'T', 'C', 'X', 'X'], ['X', 'X', 'X', 'X', 'X'], ['T', 'C', 'X', 'C', 'T'], ['X', 'T', 'X', 'X', 'X'], ['X', 'C', 'X', 'T', 'C']]",
+        "[['X', 'T', 'X', 'X', 'X'], ['X', 'X', 'X', 'X', 'X'], ['T', 'C', 'X', 'C', 'T'], ['X', 'T', 'X', 'X', 'X'], ['X', 'C', 'X', 'T', 'C']]",
+        "[['X', 'X', 'C', 'T', 'C'], ['X', 'T', 'X', 'X', 'T'], ['X', 'C', 'X', 'X', 'X'], ['X', 'X', 'X', 'C', 'T']]",
+        "[['X', 'X', 'X', 'T', 'C'], ['X', 'T', 'X', 'X', 'T'], ['X', 'C', 'X', 'X', 'X'], ['X', 'X', 'X', 'C', 'T']]",
+        "[['X', 'T', 'C', 'X', 'T'], ['X', 'X', 'X', 'X', 'C'], ['T', 'C', 'X', 'X', 'T'], ['X', 'X', 'X', 'X', 'C'], ['X', 'T', 'C', 'X', 'X']]",
+        "[['X', 'T', 'X', 'X', 'T'], ['X', 'X', 'X', 'X', 'C'], ['T', 'C', 'X', 'X', 'T'], ['X', 'X', 'X', 'X', 'C'], ['X', 'T', 'C', 'X', 'X']]",
+        "[['X', 'C', 'X', 'T', 'C'], ['X', 'T', 'X', 'X', 'X'], ['C', 'T', 'C', 'X', 'X'], ['T', 'X', 'X', 'X', 'X']]",
+        "[['X', 'X', 'X', 'T', 'C'], ['X', 'T', 'X', 'X', 'X'], ['C', 'T', 'C', 'X', 'X'], ['T', 'X', 'X', 'X', 'X']]",
+        "[['X', 'X', 'T', 'C', 'X'], ['X', 'X', 'X', 'T', 'X'], ['T', 'C', 'X', 'C', 'X'], ['X', 'X', 'X', 'X', 'X'], ['C', 'T', 'T', 'C', 'X']]",
+        "[['X', 'X', 'T', 'X', 'X'], ['X', 'X', 'X', 'T', 'X'], ['T', 'C', 'X', 'C', 'X'], ['X', 'X', 'X', 'X', 'X'], ['C', 'T', 'T', 'C', 'X']]",
+        "[['X', 'C', 'T', 'C', 'T'], ['X', 'T', 'X', 'X', 'T'], ['X', 'C', 'X', 'X', 'C'], ['X', 'X', 'X', 'X', 'X'], ['T', 'C', 'X', 'X', 'X']]",
+        "[['X', 'X', 'T', 'C', 'T'], ['X', 'T', 'X', 'X', 'T'], ['X', 'C', 'X', 'X', 'C'], ['X', 'X', 'X', 'X', 'X'], ['T', 'C', 'X', 'X', 'X']]",
+        "[['T', 'C', 'X', 'T', 'C'], ['X', 'X', 'T', 'X', 'X'], ['C', 'T', 'C', 'X', 'X'], ['X', 'X', 'X', 'X', 'X']]",
+        "[['T', 'X', 'X', 'T', 'C'], ['X', 'X', 'T', 'X', 'X'], ['C', 'T', 'C', 'X', 'X'], ['X', 'X', 'X', 'X', 'X']]",
+        "[['X', 'X', 'X', 'X', 'X'], ['X', 'C', 'X', 'X', 'T'], ['T', 'T', 'X', 'X', 'C'], ['C', 'T', 'C', 'X', 'X']]",
+        "[['X', 'X', 'X', 'X', 'X'], ['X', 'X', 'X', 'X', 'T'], ['T', 'T', 'X', 'X', 'C'], ['C', 'T', 'C', 'X', 'X']]",
+        "[['C', 'X', 'X', 'C', 'T'], ['T', 'X', 'X', 'X', 'X'], ['X', 'C', 'T', 'C', 'T'], ['X', 'X', 'X', 'X', 'T'], ['X', 'X', 'X', 'X', 'C']]",
+        "[['X', 'X', 'X', 'C', 'T'], ['T', 'X', 'X', 'X', 'X'], ['X', 'C', 'T', 'C', 'T'], ['X', 'X', 'X', 'X', 'T'], ['X', 'X', 'X', 'X', 'C']]",
+        "[['X', 'X', 'X', 'X', 'C'], ['X', 'X', 'X', 'X', 'T'], ['T', 'X', 'C', 'T', 'C'], ['C', 'X', 'T', 'X', 'X'], ['X', 'X', 'X', 'C', 'T']]",
+        "[['X', 'X', 'X', 'X', 'X'], ['X', 'X', 'X', 'X', 'T'], ['T', 'X', 'C', 'T', 'C'], ['C', 'X', 'T', 'X', 'X'], ['X', 'X', 'X', 'C', 'T']]",
+        "[['X', 'T', 'C', 'T', 'C'], ['T', 'X', 'X', 'X', 'X'], ['C', 'X', 'X', 'X', 'X'], ['X', 'X', 'X', 'C', 'T']]",
+        "[['X', 'T', 'X', 'T', 'C'], ['T', 'X', 'X', 'X', 'X'], ['C', 'X', 'X', 'X', 'X'], ['X', 'X', 'X', 'C', 'T']]",
+        "[['X', 'X', 'T', 'C', 'X'], ['X', 'X', 'X', 'T', 'X'], ['T', 'C', 'X', 'C', 'X'], ['X', 'T', 'X', 'T', 'X'], ['X', 'C', 'X', 'C', 'X']]",
+        "[['X', 'X', 'T', 'X', 'X'], ['X', 'X', 'X', 'T', 'X'], ['T', 'C', 'X', 'C', 'X'], ['X', 'T', 'X', 'T', 'X'], ['X', 'C', 'X', 'C', 'X']]",
+        "[['X', 'X', 'T', 'C', 'X'], ['X', 'X', 'T', 'X', 'T'], ['X', 'X', 'C', 'X', 'C'], ['X', 'X', 'X', 'X', 'T'], ['X', 'C', 'T', 'X', 'C']]",
+        "[['X', 'X', 'T', 'X', 'X'], ['X', 'X', 'T', 'X', 'T'], ['X', 'X', 'C', 'X', 'C'], ['X', 'X', 'X', 'X', 'T'], ['X', 'C', 'T', 'X', 'C']]",
+        "[['X', 'X', 'X', 'T', 'C'], ['X', 'X', 'X', 'X', 'X'], ['C', 'X', 'T', 'T', 'C'], ['T', 'X', 'C', 'X', 'X'], ['C', 'T', 'X', 'X', 'X']]",
+        "[['X', 'X', 'X', 'T', 'X'], ['X', 'X', 'X', 'X', 'X'], ['C', 'X', 'T', 'T', 'C'], ['T', 'X', 'C', 'X', 'X'], ['C', 'T', 'X', 'X', 'X']]",
+        "[['X', 'X', 'X', 'X', 'X'], ['X', 'X', 'X', 'X', 'X'], ['X', 'C', 'X', 'C', 'X'], ['T', 'T', 'X', 'T', 'T'], ['C', 'T', 'C', 'X', 'C']]",
+        "[['X', 'X', 'X', 'X', 'X'], ['X', 'X', 'X', 'X', 'X'], ['X', 'X', 'X', 'C', 'X'], ['T', 'T', 'X', 'T', 'T'], ['C', 'T', 'C', 'X', 'C']]",
+        "[['X', 'T', 'C', 'X'], ['X', 'X', 'T', 'X'], ['T', 'X', 'C', 'X'], ['C', 'X', 'X', 'X']]",
+        "[['X', 'T', 'X', 'X'], ['X', 'X', 'T', 'X'], ['T', 'X', 'C', 'X'], ['C', 'X', 'X', 'X']]"
+      ],
+      "max_output_tokens": 256,
+      "policy": "candidates",
+      "temperature": 4.0,
+      "top_p": 1.0,
+      "version": "text-tools-v1"
+    }
+  },
+  {
+    "env_id": "affine_scitext",
+    "spec": {
+      "id": "affine_scitext",
+      "num_samples": 32
+    },
+    "indices": [],
+    "harness": {
+      "candidates": [
+        "\\boxed{42.4057084608}",
+        "\\boxed{42.4057}",
+        "\\boxed{42.406}",
+        "\\boxed{42.41}",
+        "\\boxed{42.4}",
+        "\\boxed{42}",
+        "\\boxed{-999999}",
+        "\\boxed{50000}"
+      ],
+      "max_output_tokens": 256,
+      "policy": "candidates",
+      "temperature": 4.0,
+      "top_p": 1.0,
+      "version": "text-tools-v1"
+    }
+  },
+  {
+    "env_id": "affine_unscramble",
+    "spec": {
+      "id": "affine_unscramble",
+      "num_samples": 32
+    },
+    "indices": [],
+    "harness": {
+      "candidates": [
+        "<unscrambled_text>\n*1*: Nasrudin tries on a coat in a store.\n*2*: He exchanges the coat for pants.\n*3*: He walks out without paying.\n*4*: The storeowner stops him for unpaid pants.\n*5*: Nasrudin claims he never paid for the coat.\n*6*: The storeowner realizes Nasrudin outsmarted him.\n</unscrambled_text>",
+        "<unscrambled_text>\n*1*: The storeowner realizes Nasrudin outsmarted him.\n*2*: Nasrudin claims he never paid for the coat.\n*3*: The storeowner stops him for unpaid pants.\n*4*: He walks out without paying.\n*5*: He exchanges the coat for pants.\n*6*: Nasrudin tries on a coat in a store.\n</unscrambled_text>",
+        "<unscrambled_text>\n*1*: Nasrudin smuggles straw bundles across the border.\n*2*: The inspector searches Nasrudin\u2019s clothes and harness.\n*3*: The inspector searches the bundles and finds nothing.\n*4*: Nasrudin is allowed to pass.\n*5*: The inspector later asks Nasrudin the truth.\n*6*: Nasrudin reveals he was smuggling donkeys (the bundles were empty).\n</unscrambled_text>",
+        "<unscrambled_text>\n*1*: Nasrudin reveals he was smuggling donkeys (the bundles were empty).\n*2*: The inspector later asks Nasrudin the truth.\n*3*: Nasrudin is allowed to pass.\n*4*: The inspector searches the bundles and finds nothing.\n*5*: The inspector searches Nasrudin\u2019s clothes and harness.\n*6*: Nasrudin smuggles straw bundles across the border.\n</unscrambled_text>",
+        "<unscrambled_text>\n*1*: Nasrudin smuggles straw bundles across the border.\n*2*: The inspector searches the bundles and finds nothing.\n*3*: The inspector searches Nasrudin\u2019s clothes and harness.\n*4*: Nasrudin is allowed to pass.\n*5*: The inspector later asks Nasrudin the truth.\n*6*: Nasrudin reveals he was smuggling donkeys (the bundles were empty).\n</unscrambled_text>"
+      ],
+      "max_output_tokens": 256,
+      "policy": "candidates",
+      "temperature": 4.0,
+      "top_p": 1.0,
+      "version": "text-tools-v1"
+    }
+  },
+  {
+    "env_id": "affine_verbatim",
+    "spec": {
+      "id": "affine_verbatim",
+      "num_samples": 32
+    },
+    "indices": [],
+    "harness": {
+      "input_tags": [
+        "<text>",
+        "</text>"
+      ],
+      "max_output_tokens": 256,
+      "output_tags": [
+        "<answer>",
+        "</answer>"
+      ],
+      "policy": "visible-copy-candidates",
+      "temperature": 4.0,
+      "top_p": 1.0,
+      "version": "plain-transcript-v1"
+    }
+  },
+  {
+    "env_id": "affine_math",
+    "spec": {
+      "id": "affine_math",
+      "num_samples": 32
+    },
+    "indices": [],
+    "harness": {
+      "candidates": [
+        "\\boxed{0}",
+        "\\boxed{1}",
+        "\\boxed{98}",
+        "\\boxed{97}"
+      ],
+      "max_output_tokens": 128,
+      "policy": "candidates",
+      "temperature": 4.0,
+      "top_p": 1.0,
+      "version": "text-tools-v1"
+    }
+  },
+  {
+    "env_id": "affine_rgym",
+    "spec": {
+      "id": "affine_rgym",
+      "num_samples": 32
+    },
+    "indices": [],
+    "harness": {
+      "candidates": [
+        "<answer>0</answer>",
+        "<answer>1</answer>",
+        "<answer>2</answer>",
+        "<answer>3</answer>",
+        "<answer>4</answer>",
+        "<answer>5</answer>",
+        "<answer>6</answer>",
+        "<answer>7</answer>",
+        "<answer>8</answer>",
+        "<answer>9</answer>",
+        "<answer>10</answer>",
+        "<answer>11</answer>",
+        "<answer>12</answer>",
+        "<answer>13</answer>",
+        "<answer>14</answer>",
+        "<answer>15</answer>",
+        "<answer>16</answer>",
+        "<answer>17</answer>",
+        "<answer>18</answer>",
+        "<answer>19</answer>",
+        "<answer>20</answer>",
+        "<answer>21</answer>",
+        "<answer>22</answer>",
+        "<answer>23</answer>",
+        "<answer>24</answer>",
+        "<answer>25</answer>",
+        "<answer>26</answer>",
+        "<answer>27</answer>",
+        "<answer>28</answer>",
+        "<answer>29</answer>",
+        "<answer>30</answer>",
+        "<answer>31</answer>",
+        "<answer>32</answer>"
+      ],
+      "max_output_tokens": 96,
+      "policy": "candidates",
+      "temperature": 4.0,
+      "top_p": 1.0,
+      "version": "text-tools-v1"
+    }
+  },
+  {
+    "env_id": "affine_when2call",
+    "spec": {
+      "id": "affine_when2call",
+      "num_samples": 32
+    },
+    "indices": [],
+    "harness": {
+      "candidates": [
+        "Here is the result.",
+        "Finished."
+      ],
+      "max_output_tokens": 128,
+      "policy": "candidates",
+      "temperature": 4.0,
+      "top_p": 1.0,
+      "turn_overrides": {
+        "0": {
+          "candidates": [
+            "{\"tool_call\":{\"name\":\"get_ico_calendar\",\"arguments\":{\"category\":\"_ico_cat_ecomm,_ico_cat_finance\",\"time_utc_offset\":28800,\"tabname\":\"completed\",\"sort\":\"funds_raised\"}}}",
+            "{\"tool_call\":{\"name\":\"get_ico_calendar\",\"arguments\":{\"category\":\"_ico_cat_ecomm,_ico_cat_finance\",\"time_utc_offset\":0,\"tabname\":\"completed\",\"sort\":\"funds_raised\"}}}"
+          ]
+        }
+      },
+      "version": "text-tools-v1"
+    }
+  },
+  {
+    "env_id": "affine_ifeval",
+    "spec": {
+      "id": "affine_ifeval",
+      "num_samples": 32
+    },
+    "indices": [],
+    "harness": {
+      "candidates": [
+        "ipv6 expands the address space and routes internet traffic, allowing more devices to connect.",
+        "IPv6 expands the address space and routes internet traffic, allowing more devices to connect."
+      ],
+      "max_output_tokens": 96,
+      "policy": "candidates",
+      "temperature": 4.0,
+      "top_p": 1.0,
+      "version": "text-tools-v1"
+    }
+  },
+  {
+    "env_id": "affine_oolong",
+    "spec": {
+      "id": "affine_oolong",
+      "num_samples": 32
+    },
+    "indices": [],
+    "harness": {
+      "candidates": [
+        "{\"tool_call\":{\"name\":\"bash\",\"arguments\":{\"command\":\"head -n 5 /workspace/context.txt\"}}}",
+        "{\"tool_call\":{\"name\":\"bash\",\"arguments\":{\"command\":\"head -n 6 /workspace/context.txt\"}}}"
+      ],
+      "max_output_tokens": 512,
+      "policy": "candidates",
+      "temperature": 4.0,
+      "top_p": 1.0,
+      "turn_overrides": {
+        "1": {
+          "candidates": [
+            "{\"tool_call\":{\"name\":\"bash\",\"arguments\":{\"command\":\"python -c 'import re,collections; text=open('\\\"'\\\"'/workspace/context.txt'\\\"'\\\"').read(); c=collections.Counter(re.findall(r'\\\"'\\\"'^Date: (.*?) \\\\|\\\\| User:'\\\"'\\\"',text,re.M)); n=sum(v==2 for v in c.values()); open('\\\"'\\\"'/workspace/answer.txt'\\\"'\\\"','\\\"'\\\"'w'\\\"'\\\"').write(str(n+0))'\"}}}",
+            "{\"tool_call\":{\"name\":\"bash\",\"arguments\":{\"command\":\"python -c 'import re,collections; text=open('\\\"'\\\"'/workspace/context.txt'\\\"'\\\"').read(); c=collections.Counter(re.findall(r'\\\"'\\\"'^Date: (.*?) \\\\|\\\\| User:'\\\"'\\\"',text,re.M)); n=sum(v==2 for v in c.values()); open('\\\"'\\\"'/workspace/answer.txt'\\\"'\\\"','\\\"'\\\"'w'\\\"'\\\"').write(str(n+1))'\"}}}"
+          ],
+          "policy": "candidates"
+        }
+      },
+      "version": "plain-transcript-v1"
+    }
+  },
+  {
+    "env_id": "affine_i3math",
+    "spec": {
+      "id": "affine_i3math",
+      "num_samples": 32
+    },
+    "indices": [],
+    "harness": {
+      "candidates": [
+        "\\boxed{7}",
+        "\\boxed{8}",
+        "\\boxed{14}",
+        "\\boxed{15}"
+      ],
+      "max_output_tokens": 256,
+      "policy": "candidates",
+      "temperature": 4.0,
+      "top_p": 1.0,
+      "version": "text-tools-v1"
+    }
+  },
+  {
+    "env_id": "affine_trivia",
+    "spec": {
+      "id": "affine_trivia",
+      "num_samples": 32
+    },
+    "indices": [],
+    "harness": {
+      "max_output_tokens": 64,
+      "policy": "autoregressive",
+      "temperature": 1.0,
+      "top_p": 1.0,
+      "version": "text-tools-v1"
+    }
+  },
+  {
+    "env_id": "affine_popqa_abstain",
+    "spec": {
+      "id": "affine_popqa_abstain",
+      "num_samples": 32
+    },
+    "indices": [],
+    "harness": {
+      "max_output_tokens": 64,
+      "policy": "autoregressive",
+      "temperature": 1.0,
+      "top_p": 1.0,
+      "version": "text-tools-v1"
+    }
+  },
+  {
+    "env_id": "affine_mrcr",
+    "spec": {
+      "id": "affine_mrcr",
+      "num_samples": 32
+    },
+    "indices": [],
+    "harness": {
+      "max_output_tokens": 512,
+      "policy": "public-mrcr-shell-candidates",
+      "public_policy_revision": "original-mrcr-public-transcript-retrieval-v1",
+      "public_policy_sha256": "e3e8ef38f69eb04d840b0a1299ccd9274c8149e34d641a91dcb1041eb150f3b2",
+      "temperature": 4.0,
+      "top_p": 1.0,
+      "turn_overrides": {
+        "1": {
+          "candidates": [
+            "Done",
+            "Finished"
+          ],
+          "max_output_tokens": 16,
+          "policy": "candidates"
+        }
+      },
+      "version": "text-tools-v1"
+    }
+  },
+  {
+    "env_id": "affine_trivia_abstain",
+    "spec": {
+      "id": "affine_trivia_abstain",
+      "num_samples": 32
+    },
+    "indices": [],
+    "harness": {
+      "candidates": [
+        "I don't know",
+        "I do know."
+      ],
+      "max_output_tokens": 256,
+      "policy": "candidates",
+      "temperature": 4.0,
+      "top_p": 1.0,
+      "version": "text-tools-v1"
+    }
+  },
+  {
+    "env_id": "affine_numina",
+    "spec": {
+      "id": "affine_numina",
+      "num_samples": 32
+    },
+    "indices": [
+      13
+    ],
+    "harness": {
+      "candidates": [
+        "{\"tool_call\":{\"name\":\"bash\",\"arguments\":{\"command\":\"python3 -c 'from pathlib import Path; import re; p=Path('\\\"'\\\"'/tmp/proof.lean'\\\"'\\\"'); s=p.read_text(); s,n=re.subn(r'\\\"'\\\"'\\\\bsorry\\\\b'\\\"'\\\"', '\\\"'\\\"'first | aesop | omega | nlinarith | ring | norm_num | decide'\\\"'\\\"', s); assert n>0; p.write_text(s)'\"}}}",
+        "{\"tool_call\":{\"name\":\"bash\",\"arguments\":{\"command\":\"python3 -c 'from pathlib import Path; import re; p=Path('\\\"'\\\"'/tmp/proof.lean'\\\"'\\\"'); s=p.read_text(); s,n=re.subn(r'\\\"'\\\"'\\\\bsorry\\\\b'\\\"'\\\"', '\\\"'\\\"'first | aesop | omega | nlinarith | ring | norm_num | decide'\\\"'\\\"', s); assert n<0; p.write_text(s)'\"}}}"
+      ],
+      "max_output_tokens": 512,
+      "policy": "candidates",
+      "temperature": 4.0,
+      "top_p": 1.0,
+      "version": "text-tools-v1"
+    }
+  },
+  {
+    "env_id": "affine_pydantic",
+    "spec": {
+      "id": "affine_pydantic",
+      "num_samples": 32
+    },
+    "indices": [],
+    "harness": {
+      "candidates": [
+        "```json\n{\"festival_name\":\"x\",\"start_date\":\"2030-01-01\",\"end_date\":\"2030-01-02\",\"stages\":[]}\n```",
+        "```json\n{\"festival_name\":[],\"start_date\":\"2030-01-01\",\"end_date\":\"2030-01-02\",\"stages\":[]}\n```"
+      ],
+      "max_output_tokens": 512,
+      "policy": "candidates",
+      "temperature": 4.0,
+      "top_p": 1.0,
+      "version": "text-tools-v1"
+    }
+  }
+]

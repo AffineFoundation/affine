@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 import requests
 from nacl.signing import VerifyKey
-from .backend_jobs import canonical,file_map,FULL_POLICY,SOURCE_FILES,BACKEND_PROFILE,NUMERICAL_POLICY,signed
+from .backend_jobs import canonical,file_map,FIXED_POLICY as FULL_POLICY,SOURCE_FILES,BACKEND_PROFILE,NUMERICAL_POLICY,signed
 from .controller import Controller
 from .scoring import score
 
@@ -107,6 +107,16 @@ class RemoteController(Controller):
     def __init__(self,bucket,gateway,state,remote):
         super().__init__(bucket,gateway,state);self.jobs=RemoteJobs(remote,self)
     def open(self,*args,max_batches=3,**kwargs):
+        heldouts=kwargs.pop('heldout_indices',None)
+        operator_test_policy=kwargs.pop('operator_test_policy',None)
+        if operator_test_policy is not None:
+            from .empty_epoch_policy import validate
+            validate(operator_test_policy)
+            if not args or not args[0].startswith('nonpayable-'):raise ValueError('nonpayable controlled window')
+        if heldouts is not None:
+            from .verified_replay_pool import definitions,heldout_registry
+            raw={'heldout_indices':heldouts,'environments':[dict(env_id=r['spec']['id'],spec=r['spec'],indices=r.get('indices',[]),harness=r.get('harness')) for r in kwargs.get('environments',[])]}
+            heldout_registry(raw,definitions(raw))
         # Delay base-controller publication so the approved quota is included in
         # the first public manifest rather than overwriting a signed challenge.
         original=self.bucket
@@ -118,6 +128,8 @@ class RemoteController(Controller):
         try:manifest=super().open(*args,**kwargs)
         finally:self.bucket=original
         manifest['max_batches']=max_batches
+        if operator_test_policy is not None:manifest['operator_test_policy']=operator_test_policy
+        if heldouts is not None:manifest['heldout_indices']=heldouts
         save(self.state/(manifest['epoch']+'-manifest.json'),manifest)
         for key,value in buffered.writes:
             if key=='public/'+manifest['epoch']+'/manifest.json':value=self.signed(manifest)
@@ -176,18 +188,24 @@ class RemoteController(Controller):
             if not artifact.exists():self.bucket.download(receipt['frozen_key'],artifact)
         result=score(reports);result.update(payable=False,epoch_id=epoch,finalized_at=time.time(),receipts=receipts,checkpoint=manifest['checkpoint']['id'])
         save(saved,result);self.bucket.json('public/'+epoch+'/scores.json',self.signed(result));return result,reports
-    def train(self,manifest,reports,checkpoint_path,destination=None,steps=1,**ignored):
+    def train(self,manifest,reports,checkpoint_path,destination=None,steps=1,replay=None,**ignored):
         epoch=manifest['epoch'];cached=self.state/(epoch+'-training-metrics.json')
         if cached.exists():
             metrics=json.loads(cached.read_text())
             if metrics.get('source_epoch')!=epoch or metrics.get('input_checkpoint')!=manifest['checkpoint']['id'] or metrics.get('training_policy')!=FULL_POLICY or metrics.get('weights_changed') is not True or metrics['checkpoint']!=file_map(metrics['new_checkpoint']['files']) or metrics['checkpoint']==manifest['checkpoint']['id']:raise ValueError('cached GPU training checkpoint binding')
+            expected_replay=hashlib.sha256(canonical(replay)).hexdigest() if replay is not None else None
+            if metrics.get('replay_inputs_sha256')!=expected_replay or metrics['steps']!=steps:raise ValueError('cached replay/current request binding')
+            self.bucket.json('public/'+epoch+'/training.json',self.signed(metrics))
             return metrics['new_checkpoint'],metrics
         capacity=self.jobs.capacity(checkpoint_path);receipts=json.loads((self.state/(epoch+'-scores.json')).read_text())['receipts']
         submissions=[dict(url=self.bucket.presign(receipts[m]['frozen_key']),sha256=receipts[m]['sha256']) for m,r in reports.items() if r['accepted']]
         if not submissions:raise ValueError('no independently verified training data')
-        remote=self.jobs.run(epoch+'-train','train',manifest,checkpoint_path,submissions=submissions,steps=steps,training_policy=FULL_POLICY)
+        extra={'replay':replay} if replay is not None else {}
+        remote=self.jobs.run(epoch+'-train','train',manifest,checkpoint_path,submissions=submissions,steps=steps,training_policy=FULL_POLICY,**extra)
         new=dict(remote['new_checkpoint']);path=new.pop('path')
         if new['id']==manifest['checkpoint']['id']:raise ValueError('unchanged trained checkpoint')
         output=self.publish_remote_checkpoint(dict(manifest,checkpoint=new),path)
         metrics=dict(steps=steps,weights_changed=True,full_model_finetune=True,training_policy=FULL_POLICY,updates=remote['training']['updates'],source_epoch=epoch,input_checkpoint=manifest['checkpoint']['id'],input_pairs=sum(len(r['accepted']) for r in reports.values()),checkpoint=new['id'],new_checkpoint=output,checkpoint_path=path,capacity_preflight=capacity,remote_job_id=remote['job_id'])
+        if replay is not None:
+            metrics['replay_training']=remote['replay_training'];metrics['replay_inputs_sha256']=hashlib.sha256(canonical(replay)).hexdigest()
         save(cached,metrics);self.bucket.json('public/'+epoch+'/training.json',self.signed(metrics));return output,metrics

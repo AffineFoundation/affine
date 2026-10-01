@@ -93,9 +93,11 @@ def _snapshot_path(config):
     return value if value.is_absolute() else PACKAGE_ROOT.parent/value
 
 
-def _dependency_versions(source_id):
+def _dependency_versions(source_id, tool_error_policy=None):
     from importlib.metadata import version,PackageNotFoundError
     names = ['verifiers']
+    if tool_error_policy=='native-mcp-toolerror-observation-v1':names.append('mcp')
+    elif tool_error_policy is not None:raise ValueError('unapproved tool error policy')
     if source_id=='affine_rgym':names+=['reasoning-gym','arckit','bfi','cellpylib','magiccube','pycosat','pyfiglet','pytz','zss']
     if source_id=='affine_verbatim':names+=['faker']
     versions={}
@@ -173,6 +175,10 @@ def _source_hash(spec):
     if snapshot:
         files.append(('tasks', _hash(_snapshot_path(spec.config))))
     files.append(('adapter',_hash(__file__)))
+    policy=spec.config.get('tool_error_policy')
+    if policy=='native-mcp-toolerror-observation-v1':
+        files.append(('tool_error_adapter',_hash(PACKAGE_ROOT/'native_tool_errors.py')))
+    elif policy is not None:raise ValueError('unapproved tool error policy')
     # Config is signed alongside source hash: changes to seed/index mapping matter.
     return hashlib.sha256(_canonical({'files':files,'config':spec.config,'id':spec.id,
                                       'version':spec.version,'adapter':spec.adapter})).hexdigest()
@@ -183,10 +189,11 @@ def build_spec(source_id, config=None, legacy_root=LEGACY_ROOT, research_root=No
     config = dict(config or {})
     config.setdefault('legacy_root', 'bundled' if Path(legacy_root)==LEGACY_ROOT else str(legacy_root))
     config.setdefault('research_root','bundled')
-    config.setdefault('dependency_versions',_dependency_versions(source_id))
+    config.setdefault('dependency_versions',_dependency_versions(source_id,config.get('tool_error_policy')))
     if research_root:
         config['research_root'] = str(research_root)
-    spec = EnvironmentSpec(source_id, config=config, num_samples=num_samples,
+    environment_version='prime-v1-2-native-mcp-errors' if config.get('tool_error_policy')=='native-mcp-toolerror-observation-v1' else 'prime-v1-1'
+    spec = EnvironmentSpec(source_id, version=environment_version, config=config, num_samples=num_samples,
                            max_turns=max_turns, max_output_tokens=max_output_tokens,
                            success_reward=success_reward)
     return EnvironmentSpec.from_dict(dict(spec.to_dict(), source_hash=_source_hash(spec)))
@@ -249,7 +256,7 @@ class EnvironmentSession:
         self.spec=spec
         if _source_hash(spec)!=spec.source_hash:
             raise ValueError('trusted environment code or data hash mismatch')
-        if spec.adapter=='prime_v1' and _dependency_versions(spec.id)!=spec.config.get('dependency_versions'):
+        if spec.adapter=='prime_v1' and _dependency_versions(spec.id,spec.config.get('tool_error_policy'))!=spec.config.get('dependency_versions'):
             raise ValueError('environment dependency version mismatch')
         self.loop=asyncio.new_event_loop()
         self.runtime=None
@@ -396,7 +403,12 @@ class EnvironmentSession:
                 result=await asyncio.wait_for(self.runtime.run(['bash','-lc',command],{}),60)
                 content=json.dumps({'exit_code':result.exit_code,'stdout':result.stdout[:32768],'stderr':result.stderr[:32768]})
             else:
-                content=await asyncio.wait_for(self.mcp._tool_manager.call_tool(call['name'],arguments),60)
+                if self.spec.config.get('tool_error_policy')=='native-mcp-toolerror-observation-v1':
+                    from .native_tool_errors import call_tool
+                    native=await asyncio.wait_for(call_tool(self.mcp._tool_manager,call['name'],arguments),60)
+                    content=native['result']
+                else:
+                    content=await asyncio.wait_for(self.mcp._tool_manager.call_tool(call['name'],arguments),60)
                 if not isinstance(content,str):content=json.dumps(content,default=str)
             observation=dict(role='tool',tool_call_id=call['id'],name=call['name'],content=content)
             observations.append(observation)

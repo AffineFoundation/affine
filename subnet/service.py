@@ -34,9 +34,10 @@ def definitions(config):
             spec=legacy_spec(row.get('config')) if row['source']=='mastermind' else build_spec(row['source'],row.get('config',{}),num_samples=row.get('num_samples',4),max_turns=row.get('max_turns',4),max_output_tokens=row.get('max_output_tokens',96))
         else:
             raw=row['spec'];spec=EnvironmentSpec.from_dict(raw) if 'id' in raw else legacy_spec(raw or None)
-        harness=normalize(row.get('harness') or (legacy_harness(spec.config) if spec.adapter=='legacy_mastermind' else None))
-        if harness['max_output_tokens']>spec.max_output_tokens:raise ValueError('harness output exceeds environment budget')
+        from .sample_harness import validate as validate_sample_harness,resolve as resolve_sample_harness
         indices=row.get('indices',row.get('training_indices',list(range(spec.num_samples))))
+        harness=validate_sample_harness(row.get('harness') or (legacy_harness(spec.config) if spec.adapter=='legacy_mastermind' else None),indices)
+        if any(normalize(resolve_sample_harness(harness,index,indices) or (legacy_harness(spec.config) if spec.adapter=='legacy_mastermind' else None))['max_output_tokens']>spec.max_output_tokens for index in indices):raise ValueError('harness exceeds environment budget')
         if not indices or len(set(indices))!=len(indices) or any(type(i) is not int or not 0<=i<spec.num_samples for i in indices):raise ValueError('challenge indices')
         if any(r['spec']['id']==spec.id for r in result):raise ValueError('duplicate environment id')
         result.append(dict(spec=spec.to_dict(),harness=harness,indices=indices))

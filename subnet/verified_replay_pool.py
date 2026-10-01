@@ -43,6 +43,8 @@ def definitions(manifest):
         samples=row['spec'].get('num_samples')
         if type(samples) is not int or not 1<=samples<=100000:raise ValueError('signed environment sample geometry')
         if row['env_id']!=row['spec'].get('id') or not isinstance(row.get('indices'),list) or len(row['indices'])>10000 or any(type(i) is not int or not 0<=i<samples for i in row['indices']) or len(set(row['indices']))!=len(row['indices']):raise ValueError('signed environment indices')
+    from .sample_harness import validate
+    for row in rows:validate(row['harness'],row['indices'])
     return {row['env_id']:row for row in rows}
 
 def heldout_registry(manifest,current_definitions):
@@ -111,10 +113,15 @@ def validate_entry(descriptor_envelope,operator_authority,historical_manifest_en
     if type(number) is not int or not 0<=number<len(records):raise ValueError('frozen batch selection')
     current_definitions=definitions(current);heldouts=heldout_registry(current,current_definitions)
     batch=records[number]['batch'];env_id=batch.get('env_id');old=definitions(historical).get(env_id);new=current_definitions.get(env_id)
-    if old is None or new is None or not exact(old['spec'],new['spec']) or not exact(old['harness'],new['harness']):raise ValueError('environment/harness replay compatibility')
+    if old is None or new is None or not exact(old['spec'],new['spec']):raise ValueError('environment/harness replay compatibility')
     if 'native' in old['spec'].get('adapter','') or old['spec'].get('config',{}).get('role_models') or descriptor.get('adapter')!=old['spec'].get('adapter') or descriptor.get('family')!=env_id:raise ValueError('unsupported native auxiliary/family geometry')
     index=batch.get('index')
     if type(index) is not int or index not in old['indices'] or index not in new['indices'] or index in heldouts[env_id]:raise ValueError('current signed taskset/heldout exclusion')
+    from .sample_harness import resolve,VERSION as INDEXED_VERSION
+    if (isinstance(old['harness'],dict)and old['harness'].get('version')==INDEXED_VERSION)!=(isinstance(new['harness'],dict)and new['harness'].get('version')==INDEXED_VERSION):raise ValueError('indexed/plain replay policy transition requires fresh qualification')
+    resolved=resolve(old['harness'],index,old['indices'])
+    if not exact(resolved,resolve(new['harness'],index,new['indices'])):raise ValueError('resolved replay harness compatibility')
+    if isinstance(old['harness'],dict)and old['harness'].get('version')==INDEXED_VERSION and (descriptor.get('resolved_harness_sha256')!=digest(resolved) or not exact(descriptor.get('resolved_harness'),resolved)):raise ValueError('indexed descriptor resolved harness binding')
     if batch.get('epoch')!=historical['epoch'] or batch.get('checkpoint')!=cp['id'] or batch.get('environment_version')!=old['spec']['version'] or batch.get('sample_index')!=index:raise ValueError('frozen environment/checkpoint/index binding')
     for key,value in [('environment_id',env_id),('environment_index',index),('environment',old['spec']),('harness',old['harness']),('batch_sha256',digest(batch))]:
         if not exact(descriptor.get(key),value):raise ValueError('descriptor canonical batch target')

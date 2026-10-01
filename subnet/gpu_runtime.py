@@ -38,6 +38,8 @@ class GPURuntime(Runtime):
     def sample(self,prompt,seed,messages,turn):
         config=policy.turn_config(self.harness,turn)
         rng=torch.Generator(device='cuda').manual_seed(seed)
+        if config['policy']=='public-mrcr-shell-candidates':
+            config={**config,'policy':'candidates','candidates':policy.mrcr_candidates(messages)}
         if config['policy']=='visible-copy-candidates':
             opening,closing=config['input_tags'];visible='\n'.join(m['content'] for m in messages if m['role']=='user');start=visible.rfind(opening)
             if start<0 or closing not in visible[start+len(opening):]:raise ValueError('visible span missing')

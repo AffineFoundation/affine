@@ -8,6 +8,7 @@ from pathlib import Path
 from nacl.signing import SigningKey
 from subnet.storage import Bucket
 from subnet.sample_harness import validate,resolve,VERSION as INDEXED_VERSION
+from subnet.protocol import entries as protocol_entries
 from subnet import verified_replay_pool as replay
 
 def signed(value,key):return {'payload':value,'signer':key.verify_key.encode().hex(),'signature':base64.b64encode(key.sign(replay.canonical(value)).signature).decode()}
@@ -18,6 +19,7 @@ def prepare(config,state,current_epoch,out,max_pairs=12):
     if out.exists():raise ValueError('new immutable replay preparation destination required')
     key=SigningKey(bytes.fromhex((state/'authority.seed').read_text().strip()));authority=key.verify_key.encode().hex();bucket=Bucket(config['bucket'])
     current_envelope=json.loads(bucket.get('public/'+current_epoch+'/manifest.json'));current=replay.authenticated(current_envelope,authority)
+    protocol_entries(current)
     cp=replay.checkpoint(current);cfg_bytes=bucket.get('public/checkpoints/'+cp['id']+'/config.json')
     if hashlib.sha256(cfg_bytes).hexdigest()!=cp['files']['config.json']:raise ValueError('approved model config bytes')
     model=json.loads(cfg_bytes);by_config={r['spec']['id']:r for r in config['environments']}
@@ -25,12 +27,12 @@ def prepare(config,state,current_epoch,out,max_pairs=12):
     rows=[]
     for definition in current['environments']:
         row=by_config[definition['env_id']]
-        approved_indices=row.get('indices',row.get('training_indices'))
-        full=validate(row['harness'],approved_indices)
+        approved=row.get('indices',row.get('training_indices'))
+        full=validate(row['harness'],approved)
         registry=current.get('sample_harness_registry')
-        trusted=registry[definition['env_id']] if registry is not None else dict(indices=definition['indices'],harness=definition['harness'])
-        if not replay.exact(row['spec'],definition['spec']) or not replay.exact(full,trusted['harness'])or (registry is not None and not replay.exact(approved_indices,trusted['indices'])):raise ValueError('trusted full configuration registry')
-        rows.append(dict(definition,indices=approved_indices,harness=full))
+        trusted=registry[definition['env_id']]if registry is not None else dict(indices=definition['indices'],harness=definition['harness'])
+        if not replay.exact(row['spec'],definition['spec'])or not replay.exact(full,trusted['harness'])or(registry is not None and not replay.exact(approved,trusted['indices'])):raise ValueError('trusted full configuration registry')
+        rows.append(dict(definition,indices=approved,harness=full))
     current['environments']=rows;current_signed=signed(current,key);entries=[];origins=[];seen=set();rejections=[]
     ledger=json.loads((state/'finalized-reports.json').read_bytes())
     for result in reversed(ledger):

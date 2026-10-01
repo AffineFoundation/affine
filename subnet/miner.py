@@ -5,7 +5,9 @@ from pathlib import Path
 from .runtime_factory import runtime as make_runtime
 from .model import check_runtime_profile
 from .batches import pack,unpack
-from .protocol import entry, classification
+from .protocol import entry,entries,harness_for, classification
+from .storage import canonical
+import hashlib
 
 class Miner:
     def __init__(self, identity, manifest, checkpoint, capability=None, state_path=None):
@@ -16,9 +18,8 @@ class Miner:
             from .client import direct_r2_url
             if self.cap.get('transport')!='direct-r2-v1':raise ValueError('direct R2 upload capability binding')
             direct_r2_url(self.cap.get('put_url'))
-        definition = entry(manifest) if len(manifest.get('environments', [])) < 2 else manifest['environments'][0]
-        self.runtime = make_runtime(checkpoint, manifest, definition['spec'], definition.get('harness'))
-        self.runtimes = {definition['env_id']: self.runtime}
+        entries(manifest)
+        self.checkpoint=checkpoint;self.runtime=None;self.runtimes={}
         self.state_path = Path(state_path) if state_path else None
         self.batches = unpack(self.state_path.read_bytes()) if self.state_path and self.state_path.exists() else []
         if any(b['epoch'] != manifest['epoch'] or b['checkpoint'] != manifest['checkpoint']['id'] for b,_ in self.batches):
@@ -27,11 +28,14 @@ class Miner:
     def search(self, index, seed=0, max_attempts=100, env_id=None):
         definition = entry(self.manifest, env_id)
         env_id = definition["env_id"]
-        if env_id not in self.runtimes:
-            self.runtimes[env_id] = self.runtime.for_environment(definition["spec"], definition.get("harness"))
-        runtime = self.runtimes[env_id]
-        if index not in definition["indices"]:
-            raise ValueError("sample outside challenge")
+        resolved=harness_for(definition,index)
+        key=(env_id,index,hashlib.sha256(canonical(resolved)).hexdigest())
+        if key not in self.runtimes:
+            if self.runtime is None:
+                self.runtime=make_runtime(self.checkpoint,self.manifest,definition['spec'],resolved)
+                self.runtimes[key]=self.runtime
+            else:self.runtimes[key]=self.runtime.for_environment(definition['spec'],resolved)
+        runtime=self.runtimes[key]
         positive, negative, arrays_pos, arrays_neg = [], [], [], []
         for attempt in range(max_attempts):
             if time.time()>=self.manifest.get('deadline',float('inf')):break

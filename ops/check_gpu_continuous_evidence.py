@@ -22,7 +22,8 @@ from ops.check_epoch_evidence import require
 # Later workers must report explicit per-update attribution; no silent downgrade.
 LEGACY_CYCLIC_WORKER='01d458b9f39312ddebc750482963c038f85aba335f75b51be2739adaee016d8a'
 
-def authenticated_training_pairs(manifest, job, train, metrics, fresh, authority):
+def authenticated_training_pairs(manifest, job, train, metrics, fresh, authority,
+        *, expected_archive_harness_source_hash=None):
     """Reconstruct attribution; historical pairs never enter miner scoring."""
     envelope=job.get('replay')
     if envelope is None:
@@ -31,7 +32,14 @@ def authenticated_training_pairs(manifest, job, train, metrics, fresh, authority
         return fresh
     from subnet.replay_training import admitted,merge_pairs,REVISION
     from subnet.verified_replay_pool import digest
-    current,selection=admitted(manifest,envelope,authority)
+    if expected_archive_harness_source_hash is None:
+        current,selection=admitted(manifest,envelope,authority)
+    else:
+        # Only inspect metadata under a pin derived from authenticated archive
+        # bytes. This path cannot authorize fresh worker execution.
+        from subnet.replay_training import audit_admitted
+        current,selection=audit_admitted(manifest,envelope,authority,
+            expected_archive_harness_source_hash=expected_archive_harness_source_hash)
     # Replay authority covers the full approved training registry. The live
     # epoch may rotate this environment out of its mining subset entirely.
     definitions={row['env_id']:row for row in current['environments']}
@@ -132,7 +140,9 @@ def check_source_bundle(body, descriptor, expected):
             require(len(value) == member.size, 'GPU worker source size')
             observed[name]=hashlib.sha256(value).hexdigest()
     require(observed == expected, 'GPU worker reproducible source inventory')
-    return dict(sha256=descriptor['sha256'], bytes=len(body), source_files=len(observed))
+    from ops.archive_harness_identity import identity
+    return dict(sha256=descriptor['sha256'], bytes=len(body), source_files=len(observed),
+                harness_source_hash=identity(body,expected))
 
 
 def read_source_bundle(bucket, descriptor):
@@ -355,6 +365,9 @@ def inspect(state, bucket, evaluations):
         if source_key not in source_checks:
             source_body,route=read_source_bundle(bucket,bundle)
             source_checks[source_key]=dict(check_source_bundle(source_body,bundle,train_job['source_files']),retrieval=route)
+        archive_harness_hash=source_checks[source_key]['harness_source_hash']
+        require(archive_harness_hash==manifest['harness_source_hash'],
+                'GPU signed manifest/authenticated archive harness identity')
         require(training_manifest == manifest and metrics['steps'] > 0 and
                 metrics['full_model_finetune'] is True and metrics['weights_changed'] is True and
                 metrics['checkpoint'] != manifest['checkpoint']['id'], 'GPU real full-model update')
@@ -375,7 +388,7 @@ def inspect(state, bucket, evaluations):
                 negatives=[r for r in batch['rollouts'] if r['classification']=='negative']
                 training_pairs.extend((batch,p,n) for p,n in zip(positives,negatives))
         training_pairs=authenticated_training_pairs(manifest,train_job,train,metrics,
-            training_pairs,authority)
+            training_pairs,authority,expected_archive_harness_source_hash=archive_harness_hash)
         require(training_pairs and len(metrics['updates'])==metrics['steps'], 'GPU optimizer update count')
         optimized=[]
         for step,update in enumerate(metrics['updates']):

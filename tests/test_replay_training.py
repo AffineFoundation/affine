@@ -7,7 +7,9 @@ class ReplayTrainingTests(unittest.TestCase):
     def setUp(self):
         self.key=SigningKey.generate();self.authority=self.key.verify_key.encode().hex()
         files={'config.json':'a'*64,'model.safetensors':'b'*64,'tokenizer.json':'c'*64};cp={'files':files,'id':r.digest(files)}
-        self.manifest={'payable':False,'model_id':'approved','model_runtime_revision':'approved-v1','backend_profile':{'device':'cuda'},'numerical_policy':{'atol':1e-5},'tokenizer_binding':{'tokenizer.json':'c'*64},'checkpoint':cp,'environments':[{'env_id':'e','spec':{'id':'e','num_samples':4},'harness':{'policy':'approved'},'indices':[0,1]}],'heldout_indices':{'e':[2,3]}}
+        self.manifest={'payable':False,'model_id':'approved','model_runtime_revision':'approved-v1','backend_profile':{'device':'cuda'},'numerical_policy':{'atol':1e-5},'tokenizer_binding':{'tokenizer.json':'c'*64},'checkpoint':cp,'environments':[{'env_id':'e','spec':{'id':'e','num_samples':4},'harness':{'version':'text-tools-v1','policy':'candidates','candidates':['yes','no'],'max_output_tokens':16,'temperature':1.,'top_p':1.},'indices':[0,1]}],'heldout_indices':{'e':[2,3]}}
+        from subnet.harness import source_hash
+        self.manifest['harness_source_hash']=source_hash()
         current=self.sign(self.manifest);entry={'version':r.VERSION,'current_manifest_sha256':r.digest(current),'current_checkpoint':cp,'family':'e','environment_id':'e','environment_index':0,'task_hash':'d'*64,'target_sha256':'e'*64}
         for label in ('positive','negative'):entry[label]={'classification':label,'env_id':'e','index':0,'task_hash':'d'*64}
         pool={'version':r.POOL_VERSION,'current_manifest_sha256':r.digest(current),'policy':{'max_pairs':9,'max_reuse':8,'max_zip_bytes':250000000,'reference_policy':r.REFERENCE_POLICY},'entries':[entry]};pool['pool_sha256']=r.digest(pool)

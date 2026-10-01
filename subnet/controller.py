@@ -74,7 +74,7 @@ class Controller:
         if existing(legacy_key) is None:self.bucket.json(legacy_key,self.signed(descriptor))
         return checkpoint
 
-    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None):
+    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None):
         deadline=int(time.time())+duration
         if getattr(self.gateway,'direct_r2',False):
             checkpoint=dict(checkpoint,read_urls={name:self.bucket.presign(f"public/checkpoints/{checkpoint['id']}/{name}",expires=min(604800,duration+3600)) for name in checkpoint['files']})
@@ -84,13 +84,15 @@ class Controller:
         for definition in environments or [dict(spec=env,harness=harness)]:
             raw=definition['spec']
             spec=legacy_spec(raw) if 'id' not in raw else EnvironmentSpec.from_dict(raw)
-            chosen=harness_policy.normalize(definition.get('harness') or (legacy_harness(raw) if 'id' not in raw else None))
+            from .sample_harness import validate as validate_sample_harness
+            chosen=validate_sample_harness(definition.get('harness') or (legacy_harness(raw) if 'id' not in raw else None),definition.get('indices',list(range(spec.num_samples))))
             definitions.append(dict(env_id=spec.id,spec=spec.to_dict(),harness=chosen,indices=definition.get('indices',list(range(spec.num_samples)))))
         manifest=dict(payable=not epoch.startswith(('nonpayable-', 'test-', 'mock-')),epoch=epoch,checkpoint=checkpoint,environment=env,indices=definitions[0]['indices'],environments=definitions,harness_source_hash=harness_policy.source_hash(),
                       tokenizer_binding={name:digest for name,digest in checkpoint['files'].items() if 'token' in name or 'template' in name},
                       K=1,L=1,max_batches=4,start=self.gateway.epochs[epoch].get('start',int(time.time())),deadline=deadline,capabilities=caps,audit_policy=dict(audit_policy or {'mode':'full','version':1}),
                       numerical_policy='cpu-float32-eager-exact-toploc-logprob-atol1e-5',model_runtime_revision=NUMERICAL_RUNTIME_REVISION,runtime_profile=dict(runtime_profile or {}),
                       environment_revision='trusted-adapter-registry-v1')
+        if sample_harness_registry is not None:manifest['sample_harness_registry']=sample_harness_registry
         manifest['transport_policy']='direct-r2-v1' if getattr(self.gateway,'direct_r2',False) else 'gateway-v1'
         if model_runtime_revision is not None:manifest['model_runtime_revision']=model_runtime_revision
         if numerical_policy is not None:manifest['numerical_policy']=numerical_policy
@@ -101,6 +103,8 @@ class Controller:
         if source_bundle is not None:manifest['source_bundle']=dict(source_bundle)
         if evaluation is not None:
             manifest['evaluation']=dict(evaluation,harness=harness_policy.normalize(evaluation.get('harness')))
+        from .protocol import entries as validate_entries
+        validate_entries(manifest)
         (self.state/f'{epoch}-manifest.json').write_bytes(canonical(manifest))
         self.bucket.json(f'public/{epoch}/manifest.json',self.signed(manifest))
         pointer='public/current.json' if manifest['payable'] else f'public/{epoch}/current.json'
@@ -149,9 +153,13 @@ class Controller:
                 positive=[r for r in batch['rollouts'] if classification(r)=='positive']
                 negative=[r for r in batch['rollouts'] if classification(r)=='negative']
                 pairs.extend(zip(positive,negative))
+        if not pairs:raise ValueError('no independently verified training pairs')
+        from .protocol import entry,harness_for
+        first=entry(manifest,pairs[0][0].get('env_id'))
+        initial_harness=harness_for(first,pairs[0][0]['index'])
         job=self.state/f"{manifest['epoch']}-training-job.json"
         metricspath=self.state/f"{manifest['epoch']}-training-metrics.json"
-        job.write_bytes(canonical(dict(checkpoint=str(checkpoint_path),files=manifest['checkpoint']['files'],pairs=pairs,destination=str(destination),steps=steps,environment=manifest['environments'][0]['spec'] if manifest.get('environments') else manifest['environment'],harness=manifest['environments'][0]['harness'] if manifest.get('environments') else None,runtime_profile=manifest.get('runtime_profile',{}))))
+        job.write_bytes(canonical(dict(checkpoint=str(checkpoint_path),files=manifest['checkpoint']['files'],pairs=pairs,destination=str(destination),steps=steps,environment=first['spec'],harness=initial_harness,runtime_profile=manifest.get('runtime_profile',{}))))
         job.chmod(0o600)
         subprocess.run([sys.executable,'-m','subnet.trainer',str(job),str(metricspath)],check=True,timeout=1200)
         metrics=json.loads(metricspath.read_text())

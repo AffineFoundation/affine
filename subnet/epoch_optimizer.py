@@ -3,6 +3,7 @@
 Not selected by existing workers. Each pair is already fully model/environment
 verified; this module never accepts an unverified uploaded training view.
 """
+from .protocol import harness_for
 from pathlib import Path
 import math
 
@@ -39,7 +40,7 @@ def train_epoch(runtime,verified_pairs,destination_root,steps=3):
     model.eval()
     with torch.no_grad():
         for definition,pos,neg in verified_pairs:
-            runtime.configure(definition['spec'],definition['harness'])
+            runtime.configure(definition['spec'],harness_for(definition,pos['index']))
             reference=float(sequence(pos)-sequence(neg))
             if not math.isfinite(reference):raise ValueError('nonfinite initial reference')
             references.append(reference)
@@ -50,7 +51,7 @@ def train_epoch(runtime,verified_pairs,destination_root,steps=3):
     try:
         for step in range(steps):
             pair_index=step%len(verified_pairs);definition,pos,neg=verified_pairs[pair_index]
-            runtime.configure(definition['spec'],definition['harness'])
+            runtime.configure(definition['spec'],harness_for(definition,pos['index']))
             optimizer.zero_grad(set_to_none=True)
             margin=sequence(pos)-sequence(neg);loss=preference_loss(torch,margin,references[pair_index])
             if not torch.isfinite(loss):raise ValueError('nonfinite epoch preference loss')

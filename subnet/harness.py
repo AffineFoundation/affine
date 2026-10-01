@@ -15,7 +15,7 @@ DEFAULT = {'version': 'text-tools-v1', 'policy': 'autoregressive', 'max_output_t
 
 def normalize(config=None):
     value = dict(DEFAULT); value.update(config or {})
-    if value['version'] not in HARNESS_REGISTRY or value['policy'] not in ('autoregressive', 'candidates', 'visible-copy-candidates'):
+    if value['version'] not in HARNESS_REGISTRY or value['policy'] not in ('autoregressive', 'candidates', 'visible-copy-candidates', 'public-mrcr-shell-candidates'):
         raise ValueError('unsupported harness or policy')
     if type(value['max_output_tokens']) is not int or not 1 <= value['max_output_tokens'] <= 512:
         raise ValueError('generation token budget')
@@ -23,6 +23,11 @@ def normalize(config=None):
         raise ValueError('temperature')
     if not 0 < value['top_p'] <= 1:
         raise ValueError('top_p')
+    if value['policy'] == 'public-mrcr-shell-candidates':
+        from .native_mrcr_public_policy import REVISION
+        digest=hashlib.sha256((Path(__file__).parent/'native_mrcr_public_policy.py').read_bytes()).hexdigest()
+        if value.get('public_policy_revision')!=REVISION or value.get('public_policy_sha256')!=digest:
+            raise ValueError('public MRCR policy pin')
     history_fields={'history_prefix_messages','history_window_messages'}
     if value['version']=='text-tools-window-v1':
         prefix=value.setdefault('history_prefix_messages',2)
@@ -68,8 +73,20 @@ def turn_config(config,turn_index):
     return normalize(value)
 
 
+def mrcr_candidates(messages):
+    from .native_mrcr_public_policy import shell_command,parse_public_question
+    questions=[m['content'].split('\n\n',1)[0].strip() for m in messages
+        if m.get('role')=='user' and isinstance(m.get('content'),str) and m['content'].startswith('Prepend ')]
+    if len(questions)!=1:raise ValueError('exact public MRCR question required')
+    prefix,_,_=parse_public_question(questions[0])
+    wrong_prefix=('1' if prefix[0]=='0' else '0')+prefix[1:]
+    wrong_question=questions[0].replace(prefix,wrong_prefix,1)
+    commands=[shell_command(questions[0]),shell_command(wrong_question)]
+    return [json.dumps({'tool_call':{'name':'bash','arguments':{'command':c}}},separators=(',',':')) for c in commands]
+
+
 def source_hash():
-    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    return hashlib.sha256(Path(__file__).read_bytes()+(Path(__file__).parent/'native_mrcr_public_policy.py').read_bytes()+(Path(__file__).parent/'sample_harness.py').read_bytes()).hexdigest()
 
 
 def _chat_render(tokenizer, messages, tools=(), config=None):
@@ -104,6 +121,8 @@ def _text_action(text):
 def _sample(model, tokenizer, prompt, seed, config, messages=()):
     config = normalize(config)
     rng = torch.Generator().manual_seed(seed)
+    if config['policy'] == 'public-mrcr-shell-candidates':
+        config=dict(config,policy='candidates',candidates=mrcr_candidates(messages))
     if config['policy'] == 'visible-copy-candidates':
         opening,closing=config['input_tags']
         visible='\n'.join(str(m.get('content','')) for m in messages if m['role']=='user')

@@ -7,7 +7,7 @@ class ReplayTests(unittest.TestCase):
  def setUp(self):
   self.key=SigningKey.generate();self.authority=self.key.verify_key.encode().hex()
   files={'config.json':'1'*64,'model.safetensors':'2'*64,'tokenizer.json':'3'*64,'tokenizer_config.json':'4'*64}
-  self.historical={'epoch':'historical','checkpoint':{'id':p.digest(files),'files':files},'model_id':'approved-model','tokenizer_binding':{k:v for k,v in files.items() if k.startswith('tokenizer')},'source_bundle':{'key':'public/source.tar.gz','sha256':'5'*64,'size':100},'audit_policy':{'mode':'full'},'environments':[{'env_id':'env-'+f,'spec':{'id':'env-'+f,'version':f+'-v1','adapter':f,'config':{},'num_samples':32},'harness':{'policy':'approved-public','version':'v1'},'indices':list(range(32))} for f in ['familyA','familyB','familyC']]}
+  self.historical={'epoch':'historical','checkpoint':{'id':p.digest(files),'files':files},'model_id':'approved-model','tokenizer_binding':{k:v for k,v in files.items() if k.startswith('tokenizer')},'source_bundle':{'key':'public/source.tar.gz','sha256':'5'*64,'size':100},'audit_policy':{'mode':'full'},'environments':[{'env_id':'env-'+f,'spec':{'id':'env-'+f,'version':f+'-v1','adapter':f,'config':{},'num_samples':32},'harness':{'version':'text-tools-v1','policy':'candidates','candidates':['yes','no'],'max_output_tokens':16,'temperature':1.,'top_p':1.},'indices':list(range(32))} for f in ['familyA','familyB','familyC']]}
   self.current=copy.deepcopy(self.historical);self.current['epoch']='current';self.current['checkpoint']['files']['model.safetensors']='6'*64;self.current['checkpoint']['id']=p.digest(self.current['checkpoint']['files']);self.current['replay_policy']={'max_pairs':3,'max_reuse':2,'max_zip_bytes':100000000,'reference_policy':p.REFERENCE_POLICY};self.current['heldout_indices']={r['env_id']:[31] for r in self.current['environments']};[r.update(indices=list(range(31))) for r in self.current['environments']];self.current['model_geometry']={'vocab_size':100,'max_context':8192,'max_output_tokens':128}
  def sign(self,value,key=None):
   key=key or self.key
@@ -80,7 +80,7 @@ class ReplayTests(unittest.TestCase):
 
  def test_twelve_actual_style_prime_adapter_environments_each_get_first_turn(self):
   families=[f'family{i:02}' for i in range(12)]
-  self.historical['environments']=[{'env_id':'env-'+f,'spec':{'id':'env-'+f,'version':f+'-v1','adapter':'prime_v1','config':{},'num_samples':32},'harness':{'policy':'approved-public','version':'v1'},'indices':list(range(32))} for f in families]
+  self.historical['environments']=[{'env_id':'env-'+f,'spec':{'id':'env-'+f,'version':f+'-v1','adapter':'prime_v1','config':{},'num_samples':32},'harness':{'version':'text-tools-v1','policy':'candidates','candidates':['yes','no'],'max_output_tokens':16,'temperature':1.,'top_p':1.},'indices':list(range(32))} for f in families]
   self.current['environments']=copy.deepcopy(self.historical['environments']);[r.update(indices=list(range(31))) for r in self.current['environments']];self.current['heldout_indices']={r['env_id']:[31] for r in self.current['environments']};self.current['replay_policy']['max_pairs']=12
   entries=[self.sign(self.validate(self.fixture(families[0],i))) for i in range(8)]+[self.sign(self.validate(self.fixture(f,10))) for f in families[1:]]
   pool=p.build_pool(entries,self.sign(self.current),self.authority);selected=p.select_pool(self.sign(pool),self.authority,{})['selected']

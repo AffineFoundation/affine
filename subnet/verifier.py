@@ -6,15 +6,14 @@ from .batches import unpack
 from .model import check_runtime_profile
 from .runtime_factory import runtime as make_runtime
 from .storage import sha
-from .protocol import entry, entries, sample_key, classification
+from .protocol import entry, entries, sample_key, classification,harness_for
 from .auditing import select, assurance
 
 def verify(data, manifest, checkpoint):
     check_runtime_profile(manifest)
     definitions = entries(manifest)
-    first = definitions[0]
-    runtime = make_runtime(checkpoint, manifest, first['spec'], first.get('harness'))
-    runtimes = {first['env_id']: runtime}
+    runtime = None
+    runtimes = {}
     records = unpack(data)
     if len(records)>manifest.get('max_batches',4):
         raise ValueError('epoch batch budget')
@@ -30,15 +29,18 @@ def verify(data, manifest, checkpoint):
             env_id = definition['env_id']
             if batch.get('schema',1)>=2 and (batch.get('env_id')!=env_id or batch.get('sample_index')!=batch.get('index')):
                 raise ValueError('required batch environment binding')
-            if env_id not in runtimes:
-                runtimes[env_id] = runtime.for_environment(definition['spec'], definition.get('harness'))
-            selected = runtimes[env_id]
-            if batch.get('schema',1)>=2 and batch.get('environment_version')!=selected.spec.version:
-                raise ValueError('batch environment version')
             key = sample_key(batch)
             index = key[1]
             if type(index) is not int or index not in definition['indices'] or key in seen:
                 raise ValueError('index or duplicate batch')
+            resolved=harness_for(definition,index)
+            runtime_key=(env_id,index,sha(__import__('json').dumps(resolved,sort_keys=True,separators=(',',':')).encode()))
+            if runtime_key not in runtimes:
+                if runtime is None:
+                    runtime=make_runtime(checkpoint,manifest,definition['spec'],resolved);runtimes[runtime_key]=runtime
+                else:runtimes[runtime_key]=runtime.for_environment(definition['spec'],resolved)
+            selected=runtimes[runtime_key]
+            if batch.get('schema',1)>=2 and batch.get('environment_version')!=selected.spec.version:raise ValueError('batch environment version')
             seen.add(key)
             rolls = batch['rollouts']
             if len(rolls) != manifest['K']+manifest['L'] or len(arrays) != len(rolls):
@@ -52,7 +54,7 @@ def verify(data, manifest, checkpoint):
                     raise ValueError('duplicate sample')
                 fingerprints.add(signature)
                 if bi in selected_indices:
-                    selected.verify(rollout, tensors)
+                    if selected.verify(rollout,tensors) is not True:raise ValueError("runtime verification did not succeed")
             if sum(classification(r) == 'positive' for r in rolls) != manifest['K'] or sum(classification(r) == 'negative' for r in rolls) != manifest['L']:
                 raise ValueError('positive negative counts')
             if bi in selected_indices:

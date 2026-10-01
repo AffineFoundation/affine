@@ -3,6 +3,7 @@
 Historical full audits are operator admissions. Fresh current-model numerical
 checks and original environment replay still precede optimizer consumption.
 """
+from .protocol import harness_for,entries,read_only_archived_entries
 import copy
 from . import verified_replay_pool as r
 
@@ -30,9 +31,26 @@ def merge_pairs(fresh,historical,reuse_counts):
     return pairs,{value[2] for value in choices.values()}
 
 def admitted(manifest,envelope,authority):
+    """Live worker admission; archived source hashes never override this path."""
+    return _admitted(manifest,envelope,authority,entries)
+
+
+def audit_admitted(manifest,envelope,authority,*,expected_archive_harness_source_hash):
+    """Read-only signed metadata inspection under an independently verified archive.
+
+    The caller must authenticate and hash the original worker source bundle.
+    Fresh model/native verification calls admitted(), retaining current-source pins.
+    """
+    def archived(value):
+        return read_only_archived_entries(value,expected_archive_harness_source_hash)
+    return _admitted(manifest,envelope,authority,archived)
+
+
+def _admitted(manifest,envelope,authority,validate_entries):
     if not isinstance(envelope,dict) or set(envelope)!={'manifest','pool','reuse_counts'}:
         raise ValueError('exact signed replay inputs')
     current=r.authenticated(envelope['manifest'],authority)
+    validate_entries(manifest);validate_entries(current)
     if manifest.get('payable') is not False or not r.exact(r.checkpoint(current),r.checkpoint(manifest)):
         raise ValueError('nonpayable current training checkpoint')
     r.compatibility(current);r.compatibility(manifest)
@@ -47,8 +65,13 @@ def admitted(manifest,envelope,authority):
     live=r.definitions(manifest)
     if set(definitions)!=set(live):raise ValueError('exact live environment inventory')
     for name,row in definitions.items():
-        if not r.exact(row['spec'],live[name]['spec']) or not r.exact(row['harness'],live[name]['harness']):
-            raise ValueError('live trusted environment/harness version')
+        if not r.exact(row['spec'],live[name]['spec']):raise ValueError('live trusted environment version')
+        registry=manifest.get('sample_harness_registry')
+        if registry is None:
+            if not r.exact(row['harness'],live[name]['harness']):raise ValueError('live trusted harness version')
+        else:
+            approved=registry.get(name)
+            if approved is None or not r.exact(row['indices'],approved['indices'])or not r.exact(row['harness'],approved['harness']):raise ValueError('signed full training harness registry')
     pool=r.authenticated(envelope['pool'],authority)
     if pool.get('current_manifest_sha256')!=r.digest(envelope['manifest']):
         raise ValueError('pool/current manifest lineage')
@@ -69,13 +92,13 @@ def verified_pairs(runtime,manifest,envelope,authority):
     current,selection=admitted(manifest,envelope,authority);definitions=r.definitions(current)
     pairs=[];checks=[]
     for entry in selection['selected']:
-        definition=definitions[entry['environment_id']];runtime.configure(definition['spec'],definition['harness'])
+        definition=definitions[entry['environment_id']];runtime.configure(definition['spec'],harness_for(definition,entry['environment_index']))
         for label in ('positive','negative'):
             claimed=copy.deepcopy(entry[label]);arrays=[]
             for turn in claimed['turns']:
                 activations,probabilities=runtime.compute(turn['prompt'],turn['output'])
                 turn['proofs']=runtime.build_proofs(activations,decode_batching_size=16,topk=128);arrays.append(probabilities)
-            if not runtime.verify(claimed,arrays):raise ValueError('fresh current probability/proof/native replay')
+            if runtime.verify(claimed,arrays) is not True:raise ValueError('fresh current probability/proof/native replay')
         pairs.append((definition,entry['positive'],entry['negative']))
         checks.append({'env_id':entry['environment_id'],'index':entry['environment_index'],'target_sha256':entry['target_sha256'],'current_checkpoint':manifest['checkpoint']['id'],'historical_probabilities_used_as_reference':False,'fresh_current_numerical_native_verification':True})
     return pairs,{'revision':REVISION,'checks':checks,'pool_sha256':selection['pool_sha256'],'proposed_reuse_increments':selection['proposed_reuse_increments'],'optimizer_performed':False}

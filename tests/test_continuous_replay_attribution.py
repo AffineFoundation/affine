@@ -44,3 +44,31 @@ class AttributionTests(unittest.TestCase):
     def test_fresh_only_remains_default(self):
         fresh=[('unchanged',1,2)]
         self.assertEqual(authenticated_training_pairs({}, {}, {}, {}, fresh,'unused'),fresh)
+    def archive_case(self):
+        self.manifest=copy.deepcopy(self.manifest)
+        self.manifest['harness_source_hash']='1'*64
+        current=copy.deepcopy(self.envelope['manifest']['payload'])
+        current['harness_source_hash']='1'*64
+        self.envelope['manifest']=self.fixture.sign(current)
+        pool=copy.deepcopy(self.envelope['pool']['payload'])
+        pool['current_manifest_sha256']=r.digest(self.envelope['manifest'])
+        for entry in pool['entries']:
+            entry['current_manifest_sha256']=pool['current_manifest_sha256']
+        pool['pool_sha256']=r.digest({k:v for k,v in pool.items() if k!='pool_sha256'})
+        self.envelope['pool']=self.fixture.sign(pool)
+        self.report['pool_sha256']=pool['pool_sha256']
+        self.metrics['replay_inputs_sha256']=r.digest(self.envelope)
+    def archive_check(self,pin):
+        return authenticated_training_pairs(self.manifest,{'replay':self.envelope},
+            {'replay_training':self.report},self.metrics,[],self.fixture.authority,
+            expected_archive_harness_source_hash=pin)
+    def test_readonly_archive_attribution_uses_external_pin(self):
+        self.archive_case()
+        self.assertEqual(len(self.archive_check('1'*64)),1)
+    def test_wrong_archive_pin_refused(self):
+        self.archive_case()
+        with self.assertRaises(ValueError):self.archive_check('2'*64)
+    def test_archive_pin_cannot_be_selected_by_job(self):
+        self.archive_case()
+        with self.assertRaises(ValueError):self.check(job={'replay':self.envelope,
+            'expected_archive_harness_source_hash':'1'*64,'skip_source_checks':True})
