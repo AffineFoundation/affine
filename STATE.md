@@ -13,12 +13,12 @@ and held-out evaluation records. Those updates consumed verified pairs from
 Math, Verbatim, Reasoning Gym, When2Call, IFEval, and Oolong. These measurements
 do not establish improvement across all environments.
 
-The wider series has seven independently checked completed epochs and twenty-one
+The wider series has eight independently checked completed epochs and twenty-four
 full-model updates. Each successor's six R2 objects were independently streamed
 and hashed (3,426,302,727 bytes). The latest paired evaluation covers twelve
-families and sixteen fixed held-out tasks per family. Trivia rose from 0.375 to
-0.5; Math, Reasoning Gym and When2Call declined; eight other metrics stayed flat.
-Independent HTTPS checks matched all 150 public evaluation records and the
+families and sixteen fixed held-out tasks per family. Math, When2Call and Oolong
+rose; Trivia and Reasoning Gym declined; seven other metrics stayed flat.
+Independent HTTPS checks matched all 174 public evaluation records and the
 checkpoint/256-UID grids on affine.io. These measurements do not establish
 improvement across all environments. See [paired results](docs/WIDE_EVALUATION_RESULTS.md).
 

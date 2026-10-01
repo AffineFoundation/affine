@@ -120,3 +120,29 @@ All six R2 objects were independently streamed and hashed, totaling
 3,426,302,727 bytes. Independent HTTPS checks matched all 150 wide-series
 public evaluation records, checkpoint bindings and 256-UID grids. Native
 coverage and qualified balanced multi-family replay remain unfinished work.
+
+## Eighth epoch: preserved twelve-family cohort
+
+The eighth completed epoch used verified Verbatim, Math and Reasoning Gym pairs
+for three full-model updates. The same twelve families, sixteen held-out tasks
+per family and 256-token autoregressive budget were retained.
+
+| Environment | Before epoch 8 | After epoch 8 |
+| --- | ---: | ---: |
+| Math | 0.375000 | 0.437500 |
+| When2Call | 0.187500 | 0.250000 |
+| Oolong | 0.188614 | 0.251114 |
+| Trivia | 0.500000 | 0.437500 |
+| Reasoning Gym | 0.001489 | 0.001331 |
+
+The other seven metrics stayed unchanged. The wider loop now has twenty-four
+verified updates across eight completed epochs. These measurements remain mixed
+and do not demonstrate improvement across every environment.
+
+The successor checkpoint is
+`46244fc043b1751fa1bdf53248e80f5db4f0d84e5a42c637ca78e54994ede5f9`.
+Root independently streamed all six R2 objects and checked their signed hashes
+(3,426,302,727 bytes). HTTPS dashboard checks matched 174 wide-series evaluation
+records and their checkpoint/grid bindings. The subsequent MRCR source starts
+a distinct thirteen-family evaluation cohort; its results must not be merged
+into this unchanged twelve-family cohort.
