@@ -6,6 +6,8 @@ from pathlib import Path
 from nacl.signing import VerifyKey
 from subnet.storage import canonical
 
+TEXT_SOURCES={'affine_trivia','affine_popqa_abstain','affine_science','affine_trivia_abstain'}
+
 def source_membership(files):
     expected={str(path) for path in Path('subnet').glob('*.py')}
     if not expected or not isinstance(files,dict) or set(files)!=expected:raise ValueError('exact source membership')
@@ -19,7 +21,7 @@ def approved(document,authority):
     if type(plan.get('search_budget')) is not int or not 1<=plan['search_budget']<=64:raise ValueError('bounded search')
     if not isinstance(plan.get('indices'),list) or not plan['indices'] or len(plan['indices'])>16 or any(type(i) is not int or not 0<=i<16 for i in plan['indices']):raise ValueError('training-only indices')
     if len(set(plan['indices']))!=len(plan['indices']):raise ValueError('duplicate probe indices')
-    if plan.get('environment',{}).get('id') not in ('affine_trivia','affine_popqa_abstain') or plan.get('environment',{}).get('adapter')!='prime_v1' or plan.get('harness',{}).get('policy')!='autoregressive':raise ValueError('native text source and unrestricted sampling scope')
+    if plan.get('environment',{}).get('id') not in TEXT_SOURCES or plan.get('environment',{}).get('adapter')!='prime_v1' or plan.get('harness',{}).get('policy')!='autoregressive' or plan.get('harness',{}).get('turn_overrides'):raise ValueError('native text source and unrestricted sampling scope')
     from subnet.backend_jobs import BACKEND_PROFILE,NUMERICAL_POLICY
     if plan.get('backend_profile')!=BACKEND_PROFILE or plan.get('numerical_policy')!=NUMERICAL_POLICY:raise ValueError('unchanged numerical policy')
     source_membership(plan.get('source_files'))
