@@ -427,3 +427,37 @@ control paths within the pinned model context, with no model weights downloaded
 or model executed. Evidence: `state/native-wikispeedia-candidate-cohort20-v1/root-model-budget-preflight.json`.
 Mixed-choice context coverage, remote model/TOPLOC qualification and common
 training remain pending. No active signed GPU source bundle was changed.
+
+## 2026-10-01: Wikispeedia mixed-path context qualification
+
+Exhaustive original native replay now covers all 384 public good/bad choice paths
+across the twenty-task cohort. Both legacy harnesses overflow the pinned context
+on eight turn contexts. The separately versioned `text-tools-window-v1` retains
+the initial messages and latest complete messages in model context while keeping
+full history for replay verification; all 384 paths fit with zero context
+failures. Five focused controls pass, including rejection of an altered old
+observation omitted from the current model prompt. The reproducible public CLI
+was rerun against original tools and grader, and root independently checked its
+entire retained trace population. This establishes native/context prerequisites,
+not remote model/TOPLOC or training coverage. See `docs/WINDOWED_HARNESS.md` and
+`docs/WIKISPEEDIA_NATIVE_CONTROLS.md`.
+
+## 2026-10-01: RCore prospective package review
+
+The isolated v2 RCore model resource guard passes eleven controls. Root's archive
+review found that the preparation tarball predates final path-dependent
+`environment.json` and the signed model plan: it has 8,797 files, one older source
+hash and no plan, whereas the final signed profile protects 8,798 files. This is
+a bootstrap/finalization distinction, not evidence of model execution. The old
+tarball remains preserved; a separate final sealed packaging artifact and an
+independent actual remote inventory check are required before approval. No RCore
+GPU inference or training has been launched. The live wide evaluation and its
+normal Numina/Pydantic recovery keep priority.
+
+Root subsequently compared a fresh SSH inventory of all 8,798 remote files with
+the signed profile: exact membership, sizes and hashes match. The complete
+bootstrap-plus-finalized-fixtures audit also passes, including both authority
+signatures, the original snapshot, approved checkpoint, all 49 source pins and
+48 unchanged v7k modules. The original bootstrap discrepancy remains recorded;
+a final self-contained archive is still being prepared. GPU launch remains
+withheld while the actual wide evaluation uses the retained GPU.
