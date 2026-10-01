@@ -28,10 +28,19 @@ twelve environment contracts. Two fresh staged native controls scored 1 and 0
 with comparable command lengths. A remote model search then produced one
 positive/negative pair at index 0 and one positive-only result at index 1. All
 three traces passed separate fresh probability/TOPLOC and original native replay
-checks; index 1 remains unqualified for scoring. MRCR is not yet counted as a
-common trained family. The balanced historical
-replay helper now requires complete held-out declarations and has fifteen passing
-signed-lineage controls. Actual pooled training remains unverified. See
+checks; index 1 remains unqualified for scoring. The MRCR controller has now
+activated at a completed idle boundary, preserving the last checkpoint and
+starting a separate thirteen-family held-out cohort. This activation alone does
+not count MRCR as a common trained family.
+
+The balanced historical replay helper requires complete held-out declarations
+and has fifteen passing signed-lineage controls. An isolated remote qualification
+now verified nine historical families against the current model, including
+probabilities, TOPLOC and original native replay, then completed nine full-model
+updates with one AdamW and immutable pre-update references. Root authenticated
+the signed reports and actual source/artifact hashes. Checkpoint publication,
+paired held-out results and continuous-controller integration remain separate
+gates; no performance gain is claimed. See
 [MRCR scope](docs/MRCR_PUBLIC_SHELL_PILOT.md) and
 [replay admission](docs/VERIFIED_REPLAY_POOL.md).
 

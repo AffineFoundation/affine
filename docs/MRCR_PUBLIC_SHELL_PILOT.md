@@ -114,3 +114,9 @@ controlled model computation and original environment replay. It is not an
 unrestricted model-solving result, a completed common training epoch, or a
 performance gain. The next gate is the shared frozen-upload/audit/scoring and
 optimizer/checkpoint loop, at a completed controller boundary.
+
+The approved v7c source activated at a completed idle boundary, using checkpoint
+`46244fc043b1751fa1bdf53248e80f5db4f0d84e5a42c637ca78e54994ede5f9`.
+The preceding completed epoch was preserved. MRCR is the next training group
+and evaluation uses an explicitly separated thirteen-family cohort. Activation
+is not evidence of a completed MRCR common epoch.
