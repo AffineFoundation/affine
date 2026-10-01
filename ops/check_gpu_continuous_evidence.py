@@ -58,18 +58,32 @@ def checked_job(state, identifier, authority):
     return job, manifest, report
 
 
+def check_aborted_training(status,manifest,accepted_count):
+    require(status.get('status')=='aborted_evaluation' and
+        status.get('epoch')==manifest['epoch'] and
+        status.get('checkpoint')==status.get('next_checkpoint')==manifest['checkpoint']['id'] and
+        status.get('optimizer_ran') is False and type(status.get('steps')) is int and status['steps']==0 and
+        status.get('payable') is False and status.get('chain_transactions') is False and
+        type(status.get('fully_audited_batches')) is int and status['fully_audited_batches']==accepted_count and
+        isinstance(status.get('failed_jobs'),list) and bool(status['failed_jobs']) and
+        all(isinstance(j,str) and j.startswith(manifest['epoch']+'-eval-before-') for j in status['failed_jobs']),
+        'GPU aborted evaluation unchanged checkpoint/no training binding')
+
+
 def inspect(state, bucket, evaluations):
     authority = Identity(bytes.fromhex((state/'authority.seed').read_text().strip())).id
     def public(key):
         return signed(json.loads(bucket.get(key)), authority)
     manifests = sorted((json.loads(p.read_text()) for p in state.glob('*-manifest.json')
                         if not p.name.endswith('-audit-manifest.json')), key=lambda m: m['start'])
-    completed, pending, source_checks = [], [], {}
+    completed, pending, aborted, source_checks = [], [], [], {}
     for manifest in manifests:
         epoch = manifest['epoch']; prefix = f'public/{epoch}/'
         metrics_path = state/f'{epoch}-training-metrics.json'
         after_paths = list(evaluations.glob(f'{epoch}-eval-after-*.json'))
-        if not metrics_path.exists() or len(after_paths) != len(manifest['environments']):
+        abort_path=state/f'{epoch}-aborted-evaluation.json'
+        abort=signed(json.loads(abort_path.read_text()),authority) if abort_path.exists() else None
+        if abort is None and (not metrics_path.exists() or len(after_paths) != len(manifest['environments'])):
             pending.append(epoch); continue
         require(public(prefix+'manifest.json') == manifest, 'GPU public manifest')
         require(manifest['payable'] is False and direct_read_routes(manifest), 'GPU nonpayable/direct policy')
@@ -101,6 +115,16 @@ def inspect(state, bucket, evaluations):
             frozen.append(dict(miner=miner, bytes=len(body), sha256=receipt['sha256'], accepted=len(accepted)))
         calculated = score(reports)
         require(all(scores[k] == calculated[k] for k in calculated), 'GPU recomputed scores')
+        if abort is not None:
+            require(not metrics_path.exists(), 'GPU aborted epoch cannot also claim optimizer metrics')
+            check_aborted_training(abort,manifest,sum(len(r['accepted']) for r in reports.values()))
+            require(public(prefix+'training.json')==abort and
+                json.loads((state/f'{epoch}-training.json').read_text())==abort,
+                'GPU aborted evaluation signed public status')
+            aborted.append(dict(epoch=epoch,status='aborted_evaluation',frozen=frozen,
+                accepted_batches=abort['fully_audited_batches'],checkpoint=abort['checkpoint'],
+                steps=0,completed_training_epoch=False))
+            continue
         metrics = json.loads(metrics_path.read_text())
         require(public(prefix+'training.json') == metrics, 'GPU training publication')
         train_job, training_manifest, train = checked_job(state, metrics['remote_job_id'], authority)
@@ -182,7 +206,7 @@ def inspect(state, bucket, evaluations):
             worker_source=source_checks[source_key],
             optimized_pairs=optimized,
             next_epoch=following['epoch'] if following else None))
-    return dict(timestamp=time.time(), success=True, epochs=completed, pending_epochs=pending,
+    return dict(timestamp=time.time(), success=True, epochs=completed, pending_epochs=pending, aborted_epochs=aborted,
         authority=authority, chain_write_operations=0, fresh_model_execution_in_this_check=False,
         remote_reports_are_operator_collected=True, published_bytes_evidence='operator_stream_hashes', goal_complete=False)
 
@@ -195,7 +219,7 @@ def main():
     a = p.parse_args(); result = inspect(a.state, Bucket(json.loads(a.bucket_config.read_text())), a.evaluations)
     output = a.state/'root-continuous-independent-evidence.json'
     output.write_bytes(canonical(result)); output.chmod(0o600)
-    print(json.dumps({'epochs_verified':len(result['epochs']), 'pending_epochs':result['pending_epochs']}))
+    print(json.dumps({'epochs_verified':len(result['epochs']), 'pending_epochs':result['pending_epochs'], 'aborted_epochs':len(result['aborted_epochs'])}))
 
 
 if __name__ == '__main__':

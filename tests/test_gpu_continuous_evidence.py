@@ -83,3 +83,15 @@ class ContinuousJobEvidenceTests(unittest.TestCase):
             root=Path(directory); authority=self.fixture(root); path=root/'roles/test-report.json'
             report=json.loads(path.read_text()); report['completed_at']=3; path.write_text(json.dumps(report))
             with self.assertRaisesRegex(ValueError,'expiry'): checked_job(root,'test',authority)
+
+class AbortedTrainingEvidence(unittest.TestCase):
+    def fixture(self):
+        manifest={'epoch':'nonpayable-wide','checkpoint':{'id':'approved'}}
+        status=dict(status='aborted_evaluation',epoch=manifest['epoch'],checkpoint='approved',next_checkpoint='approved',optimizer_ran=False,steps=0,payable=False,chain_transactions=False,fully_audited_batches=3,failed_jobs=['nonpayable-wide-eval-before-failed'])
+        return manifest,status
+    def test_untrained_abort_does_not_claim_changed_checkpoint(self):
+        from ops.check_gpu_continuous_evidence import check_aborted_training
+        manifest,status=self.fixture();check_aborted_training(status,manifest,3)
+        for key,value in [('steps',1),('steps',False),('next_checkpoint','changed'),('optimizer_ran',True),('fully_audited_batches',4),('failed_jobs',[])]:
+            changed=dict(status);changed[key]=value
+            with self.subTest(key=key,value=value),self.assertRaises(ValueError):check_aborted_training(changed,manifest,3)
