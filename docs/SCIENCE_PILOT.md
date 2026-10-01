@@ -26,3 +26,24 @@ positive/negative pair; no such pair is claimed by these environment controls.
 The original Science wrapper uses boxed-answer math verification without an
 LLM judge fallback. Its reward can undercount valid unit or expression answers;
 the pilot retains that original behavior rather than changing the grader.
+
+The bounded remote model probe has now completed on the approved 1.7B
+checkpoint `89995d56ebb787252f9ed71eace4d7ae7e8c4ff975ae634c4752beec03f2247d`.
+It sampled eight autoregressive seeds for each of original mining indices
+0 and 1, with a 256-token output budget. All sixteen attempts were negative.
+One negative rollout per task was retained; a separate model reload verified
+both full probability arrays, strict TOPLOC fingerprints and original replay.
+
+Root independently authenticated the signed plan and collected receipt,
+checked all 42 pinned source modules and both actual ZIP artifacts, and
+checked every retained float32 probability array and proof frame. Root also
+replayed both retained outputs through the original local Science grader;
+rewards, classifications and observations matched exactly. That local control
+has a distinct adapter/dependency source hash from the remote frozen source;
+both preserve the same original task snapshot and task identities. This
+inspection did not recompute the GPU model locally.
+
+This probe provides genuine negative-sample verification evidence, but no
+positive/negative pair, common training epoch or performance improvement.
+Evidence is in `state/science-tasksets/model-control/root-artifact-evidence.json`
+and `root-fresh-native-replay.json`. Mining admission remains unproven.

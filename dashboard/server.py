@@ -111,17 +111,18 @@ class Database:
                     if metrics.get('weights_changed'):
                         row['phase'] = 'trained'
                 else:
-                    abort = read(folder/f'{eid}-aborted-evaluation.json', {})
+                    abort = read(folder/f'{eid}-aborted-training-admission.json', {}) or read(folder/f'{eid}-aborted-evaluation.json', {})
                     abort = abort.get('payload', {}) if isinstance(abort, dict) else {}
                     if not isinstance(abort, dict):
                         abort = {}
                     # Public projection of operator state, not signature verification.
                     # Never export the failed worker logs or raw exception reason.
-                    if (abort.get('status') == 'aborted_evaluation' and abort.get('epoch') == eid
+                    if (abort.get('status') in ('aborted_evaluation','aborted_training_admission') and abort.get('epoch') == eid
                             and abort.get('checkpoint') == abort.get('next_checkpoint') == row['checkpoint']
                             and abort.get('optimizer_ran') is False
                             and type(abort.get('steps')) is int and abort['steps'] == 0):
-                        row['phase'] = 'aborted evaluation'
+                        row['phase'] = ('training admission rejected' if abort['status']=='aborted_training_admission'
+                                        else 'aborted evaluation')
             report = read(folder/'report.json', {})
             eid = report.get('epoch')
             if eid in epochs and report.get('training'):

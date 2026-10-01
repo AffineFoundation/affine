@@ -84,15 +84,21 @@ def checked_job(state, identifier, authority):
 
 
 def check_aborted_training(status,manifest,accepted_count):
-    require(status.get('status')=='aborted_evaluation' and
+    admission=status.get('status')=='aborted_training_admission'
+    require(status.get('status') in ('aborted_evaluation','aborted_training_admission') and
         status.get('epoch')==manifest['epoch'] and
         status.get('checkpoint')==status.get('next_checkpoint')==manifest['checkpoint']['id'] and
         status.get('optimizer_ran') is False and type(status.get('steps')) is int and status['steps']==0 and
         status.get('payable') is False and status.get('chain_transactions') is False and
         type(status.get('fully_audited_batches')) is int and status['fully_audited_batches']==accepted_count and
         isinstance(status.get('failed_jobs'),list) and bool(status['failed_jobs']) and
-        all(isinstance(j,str) and j.startswith(manifest['epoch']+'-eval-before-') for j in status['failed_jobs']),
-        'GPU aborted evaluation unchanged checkpoint/no training binding')
+        all(isinstance(j,str) and j.startswith(manifest['epoch']+('-train-' if admission else '-eval-before-')) for j in status['failed_jobs']),
+        'GPU aborted epoch unchanged checkpoint/no training binding')
+    if admission:
+        require(status.get('before_evaluation_complete') is True and
+            status.get('remote_model_or_optimizer_launch') is False and
+            status.get('admission_failure')=='missing_signed_fixed_reference_training_policy',
+            'GPU training admission abort before model launch')
 
 
 def inspect(state, bucket, evaluations):
@@ -106,8 +112,10 @@ def inspect(state, bucket, evaluations):
         epoch = manifest['epoch']; prefix = f'public/{epoch}/'
         metrics_path = state/f'{epoch}-training-metrics.json'
         after_paths = list(evaluations.glob(f'{epoch}-eval-after-*.json'))
-        abort_path=state/f'{epoch}-aborted-evaluation.json'
-        abort=signed(json.loads(abort_path.read_text()),authority) if abort_path.exists() else None
+        abort_paths=[p for p in (state/f'{epoch}-aborted-evaluation.json',
+            state/f'{epoch}-aborted-training-admission.json') if p.exists()]
+        require(len(abort_paths)<=1, 'GPU conflicting abort statuses')
+        abort=signed(json.loads(abort_paths[0].read_text()),authority) if abort_paths else None
         if abort is None and (not metrics_path.exists() or len(after_paths) != len(manifest['environments'])):
             pending.append(epoch); continue
         require(public(prefix+'manifest.json') == manifest, 'GPU public manifest')
@@ -142,11 +150,32 @@ def inspect(state, bucket, evaluations):
         require(all(scores[k] == calculated[k] for k in calculated), 'GPU recomputed scores')
         if abort is not None:
             require(not metrics_path.exists(), 'GPU aborted epoch cannot also claim optimizer metrics')
+            require(not after_paths, 'GPU untrained abort cannot claim successor evaluations')
             check_aborted_training(abort,manifest,sum(len(r['accepted']) for r in reports.values()))
+            if abort['status']=='aborted_training_admission':
+                for identifier in abort['failed_jobs']:
+                    failed_job=signed(json.loads((state/'roles'/f'{identifier}-job.json').read_text()),authority)
+                    require(failed_job['job_id']==identifier and failed_job['role']=='train' and
+                        signed(failed_job['manifest'],authority)==manifest,
+                        'GPU rejected training job signed epoch binding')
+                for definition in manifest['environments']:
+                    env=definition['env_id']
+                    record=json.loads((evaluations/f'{epoch}-eval-before-{env}.json').read_text())
+                    eval_job, eval_manifest, remote=checked_job(state,record['remote_job_id'],authority)
+                    values=[v for v in remote['heldout'] if v['env_id']==env]
+                    plan=next(s for s in eval_job['heldout'] if s['env_id']==env)
+                    require(record['checkpoint']==eval_manifest['checkpoint']['id']==manifest['checkpoint']['id'] and
+                        record['status']=='complete' and not record['evaluation_failures'] and
+                        record['count']==record['requested_count']==len(values)>0 and
+                        plan['indices']==record['heldout_indices'] and plan['harness']==record['harness_config'] and
+                        sorted(zip(plan['indices'],plan['seeds']))==sorted((v['index'],v['seed']) for v in values) and
+                        record['task_hashes']==[v['task_hash'] for v in values] and
+                        record['mean_reward']==sum(v['reward'] for v in values)/len(values),
+                        'GPU admission abort retains complete authenticated baseline evaluation')
             require(public(prefix+'training.json')==abort and
                 json.loads((state/f'{epoch}-training.json').read_text())==abort,
                 'GPU aborted evaluation signed public status')
-            aborted.append(dict(epoch=epoch,status='aborted_evaluation',frozen=frozen,
+            aborted.append(dict(epoch=epoch,status=abort['status'],frozen=frozen,
                 accepted_batches=abort['fully_audited_batches'],checkpoint=abort['checkpoint'],
                 steps=0,completed_training_epoch=False))
             continue

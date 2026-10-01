@@ -7,6 +7,22 @@ from dashboard.server import Database
 
 
 class PublicProjectionTests(unittest.TestCase):
+    def test_training_admission_rejection_preserves_verified_submission_without_training(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);folder=root/'state/gpu-wide';folder.mkdir(parents=True)
+            epoch='nonpayable-admission-rejected';identity='a'*64
+            (folder/f'{epoch}-manifest.json').write_text(json.dumps(dict(epoch=epoch,start=1,deadline=2,checkpoint={'id':'approved'})))
+            (folder/f'{epoch}-verified.json').write_text(json.dumps({identity:dict(outcomes=[dict(valid=True,fully_audited=True)],accepted=[{}])}))
+            abort=dict(status='aborted_training_admission',epoch=epoch,checkpoint='approved',next_checkpoint='approved',
+                optimizer_ran=False,steps=0,reason='PRIVATE_WORKER_ERROR',failed_jobs=['PRIVATE_JOB_LOG'])
+            (folder/f'{epoch}-aborted-training-admission.json').write_text(json.dumps({'payload':abort}))
+            database=Database(root/'network.sqlite',root/'state');database.refresh();snapshot=database.snapshot()
+            self.assertEqual(snapshot['epochs'][0]['phase'],'training admission rejected')
+            self.assertEqual(snapshot['epochs'][0]['accepted'],1)
+            self.assertIsNone(snapshot['epochs'][0]['training'])
+            self.assertNotIn('PRIVATE_WORKER_ERROR',json.dumps(snapshot))
+            self.assertNotIn('PRIVATE_JOB_LOG',json.dumps(snapshot))
+
     def test_untrained_abort_is_visible_without_private_worker_error(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); folder = root/'state/gpu-wide'; folder.mkdir(parents=True)

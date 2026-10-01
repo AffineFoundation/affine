@@ -95,3 +95,15 @@ class AbortedTrainingEvidence(unittest.TestCase):
         for key,value in [('steps',1),('steps',False),('next_checkpoint','changed'),('optimizer_ran',True),('fully_audited_batches',4),('failed_jobs',[])]:
             changed=dict(status);changed[key]=value
             with self.subTest(key=key,value=value),self.assertRaises(ValueError):check_aborted_training(changed,manifest,3)
+
+    def test_training_admission_abort_requires_no_launch_and_distinct_job_role(self):
+        from ops.check_gpu_continuous_evidence import check_aborted_training
+        manifest,status=self.fixture()
+        status.update(status='aborted_training_admission',failed_jobs=['nonpayable-wide-train-rejected'],
+            before_evaluation_complete=True,remote_model_or_optimizer_launch=False,
+            admission_failure='missing_signed_fixed_reference_training_policy')
+        check_aborted_training(status,manifest,3)
+        for key,value in [('remote_model_or_optimizer_launch',True),('before_evaluation_complete',False),
+                          ('failed_jobs',['nonpayable-wide-eval-before-failed']),('admission_failure','unknown')]:
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                check_aborted_training(dict(status,**{key:value}),manifest,3)
