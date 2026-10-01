@@ -27,4 +27,6 @@ class ResourceAdmission(unittest.TestCase):
   for flags in [[],['-I'],['-B']]:
    result=subprocess.run([sys.executable,*flags,str(Path(guard.__file__).resolve()),'--profile','/nonexistent','--authority','00','--root','/nonexistent'],capture_output=True,text=True)
    self.assertNotEqual(result.returncode,0);self.assertIn('fresh isolated no-bytecode worker',result.stderr);self.assertNotIn('FileNotFoundError',result.stderr)
+ def test_provider_cache_path_must_be_exact_before_import(self):
+  self.payload['resource_environment']['WIKISPEEDIA_CACHE_DIR']=str(self.root/'private-cache/unpinned-wiki');self.assertRaisesRegex(ValueError,'environment',self.admit)
 if __name__=='__main__':unittest.main()

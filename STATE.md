@@ -491,3 +491,16 @@ mining worker is confirmed live. This proves natural continuation after the
 empty window; completed normal training recovery remains pending. An existing
 separate native SQL evaluation also uses the retained host and is preserved.
 No new qualification GPU job or chain submission was started.
+
+## 2026-10-01: Wikispeedia signed remote stage reviewed
+
+Root authenticated the separate model plan and resource profile, checked every
+one of the 1,391 regular source-archive files and all 108 current compute-module
+pins, and independently hashed the actual 6,364 protected remote files via SSH.
+Exact membership, sizes and bytes match. The original twenty-task snapshot,
+checkpoint, native preparation and imported ops helper are pinned. Seven
+resource-guard controls pass. The Verifiers namespace is controlled; full
+transitive dependency closure is explicitly not claimed. Evidence:
+`state/wikispeedia-window-model-stage-v1/root-signed-stage-actual-byte-check.json`.
+This qualifies preparation only. Model K/L, TOPLOC, numerical replay and common
+training remain pending behind the normal wide recovery priority.
