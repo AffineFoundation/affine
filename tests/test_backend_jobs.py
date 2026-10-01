@@ -190,3 +190,49 @@ class CumulativeMining(unittest.TestCase):
         self.runtime.rollout=rollout
         data,report=self.run_miner()
         self.assertEqual(self.uploads,[b'[0]']);self.assertEqual(report['batches'],1)
+
+
+class EmptyBoundedMining(CumulativeMining):
+    def run_empty(self,label):
+        from subnet.backend_jobs import mine_cumulative
+        self.runtime.rollout=lambda index,seed:({'classification':label,'turns':[{'output':[index,seed]}]},[])
+        with patch('subnet.protocol.entries',return_value=self.definitions),patch('subnet.batches.pack') as pack:
+            data,report=mine_cumulative(self.runtime,self.manifest,self.job,lambda data,timeout:self.uploads.append(data),clock=lambda:self.now,allow_empty=True)
+            pack.assert_not_called()
+        return data,report
+    def test_all_positive_is_truthful_terminal_empty_not_failed_search(self):
+        data,report=self.run_empty('positive')
+        self.assertIsNone(data);self.assertEqual(self.uploads,[])
+        self.assertEqual(report['batches'],0);self.assertEqual(report['cumulative_uploads'],0)
+        self.assertEqual(report['mining_status'],'no_complete_KL_batch')
+        self.assertEqual([(s['attempts'],s['positive'],s['negative']) for s in report['search']],[(4,1,0)]*3)
+        self.assertEqual([(s['observed_positive'],s['observed_negative']) for s in report['search']],[(4,0)]*3)
+    def test_all_negative_retains_missing_class_and_counts(self):
+        data,report=self.run_empty('negative')
+        self.assertIsNone(data);self.assertEqual(self.uploads,[])
+        self.assertEqual([(s['attempts'],s['positive'],s['negative']) for s in report['search']],[(4,0,1)]*3)
+        self.assertEqual([(s['observed_positive'],s['observed_negative']) for s in report['search']],[(0,4)]*3)
+    def test_infrastructure_exception_is_not_an_empty_success(self):
+        from subnet.backend_jobs import mine_cumulative
+        self.runtime.rollout=unittest.mock.Mock(side_effect=RuntimeError('native worker unavailable'))
+        with patch('subnet.protocol.entries',return_value=self.definitions),self.assertRaisesRegex(RuntimeError,'native worker unavailable'):
+            mine_cumulative(self.runtime,self.manifest,self.job,lambda *args:self.fail('unexpected upload'),clock=lambda:self.now,allow_empty=True)
+
+
+class EmptyMineExecution(MiningEpochWindow):
+    def test_zero_batch_executor_succeeds_without_put_or_submission_file(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        runtime=SimpleNamespace(spec=SimpleNamespace(version='v1'))
+        runtime.for_environment=lambda *args:runtime
+        runtime.rollout=lambda index,seed:({'classification':'positive','turns':[{'output':[seed]}]},[])
+        definition=dict(env_id='one',spec={},harness={},indices=[0])
+        with tempfile.TemporaryDirectory() as directory,patch('subnet.backend_jobs.time.time',return_value=50),patch('subnet.backend_jobs.digest',return_value='a'*64),patch('subnet.backend_jobs.version',return_value='approved'),patch('subnet.backend_jobs.install_source_loader'),patch('subnet.backend_jobs.checkpoint',return_value=directory),patch.dict('os.environ',{'CUBLAS_WORKSPACE_CONFIG':':4096:8'}),patch('subnet.protocol.entries',return_value=[definition]),patch('requests.put') as put:
+            report=execute(self.sign(self.job),self.authority,directory,runtime_factory=lambda *args:runtime)
+            put.assert_not_called()
+            self.assertEqual(report['batches'],0);self.assertEqual(report['submission_size'],0);self.assertIsNone(report['submission_sha256'])
+            self.assertEqual(report['mining_status'],'no_complete_KL_batch')
+            self.assertEqual(report['search'][0]['observed_positive'],1)
+            self.assertFalse((Path(directory)/'jobs'/self.job['job_id']/'submission.zip').exists())
+            self.assertNotIn('training',report);self.assertNotIn('scores',report)
