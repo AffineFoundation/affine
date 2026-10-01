@@ -473,3 +473,21 @@ four mining tasks and 4,610 original resource files, then confirmed rejection of
 a substituted candidate. Remote resources-only staging also completed; model
 plan/resource guard preparation is pending. No GPU model, TOPLOC, training or
 new coverage claim is made. See `docs/WIKISPEEDIA_MODEL_QUALIFICATION.md`.
+
+## 2026-10-01: real wide empty epoch completed
+
+The sixteen-environment controlled empty epoch completed naturally. Independent
+full-ledger verification now accepts eleven trained wide epochs, three preserved
+aborts and one completed empty epoch. Root authenticated both original evaluation
+jobs and manifests, their 10,800-second leases and all 512 model/native-verified
+heldouts. All sixteen before/after cohorts have identical indices, seeds, task
+hashes, runtime, harness and means at unchanged checkpoint `0081b069...`.
+There are no mine/train jobs, optimizer metrics, accepted batches or proposed
+payouts for the empty epoch. Evidence:
+`state/gpu-wide/root-v7k-completed-empty-pair-check.json`.
+
+The same controller subsequently opened normal round ten and a fresh remote
+mining worker is confirmed live. This proves natural continuation after the
+empty window; completed normal training recovery remains pending. An existing
+separate native SQL evaluation also uses the retained host and is preserved.
+No new qualification GPU job or chain submission was started.
