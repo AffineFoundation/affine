@@ -6,7 +6,7 @@
 
 A prospective isolated harness resolves candidates from each current public question rather than reusing task zero's query. Its generator revision and exact bytes are pinned in the operator configuration. Existing original bash exploration steps remain intact. Tokenizer admission measured all sixteen proposed pairs within the 128-token output budget, with actual lengths from 15 to 109 tokens. Native positive/negative controls and token lengths do not establish reachable sampling probabilities: target-model class-distribution measurements and complete proof/replay admission remain necessary before deploying this harness.
 
-The existing live SQL controller remains on its prior immutable source and narrow task-zero policy. These controls do not count as additional trained tasks, completed epochs, or evidence of heldout improvement.
+The SQL controller now uses the new immutable diversity source `c454ddb7f22fadc7`, rotating the ten original mining tasks with measured positive/negative admission. The first diversity epoch remains pending audit and training. Original heldout indices 16–31 remain fixed under this new source baseline. Standalone admission controls do not count as additional trained tasks, completed epochs or heldout improvement.
 
 The remote diversity qualification has completed with the approved 135M
 checkpoint `d5347dc1c9f59da0ec574fba01314ff6c637a12126b441fd27f0bbd4af481d4b`.
