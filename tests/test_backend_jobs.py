@@ -97,3 +97,31 @@ class FreshSourceLoading(unittest.TestCase):
             path.write_text('value = "approved source"\n')
             spec=FreshSourceFinder(root).find_spec('subnet.cache_probe');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
             self.assertEqual(module.value,'approved source')
+
+class MiningEpochWindow(unittest.TestCase):
+    sign = BackendJobAuthorization.sign
+    def setUp(self):
+        BackendJobAuthorization.setUp(self)
+        self.manifest.update(start=10,deadline=90)
+        self.job.update(role='mine',miner_id='b'*64,search_budget=1,seed_start=100,
+            capability={'put_url':self.job['submissions'][0]['url'],'headers':{'Content-Type':'application/octet-stream'}})
+        self.job['manifest']=self.sign(self.manifest)
+    def test_signed_epoch_boundary_is_half_open(self):
+        from subnet.backend_jobs import mining_window
+        mining_window(self.manifest,now=10);mining_window(self.manifest,now=89.999)
+        for now in (9.999,90,91):
+            with self.subTest(now=now),self.assertRaisesRegex(ValueError,'epoch window closed'):mining_window(self.manifest,now=now)
+    def test_expired_mining_manifest_rejected_before_artifact_reads(self):
+        with patch('subnet.backend_jobs.time.time',return_value=90),patch('subnet.backend_jobs.checkpoint') as read:
+            with self.assertRaisesRegex(ValueError,'epoch window closed'):execute(self.sign(self.job),self.authority,'unused')
+            read.assert_not_called()
+    def test_deadline_crossing_before_search_does_not_generate(self):
+        import tempfile
+        from types import SimpleNamespace
+        runtime=SimpleNamespace(for_environment=lambda *a:runtime,rollout=unittest.mock.Mock())
+        from subnet.gpu_runtime import GPURuntime
+        calls=iter([50])
+        def clock():return next(calls,90)
+        with tempfile.TemporaryDirectory() as directory,patch('subnet.backend_jobs.time.time',side_effect=clock),patch('subnet.backend_jobs.digest',return_value='a'*64),patch('subnet.backend_jobs.version',return_value='approved'),patch('subnet.backend_jobs.install_source_loader'),patch('subnet.backend_jobs.checkpoint',return_value=directory),patch.dict('os.environ',{'CUBLAS_WORKSPACE_CONFIG':':4096:8'}),patch('subnet.protocol.entries',return_value=[dict(spec={},harness={},indices=[0])]):
+            with self.assertRaisesRegex(ValueError,'epoch window closed'):execute(self.sign(self.job),self.authority,directory,runtime_factory=lambda *a:runtime)
+        runtime.rollout.assert_not_called()

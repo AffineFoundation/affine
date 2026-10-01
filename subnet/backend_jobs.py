@@ -59,6 +59,11 @@ def file_map(files):
     if 'config.json' not in files or not any(n.endswith('.safetensors') for n in files):raise ValueError('safe model checkpoint required')
     return hashlib.sha256(canonical(files)).hexdigest()
 
+def mining_window(manifest, now=None):
+    now=time.time() if now is None else now
+    if any(type(manifest.get(k)) not in (int,float) for k in ('start','deadline')) or not manifest['start']<=now<manifest['deadline']:
+        raise ValueError('signed mining epoch window closed')
+
 def validate(envelope, authority, now=None):
     """Pure authorization/policy check; never opens an artifact or imports runtime."""
     job=signed(envelope,authority);now=time.time() if now is None else now
@@ -85,6 +90,7 @@ def validate(envelope, authority, now=None):
         if manifest.get('audit_policy',{}).get('mode')!='full':raise ValueError('GPU training jobs require full audit')
         if any(type(manifest.get(k)) is not int or not 1<=manifest[k]<=16 for k in ('K','L')):raise ValueError('class quota')
     if job['role']=='mine':
+        mining_window(manifest,now)
         if not re.fullmatch('[0-9a-f]{64}',job.get('miner_id','')):raise ValueError('owned miner identity')
         if type(job.get('search_budget')) is not int or not 1<=job['search_budget']<=128 or type(job.get('seed_start')) is not int or job['seed_start']<0:raise ValueError('mining search budget')
         r2_url(job['capability']['put_url'],'PUT')
@@ -255,8 +261,10 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
             for definition in entries(manifest):
                 selected=runtime.for_environment(definition['spec'],definition['harness'])
                 for index in definition['indices']:
+                    mining_window(manifest)
                     classes={'positive':[],'negative':[]};fingerprints=set()
                     for attempt in range(job['search_budget']):
+                        mining_window(manifest)
                         rollout,arrays=selected.rollout(index,job['seed_start']+attempt)
                         label=rollout['classification'];signature=tuple(tuple(t['output']) for t in rollout['turns'])
                         quota=manifest['K'] if label=='positive' else manifest['L']
@@ -271,6 +279,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                     if len(batches)>=manifest.get('max_batches',4):break
             if not batches:raise ValueError('GPU bounded search found no complete batch')
             data=pack(batches);artifact=out/'submission.zip';artifact.write_bytes(data)
+            mining_window(manifest)
             response=requests.put(job['capability']['put_url'],data=data,headers=job['capability']['headers'],timeout=180,allow_redirects=False)
             if response.status_code not in (200,201,204):raise ValueError('R2 PUT status '+str(response.status_code))
             report.update(miner_id=job['miner_id'],submission_sha256=hashlib.sha256(data).hexdigest(),submission_size=len(data),batches=len(batches),search=search,operator_authorized_experiment=True)
