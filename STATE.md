@@ -404,3 +404,14 @@ checked 4,610 extracted SNAP graph/article files against the recorded archives.
 The initial tool-prefix mismatch attempt is preserved; the successful v3 records
 bind the full environment definition. No model/TOPLOC/training/remote epoch claim
 is made. Evidence and reproduction: `docs/WIKISPEEDIA_NATIVE_CONTROLS.md`.
+
+## 2026-10-01: original standard UUIDCTF native controls qualified
+
+Two original standard-difficulty UUIDCTF tasks have successful and unsuccessful
+real sandbox trajectories using a public-file forensic solver. The unchanged
+original grader returned 1/0 for each pair. Eight forged observation/reward
+mutations were rejected; a separate root process reran all four native
+trajectories and recorded the actual image digest and observed owned-container
+teardown. Hidden expected answers are not inputs to the solver. No model,
+TOPLOC, remote epoch or common training is claimed. Evidence and reproduction:
+`docs/UUIDCTF_NATIVE_CONTROLS.md`.

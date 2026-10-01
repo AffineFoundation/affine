@@ -2,8 +2,8 @@
   "counts": {
     "import": 45,
     "local_reset": 39,
-    "native_tool_execution": 10,
-    "original_reward": 27,
+    "native_tool_execution": 11,
+    "original_reward": 28,
     "remote_proof": 25,
     "remote_replay": 24,
     "training": 18
@@ -449,12 +449,12 @@
       "import": true,
       "local_reset": true,
       "module": "affine_uuidctf_v1",
-      "native_tool_execution": false,
-      "original_reward": false,
+      "native_tool_execution": true,
+      "original_reward": true,
       "remote_proof": false,
       "remote_replay": false,
       "source": "affine_uuidctf",
-      "status": "actual_original_reset_passed",
+      "status": "original_standard_native_public_corpus_controls_replayed_no_model",
       "taskset_class": "AffineUUIDCTFTaskset",
       "training": false
     },
@@ -644,6 +644,6 @@
   "schema": 1,
   "scope": "Recorded source-level operator evidence; each row is a milestone, not full production support or proof of performance improvement.",
   "source_count": 45,
-  "source_matrix_sha256": "68c6f6cf51bbaebac67d810fcf6ab5947f1f6035ef28ae8946301f00ffccd795",
+  "source_matrix_sha256": "e5cd85fff0a78f609a5b0342c03d87b24907665070087cc9ebe8a865c2ef2a37",
   "status_is_blocker_or_milestone": true
 }
