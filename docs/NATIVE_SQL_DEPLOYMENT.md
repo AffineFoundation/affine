@@ -42,4 +42,17 @@ complete K/L pair now reports its observed outcome counts and exits normally
 without uploading a submission. Actual inference, environment and transport
 errors still fail. This avoids repeatedly executing a successful search merely
 because it could not assemble a qualifying pair. The new version's next
-epoch is a separate ongoing trial, not additional completed training evidence.
+epoch was initially a separate ongoing trial. It and its successor have now
+completed auditing, training and paired evaluation under that new source:
+
+| Epoch suffix | Successor checkpoint |
+| --- | --- |
+| `v2-empty-1790851130-4` | `c34b4f717e4baf75dd77438ef9025775779d74c7bc5cc7e4cf93a856ca48d193` |
+| `v2-empty-1790852134-5` | `d5347dc1c9f59da0ec574fba01314ff6c637a12126b441fd27f0bbd4af481d4b` |
+
+This brings independently checked common training to five epochs. Each new
+checkpoint's six R2 objects were independently streamed and hashed, and the
+public dashboard matches all ten paired evaluation records. The fixed sixteen
+held-out tasks still score zero before and after; training remains confined to
+the controlled original task zero. Wider public-question-derived SQL policies
+are prospective until their model/proof admission gates pass.

@@ -50,7 +50,7 @@ Original Spider SQL now has thirty-two pinned tasks, sixteen for mining and
 sixteen disjoint held-out tasks. Public actors and private original graders
 passed fresh remote controls. A controlled target-model candidate-policy
 positive/negative pair passed independent full probability/TOPLOC checks and
-native replay. Three common training epochs now passed independent evidence checks,
+native replay. Five common training epochs now passed independent evidence checks,
 including resumed submission, auditing and training after an intervening empty
 epoch. Each published six independently hashed checkpoint files and completed
 sixteen fixed autoregressive held-out evaluations (0 before and 0 after).
@@ -71,8 +71,12 @@ staged artifact, retaining all full-vocabulary float32 probability arrays.
 Its original upload window remains open; the pair is not yet frozen, audited
 or trained in a completed common epoch. The independent auditor accepts this
 larger bundle only under the exact approved numerical and transport profile.
-The worker's prospective multi-step optimizer path needs correction; the
-active trial uses one step and its frozen source remains unchanged.
+The newly published prospective worker rejects multi-step training until
+persistent optimizer behavior is separately qualified. The active trial uses
+one step and its frozen source remains unchanged. The public repo now includes
+a guarded utility that reproduces its exact portable source variant in an
+independent checkout; actual Git-archive reproduction passed without accessing
+fixtures/models or starting services.
 
 The public source-level matrix records 45 imports, 38 resets, 23 original-reward
 and remote-proof milestones, 22 remote-replay milestones and 14 trained sources.
