@@ -415,3 +415,15 @@ trajectories and recorded the actual image digest and observed owned-container
 teardown. Hidden expected answers are not inputs to the solver. No model,
 TOPLOC, remote epoch or common training is claimed. Evidence and reproduction:
 `docs/UUIDCTF_NATIVE_CONTROLS.md`.
+
+## 2026-10-01: Wikispeedia model-cohort prerequisites
+
+The original Wikispeedia snapshot now has twenty native-qualified tasks, scoped
+for four mining indices and sixteen separate heldouts. Forty positive/negative
+native controls and 160 mutations passed; both shared candidate branches also
+ran through the common tool dialect on all twenty tasks. Hash-checked R2
+tokenizer/configuration files show both registered harnesses fit the retained
+control paths within the pinned model context, with no model weights downloaded
+or model executed. Evidence: `state/native-wikispeedia-candidate-cohort20-v1/root-model-budget-preflight.json`.
+Mixed-choice context coverage, remote model/TOPLOC qualification and common
+training remain pending. No active signed GPU source bundle was changed.

@@ -74,3 +74,20 @@ OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 PYTHONPATH=. \
   --qualified-state state/native-wikispeedia-controls-v3-pinned-definition \
   --state state/my-wikispeedia-candidate-harness
 ```
+
+The follow-on twenty-task prerequisite freezes four mining indices and sixteen
+separate heldout indices from the original seeded pool. Its forty native
+positive/negative controls passed, including 160 observation/reward/source/task
+mutations; the shared candidate dialect also passed both branches on all twenty.
+The actual R2 checkpoint's five tokenizer/configuration files were independently
+hash-checked without downloading model weights. Both registered harnesses
+(`text-tools-v1` and `plain-transcript-v1`) fit the honest and unsuccessful
+control paths within the pinned 8,192-token context: the largest prompt was
+2,792 tokens and the largest proposed output was 36 tokens. The largest pair of
+full-probability arrays would occupy 63,897,600 raw bytes.
+
+Evidence lives in `state/native-wikispeedia-model-cohort20-v1` and
+`state/native-wikispeedia-candidate-cohort20-v1`, including
+`root-model-budget-preflight.json`. This is a control-path budget check, not
+exhaustive coverage of mixed candidate choices. Original native grading and
+context feasibility do not establish that a GPU miner produced a proof batch.
