@@ -38,9 +38,10 @@ and has fifteen passing signed-lineage controls. An isolated remote qualificatio
 now verified nine historical families against the current model, including
 probabilities, TOPLOC and original native replay, then completed nine full-model
 updates with one AdamW and immutable pre-update references. Root authenticated
-the signed reports and actual source/artifact hashes. Checkpoint publication,
-paired held-out results and continuous-controller integration remain separate
-gates; no performance gain is claimed. See
+the signed reports and actual source/artifact hashes, then independently streamed
+and hashed all six published R2 checkpoint objects. Paired held-out evaluation
+is running; its results and continuous-controller integration remain separate
+gates. No performance gain is claimed. See
 [MRCR scope](docs/MRCR_PUBLIC_SHELL_PILOT.md) and
 [replay admission](docs/VERIFIED_REPLAY_POOL.md).
 

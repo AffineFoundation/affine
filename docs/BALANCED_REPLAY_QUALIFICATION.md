@@ -34,5 +34,8 @@ Updates covered i3math, Logic, Math, PopQA, Reasoning Gym, SciText, Trivia,
 Unscramble and Verbatim, with optimizer counters 1 through 9 and gradients for
 all 218 parameter tensors. A root audit authenticated the signed completion,
 source archive and report bytes. It did not recompute model inference itself.
-Publication and comparable held-out evaluation are still separate gates; this
-result does not claim improved quality or a completed continuous replay epoch.
+The successor is now published to R2. Root independently streamed and hashed
+all six checkpoint objects, totaling 3,426,302,727 bytes, against the signed
+qualification file map. Paired evaluation on the same 192 held-out tasks is
+running. This result does not yet claim improved quality or a completed
+continuous replay epoch.
