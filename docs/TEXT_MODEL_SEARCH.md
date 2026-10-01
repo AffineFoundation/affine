@@ -1,0 +1,9 @@
+# Genuine original text-environment search
+
+`ops/probe_text_model_search.py` performs a bounded, operator-approved search on original TriviaQA or PopQA-Abstain snapshots using an unchanged, pinned target model. This isolated control does not set chain weights, score an epoch, or train. The model sees only the original public system message and question; original answers and aliases are available only to the native grader.
+
+The signed plan pins approved checkpoint files, the exact top-level module membership and bytes, the environment source/task snapshot, autoregressive harness, backend and strict numerical policy. Training indices must be below16; indices16–31 are held out. Each index searches at most64 seeds and saves at most one actual positive and one actual negative trajectory. A separate fresh-model process verifies complete token probabilities, TOPLOC fingerprints and native environment replay against frozen ZIP hashes. Negative-only bounded search is evidence of the measured search outcome, not an unsupported adapter.
+
+The initial original TriviaQA control used a1.7B model,64 output tokens and32-seed budget. Original index1 produced genuine K1/L1 after11 attempts; index0 produced only negative samples after32 attempts. A separate reload verified all three retained trajectories. These are verification controls, not proof of training or generalized model improvement. Subsequent common-pipeline admission requires a new signed epoch and full audit before training.
+
+The CLI requires `--plan`, a separately supplied trusted `--authority`, and `--out`; `--verify` performs the fresh check. It waits for at least8GiB actual free GPU memory before loading. Approved runtime dependencies and model/source files must already be installed at pinned paths. Private operator signing keys are never needed on the miner machine. Deployment approval and numeric-profile qualification remain separate from signed plan inspection.

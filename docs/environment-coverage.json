@@ -356,7 +356,7 @@
       "remote_proof": false,
       "remote_replay": false,
       "source": "affine_tau2",
-      "status": "controlled_native_negative_trajectory_verified",
+      "status": "controlled_native_K1L1_full_optimizer_and_successor_verified",
       "taskset_class": "AffineTau2Taskset",
       "training": false
     },
@@ -412,7 +412,7 @@
       "remote_proof": true,
       "remote_replay": true,
       "source": "affine_trivia",
-      "status": "verified_original_rollout",
+      "status": "genuine_autoregressive_K1L1_fresh_proof_replay_verified",
       "taskset_class": "TriviaTaskset",
       "training": false
     },
@@ -644,6 +644,6 @@
   "schema": 1,
   "scope": "Recorded source-level operator evidence; each row is a milestone, not full production support or proof of performance improvement.",
   "source_count": 45,
-  "source_matrix_sha256": "5cd80dd5bc0ea229d06c19d135f89f37193dce2a1887a8f2578529871d74a09d",
+  "source_matrix_sha256": "48d2e4d542c75cc6402297c124d535991189651bc38fb4c30c3a23160f6cdf7e",
   "status_is_blocker_or_milestone": true
 }

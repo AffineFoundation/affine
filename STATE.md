@@ -30,11 +30,14 @@ model verification and replay through the original environment grader. The
 positive trajectory has six agent/user responses and reward 1; the negative has
 eleven responses and reward 0. Both use the same task and checkpoint, and
 auxiliary user tokens are excluded from training targets. Its agent-only
-optimizer is running; a trained successor and production epoch integration
-remain unproven.
+full-model optimizer completed one agent-only update. All six successor
+checkpoint objects were independently hashed in R2, and a fresh six-role
+rollout passed independent probability/TOPLOC verification and original
+tool/grader replay. This is a controlled outcome-conditioned training example;
+common epoch integration and held-out quality improvement remain unproven.
 
 The controlled original Agent fixtures now run through the shared GPU epoch
-pipeline. Two full epochs passed independent artifact, audit, score,
+pipeline. Four full epochs passed independent artifact, audit, score,
 optimizer attribution, checkpoint-publication and held-out evidence checks.
 One full-model update per epoch consumed its verified positive/negative pair; all six new
 checkpoint objects were independently hashed (272,585,280 bytes). Two fixed

@@ -82,6 +82,14 @@ It is operator-collected evidence, not a cryptographic proof of execution.
 
 ## Common pipeline admission still required
 
+The full public tool/message context measured 16,973 prompt tokens after two
+tools, exceeding the controlled 135M model's approved 8,192-token limit before
+adding an output budget. These controls therefore have no model proofs or
+training coverage. A separately pinned longer-context model and numerical
+profile must pass full-context inference, fresh verification and falsification
+checks before admission; truncating tools or observations would change this
+harness.
+
 Pin original source/data hashes, derived immutable image, shim hash, seed and
 clock in the signed environment specification. Keep the private verifier
 catalog separate from the public actor bundle. Add a prospective adapter in an
