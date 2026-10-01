@@ -1,0 +1,22 @@
+[Unit]
+Description=Affine nonpayable original Calendar portable long-context common pipeline
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/const/subnet120-rewrite/state/prospective-native-eog-common-v4-portable
+Environment=TOKENIZERS_PARALLELISM=false
+Environment=OMP_NUM_THREADS=2
+Environment=MKL_NUM_THREADS=2
+Environment=OPENBLAS_NUM_THREADS=2
+Environment=HF_HUB_OFFLINE=1
+Environment=HF_DATASETS_OFFLINE=1
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -B -m subnet.gpu_service --config /home/const/subnet120-rewrite/state/native-eog-common-config.json
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=90
+SuccessExitStatus=143
+
+[Install]
+WantedBy=default.target
