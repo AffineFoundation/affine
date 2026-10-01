@@ -107,3 +107,20 @@ class AbortedTrainingEvidence(unittest.TestCase):
                           ('failed_jobs',['nonpayable-wide-eval-before-failed']),('admission_failure','unknown')]:
             with self.subTest(key=key),self.assertRaises(ValueError):
                 check_aborted_training(dict(status,**{key:value}),manifest,3)
+
+class EmptyEpochEvidence(unittest.TestCase):
+    def test_empty_closure_requires_zero_credit_and_unchanged_checkpoint(self):
+        from ops.check_gpu_continuous_evidence import check_empty_closed
+        manifest={'epoch':'nonpayable-empty','checkpoint':{'id':'approved'}}
+        status=dict(status='closed_no_accepted_batches',epoch='nonpayable-empty',checkpoint='approved',payable=False)
+        scores=dict(total=0,points={},weights={})
+        check_empty_closed(status,manifest,scores,0)
+        for changed_status,changed_scores,accepted in [
+            (dict(status,checkpoint='changed'),scores,0),
+            (dict(status,payable=True),scores,0),
+            (status,dict(scores,total=1),0),
+            (status,dict(scores,points={'miner':1}),0),
+            (status,dict(scores,weights={'miner':1}),0),
+            (status,scores,1)]:
+            with self.assertRaises(ValueError):
+                check_empty_closed(changed_status,manifest,changed_scores,accepted)

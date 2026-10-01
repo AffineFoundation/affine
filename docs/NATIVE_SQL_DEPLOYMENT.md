@@ -50,9 +50,28 @@ completed auditing, training and paired evaluation under that new source:
 | `v2-empty-1790851130-4` | `c34b4f717e4baf75dd77438ef9025775779d74c7bc5cc7e4cf93a856ca48d193` |
 | `v2-empty-1790852134-5` | `d5347dc1c9f59da0ec574fba01314ff6c637a12126b441fd27f0bbd4af481d4b` |
 
-This brings independently checked common training to five epochs. Each new
+Those two updates brought independently checked common training to five epochs. Each new
 checkpoint's six R2 objects were independently streamed and hashed, and the
 public dashboard matches all ten paired evaluation records. The fixed sixteen
 held-out tasks still score zero before and after; training remains confined to
-the controlled original task zero. Wider public-question-derived SQL policies
-are prospective until their model/proof admission gates pass.
+the controlled original task zero. The subsequently qualified public-question-derived SQL policy is described in
+`PUBLIC_SQL_CANDIDATES.md`; its admitted ten-task controller now runs under
+a new immutable source baseline. These earlier results remain task-zero controls.
+
+A sixth narrow-policy epoch, `v2-empty-1790853170-6`, completed one more
+verified update to checkpoint
+`9f63f5295f61613b598efe1200fa903ea975c2c343b121193d1b0cdadf181422`.
+Root independently streamed its six R2 objects (272,585,280 bytes). The
+following epoch `v2-empty-1790854231-7` closed with no accepted batches and
+no optimizer run; the new diversity controller's first epoch consumed that
+unchanged checkpoint. Broader-task training remains pending completion.
+
+The independent command
+`.venv/bin/python -m ops.check_gpu_continuous_evidence --state state/native-sql-common`
+now reports six trained epochs and two closed empty epochs separately. It
+authenticates the public manifest, frozen challenge and scores, recomputes
+zero credit for empty epochs, checks empty proposed weights and absence of
+optimizer metrics, and verifies the next signed manifest retains the same
+checkpoint. Optional before/after evaluations for an empty epoch must use
+the unchanged model with comparable fixed tasks; they are not learning
+evidence. Only the current diversity epoch remains pending in this audit.
