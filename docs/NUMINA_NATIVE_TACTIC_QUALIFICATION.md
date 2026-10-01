@@ -65,3 +65,9 @@ Continuous mining/training admission remains prospective. That controller uses
 a different approved environment-adapter source, so its future Numina specification
 must be rebound and freshly qualified against that exact source/checkpoint.
 These isolated controls cannot be relabeled as a shared completed epoch.
+
+### Common adapter and direct checkpoint hydration
+
+The separate common-adapter attempt `1790874059` stopped before model loading because its signed local checkpoint path did not exist. Its source and failed execution remain preserved. It does not establish adapter incompatibility or model verification success.
+
+A new isolated attempt `1790874912` uses common v7e adapter source with archive SHA256 `8142d78bc8b9862c9f52db1182c27822930b9660ba27643d3f6804e7975f2b48`, approved checkpoint `d7ddf269a792c7bd77ef02d36f22cb1006d90c86b2586972e7e01c641244f9c5`, and signed object-specific R2 GET capabilities. It streams six exact approved files into its own checkpoint directory, checks size and SHA256, and reloads those files for independent inference verification. No cloud account credentials are sent to the miner. Existing corrupt files, unexpected files, symlinks, unapproved hosts, and insufficient disk space fail closed. The run has started; a completed proof result is still pending. Four downloader controls and the eight existing Numina controls pass locally. This remains an isolated public-starter K1/L1 qualification, without training or chain transactions.

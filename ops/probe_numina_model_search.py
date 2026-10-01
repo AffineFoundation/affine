@@ -58,12 +58,45 @@ def gpu_wait():
         time.sleep(5)
 
 
+def hydrate_checkpoint(plan):
+    """Use only signed, per-object GET capabilities in an isolated checkpoint directory."""
+    import shutil
+    from subnet.backend_jobs import file_map, get_object, r2_url
+    download=plan.get('checkpoint_downloads')
+    if download is None:return
+    files=plan['checkpoint']['files'];target=Path(plan['checkpoint_path'])
+    file_map(files)
+    if hashlib.sha256(canonical(files)).hexdigest()!=plan['checkpoint']['id']:raise ValueError('checkpoint identity')
+    if not files or set(download)!=set(files):raise ValueError('checkpoint download membership')
+    for name,digest in files.items():
+        if Path(name).name!=name or name in ('.','..') or len(digest)!=64:raise ValueError('checkpoint filename/digest')
+        row=download[name]
+        if type(row.get('size')) is not int or not 0<row['size']<=4_000_000_000:raise ValueError('checkpoint size bound')
+        r2_url(row['url'],'GET')
+    if target.is_symlink():raise ValueError('checkpoint directory symlink')
+    target.mkdir(parents=True,exist_ok=True)
+    if any(p.name not in files for p in target.iterdir()):raise ValueError('unexpected checkpoint file')
+    missing=[]
+    for name,digest in files.items():
+        path=target/name
+        if path.is_symlink():raise ValueError('checkpoint file symlink')
+        if path.exists():
+            from subnet.model import file_hash
+            if not path.is_file() or path.stat().st_size!=download[name]['size'] or file_hash(path)!=digest:raise ValueError('existing checkpoint mismatch')
+        else:missing.append(name)
+    if shutil.disk_usage(target).free<sum(download[n]['size'] for n in missing)+1_000_000_000:raise ValueError('checkpoint download disk budget')
+    for name in missing:
+        get_object(download[name]['url'],files[name],target/name,download[name]['size'])
+        if (target/name).stat().st_size!=download[name]['size']:raise ValueError('checkpoint download size mismatch')
+
+
 def execute(plan,out,verify=False):
     import torch
     from subnet.gpu_runtime import GPURuntime
     from subnet.batches import pack,unpack
     snapshot=Path(plan['environment']['config']['task_snapshot'])
     if hashlib.sha256(snapshot.read_bytes()).hexdigest()!=plan['original_task_snapshot_sha256']:raise ValueError('original task snapshot bytes')
+    hydrate_checkpoint(plan)
     gpu_wait();out.mkdir(parents=True,exist_ok=True)
     runtime=GPURuntime(plan['checkpoint_path'],plan['checkpoint']['files'],plan['environment'],plan['harness'])
     if len(runtime.tokenizer.encode(plan['harness']['candidates'][0],add_special_tokens=False))!=len(runtime.tokenizer.encode(plan['harness']['candidates'][1],add_special_tokens=False)):raise ValueError('equal-token candidate contract')
