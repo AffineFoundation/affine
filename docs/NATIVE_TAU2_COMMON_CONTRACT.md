@@ -125,3 +125,25 @@ performance. The actual native integration is being qualified separately.
 ```sh
 .venv/bin/python -m unittest discover -s tests -p 'test_native_tau2_common_search*.py'
 ```
+
+## Original task inventory and native replay helpers
+
+`ops/materialize_native_tau2_common.py` materializes original pinned telecom
+full tasks while excluding base tasks. By default it selects 32 tasks: sixteen
+mining indices and sixteen disjoint held-outs. The public file contains only task
+IDs and hashes; raw instructions, criteria and data remain operator-private.
+Re-materialization rejects conflicting existing task commitments.
+
+`native_tau2_common_simulation.py` verifies the signed task/data/source bindings
+and supplies the exact selected original task to the original orchestrator with
+its original Affine message/tool patches and ALL grader. A bounded trusted child
+uses only the loopback role endpoint. It is not a sandbox for uploaded miner code.
+`native_tau2_common_replay.py` authenticates the full ordered role sequence and
+feeds its responses into a fresh original run. It checks every native request,
+message/tool observation, termination and reward field; only wall-clock message
+timestamps may differ. This replay cannot attest model computation and explicitly
+leaves those admission flags false until a separate numerical audit completes.
+
+Twelve synthetic controls cover selected-task routing, private/public separation,
+provider drift, conflicting task commitments, exact replay requests, observations
+and grader output. Genuine execution evidence remains distinct from these tests.
