@@ -2,8 +2,8 @@
   "counts": {
     "import": 45,
     "local_reset": 39,
-    "native_tool_execution": 9,
-    "original_reward": 26,
+    "native_tool_execution": 10,
+    "original_reward": 27,
     "remote_proof": 25,
     "remote_replay": 24,
     "training": 18
@@ -505,12 +505,12 @@
       "import": true,
       "local_reset": true,
       "module": "affine_wikispeedia_v1",
-      "native_tool_execution": false,
-      "original_reward": false,
+      "native_tool_execution": true,
+      "original_reward": true,
       "remote_proof": false,
       "remote_replay": false,
       "source": "affine_wikispeedia",
-      "status": "actual_original_reset_passed",
+      "status": "original_native_public_graph_controls_replayed_no_model",
       "taskset_class": "WikispeediaTaskset",
       "training": false
     },
@@ -644,6 +644,6 @@
   "schema": 1,
   "scope": "Recorded source-level operator evidence; each row is a milestone, not full production support or proof of performance improvement.",
   "source_count": 45,
-  "source_matrix_sha256": "d7c065483ea4b70dd78cc1930f984f1b11b0dd129fbf9b4d50b9fa74c07d07b8",
+  "source_matrix_sha256": "68c6f6cf51bbaebac67d810fcf6ab5947f1f6035ef28ae8946301f00ffccd795",
   "status_is_blocker_or_milestone": true
 }

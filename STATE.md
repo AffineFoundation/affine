@@ -393,3 +393,14 @@ including original error and recovery counts. Evidence:
 `state/native-tau2-common-live/epoch-1790869388/root-public-dashboard-recovery-check.json`.
 This does not establish quality improvement, wide empty-epoch completion, or
 chain payouts. The sixteen-family wide evaluation remains a separate live job.
+
+## 2026-10-01: original Wikispeedia native controls qualified
+
+Four original Wikispeedia tasks now have real positive/negative tool trajectories
+and fresh native replay through the shared environment adapter. Thirty-two
+mutation controls rejected forged observations, rewards, task identities and
+source hashes. Root independently reran all eight retained trajectories and
+checked 4,610 extracted SNAP graph/article files against the recorded archives.
+The initial tool-prefix mismatch attempt is preserved; the successful v3 records
+bind the full environment definition. No model/TOPLOC/training/remote epoch claim
+is made. Evidence and reproduction: `docs/WIKISPEEDIA_NATIVE_CONTROLS.md`.
