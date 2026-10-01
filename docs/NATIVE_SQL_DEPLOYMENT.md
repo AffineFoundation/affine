@@ -7,3 +7,14 @@ The isolated SQL dispatcher runs the approved public bash actor and the original
 The initial public-only curated policy explores the original database using two bash calls and chooses a final query derived from the original question. A standalone honest model search found both outcomes in two seeds, and a separate model process verified full float32 output probabilities, strict TOPLOC, and fresh original environment replay. Those controls are distinct from the subsequently launched epoch service.
 
 The `affine-native-sql-common.service` unit uses an isolated, immutable source tree and `state/native-sql-common-config.json`. It preserves the full published ten-minute window, freezes direct-R2 submissions, fully audits before training, proposes weights without chain transactions, and evaluates sixteen original held-out tasks separately from the training task. Every CUDA role waits for measured free VRAM; the owned pod stays running. Stop only this trial with `systemctl --user stop affine-native-sql-common.service`. Its private configuration and artifacts are excluded from Git.
+
+The first full common epoch, `nonpayable-native-sql-common-v1-1790846858-0`,
+completed one audited K1/L1 pair, one proposed point/normalized weight, one
+full-model optimizer update and checkpoint
+`fd8ad8cc7975eb313696fdb52185aff38a397bbc945841baa342f5dfc928bc24`.
+All six published checkpoint objects were independently streamed and hashed
+(272,585,280 bytes total). Sixteen fixed original held-out tasks, disjoint
+from mining, ran with the same autoregressive harness and 128-token budget
+before and after: mean reward 0 in both. The following epoch consumes the
+new checkpoint. These are controlled common-pipeline measurements, not a
+claim of generalization, unrestricted successful mining, or weight submission.

@@ -48,8 +48,11 @@ Original Spider SQL now has thirty-two pinned tasks, sixteen for mining and
 sixteen disjoint held-out tasks. Public actors and private original graders
 passed fresh remote controls. A controlled target-model candidate-policy
 positive/negative pair passed independent full probability/TOPLOC checks and
-native replay. Its common epoch service is running; completed common optimizer
-and held-out results remain pending. Calendar's curated positive/negative
+native replay. Its first common epoch completed a real full-model optimizer update,
+publication of six independently hashed checkpoint files, and sixteen fixed
+autoregressive held-out evaluations (0 before and 0 after). The next epoch
+uses the published successor. This confirms the controlled loop, without
+establishing held-out quality improvement. Calendar's curated positive/negative
 six-turn model artifacts also pass signed model-audit binding and separate
 original native replay. A new length-balanced Calendar pair additionally passes
 seven model turns, including complete-context terminal proofs, and separate
