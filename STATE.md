@@ -38,12 +38,16 @@ The first sixteen-family controlled empty window honored its full published
 subsequent 256-task evaluation completed 658.770 seconds after the original
 signed one-hour lease. That report is preserved as diagnostic evidence and is
 rejected for epoch admission; the signed epoch status is `aborted_evaluation`.
-The checkpoint and cumulative 41 training steps are unchanged. A new immutable
-recovery source preserves all sixteen environment contracts and task assets,
-adds a three-hour signed evaluation budget, and its controller is activated to
-open a fresh controlled empty window. The intended sequence is that window, genuine Numina
-index 13 training, then Pydantic index 0 training. Neither new family's model
-qualification counts as completed common training or empty recovery.
+A fresh immutable recovery source preserved all sixteen environment contracts
+and completed a new empty window using an original signed three-hour evaluation
+budget. Both 256-task evaluations passed with no failures, no submissions or
+optimizer updates, and an unchanged checkpoint. Independent HTTPS checks matched
+its 32 public evaluation records. The subsequent normal epoch has a genuine
+Numina index-13 batch with fresh full model/native audit, immutable private and
+public R2 copies, and an independently recomputed signed normalized score of 1.
+Its original before-training evaluation is running; completed training recovery
+is still unproven. Cumulative training remains 41 updates. Pydantic index-0
+training follows that recovery; standalone model qualification is insufficient.
 
 The separate mixed-runtime Tau2 common trial completed frozen proof auditing
 and an agent-only full optimizer update. Its original after-evaluation retained
