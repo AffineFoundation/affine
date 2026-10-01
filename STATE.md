@@ -299,3 +299,35 @@ An additional real 1.7B GPU original-Math inference/replay pilot accepted its ho
 trace and rejected five tampering controls, reward0, with exact same-GPU backend
 weights reload. Evidence `state/multi-environment/gpu-pilot/report.json`. That is
 larger-model proof evidence, not training or cross-hardware compatibility.
+
+## Independently checked wide/replay milestones — 2026-10-01
+
+The root full-ledger auditor now verifies nine completed nonpayable wide epochs
+and 27 actual full-model updates, including the first original MRCR common epoch
+`nonpayable-gpu-wide-v7-mrcr-1790865913-5`. Its checkpoint is
+`aaac517b5a1a39f3fdd78cf2c73adbad62f9f8b94f00793a95f7f8bcf6d3739d`.
+All six checkpoint objects (3,426,302,727 bytes) were independently streamed and
+hashed from R2. Actual affine.io HTTPS export includes the matching nine epochs
+and 200 evaluation records. MRCR heldout mean declined; original correlated
+conversation coverage and curated public-shell controls remain disclosed.
+
+The isolated nine-family balanced replay experiment also completed. Independent
+root checks authenticated both before/after model jobs and their 384 task rows,
+fixed identities, and all 24 public dashboard aggregates. Math improved, Trivia
+and Reasoning Gym declined, and nine other families were flat. The replay-aware
+continuous auditor preserves fresh-only checks and requires signed current-model
+replay provenance with exact consumed target and request bindings. Deployment of
+that source is a separate completed-boundary gate.
+
+The versioned equal-token TriviaAbstain candidate probe obtained K1L1 for original
+indices 0 and 1 after 4 and 9 attempts. All four retained traces passed separate
+fresh model/TOPLOC/original-native verification. Root checked actual source,
+snapshot and ZIP bytes. This clears a prerequisite for that new harness, not a
+continuous-training or factual-knowledge improvement claim. Original failed
+all-positive probe remains preserved. See docs/TRIVIA_ABSTAIN_BALANCED_PROBE.md.
+
+The fresh controlled native Tau2 window has positive/negative full-role proofs,
+private R2 cumulative submission and signed final boundary selection. Before
+heldout evaluation is in progress. It has no completed optimizer claim yet.
+Signing keys and R2 account credentials remain on the operator. All these new
+experiments remain nonpayable and make no chain weight submissions.
