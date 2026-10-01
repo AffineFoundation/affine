@@ -21,8 +21,12 @@ TOPLOC and original-native replay. Root authenticated 24 actual artifacts,
 37,911,808 probability-array bytes and the source inventory. Its 31 agent tokens
 are eligible; 97 auxiliary tokens are masked. This is curated target-model
 computation, not proof of autonomous sampling. A negative control under the same
-manifest also completed; independent root inspection of that newer paired report
-is a separate gate. No common storage epoch or training is claimed here.
+manifest also completed eleven model responses and reward 0. Root authenticated
+its 34 actual artifacts, all 72 agent tokens and 111 masked auxiliary tokens.
+The preference pair compares the first agent response at the same 6,944-token
+prompt: 31 chosen tokens versus 14 rejected tokens. All later negative agent
+responses were verified but are not included in that first-response pair. No
+common storage epoch or training is claimed here.
 
 `ops/stage_native_tau2_mixed_source.py` creates a new private source namespace.
 Its operator-only inputs include qualified descriptors and task inventories;
