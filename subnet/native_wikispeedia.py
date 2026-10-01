@@ -1,11 +1,50 @@
 """Original Wikispeedia tool execution and replay; no model provenance claim."""
 from collections import deque
 import hashlib
+import json
 import tarfile
 from pathlib import Path
 
 from .backend_jobs import canonical
 from .environments import create_session
+
+
+def public_candidate_harness(source, target, tools, links, max_turns=30):
+    """Curated model choices from public graph data, using the common tool dialect.
+
+    This supplies choices for model scoring; it does not assert that the model
+    selected them or that a rollout has passed proof verification.
+    """
+    from .harness import normalize
+    if type(max_turns) is not int or not 2 <= max_turns <= 30:
+        raise ValueError('bounded complete navigation budget')
+    clicks=[tool.get('function',{}) for tool in tools
+            if isinstance(tool,dict) and
+            str(tool.get('function',{}).get('name','')).endswith('click_link')]
+    if len(clicks)!=1:
+        raise ValueError('unambiguous original click tool schema required')
+    click=clicks[0]
+    parameters=click.get('parameters',{})
+    if ('article' not in parameters.get('properties',{}) or
+            parameters.get('properties',{}).get('article',{}).get('type')!='string'):
+        raise ValueError('original public article argument required')
+    route=public_path(source,target,links,max_turns-1)
+    if not route:
+        raise ValueError('nontrivial original navigation task required')
+    unavailable='__affine_invalid_article__'
+    if unavailable in links or any(unavailable in edges for edges in links.values()):
+        raise ValueError('negative public article must be unavailable')
+    def call(article):
+        return json.dumps({'tool_call':{'name':click['name'],
+                          'arguments':{'article':article}}},separators=(',',':'))
+    choices=[[call(article),call(unavailable)] for article in route]
+    overrides={str(i):{'candidates':candidates} for i,candidates in enumerate(choices[1:],1)}
+    overrides[str(len(route))]={'candidates':['Done.','Finished.']}
+    harness=normalize(dict(version='text-tools-v1',policy='candidates',
+                           max_output_tokens=256,temperature=4.,top_p=1.,
+                           candidates=choices[0],turn_overrides=overrides))
+    return dict(route=route,click_tool=click['name'],harness=harness,
+                max_turns=len(route)+1,public_starter_control_not_autonomous_search=True)
 
 
 def public_path(source, target, links, max_hops=30):

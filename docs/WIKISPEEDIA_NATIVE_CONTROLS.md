@@ -50,3 +50,27 @@ challenge must separately pin these recorded resource digests and approve its
 runtime/source bundle. Native replay is not proof of which model produced the
 actions. Model generation, probability/TOPLOC verification, heldout cohorts and
 common training remain subsequent gates.
+
+## Shared candidate harness prerequisite
+
+`ops.probe_wikispeedia_candidate_harness` converts each public graph route to
+the common `text-tools-v1` candidate dialect, selecting the actual original
+click tool schema. At each turn, the proposed choices are the next public link
+and an unavailable article; a final ordinary reply terminates unsuccessful
+navigation. This uses the existing per-turn harness configuration without
+changing the GPU runtime or original environment.
+
+Four original tasks passed both deterministic native control branches through
+that dialect in `state/native-wikispeedia-candidate-harness-v1`. Six helper tests
+also check directed graph bounds, ambiguous tool schemas, false negative
+articles, resource tampering, and forged native outcomes. These are curated
+public proposals: model selection, token/context budgets, TOPLOC and probability
+verification, remote resource binding and training still require a separate
+approved model experiment.
+
+```sh
+OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 PYTHONPATH=. \
+  .venv/bin/python -m ops.probe_wikispeedia_candidate_harness \
+  --qualified-state state/native-wikispeedia-controls-v3-pinned-definition \
+  --state state/my-wikispeedia-candidate-harness
+```
