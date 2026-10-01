@@ -1,0 +1,16 @@
+[Unit]
+Description=Affine synchronous epoch controller and private upload gateway
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/const/subnet120-rewrite
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -m subnet.affinity --cores 4 -- /home/const/subnet120-rewrite/.venv/bin/python -m subnet.service --config /home/const/subnet120-rewrite/state/live-config.json
+Restart=on-failure
+RestartSec=15
+UMask=0077
+Environment=MKL_CBWR=COMPATIBLE ATEN_CPU_CAPABILITY=default ONEDNN_MAX_CPU_ISA=SSE41 OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 TOKENIZERS_PARALLELISM=false
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

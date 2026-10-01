@@ -1,0 +1,20 @@
+[Unit]
+Description=Affine fixed held-out environment evaluation across completed checkpoints
+After=network-online.target
+[Service]
+WorkingDirectory=/home/const/subnet120-rewrite
+CPUAffinity=4 5 6 7
+Environment=MKL_CBWR=COMPATIBLE
+Environment=ATEN_CPU_CAPABILITY=default
+Environment=ONEDNN_MAX_CPU_ISA=SSE41
+Environment=OMP_NUM_THREADS=4
+Environment=MKL_NUM_THREADS=4
+Environment=OPENBLAS_NUM_THREADS=4
+Environment=TOKENIZERS_PARALLELISM=false
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -m subnet.affinity --cores 4 -- /home/const/subnet120-rewrite/.venv/bin/python -m subnet.eval_suite --config state/multi-environment/eval-suite.json
+UMask=0077
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=90
+[Install]
+WantedBy=default.target

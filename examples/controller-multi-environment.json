@@ -1,0 +1,90 @@
+{
+  "state": "state/configured-controller",
+  "public_url": "https://YOUR_GATEWAY",
+  "port": 8794,
+  "epoch_prefix": "nonpayable-service",
+  "payable_epochs": false,
+  "bucket": {
+    "bucket": "YOUR_PRIVATE_R2_BUCKET",
+    "endpoint": "https://YOUR_ACCOUNT.r2.cloudflarestorage.com",
+    "credentials_file": "/private/operator-r2.env"
+  },
+  "checkpoint": "state/multi-environment/checkpoint-5",
+  "duration": 1800,
+  "training_steps": 1,
+  "training_min_free_bytes": 2147483648,
+  "runtime_profile": {
+    "MKL_CBWR": "COMPATIBLE",
+    "ATEN_CPU_CAPABILITY": "default",
+    "ONEDNN_MAX_CPU_ISA": "SSE41",
+    "OMP_NUM_THREADS": "4",
+    "MKL_NUM_THREADS": "4",
+    "OPENBLAS_NUM_THREADS": "4",
+    "TOKENIZERS_PARALLELISM": "false"
+  },
+  "audit_policy": {
+    "mode": "full",
+    "version": 1
+  },
+  "environments": [
+    {
+      "source": "mastermind",
+      "config": {
+        "code_length": 1,
+        "num_symbols": 2,
+        "max_turns": 2,
+        "num_train_examples": 4,
+        "num_eval_examples": 0,
+        "seed": 42
+      },
+      "indices": [
+        0,
+        1
+      ]
+    },
+    {
+      "source": "affine_verbatim",
+      "config": {
+        "taskset": {
+          "num_samples": 4,
+          "target_length": 8,
+          "content_type": "codes"
+        }
+      },
+      "num_samples": 4,
+      "max_turns": 1,
+      "indices": [
+        0,
+        1
+      ],
+      "harness": {
+        "version": "plain-transcript-v1",
+        "policy": "visible-copy-candidates",
+        "max_output_tokens": 96,
+        "temperature": 4.0,
+        "top_p": 1.0
+      }
+    }
+  ],
+  "evaluation": {
+    "seed": 20260930,
+    "repeats": 1,
+    "suites": [
+      {
+        "env_id": "mastermind",
+        "indices": [
+          2,
+          3
+        ]
+      },
+      {
+        "env_id": "affine_verbatim",
+        "indices": [
+          2,
+          3
+        ]
+      }
+    ]
+  },
+  "direct_r2": true
+}

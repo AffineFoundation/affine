@@ -1,0 +1,10 @@
+[Unit]
+Description=Affine new model registration equal weights
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/affine-burn/venv/bin/python %h/.local/share/affine-burn/equal_registration_weights.py --execute
+TimeoutStartSec=12min
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

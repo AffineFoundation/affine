@@ -1,42 +1,18 @@
-# Workspace-wide. Package-specific rules live in affine/.gitignore and research/.gitignore.
+# Credentials and private keys
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+wallets/
+secrets/
+
+# Local Python/runtime artifacts
 .venv/
 __pycache__/
-*.pyc
-.DS_Store
-**/.eval_env
-# ralphs/ loop runner code is tracked; per-loop prompts/state/logs and the
-# secret resolver are not.
-ralphs/*
-!ralphs/ralph.sh
-!ralphs/ralphctl.sh
-# mining/ is not published. The miner is ours to run, not to hand to the miners
-# we compete with, and the loop's own logs echo the commands it runs — that is
-# how an HF token reached this repo. Nothing under mining/ is tracked: not the
-# notes, not the scripts, not the artifacts.
-mining/
-*.egg-info/
-# exploit-audit runtime artifacts — source (auditd.py, prompt.md) is tracked;
-# workspaces/verdicts are published to Hippius under audits/ + data/audits.json
-ops/exploit-audit/audits/
-ops/exploit-audit/audits.jsonl
-ops/exploit-audit/state/
-ops/teacher-b200/logs/
-ops/teacher-swarm/.swarm_env
-ops/teacher-swarm/state/
-# king-seat controller memory (holds the per-box bearer) + its known_hosts
-ops/king-datagen/state/
-
-# private king-chat pod state (ops/king-chat/kingchat.sh)
-ops/king-chat/state.json
-ops/king-chat/state-cursor.json
-ops/king-chat/known_hosts
-
-# affine-evalwatch daemon state (alert dedupe, restart baseline)
-ops/evalwatch/state/
-
-# improvement-loop watcher state (box-local)
-ops/improvement-loop/state/
-
-# autoresearch state (box-local)
-affine/state/autoresearch/
+*.py[cod]
+.pytest_cache/
+logs/
+state/
+prototype/artifacts/
+prototype/model-source.json

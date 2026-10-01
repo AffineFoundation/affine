@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Affine subnet 120. Environment evaluation history, batches per epoch and miner contribution activity.">
+<title>Affine — Network</title>
+<link rel="icon" href="/network-favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/network.css"><script src="/network.js" defer></script>
+</head>
+<body>
+<header><a class="wordmark" href="/" aria-label="Affine home"><svg viewBox="0 0 22 23" aria-hidden="true"><path d="M2 20 11 3l9 17"/></svg><span>FFINE</span></a><span id="connection" class="micro">CONNECTING</span></header>
+<main>
+<section class="hero" aria-labelledby="chart-title">
+<div class="section-label"><h1 id="chart-title">Environment / evaluation reward</h1><div class="chart-controls"><label class="environment-choice">Environment <select id="environment" aria-label="Select environment"><option value="">All environments</option></select></label><label class="metric-choice"><select id="metric" aria-label="Select chart metric"><option value="batches">Batches / epoch</option><option value="reward" selected>Evaluation reward</option></select></label><div class="scope"><button data-scope="live" aria-pressed="false">Network</button><button data-scope="test" aria-pressed="true">Pilot tests</button></div></div></div>
+<div class="chart-wrap"><svg id="chart" viewBox="0 0 1200 540" role="img" aria-label="Batches submitted per completed epoch"></svg><p id="chart-empty" class="empty" hidden>No completed epochs yet.</p><output id="chart-tip" class="chart-tip" hidden></output></div>
+<div class="chart-caption"><span id="period">Completed epochs</span><span id="metric-note">Frozen submitted batches · includes rejected batches</span></div>
+</section>
+<section class="batch-section" aria-labelledby="grid-title">
+<div class="section-label"><h2 id="grid-title">Batches</h2><label class="epoch-choice">Epoch <select id="epoch" aria-label="Select completed epoch"></select></label></div>
+<div id="grid" class="grid" aria-label="Batch counts for UIDs 0 through 255"></div>
+<div class="grid-caption"><span id="grid-note">UID 0–255 · previous completed epoch</span><span class="legend">0 <i></i> <span id="scale">1+</span></span></div>
+<output id="selection" aria-live="polite">Select a square to inspect its UID.</output>
+</section>
+</main>
+<footer><span>Affine · Subnet 120</span><span id="update">Waiting for network records</span><a href="https://github.com/AffineFoundation/affine" target="_blank" rel="noopener">Source ↗</a></footer>
+</body></html>

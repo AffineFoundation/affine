@@ -1,0 +1,19 @@
+[Unit]
+Description=Affine nonpayable remote multi-environment epochs and held-out evaluation
+After=network-online.target
+[Service]
+WorkingDirectory=/home/const/subnet120-rewrite
+Environment=MKL_CBWR=COMPATIBLE
+Environment=ATEN_CPU_CAPABILITY=default
+Environment=ONEDNN_MAX_CPU_ISA=SSE41
+Environment=OMP_NUM_THREADS=4
+Environment=MKL_NUM_THREADS=4
+Environment=OPENBLAS_NUM_THREADS=4
+Environment=TOKENIZERS_PARALLELISM=false
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -m subnet.affinity --cores 4 -- /home/const/subnet120-rewrite/.venv/bin/python -m subnet.multi_environment --config state/multi-environment/config.json --epochs 0 --interval 30
+UMask=0077
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=10
+[Install]
+WantedBy=default.target

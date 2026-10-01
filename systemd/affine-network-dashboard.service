@@ -1,0 +1,15 @@
+[Unit]
+Description=Affine network dashboard SQLite projection
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/const/subnet120-rewrite
+ExecStart=/usr/bin/python3 -m dashboard.server --port 8795 --export /home/const/subnet120/affine/website/network-data.json
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

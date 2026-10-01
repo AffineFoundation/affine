@@ -1,0 +1,13 @@
+[Unit]
+Description=Affine SN120 hourly owner-only weight heartbeat
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/affine-burn/venv/bin/python %h/.local/share/affine-burn/hourly_burn.py --execute
+WorkingDirectory=%h/.local/share/affine-burn
+TimeoutStartSec=12min
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

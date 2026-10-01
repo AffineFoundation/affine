@@ -1,0 +1,8 @@
+[Unit]
+Description=Check Affine transition registrations every minute
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=60s
+Unit=affine-transition-weights.service
+[Install]
+WantedBy=timers.target

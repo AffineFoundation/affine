@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry finalized Affine hourly payout window
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+AccuracySec=10s
+Unit=new_subnet_weights.service
+
+[Install]
+WantedBy=timers.target

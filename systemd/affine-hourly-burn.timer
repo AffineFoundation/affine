@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Affine owner weight heartbeat every hour
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+AccuracySec=1s
+Unit=affine-hourly-burn.service
+
+[Install]
+WantedBy=timers.target

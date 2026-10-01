@@ -1,8 +1,0 @@
-.venv-smoke/
-logs/
-state/
-state.*/
-website-dist/
-*.egg-info/
-dist/
-build/

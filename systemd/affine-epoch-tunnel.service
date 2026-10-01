@@ -1,0 +1,12 @@
+[Unit]
+Description=Affine epoch gateway temporary HTTPS ingress
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://127.0.0.1:8788 --no-autoupdate
+Restart=on-failure
+RestartSec=15
+UMask=0077
+
+[Install]
+WantedBy=default.target

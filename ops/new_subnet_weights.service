@@ -1,0 +1,11 @@
+[Unit]
+Description=Affine verified epoch hourly weights
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/const/subnet120-rewrite
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -m ops.new_subnet_weights --execute --reports state/live/finalized-reports.json --registrations state/live/epoch-registrations.json
+TimeoutStartSec=750
+UMask=0077
+NoNewPrivileges=true

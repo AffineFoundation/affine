@@ -1,0 +1,26 @@
+# Portable actual Verbatim / reasoning-gym / ifeval dependencies.
+# Install into the dedicated miner/verification venv, not production.
+# verifiers.v1 must be available; current portable package metadata is 0.3.1.
+verifiers==0.3.1
+reasoning-gym==0.1.25
+arckit==0.1.0
+bfi==1.0.4
+cellpylib==2.4.0
+magiccube==0.3.0
+pycosat==0.6.6
+pyfiglet==1.0.2
+pytz==2026.4
+zss==1.2.0
+faker==40.40.0
+nltk==3.10.3
+langdetect==1.0.9
+immutabledict==4.3.1
+# Additional original-resource probes, installed with --no-deps into experiment venv.
+# Signed footprint integration/remote deployment is a separate maintenance step.
+harbor==0.21.0
+swesmith @ git+https://github.com/SWE-bench/SWE-smith.git@9b74ac08118a85c39c356802f7961893af73e07f
+swebench==4.1.0
+automation-bench @ git+https://github.com/mikasenghaas/AutomationBench.git@6f0e6834930cf6906ed932e9c5b716206def40d7
+tau2 @ git+https://github.com/mikasenghaas/tau2-synth.git@798589e02ca91ea61e85557eb672be0a915592eb
+reasoning-core==0.4.0
+chromadb==1.5.5
