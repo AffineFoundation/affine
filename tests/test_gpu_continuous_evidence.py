@@ -1,6 +1,8 @@
 import base64
 import hashlib
+import io
 import json
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,10 +10,35 @@ from pathlib import Path
 from nacl.exceptions import BadSignatureError
 from subnet.storage import Identity
 from subnet.backend_jobs import canonical, file_map
-from ops.check_gpu_continuous_evidence import checked_job
+from ops.check_gpu_continuous_evidence import checked_job, check_source_bundle
 
 
 class ContinuousJobEvidenceTests(unittest.TestCase):
+    def source_fixture(self, names=('subnet/model.py',)):
+        stream=io.BytesIO();body=b'approved source'
+        with tarfile.open(fileobj=stream,mode='w:gz') as archive:
+            for name in names:
+                entry=tarfile.TarInfo(name);entry.size=len(body);archive.addfile(entry,io.BytesIO(body))
+        raw=stream.getvalue();descriptor=dict(size=len(raw),sha256=hashlib.sha256(raw).hexdigest())
+        return raw,descriptor,{'subnet/model.py':hashlib.sha256(body).hexdigest()}
+
+    def test_published_worker_source_bytes(self):
+        raw,descriptor,expected=self.source_fixture()
+        self.assertEqual(check_source_bundle(raw,descriptor,expected)['source_files'],1)
+
+    def test_wrong_worker_source_or_missing_file(self):
+        raw,descriptor,expected=self.source_fixture()
+        with self.assertRaisesRegex(ValueError,'inventory'):
+            check_source_bundle(raw,descriptor,{'subnet/model.py':'d'*64})
+        with self.assertRaisesRegex(ValueError,'inventory'):
+            check_source_bundle(raw,descriptor,dict(expected,**{'subnet/missing.py':'d'*64}))
+        with self.assertRaisesRegex(ValueError,'archive bytes'):
+            check_source_bundle(raw+b'corrupt',descriptor,expected)
+
+    def test_duplicate_worker_source_entry(self):
+        raw,descriptor,expected=self.source_fixture(('subnet/model.py','./subnet/model.py'))
+        with self.assertRaisesRegex(ValueError,'source entry'):check_source_bundle(raw,descriptor,expected)
+
     def fixture(self, root):
         identity = Identity(bytes(range(32)))
         def sign(payload):

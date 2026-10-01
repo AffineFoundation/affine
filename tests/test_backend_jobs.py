@@ -5,6 +5,25 @@ from unittest.mock import patch
 from nacl.signing import SigningKey
 from subnet.backend_jobs import validate,execute,canonical,file_map,REVISION,NUMERICAL_POLICY,BACKEND_PROFILE,SOURCE_FILES,r2_url
 
+class TrainingPairAttribution(unittest.TestCase):
+    def test_exact_consumed_pair_is_fingerprinted(self):
+        import hashlib
+        from subnet.backend_jobs import pair_attribution
+        positive={'env_id':'science','index':7,'turns':[{'output':[1,2]}]}
+        negative={'env_id':'science','index':7,'turns':[{'output':[3]}]}
+        row=pair_attribution({'env_id':'science'},positive,negative,2)
+        self.assertEqual(row['optimizer_step'],3)
+        self.assertEqual(row['positive_rollout_sha256'],hashlib.sha256(canonical(positive)).hexdigest())
+        changed=copy.deepcopy(positive);changed['turns'][0]['output'][0]=9
+        self.assertNotEqual(row['positive_rollout_sha256'],pair_attribution({'env_id':'science'},changed,negative,2)['positive_rollout_sha256'])
+
+    def test_different_task_or_environment_cannot_be_attributed(self):
+        from subnet.backend_jobs import pair_attribution
+        with self.assertRaisesRegex(ValueError,'binding'):
+            pair_attribution({'env_id':'science'},{'env_id':'science','index':7},{'env_id':'science','index':8},0)
+        with self.assertRaisesRegex(ValueError,'binding'):
+            pair_attribution({'env_id':'science'},{'env_id':'logic','index':7},{'env_id':'logic','index':7},0)
+
 class BackendJobAuthorization(unittest.TestCase):
     def setUp(self):
         self.key=SigningKey.generate();self.authority=self.key.verify_key.encode().hex()

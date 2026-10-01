@@ -5,7 +5,9 @@ operator-collected evidence, not a cryptographic proof of GPU execution.
 """
 import argparse
 import hashlib
+import io
 import json
+import tarfile
 import time
 from pathlib import Path
 
@@ -15,6 +17,30 @@ from subnet.scoring import score
 from subnet.storage import Bucket, Identity
 from ops.check_service_evidence import direct_read_routes
 from ops.check_epoch_evidence import require
+
+# This published worker was reviewed to consume pairs cyclically in audit order.
+# Later workers must report explicit per-update attribution; no silent downgrade.
+LEGACY_CYCLIC_WORKER='01d458b9f39312ddebc750482963c038f85aba335f75b51be2739adaee016d8a'
+
+
+def check_source_bundle(body, descriptor, expected):
+    require(len(body) == descriptor['size'] and len(body) <= 32*1024**2 and
+            hashlib.sha256(body).hexdigest() == descriptor['sha256'], 'GPU worker archive bytes')
+    observed={}; total=0
+    with tarfile.open(fileobj=io.BytesIO(body),mode='r:gz') as archive:
+        for member in archive:
+            total+=member.size
+            require(total <= 256*1024**2, 'GPU worker archive expanded budget')
+            name=member.name[2:] if member.name.startswith('./') else member.name
+            if name not in expected:continue
+            require(member.isfile() and not member.issym() and member.size <= 1024**2 and
+                    name not in observed, 'GPU worker archive source entry')
+            with archive.extractfile(member) as stream:
+                value=stream.read(1024**2+1)
+            require(len(value) == member.size, 'GPU worker source size')
+            observed[name]=hashlib.sha256(value).hexdigest()
+    require(observed == expected, 'GPU worker reproducible source inventory')
+    return dict(sha256=descriptor['sha256'], bytes=len(body), source_files=len(observed))
 
 
 def checked_job(state, identifier, authority):
@@ -38,7 +64,7 @@ def inspect(state, bucket, evaluations):
         return signed(json.loads(bucket.get(key)), authority)
     manifests = sorted((json.loads(p.read_text()) for p in state.glob('*-manifest.json')
                         if not p.name.endswith('-audit-manifest.json')), key=lambda m: m['start'])
-    completed, pending = [], []
+    completed, pending, source_checks = [], [], {}
     for manifest in manifests:
         epoch = manifest['epoch']; prefix = f'public/{epoch}/'
         metrics_path = state/f'{epoch}-training-metrics.json'
@@ -78,6 +104,10 @@ def inspect(state, bucket, evaluations):
         metrics = json.loads(metrics_path.read_text())
         require(public(prefix+'training.json') == metrics, 'GPU training publication')
         train_job, training_manifest, train = checked_job(state, metrics['remote_job_id'], authority)
+        bundle=manifest['source_bundle']
+        source_key=(bundle['sha256'],hashlib.sha256(canonical(train_job['source_files'])).hexdigest())
+        if source_key not in source_checks:
+            source_checks[source_key]=check_source_bundle(bucket.get(bundle['key']),bundle,train_job['source_files'])
         require(training_manifest == manifest and metrics['steps'] > 0 and
                 metrics['full_model_finetune'] is True and metrics['weights_changed'] is True and
                 metrics['checkpoint'] != manifest['checkpoint']['id'], 'GPU real full-model update')
@@ -91,6 +121,27 @@ def inspect(state, bucket, evaluations):
         for audit in train['audits']:
             require(all(expected_audits[audit['submission_sha256']].get(k) == v
                         for k,v in audit.items()), 'GPU training independently verified pairs')
+        training_pairs=[]
+        for audit in train['audits']:
+            for batch in audit['accepted']:
+                positives=[r for r in batch['rollouts'] if r['classification']=='positive']
+                negatives=[r for r in batch['rollouts'] if r['classification']=='negative']
+                training_pairs.extend((batch,p,n) for p,n in zip(positives,negatives))
+        require(training_pairs and len(metrics['updates'])==metrics['steps'], 'GPU optimizer update count')
+        optimized=[]
+        for step,update in enumerate(metrics['updates']):
+            batch,pos,neg=training_pairs[step%len(training_pairs)]
+            expected=dict(attribution_revision='verified-pair-v1',optimizer_step=step+1,
+                env_id=batch['env_id'],index=batch['index'],
+                positive_rollout_sha256=hashlib.sha256(canonical(pos)).hexdigest(),
+                negative_rollout_sha256=hashlib.sha256(canonical(neg)).hexdigest())
+            if 'attribution_revision' in update:
+                require(all(update.get(k)==v for k,v in expected.items()), 'GPU explicit training attribution')
+            else:
+                require(train_job['source_files']['subnet/backend_jobs.py']==LEGACY_CYCLIC_WORKER,
+                        'GPU unknown worker missing training attribution')
+            optimized.append(dict(expected,attribution_evidence='explicit-report' if
+                'attribution_revision' in update else 'derived-from-pinned-cyclic-worker'))
         descriptor = public(metrics['new_checkpoint']['descriptor_key'])
         require(descriptor['id'] == metrics['checkpoint'] == file_map(descriptor['files']) and
                 descriptor['files'] == metrics['new_checkpoint']['files'], 'GPU signed output checkpoint')
@@ -128,6 +179,8 @@ def inspect(state, bucket, evaluations):
                     following['checkpoint']['id'] == metrics['checkpoint'], 'GPU next epoch handover')
         completed.append(dict(epoch=epoch, frozen=frozen, steps=metrics['steps'], checkpoint=metrics['checkpoint'],
             points=scores['points'], weights=scores['weights'], heldout_pairs=pairs,
+            worker_source=source_checks[source_key],
+            optimized_pairs=optimized,
             next_epoch=following['epoch'] if following else None))
     return dict(timestamp=time.time(), success=True, epochs=completed, pending_epochs=pending,
         authority=authority, chain_write_operations=0, fresh_model_execution_in_this_check=False,

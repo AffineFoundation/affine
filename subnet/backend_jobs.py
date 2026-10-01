@@ -26,6 +26,7 @@ SOURCE_FILES = tuple('subnet/'+n+'.py' for n in
 ROLES = {'mine','verify','train','evaluate','upload'}
 HEAD_POLICY='frozen-feature-head-adamw-v1'
 FULL_POLICY='bf16-full-adamw-checkpointed-v1'
+TRAINING_ATTRIBUTION='verified-pair-v1'
 
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
@@ -35,6 +36,14 @@ def digest(path):
     with Path(path).open('rb') as f:
         for chunk in iter(lambda:f.read(1024*1024),b''):h.update(chunk)
     return h.hexdigest()
+
+def pair_attribution(definition,positive,negative,step):
+    if positive['env_id']!=definition['env_id'] or negative['env_id']!=definition['env_id'] or positive['index']!=negative['index']:
+        raise ValueError('training pair environment/index binding')
+    return dict(attribution_revision=TRAINING_ATTRIBUTION,optimizer_step=step+1,
+        env_id=definition['env_id'],index=positive['index'],
+        positive_rollout_sha256=hashlib.sha256(canonical(positive)).hexdigest(),
+        negative_rollout_sha256=hashlib.sha256(canonical(negative)).hexdigest())
 
 def signed(value, authority):
     if value.get('signer')!=authority:raise ValueError('job authority')
@@ -299,7 +308,8 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                     destination=out/('checkpoint-step-'+str(step+1))
                     policy=job.get('training_policy',HEAD_POLICY)
                     update=full_parameter_train(runtime,[(pos,neg)],destination,steps=1) if policy==FULL_POLICY else runtime.train([(pos,neg)],destination,steps=1)
-                    update['training_policy']=policy;metrics.append(update)
+                    update['training_policy']=policy
+                    update.update(pair_attribution(definition,pos,neg,step));metrics.append(update)
                 from .model import model_files
                 files=model_files(destination)
                 if files.get('model.safetensors')==manifest['checkpoint']['files'].get('model.safetensors'):raise ValueError('training did not change checkpoint weights')
