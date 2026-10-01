@@ -31,12 +31,16 @@ grader, with reward 1. Auxiliary user tokens are excluded from training targets.
 Its negative counterpart, qualifying batch, optimizer update, and production
 epoch integration are still pending.
 
-The controlled original Agent `3d_print_shop_t0` fixture now has a verified
-positive/negative model-proof pair and four rejected fresh-process tampering
-controls. Its distinct public actor/private grader images preserve original
-tools, mutable state and grading. This remains a controlled fixture milestone:
-the full upstream orchestrator and shared epoch/training integration are pending.
-See [the native Agent evidence scope](docs/NATIVE_AGENT_ISOLATION.md).
+The controlled original Agent fixtures now run through the shared GPU epoch
+pipeline. Its first full epoch passed independent artifact, audit, score,
+optimizer attribution, checkpoint-publication and held-out evidence checks.
+One full-model update consumed the verified positive/negative pair; all six new
+checkpoint objects were independently hashed (272,585,280 bytes). Two fixed
+held-out tasks scored 0 before and after training, so no improvement is claimed.
+The same miner has uploaded a new pair using the trained checkpoint. The
+public actor/private grader images preserve original tools, mutable state and
+grading; the full upstream Verifiers orchestrator remains unproven. See
+[the shared native Agent scope](docs/NATIVE_AGENT_COMMON.md).
 
 See [environment coverage](docs/environment-coverage.json) for the source-level
 snapshot and [wide tasksets](docs/WIDE_TASKSETS.md) for measurement limitations.
