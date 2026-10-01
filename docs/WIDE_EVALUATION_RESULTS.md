@@ -1,10 +1,11 @@
-# Four completed wider evaluations
+# Five completed wider evaluations
 
-Four GPU epochs completed frozen miner uploads, full original-environment audits,
+Five GPU epochs completed frozen miner uploads, full original-environment audits,
 three full-model optimizer updates each, immutable checkpoint publication and
 paired evaluation. The later extensions added i3math and Trivia while preserving
 the prior environment definitions, fixed task IDs, seeds and 256-token budget.
 Each previous post-update measurement matches its next pre-update measurement.
+The following table preserves the first four completed measurements.
 
 | Environment | Baseline | After 1 | After 2 | After 3 | After 4 | Held-out tasks |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -28,15 +29,32 @@ four declining and six unchanged environment metrics. The full twelve updates
 do not demonstrate improvement across all environments. Small fixed tasksets
 and differing fractional reward scales also limit broad conclusions.
 
-The PopQA extension is running under a separate pinned source; its pending
-epoch is not counted here. The older two-task series remains a separate
+The fifth epoch added PopQA under a separate pinned source and completed three
+more full-model updates. Its evaluation used twelve environments with sixteen
+fixed held-out tasks each. Four metrics improved and eight were unchanged:
+
+| Environment | Before epoch 5 | After epoch 5 |
+| --- | ---: | ---: |
+| Math | 0.312500 | 0.375000 |
+| Reasoning Gym | 0.001776 | 0.001878 |
+| When2Call | 0.250000 | 0.312500 |
+| PopQA | 0.187500 | 0.562500 |
+
+Math remains below its first baseline. The other eight metrics match their
+epoch-four values. Fifteen total updates and these small held-out sets do not
+establish sustained improvement across all environments. The next fixed-reference
+optimizer epoch is running and is not included as completed evidence.
+
+The older two-task series remains a separate
 measurement group, and the failed initial wider epoch remains aborted and untrained.
 
 Private evidence in `state/gpu-wide/root-continuous-independent-evidence.json`
 binds worker source bytes, frozen submissions, full audits, optimizer attribution,
-proposed weights, checkpoint descriptors, and paired measurements. All four
+proposed weights, checkpoint descriptors, and paired measurements. All five
 successor checkpoints were independently streamed and hashed: six R2 files and
-3,426,302,727 bytes each, without another local copy of the weights.
+3,426,302,727 bytes each, without another local copy of the weights. Independent
+HTTPS checks confirmed the corresponding epoch/checkpoint/UID-grid records and
+all 102 evaluation records on affine.io.
 
 ```sh
 .venv/bin/python -m ops.check_gpu_continuous_evidence --state state/gpu-wide
