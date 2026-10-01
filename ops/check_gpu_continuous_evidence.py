@@ -31,8 +31,10 @@ def authenticated_training_pairs(manifest, job, train, metrics, fresh, authority
         return fresh
     from subnet.replay_training import admitted,merge_pairs,REVISION
     from subnet.verified_replay_pool import digest
-    _,selection=admitted(manifest,envelope,authority)
-    definitions={row['env_id']:row for row in manifest['environments']}
+    current,selection=admitted(manifest,envelope,authority)
+    # Replay authority covers the full approved training registry. The live
+    # epoch may rotate this environment out of its mining subset entirely.
+    definitions={row['env_id']:row for row in current['environments']}
     historical=[]
     for entry in selection['selected']:
         target=digest(dict(environment_id=entry['environment_id'],
@@ -63,6 +65,28 @@ def training_pair_index(batch, positive, negative):
         ('index' not in batch or (type(batch['index']) is int and batch['index']==index)),
         'GPU authenticated training pair environment/index binding')
     return index
+
+
+def training_harness_digest(manifest,positive,negative):
+    """Resolve indexed attribution from signed approval, never uploaded fields."""
+    from subnet.sample_harness import VERSION,project,resolve
+    env=positive.get('env_id');index=positive.get('index')
+    require(env==negative.get('env_id') and type(index) is int and
+            index==negative.get('index') and type(negative.get('index')) is int,
+            'GPU indexed pair environment/index binding')
+    definition=next((row for row in manifest['environments'] if row['env_id']==env),None)
+    require(definition is not None,'GPU approved training environment')
+    harness=definition['harness']
+    if not isinstance(harness,dict) or harness.get('version')!=VERSION:return None
+    registry=manifest.get('sample_harness_registry')
+    require(isinstance(registry,dict) and env in registry,
+            'GPU signed full indexed training registry')
+    approved=registry[env]
+    require(project(approved['harness'],definition['indices'],approved['indices'])==harness,
+            'GPU signed projected training harness')
+    require(index not in manifest.get('heldout_indices',{}).get(env,[]),
+            'GPU indexed training heldout exclusion')
+    return hashlib.sha256(canonical(resolve(approved['harness'],index,approved['indices']))).hexdigest()
 
 
 LONG_CONTEXT_REVISION='cuda-bf16-sdpa-flash-sm86-selective-head-common-v1'
@@ -360,6 +384,9 @@ def inspect(state, bucket, evaluations):
                 env_id=batch['env_id'],index=training_pair_index(batch,pos,neg),
                 positive_rollout_sha256=hashlib.sha256(canonical(pos)).hexdigest(),
                 negative_rollout_sha256=hashlib.sha256(canonical(neg)).hexdigest())
+            resolved=training_harness_digest(manifest,pos,neg)
+            if resolved is not None:
+                expected['resolved_harness_sha256']=resolved
             if 'attribution_revision' in update:
                 require(all(update.get(k)==v for k,v in expected.items()), 'GPU explicit training attribution')
             else:

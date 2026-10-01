@@ -24,6 +24,12 @@ class AttributionTests(unittest.TestCase):
         return authenticated_training_pairs(self.manifest,job or {'replay':self.envelope},
             {'replay_training':report or self.report},metrics or self.metrics,[],self.fixture.authority)
     def test_authenticated_historical_pair(self):self.assertEqual(len(self.check()),1)
+    def test_replay_uses_full_signed_approval_when_live_family_is_inactive(self):
+        self.manifest=copy.deepcopy(self.manifest)
+        self.manifest['environments'][0]['indices']=[]
+        pair=self.check()[0]
+        self.assertEqual(pair[0]['indices'],[0,1])
+        self.assertEqual(pair[1]['index'],0)
     def test_no_unsigned_replay(self):
         with self.assertRaises(Exception):self.check(job={'steps':1})
     def test_false_fresh_verification_rejected(self):
