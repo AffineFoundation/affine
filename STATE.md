@@ -25,16 +25,18 @@ metrics improved, two decreased, and four stayed unchanged. The next epoch is
 mining from the new checkpoint. No broader performance gain is claimed; see
 [the paired wider results](docs/WIDE_EVALUATION_RESULTS.md).
 
-A controlled Tau2 tool-use trajectory has passed independent model verification
-for all six agent/user responses and replay through the original environment
-grader, with reward 1. Auxiliary user tokens are excluded from training targets.
-Its negative counterpart, qualifying batch, optimizer update, and production
-epoch integration are still pending.
+The controlled Tau2 tool-use positive/negative pair now passes independent
+model verification and replay through the original environment grader. The
+positive trajectory has six agent/user responses and reward 1; the negative has
+eleven responses and reward 0. Both use the same task and checkpoint, and
+auxiliary user tokens are excluded from training targets. Its agent-only
+optimizer is running; a trained successor and production epoch integration
+remain unproven.
 
 The controlled original Agent fixtures now run through the shared GPU epoch
-pipeline. Its first full epoch passed independent artifact, audit, score,
+pipeline. Two full epochs passed independent artifact, audit, score,
 optimizer attribution, checkpoint-publication and held-out evidence checks.
-One full-model update consumed the verified positive/negative pair; all six new
+One full-model update per epoch consumed its verified positive/negative pair; all six new
 checkpoint objects were independently hashed (272,585,280 bytes). Two fixed
 held-out tasks scored 0 before and after training, so no improvement is claimed.
 The same miner has uploaded a new pair using the trained checkpoint. The
