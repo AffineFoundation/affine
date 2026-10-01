@@ -461,3 +461,15 @@ signatures, the original snapshot, approved checkpoint, all 49 source pins and
 48 unchanged v7k modules. The original bootstrap discrepancy remains recorded;
 a final self-contained archive is still being prepared. GPU launch remains
 withheld while the actual wide evaluation uses the retained GPU.
+
+## 2026-10-01: Wikispeedia prospective model contract
+
+A separate model search probe now binds the original twenty-task snapshot,
+four mining indices, per-task public graph candidates, signed windowed harness,
+checkpoint and numerical/source policies. Five contract controls pass, including
+refusal of heldouts, payable scope, altered context budgets, preloaded providers
+and an unapproved cache. Root ran a fresh original native preflight across all
+four mining tasks and 4,610 original resource files, then confirmed rejection of
+a substituted candidate. Remote resources-only staging also completed; model
+plan/resource guard preparation is pending. No GPU model, TOPLOC, training or
+new coverage claim is made. See `docs/WIKISPEEDIA_MODEL_QUALIFICATION.md`.
