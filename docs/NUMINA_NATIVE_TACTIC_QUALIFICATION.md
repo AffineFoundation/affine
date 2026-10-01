@@ -24,3 +24,12 @@ The first immutable run is under
 `f7ad7f89b97bd21a7ce10e5393de9feee9a49f6c778a637ae8032d153cf6de21`.
 Its single worker runs the original Docker runtime and compiler bounds, records
 errors separately, and closes owned task containers after each native attempt.
+
+The native run completed with exit 0: index 13 received reward 1, with the
+protected signature intact and Lean compiler exit 0. All other mining indices
+received reward 0; three were explicitly rejected by the original signature
+guard. A fresh negative control on index 13 only inspected the working directory
+and left the original starter unchanged; the original grader gave reward 0.
+Root checked the actual source/snapshot/report bytes and signed a native-only
+completion inventory. These controls establish a reachable native K1L1 target;
+model/proof generation and full pipeline integration remain unverified.
