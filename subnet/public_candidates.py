@@ -8,7 +8,7 @@ import ast
 from decimal import Decimal
 import re
 
-VERSION = 'public-prompt-candidates-v1'
+VERSION = 'public-prompt-candidates-v2'
 
 
 def _boxed(number):
@@ -103,24 +103,39 @@ def _campsite(prompt, node_limit=200000):
 
 def _unscramble(prompt):
     blocks=re.findall(r'^\*\d+\*:\s*(.+)$',prompt,re.MULTILINE)
-    if len(blocks)!=6 or 'Nasrudin' not in ' '.join(blocks):return []
-    if 'coat' in prompt and 'pants' in prompt:
-        patterns=['tries on a coat','exchanges the coat','walks out','stops him','claims he never','realizes']
-    elif 'donkeys' in prompt and 'inspector' in prompt:
-        patterns=['smuggles straw','clothes and harness','bundles and finds','allowed to pass','later asks','reveals']
-    else:return []
-    ordered=[]
-    for pattern in patterns:
-        matches=[b for b in blocks if pattern in b]
-        if len(matches)!=1:return []
-        ordered.append(matches[0])
+    if len(blocks)!=6 or len(set(blocks))!=6:return []
     render=lambda xs:'<unscrambled_text>\n'+'\n'.join(f'*{i+1}*: {t}' for i,t in enumerate(xs))+'\n</unscrambled_text>'
+    if all(re.fullmatch(r'Age \d{1,3}',b) for b in blocks):
+        ordered=sorted(blocks,key=lambda b:int(b.split()[1]))
+    elif all(re.search(r'\((?:19|20)\d{2}s?\)',b) for b in blocks):
+        ordered=sorted(blocks,key=lambda b:int(re.search(r'\((\d{4})s?\)',b)[1]))
+    else:
+        # Each rule describes a public chronology or procedural dependency.
+        # Values are drawn exclusively from the six visible fragments.
+        rules=[
+            ['Identify the type','Determine','Gather relevant','Submit the request','Ensure accommodations','Review and adjust'],
+            ['Fractions','Algebra 1','Geometry','Algebra 2','Pre-Calculus','Calculus'],
+            ['Object coordinates','ModelView Matrix','Projection Matrix','Multiply P','Divide by w','Apply viewport'],
+            ['Locate the Nginx','Find the server block','Add "ssi on;"','Save the configuration','Restart Nginx','Verify SSI'],
+            ['Observing fireworks','Noticing the visual','Starting a mental','Hearing the sound','Calculating the distance','Understanding why'],
+            ['Scammer calls in the middle','Victim is less alert','Scammer pretends','Victim asks a question','Scammer confirms','Scammer pressures'],
+            ['Scammer obtains names','Scammer calls and uses','Scammer fabricates','Victim is more likely','Victim sends money','Scammer vanishes'],
+            ['tries on a coat','exchanges the coat','walks out','stops him','claims he never','realizes'],
+            ['smuggles straw','clothes and harness','bundles and finds','allowed to pass','later asks','reveals'],
+        ]
+        ordered=None
+        for patterns in rules:
+            matches=[([b for b in blocks if b==pattern] or [b for b in blocks if pattern in b]) for pattern in patterns]
+            if all(len(found)==1 for found in matches) and len({found[0] for found in matches})==6:
+                ordered=[found[0] for found in matches];break
+        if ordered is None:return []
     alternatives=[ordered,list(reversed(ordered))]
-    if 'donkeys' in prompt:
-        # The two searches have no explicit ordering constraint in the public
-        # story. Offer both chronological arrangements for native grading.
-        alternate=ordered[:];alternate[1],alternate[2]=alternate[2],alternate[1];alternatives.append(alternate)
-    return [render(xs) for xs in alternatives]
+    # Approximate dates and explanations can admit a neighboring order. Offer
+    # bounded alternatives; only the untouched native grader assigns outcomes.
+    for i in range(5):
+        changed=ordered[:];changed[i],changed[i+1]=changed[i+1],changed[i]
+        alternatives.append(changed)
+    return list(dict.fromkeys(render(xs) for xs in alternatives))
 
 
 def propose(env_id, messages):

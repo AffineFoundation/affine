@@ -30,3 +30,31 @@ class PublicCandidateTests(unittest.TestCase):
     def test_unsupported_and_overlong_prompt(self):
         self.assertEqual(propose('unknown',[{'role':'user','content':'42'}]),[])
         with self.assertRaisesRegex(ValueError,'budget'):propose('affine_logic',[{'role':'user','content':'x'*100001}])
+
+class PublicOrderingControls(unittest.TestCase):
+    def prompt(self,blocks):return '\n'.join(f'*{i+1}*: {value}' for i,value in enumerate(blocks))
+    def test_age_order_is_derived_and_all_fragments_retained(self):
+        blocks=['Age 26','Age 24','Age 29','Age 25','Age 28','Age 27']
+        result=propose('affine_unscramble',[{'role':'user','content':self.prompt(blocks)}])
+        self.assertEqual(len(result),7)
+        self.assertLess(result[0].index('Age 24'),result[0].index('Age 29'))
+        for candidate in result:
+            for block in blocks:self.assertEqual(candidate.count(block),1)
+    def test_year_order_tracks_changed_visible_dates(self):
+        blocks=[f'Event {i} ({year})' for i,year in enumerate([2007,2002,2009,2001,2004,2008])]
+        values=propose('affine_unscramble',[{'role':'user','content':self.prompt(blocks)}])
+        self.assertTrue(values[0].index('(2001)')<values[0].index('(2009)'))
+    def test_procedural_control_uses_public_dependency_steps(self):
+        blocks=['Verify SSI is working','Add "ssi on;" below directive','Save the configuration file','Locate the Nginx configuration','Restart Nginx','Find the server block section']
+        values=propose('affine_unscramble',[{'role':'user','content':self.prompt(blocks)}])
+        self.assertLess(values[0].index('Locate'),values[0].index('Restart'))
+    def test_unknown_fragments_do_not_use_injected_answer(self):
+        self.assertEqual(propose('affine_unscramble',[{'role':'user','content':self.prompt(list('ABCDEF')),'answer':['A','B','C','D','E','F']}]),[])
+
+class PublicOrderingExactMatch(unittest.TestCase):
+    def test_calculus_does_not_ambiguously_match_precalculus(self):
+        blocks=['Algebra 2','Fractions','Calculus','Algebra 1','Pre-Calculus','Geometry']
+        prompt='\n'.join(f'*{i+1}*: {x}' for i,x in enumerate(blocks))
+        result=propose('affine_unscramble',[{'role':'user','content':prompt}])
+        self.assertTrue(result)
+        self.assertLess(result[0].index('Pre-Calculus'),result[0].index('*6*: Calculus'))

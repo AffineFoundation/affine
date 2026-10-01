@@ -15,12 +15,13 @@ from subnet import public_candidates
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--spec-directory',type=Path,default=Path('state/original-task-snapshots'))
+    parser.add_argument('--spec-pattern',default='fixed4-{source}.spec.json')
     parser.add_argument('--sources',nargs='+',default=['affine_science','affine_scitext','affine_logic','affine_unscramble'])
     parser.add_argument('--indices',nargs='+',type=int,default=[0,1])
     parser.add_argument('--output',type=Path,default=Path('state/multi-environment/public-solver-research/root-public-candidate-native-grades.json'))
     args=parser.parse_args();rows=[]
     for source in args.sources:
-        spec=EnvironmentSpec.from_dict(json.loads((args.spec_directory/f'fixed4-{source}.spec.json').read_text()))
+        spec=EnvironmentSpec.from_dict(json.loads((args.spec_directory/args.spec_pattern.format(source=source)).read_text()))
         session=EnvironmentSession(spec)
         try:
             for index in args.indices:
