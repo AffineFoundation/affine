@@ -17,7 +17,7 @@ def source_membership(files):
 
 
 def validate_contract(plan):
-    if plan.get('schema')!=1 or plan.get('experiment')!='original-nqueens-common-model-search-v1' or plan.get('payable') is not False or plan.get('chain_transactions') is not False:raise ValueError('nonpayable scoped probe')
+    if plan.get('schema')!=1 or plan.get('experiment')!='original-nqueens-common-model-search-v2-terminal' or plan.get('payable') is not False or plan.get('chain_transactions') is not False:raise ValueError('nonpayable scoped probe')
     if type(plan.get('search_budget')) is not int or not 1<=plan['search_budget']<=32:raise ValueError('bounded search')
     if plan.get('indices')!=[0] or any(type(i) is not int for i in plan['indices']):raise ValueError('qualified original fixture index0 only')
     environment=plan.get('environment',{});config=environment.get('config',{})
@@ -30,8 +30,10 @@ def validate_contract(plan):
     from subnet.native_prolog_actor import PublicActor,isolation_command
     isolation_command('affine-prolog-native-'+'a'*16,config['prolog_runtime'])
     PublicActor(config['prolog_runtime'],public)
-    expected={'version':'text-tools-v1','policy':'candidates','max_output_tokens':512,'temperature':4.0,'top_p':1.0,'candidates':candidates(public),'turn_overrides':{'1':{'policy':'candidates','candidates':['Done']}}}
+    expected={'version':'text-tools-v1','policy':'candidates','max_output_tokens':512,'temperature':4.0,'top_p':1.0,'candidates':candidates(public),'turn_overrides':{'1':{'policy':'candidates','candidates':['Done','Finished']}}}
     if canonical(plan.get('harness'))!=canonical(expected):raise ValueError('exact public-program candidate contract')
+    from subnet.harness import normalize
+    normalize(plan['harness'])
     return plan
 
 

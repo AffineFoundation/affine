@@ -69,7 +69,7 @@ the exact checkpoint, complete module inventory, probe and public-policy hashes,
 native runtime image, two-turn harness and artifact limits. Verification binds
 the frozen ZIP, environment index, actual retained positive/negative classes and
 all probability arrays; it does not trust the search report's K/L counts alone.
-Six refusal controls cover changed candidates, incomplete output budgets,
+Seven controls cover changed candidates, incomplete output budgets,
 checkpoint/index changes and altered classification or sample metadata.
 
 Run from the exact approved isolated source directory, using the operator's plan
@@ -94,3 +94,21 @@ This is still a prerequisite: model-proof qualification and a common training
 epoch have not completed. The public starter candidate policy is curated;
 successful proof verification would not establish autonomous program discovery.
 The active sixteen-family source remains unchanged.
+
+The first remote model probe exited before producing a rollout: its terminal
+turn supplied only `Done`, while the common candidate harness requires at least
+two candidates. That source, signed plan, exit and private failure trace are
+preserved. The revised `original-nqueens-common-model-search-v2-terminal` plan
+uses `Done` and `Finished` and validates the common harness before loading the
+model. Four fresh native controls confirmed that both terminal responses retain
+the same original positive/negative outcomes and observations after the tool
+action. They are not model-proof results.
+
+The revised archive is
+`7b5b74409d6bfb2efdf53d28743f5d03854509a11c43e72a35cab7416033544e`.
+All 51 compute modules and the approved checkpoint, native image and artifact
+bounds are unchanged; only the qualification probe contract changed. Root's
+review is recorded in
+`state/native-prolog-model-qualification-v2/root-v2-signed-source-native-control-check.json`.
+Actual model generation, independent proof verification and common training
+remain separate requirements.
