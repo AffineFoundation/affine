@@ -50,3 +50,18 @@ new source archive is
 `cd8b797fbf558548f5e55fdc06f0f8f854f4e47065081d59308d31bc47d4fe16`
 and input checkpoint is `aaac517b5a1a39f3fdd78cf2c73adbad62f9f8b94f00793a95f7f8bcf6d3739d`.
 The runtime proof test is pending; native controls do not establish its result.
+
+The isolated target-model proof test has now completed: index 13 reached K1L1
+within three candidate attempts; generation and separate fresh verification
+both exited 0. Both traces passed full probabilities, TOPLOC and original native
+replay. Actual private ZIP size is 46,216,304 bytes, SHA256
+`860ae6a940119af399a950d2ecb695aca1f30cc4ca584e226e88237c1f045af1`.
+Root authenticated the plan/completion and checked source closure, helper,
+snapshot, actual ZIP bytes, outcomes, candidate membership and original task
+identity. Root did not repeat model inference. Its evidence is under
+`state/numina-model-control/1790873203/root-evidence-check.json`.
+
+Continuous mining/training admission remains prospective. That controller uses
+a different approved environment-adapter source, so its future Numina specification
+must be rebound and freshly qualified against that exact source/checkpoint.
+These isolated controls cannot be relabeled as a shared completed epoch.
