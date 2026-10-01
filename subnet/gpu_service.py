@@ -61,7 +61,7 @@ def evaluate(controller,manifest,cache,phase,steps,config):
         frozen=dict(env_id=suite['env_id'],environment=definition['spec'],harness=suite['harness'],indices=suite['indices'],seeds=suite['seeds'],model_runtime_revision=REVISION,backend_profile=BACKEND_PROFILE,runtime_versions=report['runtime_versions'],harness_source_hash=manifest['harness_source_hash'],source_files={n:report['source_files'][n] for n in ('subnet/model.py','subnet/gpu_runtime.py','subnet/environments.py','subnet/harness.py','subnet/proofs.py')})
         dataset=hashlib.sha256(canonical(frozen)).hexdigest();successes=sum(v['classification']=='positive' for v in values)
         run_id=label+'-'+suite['env_id'];stamp=report['completed_at']
-        record=dict(run_id=run_id,experiment_id='gpu-continuous-fixed128',epoch_id=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],model=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'),
+        record=dict(run_id=run_id,experiment_id=config.get('evaluation_experiment_id','gpu-continuous-fixed128'),epoch_id=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],model=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'),
             env_id=suite['env_id'],environment_version=definition['spec']['version'],model_runtime_revision=REVISION,
             harness=suite['harness']['version']+':autoregressive',harness_version=suite['harness']['version'],harness_config=suite['harness'],policy_kind='autoregressive',
             dataset_id=dataset,taskset_hash=dataset,seed=config.get('evaluation_seed',20260930),heldout_indices=suite['indices'],fixed_task_ids=[v['task_hash'] for v in values],

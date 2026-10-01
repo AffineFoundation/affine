@@ -31,6 +31,12 @@ class GPUFixedHeldout(unittest.TestCase):
             self.config['evaluation_state']=d;controller=SimpleNamespace(jobs=SimpleNamespace(run=Mock(return_value=self.report())))
             record=evaluate(controller,self.manifest,'remote','before',0,self.config)[0]
             self.assertEqual(record['timestamp'],77);self.assertEqual(record['fixed_task_ids'],['2'*64,'3'*64]);self.assertEqual(record['completed_count'],2)
+    def test_prospective_eval_label_is_configured_without_relabeling_old_defaults(self):
+        with tempfile.TemporaryDirectory() as d,patch('subnet.gpu_service.definitions',return_value=[self.row]):
+            self.config.update(evaluation_state=d,evaluation_experiment_id='wide-fixed16-autoregressive256')
+            controller=SimpleNamespace(jobs=SimpleNamespace(run=Mock(return_value=self.report())))
+            record=evaluate(controller,self.manifest,'remote','before',0,self.config)[0]
+            self.assertEqual(record['experiment_id'],'wide-fixed16-autoregressive256')
     def test_equal_count_wrong_seed_is_rejected(self):
         report=self.report();report['heldout'][0]['seed']+=1
         with tempfile.TemporaryDirectory() as d,patch('subnet.gpu_service.definitions',return_value=[self.row]):
