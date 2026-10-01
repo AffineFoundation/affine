@@ -33,3 +33,20 @@ and left the original starter unchanged; the original grader gave reward 0.
 Root checked the actual source/snapshot/report bytes and signed a native-only
 completion inventory. These controls establish a reachable native K1L1 target;
 model/proof generation and full pipeline integration remain unverified.
+
+A second native control tested the exact shared candidate pair intended for model
+verification. Both commands read the same public starter and differ only in the
+placeholder-count assertion (`n>0` versus `n<0`). Repeating each command through
+the full original two-turn environment produced positive and negative outcomes
+respectively on index 13. Model-token length equality is checked at runtime;
+character-length equality alone is not accepted as proof.
+
+`ops/probe_numina_model_search.py` is a separate bounded prospective proof test.
+It authenticates the approved plan, source closure and public-tactic helper,
+loads the pinned current model, retains sampled candidate K1L1 traces if found,
+and runs an independent model reload for full-probability/TOPLOC/native replay.
+It uses at most 16 seeds on index 13. It makes no optimizer or chain call. Its
+new source archive is
+`cd8b797fbf558548f5e55fdc06f0f8f854f4e47065081d59308d31bc47d4fe16`
+and input checkpoint is `aaac517b5a1a39f3fdd78cf2c73adbad62f9f8b94f00793a95f7f8bcf6d3739d`.
+The runtime proof test is pending; native controls do not establish its result.
