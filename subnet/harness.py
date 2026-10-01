@@ -23,6 +23,15 @@ def normalize(config=None):
         raise ValueError('temperature')
     if not 0 < value['top_p'] <= 1:
         raise ValueError('top_p')
+    history_fields={'history_prefix_messages','history_window_messages'}
+    if value['version']=='text-tools-window-v1':
+        prefix=value.setdefault('history_prefix_messages',2)
+        window=value.setdefault('history_window_messages',2)
+        if (type(prefix) is not int or not 1<=prefix<=8 or
+                type(window) is not int or not 1<=window<=32):
+            raise ValueError('signed history window bounds')
+    elif history_fields & set(value):
+        raise ValueError('history window requires its versioned harness')
     if value['policy'] == 'candidates':
         candidates = value.get('candidates', [])
         if not 2 <= len(candidates) <= 256 or any(not isinstance(t, str) or not t or len(t) > 1000 for t in candidates):
@@ -169,11 +178,25 @@ def _plain_render(tokenizer,messages,tools=(),config=None):
     return tokenizer.encode(plain_render(messages,tools),add_special_tokens=False)
 
 
+def _window_chat_render(tokenizer,messages,tools=(),config=None):
+    """Bound visible history; the complete trajectory remains replay-verified.
+
+    Preserve the signed number of initial task messages and the most recent
+    complete messages. Nothing truncates an observation or rewrites its text.
+    An individually oversized task/observation still fails the model budget.
+    """
+    config=normalize(config)
+    prefix=config['history_prefix_messages'];window=config['history_window_messages']
+    retained=list(messages[:prefix])+list(messages[prefix:][-window:])
+    return _chat_render(tokenizer,retained,tools,config)
+
+
 # Every version owns its render/action/observation/sample boundary. Core model
 # computation does not branch on environment or harness names.
 HARNESS_REGISTRY={
     'text-tools-v1': {'render':_chat_render,'action':_text_action,'observations':_text_observations,'sample':_sample},
     'plain-transcript-v1': {'render':_plain_render,'action':_text_action,'observations':_text_observations,'sample':_sample},
+    'text-tools-window-v1': {'render':_window_chat_render,'action':_text_action,'observations':_text_observations,'sample':_sample},
 }
 
 

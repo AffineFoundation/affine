@@ -91,3 +91,8 @@ Evidence lives in `state/native-wikispeedia-model-cohort20-v1` and
 `root-model-budget-preflight.json`. This is a control-path budget check, not
 exhaustive coverage of mixed candidate choices. Original native grading and
 context feasibility do not establish that a GPU miner produced a proof batch.
+
+The subsequent exhaustive mixed-choice audit found a genuine legacy-context
+overflow and qualified the new visible-history window against all 384 public
+tool-choice paths. See `docs/WINDOWED_HARNESS.md`; this does not replace or
+rewrite the earlier control-path evidence.
