@@ -14,16 +14,16 @@ Math, Verbatim, Reasoning Gym, When2Call, IFEval, and Oolong. These measurements
 do not establish improvement across all environments.
 
 The wider nine-environment run uses 32 distinct tasks per environment, with
-16 held-out tasks and a 256-token evaluation budget. Its first epoch was aborted
-without training after a native MCP tool error. The isolated, newly pinned v2
-worker preserves native tool-error observations. It completed a verified
-144-task baseline and three full-model optimizer updates on audited Logic,
-SciText, and Unscramble pairs. Its new checkpoint's six published R2 files were
-independently hashed (3,426,302,727 bytes). The paired post-training evaluation
-and full wider epoch now pass the evidence checker. Results are mixed: three
-metrics improved, two decreased, and four stayed unchanged. The next epoch is
-mining from the new checkpoint. No broader performance gain is claimed; see
-[the paired wider results](docs/WIDE_EVALUATION_RESULTS.md).
+16 held-out tasks and a 256-token evaluation budget. The original wider attempt
+was aborted without training after a native MCP tool error. The corrected,
+isolated v2 worker completed two fully verified epochs and six full-model
+updates on audited Logic, SciText, Unscramble, Verbatim, Math and Reasoning Gym
+pairs. Both new checkpoints' six R2 files were independently hashed
+(3,426,302,727 bytes per checkpoint). Paired results are mixed per update;
+relative to the starting baseline three metrics increased and six stayed flat.
+That does not establish broad improvement. The continuing separately pinned
+i3math extension is running from the latest checkpoint; admission and training
+for that new family remain pending. See [the paired wider results](docs/WIDE_EVALUATION_RESULTS.md).
 
 The controlled Tau2 tool-use positive/negative pair now passes independent
 model verification and replay through the original environment grader. The
