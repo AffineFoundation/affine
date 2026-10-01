@@ -1,0 +1,21 @@
+[Unit]
+Description=Affine nonpayable external CPU runtime qualification
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/const/subnet120-rewrite
+Environment=MKL_CBWR=COMPATIBLE
+Environment=ATEN_CPU_CAPABILITY=default
+Environment=ONEDNN_MAX_CPU_ISA=SSE41
+Environment=OMP_NUM_THREADS=4
+Environment=MKL_NUM_THREADS=4
+Environment=OPENBLAS_NUM_THREADS=4
+Environment=TOKENIZERS_PARALLELISM=false
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -m subnet.affinity --cores 4 -- /home/const/subnet120-rewrite/.venv/bin/python -m subnet.service --config /home/const/subnet120-rewrite/state/external-miner-pilot-config.json
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=90
+
+[Install]
+WantedBy=default.target
