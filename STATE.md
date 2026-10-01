@@ -13,21 +13,14 @@ and held-out evaluation records. Those updates consumed verified pairs from
 Math, Verbatim, Reasoning Gym, When2Call, IFEval, and Oolong. These measurements
 do not establish improvement across all environments.
 
-The wider nine-environment run uses 32 distinct tasks per environment, with
-16 held-out tasks and a 256-token evaluation budget. The original wider attempt
-was aborted without training after a native MCP tool error. The corrected,
-isolated v2 worker completed two fully verified epochs and six full-model
-updates on audited Logic, SciText, Unscramble, Verbatim, Math and Reasoning Gym
-pairs. Both new checkpoints' six R2 files were independently hashed
-(3,426,302,727 bytes per checkpoint). Paired results are mixed per update;
-relative to the starting baseline three metrics increased and six stayed flat.
-That does not establish broad improvement. The continuing separately pinned
-i3math extension passed a full batch audit and three attributed full-model
-updates. Its six new R2 checkpoint files were independently hashed; the ten-family
-post-update held-out evaluation completed. This is the third fully checked wider
-epoch: three held-out metrics rose, two fell and five stayed flat; i3math itself
-stayed at zero. Trivia now runs from that trained checkpoint under a new pinned
-source. See [the paired wider results](docs/WIDE_EVALUATION_RESULTS.md).
+The wider series has four fully checked epochs and twelve full-model updates,
+with new original i3math and Trivia tasksets added at versioned boundaries.
+Six checkpoint objects per successor were independently streamed and hashed
+(3,426,302,727 bytes each). The latest paired evaluation covers eleven
+families and sixteen fixed held-out tasks per family: one metric rose, four
+fell, and six stayed flat after the Trivia update. PopQA now runs under a new
+pinned source from the published successor checkpoint. These measurements
+do not establish broad improvement. See [paired results](docs/WIDE_EVALUATION_RESULTS.md).
 
 The controlled Tau2 tool-use positive/negative pair now passes independent
 model verification and replay through the original environment grader. The
@@ -41,7 +34,7 @@ tool/grader replay. This is a controlled outcome-conditioned training example;
 common epoch integration and held-out quality improvement remain unproven.
 
 The controlled original Agent fixtures now run through the shared GPU epoch
-pipeline. Five full epochs passed independent artifact, audit, score,
+pipeline. Nine full epochs passed independent artifact, audit, score,
 optimizer attribution, checkpoint-publication and held-out evidence checks.
 One full-model update per epoch consumed its verified positive/negative pair; all six new
 checkpoint objects were independently hashed (272,585,280 bytes). Two fixed
@@ -50,6 +43,16 @@ The same miner has uploaded a new pair using the trained checkpoint. The
 public actor/private grader images preserve original tools, mutable state and
 grading; the full upstream Verifiers orchestrator remains unproven. See
 [the shared native Agent scope](docs/NATIVE_AGENT_COMMON.md).
+
+Original Spider SQL now has thirty-two pinned tasks, sixteen for mining and
+sixteen disjoint held-out tasks. Public actors and private original graders
+passed fresh remote controls. A controlled target-model candidate-policy
+positive/negative pair passed independent full probability/TOPLOC checks and
+native replay. Its common epoch service is running; completed common optimizer
+and held-out results remain pending. Calendar's curated positive/negative
+six-turn model artifacts also pass signed model-audit binding and separate
+original native replay. These controls do not establish original sampling,
+completed common Calendar epochs, or general quality gains.
 
 See [environment coverage](docs/environment-coverage.json) for the source-level
 snapshot and [wide tasksets](docs/WIDE_TASKSETS.md) for measurement limitations.

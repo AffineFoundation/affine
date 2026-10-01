@@ -1,11 +1,11 @@
 {
   "counts": {
     "import": 45,
-    "local_reset": 37,
-    "native_tool_execution": 4,
-    "original_reward": 20,
-    "remote_proof": 20,
-    "remote_replay": 19,
+    "local_reset": 38,
+    "native_tool_execution": 6,
+    "original_reward": 22,
+    "remote_proof": 22,
+    "remote_replay": 21,
     "training": 11
   },
   "independently_reexecuted_by_exporter": false,
@@ -69,14 +69,14 @@
     {
       "category": "tool",
       "import": true,
-      "local_reset": false,
+      "local_reset": true,
       "module": "affine_eog_v1",
-      "native_tool_execution": false,
-      "original_reward": false,
-      "remote_proof": false,
-      "remote_replay": false,
+      "native_tool_execution": true,
+      "original_reward": true,
+      "remote_proof": true,
+      "remote_replay": true,
       "source": "affine_eog",
-      "status": "safe_runtime_isolation_required",
+      "status": "controlled_original_calendar_curated_K1L1_long_context_proof_native_replay_verified",
       "taskset_class": "AffineEnterpriseOpsTaskset",
       "training": false
     },
@@ -337,12 +337,12 @@
       "import": true,
       "local_reset": true,
       "module": "affine_sql_v1",
-      "native_tool_execution": false,
-      "original_reward": false,
-      "remote_proof": false,
-      "remote_replay": false,
+      "native_tool_execution": true,
+      "original_reward": true,
+      "remote_proof": true,
+      "remote_replay": true,
       "source": "affine_sql",
-      "status": "actual_original_reset_passed",
+      "status": "controlled_original_Spider_K1L1_fresh_proof_replay_verified",
       "taskset_class": "SqlTaskset",
       "training": false
     },
@@ -644,6 +644,6 @@
   "schema": 1,
   "scope": "Recorded source-level operator evidence; each row is a milestone, not full production support or proof of performance improvement.",
   "source_count": 45,
-  "source_matrix_sha256": "ba0ce05c06adec86a3fbdd5240bd2f13dd9c0c71bfc5982ca659e15e31678ea2",
+  "source_matrix_sha256": "c803bfae5ac19f865d8f15d272c8f6fb589f1093b539675bfadec4585a8d782d",
   "status_is_blocker_or_milestone": true
 }

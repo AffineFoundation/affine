@@ -1,0 +1,9 @@
+# Controlled original Spider deployment
+
+`native_sql_deployment.py` binds each public descriptor and operator-private fixture to the signed task commitments. The private commitment covers every fixture field except its machine-specific database path; database bytes have their own SHA-256. Changing the question, reference SQL, ordering rule, database, public descriptor, or original task identity fails before execution. The reference SQL remains in the operator-private collection and is never present in a model prompt or source archive.
+
+The isolated SQL dispatcher runs the approved public bash actor and the original grader in separate bounded Docker containers. This is a controlled cohost experiment; it does not grant arbitrary external miners access to operator fixtures, and it does not establish isolation against an operator with host-root access. The active general environment dispatcher remains unchanged.
+
+The initial public-only curated policy explores the original database using two bash calls and chooses a final query derived from the original question. A standalone honest model search found both outcomes in two seeds, and a separate model process verified full float32 output probabilities, strict TOPLOC, and fresh original environment replay. Those controls are distinct from the subsequently launched epoch service.
+
+The `affine-native-sql-common.service` unit uses an isolated, immutable source tree and `state/native-sql-common-config.json`. It preserves the full published ten-minute window, freezes direct-R2 submissions, fully audits before training, proposes weights without chain transactions, and evaluates sixteen original held-out tasks separately from the training task. Every CUDA role waits for measured free VRAM; the owned pod stays running. Stop only this trial with `systemctl --user stop affine-native-sql-common.service`. Its private configuration and artifacts are excluded from Git.

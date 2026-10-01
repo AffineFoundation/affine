@@ -1,0 +1,23 @@
+[Unit]
+Description=Affine nonpayable controlled native original Spider SQL common GPU pipeline
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/const/subnet120-rewrite/state/prospective-native-sql-service-v1
+Environment=TOKENIZERS_PARALLELISM=false
+Environment=OMP_NUM_THREADS=4
+Environment=MKL_NUM_THREADS=4
+Environment=OPENBLAS_NUM_THREADS=4
+Environment=MKL_CBWR=COMPATIBLE
+Environment=ATEN_CPU_CAPABILITY=default
+Environment=ONEDNN_MAX_CPU_ISA=SSE41
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -B -m subnet.gpu_service --config /home/const/subnet120-rewrite/state/native-sql-common-config.json
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=90
+SuccessExitStatus=143
+
+[Install]
+WantedBy=default.target
