@@ -34,7 +34,7 @@ tool/grader replay. This is a controlled outcome-conditioned training example;
 common epoch integration and held-out quality improvement remain unproven.
 
 The controlled original Agent fixtures now run through the shared GPU epoch
-pipeline. Nine full epochs passed independent artifact, audit, score,
+pipeline. Eleven full epochs passed independent artifact, audit, score,
 optimizer attribution, checkpoint-publication and held-out evidence checks.
 One full-model update per epoch consumed its verified positive/negative pair; all six new
 checkpoint objects were independently hashed (272,585,280 bytes). Two fixed
@@ -51,7 +51,10 @@ positive/negative pair passed independent full probability/TOPLOC checks and
 native replay. Its common epoch service is running; completed common optimizer
 and held-out results remain pending. Calendar's curated positive/negative
 six-turn model artifacts also pass signed model-audit binding and separate
-original native replay. These controls do not establish original sampling,
+original native replay. A new length-balanced Calendar pair additionally passes
+seven model turns, including complete-context terminal proofs, and separate
+fresh native admission with original rewards 1 and 0. See
+[terminal control scope](docs/NATIVE_EOG_BALANCED_TERMINAL.md). These controls do not establish original sampling,
 completed common Calendar epochs, or general quality gains.
 
 See [environment coverage](docs/environment-coverage.json) for the source-level
