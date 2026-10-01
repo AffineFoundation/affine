@@ -54,7 +54,9 @@ requires a new signed source, qualified deployment image and fresh model proof
 search plus independent model/native replay. Active sixteen-family pilot bytes
 are unchanged.
 
-Root repeated that frozen session in fresh owned actors. Its complete environment
-specification, original public task bindings, two-turn observations, native grades
-and replay results exactly match the qualification report. Evidence:
+Root repeated that frozen session in fresh owned actors. Original public task
+bindings, two-turn observations, native grades and replay results exactly match
+the qualification report. Fresh Docker builds produced different image IDs and
+therefore different environment source hashes; each report preserves its own
+runtime pin. This does not establish identical deployment images. Evidence:
 `state/native-prolog-session/root-native-v2-balanced/controls.json`.
