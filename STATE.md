@@ -45,6 +45,13 @@ gates. No performance gain is claimed. See
 [MRCR scope](docs/MRCR_PUBLIC_SHELL_PILOT.md) and
 [replay admission](docs/VERIFIED_REPLAY_POOL.md).
 
+The additional original TriviaAbstain model probe completed 32 candidate-sampling
+attempts and two independent full-probability/TOPLOC/native verifications. Every
+attempt chose abstention; no negative was found, so no K1/L1 pair or training
+admission is claimed. Original grader controls qualify shorter wrong responses
+for a separately signed probability calibration. See
+[TriviaAbstain qualification](docs/TRIVIA_ABSTAIN_MODEL_QUALIFICATION.md).
+
 The controlled Tau2 tool-use positive/negative pair now passes independent
 model verification and replay through the original environment grader. The
 positive trajectory has six agent/user responses and reward 1; the negative has
