@@ -28,3 +28,15 @@ admission. The next integration must provide an isolated public actor containing
 the original database and tools, preserve native prompts and task identities,
 and independently audit actual model computation and tool observations before
 any batch is scored or trained.
+
+The separate `native_sql_actor` prerequisite now exposes the original public
+system instruction, schema/question prompt, database and `bash` tool. It uses a
+private-grader-free immutable image, nonroot execution, no network or host mounts,
+and a read-only root with bounded writable workspace. Tool output uses the
+original 32,768-character observation limit. Run
+`.venv/bin/python -m ops.probe_native_sql_actor` after the grader controls.
+It checks real SQLite shell exploration, fresh exact replay, public-derived
+positive/negative query outcomes through the separate original grader, output
+limits, and absence of private grader/operator paths. These remain native
+harness controls; model-generated proof batches and common epoch admission
+are not established by them.
