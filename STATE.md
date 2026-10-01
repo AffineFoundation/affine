@@ -22,8 +22,10 @@ pairs. Both new checkpoints' six R2 files were independently hashed
 (3,426,302,727 bytes per checkpoint). Paired results are mixed per update;
 relative to the starting baseline three metrics increased and six stayed flat.
 That does not establish broad improvement. The continuing separately pinned
-i3math extension is running from the latest checkpoint; admission and training
-for that new family remain pending. See [the paired wider results](docs/WIDE_EVALUATION_RESULTS.md).
+i3math extension passed a full batch audit and three attributed full-model
+updates. Its six new R2 checkpoint files were independently hashed; the ten-family
+post-update held-out evaluation is still pending, so that epoch is not yet
+counted as complete. See [the paired wider results](docs/WIDE_EVALUATION_RESULTS.md).
 
 The controlled Tau2 tool-use positive/negative pair now passes independent
 model verification and replay through the original environment grader. The

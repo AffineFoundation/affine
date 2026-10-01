@@ -6,7 +6,7 @@
     "original_reward": 20,
     "remote_proof": 20,
     "remote_replay": 19,
-    "training": 10
+    "training": 11
   },
   "independently_reexecuted_by_exporter": false,
   "rows": [
@@ -104,9 +104,9 @@
       "remote_proof": true,
       "remote_replay": true,
       "source": "affine_i3math",
-      "status": "verified_original_rollout",
+      "status": "original_public_candidate_common_full_optimizer_verified",
       "taskset_class": "I3MathTaskset",
-      "training": false
+      "training": true
     },
     {
       "category": "singleturn_text",
@@ -230,7 +230,7 @@
       "remote_proof": true,
       "remote_replay": true,
       "source": "affine_popqa_abstain",
-      "status": "verified_original_rollout",
+      "status": "genuine_autoregressive_K1L1_fresh_proof_replay_verified",
       "taskset_class": "PopQAAbstainTaskset",
       "training": false
     },
@@ -644,6 +644,6 @@
   "schema": 1,
   "scope": "Recorded source-level operator evidence; each row is a milestone, not full production support or proof of performance improvement.",
   "source_count": 45,
-  "source_matrix_sha256": "48d2e4d542c75cc6402297c124d535991189651bc38fb4c30c3a23160f6cdf7e",
+  "source_matrix_sha256": "ba0ce05c06adec86a3fbdd5240bd2f13dd9c0c71bfc5982ca659e15e31678ea2",
   "status_is_blocker_or_milestone": true
 }
