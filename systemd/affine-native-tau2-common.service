@@ -1,0 +1,14 @@
+[Unit]
+Description=Controlled native Tau2 common pipeline (no chain weights)
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+WorkingDirectory=/home/const/subnet120-rewrite
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -B -m subnet.native_tau2_common_service --config /home/const/subnet120-rewrite/state/native-tau2-common-live/config.json
+UMask=0077
+Restart=no
+KillMode=control-group
+TimeoutStopSec=45
+[Install]
+WantedBy=default.target
