@@ -7,6 +7,22 @@ from dashboard.server import Database
 
 
 class PublicProjectionTests(unittest.TestCase):
+    def test_gpu_epoch_projection_retains_private_field_boundary(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);source=root/'state';identity='d'*64
+            for name in ('gpu-continuous','unapproved-private-folder'):
+                folder=source/name;folder.mkdir(parents=True)
+                epoch='nonpayable-'+name
+                (folder/f'{epoch}-manifest.json').write_text(json.dumps(dict(epoch=epoch,start=1,deadline=2,payable=False,capabilities={identity:'PRIVATE_GPU_PUT'})))
+                (folder/f'{epoch}-verified.json').write_text(json.dumps({identity:dict(outcomes=[dict(valid=True,fully_audited=True)],accepted=[{}])}))
+                (folder/f'{epoch}-registrations.json').write_text(json.dumps({identity:dict(public_key=identity,uid=131)}))
+                (folder/f'{epoch}-scores.json').write_text(json.dumps(dict(points={identity:1},weights={identity:1})))
+            database=Database(root/'network.sqlite',source);database.refresh();snapshot=database.snapshot()
+            self.assertEqual(len(snapshot['epochs']),1)
+            self.assertEqual(snapshot['epochs'][0]['id'],'nonpayable-gpu-continuous')
+            self.assertEqual(snapshot['epochs'][0]['grid'][131],1)
+            self.assertNotIn('PRIVATE_GPU_PUT',json.dumps(snapshot))
+
     def test_sampled_audits_do_not_label_unchecked_batches_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); folder = root/'state/service-conformance'; folder.mkdir(parents=True)
