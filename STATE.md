@@ -16,14 +16,24 @@ do not establish improvement across all environments.
 The wider nine-environment run uses 32 distinct tasks per environment, with
 16 held-out tasks and a 256-token evaluation budget. Its first epoch was aborted
 without training after a native MCP tool error. The isolated, newly pinned v2
-worker preserves native tool-error observations and is running; its completed
-training and evaluations remain unproven.
+worker preserves native tool-error observations. It completed a verified
+144-task baseline and three full-model optimizer updates on audited Logic,
+SciText, and Unscramble pairs. Its new checkpoint's six published R2 files were
+independently hashed (3,426,302,727 bytes). The paired post-training evaluation
+and completed wider epoch remain pending; no broader performance gain is claimed.
 
 A controlled Tau2 tool-use trajectory has passed independent model verification
 for all six agent/user responses and replay through the original environment
 grader, with reward 1. Auxiliary user tokens are excluded from training targets.
 Its negative counterpart, qualifying batch, optimizer update, and production
 epoch integration are still pending.
+
+The controlled original Agent `3d_print_shop_t0` fixture now has a verified
+positive/negative model-proof pair and four rejected fresh-process tampering
+controls. Its distinct public actor/private grader images preserve original
+tools, mutable state and grading. This remains a controlled fixture milestone:
+the full upstream orchestrator and shared epoch/training integration are pending.
+See [the native Agent evidence scope](docs/NATIVE_AGENT_ISOLATION.md).
 
 See [environment coverage](docs/environment-coverage.json) for the source-level
 snapshot and [wide tasksets](docs/WIDE_TASKSETS.md) for measurement limitations.
