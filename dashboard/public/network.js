@@ -2,7 +2,8 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const svgNS = 'http://www.w3.org/2000/svg';
-  let data = {epochs:[],evaluations:[],summary:{}}, scope = 'test', chosen = null, metric='reward', environment='';
+  let data = {epochs:[],evaluations:[],summary:{}}, scope = 'test', chosen = null, metric='reward', environment='', evaluation='';
+  const seriesKey = e => JSON.stringify([e.dataset_id,e.harness,e.environment_version,e.model,e.model_runtime_revision]);
   function svg(tag, attrs, text) {const n=document.createElementNS(svgNS,tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,String(v));if(text!==undefined)n.textContent=text;return n;}
   function completed() {return data.epochs.filter(e=>e.mode===scope && e.finalized).sort((a,b)=>a.start-b.start);}
   function drawChart(rows) {
@@ -48,9 +49,19 @@
     for(const id of envs.length?envs:['']){const o=document.createElement('option');o.value=id;o.textContent=id||'No evaluations yet';menu.append(o);}
     if(!envs.includes(environment))environment=envs[0]||'';menu.value=environment;
     let chartRows=rows.map(e=>({...e,value:e.batches||0}));
+    const candidates=evals.filter(e=>e.env_id===environment).sort((a,b)=>a.timestamp-b.timestamp);
+    const groups=new Map();candidates.forEach(e=>groups.set(seriesKey(e),e));
+    const seriesMenu=$('evaluation');seriesMenu.replaceChildren();
+    for(const [key,e] of [...groups].reverse()){
+      const o=document.createElement('option');o.value=key;
+      o.textContent=`${(e.model||'Model').split('/').at(-1)} · ${e.model_runtime_revision?.startsWith('cuda')?'GPU':'CPU'} · ${e.harness} · ${e.dataset_id.slice(0,8)}`;
+      seriesMenu.append(o);
+    }
+    if(!groups.has(evaluation))evaluation=candidates.length?seriesKey(candidates.at(-1)):'';
+    seriesMenu.value=evaluation;seriesMenu.disabled=metric==='batches';
     if(metric==='reward'){
-      const candidates=evals.filter(e=>e.env_id===environment),latest=candidates.at(-1);
-      chartRows=candidates.filter(e=>e.dataset_id===latest?.dataset_id&&e.harness===latest?.harness&&e.environment_version===latest?.environment_version).map(e=>({...e,id:e.run_id,start:e.timestamp,value:e.mean_reward}));
+      const latest=groups.get(evaluation);
+      chartRows=candidates.filter(e=>seriesKey(e)===evaluation).map(e=>({...e,id:e.run_id,start:e.timestamp,value:e.mean_reward}));
       const policy=latest?.policy_kind||(latest?.harness?.includes('candidates')?'curated-control':'autoregressive');
       $('metric-note').textContent=latest?`${policy==='curated-control'?'Curated policy':'Model sampling'} · fixed held-out set · ${latest.count} samples`:'Waiting for held-out evaluations';
       $('metric-note').title=latest?.harness||'';
@@ -63,6 +74,7 @@
   $('epoch').addEventListener('change',()=>{chosen=$('epoch').value;drawGrid(data.epochs.find(e=>e.id===chosen));});
   $('metric').addEventListener('change',()=>{metric=$('metric').value;render();});
   $('environment').addEventListener('change',()=>{environment=$('environment').value;render();});
+  $('evaluation').addEventListener('change',()=>{evaluation=$('evaluation').value;render();});
   let resizeTimer;
   window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(render,150);});
   async function refresh(){try{const r=await fetch('/network-data.json',{cache:'no-store'});if(!r.ok)throw Error('Data unavailable');data=await r.json();render();}catch(e){$('connection').textContent='DATA UNAVAILABLE';$('chart-empty').hidden=false;$('chart-empty').textContent='Network records are temporarily unavailable.';if(!$('grid').children.length)drawGrid(null);}}
