@@ -54,7 +54,7 @@
     const seriesMenu=$('evaluation');seriesMenu.replaceChildren();
     for(const [key,e] of [...groups].reverse()){
       const o=document.createElement('option');o.value=key;
-      o.textContent=`${(e.model||'Model').split('/').at(-1)} · ${e.model_runtime_revision?.startsWith('cuda')?'GPU':'CPU'} · ${e.harness} · ${e.dataset_id.slice(0,8)}`;
+      o.textContent=`${(e.model||'Model').split('/').at(-1)} · ${e.model_runtime_revision?.startsWith('cuda')?'GPU':'CPU'} · ${e.count} tasks${e.output_token_budget?` / ${e.output_token_budget} tokens`:''} · ${e.harness} · ${e.dataset_id.slice(0,8)}`;
       seriesMenu.append(o);
     }
     if(!groups.has(evaluation))evaluation=candidates.length?seriesKey(candidates.at(-1)):'';
@@ -63,7 +63,7 @@
       const latest=groups.get(evaluation);
       chartRows=candidates.filter(e=>seriesKey(e)===evaluation).map(e=>({...e,id:e.run_id,start:e.timestamp,value:e.mean_reward}));
       const policy=latest?.policy_kind||(latest?.harness?.includes('candidates')?'curated-control':'autoregressive');
-      $('metric-note').textContent=latest?`${policy==='curated-control'?'Curated policy':'Model sampling'} · fixed held-out set · ${latest.count} samples`:'Waiting for held-out evaluations';
+      $('metric-note').textContent=latest?`${policy==='curated-control'?'Curated policy':'Model sampling'} · fixed held-out set · ${latest.count} samples${latest.output_token_budget?` · max ${latest.output_token_budget} output tokens`:''}`:'Waiting for held-out evaluations';
       $('metric-note').title=latest?.harness||'';
     }else $('metric-note').textContent='Frozen submitted batches · includes rejected batches';
     $('chart-title').textContent=metric==='reward'?`${environment||'Environment'} / evaluation reward`:'Batches / epoch';

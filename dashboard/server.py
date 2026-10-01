@@ -128,6 +128,10 @@ class Database:
             if not isinstance(raw,dict) or not all(isinstance(raw.get(k),str) for k in ('run_id','env_id','dataset_id','status')):
                 continue
             row = {key:raw[key] for key in keys if key in raw}
+            harness_config=raw.get('harness_config')
+            budget=harness_config.get('max_output_tokens') if isinstance(harness_config,dict) else None
+            if type(budget) is int and 1<=budget<=8192:
+                row['output_token_budget']=budget
             # Public model identifiers are names, never local checkpoint paths.
             if 'model' in row and (not isinstance(row['model'], str) or
                     re.fullmatch(r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?', row['model']) is None):

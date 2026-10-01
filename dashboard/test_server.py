@@ -127,6 +127,19 @@ class PublicProjectionTests(unittest.TestCase):
             (folder/'eval1.json').unlink();database.refresh()
             self.assertEqual(len(database.snapshot()['evaluations']),1)
 
+    def test_only_bounded_numeric_budget_is_derived_from_private_harness(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);folder=root/'state/evaluations';folder.mkdir(parents=True)
+            record=dict(run_id='budget',env_id='math',dataset_id='fixed',status='complete',count=16,successes=0,mean_reward=0.,timestamp=1)
+            for name,budget in [('valid',256),('private','PRIVATE_CAPABILITY'),('bool',True),('huge',100000)]:
+                value=dict(record,run_id=name,harness_config={'max_output_tokens':budget,'private_override':'PRIVATE_SECRET'})
+                (folder/(name+'.json')).write_text(json.dumps(value))
+            database=Database(root/'network.sqlite',root/'state');database.refresh();snapshot=database.snapshot()
+            rows={e['run_id']:e for e in snapshot['evaluations']}
+            self.assertEqual(rows['valid']['output_token_budget'],256)
+            for name in ('private','bool','huge'):self.assertNotIn('output_token_budget',rows[name])
+            self.assertNotIn('PRIVATE_',json.dumps(snapshot))
+
     def test_public_model_identifiers_do_not_export_checkpoint_paths(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);folder=root/'state/evaluations';folder.mkdir(parents=True)

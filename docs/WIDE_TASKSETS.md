@@ -38,3 +38,26 @@ task before claims of successful search. A wide snapshot alone establishes no
 successful mining, training, model quality improvement or full source coverage.
 Before migration, candidate class probabilities must be measured with the
 approved model: a valid native answer can still have near-zero sampling chance.
+
+## Native tool-error boundary
+
+The first wider miner produced three independently accepted batches, but its
+full held-out role aborted on a model-generated unknown tool name. Calling the
+private MCP tool manager bypassed the native server’s error-result boundary.
+The epoch’s immutable manifest, frozen uploads and successful audits are retained;
+it is untrained and its evaluation failure is explicit. No failed job is counted
+as a complete baseline.
+
+`subnet/native_tool_errors.py` provides the prospective
+`native-mcp-toolerror-observation-v1` policy. Actual native MCP dispatch controls
+confirmed identical unknown-tool error text and preserved successful results;
+infrastructure exceptions still propagate. An original When2Call control then
+finished with the original grader’s negative outcome. This control has no model
+proof or training claim.
+
+`ops/patches/native-mcp-tool-errors.patch` adds opt-in wiring, a separate environment
+version, helper-byte fingerprinting and an MCP package pin. Apply it only inside
+an isolated prospective source stage, refresh signed specs and approve a new
+epoch. The live repository adapter remains unchanged so existing CPU pilot
+source pins remain valid. Never rewrite a running manifest or substitute a new
+worker’s source hashes into an old report.
