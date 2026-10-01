@@ -39,3 +39,22 @@ tokens and 379/379 compact tool-call JSON tokens. Exact candidate bytes and publ
 bindings are in `state/native-prolog-controls/root-wide-tokenizer-candidate-check.json`.
 This is a tokenizer prerequisite; model-sampled K/L, TOPLOC proofs and common
 training remain unqualified.
+
+A prospective session is available in `subnet.native_prolog_session` and a public
+candidate policy in `subnet.native_prolog_public_policy`. Fresh Docker conformance
+passed both original grades and exact two-turn observation replay for all three
+fixtures (`state/native-prolog-session/native-v2-balanced/controls.json`). The full
+programs share public facts and differ in one diagonal constraint, with harmless
+whitespace chosen for equal token lengths. Root checked the actual approved
+1.7B checkpoint tokenizer SHA: compact JSON actions have 379 tokens each at all
+three fixtures. This establishes candidate comparability, not sampled K/L success.
+Five session trust/state/terminal-grade controls and two public-policy controls
+pass. The session is deliberately absent from the active dispatcher; admitting it
+requires a new signed source, qualified deployment image and fresh model proof
+search plus independent model/native replay. Active sixteen-family pilot bytes
+are unchanged.
+
+Root repeated that frozen session in fresh owned actors. Its complete environment
+specification, original public task bindings, two-turn observations, native grades
+and replay results exactly match the qualification report. Evidence:
+`state/native-prolog-session/root-native-v2-balanced/controls.json`.
