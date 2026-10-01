@@ -31,3 +31,37 @@ full completion. The frozen first-service source remains unchanged; its status
 fields must be assessed against actual artifacts rather than used as a substitute
 for an independent full completion audit. Streaming deployment is still a
 separate prospective gate.
+
+### Reproducing offloaded duplicate submission caches
+
+The first epoch's local `cumulative-0.zip` and `cumulative-1.zip` were duplicate
+caches, reclaimed during operator disk pressure after exact private R2 readback.
+Their signed `cumulative-{0,1}.zip-signed-cache-storage.json` inventories preserve
+the immutable object key, complete size and SHA256. The final selection, signed
+freeze receipts, full numerical/native audit reports and raw private R2 objects
+remain available. Cache removal does not remove the submission evidence.
+
+Use the operator-only helper with the trusted authority already pinned in its
+CLI; bucket credentials remain local. Select a new private output location with
+at least the object size plus 1 GiB free:
+
+```bash
+.venv/bin/python -m ops.rehydrate_native_tau2_cache \
+  --inventory state/native-tau2-common-live/epoch-1790869388/cumulative-1.zip-signed-cache-storage.json \
+  --bucket-config state/r2-direct.json \
+  --output /operator/private/audit-copy.zip
+```
+
+The helper authenticates the inventory before reading its object, rejects keys
+outside the exact private epoch/cache locations, bounds the read to 250 MB, and
+requires exact length/hash before publishing a mode600 file. It refuses existing
+outputs and removes a failed temporary download. Rehydration verifies storage
+bytes; the separate signed model/native audits establish the computation and
+original-environment result. The final cumulative ZIP is the deadline-selected
+submission; the earlier cumulative cache is historical upload evidence.
+
+Root exercised the helper against the actual signed final-cache inventory and R2
+object: all 45,986,655 bytes matched SHA256, the output had mode600, and only that
+new owned test copy was removed afterward. Evidence:
+`state/root-audits/tau2-real-rehydration-check.json`. Seven focused authentication,
+key-scope, bounds, failure-cleanup and publication controls pass.
