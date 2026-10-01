@@ -144,3 +144,49 @@ class MiningEpochWindow(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory,patch('subnet.backend_jobs.time.time',side_effect=clock),patch('subnet.backend_jobs.digest',return_value='a'*64),patch('subnet.backend_jobs.version',return_value='approved'),patch('subnet.backend_jobs.install_source_loader'),patch('subnet.backend_jobs.checkpoint',return_value=directory),patch.dict('os.environ',{'CUBLAS_WORKSPACE_CONFIG':':4096:8'}),patch('subnet.protocol.entries',return_value=[dict(spec={},harness={},indices=[0])]):
             with self.assertRaisesRegex(ValueError,'epoch window closed'):execute(self.sign(self.job),self.authority,directory,runtime_factory=lambda *a:runtime)
         runtime.rollout.assert_not_called()
+
+class CumulativeMining(unittest.TestCase):
+    def setUp(self):
+        from types import SimpleNamespace
+        self.now=20
+        self.manifest=dict(start=10,deadline=90,epoch='nonpayable-cumulative',checkpoint={'id':'approved'},K=1,L=1,max_batches=3)
+        self.job=dict(search_budget=4,seed_start=0)
+        self.definitions=[dict(env_id='one',spec={},harness={},indices=[0,1]),dict(env_id='two',spec={},harness={},indices=[2])]
+        self.runtime=SimpleNamespace(spec=SimpleNamespace(version='v1'))
+        self.runtime.for_environment=lambda *args:self.runtime
+        self.runtime.rollout=lambda index,seed:({'classification':'positive' if seed%2==0 else 'negative','turns':[{'output':[index,seed]}]},[])
+        self.uploads=[]
+    def run_miner(self,upload=None):
+        from subnet.backend_jobs import mine_cumulative
+        import json
+        def pack(rows):return json.dumps([b['index'] for b,a in rows]).encode()
+        with patch('subnet.protocol.entries',return_value=self.definitions),patch('subnet.batches.pack',side_effect=pack):
+            return mine_cumulative(self.runtime,self.manifest,self.job,upload or (lambda data,timeout:self.uploads.append(data)),clock=lambda:self.now)
+    def test_each_complete_batch_overwrites_with_cumulative_snapshot(self):
+        data,report=self.run_miner()
+        self.assertEqual(self.uploads,[b'[0]',b'[0, 1]',b'[0, 1, 2]'])
+        self.assertEqual(data,self.uploads[-1]);self.assertEqual(report['cumulative_uploads'],3)
+    def test_later_slow_search_keeps_acknowledged_snapshot(self):
+        honest=self.runtime.rollout
+        def rollout(index,seed):
+            if index==1:self.now=91
+            return honest(index,seed)
+        self.runtime.rollout=rollout
+        data,report=self.run_miner()
+        self.assertEqual(self.uploads,[b'[0]']);self.assertEqual(data,b'[0]')
+        self.assertEqual(report['batches'],1);self.assertTrue(report['search_stopped_at_deadline'])
+    def test_max_batches_applies_across_environment_groups(self):
+        self.manifest['max_batches']=1
+        data,report=self.run_miner()
+        self.assertEqual(self.uploads,[b'[0]']);self.assertEqual(len(report['search']),1)
+    def test_failed_put_is_not_reported_as_success(self):
+        def fail(data,timeout):raise ValueError('R2 PUT status 403')
+        with self.assertRaisesRegex(ValueError,'R2 PUT status'):self.run_miner(fail)
+    def test_rollout_finishing_in_reserve_does_not_start_late_overwrite(self):
+        honest=self.runtime.rollout
+        def rollout(index,seed):
+            if index==1 and seed==1:self.now=81
+            return honest(index,seed)
+        self.runtime.rollout=rollout
+        data,report=self.run_miner()
+        self.assertEqual(self.uploads,[b'[0]']);self.assertEqual(report['batches'],1)

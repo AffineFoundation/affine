@@ -73,6 +73,51 @@ def mining_window(manifest, now=None):
     if any(type(manifest.get(k)) not in (int,float) for k in ('start','deadline')) or not manifest['start']<=now<manifest['deadline']:
         raise ValueError('signed mining epoch window closed')
 
+def mine_cumulative(runtime,manifest,job,upload,clock=None):
+    """Publish each complete private batch before searching the next task.
+
+    The last acknowledged snapshot is authoritative if subsequent search runs
+    out of time. A ten-second reserve avoids initiating overwrites at expiry;
+    upload errors remain failures rather than pretending a PUT succeeded.
+    """
+    from .batches import pack
+    from .protocol import entries
+    clock=clock or time.time
+    mining_window(manifest,clock())
+    batches=[];search=[];data=None;uploads=0;stopped=False
+    def available():
+        now=clock()
+        return manifest['start']<=now<manifest['deadline']-10
+    for definition in entries(manifest):
+        if len(batches)>=manifest.get('max_batches',4) or not available():break
+        selected=runtime.for_environment(definition['spec'],definition['harness'])
+        for index in definition['indices']:
+            if not available():stopped=True;break
+            classes={'positive':[],'negative':[]};fingerprints=set();attempts=0
+            for attempt in range(job['search_budget']):
+                if not available():stopped=True;break
+                rollout,arrays=selected.rollout(index,job['seed_start']+attempt);attempts+=1
+                label=rollout['classification'];signature=tuple(tuple(t['output']) for t in rollout['turns'])
+                quota=manifest['K'] if label=='positive' else manifest['L']
+                if label in classes and len(classes[label])<quota and signature not in fingerprints:
+                    classes[label].append((rollout,arrays));fingerprints.add(signature)
+                if len(classes['positive'])==manifest['K'] and len(classes['negative'])==manifest['L']:break
+            search.append(dict(env_id=definition['env_id'],index=index,attempts=attempts,positive=len(classes['positive']),negative=len(classes['negative'])))
+            if len(classes['positive'])==manifest['K'] and len(classes['negative'])==manifest['L']:
+                # A rollout can finish across the deadline. Keep the previously
+                # uploaded snapshot instead of replacing it with a late object.
+                if not available():stopped=True;break
+                found=classes['positive']+classes['negative']
+                batch=dict(schema=2,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],env_id=definition['env_id'],environment_version=selected.spec.version,index=index,sample_index=index,rollouts=[r for r,a in found])
+                candidate=batches+[(batch,[a for r,a in found])];candidate_data=pack(candidate)
+                if not available():stopped=True;break
+                upload(candidate_data,min(180,manifest['deadline']-clock()-1))
+                batches=candidate;data=candidate_data;uploads+=1
+            if stopped or len(batches)>=manifest.get('max_batches',4):break
+        if stopped:break
+    if data is None:raise ValueError('GPU bounded search found no complete batch before epoch window closed')
+    return data,dict(batches=len(batches),search=search,cumulative_uploads=uploads,search_stopped_at_deadline=stopped)
+
 def validate(envelope, authority, now=None):
     """Pure authorization/policy check; never opens an artifact or imports runtime."""
     job=signed(envelope,authority);now=time.time() if now is None else now
@@ -266,32 +311,12 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         if job['role']=='mine':
             from .batches import pack
             import requests
-            batches=[];search=[]
-            for definition in entries(manifest):
-                selected=runtime.for_environment(definition['spec'],definition['harness'])
-                for index in definition['indices']:
-                    mining_window(manifest)
-                    classes={'positive':[],'negative':[]};fingerprints=set()
-                    for attempt in range(job['search_budget']):
-                        mining_window(manifest)
-                        rollout,arrays=selected.rollout(index,job['seed_start']+attempt)
-                        label=rollout['classification'];signature=tuple(tuple(t['output']) for t in rollout['turns'])
-                        quota=manifest['K'] if label=='positive' else manifest['L']
-                        if label in classes and len(classes[label])<quota and signature not in fingerprints:
-                            classes[label].append((rollout,arrays));fingerprints.add(signature)
-                        if len(classes['positive'])==manifest['K'] and len(classes['negative'])==manifest['L']:break
-                    search.append(dict(env_id=definition['env_id'],index=index,attempts=attempt+1,positive=len(classes['positive']),negative=len(classes['negative'])))
-                    if len(classes['positive'])==manifest['K'] and len(classes['negative'])==manifest['L']:
-                        found=classes['positive']+classes['negative']
-                        batch=dict(schema=2,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],env_id=definition['env_id'],environment_version=selected.spec.version,index=index,sample_index=index,rollouts=[r for r,a in found])
-                        batches.append((batch,[a for r,a in found]))
-                    if len(batches)>=manifest.get('max_batches',4):break
-            if not batches:raise ValueError('GPU bounded search found no complete batch')
-            data=pack(batches);artifact=out/'submission.zip';artifact.write_bytes(data)
-            mining_window(manifest)
-            response=requests.put(job['capability']['put_url'],data=data,headers=job['capability']['headers'],timeout=180,allow_redirects=False)
-            if response.status_code not in (200,201,204):raise ValueError('R2 PUT status '+str(response.status_code))
-            report.update(miner_id=job['miner_id'],submission_sha256=hashlib.sha256(data).hexdigest(),submission_size=len(data),batches=len(batches),search=search,operator_authorized_experiment=True)
+            def upload(data,timeout):
+                response=requests.put(job['capability']['put_url'],data=data,headers=job['capability']['headers'],timeout=timeout,allow_redirects=False)
+                if response.status_code not in (200,201,204):raise ValueError('R2 PUT status '+str(response.status_code))
+            data,mining=mine_cumulative(runtime,manifest,job,upload)
+            (out/'submission.zip').write_bytes(data)
+            report.update(miner_id=job['miner_id'],submission_sha256=hashlib.sha256(data).hexdigest(),submission_size=len(data),operator_authorized_experiment=True,**mining)
         elif job['role'] in ('verify','train'):
             reports=[];pairs=[]
             for i,obj in enumerate(job['submissions']):

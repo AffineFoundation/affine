@@ -21,7 +21,19 @@ def contract(config,round_number):
     rows=definitions(config);groups=config.get('training_groups') or [[r['spec']['id'] for r in rows]]
     selected=set(groups[round_number%len(groups)])
     if not selected or not selected<={r['spec']['id'] for r in rows}:raise ValueError('GPU training group')
-    definitions_all=[dict(row,indices=row['indices'] if row['spec']['id'] in selected else []) for row in rows]
+    per_epoch=config.get('indices_per_environment_per_epoch')
+    if per_epoch is not None and (type(per_epoch) is not int or not 1<=per_epoch<=32):
+        raise ValueError('prospective index rotation budget')
+    definitions_all=[]
+    for row in rows:
+        indices=row['indices'] if row['spec']['id'] in selected else []
+        if indices and per_epoch is not None:
+            # Rotate only within the operator-approved training set; fixed
+            # held-out indices remain excluded by heldout() across all rounds.
+            cycle=round_number//len(groups)
+            start=(cycle*per_epoch)%len(indices)
+            indices=[indices[(start+i)%len(indices)] for i in range(min(per_epoch,len(indices)))]
+        definitions_all.append(dict(row,indices=indices))
     return dict(duration=config.get('duration',300),environments=definitions_all,audit_policy={'mode':'full','version':1},
         source_bundle=config['source_bundle'],model_runtime_revision=REVISION,numerical_policy=NUMERICAL_POLICY,
         backend_profile=BACKEND_PROFILE,model_id=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'))
