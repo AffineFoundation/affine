@@ -504,3 +504,16 @@ transitive dependency closure is explicitly not claimed. Evidence:
 `state/wikispeedia-window-model-stage-v1/root-signed-stage-actual-byte-check.json`.
 This qualifies preparation only. Model K/L, TOPLOC, numerical replay and common
 training remain pending behind the normal wide recovery priority.
+
+## 2026-10-01: post-empty private R2 submission checked
+
+The first normal post-empty mining job completed successfully under its original
+signed job and source/runtime/lease bindings. Root independently read the actual
+46,230,234-byte R2 staging object and checked its SHA, atomic completion metadata
+and arrival within the signed window. Bounded decoding confirms one Numina index
+13 batch with K1/L1, 484 float32 probability rows over all 49,152 vocabulary
+entries, finite normalized log probabilities and proof framing. This checks
+transport and artifact structure; it is not fresh inference verification or
+optimizer recovery. The actual controller remains alive and honors the original
+deadline before freeze. Evidence:
+`state/gpu-wide/root-post-empty-private-R2-batch-check.json`.
