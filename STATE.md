@@ -20,7 +20,10 @@ worker preserves native tool-error observations. It completed a verified
 144-task baseline and three full-model optimizer updates on audited Logic,
 SciText, and Unscramble pairs. Its new checkpoint's six published R2 files were
 independently hashed (3,426,302,727 bytes). The paired post-training evaluation
-and completed wider epoch remain pending; no broader performance gain is claimed.
+and full wider epoch now pass the evidence checker. Results are mixed: three
+metrics improved, two decreased, and four stayed unchanged. The next epoch is
+mining from the new checkpoint. No broader performance gain is claimed; see
+[the paired wider results](docs/WIDE_EVALUATION_RESULTS.md).
 
 A controlled Tau2 tool-use trajectory has passed independent model verification
 for all six agent/user responses and replay through the original environment
