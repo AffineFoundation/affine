@@ -307,16 +307,19 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                 report['full_model_finetune']=report['training']['full_model_finetune']
                 report['new_checkpoint']=dict(id=file_map(files),files=files,path=str(destination))
         else:
-            values=[]
+            values=[];failures=[]
             for row in job['heldout']:
                 definition=entry(manifest,row['env_id'])
                 if set(row['indices'])&set(definition['indices']):raise ValueError('heldout/training overlap')
                 selected=runtime.for_environment(definition['spec'],row['harness'])
                 for index,seed in zip(row['indices'],row['seeds']):
-                    doc,arrays=selected.rollout(index,seed)
-                    if not selected.verify(doc,arrays):raise ValueError('heldout audit')
-                    values.append(dict(env_id=row['env_id'],index=index,seed=seed,reward=doc['reward'],classification=doc['classification'],verified=True))
-            report['heldout']=values
+                    try:
+                        doc,arrays=selected.rollout(index,seed)
+                        if not selected.verify(doc,arrays):raise ValueError('heldout audit')
+                        values.append(dict(env_id=row['env_id'],index=index,seed=seed,reward=doc['reward'],classification=doc['classification'],task_hash=doc['task_hash'],verified=True))
+                    except (ValueError,RuntimeError,KeyError) as error:
+                        failures.append(dict(env_id=row['env_id'],index=index,seed=seed,error_type=type(error).__name__,error=str(error)[:300]))
+            report['heldout']=values;report['heldout_failures']=failures
     report['success']=True;report['completed_at']=time.time()
     (out/'report.json').write_bytes(canonical(report));return report
 

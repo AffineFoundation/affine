@@ -143,7 +143,7 @@ def main():
                 if gateway.direct_r2:pointer.update(manifest_url=bucket.presign(pointer['manifest']),current_url=bucket.presign(stream_path),current_url_expires_at=time.time()+604800,transport_policy='direct-r2-v1')
                 if gateway.direct_r2:
                     ledger=state/'finalized-reports.json'
-                    pointer['history_url']=publish_history(controller,prefix,json.loads(ledger.read_text()) if ledger.exists() else [],config.get('historical_source_bundle',config.get('source_bundle')))
+                    pointer['history_url']=publish_history(controller,prefix,json.loads(ledger.read_text()) if ledger.exists() else [],config.get('historical_source_bundle',config.get('source_bundle')),config.get('source_reconstructions',[]))
                 bucket.json(stream_path,controller.signed(pointer))
                 if gateway.direct_r2:save(state/'direct-discovery.json',dict(current_url=bucket.presign(stream_path),authority=controller.authority.id,expires_at=time.time()+604800))
                 active['phase']='collect';save(livepath,status)

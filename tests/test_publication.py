@@ -28,3 +28,19 @@ class PublicationTest(unittest.TestCase):
    first=publish_source_bundle(c,archive);self.assertEqual(first,publish_source_bundle(c,archive))
    bucket.data[first['key']]=b'corrupt'
    with self.assertRaises(ValueError):publish_source_bundle(c,archive)
+
+ def test_reviewed_reconstruction_cannot_replace_epoch_source_or_corrupt_bytes(self):
+  with tempfile.TemporaryDirectory() as p:
+   state=Path(p);bucket=Bucket();c=SimpleNamespace(state=state,bucket=bucket,authority=SimpleNamespace(id='a'*64))
+   archive=state/'reviewed.tar.gz';archive.write_bytes(b'complete reviewed static sources')
+   reconstruction=dict(publish_source_bundle(c,archive),binding='reviewed-reconstruction-not-original-epoch-archive')
+   original=dict(key='public/sources/original/source.tar.gz',sha256='b'*64,size=10)
+   (state/'e-manifest.json').write_text(json.dumps(dict(deadline=1,checkpoint=dict(id='c'*64,files={}),source_bundle=original)))
+   ledger=[dict(epoch_id='e',receipts={})]
+   report=history(c,ledger,source_reconstructions=[reconstruction])
+   self.assertEqual(report['epochs'][0]['source_bundle']['sha256'],original['sha256'])
+   self.assertEqual(report['epochs'][0]['source_bundle']['binding'],'epoch-signed')
+   self.assertEqual(report['source_reconstruction_supplements'][0]['binding'],reconstruction['binding'])
+   bucket.data[reconstruction['key']]=b'corrupt'
+   with self.assertRaisesRegex(ValueError,'content mismatch'):history(c,ledger,source_reconstructions=[reconstruction])
+   with self.assertRaisesRegex(ValueError,'provenance'):history(c,ledger,source_reconstructions=[dict(reconstruction,binding='epoch-signed')])

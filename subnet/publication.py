@@ -25,7 +25,7 @@ def publish_source_bundle(controller,path):
     return dict(key=key,sha256=digest,size=len(data))
 
 
-def history(controller,ledger,source_bundle=None):
+def history(controller,ledger,source_bundle=None,source_reconstructions=()):
     rows=[]
     def route(key):return controller.bucket.presign(public_key(key))
     for result in ledger:
@@ -59,10 +59,21 @@ def history(controller,ledger,source_bundle=None):
             if descriptor['id']!=trained:raise ValueError('trained checkpoint identity')
             output=dict(id=trained,files=descriptor['files'],descriptor_url=route(descriptor_key),read_urls={name:route(f'public/checkpoints/{trained}/{name}') for name in descriptor['files']})
         rows.append(dict(epoch_id=epoch,payable=result.get('payable',False),deadline=manifest['deadline'],checkpoint=checkpoint,trained_checkpoint=output,objects=objects,audits=audits,frozen=frozen,source_bundle=source))
-    return dict(version=1,authority=controller.authority.id,refreshed_at=time.time(),routes_expire_at=time.time()+604800,epochs=rows)
+    supplements=[]
+    for descriptor in source_reconstructions:
+        if descriptor.get('binding')!='reviewed-reconstruction-not-original-epoch-archive':
+            raise ValueError('source reconstruction provenance')
+        key=public_key(descriptor['key']);digest=descriptor['sha256']
+        if len(digest)!=64 or any(c not in '0123456789abcdef' for c in digest):
+            raise ValueError('source reconstruction digest')
+        data=controller.bucket.get(key)
+        if sha(data)!=digest or len(data)!=descriptor['size']:
+            raise ValueError('source reconstruction content mismatch')
+        supplements.append(dict(descriptor,read_url=route(key)))
+    return dict(version=1,authority=controller.authority.id,refreshed_at=time.time(),routes_expire_at=time.time()+604800,epochs=rows,source_reconstruction_supplements=supplements)
 
 
-def publish_history(controller,prefix,ledger,source_bundle=None):
+def publish_history(controller,prefix,ledger,source_bundle=None,source_reconstructions=()):
     key=public_key(f'public/streams/{prefix}/history.json')
-    controller.bucket.json(key,controller.signed(history(controller,ledger,source_bundle)))
+    controller.bucket.json(key,controller.signed(history(controller,ledger,source_bundle,source_reconstructions)))
     return controller.bucket.presign(key)
