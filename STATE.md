@@ -373,3 +373,23 @@ At the completed idle boundary, the service activated source `6c9df7739a910c494e
 ## Durable replay-source reproduction
 
 The independent auditor now tries the immutable `public/source-bundles/{signed-sha256}.tar.gz` locator when an archived manifest's key hint is stale or missing, before relying on an expiring signed URL. It retains exact signed size/digest and complete module-inventory checks; access-denied errors remain failures. Root removed the ephemeral URL from a copy of the authenticated completed v7f manifest and successfully fetched its 9,149,057-byte archive with all forty-seven source digests matching the signed job. Evidence: `state/gpu-wide/root-v7f-durable-source-check.json`. Seven source-route controls, ten ledger controls and the actual eleven-epoch ledger pass. No frozen manifest or active compute source was modified.
+
+## 2026-10-01: Tau2 recovered heldouts published without rewriting failures
+
+The separate native Tau2 common epoch completed one full-model update and all
+sixteen after-checkpoint heldouts with five explicitly separate recovery attempts.
+The original eleven-success/five-error evaluation remains unchanged. Its signed
+completion and all inventoried evidence were independently checked; the fresh
+successor also passed independent native/model verification without another
+optimizer step. Both baseline and completed after means are zero.
+
+The dashboard now exposes three authenticated derived records: sixteen baseline,
+eleven original partial, and sixteen completed with explicit recovery. A separate
+signed approval binds the unchanged completion and paired metadata contracts;
+the derived cohort includes the actual agent seeds omitted by the historical
+dataset digest. Seven export mutation/privacy controls and ten dashboard checks
+pass. Actual affine.io HTTPS JSON returned all three exact records (HTTP200),
+including original error and recovery counts. Evidence:
+`state/native-tau2-common-live/epoch-1790869388/root-public-dashboard-recovery-check.json`.
+This does not establish quality improvement, wide empty-epoch completion, or
+chain payouts. The sixteen-family wide evaluation remains a separate live job.

@@ -135,7 +135,8 @@ class Database:
         keys = ('run_id','epoch_id','checkpoint','model','env_id','environment_version','harness',
                 'dataset_id','seed','count','successes','mean_reward','timestamp',
                 'training_steps','status','fixed_task_ids','reward_standard_error',
-                'requested_count','completed_count','taskset_hash','policy_kind','model_runtime_revision')
+                'requested_count','completed_count','taskset_hash','policy_kind','model_runtime_revision',
+                'original_error_count','recovered_count','status_detail')
         for path in (self.source/'evaluations').glob('*.json'):
             raw = read(path,{})
             if not isinstance(raw,dict) or not all(isinstance(raw.get(k),str) for k in ('run_id','env_id','dataset_id','status')):
@@ -161,6 +162,12 @@ class Database:
                    for key in ('checkpoint','epoch_id','environment_version','harness','taskset_hash','model_runtime_revision')):
                 continue
             if 'policy_kind' in row and row['policy_kind'] not in ('curated-control','autoregressive'):
+                continue
+            if any(key in row and (type(row[key]) is not int or row[key] < 0)
+                   for key in ('original_error_count', 'recovered_count')):
+                continue
+            if 'status_detail' in row and row['status_detail'] not in (
+                    'original-complete', 'original-partial', 'completed-with-explicit-recovery'):
                 continue
             if row['status'] == 'complete':
                 if type(row.get('count')) is not int or row['count'] <= 0:

@@ -31,3 +31,11 @@ The public projection includes sanitized model identifiers and keeps CUDA and CP
 Repeat independent completed-epoch checks with `.venv/bin/python -m ops.check_epoch_evidence`. This reads signed R2 manifests, scores, audit challenges, audit reports and checkpoint descriptors; hashes actual frozen submissions and local trained checkpoint files; matches held-out tasks/profiles; and confirms the test reports are excluded from payout aggregation. It uses the controller report's local authority as its operator trust anchor, reads the existing private bucket config without printing credentials, and performs no chain writes. Results are saved in state/multi-environment/independent-epoch-evidence.json. These checks authenticate the recorded execution evidence; they do not replace inference recomputation by the verifier or establish goal completion.
 
 Public mobile and desktop checks at22:39UTC confirmed15 environment options,256UIDcells, noJavaScript errors or overflow, and realIFEvalbefore/after0.25→0.25. ResponsiveSVGcoordinates keepaxisfont12physicalpixels at390pxand1440px ratherthanshrinking desktopcoordinates to3.4px onphones. Epochselector showsUTCtimes; fullimmutableepochIDs remainoptiontitles/values. Evidence state/dashboard/five-epoch-public-mobile-check.json and responsive-chart-public-check.json; oldJSbackup deployment-20260930T223852Z-responsive-chart.
+
+Tau2's explicit-recovery projection now publishes a matched sixteen-task baseline
+and sixteen-task recovered after-checkpoint population, alongside the preserved
+original eleven-task partial result. Five original failures and five separate
+recoveries are visible as bounded metadata. Both completed means remain zero.
+The signed evidence and separate metadata approval are authenticated before
+export; no historical failed report is rewritten. See
+[TAU2_RECOVERY_DASHBOARD.md](../docs/TAU2_RECOVERY_DASHBOARD.md).
