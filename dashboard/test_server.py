@@ -7,6 +7,27 @@ from dashboard.server import Database
 
 
 class PublicProjectionTests(unittest.TestCase):
+    def test_untrained_abort_is_visible_without_private_worker_error(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); folder = root/'state/gpu-wide'; folder.mkdir(parents=True)
+            epoch = 'nonpayable-aborted'
+            (folder/f'{epoch}-manifest.json').write_text(json.dumps(dict(epoch=epoch, start=1, deadline=2, checkpoint={'id':'approved'})))
+            abort = dict(status='aborted_evaluation', epoch=epoch, checkpoint='approved',
+                         next_checkpoint='approved', optimizer_ran=False, steps=0, reason='PRIVATE_WORKER_ERROR')
+            path = folder/f'{epoch}-aborted-evaluation.json'
+            path.write_text(json.dumps({'payload':abort}))
+            database = Database(root/'network.sqlite', root/'state'); database.refresh()
+            snapshot = database.snapshot()
+            self.assertEqual(snapshot['epochs'][0]['phase'], 'aborted evaluation')
+            self.assertIsNone(snapshot['epochs'][0]['training'])
+            self.assertNotIn('PRIVATE_WORKER_ERROR', json.dumps(snapshot))
+            path.write_text(json.dumps({'payload':dict(abort, next_checkpoint='changed')}))
+            database.refresh()
+            self.assertEqual(database.snapshot()['epochs'][0]['phase'], 'closed')
+            path.write_text(json.dumps({'payload':['PRIVATE_WORKER_ERROR']}))
+            database.refresh()
+            self.assertEqual(database.snapshot()['epochs'][0]['phase'], 'closed')
+
     def test_gpu_epoch_projection_retains_private_field_boundary(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);source=root/'state';identity='d'*64
