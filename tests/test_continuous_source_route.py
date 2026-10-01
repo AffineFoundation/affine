@@ -27,4 +27,30 @@ class Tests(unittest.TestCase):
  def test_valid_key_does_not_need_expiring_capability(self):
   d=self.descriptor();d['sha256']=hashlib.sha256(b'old').hexdigest();d.pop('url')
   with patch('requests.get') as call:self.assertEqual(read_source_bundle(Bucket(),d),(b'old','object-key'));call.assert_not_called()
+
+class DurableTests(unittest.TestCase):
+ def descriptor(self):return {'key':'stale','size':3,'sha256':hashlib.sha256(b'new').hexdigest()}
+ def test_canonical_signed_hash_route_does_not_need_url(self):
+  from unittest.mock import Mock
+  bucket=Mock();bucket.get.side_effect=[b'old',b'new'];d=self.descriptor()
+  with patch('requests.get') as request:
+   self.assertEqual(read_source_bundle(bucket,d),(b'new','content-addressed-key'))
+   request.assert_not_called()
+  self.assertEqual(bucket.get.call_args.args[0],'public/source-bundles/'+d['sha256']+'.tar.gz')
+ def test_missing_hint_can_use_canonical_but_access_errors_cannot(self):
+  from unittest.mock import Mock
+  from botocore.exceptions import ClientError
+  for code in ['NoSuchKey','AccessDenied']:
+   bucket=Mock();bucket.get.side_effect=[ClientError({'Error':{'Code':code}},'GetObject'),b'new']
+   if code=='NoSuchKey':self.assertEqual(read_source_bundle(bucket,self.descriptor()),(b'new','content-addressed-key'))
+   else:
+    with self.assertRaises(ClientError):read_source_bundle(bucket,self.descriptor())
+    self.assertEqual(bucket.get.call_count,1)
+ def test_invalid_signed_digest_rejected_before_storage_read(self):
+  from unittest.mock import Mock
+  for digest in ['../different',True,None]:
+   bucket=Mock();d=self.descriptor();d['sha256']=digest
+   with self.assertRaises(ValueError):read_source_bundle(bucket,d)
+   bucket.get.assert_not_called()
+
 if __name__=='__main__':unittest.main()

@@ -112,14 +112,27 @@ def check_source_bundle(body, descriptor, expected):
 
 
 def read_source_bundle(bucket, descriptor):
-    """An authenticated manifest URL remains binding when its key hint is stale."""
-    body=bucket.get(descriptor['key'])
-    if len(body)==descriptor['size'] and hashlib.sha256(body).hexdigest()==descriptor['sha256']:
-        return body,'object-key'
+    """Recover signed source bytes from immutable storage before expiring URLs."""
+    import re
+    from botocore.exceptions import ClientError
+    require(type(descriptor['size']) is int and 0<descriptor['size']<=32*1024**2 and
+        isinstance(descriptor['sha256'],str) and re.fullmatch('[0-9a-f]{64}',descriptor['sha256']),
+        'GPU source read identity and size budget')
+    canonical_key='public/source-bundles/'+descriptor['sha256']+'.tar.gz'
+    keys=[(descriptor['key'],'object-key')]
+    if canonical_key!=descriptor['key']:
+        keys.append((canonical_key,'content-addressed-key'))
+    for key,route in keys:
+        try:
+            body=bucket.get(key)
+        except ClientError as error:
+            if str(error.response.get('Error',{}).get('Code')) not in ('NoSuchKey','404','NotFound'):
+                raise
+            continue
+        if len(body)==descriptor['size'] and hashlib.sha256(body).hexdigest()==descriptor['sha256']:
+            return body,route
     import requests
     from subnet.backend_jobs import r2_url
-    require(type(descriptor['size']) is int and 0<descriptor['size']<=32*1024**2,
-        'GPU source read size budget')
     url=r2_url(descriptor.get('url',''),'GET')
     chunks=[];size=0
     with requests.get(url,stream=True,timeout=180,allow_redirects=False) as response:
