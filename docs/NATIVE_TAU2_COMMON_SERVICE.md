@@ -65,3 +65,31 @@ object: all 45,986,655 bytes matched SHA256, the output had mode600, and only th
 new owned test copy was removed afterward. Evidence:
 `state/root-audits/tau2-real-rehydration-check.json`. Seven focused authentication,
 key-scope, bounds, failure-cleanup and publication controls pass.
+
+### Explicit evaluation recovery and private diagnostics
+
+The first post-training evaluation ended with eleven verified tasks and five
+failures (indices 27–31). Its original report remains unchanged. An isolated,
+separately signed recovery attempt covers only those failed indices, using the
+same trained checkpoint, fixed auxiliary model, original tasks, seeds and
+computation source. Recovery does not rerun the optimizer or relabel the original
+failed report. Its own process/exit journals, admission artifacts, numerical and
+native audits, and exact R2 storage inventories must be checked independently.
+A successful generation alone is insufficient; a verified task whose storage
+offload fails must not be reported as fully stored recovery evidence.
+
+`ops.native_tau2_private_rejection_observer` can record bounded exception text,
+traceback and disk headroom to a private mode600 signed sink. It delegates the
+original diagnostic and preserves its return or exception, including when the
+observation sink fails. The instrumentation has its own signed source pins;
+model and native source/guards remain unchanged. Four controls cover forwarding,
+bounded messages, private permissions and sink failure. Historical filtered
+diagnostics cannot establish an exception message that was never recorded.
+Keep these private traces out of public reports and dashboard data.
+
+Evidence for the explicitly approved recovery source and received admissions is
+under `state/native-tau2-common-recovery/retry-1790882934/`, including
+`root-recovery-source-approval-check.json` and
+`root-recovery-admission-storage-check.json`. These receipts state their partial
+coverage and distinguish signed lineage/storage attestations from a fresh root
+model or R2 byte recomputation.
