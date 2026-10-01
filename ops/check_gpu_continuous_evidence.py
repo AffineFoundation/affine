@@ -100,6 +100,29 @@ def check_source_bundle(body, descriptor, expected):
     return dict(sha256=descriptor['sha256'], bytes=len(body), source_files=len(observed))
 
 
+def read_source_bundle(bucket, descriptor):
+    """An authenticated manifest URL remains binding when its key hint is stale."""
+    body=bucket.get(descriptor['key'])
+    if len(body)==descriptor['size'] and hashlib.sha256(body).hexdigest()==descriptor['sha256']:
+        return body,'object-key'
+    import requests
+    from subnet.backend_jobs import r2_url
+    require(type(descriptor['size']) is int and 0<descriptor['size']<=32*1024**2,
+        'GPU source read size budget')
+    url=r2_url(descriptor.get('url',''),'GET')
+    chunks=[];size=0
+    with requests.get(url,stream=True,timeout=180,allow_redirects=False) as response:
+        require(response.status_code==200, 'GPU signed source URL status')
+        for part in response.iter_content(1024*1024):
+            size+=len(part)
+            require(size<=descriptor['size'], 'GPU signed source URL size budget')
+            chunks.append(part)
+    body=b''.join(chunks)
+    require(len(body)==descriptor['size'] and hashlib.sha256(body).hexdigest()==descriptor['sha256'],
+        'GPU signed source URL bytes')
+    return body,'signed-url-stale-key'
+
+
 def checked_job(state, identifier, authority):
     job = signed(json.loads((state/'roles'/f'{identifier}-job.json').read_text()), authority)
     manifest = signed(job['manifest'], authority)
@@ -282,7 +305,8 @@ def inspect(state, bucket, evaluations):
         bundle=manifest['source_bundle']
         source_key=(bundle['sha256'],hashlib.sha256(canonical(train_job['source_files'])).hexdigest())
         if source_key not in source_checks:
-            source_checks[source_key]=check_source_bundle(bucket.get(bundle['key']),bundle,train_job['source_files'])
+            source_body,route=read_source_bundle(bucket,bundle)
+            source_checks[source_key]=dict(check_source_bundle(source_body,bundle,train_job['source_files']),retrieval=route)
         require(training_manifest == manifest and metrics['steps'] > 0 and
                 metrics['full_model_finetune'] is True and metrics['weights_changed'] is True and
                 metrics['checkpoint'] != manifest['checkpoint']['id'], 'GPU real full-model update')
