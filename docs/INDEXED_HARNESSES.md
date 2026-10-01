@@ -45,6 +45,21 @@ strict subset projection. This helper is prospective: integration into the share
 and actual signed multi-index execution remain pending. It does not change the
 active v7k source or the separately sealed Wikispeedia probe.
 
+An additional CPU compatibility check authenticated the actual signed
+sixteen-environment recovery manifest and ran the helper beside byte-identical
+v7k runtime modules. Every declared policy retained its runtime configuration;
+all fifteen inactive definitions refused resolution, and the active Numina
+index remained authorized. The receipt is
+`state/gpu-wide/root-indexed-legacy-manifest-compatibility.json`, with module and
+manifest hashes. This did not load weights, execute inference or deploy.
+
+That check first exposed a mismatch in the current root/window-based prototype:
+it lacks the live worker's MRCR shell-candidate dispatch and original native MCP
+tool-error bridge. Their restoration and behavior checks are admission gates;
+passing the helper tests alone does not qualify that source for the existing
+sixteen-family loop. Preserve the live runtime and separately version the
+combined source rather than altering a sealed checkpoint cohort.
+
 ```sh
 PYTHONPATH=. .venv/bin/python -m unittest discover -s tests \
   -p test_sample_harness.py
