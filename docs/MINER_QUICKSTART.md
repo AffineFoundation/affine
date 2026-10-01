@@ -13,7 +13,7 @@ proposed weights and trains the next checkpoint. The next epoch waits for traini
 Pilot epochs are permanently nonpayable: they do not set blockchain weights.
 CPU multi-epoch trials and GPU mining, verification and training controls have run.
 The continuous GPU rollout/checkpoint publication path is still being completed.
-There is no currently open external-miner challenge. Contact Arbos to coordinate
+External miner pilots open only for approved, live registered identities. Contact Arbos to coordinate
 identity approval, a fresh signed discovery URL, and an agreed runtime before
 renting compute. Performance improvement across all environments is not established.
 
