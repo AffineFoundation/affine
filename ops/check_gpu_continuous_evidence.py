@@ -141,6 +141,20 @@ def check_empty_closed(status,manifest,scores,accepted_count):
         'GPU empty epoch unchanged checkpoint and zero verified reward')
 
 
+def epoch_pending(abort, empty_status, metrics_exist, after_count, environment_count):
+    return abort is None and (after_count != environment_count or
+        (empty_status is None and not metrics_exist))
+
+
+def bind_empty_recovery(empty, completed):
+    verified={r['epoch']:r for r in completed}
+    for row in empty:
+        successor=verified.get(row['next_epoch'])
+        row['recovery_verified']=bool(successor and successor['steps']>0 and
+            sum(successor['points'].values())>0 and successor['checkpoint']!=row['checkpoint'])
+        row['recovery_checkpoint']=successor['checkpoint'] if row['recovery_verified'] else None
+
+
 def inspect(state, bucket, evaluations):
     authority = Identity(bytes.fromhex((state/'authority.seed').read_text().strip())).id
     def public(key):
@@ -159,7 +173,7 @@ def inspect(state, bucket, evaluations):
         empty_path=state/f'{epoch}-empty-closed.json'
         empty_status=json.loads(empty_path.read_text()) if empty_path.exists() else None
         require(not (abort is not None and empty_status is not None), 'GPU conflicting empty/abort statuses')
-        if abort is None and empty_status is None and (not metrics_path.exists() or len(after_paths) != len(manifest['environments'])):
+        if epoch_pending(abort,empty_status,metrics_path.exists(),len(after_paths),len(manifest['environments'])):
             pending.append(epoch); continue
         require(public(prefix+'manifest.json') == manifest, 'GPU public manifest')
         require(manifest['payable'] is False and direct_read_routes(manifest), 'GPU nonpayable/direct policy')
@@ -192,6 +206,11 @@ def inspect(state, bucket, evaluations):
         calculated = score(reports)
         require(all(scores[k] == calculated[k] for k in calculated), 'GPU recomputed scores')
         if empty_status is not None:
+            if manifest.get('operator_test_policy') is not None:
+                from subnet.empty_epoch_policy import dispatch_allowed
+                require(not dispatch_allowed(manifest), 'GPU signed controlled empty policy')
+                require(not list((state/'roles').glob(epoch+'-mine-*-job.json')),
+                    'GPU controlled empty window cannot dispatch a miner')
             require(not metrics_path.exists(), 'GPU empty epoch cannot claim optimizer metrics')
             check_empty_closed(empty_status,manifest,scores,sum(len(r['accepted']) for r in reports.values()))
             proposed=json.loads((state/f'{epoch}-proposed-weights.json').read_text())
@@ -340,6 +359,7 @@ def inspect(state, bucket, evaluations):
             worker_source=source_checks[source_key],
             optimized_pairs=optimized,
             next_epoch=following['epoch'] if following else None))
+    bind_empty_recovery(empty,completed)
     return dict(timestamp=time.time(), success=True, epochs=completed, pending_epochs=pending, aborted_epochs=aborted,empty_epochs=empty,
         authority=authority, chain_write_operations=0, fresh_model_execution_in_this_check=False,
         remote_reports_are_operator_collected=True, published_bytes_evidence='operator_stream_hashes', goal_complete=False)
