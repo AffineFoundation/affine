@@ -2,11 +2,11 @@
   "counts": {
     "import": 45,
     "local_reset": 37,
-    "native_tool_execution": 3,
-    "original_reward": 19,
-    "remote_proof": 19,
-    "remote_replay": 18,
-    "training": 9
+    "native_tool_execution": 4,
+    "original_reward": 20,
+    "remote_proof": 20,
+    "remote_replay": 19,
+    "training": 10
   },
   "independently_reexecuted_by_exporter": false,
   "rows": [
@@ -15,14 +15,14 @@
       "import": true,
       "local_reset": false,
       "module": "affine_agent_v1",
-      "native_tool_execution": false,
-      "original_reward": false,
-      "remote_proof": false,
-      "remote_replay": false,
+      "native_tool_execution": true,
+      "original_reward": true,
+      "remote_proof": true,
+      "remote_replay": true,
       "source": "affine_agent",
-      "status": "controlled_native_fixture_proof_pair_verified",
+      "status": "controlled_native_common_pipeline_training_verified",
       "taskset_class": "AffineAgentTaskset",
-      "training": false
+      "training": true
     },
     {
       "category": "tool",
@@ -644,6 +644,6 @@
   "schema": 1,
   "scope": "Recorded source-level operator evidence; each row is a milestone, not full production support or proof of performance improvement.",
   "source_count": 45,
-  "source_matrix_sha256": "4e8c580320cb5f3e22d64c7357ef93277386535cd046dcb82b65a5fa051b6840",
+  "source_matrix_sha256": "5cd80dd5bc0ea229d06c19d135f89f37193dce2a1887a8f2578529871d74a09d",
   "status_is_blocker_or_milestone": true
 }
