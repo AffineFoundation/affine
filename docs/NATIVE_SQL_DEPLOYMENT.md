@@ -64,14 +64,15 @@ verified update to checkpoint
 Root independently streamed its six R2 objects (272,585,280 bytes). The
 following epoch `v2-empty-1790854231-7` closed with no accepted batches and
 no optimizer run; the new diversity controller's first epoch consumed that
-unchanged checkpoint. Broader-task training remains pending completion.
+unchanged checkpoint. The first broader-task epoch has now completed on original task 9; see
+`PUBLIC_SQL_CANDIDATES.md` for its separately qualified source and evidence.
 
 The independent command
 `.venv/bin/python -m ops.check_gpu_continuous_evidence --state state/native-sql-common`
-now reports six trained epochs and two closed empty epochs separately. It
+now reports seven trained epochs and two closed empty epochs separately. It
 authenticates the public manifest, frozen challenge and scores, recomputes
 zero credit for empty epochs, checks empty proposed weights and absence of
 optimizer metrics, and verifies the next signed manifest retains the same
 checkpoint. Optional before/after evaluations for an empty epoch must use
 the unchanged model with comparable fixed tasks; they are not learning
-evidence. Only the current diversity epoch remains pending in this audit.
+evidence. Only the successor diversity epoch remains pending in this audit.

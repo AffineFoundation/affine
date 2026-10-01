@@ -6,7 +6,7 @@
 
 A prospective isolated harness resolves candidates from each current public question rather than reusing task zero's query. Its generator revision and exact bytes are pinned in the operator configuration. Existing original bash exploration steps remain intact. Tokenizer admission measured all sixteen proposed pairs within the 128-token output budget, with actual lengths from 15 to 109 tokens. Native positive/negative controls and token lengths do not establish reachable sampling probabilities: target-model class-distribution measurements and complete proof/replay admission remain necessary before deploying this harness.
 
-The SQL controller now uses the new immutable diversity source `c454ddb7f22fadc7`, rotating the ten original mining tasks with measured positive/negative admission. The first diversity epoch remains pending audit and training. Original heldout indices 16–31 remain fixed under this new source baseline. Standalone admission controls do not count as additional trained tasks, completed epochs or heldout improvement.
+The SQL controller now uses the new immutable diversity source `c454ddb7f22fadc7`, rotating the ten original mining tasks with measured positive/negative admission. The first diversity epoch has now completed audit, training and paired evaluation on original task 9. Original heldout indices 16–31 remain fixed under this new source baseline. Standalone admission controls do not count as additional trained tasks, completed epochs or heldout improvement.
 
 The remote diversity qualification has completed with the approved 135M
 checkpoint `d5347dc1c9f59da0ec574fba01314ff6c637a12126b441fd27f0bbd4af481d4b`.
@@ -24,3 +24,21 @@ computations locally. Evidence is in
 `state/native-sql-common/diversity-model-control/root-artifact-evidence.json`.
 These standalone controls qualify task admission; broader common-epoch
 training and held-out improvement require their own completed evidence.
+
+The first completed diversity epoch is
+`nonpayable-native-sql-common-v3-diversity-1790855147-8`. Its actual frozen
+three-turn positive/negative pair was independently audited, credited one
+point, and consumed by one full-model update to checkpoint
+`a01efb6390050dd9705d05eab905ce9dac2442966e2bb8c8372260a333510816`.
+Root independently streamed all six published checkpoint objects
+(272,585,280 bytes) and replayed both trajectories through the original local
+actor/grader using the exact frozen diversity adapter and harness. All
+observations and terminal outcomes matched. The sixteen fixed original
+held-out tasks scored 0 before and after; this establishes broader task
+training, not performance improvement. Root also checked the corresponding
+public dashboard records and UID 131 grid value.
+
+Private evidence: `state/native-sql-common/root-continuous-independent-evidence.json`,
+`nonpayable-native-sql-common-v3-diversity-1790855147-8-root-checkpoint-publication.json`,
+`nonpayable-native-sql-common-v3-diversity-1790855147-8-root-fresh-native-replay.json`,
+and `state/dashboard/common-sql-seven-epoch-public-check.json`.
