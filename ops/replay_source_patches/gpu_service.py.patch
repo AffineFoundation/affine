@@ -1,0 +1,37 @@
+--- a/subnet/gpu_service.py
++++ b/subnet/gpu_service.py
+@@ -34,7 +34,7 @@
+             start=(cycle*per_epoch)%len(indices)
+             indices=[indices[(start+i)%len(indices)] for i in range(min(per_epoch,len(indices)))]
+         definitions_all.append(dict(row,indices=indices))
+-    return dict(duration=config.get('duration',300),environments=definitions_all,audit_policy={'mode':'full','version':1},
++    return dict(heldout_indices={r['env_id']:r['indices'] for r in config['heldout']},duration=config.get('duration',300),environments=definitions_all,audit_policy={'mode':'full','version':1},
+         training_policy=FULL_POLICY,source_bundle=config['source_bundle'],model_runtime_revision=REVISION,numerical_policy=NUMERICAL_POLICY,
+         backend_profile=BACKEND_PROFILE,model_id=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'))
+ 
+@@ -133,7 +133,24 @@
+                 active['phase']='train';save(statuspath,status)
+             if active['phase']=='train':
+                 if any(r['accepted'] for r in reports.values()):
+-                    cp,metrics=controller.train(manifest,reports,status['checkpoint_path'],steps=config.get('training_steps',1))
++                    replay=None;steps=config.get('training_steps',1)
++                    if config.get('balanced_replay'):
++                        from .replay_pool_preparation import prepare
++                        from .replay_training import admitted
++                        folder=state/(epoch+'-replay-pool')
++                        if not folder.exists():prepare(config,state,epoch,folder,max_pairs=16)
++                        request=folder/'job-replay.json'
++                        if request.exists():replay=json.loads(request.read_bytes())
++                        else:
++                            replay={'manifest':json.loads((folder/'current-manifest.json').read_bytes()),'pool':json.loads((folder/'pool.json').read_bytes()),'reuse_counts':json.loads((state/'replay-reuse-ledger.json').read_bytes())['counts'] if (state/'replay-reuse-ledger.json').exists() else {}}
++                            save(request,replay)
++                        _,selection=admitted(manifest,replay,controller.authority.id)
++                        families={r['environment_id'] for r in selection['selected']}|{b['env_id'] for r in reports.values() for b in r['accepted']}
++                        steps=len(families)
++                    cp,metrics=controller.train(manifest,reports,status['checkpoint_path'],steps=steps,replay=replay)
++                    if replay is not None:
++                        from .replay_commit import commit
++                        commit(state/'replay-reuse-ledger.json',epoch,metrics)
+                     active['next_checkpoint']=cp;active['next_path']=metrics['checkpoint_path'];active['next_steps']=status['training_steps']+metrics['steps']
+                 else:
+                     save(state/(epoch+'-empty-closed.json'),dict(epoch=epoch,status='closed_no_accepted_batches',payable=False,checkpoint=status['checkpoint']['id']))

@@ -36,6 +36,29 @@ all 218 parameter tensors. A root audit authenticated the signed completion,
 source archive and report bytes. It did not recompute model inference itself.
 The successor is now published to R2. Root independently streamed and hashed
 all six checkpoint objects, totaling 3,426,302,727 bytes, against the signed
-qualification file map. Paired evaluation on the same 192 held-out tasks is
-running. This result does not yet claim improved quality or a completed
-continuous replay epoch.
+qualification file map. This qualification has paired model-audited heldout
+evaluations at both checkpoints: 192 fixed original tasks, 16 per environment,
+with identical dataset identities and no evaluation failures. Math reward rose
+from 0.375 to 0.5; Trivia fell from 0.5 to 0.4375 and RGym fell from 0.001489437
+to 0.001055941. The other nine environments were unchanged. These mixed results
+do not establish a general improvement.
+
+Continuous replay integration remains prospective. To reproduce the reviewed
+controller changes in a new operator-owned MRCR-v7c source tree, run
+`python -m ops.prepare_balanced_replay_source --source APPROVED_MRCR_TREE
+--destination NEW_TREE`. The utility verifies exact base, patch and helper
+hashes, rejects source symlinks and destinations inside the input, and copies
+source without models, state or credentials. It changes no running service.
+Cached training retries republish authenticated metrics; consumed historical
+targets are recorded in one atomic epoch/count journal only after checkpoint
+publication. Replay targets produce optimizer data, not additional miner points.
+
+The root evidence checker independently authenticated both evaluation jobs,
+matched all 384 model-verified task outcomes to the 24 aggregate records, checked
+identical before/after source inventories and fixed task identities, and found
+all 24 records in the actual affine.io HTTPS export. This checks collected
+execution evidence; it does not repeat GPU computation on the root machine.
+The continuous auditor now accepts historical attribution only with an explicitly
+signed replay request, exact current-compatible pool and consumed target hashes,
+fresh numerical/native checks, and matching authenticated metrics. Historical
+pairs remain outside miner scoring; fresh-only epochs retain their old checks.

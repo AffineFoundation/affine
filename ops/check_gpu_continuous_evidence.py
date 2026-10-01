@@ -22,6 +22,38 @@ from ops.check_epoch_evidence import require
 # Later workers must report explicit per-update attribution; no silent downgrade.
 LEGACY_CYCLIC_WORKER='01d458b9f39312ddebc750482963c038f85aba335f75b51be2739adaee016d8a'
 
+def authenticated_training_pairs(manifest, job, train, metrics, fresh, authority):
+    """Reconstruct attribution; historical pairs never enter miner scoring."""
+    envelope=job.get('replay')
+    if envelope is None:
+        require('replay_training' not in train and 'replay_training' not in metrics and
+                metrics.get('replay_inputs_sha256') is None, 'unexpected unsigned replay claim')
+        return fresh
+    from subnet.replay_training import admitted,merge_pairs,REVISION
+    from subnet.verified_replay_pool import digest
+    _,selection=admitted(manifest,envelope,authority)
+    definitions={row['env_id']:row for row in manifest['environments']}
+    historical=[]
+    for entry in selection['selected']:
+        target=digest(dict(environment_id=entry['environment_id'],
+            environment_index=entry['environment_index'],task_hash=entry['task_hash'],
+            positive_rollout_sha256=digest(entry['positive']),
+            negative_rollout_sha256=digest(entry['negative'])))
+        require(target==entry['target_sha256'], 'replay target content binding')
+        historical.append((definitions[entry['environment_id']],entry['positive'],entry['negative']))
+    pairs,targets=merge_pairs(fresh,historical,envelope['reuse_counts'])
+    checks=[dict(env_id=e['environment_id'],index=e['environment_index'],
+        target_sha256=e['target_sha256'],current_checkpoint=manifest['checkpoint']['id'],
+        historical_probabilities_used_as_reference=False,
+        fresh_current_numerical_native_verification=True) for e in selection['selected']
+        if e['target_sha256'] in targets]
+    expected=dict(revision=REVISION,checks=checks,pool_sha256=selection['pool_sha256'],
+        proposed_reuse_increments={target:1 for target in targets},optimizer_performed=False)
+    require(train.get('replay_training')==expected and metrics.get('replay_training')==expected
+        and metrics.get('replay_inputs_sha256')==digest(envelope), 'signed replay execution binding')
+    require(metrics['steps']>=len(pairs), 'every replay family consumed')
+    return pairs
+
 LONG_CONTEXT_REVISION='cuda-bf16-sdpa-flash-sm86-selective-head-common-v1'
 LONG_CONTEXT_PROFILE=dict(device='cuda',dtype='bfloat16',attention='sdpa-flash-only',
     sm=[8,6],tf32=False,deterministic_algorithms=True,cublas_workspace_config=':4096:8',
@@ -251,6 +283,8 @@ def inspect(state, bucket, evaluations):
                 positives=[r for r in batch['rollouts'] if r['classification']=='positive']
                 negatives=[r for r in batch['rollouts'] if r['classification']=='negative']
                 training_pairs.extend((batch,p,n) for p,n in zip(positives,negatives))
+        training_pairs=authenticated_training_pairs(manifest,train_job,train,metrics,
+            training_pairs,authority)
         require(training_pairs and len(metrics['updates'])==metrics['steps'], 'GPU optimizer update count')
         optimized=[]
         for step,update in enumerate(metrics['updates']):

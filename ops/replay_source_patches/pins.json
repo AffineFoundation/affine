@@ -1,0 +1,35 @@
+{
+  "base": {
+    "backend_jobs.py": "15b6efd3e83160aa8fcdced4294ed0f9f657fef10c649480cf217cedf5784fea",
+    "remote_backend.py": "c8a8a4de7870f13cadc36966816db3bff4df206ebc61a318eb8c0654363543aa",
+    "gpu_service.py": "278a860b11483dbecc3dbb421d69743b3f4540116e3fb2407ebfca33fc9ff34a"
+  },
+  "outputs": {
+    "backend_jobs.py": "55e934e6688a625721794b0f60b50b8568cf6d057d1dc6b13e8e0d4845a6dae7",
+    "remote_backend.py": "b4f73118f6f7c98299a1e8131cf42f3a43446457564617dd3594b6203fa62ef9",
+    "gpu_service.py": "586fc7eed4dc6399778c57ebc41817123766cec6638a596280f6414c16892b55"
+  },
+  "patches": {
+    "backend_jobs.py.patch": "452e5ae4301605952dc4ce4092f94f72cf259ea9835b4c6a4092d07e259f10a5",
+    "remote_backend.py.patch": "922e96f7029637de3455d5c0f2ebf86d40ba98ea7b787e284e8bfbfd078497a9",
+    "gpu_service.py.patch": "c15a722ccbd9d1925cd3dd7fa62ab5bc64247ba9b82734d0c71e5fd5411c307e"
+  },
+  "helpers": {
+    "subnet/verified_replay_pool.py": {
+      "destination": "verified_replay_pool.py",
+      "sha256": "93b7a486cd25e74e79a5f37ca443e6eaa148e0b6b63f42aa98a405121aa5fe2e"
+    },
+    "subnet/replay_training.py": {
+      "destination": "replay_training.py",
+      "sha256": "ee0c8567cb13ba2ac04a880a9f8f9fb85ec0384967f56b0992760c1698805d2d"
+    },
+    "subnet/replay_commit.py": {
+      "destination": "replay_commit.py",
+      "sha256": "b8d6030029408eadca272c7e09613385c8e2e67afa043a978af6fada1db352bf"
+    },
+    "ops/build_verified_replay_pool.py": {
+      "destination": "replay_pool_preparation.py",
+      "sha256": "2d7cf60ac7f1a58766f45d634be0015a721780bac20bab8bdc1a9d58c17e5ea1"
+    }
+  }
+}

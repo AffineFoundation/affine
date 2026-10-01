@@ -1,0 +1,28 @@
+--- a/subnet/backend_jobs.py
++++ b/subnet/backend_jobs.py
+@@ -155,6 +155,10 @@
+     if job['role']=='train' and manifest.get('training_policy')!=FULL_POLICY:raise ValueError('signed fixed-reference training policy')
+     if job['role']=='train' and job.get('training_policy',HEAD_POLICY) not in (HEAD_POLICY,FULL_POLICY):raise ValueError('unapproved training objective')
+     if job['role']=='train' and (type(job.get('steps')) is not int or not 1<=job['steps']<=32):raise ValueError('training step budget')
++    if job.get('replay') is not None:
++        if job['role']!='train' or job.get('training_policy')!=FULL_POLICY:raise ValueError('replay only in signed full optimizer job')
++        from .replay_training import admitted
++        admitted(manifest,job['replay'],authority)
+     if job['role']=='evaluate':
+         if not job.get('heldout') or len(job['heldout'])>64:raise ValueError('heldout budget')
+         for row in job['heldout']:
+@@ -329,6 +333,14 @@
+             report['audits']=reports
+             if job['role']=='train':
+                 if not pairs:raise ValueError('no verified training pairs')
++                if job.get('replay') is not None:
++                    from .replay_training import verified_pairs,merge_pairs
++                    historical,replay_report=verified_pairs(runtime,manifest,job['replay'],authority)
++                    pairs,targets=merge_pairs(pairs,historical,job['replay']['reuse_counts'])
++                    replay_report['checks']=[row for row in replay_report['checks'] if row['target_sha256'] in targets]
++                    replay_report['proposed_reuse_increments']={target:1 for target in targets}
++                    report['replay_training']=replay_report
++                    if job['steps']<len(pairs):raise ValueError('each fresh and replay family requires an optimizer step')
+                 metrics=[];destination=None
+                 policy=job.get('training_policy',HEAD_POLICY)
+                 if policy==FULL_POLICY:
