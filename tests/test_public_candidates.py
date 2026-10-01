@@ -23,6 +23,8 @@ class PublicCandidateTests(unittest.TestCase):
         prompt='X T X\nrow_constraints = [1]\ncol_constraints = [1, 0, 0]'
         values=propose('affine_logic',[{'role':'user','content':prompt}])
         self.assertIn("[['C', 'T', 'X']]",values)
+        self.assertIn("[['X', 'T', 'X']]",values)
+        self.assertEqual(len(values[0]),len(values[-1]))
         self.assertEqual(propose('affine_logic',[{'role':'user','content':prompt.replace('[1]','[2]')}]),[])
 
     def test_unsupported_and_overlong_prompt(self):

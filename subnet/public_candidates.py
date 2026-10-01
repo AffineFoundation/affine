@@ -132,5 +132,13 @@ def propose(env_id, messages):
     elif env_id=='affine_logic':values=_campsite(prompt)
     elif env_id=='affine_unscramble':values=_unscramble(prompt)
     else:values=[]
-    if values and env_id!='affine_unscramble':values.append(r'\boxed{-999999}' if env_id.startswith('affine_sci') else '[]')
+    if values and env_id=='affine_logic':
+        invalid=ast.literal_eval(values[0])
+        for row in invalid:
+            if 'C' in row:
+                row[row.index('C')]='X';break
+        # A same-format, same-length count violation avoids a two-token empty
+        # answer dominating every full-grid proposal under sequence log-probs.
+        values.append(repr(invalid))
+    elif values and env_id.startswith('affine_sci'):values.append(r'\boxed{-999999}')
     return list(dict.fromkeys(values))[:64]
