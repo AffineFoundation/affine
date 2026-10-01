@@ -7,7 +7,8 @@ import argparse,base64,copy,gc,hashlib,io,json,math,os,pathlib,shlex,shutil,subp
 from .long_context_runtime import AUTHORITY,canonical,digest,file_sha,authenticate,wait_vram
 from .native_tau2_common_search_contract import preference_pair
 from .native_tau2_common_artifacts import pack_sample,unpack_sample,admit_frozen_sample,FREEZE_VERSION
-from .native_tau2_common_bridge import heldout_contract,REFERENCE
+from .native_tau2_common_bridge import REFERENCE
+from .native_tau2_common_bridge_seeded import heldout_contract, VERSION as HELDOUT_VERSION
 VERSION='controlled-native-tau2-common-streaming-service-v2'
 HOTKEY='5E68nqmVj1gSjoJHbusG2o4SiJ1dq17M7QG5PVzFKK2ic49u'
 IDENTITY='598fa5ced6b34e5123ba0033c0af4536c0f53c480e3143bbda14f851486e7d90'
@@ -34,6 +35,8 @@ def validate_training_report(report,job):
 def evaluation_completion_gate(before,after,before_contract,after_contract):
  contracts=(before_contract,after_contract)
  for contract in contracts:
+  geometry=contract.get('agent_geometry_and_policy',{})
+  if contract.get('version')!=HELDOUT_VERSION or type(geometry.get('seed_start')) is not int or not 0<=geometry['seed_start']<2**62 or geometry.get('seed_policy')!='task-seed-plus-attempt-stride-plus-role-ordinal-v2':return {'complete':False,'reason':'heldout-agent-seed-contract'}
   body={k:v for k,v in contract.items() if k!='dataset_id'}
   if contract.get('dataset_id')!=digest(body):return {'complete':False,'reason':'heldout-contract-hash'}
  if before_contract['dataset_id']!=after_contract['dataset_id']:return {'complete':False,'reason':'heldout-dataset-drift'}
@@ -119,7 +122,7 @@ class Coordinator:
   disk_guard(self.state);stamp=str(int(time.time()));folder=self.state/('epoch-'+stamp);remote='/root/native-tau2-mixed-'+stamp
   prepare(folder,remote,self.config['data'],self.config['public_tasks'],self.config['private_tasks'],self.key,self.config['known_hosts'])
   write(folder/'operator-bucket-config.json',self.config['bucket']);registration=self.registration(folder);manifest=json.loads((folder/'signed-epoch.json').read_text())['payload'];sources=json.loads((folder/'source-inventory.json').read_text())
-  for name in ('subnet/native_tau2_common_service.py','subnet/native_tau2_common_artifacts.py','subnet/native_tau2_common_bridge.py','subnet/long_context_training.py','subnet/native_tau2_common_service_streaming.py','subnet/native_tau2_common_role_storage.py','subnet/native_tau2_common_streaming_driver.py','ops/finalize_native_tau2_common_boundary.py'):
+  for name in ('subnet/native_tau2_common_service.py','subnet/native_tau2_common_artifacts.py','subnet/native_tau2_common_bridge.py','subnet/long_context_training.py','subnet/native_tau2_common_service_streaming.py','subnet/native_tau2_common_bridge_seeded.py','subnet/native_tau2_common_role_storage.py','subnet/native_tau2_common_streaming_driver.py','ops/finalize_native_tau2_common_boundary.py'):
    sources[name]=file_sha(ROOT/name);target=folder/'source'/name;target.write_bytes((ROOT/name).read_bytes());target.chmod(0o600)
   manifest['checkpoint']={k:v for k,v in self.current.items() if k in ('id','files')};manifest['roles']['agent']['checkpoint']=manifest['checkpoint']
   for role in manifest['roles'].values():role['source_files']=copy.deepcopy(sources)

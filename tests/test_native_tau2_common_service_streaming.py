@@ -27,7 +27,7 @@ if __name__=='__main__':unittest.main()
 
 class CompletionGateTests(unittest.TestCase):
  def setUp(self):
-  self.contract={'fixed_auxiliary_descriptor':{'weights':'fixed'},'heldout_tasks':[{'index':i,'seed':20260930+i,'task_hash':str(i)} for i in range(16,32)]};self.contract['dataset_id']=s.digest(self.contract)
+  self.contract={'version':s.HELDOUT_VERSION,'agent_geometry_and_policy':{'seed_start':0,'seed_policy':'task-seed-plus-attempt-stride-plus-role-ordinal-v2'},'fixed_auxiliary_descriptor':{'weights':'fixed'},'heldout_tasks':[{'index':i,'seed':20260930+i,'task_hash':str(i)} for i in range(16,32)]};self.contract['dataset_id']=s.digest(self.contract)
   self.report={'all_tasks_completed':True,'completed_count':16,'error_count':0,'dataset_id':self.contract['dataset_id'],'fixed_user_sha256':s.digest(self.contract['fixed_auxiliary_descriptor']),'records':[dict(t,verified=True,reward=0.) for t in self.contract['heldout_tasks']]}
  def gate(self,other=None,contract=None):return s.evaluation_completion_gate(self.report,other or self.report,self.contract,contract or self.contract)
  def test_all16_exact_fresh_reports_same_fixed_dataset_can_complete(self):self.assertTrue(self.gate()['complete'])
@@ -43,3 +43,10 @@ class CompletionGateTests(unittest.TestCase):
  def test_wrong_seed_cannot_complete(self):
   import copy
   other=copy.deepcopy(self.report);other['records'][0]['seed']+=1;self.assertFalse(self.gate(other)['complete'])
+
+ def test_historical_seed_omission_cannot_complete_prospective_service(self):
+  import copy
+  contract=copy.deepcopy(self.contract);contract.pop('agent_geometry_and_policy');contract['dataset_id']=s.digest({k:v for k,v in contract.items() if k!='dataset_id'});self.assertFalse(self.gate(contract=contract)['complete'])
+ def test_changed_agent_sampling_seed_cannot_share_completion_group(self):
+  import copy
+  contract=copy.deepcopy(self.contract);contract['agent_geometry_and_policy']['seed_start']=1;contract['dataset_id']=s.digest({k:v for k,v in contract.items() if k!='dataset_id'});self.assertFalse(self.gate(contract=contract)['complete'])
