@@ -42,19 +42,18 @@ fixed held-out tasks each. Four metrics improved and eight were unchanged:
 
 Math remains below its first baseline. The other eight metrics match their
 epoch-four values. Fifteen total updates and these small held-out sets do not
-establish sustained improvement across all environments. The next fixed-reference
-optimizer epoch is running and is not included as completed evidence.
+establish sustained improvement across all environments.
 
 The older two-task series remains a separate
 measurement group, and the failed initial wider epoch remains aborted and untrained.
 
 Private evidence in `state/gpu-wide/root-continuous-independent-evidence.json`
 binds worker source bytes, frozen submissions, full audits, optimizer attribution,
-proposed weights, checkpoint descriptors, and paired measurements. All five
+proposed weights, checkpoint descriptors, and paired measurements. All six
 successor checkpoints were independently streamed and hashed: six R2 files and
 3,426,302,727 bytes each, without another local copy of the weights. Independent
 HTTPS checks confirmed the corresponding epoch/checkpoint/UID-grid records and
-all 102 evaluation records on affine.io.
+all 126 evaluation records on affine.io.
 
 ```sh
 .venv/bin/python -m ops.check_gpu_continuous_evidence --state state/gpu-wide
@@ -63,3 +62,34 @@ all 102 evaluation records on affine.io.
 This checks authenticated operator reports and actual artifacts; it does not
 rerun inference itself. Epochs are nonpayable and submit no chain weights.
 Broader native integration and coverage remain unfinished.
+
+## Sixth epoch: fixed-reference update and mixed held-out results
+
+The sixth completed epoch made three full-model updates on one verified original
+i3math preference pair. The reference margin from the frozen batch probabilities
+was 0.5493861153; the worker used 0.5493862629, within the pinned 1e-5 tolerance.
+It held that reference fixed while persistent Adam counters advanced through
+1, 2 and 3. The training loss fell from 0.693147 to 0.678692. This confirms the
+optimizer operation; it does not establish generalization.
+
+| Environment | Before epoch 6 | After epoch 6 |
+| --- | ---: | ---: |
+| Math | 0.375000 | 0.437500 |
+| Reasoning Gym | 0.001878 | 0.001509 |
+| When2Call | 0.312500 | 0.250000 |
+| IFEval | 0.187500 | 0.125000 |
+| Trivia | 0.437500 | 0.375000 |
+
+The other seven metrics remained unchanged, including i3math at zero and PopQA
+at 0.5625. Each of the twelve environments used the same sixteen held-out tasks
+and 256-token budget before and after training. There are now eighteen verified
+updates across six completed wider epochs. One improving metric, four declines
+and seven unchanged metrics do not support improvement across all environments.
+Balanced multi-family training remains work to qualify in a prospective source
+version; this result must not be replaced with an assumption of future recovery.
+
+The sixth successor checkpoint is
+`088fdf925b4c0063e9113b1a99aab49ba9f6b749fd77939d1a0cfba3fd474b89`.
+Its six R2 objects were independently streamed and hashed, totaling
+3,426,302,727 bytes. The published dashboard was checked against all paired
+reports, exact checkpoint IDs and the 256-cell UID grid.
