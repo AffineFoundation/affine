@@ -20,7 +20,7 @@
       "remote_proof": false,
       "remote_replay": false,
       "source": "affine_agent",
-      "status": "safe_runtime_isolation_required",
+      "status": "controlled_native_fixture_proof_pair_verified",
       "taskset_class": "AffineAgentTaskset",
       "training": false
     },
@@ -644,6 +644,6 @@
   "schema": 1,
   "scope": "Recorded source-level operator evidence; each row is a milestone, not full production support or proof of performance improvement.",
   "source_count": 45,
-  "source_matrix_sha256": "ee1533d2b7ed2be1f91435506c55d8b26dd0811c93c3a2f09ce33b18cb60eb5b",
+  "source_matrix_sha256": "b4b8451891f82d7c20fdb7872b87ab259df96c1b685ce6d2bbc8fc40fa8f487c",
   "status_is_blocker_or_milestone": true
 }
