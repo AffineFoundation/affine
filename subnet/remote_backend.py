@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import json
+import math
 import secrets
 import shlex
 import subprocess
@@ -9,7 +10,7 @@ import time
 from pathlib import Path
 import requests
 from nacl.signing import VerifyKey
-from .backend_jobs import canonical,file_map,FULL_POLICY,SOURCE_FILES,BACKEND_PROFILE,NUMERICAL_POLICY
+from .backend_jobs import canonical,file_map,FULL_POLICY,SOURCE_FILES,BACKEND_PROFILE,NUMERICAL_POLICY,signed
 from .controller import Controller
 from .scoring import score
 
@@ -18,8 +19,19 @@ def save(path,value):
     path.parent.mkdir(parents=True,exist_ok=True)
     tmp=path.with_suffix('.tmp');tmp.write_bytes(canonical(value));tmp.chmod(0o600);tmp.replace(path)
 
+def role_time_budget(config,role):
+    budgets=config.get('job_ttl_seconds_by_role',{})
+    roles={'mine','verify','train','evaluate','upload'}
+    if not isinstance(budgets,dict) or set(budgets)-roles:
+        raise ValueError('remote role time budget configuration')
+    if any(type(seconds) is not int or not 60<=seconds<=86400 for seconds in budgets.values()):
+        raise ValueError('remote role time budget bounds')
+    if role not in roles:raise ValueError('remote role')
+    return budgets.get(role,3600)
+
 class RemoteJobs:
     def __init__(self,config,controller):
+        role_time_budget(config,'evaluate')
         self.config=config;self.controller=controller;self.state=controller.state/'roles';self.state.mkdir(exist_ok=True)
         self.peer=config.get('user','root')+'@'+config['host']
         shared=['-o','BatchMode=yes','-o','UserKnownHostsFile='+config['known_hosts']]
@@ -58,7 +70,7 @@ class RemoteJobs:
             elif status['phase']!='running':raise ValueError('unknown authoritative remote job status')
         if prior is None:
             identifier=label+'-'+secrets.token_hex(4);now=time.time()
-            payload=dict(schema=1,job_id=identifier,role=role,created_at=now,expires_at=now+3600,manifest=self.controller.signed(manifest),**self.metadata,**fields)
+            payload=dict(schema=1,job_id=identifier,role=role,created_at=now,expires_at=now+role_time_budget(self.config,role),manifest=self.controller.signed(manifest),**self.metadata,**fields)
             jobpath=self.state/(identifier+'-job.json');save(jobpath,self.controller.signed(payload))
             prior=dict(job_id=identifier,role=role,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],job_sha256=hashlib.sha256(canonical(payload)).hexdigest(),manifest_sha256=hashlib.sha256(canonical(manifest)).hexdigest(),source_files=self.metadata['source_files'],runtime_versions=self.metadata['runtime_versions'])
             save(record,prior);remotejob=self.workspace+'/'+identifier+'.json'
@@ -80,6 +92,15 @@ class RemoteJobs:
             time.sleep(5)
     def checked(self,report,prior,manifest):
         if report.get('job_id')!=prior['job_id'] or report.get('operator')!=self.controller.authority.id or report.get('job_sha256')!=prior['job_sha256'] or report.get('checkpoint')!=manifest['checkpoint']['id'] or report.get('epoch')!=manifest['epoch'] or report.get('role')!=prior['role'] or not report.get('success') or report.get('chain_transactions') is not False or report.get('backend_profile')!=BACKEND_PROFILE or report.get('numerical_policy')!=NUMERICAL_POLICY or report.get('source_files')!=prior['source_files'] or report.get('runtime_versions')!=prior['runtime_versions'] or hashlib.sha256(canonical(manifest)).hexdigest()!=prior['manifest_sha256']:raise ValueError('remote role report binding')
+        # Older dispatch records omit timestamps; reconstruct them from their
+        # original signed job, never from mutable local configuration or a new
+        # signature. A live observation timeout does not affect this check.
+        job=signed(json.loads((self.state/(prior['job_id']+'-job.json')).read_text()),self.controller.authority.id)
+        if hashlib.sha256(canonical(job)).hexdigest()!=prior['job_sha256']:
+            raise ValueError('remote role original signed job binding')
+        created,expires,completed=job.get('created_at'),job.get('expires_at'),report.get('completed_at')
+        if any(type(value) not in (int,float) or not math.isfinite(value) for value in (created,expires,completed)) or not created<=completed<expires or not 0<expires-created<=86400:
+            raise ValueError('remote role report outside signed time budget')
         return report
 
 class RemoteController(Controller):

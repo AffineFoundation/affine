@@ -34,6 +34,24 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 /root/miner-venv/bin/python -B -m subnet.backend
 
 The outer payload requires `schema:1`, an alphanumeric/hyphen/underscore `job_id`, `role`, `created_at`, `expires_at` (at most one day), `manifest`, `source_files`, and `runtime_versions`. The approved manifest uses the normal epoch/environment registry, K/L quotas and checkpoint `{id, files, read_urls}`. Cached model bytes are accepted only after hashing the complete relevant file allowlist. Without a cache, the worker streams exact per-object presigned R2 GET URLs into its remote checkpoint directory. Capability HTTP requests reject redirects and never fall back to a tunnel.
 
+The operator's remote configuration can set `job_ttl_seconds_by_role`, for example
+`{"evaluate":10800}` for a larger sequential environment suite. Unspecified roles
+retain the 3600-second default. Values must be integers between 60 and 86400,
+and only the five documented roles are accepted. This sets the lifetime of a
+**new signed job**; it does not extend an existing job, epoch upload deadline,
+capability URL, or observation timeout. Deploy the new operator source/config
+through a reviewed recovery or completed boundary; do not edit frozen worker
+bundles or historical signed envelopes.
+
+Before accepting a report, the controller reconstructs timing from the original
+saved signed job and verifies its immutable digest. Completion must be finite
+and satisfy `created_at <= completed_at < expires_at`. A new signature with a
+longer expiry cannot replace that original commitment. This matches the
+independent ledger auditor's existing expiry gate. A live job remains the same
+job when an observation times out; a late completion remains retained evidence
+but is rejected for admission. The operator must explicitly issue a new reviewed
+attempt if recovery is needed.
+
 - **verify:** `submissions:[{url,sha256}]` contains at most 256 frozen ZIP capabilities. Each ZIP is digest-checked, safely unpacked and fully checked for epoch/checkpoint/environment/index binding, duplicate outputs, positive/negative quotas, every TOPLOC fingerprint, full probability arrays and environment replay. Reports preserve each artifact hash and audited outcomes. Only fully audited batches are training eligible.
 - **train:** the same submissions are independently audited in the trainer process, even if an earlier verifier report exists. `steps` is 1–32. Accepted positive/negative pairs are routed to their exact environment and harness. Each actual output-head preference optimizer update writes a complete new model/tokenizer checkpoint remotely. Metrics state `full_model_finetune:false`, reference-relative frozen-decoder-feature objective and whether the input embedding is tied to the updated output head. This is real partial-parameter optimization, not a claim of task-quality improvement or full-model training.
 - **evaluate:** `heldout:[{env_id,indices,seeds,harness}]` pins fixed heldout indices and seeds, disjoint from training indices. The heldout harness must be free autoregressive with no curated turn overrides. Each generated trajectory is independently replayed and its TOPLOC/probabilities verified. Scores report the observed task rewards without inventing improvements.

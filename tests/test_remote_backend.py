@@ -2,16 +2,24 @@ import copy,json,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch,Mock
 from types import SimpleNamespace
-from subnet.remote_backend import RemoteJobs,RemoteController
+from subnet.remote_backend import RemoteJobs,RemoteController,role_time_budget
+from nacl.signing import SigningKey
+import base64
 from subnet.backend_jobs import BACKEND_PROFILE,NUMERICAL_POLICY,canonical
 import hashlib
 
 class RemoteReportBinding(unittest.TestCase):
     def setUp(self):
-        self.jobs=RemoteJobs.__new__(RemoteJobs);self.jobs.controller=SimpleNamespace(authority=SimpleNamespace(id='operator'))
+        self.key=SigningKey.generate();self.operator=self.key.verify_key.encode().hex()
+        self.folder=tempfile.TemporaryDirectory();self.addCleanup(self.folder.cleanup)
+        self.jobs=RemoteJobs.__new__(RemoteJobs);self.jobs.controller=SimpleNamespace(authority=SimpleNamespace(id=self.operator));self.jobs.state=Path(self.folder.name)
         self.manifest=dict(epoch='nonpayable-test',checkpoint={'id':'approved'})
-        self.prior=dict(job_id='same-job',role='verify',job_sha256='digest',source_files={'a':'b'},runtime_versions={'torch':'approved'},manifest_sha256=hashlib.sha256(canonical(self.manifest)).hexdigest())
-        self.report=dict(job_id='same-job',role='verify',operator='operator',job_sha256='digest',checkpoint='approved',epoch='nonpayable-test',success=True,chain_transactions=False,backend_profile=BACKEND_PROFILE,numerical_policy=NUMERICAL_POLICY,source_files={'a':'b'},runtime_versions={'torch':'approved'})
+        job=dict(job_id='same-job',role='verify',created_at=10,expires_at=30)
+        self.envelope=dict(payload=job,signer=self.operator,signature=base64.b64encode(self.key.sign(canonical(job)).signature).decode())
+        digest=hashlib.sha256(canonical(job)).hexdigest()
+        self.prior=dict(job_id='same-job',role='verify',job_sha256=digest,source_files={'a':'b'},runtime_versions={'torch':'approved'},manifest_sha256=hashlib.sha256(canonical(self.manifest)).hexdigest())
+        self.report=dict(job_id='same-job',role='verify',operator=self.operator,job_sha256=digest,completed_at=20,checkpoint='approved',epoch='nonpayable-test',success=True,chain_transactions=False,backend_profile=BACKEND_PROFILE,numerical_policy=NUMERICAL_POLICY,source_files={'a':'b'},runtime_versions={'torch':'approved'})
+        (self.jobs.state/'same-job-job.json').write_text(json.dumps(self.envelope))
     def test_approved_report_binding(self):self.assertIs(self.jobs.checked(self.report,self.prior,self.manifest),self.report)
     def test_changed_identity_sources_or_runtime_is_rejected(self):
         for name,value in [('job_id','another-job'),('source_files',{'a':'bad'}),('runtime_versions',{'torch':'unapproved'}),('chain_transactions',True),('backend_profile',{'device':'cpu'})]:
@@ -20,6 +28,7 @@ class RemoteReportBinding(unittest.TestCase):
     def test_live_prior_job_is_polled_instead_of_launched_again(self):
         with tempfile.TemporaryDirectory() as d:
             self.jobs.state=Path(d);self.jobs.workspace='/remote';record=self.jobs.state/'label.json';record.write_text(json.dumps(self.prior))
+            (self.jobs.state/'same-job-job.json').write_text(json.dumps(self.envelope))
             self.jobs.remote_status=Mock(side_effect=[{'phase':'running'},{'phase':'complete'}]);self.jobs.command=Mock();self.jobs.copy_to=Mock()
             def fetch(remote,local):local.write_text(json.dumps(self.report))
             self.jobs.copy_from=fetch
@@ -30,6 +39,28 @@ class RemoteReportBinding(unittest.TestCase):
             self.jobs.state=Path(d);(self.jobs.state/'label.json').write_text(json.dumps(self.prior));self.jobs.remote_status=Mock(side_effect=TimeoutError('SSH status unreachable'));self.jobs.copy_to=Mock()
             with self.assertRaises(TimeoutError):self.jobs.run('label','verify',self.manifest)
             self.jobs.copy_to.assert_not_called()
+    def test_late_prestart_and_invalid_completion_times_rejected(self):
+        for completed in (9,30,31,True,None,float('nan'),float('inf')):
+            report=dict(self.report,completed_at=completed)
+            with self.subTest(completed=completed),self.assertRaises(ValueError):
+                self.jobs.checked(report,self.prior,self.manifest)
+    def test_new_signature_cannot_extend_original_job_lifetime(self):
+        payload=dict(self.envelope['payload'],expires_at=100)
+        changed=dict(payload=payload,signer=self.operator,signature=base64.b64encode(self.key.sign(canonical(payload)).signature).decode())
+        (self.jobs.state/'same-job-job.json').write_text(json.dumps(changed))
+        with self.assertRaisesRegex(ValueError,'original signed job binding'):
+            self.jobs.checked(self.report,self.prior,self.manifest)
+
+class RoleTimeBudget(unittest.TestCase):
+    def test_expanded_evaluation_does_not_extend_other_roles(self):
+        config={'job_ttl_seconds_by_role':{'evaluate':10800}}
+        self.assertEqual(role_time_budget(config,'evaluate'),10800)
+        self.assertEqual(role_time_budget(config,'mine'),3600)
+        self.assertEqual(role_time_budget({},'evaluate'),3600)
+    def test_unbounded_unknown_and_noninteger_budgets_rejected(self):
+        for budgets in ({'evaluate':86401},{'evaluate':59},{'evaluate':True},{'evaluate':7200.0},{'unknown':3600},3600):
+            with self.subTest(budgets=budgets),self.assertRaises(ValueError):
+                role_time_budget({'job_ttl_seconds_by_role':budgets},'evaluate')
 
 class DurableRemoteLiveness(unittest.TestCase):
     def test_old_pid_reuse_is_not_treated_as_live_job(self):
