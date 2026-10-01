@@ -3,10 +3,10 @@
     "import": 45,
     "local_reset": 38,
     "native_tool_execution": 6,
-    "original_reward": 22,
-    "remote_proof": 22,
-    "remote_replay": 21,
-    "training": 13
+    "original_reward": 23,
+    "remote_proof": 23,
+    "remote_replay": 22,
+    "training": 14
   },
   "independently_reexecuted_by_exporter": false,
   "rows": [
@@ -230,9 +230,9 @@
       "remote_proof": true,
       "remote_replay": true,
       "source": "affine_popqa_abstain",
-      "status": "genuine_autoregressive_K1L1_fresh_proof_replay_verified",
+      "status": "original_autoregressive_common_full_optimizer_verified",
       "taskset_class": "PopQAAbstainTaskset",
-      "training": false
+      "training": true
     },
     {
       "category": "multiturn_sandbox",
@@ -254,11 +254,11 @@
       "local_reset": true,
       "module": "affine_pydantic_v1",
       "native_tool_execution": false,
-      "original_reward": false,
-      "remote_proof": false,
-      "remote_replay": false,
+      "original_reward": true,
+      "remote_proof": true,
+      "remote_replay": true,
       "source": "affine_pydantic",
-      "status": "actual_original_reset_passed",
+      "status": "original_autoregressive_negative_only_proof_replay_verified",
       "taskset_class": "PydanticTaskset",
       "training": false
     },
@@ -644,6 +644,6 @@
   "schema": 1,
   "scope": "Recorded source-level operator evidence; each row is a milestone, not full production support or proof of performance improvement.",
   "source_count": 45,
-  "source_matrix_sha256": "9220e86ceb87ffbec5af6a41fdd41162cf49a28f4841599006620958b8d6bc3b",
+  "source_matrix_sha256": "acc284f4ecf47e22277f8607c8ac7e8398bbc744ffcb88d9f72926749dc0bbef",
   "status_is_blocker_or_milestone": true
 }

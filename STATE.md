@@ -7,19 +7,21 @@ dashboard is affine.io; Arbos domains are unchanged. New-pipeline test epochs ar
 nonpayable and do not submit chain weights. Older operational entries below are
 historical records, rather than instructions to re-enable their services.
 
-Five completed GPU epochs have independently checked frozen submissions,
+The earlier small-held-out GPU series has five completed epochs with independently checked frozen submissions,
 original-environment audits, 13 real optimizer updates, checkpoint publication,
 and held-out evaluation records. Those updates consumed verified pairs from
 Math, Verbatim, Reasoning Gym, When2Call, IFEval, and Oolong. These measurements
 do not establish improvement across all environments.
 
-The wider series has four fully checked epochs and twelve full-model updates,
-with new original i3math and Trivia tasksets added at versioned boundaries.
+The wider series has five fully checked epochs and fifteen full-model updates,
+with original i3math, Trivia and PopQA tasksets added at versioned boundaries.
 Six checkpoint objects per successor were independently streamed and hashed
-(3,426,302,727 bytes each). The latest paired evaluation covers eleven
-families and sixteen fixed held-out tasks per family: one metric rose, four
-fell, and six stayed flat after the Trivia update. PopQA now runs under a new
-pinned source from the published successor checkpoint. These measurements
+(3,426,302,727 bytes each). The latest paired evaluation covers twelve
+families and sixteen fixed held-out tasks per family: four metrics rose and
+eight stayed flat after the PopQA update. Independent HTTPS checks matched
+all 102 public evaluation records and the epoch/checkpoint/UID grids on affine.io.
+The next fixed-reference optimizer source is running in a separate ongoing epoch.
+These measurements
 do not establish broad improvement. See [paired results](docs/WIDE_EVALUATION_RESULTS.md).
 
 The controlled Tau2 tool-use positive/negative pair now passes independent
@@ -48,10 +50,12 @@ Original Spider SQL now has thirty-two pinned tasks, sixteen for mining and
 sixteen disjoint held-out tasks. Public actors and private original graders
 passed fresh remote controls. A controlled target-model candidate-policy
 positive/negative pair passed independent full probability/TOPLOC checks and
-native replay. Its first common epoch completed a real full-model optimizer update,
-publication of six independently hashed checkpoint files, and sixteen fixed
-autoregressive held-out evaluations (0 before and 0 after). The next epoch
-uses the published successor. This confirms the controlled loop, without
+native replay. Three common training epochs now passed independent evidence checks,
+including resumed submission, auditing and training after an intervening empty
+epoch. Each published six independently hashed checkpoint files and completed
+sixteen fixed autoregressive held-out evaluations (0 before and 0 after).
+The controller adopted bounded empty-search reporting at a completed epoch boundary.
+These checks confirm the controlled loop, without
 establishing held-out quality improvement. Calendar's curated positive/negative
 six-turn model artifacts also pass signed model-audit binding and separate
 original native replay. A new length-balanced Calendar pair additionally passes
@@ -59,6 +63,22 @@ seven model turns, including complete-context terminal proofs, and separate
 fresh native admission with original rewards 1 and 0. See
 [terminal control scope](docs/NATIVE_EOG_BALANCED_TERMINAL.md). These controls do not establish original sampling,
 completed common Calendar epochs, or general quality gains.
+
+Calendar's new common long-context controller has now uploaded a seven-turn
+positive/negative pair to direct R2. Independent inspection authenticated the
+signed job, public epoch manifest, exact worker source and 175,247,173-byte
+staged artifact, retaining all full-vocabulary float32 probability arrays.
+Its original upload window remains open; the pair is not yet frozen, audited
+or trained in a completed common epoch. The independent auditor accepts this
+larger bundle only under the exact approved numerical and transport profile.
+The worker's prospective multi-step optimizer path needs correction; the
+active trial uses one step and its frozen source remains unchanged.
+
+The public source-level matrix records 45 imports, 38 resets, 23 original-reward
+and remote-proof milestones, 22 remote-replay milestones and 14 trained sources.
+Pydantic has verified negative-only traces, with no qualifying K/L pair or training.
+These flags describe specific demonstrated controls, rather than complete support
+or broad task mastery across each environment family.
 
 See [environment coverage](docs/environment-coverage.json) for the source-level
 snapshot and [wide tasksets](docs/WIDE_TASKSETS.md) for measurement limitations.
