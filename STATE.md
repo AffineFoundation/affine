@@ -65,7 +65,8 @@ full-model optimizer completed one agent-only update. All six successor
 checkpoint objects were independently hashed in R2, and a fresh six-role
 rollout passed independent probability/TOPLOC verification and original
 tool/grader replay. This is a controlled outcome-conditioned training example;
-common epoch integration and held-out quality improvement remain unproven.
+the separate common mixed-runtime trial and explicit recovery are recorded above.
+Held-out quality improvement remains unproven.
 
 The controlled original Agent fixtures now run through the shared GPU epoch
 pipeline. Eleven full epochs passed independent artifact, audit, score,
@@ -112,15 +113,18 @@ public repo includes a guarded utility that reproduces its exact portable source
 variant in an independent checkout; actual Git-archive reproduction passed
 without accessing fixtures/models or starting services.
 
-The canonical private source-level matrix records 45 imports and 17 trained
+The source-level coverage matrix records 45 imports and 18 trained
 original families, with versioned evidence distinguishing native controls,
 model/proof qualification and completed common training. Numina and Pydantic
 now have qualifying target-model positive/negative controls, but their new
-common epochs remain pending. Prolog has original isolated native controls over
-two problem geometries; its shared-model proof qualification is pending.
-RCore has a qualified public arithmetic control and explicit failures for
-other original graders; its dependency qualification is still in progress.
-The public coverage snapshot may precede these latest private qualifications.
+common epochs remain pending. Prolog has a shared-model positive/negative proof
+batch independently verified against its original native grader, over the
+qualified NQueens fixture; common training remains pending. Its three fixtures
+represent two problem geometries. RCore's 64 original operator grader controls
+and public arithmetic controls passed, with pinned isolated dependencies and
+resource bytes; remote model/proof qualification remains pending.
+The public coverage snapshot reflects these milestones, including Tau2's
+completion with explicitly recorded evaluation recovery.
 These flags describe demonstrated scopes, rather than complete support or broad
 task mastery across each environment family.
 

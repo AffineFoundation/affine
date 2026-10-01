@@ -1,12 +1,12 @@
 {
   "counts": {
     "import": 45,
-    "local_reset": 38,
-    "native_tool_execution": 6,
-    "original_reward": 23,
-    "remote_proof": 23,
-    "remote_replay": 22,
-    "training": 15
+    "local_reset": 39,
+    "native_tool_execution": 9,
+    "original_reward": 26,
+    "remote_proof": 25,
+    "remote_replay": 24,
+    "training": 18
   },
   "independently_reexecuted_by_exporter": false,
   "rows": [
@@ -174,9 +174,9 @@
       "remote_proof": true,
       "remote_replay": true,
       "source": "affine_mrcr",
-      "status": "verified_original_rollout",
+      "status": "common_original_public_shell_control_full_optimizer_verified",
       "taskset_class": "MRCRTaskset",
-      "training": false
+      "training": true
     },
     {
       "category": "multiturn_sandbox",
@@ -197,12 +197,12 @@
       "import": true,
       "local_reset": true,
       "module": "affine_numina_v1",
-      "native_tool_execution": false,
+      "native_tool_execution": true,
       "original_reward": true,
       "remote_proof": true,
       "remote_replay": true,
       "source": "affine_numina",
-      "status": "verified_original_rollout_negative_curated_tools",
+      "status": "common_adapter_original_public_starter_sampled_K1L1_verified_training_pending",
       "taskset_class": "AffineNuminaTaskset",
       "training": false
     },
@@ -239,12 +239,12 @@
       "import": true,
       "local_reset": true,
       "module": "affine_prolog_v1",
-      "native_tool_execution": false,
-      "original_reward": false,
-      "remote_proof": false,
-      "remote_replay": false,
+      "native_tool_execution": true,
+      "original_reward": true,
+      "remote_proof": true,
+      "remote_replay": true,
       "source": "affine_prolog",
-      "status": "actual_original_reset_passed",
+      "status": "original_nqueens_common_model_K1L1_verified_no_common_training",
       "taskset_class": "PrologTaskset",
       "training": false
     },
@@ -258,7 +258,7 @@
       "remote_proof": true,
       "remote_replay": true,
       "source": "affine_pydantic",
-      "status": "original_autoregressive_negative_only_proof_replay_verified",
+      "status": "public_schema_type_mutation_sampled_K1L1_verified_training_pending",
       "taskset_class": "PydanticTaskset",
       "training": false
     },
@@ -268,11 +268,11 @@
       "local_reset": true,
       "module": "affine_rcore_v1",
       "native_tool_execution": false,
-      "original_reward": false,
+      "original_reward": true,
       "remote_proof": false,
       "remote_replay": false,
       "source": "affine_rcore",
-      "status": "actual_original_reset_passed",
+      "status": "original_operator_grader64_and_public_arithmetic_controls_verified",
       "taskset_class": "RCoreTaskset",
       "training": false
     },
@@ -349,16 +349,16 @@
     {
       "category": "multiturn_tool_simulator",
       "import": true,
-      "local_reset": false,
+      "local_reset": true,
       "module": "affine_tau2_v1",
-      "native_tool_execution": false,
-      "original_reward": false,
-      "remote_proof": false,
-      "remote_replay": false,
+      "native_tool_execution": true,
+      "original_reward": true,
+      "remote_proof": true,
+      "remote_replay": true,
       "source": "affine_tau2",
-      "status": "controlled_native_K1L1_full_optimizer_and_successor_verified",
+      "status": "common_fixed_auxiliary_agent_update_recovered_heldouts_successor_verified",
       "taskset_class": "AffineTau2Taskset",
-      "training": false
+      "training": true
     },
     {
       "category": "multiturn_tool_simulator",
@@ -426,9 +426,9 @@
       "remote_proof": true,
       "remote_replay": true,
       "source": "affine_trivia_abstain",
-      "status": "verified_original_rollout",
+      "status": "common_original_abstention_epoch_fully_audited_trained_and_heldout_verified",
       "taskset_class": "TriviaAbstainTaskset",
-      "training": false
+      "training": true
     },
     {
       "category": "singleturn_text",
@@ -644,6 +644,6 @@
   "schema": 1,
   "scope": "Recorded source-level operator evidence; each row is a milestone, not full production support or proof of performance improvement.",
   "source_count": 45,
-  "source_matrix_sha256": "8d769122cc0633c1afc9fa5a9dd7491a0df7f1b9d4a0a154ac132c3d2ef53344",
+  "source_matrix_sha256": "d7c065483ea4b70dd78cc1930f984f1b11b0dd129fbf9b4d50b9fa74c07d07b8",
   "status_is_blocker_or_milestone": true
 }

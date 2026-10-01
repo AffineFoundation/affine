@@ -112,3 +112,23 @@ review is recorded in
 `state/native-prolog-model-qualification-v2/root-v2-signed-source-native-control-check.json`.
 Actual model generation, independent proof verification and common training
 remain separate requirements.
+
+The revised probe subsequently completed generation and a separate fresh model
+verification, both with exit code zero. Four attempts produced three positive
+outcomes and one negative; the retained index-0 batch contains one of each.
+Its ZIP is 71,864,203 bytes with SHA-256
+`f0138821f8199416c0678ede86ca27c4d5cac477b774111a89f5875fb90a8883`.
+The complete float32 probability arrays occupy 149,618,688 bytes: the tool
+responses each have 379 token rows, followed by one- and two-token terminal
+responses, all over the approved 49,152-token vocabulary. The independent
+verifier checked those probabilities, TOPLOC fingerprints and original native
+replay against checkpoint `0081b0698c0ccc103edfca0506a2c60aeaf9d0a521716889e6a51fdef0a6513b`.
+
+Root authenticated the operator-signed completion and its eight exact file
+bindings, checked the ZIP, actual K/L metadata, complete array dimensions,
+probability normalization, context limits and proof framing. This review did
+not perform another model recomputation. Evidence is
+`state/native-prolog-model-qualification-v2/root-v2-frozen-artifact-check.json`.
+Common training and independent held-out learning remain unproven. The three
+native fixtures still represent only two geometries; a future training cohort
+must explicitly separate its actual training and held-out task definitions.
