@@ -29,3 +29,13 @@ Root independently reran the same frozen source in fresh actors:
 original task hashes, public descriptors, positive/negative outcomes and exact
 fresh observations match the earlier qualified run. Both hostile controls again
 removed their owned actors; six focused runtime/policy controls also pass.
+
+A subsequent prospective public policy keeps the full CLPFD program and changes
+only its diagonal constraint, rather than using a shorter invalid program. Root
+checked the actual R2 tokenizer bytes of approved shared checkpoint
+`0081b0698c0ccc103edfca0506a2c60aeaf9d0a521716889e6a51fdef0a6513b`
+against its pinned file digest. All three native fixtures yield 340/340 command
+tokens and 379/379 compact tool-call JSON tokens. Exact candidate bytes and public
+bindings are in `state/native-prolog-controls/root-wide-tokenizer-candidate-check.json`.
+This is a tokenizer prerequisite; model-sampled K/L, TOPLOC proofs and common
+training remain unqualified.
