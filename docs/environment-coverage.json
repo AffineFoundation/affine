@@ -6,7 +6,7 @@
     "original_reward": 19,
     "remote_proof": 19,
     "remote_replay": 18,
-    "training": 6
+    "training": 9
   },
   "independently_reexecuted_by_exporter": false,
   "rows": [
@@ -146,9 +146,9 @@
       "remote_proof": true,
       "remote_replay": true,
       "source": "affine_logic",
-      "status": "verified_original_rollout",
+      "status": "genuine_gpu_audited_batch_full_optimizer_verified",
       "taskset_class": "LogicTaskset",
-      "training": false
+      "training": true
     },
     {
       "category": "singleturn_text",
@@ -328,9 +328,9 @@
       "remote_proof": true,
       "remote_replay": true,
       "source": "affine_scitext",
-      "status": "verified_original_rollout",
+      "status": "genuine_gpu_audited_batch_full_optimizer_verified",
       "taskset_class": "SciTextTaskset",
-      "training": false
+      "training": true
     },
     {
       "category": "multiturn_sandbox",
@@ -440,9 +440,9 @@
       "remote_proof": true,
       "remote_replay": true,
       "source": "affine_unscramble",
-      "status": "verified_original_rollout",
+      "status": "genuine_gpu_audited_batch_full_optimizer_verified",
       "taskset_class": "UnscrambleTaskset",
-      "training": false
+      "training": true
     },
     {
       "category": "multiturn_sandbox",
@@ -644,6 +644,6 @@
   "schema": 1,
   "scope": "Recorded source-level operator evidence; each row is a milestone, not full production support or proof of performance improvement.",
   "source_count": 45,
-  "source_matrix_sha256": "b4b8451891f82d7c20fdb7872b87ab259df96c1b685ce6d2bbc8fc40fa8f487c",
+  "source_matrix_sha256": "4e8c580320cb5f3e22d64c7357ef93277386535cd046dcb82b65a5fa051b6840",
   "status_is_blocker_or_milestone": true
 }
