@@ -147,3 +147,19 @@ leaves those admission flags false until a separate numerical audit completes.
 Twelve synthetic controls cover selected-task routing, private/public separation,
 provider drift, conflicting task commitments, exact replay requests, observations
 and grader output. Genuine execution evidence remains distinct from these tests.
+
+## Prospective model-only CPU loader
+
+`native_role_model_only.py` loads a flat, hash-pinned safetensors checkpoint with
+local files and remote code disabled. It exposes model computation and TOPLOC
+operations without importing an environment, initializing a session or requiring
+Mastermind resources. Its forward pass preserves the existing qualified CPU
+v2 token slices, full float32 output log probabilities and BF16 hidden activation
+segments, with four-thread TOPLOC extraction.
+
+This is a separate source/runtime revision. Seven mocked loader and tiny-tensor
+controls confirm checkpoint checks, absence of environment imports and exact
+forward slicing. They do not prove pretrained numerical equivalence. Fresh
+full-probability and TOPLOC checks against approved real role checkpoints are
+required before switching any live descriptor to this loader. Existing live and
+frozen runtime files remain unchanged.
