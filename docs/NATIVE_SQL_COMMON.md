@@ -1,5 +1,7 @@
 # Original Spider common environment contract
 
+The active frozen common-pipeline variant now has fourteen independently checked completed epochs and fourteen real optimizer updates, with resumed training after two empty searches. Each successor has six independently hashed R2 checkpoint files. Sixteen fixed autoregressive held-out tasks remain at reward zero before and after training. All twenty-eight paired evaluation records and UID grids match affine.io. This verifies the controlled pipeline rather than held-out quality improvement; the root adapter described below remains a prospective deployment building block.
+
 `subnet.native_sql_adapter.NativeSQLAdapter` implements the common reset/step/close interface for original Spider SQL tasks. The version is `controlled-native-spider-common-v1`. It is prospective and is not registered in the active environment dispatcher.
 
 A trusted deployment supplies fresh `PublicSQLActor` sessions and an operator-only terminal grader. The public specification contains original question/schema messages, bash tools, database and original-source hashes, and an approved grader runtime descriptor. Reference SQL and private filesystem locations stay outside the public specification and actor image.

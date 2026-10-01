@@ -1,5 +1,7 @@
 # Prospective EOG common adapter
 
+The active frozen long-context common-pipeline variant now has three independently checked completed epochs and three real agent-only updates. Six R2 files per checkpoint passed independent byte hashing. Two fixed held-out tasks remain at reward zero before and after each update; all six paired evaluation records and UID grids match affine.io. This verifies the controlled complete-context pipeline rather than general quality improvement. The root adapter described below remains a prospective deployment building block; see NATIVE_EOG_DEPLOYMENT.md for the separate qualified source/profile.
+
 `subnet/native_eog_adapter.py` implements the common reset/step/terminal contract over scoped public actor sessions. It is not registered in the active dispatcher and has not completed a miner/audit/training epoch.
 
 The signed public spec contains approved public task descriptors, including original messages, selected tool schemas, runtime and source pins, and seed byte hashes. A trusted deployment supplies a fresh actor factory for each reset. Actor capabilities, private seed files and native SQL grader fixtures do not belong in that public spec. The operator owns broker startup and must close each broker after grading and actor cleanup. The current broker is a controlled co-located pilot; it does not establish isolation against host root or unrestricted external miner processes.

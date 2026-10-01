@@ -13,16 +13,24 @@ and held-out evaluation records. Those updates consumed verified pairs from
 Math, Verbatim, Reasoning Gym, When2Call, IFEval, and Oolong. These measurements
 do not establish improvement across all environments.
 
-The wider series has five fully checked epochs and fifteen full-model updates,
-with original i3math, Trivia and PopQA tasksets added at versioned boundaries.
-Six checkpoint objects per successor were independently streamed and hashed
-(3,426,302,727 bytes each). The latest paired evaluation covers twelve
-families and sixteen fixed held-out tasks per family: four metrics rose and
-eight stayed flat after the PopQA update. Independent HTTPS checks matched
-all 102 public evaluation records and the epoch/checkpoint/UID grids on affine.io.
-The next fixed-reference optimizer source is running in a separate ongoing epoch.
-These measurements
-do not establish broad improvement. See [paired results](docs/WIDE_EVALUATION_RESULTS.md).
+The wider series has seven independently checked completed epochs and twenty-one
+full-model updates. Each successor's six R2 objects were independently streamed
+and hashed (3,426,302,727 bytes). The latest paired evaluation covers twelve
+families and sixteen fixed held-out tasks per family. Trivia rose from 0.375 to
+0.5; Math, Reasoning Gym and When2Call declined; eight other metrics stayed flat.
+Independent HTTPS checks matched all 150 public evaluation records and the
+checkpoint/256-UID grids on affine.io. These measurements do not establish
+improvement across all environments. See [paired results](docs/WIDE_EVALUATION_RESULTS.md).
+
+MRCR's disjoint original snapshot passed 64 native grader controls. A prospective
+common source adds its public-shell candidate policy while preserving the existing
+twelve environment contracts. Two fresh staged native controls scored 1 and 0
+with comparable command lengths. Remote model/proof qualification is in progress;
+MRCR is not yet counted as a common trained family. The balanced historical
+replay helper now requires complete held-out declarations and has fifteen passing
+signed-lineage controls. Actual pooled training remains unverified. See
+[MRCR scope](docs/MRCR_PUBLIC_SHELL_PILOT.md) and
+[replay admission](docs/VERIFIED_REPLAY_POOL.md).
 
 The controlled Tau2 tool-use positive/negative pair now passes independent
 model verification and replay through the original environment grader. The
@@ -50,7 +58,7 @@ Original Spider SQL now has thirty-two pinned tasks, sixteen for mining and
 sixteen disjoint held-out tasks. Public actors and private original graders
 passed fresh remote controls. A controlled target-model candidate-policy
 positive/negative pair passed independent full probability/TOPLOC checks and
-native replay. Five common training epochs now passed independent evidence checks,
+native replay. Fourteen common training epochs now passed independent evidence checks,
 including resumed submission, auditing and training after an intervening empty
 epoch. Each published six independently hashed checkpoint files and completed
 sixteen fixed autoregressive held-out evaluations (0 before and 0 after).
@@ -62,24 +70,23 @@ original native replay. A new length-balanced Calendar pair additionally passes
 seven model turns, including complete-context terminal proofs, and separate
 fresh native admission with original rewards 1 and 0. See
 [terminal control scope](docs/NATIVE_EOG_BALANCED_TERMINAL.md). These controls do not establish original sampling,
-completed common Calendar epochs, or general quality gains.
+general quality gains; the separate common-pipeline results are recorded below.
 
-Calendar's new common long-context controller completed its first full epoch.
-Independent checks authenticated the signed manifests, frozen 175,247,173-byte
-seven-turn positive/negative batch, full inference/native audit, normalized
-proposed weight and one full-model agent-only update. All six successor
-checkpoint objects were independently streamed and hashed (999,524,442 bytes).
-Two fixed, disjoint original held-out tasks scored zero before and after, so
-no quality gain is claimed. Its next epoch consumes the new checkpoint. Live
-affine.io JSON and desktop/phone browser checks confirmed the Calendar chart,
-exact evaluation records and 256-UID grid. The independent auditor accepts
-these larger bundles only under the exact approved numerical/transport profile.
-The newly published prospective worker rejects multi-step training until
-persistent optimizer behavior is separately qualified. The active trial uses
-one step and its frozen source remains unchanged. The public repo now includes
-a guarded utility that reproduces its exact portable source variant in an
-independent checkout; actual Git-archive reproduction passed without accessing
-fixtures/models or starting services.
+Calendar's common long-context controller has three independently checked
+completed epochs and three full-model agent-only updates. Signed manifests,
+frozen complete-context batches, full inference/native audits, normalized
+proposed weights and optimizer attribution were checked. Each successor's six
+R2 checkpoint objects were independently streamed and hashed (999,524,442 bytes).
+Two fixed, disjoint original held-out tasks scored zero before and after every
+update, so no quality gain is claimed. The controller progressed past two empty
+search epochs without treating them as negative samples. Live affine.io JSON
+matched all six paired evaluation records and the 256-UID grids; earlier
+Calendar desktop/phone chart checks remain recorded separately. The auditor
+accepts larger bundles only under the exact approved numerical/transport profile.
+The active trial uses one step and its frozen source remains unchanged. The
+public repo includes a guarded utility that reproduces its exact portable source
+variant in an independent checkout; actual Git-archive reproduction passed
+without accessing fixtures/models or starting services.
 
 The public source-level matrix records 45 imports, 38 resets, 23 original-reward
 and remote-proof milestones, 22 remote-replay milestones and 15 trained sources.

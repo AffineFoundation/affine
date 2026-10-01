@@ -1,4 +1,4 @@
-# Five completed wider evaluations
+# Seven completed wider evaluations
 
 Five GPU epochs completed frozen miner uploads, full original-environment audits,
 three full-model optimizer updates each, immutable checkpoint publication and
@@ -49,11 +49,11 @@ measurement group, and the failed initial wider epoch remains aborted and untrai
 
 Private evidence in `state/gpu-wide/root-continuous-independent-evidence.json`
 binds worker source bytes, frozen submissions, full audits, optimizer attribution,
-proposed weights, checkpoint descriptors, and paired measurements. All six
+proposed weights, checkpoint descriptors, and paired measurements. All seven
 successor checkpoints were independently streamed and hashed: six R2 files and
 3,426,302,727 bytes each, without another local copy of the weights. Independent
 HTTPS checks confirmed the corresponding epoch/checkpoint/UID-grid records and
-all 126 evaluation records on affine.io.
+all 150 evaluation records on affine.io.
 
 ```sh
 .venv/bin/python -m ops.check_gpu_continuous_evidence --state state/gpu-wide
@@ -93,3 +93,30 @@ The sixth successor checkpoint is
 Its six R2 objects were independently streamed and hashed, totaling
 3,426,302,727 bytes. The published dashboard was checked against all paired
 reports, exact checkpoint IDs and the 256-cell UID grid.
+
+
+## Seventh epoch: twelve fixed held-out families
+
+The seventh completed epoch used verified preference pairs from Logic, SciText
+and Unscramble for three full-model updates. All twelve families retained their
+sixteen fixed held-out tasks, seeds and 256-token autoregressive budget.
+
+| Environment | Before epoch 7 | After epoch 7 |
+| --- | ---: | ---: |
+| Trivia | 0.375000 | 0.500000 |
+| Math | 0.437500 | 0.375000 |
+| Reasoning Gym | 0.001509 | 0.001489 |
+| When2Call | 0.250000 | 0.187500 |
+
+The other eight metrics stayed unchanged, including all three directly trained
+families at zero. The loop has twenty-one verified optimizer updates across
+seven completed epochs; these results remain mixed. They do not establish
+improvement across all environments or transfer from the curated mining policy
+to unrestricted held-out sampling.
+
+The seventh successor checkpoint is
+`d8e047f13278692e0baa0df213b4d5566318e582bb74e47754a63a91d6125383`.
+All six R2 objects were independently streamed and hashed, totaling
+3,426,302,727 bytes. Independent HTTPS checks matched all 150 wide-series
+public evaluation records, checkpoint bindings and 256-UID grids. Native
+coverage and qualified balanced multi-family replay remain unfinished work.
