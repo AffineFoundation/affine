@@ -45,3 +45,13 @@ than model experiments.
 ```sh
 .venv/bin/python -m unittest discover -s tests -p 'test_verified_replay_pool.py'
 ```
+
+
+A new version-3 pool has since been prepared and authenticated for current
+checkpoint `d8e047f13278692e0baa0df213b4d5566318e582bb74e47754a63a91d6125383`.
+It retains nine eligible environment/index pairs across the same nine families,
+with the complete twelve-environment held-out map. Its pool SHA256 is
+`91f561155a08458161efb914de1718bdf6998f4476e70ea6b78f26f33137b5b7`;
+private evidence is in `state/verified-replay-pool/currentd8-v3`. Current-model
+reference recomputation and actual pooled optimization are still separate,
+uncompleted qualification gates in this report.

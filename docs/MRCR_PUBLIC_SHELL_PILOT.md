@@ -89,3 +89,28 @@ its environment hash to the selected approved adapter. A changed code binding
 creates a new evaluation cohort; retain historical reports rather than silently
 merging those cohorts. Shared-pipeline model/proof qualification and a completed
 native epoch remain required before this can be counted as a trained family.
+
+
+## Actual remote model/proof qualification
+
+A separately pinned remote search used approved checkpoint
+`d8e047f13278692e0baa0df213b4d5566318e582bb74e47754a63a91d6125383`
+and the disclosed public-shell candidate policy. Original index 0 found one
+positive and one negative in four attempts. Index 1 found a positive but no
+negative after eight attempts; it is not a qualifying K1/L1 batch.
+
+A separate process reloaded the exact model and verified all three complete
+traces against their full log probabilities and TOPLOC fingerprints, then
+replayed their tools through the original native environment. Both immutable
+ZIPs and the search/verification reports match the operator-signed completion
+record. A root check independently authenticated the plan and completion,
+checked exact source-file membership against the approved archive, and hashed
+all actual artifact bytes. That root check did not itself rerun model inference.
+
+The index-0 ZIP has 45,343,956 bytes; index 1 has 22,678,196 bytes. Evidence is in
+`state/mrcr-model-control/1790863561`, with the root lineage check in
+`state/root-audits/mrcr-and-tau2-prerequisite-root-evidence.json`. This qualifies
+controlled model computation and original environment replay. It is not an
+unrestricted model-solving result, a completed common training epoch, or a
+performance gain. The next gate is the shared frozen-upload/audit/scoring and
+optimizer/checkpoint loop, at a completed controller boundary.

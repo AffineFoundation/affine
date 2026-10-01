@@ -25,8 +25,11 @@ improvement across all environments. See [paired results](docs/WIDE_EVALUATION_R
 MRCR's disjoint original snapshot passed 64 native grader controls. A prospective
 common source adds its public-shell candidate policy while preserving the existing
 twelve environment contracts. Two fresh staged native controls scored 1 and 0
-with comparable command lengths. Remote model/proof qualification is in progress;
-MRCR is not yet counted as a common trained family. The balanced historical
+with comparable command lengths. A remote model search then produced one
+positive/negative pair at index 0 and one positive-only result at index 1. All
+three traces passed separate fresh probability/TOPLOC and original native replay
+checks; index 1 remains unqualified for scoring. MRCR is not yet counted as a
+common trained family. The balanced historical
 replay helper now requires complete held-out declarations and has fifteen passing
 signed-lineage controls. Actual pooled training remains unverified. See
 [MRCR scope](docs/MRCR_PUBLIC_SHELL_PILOT.md) and
