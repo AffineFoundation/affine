@@ -36,3 +36,21 @@ Six additional original-native controls on those two mining tasks confirmed
 A separately signed calibration measures exact tokenizer lengths and current
 SUM-logprob candidate scores before any new candidate harness is selected.
 The original 32 attempts and original grader remain unchanged.
+
+The first current-model calibration completed and its exact report/probe/plan
+bytes were authenticated in `calibration-collected` under the same evidence
+directory. Under the unchanged SUM-logprob/temperature-4 sampling rule:
+
+| Wrong public candidate | Tokens | Probability on task 0 | Probability on task 1 |
+| --- | ---: | ---: | ---: |
+| `definitely_wrong_answer` | 6 | 0.00008614 | 0.00005980 |
+| `I don't care` | 4 | 0.01168726 | 0.00844563 |
+| `I do know` | 3 | 0.14508286 | 0.18857263 |
+
+The abstention candidate has four tokens. These are two-candidate probabilities
+against abstention, not measured rollout success rates. They explain why a
+small seed budget produced no original wrong-answer sample. Four additional
+native controls confirm `I do know.` and `I do know!` remain wrong and
+non-abstaining under the unchanged grader. Their equal-length probability
+calibration is separate and pending. No new sampler contract or common epoch
+is inferred from calibration alone.
