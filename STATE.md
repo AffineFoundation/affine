@@ -16,10 +16,12 @@ The new separate-role implementation uses an operator-side atomic SQLite
 claim authority, authenticated worker identities, expiring leases, bounded
 retries and immutable R2 report history. The reviewed immutable source is deployed
 on all five nodes, and the new controller and two authenticated verifier workers
-are running in `state/prospective-separated-hopper-math-v1`. Initial checkpoint
-upload has completed; the controller is independently checking the actual R2
-bytes before opening the first epoch. Genuine math-pair mining, full training,
-paired heldout evaluation and two-worker audit qualification remain pending.
+are running in `state/prospective-separated-hopper-math-v1`. All 11 initial
+checkpoint objects passed independent R2 byte/hash checks. The first real epoch,
+`nonpayable-separated-hopper-original-math-v1-1790972646-0`, opened at 20:24:11 UTC
+with its signed 20:54:11 UTC deadline; the dedicated miner is sampling. Genuine
+math-pair qualification, full training, paired heldout evaluation and two-worker
+audit qualification remain pending.
 Chain submissions remain disabled. The existing retained-3090 pilot and its
 artifacts are preserved.
 
