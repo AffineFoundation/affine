@@ -17,9 +17,20 @@ UID 131 miner has now completed the real external bootstrap path: signed source
 admission, isolated CLI execution, checkpoint download, autoregressive sampling,
 and a private R2 cumulative upload. The independently hashed 32,373,517-byte
 artifact contains one batch for original task 503, with two rollouts and full
-49,152-vocabulary float32 probabilities. The epoch retains its original deadline;
-normal inference verification, native grading, scoring, training and paired
-evaluation remain pending. No math-only training or learning gain is claimed yet.
+49,152-vocabulary float32 probabilities. The epoch closed at its original deadline,
+passed the normal inference verification and native grading, earned one point,
+and completed eight full-model updates. All 218 parameter tensors received
+gradients under one persistent AdamW optimizer with an immutable epoch reference.
+The actual published successor checkpoint bytes were independently streamed and
+hashed, and the epoch's test score was excluded from payout aggregation.
+
+The same 32 held-out tasks improved from 6 correct (0.1875) to 7 correct (0.21875),
+with zero verification failures. Three tasks improved, two declined and 27 were
+unchanged. Full tokenizer semantics, special tokens, chat template and all 32
+prompt token sequences are unchanged despite export serialization differences.
+This small first-epoch gain is not yet a trend. Actual affine.io browser checks
+include the new math cohort and completed batch. The next gate is consecutive
+epochs resuming from the trained checkpoint, rather than another reset to base.
 
 The GPU policy field is now bound when opening and signing an epoch. The generic
 bootstrap requests unencoded R2 responses while retaining its encoding refusal,
