@@ -7,6 +7,22 @@ from dashboard.server import Database, export_snapshot
 
 
 class PublicProjectionTests(unittest.TestCase):
+    def test_separate_hopper_namespace_exports_only_public_measurements(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);state=root/'state';folder=state/'prospective-separated-hopper-math-v1/controller-state'
+            folder.mkdir(parents=True);epoch='nonpayable-separated-hopper-original-math-v1-1'
+            (folder/f'{epoch}-manifest.json').write_text(json.dumps(dict(epoch=epoch,start=1,deadline=2,
+                checkpoint={'id':'approved'},capabilities={'miner':'PRIVATE_CAPABILITY'})))
+            evaluations=folder.parent/'evaluations';evaluations.mkdir()
+            (evaluations/'run.json').write_text(json.dumps(dict(run_id='separate-run',epoch_id=epoch,
+                env_id='affine_math',dataset_id='new-fixed-cohort',status='complete',timestamp=3,
+                count=8,successes=2,mean_reward=.25,model='Qwen/Qwen2.5-Math-7B-Instruct',
+                private_url='PRIVATE_CAPABILITY',harness_config={'max_output_tokens':1024})))
+            database=Database(root/'network.sqlite',state);database.refresh();snapshot=database.snapshot()
+            self.assertEqual(snapshot['epochs'][0]['source'],'separated-hopper-math')
+            self.assertEqual(snapshot['evaluations'][0]['output_token_budget'],1024)
+            self.assertNotIn('PRIVATE_CAPABILITY',json.dumps(snapshot))
+
     def test_export_restores_canonical_public_guide_after_legacy_regeneration(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

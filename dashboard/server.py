@@ -37,8 +37,11 @@ class Database:
 
     def refresh(self):
         epochs = {}
-        for folder in self.source.iterdir():
-            if not folder.is_dir() or folder.name not in ('live', 'e2e-final', 'registered-test', 'registered-test-compatible', 'multi-environment', 'service-conformance', 'gpu-continuous', 'gpu-wide', 'native-agent-common', 'native-sql-common', 'native-eog-common', 'native-math-common'):
+        folders=[(folder,folder.name) for folder in self.source.iterdir()
+            if folder.name in ('live', 'e2e-final', 'registered-test', 'registered-test-compatible', 'multi-environment', 'service-conformance', 'gpu-continuous', 'gpu-wide', 'native-agent-common', 'native-sql-common', 'native-eog-common', 'native-math-common')]
+        folders.append((self.source/'prospective-separated-hopper-math-v1/controller-state','separated-hopper-math'))
+        for folder,source_name in folders:
+            if not folder.is_dir():
                 continue
             health = read(folder/'health.json', {})
             for path in folder.glob('*-manifest.json'):
@@ -103,7 +106,7 @@ class Database:
                            batches=batches, grid=grid, unassigned_batches=outside,
                            miners=[dict(identity=identity, points=value, weight=scores.get('weights', {}).get(identity, 0))
                                    for identity, value in points.items()], training=None,
-                           audit_policy=doc.get('audit_policy', ''), source=folder.name)
+                           audit_policy=doc.get('audit_policy', ''), source=source_name)
                 epochs[eid] = row
                 metrics = read(folder/f'{eid}-training-metrics.json', {})
                 if metrics:
@@ -137,7 +140,9 @@ class Database:
                 'training_steps','status','fixed_task_ids','reward_standard_error',
                 'requested_count','completed_count','taskset_hash','policy_kind','model_runtime_revision',
                 'original_error_count','recovered_count','status_detail')
-        for path in (self.source/'evaluations').glob('*.json'):
+        evaluation_paths=list((self.source/'evaluations').glob('*.json'))
+        evaluation_paths.extend((self.source/'prospective-separated-hopper-math-v1/evaluations').glob('*.json'))
+        for path in evaluation_paths:
             raw = read(path,{})
             if not isinstance(raw,dict) or not all(isinstance(raw.get(k),str) for k in ('run_id','env_id','dataset_id','status')):
                 continue
