@@ -13,6 +13,16 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
   --state /absolute/private/miner-state --once
 ```
 
+For an operator-delegated test miner, replace `--key` with
+`--cap-file /absolute/private/epoch-capability.json`. These arguments are
+mutually exclusive. The operator decrypts the upload capability locally and
+transfers only its epoch-scoped capability file to the GPU miner; the registered
+hotkey stays on the operator machine. The bootstrap forwards the explicit file
+path without reading or rewriting its contents. The admitted CLI checks the
+capability against the signed epoch and performs the actual mining/upload.
+This is a delegated public-client test, not a new independently signed network
+registration. A fresh epoch requires its own matching capability.
+
 The discovery and matching epoch manifest must both verify under the supplied
 known authority. The source descriptor's HTTPS R2 URL, exact size and SHA256 are
 bound by that manifest. Redirects, transport downgrades, expired epochs and

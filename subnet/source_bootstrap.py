@@ -179,19 +179,22 @@ def hydrate_task_assets(source,value,cache):
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--authority',required=True);p.add_argument('--current-url',required=True)
-    p.add_argument('--source-cache',required=True);p.add_argument('--key',required=True);p.add_argument('--state',required=True)
+    p.add_argument('--source-cache',required=True);p.add_argument('--state',required=True)
+    credential=p.add_mutually_exclusive_group(required=True)
+    credential.add_argument('--key');credential.add_argument('--cap-file')
     p.add_argument('--gateway',default='https://unused.invalid');p.add_argument('--once',action='store_true');p.add_argument('--max-batches',type=int)
     p.add_argument('--env-id');p.add_argument('--indices',nargs='+',type=int);p.add_argument('--search-budget',type=int)
     a=p.parse_args(argv)
-    key=Path(os.path.abspath(a.key));state=Path(os.path.abspath(a.state));cache=Path(os.path.abspath(a.source_cache))
-    if not key.is_file() or key.is_symlink():raise ValueError('explicit existing key file required')
-    # This bootstrap never reads, creates or modifies the explicit private key.
+    credential_flag='--cap-file' if a.cap_file else '--key'
+    credential_path=Path(os.path.abspath(a.cap_file or a.key));state=Path(os.path.abspath(a.state));cache=Path(os.path.abspath(a.source_cache))
+    if not credential_path.is_file() or credential_path.is_symlink():raise ValueError('explicit existing credential file required')
+    # Forward only its path; never read, create or modify the key/capability.
     value=manifest(a.current_url,a.authority);descriptor=value.get('source_bundle')
     if not isinstance(descriptor,dict):raise ValueError('signed source bundle required')
     body=download(r2_url(descriptor.get('url')),COMPRESSED_LIMIT)
     source=install(body,descriptor,cache)
     hydrate_task_assets(source,value,cache)
-    arguments=['--authority',a.authority,'--current-url',a.current_url,'--gateway',a.gateway,'--key',str(key),'--state',str(state),'--source-bundle-sha256',descriptor['sha256']]
+    arguments=['--authority',a.authority,'--current-url',a.current_url,'--gateway',a.gateway,credential_flag,str(credential_path),'--state',str(state),'--source-bundle-sha256',descriptor['sha256']]
     if a.once:arguments+=['--once']
     if a.max_batches is not None:arguments+=['--max-batches',str(a.max_batches)]
     if a.env_id is not None:arguments+=['--env-id',a.env_id]

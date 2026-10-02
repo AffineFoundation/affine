@@ -165,4 +165,27 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(key.read_bytes(),b'do-not-read-or-modify')
             self.assertFalse((Path(tmp)/'state').exists())
 
+    def test_main_forwards_delegated_capability_without_a_private_key(self):
+        body,desc=archive()
+        with tempfile.TemporaryDirectory() as tmp:
+            cap=Path(tmp)/'epoch-capability.json';cap.write_bytes(b'opaque-epoch-scoped-capability')
+            with patch.object(b,'manifest',return_value={'source_bundle':desc}),patch.object(b,'download',return_value=body),patch.object(b,'execute') as execute:
+                b.main(['--authority','a'*64,'--current-url',URL,'--cap-file',str(cap),'--state',str(Path(tmp)/'state'),'--source-cache',str(Path(tmp)/'cache'),'--once'])
+            args=execute.call_args.args[1]
+            self.assertNotIn('--key',args)
+            self.assertEqual(args[args.index('--cap-file')+1],str(cap))
+            self.assertEqual(args[args.index('--source-bundle-sha256')+1],desc['sha256'])
+            self.assertEqual(cap.read_bytes(),b'opaque-epoch-scoped-capability')
+            b.verify_cache(execute.call_args.args[0],b.admitted_files(body,desc))
+
+    def test_delegated_capability_path_must_exist_and_not_be_a_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing=Path(tmp)/'missing';target=Path(tmp)/'cap';target.write_bytes(b'cap')
+            link=Path(tmp)/'symlink';link.symlink_to(target)
+            for cap in [missing,link]:
+                with self.subTest(cap=cap.name),patch.object(b,'manifest') as fetch:
+                    with self.assertRaisesRegex(ValueError,'credential file'):
+                        b.main(['--authority','a'*64,'--current-url',URL,'--cap-file',str(cap),'--state',str(Path(tmp)/'state'),'--source-cache',str(Path(tmp)/'cache')])
+                    fetch.assert_not_called()
+
 if __name__=='__main__':unittest.main()
