@@ -28,19 +28,32 @@ The same 32 held-out tasks improved from 6 correct (0.1875) to 7 correct (0.2187
 with zero verification failures. Three tasks improved, two declined and 27 were
 unchanged. Full tokenizer semantics, special tokens, chat template and all 32
 prompt token sequences are unchanged despite export serialization differences.
-This small first-epoch gain is not yet a trend. Actual affine.io browser checks
-include the new math cohort and completed batch. The next gate is consecutive
-epochs resuming from the trained checkpoint, rather than another reset to base.
+Actual affine.io browser checks include the new math cohort and completed batch.
 
 The second epoch exposed an owned-worker admission ordering bug: resolving the
 task subset imported pinned environment modules before installing the fresh
-source loader. Its local dispatcher is paused, with the original manifest,
-deadline and failed-job records preserved. The worker fix defers source-dependent
+source loader. Its four failed jobs, original manifest and deadline are preserved.
+The registered external miner recovered the window with two genuine batches,
+for tasks 1235 and 4454. Both passed full verification and earned two nonpayable
+test points. The controller resumed at the original deadline, completed another
+eight full-model updates and exited normally. All six successor checkpoint
+objects were independently streamed and hashed; only the model-weight file
+changed. The pre-training evaluation reproduced the previous 7/32 result exactly.
+After training, the same 32 tasks reached 9/32: two improvements, no declines and
+30 unchanged. The untouched-base series is therefore 6, 7 and 9 correct on this
+small fixed cohort, with 16 actual optimizer updates across two completed epochs.
+These measurements do not establish broader improvement.
+
+The worker fix defers source-dependent
 subset and replay checks until after source/runtime admission, still before
 creating job artifacts or loading a checkpoint. Fresh-process controls confirm
 valid admission and rejection of held-out indices, altered source and preloaded
-runtime modules. The existing external miner path is being used for recovery;
-continuous owned mining has not yet been requalified on the corrected source.
+runtime modules. The corrected immutable source bundle has been published and
+all 1,731 actual remote files checked against the reviewed bytes. Fresh-process
+admission controls also pass on the retained GPU host. A continuous controller
+has resumed from the twice-trained checkpoint with the same task pool, held-out
+cohort and training policy. Its first actual owned GPU mining job is the next
+qualification gate; continuous owned mining is not yet claimed healthy.
 
 The GPU policy field is now bound when opening and signing an epoch. The generic
 bootstrap requests unencoded R2 responses while retaining its encoding refusal,
