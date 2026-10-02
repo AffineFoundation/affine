@@ -14,10 +14,14 @@ batch success, optimizer consumption or benchmark improvement.
 
 The new separate-role implementation uses an operator-side atomic SQLite
 claim authority, authenticated worker identities, expiring leases, bounded
-retries and immutable R2 report history. Narrow verifier seeds are provisioned;
-activation of the new full pilot remains pending reviewed source/configuration
-deployment and genuine math-pair/training qualification. Chain submissions
-remain disabled. The existing retained-3090 pilot and its artifacts are preserved.
+retries and immutable R2 report history. The reviewed immutable source is deployed
+on all five nodes, and the new controller and two authenticated verifier workers
+are running in `state/prospective-separated-hopper-math-v1`. Initial checkpoint
+upload has completed; the controller is independently checking the actual R2
+bytes before opening the first epoch. Genuine math-pair mining, full training,
+paired heldout evaluation and two-worker audit qualification remain pending.
+Chain submissions remain disabled. The existing retained-3090 pilot and its
+artifacts are preserved.
 
 DeepMath and NuminaMath-CoT catalog/native-adapter qualification now yields
 832,335 training tasks plus separate heldouts, represented by 106 bounded
