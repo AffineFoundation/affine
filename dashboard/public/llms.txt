@@ -127,8 +127,8 @@ BF16, eager attention and deterministic CUBLAS. Genuine same-model generation,
 full-vocabulary probability and TOPLOC proof controls passed on the miner and
 both independent verifiers, including rejection of altered evidence. Those
 controls are hardware qualification, not held-out evaluations or training.
-The first real separated epoch is mining; completed training and gains have
-not yet been established. Exact installed versions and source policies come
+The first real separated epoch has opened but remains incomplete; completed
+training and gains have not yet been established. Exact installed versions and source policies come
 from the signed challenge. Other hardware compatibility is unproven.
 Report only public epoch IDs/hotkeys, hardware/runtime and errors with secrets
 and signed URLs removed. Pilot points are permanently nonpayable. The separate
