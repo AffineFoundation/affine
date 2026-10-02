@@ -19,9 +19,13 @@ on all five nodes, and the new controller and two authenticated verifier workers
 are running in `state/prospective-separated-hopper-math-v1`. All 11 initial
 checkpoint objects passed independent R2 byte/hash checks. The first real epoch,
 `nonpayable-separated-hopper-original-math-v1-1790972646-0`, opened at 20:24:11 UTC
-with its signed 20:54:11 UTC deadline; the dedicated miner is sampling. Genuine
-math-pair qualification, full training, paired heldout evaluation and two-worker
-audit qualification remain pending.
+with its signed 20:54:11 UTC deadline. The miner lost SSH connectivity during
+this attempt. Lium subsequently reported `REBOOT_FAILED`, with container
+creation failing at `ssh_connect`; the cause is not established as an OOM or
+model failure. The original attempt and failed pod are retained. A replacement
+miner is being prepared in a fresh namespace. Genuine math-pair qualification,
+full training, paired heldout evaluation and two-worker audit qualification
+remain pending.
 Chain submissions remain disabled. The existing retained-3090 pilot and its
 artifacts are preserved.
 
