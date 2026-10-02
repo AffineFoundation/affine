@@ -7,7 +7,11 @@ Affine branding. The footer links to the current inference-verification guide at
 `/llms.txt`.
 
 The initial selection is original MATH and its latest fixed evaluation cohort,
-with the original MATH pilot batch series. Environment/cohort and epoch-series
+with the newest finalized original MATH pilot batch series. The batch selector
+labels SmolLM2-1.7B and Qwen2.5-Math-7B series separately and follows the newest
+actual finalized MATH window until the user selects a series. Manual choices
+persist through refresh and resize; initial upload and qualification jobs never
+become finalized batch points. Environment/cohort and epoch-series
 selectors preserve access to historical measurements. Network and nonpayable
 pilot scopes remain separate. Cohort identity binds dataset/taskset, fixed task
 IDs, seed, sample count, model family, environment version, harness, output

@@ -1,11 +1,11 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id), ns = 'http://www.w3.org/2000/svg';
-  let data = {epochs:[], evaluations:[], summary:{}}, scope='test', environment='affine_math', cohort='', source='native-math-common';
+  let data = {epochs:[], evaluations:[], summary:{}}, scope='test', environment='affine_math', cohort='', source='all', sourceChosen=false;
   // Weights may change within a cohort; every task/runtime/sampling identity stays fixed.
   const cohortKey = e => JSON.stringify([e.dataset_id,e.taskset_hash,e.fixed_task_ids,e.seed,e.count,e.requested_count,e.harness,e.environment_version,e.model,e.model_runtime_revision,e.output_token_budget,e.policy_kind]);
   const mode = e => data.epochs.find(x=>x.id===e.epoch_id)?.mode || (/^(nonpayable-|test-|mock-)/.test(e.epoch_id||'')?'test':'live');
-  const names = {'native-math-common':'Original MATH pilot','gpu-wide':'Wide pilot','gpu-continuous':'GPU pilot','native-sql-common':'SQL pilot','native-agent-common':'Agent pilot','native-eog-common':'Calendar pilot'};
+  const names = {'native-math-common':'Original MATH · SmolLM2-1.7B','separated-hopper-math':'Original MATH · Qwen2.5-Math-7B','gpu-wide':'Wide pilot','gpu-continuous':'GPU pilot','native-sql-common':'SQL pilot','native-agent-common':'Agent pilot','native-eog-common':'Calendar pilot'};
   function svg(tag, attrs, text){const n=document.createElementNS(ns,tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,String(v));if(text!==undefined)n.textContent=text;return n;}
   function menu(id, options, chosen){const n=$(id);n.replaceChildren();for(const [value,label] of options){const o=document.createElement('option');o.value=value;o.textContent=label;o.title=label;n.append(o);}n.value=chosen;n.disabled=!options.length;}
   function draw(kind, rows){
@@ -45,7 +45,8 @@
     $('evaluation-note').title=latest?`Cohort ${latest.dataset_id}. Repeated checkpoint evaluations remain separate measurements. Small cohorts do not establish broad improvement.`:'';
     draw('evaluation',selected.map(e=>({...e,time:e.timestamp,value:e.mean_reward})));
     const epochs=data.epochs.filter(e=>e.mode===scope&&e.finalized).sort((a,b)=>a.start-b.start),sources=[...new Set(epochs.map(e=>e.source))].sort();
-    if(source!=='all'&&!sources.includes(source))source=sources.includes('native-math-common')?'native-math-common':'all';
+    const latestMath=epochs.filter(e=>['native-math-common','separated-hopper-math'].includes(e.source)).at(-1);
+    if(!sourceChosen||(source!=='all'&&!sources.includes(source))){source=latestMath?.source||'all';sourceChosen=false;}
     menu('batch-source',[['all','All epoch series'],...sources.map(s=>[s,names[s]||s])],source);
     draw('batch',epochs.filter(e=>source==='all'||e.source===source).map(e=>({...e,time:e.start,value:e.batches})));
     $('connection').textContent=`${scope==='test'?'Nonpayable pilot':'Network'} · updated ${new Date(data.summary.updated_at*1000).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',timeZone:'UTC'})} UTC`;
@@ -53,7 +54,7 @@
   document.querySelectorAll('[data-scope]').forEach(b=>b.addEventListener('click',()=>{scope=b.dataset.scope;document.querySelectorAll('[data-scope]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));render();}));
   $('environment').addEventListener('change',()=>{environment=$('environment').value;cohort='';render();});
   $('evaluation').addEventListener('change',()=>{cohort=$('evaluation').value;render();});
-  $('batch-source').addEventListener('change',()=>{source=$('batch-source').value;render();});
+  $('batch-source').addEventListener('change',()=>{source=$('batch-source').value;sourceChosen=true;render();});
   let resizeTimer;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(render,100);});
   async function refresh(){try{const r=await fetch('/network-data.json',{cache:'no-store'});if(!r.ok)throw Error('Data unavailable');const next=await r.json();if(!Array.isArray(next.epochs)||!Array.isArray(next.evaluations))throw Error('Invalid data');data=next;render();}catch{
     $('connection').textContent='Data unavailable';

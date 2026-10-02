@@ -80,6 +80,35 @@ const assert=(condition,message)=>{if(!condition)throw Error(message);};
    for(const cohort of options){await control.selectOption('#evaluation',cohort);assert(await control.locator('#evaluation-chart circle').count()===1,'Independent cohorts merged');}
    controls.push({intercepted_response:'cohort-identity-mutations',independent_cohorts:5,each_points:1});await control.close();
   }
+  // Local response fixtures exercise automatic/newest selection and exclusion
+  // of unfinalized upload activity. They are never published as pilot metrics.
+  const mathWindow=snapshot.epochs.filter(e=>e.mode==='test'&&e.finalized&&e.source==='native-math-common').sort((a,b)=>a.start-b.start).at(-1);
+  if(mathWindow){
+   const fakeNew={...mathWindow,id:'nonpayable-local-series-selection-control',source:'separated-hopper-math',start:mathWindow.start+1};
+   const pendingUpload={...fakeNew,id:'nonpayable-local-initial-upload-control',start:fakeNew.start+1,finalized:false};
+   let fixture={...snapshot,epochs:[mathWindow,pendingUpload]};
+   const control=await browser.newPage();control.on('pageerror',e=>errors.push(String(e)));
+   await control.route('**/network-data.json',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(fixture)}));
+   await control.goto(site,{waitUntil:'domcontentloaded'});
+   await control.waitForFunction(()=>document.querySelector('#connection')?.textContent.includes('updated'));
+   assert(await control.locator('#batch-source').inputValue()==='native-math-common','Unfinalized upload selected as current scored series');
+   assert(await control.locator('#batch-chart circle').count()===1,'Unfinalized upload created a batch point');
+   fixture={...fixture,epochs:[mathWindow,pendingUpload,fakeNew]};
+   await control.setViewportSize({width:1200,height:900});await control.waitForTimeout(200);
+   // Reload refreshes from the changed local fixture, without waiting15seconds.
+   await control.reload({waitUntil:'domcontentloaded'});
+   await control.waitForFunction(()=>document.querySelector('#batch-source')?.value==='separated-hopper-math');
+   const labels=await control.locator('#batch-source option').evaluateAll(rows=>rows.map(x=>x.textContent));
+   assert(labels.some(x=>x.includes('Qwen2.5-Math-7B'))&&labels.some(x=>x.includes('SmolLM2-1.7B')),'Model series labels missing');
+   assert(await control.locator('#batch-chart circle').count()===1,'Latest scored MATH series mismatch');
+   await control.selectOption('#batch-source','native-math-common');
+   await control.setViewportSize({width:390,height:900});await control.waitForTimeout(200);
+   assert(await control.locator('#batch-source').inputValue()==='native-math-common','Manual historical series selection lost');
+   await control.locator('[data-scope="test"]').click();
+   assert(await control.locator('#batch-source').inputValue()==='native-math-common','Manual series selection reset on render');
+   controls.push({intercepted_response:'synthetic-source-selection-fixtures',unfinalized_upload_excluded:true,newest_finalized_math_default:true,historical_series_retained:true,manual_selection_preserved:true});
+   await control.close();
+  }
   assert(errors.length===0,'Browser errors: '+errors.join('; '));
   const out={passed:true,checked_at:Date.now()/1000,site,actual_page_checked:true,public_response_sha256:crypto.createHash('sha256').update(raw).digest('hex'),structure,default_view:defaultView,cohort_checks:checks,batch_checks:batchChecks,viewports,public_guide:true,local_controls:controls,page_errors:errors,chain_transactions:false,quality_improvement_claimed:false};
   fs.writeFileSync(path.join(output,'two-chart-browser-check.json'),JSON.stringify(out,null,2)+'\n');

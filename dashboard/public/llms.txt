@@ -53,8 +53,10 @@ preserved rather than being rewritten as successful epochs.
 
 Roles are logically separate: miner searches; verifier checks inference and
 native outcomes; trainer updates weights; validator/controller owns admission,
-deadlines, freeze, scoring and checkpoint handover. A shared test host does not
-establish independent hardware or production decentralization.
+deadlines, freeze, scoring and checkpoint handover. The new separated pilot uses
+five distinct H200 hosts: one miner, two verifiers, one trainer and one evaluator.
+Arbos.life is the local operator/validator host. This physical separation does
+not by itself establish production decentralization.
 
 ## What the two charts measure
 
@@ -98,6 +100,7 @@ Start with the public repository and these guides:
 - https://github.com/AffineFoundation/affine/blob/main/docs/MATH_MINER_BOOTSTRAP.md
 - https://github.com/AffineFoundation/affine/blob/main/docs/MATH_PILOT.md
 - https://github.com/AffineFoundation/affine/blob/main/docs/ARCHITECTURE.md
+- https://github.com/AffineFoundation/affine/blob/main/docs/DISTRIBUTED_GPU_ROLES.md
 
 A clean checkout needs the generated task snapshot and exact signed source.
 After approval, use the source bootstrap with locally supplied variables:
@@ -117,9 +120,16 @@ before running the admitted CLI in a fresh isolated interpreter. Runtime package
 still need installing and qualifying on your hardware. Source changes require
 fresh bootstrap approval; source is signed executable code, not a sandbox.
 
-The initial qualified GPU profile is CUDA compute capability 8.6, BF16, eager
-attention and deterministic CUBLAS. Exact installed versions and source policies
-come from the signed challenge. Other hardware compatibility is unproven.
+The historical SmolLM2 baseline uses CUDA compute capability 8.6. The new H200
+Qwen2.5-Math-7B-Instruct pilot pins model revision
+ef9926d75ab1d54532f6a30dd5e760355eb9aa4d and CUDA compute capability 9.0,
+BF16, eager attention and deterministic CUBLAS. Genuine same-model generation,
+full-vocabulary probability and TOPLOC proof controls passed on the miner and
+both independent verifiers, including rejection of altered evidence. Those
+controls are hardware qualification, not held-out evaluations or training.
+The first real separated epoch is mining; completed training and gains have
+not yet been established. Exact installed versions and source policies come
+from the signed challenge. Other hardware compatibility is unproven.
 Report only public epoch IDs/hotkeys, hardware/runtime and errors with secrets
 and signed URLs removed. Pilot points are permanently nonpayable. The separate
 legacy transition writer is outside this pilot; charts are not chain payouts.
