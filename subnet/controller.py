@@ -98,7 +98,11 @@ class Controller:
         if existing(legacy_key) is None:self.bucket.json(legacy_key,self.signed(descriptor))
         return checkpoint
 
-    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None):
+    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None):
+        if training_policy is not None:
+            from .backend_jobs import FIXED_POLICY,REVISION
+            if training_policy!=FIXED_POLICY or model_runtime_revision!=REVISION:
+                raise ValueError('unsupported epoch training policy or backend')
         deadline=int(time.time())+duration
         if getattr(self.gateway,'direct_r2',False):
             checkpoint=dict(checkpoint,read_urls={name:self.bucket.presign(f"public/checkpoints/{checkpoint['id']}/{name}",expires=min(604800,duration+3600)) for name in checkpoint['files']})
@@ -122,6 +126,7 @@ class Controller:
         if numerical_policy is not None:manifest['numerical_policy']=numerical_policy
         if backend_profile is not None:manifest['backend_profile']=backend_profile
         if model_id is not None:manifest['model_id']=model_id
+        if training_policy is not None:manifest['training_policy']=training_policy
         from .runtime_factory import validate_backend
         validate_backend(manifest)
         if source_bundle is not None:manifest['source_bundle']=dict(source_bundle)
