@@ -4,6 +4,13 @@ import unittest
 from subnet.environments import build_spec, create_session, legacy_spec, source_inventory
 
 class EnvironmentTests(unittest.TestCase):
+    def ifeval_spec(self):
+        from pathlib import Path
+        # Bind public tasks to the code under test; archived runtime specs stay
+        # immutable and are not suitable for a new adapter-source revision.
+        snapshot=Path(__file__).parent/'fixtures/ifeval_public_constraint_tasks.json'
+        return build_spec('affine_ifeval',{'task_snapshot':str(snapshot.resolve())},
+                          num_samples=4,max_turns=1,max_output_tokens=128)
     def test_active_inventory(self):
         inventory=source_inventory()
         self.assertEqual(sum(v['active'] for v in inventory.values()),45)
@@ -60,7 +67,7 @@ class EnvironmentTests(unittest.TestCase):
         import json
         from pathlib import Path
         from subnet.environments import EnvironmentSpec
-        spec=EnvironmentSpec.from_dict(json.loads(Path('state/original-task-snapshots/fixed4-affine_ifeval.spec.json').read_text()))
+        spec=self.ifeval_spec()
         for text,reward in [('ipv6 expands the address space and routes internet traffic, allowing more devices to connect.',1),('IPv6 expands the address space and routes internet traffic, allowing more devices to connect.',0)]:
             session=create_session(spec)
             try:
@@ -73,7 +80,7 @@ class EnvironmentTests(unittest.TestCase):
         import json,tempfile
         from pathlib import Path
         from subnet.environments import EnvironmentSpec,_source_hash
-        original=EnvironmentSpec.from_dict(json.loads(Path('state/original-task-snapshots/fixed4-affine_ifeval.spec.json').read_text()))
+        original=self.ifeval_spec()
         rows=json.loads(Path(original.config['task_snapshot']).read_text())
         rows[0]['task_class']='ArbitraryUploadedClass'
         with tempfile.TemporaryDirectory() as directory:

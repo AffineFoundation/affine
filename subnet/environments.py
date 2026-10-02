@@ -175,6 +175,11 @@ def _source_hash(spec):
     if snapshot:
         files.append(('tasks', _hash(_snapshot_path(spec.config))))
     files.append(('adapter',_hash(__file__)))
+    if spec.config.get('prolog_session_revision') is not None:
+        from .native_common_dispatch import validate_prolog_binding
+        validate_prolog_binding(spec)
+        files.append(('native_common_dispatch',_hash(PACKAGE_ROOT/'native_common_dispatch.py')))
+        for name,digest in sorted(spec.config['prolog_source_files'].items()):files.append(('native_prolog',name,digest))
     policy=spec.config.get('tool_error_policy')
     if policy=='native-mcp-toolerror-observation-v1':
         files.append(('tool_error_adapter',_hash(PACKAGE_ROOT/'native_tool_errors.py')))
@@ -447,4 +452,7 @@ def create_session(spec):
     if checked.adapter in ('resource_prime_v1','resource_prime_v1_controlled'):
         from .resource_session import create_resource_session
         return create_resource_session(checked.to_dict())
+    if checked.config.get('prolog_session_revision') is not None:
+        from .native_common_dispatch import prolog_session
+        return prolog_session(checked)
     return EnvironmentSession(checked)

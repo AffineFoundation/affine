@@ -1,0 +1,37 @@
+{
+  "id": "affine_prolog",
+  "version": "prime-native-prolog-dispatch-v2",
+  "adapter": "prime_v1",
+  "num_samples": 3,
+  "max_turns": 2,
+  "max_output_tokens": 512,
+  "success_reward": 1.0,
+  "source_hash": "unsealed-public-test-fixture",
+  "config": {
+    "legacy_root": "bundled",
+    "research_root": "bundled",
+    "dependency_versions": {
+      "verifiers": "0.3.1"
+    },
+    "taskset": {
+      "tasks": [
+        "prolog-nqueens-0005",
+        "prolog-nqueens-0014",
+        "prolog-nqueens-0023"
+      ],
+      "num_examples": 32,
+      "difficulty": "medium"
+    },
+    "prolog_session_revision": "original-nqueens-common-session-v1",
+    "prolog_source_files": {
+      "subnet/native_prolog_actor.py": "3fff53115530d8dfd0cf8393f4dc1727269f3f87e253cc2ec78ef0b3686d5eb6",
+      "subnet/native_prolog_session.py": "97ef7feaa5852dd71b69ad9af9cd9dd981db19098d75a52b9b9918b0a4fc62e5"
+    },
+    "prolog_runtime": {
+      "revision": "original-prolog-public-actor-native-grader-v1",
+      "base_image": "sha256:4697e5fc9ca9fd4825a42144ee05545490c18385dc88a4ac0f99c598dafea0c2",
+      "image": "sha256:beec3bb11987ee84013dc728b92833e3b26254ed83f3e285a0fc28ddd128ffb6",
+      "shim_sha256": "ab0ec3e391015d233c827d35ce2924bb3cd6a9019f014014174a0db2a1a0add2"
+    }
+  }
+}

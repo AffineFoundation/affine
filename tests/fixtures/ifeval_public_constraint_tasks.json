@@ -1,0 +1,163 @@
+[
+  {
+    "data": {
+      "artifacts": [],
+      "constraint_type": "All Lowercase",
+      "description": null,
+      "func_name": "validate_lowercase",
+      "idx": 0,
+      "image": null,
+      "kwargs": {},
+      "name": "ifeval-10fcca483882",
+      "network_allow": [
+        "*"
+      ],
+      "network_block": [],
+      "prompt": "Describe the purpose of internet protocol version 6 (IPv6).\n\n Your entire response should be in English, and in all lowercase letters. No capital letters are allowed.",
+      "resources": {
+        "cpu": null,
+        "disk": null,
+        "gpu": null,
+        "memory": null
+      },
+      "system_prompt": "You are a helpful assistant. Read the request carefully: it contains explicit formatting or content constraints (length, case, keywords, sections, JSON, ...). Think about how to satisfy every constraint, then write the reply itself. Your visible reply is checked automatically against each constraint, so it must contain only the requested answer.",
+      "timeout": {
+        "agent": null,
+        "finalize": null,
+        "scoring": null,
+        "setup": null
+      },
+      "workdir": null
+    },
+    "task_class": "RLVRTask",
+    "task_config": {
+      "judges": [],
+      "metrics": {},
+      "mode": "strict",
+      "rewards": {},
+      "stops": {}
+    }
+  },
+  {
+    "data": {
+      "artifacts": [],
+      "constraint_type": "Number Paragraphs",
+      "description": null,
+      "func_name": "verify_paragraph_count",
+      "idx": 1,
+      "image": null,
+      "kwargs": {
+        "N": 17
+      },
+      "name": "ifeval-ac60b6e51a92",
+      "network_allow": [
+        "*"
+      ],
+      "network_block": [],
+      "prompt": "Your response should contain 17 paragraphs. You separate paragraphs using the markdown divider: * * * What is the fastest way to get a weather report from the terminal?",
+      "resources": {
+        "cpu": null,
+        "disk": null,
+        "gpu": null,
+        "memory": null
+      },
+      "system_prompt": "You are a helpful assistant. Read the request carefully: it contains explicit formatting or content constraints (length, case, keywords, sections, JSON, ...). Think about how to satisfy every constraint, then write the reply itself. Your visible reply is checked automatically against each constraint, so it must contain only the requested answer.",
+      "timeout": {
+        "agent": null,
+        "finalize": null,
+        "scoring": null,
+        "setup": null
+      },
+      "workdir": null
+    },
+    "task_class": "RLVRTask",
+    "task_config": {
+      "judges": [],
+      "metrics": {},
+      "mode": "strict",
+      "rewards": {},
+      "stops": {}
+    }
+  },
+  {
+    "data": {
+      "artifacts": [],
+      "constraint_type": "No Commas",
+      "description": null,
+      "func_name": "validate_no_commas",
+      "idx": 2,
+      "image": null,
+      "kwargs": {},
+      "name": "ifeval-8e2ff8733de7",
+      "network_allow": [
+        "*"
+      ],
+      "network_block": [],
+      "prompt": "Given the task definition, example input & output, solve the new input case.\nYou are given a negative review and your task is to convert it to a positive review by one or more making minimal changes. Avoid changing the context of the review.\nExample: we stood there in shock , because we never expected this .\nOutput: we loved every moment when we were there .\nThe output converts the given negative review to positive review by repharsing the sentence. It does not change the context of the input.\n\nNew input case for you: the chow mein was very mushy and had weird texture .\nOutput: In your entire response, refrain from the use of any commas.",
+      "resources": {
+        "cpu": null,
+        "disk": null,
+        "gpu": null,
+        "memory": null
+      },
+      "system_prompt": "You are a helpful assistant. Read the request carefully: it contains explicit formatting or content constraints (length, case, keywords, sections, JSON, ...). Think about how to satisfy every constraint, then write the reply itself. Your visible reply is checked automatically against each constraint, so it must contain only the requested answer.",
+      "timeout": {
+        "agent": null,
+        "finalize": null,
+        "scoring": null,
+        "setup": null
+      },
+      "workdir": null
+    },
+    "task_class": "RLVRTask",
+    "task_config": {
+      "judges": [],
+      "metrics": {},
+      "mode": "strict",
+      "rewards": {},
+      "stops": {}
+    }
+  },
+  {
+    "data": {
+      "artifacts": [],
+      "constraint_type": "Keyword Frequency",
+      "description": null,
+      "func_name": "verify_keyword_frequency",
+      "idx": 3,
+      "image": null,
+      "kwargs": {
+        "N": 17,
+        "word": "nonsensorial"
+      },
+      "name": "ifeval-0a8741e3cf02",
+      "network_allow": [
+        "*"
+      ],
+      "network_block": [],
+      "prompt": "Answer a question about this article:\nIncreasingly, more modern games such as video games and slot machines are provided. Pubs hold special events, from tournaments of the aforementioned games to karaoke nights to pub quizzes. Some play pop music and hip-hop (dance bar), or show football and rugby union on big screen televisions (sports bar). Shove ha'penny and Bat and trap were also popular in pubs south of London.\nAlong with slot machines, what is a modern game that is increasingly present in pubs? In your response, the word nonsensorial should appear 17 times.",
+      "resources": {
+        "cpu": null,
+        "disk": null,
+        "gpu": null,
+        "memory": null
+      },
+      "system_prompt": "You are a helpful assistant. Read the request carefully: it contains explicit formatting or content constraints (length, case, keywords, sections, JSON, ...). Think about how to satisfy every constraint, then write the reply itself. Your visible reply is checked automatically against each constraint, so it must contain only the requested answer.",
+      "timeout": {
+        "agent": null,
+        "finalize": null,
+        "scoring": null,
+        "setup": null
+      },
+      "workdir": null
+    },
+    "task_class": "RLVRTask",
+    "task_config": {
+      "judges": [],
+      "metrics": {},
+      "mode": "strict",
+      "rewards": {},
+      "stops": {}
+    }
+  }
+]
