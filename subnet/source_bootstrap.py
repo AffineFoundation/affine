@@ -168,6 +168,7 @@ def main(argv=None):
     p.add_argument('--authority',required=True);p.add_argument('--current-url',required=True)
     p.add_argument('--source-cache',required=True);p.add_argument('--key',required=True);p.add_argument('--state',required=True)
     p.add_argument('--gateway',default='https://unused.invalid');p.add_argument('--once',action='store_true');p.add_argument('--max-batches',type=int)
+    p.add_argument('--env-id');p.add_argument('--indices',nargs='+',type=int);p.add_argument('--search-budget',type=int)
     a=p.parse_args(argv)
     key=Path(os.path.abspath(a.key));state=Path(os.path.abspath(a.state));cache=Path(os.path.abspath(a.source_cache))
     if not key.is_file() or key.is_symlink():raise ValueError('explicit existing key file required')
@@ -179,6 +180,9 @@ def main(argv=None):
     arguments=['--authority',a.authority,'--current-url',a.current_url,'--gateway',a.gateway,'--key',str(key),'--state',str(state),'--source-bundle-sha256',descriptor['sha256']]
     if a.once:arguments+=['--once']
     if a.max_batches is not None:arguments+=['--max-batches',str(a.max_batches)]
+    if a.env_id is not None:arguments+=['--env-id',a.env_id]
+    if a.indices is not None:arguments+=['--indices',*[str(i) for i in a.indices]]
+    if a.search_budget is not None:arguments+=['--search-budget',str(a.search_budget)]
     execute(source,arguments)
 
 if __name__=='__main__':main()

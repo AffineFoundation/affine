@@ -30,6 +30,22 @@ def envelope(value,key):
     return b.canonical(dict(payload=value,signer=key.verify_key.encode().hex(),signature=base64.b64encode(key.sign(b.canonical(value)).signature).decode()))
 
 class BootstrapTests(unittest.TestCase):
+    def test_explicit_search_preferences_reach_admitted_cli(self):
+        body,descriptor=archive()
+        with tempfile.TemporaryDirectory() as tmp:
+            key=Path(tmp)/'fixture-key';key.write_text('opaque fixture, never read')
+            argv=['--authority','a'*64,'--current-url',URL,'--source-cache',str(Path(tmp)/'cache'),
+                '--key',str(key),'--state',str(Path(tmp)/'miner'),
+                '--env-id','affine_math','--indices','0','2','--search-budget','7','--max-batches','1','--once']
+            with patch.object(b,'manifest',return_value={'source_bundle':descriptor}),patch.object(b,'download',return_value=body),patch.object(b,'execute') as execute:
+                b.main(argv)
+            arguments=execute.call_args.args[1]
+            self.assertEqual(arguments[arguments.index('--env-id')+1],'affine_math')
+            self.assertEqual(arguments[arguments.index('--indices')+1:arguments.index('--search-budget')],['0','2'])
+            self.assertEqual(arguments[arguments.index('--search-budget')+1],'7')
+            self.assertIn('--source-bundle-sha256',arguments)
+            b.verify_cache(execute.call_args.args[0],b.admitted_files(body,descriptor))
+
     def test_signatures_discovery_and_expiry(self):
         key=SigningKey.generate(); authority=key.verify_key.encode().hex()
         current=dict(epoch='math1',transport_policy='direct-r2-v1',manifest_url=URL)

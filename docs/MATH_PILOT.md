@@ -21,6 +21,12 @@ The public challenge authorizes the full 6,746-problem mining pool. An operator
 may set `owned_mining_subset` to a bounded starter list for its own signed mining
 job; the worker checks it is a subset of authorized training indices. This does
 not restrict external miners or expose an alternate heldout admission path.
+For a first miner-interface trial, the controller may set
+`owned_miner_dispatch: false` and run once, allowing an actual registered miner
+to upload through the bootstrap/CLI without a competing delegated worker. This
+does not designate an empty epoch or reject external contributions: ordinary
+verification, scoring and training still consume valid uploaded batches. Later
+epochs can restore owned dispatch with the same controller state.
 The preparation recipe instead uses `owned_mining_schedule`: 422 groups of up
 to 16 training indices, rotating by epoch round. This avoids repeatedly starting
 the owned miner on the same problem while preserving the full external pool.
@@ -59,10 +65,13 @@ benchmark contamination remains a limitation of any improvement claim.
 The taskset, split and prospective configuration are prepared. The untouched
 upstream base files are downloaded on the retained GPU host and match pinned
 upstream metadata. Native grader controls and source/bootstrap archive checks
-pass. Base-model execution, deployment, real math-only epochs and performance
-improvement are not yet demonstrated. More accepted data and repeated comparable
-evaluations are needed before claiming effective learning or public release
-readiness.
+pass. The untouched base's GPU baseline verified all 32 fixed heldout tasks,
+with 6 correct answers (18.75%), no verification failures and no optimizer
+update. Its six uploaded R2 objects match the untouched base hashes. This is a
+starting measurement, not evidence of learning. Miner-interface deployment,
+real math-only training epochs and performance improvement remain to be
+demonstrated. More accepted data and repeated comparable evaluations are needed
+before claiming effective learning or public release readiness.
 
 The dashboard recognizes finalized records in `state/native-math-common` and
 fixed-cohort evaluations in `state/evaluations`. Prospective preparation folders

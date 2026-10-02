@@ -10,8 +10,11 @@ reserved evaluation tasks, with an initial fixed cohort of 32. All prompts fit
 the pinned tokenizer/context budget. Grader controls and portable source,
 bootstrap, cumulative-upload and rotating-search controls pass.
 
-The new math source is prepared; model execution, real math-only epochs and
-learning gains remain to be demonstrated. No chain weights are submitted.
+The untouched base's 32-task GPU baseline completed with 6 correct answers,
+zero verification failures and no optimizer update, inside its original signed
+lease. Its six R2 objects were independently streamed and hashed. The first
+miner-interface epoch, real math-only training and learning gains remain to be
+demonstrated. No chain weights are submitted.
 The wider experiment's latest paired evaluation completed with two improving,
 four declining and ten unchanged metrics. Its next opening is interrupted by a
 truncated local manifest; that historical artifact remains preserved. The older

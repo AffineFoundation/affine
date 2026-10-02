@@ -56,6 +56,15 @@ before inference. The retained RTX 3090 has that architecture. Use the operator'
 qualified package versions; compatibility with other hardware is not established
 by the source bootstrap.
 
+Miners may choose a bounded search on particular authorized tasks by adding
+`--env-id affine_math --indices 1553 --search-budget 32 --max-batches 1`.
+The CLI checks that selected indices are unique members of the signed epoch's
+training pool before downloading a checkpoint or creating a model. An index
+reserved for evaluation is rejected. The search budget must be 1–128 attempts
+per task; the default remains 50. Omitting task selectors searches the full
+authorized pool. These local preferences do not change the public challenge or
+its scoring rules.
+
 Portable reproduction:
 
 ```sh

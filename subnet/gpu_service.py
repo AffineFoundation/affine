@@ -17,6 +17,14 @@ from .evaluation import wilson
 
 log=logging.getLogger('affine-gpu')
 
+def owned_dispatch_allowed(config,manifest):
+    """Permit external-only trials without changing admission or empty policy."""
+    from .empty_epoch_policy import dispatch_allowed
+    configured=config.get('owned_miner_dispatch',True)
+    if type(configured)is not bool:raise ValueError('owned miner dispatch must be boolean')
+    allowed=dispatch_allowed(manifest)
+    return configured and allowed
+
 def owned_mining_job_fields(config,manifest,round_number):
     """Rotate the operator's bounded search while external miners keep the full pool."""
     subset=config.get('owned_mining_subset')
@@ -101,6 +109,7 @@ def initial_manifest(config,checkpoint):
 def run(config,once=False):
     prefix=config.get('epoch_prefix','nonpayable-gpu-continuous')
     if not prefix.startswith('nonpayable-') or config.get('payable_epochs',False):raise ValueError('GPU loop is permanently nonpayable')
+    if type(config.get('owned_miner_dispatch',True))is not bool:raise ValueError('owned miner dispatch must be boolean')
     if not 60<=config.get('duration',300)<=3600 or not 1<=config.get('max_batches',3)<=3:raise ValueError('epoch budget')
     state=Path(config['state']);state.mkdir(parents=True,exist_ok=True);state.chmod(0o700)
     bucket=Bucket(config['bucket']);gateway=Gateway(bucket,state_path=state/'gateway.json',public_url='http://unused-gpu-operator.invalid',direct_r2=True)
@@ -135,8 +144,7 @@ def run(config,once=False):
                 active['phase']='mine';save(statuspath,status)
             manifest=json.loads(manifestpath.read_text())
             if active['phase']=='mine':
-                from .empty_epoch_policy import dispatch_allowed
-                if dispatch_allowed(manifest) and time.time()<manifest['deadline']:
+                if owned_dispatch_allowed(config,manifest) and time.time()<manifest['deadline']:
                     for miner in active['identities']:
                         capability=dict(put_url=bucket.presign('private/'+epoch+'/staging/'+miner+'.zip','put_object',max(1,manifest['deadline']-int(time.time()))),headers={'Content-Type':'application/octet-stream'})
                         owned_fields=owned_mining_job_fields(config,manifest,status['round'])
