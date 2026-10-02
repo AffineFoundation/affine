@@ -52,8 +52,11 @@ runtime modules. The corrected immutable source bundle has been published and
 all 1,731 actual remote files checked against the reviewed bytes. Fresh-process
 admission controls also pass on the retained GPU host. A continuous controller
 has resumed from the twice-trained checkpoint with the same task pool, held-out
-cohort and training policy. Its first actual owned GPU mining job is the next
-qualification gate; continuous owned mining is not yet claimed healthy.
+cohort and training policy. Its first owned GPU mining job completed successfully
+and uploaded three cumulative batches for tasks 1862, 7197 and 3422. The actual
+62,607,619-byte R2 artifact and remote terminal report were independently checked.
+The third epoch still awaits its normal deadline, inference/native audit, training
+and evaluation; uninterrupted owned epoch handovers remain to be qualified.
 
 The GPU policy field is now bound when opening and signing an epoch. The generic
 bootstrap requests unencoded R2 responses while retaining its encoding refusal,
