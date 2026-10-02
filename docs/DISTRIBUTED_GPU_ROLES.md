@@ -79,6 +79,25 @@ which admitted operator-managed worker returned the report. It does not prove
 that a GPU executed the calculation or that a miner originally sampled tokens.
 These are trusted numerical runtime reports, not cryptographic sampling proofs.
 
+On Arbos.life, every retained Lium rental must also be registered with the
+existing pod reaper **before renting** its unique pod name. The reaper releases
+unregistered Affine pods after 90 minutes, regardless of active jobs or provider
+TTL settings. Use the existing registry's locked update path; do not stop the
+shared reaper or rewrite its registry file directly:
+
+```sh
+/home/const/subnet120/.venv/bin/python /home/const/subnet120/ops/pods/registry.py \
+  register UNIQUE_POD_NAME --purpose separated_hopper_math_retained \
+  --owner manual:authorized-hopper-pilot --hours 0 --price HOURLY_PRICE
+```
+
+Rent with that exact name, save the actual provider UUID, and update the same
+registry record with the UUID and role. Confirm an explicit manual owner,
+`expected_hours = 0`, no release request and no released marker. If rental fails,
+retain an accurate failed-attempt receipt; never use an unrelated node's identity.
+Provider inventory and exact remote process checks still determine runtime
+health; registry ownership establishes retention, not successful computation.
+
 For a bounded qualification, use a fresh nonpayable namespace and new reviewed
 source bundle. First run two frozen verification jobs concurrently and establish
 that the two worker identities claim different jobs. Preserve their exact reports,

@@ -8,7 +8,12 @@ TOPLOC generation/replay and mutation controls. However, Lium account audit
 records now show all five were deleted through an API key on October 2:
 delete requests occurred at 20:57:38–20:57:48 UTC and were marked
 `user_initiated`. This is distinct from the original miner's earlier
-`REBOOT_FAILED` event. The deletion actor's client has not been identified.
+`REBOOT_FAILED` event. The deletion client was the local `affine-pod-reaper`: its logs and ledger
+match all five account API requests. The nodes lacked required ownership
+registration, so its 90-minute unregistered-pod rule deleted them. The surviving
+replacement miner now has explicit retained ownership with no lifetime ceiling.
+Four replacement roles are being registered before rental; the shared reaper
+remains running.
 Only the replacement H200 miner is present in the current fleet inventory;
 the two verifier nodes, trainer and evaluator must be restored before this
 separate-role pilot can finish. Previous fleet costs and worker-health claims
@@ -24,8 +29,9 @@ Independent acceptance, scores, training and heldout performance for this
 Qwen epoch are not established. The recovery controller was stopped with an
 exact process-identity check; a verification-only companion failed before
 starting its coordinator because its remote nodes were unavailable. The
-closed submission is being preserved using the original gateway, without
-inventing verifier reports or extending its window.
+closed submission has been frozen and published by the original gateway,
+with an independent public readback hash check and unchanged manifest/deadline.
+No verifier reports or scores have been invented.
 
 Review found that the frozen training guard assumes a single weight file and
 rejects Qwen's sharded checkpoint. Commit
