@@ -90,7 +90,7 @@
       "remote_proof": false,
       "remote_replay": false,
       "source": "affine_i3code",
-      "status": "actual_original_reset_passed",
+      "status": "blocked_original_grader_requires_isolated_docker_runtime",
       "taskset_class": "I3CodeTaskset",
       "training": false
     },
@@ -644,6 +644,6 @@
   "schema": 1,
   "scope": "Recorded source-level operator evidence; each row is a milestone, not full production support or proof of performance improvement.",
   "source_count": 45,
-  "source_matrix_sha256": "eee9bc5e3c5e24894baf7b086ea44b06e915341c9d2153af342634c87a77dc61",
+  "source_matrix_sha256": "f2cff5fb584918d2771cf588294f4b13bac6a012693dcbd590b011b1b8a99014",
   "status_is_blocker_or_milestone": true
 }
