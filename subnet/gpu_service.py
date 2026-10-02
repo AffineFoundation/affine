@@ -119,6 +119,11 @@ def initial_manifest(config,checkpoint):
     return result
 
 def run(config,once=False):
+    for field in ('preparation_only','activation_allowed'):
+        if field in config and type(config[field]) is not bool:
+            raise ValueError(field+' must be boolean')
+    if config.get('preparation_only',False):raise ValueError('preparation-only config cannot run')
+    if not config.get('activation_allowed',True):raise ValueError('config activation is not allowed')
     prefix=config.get('epoch_prefix','nonpayable-gpu-continuous')
     if not prefix.startswith('nonpayable-') or config.get('payable_epochs',False):raise ValueError('GPU loop is permanently nonpayable')
     if type(config.get('owned_miner_dispatch',True))is not bool:raise ValueError('owned miner dispatch must be boolean')
