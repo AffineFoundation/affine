@@ -8,8 +8,14 @@ from dashboard.server import Database, export_snapshot
 
 class PublicProjectionTests(unittest.TestCase):
     def test_separate_hopper_namespace_exports_only_public_measurements(self):
+        self.assert_hopper_projection('prospective-separated-hopper-math-v1', 'separated-hopper-math')
+
+    def test_recovery_hopper_namespace_exports_only_public_measurements(self):
+        self.assert_hopper_projection('prospective-separated-hopper-math-recovery-v1', 'separated-hopper-math-recovery')
+
+    def assert_hopper_projection(self, namespace, source):
         with tempfile.TemporaryDirectory() as temp:
-            root=Path(temp);state=root/'state';folder=state/'prospective-separated-hopper-math-v1/controller-state'
+            root=Path(temp);state=root/'state';folder=state/namespace/'controller-state'
             folder.mkdir(parents=True);epoch='nonpayable-separated-hopper-original-math-v1-1'
             (folder/f'{epoch}-manifest.json').write_text(json.dumps(dict(epoch=epoch,start=1,deadline=2,
                 checkpoint={'id':'approved'},capabilities={'miner':'PRIVATE_CAPABILITY'})))
@@ -19,7 +25,7 @@ class PublicProjectionTests(unittest.TestCase):
                 count=8,successes=2,mean_reward=.25,model='Qwen/Qwen2.5-Math-7B-Instruct',
                 private_url='PRIVATE_CAPABILITY',harness_config={'max_output_tokens':1024})))
             database=Database(root/'network.sqlite',state);database.refresh();snapshot=database.snapshot()
-            self.assertEqual(snapshot['epochs'][0]['source'],'separated-hopper-math')
+            self.assertEqual(snapshot['epochs'][0]['source'],source)
             self.assertEqual(snapshot['evaluations'][0]['output_token_budget'],1024)
             self.assertNotIn('PRIVATE_CAPABILITY',json.dumps(snapshot))
 
