@@ -3,10 +3,31 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from dashboard.server import Database
+from dashboard.server import Database, export_snapshot
 
 
 class PublicProjectionTests(unittest.TestCase):
+    def test_export_restores_canonical_public_guide_after_legacy_regeneration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            public = root/'canonical'; public.mkdir()
+            canonical = '# Affine current pilot\nK=1 positive and L=1 negative; nonpayable.\n'
+            (public/'llms.txt').write_text(canonical)
+            website = root/'website'; website.mkdir()
+            destination = website/'network-data.json'
+            snapshot = dict(epochs=[], evaluations=[], summary={})
+            export_snapshot(snapshot, destination, public)
+            self.assertEqual(json.loads(destination.read_text()), snapshot)
+            target = website/'llms.txt'
+            self.assertEqual(target.read_text(), canonical)
+            original_mtime = target.stat().st_mtime_ns
+            export_snapshot(snapshot, destination, public)
+            self.assertEqual(target.stat().st_mtime_ns, original_mtime)
+            target.write_text('Historical teacher-distillation guide')
+            export_snapshot(snapshot, destination, public)
+            self.assertEqual(target.read_text(), canonical)
+            self.assertFalse((website/'llms.tmp').exists())
+
     def test_training_admission_rejection_preserves_verified_submission_without_training(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);folder=root/'state/gpu-wide';folder.mkdir(parents=True)

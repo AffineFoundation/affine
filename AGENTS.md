@@ -8,3 +8,4 @@ Keep this file short; put detailed design and operational records in separate do
 Do not carry forward the archived distillation contract as the new design.
 Keep credentials in 1Password or the operator environment; never commit tokens or wallet private keys.
 Production remains in /home/const/subnet120 until the operator specifies how services should transition. Changes in this checkout do not deploy automatically.
+The operator's name "Arbos.life" (sometimes transcribed as "Arbos Lite") refers to this current machine: the code workspace and existing validator host. Keep the new validator here when separating Lium miner, verifier and trainer nodes. This naming clarification does not authorize changes to an Arbos website or DNS.

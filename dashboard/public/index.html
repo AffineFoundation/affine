@@ -2,25 +2,24 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Affine subnet 120. Environment evaluation history, batches per epoch and miner contribution activity.">
-<title>Affine — Network</title>
+<meta name="description" content="Affine subnet 120. Actual held-out evaluation performance over time and batches per epoch.">
+<title>Affine</title>
 <link rel="icon" href="/network-favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/network.css"><script src="/network.js?v=20261001-budgets" defer></script>
+<link rel="stylesheet" href="/network.css?v=20261002-two-charts"><script src="/network.js?v=20261002-two-charts" defer></script>
 </head>
 <body>
-<header><a class="wordmark" href="/" aria-label="Affine home"><svg viewBox="0 0 22 23" aria-hidden="true"><path d="M2 20 11 3l9 17"/></svg><span>FFINE</span></a><span id="connection" class="micro">CONNECTING</span></header>
+<header><a class="wordmark" href="/" aria-label="Affine home"><svg viewBox="0 0 22 23" aria-hidden="true"><path d="M2 20 11 3l9 17"/></svg><span>FFINE</span></a><div class="scope" aria-label="Data scope"><button data-scope="test" aria-pressed="true">Pilot tests</button><button data-scope="live" aria-pressed="false">Network</button></div></header>
 <main>
-<section class="hero" aria-labelledby="chart-title">
-<div class="section-label"><h1 id="chart-title">Environment / evaluation reward</h1><div class="chart-controls"><label class="environment-choice">Environment <select id="environment" aria-label="Select environment"><option value="">All environments</option></select></label><label class="evaluation-choice">Evaluation <select id="evaluation" aria-label="Select comparable evaluation series"></select></label><label class="metric-choice"><select id="metric" aria-label="Select chart metric"><option value="batches">Batches / epoch</option><option value="reward" selected>Evaluation reward</option></select></label><div class="scope"><button data-scope="live" aria-pressed="false">Network</button><button data-scope="test" aria-pressed="true">Pilot tests</button></div></div></div>
-<div class="chart-wrap"><svg id="chart" viewBox="0 0 1200 540" role="img" aria-label="Batches submitted per completed epoch"></svg><p id="chart-empty" class="empty" hidden>No completed epochs yet.</p><output id="chart-tip" class="chart-tip" hidden></output></div>
-<div class="chart-caption"><span id="period">Completed epochs</span><span id="metric-note">Frozen submitted batches · includes rejected batches</span></div>
+<section aria-labelledby="evaluation-title">
+<div class="section-label"><h1 id="evaluation-title">Evaluation performance / time</h1><div class="chart-controls"><label>Environment <select id="environment" aria-label="Select environment"></select></label><label>Cohort <select id="evaluation" aria-label="Select comparable evaluation cohort"></select></label></div></div>
+<div class="chart-wrap"><svg id="evaluation-chart" role="img" aria-label="Held-out evaluation performance over time"></svg><p id="evaluation-empty" class="empty" hidden>No completed held-out evaluations yet.</p><output id="evaluation-tip" class="chart-tip" hidden></output></div>
+<div class="chart-caption"><span id="evaluation-period">Completed evaluations · UTC</span><span id="evaluation-note">Actual held-out measurements</span></div>
 </section>
-<section class="batch-section" aria-labelledby="grid-title">
-<div class="section-label"><h2 id="grid-title">Batches</h2><label class="epoch-choice">Epoch <select id="epoch" aria-label="Select completed epoch"></select></label></div>
-<div id="grid" class="grid" aria-label="Batch counts for UIDs 0 through 255"></div>
-<div class="grid-caption"><span id="grid-note">UID 0–255 · previous completed epoch</span><span class="legend">0 <i></i> <span id="scale">1+</span></span></div>
-<output id="selection" aria-live="polite">Select a square to inspect its UID.</output>
+<section aria-labelledby="batch-title">
+<div class="section-label"><h2 id="batch-title">Batches / epoch</h2><label>Series <select id="batch-source" aria-label="Select epoch series"></select></label></div>
+<div class="chart-wrap"><svg id="batch-chart" role="img" aria-label="Batches submitted per finalized epoch"></svg><p id="batch-empty" class="empty" hidden>No finalized epochs yet.</p><output id="batch-tip" class="chart-tip" hidden></output></div>
+<div class="chart-caption"><span id="batch-period">Finalized epochs · UTC</span><span>Frozen submitted batches · accepted totals in tooltips</span></div>
 </section>
 </main>
-<footer><span>Affine · Subnet 120</span><span id="update">Waiting for network records</span><a href="https://github.com/AffineFoundation/affine" target="_blank" rel="noopener">Source ↗</a></footer>
+<footer><span>Affine · Subnet 120</span><span id="connection" role="status">Connecting</span><a href="/llms.txt">llms.txt ↗</a></footer>
 </body></html>

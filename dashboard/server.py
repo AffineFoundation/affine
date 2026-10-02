@@ -220,13 +220,13 @@ def serve(db, host, port):
                 data = json.dumps(db.snapshot() if path != '/health' else {'status':'ok'}).encode()
                 kind = 'application/json'
             else:
-                files = {'/':'index.html', '/index.html':'index.html', '/network.js':'network.js', '/network.css':'network.css', '/network-favicon.svg':'network-favicon.svg', '/network-haffer.ttf':'network-haffer.ttf', '/network-mono.ttf':'network-mono.ttf'}
+                files = {'/':'index.html', '/index.html':'index.html', '/llms.txt':'llms.txt', '/network.js':'network.js', '/network.css':'network.css', '/network-favicon.svg':'network-favicon.svg', '/network-haffer.ttf':'network-haffer.ttf', '/network-mono.ttf':'network-mono.ttf'}
                 if path not in files:
                     self.send_error(404)
                     return
                 file = PUBLIC/files[path]
                 data = file.read_bytes()
-                kind = {'.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.svg':'image/svg+xml', '.ttf':'font/ttf'}[file.suffix]
+                kind = {'.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.svg':'image/svg+xml', '.ttf':'font/ttf', '.txt':'text/plain'}[file.suffix]
             self.send_response(200)
             self.send_header('Content-Type', kind+'; charset=utf-8')
             self.send_header('Content-Length', str(len(data)))
@@ -243,6 +243,24 @@ def serve(db, host, port):
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 
+def export_snapshot(snapshot, destination, public=PUBLIC):
+    """Publish data and preserve the current guide against legacy regeneration."""
+    destination = Path(destination)
+    temporary = destination.with_suffix('.tmp')
+    temporary.write_text(json.dumps(snapshot, allow_nan=False))
+    temporary.replace(destination)
+    # This export target is the production static website directory. Legacy
+    # website pushes regenerate a historical guide, so restore our canonical
+    # public guide atomically whenever it differs. No private URLs are used.
+    guide = Path(public)/'llms.txt'
+    target = destination.parent/'llms.txt'
+    content = guide.read_bytes()
+    if not target.exists() or target.read_bytes() != content:
+        temporary_guide = target.with_suffix('.tmp')
+        temporary_guide.write_bytes(content)
+        temporary_guide.replace(target)
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--db', default=str(ROOT/'state/dashboard/network.sqlite'))
@@ -256,10 +274,7 @@ def main():
     db.refresh()
     def export():
         if args.export:
-            path=Path(args.export)
-            temporary=path.with_suffix('.tmp')
-            temporary.write_text(json.dumps(db.snapshot(),allow_nan=False))
-            temporary.replace(path)
+            export_snapshot(db.snapshot(), args.export)
     export()
     if args.snapshot:
         print(json.dumps(db.snapshot()))

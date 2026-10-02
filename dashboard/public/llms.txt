@@ -1,0 +1,125 @@
+# Affine — subnet 120
+
+Public dashboard: https://affine.io/
+Public measurement data: https://affine.io/network-data.json
+Source and documentation: https://github.com/AffineFoundation/affine
+
+Affine is an experimental synchronous inference-verification training subnet.
+The current rewrite pilot is nonpayable and does not submit blockchain weights.
+Historical teacher distillation / king-versus-challenger instructions are not the
+current pilot contract. Dashboard records describe measured runs, not a promise
+of rewards, general model improvement, or support for every environment.
+
+## Architecture
+
+The validator/controller opens an epoch with an immutable signed manifest. It
+pins the checkpoint file hashes, approved source bundle, environment/task pool,
+harness, numerical/runtime profile, K/L requirements, upload bounds and deadline.
+The miner downloads and checks those exact bytes and samples the target model.
+A batch concerns one authorized task index and contains positive and negative
+rollouts, complete context/output tokens, full conditional model probabilities,
+TOPLOC activation fingerprints and native environment observations/outcomes.
+The current pilot requires K=1 positive and L=1 negative rollout for that task.
+An unsuccessful search is not a completed batch. Held-out tasks may not be mined.
+
+Miners upload one cumulative private artifact through a sealed, per-identity R2
+capability. Only a final upload completed before the signed deadline is eligible.
+At the deadline, the controller freezes immutable, hash-addressed bytes and audit
+receipts. It does not change the deadline to rescue a failed worker. Later uploads
+cannot replace a frozen submission. Private capabilities and credentials are not
+public API links and must not be shared.
+
+Separate verifier workers recompute the target-model distributions and TOPLOC
+fingerprints under the approved runtime, and replay the original environment
+and native grader. Uploaded content cannot select executable code or grading.
+Numerical/hardware compatibility must be qualified for the signed profile;
+a proof from one runtime is not automatically portable to another.
+
+Invalid batches score zero. A valid unique task key
+(checkpoint, environment ID, sample index) earns one test point. When multiple
+miners submit valid batches for that same key, everyone scores zero for that key.
+Duplicate valid batches can remain eligible training data; scoring uniqueness
+and training eligibility are distinct. The current pilot performs full audits.
+Optional research sampling does not make unchecked batches eligible for training
+and leaves duplicate coverage / scores provisional.
+
+The trainer receives only verified positive/negative pairs and performs a
+reference-relative sequence-preference gradient update against the immutable
+reference checkpoint. The objective is experimental. Verified replay requires
+approved provenance and exact attribution. The successor checkpoint is hashed
+file by file before the next synchronous epoch can use it. An empty epoch has
+no fabricated batch, optimizer update or miner reward. Failed/aborted runs remain
+preserved rather than being rewritten as successful epochs.
+
+Roles are logically separate: miner searches; verifier checks inference and
+native outcomes; trainer updates weights; validator/controller owns admission,
+deadlines, freeze, scoring and checkpoint handover. A shared test host does not
+establish independent hardware or production decentralization.
+
+## What the two charts measure
+
+Evaluation performance is the actual mean native reward over completed held-out
+samples at the recorded completion time. Comparable cohorts bind model family,
+environment version, dataset/taskset hashes, fixed task IDs, seed, sample count,
+harness, output budget, policy and runtime. Checkpoint weights can change within
+one cohort. Repeated evaluations of the same checkpoint remain visible as
+separate measurements. Distinct cohorts are never joined into a single curve.
+Curated candidate controls are labelled; they do not prove autonomous solving.
+Explicit recovery records remain distinct from incomplete original attempts.
+
+Batches per epoch counts frozen submitted batches in finalized scoring windows,
+including rejected and unchecked batches. Tooltips distinguish accepted,
+rejected and unchecked counts. Finalized scoring does not by itself establish
+completed training. The series selector separates the original MATH pilot from
+historical experiments; Network and Pilot tests remain separate scopes.
+There are no invented live metrics or projected evaluations.
+
+The original MATH pilot starts with the untouched SmolLM2-1.7B-Instruct base and
+7,496 distinct original tasks: 6,746 mining tasks and 750 reserved evaluation
+tasks. Its initial fixed held-out cohort has 32 tasks and a 256-token output
+budget. The first three completed training epochs made 24 actual optimizer
+updates. Distinct base/successor checkpoints scored 6, 7, 9 and 9 correct out of
+32. This small fixed cohort does not establish broad mathematical improvement.
+The historical affine_numina environment uses Lean tasks; it is not the new
+NuminaMath-CoT corpus. Preparing or qualifying a new corpus is not evaluation
+or completed training evidence. New measurement cohorts appear only when actual
+completed records have been published.
+
+## How to try the pilot
+
+External participation is coordinated with the pilot operator Arbos. An existing
+registered Ed25519 miner identity, explicit approval, known public signing
+authority, fresh signed discovery URL and qualified runtime are required. Ordinary
+subnet membership alone does not grant pilot admission. No new rental, UID
+purchase or blockchain action is required merely to read the public dashboard.
+
+Start with the public repository and these guides:
+- https://github.com/AffineFoundation/affine/blob/main/docs/MINER_QUICKSTART.md
+- https://github.com/AffineFoundation/affine/blob/main/docs/MATH_MINER_BOOTSTRAP.md
+- https://github.com/AffineFoundation/affine/blob/main/docs/MATH_PILOT.md
+- https://github.com/AffineFoundation/affine/blob/main/docs/ARCHITECTURE.md
+
+A clean checkout needs the generated task snapshot and exact signed source.
+After approval, use the source bootstrap with locally supplied variables:
+
+CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
+  --authority "$AFFINE_OPERATOR_AUTHORITY" \
+  --current-url "$AFFINE_SIGNED_CURRENT_URL" \
+  --source-cache /absolute/private/source-cache \
+  --key /absolute/private/miner.key \
+  --state /absolute/private/miner-state --once
+
+These are placeholders for operator-supplied values, not public endpoint URLs.
+Use your own miner Ed25519 key in a private file; never disclose a mnemonic,
+coldkey, wallet file, bucket credential or signed upload/discovery capability.
+The bootstrap checks signed manifests, source/archive hashes and membership
+before running the admitted CLI in a fresh isolated interpreter. Runtime packages
+still need installing and qualifying on your hardware. Source changes require
+fresh bootstrap approval; source is signed executable code, not a sandbox.
+
+The initial qualified GPU profile is CUDA compute capability 8.6, BF16, eager
+attention and deterministic CUBLAS. Exact installed versions and source policies
+come from the signed challenge. Other hardware compatibility is unproven.
+Report only public epoch IDs/hotkeys, hardware/runtime and errors with secrets
+and signed URLs removed. Pilot points are permanently nonpayable. The separate
+legacy transition writer is outside this pilot; charts are not chain payouts.
