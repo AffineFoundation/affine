@@ -50,7 +50,10 @@ class Miner:
             if len(positive) == self.manifest['K'] and len(negative) == self.manifest['L']:
                 batch = dict(schema=2,epoch=self.manifest['epoch'], checkpoint=self.manifest['checkpoint']['id'],
                              env_id=env_id, environment_version=runtime.spec.version, sample_index=index, index=index, rollouts=positive+negative)
-                self.batches.append((batch, arrays_pos+arrays_neg))
+                candidate = self.batches + [(batch, arrays_pos+arrays_neg)]
+                # A rejected addition must not poison previously uploaded state.
+                pack(candidate)
+                self.batches = candidate
                 return batch
         raise RuntimeError('search budget exhausted')
 

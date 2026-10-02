@@ -86,11 +86,11 @@ def mine_cumulative(runtime,manifest,job,upload,clock=None,allow_empty=False):
     out of time. A ten-second reserve avoids initiating overwrites at expiry;
     upload errors remain failures rather than pretending a PUT succeeded.
     """
-    from .batches import pack
+    from .batches import pack,UploadBudgetExceeded
     from .protocol import entries,harness_for
     clock=clock or time.time
     mining_window(manifest,clock())
-    batches=[];search=[];data=None;uploads=0;stopped=False
+    batches=[];search=[];data=None;uploads=0;stopped=False;capacity_reached=False
     def available():
         now=clock()
         return manifest['start']<=now<manifest['deadline']-10
@@ -118,14 +118,19 @@ def mine_cumulative(runtime,manifest,job,upload,clock=None,allow_empty=False):
                 if not available():stopped=True;break
                 found=classes['positive']+classes['negative']
                 batch=dict(schema=2,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],env_id=definition['env_id'],environment_version=selected.spec.version,index=index,sample_index=index,rollouts=[r for r,a in found])
-                candidate=batches+[(batch,[a for r,a in found])];candidate_data=pack(candidate)
+                candidate=batches+[(batch,[a for r,a in found])]
+                try:candidate_data=pack(candidate)
+                except UploadBudgetExceeded:
+                    search[-1]['submission_status']='exceeds_cumulative_upload_budget'
+                    if batches:capacity_reached=True;break
+                    continue
                 if not available():stopped=True;break
                 upload(candidate_data,min(180,manifest['deadline']-clock()-1))
                 batches=candidate;data=candidate_data;uploads+=1
             if stopped or len(batches)>=manifest.get('max_batches',4):break
-        if stopped:break
+        if stopped or capacity_reached:break
     if data is None and not allow_empty:raise ValueError('GPU bounded search found no complete batch before epoch window closed')
-    return data,dict(batches=len(batches),search=search,cumulative_uploads=uploads,search_stopped_at_deadline=stopped,mining_status='complete_batches_uploaded' if data is not None else 'no_complete_KL_batch')
+    return data,dict(batches=len(batches),search=search,cumulative_uploads=uploads,search_stopped_at_deadline=stopped,search_stopped_at_capacity=capacity_reached,mining_status='complete_batches_uploaded' if data is not None else 'no_complete_KL_batch')
 
 def validate(envelope, authority, now=None):
     """Pure authorization/policy check; never opens an artifact or imports runtime."""

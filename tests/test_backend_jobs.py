@@ -182,6 +182,22 @@ class CumulativeMining(unittest.TestCase):
     def test_failed_put_is_not_reported_as_success(self):
         def fail(data,timeout):raise ValueError('R2 PUT status 403')
         with self.assertRaisesRegex(ValueError,'R2 PUT status'):self.run_miner(fail)
+    def test_capacity_limit_preserves_last_acknowledged_upload(self):
+        from subnet.backend_jobs import mine_cumulative
+        from subnet.batches import UploadBudgetExceeded
+        with patch('subnet.protocol.entries',return_value=self.definitions),patch('subnet.batches.pack',side_effect=[b'first-complete',UploadBudgetExceeded('full')]):
+            data,report=mine_cumulative(self.runtime,self.manifest,self.job,lambda data,timeout:self.uploads.append(data),clock=lambda:self.now)
+        self.assertEqual(data,b'first-complete');self.assertEqual(self.uploads,[data])
+        self.assertEqual(report['batches'],1);self.assertTrue(report['search_stopped_at_capacity'])
+        self.assertEqual(report['search'][-1]['submission_status'],'exceeds_cumulative_upload_budget')
+    def test_oversize_first_batch_does_not_prevent_smaller_later_batch(self):
+        from subnet.backend_jobs import mine_cumulative
+        from subnet.batches import UploadBudgetExceeded
+        self.manifest['max_batches']=1
+        with patch('subnet.protocol.entries',return_value=self.definitions),patch('subnet.batches.pack',side_effect=[UploadBudgetExceeded('full'),b'smaller-complete']):
+            data,report=mine_cumulative(self.runtime,self.manifest,self.job,lambda data,timeout:self.uploads.append(data),clock=lambda:self.now)
+        self.assertEqual(self.uploads,[b'smaller-complete']);self.assertEqual(data,self.uploads[0])
+        self.assertEqual(report['search'][1]['index'],1);self.assertFalse(report['search_stopped_at_capacity'])
     def test_rollout_finishing_in_reserve_does_not_start_late_overwrite(self):
         honest=self.runtime.rollout
         def rollout(index,seed):

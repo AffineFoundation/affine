@@ -7,6 +7,9 @@ from .storage import canonical
 
 MAX_UPLOAD = 100_000_000
 
+class UploadBudgetExceeded(ValueError):
+    """A complete candidate cannot fit the bounded cumulative object."""
+
 def pack(batches):
     out = io.BytesIO()
     manifest = []
@@ -23,7 +26,7 @@ def pack(batches):
             manifest.append(dict(batch=batch, arrays=refs))
         z.writestr('manifest.json', canonical(manifest))
     if out.tell() > MAX_UPLOAD:
-        raise ValueError('upload exceeds budget')
+        raise UploadBudgetExceeded('upload exceeds budget')
     return out.getvalue()
 
 def bounded_tensor(data):

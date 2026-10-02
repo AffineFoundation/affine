@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from pathlib import Path
 from .client import identity,fetch_signed,checkpoint_download,direct_r2_url
 from .miner import Miner
+from .batches import UploadBudgetExceeded
 from .model import check_runtime_profile
 from .protocol import entries, sample_key
 
@@ -62,6 +63,10 @@ def run(a):
             if time.time()>=manifest['deadline'] or len(miner.batches)>=limit:break
             try:
                 miner.search(index,seed=int(time.time_ns()%2**31),max_attempts=50,env_id=env_id);miner.upload()
+            except UploadBudgetExceeded:
+                logging.info('candidate exceeds cumulative upload budget; preserving prior batches')
+                if miner.batches:break
+                continue
             except RuntimeError:continue
         if a.once:return
         time.sleep(10)
