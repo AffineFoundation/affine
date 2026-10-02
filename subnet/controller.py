@@ -1,10 +1,12 @@
 """Synchronous epoch controller, artifact authority and trainer barrier."""
 import base64
 import json
+import os
 import secrets
 import subprocess
 import sys
 import time
+import tempfile
 from pathlib import Path
 from .model import ENV, Runtime, model_files,NUMERICAL_RUNTIME_REVISION
 from .storage import canonical, sha, Identity
@@ -15,6 +17,28 @@ from .environments import EnvironmentSpec, legacy_spec, legacy_harness
 
 class CheckpointCapacityError(RuntimeError):
     pass
+
+
+def save_manifest(path, manifest):
+    """Publish local JSON only after its complete bytes have reached disk."""
+    path = Path(path)
+    data = canonical(manifest)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=path.name + '.', suffix='.tmp', dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, 'wb') as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def require_checkpoint_space(checkpoint_path,destination,min_free_bytes=2*1024**3):
@@ -105,7 +129,7 @@ class Controller:
             manifest['evaluation']=dict(evaluation,harness=harness_policy.normalize(evaluation.get('harness')))
         from .protocol import entries as validate_entries
         validate_entries(manifest)
-        (self.state/f'{epoch}-manifest.json').write_bytes(canonical(manifest))
+        save_manifest(self.state/f'{epoch}-manifest.json', manifest)
         self.bucket.json(f'public/{epoch}/manifest.json',self.signed(manifest))
         pointer='public/current.json' if manifest['payable'] else f'public/{epoch}/current.json'
         self.bucket.json(pointer,self.signed(dict(epoch=epoch,manifest=f'public/{epoch}/manifest.json')))
