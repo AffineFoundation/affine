@@ -16,8 +16,10 @@ Four replacement roles are being registered before rental; the shared reaper
 remains running.
 The replacement miner and four restored H200 nodes are now present as RUNNING
 in independently queried Lium inventory, and all five have retained ownership
-records. The restored nodes still need exact runtime/model/source admission
-before verification or training dispatch. The restored fleet's listed hourly
+records. All five passed fresh source/model/native-grader admission. The four restored
+nodes additionally passed strict independent replay, tampering, weight-restoration
+and corrected-source production initialization controls. The retained miner's
+corrected-source initialization remains the last fresh full-pipeline gate. The restored fleet's listed hourly
 rate totals $15.35; previous worker-health claims are historical, not current
 runtime liveness evidence.
 
@@ -27,8 +29,12 @@ opened at 21:12:38 UTC and kept its signed 21:42:38 UTC deadline. The replacemen
 miner genuinely searched 20 samples and uploaded one success/failure batch
 before the deadline. Its R2 artifact is 318,236,285 bytes with SHA-256
 `676815117403b201844f7e5318fdc671d17d030b6feb5b2819bb303d49ce1013`.
-Independent acceptance, scores, training and heldout performance for this
-Qwen epoch are not established. The recovery controller was stopped with an
+The genuine frozen batch passed the real audit and earned one nonpayable
+point (proposed weight 1.0). Two additional audit jobs ran concurrently on the
+two distinct verifier workers; both accepted the same batch, and the actual
+score-file hash stayed unchanged. The recovery companion is measuring its
+fixed eight-task untouched-model baseline. Training and performance gains for
+this Qwen epoch remain unproven. The recovery controller was stopped with an
 exact process-identity check; a verification-only companion failed before
 starting its coordinator because its remote nodes were unavailable. The
 closed submission has been frozen and published by the original gateway,
