@@ -22,10 +22,15 @@ checkpoint objects passed independent R2 byte/hash checks. The first real epoch,
 with its signed 20:54:11 UTC deadline. The miner lost SSH connectivity during
 this attempt. Lium subsequently reported `REBOOT_FAILED`, with container
 creation failing at `ssh_connect`; the cause is not established as an OOM or
-model failure. The original attempt and failed pod are retained. A replacement
-miner is being prepared in a fresh namespace. Genuine math-pair qualification,
-full training, paired heldout evaluation and two-worker audit qualification
-remain pending.
+model failure. The original attempt and failed pod are retained. The replacement
+miner passed pinned-runtime, genuine generation/replay, tampering and production
+loader controls; all five working nodes passed fresh admission. The recovery
+controller started at 20:53:53 UTC in
+`state/prospective-separated-hopper-math-recovery-v1`, with both verifier workers
+authenticated and healthy. Its initial checkpoint publication is underway.
+Keeping the failed pod adds $2.95/hour, for a retained fleet total of $18.30/hour.
+Genuine math-pair qualification, full training, paired heldout evaluation and
+two-worker audit qualification remain pending.
 Chain submissions remain disabled. The existing retained-3090 pilot and its
 artifacts are preserved.
 
