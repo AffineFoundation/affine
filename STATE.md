@@ -45,9 +45,19 @@ optimizer updates, and an unchanged checkpoint. Independent HTTPS checks matched
 its 32 public evaluation records. The subsequent normal epoch has a genuine
 Numina index-13 batch with fresh full model/native audit, immutable private and
 public R2 copies, and an independently recomputed signed normalized score of 1.
-Its original before-training evaluation is running; completed training recovery
-is still unproven. Cumulative training remains 41 updates. Pydantic index-0
-training follows that recovery; standalone model qualification is insufficient.
+Its before-training evaluation completed with all 256 tasks across sixteen
+environments verified and no failures, inside its original signed lease. The
+results exactly match the empty epoch's after-evaluation on the unchanged
+checkpoint, including fixed task IDs, seeds, dataset identities and rewards.
+The signed twelve-step training job completed with one fresh Numina submission
+and approved historical replay. Independent source/archive and attribution checks
+bind all twelve full-gradient updates, immutable input references and persistent
+AdamW counters 1–12. The uploaded successor is
+`9d558f36c595bf7f894b820daed11f18f9331ccbe7827ef455ed30381f1c34b6`.
+Its paired after-evaluation is running; full epoch completion and the subsequent
+rollover remain unproven. The completed-epoch ledger remains eleven epochs and
+41 updates until those gates pass. Pydantic index-0 training follows that
+recovery; standalone model qualification is insufficient.
 
 The separate mixed-runtime Tau2 common trial completed frozen proof auditing
 and an agent-only full optimizer update. Its original after-evaluation retained
