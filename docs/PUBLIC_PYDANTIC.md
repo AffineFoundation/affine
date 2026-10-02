@@ -38,3 +38,30 @@ A separate model qualification uses `ops/probe_pydantic_public_model_search.py`.
 The first run is `state/pydantic-public-model-control/1790874356`, original mining indices 0 and 1, sixteen seed attempts each, checkpoint `aaac517b5a1a39f3fdd78cf2c73adbad62f9f8b94f00793a95f7f8bcf6d3739d`. Its worker uses the continuous controller's adapter source in a separate immutable archive. Generation and a separate fresh full-logit/TOPLOC/native verifier completed, but both indices yielded only positive samples: no K1/L1 pair. Actual candidate negative probabilities were about 0.000509 and 0.000106, with unequal token lengths (49/52 and 86/87). This preserved v1 result motivates a new public-only candidate policy, rather than claiming sampled K/L availability or common training.
 
 A second immutable proposal version, `public-pydantic-same-key-wrong-type-v2`, preserves the public JSON key order and changes the first value to an incompatible container type. Original native controls at mining indices 0 and 1 both retained reward 1 for the public valid proposal and reward 0 for the mutation. The separate probe `ops/probe_pydantic_type_model_search.py` records actual candidate probabilities; it does not assume equal token lengths. Run `state/pydantic-type-model-control/1790875093` sampled genuine K1L1 at index 0 after four seed attempts, with measured negative probability 0.18163 and 49/50-token candidates. Index 1 retained only a positive after sixteen attempts, with probability 0.01130 and 86/87 tokens. Separate fresh full-logit/TOPLOC/native verification completed for all three retained traces, and signed artifact collection completed. Root independently checked approval signatures, exact source inventory and generator/probe pins, terminal exits, reported probabilities, and actual ZIP bytes (`root-evidence-check.json`). Root did not rerun GPU inference. This qualifies index 0 for a prospective common epoch; no common epoch or optimizer has run for this family.
+
+The wrong-type version has now also been checked against all sixteen original
+training indices with fresh original-session replays. Indices 0, 1, 6, 8, 10,
+11, 12 and 15 retain both positive and negative controls. Six indices produce
+two negative outcomes; indices 4 and 13 remain unsupported by this proposer.
+The eight candidates fit the actual R2-verified successor tokenizer: prompts
+have 802–1,956 tokens and candidates have 10–119 tokens, within the 512-token
+output and 8,192-token context budgets. Environment initialization uses seed 0,
+separately from model sampling seeds. Heldout indices 16–31 were not probed.
+
+The native probe supports both proposal versions and checks fresh terminal
+replay. Supply a specification bound to the source being tested; historical
+specifications remain pinned to their original source:
+
+```bash
+PYTHONPATH=. .venv/bin/python -m ops.probe_public_pydantic \
+  --spec /path/to/approved-current-environment.json \
+  --generator same-key-wrong-type-v2 --seed 0 \
+  --output /path/to/native-controls.json
+```
+
+The prospective per-index harness registry is recorded privately under
+`state/prospective-pydantic-indexed-population-v1/admission-plan.json`. It requires
+a fresh source package, sampled model generation, independent TOPLOC/native
+verification and common training before admission. Token budget and native
+success alone do not establish that the model will sample both classes. Live
+configuration still uses the previously qualified index-zero policy.
