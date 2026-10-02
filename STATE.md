@@ -1,6 +1,24 @@
 # Affine rewrite status
 
-## Current verified state — October 1, 2026
+## Current priority — October 2, 2026
+
+The next pilot is restricted to the original MATH environment and the untouched
+upstream SmolLM2-1.7B-Instruct base. Its six model files have been downloaded to
+the retained GPU host and checked against pinned upstream metadata. The original
+loader provides 7,496 distinct tasks: 6,746 authorized mining tasks and 750
+reserved evaluation tasks, with an initial fixed cohort of 32. All prompts fit
+the pinned tokenizer/context budget. Grader controls and portable source,
+bootstrap, cumulative-upload and rotating-search controls pass.
+
+The new math source is prepared; model execution, real math-only epochs and
+learning gains remain to be demonstrated. No chain weights are submitted.
+The wider experiment's latest paired evaluation completed with two improving,
+four declining and ten unchanged metrics. Its next opening is interrupted by a
+truncated local manifest; that historical artifact remains preserved. The older
+details below describe earlier milestones and must not be read as current live
+job status. See [the math pilot requirements](docs/MATH_PILOT.md).
+
+## Earlier verified state — October 1, 2026
 
 GitHub main now contains the inference-verification rewrite. The deployed public
 dashboard is affine.io; Arbos domains are unchanged. New-pipeline test epochs are

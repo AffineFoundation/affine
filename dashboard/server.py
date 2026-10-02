@@ -38,7 +38,7 @@ class Database:
     def refresh(self):
         epochs = {}
         for folder in self.source.iterdir():
-            if not folder.is_dir() or folder.name not in ('live', 'e2e-final', 'registered-test', 'registered-test-compatible', 'multi-environment', 'service-conformance', 'gpu-continuous', 'gpu-wide', 'native-agent-common', 'native-sql-common', 'native-eog-common'):
+            if not folder.is_dir() or folder.name not in ('live', 'e2e-final', 'registered-test', 'registered-test-compatible', 'multi-environment', 'service-conformance', 'gpu-continuous', 'gpu-wide', 'native-agent-common', 'native-sql-common', 'native-eog-common', 'native-math-common'):
                 continue
             health = read(folder/'health.json', {})
             for path in folder.glob('*-manifest.json'):

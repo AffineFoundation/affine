@@ -56,7 +56,16 @@ on the submitted trace; original grading establishes the outcome. The owned
 baseline and miner controls must use genuine autoregressive sampling. Public
 benchmark contamination remains a limitation of any improvement claim.
 
-The taskset, split and prospective configuration are prepared. Fresh base-model
-qualification, deployment, real math-only epochs and performance improvement are
-not yet demonstrated. More accepted data and repeated comparable evaluations are
-needed before claiming effective learning or public release readiness.
+The taskset, split and prospective configuration are prepared. The untouched
+upstream base files are downloaded on the retained GPU host and match pinned
+upstream metadata. Native grader controls and source/bootstrap archive checks
+pass. Base-model execution, deployment, real math-only epochs and performance
+improvement are not yet demonstrated. More accepted data and repeated comparable
+evaluations are needed before claiming effective learning or public release
+readiness.
+
+The dashboard recognizes finalized records in `state/native-math-common` and
+fixed-cohort evaluations in `state/evaluations`. Prospective preparation folders
+are excluded. Math pilot evaluations use their own experiment and dataset
+identities so they cannot be combined silently with the earlier small-taskset
+math series.
