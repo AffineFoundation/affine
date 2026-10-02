@@ -58,3 +58,9 @@ independent audits and checkpoint handover. Report the epoch ID, public hotkey,
 error text with URLs/secrets removed, runtime and hardware. See
 [LIVE_SUBNET.md](LIVE_SUBNET.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 The dashboard is https://affine.io.
+
+For the forthcoming single-MATH pilot, a clean checkout also needs the generated
+task snapshot and exact approved source. Use the [signed-source bootstrap](MATH_MINER_BOOTSTRAP.md)
+after the operator supplies an approved identity, runtime and live discovery URL.
+The [MATH pilot plan](MATH_PILOT.md) describes the task split and pending launch
+checks; preparation is not a public mining invitation or demonstrated improvement.
