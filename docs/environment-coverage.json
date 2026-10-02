@@ -272,7 +272,7 @@
       "remote_proof": false,
       "remote_replay": false,
       "source": "affine_rcore",
-      "status": "original_operator_grader64_and_public_arithmetic_controls_verified",
+      "status": "original_grader64_retained_CPU_and_public_arithmetic_controls_verified_no_model",
       "taskset_class": "RCoreTaskset",
       "training": false
     },
@@ -644,6 +644,6 @@
   "schema": 1,
   "scope": "Recorded source-level operator evidence; each row is a milestone, not full production support or proof of performance improvement.",
   "source_count": 45,
-  "source_matrix_sha256": "e5cd85fff0a78f609a5b0342c03d87b24907665070087cc9ebe8a865c2ef2a37",
+  "source_matrix_sha256": "eee9bc5e3c5e24894baf7b086ea44b06e915341c9d2153af342634c87a77dc61",
   "status_is_blocker_or_milestone": true
 }
