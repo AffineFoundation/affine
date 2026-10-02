@@ -47,8 +47,10 @@ class Runtime:
                                                         dtype=torch.float32,
                                                         attn_implementation='eager',trust_remote_code=False,use_safetensors=True).eval()
         self.configure(environment or ENV, harness)
-        from toploc import build_proofs_base64, verify_proofs_base64
-        self.build_proofs, self.verify_proofs = build_proofs_base64, verify_proofs_base64
+        from toploc import build_proofs_base64
+        from .proofs import verify_mapped_proofs
+        from functools import partial
+        self.build_proofs, self.verify_proofs = build_proofs_base64, partial(verify_mapped_proofs,num_threads=threads)
         # TOPLOC's default native bit-extraction calls omp_set_num_threads with
         # hardware_concurrency, contaminating later Torch inference. Pin its
         # explicit thread parameter; extraction itself remains bit-identical.

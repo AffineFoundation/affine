@@ -25,11 +25,12 @@ class GPURuntime(Runtime):
         self.tokenizer=AutoTokenizer.from_pretrained(checkpoint,local_files_only=True,trust_remote_code=False)
         self.model=AutoModelForCausalLM.from_pretrained(checkpoint,local_files_only=True,trust_remote_code=False,use_safetensors=True,dtype=torch.bfloat16,attn_implementation='eager').to('cuda').eval()
         self.configure(environment,harness)
-        from toploc import build_proofs_base64,verify_proofs_base64
+        from toploc import build_proofs_base64
+        from .proofs import verify_mapped_proofs
         from toploc.C.csrc.utils import get_fp_parts
         import toploc.poly as poly
         self.toploc_threads=2;poly.get_fp_parts=lambda tensor:get_fp_parts(tensor,num_threads=2)
-        self.build_proofs,self.verify_proofs=build_proofs_base64,verify_proofs_base64
+        self.build_proofs,self.verify_proofs=build_proofs_base64,verify_mapped_proofs
 
     def compute(self,prompt,output):
         with torch.inference_mode():

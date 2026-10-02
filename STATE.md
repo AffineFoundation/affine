@@ -79,7 +79,12 @@ is preserved; a same-model, same-task diagnostic is being prepared without
 changing thresholds, seeds or cohort. A separate same-source, same-base
 one-task diagnostic reproduced the TOPLOC failure with index 6665 and seed
 26926002; the original baseline and score hash stayed unchanged. A read-only
-diagnostic comparing actual hidden bytes and proof-block errors is next.
+diagnostic then confirmed identical hidden bytes and zero full-probability
+error. Only prefill block zero failed, including against the original hidden
+tensor used to build its proof. Root reproduced the omitted index remapping
+in TOPLOC's Python list verifier; its native C++ verifier already applies that
+mapping. The future-source correction follows those native semantics and
+retains exact zero-error thresholds; see `docs/TOPLOC_INDEX_MAPPING.md`.
 The old eight-task baseline remains a separate record.
 
 Public miner fixes now preserve the complete delegated epoch upload capability
@@ -114,9 +119,10 @@ single-PUT size guard. Its 1,444-file archive
 passed 128 tests in the frozen source and strict post-test membership checks.
 It is signed and independently read back from R2 under authority
 `861b6ba38150b0f17097abe1918f8d74d9ad932eab42d3828887203bbad43897`.
-The next external-client pilot targets v6 rather than activating v3 with the
-known oversized export. It still requires actual trained-checkpoint and
-verification admission. No v6 epoch has opened or proposed score been created.
+The next external-client pilot now targets a fresh v7 source containing both
+the export fix and index-map verification correction. v3 and v6 remain
+preparation history. The next pilot still requires actual trained-checkpoint
+and verification admission. No v6 epoch has opened or proposed score been created.
 The dashboard now explicitly allows its eventual public measurements; fifteen
 projection privacy tests and the deployed affine.io JavaScript readback pass.
 Chain submissions remain disabled. Production, the retained-3090 pilot and
