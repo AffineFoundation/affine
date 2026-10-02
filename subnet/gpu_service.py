@@ -17,6 +17,21 @@ from .evaluation import wilson
 
 log=logging.getLogger('affine-gpu')
 
+def owned_mining_job_fields(config,manifest,round_number):
+    """Rotate the operator's bounded search while external miners keep the full pool."""
+    subset=config.get('owned_mining_subset')
+    schedule=config.get('owned_mining_schedule')
+    if schedule is not None:
+        if subset is not None or not isinstance(schedule,list) or not 1<=len(schedule)<=1024:
+            raise ValueError('one bounded owned mining schedule or static subset')
+        if type(round_number)is not int or round_number<0:raise ValueError('owned mining round')
+        subset=schedule[round_number%len(schedule)]
+    if subset is None:return {}
+    from .backend_jobs import mining_definitions
+    fields={'mining_subset':subset}
+    mining_definitions(manifest,fields)
+    return fields
+
 def contract(config,round_number):
     rows=definitions(config);groups=config.get('training_groups') or [[r['spec']['id'] for r in rows]]
     selected=set(groups[round_number%len(groups)])
@@ -124,11 +139,7 @@ def run(config,once=False):
                 if dispatch_allowed(manifest) and time.time()<manifest['deadline']:
                     for miner in active['identities']:
                         capability=dict(put_url=bucket.presign('private/'+epoch+'/staging/'+miner+'.zip','put_object',max(1,manifest['deadline']-int(time.time()))),headers={'Content-Type':'application/octet-stream'})
-                        owned_fields={}
-                        if config.get('owned_mining_subset') is not None:
-                            from .backend_jobs import mining_definitions
-                            owned_fields={'mining_subset':config['owned_mining_subset']}
-                            mining_definitions(manifest,owned_fields)
+                        owned_fields=owned_mining_job_fields(config,manifest,status['round'])
                         controller.jobs.run(epoch+'-mine-'+miner[:8],'mine',manifest,None,miner_id=miner,capability=capability,search_budget=config.get('search_budget',64),seed_start=100+status['round']*1000,**owned_fields)
                     status['checkpoint_path']=config['remote']['workspace']+'/checkpoints/'+status['checkpoint']['id']
                 active['phase']='collect';save(statuspath,status)

@@ -21,6 +21,9 @@ The public challenge authorizes the full 6,746-problem mining pool. An operator
 may set `owned_mining_subset` to a bounded starter list for its own signed mining
 job; the worker checks it is a subset of authorized training indices. This does
 not restrict external miners or expose an alternate heldout admission path.
+The preparation recipe instead uses `owned_mining_schedule`: 422 groups of up
+to 16 training indices, rotating by epoch round. This avoids repeatedly starting
+the owned miner on the same problem while preserving the full external pool.
 
 All task prompts were rendered using the upstream tokenizer: the largest prompt
 is 2,098 tokens, within the 8,192-token context with a 512-token output reserve.
