@@ -76,8 +76,11 @@ and numerical profile. The baseline attempted all 32 tasks, but one task
 with 31 verified results and no mean reward or confidence interval. It is not
 a completed baseline or evidence of improvement. The original failed record
 is preserved; a same-model, same-task diagnostic is being prepared without
-changing thresholds, seeds or cohort. The old eight-task baseline remains a
-separate record.
+changing thresholds, seeds or cohort. A separate same-source, same-base
+one-task diagnostic reproduced the TOPLOC failure with index 6665 and seed
+26926002; the original baseline and score hash stayed unchanged. A read-only
+diagnostic comparing actual hidden bytes and proof-block errors is next.
+The old eight-task baseline remains a separate record.
 
 Public miner fixes now preserve the complete delegated epoch upload capability
 and honor the signed long-proof artifact budget in packing, restoration and
@@ -104,6 +107,18 @@ is signed and independently read back from R2, but has no activated controller
 or GPU jobs. Its older export code still needs the subsequent shard fix before
 it can be used for a new production training release. The larger DeepMath and
 Numina tasksets remain CPU-qualified preparation, not proven GPU training.
+
+The prospective v6 source includes the explicit export shard setting and
+single-PUT size guard. Its 1,444-file archive
+`b5cac29975cc2a01d5db17d47b5c964a697232cde0efddca4d448144ebcea781`
+passed 128 tests in the frozen source and strict post-test membership checks.
+It is signed and independently read back from R2 under authority
+`861b6ba38150b0f17097abe1918f8d74d9ad932eab42d3828887203bbad43897`.
+The next external-client pilot targets v6 rather than activating v3 with the
+known oversized export. It still requires actual trained-checkpoint and
+verification admission. No v6 epoch has opened or proposed score been created.
+The dashboard now explicitly allows its eventual public measurements; fifteen
+projection privacy tests and the deployed affine.io JavaScript readback pass.
 Chain submissions remain disabled. Production, the retained-3090 pilot and
 independent services are preserved.
 

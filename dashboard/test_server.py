@@ -16,6 +16,9 @@ class PublicProjectionTests(unittest.TestCase):
     def test_corrected_hopper_namespace_exports_only_public_measurements(self):
         self.assert_hopper_projection('prospective-separated-hopper-math-v2', 'separated-hopper-math-v2')
 
+    def test_public_miner_hopper_namespace_exports_only_public_measurements(self):
+        self.assert_hopper_projection('prospective-separated-hopper-math-v6', 'separated-hopper-math-v6')
+
     def assert_hopper_projection(self, namespace, source):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);state=root/'state';folder=state/namespace/'controller-state'
