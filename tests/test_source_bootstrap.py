@@ -114,6 +114,16 @@ class BootstrapTests(unittest.TestCase):
             with patch.object(b.requests,'get',return_value=response) as get:
                 with self.assertRaises(ValueError):b.download(URL,4)
                 self.assertFalse(get.call_args.kwargs['allow_redirects'])
+                self.assertEqual(get.call_args.kwargs['headers'],{'Accept-Encoding':'identity'})
+
+    def test_identity_response_is_requested_and_exact_bytes_retained(self):
+        response=MagicMock();response.__enter__.return_value=response
+        response.status_code=200;response.headers={'Content-Length':'4'}
+        response.iter_content.return_value=[b'ab',b'cd']
+        with patch.object(b.requests,'get',return_value=response) as get:
+            self.assertEqual(b.download(URL,4),b'abcd')
+            self.assertEqual(get.call_args.kwargs['headers'],{'Accept-Encoding':'identity'})
+            self.assertFalse(get.call_args.kwargs['allow_redirects'])
 
     def test_real_fresh_isolated_execution_of_approved_public_fixture(self):
         # Genuine subprocess qualification of admission/exec, deliberately no model/GPU.

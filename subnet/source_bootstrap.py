@@ -44,7 +44,8 @@ def r2_url(url):
 
 def download(url, limit):
     r2_url(url)
-    with requests.get(url, timeout=180, stream=True, allow_redirects=False) as r:
+    with requests.get(url, timeout=180, stream=True, allow_redirects=False,
+                      headers={'Accept-Encoding': 'identity'}) as r:
         if 300 <= r.status_code < 400: raise ValueError('redirect refused')
         r.raise_for_status()
         if r.headers.get('Content-Encoding', 'identity') != 'identity': raise ValueError('HTTP encoding refused')
