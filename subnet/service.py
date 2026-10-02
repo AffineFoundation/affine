@@ -38,12 +38,21 @@ def definitions(config):
             spec=legacy_spec(row.get('config')) if row['source']=='mastermind' else build_spec(row['source'],row.get('config',{}),num_samples=row.get('num_samples',4),max_turns=row.get('max_turns',4),max_output_tokens=row.get('max_output_tokens',96))
         else:
             raw=row['spec'];spec=EnvironmentSpec.from_dict(raw) if 'id' in raw else legacy_spec(raw or None)
-        from .sample_harness import validate as validate_sample_harness,resolve as resolve_sample_harness
+        from .sample_harness import VERSION as INDEXED_HARNESS,validate as validate_sample_harness
         indices=row.get('indices',row.get('training_indices',list(range(spec.num_samples))))
         harness=validate_sample_harness(row.get('harness') or (legacy_harness(spec.config) if spec.adapter=='legacy_mastermind' else None),indices)
-        if evaluation_only and isinstance(harness,dict) and harness.get('max_output_tokens',0)>spec.max_output_tokens:
-            raise ValueError('harness exceeds environment budget')
-        if any(normalize(resolve_sample_harness(harness,index,indices) or (legacy_harness(spec.config) if spec.adapter=='legacy_mastermind' else None))['max_output_tokens']>spec.max_output_tokens for index in indices):raise ValueError('harness exceeds environment budget')
+        # validate_sample_harness already checks exact index coverage and
+        # normalizes every choice. Re-resolving for each index would repeatedly
+        # validate the entire approved population, with quadratic work.
+        if isinstance(harness,dict) and harness.get('version')==INDEXED_HARNESS:
+            choices=harness['by_index'].values()
+        elif harness is not None and (indices or evaluation_only):
+            choices=(harness,)
+        elif indices:
+            choices=(normalize(legacy_harness(spec.config) if spec.adapter=='legacy_mastermind' else None),)
+        else:
+            choices=()
+        if any(choice['max_output_tokens']>spec.max_output_tokens for choice in choices):raise ValueError('harness exceeds environment budget')
         if (not isinstance(indices,list) or (not indices and not evaluation_only) or
                 len(set(indices))!=len(indices) or any(type(i) is not int or not 0<=i<spec.num_samples for i in indices)):raise ValueError('challenge indices')
         if any(r['spec']['id']==spec.id for r in result):raise ValueError('duplicate environment id')
