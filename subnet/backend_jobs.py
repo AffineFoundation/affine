@@ -156,7 +156,11 @@ def mine_cumulative(runtime,manifest,job,upload,clock=None,allow_empty=False):
     return data,dict(batches=len(batches),search=search,cumulative_uploads=uploads,search_stopped_at_deadline=stopped,search_stopped_at_capacity=capacity_reached,mining_status='complete_batches_uploaded' if data is not None else 'no_complete_KL_batch')
 
 def validate(envelope, authority, now=None):
-    """Pure authorization/policy check; never opens an artifact or imports runtime."""
+    """Strict authorization/policy admission, including signed subset semantics."""
+    return _validate(envelope,authority,now,resolve_source=True)
+
+def _validate(envelope, authority, now=None, *, resolve_source):
+    """Workers defer source-dependent semantics until pinned imports are installed."""
     job=signed(envelope,authority);now=time.time() if now is None else now
     if job.get('schema')!=1 or job.get('role') not in ROLES:raise ValueError('job role/schema')
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',job.get('job_id','')):raise ValueError('job ID')
@@ -186,15 +190,16 @@ def validate(envelope, authority, now=None):
         if type(job.get('search_budget')) is not int or not 1<=job['search_budget']<=128 or type(job.get('seed_start')) is not int or job['seed_start']<0:raise ValueError('mining search budget')
         r2_url(job['capability']['put_url'],'PUT')
         if job['capability'].get('headers')!={'Content-Type':'application/octet-stream'}:raise ValueError('signed upload headers')
-        if job.get('mining_subset') is not None:mining_definitions(manifest,job)
+        if resolve_source and job.get('mining_subset') is not None:mining_definitions(manifest,job)
     elif 'mining_subset' in job:raise ValueError('mining subset only in signed mining jobs')
     if job['role']=='train' and job.get('training_policy',HEAD_POLICY) not in (HEAD_POLICY,FULL_POLICY,FIXED_POLICY):raise ValueError('unapproved training objective')
     if job['role']=='train' and (type(job.get('steps')) is not int or not 1<=job['steps']<=32):raise ValueError('training step budget')
     if job.get('training_policy')==FIXED_POLICY and manifest.get('training_policy')!=FIXED_POLICY:raise ValueError('signed fixed-reference training policy')
     if job.get('replay') is not None:
         if job['role']!='train' or job.get('training_policy')!=FIXED_POLICY:raise ValueError('replay only in signed fixed optimizer job')
-        from .replay_training import admitted
-        admitted(manifest,job['replay'],authority)
+        if resolve_source:
+            from .replay_training import admitted
+            admitted(manifest,job['replay'],authority)
     if job['role']=='evaluate':
         if not job.get('heldout') or len(job['heldout'])>64:raise ValueError('heldout budget')
         for row in job['heldout']:
@@ -334,7 +339,7 @@ def initial_configuration(manifest,job):
     return first,harness_for(first,first['indices'][0])
 
 def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
-    job,manifest=validate(envelope,authority)
+    job,manifest=_validate(envelope,authority,resolve_source=False)
     root=Path(__file__).resolve().parent.parent
     for name,expected in job['source_files'].items():
         if (root/name).is_symlink() or digest(root/name)!=expected:raise ValueError('worker source mismatch')
@@ -342,6 +347,12 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         if version(name)!=expected:raise ValueError('runtime package mismatch')
     if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':raise ValueError('CUDA environment profile')
     install_source_loader(root)
+    # Resolve against authenticated fresh source before any artifact, workspace,
+    # checkpoint or model is opened. Public validate() remains fully strict.
+    if job.get('mining_subset') is not None:mining_definitions(manifest,job)
+    if job.get('replay') is not None:
+        from .replay_training import admitted
+        admitted(manifest,job['replay'],authority)
     workspace=Path(workspace);out=workspace/'jobs'/job['job_id']
     out.mkdir(parents=True,exist_ok=False);out.chmod(0o700)
     approved=checkpoint(manifest,workspace,cache)

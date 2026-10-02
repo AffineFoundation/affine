@@ -32,6 +32,16 @@ This small first-epoch gain is not yet a trend. Actual affine.io browser checks
 include the new math cohort and completed batch. The next gate is consecutive
 epochs resuming from the trained checkpoint, rather than another reset to base.
 
+The second epoch exposed an owned-worker admission ordering bug: resolving the
+task subset imported pinned environment modules before installing the fresh
+source loader. Its local dispatcher is paused, with the original manifest,
+deadline and failed-job records preserved. The worker fix defers source-dependent
+subset and replay checks until after source/runtime admission, still before
+creating job artifacts or loading a checkpoint. Fresh-process controls confirm
+valid admission and rejection of held-out indices, altered source and preloaded
+runtime modules. The existing external miner path is being used for recovery;
+continuous owned mining has not yet been requalified on the corrected source.
+
 The GPU policy field is now bound when opening and signing an epoch. The generic
 bootstrap requests unencoded R2 responses while retaining its encoding refusal,
 byte bounds, archive hashes and signature checks. The successful loader recovery
