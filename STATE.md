@@ -12,16 +12,15 @@ delete requests occurred at 20:57:38–20:57:48 UTC and were marked
 match all five account API requests. The nodes lacked required ownership
 registration, so its 90-minute unregistered-pod rule deleted them. The surviving
 replacement miner now has explicit retained ownership with no lifetime ceiling.
-Four replacement roles are being registered before rental; the shared reaper
+Four replacement roles were registered before rental; the shared reaper
 remains running.
 The replacement miner and four restored H200 nodes are now present as RUNNING
 in independently queried Lium inventory, and all five have retained ownership
 records. All five passed fresh source/model/native-grader admission. The four restored
 nodes additionally passed strict independent replay, tampering, weight-restoration
-and corrected-source production initialization controls. The retained miner's
-corrected-source initialization remains the last fresh full-pipeline gate. The restored fleet's listed hourly
-rate totals $15.35; previous worker-health claims are historical, not current
-runtime liveness evidence.
+and corrected-source production initialization controls. The retained miner also
+passed corrected-source initialization. The restored fleet's listed hourly rate
+totals $15.35; node inventory and worker liveness are checked separately.
 
 The recovery epoch
 `nonpayable-separated-hopper-original-math-recovery-v1-1790975553-0`
@@ -32,14 +31,11 @@ before the deadline. Its R2 artifact is 318,236,285 bytes with SHA-256
 The genuine frozen batch passed the real audit and earned one nonpayable
 point (proposed weight 1.0). Two additional audit jobs ran concurrently on the
 two distinct verifier workers; both accepted the same batch, and the actual
-score-file hash stayed unchanged. The recovery companion is measuring its
-fixed eight-task untouched-model baseline. Training and performance gains for
-this Qwen epoch remain unproven. The recovery controller was stopped with an
-exact process-identity check; a verification-only companion failed before
-starting its coordinator because its remote nodes were unavailable. The
-closed submission has been frozen and published by the original gateway,
-with an independent public readback hash check and unchanged manifest/deadline.
-No verifier reports or scores have been invented.
+score-file hash stayed unchanged. The recovery companion completed the original
+fixed eight-task untouched-model baseline: eight correct out of eight, with no
+training. That saturated small cohort does not measure performance on all MATH
+problems. The companion and its original workers are terminal. The original
+manifest, submission and signed deadline remain unchanged.
 
 Review found that the frozen training guard assumes a single weight file and
 rejects Qwen's sharded checkpoint. Commit
@@ -47,8 +43,27 @@ rejects Qwen's sharded checkpoint. Commit
 weight shards and verifies actual parameter-value hashes before and after
 optimization. Relevant verification passed 105 tests. That fix requires a
 new signed source and fresh epoch; the original source and submission cannot
-be silently relabeled. Genuine independent audits, full-model training,
-paired heldout evaluation and consecutive handovers remain pending.
+be silently relabeled. The corrected v2 source was signed and strictly admitted
+on all five nodes, and its full 15,242,788,091-byte initial checkpoint publication
+completed. On October 2 at 22:41:46 UTC, its first mining epoch opened:
+`nonpayable-separated-hopper-original-math-v2-1790980906-0`. The exact remote
+mining job `...-mine-598fa5ce-00339d36` was independently probed as running.
+Training updates remain zero; this epoch's audit, training and handover have not
+yet completed.
+
+Before v2 activation, a new fixed heldout cohort of 32 tasks was selected without
+consulting outputs: sixteen Level 4 and sixteen Level 5 problems, all reserved
+and disjoint from mining. Before/after evaluations use that identical cohort
+and numerical profile. The old eight-task baseline remains a separate record.
+
+Public miner fixes now preserve the complete delegated epoch upload capability
+and honor the signed long-proof artifact budget in packing, restoration and
+upload. Twenty-six focused tests pass; commit
+`57fa14c8700e1d03177f744141e158b5076e557e` is verified on GitHub main.
+A separately signed prospective v3 source will qualify that public client on
+real H200 outputs. The running v2 source remains unchanged. Full-model training,
+paired heldout evaluation, public-client GPU qualification and consecutive
+handovers are still required.
 Chain submissions remain disabled. Production, the retained-3090 pilot and
 independent services are preserved.
 
