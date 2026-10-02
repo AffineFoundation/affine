@@ -47,9 +47,13 @@ be silently relabeled. The corrected v2 source was signed and strictly admitted
 on all five nodes, and its full 15,242,788,091-byte initial checkpoint publication
 completed. On October 2 at 22:41:46 UTC, its first mining epoch opened:
 `nonpayable-separated-hopper-original-math-v2-1790980906-0`. The exact remote
-mining job `...-mine-598fa5ce-00339d36` was independently probed as running.
-Training updates remain zero; this epoch's audit, training and handover have not
-yet completed.
+mining job `...-mine-598fa5ce-00339d36` completed successfully. It searched
+20 genuine samples and uploaded one success/failure batch for task 1278 before
+the original deadline. Root independently fetched and hashed the 318,236,285-byte
+R2 submission: `edc79ec48ff59c884809c6161d3c123de0966fa0c5e1e43b0e7bb2698836b689`.
+The epoch remains collecting until its signed 23:11:51 UTC deadline. Training
+updates remain zero; this epoch's audit, training and handover have not yet
+completed.
 
 Before v2 activation, a new fixed heldout cohort of 32 tasks was selected without
 consulting outputs: sixteen Level 4 and sixteen Level 5 problems, all reserved
@@ -61,7 +65,15 @@ and honor the signed long-proof artifact budget in packing, restoration and
 upload. Twenty-six focused tests pass; commit
 `57fa14c8700e1d03177f744141e158b5076e557e` is verified on GitHub main.
 A separately signed prospective v3 source will qualify that public client on
-real H200 outputs. The running v2 source remains unchanged. Full-model training,
+real H200 outputs. The running v2 source remains unchanged. Prospective v3 source
+`c20009a33302e8268407160a63668d9f4f5c718c9d4a61d42aa1203e688e2a47`
+contains only the six reviewed public-client changes. Its 1,438-member archive
+passed strict installation and source/runtime/native-grader admission on all
+five H200 nodes. Root separately verified its signed descriptor and exact R2
+bytes. This admission uses the initial checkpoint as a placeholder; v3 remains
+preparation-only until the actual trained successor and handover are reviewed.
+Internal mining is disabled in v3 so the delegated public CLI can be tested
+without competing internal submissions. Full-model training,
 paired heldout evaluation, public-client GPU qualification and consecutive
 handovers are still required.
 Chain submissions remain disabled. Production, the retained-3090 pilot and
@@ -77,9 +89,9 @@ affine.io now has exactly two charts: evaluation performance over time and
 batches per finalized epoch, with a linked `/llms.txt`. Live desktop/mobile
 browser checks pass. No Arbos website or DNS was changed.
 
-## Current priority — October 2, 2026
+## Earlier retained-3090 qualification — October 2, 2026
 
-The current pilot is restricted to the original MATH environment and the untouched
+That earlier pilot is restricted to the original MATH environment and the untouched
 upstream SmolLM2-1.7B-Instruct base. Its six model files have been downloaded to
 the retained GPU host and checked against pinned upstream metadata. The original
 loader provides 7,496 distinct tasks: 6,746 authorized mining tasks and 750
