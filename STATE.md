@@ -3,46 +3,40 @@
 ## Separate H200 deployment — October 2, 2026
 
 The operator's Arbos.life name refers to this current code/validator host.
-Five separate single-H200 Lium nodes are rented and running: one miner, two
-verifiers, one trainer and one evaluator, totaling $15.35/hour. All five pass
-CUDA BF16, Qwen model-import and rebuilt TOPLOC runtime smoke controls. The
-pinned Qwen2.5-Math-7B-Instruct computation controls pass on the miner and both
-independent verifiers with zero full-vocabulary log-probability error and exact
-TOPLOC matches. Four token/probability/proof/weight mutations are rejected on
-each verifier. These short computation controls do not establish native math
-batch success, optimizer consumption or benchmark improvement.
+The original five single-H200 nodes passed pinned CUDA BF16, Qwen import,
+TOPLOC generation/replay and mutation controls. However, Lium account audit
+records now show all five were deleted through an API key on October 2:
+delete requests occurred at 20:57:38–20:57:48 UTC and were marked
+`user_initiated`. This is distinct from the original miner's earlier
+`REBOOT_FAILED` event. The deletion actor's client has not been identified.
+Only the replacement H200 miner is present in the current fleet inventory;
+the two verifier nodes, trainer and evaluator must be restored before this
+separate-role pilot can finish. Previous fleet costs and worker-health claims
+are historical, not current billing or liveness evidence.
 
-The new separate-role implementation uses an operator-side atomic SQLite
-claim authority, authenticated worker identities, expiring leases, bounded
-retries and immutable R2 report history. The reviewed immutable source is deployed
-on all five nodes, and the new controller and two authenticated verifier workers
-are running in `state/prospective-separated-hopper-math-v1`. All 11 initial
-checkpoint objects passed independent R2 byte/hash checks. The first real epoch,
-`nonpayable-separated-hopper-original-math-v1-1790972646-0`, opened at 20:24:11 UTC
-with its signed 20:54:11 UTC deadline. The miner lost SSH connectivity during
-this attempt. Lium subsequently reported `REBOOT_FAILED`, with container
-creation failing at `ssh_connect`; the cause is not established as an OOM or
-model failure. The original attempt and failed pod are retained. The replacement
-miner passed pinned-runtime, genuine generation/replay, tampering and production
-loader controls; all five working nodes passed fresh admission. The recovery
-controller started at 20:53:53 UTC in
-`state/prospective-separated-hopper-math-recovery-v1`, with both verifier workers
-authenticated and healthy. All 11 initial checkpoint objects passed independent
-R2 hash checks. Recovery epoch
-`nonpayable-separated-hopper-original-math-recovery-v1-1790975553-0` opened at
-21:12:38 UTC with a signed 21:42:38 UTC deadline. The replacement miner uploaded
-one genuine generated K1/L1 batch (318,236,285 bytes) before the deadline;
-independent acceptance and training remain unproven. Review found a training
-guard that incorrectly assumes a single weight file and rejects Qwen's sharded
-checkpoint. The fix compares all weight shards and measures actual parameter
-values before and after optimization; it is tested in the worktree and will
-require a separately signed source/epoch. The active source and deadline remain
-unchanged, and the old epoch will retain its actual verification-only evidence.
-Keeping the failed pod adds $2.95/hour, for a retained fleet total of $18.30/hour.
-Genuine math-pair qualification, full training, paired heldout evaluation and
-two-worker audit qualification remain pending.
-Chain submissions remain disabled. The existing retained-3090 pilot and its
-artifacts are preserved.
+The recovery epoch
+`nonpayable-separated-hopper-original-math-recovery-v1-1790975553-0`
+opened at 21:12:38 UTC and kept its signed 21:42:38 UTC deadline. The replacement
+miner genuinely searched 20 samples and uploaded one success/failure batch
+before the deadline. Its R2 artifact is 318,236,285 bytes with SHA-256
+`676815117403b201844f7e5318fdc671d17d030b6feb5b2819bb303d49ce1013`.
+Independent acceptance, scores, training and heldout performance for this
+Qwen epoch are not established. The recovery controller was stopped with an
+exact process-identity check; a verification-only companion failed before
+starting its coordinator because its remote nodes were unavailable. The
+closed submission is being preserved using the original gateway, without
+inventing verifier reports or extending its window.
+
+Review found that the frozen training guard assumes a single weight file and
+rejects Qwen's sharded checkpoint. Commit
+`745cee2a2fd040ee601ba4fb8c5e5defa6235c8d`, pushed to main, compares all
+weight shards and verifies actual parameter-value hashes before and after
+optimization. Relevant verification passed 105 tests. That fix requires a
+new signed source and fresh epoch; the original source and submission cannot
+be silently relabeled. Genuine independent audits, full-model training,
+paired heldout evaluation and consecutive handovers remain pending.
+Chain submissions remain disabled. Production, the retained-3090 pilot and
+independent services are preserved.
 
 DeepMath and NuminaMath-CoT catalog/native-adapter qualification now yields
 832,335 training tasks plus separate heldouts, represented by 106 bounded
