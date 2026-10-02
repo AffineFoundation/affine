@@ -99,6 +99,10 @@ class Controller:
         return checkpoint
 
     def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None):
+        for definition in environments or []:
+            if 'evaluation_only' in definition:
+                if type(definition['evaluation_only'])is not bool or (definition['evaluation_only'] and definition.get('indices')!=[]):
+                    raise ValueError('evaluation-only mining indices')
         if training_policy is not None:
             from .backend_jobs import FIXED_POLICY
             from .backend_profiles import profile
@@ -122,7 +126,9 @@ class Controller:
             spec=legacy_spec(raw) if 'id' not in raw else EnvironmentSpec.from_dict(raw)
             from .sample_harness import validate as validate_sample_harness
             chosen=validate_sample_harness(definition.get('harness') or (legacy_harness(raw) if 'id' not in raw else None),definition.get('indices',list(range(spec.num_samples))))
-            definitions.append(dict(env_id=spec.id,spec=spec.to_dict(),harness=chosen,indices=definition.get('indices',list(range(spec.num_samples)))))
+            row=dict(env_id=spec.id,spec=spec.to_dict(),harness=chosen,indices=definition.get('indices',list(range(spec.num_samples))))
+            if definition.get('evaluation_only',False):row['evaluation_only']=True
+            definitions.append(row)
         manifest=dict(payable=not epoch.startswith(('nonpayable-', 'test-', 'mock-')),epoch=epoch,checkpoint=checkpoint,environment=env,indices=definitions[0]['indices'],environments=definitions,harness_source_hash=harness_policy.source_hash(),
                       tokenizer_binding={name:digest for name,digest in checkpoint['files'].items() if 'token' in name or 'template' in name},
                       K=1,L=1,max_batches=4,start=self.gateway.epochs[epoch].get('start',int(time.time())),deadline=deadline,capabilities=caps,audit_policy=dict(audit_policy or {'mode':'full','version':1}),

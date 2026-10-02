@@ -30,6 +30,10 @@ def definitions(config):
     """Compile trusted operator config; submitted batch data never chooses code."""
     result=[]
     for row in config.get('environments') or [dict(spec=config.get('environment') or {})]:
+        evaluation_only=row.get('evaluation_only',False)
+        if type(evaluation_only)is not bool:raise ValueError('evaluation-only flag must be boolean')
+        if evaluation_only and row.get('indices')!=[]:
+            raise ValueError('evaluation-only environment requires explicit empty mining indices')
         if row.get('source'):
             spec=legacy_spec(row.get('config')) if row['source']=='mastermind' else build_spec(row['source'],row.get('config',{}),num_samples=row.get('num_samples',4),max_turns=row.get('max_turns',4),max_output_tokens=row.get('max_output_tokens',96))
         else:
@@ -37,10 +41,15 @@ def definitions(config):
         from .sample_harness import validate as validate_sample_harness,resolve as resolve_sample_harness
         indices=row.get('indices',row.get('training_indices',list(range(spec.num_samples))))
         harness=validate_sample_harness(row.get('harness') or (legacy_harness(spec.config) if spec.adapter=='legacy_mastermind' else None),indices)
+        if evaluation_only and isinstance(harness,dict) and harness.get('max_output_tokens',0)>spec.max_output_tokens:
+            raise ValueError('harness exceeds environment budget')
         if any(normalize(resolve_sample_harness(harness,index,indices) or (legacy_harness(spec.config) if spec.adapter=='legacy_mastermind' else None))['max_output_tokens']>spec.max_output_tokens for index in indices):raise ValueError('harness exceeds environment budget')
-        if not indices or len(set(indices))!=len(indices) or any(type(i) is not int or not 0<=i<spec.num_samples for i in indices):raise ValueError('challenge indices')
+        if (not isinstance(indices,list) or (not indices and not evaluation_only) or
+                len(set(indices))!=len(indices) or any(type(i) is not int or not 0<=i<spec.num_samples for i in indices)):raise ValueError('challenge indices')
         if any(r['spec']['id']==spec.id for r in result):raise ValueError('duplicate environment id')
-        result.append(dict(spec=spec.to_dict(),harness=harness,indices=indices))
+        definition=dict(spec=spec.to_dict(),harness=harness,indices=indices)
+        if evaluation_only:definition['evaluation_only']=True
+        result.append(definition)
     return result
 
 

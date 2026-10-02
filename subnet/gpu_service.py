@@ -43,9 +43,12 @@ def owned_mining_job_fields(config,manifest,round_number):
 
 def contract(config,round_number):
     revision,profile,policy=for_config(config)
-    rows=definitions(config);groups=config.get('training_groups') or [[r['spec']['id'] for r in rows]]
+    rows=definitions(config)
+    training_ids={r['spec']['id'] for r in rows if not r.get('evaluation_only',False)}
+    groups=config.get('training_groups') or [[r['spec']['id'] for r in rows if r['spec']['id'] in training_ids]]
     selected=set(groups[round_number%len(groups)])
     if not selected or not selected<={r['spec']['id'] for r in rows}:raise ValueError('GPU training group')
+    if not selected<=training_ids:raise ValueError('evaluation-only environment in training group')
     per_epoch=config.get('indices_per_environment_per_epoch')
     if per_epoch is not None and (type(per_epoch) is not int or not 1<=per_epoch<=32):
         raise ValueError('prospective index rotation budget')

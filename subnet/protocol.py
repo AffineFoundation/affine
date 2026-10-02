@@ -38,6 +38,9 @@ def _entries(manifest,expected_source_hash):
         if entry['env_id'] != entry['spec'].get('id', 'mastermind'):
             raise ValueError('environment registry identity')
         indices = entry['indices']
+        evaluation_only=entry.get('evaluation_only',False)
+        if type(evaluation_only)is not bool or (evaluation_only and indices):
+            raise ValueError('evaluation-only mining indices')
         if not isinstance(indices, list) or len(indices) > 10000 or len(indices) != len(set(indices)) or any(type(i) is not int or i < 0 for i in indices):
             raise ValueError('sample index budget')
         validate_sample_harness(entry['harness'],indices)
@@ -48,6 +51,8 @@ def _entries(manifest,expected_source_hash):
         for e in result:
             row=registry[e['env_id']]
             if not isinstance(row,dict)or set(row)!={'indices','harness'}or not isinstance(row['indices'],list)or any(type(i)is not int or i<0 or i>=e['spec']['num_samples']for i in row['indices']):raise ValueError('full registry sample geometry')
+            if e.get('evaluation_only',False) and row['indices']:
+                raise ValueError('evaluation-only full mining registry')
             if e['harness']!=project(row['harness'],e['indices'],row['indices']):raise ValueError('signed projected sample harness mismatch')
     return result
 
