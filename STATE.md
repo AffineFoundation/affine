@@ -14,10 +14,12 @@ registration, so its 90-minute unregistered-pod rule deleted them. The surviving
 replacement miner now has explicit retained ownership with no lifetime ceiling.
 Four replacement roles are being registered before rental; the shared reaper
 remains running.
-Only the replacement H200 miner is present in the current fleet inventory;
-the two verifier nodes, trainer and evaluator must be restored before this
-separate-role pilot can finish. Previous fleet costs and worker-health claims
-are historical, not current billing or liveness evidence.
+The replacement miner and four restored H200 nodes are now present as RUNNING
+in independently queried Lium inventory, and all five have retained ownership
+records. The restored nodes still need exact runtime/model/source admission
+before verification or training dispatch. The restored fleet's listed hourly
+rate totals $15.35; previous worker-health claims are historical, not current
+runtime liveness evidence.
 
 The recovery epoch
 `nonpayable-separated-hopper-original-math-recovery-v1-1790975553-0`
