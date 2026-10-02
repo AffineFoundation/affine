@@ -17,7 +17,8 @@ def normalize(config=None):
     value = dict(DEFAULT); value.update(config or {})
     if value['version'] not in HARNESS_REGISTRY or value['policy'] not in ('autoregressive', 'candidates', 'visible-copy-candidates', 'public-mrcr-shell-candidates'):
         raise ValueError('unsupported harness or policy')
-    if type(value['max_output_tokens']) is not int or not 1 <= value['max_output_tokens'] <= 512:
+    limit=2048 if value['version']=='text-tools-long-v2' else 512
+    if type(value['max_output_tokens']) is not int or not 1 <= value['max_output_tokens'] <= limit:
         raise ValueError('generation token budget')
     if not math.isfinite(value['temperature']) or not 0 < value['temperature'] <= 4:
         raise ValueError('temperature')
@@ -213,6 +214,7 @@ def _window_chat_render(tokenizer,messages,tools=(),config=None):
 # Every version owns its render/action/observation/sample boundary. Core model
 # computation does not branch on environment or harness names.
 HARNESS_REGISTRY={
+    'text-tools-long-v2': {'render':_chat_render,'action':_text_action,'observations':_text_observations,'sample':_sample},
     'text-tools-v1': {'render':_chat_render,'action':_text_action,'observations':_text_observations,'sample':_sample},
     'plain-transcript-v1': {'render':_plain_render,'action':_text_action,'observations':_text_observations,'sample':_sample},
     'text-tools-window-v1': {'render':_window_chat_render,'action':_text_action,'observations':_text_observations,'sample':_sample},

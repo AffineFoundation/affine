@@ -164,6 +164,18 @@ def execute(source, arguments, executor=os.execve):
     os.chdir(source)
     executor(sys.executable,[sys.executable,'-I','-B','-c',loader,*arguments],environment)
 
+def hydrate_task_assets(source,value,cache):
+    """Admitted code hydrates separately signed data outside immutable source."""
+    if not value.get('task_assets') and not any('math_corpus_asset' in r.get('spec',{}).get('config',{}) for r in value.get('environments',[])):
+        return
+    import subprocess
+    root=Path(cache)/'task-assets';root.mkdir(parents=True,exist_ok=True);root.chmod(0o700)
+    loader="import json,sys;sys.path.insert(0,sys.argv[1]);from subnet.task_assets import hydrate_manifest;hydrate_manifest(sys.argv[2],json.load(sys.stdin))"
+    result=subprocess.run([sys.executable,'-I','-B','-c',loader,str(Path(source).resolve()),str(root.resolve())],
+        input=canonical(value),capture_output=True,timeout=1800)
+    if result.returncode:raise ValueError('signed task asset hydration failed')
+    os.environ['AFFINE_MATH_CORPUS_ASSET_ROOT']=str(root.resolve())
+
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--authority',required=True);p.add_argument('--current-url',required=True)
@@ -178,6 +190,7 @@ def main(argv=None):
     if not isinstance(descriptor,dict):raise ValueError('signed source bundle required')
     body=download(r2_url(descriptor.get('url')),COMPRESSED_LIMIT)
     source=install(body,descriptor,cache)
+    hydrate_task_assets(source,value,cache)
     arguments=['--authority',a.authority,'--current-url',a.current_url,'--gateway',a.gateway,'--key',str(key),'--state',str(state),'--source-bundle-sha256',descriptor['sha256']]
     if a.once:arguments+=['--once']
     if a.max_batches is not None:arguments+=['--max-batches',str(a.max_batches)]

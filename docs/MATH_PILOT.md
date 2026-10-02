@@ -68,16 +68,16 @@ The untouched base's GPU baseline verified all 32 fixed heldout tasks, with
 6 correct answers (18.75%), no verification failures and no optimizer update.
 Its six uploaded R2 objects match the untouched base hashes.
 
-Two epochs have completed the miner-facing bootstrap, private cumulative upload,
+Three epochs have completed private cumulative uploads,
 normal full inference/native verification, nonpayable scoring, eight full-model
 updates per epoch, checkpoint publication and paired evaluation. The first
-accepted one batch; the second accepted two. All 218 parameter tensors received
-gradients, using one persistent AdamW optimizer per epoch and an immutable input
+accepted one batch, the second two and the third three. All 218 parameter tensors
+received gradients, using one persistent AdamW optimizer per epoch and an immutable input
 checkpoint reference. Actual published checkpoint object bytes were independently
 streamed and hashed. Test scores are excluded from payout aggregation.
 
-The fixed 32-task series is 6 correct at the untouched base, then 7 and 9 after
-16 total updates. The second pre-training evaluation reproduced the first
+The fixed 32-task series is 6 correct at the untouched base, then 7, 9 and 9 after
+24 total updates. The second pre-training evaluation reproduced the first
 post-training result on every task. These small repeated measurements do not
 establish general improvement, statistical significance or release readiness.
 
@@ -86,9 +86,12 @@ an owned-worker source-admission ordering failure. Its failed jobs, original
 manifest and original deadline are retained. A newly signed immutable source
 fix installs the fresh loader before resolving task semantics, retaining all
 source and heldout admission checks. Its first owned GPU job completed and
-uploaded three batches for the third epoch. Actual R2 bytes and the remote
-terminal report match; those batches still await their normal deadline, full
-verification, training and evaluation. Consecutive uninterrupted owned-worker
+uploaded three batches for the third epoch. The epoch closed at its original
+deadline, all three batches passed full inference/native verification, and eight
+full-model updates consumed those authenticated pairs. Actual frozen artifact and
+published checkpoint bytes were independently checked. Its fixed-cohort reward
+remained 9/32, with one improved task and one regression. Three complete ledger
+records pass the independent auditor. Subsequent uninterrupted owned-worker
 handovers and empty-epoch recovery remain qualification gates.
 
 The dashboard recognizes finalized records in `state/native-math-common` and

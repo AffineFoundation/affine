@@ -98,15 +98,23 @@ class Controller:
         if existing(legacy_key) is None:self.bucket.json(legacy_key,self.signed(descriptor))
         return checkpoint
 
-    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None):
+    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None):
         if training_policy is not None:
-            from .backend_jobs import FIXED_POLICY,REVISION
-            if training_policy!=FIXED_POLICY or model_runtime_revision!=REVISION:
+            from .backend_jobs import FIXED_POLICY
+            from .backend_profiles import profile
+            profile(model_runtime_revision)
+            if training_policy!=FIXED_POLICY:
                 raise ValueError('unsupported epoch training policy or backend')
         deadline=int(time.time())+duration
         if getattr(self.gateway,'direct_r2',False):
             checkpoint=dict(checkpoint,read_urls={name:self.bucket.presign(f"public/checkpoints/{checkpoint['id']}/{name}",expires=min(604800,duration+3600)) for name in checkpoint['files']})
-        caps=self.gateway.open(epoch,miners,deadline)
+        if artifact_policy is None:
+            caps=self.gateway.open(epoch,miners,deadline)
+        else:
+            from .artifact_budget import for_manifest
+            budget=for_manifest(dict(artifact_policy=artifact_policy,model_runtime_revision=model_runtime_revision,
+                backend_profile=backend_profile,numerical_policy=numerical_policy))
+            caps=self.gateway.open(epoch,miners,deadline,upload_limit=budget['compressed_bytes'])
         env=dict(environment or ENV)
         definitions=[]
         for definition in environments or [dict(spec=env,harness=harness)]:
@@ -127,6 +135,8 @@ class Controller:
         if backend_profile is not None:manifest['backend_profile']=backend_profile
         if model_id is not None:manifest['model_id']=model_id
         if training_policy is not None:manifest['training_policy']=training_policy
+        if artifact_policy is not None:manifest['artifact_policy']=artifact_policy
+        if task_assets is not None:manifest['task_assets']=task_assets
         from .runtime_factory import validate_backend
         validate_backend(manifest)
         if source_bundle is not None:manifest['source_bundle']=dict(source_bundle)

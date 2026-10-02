@@ -14,7 +14,8 @@ def verify(data, manifest, checkpoint):
     definitions = entries(manifest)
     runtime = None
     runtimes = {}
-    records = unpack(data)
+    from .artifact_budget import for_manifest
+    records = unpack(data,budget=for_manifest(manifest))
     if len(records)>manifest.get('max_batches',4):
         raise ValueError('epoch batch budget')
     policy=manifest.get('audit_policy',{'mode':'full'})

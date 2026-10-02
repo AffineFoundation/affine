@@ -1,0 +1,18 @@
+{
+  "model_runtime_revision": "cuda-bf16-eager-sm90-v1",
+  "model_id": "Qwen/Qwen2.5-Math-7B-Instruct",
+  "remote": {
+    "initial_checkpoint_role": "mine",
+    "job_ttl_seconds_by_role": {"verify": 3600, "train": 7200, "evaluate": 10800, "upload": 3600},
+    "verifier_queue": {"host": "127.0.0.1", "port": 19080, "lease_seconds": 300, "max_attempts": 3, "history_prefix": "private/nonpayable-hopper-role-history"},
+    "roles": {
+      "mine": {"host": "MINER_HOST", "port": 22, "known_hosts": "/private/known-hosts", "code": "/root/reviewed-affine", "workspace": "/root/affine-miner", "python": "/root/miner-venv/bin/python"},
+      "train": {"host": "TRAINER_HOST", "port": 22, "known_hosts": "/private/known-hosts", "code": "/root/reviewed-affine", "workspace": "/root/affine-trainer", "python": "/root/miner-venv/bin/python", "job_ttl_seconds_by_role": {"train": 7200}},
+      "evaluate": {"host": "EVALUATOR_HOST", "port": 22, "known_hosts": "/private/known-hosts", "code": "/root/reviewed-affine", "workspace": "/root/affine-evaluator", "python": "/root/miner-venv/bin/python", "job_ttl_seconds_by_role": {"evaluate": 10800}},
+      "verify": [
+        {"host": "VERIFIER_1_HOST", "port": 22, "known_hosts": "/private/known-hosts", "code": "/root/reviewed-affine", "workspace": "/root/affine-verifier", "python": "/root/miner-venv/bin/python", "worker_identity": "VERIFIER_1_ED25519_PUBLIC_HEX"},
+        {"host": "VERIFIER_2_HOST", "port": 22, "known_hosts": "/private/known-hosts", "code": "/root/reviewed-affine", "workspace": "/root/affine-verifier", "python": "/root/miner-venv/bin/python", "worker_identity": "VERIFIER_2_ED25519_PUBLIC_HEX"}
+      ]
+    }
+  }
+}

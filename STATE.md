@@ -1,5 +1,34 @@
 # Affine rewrite status
 
+## Separate H200 deployment — October 2, 2026
+
+The operator's Arbos.life name refers to this current code/validator host.
+Five separate single-H200 Lium nodes are rented and running: one miner, two
+verifiers, one trainer and one evaluator, totaling $15.35/hour. All five pass
+CUDA BF16, Qwen model-import and rebuilt TOPLOC runtime smoke controls. The
+pinned Qwen2.5-Math-7B-Instruct computation controls pass on the miner and both
+independent verifiers with zero full-vocabulary log-probability error and exact
+TOPLOC matches. Four token/probability/proof/weight mutations are rejected on
+each verifier. These short computation controls do not establish native math
+batch success, optimizer consumption or benchmark improvement.
+
+The new separate-role implementation uses an operator-side atomic SQLite
+claim authority, authenticated worker identities, expiring leases, bounded
+retries and immutable R2 report history. Narrow verifier seeds are provisioned;
+activation of the new full pilot remains pending reviewed source/configuration
+deployment and genuine math-pair/training qualification. Chain submissions
+remain disabled. The existing retained-3090 pilot and its artifacts are preserved.
+
+DeepMath and NuminaMath-CoT catalog/native-adapter qualification now yields
+832,335 training tasks plus separate heldouts, represented by 106 bounded
+assets. Their GPU mining/proof/training qualification is still pending; see
+`docs/MATH_CORPORA_QUALIFICATION.md`. Resources are separate signed, hashed
+data assets outside immutable executable source caches.
+
+affine.io now has exactly two charts: evaluation performance over time and
+batches per finalized epoch, with a linked `/llms.txt`. Live desktop/mobile
+browser checks pass. No Arbos website or DNS was changed.
+
 ## Current priority — October 2, 2026
 
 The current pilot is restricted to the original MATH environment and the untouched
@@ -55,8 +84,15 @@ has resumed from the twice-trained checkpoint with the same task pool, held-out
 cohort and training policy. Its first owned GPU mining job completed successfully
 and uploaded three cumulative batches for tasks 1862, 7197 and 3422. The actual
 62,607,619-byte R2 artifact and remote terminal report were independently checked.
-The third epoch still awaits its normal deadline, inference/native audit, training
-and evaluation; uninterrupted owned epoch handovers remain to be qualified.
+The third epoch closed at its original deadline and all three batches passed
+full inference/native verification. It completed eight more full-model updates;
+every update's positive/negative hashes match the verified pairs. All six actual
+R2 checkpoint objects were independently hashed. The fixed cohort remained 9/32,
+with one improvement, one regression and 30 unchanged tasks. The independently
+inspected ledger now contains three completed epochs, no pending records and no
+chain writes: 24 actual updates and a base-to-successor series of 6, 7, 9, 9.
+The same continuous controller is proceeding to the next owned-worker handover;
+that next epoch's genuine contributions remain to be qualified.
 
 The GPU policy field is now bound when opening and signing an epoch. The generic
 bootstrap requests unencoded R2 responses while retaining its encoding refusal,

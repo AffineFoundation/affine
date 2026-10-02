@@ -89,6 +89,9 @@ def _roots(config):
 
 
 def _snapshot_path(config):
+    if config.get('math_corpus_asset') is not None:
+        from .math_corpus_provider import asset_path
+        return asset_path(config['math_corpus_asset'],PACKAGE_ROOT.parent)
     value = Path(config['task_snapshot'])
     return value if value.is_absolute() else PACKAGE_ROOT.parent/value
 
@@ -141,7 +144,8 @@ class EnvironmentSpec:
         result = cls(**value)
         if result.adapter not in ('prime_v1', 'legacy_mastermind', 'resource_prime_v1', 'resource_prime_v1_controlled'):
             raise ValueError('unknown trusted environment adapter')
-        if result.adapter == 'prime_v1' and result.id not in REGISTRY:
+        from .math_corpus_provider import is_corpus_id
+        if result.adapter == 'prime_v1' and result.id not in REGISTRY and not is_corpus_id(result.id):
             raise ValueError('unknown environment source')
         if not 1<=result.max_turns<=128 or not 1<=result.num_samples<=100000 or not 1<=result.max_output_tokens<=32768:
             raise ValueError('environment budget')
@@ -150,6 +154,9 @@ class EnvironmentSpec:
         if result.adapter in ('resource_prime_v1','resource_prime_v1_controlled'):
             from .resource_session import validate_outer_spec
             validate_outer_spec(result.to_dict())
+        if is_corpus_id(result.id):
+            from .math_corpus_provider import validate
+            validate(result)
         return result
 
     def to_dict(self):
@@ -164,6 +171,10 @@ def _source_hash(spec):
         roots = [legacy/'rollouts/envs']
         if research.exists():
             roots.append(research/'environments')
+    from .math_corpus_provider import is_corpus_id
+    if is_corpus_id(spec.id):
+        from .math_corpus_provider import validate
+        validate(spec,PACKAGE_ROOT.parent)
     files = []
     for i, root in enumerate(roots):
         if not root.exists():
@@ -175,6 +186,8 @@ def _source_hash(spec):
     if snapshot:
         files.append(('tasks', _hash(_snapshot_path(spec.config))))
     files.append(('adapter',_hash(__file__)))
+    if is_corpus_id(spec.id):
+        files.extend((name,_hash(PACKAGE_ROOT/name)) for name in ('math_corpus_provider.py','math_corpus_assets.py','math_corpus.py'))
     if spec.config.get('prolog_session_revision') is not None:
         from .native_common_dispatch import validate_prolog_binding
         validate_prolog_binding(spec)
@@ -203,6 +216,8 @@ def build_spec(source_id, config=None, legacy_root=LEGACY_ROOT, research_root=No
     if research_root:
         config['research_root'] = str(research_root)
     environment_version='prime-v1-2-native-mcp-errors' if config.get('tool_error_policy')=='native-mcp-toolerror-observation-v1' else 'prime-v1-1'
+    from .math_corpus_provider import is_corpus_id,VERSION as corpus_version
+    if is_corpus_id(source_id):environment_version=corpus_version
     spec = EnvironmentSpec(source_id, version=environment_version, config=config, num_samples=num_samples,
                            max_turns=max_turns, max_output_tokens=max_output_tokens,
                            success_reward=success_reward)
@@ -235,7 +250,8 @@ def _taskset(spec):
         for p in (research/'environments').glob('*/*'):
             if p.is_dir():
                 sys.path.insert(0,str(p))
-    module, name = REGISTRY[spec.id]
+    from .math_corpus_provider import is_corpus_id,taskset_source
+    module,name=taskset_source(spec) if is_corpus_id(spec.id) else REGISTRY[spec.id]
     cls = getattr(importlib.import_module(module+'.taskset'), name)
     config_cls = concrete_type(cls, TasksetConfig)
     if config_cls is None:
@@ -333,7 +349,8 @@ class EnvironmentSession:
         from verifiers.v1.state import state_cls
         from verifiers.v1.runtimes import DockerConfig,DockerRuntime,SubprocessConfig,SubprocessRuntime
         from mcp.server.fastmcp import FastMCP
-        sandbox=self.task.NEEDS_CONTAINER or self.spec.id not in SINGLE_TEXT|TOOL_SOURCES
+        from .math_corpus_provider import is_corpus_id
+        sandbox=self.task.NEEDS_CONTAINER or (self.spec.id not in SINGLE_TEXT|TOOL_SOURCES and not is_corpus_id(self.spec.id))
         if sandbox:
             self.runtime=DockerRuntime(DockerConfig(image=self.task.data.image or 'python:3.12-slim',
                 workdir=self.task.data.workdir or '/app',cpu=1,memory=2))

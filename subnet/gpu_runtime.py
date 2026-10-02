@@ -11,10 +11,13 @@ from .environments import create_session
 PROFILE_VERSION='cuda-bf16-eager-sm86-v1'
 
 class GPURuntime(Runtime):
-    def __init__(self,checkpoint,files,environment,harness):
+    def __init__(self,checkpoint,files,environment,harness,*,runtime_revision=PROFILE_VERSION):
+        from .backend_profiles import profile
+        revision,approved_profile,_=profile(runtime_revision)
         if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':raise ValueError('GPU deterministic CUBLAS workspace profile missing')
-        if not torch.cuda.is_available() or torch.cuda.get_device_capability()!=(8,6):
-            raise ValueError('approved CUDA sm86 device unavailable')
+        if not torch.cuda.is_available() or torch.cuda.get_device_capability()!=tuple(approved_profile['sm']):
+            raise ValueError('approved CUDA device unavailable for '+revision)
+        self.runtime_revision=revision
         torch.set_num_threads(2)
         torch.backends.cuda.matmul.allow_tf32=False;torch.backends.cudnn.allow_tf32=False
         torch.use_deterministic_algorithms(True)

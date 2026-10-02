@@ -10,7 +10,10 @@ MAX_UPLOAD = 100_000_000
 class UploadBudgetExceeded(ValueError):
     """A complete candidate cannot fit the bounded cumulative object."""
 
-def pack(batches):
+def pack(batches, *, budget=None):
+    from .artifact_budget import LEGACY,LONG
+    budget=dict(LEGACY if budget is None else budget)
+    if budget not in (LEGACY,LONG):raise ValueError('artifact budget')
     out = io.BytesIO()
     manifest = []
     with zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED) as z:
@@ -25,11 +28,14 @@ def pack(batches):
                 refs.append(row)
             manifest.append(dict(batch=batch, arrays=refs))
         z.writestr('manifest.json', canonical(manifest))
-    if out.tell() > MAX_UPLOAD:
+    with zipfile.ZipFile(io.BytesIO(out.getvalue())) as archive:
+        if sum(e.file_size for e in archive.infolist())>budget['raw_bytes']:
+            raise UploadBudgetExceeded('raw upload exceeds budget')
+    if out.tell() > budget['compressed_bytes']:
         raise UploadBudgetExceeded('upload exceeds budget')
     return out.getvalue()
 
-def bounded_tensor(data):
+def bounded_tensor(data, *, max_rows=512):
     """Validate NPY framing before NumPy can allocate its declared shape."""
     stream=io.BytesIO(data)
     version=np.lib.format.read_magic(stream)
@@ -37,7 +43,8 @@ def bounded_tensor(data):
     elif version==(2,0):reader=np.lib.format.read_array_header_2_0
     else:raise ValueError('unsupported tensor NPY version')
     shape,fortran_order,dtype=reader(stream,max_header_size=10000)
-    if dtype!=np.dtype(np.float32) or len(shape)!=2 or any(type(n) is not int or n<=0 for n in shape) or shape[0]>512 or shape[1]>200000:
+    if type(max_rows)is not int or max_rows not in (512,2048):raise ValueError('tensor row budget')
+    if dtype!=np.dtype(np.float32) or len(shape)!=2 or any(type(n) is not int or n<=0 for n in shape) or shape[0]>max_rows or shape[1]>200000:
         raise ValueError('tensor header shape or dtype')
     expected=shape[0]*shape[1]*dtype.itemsize
     if len(data)-stream.tell()!=expected:
@@ -49,15 +56,21 @@ def bounded_tensor(data):
     return value
 
 
-def unpack(data, *, max_upload=MAX_UPLOAD):
-    if type(max_upload) is not int or not 0 < max_upload <= 250_000_000:
+def unpack(data, *, max_upload=MAX_UPLOAD, budget=None):
+    from .artifact_budget import LEGACY,LONG
+    if budget is not None:
+        budget=dict(budget)
+        if budget not in (LEGACY,LONG) or max_upload!=MAX_UPLOAD:raise ValueError('artifact budget')
+        max_upload=budget['compressed_bytes']
+    else:budget=dict(LEGACY)
+    if type(max_upload) is not int or not 0 < max_upload <= (LONG['compressed_bytes'] if budget==LONG else 250_000_000):
         raise ValueError('compressed budget bounds')
     if len(data) > max_upload:
         raise ValueError('compressed upload budget')
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         entries = z.infolist()
         names = [e.filename for e in entries]
-        if len(names) != len(set(names)) or len(names) > 4096 or sum(e.file_size for e in entries) > 500_000_000:
+        if len(names) != len(set(names)) or len(names) > 4096 or sum(e.file_size for e in entries) > budget['raw_bytes']:
             raise ValueError('archive budget or duplicate entries')
         if any('/' in n or '..' in n for n in names):
             raise ValueError('archive paths')
@@ -77,8 +90,8 @@ def unpack(data, *, max_upload=MAX_UPLOAD):
                     if name in referenced or name not in names:
                         raise ValueError('tensor reference')
                     referenced.add(name)
-                    value = bounded_tensor(z.read(name))
-                    if value.dtype != np.float32 or value.ndim != 2 or value.shape[0] > 512 or value.shape[1] > 200000:
+                    value = bounded_tensor(z.read(name),max_rows=budget['tensor_rows'])
+                    if value.dtype != np.float32 or value.ndim != 2 or value.shape[0] > budget['tensor_rows'] or value.shape[1] > 200000:
                         raise ValueError('tensor shape')
                     row.append(value)
                 arrays.append(row)

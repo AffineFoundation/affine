@@ -140,7 +140,9 @@ class Gateway:
                     _, _, epoch, miner = parts.path.split('/')
                     self.connection.settimeout(30)
                     size = int(self.headers['Content-Length'])
-                    if not 0 < size <= 100_000_000:
+                    with gateway.lock:
+                        upload_limit=gateway.epochs.get(epoch,{}).get('upload_limit',100_000_000)
+                    if not 0 < size <= upload_limit:
                         return self.reply(413, b'upload size')
                     data = self.rfile.read(size)
                     if len(data) != size:
@@ -176,11 +178,14 @@ class Gateway:
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
 
-    def open(self, epoch, miners, deadline):
+    def open(self, epoch, miners, deadline, *, upload_limit=100_000_000):
+        if type(upload_limit)is not int or upload_limit not in (100_000_000,2_000_000_000):
+            raise ValueError('upload limit policy')
         with self.lock:
             if epoch in self.epochs:
                 raise ValueError('epoch already exists')
             self.epochs[epoch] = dict(closed=False, miners=set(miners), uploads={},transport='direct-r2-v1' if self.direct_r2 else 'gateway-v1',start=int(time.time()),deadline=deadline)
+            if upload_limit!=100_000_000:self.epochs[epoch]['upload_limit']=upload_limit
             caps = {}
             for miner in miners:
                 if self.direct_r2:
@@ -216,7 +221,9 @@ class Gateway:
                 for miner in sorted(state['miners']):
                     if miner in snapshots or miner in rejections:continue
                     key=f'private/{epoch}/staging/{miner}.zip'
-                    try:snapshot=self.bucket.snapshot(key)
+                    try:
+                        if 'upload_limit' in state:snapshot=self.bucket.snapshot(key,limit=state['upload_limit'])
+                        else:snapshot=self.bucket.snapshot(key)
                     except SubmissionPolicyError as exc:
                         rejections[miner]=str(exc);self.persist();continue
                     if snapshot is None:

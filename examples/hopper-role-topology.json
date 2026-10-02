@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "status": "prospective-not-deployed",
+  "chain_transactions": false,
+  "shared_artifact_store": "operator-configured-private-R2-bucket",
+  "model_selection": "qualified-pinned-checkpoint-required",
+  "roles": {
+    "validator": {
+      "placement": "current-operator-host-Arbos.life",
+      "gpu_required": false,
+      "functions": [
+        "epoch-publication",
+        "registration-read",
+        "verification-report-admission",
+        "duplicate-zero-scoring",
+        "proposed-weight-publication",
+        "checkpoint-handover"
+      ],
+      "chain_weight_submission": false
+    },
+    "verifier": {
+      "placement": "Lium",
+      "preferred_gpu": "H200",
+      "fallback_gpu": "H100",
+      "minimum_gpu_count": 1,
+      "scale": "multiple-independent-workers",
+      "initial_worker_count": 2,
+      "functions": [
+        "claim-frozen-batch",
+        "inference-proof-verification",
+        "native-math-grading",
+        "authenticated-result-publication"
+      ],
+      "credentials": "role-scoped-artifact-read-and-report-write",
+      "queue_requires": [
+        "atomic-claim",
+        "expiring-lease",
+        "retry",
+        "idempotent-result-admission"
+      ],
+      "gpu_profile_qualification_required": true
+    },
+    "trainer": {
+      "placement": "separate-Lium-node",
+      "preferred_gpu": "H200",
+      "fallback_gpu": "H100",
+      "gpu_count": "determined-by-real-model-memory-qualification",
+      "functions": [
+        "consume-authenticated-accepted-pairs",
+        "full-model-training",
+        "immutable-checkpoint-publication"
+      ],
+      "credentials": "accepted-batch-read-and-checkpoint-write",
+      "gpu_profile_qualification_required": true,
+      "multi_gpu_optimizer_implementation_required_if_selected": true
+    },
+    "evaluator": {
+      "placement": "separate-Lium-node",
+      "preferred_gpu": "H200",
+      "minimum_gpu_count": 1,
+      "functions": ["fixed-heldout-evaluation-before-and-after-training", "authenticated-performance-history-publication"],
+      "credentials": "checkpoint-read-and-evaluation-report-write",
+      "gpu_profile_qualification_required": true
+    },
+    "test_miner": {
+      "placement": "separate-Lium-node",
+      "preferred_gpu": "H200",
+      "fallback_gpu": "H100",
+      "minimum_gpu_count": 1,
+      "functions": [
+        "signed-manifest-admission",
+        "checkpoint-download",
+        "model-sampling",
+        "proof-and-probability-batch-generation",
+        "private-cumulative-upload"
+      ],
+      "credentials": "registered-miner-key-and-encrypted-upload-capability",
+      "gpu_profile_qualification_required": true
+    }
+  },
+  "deployment_gates": [
+    "qualify-Hopper-runtime-source-model-and-numerical-profile",
+    "implement-and-test-distributed-verifier-job-claims",
+    "authenticate-and-deduplicate-worker-reports",
+    "qualify-trainer-memory-and-full-optimizer",
+    "run-separate-role-end-to-end-nonpayable-epochs",
+    "verify-no-chain-transactions"
+  ],
+  "rental_authorized_by_this_template": false
+}

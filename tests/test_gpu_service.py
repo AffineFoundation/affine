@@ -3,12 +3,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch,Mock
 from subnet.gpu_service import heldout,evaluate,contract
+from subnet.backend_profiles import for_config
 
 class GPUFixedHeldout(unittest.TestCase):
     def setUp(self):
         self.row={'spec':{'id':'env','num_samples':4,'max_output_tokens':512,'version':'fixed-v1'},'indices':[0,1],'harness':{'version':'text-tools-v1'}}
         self.config={'environments':[], 'heldout':[dict(env_id='env',indices=[2,3],seed=100,harness=dict(version='text-tools-v1',policy='autoregressive',max_output_tokens=128))]}
         self.manifest={'epoch':'nonpayable-gpu-test','checkpoint':{'id':'approved'},'environments':[dict(env_id='env',**self.row)],'harness_source_hash':'pinned'}
+        revision,profile,policy=for_config({})
+        self.manifest.update(model_runtime_revision=revision,backend_profile=profile,numerical_policy=policy)
     def test_inactive_epoch_group_cannot_train_on_fixed_heldout(self):
         self.manifest['environments'][0]['indices']=[];self.config['heldout'][0]['indices']=[1]
         with patch('subnet.gpu_service.definitions',return_value=[self.row]),self.assertRaisesRegex(ValueError,'fixed heldout binding'):heldout(self.config,self.manifest)
@@ -20,6 +23,13 @@ class GPUFixedHeldout(unittest.TestCase):
         self.assertEqual([rounds[n][0]['indices'] for n in range(4)],[[0],[],[1],[]])
         self.assertEqual([rounds[n][1]['indices'] for n in range(4)],[[],[0],[],[1]])
         self.assertTrue(all(set(r['indices'])<={0,1} for rows in rounds for r in rows))
+    def test_hopper_contract_and_artifact_policy_are_explicit(self):
+        with patch('subnet.gpu_service.definitions',return_value=[self.row]):
+            value=contract(dict(source_bundle={},heldout=[],model_runtime_revision='cuda-bf16-eager-sm90-v1',artifact_policy='full-vocabulary-long-v1'),0)
+        self.assertEqual(value['backend_profile']['sm'],[9,0])
+        self.assertEqual(value['numerical_policy']['logprob_atol'],0.00001)
+        self.assertEqual(value['artifact_policy'],'full-vocabulary-long-v1')
+
     def test_unconfigured_rotation_retains_historical_indices(self):
         with patch('subnet.gpu_service.definitions',return_value=[self.row]):
             value=contract(dict(source_bundle={},heldout=[]),17)

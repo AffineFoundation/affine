@@ -1,0 +1,202 @@
+"""Atomic operator-side role leases. GPU identity authentication is not sampling proof."""
+import base64
+import hashlib
+import json
+import math
+import secrets
+import sqlite3
+import time
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from nacl.signing import VerifyKey
+from .storage import canonical
+
+
+def digest(value):
+    return hashlib.sha256(canonical(value)).hexdigest()
+
+
+def authenticate(envelope, identity):
+    if envelope.get('signer') != identity:
+        raise ValueError('signer')
+    VerifyKey(bytes.fromhex(identity)).verify(canonical(envelope['payload']), base64.b64decode(envelope['signature'], validate=True))
+    return envelope['payload']
+
+
+class Coordinator:
+    """SQLite is the claim authority; R2 holds immutable history, never lock files.
+
+    One SQLite database on the validator host is shared by HTTP handler threads.
+    BEGIN IMMEDIATE serializes selection and lease replacement across processes.
+    Workers possess an individual signing seed, never an operator or bucket key.
+    """
+    def __init__(self, path, authority, workers, lease_seconds=300, max_attempts=3, clock=time.time):
+        if not 10 <= lease_seconds <= 86400 or not 1 <= max_attempts <= 10:
+            raise ValueError('lease bounds')
+        self.path = str(path); self.authority = authority; self.workers = workers
+        self.lease_seconds = lease_seconds; self.max_attempts = max_attempts; self.clock = clock
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with self.transaction() as db:
+            db.executescript('''
+            CREATE TABLE IF NOT EXISTS jobs (
+              id TEXT PRIMARY KEY, digest TEXT UNIQUE NOT NULL, envelope TEXT NOT NULL,
+              role TEXT NOT NULL, expires REAL NOT NULL, status TEXT NOT NULL,
+              attempt INTEGER NOT NULL DEFAULT 0, worker TEXT, token TEXT, lease REAL,
+              report TEXT, report_digest TEXT, report_request TEXT);
+            CREATE TABLE IF NOT EXISTS requests (worker TEXT, nonce TEXT, expires REAL,
+              PRIMARY KEY(worker,nonce));
+            CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+              job TEXT, at REAL, kind TEXT, detail TEXT);
+            ''')
+        Path(path).chmod(0o600)
+
+    @contextmanager
+    def transaction(self):
+        db = sqlite3.connect(self.path, timeout=30, isolation_level=None)
+        db.row_factory = sqlite3.Row
+        try:
+            db.execute('BEGIN IMMEDIATE'); yield db; db.commit()
+        except BaseException:
+            db.rollback(); raise
+        finally:
+            db.close()
+
+    def event(self, db, identifier, kind, **detail):
+        db.execute('INSERT INTO events(job,at,kind,detail) VALUES(?,?,?,?)',
+                   (identifier, self.clock(), kind, canonical(detail).decode()))
+
+    def enqueue(self, envelope):
+        job = authenticate(envelope, self.authority)
+        manifest = authenticate(job['manifest'], self.authority)
+        from .backend_profiles import resolve
+        resolve(manifest)
+        now = self.clock()
+        if manifest.get('payable') is not False or not str(manifest['epoch']).startswith('nonpayable-'):
+            raise ValueError('nonpayable queue only')
+        if job.get('schema') != 1 or job.get('role') != 'verify' or not str(job['job_id']).replace('-','').replace('_','').isalnum():
+            raise ValueError('queue role/job')
+        if any(type(job.get(k)) not in (int,float) or not math.isfinite(job[k]) for k in ('created_at','expires_at')) or not 0 < job['expires_at']-job['created_at'] <= 86400:
+            raise ValueError('signed job lifetime')
+        submissions = job.get('submissions', [])
+        frozen = manifest.get('audit_frozen_receipts', {})
+        allowed = {r['sha256'] for r in frozen.values()}
+        if not submissions or len(submissions) > 256 or any(s.get('sha256') not in allowed for s in submissions):
+            raise ValueError('frozen submission binding')
+        with self.transaction() as db:
+            old = db.execute('SELECT digest FROM jobs WHERE id=?', (job['job_id'],)).fetchone()
+            if old:
+                if old['digest'] != digest(job): raise ValueError('immutable job collision')
+                return job['job_id']
+            if not job['created_at'] <= now < job['expires_at']: raise ValueError('signed job lifetime')
+            db.execute('INSERT INTO jobs(id,digest,envelope,role,expires,status) VALUES(?,?,?,?,?,?)',
+                (job['job_id'],digest(job),canonical(envelope).decode(),job['role'],job['expires_at'],'queued'))
+            self.event(db, job['job_id'], 'queued')
+        return job['job_id']
+
+    def request(self, envelope):
+        worker = envelope.get('signer')
+        if worker not in self.workers: raise ValueError('unknown worker')
+        request = authenticate(envelope, worker); now = self.clock()
+        timestamp = request.get('at'); nonce = request.get('nonce')
+        if type(timestamp) not in (int,float) or not math.isfinite(timestamp) or abs(timestamp-now) > 60 or not isinstance(nonce,str) or not 16 <= len(nonce) <= 128:
+            raise ValueError('request freshness')
+        with self.transaction() as db:
+            db.execute('DELETE FROM requests WHERE expires<?', (now,))
+            try: db.execute('INSERT INTO requests VALUES(?,?,?)', (worker,nonce,now+120))
+            except sqlite3.IntegrityError: raise ValueError('request replay') from None
+            action = request.get('action')
+            if action == 'claim':
+                role = request.get('role')
+                if role not in self.workers[worker] or role != 'verify': raise ValueError('worker role')
+                db.execute("UPDATE jobs SET status='expired' WHERE status IN ('queued','leased') AND expires<=?", (now,))
+                db.execute("UPDATE jobs SET status='failed' WHERE status='leased' AND lease<=? AND attempt>=?", (now,self.max_attempts))
+                row = db.execute("SELECT * FROM jobs WHERE role=? AND expires>? AND attempt<? AND (status='queued' OR (status='leased' AND lease<=?)) ORDER BY rowid LIMIT 1", (role,now,self.max_attempts,now)).fetchone()
+                if not row: return {'claim':None}
+                token = secrets.token_hex(32); lease = min(now+self.lease_seconds,row['expires'])
+                db.execute("UPDATE jobs SET status='leased',worker=?,token=?,lease=?,attempt=attempt+1 WHERE id=?", (worker,token,lease,row['id']))
+                self.event(db,row['id'],'claimed',worker=worker,attempt=row['attempt']+1,lease_until=lease)
+                return {'claim':dict(job=json.loads(row['envelope']),job_sha256=row['digest'],token=token,lease_until=lease,attempt=row['attempt']+1)}
+            row = db.execute('SELECT * FROM jobs WHERE id=?', (request.get('job_id'),)).fetchone()
+            if not row: raise ValueError('unknown job')
+            if row['worker'] != worker or row['token'] != request.get('token'): raise ValueError('stale lease identity')
+            if action == 'report' and row['status'] == 'complete':
+                if digest(request['report']) != row['report_digest']: raise ValueError('conflicting duplicate report')
+                return {'accepted':True,'duplicate':True}
+            if row['status'] != 'leased' or now >= row['lease'] or now >= row['expires']:
+                raise ValueError('expired lease')
+            if action == 'renew':
+                lease = min(now+self.lease_seconds,row['expires'])
+                db.execute('UPDATE jobs SET lease=? WHERE id=?', (lease,row['id']))
+                self.event(db,row['id'],'renewed',worker=worker,attempt=row['attempt'],lease_until=lease)
+                return {'lease_until':lease}
+            if action == 'fail':
+                status = 'queued' if row['attempt'] < self.max_attempts else 'failed'
+                db.execute('UPDATE jobs SET status=? WHERE id=?', (status,row['id']))
+                self.event(db,row['id'],'worker_failed',worker=worker,attempt=row['attempt'])
+                return {'status':status}
+            if action != 'report': raise ValueError('request action')
+            report = request['report']; job = json.loads(row['envelope'])['payload']; manifest = job['manifest']['payload']
+            self.validate_report(report,job,manifest,row['digest'])
+            db.execute("UPDATE jobs SET status='complete',report=?,report_digest=?,report_request=? WHERE id=?", (canonical(report).decode(),digest(report),canonical(envelope).decode(),row['id']))
+            self.event(db,row['id'],'completed',worker=worker,report_sha256=digest(report))
+            return {'accepted':True,'duplicate':False}
+
+    def validate_report(self, report, job, manifest, job_digest):
+        expected = dict(job_id=job['job_id'],job_sha256=job_digest,operator=self.authority,
+                        role=job['role'],epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],
+                        source_files=job['source_files'],runtime_versions=job['runtime_versions'],
+                        backend_profile=manifest['backend_profile'],numerical_policy=manifest['numerical_policy'],
+                        chain_transactions=False,success=True)
+        if any(canonical(report.get(k)) != canonical(v) for k,v in expected.items()):
+            raise ValueError('report job/epoch/checkpoint/source/runtime binding')
+        completed = report.get('completed_at')
+        if type(completed) not in (int,float) or not math.isfinite(completed) or not job['created_at'] <= completed < job['expires_at'] or completed > self.clock()+5:
+            raise ValueError('report signed deadline')
+        if [r.get('submission_sha256') for r in report.get('audits',[])] != [r['sha256'] for r in job['submissions']]:
+            raise ValueError('report frozen artifact binding')
+        if any(r.get('epoch') != manifest['epoch'] or any(b.get('epoch') != manifest['epoch'] or b.get('checkpoint') != manifest['checkpoint']['id'] for b in r.get('accepted', [])) for r in report['audits']):
+            raise ValueError('audit epoch/checkpoint binding')
+
+    def status(self, identifier):
+        with self.transaction() as db:
+            row = db.execute('SELECT status,report,report_digest,worker,attempt FROM jobs WHERE id=?',(identifier,)).fetchone()
+            if not row: raise ValueError('unknown job')
+            value = dict(row); value['report'] = json.loads(value['report']) if value['report'] else None
+            return value
+
+    def archive(self, identifier, bucket, prefix):
+        """Operator-only conditional creation. No permanent R2 key leaves this host."""
+        with self.transaction() as db:
+            row = db.execute('SELECT * FROM jobs WHERE id=?',(identifier,)).fetchone()
+            events = [dict(r) for r in db.execute('SELECT * FROM events WHERE job=? ORDER BY sequence',(identifier,))]
+        objects = {'job.json': json.loads(row['envelope'])}
+        if row['status'] == 'complete':
+            objects.update({'report.json':json.loads(row['report']), 'worker-report.json':json.loads(row['report_request']), 'history.json':dict(worker=row['worker'],attempt=row['attempt'],events=events,chain_transactions=False)})
+        for name,value in objects.items():
+            key = prefix.rstrip('/')+'/'+identifier+'/'+name; body = canonical(value)
+            try:
+                bucket.client.put_object(Bucket=bucket.name,Key=key,Body=body,ContentType='application/json',IfNoneMatch='*')
+            except Exception as error:
+                code = getattr(error,'response',{}).get('Error',{}).get('Code')
+                if code not in ('PreconditionFailed','412'): raise
+                if bucket.get(key) != body: raise ValueError('immutable role history collision') from None
+
+
+class CoordinatorServer(ThreadingHTTPServer):
+    daemon_threads = True
+    def __init__(self, address, coordinator, sign):
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self,*args): pass
+            def do_POST(self):
+                try:
+                    self.connection.settimeout(30)
+                    size = int(self.headers.get('Content-Length','0'))
+                    if self.path != '/request' or not 0 < size <= 16_000_000: raise ValueError('request bounds')
+                    result = coordinator.request(json.loads(self.rfile.read(size)))
+                    data = canonical(sign(result)); code = 200
+                except Exception:
+                    data = b'{"error":"request rejected"}'; code = 403
+                self.send_response(code); self.send_header('Content-Type','application/json')
+                self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
+        super().__init__(address,Handler)

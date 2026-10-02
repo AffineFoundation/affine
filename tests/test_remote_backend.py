@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from subnet.remote_backend import RemoteJobs,RemoteController,role_time_budget
 from nacl.signing import SigningKey
 import base64
-from subnet.backend_jobs import BACKEND_PROFILE,NUMERICAL_POLICY,canonical,signed
+from subnet.backend_jobs import BACKEND_PROFILE,NUMERICAL_POLICY,REVISION,canonical,signed
 import hashlib
 
 class RemoteReportBinding(unittest.TestCase):
@@ -13,7 +13,7 @@ class RemoteReportBinding(unittest.TestCase):
         self.key=SigningKey.generate();self.operator=self.key.verify_key.encode().hex()
         self.folder=tempfile.TemporaryDirectory();self.addCleanup(self.folder.cleanup)
         self.jobs=RemoteJobs.__new__(RemoteJobs);self.jobs.controller=SimpleNamespace(authority=SimpleNamespace(id=self.operator));self.jobs.state=Path(self.folder.name)
-        self.manifest=dict(epoch='nonpayable-test',checkpoint={'id':'approved'})
+        self.manifest=dict(epoch='nonpayable-test',checkpoint={'id':'approved'},model_runtime_revision=REVISION,backend_profile=BACKEND_PROFILE,numerical_policy=NUMERICAL_POLICY)
         job=dict(job_id='same-job',role='verify',created_at=10,expires_at=30)
         self.envelope=dict(payload=job,signer=self.operator,signature=base64.b64encode(self.key.sign(canonical(job)).signature).decode())
         digest=hashlib.sha256(canonical(job)).hexdigest()
@@ -22,7 +22,7 @@ class RemoteReportBinding(unittest.TestCase):
         (self.jobs.state/'same-job-job.json').write_text(json.dumps(self.envelope))
     def test_approved_report_binding(self):self.assertIs(self.jobs.checked(self.report,self.prior,self.manifest),self.report)
     def test_changed_identity_sources_or_runtime_is_rejected(self):
-        for name,value in [('job_id','another-job'),('source_files',{'a':'bad'}),('runtime_versions',{'torch':'unapproved'}),('chain_transactions',True),('backend_profile',{'device':'cpu'})]:
+        for name,value in [('job_id','another-job'),('source_files',{'a':'bad'}),('runtime_versions',{'torch':'unapproved'}),('chain_transactions',True),('backend_profile',{'device':'cpu'}),('backend_profile',dict(BACKEND_PROFILE,tf32=0)),('success',1)]:
             report=copy.deepcopy(self.report);report[name]=value
             with self.subTest(name=name),self.assertRaises(ValueError):self.jobs.checked(report,self.prior,self.manifest)
     def test_live_prior_job_is_polled_instead_of_launched_again(self):

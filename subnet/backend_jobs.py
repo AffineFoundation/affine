@@ -22,7 +22,7 @@ BACKEND_PROFILE = dict(device='cuda', dtype='bfloat16', attention='eager', sm=[8
     tf32=False, deterministic_algorithms=True, cublas_workspace_config=':4096:8',
     native_toploc_threads=2, torch_threads=2)
 SOURCE_FILES = tuple('subnet/'+n+'.py' for n in
-    ('backend_jobs','gpu_runtime','model','harness','environments','proofs','batches','protocol'))
+    ('backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol'))
 ROLES = {'mine','verify','train','evaluate','upload'}
 HEAD_POLICY='frozen-feature-head-adamw-v1'
 FULL_POLICY='bf16-full-adamw-checkpointed-v1'
@@ -142,7 +142,10 @@ def mine_cumulative(runtime,manifest,job,upload,clock=None,allow_empty=False):
                 found=classes['positive']+classes['negative']
                 batch=dict(schema=2,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],env_id=definition['env_id'],environment_version=selected.spec.version,index=index,sample_index=index,rollouts=[r for r,a in found])
                 candidate=batches+[(batch,[a for r,a in found])]
-                try:candidate_data=pack(candidate)
+                from .artifact_budget import for_manifest
+                try:
+                    candidate_data=(pack(candidate,budget=for_manifest(manifest))
+                        if manifest.get('artifact_policy') is not None else pack(candidate))
                 except UploadBudgetExceeded:
                     search[-1]['submission_status']='exceeds_cumulative_upload_budget'
                     if batches:capacity_reached=True;break
@@ -166,7 +169,10 @@ def _validate(envelope, authority, now=None, *, resolve_source):
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',job.get('job_id','')):raise ValueError('job ID')
     if any(type(job.get(k)) not in (int,float) for k in ('created_at','expires_at')) or not job['created_at']<=now<job['expires_at'] or job['expires_at']-job['created_at']>86400:raise ValueError('job expired/time budget')
     manifest=signed(job['manifest'],authority)
-    if manifest.get('model_runtime_revision')!=REVISION or manifest.get('numerical_policy')!=NUMERICAL_POLICY or manifest.get('backend_profile')!=BACKEND_PROFILE:raise ValueError('GPU profile or numerical policy')
+    from .backend_profiles import resolve
+    resolve(manifest)
+    from .artifact_budget import for_manifest
+    for_manifest(manifest)
     cp=manifest['checkpoint'];identifier=file_map(cp['files'])
     if cp.get('id')!=identifier:raise ValueError('checkpoint identity')
     urls=cp.get('read_urls',{})
@@ -241,7 +247,8 @@ def checkpoint(manifest, workspace, cache=None):
 def audit(data, manifest, runtime):
     from .batches import unpack
     from .protocol import entries, entry, classification, sample_key,harness_for
-    definitions=entries(manifest);records=unpack(data)
+    from .artifact_budget import for_manifest
+    definitions=entries(manifest);records=unpack(data,budget=for_manifest(manifest))
     if len(records)>manifest.get('max_batches',4):raise ValueError('batch quota')
     outcomes=[];accepted=[];pairs=[];seen=set()
     for number,(batch,arrays) in enumerate(records):
@@ -322,6 +329,11 @@ class FreshSourceFinder(importlib.abc.MetaPathFinder):
         return importlib.util.spec_from_file_location(fullname,location,loader=Loader())
 
 def install_source_loader(root):
+    # Pure admission helpers are used before workspace/artifact access. Their
+    # pinned bytes have now been checked; discard bootstrap imports so compute
+    # admission reloads them through the authenticated fresh-source finder.
+    for module_name in ('subnet.backend_profiles','subnet.artifact_budget'):
+        sys.modules.pop(module_name,None)
     for name in SOURCE_FILES:
         module_name=name[:-3].replace('/','.')
         if module_name in sys.modules and module_name!='subnet.backend_jobs':
@@ -347,6 +359,16 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         if version(name)!=expected:raise ValueError('runtime package mismatch')
     if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':raise ValueError('CUDA environment profile')
     install_source_loader(root)
+    from .backend_profiles import resolve
+    revision,backend_profile,numerical_policy=resolve(manifest)
+    from .artifact_budget import for_manifest
+    for_manifest(manifest)
+    from .task_assets import hydrate_manifest
+    asset_root=Path(workspace)/'task-assets'
+    if manifest.get('task_assets'):
+        asset_root.mkdir(parents=True,exist_ok=True);asset_root.chmod(0o700)
+        os.environ['AFFINE_MATH_CORPUS_ASSET_ROOT']=str(asset_root.resolve())
+    hydrate_manifest(asset_root,manifest)
     # Resolve against authenticated fresh source before any artifact, workspace,
     # checkpoint or model is opened. Public validate() remains fully strict.
     if job.get('mining_subset') is not None:mining_definitions(manifest,job)
@@ -358,7 +380,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     approved=checkpoint(manifest,workspace,cache)
     report=dict(schema=1,job_id=job['job_id'],role=job['role'],operator=authority,
         job_sha256=hashlib.sha256(canonical(job)).hexdigest(),checkpoint=manifest['checkpoint']['id'],
-        epoch=manifest['epoch'],backend_profile=BACKEND_PROFILE,numerical_policy=NUMERICAL_POLICY,
+        epoch=manifest['epoch'],backend_profile=backend_profile,numerical_policy=numerical_policy,
         source_files=job['source_files'],runtime_versions=job['runtime_versions'],
         chain_transactions=False,full_model_finetune=False,execution_resources_enforced=False)
     if job['role']=='upload':
@@ -373,7 +395,11 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         from .gpu_runtime import GPURuntime
         factory=runtime_factory or GPURuntime;definitions=entries(manifest)
         first,initial_harness=initial_configuration(manifest,job)
-        runtime=factory(approved,manifest['checkpoint']['files'],first['spec'],initial_harness)
+        if runtime_factory is None:
+            runtime=factory(approved,manifest['checkpoint']['files'],first['spec'],initial_harness,
+                runtime_revision=revision)
+        else:
+            runtime=factory(approved,manifest['checkpoint']['files'],first['spec'],initial_harness)
         if job['role']=='mine':
             from .batches import pack
             import requests
@@ -386,7 +412,8 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         elif job['role'] in ('verify','train'):
             reports=[];pairs=[]
             for i,obj in enumerate(job['submissions']):
-                path=out/('submission-'+str(i)+'.zip');get_object(obj['url'],obj['sha256'],path,100_000_000)
+                from .artifact_budget import for_manifest
+                path=out/('submission-'+str(i)+'.zip');get_object(obj['url'],obj['sha256'],path,for_manifest(manifest)['compressed_bytes'])
                 result,verified=audit(path.read_bytes(),manifest,runtime);reports.append(result);pairs.extend(verified)
             report['audits']=reports
             if job['role']=='train':

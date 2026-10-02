@@ -6,7 +6,8 @@ import json
 import logging
 import time
 from pathlib import Path
-from .backend_jobs import REVISION,NUMERICAL_POLICY,BACKEND_PROFILE,FIXED_POLICY as FULL_POLICY
+from .backend_jobs import FIXED_POLICY as FULL_POLICY
+from .backend_profiles import resolve,for_config
 from .remote_backend import RemoteController,save
 from .storage import Bucket,Gateway,canonical
 from .chain import ChainAdapter
@@ -41,6 +42,7 @@ def owned_mining_job_fields(config,manifest,round_number):
     return fields
 
 def contract(config,round_number):
+    revision,profile,policy=for_config(config)
     rows=definitions(config);groups=config.get('training_groups') or [[r['spec']['id'] for r in rows]]
     selected=set(groups[round_number%len(groups)])
     if not selected or not selected<={r['spec']['id'] for r in rows}:raise ValueError('GPU training group')
@@ -60,8 +62,10 @@ def contract(config,round_number):
         definitions_all.append(dict(row,indices=indices,harness=project(row['harness'],indices,row['indices'])))
     registry={row['spec']['id']:dict(indices=row['indices'],harness=row['harness']) for row in rows}
     result=dict(sample_harness_registry=registry,heldout_indices={r['env_id']:r['indices'] for r in config['heldout']},duration=config.get('duration',300),environments=definitions_all,audit_policy={'mode':'full','version':1},
-        training_policy=FULL_POLICY,source_bundle=config['source_bundle'],model_runtime_revision=REVISION,numerical_policy=NUMERICAL_POLICY,
-        backend_profile=BACKEND_PROFILE,model_id=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'))
+        training_policy=FULL_POLICY,source_bundle=config['source_bundle'],model_runtime_revision=revision,numerical_policy=policy,
+        backend_profile=profile,model_id=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'))
+    if config.get('artifact_policy') is not None:result['artifact_policy']=config['artifact_policy']
+    if config.get('task_assets') is not None:result['task_assets']=config['task_assets']
     from .empty_epoch_policy import selected
     policy=selected(config,round_number)
     if policy is not None:result['operator_test_policy']=policy
@@ -78,6 +82,7 @@ def heldout(config,manifest):
     return rows
 
 def evaluate(controller,manifest,cache,phase,steps,config):
+    revision,profile,policy=resolve(manifest)
     label=manifest['epoch']+'-eval-'+phase
     rows=heldout(config,manifest);report=controller.jobs.run(label,'evaluate',manifest,cache,heldout=rows)
     records=[]
@@ -87,24 +92,28 @@ def evaluate(controller,manifest,cache,phase,steps,config):
         expected=sorted(zip(suite['indices'],suite['seeds']))
         observed=sorted((v['index'],v['seed']) for v in values+failures)
         if observed!=expected or any(v.get('verified') is not True or not isinstance(v.get('task_hash'),str) or len(v['task_hash'])!=64 for v in values):raise ValueError('remote heldout exact plan/hash completeness')
-        frozen=dict(env_id=suite['env_id'],environment=definition['spec'],harness=suite['harness'],indices=suite['indices'],seeds=suite['seeds'],model_runtime_revision=REVISION,backend_profile=BACKEND_PROFILE,runtime_versions=report['runtime_versions'],harness_source_hash=manifest['harness_source_hash'],source_files={n:report['source_files'][n] for n in ('subnet/model.py','subnet/gpu_runtime.py','subnet/environments.py','subnet/harness.py','subnet/proofs.py')})
+        frozen=dict(env_id=suite['env_id'],environment=definition['spec'],harness=suite['harness'],indices=suite['indices'],seeds=suite['seeds'],model_runtime_revision=revision,backend_profile=profile,runtime_versions=report['runtime_versions'],harness_source_hash=manifest['harness_source_hash'],source_files={n:report['source_files'][n] for n in ('subnet/model.py','subnet/gpu_runtime.py','subnet/environments.py','subnet/harness.py','subnet/proofs.py')})
         dataset=hashlib.sha256(canonical(frozen)).hexdigest();successes=sum(v['classification']=='positive' for v in values)
         run_id=label+'-'+suite['env_id'];stamp=report['completed_at']
         record=dict(run_id=run_id,experiment_id=config.get('evaluation_experiment_id','gpu-continuous-fixed128'),epoch_id=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],model=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'),
-            env_id=suite['env_id'],environment_version=definition['spec']['version'],model_runtime_revision=REVISION,
+            env_id=suite['env_id'],environment_version=definition['spec']['version'],model_runtime_revision=revision,
             harness=suite['harness']['version']+':autoregressive',harness_version=suite['harness']['version'],harness_config=suite['harness'],policy_kind='autoregressive',
             dataset_id=dataset,taskset_hash=dataset,seed=config.get('evaluation_seed',20260930),heldout_indices=suite['indices'],fixed_task_ids=[v['task_hash'] for v in values],
             count=len(values),completed_count=len(values),requested_count=len(suite['indices']),attempted_count=len(suite['indices']),successes=successes,
             mean_reward=sum(v['reward'] for v in values)/len(values) if values and not failures else None,status='complete' if not failures else 'error',evaluation_failures=failures,uncertainty=wilson(successes,len(values)) if not failures else None,
             training_steps=steps,timestamp=stamp,timestamp_iso=datetime.datetime.fromtimestamp(stamp,datetime.timezone.utc).isoformat(),
-            payable=False,weight_submission=False,backend_profile=BACKEND_PROFILE,remote_job_id=report['job_id'],task_hashes=[v['task_hash'] for v in values],runtime_profile=dict(report['runtime_versions'],**BACKEND_PROFILE))
+            payable=False,weight_submission=False,backend_profile=profile,remote_job_id=report['job_id'],task_hashes=[v['task_hash'] for v in values],runtime_profile=dict(report['runtime_versions'],**profile))
         save(Path(config.get('evaluation_state','state/evaluations'))/(run_id+'.json'),record);records.append(record)
     return records
 
 def initial_manifest(config,checkpoint):
     chosen=contract(config,0)
+    revision,profile,policy=for_config(config)
     from .harness import source_hash
-    return dict(sample_harness_registry=chosen['sample_harness_registry'],epoch=config['epoch_prefix']+'-initial',payable=False,training_policy=FULL_POLICY,checkpoint=checkpoint,environments=[dict(env_id=r['spec']['id'],**r) for r in chosen['environments']],K=1,L=1,max_batches=config.get('max_batches',3),audit_policy={'mode':'full','version':1},harness_source_hash=source_hash(),model_runtime_revision=REVISION,numerical_policy=NUMERICAL_POLICY,backend_profile=BACKEND_PROFILE,model_id=chosen['model_id'],transport_policy='direct-r2-v1')
+    result=dict(sample_harness_registry=chosen['sample_harness_registry'],epoch=config['epoch_prefix']+'-initial',payable=False,training_policy=FULL_POLICY,checkpoint=checkpoint,environments=[dict(env_id=r['spec']['id'],**r) for r in chosen['environments']],K=1,L=1,max_batches=config.get('max_batches',3),audit_policy={'mode':'full','version':1},harness_source_hash=source_hash(),model_runtime_revision=revision,numerical_policy=policy,backend_profile=profile,model_id=chosen['model_id'],transport_policy='direct-r2-v1')
+    if 'artifact_policy' in chosen:result['artifact_policy']=chosen['artifact_policy']
+    if 'task_assets' in chosen:result['task_assets']=chosen['task_assets']
+    return result
 
 def run(config,once=False):
     prefix=config.get('epoch_prefix','nonpayable-gpu-continuous')
@@ -149,7 +158,7 @@ def run(config,once=False):
                         capability=dict(put_url=bucket.presign('private/'+epoch+'/staging/'+miner+'.zip','put_object',max(1,manifest['deadline']-int(time.time()))),headers={'Content-Type':'application/octet-stream'})
                         owned_fields=owned_mining_job_fields(config,manifest,status['round'])
                         controller.jobs.run(epoch+'-mine-'+miner[:8],'mine',manifest,None,miner_id=miner,capability=capability,search_budget=config.get('search_budget',64),seed_start=100+status['round']*1000,**owned_fields)
-                    status['checkpoint_path']=config['remote']['workspace']+'/checkpoints/'+status['checkpoint']['id']
+                    status['checkpoint_path']=(controller.jobs.checkpoint_path('mine',status['checkpoint']['id']) if hasattr(controller.jobs,'checkpoint_path') else config['remote']['workspace']+'/checkpoints/'+status['checkpoint']['id'])
                 active['phase']='collect';save(statuspath,status)
             if active['phase']=='collect':
                 if time.time()<manifest['deadline']:

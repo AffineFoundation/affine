@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 import requests
 from nacl.signing import VerifyKey
-from .backend_jobs import canonical,file_map,FIXED_POLICY as FULL_POLICY,SOURCE_FILES,BACKEND_PROFILE,NUMERICAL_POLICY,signed
+from .backend_jobs import canonical,file_map,FIXED_POLICY as FULL_POLICY,SOURCE_FILES,signed
 from .controller import Controller
 from .scoring import score
 
@@ -91,7 +91,9 @@ class RemoteJobs:
             if time.time()-started>1800:raise TimeoutError('same remote role remains active; retain job identity')
             time.sleep(5)
     def checked(self,report,prior,manifest):
-        if report.get('job_id')!=prior['job_id'] or report.get('operator')!=self.controller.authority.id or report.get('job_sha256')!=prior['job_sha256'] or report.get('checkpoint')!=manifest['checkpoint']['id'] or report.get('epoch')!=manifest['epoch'] or report.get('role')!=prior['role'] or not report.get('success') or report.get('chain_transactions') is not False or report.get('backend_profile')!=BACKEND_PROFILE or report.get('numerical_policy')!=NUMERICAL_POLICY or report.get('source_files')!=prior['source_files'] or report.get('runtime_versions')!=prior['runtime_versions'] or hashlib.sha256(canonical(manifest)).hexdigest()!=prior['manifest_sha256']:raise ValueError('remote role report binding')
+        from .backend_profiles import resolve
+        _,profile,policy=resolve(manifest)
+        if report.get('job_id')!=prior['job_id'] or report.get('operator')!=self.controller.authority.id or report.get('job_sha256')!=prior['job_sha256'] or report.get('checkpoint')!=manifest['checkpoint']['id'] or report.get('epoch')!=manifest['epoch'] or report.get('role')!=prior['role'] or report.get('success') is not True or report.get('chain_transactions') is not False or canonical(report.get('backend_profile'))!=canonical(profile) or canonical(report.get('numerical_policy'))!=canonical(policy) or report.get('source_files')!=prior['source_files'] or report.get('runtime_versions')!=prior['runtime_versions'] or hashlib.sha256(canonical(manifest)).hexdigest()!=prior['manifest_sha256']:raise ValueError('remote role report binding')
         # Older dispatch records omit timestamps; reconstruct them from their
         # original signed job, never from mutable local configuration or a new
         # signature. A live observation timeout does not affect this check.
@@ -105,7 +107,11 @@ class RemoteJobs:
 
 class RemoteController(Controller):
     def __init__(self,bucket,gateway,state,remote):
-        super().__init__(bucket,gateway,state);self.jobs=RemoteJobs(remote,self)
+        super().__init__(bucket,gateway,state)
+        if 'roles' in remote:
+            from .role_router import RoutedJobs
+            self.jobs=RoutedJobs(remote,self)
+        else:self.jobs=RemoteJobs(remote,self)
     def open(self,*args,max_batches=3,**kwargs):
         heldouts=kwargs.pop('heldout_indices',None)
         operator_test_policy=kwargs.pop('operator_test_policy',None)
@@ -176,16 +182,24 @@ class RemoteController(Controller):
         if challenge['receipts']!=receipts:raise ValueError('frozen audit challenge binding')
         self.bucket.json('public/'+epoch+'/audit-challenge.json',self.signed(challenge));audit_manifest=dict(manifest,audit_seed=challenge['seed'],audit_frozen_receipts=receipts)
         save(self.state/(epoch+'-audit-manifest.json'),audit_manifest);reports={}
-        for miner,receipt in receipts.items():
+        def verify_one(item):
+            miner,receipt=item
             remote=self.jobs.run(epoch+'-verify-'+miner[:8],'verify',audit_manifest,checkpoint_path,
                 submissions=[dict(url=self.bucket.presign(receipt['frozen_key']),sha256=receipt['sha256'])])
+            return miner,receipt,remote
+        if hasattr(self.jobs,'queue'):
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=min(len(receipts) or 1,len(self.jobs.verifiers))) as pool:
+                verified=list(pool.map(verify_one,receipts.items()))
+        else:verified=[verify_one(item) for item in receipts.items()]
+        for miner,receipt,remote in verified:
             report=remote['audits'][0]
             if report['submission_sha256']!=receipt['sha256']:raise ValueError('frozen artifact report binding')
             report.update(remote_job_id=remote['job_id'],backend_profile=remote['backend_profile'],execution_resources_enforced=remote['execution_resources_enforced'])
             save(self.state/(epoch+'-'+miner+'-report.json'),report);reports[miner]=report
             self.bucket.json('public/'+epoch+'/audits/'+miner+'.json',self.signed(report))
             artifact=self.state/(epoch+'-'+miner+'.zip')
-            if not artifact.exists():self.bucket.download(receipt['frozen_key'],artifact)
+            if not hasattr(self.jobs,'queue') and not artifact.exists():self.bucket.download(receipt['frozen_key'],artifact)
         result=score(reports);result.update(payable=False,epoch_id=epoch,finalized_at=time.time(),receipts=receipts,checkpoint=manifest['checkpoint']['id'])
         save(saved,result);self.bucket.json('public/'+epoch+'/scores.json',self.signed(result));return result,reports
     def train(self,manifest,reports,checkpoint_path,destination=None,steps=1,replay=None,**ignored):
@@ -197,7 +211,7 @@ class RemoteController(Controller):
             if metrics.get('replay_inputs_sha256')!=expected_replay or metrics['steps']!=steps:raise ValueError('cached replay/current request binding')
             self.bucket.json('public/'+epoch+'/training.json',self.signed(metrics))
             return metrics['new_checkpoint'],metrics
-        capacity=self.jobs.capacity(checkpoint_path);receipts=json.loads((self.state/(epoch+'-scores.json')).read_text())['receipts']
+        capacity=(self.jobs.training_capacity(manifest,steps) if hasattr(self.jobs,'training_capacity') else self.jobs.capacity(checkpoint_path));receipts=json.loads((self.state/(epoch+'-scores.json')).read_text())['receipts']
         submissions=[dict(url=self.bucket.presign(receipts[m]['frozen_key']),sha256=receipts[m]['sha256']) for m,r in reports.items() if r['accepted']]
         if not submissions:raise ValueError('no independently verified training data')
         extra={'replay':replay} if replay is not None else {}
