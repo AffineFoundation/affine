@@ -6,6 +6,23 @@ from nacl.signing import SigningKey
 from subnet.backend_jobs import validate,execute,canonical,file_map,REVISION,NUMERICAL_POLICY,BACKEND_PROFILE,SOURCE_FILES,r2_url
 
 class CheckpointTrainingChanges(unittest.TestCase):
+    def test_single_put_rejects_oversize_checkpoint_before_transport(self):
+        import tempfile
+        from pathlib import Path
+        from subnet.backend_jobs import validate_single_put_sizes
+        with tempfile.TemporaryDirectory() as root:
+            checkpoint=Path(root)
+            (checkpoint/'config.json').write_text('{}')
+            # Sparse files exercise the real object-size boundary without
+            # allocating a large tensor or making a network request.
+            with (checkpoint/'model.safetensors').open('wb') as f:
+                f.truncate(5*1024**3+1)
+            with self.assertRaisesRegex(ValueError,'multipart required'):
+                validate_single_put_sizes(checkpoint,{'config.json':'a','model.safetensors':'b'})
+            with (checkpoint/'model.safetensors').open('r+b') as f:
+                f.truncate(5*1024**3)
+            validate_single_put_sizes(checkpoint,{'config.json':'a','model.safetensors':'b'})
+
     def test_changed_shard_is_detected_without_single_weight_file(self):
         from subnet.backend_jobs import checkpoint_weights_changed
         before={'config.json':'a'*64,'model-00001-of-00002.safetensors':'b'*64,

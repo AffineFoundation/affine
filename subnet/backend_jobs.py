@@ -29,6 +29,16 @@ FULL_POLICY='bf16-full-adamw-checkpointed-v1'
 FIXED_POLICY='bf16-full-adamw-fixed-epoch-reference-v2'
 TRAINING_ATTRIBUTION='verified-pair-v1'
 
+def validate_single_put_sizes(checkpoint, files):
+    """Reject unsupported objects before uploading any checkpoint member.
+
+    A single tensor can exceed the requested export shard size, so the
+    explicit 4 GB export setting alone is insufficient for arbitrary models.
+    Larger objects require the separate multipart transport.
+    """
+    if any((Path(checkpoint)/name).stat().st_size > 5*1024**3 for name in files):
+        raise ValueError('checkpoint object exceeds R2 single PUT limit; multipart required')
+
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
 
@@ -326,7 +336,7 @@ def full_parameter_train(runtime, pairs, destination, steps=1):
         state_dtypes=sorted({str(value.dtype) for row in optimizer.state.values() for name,value in row.items() if name!='step' and hasattr(value,'dtype')})
         destination=Path(destination)
         if destination.exists():raise ValueError('refuse checkpoint overwrite')
-        destination.mkdir(parents=True);model.save_pretrained(destination,safe_serialization=True);runtime.tokenizer.save_pretrained(destination)
+        destination.mkdir(parents=True);model.save_pretrained(destination,safe_serialization=True,max_shard_size='4GB');runtime.tokenizer.save_pretrained(destination)
         return dict(steps=steps,losses=losses,training_policy=FULL_POLICY,objective='reference-relative full-model sequence preference',
             full_model_finetune=True,trainable_parameters=count,learning_rate=1e-5,gradient_checkpointing=True,parameter_dtype='torch.bfloat16',optimizer_state_dtypes=state_dtypes,
             gpu_peak_allocated_bytes=torch.cuda.max_memory_allocated(),gpu_peak_reserved_bytes=torch.cuda.max_memory_reserved(),gpu_free_before_bytes=free,gpu_required_additional_bytes=required)
@@ -404,6 +414,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         chain_transactions=False,full_model_finetune=False,execution_resources_enforced=False)
     if job['role']=='upload':
         import requests
+        validate_single_put_sizes(approved,manifest['checkpoint']['files'])
         for name,url in job['put_urls'].items():
             with (approved/name).open('rb') as body:
                 response=requests.put(url,data=body,headers={'Content-Type':'application/octet-stream'},timeout=600,allow_redirects=False)

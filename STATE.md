@@ -51,14 +51,33 @@ mining job `...-mine-598fa5ce-00339d36` completed successfully. It searched
 20 genuine samples and uploaded one success/failure batch for task 1278 before
 the original deadline. Root independently fetched and hashed the 318,236,285-byte
 R2 submission: `edc79ec48ff59c884809c6161d3c123de0966fa0c5e1e43b0e7bb2698836b689`.
-The epoch remains collecting until its signed 23:11:51 UTC deadline. Training
-updates remain zero; this epoch's audit, training and handover have not yet
-completed.
+The epoch froze after its original signed 23:11:51 UTC deadline. Its actual
+independent audit accepted the batch, yielding one nonpayable point and proposed
+weight 1.0. The full-model training job completed one AdamW update across
+7,615,616,512 parameters and all 339 parameter tensors. Actual parameter-value
+hashes changed, independently of serialization layout; the exported successor
+is `253f921e60baee63d803e69c78408e3ae5b96b088b7e93c2d288c7ea571d7c29`.
+Evidence: `state/prospective-separated-hopper-math-v2/actual-training-root-review.private.json`.
+
+Checkpoint publication then failed: Transformers exported a single roughly
+15 GB weight object, exceeding R2's 5 GiB single-PUT limit. The once-controller
+is terminal and retains phase `train`; its committed step counter is still zero
+because publication and handover have not completed. Recovering the exact
+trained bytes through multipart upload must not repeat the optimizer update.
+Future source exports now explicitly request 4 GB shards and preflight every
+object against the single-PUT limit before starting an upload. Those changes
+do not alter the frozen live source or its existing checkpoint.
 
 Before v2 activation, a new fixed heldout cohort of 32 tasks was selected without
 consulting outputs: sixteen Level 4 and sixteen Level 5 problems, all reserved
 and disjoint from mining. Before/after evaluations use that identical cohort
-and numerical profile. The old eight-task baseline remains a separate record.
+and numerical profile. The baseline attempted all 32 tasks, but one task
+(reserved index 6665) failed strict TOPLOC verification. Its status is `error`,
+with 31 verified results and no mean reward or confidence interval. It is not
+a completed baseline or evidence of improvement. The original failed record
+is preserved; a same-model, same-task diagnostic is being prepared without
+changing thresholds, seeds or cohort. The old eight-task baseline remains a
+separate record.
 
 Public miner fixes now preserve the complete delegated epoch upload capability
 and honor the signed long-proof artifact budget in packing, restoration and
@@ -73,9 +92,18 @@ five H200 nodes. Root separately verified its signed descriptor and exact R2
 bytes. This admission uses the initial checkpoint as a placeholder; v3 remains
 preparation-only until the actual trained successor and handover are reviewed.
 Internal mining is disabled in v3 so the delegated public CLI can be tested
-without competing internal submissions. Full-model training,
+without competing internal submissions. Successful checkpoint publication,
 paired heldout evaluation, public-client GPU qualification and consecutive
 handovers are still required.
+
+The future corpus source v5 has 1,443 strictly admitted files and passed 109
+tests in its frozen tree. Its startup guard refuses preparation-only plans
+before opening network or controller resources. Source
+`9160d4786c5c74237ad093205343f79e18568e86e65e7684c28c7605acd2e8b7`
+is signed and independently read back from R2, but has no activated controller
+or GPU jobs. Its older export code still needs the subsequent shard fix before
+it can be used for a new production training release. The larger DeepMath and
+Numina tasksets remain CPU-qualified preparation, not proven GPU training.
 Chain submissions remain disabled. Production, the retained-3090 pilot and
 independent services are preserved.
 

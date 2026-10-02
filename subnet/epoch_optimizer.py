@@ -61,7 +61,9 @@ def train_epoch(runtime,verified_pairs,destination_root,steps=3):
             torch.nn.utils.clip_grad_norm_(parameters,1);optimizer.step()
             destination=Path(destination_root)/('checkpoint-step-'+str(step+1))
             if destination.exists():raise ValueError('refuse checkpoint overwrite')
-            destination.mkdir(parents=True);model.save_pretrained(destination,safe_serialization=True);runtime.tokenizer.save_pretrained(destination)
+            # R2 single PUT is limited to 5 GiB. Pin the export layout rather
+            # than relying on a Transformers-version-dependent default.
+            destination.mkdir(parents=True);model.save_pretrained(destination,safe_serialization=True,max_shard_size='4GB');runtime.tokenizer.save_pretrained(destination)
             state_steps=sorted({int(row['step'].item()) for row in optimizer.state.values() if 'step' in row})
             if len(optimizer.state)!=len(parameters) or state_steps!=[step+1]:raise ValueError('persistent epoch optimizer state coverage')
             update=dict(steps=1,losses=[float(loss.detach())],training_policy=POLICY,objective='fixed-input-checkpoint reference-relative sequence preference',
