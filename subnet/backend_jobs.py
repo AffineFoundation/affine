@@ -38,6 +38,25 @@ def digest(path):
         for chunk in iter(lambda:f.read(1024*1024),b''):h.update(chunk)
     return h.hexdigest()
 
+def checkpoint_weights_changed(before, after):
+    """Compare every safe weight file, including sharded checkpoints."""
+    old={name:sha for name,sha in before.items() if name.endswith('.safetensors')}
+    new={name:sha for name,sha in after.items() if name.endswith('.safetensors')}
+    if not old or not new:raise ValueError('safe model checkpoint weights required')
+    return old!=new
+
+def parameter_value_digest(model):
+    """Hash actual parameter values independently of export shard layout."""
+    import torch
+    h=hashlib.sha256()
+    for name,value in sorted(model.named_parameters()):
+        h.update(canonical(dict(name=name,dtype=str(value.dtype),shape=list(value.shape))))
+        h.update(b'\0')
+        raw=value.detach().to('cpu').contiguous().reshape(-1).view(torch.uint8).numpy()
+        h.update(memoryview(raw).cast('B'))
+        del raw
+    return h.hexdigest()
+
 def pair_attribution(definition,positive,negative,step):
     if positive['env_id']!=definition['env_id'] or negative['env_id']!=definition['env_id'] or positive['index']!=negative['index']:
         raise ValueError('training pair environment/index binding')
@@ -418,6 +437,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
             report['audits']=reports
             if job['role']=='train':
                 if not pairs:raise ValueError('no verified training pairs')
+                values_before=parameter_value_digest(runtime.model)
                 if job.get('replay') is not None:
                     from .replay_training import verified_pairs,merge_pairs
                     historical,replay_report=verified_pairs(runtime,manifest,job['replay'],authority)
@@ -441,8 +461,10 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                         update.update(pair_attribution(definition,pos,neg,step));metrics.append(update)
                 from .model import model_files
                 files=model_files(destination)
-                if files.get('model.safetensors')==manifest['checkpoint']['files'].get('model.safetensors'):raise ValueError('training did not change checkpoint weights')
-                report['training']=dict(steps=job['steps'],updates=metrics,training_policy=job.get('training_policy',HEAD_POLICY),full_model_finetune=job.get('training_policy',HEAD_POLICY) in (FULL_POLICY,FIXED_POLICY))
+                if not checkpoint_weights_changed(manifest['checkpoint']['files'],files):raise ValueError('training did not change checkpoint weights')
+                values_after=parameter_value_digest(runtime.model)
+                if values_before==values_after:raise ValueError('optimizer did not change parameter values')
+                report['training']=dict(steps=job['steps'],updates=metrics,training_policy=job.get('training_policy',HEAD_POLICY),full_model_finetune=job.get('training_policy',HEAD_POLICY) in (FULL_POLICY,FIXED_POLICY),weights_changed=True,parameter_values_sha256_before=values_before,parameter_values_sha256_after=values_after)
                 report['full_model_finetune']=report['training']['full_model_finetune']
                 report['new_checkpoint']=dict(id=file_map(files),files=files,path=str(destination))
         else:

@@ -5,6 +5,38 @@ from unittest.mock import patch
 from nacl.signing import SigningKey
 from subnet.backend_jobs import validate,execute,canonical,file_map,REVISION,NUMERICAL_POLICY,BACKEND_PROFILE,SOURCE_FILES,r2_url
 
+class CheckpointTrainingChanges(unittest.TestCase):
+    def test_changed_shard_is_detected_without_single_weight_file(self):
+        from subnet.backend_jobs import checkpoint_weights_changed
+        before={'config.json':'a'*64,'model-00001-of-00002.safetensors':'b'*64,
+                'model-00002-of-00002.safetensors':'c'*64}
+        self.assertFalse(checkpoint_weights_changed(before,dict(before)))
+        after={**before,'model-00002-of-00002.safetensors':'d'*64}
+        self.assertTrue(checkpoint_weights_changed(before,after))
+        self.assertFalse(checkpoint_weights_changed(before,{**before,'config.json':'e'*64}))
+
+    def test_single_file_and_missing_weight_guards(self):
+        from subnet.backend_jobs import checkpoint_weights_changed
+        before={'model.safetensors':'a'*64}
+        self.assertFalse(checkpoint_weights_changed(before,before))
+        self.assertTrue(checkpoint_weights_changed(before,{'model.safetensors':'b'*64}))
+        with self.assertRaisesRegex(ValueError,'checkpoint weights'):
+            checkpoint_weights_changed(before,{'config.json':'c'*64})
+
+    def test_digest_tracks_real_bf16_optimizer_changes_not_export_layout(self):
+        import torch
+        from subnet.backend_jobs import parameter_value_digest
+        model=torch.nn.Linear(3,2).to(torch.bfloat16)
+        with torch.no_grad():
+            model.weight.fill_(.5);model.bias.fill_(.25)
+        before=parameter_value_digest(model)
+        model.config={'export_shard_size':'different'}
+        self.assertEqual(before,parameter_value_digest(model))
+        optimizer=torch.optim.AdamW(model.parameters(),lr=.1)
+        loss=model(torch.ones(1,3,dtype=torch.bfloat16)).float().square().mean()
+        loss.backward();optimizer.step()
+        self.assertNotEqual(before,parameter_value_digest(model))
+
 class TrainingPairAttribution(unittest.TestCase):
     def test_exact_consumed_pair_is_fingerprinted(self):
         import hashlib

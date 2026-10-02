@@ -27,7 +27,17 @@ miner passed pinned-runtime, genuine generation/replay, tampering and production
 loader controls; all five working nodes passed fresh admission. The recovery
 controller started at 20:53:53 UTC in
 `state/prospective-separated-hopper-math-recovery-v1`, with both verifier workers
-authenticated and healthy. Its initial checkpoint publication is underway.
+authenticated and healthy. All 11 initial checkpoint objects passed independent
+R2 hash checks. Recovery epoch
+`nonpayable-separated-hopper-original-math-recovery-v1-1790975553-0` opened at
+21:12:38 UTC with a signed 21:42:38 UTC deadline. The replacement miner uploaded
+one genuine generated K1/L1 batch (318,236,285 bytes) before the deadline;
+independent acceptance and training remain unproven. Review found a training
+guard that incorrectly assumes a single weight file and rejects Qwen's sharded
+checkpoint. The fix compares all weight shards and measures actual parameter
+values before and after optimization; it is tested in the worktree and will
+require a separately signed source/epoch. The active source and deadline remain
+unchanged, and the old epoch will retain its actual verification-only evidence.
 Keeping the failed pod adds $2.95/hour, for a retained fleet total of $18.30/hour.
 Genuine math-pair qualification, full training, paired heldout evaluation and
 two-worker audit qualification remain pending.
