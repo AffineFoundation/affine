@@ -9,6 +9,7 @@ next checkpoint. Blockchain-free mock and live chain adapters share the same cor
 - [Live registration, payouts and rollback](docs/LIVE_SUBNET.md)
 - [Implementation plan](IMPLEMENTATION_PLAN.md)
 - [Operational state and evidence](STATE.md)
+- [Original RCore common adapter and private terminal package](docs/NATIVE_RCORE_COMMON.md)
 
 Run `.venv/bin/python -m subnet.mock` for a real model/R2/training smoke, or
 `.venv/bin/python -m subnet.tests` and `.venv/bin/python -m ops.new_subnet_checks`
