@@ -7,6 +7,7 @@ import logging
 import requests
 from types import SimpleNamespace
 from pathlib import Path
+from urllib.parse import urlparse,unquote
 from .client import identity,fetch_signed,checkpoint_download,direct_r2_url
 from .miner import Miner
 from .batches import UploadBudgetExceeded
@@ -25,6 +26,24 @@ def selected_tasks(manifest, env_id=None, indices=None):
             raise ValueError('selected indices are not an authorized unique training subset')
         return [(env_id,index) for index in indices]
     return [(row['env_id'],index) for row in definitions if env_id is None or row['env_id']==env_id for index in row['indices']]
+
+def delegated_capability(manifest,delegated):
+    """Use only the upload fields of the operator-decrypted epoch capability."""
+    if delegated.get('epoch')!=manifest['epoch']:raise ValueError('delegated capability epoch mismatch')
+    identity=delegated.get('identity')
+    if identity not in manifest['capabilities']:raise ValueError('delegated identity not registered for epoch')
+    capability={name:delegated[name] for name in ('put_url','headers','transport','deadline') if name in delegated}
+    if manifest.get('transport_policy')=='direct-r2-v1':
+        if capability.get('transport')!='direct-r2-v1':raise ValueError('delegated direct R2 transport mismatch')
+        if type(capability.get('deadline')) is not int or capability['deadline']!=manifest['deadline']:
+            raise ValueError('delegated signed deadline mismatch')
+        if capability.get('headers')!={'Content-Type':'application/octet-stream'}:
+            raise ValueError('delegated direct R2 headers mismatch')
+        direct_r2_url(capability.get('put_url'))
+        expected='/private/'+manifest['epoch']+'/staging/'+identity+'.zip'
+        if not unquote(urlparse(capability['put_url']).path).endswith(expected):
+            raise ValueError('delegated upload object binding')
+    return capability
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--gateway',required=True);p.add_argument('--authority',required=True)
@@ -66,9 +85,9 @@ def run(a):
             plan=selected_tasks(manifest,getattr(a,'env_id',None),getattr(a,'indices',None))
             check_runtime_profile(manifest)
             if key.id not in manifest['capabilities']:raise ValueError('identity not registered for epoch')
+            capability=delegated_capability(manifest,delegated) if delegated else None
             checkpoint=checkpoint_download(manifest,Path(a.state)/manifest['checkpoint']['id'])
-            if delegated and delegated['epoch']!=manifest['epoch']:raise ValueError('delegated capability epoch mismatch')
-            miner=Miner(key,manifest,checkpoint,capability={'put_url':delegated['put_url']} if delegated else None,state_path=Path(a.state)/f"{manifest['epoch']}-{key.id}.zip")
+            miner=Miner(key,manifest,checkpoint,capability=capability,state_path=Path(a.state)/f"{manifest['epoch']}-{key.id}.zip")
             if miner.batches and time.time()<manifest['deadline']:miner.upload()
             seen=current['epoch']
         # Budget exhaustion on an index does not finish the epoch. Search another

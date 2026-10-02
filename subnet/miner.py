@@ -5,6 +5,7 @@ from pathlib import Path
 from .runtime_factory import runtime as make_runtime
 from .model import check_runtime_profile
 from .batches import pack,unpack
+from .artifact_budget import for_manifest
 from .protocol import entry,entries,harness_for, classification
 from .storage import canonical
 import hashlib
@@ -12,6 +13,7 @@ import hashlib
 class Miner:
     def __init__(self, identity, manifest, checkpoint, capability=None, state_path=None):
         check_runtime_profile(manifest)
+        for_manifest(manifest)
         self.identity, self.manifest = identity, manifest
         self.cap = capability or identity.decrypt(manifest['capabilities'][identity.id])
         if manifest.get('transport_policy')=='direct-r2-v1':
@@ -21,7 +23,7 @@ class Miner:
         entries(manifest)
         self.checkpoint=checkpoint;self.runtime=None;self.runtimes={}
         self.state_path = Path(state_path) if state_path else None
-        self.batches = unpack(self.state_path.read_bytes()) if self.state_path and self.state_path.exists() else []
+        self.batches = unpack(self.state_path.read_bytes(),budget=for_manifest(manifest)) if self.state_path and self.state_path.exists() else []
         if any(b['epoch'] != manifest['epoch'] or b['checkpoint'] != manifest['checkpoint']['id'] for b,_ in self.batches):
             raise ValueError('stale local miner state')
 
@@ -52,13 +54,13 @@ class Miner:
                              env_id=env_id, environment_version=runtime.spec.version, sample_index=index, index=index, rollouts=positive+negative)
                 candidate = self.batches + [(batch, arrays_pos+arrays_neg)]
                 # A rejected addition must not poison previously uploaded state.
-                pack(candidate)
+                pack(candidate,budget=for_manifest(self.manifest))
                 self.batches = candidate
                 return batch
         raise RuntimeError('search budget exhausted')
 
     def upload(self):
-        data = pack(self.batches)
+        data = pack(self.batches,budget=for_manifest(self.manifest))
         if self.state_path:
             self.state_path.parent.mkdir(parents=True,exist_ok=True)
             temporary = self.state_path.with_suffix('.tmp');temporary.write_bytes(data);temporary.chmod(0o600);temporary.replace(self.state_path)
