@@ -2,7 +2,7 @@
 
 ## Current priority — October 2, 2026
 
-The next pilot is restricted to the original MATH environment and the untouched
+The current pilot is restricted to the original MATH environment and the untouched
 upstream SmolLM2-1.7B-Instruct base. Its six model files have been downloaded to
 the retained GPU host and checked against pinned upstream metadata. The original
 loader provides 7,496 distinct tasks: 6,746 authorized mining tasks and 750
@@ -12,9 +12,20 @@ bootstrap, cumulative-upload and rotating-search controls pass.
 
 The untouched base's 32-task GPU baseline completed with 6 correct answers,
 zero verification failures and no optimizer update, inside its original signed
-lease. Its six R2 objects were independently streamed and hashed. The first
-miner-interface epoch, real math-only training and learning gains remain to be
-demonstrated. No chain weights are submitted.
+lease. Its six R2 objects were independently streamed and hashed. The registered
+UID 131 miner has now completed the real external bootstrap path: signed source
+admission, isolated CLI execution, checkpoint download, autoregressive sampling,
+and a private R2 cumulative upload. The independently hashed 32,373,517-byte
+artifact contains one batch for original task 503, with two rollouts and full
+49,152-vocabulary float32 probabilities. The epoch retains its original deadline;
+normal inference verification, native grading, scoring, training and paired
+evaluation remain pending. No math-only training or learning gain is claimed yet.
+
+The GPU policy field is now bound when opening and signing an epoch. The generic
+bootstrap requests unencoded R2 responses while retaining its encoding refusal,
+byte bounds, archive hashes and signature checks. The successful loader recovery
+admitted the unchanged deployed source; it did not rewrite the epoch manifest or
+extend its deadline. The pilot is nonpayable and does not submit chain weights.
 The wider experiment's latest paired evaluation completed with two improving,
 four declining and ten unchanged metrics. Its next opening is interrupted by a
 truncated local manifest; that historical artifact remains preserved. The older
