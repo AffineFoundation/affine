@@ -52,9 +52,11 @@ prove inference, submit chain weights or create/read a wallet.
 
 The initial GPU profile requires CUDA compute capability 8.6, BF16, eager
 attention and deterministic CUBLAS with `CUBLAS_WORKSPACE_CONFIG=:4096:8` set
-before inference. The retained RTX 3090 has that architecture. Use the operator's
-qualified package versions; compatibility with other hardware is not established
-by the source bootstrap.
+before inference. The retained RTX 3090 has that architecture. The pilot's actually qualified
+runtime reports torch 2.14.0, transformers 5.14.1 and toploc 0.1.6. These are
+observed operator-runtime versions, not a promise that a clean installation or
+another GPU will reproduce them. Validate installed runtime admission before
+mining; compatibility with other hardware is not established by the bootstrap.
 
 Miners may choose a bounded search on particular authorized tasks by adding
 `--env-id affine_math --indices 1553 --search-budget 32 --max-batches 1`.

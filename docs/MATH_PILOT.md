@@ -62,16 +62,34 @@ on the submitted trace; original grading establishes the outcome. The owned
 baseline and miner controls must use genuine autoregressive sampling. Public
 benchmark contamination remains a limitation of any improvement claim.
 
-The taskset, split and prospective configuration are prepared. The untouched
-upstream base files are downloaded on the retained GPU host and match pinned
-upstream metadata. Native grader controls and source/bootstrap archive checks
-pass. The untouched base's GPU baseline verified all 32 fixed heldout tasks,
-with 6 correct answers (18.75%), no verification failures and no optimizer
-update. Its six uploaded R2 objects match the untouched base hashes. This is a
-starting measurement, not evidence of learning. Miner-interface deployment,
-real math-only training epochs and performance improvement remain to be
-demonstrated. More accepted data and repeated comparable evaluations are needed
-before claiming effective learning or public release readiness.
+## Observed pilot results — October 2, 2026
+
+The untouched base's GPU baseline verified all 32 fixed heldout tasks, with
+6 correct answers (18.75%), no verification failures and no optimizer update.
+Its six uploaded R2 objects match the untouched base hashes.
+
+Two epochs have completed the miner-facing bootstrap, private cumulative upload,
+normal full inference/native verification, nonpayable scoring, eight full-model
+updates per epoch, checkpoint publication and paired evaluation. The first
+accepted one batch; the second accepted two. All 218 parameter tensors received
+gradients, using one persistent AdamW optimizer per epoch and an immutable input
+checkpoint reference. Actual published checkpoint object bytes were independently
+streamed and hashed. Test scores are excluded from payout aggregation.
+
+The fixed 32-task series is 6 correct at the untouched base, then 7 and 9 after
+16 total updates. The second pre-training evaluation reproduced the first
+post-training result on every task. These small repeated measurements do not
+establish general improvement, statistical significance or release readiness.
+
+The second epoch required recovery through the external miner interface after
+an owned-worker source-admission ordering failure. Its failed jobs, original
+manifest and original deadline are retained. A newly signed immutable source
+fix installs the fresh loader before resolving task semantics, retaining all
+source and heldout admission checks. Its first owned GPU job completed and
+uploaded three batches for the third epoch. Actual R2 bytes and the remote
+terminal report match; those batches still await their normal deadline, full
+verification, training and evaluation. Consecutive uninterrupted owned-worker
+handovers and empty-epoch recovery remain qualification gates.
 
 The dashboard recognizes finalized records in `state/native-math-common` and
 fixed-cohort evaluations in `state/evaluations`. Prospective preparation folders
