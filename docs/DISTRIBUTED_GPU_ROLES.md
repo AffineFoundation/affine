@@ -119,3 +119,6 @@ records exact process identities, reuses live matching workers/tunnels and never
 signals or replaces existing processes. Start the new controller/coordinator
 before the workers. These flags do not deploy source or approve numerical controls.
 Use the new namespace's controller authority; never use chain signing keys.
+The startup helper waits up to 30 seconds for the operator coordinator to listen
+before launching any workers. If it times out, start or inspect the controller
+and retry the helper; it does not start workers against an absent coordinator.

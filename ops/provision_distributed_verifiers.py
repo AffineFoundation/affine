@@ -9,6 +9,7 @@ import json
 import os
 import shlex
 import secrets
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -24,6 +25,19 @@ def save(path,value):
     temporary=path.with_suffix('.tmp');temporary.write_text(json.dumps(value,sort_keys=True));temporary.chmod(0o600);temporary.replace(path)
 
 
+def wait_for_coordinator(host, port, timeout=30):
+    """Do not launch workers while their controller is still importing."""
+    deadline=time.monotonic()+timeout
+    while True:
+        remaining=deadline-time.monotonic()
+        if remaining<=0:raise TimeoutError('operator coordinator not listening; no verifier workers started')
+        try:
+            with socket.create_connection((host,port),timeout=min(1,remaining)):
+                return
+        except OSError:
+            time.sleep(min(.1,max(0,deadline-time.monotonic())))
+
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--config',required=True)
     parser.add_argument('--seed-dir',required=True);parser.add_argument('--authority')
@@ -34,6 +48,7 @@ def main():
     if configpath.stat().st_mode & 0o077:raise ValueError('prospective config must remain private')
     if q.get('host','127.0.0.1')!='127.0.0.1':raise ValueError('operator coordinator must bind loopback')
     if args.start and (not args.authority or len(bytes.fromhex(args.authority))!=32):raise ValueError('new controller public authority required')
+    if args.start:wait_for_coordinator('127.0.0.1',q['port'])
     for number,endpoint in enumerate(remote['roles']['verify'],1):
         seedpath=seedroot/('verifier-'+str(number)+'-worker.seed.private')
         if seedpath.stat().st_mode & 0o077:raise ValueError('verifier seed mode')
