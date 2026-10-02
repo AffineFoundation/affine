@@ -79,6 +79,29 @@ def mining_window(manifest, now=None):
     if any(type(manifest.get(k)) not in (int,float) for k in ('start','deadline')) or not manifest['start']<=now<manifest['deadline']:
         raise ValueError('signed mining epoch window closed')
 
+def mining_definitions(manifest, job):
+    """An owned job may narrow its search without narrowing the public challenge."""
+    from .protocol import entries
+    definitions = entries(manifest)
+    subset = job.get('mining_subset')
+    if subset is None:return definitions
+    known = {row['env_id']: row for row in definitions}
+    if not isinstance(subset,dict) or not subset or not set(subset)<=set(known):
+        raise ValueError('owned mining subset environment')
+    result = []
+    for env_id, indices in subset.items():
+        if (not isinstance(indices,list) or not 1<=len(indices)<=128 or
+                any(type(i)is not int for i in indices) or
+                len(indices)!=len(set(indices)) or not set(indices)<=set(known[env_id]['indices'])):
+            raise ValueError('owned mining subset outside authorized training indices')
+        definition = dict(known[env_id],indices=list(indices))
+        from .sample_harness import VERSION,project
+        if isinstance(definition.get('harness'),dict) and definition['harness'].get('version')==VERSION:
+            definition['harness']=project(definition['harness'],indices,known[env_id]['indices'])
+        result.append(definition)
+    return result
+
+
 def mine_cumulative(runtime,manifest,job,upload,clock=None,allow_empty=False):
     """Publish each complete private batch before searching the next task.
 
@@ -94,7 +117,7 @@ def mine_cumulative(runtime,manifest,job,upload,clock=None,allow_empty=False):
     def available():
         now=clock()
         return manifest['start']<=now<manifest['deadline']-10
-    for definition in entries(manifest):
+    for definition in mining_definitions(manifest,job):
         if len(batches)>=manifest.get('max_batches',4) or not available():break
         for index in definition['indices']:
             selected=runtime.for_environment(definition['spec'],harness_for(definition,index))
@@ -163,6 +186,8 @@ def validate(envelope, authority, now=None):
         if type(job.get('search_budget')) is not int or not 1<=job['search_budget']<=128 or type(job.get('seed_start')) is not int or job['seed_start']<0:raise ValueError('mining search budget')
         r2_url(job['capability']['put_url'],'PUT')
         if job['capability'].get('headers')!={'Content-Type':'application/octet-stream'}:raise ValueError('signed upload headers')
+        if job.get('mining_subset') is not None:mining_definitions(manifest,job)
+    elif 'mining_subset' in job:raise ValueError('mining subset only in signed mining jobs')
     if job['role']=='train' and job.get('training_policy',HEAD_POLICY) not in (HEAD_POLICY,FULL_POLICY,FIXED_POLICY):raise ValueError('unapproved training objective')
     if job['role']=='train' and (type(job.get('steps')) is not int or not 1<=job['steps']<=32):raise ValueError('training step budget')
     if job.get('training_policy')==FIXED_POLICY and manifest.get('training_policy')!=FIXED_POLICY:raise ValueError('signed fixed-reference training policy')

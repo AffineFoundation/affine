@@ -17,6 +17,11 @@ subject/level strata. The reserved problems cannot earn mining scores or enter
 training. Evaluation cohorts retain their identities across checkpoints; broader
 evaluation must not be merged into a supposedly comparable series silently.
 
+The public challenge authorizes the full 6,746-problem mining pool. An operator
+may set `owned_mining_subset` to a bounded starter list for its own signed mining
+job; the worker checks it is a subset of authorized training indices. This does
+not restrict external miners or expose an alternate heldout admission path.
+
 All task prompts were rendered using the upstream tokenizer: the largest prompt
 is 2,098 tokens, within the 8,192-token context with a 512-token output reserve.
 The initial candidate configuration uses genuine autoregressive sampling with a

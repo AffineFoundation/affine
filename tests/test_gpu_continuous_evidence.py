@@ -15,16 +15,24 @@ from ops.check_gpu_continuous_evidence import checked_job, check_source_bundle
 
 class ContinuousJobEvidenceTests(unittest.TestCase):
     def source_fixture(self, names=('subnet/model.py',)):
-        stream=io.BytesIO();body=b'approved source'
+        from ops.archive_harness_identity import MODULES
+        stream=io.BytesIO();body=b'approved source';expected={}
         with tarfile.open(fileobj=stream,mode='w:gz') as archive:
-            for name in names:
-                entry=tarfile.TarInfo(name);entry.size=len(body);archive.addfile(entry,io.BytesIO(body))
+            for name in (*names,*MODULES):
+                content=Path(name).read_bytes() if name in MODULES else body
+                entry=tarfile.TarInfo(name);entry.size=len(content);archive.addfile(entry,io.BytesIO(content))
+                expected[name.removeprefix('./')]=hashlib.sha256(content).hexdigest()
         raw=stream.getvalue();descriptor=dict(size=len(raw),sha256=hashlib.sha256(raw).hexdigest())
-        return raw,descriptor,{'subnet/model.py':hashlib.sha256(body).hexdigest()}
+        return raw,descriptor,expected
 
     def test_published_worker_source_bytes(self):
         raw,descriptor,expected=self.source_fixture()
-        self.assertEqual(check_source_bundle(raw,descriptor,expected)['source_files'],1)
+        self.assertEqual(check_source_bundle(raw,descriptor,expected)['source_files'],4)
+
+    def test_inventory_without_archived_harness_is_not_admitted(self):
+        raw,descriptor,expected=self.source_fixture()
+        with self.assertRaisesRegex(ValueError,'pinned archived harness'):
+            check_source_bundle(raw,descriptor,{'subnet/model.py':expected['subnet/model.py']})
 
     def test_wrong_worker_source_or_missing_file(self):
         raw,descriptor,expected=self.source_fixture()

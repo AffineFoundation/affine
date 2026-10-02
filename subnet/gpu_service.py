@@ -124,7 +124,12 @@ def run(config,once=False):
                 if dispatch_allowed(manifest) and time.time()<manifest['deadline']:
                     for miner in active['identities']:
                         capability=dict(put_url=bucket.presign('private/'+epoch+'/staging/'+miner+'.zip','put_object',max(1,manifest['deadline']-int(time.time()))),headers={'Content-Type':'application/octet-stream'})
-                        controller.jobs.run(epoch+'-mine-'+miner[:8],'mine',manifest,None,miner_id=miner,capability=capability,search_budget=config.get('search_budget',64),seed_start=100+status['round']*1000)
+                        owned_fields={}
+                        if config.get('owned_mining_subset') is not None:
+                            from .backend_jobs import mining_definitions
+                            owned_fields={'mining_subset':config['owned_mining_subset']}
+                            mining_definitions(manifest,owned_fields)
+                        controller.jobs.run(epoch+'-mine-'+miner[:8],'mine',manifest,None,miner_id=miner,capability=capability,search_budget=config.get('search_budget',64),seed_start=100+status['round']*1000,**owned_fields)
                     status['checkpoint_path']=config['remote']['workspace']+'/checkpoints/'+status['checkpoint']['id']
                 active['phase']='collect';save(statuspath,status)
             if active['phase']=='collect':

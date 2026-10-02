@@ -179,6 +179,28 @@ class CumulativeMining(unittest.TestCase):
         self.manifest['max_batches']=1
         data,report=self.run_miner()
         self.assertEqual(self.uploads,[b'[0]']);self.assertEqual(len(report['search']),1)
+    def test_owned_subset_keeps_public_manifest_and_searches_only_selected_tasks(self):
+        self.job['mining_subset']={'one':[1]}
+        data,report=self.run_miner()
+        self.assertEqual(self.uploads,[b'[1]']);self.assertEqual(data,self.uploads[0])
+        self.assertEqual(self.definitions[0]['indices'],[0,1])
+        self.assertEqual([(r['env_id'],r['index'])for r in report['search']],[('one',1)])
+    def test_owned_subset_cannot_authorize_other_environment_or_heldout(self):
+        from subnet.backend_jobs import mining_definitions
+        for subset in [{'unknown':[0]},{'one':[99]},{'one':[True]},{'one':[0,0]},{'one':[]},{}]:
+            with self.subTest(subset=subset),patch('subnet.protocol.entries',return_value=self.definitions):
+                with self.assertRaises(ValueError):mining_definitions(self.manifest,{'mining_subset':subset})
+    def test_owned_subset_projects_only_the_pinned_indexed_policy(self):
+        from subnet.backend_jobs import mining_definitions
+        from subnet.sample_harness import VERSION,resolve
+        a=dict(version='text-tools-v1',policy='autoregressive',max_output_tokens=128)
+        b=dict(a,max_output_tokens=256)
+        self.definitions[0]['harness']=dict(version=VERSION,by_index={'0':a,'1':b})
+        with patch('subnet.protocol.entries',return_value=self.definitions):
+            selected=mining_definitions(self.manifest,{'mining_subset':{'one':[1]}})[0]
+        self.assertEqual(set(selected['harness']['by_index']),{'1'})
+        self.assertEqual(resolve(selected['harness'],1,selected['indices'])['max_output_tokens'],256)
+        self.assertEqual(set(self.definitions[0]['harness']['by_index']),{'0','1'})
     def test_failed_put_is_not_reported_as_success(self):
         def fail(data,timeout):raise ValueError('R2 PUT status 403')
         with self.assertRaisesRegex(ValueError,'R2 PUT status'):self.run_miner(fail)

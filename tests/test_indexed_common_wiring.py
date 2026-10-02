@@ -33,7 +33,8 @@ class IndexedPaths(unittest.TestCase):
  def test_local_external_miner_is_lazy_and_routes_each_index(self):
   from subnet.miner import Miner
   identity=SimpleNamespace(id='owned')
-  with patch('subnet.miner.time.time',return_value=10),patch('subnet.miner.check_runtime_profile'),patch('subnet.miner.make_runtime',side_effect=self.make)as factory:
+  self.manifest.update(start=1700000000,deadline=1700001000)
+  with patch('subnet.miner.time.time',return_value=1700000010),patch('subnet.miner.check_runtime_profile'),patch('subnet.miner.make_runtime',side_effect=self.make)as factory:
    miner=Miner(identity,self.manifest,'unused',capability={'put_url':'unused'})
    factory.assert_not_called();miner.search(0,seed=100,max_attempts=2,env_id='original');miner.search(1,seed=100,max_attempts=2,env_id='original')
    self.assertEqual(self.selected,['taskzero','taskone']);self.assertEqual(len(miner.runtimes),2)
