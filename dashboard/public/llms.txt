@@ -101,6 +101,12 @@ Operator startup now checks actual verifier process and tunnel bindings; complet
 download replicas can be removed after original signature and full archive checks.
 See docs/TRANSPORT_RECOVERY.md and docs/SUBMISSION_RETENTION.md on main. These
 operations preserve frozen submissions, reports, weights and original deadlines.
+Verifier startup now checks the actual remote seed's approved public identity
+before launch, with an explicit seed namespace option. Automatic completed-trainer
+housekeeping archives and fully reads back intermediate exports before removing
+their local replicas and completed downloads. Final learned exports, model caches,
+reports and original job records are retained. See docs/TRAINING_RETENTION.md;
+this storage change does not alter model computation or a signed mining contract.
 
 The signed per-UID submission cap is currently three batches per epoch. It is a
 conservative configurable pilot setting, not a measured throughput maximum or

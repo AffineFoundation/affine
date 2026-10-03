@@ -1,5 +1,20 @@
 # Live reward launch authorized — October 3, 2026
 
+The completed-trainer archive/retention supervisor is now deployed under an
+actual-wait parent, with the child independently observed alive under its original
+start ticks. Its first real cycle authenticated the live source approvals and
+completed job evidence, probed the trainer and completed as a no-op: the preceding
+bounded cleanup had already removed those replicas. It runs every 300 seconds,
+defers while the trainer GPU is occupied, and handles at most one completed job
+and two intermediate exports per cycle. Six operator controls plus eight remote
+retirement controls pass, including real isolated Python/HTTP archival/deletion
+and corrupted archive rejection that preserves all local files. This is not
+evidence that a new live training archive has already been retired automatically.
+Final learned exports and model caches remain retained; bounded final/model cache
+history and stable held-out improvement are still unfinished. See
+`docs/TRAINING_RETENTION.md`, `trainer-retention-watch-v1/process.private.json`
+and `automatic-completed-trainer-retention-v1/` in the current upgrade directory.
+
 At 21:14 UTC both upgraded verifier workers were independently observed alive
 with their original start ticks, exact admitted source and approved public
 identities. The actual coordinator database records recent authenticated requests

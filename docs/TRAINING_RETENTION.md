@@ -25,5 +25,38 @@ must inspect actual completion before trying another operation.
 Eight controls cover complete versus still-running jobs, original signatures and
 byte bindings, substituted paths/hashes/positions, archive requirements, live
 process identities, open and hardlinked files, GPU occupancy, intermediate export
-retirement and final/current checkpoint protection. This is a retention primitive;
-an automatic trainer archive-and-retention supervisor is not yet deployed.
+retirement and final/current checkpoint protection.
+
+`ops.retain_completed_training` provides the bounded operator supervisor:
+
+```sh
+.venv/bin/python -B -m ops.retain_completed_training \
+  --config /private/current-controller.json \
+  --writer-cutover /private/signed-source-approvals.json \
+  --authority CONTROLLER_PUBLIC_HEX \
+  --controller-process /private/original-controller-process.json \
+  --output /private/trainer-retention --watch --interval 300
+```
+
+Each cycle authenticates the admitted original source, job, manifest and report,
+checks the actual controller PID/start ticks and immutable configuration bytes,
+and observes the trainer's original successful runner completion. It defers
+while the trainer GPU is occupied. One cycle handles at most one completed job,
+two intermediate exports and its bounded original submission population.
+Intermediate exports are uploaded with scoped per-object capabilities, then
+independently read back in full before authenticated archive descriptors and
+retirement plans are issued. Conditional writes preserve existing archives.
+The remote helper checks actual successful process completion again before
+retirement. Current and pending successor checkpoints are protected.
+
+The supervisor holds an exclusive operator lock and records private progress
+and actual completion. A transport, integrity or process failure stops it for
+inspection; it does not restart a GPU job or infer completion from an observation
+timeout. Model workers receive no permanent bucket or operator signing credential.
+Final learned exports and model caches are retained, so this removes temporary
+training replicas rather than bounding the entire model history. Final-checkpoint
+and cache retention remain separate work.
+
+Six supervisor controls include real isolated Python/HTTP archive and retirement
+execution, a corrupted archive that prevents all deletion, original source and
+receipt admission, stream truncation, and live controller/configuration guards.
