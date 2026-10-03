@@ -1,5 +1,30 @@
 # Live reward launch authorized — October 3, 2026
 
+Fresh sampled-audit epoch `nonpayable-live-reward-math-v1--1791036559-4`
+opened at 14:09:19 UTC with its original 14:39:19 deadline. All five H200 roles
+passed actual source/runtime/checkpoint admission and CPU tokenizer/native
+controls (34 contexts and eight original grader controls each). The actual public
+UID131 miner is running on source 2361c1ea… and learned checkpoint 94ae9c68…;
+its observed isolated CLI source pin matches. Only the epoch upload grant left
+Arbos.life, not its wallet key. Two new narrow-key verifier workers are connected
+to the shared queue. The controller retains round 4 and five completed updates.
+Public affine.io discovery is open, with a signed-deadline close guard.
+
+The sampler bounds work by epoch and per-UID caps; this epoch permits three
+batches per miner, initial budget 256/escalation 64 and multiplier 0.5 per confirmed
+invalid batch. Pure shared audit arithmetic generates both proposed weights and
+reward units; unchecked batches earn no points, and infra errors are not fraud.
+The single-writer cutover configuration is genuinely root-signed but still off.
+No new chain receipt exists. A host-interpreter launch failed before opening and
+was preserved; the fresh launch uses the rewrite's actual shared environment.
+
+The writer now refuses incomplete finalized evidence and checks the controller's
+finalization watermark before and after chain identity discovery. It cannot close
+an old hour while its scoring is still unresolved or silently import late rewards
+into a closed hour. All 46 targeted writer/completeness/bridge/sampler controls pass.
+This does not establish a completed new epoch, optimizer update, live payout or
+held-out improvement; those remain under the active goal.
+
 The operator's new nine-part goal explicitly authorizes live SN120 rewards,
 new-mechanism-only weight setting, a Discord launch announcement after actual
 cutover, continuing public adversarial mining and independently verified held-out
@@ -25,10 +50,11 @@ complete on all five nodes, with actual supervised exit0 and all ten learned
 checkpoint hashes matching the approved descriptor. The final source 2361c1ea…
 (exact compute commit 04f4e129, 1,827 files/127 runtime modules) passed full R2
 archive readback and installed on all five nodes with actual exit0. Runtime and
-CPU tokenizer/native admission remain in progress. Initial admission attempts
+CPU tokenizer/native admission subsequently completed as recorded above. Initial admission attempts
 refused their own unbound supervisor; a separately reviewed parent-bound guard
 and fresh commands preserve those failures. No GPU job or chain transaction was
-started. Raw observations and original failure receipts are retained under
+started by those staging checks. The fresh epoch above now runs GPU inference.
+Raw observations and original failure receipts are retained under
 state/live-math-launch-preparation-v1.
 
 The operator-only single writer is now implemented, with actual global locking,

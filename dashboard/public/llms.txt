@@ -1,17 +1,19 @@
-LIVE LAUNCH PREPARATION — 2026-10-03
-The operator has authorized prospective live SN120 rewards. The new payout
-worker is not live yet; do not infer payment from historical nonpayable epochs.
-Old equal-registration and burn weight timers are now disabled. A fresh
-reward-enabled epoch, source admission and verified chain submission are still
-required. Watch this document and https://github.com/AffineFoundation/affine
-main for versioned miner updates. Existing signed epochs remain immutable.
-The sampled audit and prospective reward bridge code are now implemented.
-Policy: only fully audited unique observed task pairs earn points; each confirmed
-invalid batch multiplies that miner's epoch points by 0.5. Infrastructure errors
-retry without penalties. Unchecked duplicate claims remain unresolved and are
-disclosed in reward reports. These parameters are fixed in each signed opening.
-See docs/AUDIT_SAMPLING.md and docs/LIVE_REWARDS.md on GitHub. Activation and the
-first actual chain receipt are still pending; this is not a live payout notice.
+PROSPECTIVE MATH REWARD EPOCH OPEN — 2026-10-03
+A fresh original-MATH epoch is open to every activated subnet-120 Ed25519 hotkey.
+Read https://affine.io/mining.json for the signed current discovery and deadline.
+The manifest fixes source, checkpoint, audit budgets and penalties. A miner may
+upload at most three distinct task batches, each with one success and one failure.
+Only fully audited unique observed task pairs earn points. Each confirmed invalid
+batch multiplies that miner's epoch points by 0.5; infrastructure errors retry
+without penalties. Unchecked duplicate claims remain unresolved and are disclosed.
+Compute remains unable to submit chain transactions. The first manifest contains
+a separate prospective reward contract; the single chain writer is not activated
+yet. Historical nonpayable epochs are never converted or repaid. No live payout
+announcement has been made. Old burn and equal-registration writers remain off.
+Watch this document and https://github.com/AffineFoundation/affine main for updates;
+agent miners must follow each signed checkpoint/source and rerun source bootstrap
+when the approved source changes. H200 SM90 BF16 eager is the qualified profile.
+See docs/AUDIT_SAMPLING.md and docs/LIVE_REWARDS.md for the audit/reward rules.
 
 # Affine — subnet 120
 
@@ -20,12 +22,13 @@ Public measurement data: https://affine.io/network-data.json
 Source and documentation: https://github.com/AffineFoundation/affine
 
 Affine is an experimental synchronous inference-verification training subnet.
-The current rewrite pilot is nonpayable and does not submit blockchain weights.
+Historical pilots are nonpayable. The fresh epoch declares prospective rewards;
+chain weight submission has not yet been activated.
 Historical teacher distillation / king-versus-challenger instructions are not the
 current pilot contract. Dashboard records describe measured runs, not a promise
 of rewards, general model improvement, or support for every environment.
 
-Current operational status: the first v11 revision2 public math epoch is fully
+Historical qualification: the first v11 revision2 public math epoch is fully
 qualified and closed for uploads. Its signed deadline was 2026-10-03 08:09:37 UTC.
 Admission is open to every activated subnet-120 hotkey, with no operator whitelist.
 Six miners passed full independent verification, including UID 85, and received
@@ -34,7 +37,7 @@ accepted pair; the other five pairs were not used in that update. Its successor
 checkpoint is published, with four cumulative updates. Matched fixed32 evaluation
 changed from 23/32 to 22/32. The controller exited cleanly without operator
 recovery. This small cohort does not establish broader improvement.
-The latest published epoch uses that successor, with 237 activated identities
+The second historical epoch used that successor, with 237 activated identities
 including UID 85 and all 6,746 original MATH tasks. Its signed deadline is
 2026-10-03 09:54:20 UTC. Read https://affine.io/mining.json for the signed current
 manifest, source pin and current open/closed status before submitting. Its upload
@@ -47,9 +50,9 @@ closeout passed with an actual clean controller exit and no operator recovery.
 Two consecutive public epochs are now qualified, with five cumulative updates.
 The separate original I3Math generation test finished with a genuine success/
 failure pair and native self-verification. It has not completed independent
-public-epoch verification or training. The next MATH opening is being prepared
-with the new sampled audit source and a prospective live reward contract.
-Blockchain weight submission remains disabled.
+public-epoch verification or training. The fresh sampled-audit epoch is now open from checkpoint 94ae9c680d15f2b5...,
+with the prospective live reward contract. Its deadline is 2026-10-03T14:39:19+00:00.
+The chain writer remains off pending fresh authenticated reports and root cutover.
 
 ## Architecture
 

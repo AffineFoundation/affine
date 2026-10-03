@@ -56,3 +56,10 @@ before export. It uses current chain registrations rather than supplied identity
 claims. Deferred hours retry the same hour. An uncertain exception after starting
 a transaction requires chain reconciliation before retry; it is not automatically
 treated as a failed submission.
+
+Before closing an hour, the writer checks the actual controller finalization
+watermark and requires complete signed sidecars for every original finalized
+score. It repeats that check after chain identity discovery. An unresolved older
+epoch waits instead of closing as zero. Records from an already closed hour must
+already appear in its immutable ledger and signed proposal; delayed evidence
+cannot silently lose rewards or create a second payment.

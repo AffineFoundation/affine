@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from nacl.signing import SigningKey
-ROOT=Path('/home/const/subnet120-rewrite');sys.path.insert(0,str(ROOT))
+ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 from ops import live_reward_writer as w
 from subnet.backend_profiles import profile
 from subnet.backend_jobs import SOURCE_FILES
@@ -58,7 +58,7 @@ class RuntimeTests(unittest.TestCase):
  def test_real_exporter_signed_handoff_dryrun_and_deferred_same_hour(self):
   from contextlib import contextmanager
   with tempfile.TemporaryDirectory() as t:
-   root=Path(t);compute=root/'compute';compute.mkdir();reward=root/'reward';reward.mkdir();seed=root/'seed';key=SigningKey.generate();seed.write_text(key.encode().hex());seed.chmod(0o600);authority=key.verify_key.encode().hex()
+   root=Path(t);compute=root/'compute';compute.mkdir();(compute/'controller.json').write_text(json.dumps({'active':None}));reward=root/'reward';reward.mkdir();seed=root/'seed';key=SigningKey.generate();seed.write_text(key.encode().hex());seed.chmod(0o600);authority=key.verify_key.encode().hex()
    anchor=sign(dict(version='live-reward-cutover-v1',netuid=120,owner_hotkey=w.OWNER,effective_at=3700,compute_epoch_prefix='nonpayable-live-reward-math-v1-',live_epoch_prefix='live-math-reward-v1-',approved_compute_sources=['b'*64]),key)
    c=dict(version='live-single-writer-runtime-v1',netuid=120,owner_hotkey=w.OWNER,anchor_sha256=w.sha(anchor),global_lock_path=str(Path('/run/user')/str(os.getuid())/('affine-live-reward-120-'+hashlib.sha256(w.OWNER.encode()).hexdigest()+'.lock')),compute_state=str(compute),reward_state=str(reward),chain_state=str(reward),queue_database=str(root/'queue'),authority_seed_file=str(seed),runtime_versions=dict(torch='test',transformers='test',toploc='test'))
    events=[]
@@ -92,6 +92,16 @@ class RuntimeTests(unittest.TestCase):
     self.assertEqual(w.read(reward/'writer-cursor.json')['status'],'submitting')
     with self.assertRaises(RuntimeError):w.run_once(sign(c,key),anchor,authority,execute=True,adapter_factory=factory)
     factory.assert_not_called()
+    (reward/'writer-cursor.json').unlink()
+    class LateFinalize(Adapter):
+     def registrations(self):
+      epoch='nonpayable-live-reward-math-v1-DELAYED'
+      (compute/(epoch+'-manifest.json')).write_text(json.dumps(dict(epoch=epoch,deadline=7100)))
+      (compute/'controller.json').write_text(json.dumps(dict(active=dict(epoch=epoch,phase='collect'))))
+      return {}
+    with patch.object(w.exporter,'run_once') as export_spy:
+     with self.assertRaisesRegex(ValueError,'lacks original scores'):w.run_once(sign(c,key),anchor,authority,adapter_factory=lambda *a,**k:LateFinalize())
+     export_spy.assert_not_called()
  def test_evidence_failure_refuses_before_adapter_and_export(self):
   # Failure order tested on actual runner; no real chain/network construction.
   with patch.object(w,'authenticate_cutover',return_value=({'global_lock_path':'unused'},{'effective_at':1})),patch.object(w,'global_lock',side_effect=ValueError('lock refusal')):

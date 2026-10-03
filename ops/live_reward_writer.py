@@ -1,5 +1,5 @@
 """Local prospective one-writer runner. Dry-run default; never starts compute roles."""
-import argparse,fcntl,hashlib,json,os,sqlite3,subprocess,time,stat,signal
+import argparse,fcntl,hashlib,json,os,sqlite3,subprocess,time,stat,signal,math
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -113,6 +113,67 @@ def verify_completed_evidence(c,authority,now):
     proofs.append(verify_audit_lineage(state,m,audit,authority,c,db,now,files))
  return proofs
 
+def finalized_hour_watermark(state,prefix,window_end):
+ """Observe actual controller state: unresolved old-window finalize blocks payout."""
+ status=read(state/'controller.json');active=status.get('active')
+ if active is None:return status
+ need(isinstance(active,dict) and isinstance(active.get('epoch'),str) and active['epoch'].startswith(prefix),'actual prospective controller epoch')
+ phase=active.get('phase')
+ need(phase in ('opening','mine','collect','before','train','after'),'known actual controller phase')
+ if phase in ('opening','mine','collect'):
+  manifest_path=state/(active['epoch']+'-manifest.json')
+  need(manifest_path.is_file(),'unresolved opening watermark')
+  manifest=read(manifest_path);need(manifest['epoch']==active['epoch'],'controller watermark manifest epoch')
+  deadline=manifest['deadline'];need(type(deadline) in (int,float) and math.isfinite(deadline) and deadline>=0,'controller watermark deadline')
+  if deadline<=window_end:
+   need((state/(active['epoch']+'-scores.json')).is_file(),'old-hour active finalize lacks original scores')
+   need((state/(active['epoch']+'-signed-compute-scores.json')).is_file(),'old-hour active finalize lacks signed scores')
+ return status
+
+def finalized_reward_completeness(c,anchor_document,authority,*,window_end):
+ """Never close an hour while original finalized records lack signed evidence.
+
+ Active epochs without original scores are ignored. A previously closed hour
+ must already contain the exact immutable derived record, never import it late.
+ """
+ state=Path(c['compute_state']);reward=Path(c['reward_state'])
+ anchor=signed(anchor_document,authority);prefix=anchor['compute_epoch_prefix']
+ need(prefix=='nonpayable-live-reward-math-v1-','fresh compute evidence namespace')
+ watermark=finalized_hour_watermark(state,prefix,window_end)
+ ledgerpath=reward/'signed-reward-ledger.json';ledger=read(ledgerpath) if ledgerpath.exists() else []
+ indexed={signed(doc,authority)['compute_epoch_id']:signed(doc,authority) for doc in ledger}
+ ledger_documents={signed(doc,authority)['compute_epoch_id']:doc for doc in ledger}
+ need(len(indexed)==len(ledger),'unique immutable compute reward records')
+ cursor=read(reward/'writer-cursor.json') if (reward/'writer-cursor.json').exists() else {}
+ closed=None
+ if 'window_end' in cursor:
+  end=cursor['window_end'];need(type(end)is int and end%3600==0,'completed hour cursor')
+  closed=end if cursor.get('status') in ('submitted','already_submitted','zero_points_no_submission') else end-3600
+ rawpaths={p.name[:-len('-scores.json')]:p for p in state.glob(prefix+'*-scores.json') if not p.name.endswith('-signed-compute-scores.json')}
+ signedpaths={p.name[:-len('-signed-compute-scores.json')]:p for p in state.glob(prefix+'*-signed-compute-scores.json')}
+ need(set(signedpaths)<=set(rawpaths),'signed scores need original raw finalization')
+ observations=[]
+ for epoch,path in sorted(rawpaths.items()):
+  original=read(path);need(original.get('epoch_id')==epoch,'original finalized epoch path')
+  needed=['first-signed-manifest','opening-attestation','signed-registrations','signed-compute-scores']
+  need(all((state/(epoch+'-'+label+'.json')).is_file() for label in needed),'incomplete finalized reward sidecars')
+  score=signed(read(state/(epoch+'-signed-compute-scores.json')),authority)
+  need(canonical(score)==canonical(original),'signed versus original finalized score bytes')
+  first=signed(read(state/(epoch+'-first-signed-manifest.json')),authority)
+  need(canonical(first)==canonical(read(state/(epoch+'-manifest.json'))),'original final manifest binding')
+  need(all((state/(epoch+'-signed-compute-audit-'+miner+'.json')).is_file() for miner in original['receipts']),'incomplete finalized audit sidecars')
+  expected=exporter.export_epoch(state,epoch,anchor_document,authority)
+  if epoch in indexed:need(canonical(indexed[epoch])==canonical(expected),'immutable ledger versus original finalized evidence')
+  if closed is not None and score['finalized_at']<closed:
+   need(epoch in indexed,'late unexported reward for already closed hour')
+   hour=(int(score['finalized_at'])//3600+1)*3600
+   proposal_document=read(reward/('hour-'+str(hour)+'-reward-units.json'));proposal=signed(proposal_document,authority)
+   need(proposal.get('version')=='live-reward-hour-units-v1' and proposal.get('window_end')==hour and sha(ledger_documents[epoch]) in proposal.get('source_reward_records',[]),'closed hour proposal omitted existing reward')
+   if hour==cursor.get('window_end'):need(cursor.get('proposal_sha256')==sha(proposal_document),'closed cursor versus signed hour proposal')
+  observations.append(dict(epoch=epoch,score_sha256=sha(original)))
+ need(canonical(finalized_hour_watermark(state,prefix,window_end))==canonical(watermark),'controller watermark changed during evidence read')
+ return observations
+
 def choose_hour(state,anchor,now):
  cursor=read(state/'writer-cursor.json') if (state/'writer-cursor.json').exists() else {}
  if cursor.get('status')=='submitting':raise RuntimeError('uncertain chain outcome requires explicit root reconciliation')
@@ -131,10 +192,13 @@ def run_once(cutover_document,anchor_document,authority,*,execute=False,adapter_
   state=Path(c['reward_state']);state.mkdir(exist_ok=True,mode=0o700)
   end=choose_hour(state,anchor,now)
   if end is None:return {'status':'waiting_for_completed_live_hour','chain_executed':False}
+  completeness=finalized_reward_completeness(c,anchor_document,authority,window_end=end)
   evidence=verify_completed_evidence(c,authority,now)
   adapter=adapter_factory(state,netuid=120,expected_owner=OWNER)
   # Actual chain-derived identities before import/export, not a caller-supplied registry.
   registrations=adapter.registrations()
+  # Recheck after potentially slow chain identity discovery, immediately before export.
+  completeness=finalized_reward_completeness(c,anchor_document,authority,window_end=end)
   exporter.run_once(c['compute_state'],state,anchor_document,authority,key,registrations,end)
   # Fresh execution proof immediately before chain handoff, under the same held lock.
   guard_files(c);units=observe_units();identity=process_identity();now=time.time()
@@ -149,7 +213,7 @@ def run_once(cutover_document,anchor_document,authority,*,execute=False,adapter_
    exporter.atomic(state/'last-run.json',dict(version='actual-single-writer-run-v1',at=now,execute=execute,window_end=end,status='handoff_failed_outcome_uncertain' if execute else 'dry_run_failed',error_type=type(error).__name__,writer_receipt_sha256=sha(receipt)))
    raise
   if execute:exporter.atomic(state/'writer-cursor.json',dict(window_end=end,status=result['status'],proposal_sha256=sha(proposal)))
-  exporter.atomic(state/'last-run.json',dict(version='actual-single-writer-run-v1',at=now,execute=execute,window_end=end,result=result,evidence=evidence,writer_receipt_sha256=sha(receipt)))
+  exporter.atomic(state/'last-run.json',dict(version='actual-single-writer-run-v1',at=now,execute=execute,window_end=end,result=result,evidence=evidence,finalized_completeness=completeness,writer_receipt_sha256=sha(receipt)))
   return result
 
 def main():
