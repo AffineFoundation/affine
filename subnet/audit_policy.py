@@ -95,15 +95,28 @@ def allocate(populations, policy, seed, *, escalation=False):
             if counts[miner]<limits[miner]:
                 counts[miner]+=1;remaining-=1
         eligible=[m for m in eligible if counts[m]<limits[m]]
-    while remaining and eligible:
-        residual=[limits[m]-counts[m] for m in eligible]
-        pick=rng.randrange(sum(residual))
-        for miner,slots in zip(eligible,residual):
-            if pick<slots:
-                counts[miner]+=1;remaining-=1
-                if counts[miner]==limits[miner]:eligible.remove(miner)
-                break
-            pick-=slots
+    # A prefix-sum tree preserves the same weighted random draws while avoiding
+    # scanning every miner for every allocated slot. Zeroed slots keep ordering
+    # stable, so this is compatible with the existing seeded allocation policy.
+    slots=[limits[m]-counts[m] for m in eligible]
+    tree=[0]+slots
+    for i in range(1,len(tree)):
+        parent=i+(i & -i)
+        if parent<len(tree):tree[parent]+=tree[i]
+    available=sum(slots)
+    while remaining and available:
+        pick=rng.randrange(available)
+        index=0
+        step=1<<(len(eligible).bit_length()-1)
+        while step:
+            next_index=index+step
+            if next_index<len(tree) and tree[next_index]<=pick:
+                pick-=tree[next_index];index=next_index
+            step>>=1
+        counts[eligible[index]]+=1;remaining-=1;available-=1
+        i=index+1
+        while i<len(tree):
+            tree[i]-=1;i+=i & -i
     return counts
 
 

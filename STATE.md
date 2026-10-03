@@ -38,9 +38,13 @@ parameters and operation are in configs/bounded-audit-policy.json and
 docs/AUDIT_SAMPLING.md. This is worktree implementation and local integration
 qualification only: existing signed epochs, frozen source bundles, running nodes,
 production, and chain submission settings were not modified or redeployed.
-128 targeted policy/controller/worker/source-admission/runtime regression tests
-passed. A new source admission and epoch are still required before using this
-policy live.
+The allocator now uses a prefix-sum tree to scale remaining random draws without
+changing seeded results: 160 comparisons against the previous committed allocator
+matched. The weights preview and reward bridge share exact rational penalty
+arithmetic, preserving small rewards until hourly aggregation. 131 targeted
+policy/controller/worker/source-admission/runtime regression tests passed,
+including a 4,096-identity, 20,000-slot allocation. A new source admission and
+epoch are still required before using this policy live.
 
 # First uninterrupted v11 revision2 math epoch qualified — October 3, 2026
 

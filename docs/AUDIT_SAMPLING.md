@@ -20,6 +20,9 @@ When the budget cannot cover everyone, some miners get zero expensive checks.
 Allocation uses the signed per-miner batch cap as a conservative population
 bound, not miner claims or upload bytes. Unused slots from smaller submissions
 are not counted as checks or automatically recycled in this first implementation.
+Allocation uses a prefix-sum tree: memory grows with the number of miners, and
+each remaining audit slot takes logarithmic work rather than scanning every miner.
+This retains the existing seeded selection and allocation policy.
 Worker reports contain actual selected batches and assurance separately. Byte-identical
 cross-UID submissions get no expensive audits or points; this also prevents
 a shared artifact hash from multiplying a single allocated audit slot.
@@ -47,6 +50,13 @@ parameters:
     adjusted_points = unique_fully_verified_task_points * multiplier ** invalid_batches
     weight = adjusted_points / sum(all_adjusted_points)
 
+The shared `subnet.scoring.adjusted_point_fractions` function computes exact
+rational adjusted points. Preview scores and the payout bridge use this same
+arithmetic. Hourly payouts aggregate adjusted points before integer rounding;
+they do not round each epoch separately or sum normalized epoch weights.
+Publish penalty settings in the signed epoch manifest before mining starts.
+Changing an operator config applies to future epochs, not frozen audit history.
+
 `invalid_batch_multiplier` defaults to 0.5. `zero_epoch_after` defaults to 0
 (disabled); a positive value zeros that miner's epoch points once that many
 confirmed invalid batches are found. `penalize_structural` defaults to false.
@@ -72,3 +82,10 @@ payload includes `epoch_id`, `payable: false`, `receipts` keyed by miner and
 The command verifies signatures and receipt bindings, refuses overwriting an
 existing output, and never submits chain weights. Budget numbers in the example
 are configurable starting values, not measured verifier throughput guarantees.
+
+To operate the sampled controller, add `audit_policy` from the example config
+and set a fixed `max_batches` per UID. Run additional verifier workers against
+the same coordinator to increase capacity; the existing job leases, retries,
+and signed result acceptance handle concurrency. The weights process reads
+authenticated final reports and the epoch's penalty settings; it does not run
+inference or inspect miner upload volume to create additional points.

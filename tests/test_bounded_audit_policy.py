@@ -29,6 +29,25 @@ class SamplingPolicy(unittest.TestCase):
         counts=allocate({str(i):100 for i in range(256)},policy(epoch_budget=10),'2'*64)
         self.assertEqual(sum(counts.values()),10)
         self.assertEqual(max(counts.values()),1)
+    def test_large_registry_allocation_stays_within_budget_and_caps(self):
+        population={str(i):10000 for i in range(4096)}
+        counts=allocate(population,policy(epoch_budget=20000,maximum_per_miner=32),'7'*64)
+        self.assertEqual(sum(counts.values()),20000)
+        self.assertTrue(all(1<=count<=32 for count in counts.values()))
+    def test_empty_registry_and_exhausted_populations_need_no_draw(self):
+        self.assertEqual(allocate({},policy(),'1'*64),{})
+        self.assertEqual(allocate({'a':0,'b':1},policy(),'1'*64),{'a':0,'b':1})
+    def test_exact_penalties_preserve_small_rewards_before_hourly_rounding(self):
+        from fractions import Fraction
+        from subnet.scoring import adjusted_point_fractions
+        bad=[dict(batch=i,valid=False,fully_audited=True,failure_kind='confirmed_invalid') for i in range(10)]
+        reports={'a':dict(accepted=[dict(env_id='math',index=1,checkpoint='cp')],outcomes=bad)}
+        params=dict(invalid_batch_multiplier=.1)
+        points,adjusted,adjustments=adjusted_point_fractions(reports,params)
+        self.assertEqual(points,{'a':1})
+        self.assertEqual(adjusted['a'],Fraction(1,10**10))
+        self.assertEqual(adjustments['a'],(Fraction(1,10**10),10))
+        self.assertEqual(score(reports,params)['weights'],{'a':1.})
     def test_escalated_selection_is_a_superset_and_zero_allowed(self):
         first=selection(20,3,'3'*64,'4'*64)
         self.assertTrue(set(first)<=set(selection(20,9,'3'*64,'4'*64)))
