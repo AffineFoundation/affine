@@ -26,9 +26,12 @@ manifest, source pin and current open/closed status before submitting. Its uploa
 window has now closed. All five submitted batches passed independent full audits,
 earning one unique point each and proposed nonpayable shares of 0.2. The baseline
 repeated at 22/32; one full-model update produced a new checkpoint. All ten
-checkpoint files passed the controller's content hashes, and the separate after
-evaluation is running. Complete epoch qualification and its measured change are
-still pending.
+checkpoint files passed content hashes, and the separate after evaluation
+completed at 22/32, unchanged from the matched baseline. Full authenticated
+closeout passed with an actual clean controller exit and no operator recovery.
+Two consecutive public epochs are now qualified, with five cumulative updates.
+The next MATH opening is held during a separate original I3Math generation test;
+that test has not yet established a verified batch or training result.
 Blockchain weight submission remains disabled.
 
 ## Architecture

@@ -50,9 +50,14 @@ The before evaluation repeated the preceding checkpoint's exact fixed32 result,
 22/32, with identical task IDs, seeds, harness and task hashes. The trainer
 reported one full-model update on task 2469, changed parameter-value hashes and
 successor `94ae9c68…`. Root authenticated the native training and upload reports;
-the controller subsequently hashed all ten published files (15,242,726,234 bytes)
-and began the separate after evaluation. That evaluation and authenticated full
-closeout remain pending. No additional controller was started.
+the controller subsequently hashed all ten published files (15,242,726,234 bytes).
+The separate after evaluation completed at 22/32, unchanged from its matched
+baseline. The original controller exited 0. The root closeout verifier also
+exited 0 after checking all current checkpoint bytes, authenticated reports,
+frozen submissions, scoring, training, comparable evaluations and signed history
+continuity. There are now two qualified uninterrupted public epochs, round 4 and
+five cumulative updates. No operator recovery or chain submission occurred.
+The next MATH opening is held while the evaluator runs original I3Math generation.
 Accepted UID bindings are 168, 137, 131, 43, 12 and 85. UID 85 matches the user's
 supplied hotkey and earned one point; no payout or chain submission occurred.
 Two independently hosted verifier workers are live under the new authority.
@@ -81,9 +86,15 @@ v2 receipts and the superseded review remain preserved and disqualified. The
 corrected v3 uses the exact frozen harness renderer; its actual exit0 verifies
 real prompt lengths97–203, ten contexts within4096 with2048 output, and twenty
 original native positive/negative controls. Model output width152064 and actual
-tokenizer length151665 are distinct. No genuine I3Math generation, independent
-inference verification or training has occurred. Its next GPU run waits for the
-live MATH roles to finish. Evidence: state/original-qwen-i3math-prospective-v1/.
+tokenizer length151665 are distinct. After the second MATH epoch's full closeout,
+root freshly checked all five retained source installations/GPU roles idle and
+the evaluator's provider status. The reviewed original I3Math generation-only
+supervisor is now live on that evaluator (PID 12333, child 12340), using the
+untouched base and preserving every actual attempt privately. No genuine pair,
+independent inference qualification or training result is established yet.
+Fourteen prospective independent-verifier/scheduling controls passed locally;
+those controls are not a public pipeline qualification.
+Evidence: state/original-qwen-i3math-prospective-v1/.
 
 Verbatim and other original environment qualifications remain unfinished. The broad goal is
 active; consecutive uninterrupted math handovers and broader qualification still
