@@ -93,6 +93,22 @@ class RuntimeTests(unittest.TestCase):
     with self.assertRaises(RuntimeError):w.run_once(sign(c,key),anchor,authority,execute=True,adapter_factory=factory)
     factory.assert_not_called()
     (reward/'writer-cursor.json').unlink()
+    epoch='nonpayable-live-reward-math-v1-PENDING'
+    (compute/(epoch+'-manifest.json')).write_text(json.dumps(dict(epoch=epoch,deadline=7100)))
+    (compute/'controller.json').write_text(json.dumps(dict(active=dict(epoch=epoch,phase='collect'))))
+    previous_handoff=(reward/'last-run.json').read_bytes()
+    with patch.object(w.exporter,'run_once') as export_spy:
+     result=w.run_once(sign(c,key),anchor,authority,execute=True,adapter_factory=factory)
+     self.assertEqual(result,dict(status='waiting_for_epoch_finalization',window_end=7200,epoch=epoch,chain_executed=False))
+     factory.assert_not_called();export_spy.assert_not_called()
+     self.assertFalse((reward/'writer-cursor.json').exists())
+     self.assertEqual((reward/'last-run.json').read_bytes(),previous_handoff)
+     (compute/(epoch+'-signed-compute-scores.json')).write_text('{}')
+     with self.assertRaisesRegex(ValueError,'lacks original scores'):
+      w.run_once(sign(c,key),anchor,authority,execute=True,adapter_factory=factory)
+     factory.assert_not_called();export_spy.assert_not_called()
+    (compute/(epoch+'-signed-compute-scores.json')).unlink()
+    (compute/'controller.json').write_text(json.dumps({'active':None}))
     class LateFinalize(Adapter):
      def registrations(self):
       epoch='nonpayable-live-reward-math-v1-DELAYED'

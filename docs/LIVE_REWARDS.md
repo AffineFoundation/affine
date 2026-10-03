@@ -81,3 +81,12 @@ score. It repeats that check after chain identity discovery. An unresolved older
 epoch waits instead of closing as zero. Records from an already closed hour must
 already appear in its immutable ledger and signed proposal; delayed evidence
 cannot silently lose rewards or create a second payment.
+
+If an expired active epoch has neither an original score nor its signed sidecar
+at the first completeness check, the runner reports
+`waiting_for_epoch_finalization` with a successful timer invocation. It leaves
+the reward cursor and prior handoff evidence unchanged and does not construct
+a chain adapter, export an hour or submit a transaction. A lone score artifact,
+missing finalized sidecars, inconsistent evidence or a finalization change after
+chain identity discovery still refuses the invocation. This distinguishes normal
+audit backlog from corruption without bypassing the closed-hour reward guard.

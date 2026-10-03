@@ -1,5 +1,17 @@
 # Live reward launch authorized — October 3, 2026
 
+At 23:14 UTC epoch six had 47 completed audit jobs and two leased under the
+original live controller. Its scores are not finalized. Read-only writer checks
+confirmed the exact waiting cause: this old-hour active epoch lacks both original
+and signed scores. Legacy writers remain disabled and the suppression bytes match.
+The reward writer now distinguishes that first-check pending condition from an
+integrity failure: its actual 23:13 invocation exited zero with
+waiting_for_epoch_finalization. It does not advance the cursor, export an hour,
+construct the chain adapter or submit a transaction for that wait. Partial score
+artifacts and other evidence errors still refuse. Thirty-one live-reward controls
+pass, including no chain/export/handoff mutation during the wait. This is not a
+new payout or completed current-epoch training claim.
+
 At 23:04 UTC the original controller and all three storage housekeeping workers
 were independently confirmed alive under exact start ticks. Epoch six had 42
 completed audit jobs and two leased; cumulative training was still nine updates.

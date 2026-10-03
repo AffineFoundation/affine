@@ -13,6 +13,12 @@ from subnet.source_bootstrap import admitted_files
 from ops import live_reward_exporter as exporter,live_reward_submit as submit
 UNITS=tuple(n+'.'+s for n in ('affine-transition-weights','affine-hourly-burn') for s in ('timer','service'))
 
+class FinalizationPending(ValueError):
+ """An active expired epoch has not produced either score artifact yet."""
+ def __init__(self,epoch):
+  self.epoch=epoch
+  super().__init__('old-hour active finalize lacks original scores')
+
 def read(path):return json.loads(Path(path).read_text())
 def file_hash(path):
  p=Path(path);need(p.is_file() and not p.is_symlink(),'regular reviewed file')
@@ -141,6 +147,8 @@ def finalized_hour_watermark(state,prefix,window_end):
   manifest=read(manifest_path);need(manifest['epoch']==active['epoch'],'controller watermark manifest epoch')
   deadline=manifest['deadline'];need(type(deadline) in (int,float) and math.isfinite(deadline) and deadline>=0,'controller watermark deadline')
   if deadline<=window_end:
+   if not (state/(active['epoch']+'-scores.json')).exists() and not (state/(active['epoch']+'-signed-compute-scores.json')).exists():
+    raise FinalizationPending(active['epoch'])
    need((state/(active['epoch']+'-scores.json')).is_file(),'old-hour active finalize lacks original scores')
    need((state/(active['epoch']+'-signed-compute-scores.json')).is_file(),'old-hour active finalize lacks signed scores')
  return status
@@ -208,7 +216,9 @@ def run_once(cutover_document,anchor_document,authority,*,execute=False,adapter_
   state=Path(c['reward_state']);state.mkdir(exist_ok=True,mode=0o700)
   end=choose_hour(state,anchor,now)
   if end is None:return {'status':'waiting_for_completed_live_hour','chain_executed':False}
-  completeness=finalized_reward_completeness(c,anchor_document,authority,window_end=end)
+  try:completeness=finalized_reward_completeness(c,anchor_document,authority,window_end=end)
+  except FinalizationPending as pending:
+   return dict(status='waiting_for_epoch_finalization',window_end=end,epoch=pending.epoch,chain_executed=False)
   evidence=verify_completed_evidence(c,authority,now)
   adapter=adapter_factory(state,netuid=120,expected_owner=OWNER)
   # Actual chain-derived identities before import/export, not a caller-supplied registry.

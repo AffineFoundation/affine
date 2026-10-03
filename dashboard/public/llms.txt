@@ -18,6 +18,10 @@ validators' vectors or a confirmation of individual wallet receipts.
 The old burn and equal-registration writers are disabled and inactive; the
 legacy validator's suppression guard remains in place. Historical nonpayable
 experiments are not converted into reward epochs or repaid.
+The hourly writer waits for outstanding epoch audits and final scores before
+closing their hour. This expected wait leaves prior weights and the reward cursor
+intact; it does not treat unfinalized submissions as a zero-point payout.
+
 
 The storage/transport upgrade opened a fresh epoch at 20:42:25 UTC from learned
 checkpoint 7f017e949b128a27851087df1b213659ce1e41e978b478964ba006b5a4aa1adc,
