@@ -48,6 +48,7 @@ class Database:
         folders.append((self.source/'prospective-separated-hopper-math-v8/controller-state','separated-hopper-math-v8'))
         folders.append((self.source/'prospective-separated-hopper-math-v9/controller-state','separated-hopper-math-v9'))
         folders.append((self.source/'prospective-separated-hopper-math-v10/controller-state','separated-hopper-math-v10'))
+        folders.append((self.source/'prospective-separated-hopper-math-v11-revision2/controller-state','separated-hopper-math-v11-revision2'))
         for folder,source_name in folders:
             if not folder.is_dir():
                 continue
@@ -158,6 +159,7 @@ class Database:
         evaluation_paths.extend((self.source/'prospective-separated-hopper-math-v8/evaluations').glob('*.json'))
         evaluation_paths.extend((self.source/'prospective-separated-hopper-math-v9/evaluations').glob('*.json'))
         evaluation_paths.extend((self.source/'prospective-separated-hopper-math-v10/evaluations').glob('*.json'))
+        evaluation_paths.extend((self.source/'prospective-separated-hopper-math-v11-revision2/evaluations').glob('*.json'))
         for path in evaluation_paths:
             raw = read(path,{})
             if not isinstance(raw,dict) or not all(isinstance(raw.get(k),str) for k in ('run_id','env_id','dataset_id','status')):
