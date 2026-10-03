@@ -25,6 +25,32 @@ class PublicProjectionTests(unittest.TestCase):
     def test_corrected_handover_namespace_exports_only_public_measurements(self):
         self.assert_hopper_projection('prospective-separated-hopper-math-v8', 'separated-hopper-math-v8')
 
+    def test_v9_public_epoch_namespace_exports_only_public_measurements(self):
+        self.assert_hopper_projection('prospective-separated-hopper-math-v9', 'separated-hopper-math-v9')
+
+    def test_v9_finalized_two_miner_window_keeps_corrected_cohort_separate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);state=root/'state';folder=state/'prospective-separated-hopper-math-v9/controller-state'
+            folder.mkdir(parents=True);epoch='nonpayable-separated-hopper-original-math-v9-1790996840-0'
+            identities=['a'*64,'b'*64]
+            (folder/f'{epoch}-manifest.json').write_text(json.dumps(dict(epoch=epoch,start=1,deadline=2,payable=False,
+                checkpoint={'id':'base'},capabilities={i:'PRIVATE_CAPABILITY' for i in identities})))
+            (folder/f'{epoch}-verified.json').write_text(json.dumps({i:dict(outcomes=[dict(valid=True,fully_audited=True)],accepted=[{}]) for i in identities}))
+            (folder/f'{epoch}-scores.json').write_text(json.dumps(dict(points={i:1 for i in identities},weights={i:.5 for i in identities})))
+            (folder/f'{epoch}-registrations.json').write_text(json.dumps({str(uid):dict(uid=uid,public_key=i) for uid,i in zip([131,168],identities)}))
+            evaluations=folder.parent/'evaluations';evaluations.mkdir()
+            old=state/'evaluations';old.mkdir()
+            for destination,run,model,dataset in [(evaluations,'corrected-h200','Qwen/Qwen2.5-Math-7B-Instruct','h200-fixed32'),(old,'historical-smol','HuggingFaceTB/SmolLM2-1.7B-Instruct','smol-fixed32')]:
+                (destination/(run+'.json')).write_text(json.dumps(dict(run_id=run,epoch_id=epoch,env_id='affine_math',dataset_id=dataset,
+                    status='complete',timestamp=3,count=32,successes=9,mean_reward=9/32,model=model)))
+            database=Database(root/'network.sqlite',state);database.refresh();snapshot=database.snapshot();row=snapshot['epochs'][0]
+            self.assertTrue(row['finalized']);self.assertFalse(row['payable']);self.assertEqual(row['source'],'separated-hopper-math-v9')
+            self.assertEqual((row['batches'],row['accepted'],row['rejected'],row['unchecked']),(2,2,0,0))
+            self.assertEqual((row['grid'][131],row['grid'][168],row['points']),(1,1,2));self.assertIsNone(row['training'])
+            self.assertEqual({e['dataset_id'] for e in snapshot['evaluations']},{'h200-fixed32','smol-fixed32'})
+            self.assertEqual(len({e['model'] for e in snapshot['evaluations']}),2)
+            self.assertNotIn('PRIVATE_CAPABILITY',json.dumps(snapshot))
+
     def assert_hopper_projection(self, namespace, source):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);state=root/'state';folder=state/namespace/'controller-state'

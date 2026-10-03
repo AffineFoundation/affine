@@ -1,3 +1,29 @@
+# First v9 public batches fully audited — October 3, 2026
+
+The original 03:37:20 UTC deadline closed normally. The owned UID 131 public
+client and an independent activated miner UID 168 each uploaded one real K1/L1
+batch, for task indices 1278 and 6260 respectively. Root independently streamed
+both frozen R2 artifacts (331,379,315 and 225,886,481 bytes), checked their SHA
+against the frozen signed audit jobs, authenticated verifier queue/report
+bindings, exact 125 module hashes, approved weights/runtime/numerical policy,
+and fully-audited accepted positive/negative rollouts. Two distinct H200 verifier
+workers completed the audits. The external audit retried after a temporary R2
+network error; lease renewals continued and attempt 2 passed without a controller
+restart or modified source/thresholds.
+
+Actual signed R2 scores give each miner one point and proposed weight 0.5.
+The terminal proposal file, training, successor publication and after32 evaluation
+are still pending; no blockchain weights are submitted. The controller is running
+the fixed before32 evaluation at cumulative step 1, before the next full-model
+update. This is a real public-miner/audit/scoring result, not yet a qualified
+complete public training epoch or demonstrated improvement.
+
+The live two-chart dashboard now includes v9: actual HTTPS readback shows two
+submitted and two accepted batches, zero rejected/unchecked, and no training
+claim. Desktop/mobile browser checks preserve two charts and the distinct H200
+fixed32 cohort. Nineteen projection tests passed. Follow-on public epochs remain
+gated on independent first full training/publication/after32 completion review.
+
 # Open admission live — October 3, 2026
 
 The per-key whitelist is removed in the active v9 pilot config. Root verified the
