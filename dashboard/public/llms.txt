@@ -10,11 +10,14 @@ Historical teacher distillation / king-versus-challenger instructions are not th
 current pilot contract. Dashboard records describe measured runs, not a promise
 of rewards, general model improvement, or support for every environment.
 
-Current operational status: the repaired v10 public pilot opened on October 3,
-2026 at 05:28:39 UTC, with a signed deadline of 05:58:39 UTC. Public discovery
-announces the actual signed epoch. Read https://affine.io/mining.json and verify
-the current signed manifest/deadline before mining; an opening is not completed
-training. The retained v9 fixed32 measurement changed from 20/32 to 22/32.
+Current operational status: the v11 revision2 public math pilot is open.
+Signed deadline: 2026-10-03 08:09:37 UTC. It admits all activated subnet-120
+hotkeys; UID 85 is included in this epoch's authenticated snapshot. Read
+https://affine.io/mining.json and verify its signed current manifest before mining.
+The checkpoint preserves three completed full-model updates. The previous v10
+fixed32 evaluation changed from 22/32 to 23/32; it required operator recovery.
+This small matched cohort does not establish broader improvement. This opening
+is not a completed training epoch, and blockchain weight submission is disabled.
 
 ## Architecture
 
