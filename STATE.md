@@ -1,4 +1,4 @@
-# Closed v11 revision2 math epoch under post-training evaluation — October 3, 2026
+# First uninterrupted v11 revision2 math epoch qualified — October 3, 2026
 
 The recovered v10 epoch is fully qualified, including its signed nonempty history,
 three independently audited batches and exactly one full-model update. Fixed32
@@ -11,11 +11,11 @@ trained caches on trainer/evaluator, and adopted checkpoint `5756f804…` withou
 resetting or repeating training. The new source `86a38cba…` and authority
 `3301134b…` opened epoch
 `nonpayable-separated-hopper-original-math-v11-revision2-1791013177-2`.
-Its signed deadline was 08:09:37 UTC. Upload discovery is now closed. The fresh snapshot includes 237 activated
+Its signed deadline was 08:09:37 UTC; that epoch is closed. Its snapshot includes 237 activated
 subnet identities, including UID 85, and the full 6,746 original MATH mining
 indices. There is no operator registration allowlist. Activation and current
 on-chain UID ownership remain required. This epoch inherits round 2 and three
-completed full-model updates; its own training has not completed yet.
+completed full-model updates; its own update and complete closeout are now qualified.
 
 The real UID 131 public client completed and uploaded a genuine task-1278 pair
 before the deadline, with the exact isolated source pin and capability-only
@@ -30,13 +30,23 @@ parameter tensors receiving gradients, and changed parameter-value hashes. The
 other five accepted pairs were not consumed by this single update. Root streamed
 and verified all ten successor files in R2 (15,242,726,234 bytes), matching the
 training file map, controller publication receipt and signed descriptor for
-`4c0ed049…`. Post-training evaluation is now running on its separate evaluator.
-After-evaluation and clean controller closeout remain unqualified for this epoch.
+`4c0ed049…`. The separate evaluator completed the identical 32 held-out tasks
+at 22/32, down from 23/32 before training. Root verified the original controller’s
+actual clean exit 0, complete authenticated history and all published artifacts.
+This epoch required no operator recovery and is fully qualified. The small-cohort
+decline is retained; broader performance improvement is not established.
+The raw signed first history is archived before any refreshed publication. A
+reviewed once-only follow-on controller is running from that successor, with
+round 3 and four cumulative updates. Root verified its actual new signed opening
+`nonpayable-separated-hopper-original-math-v11-revision2-1791019460-3`, deadline 2026-10-03 09:54:20 UTC,
+237 activated identities including UID 85, and all 6,746 MATH tasks. Actual
+affine.io mining discovery is open. The public test-client continuation is running;
+this new epoch has not yet completed mining, verification or training.
 Accepted UID bindings are 168, 137, 131, 43, 12 and 85. UID 85 matches the user's
 supplied hotkey and earned one point; no payout or chain submission occurred.
 Two independently hosted verifier workers are live under the new authority.
-Actual affine.io HTTPS mining discovery and /llms.txt show closed uploads and
-open admission for the next signed opening. No chain weight
+Actual affine.io HTTPS mining discovery and /llms.txt show the verified following
+opening and admission for all activated keys. No chain weight
 submission is enabled. See the opening, discovery, handover and worker receipts
 in `state/prospective-separated-hopper-math-v11-revision2/`.
 
