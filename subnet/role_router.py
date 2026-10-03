@@ -58,7 +58,7 @@ class RoutedJobs:
         if target['free_bytes']<source['required_bytes']:raise ValueError('trainer checkpoint download/output disk reserve')
         return dict(source,trainer_capacity=target)
 
-    def training_capacity(self,manifest,steps):
+    def training_capacity(self,manifest,steps,submission_bytes=None):
         """Free bytes already account for installed packages and existing caches.
 
         Legacy full training retains one complete checkpoint per optimizer step
@@ -78,9 +78,15 @@ class RoutedJobs:
             code="import json,os;from pathlib import Path;p=Path("+repr(trainer.workspace)+");p.mkdir(parents=True,exist_ok=True);s=os.statvfs(p);print(json.dumps(dict(free_bytes=s.f_bavail*s.f_frsize)))"
             free=json.loads(trainer.command(shlex.quote(trainer.python)+' -c '+shlex.quote(code)))['free_bytes']
         budget=for_manifest(manifest)
-        required=checkpoint_bytes*(steps+1+(0 if cache else 1))+budget['compressed_bytes']+budget['raw_bytes']+2*1024**3
+        if submission_bytes is not None and (type(submission_bytes) is not int or not 0<submission_bytes<=256*budget['compressed_bytes']):
+            raise ValueError('planned training submission bytes')
+        # Download ZIPs are retained for the entire job. Raw tensors are decoded
+        # one submission at a time, so retain one raw-artifact working reserve.
+        downloads=max(budget['compressed_bytes'],submission_bytes or 0)
+        required=checkpoint_bytes*(steps+1+(0 if cache else 1))+downloads+budget['raw_bytes']+2*1024**3
         if free<required:raise ValueError('trainer input/snapshot/export/artifact disk reserve')
-        return dict(free_bytes=free,checkpoint_bytes=checkpoint_bytes,required_bytes=required,input_cache=bool(cache),retained_step_checkpoints=steps,final_exports=1)
+        return dict(free_bytes=free,checkpoint_bytes=checkpoint_bytes,required_bytes=required,input_cache=bool(cache),retained_step_checkpoints=steps,final_exports=1,
+                    planned_submission_bytes=submission_bytes,download_reserve_bytes=downloads,raw_working_reserve_bytes=budget['raw_bytes'])
 
     def run(self,label,role,manifest,cache=None,**fields):
         from .remote_backend import save,role_time_budget

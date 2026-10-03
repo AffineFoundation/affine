@@ -1,5 +1,20 @@
 # Live reward launch authorized — October 3, 2026
 
+The actual three-step training job completed and published its next checkpoint;
+the original controller advanced to after-training evaluation. Global completed
+step count stays six until that evaluation and history publication finish.
+The prospective trainer now reserves all selected frozen submission downloads,
+rather than only one compressed-artifact budget. Hash/size/population guards and
+existing routing/backend controls pass; this admission-only change is not active
+in the current signed job. See `docs/TRAINER_STORAGE.md`.
+Root also freshly hashed every archived object of old checkpoint 94ae9c68… and
+retired exact idle miner/evaluator cache copies, totaling 30,485,452,468 bytes.
+Current f9 weights, jobs, reports and the independent verifier copy remain intact.
+Seven retirement controls cover archives, identity, GPU occupancy, hard links,
+descriptors and real memory maps. See `docs/CHECKPOINT_RETENTION.md` and private
+`old94-full-archive-retention-*` receipts. Automatic optimizer-export/model-history
+retention and sustained held-out improvement are still incomplete.
+
 The bounded verifier-retention watcher is now actually running every 300 seconds
 under a recorded PID/start tick, with the original controller also confirmed
 alive. Its first cycle completed successfully against both approved workers;

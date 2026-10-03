@@ -55,6 +55,25 @@ class RoutingTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.router.run('job','mine',dict(self.manifest,payable=True))
         self.router.roles['mine'].run.assert_not_called()
 
+    def test_training_reserves_all_retained_downloads_and_one_raw_workspace(self):
+        from subnet.artifact_budget import LEGACY
+        self.router.caches={'train':{'CP':'/train/cache'}}
+        measured={'checkpoint_bytes':100,'free_bytes':10**12,'required_bytes':200}
+        self.router.roles['train'].capacity.return_value=measured
+        downloads=12*LEGACY['compressed_bytes']
+        result=self.router.training_capacity(self.manifest,3,submission_bytes=downloads)
+        required=400+downloads+LEGACY['raw_bytes']+2*1024**3
+        self.assertEqual(result['required_bytes'],required)
+        self.router.roles['train'].capacity.return_value=dict(measured,free_bytes=required-1)
+        with self.assertRaisesRegex(ValueError,'disk reserve'):self.router.training_capacity(self.manifest,3,submission_bytes=downloads)
+
+    def test_training_submission_reserve_requires_bounded_integer(self):
+        from subnet.artifact_budget import LEGACY
+        self.router.caches={'train':{'CP':'/train/cache'}}
+        self.router.roles['train'].capacity.return_value={'checkpoint_bytes':100,'free_bytes':10**12,'required_bytes':200}
+        for invalid in (True,0,-1,1.5,257*LEGACY['compressed_bytes']):
+            with self.assertRaises(ValueError):self.router.training_capacity(self.manifest,3,submission_bytes=invalid)
+
     def test_training_download_capacity_checked_on_trainer(self):
         self.router.roles['mine'].capacity.return_value={'required_bytes':100,'checkpoint_bytes':40,'free_bytes':500}
         self.router.roles['train'].python='/python'

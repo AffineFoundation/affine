@@ -19,6 +19,20 @@ def save(path,value):
     path.parent.mkdir(parents=True,exist_ok=True)
     tmp=path.with_suffix('.tmp');tmp.write_bytes(canonical(value));tmp.chmod(0o600);tmp.replace(path)
 
+def training_submission_bytes(receipts,reports,manifest):
+    """Count every frozen ZIP that this training request actually downloads."""
+    from .artifact_budget import for_manifest
+    limit=for_manifest(manifest)['compressed_bytes'];total=0;count=0
+    for miner,report in reports.items():
+        if not report['accepted']:continue
+        receipt=receipts[miner];size=receipt.get('size')
+        if (type(size) is not int or not 0<size<=limit or
+                report.get('submission_sha256')!=receipt['sha256']):
+            raise ValueError('training frozen receipt size/hash binding')
+        count+=1;total+=size
+    if not 1<=count<=256:raise ValueError('planned training submission count')
+    return total
+
 def role_time_budget(config,role):
     budgets=config.get('job_ttl_seconds_by_role',{})
     roles={'mine','verify','train','evaluate','upload'}
@@ -271,7 +285,9 @@ class RemoteController(Controller):
             current=dict(metrics,new_checkpoint=output)
             self.bucket.json('public/'+epoch+'/training.json',self.signed(current))
             return output,current
-        capacity=(self.jobs.training_capacity(manifest,steps) if hasattr(self.jobs,'training_capacity') else self.jobs.capacity(checkpoint_path));receipts=json.loads((self.state/(epoch+'-scores.json')).read_text())['receipts']
+        receipts=json.loads((self.state/(epoch+'-scores.json')).read_text())['receipts']
+        planned_bytes=training_submission_bytes(receipts,reports,manifest)
+        capacity=(self.jobs.training_capacity(manifest,steps,submission_bytes=planned_bytes) if hasattr(self.jobs,'training_capacity') else self.jobs.capacity(checkpoint_path))
         submissions=[dict(url=self.bucket.presign(receipts[m]['frozen_key']),sha256=receipts[m]['sha256']) for m,r in reports.items() if r['accepted']]
         if not submissions:raise ValueError('no independently verified training data')
         extra={'replay':replay} if replay is not None else {}
