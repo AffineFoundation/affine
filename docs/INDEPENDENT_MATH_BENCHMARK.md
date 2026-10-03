@@ -5,7 +5,8 @@ learning. A separate comparison uses 128 tasks selected before any outcomes,
 from the 750 reserved MATH tasks, excluding both mining tasks and the diagnostic
 32. It pins the zero-update baseline, nine-update learned checkpoint, original
 task asset, source, autoregressive harness and matched seeds in a signed plan.
-Four 32-task jobs run for each checkpoint on a separately retained H200.
+Four 32-task jobs are planned for each checkpoint on a separately retained
+Hopper GPU, after actual allocation and full control admission.
 
 Admission checks the complete installed source, package versions and checkpoint
 bytes. Before benchmarking, a separate control exercises original grading,
@@ -33,3 +34,11 @@ also remains unproven.
 Current experiment records live in the private operator state under
 `independent-math128-precommit-v1`. Public status must distinguish admission,
 running benchmark jobs and fully checked final results.
+
+The first extra H200 hydrated the pinned checkpoints and passed CPU controls but
+failed to create a CUDA context in both the approved and provider-default Torch
+runtimes. No benchmark shard ran on it. A separately retained single H100 passes
+actual CUDA allocation with the approved runtime and has independently checked
+approved source bytes. Its checkpoint/control admission is pending. This changes
+the dedicated machine, not the precommitted cohort, model weights, sampling
+settings or verification tolerances; it does not qualify H100 for public mining.

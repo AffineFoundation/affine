@@ -40,10 +40,12 @@ or performance on a larger independent benchmark. Three optimizer steps remain
 configured per nonempty training epoch. Larger DeepMath/NuminaMath tasksets are
 not part of the active mining contract.
 A larger 128-task comparison is precommitted outside both the mining set and
-the fixed 32-task diagnostic. Its separate retained H200 has matching package
-versions and a complete, independently checked installation of the approved
-source. Checkpoint hydration and honest/tampered rollout admission are underway;
-benchmark results are pending. This comparison keeps original jobs, matched
+the fixed 32-task diagnostic. Its first separate H200 passed checkpoint hashing
+and CPU controls but fails actual CUDA context allocation, even with the provider's
+default runtime; no benchmark shards ran there. A separate retained H100 passes
+actual allocation with the approved copied runtime and has independently checked
+approved source bytes. Checkpoint transfer and honest/tampered rollout admission
+are underway; benchmark results are pending. This comparison keeps original jobs, matched
 seeds and complete coverage, and will report paired gains/losses and uncertainty.
 See https://github.com/AffineFoundation/affine/blob/main/docs/INDEPENDENT_MATH_BENCHMARK.md.
 Hardware availability or a single positive comparison does not prove sustained
@@ -113,8 +115,10 @@ operations preserve frozen submissions, reports, weights and original deadlines.
 Verifier startup now checks the actual remote seed's approved public identity
 before launch, with an explicit seed namespace option. Automatic completed-trainer
 housekeeping archives and fully reads back intermediate exports before removing
-their local replicas and completed downloads. Final learned exports, model caches,
-reports and original job records are retained. See docs/TRAINING_RETENTION.md;
+their local replicas and completed downloads. The intermediate watcher retains final learned exports. A separate automatic
+watcher can retire an obsolete completed final export only after full public
+archive checks, while protecting current/pending checkpoints and unfinished
+audits. Model caches, reports and original job records remain retained. See docs/TRAINING_RETENTION.md;
 this storage change does not alter model computation or a signed mining contract.
 A further streaming/conditional-copy snapshot path is tested on main but awaits
 future source admission. It does not change the current signed source. See
@@ -165,8 +169,10 @@ Arbos.life runs the validator/controller, authenticated audit queue, single chai
 writer, discovery monitor and dashboard. Five independent retained Lium H200
 nodes run one test miner, two verifiers, one trainer and one evaluator. R2 holds
 signed manifests, frozen batches, reports, scores, checkpoints and history.
-An additional retained H200 is dedicated to the independent 128-task comparison,
-so that experiment does not compete with the live role GPUs.
+Two additional machines remain retained for independent qualification: the H200
+with the CUDA-context failure ($3.40/hour) and the alternate H100 ($1.30/hour).
+Independent evaluation does not compete with the five live role GPUs. The H100
+checks do not yet broaden the approved public-miner hardware profile.
 The trainer rechecks selected accepted pairs, performs full-model preference
 updates against the fixed input-checkpoint reference and publishes a new immutable
 checkpoint. The synchronous next epoch waits for this publication. Configured

@@ -1,5 +1,42 @@
 # Live reward launch authorized — October 3, 2026
 
+At 23:04 UTC the original controller and all three storage housekeeping workers
+were independently confirmed alive under exact start ticks. Epoch six had 42
+completed audit jobs and two leased; cumulative training was still nine updates.
+Both approved verifier identities and source pins were freshly checked live.
+These are completed checks, not final current-epoch scores or training results.
+
+Independent benchmark admission fully hydrated both precommitted checkpoints
+and passed CPU tokenizer/original grader controls on the extra H200, but failed
+when retaining its CUDA device context. Both the approved mirrored Torch and the
+provider's default Torch fail a one-element CUDA allocation there. No benchmark
+shard ran. The original actual-wait exit and diagnostics remain preserved; no
+host GPU reset, driver change or production-role restart was made.
+A different single-H200 request was rejected because that host requires all eight
+GPUs; independent inventory confirms it created no pod. A separate single H100
+was then rented at $1.30/hour and registered for manual retention. Both its default
+and approved copied Torch runtime actually allocate on SM90 successfully. The
+approved 1,852-file source installation and independent full readback completed.
+Its first model-cache transfer failed solely because the destination parent was
+absent; actual child-wait failure and destination absence were checked before
+creating that parent and issuing a separate exact-cache copy. Copy completion,
+full checkpoint/control admission and benchmark shards are still pending.
+The original 128-task cohort, checkpoints, seeds and numerical tolerances remain
+unchanged. The unusable extra H200 remains retained at $3.40/hour. Neither extra
+machine is used for live role computation or weight writing.
+
+Automatic obsolete-final-export housekeeping is now running separately from
+intermediate/ZIP retention. Four actual cycles completed as no-ops: current
+weights, pending successors and unfinished signed audit jobs are protected.
+It authenticates the original training job/report/source, reads every already
+public archive object in full, and uses the existing remote process/file/idle-GPU
+retirement guard before removing at most one obsolete final replica per cycle.
+Model caches and original evidence are preserved. Thirty-six training/retention
+controls pass, including real isolated final-export retirement and corrupted
+archive refusal. No new live deletion by this companion is claimed.
+Main f424c5f3 and actual HTTPS guide SHA5712b660 were independently read back
+before this additional retention/status publication.
+
 At 22:36 UTC the original epoch-six controller and both retention supervisors
 were independently confirmed alive under their exact start ticks. Twenty-one
 current verifier jobs were complete and two leased. Three observed retry failures

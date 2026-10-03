@@ -66,7 +66,13 @@ class CompleteOperatorCycle(unittest.TestCase):
     def test_corrupt_archive_blocks_all_retirement_and_preserves_local_weights(self):
         self.exercise_cycle(corrupt_archive=True)
 
-    def exercise_cycle(self,corrupt_archive=False):
+    def test_actual_obsolete_final_retirement_preserves_current_and_original_evidence(self):
+        self.exercise_cycle(obsolete_final=True)
+
+    def test_corrupt_public_final_archive_preserves_all_local_weights(self):
+        self.exercise_cycle(corrupt_archive=True,obsolete_final=True)
+
+    def exercise_cycle(self,corrupt_archive=False,obsolete_final=False):
         import base64,hashlib,shlex,shutil,subprocess,sys,threading
         from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
         from nacl.signing import SigningKey
@@ -84,11 +90,15 @@ class CompleteOperatorCycle(unittest.TestCase):
             for step in (1,2,3):
                 p=jobs/('checkpoint-step-'+str(step));p.mkdir();(p/'config.json').write_bytes(b'{}');(p/'model.safetensors').write_bytes(('model-'+str(step)).encode());exports[step]=digest({f.name:sha(f) for f in p.iterdir()})
             (jobs/'submission-0.zip').write_bytes(b'zip');final=exports[3]
-            report=dict(job_id=job['job_id'],role='train',success=True,operator=authority,job_sha256=digest(job),epoch='epoch',checkpoint='a'*64,new_checkpoint={'id':final})
+            final_files={f.name:sha(f) for f in (jobs/'checkpoint-step-3').iterdir()}
+            report=dict(job_id=job['job_id'],role='train',success=True,operator=authority,job_sha256=digest(job),epoch='epoch',checkpoint='a'*64,new_checkpoint={'id':final,'files':final_files,'path':str(jobs/'checkpoint-step-3')})
+            if obsolete_final:
+                for f in (jobs/'checkpoint-step-3').iterdir():storage['public/checkpoints/'+final+'/'+f.name]=f.read_bytes()
+                storage['public/checkpoints/'+final+'/authorities/'+authority+'/checkpoint.json']=canonical(sign({'id':final,'files':final_files}))
             terminal=dict(job_id=job['job_id'],phase='complete',exit_code=0,runner_pid=999999998,child_pid=999999999,runner_pid_ticks='0',child_pid_ticks='0')
             (workspace/'runner-status').mkdir();(workspace/'runner-status'/(job['job_id']+'.json')).write_bytes(canonical(terminal));(workspace/(job['job_id']+'.json')).write_bytes(canonical(envelope));(jobs/'report.json').write_bytes(canonical(report))
             (roles/(job['job_id']+'-job.json')).write_bytes(canonical(envelope));(roles/(job['job_id']+'-report.json')).write_bytes(canonical(report));(roles/'epoch-train.json').write_bytes(canonical({'job_id':job['job_id']}))
-            (state/'controller.json').write_bytes(canonical({'checkpoint':{'id':'a'*64},'active':{'next_checkpoint':{'id':final}}}))
+            (state/'controller.json').write_bytes(canonical({'checkpoint':{'id':'a'*64},'active':None if obsolete_final else {'next_checkpoint':{'id':final}}}))
             config=root/'config.json';config.write_bytes(canonical({'state':str(state),'remote':{'roles':{'train':dict(user='root',host='fixture',port=1,known_hosts='/fixture',python=sys.executable,workspace=str(workspace))}},'bucket':{}}));config.chmod(0o600)
             record=root/'process.json';record.write_bytes(canonical(dict(child_pid=os.getpid(),child_ticks=Path('/proc',str(os.getpid()),'stat').read_text().rsplit(')',1)[1].split()[19],config_sha256=sha(config))))
             writer=root/'writer.json';writer.write_bytes(canonical(sign({'compute_state':str(state)})))
@@ -102,6 +112,7 @@ class CompleteOperatorCycle(unittest.TestCase):
                     self.end_headers()
             server=ThreadingHTTPServer(('127.0.0.1',0),Handler);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start();self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
             class FakeClient:
+                def head_object(self,**kwargs):return {'ContentLength':len(storage[kwargs['Key']])}
                 def get_object(self,**kwargs):
                     data=storage[kwargs['Key']]
                     if corrupt_archive and kwargs['Key'].endswith('/model.safetensors'):data=b'fakebad'
@@ -122,7 +133,11 @@ class CompleteOperatorCycle(unittest.TestCase):
                 # reading other users' processes on shared test hosts.
                 if 'spec.loader.exec_module(m)' in code:code=code.replace('spec.loader.exec_module(m)','spec.loader.exec_module(m);m.processes=lambda:[Path("/proc",str(os.getpid()))]')
                 env=dict(os.environ,PATH=str(binpath)+os.pathsep+os.environ['PATH']);return original_run(command[:4]+[code],env=env,**kwargs)
-            with patch('ops.retain_completed_training.Bucket',return_value=FakeBucket()),patch('ops.retain_completed_training.approved_source_members',return_value={'source':job['source_files']}),patch('ops.retain_completed_training.RemoteJobs.checked'),patch('ops.retain_completed_training.subprocess.run',side_effect=local_transport):
+            module='ops.retain_completed_training'
+            if obsolete_final:
+                module='ops.retain_obsolete_training_exports'
+                from ops.retain_obsolete_training_exports import run_cycle
+            with patch(module+'.Bucket',return_value=FakeBucket()),patch(module+'.approved_source_members',return_value={'source':job['source_files']}),patch(module+'.RemoteJobs.checked'),patch(module+'.subprocess.run',side_effect=local_transport):
                 if corrupt_archive:
                     with self.assertRaisesRegex(ValueError,'archive bytes changed'):run_cycle(config,writer,authority,root/'retention',record)
                     self.assertTrue(all((jobs/('checkpoint-step-'+str(i))/'model.safetensors').is_file() for i in (1,2,3)))
@@ -130,6 +145,14 @@ class CompleteOperatorCycle(unittest.TestCase):
                     self.assertFalse(any(k.endswith('/descriptor.json') for k in storage))
                     return
                 result=run_cycle(config,writer,authority,root/'retention',record)
+            if obsolete_final:
+                self.assertEqual(result['removed_replicas'],1);self.assertEqual(result['removed_bytes'],9)
+                self.assertFalse((jobs/'checkpoint-step-3').exists())
+                self.assertTrue(all((jobs/('checkpoint-step-'+str(i))/'model.safetensors').is_file() for i in (1,2)))
+                self.assertTrue((jobs/'report.json').is_file());self.assertTrue((workspace/(job['job_id']+'.json')).is_file());self.assertTrue((jobs/'submission-0.zip').is_file())
+                self.assertEqual(json.loads((state/'controller.json').read_text())['checkpoint']['id'],'a'*64)
+                self.assertEqual(storage['public/checkpoints/'+final+'/model.safetensors'],b'model-3')
+                return
             self.assertEqual(result['removed_replicas'],3);self.assertEqual(result['removed_bytes'],21)
             self.assertFalse((jobs/'checkpoint-step-1').exists());self.assertFalse((jobs/'checkpoint-step-2').exists());self.assertFalse((jobs/'submission-0.zip').exists())
             self.assertTrue((jobs/'checkpoint-step-3/model.safetensors').is_file());self.assertTrue((jobs/'report.json').is_file());self.assertTrue((workspace/(job['job_id']+'.json')).is_file())

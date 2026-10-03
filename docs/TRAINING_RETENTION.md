@@ -54,9 +54,26 @@ and actual completion. A transport, integrity or process failure stops it for
 inspection; it does not restart a GPU job or infer completion from an observation
 timeout. Model workers receive no permanent bucket or operator signing credential.
 Final learned exports and model caches are retained, so this removes temporary
-training replicas rather than bounding the entire model history. Final-checkpoint
-and cache retention remain separate work.
+training replicas. Model-cache history remains separate work.
 
 Six supervisor controls include real isolated Python/HTTP archive and retirement
 execution, a corrupted archive that prevents all deletion, original source and
 receipt admission, stream truncation, and live controller/configuration guards.
+
+The optional companion `ops.retain_obsolete_training_exports` bounds completed
+final export history separately. It accepts the same arguments and interval as
+the intermediate supervisor, with its own private output directory and lock.
+Each cycle handles at most one obsolete final export. It protects the current
+checkpoint, a pending successor and every unfinished authenticated verifier job.
+It authenticates original training jobs, source approvals and reports, then
+checks the already-published authority-specific checkpoint descriptor and reads
+every public object in full. No HEAD, ETag or file name is accepted instead of
+body hashing. Failed or incomplete archives prevent retirement.
+
+The existing remote primitive then checks original successful child/runner exit,
+complete local hashes and inventory, the final checkpoint report, idle GPU, hard
+links, descriptors and memory maps. Current weights, reports, original requests,
+runner records, archived objects and model caches are preserved. It never changes
+an epoch, retries a GPU job, or sends chain weights. Four additional controls
+exercise unfinished-job protection, path/file-map substitutions, actual isolated
+final-export retirement, and corrupt public archives preserving local files.
