@@ -18,7 +18,20 @@ def atomic(path,value):
   with os.fdopen(fd,'wb') as f:f.write(canonical(value));f.flush();os.fsync(f.fileno())
   os.chmod(name,0o600);os.replace(name,path)
  finally:Path(name).unlink(missing_ok=True)
-def run_once(compute_state,reward_state,anchor_document,authority,key,fresh_registrations,window_end):
+def epoch_anchor(manifest,anchor_document,authority,source_anchors=None):
+ """Keep each source's original approval anchor across prospective upgrades."""
+ if source_anchors is None:return anchor_document
+ need(isinstance(source_anchors,dict) and source_anchors,'approved source anchor registry')
+ current=signed(anchor_document,authority);digest=manifest['source_bundle']['sha256']
+ need(digest in source_anchors,'missing original source approval anchor')
+ original=source_anchors[digest];approved=signed(original,authority)
+ fields=('version','netuid','owner_hotkey','effective_at','compute_epoch_prefix','live_epoch_prefix','cutover_id')
+ need(all(approved.get(k)==current.get(k) for k in fields),'source anchor cannot change cutover identity or time')
+ sources=approved.get('approved_compute_sources');latest=current.get('approved_compute_sources')
+ need(isinstance(sources,list) and isinstance(latest,list) and digest in sources and set(sources)<=set(latest),'original source approval must be retained')
+ return original
+
+def run_once(compute_state,reward_state,anchor_document,authority,key,fresh_registrations,window_end,*,source_anchors=None):
  need(key.verify_key.encode().hex()==authority,'operator reward authority key binding')
  compute_state=Path(compute_state);reward_state=Path(reward_state);reward_state.mkdir(parents=True,exist_ok=True);reward_state.chmod(0o700)
  with (reward_state/'reward-ledger.lock').open('a') as lock:
@@ -29,7 +42,8 @@ def run_once(compute_state,reward_state,anchor_document,authority,key,fresh_regi
   for first in sorted(compute_state.glob('*-first-signed-manifest.json')):
    m=signed(json.loads(first.read_text()),authority);epoch=m['epoch']
    if not (compute_state/(epoch+'-signed-compute-scores.json')).exists():continue
-   report=export_epoch(compute_state,epoch,anchor_document,authority);document=sign(report,key)
+   original_anchor=epoch_anchor(m,anchor_document,authority,source_anchors)
+   report=export_epoch(compute_state,epoch,original_anchor,authority);document=sign(report,key)
    reward_epoch=report['epoch_id']
    if reward_epoch in by_epoch:need(canonical(document)==canonical(by_epoch[reward_epoch]),'immutable reward ledger collision')
    else:ledger.append(document);by_epoch[reward_epoch]=document

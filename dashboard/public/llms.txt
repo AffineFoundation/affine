@@ -57,9 +57,12 @@ closeout passed with an actual clean controller exit and no operator recovery.
 Two consecutive public epochs are now qualified, with five cumulative updates.
 The separate original I3Math generation test finished with a genuine success/
 failure pair and native self-verification. It has not completed independent
-public-epoch verification or training. The fresh sampled-audit epoch is now open from checkpoint 94ae9c680d15f2b5...,
-with the prospective live reward contract. Its deadline is 2026-10-03T14:39:19+00:00.
-The chain writer remains off pending fresh authenticated reports and root cutover.
+public-epoch verification or training. The fresh sampled-audit epoch from
+checkpoint 94ae9c680d15f2b5... closed at 2026-10-03T14:39:19+00:00. Its 42
+verified task batches from 19 miners have finalized. The enabled single writer
+is waiting for the first eligible reward hour to end at 16:00 UTC. There is no
+confirmed chain transaction yet. Training produced a new checkpoint, which is
+currently undergoing the matched after-training evaluation.
 
 ## Architecture
 
@@ -90,9 +93,10 @@ Invalid batches score zero. A valid unique task key
 (checkpoint, environment ID, sample index) earns one test point. When multiple
 miners submit valid batches for that same key, everyone scores zero for that key.
 Duplicate valid batches can remain eligible training data; scoring uniqueness
-and training eligibility are distinct. The current pilot performs full audits.
-Optional research sampling does not make unchecked batches eligible for training
-and leaves duplicate coverage / scores provisional.
+and training eligibility are distinct. The current epoch uses bounded random
+audits; this epoch's 19 submitted artifacts were all independently checked.
+Unchecked batches are not eligible for training or rewards, and unchecked
+duplicate claims leave coverage / scores provisional.
 
 The trainer receives only verified positive/negative pairs and performs a
 reference-relative sequence-preference gradient update against the immutable

@@ -177,7 +177,8 @@ def finalized_reward_completeness(c,anchor_document,authority,*,window_end):
   first=signed(read(state/(epoch+'-first-signed-manifest.json')),authority)
   need(canonical(first)==canonical(read(state/(epoch+'-manifest.json'))),'original final manifest binding')
   need(all((state/(epoch+'-signed-compute-audit-'+miner+'.json')).is_file() for miner in original['receipts']),'incomplete finalized audit sidecars')
-  expected=exporter.export_epoch(state,epoch,anchor_document,authority)
+  original_anchor=exporter.epoch_anchor(first,anchor_document,authority,c.get('approved_source_anchors'))
+  expected=exporter.export_epoch(state,epoch,original_anchor,authority)
   if epoch in indexed:need(canonical(indexed[epoch])==canonical(expected),'immutable ledger versus original finalized evidence')
   if closed is not None and score['finalized_at']<closed:
    need(epoch in indexed,'late unexported reward for already closed hour')
@@ -214,7 +215,8 @@ def run_once(cutover_document,anchor_document,authority,*,execute=False,adapter_
   registrations=adapter.registrations()
   # Recheck after potentially slow chain identity discovery, immediately before export.
   completeness=finalized_reward_completeness(c,anchor_document,authority,window_end=end)
-  exporter.run_once(c['compute_state'],state,anchor_document,authority,key,registrations,end)
+  export_options={'source_anchors':c['approved_source_anchors']} if 'approved_source_anchors' in c else {}
+  exporter.run_once(c['compute_state'],state,anchor_document,authority,key,registrations,end,**export_options)
   # Fresh execution proof immediately before chain handoff, under the same held lock.
   guard_files(c);units=observe_units();identity=process_identity();now=time.time()
   receipt=exporter.sign(dict(version='single-live-reward-writer-v1',netuid=120,observed_at=now,global_writer_lock_held=True,legacy_validator_guard_verified=True,old_writers=units,**identity),key)

@@ -56,6 +56,13 @@ each epoch; upgrading the primary source never replaces older audit evidence.
 The signed anchor must also approve a new source before its first epoch opens.
 Without this map, the existing single-source contract remains unchanged.
 
+An approval extension must also retain the original signed anchor for each
+source in `approved_source_anchors`. Both completeness checking and reward
+export select that source's original anchor. The extension preserves cutover
+identity, effective time and all earlier source approvals. Previously exported
+ledger records and closed-hour proposals stay byte-identical; changing the
+anchor used to recompute old records is refused as an immutable ledger collision.
+
 The runner derives actual process/boot identity, holds the global lock, queries
 the old units and checks the reviewed production hook and suppression marker.
 It reads original signed verifier requests and worker-authenticated completed
