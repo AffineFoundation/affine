@@ -7,6 +7,33 @@ from dashboard.server import Database, export_snapshot
 
 
 class PublicProjectionTests(unittest.TestCase):
+    def test_live_reward_epoch_and_actual_eval_are_public_without_upload_capabilities(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);state=root/'state'
+            launch=state/'live-math-launch-preparation-v1/distributed-preparation/live-controller-v1'
+            folder=launch/'controller-state';folder.mkdir(parents=True);epoch='nonpayable-live-reward-math-v1-PUBLIC'
+            manifest=dict(epoch=epoch,start=1,deadline=2,payable=False,checkpoint={'id':'input'},
+                capabilities={'miner':'PRIVATE_UPLOAD'},source_bundle={'read_url':'PRIVATE_READ'},
+                live_reward_contract=dict(version='live-verified-subset-reward-v1',payable=True,epoch=epoch))
+            (folder/f'{epoch}-manifest.json').write_text(json.dumps(manifest))
+            (folder/f'{epoch}-scores.json').write_text(json.dumps(dict(points={'miner':1})))
+            (folder/f'{epoch}-verified.json').write_text(json.dumps({'miner':dict(accepted=[{}],outcomes=[dict(valid=True,fully_audited=True)])}))
+            evaluations=launch/'evaluations';evaluations.mkdir()
+            (evaluations/'before.json').write_text(json.dumps(dict(run_id='live-before',epoch_id=epoch,env_id='affine_math',dataset_id='fixed32',status='complete',timestamp=3,count=32,successes=22,mean_reward=22/32,private_url='PRIVATE_READ')))
+            database=Database(root/'network.sqlite',state);database.refresh();snapshot=database.snapshot()
+            row=snapshot['epochs'][0];self.assertEqual(row['source'],'live-reward-math');self.assertEqual(row['mode'],'live')
+            self.assertFalse(row['payable']);self.assertTrue(row['reward_eligible']);self.assertEqual(row['batches'],1)
+            self.assertEqual(snapshot['evaluations'][0]['successes'],22)
+            self.assertNotIn('PRIVATE_',json.dumps(snapshot))
+            historical=state/'native-math-common';historical.mkdir()
+            (historical/'old-manifest.json').write_text(json.dumps(dict(epoch='old',start=0,deadline=1)))
+            database.refresh();current=database.snapshot(current_only=True)
+            self.assertEqual([e['id'] for e in current['epochs']],[epoch])
+            self.assertEqual(current['summary']['epochs'],1)
+            self.assertEqual(current['summary']['accepted'],1)
+            manifest['live_reward_contract']['epoch']='OTHER';(folder/f'{epoch}-manifest.json').write_text(json.dumps(manifest))
+            database.refresh();self.assertEqual(database.snapshot()['epochs'][0]['mode'],'test')
+
     def test_separate_hopper_namespace_exports_only_public_measurements(self):
         self.assert_hopper_projection('prospective-separated-hopper-math-v1', 'separated-hopper-math')
 

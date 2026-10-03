@@ -10,8 +10,11 @@ batch multiplies that miner's epoch points by 0.5; infrastructure errors retry
 without penalties. Unchecked duplicate claims remain unresolved and are disclosed.
 Compute remains unable to submit chain transactions. The first manifest contains
 a separate prospective reward contract; the single chain writer is enabled.
-The finalized 42 task points across 19 miners fall in the reward hour ending
-16:00 UTC. Its first confirmed chain transaction remains pending.
+The finalized 42 task points across 19 miners were committed in the reward hour
+ending 16:00 UTC. The transaction finalized at block hash
+0xa5b1cab7653bbb75adb8b6eb7b222bcded4fe9b8f3300b45d17faaf04fdcab30.
+Commit-reveal is enabled: automatic reveal is pending, so the active chain weight
+vector has not yet been independently confirmed as the new mechanism's vector.
 Historical nonpayable epochs are never converted or repaid. No live payout
 announcement has been made. Old burn and equal-registration writers remain off.
 Watch this document and https://github.com/AffineFoundation/affine main for updates;
@@ -30,7 +33,8 @@ Source and documentation: https://github.com/AffineFoundation/affine
 
 Affine is an experimental synchronous inference-verification training subnet.
 Historical pilots are nonpayable. The fresh epoch declares prospective rewards;
-the single writer is enabled, with its first confirmed chain transaction pending.
+the single writer is enabled and its first encrypted weight commitment finalized.
+Active reward weights still await the chain's automatic reveal and readback.
 Historical teacher distillation / king-versus-challenger instructions are not the
 current pilot contract. Dashboard records describe measured runs, not a promise
 of rewards, general model improvement, or support for every environment.
@@ -60,9 +64,11 @@ failure pair and native self-verification. It has not completed independent
 public-epoch verification or training. The fresh sampled-audit epoch from
 checkpoint 94ae9c680d15f2b5... closed at 2026-10-03T14:39:19+00:00. Its 42
 verified task batches from 19 miners have finalized. The enabled single writer
-is waiting for the first eligible reward hour to end at 16:00 UTC. There is no
-confirmed chain transaction yet. Training produced a new checkpoint, which is
-currently undergoing the matched after-training evaluation.
+finalized their encrypted weight commitment; automatic reveal is pending.
+Training produced checkpoint f9ea6c2d9fe81baede5deaf12fd5cb48750722a6731aff2d063b49b3dc39695e.
+Matched held-out performance declined from 22/32 to 20/32. The controller finished
+with an actual clean exit. The next source/checkpoint is being admitted before
+opening the next upload window; follow mining.json rather than reusing old grants.
 
 ## Architecture
 

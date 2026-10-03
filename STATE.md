@@ -14,18 +14,27 @@ The gateway froze 19 other registered miners' in-window uploads. All 19 worker
 jobs completed and root authenticated their original requests, source/runtime
 pins, deadlines, worker signatures and frozen receipt bindings. Finalized scores
 credit 42 fully verified distinct task batches across those 19 UIDs. The same
-original controller completed the before-training evaluation and moved to training.
+original controller completed training and after evaluation, then exited cleanly.
+The successor is f9ea6c2d… with six cumulative updates; matched fixed32 performance
+declined from 22/32 to 20/32. This epoch does not show a learning gain.
 The real writer dry run passed for the completed 15:00 UTC hour, with zero
 eligible points in that hour. This epoch finalized at 15:14 UTC, so its first
-positive reward hour ends at 16:00 UTC. No chain transaction has occurred.
+positive reward hour ended at 16:00 UTC. The writer finalized an encrypted
+commitment at block hash 0xa5b1cab7653bbb75adb8b6eb7b222bcded4fe9b8f3300b45d17faaf04fdcab30.
+Commit-reveal is enabled; the chain holds its pending owner commitment for round
+32748064. The active vector has not yet matched the intended 19 recipients, so
+automatic reveal/readback and the live-weights announcement remain pending.
 
 A future signed-harness KV-cache sampler is being qualified on the idle miner
 H200 in an isolated namespace. Seven CPU controls pass. Independent H200 replay
 passed for a genuine success and failure from different tasks, with exact full
 F32 probabilities, zero TOPLOC mismatches and eight typed tamper rejections.
 Root authenticated the original signed job and actual exit-zero receipt; a
-same-task success/failure pair and prospective source admission remain pending.
-It does not change
+same-task success/failure pair has now also passed independent H200 verification
+with exact full probabilities, zero TOPLOC mismatches and eight typed tamper
+rejections. Root authenticated both original jobs and checked the original
+supervised results and transferred artifact hashes. Five-role admission of the
+prospective source and learned f9 checkpoint remains in progress. It does not change
 the current epoch's sampler, source, checkpoint, deadline or numerical tolerances.
 The writer now supports a signed approved-source registry so prospective code
 upgrades retain each older epoch's original archive and authenticated job pins.
@@ -41,7 +50,8 @@ invalid batch. Pure shared audit arithmetic generates both proposed weights and
 reward units; unchecked batches earn no points, and infra errors are not fraud.
 The single-writer cutover configuration is genuinely root-signed. Its user timer
 is enabled and active after the actual dry run and 19 authenticated worker reports.
-The first positive reward hour ends at 16:00 UTC; no chain receipt exists yet.
+The first positive reward hour ended at 16:00 UTC; its commitment finalized, with
+automatic reveal and active-vector verification still pending.
 A host-interpreter launch failed before opening and
 was preserved; the fresh launch uses the rewrite's actual shared environment.
 
@@ -56,7 +66,17 @@ The operator's new nine-part goal explicitly authorizes live SN120 rewards,
 new-mechanism-only weight setting, a Discord launch announcement after actual
 cutover, continuing public adversarial mining and independently verified held-out
 improvement. See LIVE_LAUNCH_PLAN.md. Historical nonpayable epochs are preserved;
-there is no retroactive conversion or chain transaction yet.
+there is no retroactive conversion of earlier nonpayable epochs.
+
+The public affine.io dashboard now contains only the current reward run and
+exactly two charts: held-out math performance and batches per epoch. Historical
+run selectors and dropdowns are removed from both UI and public data export.
+All 22 dashboard controls pass. Actual HTTPS byte readback matches the deployed
+assets, and browser checks passed at five phone viewports and one desktop size,
+including touch tooltips, no horizontal overflow and no JavaScript errors.
+Arbos posted the system/setup instructions to the public Subnet 120 channel,
+including the pending weight reveal, continual main/llms updates and current
+22/32 to 20/32 performance decline; no improvement or active-vector claim was made.
 
 Root checked the legacy production weight guard exists. Both old transition and
 hourly-burn timers/services are now disabled/inactive, with before/after evidence

@@ -49,6 +49,8 @@ class Database:
         folders.append((self.source/'prospective-separated-hopper-math-v9/controller-state','separated-hopper-math-v9'))
         folders.append((self.source/'prospective-separated-hopper-math-v10/controller-state','separated-hopper-math-v10'))
         folders.append((self.source/'prospective-separated-hopper-math-v11-revision2/controller-state','separated-hopper-math-v11-revision2'))
+        launch=self.source/'live-math-launch-preparation-v1/distributed-preparation/live-controller-v1'
+        folders.append((launch/'controller-state','live-reward-math'))
         for folder,source_name in folders:
             if not folder.is_dir():
                 continue
@@ -105,7 +107,12 @@ class Database:
                 phase = 'collecting' if time.time() < doc.get('deadline', 0) else ('verified' if reports else 'closed')
                 if health.get('epoch') == eid and health.get('status') == 'paused_no_verified_training_data':
                     phase = 'awaiting data'
-                row = dict(id=eid, finalized=scorepath.exists(), mode='test' if eid.startswith(('mock-', 'test-', 'nonpayable-')) else 'live',
+                reward=doc.get('live_reward_contract', {})
+                reward_eligible=(source_name=='live-reward-math' and isinstance(reward,dict)
+                    and reward.get('version')=='live-verified-subset-reward-v1'
+                    and reward.get('payable') is True and reward.get('epoch')==eid)
+                row = dict(id=eid, finalized=scorepath.exists(), mode='live' if reward_eligible else 'test' if eid.startswith(('mock-', 'test-', 'nonpayable-')) else 'live',
+                           reward_eligible=reward_eligible,
                            payable=doc.get('payable', not eid.startswith(('mock-', 'test-', 'nonpayable-'))),
                            start=doc.get('start', 0), deadline=doc.get('deadline', 0), phase=phase,
                            checkpoint=str(checkpoint), indices=len(doc.get('indices', [])), k=doc.get('K', 0), l=doc.get('L', 0),
@@ -160,6 +167,7 @@ class Database:
         evaluation_paths.extend((self.source/'prospective-separated-hopper-math-v9/evaluations').glob('*.json'))
         evaluation_paths.extend((self.source/'prospective-separated-hopper-math-v10/evaluations').glob('*.json'))
         evaluation_paths.extend((self.source/'prospective-separated-hopper-math-v11-revision2/evaluations').glob('*.json'))
+        evaluation_paths.extend((launch/'evaluations').glob('*.json'))
         for path in evaluation_paths:
             raw = read(path,{})
             if not isinstance(raw,dict) or not all(isinstance(raw.get(k),str) for k in ('run_id','env_id','dataset_id','status')):
@@ -226,12 +234,23 @@ class Database:
             db.execute('INSERT OR REPLACE INTO snapshots VALUES(1,?)', (json.dumps(summary),))
             db.executemany('INSERT OR REPLACE INTO evaluations VALUES(?,?)',[(k,json.dumps(v,allow_nan=False)) for k,v in evaluations.items()])
 
-    def snapshot(self):
+    def snapshot(self, current_only=False):
         with self.connect() as db:
             summary = db.execute('SELECT data FROM snapshots WHERE id=1').fetchone()
             epochs = [json.loads(r[0]) for r in db.execute('SELECT data FROM epochs')]
             evaluations = [json.loads(r[0]) for r in db.execute('SELECT data FROM evaluations')]
-        return dict(summary=json.loads(summary[0]) if summary else {}, epochs=sorted(epochs, key=lambda x:x['start'], reverse=True),
+        summary=json.loads(summary[0]) if summary else {}
+        if current_only:
+            epochs=[row for row in epochs if row['source']=='live-reward-math']
+            epoch_ids={row['id'] for row in epochs}
+            evaluations=[row for row in evaluations if row.get('epoch_id') in epoch_ids]
+            summary=dict(updated_at=summary.get('updated_at'),network='Finney',netuid=120,
+                current_source='live-reward-math',epochs=len(epochs),
+                accepted=sum(row['accepted'] for row in epochs),
+                rejected=sum(row['rejected'] for row in epochs),
+                unchecked=sum(row['unchecked'] for row in epochs),
+                training_steps=sum((row.get('training') or {}).get('steps',0) or 0 for row in epochs))
+        return dict(summary=summary, epochs=sorted(epochs, key=lambda x:x['start'], reverse=True),
                     evaluations=sorted(evaluations,key=lambda x:x['timestamp']))
 
 
@@ -240,7 +259,7 @@ def serve(db, host, port):
         def do_GET(self):
             path = self.path.split('?')[0]
             if path in ('/api/network', '/network-data.json', '/health'):
-                data = json.dumps(db.snapshot() if path != '/health' else {'status':'ok'}).encode()
+                data = json.dumps(db.snapshot(current_only=True) if path != '/health' else {'status':'ok'}).encode()
                 kind = 'application/json'
             else:
                 files = {'/':'index.html', '/index.html':'index.html', '/llms.txt':'llms.txt', '/network.js':'network.js', '/network.css':'network.css', '/network-favicon.svg':'network-favicon.svg', '/network-haffer.ttf':'network-haffer.ttf', '/network-mono.ttf':'network-mono.ttf'}
@@ -297,7 +316,7 @@ def main():
     db.refresh()
     def export():
         if args.export:
-            export_snapshot(db.snapshot(), args.export)
+            export_snapshot(db.snapshot(current_only=True), args.export)
     export()
     if args.snapshot:
         print(json.dumps(db.snapshot()))

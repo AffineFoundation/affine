@@ -26,11 +26,18 @@ all 152,064-wide F32 log probabilities matched exactly, and every TOPLOC block
 had zero mismatch. Token, proof, probability and model-weight mutations were
 each rejected as `InvalidSample`; restoring the weights restored honest replay.
 Root authenticated the original signed job and actual exit-zero receipt.
-This verifies those trajectories, not sampler-seed provenance or a same-task
-pair. A valid same-task success/failure pair and prospective source admission
-remain required before activating the new harness in a public epoch. No current
-manifest or deadline is changed. Keep held-out comparisons on the same versioned
-sampling harness before and after training.
+A subsequent original generation job produced both a success and a failure for
+MATH task 1278 under the same task specification, checkpoint and cached harness
+(temperature 1.0, 1,024 output tokens). Independent replay on the second H200
+passed for both, with exact full probabilities, zero TOPLOC mismatches and all
+eight typed tamper rejections. Root authenticated the original signed generation
+and verification jobs, checked every transferred artifact hash and read the
+original supervised exit-zero result directly from the verifier machine.
+This qualifies the sampled trajectories, without proving sampler-seed provenance.
+Prospective source/checkpoint admission on all production roles is still required
+before activating the new harness in a public epoch. No existing manifest or
+deadline is changed. Keep held-out comparisons on the same versioned sampling
+harness before and after training.
 
 The miner now treats the native `TaskError` as an unscorable generation attempt
 and keeps searching within the original attempt/deadline limits. It retains
