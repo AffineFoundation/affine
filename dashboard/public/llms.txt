@@ -40,8 +40,14 @@ or performance on a larger independent benchmark. Three optimizer steps remain
 configured per nonempty training epoch. Larger DeepMath/NuminaMath tasksets are
 not part of the active mining contract.
 A larger 128-task comparison is precommitted outside both the mining set and
-the fixed 32-task diagnostic. A separate retained H200 is being prepared for it;
-results are pending. Hardware availability alone does not qualify its runtime.
+the fixed 32-task diagnostic. Its separate retained H200 has matching package
+versions and a complete, independently checked installation of the approved
+source. Checkpoint hydration and honest/tampered rollout admission are underway;
+benchmark results are pending. This comparison keeps original jobs, matched
+seeds and complete coverage, and will report paired gains/losses and uncertainty.
+See https://github.com/AffineFoundation/affine/blob/main/docs/INDEPENDENT_MATH_BENCHMARK.md.
+Hardware availability or a single positive comparison does not prove sustained
+learning. The public mining contract is unchanged.
 
 ## How to start mining
 
@@ -159,6 +165,8 @@ Arbos.life runs the validator/controller, authenticated audit queue, single chai
 writer, discovery monitor and dashboard. Five independent retained Lium H200
 nodes run one test miner, two verifiers, one trainer and one evaluator. R2 holds
 signed manifests, frozen batches, reports, scores, checkpoints and history.
+An additional retained H200 is dedicated to the independent 128-task comparison,
+so that experiment does not compete with the live role GPUs.
 The trainer rechecks selected accepted pairs, performs full-model preference
 updates against the fixed input-checkpoint reference and publishes a new immutable
 checkpoint. The synchronous next epoch waits for this publication. Configured

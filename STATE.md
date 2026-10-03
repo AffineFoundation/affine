@@ -1,5 +1,36 @@
 # Live reward launch authorized — October 3, 2026
 
+At 22:36 UTC the original epoch-six controller and both retention supervisors
+were independently confirmed alive under their exact start ticks. Twenty-one
+current verifier jobs were complete and two leased. Three observed retry failures
+were original R2 read timeouts; earlier affected jobs completed through the
+existing lease retry path. These infrastructure errors are not evidence of fraud.
+
+The independent evaluator's mirrored runtime reports torch 2.14.0,
+transformers 5.14.1, TOPLOC 0.1.6 and verifiers 0.3.1. CPU source installation
+and independent readback matched all 1,852 files of approved archive 548effe0….
+The signed 128-task precommit is unchanged. A supervised admission attempt is
+now actually hydrating and hashing baseline 2173 and learned 7f objects on the
+separate H200 before original-grader/tokenizer and honest/tampered GPU controls.
+Its original root PID/start ticks were freshly checked alive. Benchmark shards
+have not yet been launched and no quality result is claimed.
+Two earlier admission attempts exited before GPU work: the first expected a
+baseline authority-specific R2 descriptor that does not exist; the authenticated
+original zero-update job/report is now retained as its trust anchor. The second
+imported source-dependent modules before installing the fresh-source loader.
+Original failures and actual remote absence/idle observations remain preserved
+under independent-math128-precommit-v1. Neither failure changed the live fleet.
+
+The public paired-evaluation reducer and six meaningful controls now check exact
+cohort coverage, matched seeds/task hashes and binary verified native outcomes,
+then compute paired gains/losses, accuracy intervals and an exact two-sided
+McNemar probability. Missing tasks and grader errors stop the comparison rather
+than altering its denominator. The reducer itself authenticates no execution;
+the operator must first check original signed jobs and admitted runtime evidence.
+See docs/INDEPENDENT_MATH_BENCHMARK.md. Main and the actual HTTPS guide were
+independently read back at bdb14c12… with matching guide bytes SHA228c4312… before
+this additional report-tool/guide publication.
+
 Epoch six froze 78 in-window uploads (37,717,616,503 bytes). Both approved
 verifier identities subsequently claimed distinct original jobs; at 22:01 UTC
 one current audit job had completed and two were leased. The owned capability-only
