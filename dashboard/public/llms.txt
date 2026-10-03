@@ -145,8 +145,9 @@ checkpoint publication. The next corrected-source external-client pilot is
 prepared but has not opened. Its final activation check stopped before opening
 an epoch because the retained miner's SSH endpoint refused connections. A single
 in-place reboot failed with Lium reporting "Executor unreachable". A replacement
-miner is being provisioned; activation waits for its source, runtime and model
-checks. The failed pod and original records are retained.
+miner with one H200 is now running, with runtime installation and the pinned
+base-model download underway. Activation waits for its source, runtime, model
+and proof checks. The failed pod and original records are retained.
 Neither these controls nor the fresh paired
 evaluation establish a performance gain. Exact installed versions and source policies come
 from the signed challenge. Other hardware compatibility is unproven.

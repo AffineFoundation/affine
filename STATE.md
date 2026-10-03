@@ -80,6 +80,15 @@ before rental. Its source, runtime, model and proof checks must pass and its
 exact updated endpoint config must be reviewed before activation. The old failed
 pod, its histories and the already-reviewed prospective config are preserved.
 
+The replacement is now RUNNING: `lunar-eagle-c4`, UUID
+`eafd56dc-7597-42bb-8a22-dd79929d4faf`, exactly one H200 at $3.75/hour.
+Root independently checked the provider inventory, open endpoint and retained
+manual ownership with no lifetime ceiling. Runtime installation PID 1319 and
+the pinned base-model download PID 1373 were independently observed live over
+SSH. Preparation is still running; this is not model/proof admission or epoch
+activation. The prospective config changes only the miner endpoint and its
+qualification gate, preserving checkpoint, source, sampling and training rules.
+
 ## Separate H200 deployment — October 2, 2026
 
 The operator's Arbos.life name refers to this current code/validator host.
