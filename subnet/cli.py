@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from pathlib import Path
 from urllib.parse import urlparse,unquote
 from .client import identity,fetch_signed,checkpoint_download,direct_r2_url
-from .miner import Miner
+from .miner import Miner, EpochClosed
 from .batches import UploadBudgetExceeded
 from .model import check_runtime_profile
 from .protocol import entries, sample_key
@@ -88,7 +88,9 @@ def run(a):
             capability=delegated_capability(manifest,delegated) if delegated else None
             checkpoint=checkpoint_download(manifest,Path(a.state)/manifest['checkpoint']['id'])
             miner=Miner(key,manifest,checkpoint,capability=capability,state_path=Path(a.state)/f"{manifest['epoch']}-{key.id}.zip")
-            if miner.batches and time.time()<manifest['deadline']:miner.upload()
+            if miner.batches and time.time()<manifest['deadline']:
+                try:miner.upload()
+                except EpochClosed:logging.info('signed epoch closed before local batches could be uploaded')
             seen=current['epoch']
         # Budget exhaustion on an index does not finish the epoch. Search another
         # sweep until the signed deadline or batch quota, without reloading model.
@@ -101,6 +103,9 @@ def run(a):
             if time.time()>=manifest['deadline'] or len(miner.batches)>=limit:break
             try:
                 miner.search(index,seed=int(time.time_ns()%2**31),max_attempts=budget,env_id=env_id);miner.upload()
+            except EpochClosed:
+                logging.info('signed epoch closed; retaining prior batches without extending the deadline')
+                break
             except UploadBudgetExceeded:
                 logging.info('candidate exceeds cumulative upload budget; preserving prior batches')
                 if miner.batches:break

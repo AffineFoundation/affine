@@ -11,6 +11,9 @@ from .storage import canonical
 import hashlib
 from verifiers.v1.errors import TaskError
 
+class EpochClosed(RuntimeError):
+    """The original signed upload window has ended; not an invalid sample."""
+
 class Miner:
     def __init__(self, identity, manifest, checkpoint, capability=None, state_path=None):
         check_runtime_profile(manifest)
@@ -29,6 +32,8 @@ class Miner:
             raise ValueError('stale local miner state')
 
     def search(self, index, seed=0, max_attempts=100, env_id=None):
+        if time.time()>=self.manifest.get('deadline',float('inf')):
+            raise EpochClosed('signed epoch window closed')
         definition = entry(self.manifest, env_id)
         env_id = definition["env_id"]
         resolved=harness_for(definition,index)
@@ -41,7 +46,8 @@ class Miner:
         runtime=self.runtimes[key]
         positive, negative, arrays_pos, arrays_neg = [], [], [], []
         for attempt in range(max_attempts):
-            if time.time()>=self.manifest.get('deadline',float('inf')):break
+            if time.time()>=self.manifest.get('deadline',float('inf')):
+                raise EpochClosed('signed epoch window closed')
             try:
                 rollout, arrays = runtime.rollout(index, seed+attempt)
             except TaskError as error:
@@ -49,6 +55,8 @@ class Miner:
                 self.last_generation_error = dict(kind='unscorable_native_task_error',
                     env_id=env_id,index=index,seed=seed+attempt,error_type=type(error).__name__)
                 continue
+            if time.time()>=self.manifest.get('deadline',float('inf')):
+                raise EpochClosed('rollout completed after signed deadline')
             kind = classification(rollout)
             if kind == 'neutral':
                 continue
@@ -62,15 +70,23 @@ class Miner:
                 candidate = self.batches + [(batch, arrays_pos+arrays_neg)]
                 # A rejected addition must not poison previously uploaded state.
                 pack(candidate,budget=for_manifest(self.manifest))
+                if time.time()>=self.manifest.get('deadline',float('inf')):
+                    raise EpochClosed('batch construction completed after signed deadline')
                 self.batches = candidate
                 return batch
         raise RuntimeError('search budget exhausted')
 
     def upload(self):
+        if time.time()>=self.manifest.get('deadline',float('inf')):
+            raise EpochClosed('signed epoch upload window closed')
         data = pack(self.batches,budget=for_manifest(self.manifest))
         if self.state_path:
             self.state_path.parent.mkdir(parents=True,exist_ok=True)
             temporary = self.state_path.with_suffix('.tmp');temporary.write_bytes(data);temporary.chmod(0o600);temporary.replace(self.state_path)
+        if time.time()>=self.manifest.get('deadline',float('inf')):
+            raise EpochClosed('upload preparation completed after signed deadline')
         result = requests.put(self.cap['put_url'], data=data,headers=self.cap.get('headers',{}),timeout=120)
+        if result.status_code==403 and time.time()>=self.manifest.get('deadline',float('inf')):
+            raise EpochClosed('upload capability expired during request')
         result.raise_for_status()
         return result.status_code

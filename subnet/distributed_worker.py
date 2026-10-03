@@ -3,6 +3,7 @@ import argparse
 import base64
 import json
 import hashlib
+import logging
 import re
 import stat
 import os
@@ -114,6 +115,21 @@ class Worker:
             stopped.set(); thread.join(timeout=31)
 
 
+def serve(worker, pause=time.sleep):
+    """Retry transport outages while retaining original jobs and leases.
+
+    Authority, integrity and unclassified failures still stop the worker.
+    """
+    while True:
+        try:
+            worked=worker.once()
+        except requests.RequestException as error:
+            logging.warning('verifier transport unavailable (%s); retrying in 5 seconds',type(error).__name__)
+            pause(5)
+            continue
+        if not worked:pause(5)
+
+
 def main():
     parser=argparse.ArgumentParser(); parser.add_argument('--coordinator',required=True)
     parser.add_argument('--seed-file',required=True); parser.add_argument('--authority',required=True)
@@ -128,9 +144,9 @@ def main():
         if identifier in caches:raise ValueError('duplicate checkpoint cache mapping')
         caches[identifier]=local
     worker=Worker(args.coordinator,bytes.fromhex(path.read_text().strip()),args.authority,args.workspace,checkpoint_caches=caches)
-    while True:
-        worked=worker.once()
-        if args.once: return
-        if not worked: time.sleep(5)
+    if args.once:
+        worker.once()
+        return
+    serve(worker)
 
 if __name__=='__main__': main()

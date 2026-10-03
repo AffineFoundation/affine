@@ -65,10 +65,42 @@ class Bucket:
     def upload(self, key, path):
         self.client.upload_file(str(path), self.name, key)
 
-    def copy(self, source, destination):
+    def copy(self, source, destination, *, expected_etag=None):
         """Copy an operator-owned frozen object within R2, without re-uploading."""
+        condition = {} if expected_etag is None else {'CopySourceIfMatch': expected_etag}
         self.client.copy_object(Bucket=self.name, Key=destination,
-                                CopySource={'Bucket': self.name, 'Key': source})
+                                CopySource={'Bucket': self.name, 'Key': source}, **condition)
+
+    def verified_copy(self, source, destination, digest, size):
+        """Stream-check immutable frozen bytes, then copy that exact object.
+
+        The ETag condition only closes the read/copy race. SHA256 of the full
+        body remains the integrity check; neither HEAD nor ETag replaces it.
+        """
+        if (not isinstance(digest, str) or len(digest) != 64 or
+                any(c not in '0123456789abcdef' for c in digest) or
+                type(size) is not int or size <= 0):
+            raise ValueError('frozen receipt integrity fields')
+        response = self.client.get_object(Bucket=self.name, Key=source)
+        body = response['Body']
+        try:
+            if response['ContentLength'] != size:
+                raise ValueError('receipt size changed')
+            hashed = hashlib.sha256(); count = 0
+            while True:
+                part = body.read(1024 * 1024)
+                if not part: break
+                count += len(part)
+                if count > size: raise ValueError('receipt size changed')
+                hashed.update(part)
+            if count != size or hashed.hexdigest() != digest:
+                raise ValueError('receipt hash changed')
+            etag = response['ETag']
+            if not isinstance(etag, str) or not etag:
+                raise ValueError('frozen object ETag missing')
+        finally:
+            body.close()
+        self.copy(source, destination, expected_etag=etag)
 
     def download(self, key, path):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -104,7 +136,10 @@ class Gateway:
     identities. All PUTs and closure share a lock, including the R2 write itself.
     This makes finalization atomic with respect to an in-flight upload.
     """
-    def __init__(self, bucket, host='127.0.0.1', port=0, state_path=None, public_url=None,direct_r2=False):
+    def __init__(self, bucket, host='127.0.0.1', port=0, state_path=None, public_url=None,direct_r2=False,publication_workers=4):
+        if type(publication_workers) is not int or not 1<=publication_workers<=8:
+            raise ValueError('bounded frozen publication workers')
+        self.publication_workers=publication_workers
         self.bucket = bucket
         self.direct_r2=direct_r2
         self.state_path = Path(state_path) if state_path else None
@@ -242,19 +277,27 @@ class Gateway:
                     self.persist()
                 state['uploads']=dict(snapshots)
                 self.persist()
-            result = {}
-            for miner, receipt in state['uploads'].items():
-                data = self.bucket.get(receipt.get('snapshot_key',receipt['key']))
-                if sha(data) != receipt['sha256']:
-                    raise ValueError('receipt hash changed')
+            def publish(item):
+                miner, receipt = item
                 key = f'public/{epoch}/submissions/{miner}.zip'
-                if state.get('transport')=='direct-r2-v1' and hasattr(self.bucket,'copy'):
-                    # The private frozen key is operator-owned. Its actual body
-                    # was just hash-checked; never copy the mutable staging key.
-                    self.bucket.copy(receipt['snapshot_key'],key)
-                else:self.bucket.put(key, data)
-                result[miner] = dict(receipt, frozen_key=key)
-                if state.get('transport')=='direct-r2-v1':result[miner]['read_url']=self.bucket.presign(key)
+                if state.get('transport')=='direct-r2-v1' and hasattr(self.bucket,'verified_copy'):
+                    self.bucket.verified_copy(receipt['snapshot_key'],key,receipt['sha256'],receipt['size'])
+                else:
+                    data = self.bucket.get(receipt.get('snapshot_key',receipt['key']))
+                    if sha(data) != receipt['sha256']:
+                        raise ValueError('receipt hash changed')
+                    if state.get('transport')=='direct-r2-v1' and hasattr(self.bucket,'copy'):
+                        # Never copy the miner's mutable staging key.
+                        self.bucket.copy(receipt['snapshot_key'],key)
+                    else:self.bucket.put(key, data)
+                value = dict(receipt, frozen_key=key)
+                if state.get('transport')=='direct-r2-v1':value['read_url']=self.bucket.presign(key)
+                return miner,value
+            if state.get('transport')=='direct-r2-v1' and hasattr(self.bucket,'verified_copy'):
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=self.publication_workers) as pool:
+                    result = dict(pool.map(publish,state['uploads'].items()))
+            else:result=dict(map(publish,state['uploads'].items()))
             if state.get('transport')=='direct-r2-v1':state['frozen_receipts']=result;self.persist()
             self.bucket.json(f'public/{epoch}/receipts.json', result)
             return result

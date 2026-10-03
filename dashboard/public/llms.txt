@@ -88,6 +88,13 @@ credentials. Miners need no permanent bucket credentials.
 
 ## Batch and reward rules
 
+Recent main updates add bounded parallel frozen-object publication, explicit
+miner deadline handling and verifier connection recovery. They are prospective
+until admitted for a future signed epoch. Bootstrap the archive selected by the
+current manifest; do not mix modules from main into an already signed run.
+Leave time for proof construction, compression and upload: a local candidate
+completed after the signed deadline cannot earn points.
+
 The signed per-UID submission cap is currently three batches per epoch. It is a
 conservative configurable pilot setting, not a measured throughput maximum or
 a fundamental protocol limit. Each batch covers one authorized task index on the

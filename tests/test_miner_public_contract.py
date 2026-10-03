@@ -81,7 +81,7 @@ class PublicMinerContract(unittest.TestCase):
             restored=Miner(SimpleNamespace(id='registered'),manifest,root,
                 capability=cli.delegated_capability(manifest,cap),state_path=state)
             self.assertEqual(len(restored.batches),1)
-            with patch.dict(LEGACY,compressed_bytes=1),patch('subnet.miner.requests.put',return_value=response) as upload:
+            with patch.dict(LEGACY,compressed_bytes=1),patch('subnet.miner.requests.put',return_value=response) as upload,patch('subnet.miner.time.time',return_value=1700000010):
                 restored.upload()
             self.assertEqual(unpack(upload.call_args.kwargs['data'],budget=LONG)[0][1][1][0].shape,(1024,2))
             legacy=copy.deepcopy(manifest);legacy.pop('artifact_policy')

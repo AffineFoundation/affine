@@ -1,5 +1,28 @@
 # Live reward launch authorized — October 3, 2026
 
+The continuous epoch's 33 in-window uploads have now been frozen and published;
+the actual controller remains alive and audits are progressing. Root found that
+verifier 2's retained SSH forward exposed remote 19082 while its new worker
+requested 19081. The missing worker and absent listener were checked against
+actual processes and lease state. Root preserved the old forward, created a
+distinct correct listener and restarted only the absent worker. Both verifier
+identities now hold original coordinator leases. At 18:09 UTC, six jobs had
+completed with 18 accepted batches and no confirmed invalid outcomes; these are
+partial audit observations, not final epoch scores or new training results.
+Evidence: `state/live-math-launch-preparation-v1/continuous-upgrade-e6357200-f9-v1/verifier2-transport-recovery-v2/`
+and `post-transport-recovery-audit-observation.private.json` in that parent.
+
+Prospective source now streams and parallelizes hash-checked frozen publication,
+stops late miner submissions explicitly and keeps verifier daemons alive through
+connection outages. Sixteen new controls and 38 existing focused controls pass.
+A private actual R2 probe verified every copied byte and rejected a changed
+source with HTTP 412; four-worker publication of four 8 MiB objects took 0.93 s
+versus 3.55 s serially. This is a small qualification, not production throughput.
+The current signed epoch retains source ae44200b…; these source changes require
+future admission. See `docs/BUCKET_PUBLICATION.md` and `docs/TRANSPORT_RECOVERY.md`.
+The actual UID131 miner completed after the original deadline and received 403;
+its late candidate is not eligible. Its original exit-one receipt is preserved.
+
 The continuous successor opened at 16:57:27 UTC with its original 17:27:27
 deadline, learned checkpoint f9ea6c2d… and source ae44200b…. All five separate
 H200s passed fifteen actual supervised CPU exits, complete source/checkpoint
