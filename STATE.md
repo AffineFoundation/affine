@@ -132,8 +132,13 @@ single-PUT job remains failed. The reviewed CPU transport-recovery adapter
 resumes only that exact publication, rechecks current R2 bytes and signs the
 normal checkpoint descriptor before continuing the original once-controller.
 It reuses the original completed training report and does not repeat the update.
-The resumed controller is confirmed live; after-evaluation and final handover
-are still pending.
+The resumed controller reached the after-evaluation phase, then its evaluator
+failed before model loading because the returned successor descriptor omitted
+`read_urls`. The failed job and terminal controller are preserved. A narrow
+hash-checked evaluator hydration is being prepared; no optimizer rerun is needed.
+The future publisher now returns exact read links after independent verification
+and refreshes them for cached training only with a matching publication receipt.
+The immutable checkpoint descriptor and saved training metrics stay unchanged.
 
 Corrected proof source v7
 `175cd629e397f3b1a32d3066fcb673dddacfe674fb39682f117ca1af2ff27ce9`
@@ -142,7 +147,9 @@ Its signed archive was independently read back from R2 under authority
 `d372183790955364d0cd7758d1d64d71200b8d6d30ad1e39d05c4f446dc0a3f2`.
 Separate fleet source installation and runtime admission are in progress;
 the known-task GPU qualification and fresh comparable evaluations are pending.
-No v7 mining epoch is active. affine.io now allows that future namespace, keeps
+No v7 mining epoch is active. The next deployment source must also include the
+successor-download-link fix; v7 remains a proof-qualification stage. affine.io
+now allows that future namespace, keeps
 the two-chart layout, and explains the distinct Qwen cohort in `/llms.txt`.
 Sixteen privacy projection tests and actual HTTPS readbacks pass.
 Chain submissions remain disabled. Production, the retained-3090 pilot and

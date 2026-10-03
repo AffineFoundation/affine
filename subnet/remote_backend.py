@@ -141,6 +141,11 @@ class RemoteController(Controller):
             if key=='public/'+manifest['epoch']+'/manifest.json':value=self.signed(manifest)
             original.json(key,value)
         return manifest
+    def checkpoint_with_reads(self,checkpoint):
+        files=checkpoint['files']
+        if checkpoint['id']!=file_map(files):raise ValueError('checkpoint read capability file-map binding')
+        return dict(checkpoint,read_urls={name:self.bucket.presign('public/checkpoints/'+checkpoint['id']+'/'+name) for name in files})
+
     def publish_remote_checkpoint(self,manifest,remote_path):
         cp=manifest['checkpoint'];capacity=self.jobs.capacity(remote_path)
         report=self.jobs.run(manifest['epoch']+'-publish-'+cp['id'][:8],'upload',manifest,remote_path,
@@ -164,7 +169,7 @@ class RemoteController(Controller):
             VerifyKey(bytes.fromhex(self.authority.id)).verify(canonical(existing['payload']),base64.b64decode(existing['signature'],validate=True))
             if existing['payload']!=descriptor:raise ValueError('immutable checkpoint descriptor collision')
         save(self.state/(manifest['epoch']+'-checkpoint-publication.json'),dict(checkpoint=cp['id'],objects=observed,capacity=capacity,operator_independent_hashes=True))
-        return dict(descriptor,descriptor_key=key)
+        return self.checkpoint_with_reads(dict(descriptor,descriptor_key=key))
     def finalize(self,manifest,checkpoint_path):
         if manifest.get('payable') is not False:raise ValueError('remote experimental controller is nonpayable only')
         epoch=manifest['epoch'];saved=self.state/(epoch+'-scores.json')
@@ -209,8 +214,12 @@ class RemoteController(Controller):
             if metrics.get('source_epoch')!=epoch or metrics.get('input_checkpoint')!=manifest['checkpoint']['id'] or metrics.get('training_policy')!=FULL_POLICY or metrics.get('weights_changed') is not True or metrics['checkpoint']!=file_map(metrics['new_checkpoint']['files']) or metrics['checkpoint']==manifest['checkpoint']['id']:raise ValueError('cached GPU training checkpoint binding')
             expected_replay=hashlib.sha256(canonical(replay)).hexdigest() if replay is not None else None
             if metrics.get('replay_inputs_sha256')!=expected_replay or metrics['steps']!=steps:raise ValueError('cached replay/current request binding')
-            self.bucket.json('public/'+epoch+'/training.json',self.signed(metrics))
-            return metrics['new_checkpoint'],metrics
+            publication=json.loads((self.state/(epoch+'-checkpoint-publication.json')).read_text())
+            if publication.get('checkpoint')!=metrics['checkpoint'] or publication.get('operator_independent_hashes') is not True or {name:value['sha256'] for name,value in publication.get('objects',{}).items()}!=metrics['new_checkpoint']['files']:raise ValueError('cached checkpoint publication receipt binding')
+            output=self.checkpoint_with_reads(metrics['new_checkpoint'])
+            current=dict(metrics,new_checkpoint=output)
+            self.bucket.json('public/'+epoch+'/training.json',self.signed(current))
+            return output,current
         capacity=(self.jobs.training_capacity(manifest,steps) if hasattr(self.jobs,'training_capacity') else self.jobs.capacity(checkpoint_path));receipts=json.loads((self.state/(epoch+'-scores.json')).read_text())['receipts']
         submissions=[dict(url=self.bucket.presign(receipts[m]['frozen_key']),sha256=receipts[m]['sha256']) for m,r in reports.items() if r['accepted']]
         if not submissions:raise ValueError('no independently verified training data')

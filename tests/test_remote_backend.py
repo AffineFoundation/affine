@@ -125,3 +125,49 @@ class InitialManifestPublication(unittest.TestCase):
             with patch('subnet.controller.Controller.open',base_open):controller.open('nonpayable-test',{},[],max_batches=3)
             manifests=[c.args[1]['payload'] for c in bucket.json.call_args_list if c.args[0].endswith('/manifest.json')]
             self.assertEqual(manifests,[dict(epoch='nonpayable-test',max_batches=3)])
+
+class SuccessorCheckpointReads(unittest.TestCase):
+    def setUp(self):
+        from subnet.storage import Identity
+        from subnet.backend_jobs import file_map
+        self.folder=tempfile.TemporaryDirectory();self.addCleanup(self.folder.cleanup)
+        self.state=Path(self.folder.name);self.identity=Identity()
+        self.bodies={'config.json':b'{}','model.safetensors':b'actual-trained-weight-bytes'}
+        self.files={n:hashlib.sha256(b).hexdigest() for n,b in self.bodies.items()};self.cp={'id':file_map(self.files),'files':self.files}
+        self.controller=RemoteController.__new__(RemoteController);self.controller.state=self.state;self.controller.authority=self.identity
+        self.controller.jobs=SimpleNamespace(capacity=Mock(return_value={}),run=Mock(return_value={'success':True}))
+        def url(key,operation='get_object',*args):return 'https://test.r2.cloudflarestorage.com/b/'+key+'?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=test'
+        self.controller.bucket=SimpleNamespace(presign=Mock(side_effect=url),get=Mock(side_effect=KeyError('missing')),json=Mock())
+    def response(self,url,**kwargs):
+        name=url.split('?',1)[0].rsplit('/',1)[1];body=self.bodies[name]
+        result=Mock();result.status_code=200;result.iter_content.return_value=[body];result.__enter__=Mock(return_value=result);result.__exit__=Mock(return_value=False);return result
+    def publish(self):
+        # S3 missing-key shape, not an unchecked network failure.
+        from botocore.exceptions import ClientError
+        self.controller.bucket.get=Mock(side_effect=ClientError({'Error':{'Code':'NoSuchKey'}},'GetObject'))
+        with patch('subnet.remote_backend.requests.get',side_effect=self.response):return self.controller.publish_remote_checkpoint({'epoch':'nonpayable-source','checkpoint':self.cp},'/trainer/exact-output')
+    def test_new_remote_evaluator_fetches_exact_successor_after_publication(self):
+        from subnet.backend_jobs import checkpoint
+        published=self.publish();self.assertEqual(set(published['read_urls']),set(self.files))
+        descriptor=self.controller.bucket.json.call_args.args[1]['payload'];self.assertEqual(descriptor,self.cp);self.assertNotIn('read_urls',descriptor)
+        with patch('requests.get',side_effect=self.response):target=checkpoint({'checkpoint':published},self.state/'different-evaluator')
+        self.assertEqual({n:(target/n).read_bytes() for n in self.files},self.bodies)
+    def test_failed_independent_hash_never_returns_checkpoint_or_signs_descriptor(self):
+        self.bodies['model.safetensors']=b'changed-after-upload'
+        with self.assertRaisesRegex(ValueError,'independent checkpoint integrity'):self.publish()
+        self.controller.bucket.json.assert_not_called()
+    def test_cached_training_refreshes_narrow_reads_without_gpu_or_saved_metrics_mutation(self):
+        from subnet.remote_backend import FULL_POLICY
+        metrics=dict(source_epoch='nonpayable-source',input_checkpoint='input',training_policy=FULL_POLICY,weights_changed=True,checkpoint=self.cp['id'],new_checkpoint=self.cp,steps=1)
+        path=self.state/'nonpayable-source-training-metrics.json';raw=canonical(metrics);path.write_bytes(raw)
+        (self.state/'nonpayable-source-checkpoint-publication.json').write_bytes(canonical(dict(checkpoint=self.cp['id'],operator_independent_hashes=True,objects={n:{'sha256':h} for n,h in self.files.items()})))
+        cp,current=self.controller.train({'epoch':'nonpayable-source','checkpoint':{'id':'input'}},{},'/unused',steps=1)
+        self.assertEqual(set(cp['read_urls']),set(self.files));self.assertEqual(current['new_checkpoint'],cp);self.assertEqual(path.read_bytes(),raw)
+        self.controller.jobs.run.assert_not_called();self.controller.jobs.capacity.assert_not_called()
+    def test_cached_reads_reject_missing_or_mismatched_publication_receipt(self):
+        from subnet.remote_backend import FULL_POLICY
+        metrics=dict(source_epoch='nonpayable-source',input_checkpoint='input',training_policy=FULL_POLICY,weights_changed=True,checkpoint=self.cp['id'],new_checkpoint=self.cp,steps=1)
+        (self.state/'nonpayable-source-training-metrics.json').write_bytes(canonical(metrics))
+        (self.state/'nonpayable-source-checkpoint-publication.json').write_bytes(canonical(dict(checkpoint=self.cp['id'],operator_independent_hashes=True,objects={})))
+        with self.assertRaisesRegex(ValueError,'publication receipt binding'):self.controller.train({'epoch':'nonpayable-source','checkpoint':{'id':'input'}},{},'/unused',steps=1)
+        self.controller.bucket.presign.assert_not_called();self.controller.jobs.run.assert_not_called()
