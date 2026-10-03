@@ -1,3 +1,35 @@
+# Open v11 revision2 math epoch — October 3, 2026
+
+The recovered v10 epoch is fully qualified, including its signed nonempty history,
+three independently audited batches and exactly one full-model update. Fixed32
+math performance changed from 22/32 to 23/32. Its original controller exited 1;
+operator recovery completed with an actual exit 0. Preserve that distinction:
+this is a recovered completion, not an uninterrupted automatic epoch.
+
+Root admitted all five retained H200 source installations, checked the actual
+trained caches on trainer/evaluator, and adopted checkpoint `5756f804…` without
+resetting or repeating training. The new source `86a38cba…` and authority
+`3301134b…` opened epoch
+`nonpayable-separated-hopper-original-math-v11-revision2-1791013177-2`.
+Its signed deadline is 08:09:37 UTC. The fresh snapshot includes 237 activated
+subnet identities, including UID 85, and the full 6,746 original MATH mining
+indices. There is no operator registration allowlist. Activation and current
+on-chain UID ownership remain required. This epoch inherits round 2 and three
+completed full-model updates; its own training has not completed yet.
+
+The real UID 131 public client is running on the miner H200, with the exact
+isolated source pin and capability-only delegation. Two independently hosted
+verifier workers are live under the new authority. Actual affine.io HTTPS
+mining discovery and /llms.txt match the signed opening. No chain weight
+submission is enabled. See the opening, discovery, handover and worker receipts
+in `state/prospective-separated-hopper-math-v11-revision2/`.
+
+The original RGym generation diagnostic completed normally with 32 unsuccessful
+attempts and no K1/L1 pair. It is not GPU-qualified for training. Verbatim and
+other original environment qualifications remain unfinished. The broad goal is
+active; consecutive uninterrupted math handovers and broader qualification still
+need actual terminal, artifact, training and evaluation evidence.
+
 # Repaired v10 public epoch opened — October 3, 2026
 
 The next-release worktree now rejects malformed normal-backend submission
