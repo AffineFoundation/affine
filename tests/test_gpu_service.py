@@ -1,8 +1,8 @@
-import tempfile,unittest
+import json,tempfile,unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch,Mock
-from subnet.gpu_service import heldout,evaluate,contract
+from subnet.gpu_service import heldout,evaluate,contract,run
 from subnet.backend_profiles import for_config
 
 class GPUFixedHeldout(unittest.TestCase):
@@ -58,5 +58,28 @@ class GPUFixedHeldout(unittest.TestCase):
             self.config['evaluation_state']=d;controller=SimpleNamespace(jobs=SimpleNamespace(run=Mock(return_value=report)))
             record=evaluate(controller,self.manifest,'remote','before',0,self.config)[0]
             self.assertEqual(record['completed_count'],1);self.assertEqual(record['requested_count'],2);self.assertEqual(record['status'],'error');self.assertIsNone(record['mean_reward'])
+
+class GPUHistoryCompletion(unittest.TestCase):
+    def test_failed_history_retains_after_phase_and_retry_does_not_train_again(self):
+        with tempfile.TemporaryDirectory() as d:
+            state=Path(d);epoch='nonpayable-history-retry'
+            old=dict(id='old',files={});new=dict(id='new',files={})
+            status=dict(active=dict(epoch=epoch,phase='after',next_checkpoint=new,next_path='new-path',next_steps=2),round=1,training_steps=1,checkpoint=old,checkpoint_path='old-path',initial_published=True)
+            for name,value in [('controller.json',status),(epoch+'-manifest.json',dict(epoch=epoch,checkpoint=old)),(epoch+'-verified.json',{}),(epoch+'-scores.json',dict(weights={})),('finalized-reports.json',[])]:
+                (state/name).write_text(json.dumps(value))
+            config=dict(state=d,bucket={},remote={},source_bundle={},epoch_prefix='nonpayable-history',registration_allowlist=[])
+            controller=SimpleNamespace(train=Mock())
+            with patch('subnet.gpu_service.Bucket'),patch('subnet.gpu_service.Gateway'),patch('subnet.gpu_service.RemoteController',return_value=controller),patch('subnet.gpu_service.ChainAdapter'),patch('subnet.gpu_service.evaluate') as evaluate_after,patch('subnet.gpu_service.publish_history',side_effect=KeyError('key')),patch('subnet.gpu_service.log.exception'):
+                with self.assertRaises(KeyError):run(config,once=True)
+                evaluate_after.assert_called_once()
+            failed=json.loads((state/'controller.json').read_text())
+            self.assertEqual(failed,status)
+            self.assertEqual(json.loads((state/'health.json').read_text())['status'],'error_retry')
+            with patch('subnet.gpu_service.Bucket'),patch('subnet.gpu_service.Gateway'),patch('subnet.gpu_service.RemoteController',return_value=controller),patch('subnet.gpu_service.ChainAdapter'),patch('subnet.gpu_service.evaluate'),patch('subnet.gpu_service.publish_history') as publish:
+                run(config,once=True);publish.assert_called_once()
+            final=json.loads((state/'controller.json').read_text())
+            self.assertIsNone(final['active']);self.assertEqual(final['round'],2)
+            self.assertEqual(final['checkpoint'],new);self.assertEqual(final['training_steps'],2)
+            controller.train.assert_not_called()
 
 if __name__=='__main__':unittest.main()

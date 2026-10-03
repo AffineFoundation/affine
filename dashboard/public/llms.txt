@@ -10,6 +10,11 @@ Historical teacher distillation / king-versus-challenger instructions are not th
 current pilot contract. Dashboard records describe measured runs, not a promise
 of rewards, general model improvement, or support for every environment.
 
+Current operational status: new public epochs are paused for a history-publication
+repair. The last completed mining/training measurements are preserved. The
+published discovery pointer does not currently announce a new accepting epoch;
+check the signed deadline before attempting a submission.
+
 ## Architecture
 
 The validator/controller opens an epoch with an immutable signed manifest. It
@@ -102,11 +107,11 @@ These Qwen measurements must not be joined to the older SmolLM2 curve.
 
 ## How to try the pilot
 
-Open admission is live: the v9 pilot admits every current subnet
+Open admission policy admits every current subnet
 120 identity with a valid signed Ed25519 Affine activation, without individual
 operator approval. Each epoch takes a fresh chain snapshot; later activations
 enter the next epoch. The signed authority, discovery URL and pinned runtime
-remain required. The current signed epoch includes 239 eligible identities,
+remain required. The last published signed epoch included 239 eligible identities,
 including UID 85. No blockchain action
 is required merely to read the public dashboard.
 
@@ -171,10 +176,24 @@ Report only public epoch IDs/hotkeys, hardware/runtime and errors with secrets
 and signed URLs removed. Pilot points are permanently nonpayable. The separate
 legacy transition writer is outside this pilot; charts are not chain payouts.
 
-The open v9 epoch nonpayable-separated-hopper-original-math-v9-1790996840-0
-opened at 03:07:20 UTC on October 3, 2026 and closes at 03:37:20 UTC.
+The v9 epoch nonpayable-separated-hopper-original-math-v9-1790996840-0
+opened at 03:07:20 UTC on October 3, 2026 and closed at 03:37:20 UTC.
 Its signed R2 manifest includes all 239 authenticated activation identities,
 all 6,746 mining tasks and the fixed 32 held-out tasks. Operator allowlisting
 is disabled. Later activations are discovered at the next epoch opening.
 Root verified the published manifest and public discovery HTTPS readback.
-This is admission verification, not evidence of new training or improved scores.
+UIDs 131 and 168 each submitted a genuine positive/negative batch, independently
+verified on two H200 verifier nodes. Each earned one nonpayable test point and
+proposed weight 0.5. One full-model AdamW update used UID 168's pair; UID 131's
+pair was accepted but unused in this one-step update. All ten successor files
+were independently verified in R2. The matched fixed32 evaluation changed from
+20/32 to 22/32. This two-task gain is a cohort measurement, not an established
+broader trend.
+
+Final history publication then failed because the history reader expected a
+source bucket key absent from the signed bootstrap descriptor. A follow-on
+opening hit the same error. The old manifests, deadlines, checkpoint, training
+counter and failed attempts are retained. A corrected release is being prepared;
+the old signed source is not hotpatched, training is not repeated, and chain
+weight submission remains disabled. Complete handover qualification awaits a
+successful repaired history publication and consecutive epochs.

@@ -25,6 +25,37 @@ def publish_source_bundle(controller,path):
     return dict(key=key,sha256=digest,size=len(data))
 
 
+def source_archive_key(controller,source):
+    """Resolve bootstrap descriptors without rewriting their signed payload.
+
+    Bootstrap descriptors carry archive URLs and digests, while older history
+    descriptors carry a bucket key. Private bootstrap archives are copied to
+    the public content-addressed namespace only after their digest and size
+    match. Original epoch descriptors and private objects remain untouched.
+    """
+    if 'key' in source:
+        return public_key(source['key'])
+    digest=source.get('sha256');size=source.get('size')
+    if not isinstance(digest,str) or len(digest)!=64 or any(c not in '0123456789abcdef' for c in digest):
+        raise ValueError('source archive digest')
+    if type(size)is not int or size<=0:
+        raise ValueError('source archive size')
+    key=f'public/sources/{digest}/source.tar.gz'
+    try:data=controller.bucket.get(key)
+    except Exception as exc:
+        from botocore.exceptions import ClientError
+        if not isinstance(exc,(KeyError,FileNotFoundError)) and not (isinstance(exc,ClientError) and str(exc.response.get('Error',{}).get('Code')) in ('404','NoSuchKey','NotFound')):raise
+        # This is the frozen-source publisher's specific namespace, never a
+        # miner staging path or an arbitrary key parsed from an uploaded URL.
+        data=controller.bucket.get(f'private/source-bundles/{digest}.tar.gz')
+        if sha(data)!=digest or len(data)!=size:
+            raise ValueError('source archive content mismatch')
+        controller.bucket.put(key,data)
+    if sha(data)!=digest or len(data)!=size:
+        raise ValueError('source archive content mismatch')
+    return key
+
+
 def history(controller,ledger,source_bundle=None,source_reconstructions=()):
     rows=[]
     def route(key):return controller.bucket.presign(public_key(key))
@@ -38,7 +69,9 @@ def history(controller,ledger,source_bundle=None,source_reconstructions=()):
         approved=manifest['checkpoint']
         checkpoint=dict(id=approved['id'],files=approved['files'],read_urls={name:route(f"public/checkpoints/{approved['id']}/{name}") for name in approved['files']})
         source=manifest.get('source_bundle') or source_bundle
-        if source:source=dict(source,read_url=route(source['key']),binding='epoch-signed' if manifest.get('source_bundle') else 'reviewed-compatible-reference')
+        if source:
+            source_url=route(source_archive_key(controller,source))
+            source=dict(source,url=source_url,read_url=source_url,binding='epoch-signed' if manifest.get('source_bundle') else 'reviewed-compatible-reference')
         output=None
         metrics_path=controller.state/f'{epoch}-training-metrics.json'
         if metrics_path.exists():

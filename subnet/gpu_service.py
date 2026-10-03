@@ -236,8 +236,10 @@ def run(config,once=False):
             if active['phase']=='after':
                 nextmanifest=dict(manifest,checkpoint=active['next_checkpoint']);evaluate(controller,nextmanifest,active['next_path'],'after',active['next_steps'],config)
                 save(state/(epoch+'-proposed-weights.json'),dict(epoch_id=epoch,payable=False,weights=json.loads((state/(epoch+'-scores.json')).read_text())['weights'],chain_transactions=False))
-                status.update(checkpoint=active['next_checkpoint'],checkpoint_path=active['next_path'],training_steps=active['next_steps'],active=None,round=status['round']+1);save(statuspath,status)
                 publish_history(controller,prefix,json.loads(ledgerpath.read_text()),config['source_bundle'])
+                # A failed history publication must remain in the after phase:
+                # resume reuses the completed evaluation and never retrains.
+                status.update(checkpoint=active['next_checkpoint'],checkpoint_path=active['next_path'],training_steps=active['next_steps'],active=None,round=status['round']+1);save(statuspath,status)
                 if once:return
         except Exception as error:
             log.exception('GPU epoch paused for retry');save(state/'health.json',dict(status='error_retry',error_type=type(error).__name__,time=time.time(),epoch=status.get('active',{}).get('epoch') if status.get('active') else None))

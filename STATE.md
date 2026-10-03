@@ -1,4 +1,4 @@
-# First v9 public batches fully audited — October 3, 2026
+# V9 training verified; history publication blocks handover — October 3, 2026
 
 The original 03:37:20 UTC deadline closed normally. The owned UID 131 public
 client and an independent activated miner UID 168 each uploaded one real K1/L1
@@ -22,17 +22,33 @@ The owned UID 131 task 1278 pair was accepted but unused in that update.
 The normal successor checkpoint `159ad21c…` was uploaded as ten objects totaling
 15,242,726,234 bytes. The controller independently streamed and hashed every
 published object before publishing its descriptor and training metrics. The
-separate evaluator is now running the same fixed 32 tasks on that successor.
-The terminal proposal and independent complete-epoch review remain pending;
-cumulative step 2 is committed only after evaluation completes. No improvement
-or qualified complete public training epoch is claimed yet, and no blockchain
-weights are submitted.
+separate evaluator completed the same fixed 32 tasks at 22/32, versus 20/32
+before. Root independently streamed both frozen submissions and all ten published
+checkpoint files, and verified the authenticated reports and comparable cohort.
+The terminal proposal and cumulative step 2 were written. The two-task increase
+is a measurement on this fixed cohort, not an established broader trend.
+
+The controller then failed its final history publication: the history reader
+expected `source_bundle.key`, while the signed bootstrap descriptor contains
+archive URLs and a digest. A bounded next-epoch attempt hit the same error while
+opening. Its original manifest and deadline are retained, and no new owned miner
+was dispatched. The waiting owned capability-renewal supervisor was stopped.
+The initial complete-epoch qualification was explicitly superseded; its verified
+training, checkpoint and evaluation evidence remain intact. The next release
+must pass corrected history publication and a clean handover. Chain submissions
+remain disabled.
+
+The working-tree fix resolves the exact digest-bound bootstrap archive into the
+public source-audit namespace without changing old signed manifests. Final
+history publication now precedes checkpoint/counter commit, so a failed publish
+retains the after phase and can retry without rerunning the optimizer. Focused
+publication and failure/retry tests pass; this fix is not hotpatched into v9.
 
 The live two-chart dashboard now includes v9: actual HTTPS readback shows two
 submitted and two accepted batches, zero rejected/unchecked, and no training
-claim. Desktop/mobile browser checks preserve two charts and the distinct H200
+claim at that observation. Desktop/mobile browser checks preserve two charts and the distinct H200
 fixed32 cohort. Nineteen projection tests passed. Follow-on public epochs remain
-gated on independent first full training/publication/after32 completion review.
+gated on repaired history publication and independent clean completion review.
 
 # Open admission live — October 3, 2026
 
