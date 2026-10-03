@@ -20,9 +20,17 @@ dispatch on a tiny CPU model. A retained H200 generated eight real successful
 MATH trajectories using the learned checkpoint and passed full same-node native,
 probability and proof replay. A separate high-temperature trial preserved five
 failures before the native grader raised an error; that exception is unscorable,
-not a negative training sample. Independent H200 replay, mutation tests and a
-valid same-task success/failure pair remain required before activating the
-new harness in a public epoch. No current manifest or deadline is changed.
+not a negative training sample. Independent replay on a second H200 has now
+passed for one genuine success and one genuine failure from different tasks:
+all 152,064-wide F32 log probabilities matched exactly, and every TOPLOC block
+had zero mismatch. Token, proof, probability and model-weight mutations were
+each rejected as `InvalidSample`; restoring the weights restored honest replay.
+Root authenticated the original signed job and actual exit-zero receipt.
+This verifies those trajectories, not sampler-seed provenance or a same-task
+pair. A valid same-task success/failure pair and prospective source admission
+remain required before activating the new harness in a public epoch. No current
+manifest or deadline is changed. Keep held-out comparisons on the same versioned
+sampling harness before and after training.
 
 The miner now treats the native `TaskError` as an unscorable generation attempt
 and keeps searching within the original attempt/deadline limits. It retains

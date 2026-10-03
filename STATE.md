@@ -14,14 +14,18 @@ The gateway froze 19 other registered miners' in-window uploads. All 19 worker
 jobs completed and root authenticated their original requests, source/runtime
 pins, deadlines, worker signatures and frozen receipt bindings. Finalized scores
 credit 42 fully verified distinct task batches across those 19 UIDs. The same
-original controller is now running the before-training held-out evaluation.
+original controller completed the before-training evaluation and moved to training.
 The real writer dry run passed for the completed 15:00 UTC hour, with zero
 eligible points in that hour. This epoch finalized at 15:14 UTC, so its first
 positive reward hour ends at 16:00 UTC. No chain transaction has occurred.
 
 A future signed-harness KV-cache sampler is being qualified on the idle miner
-H200 in an isolated namespace. Seven CPU controls pass, but actual H200/native
-proof and independent replay qualification remain pending. It does not change
+H200 in an isolated namespace. Seven CPU controls pass. Independent H200 replay
+passed for a genuine success and failure from different tasks, with exact full
+F32 probabilities, zero TOPLOC mismatches and eight typed tamper rejections.
+Root authenticated the original signed job and actual exit-zero receipt; a
+same-task success/failure pair and prospective source admission remain pending.
+It does not change
 the current epoch's sampler, source, checkpoint, deadline or numerical tolerances.
 The writer now supports a signed approved-source registry so prospective code
 upgrades retain each older epoch's original archive and authenticated job pins.
