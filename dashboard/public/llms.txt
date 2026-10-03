@@ -39,6 +39,9 @@ below an earlier 22/32 diagnostic and does not establish sustained improvement
 or performance on a larger independent benchmark. Three optimizer steps remain
 configured per nonempty training epoch. Larger DeepMath/NuminaMath tasksets are
 not part of the active mining contract.
+A larger 128-task comparison is precommitted outside both the mining set and
+the fixed 32-task diagnostic. A separate retained H200 is being prepared for it;
+results are pending. Hardware availability alone does not qualify its runtime.
 
 ## How to start mining
 

@@ -1,5 +1,37 @@
 # Live reward launch authorized — October 3, 2026
 
+Epoch six froze 78 in-window uploads (37,717,616,503 bytes). Both approved
+verifier identities subsequently claimed distinct original jobs; at 22:01 UTC
+one current audit job had completed and two were leased. The owned capability-only
+miner also has an actual exit-zero child-wait receipt; it was not restarted after
+the deadline. Final scores, new training and a successor are not yet established.
+Another 15,242,726,234 bytes were recovered from the trainer by retiring only the
+obsolete completed f9 final export, after original job/source/runner checks and
+fresh full public checkpoint archive hashing. Current 7f weights and job/report
+evidence remain intact. The trainer measured 107,958,386,688 bytes free afterward;
+the higher upload population still requires prospective full-download admission.
+
+The next transport source, exact eligible main commit 2240f1d2… plus the original
+pinned task asset, is sealed as archive 32c73fc5…. All five machines completed
+fresh CPU-only source installation and independent 1,858-file readback in new
+directories. The first verifier-2 SSH attempt timed out before installation;
+an authoritative probe found no destination or installer, then its distinct
+retry completed. Original failure and four original successful stages remain.
+Only subnet/storage.py changed in the 128-module runtime inventory. This is source
+staging, not activation or checkpoint/native/GPU admission for the next boundary.
+
+A 128-task comparison cohort is signed and precommitted, excluding both mining
+tasks and the existing 32-task diagnostic. It pins the original zero-update 2173
+checkpoint and nine-update 7f checkpoint, matched seeds/harness and four bounded
+32-task shards each. No benchmark jobs have started. One additional H200 was
+actually rented for it at $3.40/hour and registered for indefinite manual retention
+before rent, with provider UUID attached afterward. The actual GPU query reports
+one H200 and about 4.62 TB free disk. Its default packages differ from the approved
+runtime, so dependency runtime copying/admission is underway; it is not yet a
+qualified evaluator. The larger benchmark and sustained improvement remain
+unproven. See independent-math128-precommit-v1 and the actual rental/runtime-copy
+process and terminal records; never duplicate a request on observation timeout.
+
 The prospective freeze path now streams each atomic submission GET in 1 MiB
 chunks and conditionally copies its exact ETag within R2, with bounded concurrent
 snapshots. It preserves successful siblings after another copy fails, retaining
