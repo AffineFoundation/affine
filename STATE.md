@@ -12,11 +12,21 @@ network error; lease renewals continued and attempt 2 passed without a controlle
 restart or modified source/thresholds.
 
 Actual signed R2 scores give each miner one point and proposed weight 0.5.
-The terminal proposal file, training, successor publication and after32 evaluation
-are still pending; no blockchain weights are submitted. The controller is running
-the fixed before32 evaluation at cumulative step 1, before the next full-model
-update. This is a real public-miner/audit/scoring result, not yet a qualified
-complete public training epoch or demonstrated improvement.
+The fixed before32 evaluation completed at 20/32 on checkpoint `253f921e…`,
+cumulative step 1. The sole full-model training job then completed one AdamW
+update with gradients across all 339 parameter tensors (7,615,616,512 trainable
+parameters) and changed parameter hashes. Both admitted pairs were inputs;
+this one-step update selected the genuine external UID 168 task 6260 pair.
+The owned UID 131 task 1278 pair was accepted but unused in that update.
+
+The normal successor checkpoint `159ad21c…` was uploaded as ten objects totaling
+15,242,726,234 bytes. The controller independently streamed and hashed every
+published object before publishing its descriptor and training metrics. The
+separate evaluator is now running the same fixed 32 tasks on that successor.
+The terminal proposal and independent complete-epoch review remain pending;
+cumulative step 2 is committed only after evaluation completes. No improvement
+or qualified complete public training epoch is claimed yet, and no blockchain
+weights are submitted.
 
 The live two-chart dashboard now includes v9: actual HTTPS readback shows two
 submitted and two accepted batches, zero rejected/unchecked, and no training
