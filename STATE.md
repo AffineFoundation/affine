@@ -1,5 +1,24 @@
 # Affine rewrite status
 
+## Corrected handover candidate — October 3, 2026
+
+The next separated pilot source is v8, archive
+`24d3638ff736b21b5ca1232b0da2f8fa980a266a8b2059ce85d61aef7bac6533`.
+It preserves all v7 compute/proof bytes and adds only the reviewed successor
+download-link fix and its regression tests. All 136 checks passed against the
+actual frozen archive; strict cache admission passed afterward. Its signed R2
+publication passed an independent byte-for-byte GET. This is preparation,
+not activation or a performance result. Commit
+`316a44fc5a9ac89570cbde48b32c255884741657` is verified on GitHub main.
+
+The evaluator's CPU-only hydration of the already-trained v2 successor completed
+under a signed six-object plan. Root independently rehashed all six local files,
+15,242,698,782 bytes, and approved an after-only retry against those exact bytes.
+No optimizer repeat is authorized by this recovery. The incomplete old baseline
+remains an error; fresh corrected-source baseline and successor evaluations are
+needed. All five retained H200 nodes have admitted v8 source membership;
+CPU runtime admission and actual corrected GPU qualification remain separate.
+
 ## Separate H200 deployment — October 2, 2026
 
 The operator's Arbos.life name refers to this current code/validator host.
