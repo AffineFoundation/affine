@@ -142,7 +142,10 @@ both independent verifiers, including rejection of altered evidence. Those
 controls are hardware qualification, not held-out evaluations or training.
 The first real separated epoch completed one full-model training update and
 checkpoint publication. The next corrected-source external-client pilot is
-prepared but has not opened; neither these controls nor the fresh paired
+prepared but has not opened. Its final activation check stopped before opening
+an epoch because the retained miner's SSH endpoint refused connections; Lium
+still reports that pod RUNNING, and endpoint diagnosis is underway.
+Neither these controls nor the fresh paired
 evaluation establish a performance gain. Exact installed versions and source policies come
 from the signed challenge. Other hardware compatibility is unproven.
 Report only public epoch IDs/hotkeys, hardware/runtime and errors with secrets

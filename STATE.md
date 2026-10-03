@@ -61,6 +61,16 @@ that descriptor in R2, candidate config and lineage. Its prepared initial state
 skips blind weight re-publication but has not been written to runtime state.
 Final activation and the genuine external-client epoch remain pending.
 
+The final active config passed independent review, retaining the nonpayable
+contract and external-client-only mining. Its fresh activation check stopped
+before writing runtime state because the retained miner's SSH endpoint refused
+connections. Root independently queried Lium: UUID
+`a682e733-ba12-4c59-9bff-b39519fd47ff` is reported RUNNING with the same endpoint,
+and the two-hour pod audit returned no events. This does not establish deletion
+or a healthy runtime. No new epoch or miner was launched; provider and endpoint
+diagnosis is underway. The current production validator, independent retained
+pilot and GPU guardian were also confirmed live.
+
 ## Separate H200 deployment — October 2, 2026
 
 The operator's Arbos.life name refers to this current code/validator host.
