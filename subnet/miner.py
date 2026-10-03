@@ -9,6 +9,7 @@ from .artifact_budget import for_manifest
 from .protocol import entry,entries,harness_for, classification
 from .storage import canonical
 import hashlib
+from verifiers.v1.errors import TaskError
 
 class Miner:
     def __init__(self, identity, manifest, checkpoint, capability=None, state_path=None):
@@ -41,7 +42,13 @@ class Miner:
         positive, negative, arrays_pos, arrays_neg = [], [], [], []
         for attempt in range(max_attempts):
             if time.time()>=self.manifest.get('deadline',float('inf')):break
-            rollout, arrays = runtime.rollout(index, seed+attempt)
+            try:
+                rollout, arrays = runtime.rollout(index, seed+attempt)
+            except TaskError as error:
+                # No completed native outcome exists: neither a negative sample nor fraud.
+                self.last_generation_error = dict(kind='unscorable_native_task_error',
+                    env_id=env_id,index=index,seed=seed+attempt,error_type=type(error).__name__)
+                continue
             kind = classification(rollout)
             if kind == 'neutral':
                 continue

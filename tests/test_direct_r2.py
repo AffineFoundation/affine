@@ -17,6 +17,38 @@ class MemoryR2:
         return value
 
 class DirectR2Freeze(unittest.TestCase):
+    def test_server_copy_publishes_verified_frozen_bytes_and_retries_copy_fault(self):
+        from unittest.mock import patch
+        class CopyingR2(MemoryR2):
+            def __init__(self):super().__init__();self.copies=[]
+            def copy(self,source,destination):
+                self.copies.append((source,destination));self.objects[destination]=self.objects[source]
+        b=CopyingR2();i=Identity();g=Gateway(b,direct_r2=True)
+        try:
+            epoch='nonpayable-copy';g.open(epoch,[i.id],int(time.time())+100)
+            staging=f'private/{epoch}/staging/{i.id}.zip';b.put(staging,b'original')
+            with patch.object(b,'copy',side_effect=IOError('copy unavailable')):
+                with self.assertRaises(IOError):g.freeze(epoch)
+            self.assertNotIn('frozen_receipts',g.epochs[epoch])
+            frozen=g.epochs[epoch]['snapshots'][i.id]['snapshot_key'];b.put(staging,b'late replacement')
+            with patch.object(b,'snapshot',side_effect=AssertionError('reuse frozen bytes')):
+                receipts=g.freeze(epoch)
+            self.assertEqual(b.copies,[(frozen,receipts[i.id]['frozen_key'])])
+            self.assertEqual(b.get(receipts[i.id]['frozen_key']),b'original')
+            self.assertEqual(g.freeze(epoch),receipts);self.assertEqual(len(b.copies),1)
+        finally:g.stop()
+
+    def test_corrupt_frozen_object_refuses_before_server_copy(self):
+        from unittest.mock import Mock
+        b=MemoryR2();b.copy=Mock();i=Identity();g=Gateway(b,direct_r2=True)
+        try:
+            epoch='nonpayable-copy-corrupt';g.open(epoch,[i.id],int(time.time())+100)
+            frozen=f'private/{epoch}/frozen/{i.id}/original.zip';b.put(frozen,b'changed')
+            g.epochs[epoch]['snapshots']={i.id:dict(key='unused',snapshot_key=frozen,sha256=sha(b'original'))}
+            with self.assertRaisesRegex(ValueError,'receipt hash changed'):g.freeze(epoch)
+            b.copy.assert_not_called();self.assertNotIn('frozen_receipts',g.epochs[epoch])
+        finally:g.stop()
+
     def test_direct_checkpoint_urls_fail_closed_before_network(self):
         from subnet.client import checkpoint_download,direct_r2_url
         from unittest.mock import patch

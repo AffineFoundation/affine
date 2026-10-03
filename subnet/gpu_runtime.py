@@ -41,6 +41,9 @@ class GPURuntime(Runtime):
 
     def sample(self,prompt,seed,messages,turn):
         config=policy.turn_config(self.harness,turn)
+        if config['version']=='text-tools-long-kv-v3':
+            from .cached_sampling import sample as cached_sample
+            return cached_sample(self.model,prompt,seed=seed,max_output_tokens=config['max_output_tokens'],temperature=config['temperature'],top_p=config['top_p'],eos_token_id=self.tokenizer.eos_token_id,mode='kv-last-logits-v1')[0]
         rng=torch.Generator(device='cuda').manual_seed(seed)
         if config['policy']=='public-mrcr-shell-candidates':
             config={**config,'policy':'candidates','candidates':policy.mrcr_candidates(messages)}

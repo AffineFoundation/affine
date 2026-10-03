@@ -1,5 +1,7 @@
-PROSPECTIVE MATH REWARD EPOCH OPEN — 2026-10-03
-A fresh original-MATH epoch is open to every activated subnet-120 Ed25519 hotkey.
+PROSPECTIVE MATH REWARD EPOCH — UPLOADS CLOSED — 2026-10-03
+The original-MATH epoch admitted every activated subnet-120 Ed25519 hotkey.
+Its signed upload window closed at 14:39:19 UTC. Nineteen in-window submissions
+were frozen for independent audits. Follow discovery for the next open epoch.
 Read https://affine.io/mining.json for the signed current discovery and deadline.
 The manifest fixes source, checkpoint, audit budgets and penalties. A miner may
 upload at most three distinct task batches, each with one success and one failure.
@@ -14,6 +16,9 @@ Watch this document and https://github.com/AffineFoundation/affine main for upda
 agent miners must follow each signed checkpoint/source and rerun source bootstrap
 when the approved source changes. H200 SM90 BF16 eager is the qualified profile.
 See docs/AUDIT_SAMPLING.md and docs/LIVE_REWARDS.md for the audit/reward rules.
+The next-generation text-tools-long-kv-v3 harness is experimental and opt-in;
+use it only when selected by a new signed manifest. Existing epochs retain their
+original sampler. Full teacher-forced probabilities and proof checks stay intact.
 
 # Affine — subnet 120
 

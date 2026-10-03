@@ -10,9 +10,14 @@ Arbos.life, not its wallet key. Two new narrow-key verifier workers are connecte
 to the shared queue. The controller retains round 4 and five completed updates.
 Public affine.io discovery closed at the original deadline, with an actual HTTPS
 readback. The UID131 process completed with a real exit-zero receipt but no batch.
-The gateway froze 19 other registered miners' in-window uploads. At 14:51 UTC,
-both independent verifier nodes had claimed jobs; these submissions are not yet
-verified contributions or rewards. The same original controller remains live.
+The gateway froze 19 other registered miners' in-window uploads. All 19 worker
+jobs completed and root authenticated their original requests, source/runtime
+pins, deadlines, worker signatures and frozen receipt bindings. Finalized scores
+credit 42 fully verified distinct task batches across those 19 UIDs. The same
+original controller is now running the before-training held-out evaluation.
+The real writer dry run passed for the completed 15:00 UTC hour, with zero
+eligible points in that hour. This epoch finalized at 15:14 UTC, so its first
+positive reward hour ends at 16:00 UTC. No chain transaction has occurred.
 
 A future signed-harness KV-cache sampler is being qualified on the idle miner
 H200 in an isolated namespace. Seven CPU controls pass, but actual H200/native
@@ -21,6 +26,10 @@ the current epoch's sampler, source, checkpoint, deadline or numerical tolerance
 The writer now supports a signed approved-source registry so prospective code
 upgrades retain each older epoch's original archive and authenticated job pins.
 Ten writer, seven completeness and fourteen bridge controls pass after that change.
+The reviewed cache harness, native TaskError recovery and R2 server-copy path are
+in main for prospective release; the running epoch keeps its original source.
+Four cache, three native-error and eight storage controls pass, alongside fifteen
+harness/budget regressions. A real private R2 copy passed byte-for-byte readback.
 
 The sampler bounds work by epoch and per-UID caps; this epoch permits three
 batches per miner, initial budget 256/escalation 64 and multiplier 0.5 per confirmed

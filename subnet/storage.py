@@ -65,6 +65,11 @@ class Bucket:
     def upload(self, key, path):
         self.client.upload_file(str(path), self.name, key)
 
+    def copy(self, source, destination):
+        """Copy an operator-owned frozen object within R2, without re-uploading."""
+        self.client.copy_object(Bucket=self.name, Key=destination,
+                                CopySource={'Bucket': self.name, 'Key': source})
+
     def download(self, key, path):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.client.download_file(self.name, key, str(path))
@@ -243,7 +248,11 @@ class Gateway:
                 if sha(data) != receipt['sha256']:
                     raise ValueError('receipt hash changed')
                 key = f'public/{epoch}/submissions/{miner}.zip'
-                self.bucket.put(key, data)
+                if state.get('transport')=='direct-r2-v1' and hasattr(self.bucket,'copy'):
+                    # The private frozen key is operator-owned. Its actual body
+                    # was just hash-checked; never copy the mutable staging key.
+                    self.bucket.copy(receipt['snapshot_key'],key)
+                else:self.bucket.put(key, data)
                 result[miner] = dict(receipt, frozen_key=key)
                 if state.get('transport')=='direct-r2-v1':result[miner]['read_url']=self.bucket.presign(key)
             if state.get('transport')=='direct-r2-v1':state['frozen_receipts']=result;self.persist()
