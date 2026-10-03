@@ -40,8 +40,11 @@ reviewed once-only follow-on controller is running from that successor, with
 round 3 and four cumulative updates. Root verified its actual new signed opening
 `nonpayable-separated-hopper-original-math-v11-revision2-1791019460-3`, deadline 2026-10-03 09:54:20 UTC,
 237 activated identities including UID 85, and all 6,746 MATH tasks. Actual
-affine.io mining discovery is open. The public test-client continuation is running;
-this new epoch has not yet completed mining, verification or training.
+affine.io mining discovery closed at that signed deadline. Five activated
+identities submitted; both independent verifier nodes have claimed audit jobs.
+The UID 131 public client exited 0 with its exact isolated source pin and
+uploaded a genuine task-6905 success/failure pair (321,385,846 bytes) before
+the boundary. Independent acceptance, training and closeout remain pending.
 Accepted UID bindings are 168, 137, 131, 43, 12 and 85. UID 85 matches the user's
 supplied hotkey and earned one point; no payout or chain submission occurred.
 Two independently hosted verifier workers are live under the new authority.
@@ -60,6 +63,20 @@ using the untouched base and unchanged original grader. It found no K1/L1 pair
 and produced no batch artifact. Neither independent verification nor training is
 permitted from that result. Its actual terminal and fresh admission evidence are retained in
 `state/original-qwen-next-prospective-v1/verbatim-generation-only-v1/`.
+Original I3Math now has independently reviewed local data/grader controls and
+actual evaluator CPU admission. Its original 7,583 tasks include seven exact
+normalized matches to reserved MATH750 questions; excluding those and eight
+internal held-out tasks leaves 7,568 mining tasks. Native source1449, untouched
+BASE2173 all11 hashes, runtime and isolated grader versions passed. An initial
+CPU check incorrectly counted tokenizer mapping fields as tokens; all original
+v2 receipts and the superseded review remain preserved and disqualified. The
+corrected v3 uses the exact frozen harness renderer; its actual exit0 verifies
+real prompt lengths97–203, ten contexts within4096 with2048 output, and twenty
+original native positive/negative controls. Model output width152064 and actual
+tokenizer length151665 are distinct. No genuine I3Math generation, independent
+inference verification or training has occurred. Its next GPU run waits for the
+live MATH roles to finish. Evidence: state/original-qwen-i3math-prospective-v1/.
+
 Verbatim and other original environment qualifications remain unfinished. The broad goal is
 active; consecutive uninterrupted math handovers and broader qualification still
 need actual terminal, artifact, training and evaluation evidence.

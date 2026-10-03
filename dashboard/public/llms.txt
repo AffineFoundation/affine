@@ -19,10 +19,11 @@ accepted pair; the other five pairs were not used in that update. Its successor
 checkpoint is published, with four cumulative updates. Matched fixed32 evaluation
 changed from 23/32 to 22/32. The controller exited cleanly without operator
 recovery. This small cohort does not establish broader improvement.
-The following epoch is now open from that successor, with 237 activated identities
+The latest published epoch uses that successor, with 237 activated identities
 including UID 85 and all 6,746 original MATH tasks. Its signed deadline is
 2026-10-03 09:54:20 UTC. Read https://affine.io/mining.json for the signed current
-manifest, source pin and your encrypted upload capability before submitting.
+manifest, source pin and current open/closed status before submitting. Its upload
+window has now closed; frozen submissions are under independent audit.
 Blockchain weight submission remains disabled.
 
 ## Architecture
