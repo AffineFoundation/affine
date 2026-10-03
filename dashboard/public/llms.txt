@@ -150,6 +150,11 @@ source or model bytes: it requires a `url` source descriptor field, while the
 manifest supplies `read_url`. The attempt and original deadline are preserved;
 a corrected descriptor is being qualified for a fresh epoch. No upload, audit
 or training from this public-client attempt is claimed.
+The original window closed with zero submitted batches and zero points. Its
+fixed held-out evaluations are running before completed-state recovery. The
+descriptor correction passed a separate diagnostic bootstrap on the actual
+Lium miner, including signed R2 source download and exact file admission; that
+diagnostic stopped before the CLI or model and is not a mining result.
 An earlier activation attempt stopped because the retained miner's SSH endpoint
 refused connections; its single reboot failed with "Executor unreachable".
 The replacement H200 passed source, model, runtime and proof qualification before

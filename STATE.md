@@ -41,6 +41,23 @@ unactivated until the existing controller closes naturally and its completed
 state is checked. The next run must retain round, checkpoint and cumulative
 training counters; no optimizer replay or fabricated batch is permitted.
 
+The original public-client window closed naturally at 02:23:35 UTC. Root fetched
+and authenticated the actual frozen R2 scores: no submission receipts, accepted
+batches, points or proposed weights. Cumulative training remains at step one.
+The real 32-task before evaluation is running on the separate evaluator as
+`...-eval-before-ae5bf750`; its signed source pins, exact task indices and seeds,
+and actual remote process handles were independently checked. Full closeout and
+the after evaluation are still pending.
+
+The corrected descriptor also passed on the actual restored Lium miner through
+a separate CPU-only diagnostic bootstrap. Root independently fetched its remote
+receipt, rehashed the transferred helpers and rechecked all 1,446 source files
+against the actual signed R2 archive. Only a diagnostic read URL, public authority,
+hash-pinned bootstrap/helper and empty dummy capability were transferred. Final
+execution was intercepted before the CLI or model; this proves remote R2 source
+admission, not genuine mining, upload or training. The original failed attempt
+remains preserved.
+
 ## Corrected handover candidate — October 3, 2026
 
 The next separated pilot source is v8, archive
