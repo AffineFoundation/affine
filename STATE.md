@@ -1,5 +1,24 @@
 # Live reward launch authorized — October 3, 2026
 
+At 23:26 UTC the H100's fresh admission completed with actual child-wait exit
+zero: both full checkpoint file maps hashed exactly, original native positive/
+negative controls passed, a 64-token honest rollout verified after an independent
+model reload, and token, proof, full-logprob, native-outcome and pinned-weight-hash
+mutations were rejected. Source inventory matched before and after. The parent
+then observed the exact control process absent and no GPU compute process before
+launching baseline shard zero. Its original remote runner and child are confirmed
+live under matching start ticks. This starts the planned eight-job, matched
+128-task comparison; no completed shard or improvement result is claimed yet.
+The preceding v4 admission reached its final allocator-zero assertion and exited
+one. The new control records 33,554,432 residual allocator bytes before process
+exit, and requires actual successful exit plus observed GPU quiescence afterward.
+No proof, probability or native grading tolerance changed. Both failed attempts
+and original handles are preserved; the new attempt uses the unchanged signed
+cohort and exact baseline/learned weights.
+Evidence: independent-math128-precommit-v1/benchmark-run-v5-h100 and the separate
+actual-wait benchmark-supervisor-v2. Main d5087d95 and the actual HTTPS guide
+SHAd5f2e008 were checked independently before this status update.
+
 At 23:14 UTC epoch six had 47 completed audit jobs and two leased under the
 original live controller. Its scores are not finalized. Read-only writer checks
 confirmed the exact waiting cause: this old-hour active epoch lacks both original

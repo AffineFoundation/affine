@@ -47,9 +47,12 @@ A larger 128-task comparison is precommitted outside both the mining set and
 the fixed 32-task diagnostic. Its first separate H200 passed checkpoint hashing
 and CPU controls but fails actual CUDA context allocation, even with the provider's
 default runtime; no benchmark shards ran there. A separate retained H100 passes
-actual allocation with the approved copied runtime and has independently checked
-approved source bytes. Checkpoint transfer and honest/tampered rollout admission
-are underway; benchmark results are pending. This comparison keeps original jobs, matched
+actual allocation with the approved copied runtime and independently checked
+approved source bytes. Full checkpoint hashes, original native controls, an
+honest rollout with model reload, and five tampering rejections passed. After
+actual control-process exit and GPU quiescence, the first 32-task baseline shard
+started. All eight shards are required before reporting a 128-task comparison;
+benchmark results are pending. This comparison keeps original jobs, matched
 seeds and complete coverage, and will report paired gains/losses and uncertainty.
 See https://github.com/AffineFoundation/affine/blob/main/docs/INDEPENDENT_MATH_BENCHMARK.md.
 Hardware availability or a single positive comparison does not prove sustained

@@ -39,6 +39,11 @@ The first extra H200 hydrated the pinned checkpoints and passed CPU controls but
 failed to create a CUDA context in both the approved and provider-default Torch
 runtimes. No benchmark shard ran on it. A separately retained single H100 passes
 actual CUDA allocation with the approved runtime and has independently checked
-approved source bytes. Its checkpoint/control admission is pending. This changes
-the dedicated machine, not the precommitted cohort, model weights, sampling
-settings or verification tolerances; it does not qualify H100 for public mining.
+approved source bytes. It passed full checkpoint, original grader and honest/
+tampered rollout admission. The actual-wait parent checked original process exit
+and an idle GPU before starting the first baseline shard. A preceding attempt
+failed its interpreter allocator-zero cleanup assertion; the successful attempt
+records that residual allocation and checks actual process/GPU quiescence after
+exit. Original failures remain retained. This changes the dedicated machine and
+cleanup observation, not the precommitted cohort, model weights, sampling settings
+or verification tolerances; it does not qualify H100 for public mining.
