@@ -1,5 +1,25 @@
 # Affine rewrite status
 
+## Public-client epoch opened — October 3, 2026
+
+The restored miner passed independent source membership, all eleven pinned
+base-model file hashes, native BF16 initialization, two exact honest replay
+controls and four tampering rejections. The final restored-endpoint config
+retains all approved scientific settings. A fresh admission check passed on
+all five active H200 roles before the controller was activated once.
+
+Actual signed R2 epoch `nonpayable-separated-hopper-original-math-v8-1790992415-0`
+is open until 02:23:35 UTC. Root independently verified its manifest against
+the approved config: trained checkpoint `253f921e…`, source `24d3638f…`, all
+6,746 mining tasks, the exact 32 fixed held-out tasks, and nonpayable scope.
+Both independent verifier workers are running. The owned UID 131 public-client
+bootstrap has started on the restored miner with only a scoped upload capability;
+no wallet key or operator bucket credentials were transferred. Actual checkpoint
+hydration, mining completion, upload, audit and this epoch's training remain
+to be verified. Internal mining dispatch and chain weight submission are off.
+The first completed public-client epoch must pass independent review before
+continuous follow-on epochs are activated. Earlier failure records remain intact.
+
 ## Corrected handover candidate — October 3, 2026
 
 The next separated pilot source is v8, archive

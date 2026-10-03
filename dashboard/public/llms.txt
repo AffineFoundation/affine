@@ -141,13 +141,16 @@ full-vocabulary probability and TOPLOC proof controls passed on the miner and
 both independent verifiers, including rejection of altered evidence. Those
 controls are hardware qualification, not held-out evaluations or training.
 The first real separated epoch completed one full-model training update and
-checkpoint publication. The next corrected-source external-client pilot is
-prepared but has not opened. Its final activation check stopped before opening
-an epoch because the retained miner's SSH endpoint refused connections. A single
-in-place reboot failed with Lium reporting "Executor unreachable". A replacement
-miner with one H200 is now running, with runtime installation and the pinned
-base-model download underway. Activation waits for its source, runtime, model
-and proof checks. The failed pod and original records are retained.
+checkpoint publication. The corrected-source public-client epoch
+nonpayable-separated-hopper-original-math-v8-1790992415-0 opened on October 3,
+with a signed deadline of 02:23:35 UTC. Its manifest was independently checked
+against the approved checkpoint and full mining pool. Two independent verifier
+workers are running and the owned test miner's public-client bootstrap has
+started; this epoch's upload, audit and training are not yet verified.
+An earlier activation attempt stopped because the retained miner's SSH endpoint
+refused connections; its single reboot failed with "Executor unreachable".
+The replacement H200 passed source, model, runtime and proof qualification before
+activation. The failed pod and original records are retained.
 Neither these controls nor the fresh paired
 evaluation establish a performance gain. Exact installed versions and source policies come
 from the signed challenge. Other hardware compatibility is unproven.
