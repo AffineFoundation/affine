@@ -1,4 +1,4 @@
-# Open v11 revision2 math epoch — October 3, 2026
+# Closed v11 revision2 math epoch under evaluation — October 3, 2026
 
 The recovered v10 epoch is fully qualified, including its signed nonempty history,
 three independently audited batches and exactly one full-model update. Fixed32
@@ -11,22 +11,36 @@ trained caches on trainer/evaluator, and adopted checkpoint `5756f804…` withou
 resetting or repeating training. The new source `86a38cba…` and authority
 `3301134b…` opened epoch
 `nonpayable-separated-hopper-original-math-v11-revision2-1791013177-2`.
-Its signed deadline is 08:09:37 UTC. The fresh snapshot includes 237 activated
+Its signed deadline was 08:09:37 UTC. Upload discovery is now closed. The fresh snapshot includes 237 activated
 subnet identities, including UID 85, and the full 6,746 original MATH mining
 indices. There is no operator registration allowlist. Activation and current
 on-chain UID ownership remain required. This epoch inherits round 2 and three
 completed full-model updates; its own training has not completed yet.
 
-The real UID 131 public client is running on the miner H200, with the exact
-isolated source pin and capability-only delegation. Two independently hosted
-verifier workers are live under the new authority. Actual affine.io HTTPS
-mining discovery and /llms.txt match the signed opening. No chain weight
+The real UID 131 public client completed and uploaded a genuine task-1278 pair
+before the deadline, with the exact isolated source pin and capability-only
+delegation. Six submissions have authenticated independent full-audit reports
+accepting distinct tasks 2192, 3953, 1278, 1925, 6823 and 7215. Root independently
+checked the signed score tally: six points and proposed equal shares of 1/6.
+One verifier's initial checkpoint download failed with NetworkUnreachable; its
+ordinary bounded second attempt passed without manual recovery. The same
+controller is running the pre-training evaluation. Training, successor publication,
+after-evaluation and clean controller closeout remain unqualified for this epoch.
+Two independently hosted verifier workers are live under the new authority.
+Actual affine.io HTTPS mining discovery and /llms.txt show closed uploads and
+open admission for the next signed opening. No chain weight
 submission is enabled. See the opening, discovery, handover and worker receipts
 in `state/prospective-separated-hopper-math-v11-revision2/`.
 
 The original RGym generation diagnostic completed normally with 32 unsuccessful
-attempts and no K1/L1 pair. It is not GPU-qualified for training. Verbatim and
-other original environment qualifications remain unfinished. The broad goal is
+attempts and no K1/L1 pair. Two private exact-seed replay diagnostics preserved
+the original negative outcomes: one correct boxed answer was incompatible with
+the native answer extraction; the other was arithmetically wrong. Neither is
+training-qualified. The separately reviewed Verbatim generation-only run is now
+live on the idle miner H200 using the untouched base and unchanged original
+grader. Its actual supervisor/child and fresh admission evidence are retained in
+`state/original-qwen-next-prospective-v1/verbatim-generation-only-v1/`.
+Verbatim and other original environment qualifications remain unfinished. The broad goal is
 active; consecutive uninterrupted math handovers and broader qualification still
 need actual terminal, artifact, training and evaluation evidence.
 
