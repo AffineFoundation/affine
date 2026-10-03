@@ -14,6 +14,11 @@ and refuses replacing a mismatched live worker. Five startup/process controls
 pass. This change is prospective; current scientific worker sources remain pinned.
 Training and held-out improvement for this epoch remain unproven, and automatic
 checkpoint/export retention is still required for bounded continuous disk usage.
+Subsequently all 33 current jobs completed and the controller advanced naturally
+to before-training evaluation. The original signed final score records 79 unique
+task points across 33 miners; 87 batches passed verification before cross-miner
+duplicate exclusion. The score is not provisional. The tested retention/startup
+changes were pushed and independently read back on GitHub main at f1da1605….
 
 The continuous epoch's 33 in-window uploads have now been frozen and published;
 the actual controller remains alive and audits are progressing. Root found that
