@@ -44,7 +44,15 @@ affine.io mining discovery closed at that signed deadline. Five activated
 identities submitted; both independent verifier nodes have claimed audit jobs.
 The UID 131 public client exited 0 with its exact isolated source pin and
 uploaded a genuine task-6905 success/failure pair (321,385,846 bytes) before
-the boundary. Independent acceptance, training and closeout remain pending.
+the boundary. All five independent full audits passed, with one unique point
+each for UIDs 168, 165, 131, 100 and 156 and nonpayable proposed shares of 0.2.
+The before evaluation repeated the preceding checkpoint's exact fixed32 result,
+22/32, with identical task IDs, seeds, harness and task hashes. The trainer
+reported one full-model update on task 2469, changed parameter-value hashes and
+successor `94ae9c68…`. Root authenticated the native training and upload reports;
+the controller subsequently hashed all ten published files (15,242,726,234 bytes)
+and began the separate after evaluation. That evaluation and authenticated full
+closeout remain pending. No additional controller was started.
 Accepted UID bindings are 168, 137, 131, 43, 12 and 85. UID 85 matches the user's
 supplied hotkey and earned one point; no payout or chain submission occurred.
 Two independently hosted verifier workers are live under the new authority.
