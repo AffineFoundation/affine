@@ -119,8 +119,66 @@ def unpack_authenticated_epoch(body, manifest):
             canonical(manifest.get('artifact_policy')) == canonical(dict(compressed_bytes=250_000_000,raw_bytes=500_000_000)),
             'GPU qualified long-context artifact policy')
         return unpack(body, max_upload=250_000_000)
+    from subnet.backend_profiles import HOPPER_REVISION
+    if manifest.get('model_runtime_revision') == HOPPER_REVISION:
+        from subnet.artifact_budget import for_manifest
+        from subnet.backend_profiles import resolve
+        resolve(manifest)
+        return unpack(body,budget=for_manifest(manifest))
     require(not manifest.get('artifact_policy'), 'GPU unknown enlarged artifact policy')
     return unpack(body)
+
+
+
+# Reviewed transport-rejection implementation, commit31041553. A signed claim
+# alone cannot authorize a different decoder or silently downgrade the reader.
+TRANSPORT_REJECTION_SOURCES={
+    'subnet/backend_jobs.py':'d8a4d011265ba0127eb62a18135e2a6385514e850ddc4fbf5facef3c014066ed',
+    'subnet/batches.py':'30968ea0f9869c3954a9339482d328f243dbb8dccaad64b7851372b938cbbf9d'}
+
+def check_frozen_submission_audit(body,manifest,audit,receipt,*,rejection_source=None):
+    """Read-only qualification after signed manifest/job/report authentication.
+
+    Rejected framing is reproduced from the exact bytes using a reviewed decoder
+    whose actual archive membership is independently checked here. No model runs.
+    """
+    require(len(body)==receipt['size'] and hashlib.sha256(body).hexdigest()==receipt['sha256']
+        and audit.get('submission_sha256')==receipt['sha256'] and audit.get('epoch')==manifest['epoch'],
+        'GPU frozen submission integrity/binding')
+    if audit.get('submission_rejected') is True:
+        require(rejection_source is not None,'GPU rejected transport authenticated source required')
+        source_body,descriptor,sources=rejection_source
+        require(all(sources.get(name)==pin for name,pin in TRANSPORT_REJECTION_SOURCES.items()),
+            'GPU reviewed transport rejection source')
+        check_source_bundle(source_body,descriptor,sources)
+        from subnet.artifact_budget import for_manifest
+        from subnet.batches import submission_records,SubmissionRejected
+        from subnet import batches as local_decoder
+        require(hashlib.sha256(Path(local_decoder.__file__).read_bytes()).hexdigest()==
+            TRANSPORT_REJECTION_SOURCES['subnet/batches.py'],'GPU reviewed local rejection decoder')
+        budget=for_manifest(manifest)
+        try:submission_records(body,budget=budget,max_batches=manifest.get('max_batches',4))
+        except SubmissionRejected as error:
+            expected=dict(submission_rejected=True,rejection_stage='transport',accepted=[],
+                training_eligibility='fully-audited-only',outcomes=[dict(batch=None,valid=False,
+                    reason=str(error),rejection_stage='transport')])
+            require(all(audit.get(key)==value for key,value in expected.items()),
+                'GPU exact independently reproduced transport rejection')
+        else:raise ValueError('GPU valid transport falsely rejected')
+        return []
+    require('submission_rejected' not in audit and 'rejection_stage' not in audit,
+        'GPU unexpected transport rejection marker')
+    batches=[batch for batch,arrays in unpack_authenticated_epoch(body,manifest)]
+    accepted=[];seen=set()
+    for outcome in audit['outcomes']:
+        if not outcome.get('valid'):continue
+        number=outcome.get('batch')
+        require(type(number) is int and 0<=number<len(batches) and number not in seen
+            and outcome['valid'] is True and outcome.get('fully_audited') is True,
+            'GPU accepted frozen batch binding')
+        seen.add(number);accepted.append(batches[number])
+    require(accepted==audit['accepted'],'GPU accepted frozen batch binding')
+    return accepted
 
 
 def check_source_bundle(body, descriptor, expected):
@@ -272,16 +330,22 @@ def inspect(state, bucket, evaluations):
             require(len(body) == receipt['size'] and hashlib.sha256(body).hexdigest() == receipt['sha256'],
                     'GPU frozen bytes')
             audit = public(prefix+f'audits/{miner}.json')
-            _, audit_manifest, remote = checked_job(state, audit['remote_job_id'], authority)
+            verify_job, audit_manifest, remote = checked_job(state, audit['remote_job_id'], authority)
             require(audit_manifest == dict(manifest, audit_seed=challenge['seed'],
                 audit_frozen_receipts=scores['receipts']), 'GPU verifier challenge binding')
             raw = remote['audits'][0]
             require(all(audit.get(k) == v for k, v in raw.items()) and
                     audit['submission_sha256'] == receipt['sha256'], 'GPU independent audit report')
-            batches = [b for b, arrays in unpack_authenticated_epoch(body, manifest)]
-            accepted = [batches[o['batch']] for o in audit['outcomes'] if o.get('valid')]
-            require(accepted == audit['accepted'] and all(o.get('fully_audited')
-                    for o in audit['outcomes'] if o.get('valid')), 'GPU accepted frozen batch binding')
+            rejection_source=None
+            if audit.get('submission_rejected') is True:
+                bundle=manifest['source_bundle']
+                source_key=(bundle['sha256'],hashlib.sha256(canonical(verify_job['source_files'])).hexdigest())
+                if source_key not in source_checks:
+                    source_body,route=read_source_bundle(bucket,bundle)
+                    source_checks[source_key]=dict(check_source_bundle(source_body,bundle,verify_job['source_files']),retrieval=route)
+                else:source_body,_=read_source_bundle(bucket,bundle)
+                rejection_source=(source_body,bundle,verify_job['source_files'])
+            accepted=check_frozen_submission_audit(body,manifest,audit,receipt,rejection_source=rejection_source)
             reports[miner] = audit
             frozen.append(dict(miner=miner, bytes=len(body), sha256=receipt['sha256'], accepted=len(accepted)))
         calculated = score(reports)
