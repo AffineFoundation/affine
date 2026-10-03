@@ -17,7 +17,7 @@ def normalize(config=None):
     value = dict(DEFAULT); value.update(config or {})
     if value['version'] not in HARNESS_REGISTRY or value['policy'] not in ('autoregressive', 'candidates', 'visible-copy-candidates', 'public-mrcr-shell-candidates'):
         raise ValueError('unsupported harness or policy')
-    limit=2048 if value['version']=='text-tools-long-v2' else 512
+    limit=2048 if value['version'] in ('text-tools-long-v2','text-tools-format-long-v1') else 512
     if type(value['max_output_tokens']) is not int or not 1 <= value['max_output_tokens'] <= limit:
         raise ValueError('generation token budget')
     if not math.isfinite(value['temperature']) or not 0 < value['temperature'] <= 4:
@@ -29,6 +29,12 @@ def normalize(config=None):
         digest=hashlib.sha256((Path(__file__).parent/'native_mrcr_public_policy.py').read_bytes()).hexdigest()
         if value.get('public_policy_revision')!=REVISION or value.get('public_policy_sha256')!=digest:
             raise ValueError('public MRCR policy pin')
+    if value['version']=='text-tools-format-long-v1':
+        instruction=value.get('response_format_instruction')
+        if not isinstance(instruction,str) or not instruction.strip() or len(instruction)>512:
+            raise ValueError('bounded signed response format instruction')
+    elif 'response_format_instruction' in value:
+        raise ValueError('response format instruction requires its versioned harness')
     history_fields={'history_prefix_messages','history_window_messages'}
     if value['version']=='text-tools-window-v1':
         prefix=value.setdefault('history_prefix_messages',2)
@@ -211,9 +217,21 @@ def _window_chat_render(tokenizer,messages,tools=(),config=None):
     return _chat_render(tokenizer,retained,tools,config)
 
 
+def _format_chat_render(tokenizer,messages,tools=(),config=None):
+    """Render an explicit signed format instruction without rewriting responses."""
+    config=normalize(config)
+    copied=[dict(m) for m in messages]
+    last=next((i for i in range(len(copied)-1,-1,-1) if copied[i].get('role')=='user'),None)
+    if last is None or not isinstance(copied[last].get('content'),str):
+        raise ValueError('response format requires public text user message')
+    copied[last]['content']+='\n\nResponse format: '+config['response_format_instruction']
+    return _chat_render(tokenizer,copied,tools,config)
+
+
 # Every version owns its render/action/observation/sample boundary. Core model
 # computation does not branch on environment or harness names.
 HARNESS_REGISTRY={
+    'text-tools-format-long-v1': {'render':_format_chat_render,'action':_text_action,'observations':_text_observations,'sample':_sample},
     'text-tools-long-v2': {'render':_chat_render,'action':_text_action,'observations':_text_observations,'sample':_sample},
     'text-tools-v1': {'render':_chat_render,'action':_text_action,'observations':_text_observations,'sample':_sample},
     'plain-transcript-v1': {'render':_plain_render,'action':_text_action,'observations':_text_observations,'sample':_sample},

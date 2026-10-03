@@ -31,6 +31,17 @@ protocols fail explicitly. This is not an assertion that every upstream harness
 or all45 active sources have completed an end-to-end run: consult the execution
 matrix and original dependency/resource evidence in LEGACY_ENVIRONMENTS.md.
 
+`text-tools-format-long-v1` adds a bounded, signed
+`response_format_instruction` to a copy of the final public user message. For
+example, an environment expecting answer tags can request
+`Finish with <answer>...</answer>.` through harness configuration. This preserves
+the raw native messages, model sampling and native grader; it does not repair
+generated answers or inject hidden solutions. The field is rejected on older
+harness versions so a format change cannot silently reuse their identity. The
+new version still needs genuine generation and independent verification under a
+new pinned source before use in a public epoch. Its CPU controls alone do not
+qualify an environment or prove better model performance.
+
 Autoregressive policies genuinely sample target-model tokens; candidate policies
 are curated controls chosen by target-model likelihood. Signed bounded per-turn
 policy overrides allow a tool action followed by a final response without adding
