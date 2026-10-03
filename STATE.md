@@ -30,6 +30,17 @@ prospective next-epoch descriptor will retain `read_url` and provide the canonic
 must pass before a fresh epoch is activated. No sample or training credit is
 claimed for the failed attempt.
 
+The prospective dual-URL descriptor has now been signed by the existing pilot
+authority and independently fetched from R2. Root independently reran the frozen
+bootstrap against a separately signed diagnostic pointer and manifest: all 1,446
+source members admitted, the isolated CLI source-pin arguments matched, and four
+malformed descriptor controls were rejected. Execution stopped before the CLI or
+model. The prospective config changes only the equal URL alias and admission
+metadata. Restart and distinct second-attempt helpers are reviewed, but remain
+unactivated until the existing controller closes naturally and its completed
+state is checked. The next run must retain round, checkpoint and cumulative
+training counters; no optimizer replay or fabricated batch is permitted.
+
 ## Corrected handover candidate — October 3, 2026
 
 The next separated pilot source is v8, archive

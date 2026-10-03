@@ -31,6 +31,16 @@ mismatched discovery/manifest epochs refuse. Source downloads are bounded to
 archive membership are checked before any source writes. No private key is read
 by the bootstrap; the admitted miner receives the same explicit key path.
 
+The frozen bootstrap reads the download address from `source_bundle.url`.
+Operator descriptors that also expose `read_url` must supply the same signed
+address in both fields. A `read_url`-only descriptor does not satisfy this
+bootstrap contract. The October 3 public-client attempt exposed this mismatch
+before downloading anything; its manifest and failure remain preserved. The
+prospective correction passed a separately signed R2 discovery/manifest/archive
+admission control against the exact frozen bootstrap, with all source bytes
+unchanged. This control stops before CLI execution and does not establish a
+successful rollout or training epoch.
+
 The accepted archive consists of regular public code/documentation files in
 subnet, ops, tests, docs, dashboard, examples, prototype and systemd, named public
 root documentation/build files, and the explicit generated
