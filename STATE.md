@@ -1,5 +1,19 @@
 # Live reward launch authorized — October 3, 2026
 
+The before-training evaluation subsequently finished under its original signed
+job: all 32 prescribed held-outs passed model/native checks with 20 successes,
+matching the previous after-training diagnostic. This does not establish a gain.
+The controller has advanced naturally into the original three-step training job.
+All 33 current completed verifier download replicas have now been removed after
+fresh archive and local checks, totaling 17,048,016,339 bytes. One intermediate
+SSH observation failed; its evidence is preserved, a fresh operation succeeded,
+and a final presence check found no remaining current replicas on either worker.
+A reusable bounded retention command also completed an actual no-op pass against
+the signed roster and historical queue. Forty-five relevant controls pass,
+including archive truncation/corruption and boundary/roster guards. Main and the
+live HTTPS guide were independently checked at 00ce65f4… and exact guide SHA256
+855ea376… before this additional retention-command publication.
+
 At 18:47 UTC the original continuous controller remained alive with its exact
 start ticks; 31 current audit jobs were complete and both verifier identities
 held leases. Two actual retention operations removed eighteen duplicate completed

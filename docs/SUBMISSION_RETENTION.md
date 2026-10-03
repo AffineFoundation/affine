@@ -29,3 +29,23 @@ checkpoint, trainer intermediate-export, or evaluator tensor retention. Those
 need separate admission and archive checks before a continuous fleet can claim
 bounded long-term disk usage. Removing download replicas does not change scoring,
 penalties, original jobs, deadlines, or scientific verification.
+
+Operators can run a single bounded pass or a continuous watcher:
+
+```
+PYTHONPATH=. .venv/bin/python -B -m ops.retain_verifier_downloads \
+  --config PRIVATE_CONTROLLER_CONFIG \
+  --writer-cutover SIGNED_WRITER_CUTOVER --authority OPERATOR_PUBLIC_KEY \
+  --output PRIVATE_RETENTION_RECEIPTS --per-worker 8 --watch --interval 300
+```
+
+The watcher holds an exclusive local lock, reloads and authenticates the approved
+worker/source roster each cycle, and considers only completed verifier jobs,
+including earlier epochs. It inspects actual replica presence before downloading
+archives and processes at most eight files per worker per cycle, with at most
+four concurrent workers. Without `--watch`, a failed worker operation produces
+a nonzero exit. A watch cycle retains failure evidence and retries through fresh
+presence/archive checks on the next interval; it does not infer fraud or replay
+scientific jobs. Empty queues and epoch boundaries are safe no-ops. Six additional
+controls cover complete streamed archive checks, corruption and truncation,
+boundary no-ops, signed roster disagreement and private configuration admission.
