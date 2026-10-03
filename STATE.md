@@ -1,5 +1,17 @@
 # Live reward launch authorized — October 3, 2026
 
+The bounded verifier-retention watcher is now actually running every 300 seconds
+under a recorded PID/start tick, with the original controller also confirmed
+alive. Its first cycle completed successfully against both approved workers;
+no duplicate downloads remained. The training runner and child were independently
+observed alive under their original ticks with one GPU compute process and no
+completion report yet. These observations do not claim optimizer completion or
+quality improvement. Evidence: `verifier-retention-watch-v1/process.private.json`,
+`automatic-verifier-retention-v1/` and
+`training-actual-liveness-after-retention.private.json` in the continuous-upgrade
+directory. The bounded command and its controls were pushed and independently
+read back on main at c4d76244…; the worktree was clean after publication.
+
 The before-training evaluation subsequently finished under its original signed
 job: all 32 prescribed held-outs passed model/native checks with 20 successes,
 matching the previous after-training diagnostic. This does not establish a gain.
