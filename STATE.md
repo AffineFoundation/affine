@@ -19,6 +19,26 @@ remains an error; fresh corrected-source baseline and successor evaluations are
 needed. All five retained H200 nodes have admitted v8 source membership;
 CPU runtime admission and actual corrected GPU qualification remain separate.
 
+The original v2 after-only evaluation retry completed as job
+`...-eval-after-10771995` on the evaluator. The controller is terminal at round
+one, one full-model update and checkpoint `253f921e…`; root checked the signed
+evaluation job and exact 32-task result plan. Its result remains an error:
+31 verified tasks and task 6665 rejected by the old TOPLOC path, so no mean
+reward or performance trend is established. A fresh corrected-source untouched
+base-model 32-task evaluation is running as
+`nonpayable-separated-hopper-original-math-v8-corrected-paired32-v1-eval-before-92264392`
+on the trainer, with the exact original held-out indices, seeds and harness.
+These jobs perform no optimization. The v8 baseline's signed compute-file pins
+and admitted source bind its actual computation; its standalone initial manifest
+omits the source-bundle field and is preserved as submitted.
+
+The first verifier-2 codec diagnostic, `...codec-1790987526-58e0b6a0`, exited
+with a KeyError and no result receipt. Its diagnostic manifest lacked the
+source-bundle field required by the final result writer. A separately signed
+attempt adds that exact field and keeps the same helper, source, model, task,
+seed and rejection thresholds. The failed attempt is retained and is not a
+qualification pass. Corrected paired performance remains unproven.
+
 ## Separate H200 deployment — October 2, 2026
 
 The operator's Arbos.life name refers to this current code/validator host.
