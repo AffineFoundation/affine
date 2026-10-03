@@ -1,4 +1,4 @@
-# Closed v11 revision2 math epoch under evaluation — October 3, 2026
+# Closed v11 revision2 math epoch under post-training evaluation — October 3, 2026
 
 The recovered v10 epoch is fully qualified, including its signed nonempty history,
 three independently audited batches and exactly one full-model update. Fixed32
@@ -24,8 +24,16 @@ accepting distinct tasks 2192, 3953, 1278, 1925, 6823 and 7215. Root independent
 checked the signed score tally: six points and proposed equal shares of 1/6.
 One verifier's initial checkpoint download failed with NetworkUnreachable; its
 ordinary bounded second attempt passed without manual recovery. The same
-controller is running the pre-training evaluation. Training, successor publication,
-after-evaluation and clean controller closeout remain unqualified for this epoch.
+controller completed the pre-training evaluation at 23/32. Root verified one
+full-model update using task 2192: 7,615,616,512 trainable parameters, all 339
+parameter tensors receiving gradients, and changed parameter-value hashes. The
+other five accepted pairs were not consumed by this single update. Root streamed
+and verified all ten successor files in R2 (15,242,726,234 bytes), matching the
+training file map, controller publication receipt and signed descriptor for
+`4c0ed049…`. Post-training evaluation is now running on its separate evaluator.
+After-evaluation and clean controller closeout remain unqualified for this epoch.
+Accepted UID bindings are 168, 137, 131, 43, 12 and 85. UID 85 matches the user's
+supplied hotkey and earned one point; no payout or chain submission occurred.
 Two independently hosted verifier workers are live under the new authority.
 Actual affine.io HTTPS mining discovery and /llms.txt show closed uploads and
 open admission for the next signed opening. No chain weight
@@ -36,9 +44,11 @@ The original RGym generation diagnostic completed normally with 32 unsuccessful
 attempts and no K1/L1 pair. Two private exact-seed replay diagnostics preserved
 the original negative outcomes: one correct boxed answer was incompatible with
 the native answer extraction; the other was arithmetically wrong. Neither is
-training-qualified. The separately reviewed Verbatim generation-only run is now
-live on the idle miner H200 using the untouched base and unchanged original
-grader. Its actual supervisor/child and fresh admission evidence are retained in
+training-qualified. The separately reviewed Verbatim generation-only run finished
+with actual exit 0 and ten negative attempts (eight on index 1, two on index 3),
+using the untouched base and unchanged original grader. It found no K1/L1 pair
+and produced no batch artifact. Neither independent verification nor training is
+permitted from that result. Its actual terminal and fresh admission evidence are retained in
 `state/original-qwen-next-prospective-v1/verbatim-generation-only-v1/`.
 Verbatim and other original environment qualifications remain unfinished. The broad goal is
 active; consecutive uninterrupted math handovers and broader qualification still

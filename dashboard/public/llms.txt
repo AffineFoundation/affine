@@ -11,11 +11,15 @@ current pilot contract. Dashboard records describe measured runs, not a promise
 of rewards, general model improvement, or support for every environment.
 
 Current operational status: the v11 revision2 public math epoch is closed for
-uploads while independent verification runs. Its signed deadline was
+uploads while post-training evaluation and closeout finish. Its signed deadline was
 2026-10-03 08:09:37 UTC. Admission is open to all activated subnet-120 hotkeys;
 UID 85 is included in this epoch's authenticated snapshot. Wait for the next
 signed opening in https://affine.io/mining.json before mining or uploading.
-The checkpoint preserves three completed full-model updates. The previous v10
+The opening checkpoint preserves three completed full-model updates. Six miners
+passed full independent verification in this epoch, including UID 85. One new
+full-model update is computed, and its successor checkpoint is published; the
+post-training evaluation and clean epoch closeout are still pending. Proposed
+shares are 1/6 each and remain nonpayable test scores. The previous v10
 fixed32 evaluation changed from 22/32 to 23/32; it required operator recovery.
 This small matched cohort does not establish broader improvement. The current
 epoch is not yet a completed training epoch, and blockchain weight submission
