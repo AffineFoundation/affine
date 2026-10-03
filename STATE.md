@@ -17,9 +17,20 @@ The public HTTPS discovery was authenticated against the signed pointer and
 manifest. A running observer closes discovery at the original deadline or when
 the controller is absent, and follows new epochs automatically. Six controls
 cover expiry, signatures, source/weight binding and refreshed read capabilities.
-Continued local checkpoint/artifact retention needs a bounded policy: verifier 2
-has 18.1 GB free and the trainer has enough for this three-step epoch, not
-unlimited retained snapshots. Stable uninterrupted learning remains unproven.
+Root recovered local capacity by removing only two exact duplicate old-94
+checkpoint caches after independently hashing a retained verifier copy and
+authenticating the archived descriptor. Current f9 weights, reports, submissions
+and qualification artifacts remain intact. Verifier 2 now has 33.46 GB free and
+the trainer 108.11 GB. Continued retention still needs a bounded policy;
+unlimited snapshots and stable uninterrupted learning remain unproven.
+The new upload window closed at its original deadline. A root observation found
+33 private staging artifacts totaling 17.05 GB, awaiting freeze/audit; this is
+not a claim that all are valid or eligible. The owned miner's actual CLI source
+pin matched ae44200b… and its original process was observed live, with no wallet
+key exported. The discovery endpoint automatically closed uploads on time.
+Arbos's live-weights announcement was posted and independently read back in the
+public Subnet 120 channel (message 1555994811419336797). It explains agent mining,
+the setup guide, continuous main/llms updates, audit rules and unproven gains.
 
 Fresh sampled-audit epoch `nonpayable-live-reward-math-v1--1791036559-4`
 opened at 14:09:19 UTC with its original 14:39:19 deadline. All five H200 roles
@@ -42,9 +53,12 @@ The real writer dry run passed for the completed 15:00 UTC hour, with zero
 eligible points in that hour. This epoch finalized at 15:14 UTC, so its first
 positive reward hour ended at 16:00 UTC. The writer finalized an encrypted
 commitment at block hash 0xa5b1cab7653bbb75adb8b6eb7b222bcded4fe9b8f3300b45d17faaf04fdcab30.
-Commit-reveal is enabled; the chain holds its pending owner commitment for round
-32748064. The active vector has not yet matched the intended 19 recipients, so
-automatic reveal/readback and the live-weights announcement remain pending.
+Commit-reveal is enabled; its owner commitment for round 32748064 revealed.
+Independent readback at block 9203767 confirmed exactly the intended 19 recipients,
+their normalized shares and current ownership of all winning UIDs. Root rechecked
+the legacy production suppression guard and disabled/inactive old weight writers.
+Our validator's active vector assigns 100% of its weights to the new mechanism;
+this does not establish other validators' vectors or wallet-level payments.
 
 A future signed-harness KV-cache sampler is being qualified on the idle miner
 H200 in an isolated namespace. Seven CPU controls pass. Independent H200 replay
@@ -71,8 +85,8 @@ invalid batch. Pure shared audit arithmetic generates both proposed weights and
 reward units; unchecked batches earn no points, and infra errors are not fraud.
 The single-writer cutover configuration is genuinely root-signed. Its user timer
 is enabled and active after the actual dry run and 19 authenticated worker reports.
-The first positive reward hour ended at 16:00 UTC; its commitment finalized, with
-automatic reveal and active-vector verification still pending.
+The first positive reward hour ended at 16:00 UTC; its commitment finalized and
+the revealed vector subsequently passed independent recipient/share/owner checks.
 A host-interpreter launch failed before opening and
 was preserved; the fresh launch uses the rewrite's actual shared environment.
 

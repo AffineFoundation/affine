@@ -1,8 +1,11 @@
 # Prospective live MATH rewards
 
-The reward bridge is implemented; activation still requires admitted GPU source,
-a fresh public epoch and an actual verified chain submission. Historical pilot
-epochs are ineligible. Model execution and chain signing remain separate roles.
+The reward bridge is live. The first admitted public MATH epoch produced 42
+audited points from 19 miners. Its encrypted commitment finalized, then the
+revealed vector passed independent recipient, normalized-share and current-owner
+checks at Finney block 9203767. Both legacy payout writers are disabled/inactive.
+Historical pilot epochs are ineligible. Model execution and chain signing remain
+separate roles; active weights do not establish individual wallet receipts.
 
 The validator publishes a signed `live_reward_contract` in the first manifest
 of each eligible epoch. It pins the approved source, checkpoint, penalty settings,
