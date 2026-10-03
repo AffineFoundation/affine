@@ -1,4 +1,4 @@
-import copy,hashlib,io,tarfile,unittest
+import copy,hashlib,io,tarfile,unittest,subprocess
 from pathlib import Path
 from unittest.mock import patch
 import numpy as np
@@ -21,7 +21,7 @@ class TransportEvidence(unittest.TestCase):
   self.sources={};stream=io.BytesIO()
   with tarfile.open(fileobj=stream,mode='w:gz') as archive:
    for name in (*MODULES,*TRANSPORT_REJECTION_SOURCES):
-    body=Path(name).read_bytes();self.sources[name]=hashlib.sha256(body).hexdigest();member=tarfile.TarInfo(name);member.size=len(body);archive.addfile(member,io.BytesIO(body))
+    body=(subprocess.check_output(['git','show','31041553:'+name]) if name in TRANSPORT_REJECTION_SOURCES else Path(name).read_bytes());self.sources[name]=hashlib.sha256(body).hexdigest();member=tarfile.TarInfo(name);member.size=len(body);archive.addfile(member,io.BytesIO(body))
   self.archive=stream.getvalue();self.descriptor={'size':len(self.archive),'sha256':hashlib.sha256(self.archive).hexdigest()};self.source=(self.archive,self.descriptor,self.sources)
  def check(self,report=None,body=None,receipt=None,source=None,manifest=None):
   return check_frozen_submission_audit(self.body if body is None else body,self.manifest if manifest is None else manifest,self.rejected if report is None else report,self.receipt if receipt is None else receipt,rejection_source=self.source if source is None else source)

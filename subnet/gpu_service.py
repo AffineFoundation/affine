@@ -89,7 +89,7 @@ def contract(config,round_number):
         from .sample_harness import project
         definitions_all.append(dict(row,indices=indices,harness=project(row['harness'],indices,row['indices'])))
     registry={row['spec']['id']:dict(indices=row['indices'],harness=row['harness']) for row in rows}
-    result=dict(sample_harness_registry=registry,heldout_indices={r['env_id']:r['indices'] for r in config['heldout']},duration=config.get('duration',300),environments=definitions_all,audit_policy={'mode':'full','version':1},
+    result=dict(sample_harness_registry=registry,heldout_indices={r['env_id']:r['indices'] for r in config['heldout']},duration=config.get('duration',300),environments=definitions_all,audit_policy=config.get('audit_policy',{'mode':'full','version':1}),
         training_policy=FULL_POLICY,source_bundle=config['source_bundle'],model_runtime_revision=revision,numerical_policy=policy,
         backend_profile=profile,model_id=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'))
     if config.get('artifact_policy') is not None:result['artifact_policy']=config['artifact_policy']
@@ -138,7 +138,7 @@ def initial_manifest(config,checkpoint):
     chosen=contract(config,0)
     revision,profile,policy=for_config(config)
     from .harness import source_hash
-    result=dict(sample_harness_registry=chosen['sample_harness_registry'],epoch=config['epoch_prefix']+'-initial',payable=False,training_policy=FULL_POLICY,checkpoint=checkpoint,environments=[dict(env_id=r['spec']['id'],**r) for r in chosen['environments']],K=1,L=1,max_batches=config.get('max_batches',3),audit_policy={'mode':'full','version':1},harness_source_hash=source_hash(),model_runtime_revision=revision,numerical_policy=policy,backend_profile=profile,model_id=chosen['model_id'],transport_policy='direct-r2-v1')
+    result=dict(sample_harness_registry=chosen['sample_harness_registry'],epoch=config['epoch_prefix']+'-initial',payable=False,training_policy=FULL_POLICY,checkpoint=checkpoint,environments=[dict(env_id=r['spec']['id'],**r) for r in chosen['environments']],K=1,L=1,max_batches=config.get('max_batches',3),audit_policy=config.get('audit_policy',{'mode':'full','version':1}),harness_source_hash=source_hash(),model_runtime_revision=revision,numerical_policy=policy,backend_profile=profile,model_id=chosen['model_id'],transport_policy='direct-r2-v1')
     if 'artifact_policy' in chosen:result['artifact_policy']=chosen['artifact_policy']
     if 'task_assets' in chosen:result['task_assets']=chosen['task_assets']
     return result
@@ -153,7 +153,12 @@ def run(config,once=False):
     if not prefix.startswith('nonpayable-') or config.get('payable_epochs',False):raise ValueError('GPU loop is permanently nonpayable')
     if type(config.get('owned_miner_dispatch',True))is not bool:raise ValueError('owned miner dispatch must be boolean')
     registration_policy(config)
-    if not 60<=config.get('duration',300)<=3600 or not 1<=config.get('max_batches',3)<=3:raise ValueError('epoch budget')
+    if config.get('audit_policy',{}).get('version')=='bounded-random-v1':
+        from .audit_policy import validate
+        validate(config['audit_policy'])
+        if 'submission_counts' in config['audit_policy']:raise ValueError('audit allocation must be generated after freeze')
+        if config.get('balanced_replay'):raise ValueError('sampled historical replay requires separate admission')
+    if not 60<=config.get('duration',300)<=3600 or type(config.get('max_batches',3)) is not int or not 1<=config.get('max_batches',3)<=256:raise ValueError('epoch budget')
     state=Path(config['state']);state.mkdir(parents=True,exist_ok=True);state.chmod(0o700)
     bucket=Bucket(config['bucket']);gateway=Gateway(bucket,state_path=state/'gateway.json',public_url='http://unused-gpu-operator.invalid',direct_r2=True)
     controller=RemoteController(bucket,gateway,state,config['remote']);chain=ChainAdapter(state/'chain')

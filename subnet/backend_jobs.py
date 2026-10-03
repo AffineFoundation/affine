@@ -22,7 +22,7 @@ BACKEND_PROFILE = dict(device='cuda', dtype='bfloat16', attention='eager', sm=[8
     tf32=False, deterministic_algorithms=True, cublas_workspace_config=':4096:8',
     native_toploc_threads=2, torch_threads=2)
 SOURCE_FILES = tuple('subnet/'+n+'.py' for n in
-    ('backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol'))
+    ('audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol'))
 ROLES = {'mine','verify','train','evaluate','upload'}
 HEAD_POLICY='frozen-feature-head-adamw-v1'
 FULL_POLICY='bf16-full-adamw-checkpointed-v1'
@@ -216,8 +216,14 @@ def _validate(envelope, authority, now=None, *, resolve_source):
         if not re.fullmatch('[0-9a-f]{64}',obj['sha256']):raise ValueError('submission digest')
     if len(job.get('submissions',[]))>256:raise ValueError('submission job budget')
     if job['role'] in ('mine','verify','train'):
+        if type(manifest.get('max_batches',4)) is not int or not 1<=manifest.get('max_batches',4)<=256:raise ValueError('signed per UID batch quota')
         if job['role']!='mine' and not job.get('submissions'):raise ValueError('no submissions')
-        if manifest.get('audit_policy',{}).get('mode')!='full':raise ValueError('GPU training jobs require full audit')
+        audit_policy=manifest.get('audit_policy',{})
+        if audit_policy.get('mode')!='full':
+            from .audit_policy import validate
+            validate({k:v for k,v in audit_policy.items() if k!='count'})
+            if job['role']!='mine':
+                if not audit_policy.get('submission_counts') and 'count' not in audit_policy:raise ValueError('missing signed audit allocation')
         if any(type(manifest.get(k)) is not int or not 1<=manifest[k]<=16 for k in ('K','L')):raise ValueError('class quota')
     if job['role']=='mine':
         mining_window(manifest,now)
@@ -284,6 +290,9 @@ def audit(data, manifest, runtime):
             submission_rejected=True,rejection_stage='transport',
             outcomes=[dict(batch=None,valid=False,reason=str(error),rejection_stage='transport')],
             accepted=[],training_eligibility='fully-audited-only'),[]
+    from .auditing import select,assurance
+    policy=manifest.get('audit_policy',{'mode':'full'})
+    selected_indices=set(select(len(records),policy,manifest.get('audit_seed'),hashlib.sha256(data).hexdigest()))
     outcomes=[];accepted=[];pairs=[];seen=set()
     for number,(batch,arrays) in enumerate(records):
         try:
@@ -291,10 +300,12 @@ def audit(data, manifest, runtime):
             definition=entry(manifest,batch.get('env_id'));index=batch['index'];key=sample_key(batch)
             if batch.get('schema')!=2 or batch['epoch']!=manifest['epoch'] or batch['checkpoint']!=manifest['checkpoint']['id'] or batch.get('sample_index')!=index or type(index) is not int or index not in definition['indices'] or key in seen:raise ValueError('batch binding')
         except (ValueError,KeyError,TypeError,IndexError) as error:
-            outcomes.append(dict(batch=number,valid=False,reason=type(error).__name__+': '+str(error)[:300]));continue
+            outcomes.append(dict(batch=number,valid=False,failure_kind='structural_invalid',fully_audited=False,reason=type(error).__name__+': '+str(error)[:300]));continue
         # The selected runtime/harness is operator-approved, not miner input.
         # Configuration or infrastructure refusal must fail the worker honestly.
         selected=runtime.for_environment(definition['spec'],harness_for(definition,index))
+        from .audit_policy import InvalidSample
+        confirmed_invalid=False
         try:
             if batch.get('environment_version')!=selected.spec.version:raise ValueError('environment version')
             seen.add(key);rolls=batch['rollouts'];tokens=set()
@@ -303,14 +314,24 @@ def audit(data, manifest, runtime):
                 signature=tuple(tuple(t['output']) for t in rollout['turns'])
                 if signature in tokens or rollout['index']!=index or rollout.get('env_id')!=definition['env_id']:raise ValueError('sample binding/duplicate')
                 tokens.add(signature)
-                if selected.verify(rollout,probs) is not True:raise ValueError('inference or replay')
+                if number in selected_indices:
+                    try:verified=selected.verify(rollout,probs)
+                    except InvalidSample:raise
+                    except Exception as error:
+                        if policy.get('version')=='bounded-random-v1':
+                            raise RuntimeError('audit execution failed; retry without miner penalty') from error
+                        raise
+                    if verified is not True:
+                        confirmed_invalid=True
+                        raise ValueError('inference or replay')
             pos=[r for r in rolls if classification(r)=='positive'];neg=[r for r in rolls if classification(r)=='negative']
             if len(pos)!=manifest['K'] or len(neg)!=manifest['L']:raise ValueError('positive/negative quota')
-            accepted.append(batch);pairs.extend((definition,p,n) for p,n in zip(pos,neg))
-            outcomes.append(dict(batch=number,env_id=definition['env_id'],index=index,valid=True,fully_audited=True))
+            if number in selected_indices:
+                accepted.append(batch);pairs.extend((definition,p,n) for p,n in zip(pos,neg))
+            outcomes.append(dict(batch=number,env_id=definition['env_id'],index=index,structural_valid=True,valid=True if number in selected_indices else None,fully_audited=number in selected_indices))
         except (ValueError,KeyError,TypeError,IndexError) as error:
-            outcomes.append(dict(batch=number,valid=False,reason=type(error).__name__+': '+str(error)[:300]))
-    return dict(epoch=manifest['epoch'],submission_sha256=hashlib.sha256(data).hexdigest(),outcomes=outcomes,accepted=accepted,training_eligibility='fully-audited-only'),pairs
+            outcomes.append(dict(batch=number,valid=False,fully_audited=number in selected_indices,failure_kind='confirmed_invalid' if confirmed_invalid or isinstance(error,InvalidSample) else 'verification_error',reason=type(error).__name__+': '+str(error)[:300]))
+    return dict(epoch=manifest['epoch'],submission_sha256=hashlib.sha256(data).hexdigest(),policy=policy,selected_batches=sorted(selected_indices),assurance=assurance(len(records),len(selected_indices)),outcomes=outcomes,accepted=accepted,training_eligibility='fully-audited-only'),pairs
 
 def full_parameter_train(runtime, pairs, destination, steps=1):
     """Measured, separately selected full BF16 AdamW; not the head-only control."""
@@ -372,7 +393,7 @@ def install_source_loader(root):
     # Pure admission helpers are used before workspace/artifact access. Their
     # pinned bytes have now been checked; discard bootstrap imports so compute
     # admission reloads them through the authenticated fresh-source finder.
-    for module_name in ('subnet.backend_profiles','subnet.artifact_budget'):
+    for module_name in ('subnet.backend_profiles','subnet.artifact_budget','subnet.audit_policy','subnet.auditing'):
         sys.modules.pop(module_name,None)
     for name in SOURCE_FILES:
         module_name=name[:-3].replace('/','.')

@@ -14,6 +14,9 @@ def select(total, policy, seed, submission_hash):
         raise ValueError('post-freeze audit policy')
     try: bytes.fromhex(seed)
     except ValueError: raise ValueError('audit seed encoding')
+    if policy.get('version') == 'bounded-random-v1':
+        from .audit_policy import selection
+        return selection(total, policy.get('submission_counts',{}).get(submission_hash,policy.get('count')), seed, submission_hash)
     count = policy.get('count', 1)
     if type(count) is not int or not 1 <= count <= 32:
         raise ValueError('audit count')

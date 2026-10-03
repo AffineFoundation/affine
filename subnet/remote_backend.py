@@ -113,6 +113,7 @@ class RemoteController(Controller):
             self.jobs=RoutedJobs(remote,self)
         else:self.jobs=RemoteJobs(remote,self)
     def open(self,*args,max_batches=3,**kwargs):
+        if type(max_batches)is not int or not 1<=max_batches<=256:raise ValueError('per UID batch quota')
         heldouts=kwargs.pop('heldout_indices',None)
         operator_test_policy=kwargs.pop('operator_test_policy',None)
         if operator_test_policy is not None:
@@ -186,6 +187,18 @@ class RemoteController(Controller):
             challenge=dict(seed=secrets.token_hex(32),generated_after_freeze_at=time.time(),receipts=receipts);save(challengepath,challenge)
         if challenge['receipts']!=receipts:raise ValueError('frozen audit challenge binding')
         self.bucket.json('public/'+epoch+'/audit-challenge.json',self.signed(challenge));audit_manifest=dict(manifest,audit_seed=challenge['seed'],audit_frozen_receipts=receipts)
+        bounded=manifest.get('audit_policy',{}).get('version')=='bounded-random-v1'
+        if bounded:
+            from .audit_policy import validate,allocate
+            policy=validate(manifest['audit_policy'])
+            allocations=allocate({m:manifest['max_batches'] for m in receipts},policy,challenge['seed'])
+            from collections import Counter
+            multiplicity=Counter(r['sha256'] for r in receipts.values())
+            # Byte-identical cross-miner submissions cannot earn unique points.
+            # Do not let one shared hash apply another UID's allocation.
+            allocations={m:(n if multiplicity[receipts[m]['sha256']]==1 else 0) for m,n in allocations.items()}
+            audit_manifest['audit_policy']=dict(policy,submission_counts={r['sha256']:allocations[m] for m,r in receipts.items()})
+            save(self.state/(epoch+'-audit-plan.json'),dict(allocations=allocations,population_basis='signed-per-miner-upper-bound',policy=policy))
         save(self.state/(epoch+'-audit-manifest.json'),audit_manifest);reports={}
         def verify_one(item):
             miner,receipt=item
@@ -205,7 +218,34 @@ class RemoteController(Controller):
             self.bucket.json('public/'+epoch+'/audits/'+miner+'.json',self.signed(report))
             artifact=self.state/(epoch+'-'+miner+'.zip')
             if not hasattr(self.jobs,'queue') and not artifact.exists():self.bucket.download(receipt['frozen_key'],artifact)
-        result=score(reports);result.update(payable=False,epoch_id=epoch,finalized_at=time.time(),receipts=receipts,checkpoint=manifest['checkpoint']['id'])
+        if bounded:
+            from .audit_policy import escalation_allocations,penalty_count
+            remaining={m:manifest['max_batches']
+                       for m,r in reports.items() if penalty_count(r,policy['penalties'])}
+            additions=escalation_allocations(remaining,allocations,policy,challenge['seed'])
+            counts=dict(audit_manifest['audit_policy']['submission_counts'])
+            for miner,extra in additions.items():
+                if not extra:continue
+                receipt=receipts[miner];counts[receipt['sha256']]+=extra
+            expanded=dict(audit_manifest,audit_policy=dict(audit_manifest['audit_policy'],submission_counts=counts))
+            for miner,extra in additions.items():
+                if not extra:continue
+                receipt=receipts[miner]
+                remote=self.jobs.run(epoch+'-verify-expanded-'+miner[:8],'verify',expanded,checkpoint_path,
+                    submissions=[dict(url=self.bucket.presign(receipt['frozen_key']),sha256=receipt['sha256'])])
+                report=remote['audits'][0]
+                if report['submission_sha256']!=receipt['sha256']:raise ValueError('expanded frozen artifact binding')
+                previous={o['batch']:o for o in reports[miner]['outcomes'] if o.get('fully_audited') is True}
+                current={o['batch']:o for o in report['outcomes']}
+                if any(current.get(b,{}).get('valid')!=o.get('valid') for b,o in previous.items()):raise ValueError('expanded audit inconsistent with initial audited outcomes')
+                report.update(remote_job_id=remote['job_id'],backend_profile=remote['backend_profile'],execution_resources_enforced=remote['execution_resources_enforced'])
+                save(self.state/(epoch+'-'+miner+'-initial-report.json'),reports[miner])
+                save(self.state/(epoch+'-'+miner+'-report.json'),report);reports[miner]=report
+                self.bucket.json('public/'+epoch+'/audits/'+miner+'.json',self.signed(report))
+            audit_manifest=expanded
+            save(self.state/(epoch+'-audit-manifest.json'),audit_manifest)
+            self.bucket.json('public/'+epoch+'/audit-plan.json',self.signed(dict(allocations=allocations,escalations=additions,policy=policy,population_basis='signed-per-miner-upper-bound')))
+        result=score(reports,policy['penalties'] if bounded else None);result.update(payable=False,epoch_id=epoch,finalized_at=time.time(),receipts=receipts,checkpoint=manifest['checkpoint']['id'])
         save(saved,result);self.bucket.json('public/'+epoch+'/scores.json',self.signed(result));return result,reports
     def train(self,manifest,reports,checkpoint_path,destination=None,steps=1,replay=None,**ignored):
         epoch=manifest['epoch'];cached=self.state/(epoch+'-training-metrics.json')
@@ -224,7 +264,10 @@ class RemoteController(Controller):
         submissions=[dict(url=self.bucket.presign(receipts[m]['frozen_key']),sha256=receipts[m]['sha256']) for m,r in reports.items() if r['accepted']]
         if not submissions:raise ValueError('no independently verified training data')
         extra={'replay':replay} if replay is not None else {}
-        remote=self.jobs.run(epoch+'-train','train',manifest,checkpoint_path,submissions=submissions,steps=steps,training_policy=FULL_POLICY,**extra)
+        training_manifest=manifest
+        if manifest.get('audit_policy',{}).get('version')=='bounded-random-v1':
+            training_manifest=json.loads((self.state/(epoch+'-audit-manifest.json')).read_text())
+        remote=self.jobs.run(epoch+'-train','train',training_manifest,checkpoint_path,submissions=submissions,steps=steps,training_policy=FULL_POLICY,**extra)
         new=dict(remote['new_checkpoint']);path=new.pop('path')
         if new['id']==manifest['checkpoint']['id']:raise ValueError('unchanged trained checkpoint')
         output=self.publish_remote_checkpoint(dict(manifest,checkpoint=new),path)

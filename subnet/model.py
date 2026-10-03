@@ -124,46 +124,48 @@ class Runtime:
             session.close()
 
     def verify(self, rollout, arrays):
+        from .audit_policy import InvalidSample
         if rollout.get('schema',1)>=2 and (rollout.get('sample_index')!=rollout.get('index') or rollout.get('env_id')!=self.spec.id or rollout.get('environment_version')!=self.spec.version):
-            raise ValueError('required environment binding')
+            raise InvalidSample('required environment binding')
         if type(rollout.get('reward')) not in (int,float) or not math.isfinite(rollout['reward']):
-            raise ValueError('reward type or finiteness')
+            raise InvalidSample('reward type or finiteness')
         if rollout.get('env_id', self.spec.id) != self.spec.id or rollout.get('environment_version', self.spec.version) != self.spec.version:
-            raise ValueError('environment binding')
+            raise InvalidSample('environment binding')
         session = create_session(self.spec)
         try:
             env_seed = int(self.spec.config.get('seed', 0))
             if rollout.get('env_seed', env_seed) != env_seed:
-                raise ValueError('environment seed')
+                raise InvalidSample('environment seed')
             initial = session.reset(rollout['index'], env_seed)
             if rollout.get('task_hash', initial['task_hash']) != initial['task_hash']:
-                raise ValueError('task hash')
+                raise InvalidSample('task hash')
             messages, tools = initial['messages'], initial.get('tools', [])
             turns = rollout['turns']
             if not 1 <= len(turns) <= self.spec.max_turns or len(arrays) != len(turns):
-                raise ValueError('trajectory length')
+                raise InvalidSample('trajectory length')
             for i, (turn, claimed) in enumerate(zip(turns, arrays)):
                 prompt = self.prompt(messages, tools)
                 if turn['prompt'] != prompt:
-                    raise ValueError('context')
+                    raise InvalidSample('context')
                 output = turn['output']
                 if not 0 < len(output) <= self.spec.max_output_tokens or any(type(x) is not int or not 0 <= x < self.model.config.vocab_size for x in output):
-                    raise ValueError('tokens')
+                    raise InvalidSample('tokens')
                 if len(prompt)+len(output) > min(getattr(self.model.config,'max_position_embeddings',8192),8192):
-                    raise ValueError('model context budget')
+                    raise InvalidSample('model context budget')
                 text = self.tokenizer.decode(output, skip_special_tokens=True)
                 if turn['text'] != text:
-                    raise ValueError('text')
+                    raise InvalidSample('text')
                 if type(turn.get('done')) is not bool or type(turn.get('reward')) not in (int,float) or not math.isfinite(turn['reward']):
-                    raise ValueError('turn outcome types')
+                    raise InvalidSample('turn outcome types')
                 acts, probs = self.compute(prompt, output)
                 if claimed.shape != probs.shape or not np.isfinite(claimed).all() or not np.allclose(claimed, probs, atol=1e-5, rtol=0):
-                    raise ValueError('probabilities')
+                    raise InvalidSample('probabilities')
                 count = 1+math.ceil(len(output)/16)
-                validate_framing(turn['proofs'],count)
+                try:validate_framing(turn['proofs'],count)
+                except ValueError as error:raise InvalidSample('proof framing') from error
                 results = self.verify_proofs(acts, turn['proofs'], decode_batching_size=16, topk=128)
                 if len(results) != count or any(r.exp_mismatches or r.mant_err_mean or r.mant_err_median for r in results):
-                    raise ValueError('TOPLOC')
+                    raise InvalidSample('TOPLOC')
                 result = session.step(policy.action(text,self.harness))
                 done, reward = result['done'], result['reward']
                 observations = result['observations']
@@ -171,14 +173,14 @@ class Runtime:
                 if expected_observations is None and self.legacy:
                     expected_observations = [dict(role='user',content=turn.get('feedback',''))]
                 if turn['done'] != done or expected_observations != observations or turn['reward'] != reward:
-                    raise ValueError('environment replay')
+                    raise InvalidSample('environment replay')
                 if turn.get('classification',result['classification']) != result['classification']:
-                    raise ValueError('classification')
+                    raise InvalidSample('classification')
                 if done and i != len(turns)-1:
-                    raise ValueError('extra turns')
+                    raise InvalidSample('extra turns')
                 messages = messages + [dict(role='assistant',content=text)] + policy.observations(observations,self.harness)
             if not done or rollout['reward'] != reward or rollout.get('classification',result['classification']) != result['classification']:
-                raise ValueError('incomplete rollout or score')
+                raise InvalidSample('incomplete rollout or score')
             return True
         finally:
             session.close()

@@ -1,0 +1,13 @@
+{
+  "mode": "sampled",
+  "version": "bounded-random-v1",
+  "epoch_budget": 256,
+  "escalation_budget": 64,
+  "minimum_per_miner": 1,
+  "maximum_per_miner": 32,
+  "penalties": {
+    "invalid_batch_multiplier": 0.5,
+    "zero_epoch_after": 0,
+    "penalize_structural": false
+  }
+}

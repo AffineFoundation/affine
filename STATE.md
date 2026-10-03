@@ -1,3 +1,26 @@
+# Bounded audit sampler implementation — October 3, 2026
+
+The rewrite now has an opt-in bounded-random-v1 GPU audit policy with per-UID
+submission quotas, global initial/escalation budgets, post-freeze deterministic
+random selection, ordinary distributed verifier leases, expanded audits after
+confirmed invalid data, and parameterized proposed weights. Only fully audited
+unique task batches earn points or enter training; sampled scores remain
+provisional because unchecked duplicate claims are unresolved. Unexpected sampled
+inference exceptions fail the job for ordinary retries without miner penalties.
+Typed InvalidSample comparisons distinguish actual data mismatches from execution
+errors. Expansion budgets include repeated initial checks. Duplicate identical
+cross-UID artifacts cannot multiply allocated work.
+
+The independent ops.audit_weights command authenticates validator-signed frozen
+ledgers/reports and recomputes proposed weights without chain access. Example
+parameters and operation are in configs/bounded-audit-policy.json and
+docs/AUDIT_SAMPLING.md. This is worktree implementation and local integration
+qualification only: existing signed epochs, frozen source bundles, running nodes,
+production, and chain submission settings were not modified or redeployed.
+128 targeted policy/controller/worker/source-admission/runtime regression tests
+passed. A new source admission and epoch are still required before using this
+policy live.
+
 # First uninterrupted v11 revision2 math epoch qualified — October 3, 2026
 
 The recovered v10 epoch is fully qualified, including its signed nonempty history,
