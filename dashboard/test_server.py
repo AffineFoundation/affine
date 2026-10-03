@@ -28,6 +28,33 @@ class PublicProjectionTests(unittest.TestCase):
     def test_v9_public_epoch_namespace_exports_only_public_measurements(self):
         self.assert_hopper_projection('prospective-separated-hopper-math-v9', 'separated-hopper-math-v9')
 
+    def test_v10_repaired_namespace_exports_only_public_measurements(self):
+        self.assert_hopper_projection('prospective-separated-hopper-math-v10', 'separated-hopper-math-v10')
+
+    def test_preparation_v10_does_not_replace_v9_completed_fixed32_science(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);state=root/'state';v9=state/'prospective-separated-hopper-math-v9'
+            folder=v9/'controller-state';folder.mkdir(parents=True)
+            epoch='nonpayable-separated-hopper-original-math-v9-1790996840-0'
+            (folder/f'{epoch}-manifest.json').write_text(json.dumps(dict(epoch=epoch,start=1,deadline=2,payable=False,checkpoint={'id':'base'})))
+            (folder/f'{epoch}-scores.json').write_text(json.dumps(dict(points={'miner':1})))
+            evaluations=v9/'evaluations';evaluations.mkdir()
+            for run,successes,timestamp in [('before',20,3),('after',22,4)]:
+                (evaluations/(run+'.json')).write_text(json.dumps(dict(run_id=run,epoch_id=epoch,
+                    env_id='affine_math',dataset_id='corrected-qwen-fixed32',taskset_hash='same-taskset',
+                    status='complete',timestamp=timestamp,count=32,successes=successes,mean_reward=successes/32,
+                    model='Qwen/Qwen2.5-Math-7B-Instruct',model_runtime_revision='cuda-bf16-eager-sm90-v1')))
+            v10=state/'prospective-separated-hopper-math-v10';v10.mkdir()
+            (v10/'config.prospective.private.json').write_text(json.dumps(dict(preparation_only=True,activation_allowed=False,private_url='PRIVATE_CAPABILITY')))
+            (v10/'controller-state').mkdir()
+            database=Database(root/'network.sqlite',state);database.refresh();snapshot=database.snapshot()
+            self.assertEqual([e['source'] for e in snapshot['epochs']],['separated-hopper-math-v9'])
+            rows=snapshot['evaluations'];self.assertEqual([e['successes'] for e in rows],[20,22])
+            self.assertEqual([e['mean_reward'] for e in rows],[20/32,22/32])
+            self.assertEqual({e['dataset_id'] for e in rows},{'corrected-qwen-fixed32'})
+            self.assertEqual({e['taskset_hash'] for e in rows},{'same-taskset'})
+            self.assertNotIn('PRIVATE_CAPABILITY',json.dumps(snapshot))
+
     def test_v9_finalized_two_miner_window_keeps_corrected_cohort_separate(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);state=root/'state';folder=state/'prospective-separated-hopper-math-v9/controller-state'
