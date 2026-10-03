@@ -1,5 +1,19 @@
 # Live reward launch authorized — October 3, 2026
 
+The prospective freeze path now streams each atomic submission GET in 1 MiB
+chunks and conditionally copies its exact ETag within R2, with bounded concurrent
+snapshots. It preserves successful siblings after another copy fails, retaining
+original deadline/receipt semantics. Twenty transport controls pass. A real
+private R2 qualification completed four concurrent 8 MiB freezes in 1.69 seconds,
+fully read back all four and rejected an actual post-hash overwrite. This does
+not prove large-submission throughput and is not activated in the current epoch.
+At 21:35 UTC the original active controller was still advancing through freeze
+(50 snapshotted uploads, 117 missing/policy observations, no new audit jobs yet).
+See `docs/TRANSPORT_RECOVERY.md` and `stream-snapshot-qualification-*` evidence.
+The community upgrade/mining-guide message was posted and GET-read back as
+Discord message 1556055774931845290; main and the live HTTPS guide had already
+been independently checked at 8a1d4643… and exact guide SHA64ea3aa4….
+
 The completed-trainer archive/retention supervisor is now deployed under an
 actual-wait parent, with the child independently observed alive under its original
 start ticks. Its first real cycle authenticated the live source approvals and

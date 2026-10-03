@@ -128,6 +128,39 @@ class Bucket:
             return dict(data=data,size=size,etag=response['ETag'],completed_at=response['LastModified'].timestamp())
         finally:body.close()
 
+    def freeze_snapshot(self,key,prefix,start,deadline,limit=100_000_000):
+        """Hash one atomic GET, then freeze its exact ETag inside the bucket.
+
+        No body-sized allocation or upload passes through the operator. Metadata
+        and bytes come from the same GET; the conditional copy closes a miner
+        overwrite race. A copy fault is infrastructure failure, not fraud.
+        """
+        from botocore.exceptions import ClientError
+        if type(limit) is not int or not 0<limit<=2_000_000_000 or not start<deadline:
+            raise ValueError('bounded snapshot window and size')
+        try:response=self.client.get_object(Bucket=self.name,Key=key)
+        except ClientError as exc:
+            if str(exc.response.get('Error',{}).get('Code')) in ('NoSuchKey','404','NotFound'):return None
+            raise
+        body=response['Body']
+        try:
+            size=response['ContentLength'];completed=response['LastModified'].timestamp()
+            if type(size) is not int or not 0<size<=limit:raise SubmissionPolicyError('R2 upload size')
+            if not start<=completed<deadline:raise SubmissionPolicyError('completion outside signed epoch window')
+            etag=response['ETag']
+            if not isinstance(etag,str) or not etag:raise ValueError('snapshot object ETag missing')
+            h=hashlib.sha256();count=0
+            for block in iter(lambda:body.read(1024*1024),b''):
+                count+=len(block)
+                if count>size:raise ValueError('R2 snapshot size mismatch')
+                h.update(block)
+            if count!=size:raise ValueError('R2 snapshot size mismatch')
+            digest=h.hexdigest()
+        finally:body.close()
+        frozen=prefix+'/'+digest+'.zip';self.copy(key,frozen,expected_etag=etag)
+        return dict(key=key,snapshot_key=frozen,sha256=digest,size=size,etag=etag,
+                    received_at=completed,snapshotted_at=time.time())
+
 
 class Gateway:
     """The bucket stays private; this service exposes only frozen public artifacts.
@@ -258,23 +291,44 @@ class Gateway:
             if state.get('transport')=='direct-r2-v1':
                 snapshots=state.setdefault('snapshots',{})
                 rejections=state.setdefault('rejections',{})
-                for miner in sorted(state['miners']):
-                    if miner in snapshots or miner in rejections:continue
+                remaining=[m for m in sorted(state['miners']) if m not in snapshots and m not in rejections]
+                def freeze_one(miner):
                     key=f'private/{epoch}/staging/{miner}.zip'
                     try:
+                        if hasattr(self.bucket,'freeze_snapshot'):
+                            receipt=self.bucket.freeze_snapshot(key,f'private/{epoch}/frozen/{miner}',
+                                state['start'],state['deadline'],state.get('upload_limit',100_000_000))
+                            return miner,receipt,None if receipt is not None else 'no completed upload'
                         if 'upload_limit' in state:snapshot=self.bucket.snapshot(key,limit=state['upload_limit'])
                         else:snapshot=self.bucket.snapshot(key)
                     except SubmissionPolicyError as exc:
-                        rejections[miner]=str(exc);self.persist();continue
+                        return miner,None,str(exc)
                     if snapshot is None:
-                        rejections[miner]='no completed upload';self.persist();continue
+                        return miner,None,'no completed upload'
                     if not state['start']<=snapshot['completed_at']<state['deadline']:
-                        rejections[miner]='completion outside signed epoch window';self.persist();continue
+                        return miner,None,'completion outside signed epoch window'
                     digest=sha(snapshot['data'])
                     frozen=f'private/{epoch}/frozen/{miner}/{digest}.zip'
                     self.bucket.put(frozen,snapshot['data'])
-                    snapshots[miner]=dict(key=key,snapshot_key=frozen,sha256=digest,size=snapshot['size'],etag=snapshot['etag'],received_at=snapshot['completed_at'],snapshotted_at=time.time())
-                    self.persist()
+                    return miner,dict(key=key,snapshot_key=frozen,sha256=digest,size=snapshot['size'],etag=snapshot['etag'],received_at=snapshot['completed_at'],snapshotted_at=time.time()),None
+                def record(results):
+                    for miner,receipt,rejection in results:
+                        if rejection is not None:rejections[miner]=rejection
+                        else:snapshots[miner]=receipt
+                        self.persist()
+                if hasattr(self.bucket,'freeze_snapshot'):
+                    from concurrent.futures import ThreadPoolExecutor,as_completed
+                    failures=[]
+                    with ThreadPoolExecutor(max_workers=self.publication_workers) as pool:
+                        futures=[pool.submit(freeze_one,miner) for miner in remaining]
+                        for future in as_completed(futures):
+                            try:record([future.result()])
+                            except Exception as error:failures.append(error)
+                    # Successful siblings are durable even when one stream or
+                    # conditional copy fails. Retry never rereads those staging
+                    # objects or converts infrastructure faults into rejections.
+                    if failures:raise failures[0]
+                else:record(map(freeze_one,remaining))
                 state['uploads']=dict(snapshots)
                 self.persist()
             def publish(item):

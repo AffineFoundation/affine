@@ -107,6 +107,9 @@ housekeeping archives and fully reads back intermediate exports before removing
 their local replicas and completed downloads. Final learned exports, model caches,
 reports and original job records are retained. See docs/TRAINING_RETENTION.md;
 this storage change does not alter model computation or a signed mining contract.
+A further streaming/conditional-copy snapshot path is tested on main but awaits
+future source admission. It does not change the current signed source. See
+docs/TRANSPORT_RECOVERY.md; follow discovery rather than assuming main is active.
 
 The signed per-UID submission cap is currently three batches per epoch. It is a
 conservative configurable pilot setting, not a measured throughput maximum or

@@ -41,3 +41,28 @@ workspace, checkpoint-cache arguments and source directory; a mismatch stops
 activation rather than replacing it. Five controls cover delayed/coordinator
 startup and actual process binding, including a real zombie. These operator
 changes do not replace the source or processes of an active signed epoch.
+
+## Prospective streaming snapshot freeze
+
+The next transport change removes the operator's body-sized submission snapshot
+and re-upload. `Bucket.freeze_snapshot` obtains completion metadata and the full
+body from one atomic GET, hashes bounded 1 MiB chunks, and conditionally copies
+the exact source ETag into its digest-bound private frozen key. It rejects a
+completion outside the original signed window before reading the body. ETag
+only prevents a read/copy overwrite race; full SHA256 remains the byte binding.
+Publication still independently checks the frozen bytes before the public copy.
+
+Gateway freeze schedules at most the configured 1–8 publication workers. It
+persists successful siblings even if another stream or copy fails. Infrastructure
+failures remain retryable errors, never miner fraud or point penalties. Already
+persisted snapshots are reused on retry, so later staging changes cannot replace
+accepted frozen bytes. Legacy bucket adapters keep their serial snapshot path.
+
+Four focused tests plus sixteen existing publication/direct-R2 controls cover
+bounded streaming, deadline/size rejection, conditional overwrite refusal,
+partial failure and durable retry. A real private R2 qualification froze four
+8 MiB objects concurrently in 1.69 seconds, independently read back all four,
+and rejected an actual overwrite between hashing and copying. That small test
+does not establish production throughput for hundreds of large submissions.
+This change is prospective: it needs a new admitted source and a completed epoch
+boundary before activation. Existing signed epochs retain their original code.
