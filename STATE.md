@@ -1,5 +1,39 @@
 # Live reward launch authorized — October 3, 2026
 
+The storage/transport upgrade is now active at the original completed epoch
+boundary. All five retained H200 roles completed actual exit-zero checkpoint
+hydration, exact-source admission and CPU tokenizer/native grading checks against
+learned checkpoint 7f017e94… and source 548effe0… (the frozen eligible f590bce9
+public tree plus the separately pinned original MATH asset). The old controller
+was retired only after round five finished; the new supervised continuous
+controller inherited round six and nine cumulative optimizer steps. Existing
+signed epochs, reward cursor/ledger and original source approvals were preserved.
+Both verifier workers now run the new source. Verifier 1's exact idle noncanonical
+19081 tunnel was retired and replaced with a strict canonical forward; unrelated
+19082 tunnels remain intact. Actual HTTPS discovery and the original R2 first
+manifest agree: epoch nonpayable-live-reward-math-v1--1791060145-6 opened with
+241 activated identities, the learned checkpoint, unchanged K1/L1 and three-batch
+cap, and its original 21:12:25 UTC deadline. The owned UID131 capability-only
+public miner has an actual successful remote launch and the old root monitor
+has been retired. See private continuous-upgrade-f590-new9-v1 receipts.
+
+The preceding completed epoch's matched fixed32 evaluation went from 20/32 to
+21/32 after three additional updates, nine cumulative. Root authenticated both
+original jobs/reports and checked identical task indices, seeds and task hashes;
+this is not an independent GPU rerun or a larger held-out benchmark. The score
+remains below the earlier 22/32 diagnostic. Stable held-out improvement is unproven.
+
+Two completed intermediate trainer checkpoints were fully archived and read back,
+then retired alongside 33 exact downloaded submission replicas after full original
+archive readback and actual runner/child exit checks. This recovered 47,533,468,807
+bytes; the trainer measured 92,631,937,024 free bytes against an 83,166,404,923-byte
+next-job reserve. Current weights, original requests, reports and runner records
+were preserved. Twenty-two retention controls pass, including eight new completed
+trainer controls. The verifier retention watcher has been relaunched under the
+new config/source approvals. Automatic trainer archival/retention and sustained
+learning remain unfinished; this was an actual bounded one-shot trainer cleanup.
+See docs/TRAINING_RETENTION.md and trainer-full-archive-retention-* evidence.
+
 The actual three-step training job completed and published its next checkpoint;
 the original controller advanced to after-training evaluation. Global completed
 step count stays six until that evaluation and history publication finish.
