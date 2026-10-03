@@ -14,8 +14,8 @@ Pilot epochs are permanently nonpayable: they do not set blockchain weights.
 CPU multi-epoch trials and continuous GPU mining, verification, full-model
 training and immutable checkpoint publication have run. Environment coverage
 and hardware compatibility remain under active testing; use the runtime and
-source bundle pinned by your approved challenge.
-The next deployment opens admission to all live subnet 120 miner identities with
+source bundle pinned by the signed challenge.
+The live v9 deployment opens admission to all live subnet 120 miner identities with
 a valid signed Ed25519 Affine activation. Its config uses
 `registration_policy: all_activated_subnet` and omits `registration_allowlist`;
 no individual operator approval is needed. Each new epoch takes a fresh chain
@@ -42,7 +42,8 @@ activation commitment. It does not purchase a new subnet UID. Subnet membership
 and a valid signed activation are both required; open admission removes the
 operator allowlist, not identity authentication.
 
-Once Arbos supplies the approved authority and a fresh discovery URL:
+Read `authority` and `current_url` from https://affine.io/mining.json and set
+`AFFINE_AUTHORITY` and `AFFINE_CURRENT_URL` locally:
 
 ```bash
 python -m subnet.cli \
@@ -67,6 +68,6 @@ The dashboard is https://affine.io.
 
 For the forthcoming single-MATH pilot, a clean checkout also needs the generated
 task snapshot and exact approved source. Use the [signed-source bootstrap](MATH_MINER_BOOTSTRAP.md)
-after the operator supplies an approved identity, runtime and live discovery URL.
+with your registered, activated identity and the published runtime and live discovery URL.
 The [MATH pilot plan](MATH_PILOT.md) describes the task split and pending launch
 checks; preparation is not a public mining invitation or demonstrated improvement.

@@ -1,3 +1,24 @@
+# Open admission live — October 3, 2026
+
+The per-key whitelist is removed in the active v9 pilot config. Root verified the
+actual signed R2 epoch `nonpayable-separated-hopper-original-math-v9-1790996840-0`
+opened at 03:07:20 UTC, deadline 03:37:20 UTC, with every one of the 239 current
+subnet 120 identities having a valid signed Ed25519 activation, including UID 85.
+Each identity has an encrypted upload capability; no individual operator approval
+is required. New activations enter at the next epoch's fresh chain snapshot.
+Public read-only discovery is https://affine.io/mining.json; actual HTTPS readback
+matched. Upload access and wallet/bucket secrets remain private.
+
+The frozen v9 source passed all 170 bundled tests. Root independently verified
+all five deployed source caches, actual R2 archive/descriptor, local and remote
+bootstrap admission, checkpoint handover and the original empty v8 closeout.
+The v8 epoch completed zero accepted batches and unchanged before/after 20/32;
+no optimizer was repeated. V9 admission does not establish new training or gains.
+Two independent verifier workers use the new authority; the validator remains
+on Arbos.life. The pilot remains nonpayable, with chain submissions disabled.
+
+The older records below describe their original windows and are preserved.
+
 # Affine rewrite status
 
 ## Open subnet admission requested — October 3, 2026

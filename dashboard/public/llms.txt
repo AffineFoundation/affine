@@ -102,11 +102,13 @@ These Qwen measurements must not be joined to the older SmolLM2 curve.
 
 ## How to try the pilot
 
-External participation is coordinated with the pilot operator Arbos. An existing
-registered Ed25519 miner identity, explicit approval, known public signing
-authority, fresh signed discovery URL and qualified runtime are required. Ordinary
-subnet membership alone does not grant pilot admission. No new rental, UID
-purchase or blockchain action is required merely to read the public dashboard.
+Open admission is live: the v9 pilot admits every current subnet
+120 identity with a valid signed Ed25519 Affine activation, without individual
+operator approval. Each epoch takes a fresh chain snapshot; later activations
+enter the next epoch. The signed authority, discovery URL and pinned runtime
+remain required. The current signed epoch includes 239 eligible identities,
+including UID 85. No blockchain action
+is required merely to read the public dashboard.
 
 Start with the public repository and these guides:
 - https://github.com/AffineFoundation/affine/blob/main/docs/MINER_QUICKSTART.md
@@ -116,7 +118,7 @@ Start with the public repository and these guides:
 - https://github.com/AffineFoundation/affine/blob/main/docs/DISTRIBUTED_GPU_ROLES.md
 
 A clean checkout needs the generated task snapshot and exact signed source.
-After approval, use the source bootstrap with locally supplied variables:
+Use the source bootstrap with the published authority and fresh discovery URL:
 
 CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
   --authority "$AFFINE_OPERATOR_AUTHORITY" \
@@ -125,9 +127,11 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
   --key /absolute/private/miner.key \
   --state /absolute/private/miner-state --once
 
-These are placeholders for operator-supplied values, not public endpoint URLs.
+Get the authority and read-only current_url from https://affine.io/mining.json.
+Set AFFINE_OPERATOR_AUTHORITY and AFFINE_SIGNED_CURRENT_URL to those values.
+This metadata grants no bucket write access; uploads remain encrypted per miner.
 Use your own miner Ed25519 key in a private file; never disclose a mnemonic,
-coldkey, wallet file, bucket credential or signed upload/discovery capability.
+coldkey, wallet file, bucket credential or decrypted signed upload capability.
 The bootstrap checks signed manifests, source/archive hashes and membership
 before running the admitted CLI in a fresh isolated interpreter. Runtime packages
 still need installing and qualifying on your hardware. Source changes require
@@ -151,7 +155,8 @@ manifest supplies `read_url`. The attempt and original deadline are preserved;
 a corrected descriptor is being qualified for a fresh epoch. No upload, audit
 or training from this public-client attempt is claimed.
 The original window closed with zero submitted batches and zero points. Its
-fixed held-out evaluations are running before completed-state recovery. The
+fixed held-out evaluations completed all 32 tasks before and after, scoring
+20/32 in both with unchanged weights. No mining or optimizer update occurred. The
 descriptor correction passed a separate diagnostic bootstrap on the actual
 Lium miner, including signed R2 source download and exact file admission; that
 diagnostic stopped before the CLI or model and is not a mining result.
@@ -165,3 +170,11 @@ from the signed challenge. Other hardware compatibility is unproven.
 Report only public epoch IDs/hotkeys, hardware/runtime and errors with secrets
 and signed URLs removed. Pilot points are permanently nonpayable. The separate
 legacy transition writer is outside this pilot; charts are not chain payouts.
+
+The open v9 epoch nonpayable-separated-hopper-original-math-v9-1790996840-0
+opened at 03:07:20 UTC on October 3, 2026 and closes at 03:37:20 UTC.
+Its signed R2 manifest includes all 239 authenticated activation identities,
+all 6,746 mining tasks and the fixed 32 held-out tasks. Operator allowlisting
+is disabled. Later activations are discovered at the next epoch opening.
+Root verified the published manifest and public discovery HTTPS readback.
+This is admission verification, not evidence of new training or improved scores.
