@@ -1,5 +1,27 @@
 # Live reward launch authorized — October 3, 2026
 
+The combined prospective transport/hashing source is now sealed from exact
+public commit 25230949 plus the original pinned MATH asset as archive a7d557dc….
+All five production-role machines completed new-directory CPU installation and
+independent full readback of all 1,865 files. Its 129-module runtime inventory
+changes only model.py (complete bounded parallel hashes), storage.py (previously
+qualified streaming/conditional freeze) and the new statistics-only paired
+reducer. AST comparison confirms model computation outside the hashing inventory
+is unchanged; the storage module exactly matches the already-tested candidate.
+This preparation supersedes the earlier 2240 candidate for future admission;
+original candidate evidence remains intact. No live source, manifest, writer
+anchor or scientific job was changed. Checkpoint/native/GPU admission and a
+completed-epoch boundary handoff still remain. Evidence:
+distributed-preparation/future-source-25230949-v1/source-install-v1.
+
+The independent benchmark's first original baseline shard completed with all
+32 native/model-verified task outcomes. Its second original baseline shard is
+confirmed running. One of eight jobs is complete; the 128-task paired conclusion
+must wait for complete baseline and learned coverage. Epoch six's current audit
+queue separately reached 62 completed jobs and two leased at 23:37 UTC, while the
+original controller remained live with nine cumulative updates. Source and
+retention changes do not establish completed new training or a quality gain.
+
 A prospective full-checkpoint hashing improvement now uses at most four bounded
 readers without skipping any bytes or trusting metadata. CPU-only real checks of
 the same 15,242,788,091-byte baseline on the idle extra machine took 55.74/60.60

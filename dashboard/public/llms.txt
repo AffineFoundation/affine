@@ -52,7 +52,9 @@ approved source bytes. Full checkpoint hashes, original native controls, an
 honest rollout with model reload, and five tampering rejections passed. After
 actual control-process exit and GPU quiescence, the first 32-task baseline shard
 started. All eight shards are required before reporting a 128-task comparison;
-benchmark results are pending. This comparison keeps original jobs, matched
+benchmark results are pending. The first baseline shard has completed all 32
+native/model-verified tasks and the second is running. This is partial coverage,
+not a 128-task improvement result. This comparison keeps original jobs, matched
 seeds and complete coverage, and will report paired gains/losses and uncertainty.
 See https://github.com/AffineFoundation/affine/blob/main/docs/INDEPENDENT_MATH_BENCHMARK.md.
 Hardware availability or a single positive comparison does not prove sustained
@@ -133,7 +135,10 @@ docs/TRANSPORT_RECOVERY.md; follow discovery rather than assuming main is active
 A prospective complete-checkpoint reader also hashes with at most four bounded
 threads. Real CPU measurements matched every original weight hash and reduced
 hashing time on one retained machine; this is not a whole-verifier speed claim.
-It awaits future signed source admission. See docs/CHECKPOINT_HASHING.md.
+The combined prospective transport/hashing source is installed and independently
+checked in fresh directories on all five live-role machines. Checkpoint/native/
+GPU admission and a completed-epoch handoff remain; active source is unchanged.
+See docs/CHECKPOINT_HASHING.md.
 
 The signed per-UID submission cap is currently three batches per epoch. It is a
 conservative configurable pilot setting, not a measured throughput maximum or
