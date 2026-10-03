@@ -10,14 +10,16 @@ Historical teacher distillation / king-versus-challenger instructions are not th
 current pilot contract. Dashboard records describe measured runs, not a promise
 of rewards, general model improvement, or support for every environment.
 
-Current operational status: the v11 revision2 public math pilot is open.
-Signed deadline: 2026-10-03 08:09:37 UTC. It admits all activated subnet-120
-hotkeys; UID 85 is included in this epoch's authenticated snapshot. Read
-https://affine.io/mining.json and verify its signed current manifest before mining.
+Current operational status: the v11 revision2 public math epoch is closed for
+uploads while independent verification runs. Its signed deadline was
+2026-10-03 08:09:37 UTC. Admission is open to all activated subnet-120 hotkeys;
+UID 85 is included in this epoch's authenticated snapshot. Wait for the next
+signed opening in https://affine.io/mining.json before mining or uploading.
 The checkpoint preserves three completed full-model updates. The previous v10
 fixed32 evaluation changed from 22/32 to 23/32; it required operator recovery.
-This small matched cohort does not establish broader improvement. This opening
-is not a completed training epoch, and blockchain weight submission is disabled.
+This small matched cohort does not establish broader improvement. The current
+epoch is not yet a completed training epoch, and blockchain weight submission
+is disabled.
 
 ## Architecture
 
@@ -115,7 +117,7 @@ Open admission policy admits every current subnet
 120 identity with a valid signed Ed25519 Affine activation, without individual
 operator approval. Each epoch takes a fresh chain snapshot; later activations
 enter the next epoch. The signed authority, discovery URL and pinned runtime
-remain required. The last published signed epoch included 239 eligible identities,
+remain required. The last published signed epoch included 237 eligible identities,
 including UID 85. No blockchain action
 is required merely to read the public dashboard.
 
