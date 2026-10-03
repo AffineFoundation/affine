@@ -1,0 +1,164 @@
+"""Local prospective one-writer runner. Dry-run default; never starts compute roles."""
+import argparse,fcntl,hashlib,json,os,sqlite3,subprocess,time,stat,signal
+from contextlib import contextmanager
+from pathlib import Path
+from types import SimpleNamespace
+from nacl.signing import SigningKey
+from subnet.live_reward_bridge import signed,need,canonical,sha
+from subnet.chain import ChainAdapter,OWNER
+from subnet.distributed_roles import Coordinator,authenticate
+from subnet.backend_jobs import _validate
+from subnet.remote_backend import RemoteJobs
+from subnet.source_bootstrap import admitted_files
+from ops import live_reward_exporter as exporter,live_reward_submit as submit
+UNITS=tuple(n+'.'+s for n in ('affine-transition-weights','affine-hourly-burn') for s in ('timer','service'))
+
+def read(path):return json.loads(Path(path).read_text())
+def file_hash(path):
+ p=Path(path);need(p.is_file() and not p.is_symlink(),'regular reviewed file')
+ h=hashlib.sha256()
+ with p.open('rb') as f:
+  for chunk in iter(lambda:f.read(1024*1024),b''):h.update(chunk)
+ return h.hexdigest()
+def process_identity():
+ pid=os.getpid();fields=Path('/proc/self/stat').read_text().rsplit(')',1)[1].split()
+ need(fields[0] in ('R','S','D','I'),'live writer process')
+ return dict(writer_pid=pid,writer_start_ticks=fields[19],writer_process_state=fields[0],boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip())
+def observe_units(run=subprocess.run):
+ result=[]
+ for unit in UNITS:
+  r=run(['systemctl','--user','show',unit,'--property=LoadState,ActiveState,UnitFileState','--no-pager'],capture_output=True,text=True,timeout=15)
+  need(r.returncode==0,'old writer status query failed')
+  fields=dict(line.split('=',1) for line in r.stdout.splitlines() if '=' in line)
+  need(fields.get('LoadState')=='loaded' and fields.get('ActiveState')=='inactive' and fields.get('UnitFileState') in (('disabled','masked','static') if unit.endswith('.service') else ('disabled','masked')),'old writer must be disabled and inactive')
+  result.append(dict(unit=unit,running=False,enabled=False,status_query_succeeded=True))
+ return result
+
+def authenticate_cutover(document,anchor_document,authority):
+ c=signed(document,authority);a=signed(anchor_document,authority)
+ need(c.get('version')=='live-single-writer-runtime-v1' and c.get('netuid')==120 and c.get('owner_hotkey')==OWNER,'exact owner/netuid cutover')
+ need(c['anchor_sha256']==sha(anchor_document) and a.get('owner_hotkey')==OWNER and a.get('netuid')==120,'cutover anchor binding')
+ need(a.get('compute_epoch_prefix')=='nonpayable-live-reward-math-v1-','prospective compute prefix')
+ for key in ('compute_state','reward_state','chain_state','queue_database','authority_seed_file'):
+  path=Path(c[key]);need(path.is_absolute() and path.resolve()==path,'absolute canonical operator path')
+ expected=Path('/run/user')/str(os.getuid())/('affine-live-reward-120-'+hashlib.sha256(OWNER.encode()).hexdigest()+'.lock')
+ need(c['global_lock_path']==str(expected),'canonical global owner/netuid lock')
+ need(c['chain_state']==c['reward_state'],'one writer chain/reward state')
+ need(set(c.get('runtime_versions',{}))=={'torch','transformers','toploc'},'exact original job three-package runtime pins')
+ return c,a
+@contextmanager
+def global_lock(path):
+ p=Path(path);need(p.parent.is_dir() and not p.is_symlink(),'existing trusted runtime lock directory')
+ fd=os.open(p,os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW,0o600)
+ with os.fdopen(fd,'a') as f:
+  actual=os.fstat(f.fileno());need(stat.S_ISREG(actual.st_mode) and actual.st_uid==os.getuid() and actual.st_mode&0o077==0,'private owned global lock file')
+  fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)
+  try:yield
+  finally:fcntl.flock(f,fcntl.LOCK_UN)
+def guard_files(c):
+ for row in c['legacy_guard_files']:
+  need(file_hash(row['path'])==row['sha256'],'reviewed legacy guard/marker bytes changed')
+ need(len(c['legacy_guard_files'])==2 and {row['kind'] for row in c['legacy_guard_files']}=={'validator-hook','suppression-marker'},'actual hook and marker required')
+ marker=Path.home()/'.local/state/affine-transition/active'
+ need(any(row['kind']=='suppression-marker' and Path(row['path'])==marker for row in c['legacy_guard_files']),'actual production suppression marker path')
+
+def verify_audit_lineage(state,manifest,audit,authority,c,db,now,files):
+ """Read actual worker-authenticated queue row and original signed request."""
+ jobid=audit['remote_job_id'];need(isinstance(jobid,str) and all(x.isalnum() or x in '-_' for x in jobid),'job path identity')
+ envelope=read(state/'roles'/(jobid+'-job.json'));job=signed(envelope,authority)
+ need(job['role']=='verify' and signed(job['manifest'],authority)['epoch']==manifest['epoch'],'original verifier job epoch')
+ # Validate at original creation, preserving original signed expiry. No source-dependent live imports.
+ _validate(envelope,authority,now=job['created_at'],resolve_source=False)
+ need(job['manifest']['payload']['checkpoint']==manifest['checkpoint'],'exact checkpoint descriptor')
+ jm=job['manifest']['payload']
+ need(jm['source_bundle']['sha256']==manifest['source_bundle']['sha256'],'original approved source')
+ # Postfreeze allocation fields are permitted; all opening scientific/contract fields remain exact.
+ opening={k:v for k,v in jm.items() if k not in ('audit_seed','audit_frozen_receipts')};opening['audit_policy']=dict(opening['audit_policy']);opening['audit_policy'].pop('submission_counts',None)
+ need(canonical(opening)==canonical(manifest),'opening versus audit manifest')
+ need(job['runtime_versions']==c['runtime_versions'],'approved runtime versions')
+ need(all(files.get(name)==digest for name,digest in job['source_files'].items()),'actual approved archive module pins')
+ row=db.execute('SELECT * FROM jobs WHERE id=?',(jobid,)).fetchone();need(row is not None and row['status']=='complete','actual queue completion')
+ need(canonical(json.loads(row['envelope']))==canonical(envelope),'original queue signed request')
+ worker=row['worker'];need(worker in c['verifier_identities'],'approved verifier identity')
+ request=authenticate(json.loads(row['report_request']),worker);remote=json.loads(row['report'])
+ need(request['action']=='report' and request['job_id']==jobid and request['report']==remote,'actual authenticated worker report')
+ need(hashlib.sha256(canonical(remote)).hexdigest()==row['report_digest'],'queue report bytes')
+ checker=Coordinator.__new__(Coordinator);checker.authority=authority;checker.clock=lambda:now
+ checker.validate_report(remote,job,jm,hashlib.sha256(canonical(job)).hexdigest())
+ prior=dict(job_id=jobid,job_sha256=hashlib.sha256(canonical(job)).hexdigest(),role='verify',source_files=job['source_files'],runtime_versions=job['runtime_versions'],manifest_sha256=sha(jm))
+ reader=RemoteJobs.__new__(RemoteJobs);reader.state=state/'roles';reader.controller=SimpleNamespace(authority=SimpleNamespace(id=authority))
+ reader.checked(remote,prior,jm)
+ matches=[r for r in remote['audits'] if r['submission_sha256']==audit['submission_sha256']];need(len(matches)==1,'exact frozen report')
+ bound=dict(matches[0],remote_job_id=remote['job_id'],backend_profile=remote['backend_profile'],execution_resources_enforced=remote['execution_resources_enforced'])
+ need(canonical(bound)==canonical(audit),'original audit metadata, not caller score')
+ return dict(job_id=jobid,job_sha256=sha(job),report_sha256=sha(remote),worker=worker,submission_sha256=audit['submission_sha256'])
+
+def verify_completed_evidence(c,authority,now):
+ state=Path(c['compute_state']);proofs=[]
+ # Source bytes are checked once per invocation, not trusting a signed arbitrary inventory.
+ source=c['source'];need(file_hash(source['archive_path'])==source['sha256'],'approved source archive bytes')
+ descriptor=signed(read(source['descriptor_path']),authority);need(descriptor['sha256']==source['sha256'] and descriptor['size']==Path(source['archive_path']).stat().st_size,'signed source descriptor')
+ members=admitted_files(Path(source['archive_path']).read_bytes(),descriptor);files={name:hashlib.sha256(data).hexdigest() for name,data in members.items()}
+ uri=Path(c['queue_database']).as_uri()+'?mode=ro'
+ with sqlite3.connect(uri,uri=True) as db:
+  db.row_factory=sqlite3.Row
+  for first in sorted(state.glob('*-first-signed-manifest.json')):
+   m=signed(read(first),authority);epoch=m['epoch'];scores=state/(epoch+'-signed-compute-scores.json')
+   if not scores.exists():continue
+   need(m['source_bundle']['sha256']==source['sha256'],'approved live source only')
+   score=signed(read(scores),authority)
+   for miner in score['receipts']:
+    audit=signed(read(state/(epoch+'-signed-compute-audit-'+miner+'.json')),authority)
+    need(audit['submission_sha256']==score['receipts'][miner]['sha256'],'signed frozen receipt binding')
+    proofs.append(verify_audit_lineage(state,m,audit,authority,c,db,now,files))
+ return proofs
+
+def choose_hour(state,anchor,now):
+ cursor=read(state/'writer-cursor.json') if (state/'writer-cursor.json').exists() else {}
+ if cursor.get('status')=='submitting':raise RuntimeError('uncertain chain outcome requires explicit root reconciliation')
+ end=cursor.get('window_end')
+ if end is not None and cursor.get('status') not in ('submitted','already_submitted','zero_points_no_submission'):return end
+ first=(int(anchor['effective_at'])//3600+1)*3600
+ end=max(first,(end+3600 if end is not None else first))
+ return end if end<=int(now)//3600*3600 else None
+
+def run_once(cutover_document,anchor_document,authority,*,execute=False,adapter_factory=ChainAdapter):
+ c,anchor=authenticate_cutover(cutover_document,anchor_document,authority);need(type(execute)is bool,'explicit execution flag')
+ with global_lock(c['global_lock_path']):
+  guard_files(c);units=observe_units();identity=process_identity();now=time.time()
+  seed=Path(c['authority_seed_file']);need(not seed.is_symlink() and seed.stat().st_mode&0o077==0,'private authority seed')
+  key=SigningKey(bytes.fromhex(seed.read_text().strip()));need(key.verify_key.encode().hex()==authority,'operator signing authority')
+  state=Path(c['reward_state']);state.mkdir(exist_ok=True,mode=0o700)
+  end=choose_hour(state,anchor,now)
+  if end is None:return {'status':'waiting_for_completed_live_hour','chain_executed':False}
+  evidence=verify_completed_evidence(c,authority,now)
+  adapter=adapter_factory(state,netuid=120,expected_owner=OWNER)
+  # Actual chain-derived identities before import/export, not a caller-supplied registry.
+  registrations=adapter.registrations()
+  exporter.run_once(c['compute_state'],state,anchor_document,authority,key,registrations,end)
+  # Fresh execution proof immediately before chain handoff, under the same held lock.
+  guard_files(c);units=observe_units();identity=process_identity();now=time.time()
+  receipt=exporter.sign(dict(version='single-live-reward-writer-v1',netuid=120,observed_at=now,global_writer_lock_held=True,legacy_validator_guard_verified=True,old_writers=units,**identity),key)
+  exporter.atomic(state/'actual-writer-observation.json',receipt)
+  proposal=read(state/('hour-'+str(end)+'-reward-units.json'))
+  if execute:exporter.atomic(state/'writer-cursor.json',dict(window_end=end,status='submitting',proposal_sha256=sha(proposal)))
+  try:
+   result=submit.submit_hour(adapter,proposal,authority,receipt,now=now,boot_id=identity['boot_id'],writer_pid=identity['writer_pid'],writer_ticks=identity['writer_start_ticks'],execute=execute)
+  except BaseException as error:
+   # Leave submitting cursor intact: never automatically retry an uncertain transaction.
+   exporter.atomic(state/'last-run.json',dict(version='actual-single-writer-run-v1',at=now,execute=execute,window_end=end,status='handoff_failed_outcome_uncertain' if execute else 'dry_run_failed',error_type=type(error).__name__,writer_receipt_sha256=sha(receipt)))
+   raise
+  if execute:exporter.atomic(state/'writer-cursor.json',dict(window_end=end,status=result['status'],proposal_sha256=sha(proposal)))
+  exporter.atomic(state/'last-run.json',dict(version='actual-single-writer-run-v1',at=now,execute=execute,window_end=end,result=result,evidence=evidence,writer_receipt_sha256=sha(receipt)))
+  return result
+
+def main():
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--cutover',required=True);p.add_argument('--anchor',required=True);p.add_argument('--authority',required=True);p.add_argument('--execute',action='store_true');a=p.parse_args()
+ def timed_out(*_):raise TimeoutError('bounded writer invocation')
+ signal.signal(signal.SIGALRM,timed_out);signal.alarm(720)
+ try:result=run_once(read(a.cutover),read(a.anchor),a.authority,execute=a.execute)
+ except Exception as error:
+  print(json.dumps(dict(status='refused_or_failed',error_type=type(error).__name__,execute=a.execute)));raise SystemExit(1)
+ finally:signal.alarm(0)
+ print(json.dumps(dict(status=result['status'],window_end=result.get('window_end'),execute=a.execute)))
+if __name__=='__main__':main()

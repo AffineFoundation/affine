@@ -44,3 +44,15 @@ both legacy burn and registration-weight timers/services are disabled and
 inactive. Only that writer has the chain-signing wallet. Metadata-only test
 receipts do not satisfy these operational checks. The public launch announcement
 follows a verified chain receipt, not merely a successful dry run.
+
+`python -m ops.live_reward_writer --cutover SIGNED-CONFIG.json --anchor
+SIGNED-ANCHOR.json --authority PUBLIC-KEY` runs the single-writer path in dry-run
+mode. Explicit `--execute` enables the chain handoff after operational cutover.
+The runner derives actual process/boot identity, holds the global lock, queries
+the old units and checks the reviewed production hook and suppression marker.
+It reads original signed verifier requests and worker-authenticated completed
+queue reports, checking source, runtime, frozen artifact and original expiry
+before export. It uses current chain registrations rather than supplied identity
+claims. Deferred hours retry the same hour. An uncertain exception after starting
+a transaction requires chain reconciliation before retry; it is not automatically
+treated as a failed submission.

@@ -21,8 +21,22 @@ not a live weight transaction. See docs/LIVE_REWARDS.md.
 
 Root's current SSH observations show all five retained H200s idle, and all eleven
 old verifier queue jobs completed. Capability-only checkpoint hydration/reuse is
-now running under actual supervised CPU processes on those nodes. Full per-file
-hash receipts and terminal waits remain to be reviewed; no GPU job was started.
+complete on all five nodes, with actual supervised exit0 and all ten learned
+checkpoint hashes matching the approved descriptor. The final source 2361c1ea…
+(exact compute commit 04f4e129, 1,827 files/127 runtime modules) passed full R2
+archive readback and installed on all five nodes with actual exit0. Runtime and
+CPU tokenizer/native admission remain in progress. Initial admission attempts
+refused their own unbound supervisor; a separately reviewed parent-bound guard
+and fresh commands preserve those failures. No GPU job or chain transaction was
+started. Raw observations and original failure receipts are retained under
+state/live-math-launch-preparation-v1.
+
+The operator-only single writer is now implemented, with actual global locking,
+process/systemd/legacy-hook checks, original worker-authenticated queue lineage
+verification, completed-hour selection and uncertain-transaction refusal. Its
+ten CPU controls and the shared reward/sampler controls passed (45 tests).
+The runtime service is not enabled; a concrete signed cutover still must be bound
+to the admitted compute source and fresh public epoch.
 
 The original I3Math experiment has actual supervisor exit0 and no live original
 PIDs. It found a genuine K1/L1 pair on index1 after ten attempts, with full native
