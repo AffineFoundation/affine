@@ -87,6 +87,15 @@ NuminaMath-CoT corpus. Preparing or qualifying a new corpus is not evaluation
 or completed training evidence. New measurement cohorts appear only when actual
 completed records have been published.
 
+The separate H200 pilot uses Qwen2.5-Math-7B-Instruct, 1,024-token outputs and
+a different fixed cohort of 32 reserved Level 4/5 tasks. Its first full-model
+training update changed actual parameter values and its checkpoint was recovered
+and independently verified in R2. The first baseline remains an error because
+one generated sample failed TOPLOC replay; no complete mean reward or improvement
+is claimed for it. A correction to TOPLOC's encoded index-map replay is being
+qualified in a fresh signed source. It retains zero-error proof thresholds.
+These Qwen measurements must not be joined to the older SmolLM2 curve.
+
 ## How to try the pilot
 
 External participation is coordinated with the pilot operator Arbos. An existing

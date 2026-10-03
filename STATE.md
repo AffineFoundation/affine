@@ -125,6 +125,26 @@ preparation history. The next pilot still requires actual trained-checkpoint
 and verification admission. No v6 epoch has opened or proposed score been created.
 The dashboard now explicitly allows its eventual public measurements; fifteen
 projection privacy tests and the deployed affine.io JavaScript readback pass.
+
+Root independently streamed all six recovered successor objects from R2 and
+verified 15,242,698,782 bytes against the original trained file map. The failed
+single-PUT job remains failed. The reviewed CPU transport-recovery adapter
+resumes only that exact publication, rechecks current R2 bytes and signs the
+normal checkpoint descriptor before continuing the original once-controller.
+It reuses the original completed training report and does not repeat the update.
+The resumed controller is confirmed live; after-evaluation and final handover
+are still pending.
+
+Corrected proof source v7
+`175cd629e397f3b1a32d3066fcb673dddacfe674fb39682f117ca1af2ff27ce9`
+has 1,446 strictly admitted files and passed 132 tests in its frozen tree.
+Its signed archive was independently read back from R2 under authority
+`d372183790955364d0cd7758d1d64d71200b8d6d30ad1e39d05c4f446dc0a3f2`.
+Separate fleet source installation and runtime admission are in progress;
+the known-task GPU qualification and fresh comparable evaluations are pending.
+No v7 mining epoch is active. affine.io now allows that future namespace, keeps
+the two-chart layout, and explains the distinct Qwen cohort in `/llms.txt`.
+Sixteen privacy projection tests and actual HTTPS readbacks pass.
 Chain submissions remain disabled. Production, the retained-3090 pilot and
 independent services are preserved.
 
