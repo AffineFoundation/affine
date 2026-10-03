@@ -2,6 +2,9 @@
 import argparse
 import base64
 import json
+import hashlib
+import re
+import stat
 import os
 import secrets
 import subprocess
@@ -13,6 +16,32 @@ import requests
 from nacl.signing import SigningKey
 from .distributed_roles import authenticate, digest
 from .storage import canonical
+
+
+def complete_checkpoint_cache(path,files):
+    """CPU-only exact inventory/readback; absence/mismatch is not an admission.
+
+    Storage errors propagate rather than becoming a cache miss. No model import,
+    deletion, or repair happens here; signed backend hydration remains authoritative.
+    """
+    if (not isinstance(files,dict) or not files or any(not isinstance(name,str) or
+            Path(name).name!=name or name in ('.','..') or not isinstance(expected,str) or
+            re.fullmatch('[0-9a-f]{64}',expected) is None for name,expected in files.items())):
+        raise ValueError('approved checkpoint file inventory')
+    root=Path(path)
+    try:mode=root.lstat().st_mode
+    except FileNotFoundError:return False
+    if not stat.S_ISDIR(mode) or root.absolute()!=root.resolve():return False
+    observed={entry.name:entry for entry in root.iterdir()}
+    if set(observed)!=set(files):return False
+    for name,expected in files.items():
+        entry=observed[name]
+        if not stat.S_ISREG(entry.lstat().st_mode):return False
+        digest_value=hashlib.sha256()
+        with entry.open('rb') as stream:
+            for block in iter(lambda:stream.read(1024*1024),b''):digest_value.update(block)
+        if digest_value.hexdigest()!=expected:return False
+    return True
 
 
 class Worker:
@@ -58,9 +87,12 @@ class Worker:
             cache=self.workspace/'backend'/'checkpoints'/job['manifest']['payload']['checkpoint']['id']
             command=[self.python,'-B','-m','subnet.backend_jobs',str(jobpath),
                 '--authority',self.authority,'--workspace',str(runspace)]
-            approved_cache=self.checkpoint_caches.get(job['manifest']['payload']['checkpoint']['id'])
-            if approved_cache:command+=['--checkpoint-cache',str(approved_cache)]
-            elif claim['attempt']>1 and cache.is_dir(): command+=['--checkpoint-cache',str(cache)]
+            approved=job['manifest']['payload']['checkpoint']
+            approved_cache=self.checkpoint_caches.get(approved['id'])
+            if approved_cache and complete_checkpoint_cache(approved_cache,approved['files']):
+                command+=['--checkpoint-cache',str(approved_cache)]
+            elif claim['attempt']>1 and complete_checkpoint_cache(cache,approved['files']):
+                command+=['--checkpoint-cache',str(cache)]
             with (attempt/'worker.log').open('xb') as output:
                 (attempt/'worker.log').chmod(0o600)
                 result=subprocess.run(command,stdout=output,stderr=subprocess.STDOUT,env=environment)
