@@ -1,5 +1,6 @@
 """Actual CPU inference, full-distribution verification and preference training."""
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 import math
 import os
 from pathlib import Path
@@ -27,8 +28,14 @@ def file_hash(path):
 
 
 def model_files(path):
-    return {p.name: file_hash(p) for p in Path(path).iterdir()
-            if p.is_file() and p.suffix in ('.json','.safetensors','.txt','.model','.jinja','.bin','.pt','.tiktoken')}
+    files = [p for p in Path(path).iterdir()
+             if p.is_file() and p.suffix in ('.json','.safetensors','.txt','.model','.jinja','.bin','.pt','.tiktoken')]
+    if not files:
+        return {}
+    # Read every byte on every invocation. Bound readers rather than trusting
+    # file metadata or memoized digests; a failed read fails the whole inventory.
+    with ThreadPoolExecutor(max_workers=min(4, len(files))) as readers:
+        return dict(zip((p.name for p in files), readers.map(file_hash, files)))
 
 
 class Runtime:

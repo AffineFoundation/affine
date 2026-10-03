@@ -1,5 +1,17 @@
 # Live reward launch authorized — October 3, 2026
 
+A prospective full-checkpoint hashing improvement now uses at most four bounded
+readers without skipping any bytes or trusting metadata. CPU-only real checks of
+the same 15,242,788,091-byte baseline on the idle extra machine took 55.74/60.60
+seconds serially and 13.36/14.70 seconds with four readers, with all original
+hashes matching in every run. A separate execution of the exact new public
+functions matched the full original file map in 12.41 seconds. Six new integrity
+controls, 21 checkpoint controls in total and two runtime-factory checks pass.
+This is not a whole-verifier throughput claim. Live role and independent
+benchmark source pins remain unchanged; a future source admission is required.
+See docs/CHECKPOINT_HASHING.md and independent-math128-precommit-v1/
+cpu-hash-throughput-v1 plus actual-parallel-checkpoint-reader-v1.
+
 At 23:26 UTC the H100's fresh admission completed with actual child-wait exit
 zero: both full checkpoint file maps hashed exactly, original native positive/
 negative controls passed, a 64-token honest rollout verified after an independent
