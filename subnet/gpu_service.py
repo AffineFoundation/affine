@@ -18,6 +18,31 @@ from .evaluation import wilson
 
 log=logging.getLogger('affine-gpu')
 
+def registration_policy(config):
+    """Choose operator filtering after ChainAdapter authenticates membership."""
+    policy=config.get('registration_policy','allowlist')
+    if policy not in ('allowlist','all_activated_subnet'):
+        raise ValueError('unknown registration admission policy')
+    if policy=='all_activated_subnet' and 'registration_allowlist' in config:
+        raise ValueError('open subnet admission must omit registration_allowlist')
+    return policy
+
+def admitted_registrations(config,registrations):
+    """Use a fresh authenticated subnet snapshot at each epoch opening.
+
+    ChainAdapter already requires current SN120 UID ownership and a valid
+    Ed25519 activation signature. Open admission adds no operator key filter.
+    Existing signed epochs keep their saved participant snapshots.
+    """
+    if registration_policy(config)=='all_activated_subnet':
+        return dict(registrations)
+    allowed=config.get('registration_allowlist')
+    if (not isinstance(allowed,list) or any(not isinstance(k,str) for k in allowed)
+            or len(set(allowed))!=len(allowed)):
+        raise ValueError('explicit registration allowlist required')
+    keys=set(allowed)
+    return {hotkey:row for hotkey,row in registrations.items() if row['public_key'] in keys}
+
 def owned_dispatch_allowed(config,manifest):
     """Permit external-only trials without changing admission or empty policy."""
     from .empty_epoch_policy import dispatch_allowed
@@ -127,6 +152,7 @@ def run(config,once=False):
     prefix=config.get('epoch_prefix','nonpayable-gpu-continuous')
     if not prefix.startswith('nonpayable-') or config.get('payable_epochs',False):raise ValueError('GPU loop is permanently nonpayable')
     if type(config.get('owned_miner_dispatch',True))is not bool:raise ValueError('owned miner dispatch must be boolean')
+    registration_policy(config)
     if not 60<=config.get('duration',300)<=3600 or not 1<=config.get('max_batches',3)<=3:raise ValueError('epoch budget')
     state=Path(config['state']);state.mkdir(parents=True,exist_ok=True);state.chmod(0o700)
     bucket=Bucket(config['bucket']);gateway=Gateway(bucket,state_path=state/'gateway.json',public_url='http://unused-gpu-operator.invalid',direct_r2=True)
@@ -139,9 +165,9 @@ def run(config,once=False):
             if not status.get('initial_published'):
                 initial=initial_manifest(config,status['checkpoint']);status['checkpoint']=controller.publish_remote_checkpoint(initial,status['checkpoint_path']);status['initial_published']=True;save(statuspath,status)
             if not status['active']:
-                registrations=chain.registrations();allowed=set(config['registration_allowlist']);registrations={k:r for k,r in registrations.items() if r['public_key'] in allowed}
+                registrations=admitted_registrations(config,chain.registrations())
                 if not registrations:
-                    save(state/'health.json',dict(status='waiting_for_owned_registered_identity',time=time.time()));time.sleep(30);continue
+                    save(state/'health.json',dict(status='waiting_for_activated_subnet_identity' if registration_policy(config)=='all_activated_subnet' else 'waiting_for_owned_registered_identity',time=time.time()));time.sleep(30);continue
                 identities={r['public_key']:k for k,r in registrations.items()}
                 if len(identities)!=len(registrations):raise ValueError('duplicate registered identity')
                 epoch=prefix+'-'+str(int(time.time()))+'-'+str(status['round'])

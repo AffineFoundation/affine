@@ -15,9 +15,14 @@ CPU multi-epoch trials and continuous GPU mining, verification, full-model
 training and immutable checkpoint publication have run. Environment coverage
 and hardware compatibility remain under active testing; use the runtime and
 source bundle pinned by your approved challenge.
-External miner pilots open only for approved, live registered identities. Contact Arbos to coordinate
-identity approval, a fresh signed discovery URL, and an agreed runtime before
-renting compute. Performance improvement across all environments is not established.
+The next deployment opens admission to all live subnet 120 miner identities with
+a valid signed Ed25519 Affine activation. Its config uses
+`registration_policy: all_activated_subnet` and omits `registration_allowlist`;
+no individual operator approval is needed. Each new epoch takes a fresh chain
+snapshot, so later activations enter the next epoch. Existing signed epochs keep
+their original participants. See STATE.md for actual deployment progress and use
+the signed discovery URL and runtime profile for the open epoch before renting
+compute. Performance improvement across all environments is not established.
 
 ## Prepare a miner
 
@@ -33,8 +38,9 @@ python -m subnet.register --wallet YOUR_WALLET --hotkey YOUR_ED25519_HOTKEY
 ```
 
 This previews activation. Add `--execute` only when ready to publish the signed
-activation commitment. It does not purchase a new subnet UID. Coordinate identity
-approval with the pilot operator; ordinary membership alone is insufficient.
+activation commitment. It does not purchase a new subnet UID. Subnet membership
+and a valid signed activation are both required; open admission removes the
+operator allowlist, not identity authentication.
 
 Once Arbos supplies the approved authority and a fresh discovery URL:
 

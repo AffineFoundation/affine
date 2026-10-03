@@ -1,5 +1,23 @@
 # Affine rewrite status
 
+## Open subnet admission requested — October 3, 2026
+
+The operator requested removal of the per-key whitelist. The new explicit
+`all_activated_subnet` registration policy admits every current subnet 120
+identity returned by the existing signed Ed25519 activation checks. It refreshes
+that authenticated snapshot at each new epoch and preserves participants when
+resuming an existing signed epoch. The mode omits `registration_allowlist`;
+ambiguous or unknown policies fail before external side effects. Legacy configs
+retain their existing explicit allowlist behavior. Twenty focused admission and
+controller tests passed, including discovery of a new participant at the next
+real controller opening and preservation of an existing epoch's snapshot.
+The change is being frozen and admitted as v9; it is not hotpatched into v8.
+
+UID 85 and the provided hotkey were independently confirmed on Finney at block
+9199333 with a valid signed Affine activation. Its earlier separate two-key
+admission plan is superseded by open admission. The live v8 empty epoch and its
+evaluations continue unchanged, and chain weight submission remains disabled.
+
 ## Public-client epoch opened — October 3, 2026
 
 The restored miner passed independent source membership, all eleven pinned
