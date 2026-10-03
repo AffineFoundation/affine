@@ -2,6 +2,7 @@
 import io
 import json
 import zipfile
+import zlib
 import numpy as np
 from .storage import canonical
 
@@ -69,6 +70,8 @@ def unpack(data, *, max_upload=MAX_UPLOAD, budget=None):
         raise ValueError('compressed upload budget')
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         entries = z.infolist()
+        if any(e.flag_bits & 1 for e in entries):raise ValueError('encrypted archive refused')
+        if any(e.compress_type not in (zipfile.ZIP_STORED,zipfile.ZIP_DEFLATED,zipfile.ZIP_BZIP2,zipfile.ZIP_LZMA) for e in entries):raise ValueError('unsupported archive compression')
         names = [e.filename for e in entries]
         if len(names) != len(set(names)) or len(names) > 4096 or sum(e.file_size for e in entries) > budget['raw_bytes']:
             raise ValueError('archive budget or duplicate entries')
@@ -99,3 +102,20 @@ def unpack(data, *, max_upload=MAX_UPLOAD, budget=None):
         if referenced != set(names):
             raise ValueError('unexpected entries')
         return result
+
+
+class SubmissionRejected(ValueError):
+    """Untrusted artifact framing/quota refusal, not a worker failure."""
+
+
+def submission_records(data, *, budget, max_batches):
+    # Approved policy errors remain outside the untrusted decoder boundary.
+    from .artifact_budget import LEGACY,LONG
+    if budget not in (LEGACY,LONG):raise ValueError('artifact budget')
+    if type(max_batches) is not int or max_batches < 1:raise ValueError('operator batch quota')
+    try:
+        records=unpack(data,budget=budget)
+        if len(records)>max_batches:raise ValueError('batch quota')
+        return records
+    except (zipfile.BadZipFile,zipfile.LargeZipFile,zlib.error,ValueError,KeyError,TypeError,IndexError,AttributeError,EOFError,UnicodeError) as error:
+        raise SubmissionRejected(type(error).__name__+': '+str(error)[:300]) from error

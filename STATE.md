@@ -1,5 +1,16 @@
 # Repaired v10 public epoch opened — October 3, 2026
 
+The next-release worktree now rejects malformed normal-backend submission
+containers and over-quota artifacts as zero-credit audit outcomes. Root confirmed
+the original frozen v10 decoder throws on those inputs, verified the actual epoch
+manifest used for the CPU controls, and independently passed 82 focused tests.
+Approved policy errors and runtime/harness admission failures remain worker
+errors. This change is not deployed into the immutable running v10 epoch; it does
+not alter numerical inference, proofs, or the exact K1/L1 quota. The standalone
+verifier, older long-context audit, and historical unpack-first checker require
+separate handling before claiming equivalent robustness across those paths.
+Evidence: `state/malformed-math-submission-controls-v1/root-review.private.json`.
+
 Root independently verified the signed R2 manifest and repaired opening history
 for `nonpayable-separated-hopper-original-math-v10-1791005319-1`, opened at
 05:28:39 UTC with its original signed deadline 05:58:39 UTC. The fresh chain

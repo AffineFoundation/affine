@@ -274,17 +274,28 @@ def checkpoint(manifest, workspace, cache=None):
     return target
 
 def audit(data, manifest, runtime):
-    from .batches import unpack
+    from .batches import submission_records,SubmissionRejected
     from .protocol import entries, entry, classification, sample_key,harness_for
     from .artifact_budget import for_manifest
-    definitions=entries(manifest);records=unpack(data,budget=for_manifest(manifest))
-    if len(records)>manifest.get('max_batches',4):raise ValueError('batch quota')
+    definitions=entries(manifest);budget=for_manifest(manifest)
+    try:records=submission_records(data,budget=budget,max_batches=manifest.get('max_batches',4))
+    except SubmissionRejected as error:
+        return dict(epoch=manifest['epoch'],submission_sha256=hashlib.sha256(data).hexdigest(),
+            submission_rejected=True,rejection_stage='transport',
+            outcomes=[dict(batch=None,valid=False,reason=str(error),rejection_stage='transport')],
+            accepted=[],training_eligibility='fully-audited-only'),[]
     outcomes=[];accepted=[];pairs=[];seen=set()
     for number,(batch,arrays) in enumerate(records):
         try:
+            if not isinstance(batch,dict):raise ValueError('batch object')
             definition=entry(manifest,batch.get('env_id'));index=batch['index'];key=sample_key(batch)
             if batch.get('schema')!=2 or batch['epoch']!=manifest['epoch'] or batch['checkpoint']!=manifest['checkpoint']['id'] or batch.get('sample_index')!=index or type(index) is not int or index not in definition['indices'] or key in seen:raise ValueError('batch binding')
-            selected=runtime.for_environment(definition['spec'],harness_for(definition,index))
+        except (ValueError,KeyError,TypeError,IndexError) as error:
+            outcomes.append(dict(batch=number,valid=False,reason=type(error).__name__+': '+str(error)[:300]));continue
+        # The selected runtime/harness is operator-approved, not miner input.
+        # Configuration or infrastructure refusal must fail the worker honestly.
+        selected=runtime.for_environment(definition['spec'],harness_for(definition,index))
+        try:
             if batch.get('environment_version')!=selected.spec.version:raise ValueError('environment version')
             seen.add(key);rolls=batch['rollouts'];tokens=set()
             if len(rolls)!=manifest['K']+manifest['L'] or len(arrays)!=len(rolls):raise ValueError('sample count')
