@@ -5,6 +5,13 @@ Old equal-registration and burn weight timers are now disabled. A fresh
 reward-enabled epoch, source admission and verified chain submission are still
 required. Watch this document and https://github.com/AffineFoundation/affine
 main for versioned miner updates. Existing signed epochs remain immutable.
+The sampled audit and prospective reward bridge code are now implemented.
+Policy: only fully audited unique observed task pairs earn points; each confirmed
+invalid batch multiplies that miner's epoch points by 0.5. Infrastructure errors
+retry without penalties. Unchecked duplicate claims remain unresolved and are
+disclosed in reward reports. These parameters are fixed in each signed opening.
+See docs/AUDIT_SAMPLING.md and docs/LIVE_REWARDS.md on GitHub. Activation and the
+first actual chain receipt are still pending; this is not a live payout notice.
 
 # Affine — subnet 120
 

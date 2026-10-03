@@ -138,9 +138,13 @@ class RemoteController(Controller):
         if operator_test_policy is not None:manifest['operator_test_policy']=operator_test_policy
         if heldouts is not None:manifest['heldout_indices']=heldouts
         save(self.state/(manifest['epoch']+'-manifest.json'),manifest)
+        live_registrations=kwargs.get('live_reward_registration_snapshot')
         for key,value in buffered.writes:
             if key=='public/'+manifest['epoch']+'/manifest.json':value=self.signed(manifest)
             original.json(key,value)
+        if manifest.get('live_reward_contract') is not None:
+            from .live_reward_bridge import emit_opening_documents
+            emit_opening_documents(self,manifest,live_registrations)
         return manifest
     def checkpoint_with_reads(self,checkpoint):
         files=checkpoint['files']
@@ -180,6 +184,9 @@ class RemoteController(Controller):
             reports={m:json.loads((self.state/(epoch+'-'+m+'-report.json')).read_text()) for m in result['receipts']}
             if any(r.get('epoch')!=epoch or r.get('submission_sha256')!=result['receipts'][m]['sha256'] for m,r in reports.items()):raise ValueError('cached audit report binding')
             self.bucket.json('public/'+epoch+'/scores.json',self.signed(result))
+            if manifest.get('live_reward_contract') is not None:
+                from .live_reward_bridge import persist_signed_compute_evidence
+                persist_signed_compute_evidence(self,manifest,result,reports)
             return result,reports
         receipts=self.gateway.freeze(epoch);challengepath=self.state/(epoch+'-audit-challenge.json')
         if challengepath.exists():challenge=json.loads(challengepath.read_text())
@@ -246,7 +253,11 @@ class RemoteController(Controller):
             save(self.state/(epoch+'-audit-manifest.json'),audit_manifest)
             self.bucket.json('public/'+epoch+'/audit-plan.json',self.signed(dict(allocations=allocations,escalations=additions,policy=policy,population_basis='signed-per-miner-upper-bound')))
         result=score(reports,policy['penalties'] if bounded else None);result.update(payable=False,epoch_id=epoch,finalized_at=time.time(),receipts=receipts,checkpoint=manifest['checkpoint']['id'])
-        save(saved,result);self.bucket.json('public/'+epoch+'/scores.json',self.signed(result));return result,reports
+        save(saved,result);self.bucket.json('public/'+epoch+'/scores.json',self.signed(result))
+        if manifest.get('live_reward_contract') is not None:
+            from .live_reward_bridge import persist_signed_compute_evidence
+            persist_signed_compute_evidence(self,manifest,result,reports)
+        return result,reports
     def train(self,manifest,reports,checkpoint_path,destination=None,steps=1,replay=None,**ignored):
         epoch=manifest['epoch'];cached=self.state/(epoch+'-training-metrics.json')
         if cached.exists():

@@ -94,6 +94,7 @@ def contract(config,round_number):
         backend_profile=profile,model_id=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'))
     if config.get('artifact_policy') is not None:result['artifact_policy']=config['artifact_policy']
     if config.get('task_assets') is not None:result['task_assets']=config['task_assets']
+    if config.get('live_reward_anchor_document') is not None:result['live_reward_anchor_document']=config['live_reward_anchor_document']
     from .empty_epoch_policy import selected
     policy=selected(config,round_number)
     if policy is not None:result['operator_test_policy']=policy
@@ -151,6 +152,10 @@ def run(config,once=False):
     if not config.get('activation_allowed',True):raise ValueError('config activation is not allowed')
     prefix=config.get('epoch_prefix','nonpayable-gpu-continuous')
     if not prefix.startswith('nonpayable-') or config.get('payable_epochs',False):raise ValueError('GPU loop is permanently nonpayable')
+    anchor_document=config.get('live_reward_anchor_document')
+    if anchor_document is not None:
+        if prefix!='nonpayable-live-reward-math-v1-' or prefix!=anchor_document.get('payload',{}).get('compute_epoch_prefix'):
+            raise ValueError('dedicated prospective compute-only reward prefix')
     if type(config.get('owned_miner_dispatch',True))is not bool:raise ValueError('owned miner dispatch must be boolean')
     registration_policy(config)
     if config.get('audit_policy',{}).get('version')=='bounded-random-v1':
@@ -184,8 +189,17 @@ def run(config,once=False):
                 if manifestpath.exists():manifest=json.loads(manifestpath.read_text())
                 elif epoch in gateway.epochs:
                     gateway.freeze(epoch);save(state/(epoch+'-opening-aborted.json'),dict(epoch=epoch,payable=False,reason='interrupted before published manifest'));status['active']=None;status['round']+=1;save(statuspath,status);continue
-                else:manifest=controller.open(epoch,status['checkpoint'],active['identities'],max_batches=config.get('max_batches',3),**contract(config,status['round']))
+                else:
+                    opening_contract=contract(config,status['round'])
+                    if anchor_document is not None:opening_contract['live_reward_registration_snapshot']=active['registrations']
+                    manifest=controller.open(epoch,status['checkpoint'],active['identities'],max_batches=config.get('max_batches',3),**opening_contract)
                 if manifest['max_batches']!=config.get('max_batches',3):raise ValueError('immutable epoch quota/config mismatch')
+                if manifest.get('live_reward_contract') is not None:
+                    # Resume publishes the SAME final manifest before recovering sidecars.
+                    # Missing expired opening attestations fail closed, never backdate.
+                    bucket.json('public/'+epoch+'/manifest.json',controller.signed(manifest))
+                    from .live_reward_bridge import emit_opening_documents
+                    emit_opening_documents(controller,manifest,active['registrations'])
                 ledger=json.loads(ledgerpath.read_text()) if ledgerpath.exists() else []
                 key='public/streams/'+prefix+'/current.json';pointer=dict(epoch=epoch,manifest='public/'+epoch+'/manifest.json',manifest_url=bucket.presign('public/'+epoch+'/manifest.json'),current_url=bucket.presign(key),current_url_expires_at=time.time()+604800,transport_policy='direct-r2-v1',history_url=publish_history(controller,prefix,ledger,config['source_bundle']))
                 bucket.json(key,controller.signed(pointer));save(state/'direct-discovery.json',dict(current_url=bucket.presign(key),authority=controller.authority.id,expires_at=time.time()+604800))

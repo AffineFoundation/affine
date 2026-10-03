@@ -12,6 +12,18 @@ in state/live-math-launch-preparation-v1. The new writer is not enabled yet.
 The independent source deployment and prospective authenticated reward bridge
 are being prepared. Model execution remains separate from chain signing.
 
+The prospective bridge is now integrated in the worktree: signed first-opening
+and final audit/score evidence, shared exact penalty arithmetic, a reward-only
+hourly exporter and authenticated chain-adapter handoff. Root corrected a missing
+fresh-finalize export hook and qualified idempotent opening recovery. 128 targeted
+tests passed including 14 bridge controls. This is implementation qualification,
+not a live weight transaction. See docs/LIVE_REWARDS.md.
+
+Root's current SSH observations show all five retained H200s idle, and all eleven
+old verifier queue jobs completed. Capability-only checkpoint hydration/reuse is
+now running under actual supervised CPU processes on those nodes. Full per-file
+hash receipts and terminal waits remain to be reviewed; no GPU job was started.
+
 The original I3Math experiment has actual supervisor exit0 and no live original
 PIDs. It found a genuine K1/L1 pair on index1 after ten attempts, with full native
 self-verification, pair SHA91620d2d… and169,098,030bytes. This is a private

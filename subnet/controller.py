@@ -98,7 +98,9 @@ class Controller:
         if existing(legacy_key) is None:self.bucket.json(legacy_key,self.signed(descriptor))
         return checkpoint
 
-    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None):
+    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None):
+        from .live_reward_bridge import prevalidate_opening_arguments
+        prevalidate_opening_arguments(epoch,checkpoint,miners,duration,audit_policy,source_bundle,live_reward_anchor_document,live_reward_registration_snapshot,self.authority.id)
         for definition in environments or []:
             if 'evaluation_only' in definition:
                 if type(definition['evaluation_only'])is not bool or (definition['evaluation_only'] and definition.get('indices')!=[]):
@@ -148,6 +150,11 @@ class Controller:
         if source_bundle is not None:manifest['source_bundle']=dict(source_bundle)
         if evaluation is not None:
             manifest['evaluation']=dict(evaluation,harness=harness_policy.normalize(evaluation.get('harness')))
+        if live_reward_anchor_document is not None:
+            from .live_reward_bridge import inject_opening_manifest
+            manifest=inject_opening_manifest(manifest,live_reward_anchor_document,self.authority.id,live_reward_registration_snapshot)
+        elif live_reward_registration_snapshot is not None:
+            raise ValueError('reward registration snapshot requires signed forward-live contract')
         from .protocol import entries as validate_entries
         validate_entries(manifest)
         save_manifest(self.state/f'{epoch}-manifest.json', manifest)
