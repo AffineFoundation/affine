@@ -45,9 +45,21 @@ receipt: task 6665 reproduced the original hidden bytes, 87 prompt tokens,
 218 outputs and 15 proof blocks; encoded prefill modulus 65496 now verifies
 with exact zero errors. All four token, probability, proof and activation
 mutants were rejected without changing thresholds. The v8 corrected GPU
-qualification gate is satisfied for the pinned H200 profile, while fresh base
-and successor 32-task evaluations remain running. This is not a performance
-gain or qualification across arbitrary hardware.
+qualification gate is satisfied for the pinned H200 profile. Fresh base and
+successor evaluations both completed all 32 tasks under the identical corrected
+source, task/seed/harness/runtime cohort: 20/32 correct (mean reward 0.625) at
+training steps zero and one. Root verified both signed jobs and reports. Two
+tasks improved and two declined; aggregate change is zero. These measurements
+are published on affine.io and browser-checked at desktop and mobile widths.
+They do not establish a performance gain or qualification across arbitrary
+hardware.
+
+The v8 trained-successor handover candidate retains the actual checkpoint and
+cumulative step one. All six R2 objects passed a fresh full hash check before
+the new authority signed its normal descriptor; root independently checked
+that descriptor in R2, candidate config and lineage. Its prepared initial state
+skips blind weight re-publication but has not been written to runtime state.
+Final activation and the genuine external-client epoch remain pending.
 
 ## Separate H200 deployment — October 2, 2026
 

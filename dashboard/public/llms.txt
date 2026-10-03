@@ -90,10 +90,14 @@ completed records have been published.
 The separate H200 pilot uses Qwen2.5-Math-7B-Instruct, 1,024-token outputs and
 a different fixed cohort of 32 reserved Level 4/5 tasks. Its first full-model
 training update changed actual parameter values and its checkpoint was recovered
-and independently verified in R2. The first baseline remains an error because
-one generated sample failed TOPLOC replay; no complete mean reward or improvement
-is claimed for it. A correction to TOPLOC's encoded index-map replay is being
-qualified in a fresh signed source. It retains zero-error proof thresholds.
+and independently verified in R2. The original baseline and successor evaluation
+remain errors because one generated sample failed the old TOPLOC replay path.
+The encoded index-map correction passed on an independent H200 verifier with
+zero-error thresholds unchanged; the honest sample passed and four tampered
+controls failed. Fresh corrected-source evaluations completed all 32 tasks:
+the untouched base and trained successor both solved 20/32 (mean reward 0.625).
+Two tasks improved and two declined, so the measured aggregate gain is zero.
+This is a small fixed cohort, not an accuracy estimate for all 7,496 problems.
 These Qwen measurements must not be joined to the older SmolLM2 curve.
 
 ## How to try the pilot
@@ -136,8 +140,10 @@ BF16, eager attention and deterministic CUBLAS. Genuine same-model generation,
 full-vocabulary probability and TOPLOC proof controls passed on the miner and
 both independent verifiers, including rejection of altered evidence. Those
 controls are hardware qualification, not held-out evaluations or training.
-The first real separated epoch has opened but remains incomplete; completed
-training and gains have not yet been established. Exact installed versions and source policies come
+The first real separated epoch completed one full-model training update and
+checkpoint publication. The next corrected-source external-client pilot is
+prepared but has not opened; neither these controls nor the fresh paired
+evaluation establish a performance gain. Exact installed versions and source policies come
 from the signed challenge. Other hardware compatibility is unproven.
 Report only public epoch IDs/hotkeys, hardware/runtime and errors with secrets
 and signed URLs removed. Pilot points are permanently nonpayable. The separate
