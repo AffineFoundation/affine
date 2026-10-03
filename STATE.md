@@ -20,6 +20,16 @@ to be verified. Internal mining dispatch and chain weight submission are off.
 The first completed public-client epoch must pass independent review before
 continuous follow-on epochs are activated. Earlier failure records remain intact.
 
+The first public bootstrap subsequently exited before downloading source or
+checkpoint bytes. Its preserved traceback identifies a descriptor schema
+mismatch: the frozen bootstrap requires `source_bundle.url`, while the signed
+challenge contains `source_bundle.read_url`. This is not evidence of an R2
+connectivity failure. The current manifest and deadline remain unchanged. A
+prospective next-epoch descriptor will retain `read_url` and provide the canonical
+`url` alias for the same approved archive; actual frozen-bootstrap admission
+must pass before a fresh epoch is activated. No sample or training credit is
+claimed for the failed attempt.
+
 ## Corrected handover candidate — October 3, 2026
 
 The next separated pilot source is v8, archive

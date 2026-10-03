@@ -145,8 +145,11 @@ checkpoint publication. The corrected-source public-client epoch
 nonpayable-separated-hopper-original-math-v8-1790992415-0 opened on October 3,
 with a signed deadline of 02:23:35 UTC. Its manifest was independently checked
 against the approved checkpoint and full mining pool. Two independent verifier
-workers are running and the owned test miner's public-client bootstrap has
-started; this epoch's upload, audit and training are not yet verified.
+workers are running. The owned miner's first bootstrap exited before downloading
+source or model bytes: it requires a `url` source descriptor field, while the
+manifest supplies `read_url`. The attempt and original deadline are preserved;
+a corrected descriptor is being qualified for a fresh epoch. No upload, audit
+or training from this public-client attempt is claimed.
 An earlier activation attempt stopped because the retained miner's SSH endpoint
 refused connections; its single reboot failed with "Executor unreachable".
 The replacement H200 passed source, model, runtime and proof qualification before
