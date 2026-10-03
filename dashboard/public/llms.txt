@@ -10,10 +10,11 @@ Historical teacher distillation / king-versus-challenger instructions are not th
 current pilot contract. Dashboard records describe measured runs, not a promise
 of rewards, general model improvement, or support for every environment.
 
-Current operational status: new public epochs are paused for a history-publication
-repair. The last completed mining/training measurements are preserved. The
-published discovery pointer does not currently announce a new accepting epoch;
-check the signed deadline before attempting a submission.
+Current operational status: the repaired v10 public pilot opened on October 3,
+2026 at 05:28:39 UTC, with a signed deadline of 05:58:39 UTC. Public discovery
+announces the actual signed epoch. Read https://affine.io/mining.json and verify
+the current signed manifest/deadline before mining; an opening is not completed
+training. The retained v9 fixed32 measurement changed from 20/32 to 22/32.
 
 ## Architecture
 
@@ -193,7 +194,11 @@ broader trend.
 Final history publication then failed because the history reader expected a
 source bucket key absent from the signed bootstrap descriptor. A follow-on
 opening hit the same error. The old manifests, deadlines, checkpoint, training
-counter and failed attempts are retained. A corrected release is being prepared;
-the old signed source is not hotpatched, training is not repeated, and chain
-weight submission remains disabled. Complete handover qualification awaits a
-successful repaired history publication and consecutive epochs.
+counter and failed attempts are retained. The separately signed repaired v10
+release admitted the published v9 successor checkpoint and retained cumulative
+training step 2 and round 1. Root independently verified repaired history and the
+fresh signed R2 opening, with 239 eligible activation identities including UID 85
+and all 6,746 mining tasks. The old signed source is not hotpatched and training
+is not repeated. V10 is an actual opening, not a completed new training epoch or
+new gain measurement. Full consecutive-epoch qualification remains pending;
+chain weight submission stays disabled.

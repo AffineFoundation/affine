@@ -1,3 +1,24 @@
+# Repaired v10 public epoch opened — October 3, 2026
+
+Root independently verified the signed R2 manifest and repaired opening history
+for `nonpayable-separated-hopper-original-math-v10-1791005319-1`, opened at
+05:28:39 UTC with its original signed deadline 05:58:39 UTC. The fresh chain
+snapshot admits 239 activated subnet identities including UID 85 and all 6,746
+original MATH mining tasks. Separately signed source `7e4ebdf8…` and new authority
+`89b5a84d…` retain the verified published v9 successor `159ad21c…`, cumulative
+training step 2 and round 1. Old v9 failed history/opening receipts remain intact;
+its full-model update is not repeated.
+
+Actual affine.io/mining.json now atomically publishes the controller's read-only
+discovery metadata with status active/accepting_submissions=true. The pilot is
+nonpayable and chain weight submission is disabled. The dashboard keeps exactly
+two charts and /llms.txt; actual HTTPS/browser checks retain the comparable v9
+fixed32 before 20/32 and after 22/32 measurements and two fully-audited accepted
+miner batches. An active v10 opening does not establish completed new training,
+a new evaluation gain or consecutive-epoch completion. The validator remains on
+Arbos.life; its website and DNS were not changed. Evidence:
+`state/prospective-separated-hopper-math-v10/public-opening-root-review.private.json`.
+
 # V9 training verified; history publication blocks handover — October 3, 2026
 
 The original 03:37:20 UTC deadline closed normally. The owned UID 131 public
