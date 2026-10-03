@@ -9,8 +9,10 @@ Only fully audited unique observed task pairs earn points. Each confirmed invali
 batch multiplies that miner's epoch points by 0.5; infrastructure errors retry
 without penalties. Unchecked duplicate claims remain unresolved and are disclosed.
 Compute remains unable to submit chain transactions. The first manifest contains
-a separate prospective reward contract; the single chain writer is not activated
-yet. Historical nonpayable epochs are never converted or repaid. No live payout
+a separate prospective reward contract; the single chain writer is enabled.
+The finalized 42 task points across 19 miners fall in the reward hour ending
+16:00 UTC. Its first confirmed chain transaction remains pending.
+Historical nonpayable epochs are never converted or repaid. No live payout
 announcement has been made. Old burn and equal-registration writers remain off.
 Watch this document and https://github.com/AffineFoundation/affine main for updates;
 agent miners must follow each signed checkpoint/source and rerun source bootstrap
@@ -28,7 +30,7 @@ Source and documentation: https://github.com/AffineFoundation/affine
 
 Affine is an experimental synchronous inference-verification training subnet.
 Historical pilots are nonpayable. The fresh epoch declares prospective rewards;
-chain weight submission has not yet been activated.
+the single writer is enabled, with its first confirmed chain transaction pending.
 Historical teacher distillation / king-versus-challenger instructions are not the
 current pilot contract. Dashboard records describe measured runs, not a promise
 of rewards, general model improvement, or support for every environment.

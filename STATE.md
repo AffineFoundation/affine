@@ -35,8 +35,10 @@ The sampler bounds work by epoch and per-UID caps; this epoch permits three
 batches per miner, initial budget 256/escalation 64 and multiplier 0.5 per confirmed
 invalid batch. Pure shared audit arithmetic generates both proposed weights and
 reward units; unchecked batches earn no points, and infra errors are not fraud.
-The single-writer cutover configuration is genuinely root-signed but still off.
-No new chain receipt exists. A host-interpreter launch failed before opening and
+The single-writer cutover configuration is genuinely root-signed. Its user timer
+is enabled and active after the actual dry run and 19 authenticated worker reports.
+The first positive reward hour ends at 16:00 UTC; no chain receipt exists yet.
+A host-interpreter launch failed before opening and
 was preserved; the fresh launch uses the rewrite's actual shared environment.
 
 The writer now refuses incomplete finalized evidence and checks the controller's
@@ -54,7 +56,7 @@ there is no retroactive conversion or chain transaction yet.
 
 Root checked the legacy production weight guard exists. Both old transition and
 hourly-burn timers/services are now disabled/inactive, with before/after evidence
-in state/live-math-launch-preparation-v1. The new writer is not enabled yet.
+in state/live-math-launch-preparation-v1. The new writer timer is now enabled.
 The independent source deployment and prospective authenticated reward bridge
 are being prepared. Model execution remains separate from chain signing.
 
