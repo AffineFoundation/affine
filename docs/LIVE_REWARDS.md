@@ -48,6 +48,14 @@ follows a verified chain receipt, not merely a successful dry run.
 `python -m ops.live_reward_writer --cutover SIGNED-CONFIG.json --anchor
 SIGNED-ANCHOR.json --authority PUBLIC-KEY` runs the single-writer path in dry-run
 mode. Explicit `--execute` enables the chain handoff after operational cutover.
+For prospective code upgrades, the signed cutover may include an
+`approved_sources` map from archive SHA-256 to its exact local archive and signed
+descriptor paths. Its primary `source` entry must remain in that map. The writer
+authenticates every archive and selects the original module inventory pinned by
+each epoch; upgrading the primary source never replaces older audit evidence.
+The signed anchor must also approve a new source before its first epoch opens.
+Without this map, the existing single-source contract remains unchanged.
+
 The runner derives actual process/boot identity, holds the global lock, queries
 the old units and checks the reviewed production hook and suppression marker.
 It reads original signed verifier requests and worker-authenticated completed

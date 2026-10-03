@@ -4,11 +4,23 @@ Fresh sampled-audit epoch `nonpayable-live-reward-math-v1--1791036559-4`
 opened at 14:09:19 UTC with its original 14:39:19 deadline. All five H200 roles
 passed actual source/runtime/checkpoint admission and CPU tokenizer/native
 controls (34 contexts and eight original grader controls each). The actual public
-UID131 miner is running on source 2361c1ea… and learned checkpoint 94ae9c68…;
-its observed isolated CLI source pin matches. Only the epoch upload grant left
+UID131 miner used source 2361c1ea… and learned checkpoint 94ae9c68…;
+its observed isolated CLI source pin matched. Only the epoch upload grant left
 Arbos.life, not its wallet key. Two new narrow-key verifier workers are connected
 to the shared queue. The controller retains round 4 and five completed updates.
-Public affine.io discovery is open, with a signed-deadline close guard.
+Public affine.io discovery closed at the original deadline, with an actual HTTPS
+readback. The UID131 process completed with a real exit-zero receipt but no batch.
+The gateway froze 19 other registered miners' in-window uploads. At 14:51 UTC,
+both independent verifier nodes had claimed jobs; these submissions are not yet
+verified contributions or rewards. The same original controller remains live.
+
+A future signed-harness KV-cache sampler is being qualified on the idle miner
+H200 in an isolated namespace. Seven CPU controls pass, but actual H200/native
+proof and independent replay qualification remain pending. It does not change
+the current epoch's sampler, source, checkpoint, deadline or numerical tolerances.
+The writer now supports a signed approved-source registry so prospective code
+upgrades retain each older epoch's original archive and authenticated job pins.
+Ten writer, seven completeness and fourteen bridge controls pass after that change.
 
 The sampler bounds work by epoch and per-UID caps; this epoch permits three
 batches per miner, initial budget 256/escalation 64 and multiplier 0.5 per confirmed

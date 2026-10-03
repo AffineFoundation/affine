@@ -159,6 +159,28 @@ class EvidenceTests(unittest.TestCase):
    (state/(m['epoch']+'-signed-compute-scores.json')).write_text(json.dumps(sign(dict(receipts={'MINER':{'sha256':'d'*64}}),key)))
    (state/(m['epoch']+'-signed-compute-audit-MINER.json')).write_text(json.dumps(sign(a,key)));c.update(compute_state=str(state),queue_database=str(queuepath))
    result=w.verify_completed_evidence(c,auth,160.);self.assertEqual(len(result),1);self.assertEqual(result[0]['worker'],wid)
+   # A future source becomes primary, but the real older authenticated worker
+   # report must still use its original archive inventory, never the new bytes.
+   upgraded=dict(members);upgraded['subnet/model.py']=b'# different future model module\n'
+   buffer=io.BytesIO()
+   with tarfile.open(fileobj=buffer,mode='w:gz') as tar:
+    for name,data in upgraded.items():
+     entry=tarfile.TarInfo(name);entry.size=len(data);tar.addfile(entry,io.BytesIO(data))
+   next_body=buffer.getvalue();next_archive=state/'next-source.tar.gz';next_archive.write_bytes(next_body)
+   next_digest=hashlib.sha256(next_body).hexdigest();next_descriptor=state/'next-descriptor.json'
+   next_descriptor.write_text(json.dumps(sign(dict(sha256=next_digest,size=len(next_body)),key)))
+   next_source=dict(sha256=next_digest,archive_path=str(next_archive),descriptor_path=str(next_descriptor))
+   c.update(source=next_source,approved_sources={source['sha256']:source,next_digest:next_source})
+   result=w.verify_completed_evidence(c,auth,160.);self.assertEqual(result[0]['worker'],wid)
+   with self.assertRaisesRegex(ValueError,'approved live source only'):
+    w.verify_completed_evidence(dict(c,approved_sources={next_digest:next_source}),auth,160.)
+   with self.assertRaisesRegex(ValueError,'primary approved source binding'):
+    w.approved_source_members(dict(c,approved_sources={source['sha256']:source}),auth)
+   with self.assertRaisesRegex(ValueError,'registry key'):
+    w.approved_source_members(dict(c,approved_sources={**c['approved_sources'],'f'*64:source}),auth)
+   next_descriptor.write_text(json.dumps(sign(dict(sha256=source['sha256'],size=len(next_body)),key)))
+   with self.assertRaisesRegex(ValueError,'signed source descriptor'):w.approved_source_members(c,auth)
+   next_descriptor.write_text(json.dumps(sign(dict(sha256=next_digest,size=len(next_body)),key)))
    archive.write_bytes(body+b'bad')
    with self.assertRaisesRegex(ValueError,'archive bytes'):w.verify_completed_evidence(c,auth,160.)
  def test_authenticated_worker_report_corruption_and_late_completion_refuse(self):

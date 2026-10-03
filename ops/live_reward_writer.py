@@ -93,19 +93,34 @@ def verify_audit_lineage(state,manifest,audit,authority,c,db,now,files):
  need(canonical(bound)==canonical(audit),'original audit metadata, not caller score')
  return dict(job_id=jobid,job_sha256=sha(job),report_sha256=sha(remote),worker=worker,submission_sha256=audit['submission_sha256'])
 
+def approved_source_members(c,authority):
+ """Authenticate every operator-approved archive, retaining older epoch pins."""
+ primary=c['source'];sources=c.get('approved_sources',{primary['sha256']:primary})
+ need(isinstance(sources,dict) and sources and sources.get(primary['sha256'])==primary,'primary approved source binding')
+ inventories={}
+ for digest,source in sources.items():
+  need(isinstance(digest,str) and len(digest)==64 and all(x in '0123456789abcdef' for x in digest) and source.get('sha256')==digest,'approved source registry key')
+  for field in ('archive_path','descriptor_path'):
+   path=Path(source[field]);need(path.is_absolute() and path.resolve()==path,'canonical approved source path')
+  need(file_hash(source['archive_path'])==digest,'approved source archive bytes')
+  descriptor=signed(read(source['descriptor_path']),authority)
+  need(descriptor['sha256']==digest and descriptor['size']==Path(source['archive_path']).stat().st_size,'signed source descriptor')
+  members=admitted_files(Path(source['archive_path']).read_bytes(),descriptor)
+  inventories[digest]={name:hashlib.sha256(data).hexdigest() for name,data in members.items()}
+ return inventories
+
 def verify_completed_evidence(c,authority,now):
  state=Path(c['compute_state']);proofs=[]
- # Source bytes are checked once per invocation, not trusting a signed arbitrary inventory.
- source=c['source'];need(file_hash(source['archive_path'])==source['sha256'],'approved source archive bytes')
- descriptor=signed(read(source['descriptor_path']),authority);need(descriptor['sha256']==source['sha256'] and descriptor['size']==Path(source['archive_path']).stat().st_size,'signed source descriptor')
- members=admitted_files(Path(source['archive_path']).read_bytes(),descriptor);files={name:hashlib.sha256(data).hexdigest() for name,data in members.items()}
+ # Authenticate archive bytes once per invocation. A source upgrade must never
+ # replace the archive or module inventory used by an older finalized epoch.
+ inventories=approved_source_members(c,authority)
  uri=Path(c['queue_database']).as_uri()+'?mode=ro'
  with sqlite3.connect(uri,uri=True) as db:
   db.row_factory=sqlite3.Row
   for first in sorted(state.glob('*-first-signed-manifest.json')):
    m=signed(read(first),authority);epoch=m['epoch'];scores=state/(epoch+'-signed-compute-scores.json')
    if not scores.exists():continue
-   need(m['source_bundle']['sha256']==source['sha256'],'approved live source only')
+   digest=m['source_bundle']['sha256'];need(digest in inventories,'approved live source only');files=inventories[digest]
    score=signed(read(scores),authority)
    for miner in score['receipts']:
     audit=signed(read(state/(epoch+'-signed-compute-audit-'+miner+'.json')),authority)
