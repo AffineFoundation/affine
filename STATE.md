@@ -1,5 +1,26 @@
 # Live reward launch authorized — October 3, 2026
 
+The continuous successor opened at 16:57:27 UTC with its original 17:27:27
+deadline, learned checkpoint f9ea6c2d… and source ae44200b…. All five separate
+H200s passed fifteen actual supervised CPU exits, complete source/checkpoint
+hashes, 34 tokenizer contexts and eight original grader controls each. Root
+independently read the original remote results and checked all 19 earlier
+worker-authenticated audit lineages. Approval was extended while preserving
+older signed anchors, reward records, cursor and closed-hour proposals.
+The real continuous controller and two narrow-key verifiers are running, with
+234 activated identities admitted. Mining selects the qualified cached sampler;
+the original held-out harness/cohort is preserved. Three optimizer steps are
+configured for future training; they have not run in this epoch yet.
+An actual registered UID131 miner was launched with an epoch upload grant and
+the new signed source; its wallet key remains on the operator host.
+The public HTTPS discovery was authenticated against the signed pointer and
+manifest. A running observer closes discovery at the original deadline or when
+the controller is absent, and follows new epochs automatically. Six controls
+cover expiry, signatures, source/weight binding and refreshed read capabilities.
+Continued local checkpoint/artifact retention needs a bounded policy: verifier 2
+has 18.1 GB free and the trainer has enough for this three-step epoch, not
+unlimited retained snapshots. Stable uninterrupted learning remains unproven.
+
 Fresh sampled-audit epoch `nonpayable-live-reward-math-v1--1791036559-4`
 opened at 14:09:19 UTC with its original 14:39:19 deadline. All five H200 roles
 passed actual source/runtime/checkpoint admission and CPU tokenizer/native

@@ -1,7 +1,9 @@
-PROSPECTIVE MATH REWARD EPOCH — UPLOADS CLOSED — 2026-10-03
-The original-MATH epoch admitted every activated subnet-120 Ed25519 hotkey.
-Its signed upload window closed at 14:39:19 UTC. Nineteen in-window submissions
-were frozen for independent audits. Follow discovery for the next open epoch.
+CURRENT MATH REWARD RUN — FOLLOW LIVE DISCOVERY — 2026-10-03
+The continuous original-MATH controller admits every activated subnet-120
+Ed25519 hotkey. The new epoch opened at 16:57:27 UTC using learned checkpoint
+f9ea6c2d... and the admitted cached sampler. Its signed deadline is 17:27:27 UTC.
+Never infer current upload availability from this static guide: follow mining.json
+and the signed current manifest for every subsequent epoch.
 Read https://affine.io/mining.json for the signed current discovery and deadline.
 The manifest fixes source, checkpoint, audit budgets and penalties. A miner may
 upload at most three distinct task batches, each with one success and one failure.
@@ -21,9 +23,10 @@ Watch this document and https://github.com/AffineFoundation/affine main for upda
 agent miners must follow each signed checkpoint/source and rerun source bootstrap
 when the approved source changes. H200 SM90 BF16 eager is the qualified profile.
 See docs/AUDIT_SAMPLING.md and docs/LIVE_REWARDS.md for the audit/reward rules.
-The next-generation text-tools-long-kv-v3 harness is experimental and opt-in;
-use it only when selected by a new signed manifest. Existing epochs retain their
-original sampler. Full teacher-forced probabilities and proof checks stay intact.
+The current manifest selects text-tools-long-kv-v3 after a same-task genuine
+success/failure pair passed independent H200 replay and eight tampering controls.
+Full teacher-forced probabilities and proof checks stay intact. Older signed
+epochs retain their original sampler. This does not prove sampler-seed provenance.
 
 # Affine — subnet 120
 
@@ -67,8 +70,12 @@ verified task batches from 19 miners have finalized. The enabled single writer
 finalized their encrypted weight commitment; automatic reveal is pending.
 Training produced checkpoint f9ea6c2d9fe81baede5deaf12fd5cb48750722a6731aff2d063b49b3dc39695e.
 Matched held-out performance declined from 22/32 to 20/32. The controller finished
-with an actual clean exit. The next source/checkpoint is being admitted before
-opening the next upload window; follow mining.json rather than reusing old grants.
+with an actual clean exit. All five H200 roles then passed new source/checkpoint
+admission, real tokenizer contexts and original native grader controls. A new
+continuous controller is collecting submissions from 234 activated identities.
+Its three configured optimizer steps are prospective; no new training result is
+claimed yet. The held-out harness/cohort is unchanged. Follow mining.json and
+the signed manifest rather than reusing old upload grants.
 
 ## Architecture
 
