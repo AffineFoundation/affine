@@ -1,5 +1,18 @@
 # Live reward launch authorized — October 3, 2026
 
+At 21:14 UTC both upgraded verifier workers were independently observed alive
+with their original start ticks, exact admitted source and approved public
+identities. The actual coordinator database records recent authenticated requests
+from both. An earlier startup attempted the helper's legacy seed namespace and
+was rejected by coordinator authentication; that identity did not claim a job.
+The operator helper now accepts an explicit remote seed path and validates its
+derived public identity before startup. Eight controls pass, including wrong-key,
+public-file and symlink rejection. The current epoch has crossed its original
+deadline; the controller and capability-only owned miner were still alive under
+their original ticks. No current audit jobs had been enqueued at that observation,
+so this proves authentication recovery, not completed new-epoch verification or
+training. See `verified-current-roles-*.private.json` in the upgrade directory.
+
 The storage/transport upgrade is now active at the original completed epoch
 boundary. All five retained H200 roles completed actual exit-zero checkpoint
 hydration, exact-source admission and CPU tokenizer/native grading checks against

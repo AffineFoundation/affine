@@ -138,6 +138,21 @@ records exact process identities, reuses live matching workers/tunnels and never
 signals or replaces existing processes. Start the new controller/coordinator
 before the workers. These flags do not deploy source or approve numerical controls.
 Use the new namespace's controller authority; never use chain signing keys.
+Select the actual seed namespace explicitly when using an existing deployment:
+
+```sh
+.venv/bin/python -B -m ops.provision_distributed_verifiers \
+  --config /private/current-controller.json --seed-dir /private/current-worker-seeds \
+  --remote-seed-file /root/current-deployment/private/verifier.seed \
+  --start --authority CURRENT_CONTROLLER_PUBLIC_HEX
+```
+
+The legacy default seed path is not evidence that a worker has the current
+deployment's identity. Before starting any worker, the helper checks that its
+actual canonical, private remote seed derives the public identity approved in
+the controller roster. A mismatch fails before worker startup. It does not
+overwrite an existing seed or relax coordinator authentication. Use `--provision`
+only to copy the corresponding narrow key into a reviewed new namespace.
 The startup helper waits up to 30 seconds for the operator coordinator to listen
 before launching any workers. If it times out, start or inspect the controller
 and retry the helper; it does not start workers against an absent coordinator.

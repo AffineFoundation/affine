@@ -45,6 +45,21 @@ def worker_arguments(python, coordinator, authority, key, workspace, caches):
     return args
 
 
+def remote_seed_path(value):
+    path=Path(value)
+    if not path.is_absolute() or '..' in path.parts or any(c in value for c in ('\0','\n','\r')):
+        raise ValueError('absolute remote verifier seed path required')
+    return str(path)
+
+
+def seed_admission_code(key, identity):
+    """Compare public identities only; never return private seed bytes."""
+    return ("from pathlib import Path;from nacl.signing import SigningKey;import stat;"
+            "p=Path("+repr(remote_seed_path(key))+");"
+            "assert p.resolve()==p and stat.S_ISREG(p.lstat().st_mode) and not p.stat().st_mode&0o077,'private canonical verifier seed';"
+            "assert SigningKey(bytes.fromhex(p.read_text().strip())).verify_key.encode().hex()=="+repr(identity)+",'remote verifier identity differs from approved roster'")
+
+
 def save(path,value):
     temporary=path.with_suffix('.tmp');temporary.write_text(json.dumps(value,sort_keys=True));temporary.chmod(0o600);temporary.replace(path)
 
@@ -67,6 +82,8 @@ def main():
     parser.add_argument('--seed-dir',required=True);parser.add_argument('--authority')
     parser.add_argument('--provision',action='store_true');parser.add_argument('--start',action='store_true')
     parser.add_argument('--forward-port',type=int,default=19081)
+    parser.add_argument('--remote-seed-file',default='/root/affine-hopper-pilot-v1/private/verifier.seed',
+                        help='Explicit narrow worker seed path on each verifier host')
     args=parser.parse_args();configpath=Path(args.config);config=json.loads(configpath.read_text())
     remote=config['remote'];q=remote['verifier_queue'];seedroot=Path(args.seed_dir)
     if configpath.stat().st_mode & 0o077:raise ValueError('prospective config must remain private')
@@ -81,14 +98,15 @@ def main():
         peer=endpoint.get('user','root')+'@'+endpoint['host']
         options=['-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+endpoint['known_hosts']]
         ssh=['ssh',*options,'-p',str(endpoint['port']),peer]
-        key='/root/affine-hopper-pilot-v1/private/verifier.seed'
+        key=remote_seed_path(args.remote_seed_file)
         if args.provision:
-            subprocess.run(ssh+['umask 077; mkdir -p /root/affine-hopper-pilot-v1/private'],check=True,timeout=30)
+            subprocess.run(ssh+['umask 077; mkdir -p '+shlex.quote(str(Path(key).parent))],check=True,timeout=30)
             incoming=key+'.incoming-'+secrets.token_hex(8)
             subprocess.run(['scp','-q',*options,'-P',str(endpoint['port']),str(seedpath),peer+':'+incoming],check=True,timeout=60)
             admission="from pathlib import Path;import os;p=Path("+repr(key)+");q=Path("+repr(incoming)+");data=q.read_bytes();q.chmod(0o600)\nif p.exists():\n if p.is_symlink() or p.read_bytes()!=data:raise ValueError('immutable verifier key collision')\n q.unlink()\nelse:q.replace(p)\np.chmod(0o600)"
             subprocess.run(ssh+[shlex.quote(endpoint['python'])+' -c '+shlex.quote(admission)],check=True,timeout=30)
         if args.start:
+            subprocess.run(ssh+[shlex.quote(endpoint['python'])+' -I -B -c '+shlex.quote(seed_admission_code(key,identity))],check=True,timeout=30)
             marker=seedroot/('verifier-'+str(number)+'-forward.private.json')
             old=json.loads(marker.read_text()) if marker.exists() else None
             tunnel_args=['ssh',*options,'-o','ExitOnForwardFailure=yes',

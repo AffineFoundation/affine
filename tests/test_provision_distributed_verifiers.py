@@ -5,9 +5,35 @@ import os
 import subprocess
 import sys
 import time
+import tempfile
 from pathlib import Path
 
-from ops.provision_distributed_verifiers import wait_for_coordinator,process_identity,matches_process,worker_arguments
+from ops.provision_distributed_verifiers import wait_for_coordinator,process_identity,matches_process,worker_arguments,remote_seed_path,seed_admission_code
+from nacl.signing import SigningKey
+
+
+class RemoteSeedBindings(unittest.TestCase):
+    def test_nondefault_namespace_requires_the_actual_approved_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'current-deployment/private/verifier.seed';path.parent.mkdir(parents=True)
+            key=SigningKey.generate();path.write_text(key.encode().hex());path.chmod(0o600)
+            original=path.read_bytes();exec(seed_admission_code(str(path),key.verify_key.encode().hex()),{})
+            with self.assertRaisesRegex(AssertionError,'approved roster'):
+                exec(seed_admission_code(str(path),SigningKey.generate().verify_key.encode().hex()),{})
+            self.assertEqual(path.read_bytes(),original)
+
+    def test_public_or_symlinked_seed_is_not_admitted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'verifier.seed';key=SigningKey.generate();path.write_text(key.encode().hex());path.chmod(0o644)
+            with self.assertRaisesRegex(AssertionError,'private canonical'):
+                exec(seed_admission_code(str(path),key.verify_key.encode().hex()),{})
+            path.chmod(0o600);alias=Path(directory)/'alias';alias.symlink_to(path)
+            with self.assertRaisesRegex(AssertionError,'private canonical'):
+                exec(seed_admission_code(str(alias),key.verify_key.encode().hex()),{})
+
+    def test_relative_traversal_or_control_character_paths_are_refused(self):
+        for value in ['private/key','/private/../key','/private/key\n','/private/key\0']:
+            with self.assertRaises(ValueError):remote_seed_path(value)
 
 
 class ActualProcessBindings(unittest.TestCase):
