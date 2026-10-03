@@ -39,6 +39,16 @@ attempt adds that exact field and keeps the same helper, source, model, task,
 seed and rejection thresholds. The failed attempt is retained and is not a
 qualification pass. Corrected paired performance remains unproven.
 
+The distinct second codec attempt completed successfully on verifier node 2.
+Root independently checked its signed job, helper/source/runtime bindings and
+receipt: task 6665 reproduced the original hidden bytes, 87 prompt tokens,
+218 outputs and 15 proof blocks; encoded prefill modulus 65496 now verifies
+with exact zero errors. All four token, probability, proof and activation
+mutants were rejected without changing thresholds. The v8 corrected GPU
+qualification gate is satisfied for the pinned H200 profile, while fresh base
+and successor 32-task evaluations remain running. This is not a performance
+gain or qualification across arbitrary hardware.
+
 ## Separate H200 deployment — October 2, 2026
 
 The operator's Arbos.life name refers to this current code/validator host.
