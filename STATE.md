@@ -71,6 +71,15 @@ or a healthy runtime. No new epoch or miner was launched; provider and endpoint
 diagnosis is underway. The current production validator, independent retained
 pilot and GPU guardian were also confirmed live.
 
+A single guarded reboot of that same retained miner completed as an API request,
+then Lium recorded REBOOT_FAILED at 01:20:04 UTC: "Executor unreachable".
+Root checked the lifecycle and failed-executor audit events. No repeated reboot
+or deletion was requested. One replacement H200 miner is now being provisioned
+under the existing fleet authorization, with retained ownership registered
+before rental. Its source, runtime, model and proof checks must pass and its
+exact updated endpoint config must be reviewed before activation. The old failed
+pod, its histories and the already-reviewed prospective config are preserved.
+
 ## Separate H200 deployment — October 2, 2026
 
 The operator's Arbos.life name refers to this current code/validator host.

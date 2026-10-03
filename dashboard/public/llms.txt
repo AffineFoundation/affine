@@ -143,8 +143,10 @@ controls are hardware qualification, not held-out evaluations or training.
 The first real separated epoch completed one full-model training update and
 checkpoint publication. The next corrected-source external-client pilot is
 prepared but has not opened. Its final activation check stopped before opening
-an epoch because the retained miner's SSH endpoint refused connections; Lium
-still reports that pod RUNNING, and endpoint diagnosis is underway.
+an epoch because the retained miner's SSH endpoint refused connections. A single
+in-place reboot failed with Lium reporting "Executor unreachable". A replacement
+miner is being provisioned; activation waits for its source, runtime and model
+checks. The failed pod and original records are retained.
 Neither these controls nor the fresh paired
 evaluation establish a performance gain. Exact installed versions and source policies come
 from the signed challenge. Other hardware compatibility is unproven.
