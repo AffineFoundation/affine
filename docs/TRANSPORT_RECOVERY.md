@@ -29,3 +29,15 @@ failures still stop it for investigation; they are not converted into fraud
 reports. Two focused outage/integrity controls and fourteen existing worker
 controls pass. This code requires future pinned-source admission; restoring the
 current verifier's correct listener does not replace its scientific source.
+
+The operator provisioner now checks actual `/proc` start ticks, process state,
+arguments and working directory before reusing a process marker. Zombie processes
+do not qualify. A forward must bind the requested remote port to the configured
+coordinator and SSH endpoint. A mismatched tunnel is preserved with its original
+marker; the provisioner attempts a separate correct tunnel without signaling the
+old process. It checks the remote TCP listener before starting a worker.
+An existing live worker must match the authority, coordinator, seed path,
+workspace, checkpoint-cache arguments and source directory; a mismatch stops
+activation rather than replacing it. Five controls cover delayed/coordinator
+startup and actual process binding, including a real zombie. These operator
+changes do not replace the source or processes of an active signed epoch.

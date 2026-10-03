@@ -6,6 +6,7 @@ changes a running pilot, extends signed deadlines or signals existing processes.
 """
 import argparse
 import json
+import inspect
 import os
 import shlex
 import secrets
@@ -19,6 +20,29 @@ from nacl.signing import SigningKey
 def ticks(pid):
     try:return Path('/proc/'+str(pid)+'/stat').read_text().rsplit(')',1)[1].split()[19]
     except FileNotFoundError:return None
+
+
+def process_identity(pid, proc='/proc'):
+    """Read actual process bindings; a zombie cannot host a tunnel or worker."""
+    root=Path(proc)/str(pid)
+    try:
+        fields=(root/'stat').read_text().rsplit(')',1)[1].split()
+        if fields[0] in ('Z','X'):return None
+        return dict(ticks=fields[19],argv=(root/'cmdline').read_bytes().decode().rstrip('\0').split('\0'),
+                    cwd=str((root/'cwd').resolve(strict=True)))
+    except (FileNotFoundError,ProcessLookupError):return None
+
+
+def matches_process(actual, marker, argv, cwd=None):
+    return (actual is not None and actual['ticks']==marker.get('ticks') and
+            actual['argv']==argv and (cwd is None or actual['cwd']==str(Path(cwd).resolve())))
+
+
+def worker_arguments(python, coordinator, authority, key, workspace, caches):
+    args=[python,'-B','-m','subnet.distributed_worker','--coordinator',coordinator,
+          '--authority',authority,'--seed-file',key,'--workspace',workspace]
+    for checkpoint,local in caches.items():args+=['--checkpoint-cache',checkpoint+'='+local]
+    return args
 
 
 def save(path,value):
@@ -55,7 +79,7 @@ def main():
         identity=SigningKey(bytes.fromhex(seedpath.read_text().strip())).verify_key.encode().hex()
         if identity!=endpoint['worker_identity']:raise ValueError('verifier seed/public roster mismatch')
         peer=endpoint.get('user','root')+'@'+endpoint['host']
-        options=['-o','BatchMode=yes','-o','UserKnownHostsFile='+endpoint['known_hosts']]
+        options=['-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+endpoint['known_hosts']]
         ssh=['ssh',*options,'-p',str(endpoint['port']),peer]
         key='/root/affine-hopper-pilot-v1/private/verifier.seed'
         if args.provision:
@@ -67,42 +91,57 @@ def main():
         if args.start:
             marker=seedroot/('verifier-'+str(number)+'-forward.private.json')
             old=json.loads(marker.read_text()) if marker.exists() else None
-            if not old or ticks(old['pid'])!=old['ticks']:
+            tunnel_args=['ssh',*options,'-o','ExitOnForwardFailure=yes',
+                '-o','ServerAliveInterval=30','-o','ServerAliveCountMax=3','-N','-R',
+                '127.0.0.1:'+str(args.forward_port)+':127.0.0.1:'+str(q['port']),
+                '-p',str(endpoint['port']),peer]
+            actual=process_identity(old['pid']) if old else None
+            if not old or not matches_process(actual,old,tunnel_args):
+                if old:
+                    # Preserve a mismatched live tunnel: it may serve another
+                    # operator namespace. Never signal it or erase its marker.
+                    save(seedroot/('verifier-'+str(number)+'-forward-preserved-'+secrets.token_hex(8)+'.private.json'),old)
                 logfile=seedroot/('verifier-'+str(number)+'-forward.private.log')
                 with logfile.open('ab') as output:
                     logfile.chmod(0o600)
-                    process=subprocess.Popen(['ssh',*options,'-o','ExitOnForwardFailure=yes',
-                        '-o','ServerAliveInterval=30','-o','ServerAliveCountMax=3','-N','-R',
-                        '127.0.0.1:'+str(args.forward_port)+':127.0.0.1:'+str(q['port']),
-                        '-p',str(endpoint['port']),peer],stdin=subprocess.DEVNULL,stdout=output,stderr=output,start_new_session=True)
+                    process=subprocess.Popen(tunnel_args,stdin=subprocess.DEVNULL,stdout=output,stderr=output,start_new_session=True)
                 time.sleep(1)
                 if process.poll() is not None:raise RuntimeError('review verifier forward log; SSH tunnel failed')
-                save(marker,dict(pid=process.pid,ticks=ticks(process.pid),created_at=time.time(),role='verifier-'+str(number)))
+                save(marker,dict(pid=process.pid,ticks=ticks(process.pid),created_at=time.time(),role='verifier-'+str(number),
+                    forward_port=args.forward_port,coordinator_port=q['port']))
             # Remote marker protects idempotent process activation. It never
             # stops or replaces an existing exact verifier worker.
-            code='''import json,os,subprocess,time
+            helpers='\n'.join(inspect.getsource(f) for f in (process_identity,matches_process,worker_arguments))
+            code='''import json,os,subprocess,time,socket
 from pathlib import Path
-def ticks(pid):
- try:return Path('/proc/'+str(pid)+'/stat').read_text().rsplit(')',1)[1].split()[19]
- except FileNotFoundError:return None
+'''+helpers+'''
+# Check the actual remote listener before starting any model worker.
+with socket.create_connection(('127.0.0.1',FORWARD_PORT),timeout=5):pass
 workspace=Path(WORKSPACE);workspace.mkdir(parents=True,exist_ok=True);workspace.chmod(0o700)
 marker=workspace/'worker-process.json'
 old=json.loads(marker.read_text()) if marker.exists() else None
-if not old or ticks(old['pid'])!=old['ticks']:
+args=worker_arguments(PYTHON,COORDINATOR,AUTHORITY,KEY,WORKSPACE,CACHEMAP)
+actual=process_identity(old['pid']) if old else None
+if actual and actual['ticks']==old.get('ticks'):
+ if old.get('authority')!=AUTHORITY or not matches_process(actual,old,args,SOURCE):
+  raise ValueError('refuse existing live worker binding replacement')
+else:
  log=workspace/'worker-service.log'
  with log.open('ab') as output:
   log.chmod(0o600)
-  args=[PYTHON,'-B','-m','subnet.distributed_worker','--coordinator',COORDINATOR,'--authority',AUTHORITY,'--seed-file',KEY,'--workspace',WORKSPACE]
-  for checkpoint,local in CACHEMAP.items():args+=['--checkpoint-cache',checkpoint+'='+local]
   p=subprocess.Popen(args,cwd=SOURCE,stdin=subprocess.DEVNULL,stdout=output,stderr=output,start_new_session=True,env=dict(os.environ,CUBLAS_WORKSPACE_CONFIG=':4096:8'))
- value=dict(pid=p.pid,ticks=ticks(p.pid),started_at=time.time(),authority=AUTHORITY)
+ time.sleep(.2)
+ if p.poll() is not None:raise RuntimeError('review verifier worker log; startup failed')
+ observed=process_identity(p.pid)
+ if observed is None:raise RuntimeError('worker disappeared before activation record')
+ value=dict(pid=p.pid,ticks=observed['ticks'],started_at=time.time(),authority=AUTHORITY,
+            coordinator=COORDINATOR,source=SOURCE)
  temp=marker.with_suffix('.tmp');temp.write_text(json.dumps(value));temp.chmod(0o600);temp.replace(marker)
-else:
- if old['authority']!=AUTHORITY:raise ValueError('refuse existing worker authority replacement')
 '''
             for name,value in {'WORKSPACE':endpoint['workspace'],'PYTHON':endpoint['python'],
                 'COORDINATOR':'http://127.0.0.1:'+str(args.forward_port),'AUTHORITY':args.authority,
-                'KEY':key,'SOURCE':endpoint['code'],'CACHEMAP':endpoint.get('checkpoint_caches',{})}.items():
+                'KEY':key,'SOURCE':endpoint['code'],'CACHEMAP':endpoint.get('checkpoint_caches',{}),
+                'FORWARD_PORT':args.forward_port}.items():
                 code=name+'='+repr(value)+'\n'+code
             subprocess.run(ssh+[shlex.quote(endpoint['python'])+' -c '+shlex.quote(code)],check=True,timeout=30)
     print('Verifier configuration validated.' if not (args.provision or args.start) else 'Requested narrow verifier preparation completed; inspect private process logs for runtime health.')

@@ -1,5 +1,20 @@
 # Live reward launch authorized — October 3, 2026
 
+At 18:47 UTC the original continuous controller remained alive with its exact
+start ticks; 31 current audit jobs were complete and both verifier identities
+held leases. Two actual retention operations removed eighteen duplicate completed
+verifier download ZIPs, recovering 9,520,312,600 bytes. Every removed replica had
+fresh full R2 archive hashing and original signature/local report/file checks;
+no model, report, job, archived submission or signed deadline was changed.
+Seven retention controls pass. See `docs/SUBMISSION_RETENTION.md` and private
+`submission-replica-retention-*` receipts in the continuous-upgrade directory.
+The operator provisioner now validates actual forward/worker argument bindings
+and source directories, preserves mismatched forwards, checks the remote listener,
+and refuses replacing a mismatched live worker. Five startup/process controls
+pass. This change is prospective; current scientific worker sources remain pinned.
+Training and held-out improvement for this epoch remain unproven, and automatic
+checkpoint/export retention is still required for bounded continuous disk usage.
+
 The continuous epoch's 33 in-window uploads have now been frozen and published;
 the actual controller remains alive and audits are progressing. Root found that
 verifier 2's retained SSH forward exposed remote 19082 while its new worker
