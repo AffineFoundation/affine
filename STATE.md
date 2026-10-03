@@ -1,3 +1,24 @@
+# Live reward launch authorized — October 3, 2026
+
+The operator's new nine-part goal explicitly authorizes live SN120 rewards,
+new-mechanism-only weight setting, a Discord launch announcement after actual
+cutover, continuing public adversarial mining and independently verified held-out
+improvement. See LIVE_LAUNCH_PLAN.md. Historical nonpayable epochs are preserved;
+there is no retroactive conversion or chain transaction yet.
+
+Root checked the legacy production weight guard exists. Both old transition and
+hourly-burn timers/services are now disabled/inactive, with before/after evidence
+in state/live-math-launch-preparation-v1. The new writer is not enabled yet.
+The independent source deployment and prospective authenticated reward bridge
+are being prepared. Model execution remains separate from chain signing.
+
+The original I3Math experiment has actual supervisor exit0 and no live original
+PIDs. It found a genuine K1/L1 pair on index1 after ten attempts, with full native
+self-verification, pair SHA91620d2d… and169,098,030bytes. This is a private
+generation-only result, not an independently audited public epoch or training.
+Its original evaluator is now free; small raw terminal/report receipts are
+preserved under state/live-math-launch-preparation-v1.
+
 # Bounded audit sampler implementation — October 3, 2026
 
 The rewrite now has an opt-in bounded-random-v1 GPU audit policy with per-UID

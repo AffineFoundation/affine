@@ -8,7 +8,17 @@ capabilities. After the deadline, the controller freezes submissions, publishes
 an audit history, verifies/scopes duplicate environment indices, calculates
 proposed weights and trains the next checkpoint. The next epoch waits for training.
 
-## Current pilot status
+## Live launch preparation — October 3, 2026
+
+The operator has authorized prospective live MATH rewards. Preparation is under
+way; weight setting is not live yet. Follow https://affine.io/llms.txt and
+https://affine.io/mining.json for actual opening and payout status. Use an agent
+to manage mining and watch GitHub main for continual updates. Signed epoch source
+pins are authoritative; rerun the signed-source bootstrap when the source changes.
+Historical pilot epochs remain nonpayable. The new bounded sampler and reward
+parameters are documented in [AUDIT_SAMPLING.md](AUDIT_SAMPLING.md).
+
+## Historical pilot status
 
 Pilot epochs are permanently nonpayable: they do not set blockchain weights.
 CPU multi-epoch trials and continuous GPU mining, verification, full-model
