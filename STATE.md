@@ -22,6 +22,17 @@ The current signed epoch retains source ae44200b…; these source changes requir
 future admission. See `docs/BUCKET_PUBLICATION.md` and `docs/TRANSPORT_RECOVERY.md`.
 The actual UID131 miner completed after the original deadline and received 403;
 its late candidate is not eligible. Its original exit-one receipt is preserved.
+Root subsequently froze commit 0fc239de… as candidate source c68f798e… and
+installed it into fresh directories on all five roles. Every actual installer
+completed with exit zero; independent SSH readback matched all 1,842 files on
+each node. No GPU job, active code replacement, public epoch manifest change or
+writer-anchor change occurred. This is source preparation, not future runtime
+admission or activation. Evidence:
+`state/live-math-launch-preparation-v1/distributed-preparation/future-source-0fc239de/source-install-v1/`.
+At 18:18 UTC, 11 current audit jobs had completed with 30 accepted batches and
+zero confirmed invalid outcomes; both verifiers had leases and the original
+continuous controller was actually live. Final scoring, the three configured
+training steps and after evaluation for this epoch remain pending.
 
 The continuous successor opened at 16:57:27 UTC with its original 17:27:27
 deadline, learned checkpoint f9ea6c2d… and source ae44200b…. All five separate
