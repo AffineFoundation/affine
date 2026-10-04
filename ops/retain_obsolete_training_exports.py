@@ -16,7 +16,25 @@ from ops.retain_verifier_downloads import verified_archive
 
 def protected_checkpoints(config,process_record,authority):
     c,protected=guard(config,process_record)
-    queue=Path(c['state'])/'roles/verifier-queue.sqlite3'
+    state=Path(c['state']);roles=state/'roles'
+    active=json.loads((state/'controller.json').read_text()).get('active') or {}
+    epoch=active.get('epoch')
+    # Training can finish before the coordinator records next_checkpoint (for
+    # example, while recovering its report/publication under disk pressure).
+    # Never treat that original active epoch's completed successor as obsolete.
+    if active.get('phase') in ('train','after') and epoch is not None:
+        if not isinstance(epoch,str) or re.fullmatch('[A-Za-z0-9_-]{1,200}',epoch)is None:raise ValueError('active training epoch binding')
+        priorpath=roles/(epoch+'-train.json')
+        if priorpath.exists():
+            prior=json.loads(priorpath.read_text());reportpath=roles/(prior['job_id']+'-report.json')
+            if reportpath.exists():
+                job=signed(json.loads((roles/(prior['job_id']+'-job.json')).read_text()),authority)
+                manifest=signed(job['manifest'],authority)
+                if job['role']!='train' or manifest['epoch']!=epoch:raise ValueError('pending original training epoch')
+                checker=RemoteJobs.__new__(RemoteJobs);checker.state=roles;checker.controller=SimpleNamespace(authority=SimpleNamespace(id=authority))
+                report=json.loads(reportpath.read_text());checker.checked(report,prior,manifest)
+                protected.add(final_candidate(job,report)['checkpoint'])
+    queue=roles/'verifier-queue.sqlite3'
     if queue.exists():
         with sqlite3.connect('file:'+str(queue)+'?mode=ro',uri=True) as db:
             for envelope, in db.execute('SELECT envelope FROM jobs WHERE status!="complete"'):

@@ -58,6 +58,12 @@ class RoutedJobs:
         if target['free_bytes']<source['required_bytes']:raise ValueError('trainer checkpoint download/output disk reserve')
         return dict(source,trainer_capacity=target)
 
+    def publication_capacity(self,cache):
+        return self.roles[self.owners.get(cache,self.initial_role)].publication_capacity(cache)
+
+    def training_resume(self,label,manifest,submissions,steps,replay):
+        return self.roles['train'].training_resume(label,manifest,submissions,steps,replay)
+
     def training_capacity(self,manifest,steps,submission_bytes=None):
         """Free bytes already account for installed packages and existing caches.
 

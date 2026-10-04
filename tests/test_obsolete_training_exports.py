@@ -1,4 +1,5 @@
 import base64,hashlib,json,os,sqlite3,tempfile,unittest
+from unittest.mock import patch
 from pathlib import Path
 from nacl.signing import SigningKey
 from subnet.storage import canonical
@@ -6,6 +7,25 @@ from ops.retain_completed_training import sha
 from ops.retain_obsolete_training_exports import final_candidate,protected_checkpoints
 
 class ObsoleteExportControls(unittest.TestCase):
+    def test_completed_current_training_successor_protected_before_status_advance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);state=root/'state';roles=state/'roles';roles.mkdir(parents=True)
+            (state/'controller.json').write_bytes(canonical({'checkpoint':{'id':'a'*64},'active':{'epoch':'epoch','phase':'train'}}))
+            config=root/'config.json';config.write_bytes(canonical({'state':str(state)}));record=root/'process.json'
+            ticks=Path('/proc',str(os.getpid()),'stat').read_text().rsplit(')',1)[1].split()[19];record.write_bytes(canonical({'child_pid':os.getpid(),'child_ticks':ticks,'config_sha256':sha(config)}))
+            key=SigningKey.generate();authority=key.verify_key.encode().hex()
+            def sign(value):return {'payload':value,'signer':authority,'signature':base64.b64encode(key.sign(canonical(value)).signature).decode()}
+            files={'config.json':'b'*64,'model.safetensors':'c'*64};cp=hashlib.sha256(canonical(files)).hexdigest()
+            job={'job_id':'epoch-train-original','role':'train','steps':3,'manifest':sign({'epoch':'epoch','checkpoint':{'id':'a'*64}})}
+            report={'new_checkpoint':{'id':cp,'files':files,'path':'/root/trainer/jobs/epoch-train-original/checkpoint-step-3'}}
+            (roles/'epoch-train.json').write_bytes(canonical({'job_id':job['job_id']}))
+            envelope=sign(job);(roles/(job['job_id']+'-job.json')).write_bytes(canonical(envelope))
+            (roles/(job['job_id']+'-report.json')).write_bytes(canonical(report))
+            with patch('ops.retain_obsolete_training_exports.RemoteJobs.checked') as checked:
+                self.assertEqual(protected_checkpoints(config,record,authority)[1],{'a'*64,cp});checked.assert_called_once()
+            envelope['payload']['steps']=2;(roles/(job['job_id']+'-job.json')).write_bytes(canonical(envelope))
+            with self.assertRaises(Exception):protected_checkpoints(config,record,authority)
+
     def test_current_successor_and_unfinished_original_jobs_are_protected(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);state=root/'state';roles=state/'roles';roles.mkdir(parents=True)

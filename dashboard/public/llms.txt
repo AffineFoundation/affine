@@ -43,22 +43,32 @@ below an earlier 22/32 diagnostic and does not establish sustained improvement
 or performance on a larger independent benchmark. Three optimizer steps remain
 configured per nonempty training epoch. Larger DeepMath/NuminaMath tasksets are
 not part of the active mining contract.
-A larger 128-task comparison is precommitted outside both the mining set and
-the fixed 32-task diagnostic. Its first separate H200 passed checkpoint hashing
-and CPU controls but fails actual CUDA context allocation, even with the provider's
-default runtime; no benchmark shards ran there. A separate retained H100 passes
-actual allocation with the approved copied runtime and independently checked
-approved source bytes. Full checkpoint hashes, original native controls, an
-honest rollout with model reload, and five tampering rejections passed. After
-actual control-process exit and GPU quiescence, the first 32-task baseline shard
-started. All eight shards are required before reporting a 128-task comparison;
-benchmark results are pending. All four baseline shards have completed and the
-first learned shard is running. Four of eight jobs are complete. This is partial coverage,
-not a 128-task improvement result. This comparison keeps original jobs, matched
-seeds and complete coverage, and will report paired gains/losses and uncertainty.
-See https://github.com/AffineFoundation/affine/blob/main/docs/INDEPENDENT_MATH_BENCHMARK.md.
-Hardware availability or a single positive comparison does not prove sustained
-learning. The public mining contract is unchanged.
+The separate precommitted 128-task benchmark has completed on the retained H100.
+Root independently checked all eight original signed jobs and bound reports,
+matched seeds/task identities, complete native/model verification, the signed
+final result and the original supervisor's successful wait. The base checkpoint
+scored 88/128 (68.75%); the nine-update checkpoint scored 89/128 (69.53%), with
+six paired gains and five losses. Exact two-sided McNemar p=1.0: this does not
+establish improvement or sustained learning. It excludes mining tasks and the
+fixed 32-task diagnostic. This comparison does not assess the next checkpoint.
+See https://github.com/AffineFoundation/affine/blob/main/docs/INDEPENDENT_MATH_BENCHMARK.md
+and docs/data/math128-20261004.json for the complete aggregate result.
+
+The original epoch-six trainer completed three updates, but its controller
+encountered a disk-reserve check before recovering the completed report. Root
+has authenticated that report and protected the completed successor. Checkpoint
+publication/recovery is underway without rerunning training or changing the
+signed source. Discovery remains authoritative about whether mining is open.
+Main includes a prospective fix that resumes bound original training requests
+before checking a new allocation, and budgets existing-checkpoint uploads for
+metadata rather than new model copies. It is not yet a live source upgrade.
+See docs/TRAINING_REPORT_RECOVERY.md.
+
+An expiring completed-epoch deployment hold is tested and waiting for epoch six
+to finish. It only holds a completed boundary, resumes the original controller
+within fifteen minutes if no upgrade completes, and never cancels an active
+epoch or restarts GPU jobs. Checkpoint/native/GPU admission remains separate.
+See docs/CONTROLLER_BOUNDARY_LEASE.md.
 
 ## How to start mining
 

@@ -66,6 +66,34 @@ class RemoteJobs:
         required=2*result['checkpoint_bytes']+2*1024**3
         if result['free_bytes']<required:raise ValueError('remote checkpoint history disk reserve')
         return dict(result,required_bytes=required)
+    def publication_capacity(self,cache):
+        # Upload streams an existing export; it does not allocate another model
+        # or a new checkpoint. Keep the training reserve for new training only.
+        code="import json,os;from pathlib import Path;p=Path("+repr(cache)+");s=os.statvfs(p);print(json.dumps(dict(free_bytes=s.f_bavail*s.f_frsize,checkpoint_bytes=sum(q.stat().st_size for q in p.iterdir() if q.is_file()))))"
+        result=json.loads(self.command(shlex.quote(self.python)+' -I -B -c '+shlex.quote(code)))
+        if result['checkpoint_bytes']<=0 or result['free_bytes']<1024**2:raise ValueError('existing checkpoint upload metadata reserve')
+        return dict(result,required_bytes=1024**2,purpose='existing-checkpoint-streaming-upload')
+    def training_resume(self,label,manifest,submissions,steps,replay):
+        record=self.state/(label+'.json')
+        if not record.exists():return None
+        prior=json.loads(record.read_text())
+        job=signed(json.loads((self.state/(prior['job_id']+'-job.json')).read_text()),self.controller.authority.id)
+        if (job.get('role')!='train' or prior.get('role')!='train' or job.get('job_id')!=prior['job_id']
+                or hashlib.sha256(canonical(job)).hexdigest()!=prior['job_sha256']
+                or signed(job['manifest'],self.controller.authority.id)!=manifest
+                or prior['manifest_sha256']!=hashlib.sha256(canonical(manifest)).hexdigest()
+                or job.get('steps')!=steps or type(job.get('steps'))is not int or type(steps)is not int or not 1<=steps<=32
+                or job.get('training_policy')!=FULL_POLICY or job.get('replay')!=replay
+                or [r['sha256'] for r in job.get('submissions',[])]!=[r['sha256'] for r in submissions]):
+            raise ValueError('original training request changed')
+        reportpath=self.state/(prior['job_id']+'-report.json')
+        if reportpath.exists():
+            self.checked(json.loads(reportpath.read_text()),prior,manifest);phase='complete'
+        else:
+            phase=self.remote_status(prior['job_id'])['phase']
+            if phase not in ('running','complete'):raise ValueError('original training not resumable; inspect without relaunch')
+        return dict(resuming_original_training=True,original_job_id=prior['job_id'],original_phase=phase,
+                    new_training_started=False,new_disk_reserve_not_required=True)
     def remote_status(self,identifier):
         code="from subnet.remote_runner import probe;import json;print(json.dumps(probe("+repr(self.workspace)+","+repr(identifier)+")))"
         return json.loads(self.command('cd '+shlex.quote(self.code)+' && '+shlex.quote(self.python)+' -B -c '+shlex.quote(code)))
@@ -80,6 +108,7 @@ class RemoteJobs:
                 self.copy_from(self.workspace+'/jobs/'+prior['job_id']+'/report.json',reportpath)
                 return self.checked(json.loads(reportpath.read_text()),prior,manifest)
             if status['phase'] in ('failed','not_launched'):
+                if role=='train':raise RuntimeError('original training terminal or absent; refuse automatic relaunch')
                 save(self.state/(prior['job_id']+'-failure.json'),status);prior=None
             elif status['phase']!='running':raise ValueError('unknown authoritative remote job status')
         if prior is None:
@@ -166,7 +195,7 @@ class RemoteController(Controller):
         return dict(checkpoint,read_urls={name:self.bucket.presign('public/checkpoints/'+checkpoint['id']+'/'+name) for name in files})
 
     def publish_remote_checkpoint(self,manifest,remote_path):
-        cp=manifest['checkpoint'];capacity=self.jobs.capacity(remote_path)
+        cp=manifest['checkpoint'];capacity=(self.jobs.publication_capacity(remote_path) if hasattr(self.jobs,'publication_capacity') else self.jobs.capacity(remote_path))
         report=self.jobs.run(manifest['epoch']+'-publish-'+cp['id'][:8],'upload',manifest,remote_path,
             put_urls={n:self.bucket.presign('public/checkpoints/'+cp['id']+'/'+n,'put_object',3600) for n in cp['files']})
         observed={}
@@ -286,14 +315,16 @@ class RemoteController(Controller):
             self.bucket.json('public/'+epoch+'/training.json',self.signed(current))
             return output,current
         receipts=json.loads((self.state/(epoch+'-scores.json')).read_text())['receipts']
-        planned_bytes=training_submission_bytes(receipts,reports,manifest)
-        capacity=(self.jobs.training_capacity(manifest,steps,submission_bytes=planned_bytes) if hasattr(self.jobs,'training_capacity') else self.jobs.capacity(checkpoint_path))
         submissions=[dict(url=self.bucket.presign(receipts[m]['frozen_key']),sha256=receipts[m]['sha256']) for m,r in reports.items() if r['accepted']]
         if not submissions:raise ValueError('no independently verified training data')
         extra={'replay':replay} if replay is not None else {}
         training_manifest=manifest
         if manifest.get('audit_policy',{}).get('version')=='bounded-random-v1':
             training_manifest=json.loads((self.state/(epoch+'-audit-manifest.json')).read_text())
+        planned_bytes=training_submission_bytes(receipts,reports,manifest)
+        capacity=(self.jobs.training_resume(epoch+'-train',training_manifest,submissions,steps,replay) if hasattr(self.jobs,'training_resume') else None)
+        if capacity is None:
+            capacity=(self.jobs.training_capacity(manifest,steps,submission_bytes=planned_bytes) if hasattr(self.jobs,'training_capacity') else self.jobs.capacity(checkpoint_path))
         remote=self.jobs.run(epoch+'-train','train',training_manifest,checkpoint_path,submissions=submissions,steps=steps,training_policy=FULL_POLICY,**extra)
         new=dict(remote['new_checkpoint']);path=new.pop('path')
         if new['id']==manifest['checkpoint']['id']:raise ValueError('unchanged trained checkpoint')

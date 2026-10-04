@@ -1,5 +1,23 @@
 # Independent paired math evaluation
 
+The first complete comparison finished on October 4, 2026. Root independently
+checked all eight original signed jobs and their bound reports, the signed cohort
+and final result, the actual successful supervisor wait, and complete paired
+indices, seeds, task hashes and model/native verification results. The base
+checkpoint solved **88/128 (68.75%)**; the nine-update checkpoint solved
+**89/128 (69.53%)**. There were six paired gains and five losses; the exact
+two-sided McNemar p-value is **1.0**. This does **not** demonstrate improvement.
+The 95% Wilson accuracy intervals are 60.27–76.13% and 61.08–76.84%, respectively.
+Full aggregate results are in [the result record](data/math128-20261004.json).
+Reserved task identities remain private so miners cannot target the cohort.
+
+This finding supersedes the earlier pending benchmark status. It does not
+measure the subsequent epoch-six checkpoint or establish a trend. The fixed
+32-task diagnostic's earlier gain is not a substitute for this larger result.
+Continue measuring later checkpoints under precommitted matched settings; treat
+this cohort as a monitoring set after publishing its aggregate outcome, and
+reserve a fresh untouched set for a later independent confirmation.
+
 The fixed 32-task chart is a diagnostic, not sufficient evidence of sustained
 learning. A separate comparison uses 128 tasks selected before any outcomes,
 from the 750 reserved MATH tasks, excluding both mining tasks and the diagnostic

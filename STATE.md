@@ -1,5 +1,43 @@
 # Live reward launch authorized — October 3, 2026
 
+The first separate 128-task paired comparison finished on October 4. Root checked
+all eight original signed jobs and bound reports, full matched indices/seeds/task
+hashes and binary verified native outcomes, the signed cohort and final result,
+and the original successful supervisor wait. Baseline solved 88/128; the learned
+nine-update checkpoint solved 89/128. Six gains/five losses give exact paired
+two-sided p=1.0. This does not establish improvement. Reserved identities remain
+private; aggregate evidence is published in docs/data/math128-20261004.json and
+docs/INDEPENDENT_MATH_BENCHMARK.md. The full goal remains active.
+
+Epoch six's original trainer completed three updates, but its coordinator retry
+hit the disk reserve before fetching the completed report. Root authenticated
+that original report and actual successful exit/process absence, then protected
+successor 66009823 in pending state without changing the active train phase or
+nine cumulative completed steps. An upload-only recovery is publishing the
+original output and will independently read every R2 byte before restoring its
+metrics; training was not repeated. Its original upload runner/child are live
+under checked start ticks. Evidence lives under completed-epoch6-training-original-
+recovery-v1 and completed-epoch6-checkpoint-publication-recovery-v1.
+
+Main now checks exact original signed training requests before reapplying a new-
+job disk reserve. Existing running/completed jobs reuse their original handles;
+changed or failed/missing originals refuse. Existing-checkpoint streaming uploads
+reserve metadata rather than another model copy. Seven new controls, eighteen
+remote-backend controls, nine routing controls and three download-capacity controls
+pass. The obsolete-export guard additionally protects the current epoch's bound
+completed training successor before coordinator status advances; three export
+and eight existing archive/retirement controls pass. The original failed final-
+export housekeeper's actual exit one is preserved, and its corrected replacement
+is deployed as obsolete-export-retention-watch-v2. These public runtime fixes
+still require future source admission; the signed live source is unchanged.
+
+An expiring completed-epoch hold is also tested and deployed as a waiting guard
+for epoch six. Seven real-process controls pass. It only stops the original
+controller after that epoch completes and releases its own hold within fifteen
+minutes or on interruption; active work and next epochs are never cancelled.
+The lease is not source/checkpoint/native/GPU admission. Its original process is
+recorded under boundary-lease-watch-v1; no completed-boundary activation is claimed.
+
 Scoped model-cache housekeeping is now deployed as a separate actual-wait
 worker. Its first original completed cycle reclaimed 15,242,726,234 bytes from
 verifier two's obsolete f9 cache after authenticating the public descriptor and
