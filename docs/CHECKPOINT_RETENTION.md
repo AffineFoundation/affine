@@ -27,3 +27,19 @@ descriptor was closed.
 This is a narrow operator primitive, not a complete automatic model-history
 policy. Unpublished intermediate optimizer snapshots still require separate
 archival and qualification. Long-term bounded disk usage remains unfinished.
+
+`remove_verified_hardlink_alias` handles one explicitly known two-path alias.
+Both paths must name the same content-addressed checkpoint, contain exactly the
+authenticated file map and refer to the same regular inodes with exactly two
+links. Unknown additional links, current or active checkpoint IDs, missing full
+archive readback, open descriptors, memory maps and GPU activity all refuse the
+operation. It removes only the alias and preserves the source. That operation
+reports zero physical bytes freed; the remaining source can subsequently use
+ordinary retirement after another protection check.
+
+Fifteen checkpoint controls, including seven real hardlink cases, pass; the
+combined checkpoint, trainer and submission retention suite passes 33 controls.
+The epoch-eight verifier cleanup observer has checked the two original cache
+paths and is checking every R2 archive byte. Retirement remains conditional on
+the successor becoming current and the old checkpoint being unreferenced. It
+does not change job records, proofs, leases, model computation or payout policy.
