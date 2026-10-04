@@ -36,3 +36,6 @@ submission downloads retain their 5 GiB bound. This admits the existing 7B
 model's approximately 15 GB single-file export without weakening signature,
 full-byte verification or active-checkpoint protections. These operator-only
 changes do not alter pinned training jobs or numerical settings.
+The ordinary completed-job and obsolete-final housekeeping entry points use
+these same bounds; obsolete-final archives reuse the cache-retention reader's
+signed-descriptor and complete streaming verification.

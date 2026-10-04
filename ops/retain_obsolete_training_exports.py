@@ -109,14 +109,12 @@ else:
         result=dict(removed_bytes=0,removed_replicas=0,deferred=observed.get('deferred'),current_and_pending_preserved=True)
         save(out/'completion.private.json',result);return result
     bucket=Bucket(c['bucket']);cp=selected['checkpoint']
-    descriptor=signed(json.loads(bucket.get('public/checkpoints/'+cp+'/authorities/'+authority+'/checkpoint.json')),authority)
-    if descriptor['id']!=cp or descriptor['files']!=selected['files']:raise ValueError('authenticated original public archive')
-    def archive(item):
-        name,digest=item;key='public/checkpoints/'+cp+'/'+name
-        metadata=bucket.client.head_object(Bucket=bucket.name,Key=key);size=metadata['ContentLength']
-        if type(size)is not int or not 0<size<=5*1024**3:raise ValueError('bounded archived checkpoint object')
-        return name,verified_archive(bucket,dict(archive_key=key,sha256=digest,size=size))
-    with concurrent.futures.ThreadPoolExecutor(4) as pool:readbacks=dict(pool.map(archive,selected['files'].items()))
+    # Reuse the same signed-descriptor/full-stream checks as cache retention.
+    # A local import avoids the protection helper's module dependency cycle.
+    from ops.retain_checkpoint_caches import archived_files
+    readbacks=archived_files(bucket,cp,authority)
+    if readbacks is None or {n:v['sha256'] for n,v in readbacks.items()}!=selected['files']:
+        raise ValueError('authenticated original public archive')
     save(out/'fresh-complete-public-readbacks.private.json',readbacks)
     _,protected=protected_checkpoints(config_path,process_record,authority)
     if cp in protected:raise ValueError('checkpoint became protected during archive verification')

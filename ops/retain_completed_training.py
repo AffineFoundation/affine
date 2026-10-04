@@ -132,7 +132,8 @@ for step in SELECTED['exports']:
  p=Path(BASE['workspace'])/'jobs'/BASE['job_id']/('checkpoint-step-'+str(step));members=list(p.iterdir());assert 1<=len(members)<=32
  files={}
  for f in members:
-  assert f.is_file() and not f.is_symlink() and 0<f.stat().st_size<=5*1024**3
+  limit=(32 if f.name.endswith('.safetensors') else 5)*1024**3
+  assert f.is_file() and not f.is_symlink() and 0<f.stat().st_size<=limit
   files[f.name]={'sha256':m.hash_file(f),'size':f.stat().st_size}
  exports[str(step)]={'directory':str(p),'files':files,'checkpoint':m.digest({n:v['sha256'] for n,v in files.items()})}
 print(json.dumps({'base':BASE,'exports':exports}))
