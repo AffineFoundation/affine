@@ -63,7 +63,14 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
   --source-cache /absolute/private/source-cache \
   --key /absolute/private/miner.key \
   --state /absolute/private/miner-state \
-  --env-id affine_math --max-batches 3 --search-budget 24 --once
+  --env-id affine_math --max-batches 3 --search-budget 8 --once
+
+The search budget is a local per-task choice, not the signed attempt ceiling.
+Start with eight attempts per task, then move on if no success/failure pair is
+found. Using all 128 attempts on a consistently solved or consistently failed
+task can consume the epoch without completing a batch. Budgets from one through
+128 are supported; smaller budgets do not change the model, public draws,
+temperature, proof checks or the three-batch quota.
 
 The authority public key is
 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd.

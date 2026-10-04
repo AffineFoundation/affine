@@ -82,7 +82,7 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
   --source-cache /private/affine-approved-source \
   --key /private/miner.seed \
   --state /private/affine-miner-cache \
-  --env-id affine_math --max-batches 3 --search-budget 24 --once
+  --env-id affine_math --max-batches 3 --search-budget 8 --once
 ```
 
 The key file contains the miner's 32-byte Ed25519 seed encoded as hexadecimal;
@@ -90,6 +90,12 @@ keep it private with mode 600. Never provide a coldkey, mnemonic, bucket credent
 or wallet file to another person. Discovery is read-only; upload capabilities are
 sealed to the miner and remain private. The manifest specifies model hashes,
 environments, harness, K/L requirements, runtime, deadlines and upload limits.
+The local search budget limits attempts on each task before trying another.
+Eight is a starting recommendation, not a change to the signed 128-attempt
+ceiling or sampler. Spending every attempt on one task that always succeeds or
+always fails can exhaust the epoch without producing a pair. Supported budgets
+range from one through 128; the miner must still follow the same public draws
+and submit a complete verified success/failure pair.
 Watch for each fresh epoch and repeat the bootstrap once with its current
 source/checkpoint. Do not restart an existing attempt merely because observation
 timed out. The bootstrap downloads the approved task asset and source, verifies
