@@ -87,7 +87,7 @@ def run(a):
             if key.id not in manifest['capabilities']:raise ValueError('identity not registered for epoch')
             capability=delegated_capability(manifest,delegated) if delegated else None
             checkpoint=checkpoint_download(manifest,Path(a.state)/manifest['checkpoint']['id'])
-            miner=Miner(key,manifest,checkpoint,capability=capability,state_path=Path(a.state)/f"{manifest['epoch']}-{key.id}.zip")
+            miner=Miner(key,manifest,checkpoint,capability=capability,state_path=Path(a.state)/f"{manifest['epoch']}-{key.id}.zip", progress_path=Path(a.state)/f"{manifest['epoch']}-{key.id}.progress.json")
             if miner.batches and time.time()<manifest['deadline']:
                 try:miner.upload()
                 except EpochClosed:logging.info('signed epoch closed before local batches could be uploaded')

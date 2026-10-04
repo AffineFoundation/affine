@@ -128,3 +128,12 @@ E10 activates authenticated-verifier-compact-inputs-v2. The coordinator derives 
 E10 activates native-math-grader-pinned-indeterminate-v1 with environment source hash 1d1446b678abcffd818318a2e6e3d90a74341a628fbde1fdd9da5ce2b91a4947. Historical E9 grading is preserved. The older grader could classify parsing/comparison timeouts as zero. The current grader classifies timeouts, missing references, runtime mismatches, malformed/nonfinite/out-of-domain results and execution faults as indeterminate. These do not qualify as failure samples and do not trigger fraud penalties. Completed native correct and incorrect answers retain scores one and zero.
 
 The signed environment binds approved Python 3.12.3 interpreter/stdlib profiles, exact grader dependency inventories, isolated import rules and helper source. Use its pinned environment and deployment instructions: unqualified interpreter or dependency builds can produce indeterminate grading. All seven roles passed actual native-grader and compact/trainer integration controls before E10 activation. Details: https://github.com/AffineFoundation/affine/blob/main/docs/NATIVE_MATH_GRADER_SECURITY.md
+
+## Prospective miner timing
+
+GitHub main adds a private, bounded epoch-and-identity progress sidecar for the
+next approved source. It records task/attempt timing, outcome counts and completed
+batch counts, without response text, tokens, arrays, proofs, keys or upload URLs.
+Observation write failures do not change mining. Source763 does not contain this
+telemetry; miners must keep using the signed source. Progress counters never
+replace an uploaded artifact, authenticated audit or reward evidence.
