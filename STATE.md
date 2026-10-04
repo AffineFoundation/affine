@@ -1,5 +1,41 @@
 # Live reward launch authorized — October 3, 2026
 
+October 4 source preparation update: qualified source 3bacecbf (public code
+9722bbbc) is now published in R2. Root downloaded the complete 6,637,530-byte
+archive and signed descriptor and checked their exact hashes. Publication did
+not alter the active epoch, live controller or chain-writer approval.
+
+This candidate includes covered-pair training, bounded concurrent freezing,
+checkpoint-read recovery and the native math JSON argument transport fix. All
+five roles passed CPU admission on checkpoint 660 with full source/model hashes,
+34 contexts and eight native controls. A separate H100 CPU control passed 16
+normal/null-text grader outcomes. The complete H200 training/proof control passed
+independent review: five pairs, three updates, all 339 tensors receiving gradients,
+new checkpoint reload and a changed-proof rejection. Peak allocation was
+78,636,225,536 bytes. These controls are not public mining epochs or learning gains.
+
+The original 200-task baseline failed after 80 verified tasks when a model reply
+contained a null character rejected by the grader's argv transport. Original
+failed runner/child terminal evidence and those 80 diagnostic records remain.
+A signed transport-only amendment preserves all 200 problems, seeds, checkpoint
+660, harness and statistical test; the entire baseline is running again under
+the repaired source. Its original supervisor is live and four shards completed
+at the latest observation. No benchmark score or improvement is claimed yet.
+
+The original epoch-seven controller and two verifiers remain live. All 90
+submissions are frozen, with 88 completed submission audits at the latest
+observation. Four historical HTTP403 failures remain linked to independently
+verified successful replacement jobs. Future-source successor hydration is
+waiting on the actual original epoch-seven training output. Private preparation,
+activation, controller-parent and verifier-parent helpers now bind the exact
+completed boundary, future checkpoint admissions, preserved reward history,
+approved source extension and covered policy. These helpers have not activated
+the upgrade; actual five-role successor admission and the original unexpired
+completed-boundary hold remain required.
+
+The following older preparation notes are retained as historical evidence; the
+3bace candidate above supersedes the earlier future-source candidates.
+
 Epoch-seven infrastructure recovery succeeded. Root authenticated all four new
 worker reports against their original signed requests, identical frozen input
 hashes, model descriptors, source/runtime pins and original job deadlines. Twelve
