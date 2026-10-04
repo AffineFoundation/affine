@@ -46,6 +46,19 @@ def role_time_budget(config,role):
     if role not in roles:raise ValueError('remote role')
     return budgets.get(role,3600)
 
+def dispatch_verifications(jobs, items, operation):
+    """Keep initial and escalation work bounded by the admitted worker roster.
+
+    Ordered results preserve scoring and original labels; queued job recovery
+    remains responsible for reusing completed or still-live signed requests.
+    """
+    items = list(items)
+    if hasattr(jobs, 'queue') and items:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(len(items), len(jobs.verifiers))) as pool:
+            return list(pool.map(operation, items))
+    return [operation(item) for item in items]
+
 class RemoteJobs:
     def __init__(self,config,controller):
         role_time_budget(config,'evaluate')
@@ -294,11 +307,7 @@ class RemoteController(Controller):
             remote=self.jobs.run(epoch+'-verify-'+miner[:8],'verify',audit_manifest,checkpoint_path,
                 submissions=[dict(url=self.bucket.presign(receipt['frozen_key']),sha256=receipt['sha256'])])
             return miner,receipt,remote
-        if hasattr(self.jobs,'queue'):
-            from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=min(len(receipts) or 1,len(self.jobs.verifiers))) as pool:
-                verified=list(pool.map(verify_one,receipts.items()))
-        else:verified=[verify_one(item) for item in receipts.items()]
+        verified=dispatch_verifications(self.jobs,receipts.items(),verify_one)
         for miner,receipt,remote in verified:
             report=remote['audits'][0]
             if report['submission_sha256']!=receipt['sha256']:raise ValueError('frozen artifact report binding')
@@ -318,11 +327,15 @@ class RemoteController(Controller):
                 if not extra:continue
                 receipt=receipts[miner];counts[receipt['sha256']]+=extra
             expanded=dict(audit_manifest,audit_policy=dict(audit_manifest['audit_policy'],submission_counts=counts))
-            for miner,extra in additions.items():
-                if not extra:continue
+            def expand_one(item):
+                miner,extra=item
                 receipt=receipts[miner]
                 remote=self.jobs.run(epoch+'-verify-expanded-'+miner[:8],'verify',expanded,checkpoint_path,
                     submissions=[dict(url=self.bucket.presign(receipt['frozen_key']),sha256=receipt['sha256'])])
+                return miner,receipt,remote
+            expanded_reports=dispatch_verifications(self.jobs,
+                [(miner,extra) for miner,extra in additions.items() if extra],expand_one)
+            for miner,receipt,remote in expanded_reports:
                 report=remote['audits'][0]
                 if report['submission_sha256']!=receipt['sha256']:raise ValueError('expanded frozen artifact binding')
                 require_report(manifest,report)
