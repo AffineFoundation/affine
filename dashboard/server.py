@@ -262,13 +262,13 @@ def serve(db, host, port):
                 data = json.dumps(db.snapshot(current_only=True) if path != '/health' else {'status':'ok'}).encode()
                 kind = 'application/json'
             else:
-                files = {'/':'index.html', '/index.html':'index.html', '/llms.txt':'llms.txt', '/network.js':'network.js', '/network.css':'network.css', '/network-favicon.svg':'network-favicon.svg', '/network-haffer.ttf':'network-haffer.ttf', '/network-mono.ttf':'network-mono.ttf'}
+                files = {'/':'index.html', '/index.html':'index.html', '/llms.txt':'llms.txt', '/reward-policy.json':'reward-policy.json', '/network.js':'network.js', '/network.css':'network.css', '/network-favicon.svg':'network-favicon.svg', '/network-haffer.ttf':'network-haffer.ttf', '/network-mono.ttf':'network-mono.ttf'}
                 if path not in files:
                     self.send_error(404)
                     return
                 file = PUBLIC/files[path]
                 data = file.read_bytes()
-                kind = {'.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.svg':'image/svg+xml', '.ttf':'font/ttf', '.txt':'text/plain'}[file.suffix]
+                kind = {'.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.svg':'image/svg+xml', '.ttf':'font/ttf', '.txt':'text/plain', '.json':'application/json'}[file.suffix]
             self.send_response(200)
             self.send_header('Content-Type', kind+'; charset=utf-8')
             self.send_header('Content-Length', str(len(data)))
@@ -294,13 +294,16 @@ def export_snapshot(snapshot, destination, public=PUBLIC):
     # This export target is the production static website directory. Legacy
     # website pushes regenerate a historical guide, so restore our canonical
     # public guide atomically whenever it differs. No private URLs are used.
-    guide = Path(public)/'llms.txt'
-    target = destination.parent/'llms.txt'
-    content = guide.read_bytes()
-    if not target.exists() or target.read_bytes() != content:
-        temporary_guide = target.with_suffix('.tmp')
-        temporary_guide.write_bytes(content)
-        temporary_guide.replace(target)
+    for name in ('llms.txt','reward-policy.json'):
+        source = Path(public)/name
+        if name=='reward-policy.json' and not source.exists():
+            continue
+        target = destination.parent/name
+        content = source.read_bytes()
+        if not target.exists() or target.read_bytes() != content:
+            temporary_guide = target.with_suffix('.tmp')
+            temporary_guide.write_bytes(content)
+            temporary_guide.replace(target)
 
 
 def main():
