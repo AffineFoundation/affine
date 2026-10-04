@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import verifiers.v1 as vf
 from datasets import load_dataset
+from subnet.native_math_grader import isolated_argv
 
 DATASET = "DigitalLearningGmbH/MATH-lighteval"
 SPLIT = "train"
@@ -38,6 +40,27 @@ BOXED_OPEN = "\\boxed{"
 def verify_args(gold: str, reply: str) -> list[str]:
     """Transport model text without putting null bytes in process arguments."""
     return ["--json-arguments", json.dumps([gold, reply], ensure_ascii=True)]
+
+
+async def run_grader(runtime, args: list[str]):
+    # Select the approved role interpreter for uv's isolated script environment.
+    # Python -I ignores inherited PYTHONPATH/user site and script-directory imports.
+    argv = await runtime.prepare_uv_script(VERIFY, env={"UV_PYTHON": sys.executable})
+    expected = str(Path(getattr(runtime, "scripts_dir", "/tmp/vf-scripts")) / (hashlib.sha256(VERIFY).hexdigest() + ".py"))
+    if not isinstance(argv, list) or not argv or argv[-1] != expected:
+        raise RuntimeError("native MATH grader transport profile mismatch")
+    return await runtime.run([*argv[:-2], *isolated_argv(argv[-2], argv[-1], args)], {})
+
+
+def grader_score(result) -> float:
+    if result.exit_code != 0:
+        raise RuntimeError("native MATH grader indeterminate; retry without miner penalty")
+    # Only the exact two native outcomes count; no empty, NaN, arbitrary numeric
+    # or multi-line output may manufacture an unsuccessful training sample.
+    output = result.stdout.strip()
+    if output not in ("0.0", "1.0"):
+        raise RuntimeError("native MATH grader invalid output; retry without miner penalty")
+    return float(output)
 
 
 def task_name(problem: str) -> str:
@@ -72,24 +95,23 @@ class MathData(vf.TaskData):
 
 class MathTask(vf.Task[MathData]):
     async def setup(self, runtime: vf.Runtime) -> None:
-        await runtime.prepare_uv_script(VERIFY)
+        result = await run_grader(runtime, ["--runtime-check"])
+        if result.exit_code != 0:
+            raise RuntimeError("approved MATH grader runtime unavailable; retry without miner penalty")
+        status = json.loads(result.stdout)
+        if status.get("status") != "ready":
+            raise RuntimeError("MATH grader runtime did not attest readiness")
 
     @vf.reward(weight=1.0)
     async def correct(self, trace: vf.Trace, runtime: vf.Runtime) -> float:
-        result = await runtime.run_uv_script(
-            VERIFY, args=verify_args(self.data.answer, trace.last_reply or ""))
-        if result.exit_code != 0:
-            raise RuntimeError(f"verify.py failed: {result.stderr.strip()[-500:]}")
-        lines = result.stdout.strip().splitlines()
-        return float(lines[-1]) if lines else 0.0
+        result = await run_grader(
+            runtime, verify_args(self.data.answer, trace.last_reply or ""))
+        return grader_score(result)
 
     async def validate(self, runtime: vf.Runtime) -> bool:
-        result = await runtime.run_uv_script(
-            VERIFY, args=verify_args(self.data.answer, BOXED_OPEN + self.data.answer + "}"))
-        if result.exit_code != 0:
-            raise RuntimeError(f"verify.py failed: {result.stderr.strip()[-500:]}")
-        lines = result.stdout.strip().splitlines()
-        return bool(lines) and float(lines[-1]) == 1.0
+        result = await run_grader(
+            runtime, verify_args(self.data.answer, BOXED_OPEN + self.data.answer + "}"))
+        return grader_score(result) == 1.0
 
 
 class MathConfig(vf.TasksetConfig):

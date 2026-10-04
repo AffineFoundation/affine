@@ -115,3 +115,9 @@ Prospective optimization, not the active contract: `docs/FULL_FORWARD_SAMPLER_QU
 ## Prospective compact training transport
 
 The checkout implements authenticated-verifier-compact-inputs-v2 for a future explicitly signed epoch. It is not active for E9. The coordinator derives canonical accepted batch documents from original COMPLETE verifier jobs, durably reads them back and signs a compact receipt nesting the unchanged original ZIP admission. The trainer receives those exact documents rather than downloading proof arrays again; original ZIPs and full verification history remain in R2 for audit. The training objective and sampler verification are unchanged. Every participating role must admit the new sealed source before activation. Details: https://github.com/AffineFoundation/affine/blob/main/docs/COMPACT_TRAINING_INPUTS_V2.md
+
+## Prospective native MATH grading hardening
+
+The checkout implements native-math-grader-pinned-indeterminate-v1 for future signed epochs. It is not active for historical E9. The older native grader could classify parsing/comparison timeouts as score zero; that historical contract is preserved, and its verification is not evidence of the new timeout policy. The new grader treats timeouts, missing references, runtime mismatches, empty/malformed/nonfinite/out-of-domain outputs and execution faults as indeterminate. Such attempts do not qualify as negative training samples and do not trigger fraud penalties. Completed native correct and incorrect answers retain scores one and zero.
+
+The new signed environment binds exact approved interpreter/stdlib profiles, grader dependency inventories, isolated import rules and the grader helper source. Local controls and 91 isolated remote controls across all seven roles passed; immutable production source admission and next-epoch activation remain required. Details: https://github.com/AffineFoundation/affine/blob/main/docs/NATIVE_MATH_GRADER_SECURITY.md

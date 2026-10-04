@@ -2287,3 +2287,17 @@ source and private checkpoint30ee. A separately scoped restore qualification is
 being launched after a fresh complete staged-file readback, retaining original
 parent optimizer step 3, 23 shard commitments and all 339 parameter inventories.
 No public optimizer-state activation is claimed by staging.
+
+
+## Prospective native MATH grader qualification complete
+
+Native grading no longer certifies timeouts or malformed runtime output as
+negative samples under the prospective profile. Exact interpreter/stdlib pairs,
+five grader distribution inventories and isolated -I -S execution are bound.
+All seven existing roles passed direct and actual native-runtime controls
+(91 remote controls); the agent ran 93 local tests, and root independently ran
+71 native/source-pin/old-source/backend controls. Root matched every final
+review asset hash before committing. Evidence:
+state/root-audits/math-grader-security-20261004-v1/final-prospective-review.private.json.
+The historical E9 source and reports remain unchanged. Production source sealing
+and prospective role admission are still required before opening E10.

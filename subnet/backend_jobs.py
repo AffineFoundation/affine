@@ -220,6 +220,17 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
             raise ValueError('compact input requires covered/persistent objective')
         if not {'subnet/compact_training_inputs.py','subnet/training_receipts.py'} <= set(job.get('source_files',{})):
             raise ValueError('compact policy source pins required for every role')
+    # Prospective native MATH contracts pin the imported grader transport helper.
+    # Historical signed epochs without this marker keep their original pin set.
+    definitions = manifest.get('environments', [])
+    if definitions is None:definitions = []
+    native_specs = [row.get('spec', {}) for row in definitions if isinstance(row, dict)]
+    if isinstance(manifest.get('environment'), dict):native_specs.append(manifest['environment'])
+    if any(spec.get('id') == 'affine_math' and
+           'native-math-grader-pinned-indeterminate-v1' in spec.get('config', {}).get('dependency_versions', {})
+           for spec in native_specs):
+        if 'subnet/native_math_grader.py' not in job.get('source_files', {}):
+            raise ValueError('prospective native MATH grader source pin required')
     required=SOURCE_FILES if required_source_files is None else required_source_files
     if not required or not set(required)<=set(job.get('source_files',{})):raise ValueError('missing worker source pins')
     for name,sha in job['source_files'].items():

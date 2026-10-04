@@ -107,6 +107,9 @@ def _dependency_versions(source_id, tool_error_policy=None):
     for name in names:
         try:versions[name]=version(name)
         except PackageNotFoundError:raise RuntimeError(f'required environment dependency missing: {name}')
+    if source_id == "affine_math":
+        from .native_math_grader import dependency_binding
+        versions.update(dependency_binding())
     return versions
 
 
@@ -186,6 +189,8 @@ def _source_hash(spec):
     if snapshot:
         files.append(('tasks', _hash(_snapshot_path(spec.config))))
     files.append(('adapter',_hash(__file__)))
+    if spec.id == 'affine_math':
+        files.append(('native_math_grader',_hash(PACKAGE_ROOT/'native_math_grader.py')))
     if is_corpus_id(spec.id):
         files.extend((name,_hash(PACKAGE_ROOT/name)) for name in ('math_corpus_provider.py','math_corpus_assets.py','math_corpus.py'))
     if spec.config.get('prolog_session_revision') is not None:
