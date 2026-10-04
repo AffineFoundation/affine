@@ -19,6 +19,26 @@ from .distributed_roles import authenticate, digest
 from .storage import canonical
 
 
+def checkpoint_cache_candidate(path,files):
+    """Select a local candidate without reading weights; this is NOT admission.
+
+    backend_jobs.checkpoint still reads and hashes every approved member and
+    verifies the full allowlist before GPURuntime can open the model. A corrupt
+    candidate therefore fails the job rather than gaining trusted-cache status.
+    """
+    if (not isinstance(files,dict) or not files or any(not isinstance(name,str) or
+            Path(name).name!=name or name in ('.','..') or not isinstance(expected,str) or
+            re.fullmatch('[0-9a-f]{64}',expected) is None for name,expected in files.items())):
+        raise ValueError('approved checkpoint file inventory')
+    root=Path(path)
+    try:mode=root.lstat().st_mode
+    except FileNotFoundError:return False
+    if not stat.S_ISDIR(mode) or root.absolute()!=root.resolve():return False
+    observed={entry.name:entry for entry in root.iterdir()}
+    return set(observed)==set(files) and all(
+        stat.S_ISREG(entry.lstat().st_mode) for entry in observed.values())
+
+
 def complete_checkpoint_cache(path,files):
     """CPU-only exact inventory/readback; absence/mismatch is not an admission.
 
@@ -90,9 +110,9 @@ class Worker:
                 '--authority',self.authority,'--workspace',str(runspace)]
             approved=job['manifest']['payload']['checkpoint']
             approved_cache=self.checkpoint_caches.get(approved['id'])
-            if approved_cache and complete_checkpoint_cache(approved_cache,approved['files']):
+            if approved_cache and checkpoint_cache_candidate(approved_cache,approved['files']):
                 command+=['--checkpoint-cache',str(approved_cache)]
-            elif claim['attempt']>1 and complete_checkpoint_cache(cache,approved['files']):
+            elif claim['attempt']>1 and checkpoint_cache_candidate(cache,approved['files']):
                 command+=['--checkpoint-cache',str(cache)]
             with (attempt/'worker.log').open('xb') as output:
                 (attempt/'worker.log').chmod(0o600)

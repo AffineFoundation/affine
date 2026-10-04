@@ -87,17 +87,18 @@ class CheckpointCacheTests(unittest.TestCase):
 
 class RetryCacheSelection(WorkerTests):
     def test_invalid_retry_cache_uses_normal_signed_hydration(self):
-        for kind in ('partial','wrong','extra','symlink'):
+        for kind in ('partial','extra','symlink'):
             with self.subTest(kind=kind),tempfile.TemporaryDirectory() as workspace:
                 worker=Worker('http://127.0.0.1:19081',bytes(SigningKey.generate()),self.authority,workspace)
                 cache=Path(workspace)/'backend'/'checkpoints'/'CP';cache.mkdir(parents=True);(cache/'config.json').write_bytes(b'{}')
-                if kind!='partial':(cache/'model.safetensors').write_bytes(b'weights' if kind!='wrong' else b'bad')
+                if kind!='partial':(cache/'model.safetensors').write_bytes(b'weights')
                 if kind=='extra':(cache/'extra').write_text('unexpected')
                 if kind=='symlink':
                     (cache/'model.safetensors').unlink();target=Path(workspace)/'outside';target.write_bytes(b'weights');(cache/'model.safetensors').symlink_to(target)
                 self.claim['attempt']=2;worker.request=Mock(side_effect=[{'claim':self.claim},{'status':'failed'}])
                 with patch('subnet.distributed_worker.subprocess.run',return_value=SimpleNamespace(returncode=1)) as run:worker.once()
                 self.assertNotIn('--checkpoint-cache',run.call_args.args[0]);self.assertTrue(cache.exists())
+
     def test_explicit_complete_cache_reuses_and_incomplete_mapping_hydrates(self):
         for complete in (True,False):
             with self.subTest(complete=complete),tempfile.TemporaryDirectory() as workspace:
@@ -106,5 +107,29 @@ class RetryCacheSelection(WorkerTests):
                 worker=Worker('http://127.0.0.1:19081',bytes(SigningKey.generate()),self.authority,workspace,checkpoint_caches={'CP':cache});worker.request=Mock(side_effect=[{'claim':self.claim},{'status':'failed'}])
                 with patch('subnet.distributed_worker.subprocess.run',return_value=SimpleNamespace(returncode=1)) as run:worker.once()
                 self.assertEqual('--checkpoint-cache' in run.call_args.args[0],complete)
+
+class CheckpointCandidateTests(CheckpointCacheTests):
+    def test_candidate_selection_never_reads_weight_bytes(self):
+        from subnet.distributed_worker import checkpoint_cache_candidate
+        with patch.object(Path,'open',side_effect=AssertionError('weight read')):
+            self.assertTrue(checkpoint_cache_candidate(self.root,self.files))
+
+    def test_corruption_is_rejected_by_authoritative_backend_before_runtime(self):
+        from subnet.distributed_worker import checkpoint_cache_candidate
+        from subnet.backend_jobs import checkpoint
+        (self.root/'model.safetensors').write_bytes(b'wrong')
+        self.assertTrue(checkpoint_cache_candidate(self.root,self.files))
+        manifest={'checkpoint':{'id':'candidate','files':self.files}}
+        with self.assertRaisesRegex(ValueError,'approved cached checkpoint mismatch'):
+            checkpoint(manifest,Path(self.folder.name)/'backend',cache=self.root)
+
+    def test_candidate_inventory_rejects_symlink_extra_or_missing_files(self):
+        from subnet.distributed_worker import checkpoint_cache_candidate
+        weight=self.root/'model.safetensors';weight.unlink()
+        self.assertFalse(checkpoint_cache_candidate(self.root,self.files))
+        target=Path(self.folder.name)/'outside';target.write_bytes(b'weights');weight.symlink_to(target)
+        self.assertFalse(checkpoint_cache_candidate(self.root,self.files));weight.unlink();weight.write_bytes(b'weights')
+        (self.root/'extra').write_bytes(b'x')
+        self.assertFalse(checkpoint_cache_candidate(self.root,self.files))
 
 if __name__=='__main__':unittest.main()
