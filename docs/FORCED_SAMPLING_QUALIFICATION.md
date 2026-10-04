@@ -81,11 +81,23 @@ boundary switch.
 
 ## Operational handoff
 
-The operator supervises the original controller until its actual successful
-process wait completes. The new controller inherits its completed checkpoint,
-round and training count; old submissions, reports, earned rewards and writer
-cursor remain intact. New source approval, two verifier workers, covered trainer
-policy, actual controller identity and public discovery switch together. The
+The operator supervises the original controller through a persistent service
+and records its actual child wait. An absent earlier supervisor is recorded as
+an interrupted observation, never synthesized as successful completion. Expired
+audit requests receive explicit fresh requests with identical scientific inputs;
+the original requests and expiries remain in history and incur no fraud penalty.
+
+If the original epoch completes, the new controller inherits its completed
+checkpoint, round and training count. If the legacy trainer rejects its disk
+reserve before any training job is issued, the operator may instead publish a
+signed retirement of those unperformed updates after every submission's audits
+and original scores have finalized. The checkpoint and training count stay
+unchanged; the retirement is not a successful training result. Other failures or
+already-issued training require inspection of their original evidence.
+
+Old submissions, reports, earned rewards and writer cursor remain intact. New
+source approval, two verifier workers, covered trainer policy, actual controller
+identity and public discovery switch together. The
 first signed manifest must contain the required sampling contract before mining
 can be advertised as open. A scoped one-shot public miner uses an already
 registered operator-owned identity; its private signing key stays on the

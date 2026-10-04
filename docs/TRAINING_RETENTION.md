@@ -77,3 +77,19 @@ runner records, archived objects and model caches are preserved. It never change
 an epoch, retries a GPU job, or sends chain weights. Four additional controls
 exercise unfinished-job protection, path/file-map substitutions, actual isolated
 final-export retirement, and corrupt public archives preserving local files.
+
+The final-export supervisor also recognizes an exact default checkpoint-cache
+alias of an obsolete completed export. `ops.training_cache_alias_retention`
+accepts only the two known hard links, authenticates the complete durable archive
+and original successful job, and checks both paths for open files or mappings.
+It removes the obsolete alias first, preserving the export; the existing export
+retirement can then reclaim the physical bytes. Unknown additional links, active
+or current checkpoints, substituted evidence and occupied GPUs prevent removal.
+The alias operation itself frees zero physical bytes.
+
+The deployed `affine-archived-training-lifecycle.timer` runs bounded passes every
+two minutes. It follows the actual authenticated controller and writer approvals,
+defers when the controller is absent or the GPU is occupied, and retains private
+progress. This automates completed-job and obsolete-export retirement; it does
+not delete R2 history, retry training, or claim that every unrelated cache on a
+machine has been retired.

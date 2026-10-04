@@ -124,12 +124,22 @@ else:
     for p,name in [(helper,'retention.py'),(local,'plan.private.json')]:call(scp+[str(p),peer+':'+location+'/'+name])
     _,protected=protected_checkpoints(config_path,process_record,authority)
     if cp in protected:raise ValueError('checkpoint now protected; retirement refused')
-    operation='ROOT='+repr(location)+'\nHELPER_SHA='+repr(sha(helper))+'\nPLAN_SHA='+repr(sha(local))+'\n'+'''import hashlib,importlib.util,json,os,time
+    alias_helper=Path(__file__).with_name('training_cache_alias_retention.py').read_text()
+    operation='ROOT='+repr(location)+'\nHELPER_SHA='+repr(sha(helper))+'\nPLAN_SHA='+repr(sha(local))+'\nALIAS_HELPER='+repr(alias_helper)+'\nALIAS_SHA='+repr(hashlib.sha256(alias_helper.encode()).hexdigest())+'\n'+'''import hashlib,importlib.util,json,os,time
 from pathlib import Path
 root=Path(ROOT);hp=root/'retention.py';p=root/'plan.private.json'
 assert hashlib.sha256(hp.read_bytes()).hexdigest()==HELPER_SHA and hashlib.sha256(p.read_bytes()).hexdigest()==PLAN_SHA
 spec=importlib.util.spec_from_file_location('retention',hp);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);plan=json.loads(p.read_text());plan['terminal_sha256']=m.hash_file(Path(plan['workspace'])/'runner-status'/(plan['job_id']+'.json'))
-before=os.statvfs(root).f_bavail*os.statvfs(root).f_frsize;result=m.remove_training_replica(plan)
+before=os.statvfs(root).f_bavail*os.statvfs(root).f_frsize
+alias=Path(plan['workspace'])/'checkpoints'/plan['checkpoint'];alias_result=None
+if alias.exists():
+ assert hashlib.sha256(ALIAS_HELPER.encode()).hexdigest()==ALIAS_SHA
+ original_import='from ops import training_retention as training';assert ALIAS_HELPER.count(original_import)==1
+ namespace={'__name__':'reviewed_training_alias','training':m}
+ exec(compile(ALIAS_HELPER.replace(original_import,''),'reviewed_training_alias.py','exec'),namespace)
+ alias_result=namespace['remove_training_cache_alias'](dict(plan,source_directory=plan['directory'],directory=str(alias),active_checkpoints=[]))
+result=m.remove_training_replica(plan)
+result['obsolete_cache_alias']=alias_result
 receipt={'at':time.time(),'result':result,'free_before':before,'free_after':os.statvfs(root).f_bavail*os.statvfs(root).f_frsize};(root/'actual-completion.private.json').write_text(json.dumps(receipt));print(json.dumps(receipt))
 '''
     save(out/'original-retirement.private.json',dict(command_sha256=hashlib.sha256(operation.encode()).hexdigest(),helper_sha256=sha(helper),remote=location,checkpoint=cp))
