@@ -195,6 +195,14 @@ rollout (K=1, L=1). Extra rollouts for the same task do not create extra points.
 Reserved held-out tasks cannot be mined. An unsuccessful search or grader error
 is not a valid negative sample.
 
+Full-coverage training has passed an isolated five-pair H200 control on the
+prospective pinned source. Root independently checked all source and model bytes,
+the frozen artifacts, reference probabilities and update arithmetic. All five
+pairs contributed, updated-checkpoint proof replay passed, and a changed proof
+was rejected. This remains qualification, not a live policy switch or evidence
+of held-out improvement. See docs/COVERED_EPOCH_TRAINING.md. The reusable scoped
+checkpoint preparation tool is documented in docs/CHECKPOINT_READ_HYDRATION.md.
+
 Epoch 7 has frozen 90 final submissions. Verification recovered
 from expired checkpoint download links, not a miner-fraud finding. The failed
 jobs and frozen input hashes remain intact. Four explicit replacement jobs were

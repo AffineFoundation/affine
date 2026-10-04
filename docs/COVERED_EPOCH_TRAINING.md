@@ -69,6 +69,17 @@ arithmetic. Peak allocation was 78,638,168,064 bytes. The original child wait
 succeeded; process absence and idle GPU were observed independently. See
 `docs/data/signed-covered-worker-control-20261004.json`.
 
-The deployed workers still use their original source and policy. Production
-workloads, source admission and the completed-boundary handoff remain incomplete.
+The same five-pair control has also passed on an H200 with prospective source
+b3493bd0. Root checked all 1,886 source files, every input/successor checkpoint
+file, the five frozen artifacts, fixed probability references and update
+arithmetic. All 339 parameter tensors received gradients; groups were 2, 2, 1.
+The original child exited successfully and the GPU was independently observed
+idle afterward. Peak allocation was 78,638,952,448 bytes. Fresh successor proof
+verification passed and a changed proof was rejected. See
+`docs/data/covered-training-control-h200-20261004.json`.
+
+The deployed workers still use their original source and policy. Larger public
+workloads and the completed-boundary handoff remain incomplete. CPU source
+admission for the current checkpoint does not admit the next checkpoint;
+the actual successor must receive fresh byte, tokenizer and native checks.
 Older signed epochs, their training policies and deadlines remain unchanged.
