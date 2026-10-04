@@ -5,8 +5,13 @@ Immutable runtime bundle SHA256:
 `e415623e5a8017133ff7bef3925b724441862f34b6d034ed0deb6b731a26e657`.
 Published code or successful controls alone do not establish deployment. The
 signed current manifest and authenticated mining discovery establish which
-contract is active. The prospective change waits for the original epoch to
-finish under its original contract.
+contract is active. This source activated on October 4 at epoch
+`nonpayable-live-reward-math-v1--1791128338-9`, after the original audits and
+scores finalized and an explicit signed retirement preserved its unperformed
+training updates. The owned public miner uploaded two claimed success/failure
+task batches; independently audited credit and learning gains remain separate
+milestones. Use discovery for the current window, rather than this epoch's
+historical deadline.
 
 ## What is checked
 
@@ -108,3 +113,19 @@ executed transition. An execution failure needs inspection of its original
 evidence. Completed local submission downloads are retired automatically after
 authenticated report checks and complete durable R2 archive readback. This
 retention never deletes bucket history or changes scientific penalties.
+
+Historical reward admission reads required module pins from each authenticated,
+operator-approved original source archive. It accepts only the closed original
+pin declaration syntax, never executes that archive to inspect requirements,
+and compares every reported module hash with the same approved inventory. New
+worker admission still defaults to its current mandatory pins. A new sampler
+module cannot retroactively become a requirement of an old signed audit job.
+The completed original audit lineages were rechecked after correcting this
+compatibility bug. Pending actual chain submissions must return before the
+single-writer service hands over; observation timeouts do not justify cancelling
+or resubmitting an uncertain transaction.
+
+See `SAMPLING_ADVERSARIAL_REVIEW.md` for additional attack controls and residual
+trust assumptions, and `TRAINING_STABILITY_REVIEW_20261004.md` for demonstrated
+BF16 update-rounding risks and the prospective convergence plan. Those reviews
+do not silently change the signed sampler or current training policy.

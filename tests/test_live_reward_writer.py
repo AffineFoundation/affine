@@ -169,6 +169,7 @@ class EvidenceTests(unittest.TestCase):
    state,m,a,auth,c,old_db,files,key,job,remote=lineage_fixture(t)
    old_db.close();worker=SigningKey.generate();wid=worker.verify_key.encode().hex();c['verifier_identities']=[wid]
    members={name:b'# public CPU fixture, no executed model\n' for name in SOURCE_FILES};members.update({'subnet/__init__.py':b'','subnet/cli.py':b'# CPU fixture\n',TASK_ASSET:b'[]'})
+   members['subnet/backend_jobs.py']=('SOURCE_FILES = '+repr(SOURCE_FILES)+'\n').encode()
    buffer=io.BytesIO()
    with tarfile.open(fileobj=buffer,mode='w:gz') as tar:
     for name,data in members.items():

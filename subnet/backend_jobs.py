@@ -196,7 +196,7 @@ def validate(envelope, authority, now=None):
     """Strict authorization/policy admission, including signed subset semantics."""
     return _validate(envelope,authority,now,resolve_source=True)
 
-def _validate(envelope, authority, now=None, *, resolve_source):
+def _validate(envelope, authority, now=None, *, resolve_source, required_source_files=None):
     """Workers defer source-dependent semantics until pinned imports are installed."""
     job=signed(envelope,authority);now=time.time() if now is None else now
     if job.get('schema')!=1 or job.get('role') not in ROLES:raise ValueError('job role/schema')
@@ -212,7 +212,8 @@ def _validate(envelope, authority, now=None, *, resolve_source):
     urls=cp.get('read_urls',{})
     if urls and set(urls)!=set(cp['files']):raise ValueError('checkpoint capability file binding')
     for url in urls.values():r2_url(url,'GET')
-    if not set(SOURCE_FILES)<=set(job.get('source_files',{})):raise ValueError('missing worker source pins')
+    required=SOURCE_FILES if required_source_files is None else required_source_files
+    if not required or not set(required)<=set(job.get('source_files',{})):raise ValueError('missing worker source pins')
     for name,sha in job['source_files'].items():
         if not name.startswith('subnet/') or '..' in name or Path(name).suffix!='.py' or not re.fullmatch('[0-9a-f]{64}',sha):raise ValueError('worker source pin')
     if set(job.get('runtime_versions',{}))!={'torch','transformers','toploc'}:raise ValueError('runtime version pins')

@@ -1,4 +1,65 @@
-# Live reward launch authorized — October 3, 2026
+# Sampling-enforced live learning goal — October 4, 2026
+
+The operator resumed work and authorized continuous iteration, new prospective
+contracts, GitHub publication, miner-guide updates, Discord communication and
+delegated reviews. Priority order is: verified live environment sampling and
+rewards; effective, stable training and held-out learning; then cheaper audits,
+larger per-UID caps and epoch throughput. Website polish is secondary. The
+target is a demonstrably robust system, not an unsupported absolute claim that
+no exploit exists. Every known trust assumption and unresolved attack remains
+documented. Contract changes must apply prospectively and keep `/llms.txt`
+compatible with the actual signed source, sampler, rewards and training rules.
+
+Completion requires repeated genuine public mining epochs, independent exact
+sampler/TOPLOC/environment audits, authenticated reward lineage, reproduced
+adversarial controls, effective gradient updates and durable checkpoint/state
+lineage, and an independent paired held-out comparison showing credible gains.
+Changed checkpoint bytes, optimizer step counters, qualification controls or
+32-task diagnostics alone are insufficient evidence of convergence. Optimize
+or increase the three-batch pilot quota only after those core paths work.
+
+Current handoff: all 134 original epoch-eight audits finalized under the old
+contract. Its three final training updates were explicitly retired after the
+trainer refused disk admission before any training job was issued. The signed
+retirement preserves checkpoint 093 and fifteen cumulative updates, original
+scores and reward evidence. A source-version compatibility bug in the writer
+was then found: historical jobs were required to carry future module pins.
+The fix validates required modules from each authority-approved original source
+archive, without executing archive code or relaxing current worker admission.
+Seventy-nine targeted backend, queue and lineage/writer checks pass and all
+354 original audit lineages authenticate. The guarded cutover completed after
+the running reward transaction returned. Epoch nine opened at 15:38:58 UTC as
+`nonpayable-live-reward-math-v1--1791128338-9`, using immutable source e415623e,
+exact `forced-inverse-cdf-replay-v1`, covered v3 training and the original
+checkpoint 093/fifteen-update history. The actual controller and both new-source
+verifier workers are running. Owned UID 131 started with a scoped upload grant;
+its actual isolated CLI source pin was observed, with no wallet key exported.
+R2 confirms a 699,084,961-byte cumulative upload at 16:00:49 UTC. Public HTTPS
+discovery and `/llms.txt` independently match the active source and guide.
+Audit credit, successful new training, chain inclusion of new-contract rewards
+and held-out learning have not yet been established by these launch records.
+
+The operator removed the earlier paused tracker record. The replacement live
+learning goal was created successfully and is active. The new priority order
+and acceptance criteria above govern continued work. No incomplete goal was
+falsely marked complete to bypass the earlier tracker restriction.
+
+Ten additional adversarial controls pass: arbitrary second-turn tokens with
+fresh genuine evidence, truncation, post-EOS extension, reseeding and contextual
+substitution fail exact replay; forged/stale/unchecked reward evidence is
+rejected. See `docs/SAMPLING_ADVERSARIAL_REVIEW.md` for explicit trust limits.
+The training review reproduced BF16 AdamW update rounding and task-concentration
+risks. Dedicated persistent FP32/task-normalized modules are prospective and
+not selected by the current signed v3 contract. Their integration, H200/R2
+qualification and held-out gains remain required; a proposal is not deployment.
+
+# Historical live reward launch authorized — October 3, 2026
+
+October 4 operator correction: cleanup must be part of normal worker and epoch
+completion. R2 retains checkpoints, rollouts and audit history; machines retain
+only current weights and data still needed by active work. Automatic retirement
+after durable publication takes priority over additional one-off cleanup tools.
+This is the required target lifecycle, not a claim that it is already deployed.
 
 October 4 trainer lookup recovery: during the original epoch-eight freeze,
 root authenticated the completed epoch-seven training request/report and R2

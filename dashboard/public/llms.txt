@@ -8,7 +8,7 @@ Signed payout eligibility policy: https://affine.io/reward-policy.json
 
 ## Sampling cutover
 
-Cutover state: qualified, waiting for the original epoch to finish. The replacement is not yet active.
+Cutover state: active from epoch nonpayable-live-reward-math-v1--1791128338-9. This epoch requires exact forced-sampler replay. Check mining.json and the signed manifest for current upload availability.
 
 The replacement source is 310492f6a87721760630b196e375bd2ba43cbe05, with immutable bundle SHA256 e415623e5a8017133ff7bef3925b724441862f34b6d034ed0deb6b731a26e657. Later operator housekeeping commits do not change that bundle. Every epoch's signed manifest is authoritative; mining.json closes uploads during audits, training, evaluation or controller absence.
 
@@ -18,7 +18,7 @@ An expensive audit regenerates the complete audited output and requires exact to
 
 Qualification used real H200 generation: one successful 746-token output and one failed 1,024-token output, independent replay with zero honest false rejections, and three rejected attacks. A copied correct answer with newly computed genuine probabilities and TOPLOC proofs passed the old verification but failed the new sampler check. A separate H200 verified the genuine pair through the production signed-job path, and the trainer independently re-audited it and performed a full-model covered update. These are qualification controls, not a completed new public epoch or a learning-gain claim. Details: https://github.com/AffineFoundation/affine/blob/main/docs/FORCED_SAMPLING_QUALIFICATION.md
 
-Existing epochs finish under their original signed rules. They retain their scores, original evidence and writer cursor. The cutover is prospective; old-contract data cannot become new-contract reward or training evidence. The old burn and equal-registration writers remain disabled, and historical nonpayable experiments are not paid retroactively. The single reward writer preserves the signed policy for currently owned, eligible registered UIDs.
+Epoch eight completed its audits and scoring under its original signed rules. Its final three training updates were explicitly skipped after the original trainer rejected the disk reserve before issuing a job. The signed retirement is in R2 history. The new epoch inherits checkpoint 093 and fifteen cumulative updates; no legacy training success is claimed. They retain their scores, original evidence and writer cursor. The cutover is prospective; old-contract data cannot become new-contract reward or training evidence. The old burn and equal-registration writers remain disabled, and historical nonpayable experiments are not paid retroactively. The single reward writer preserves the signed policy for currently owned, eligible registered UIDs.
 
 ## Model and taskset
 

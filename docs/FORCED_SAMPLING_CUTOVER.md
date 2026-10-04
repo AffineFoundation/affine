@@ -6,7 +6,8 @@ tokens; they do not establish that a sampler selected those tokens.
 
 ## Contract
 
-`forced-inverse-cdf-replay-v1` is a prospective, signed epoch contract. The
+`forced-inverse-cdf-replay-v1` activated from signed epoch nine on October 4,
+2026. Changes remain prospective: old epochs retain their original rules. The
 controller generates 32 bytes of epoch randomness before opening uploads. Public
 SHA-256 draws bind the contract version, epoch, checkpoint, environment, task
 index, bounded attempt number, turn number, and token position. Miner identity

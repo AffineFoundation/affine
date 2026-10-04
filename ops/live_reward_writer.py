@@ -1,5 +1,5 @@
 """Local prospective one-writer runner. Dry-run default; never starts compute roles."""
-import argparse,fcntl,hashlib,json,os,sqlite3,subprocess,time,stat,signal,math
+import argparse,ast,fcntl,hashlib,json,os,sqlite3,subprocess,time,stat,signal,math
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -71,13 +71,13 @@ def guard_files(c):
  marker=Path.home()/'.local/state/affine-transition/active'
  need(any(row['kind']=='suppression-marker' and Path(row['path'])==marker for row in c['legacy_guard_files']),'actual production suppression marker path')
 
-def verify_audit_lineage(state,manifest,audit,authority,c,db,now,files):
+def verify_audit_lineage(state,manifest,audit,authority,c,db,now,files,*,required_source_files=None):
  """Read actual worker-authenticated queue row and original signed request."""
  jobid=audit['remote_job_id'];need(isinstance(jobid,str) and all(x.isalnum() or x in '-_' for x in jobid),'job path identity')
  envelope=read(state/'roles'/(jobid+'-job.json'));job=signed(envelope,authority)
  need(job['role']=='verify' and signed(job['manifest'],authority)['epoch']==manifest['epoch'],'original verifier job epoch')
  # Validate at original creation, preserving original signed expiry. No source-dependent live imports.
- _validate(envelope,authority,now=job['created_at'],resolve_source=False)
+ _validate(envelope,authority,now=job['created_at'],resolve_source=False,required_source_files=required_source_files)
  need(job['manifest']['payload']['checkpoint']==manifest['checkpoint'],'exact checkpoint descriptor')
  jm=job['manifest']['payload']
  need(jm['source_bundle']['sha256']==manifest['source_bundle']['sha256'],'original approved source')
@@ -118,11 +118,47 @@ def approved_source_members(c,authority):
   inventories[digest]={name:hashlib.sha256(data).hexdigest() for name,data in members.items()}
  return inventories
 
+def original_required_source_files(module):
+ """Read the authenticated archive's pin declaration without executing it.
+
+ Only a literal sequence or our exact tuple/path generator is accepted. The
+ archive is authority-approved; a miner's job never selects this requirement.
+ """
+ tree=ast.parse(module);assignments=[]
+ writes=[n for n in ast.walk(tree) if isinstance(n,ast.Name) and n.id=='SOURCE_FILES' and isinstance(n.ctx,(ast.Store,ast.Del))]
+ need(len(writes)==1,'unambiguous original source pin writes')
+ for node in ast.walk(tree):
+  if isinstance(node,(ast.Assign,ast.AnnAssign,ast.AugAssign)):
+   targets=node.targets if isinstance(node,ast.Assign) else [node.target]
+   if any(isinstance(t,ast.Name) and t.id=='SOURCE_FILES' for t in targets):assignments.append(node)
+ need(len(assignments)==1 and assignments[0] in tree.body and isinstance(assignments[0],ast.Assign) and len(assignments[0].targets)==1,'unambiguous original source pin declaration')
+ value=assignments[0].value
+ try:required=ast.literal_eval(value)
+ except (ValueError,TypeError):
+  # SOURCE_FILES = tuple('subnet/'+n+'.py' for n in ('model', ...)).
+  need(isinstance(value,ast.Call) and isinstance(value.func,ast.Name) and value.func.id=='tuple' and len(value.args)==1 and not value.keywords,'original source pin expression')
+  generator=value.args[0];need(isinstance(generator,ast.GeneratorExp) and len(generator.generators)==1,'original source pin generator')
+  clause=generator.generators[0];need(isinstance(clause.target,ast.Name) and not clause.ifs and not clause.is_async,'original source pin iterator')
+  expected=ast.parse("'subnet/'+"+clause.target.id+"+'.py'",mode='eval').body
+  need(ast.dump(generator.elt)==ast.dump(expected),'original source pin path expression')
+  names=ast.literal_eval(clause.iter);need(isinstance(names,(tuple,list)) and all(isinstance(n,str) and n.isidentifier() for n in names),'original source module names')
+  required=tuple('subnet/'+n+'.py' for n in names)
+ need(isinstance(required,(tuple,list)) and required and len(required)==len(set(required)) and all(isinstance(n,str) and n.startswith('subnet/') and '..' not in n and n.endswith('.py') for n in required),'original source pin paths')
+ return tuple(required)
+
 def verify_completed_evidence(c,authority,now):
  state=Path(c['compute_state']);proofs=[]
  # Authenticate archive bytes once per invocation. A source upgrade must never
  # replace the archive or module inventory used by an older finalized epoch.
  inventories=approved_source_members(c,authority)
+ primary=c['source'];sources=c.get('approved_sources',{primary['sha256']:primary});requirements={}
+ for digest,source in sources.items():
+  descriptor=signed(read(source['descriptor_path']),authority)
+  body=Path(source['archive_path']).read_bytes();need(hashlib.sha256(body).hexdigest()==digest,'approved source archive bytes')
+  members=admitted_files(body,descriptor)
+  need({name:hashlib.sha256(data).hexdigest() for name,data in members.items()}==inventories[digest],'original source inventory changed')
+  requirements[digest]=original_required_source_files(members['subnet/backend_jobs.py'])
+  need(set(requirements[digest])<=set(inventories[digest]),'original required modules absent from archive')
  uri=Path(c['queue_database']).as_uri()+'?mode=ro'
  with sqlite3.connect(uri,uri=True) as db:
   db.row_factory=sqlite3.Row
@@ -134,7 +170,7 @@ def verify_completed_evidence(c,authority,now):
    for miner in score['receipts']:
     audit=signed(read(state/(epoch+'-signed-compute-audit-'+miner+'.json')),authority)
     need(audit['submission_sha256']==score['receipts'][miner]['sha256'],'signed frozen receipt binding')
-    proofs.append(verify_audit_lineage(state,m,audit,authority,c,db,now,files))
+    proofs.append(verify_audit_lineage(state,m,audit,authority,c,db,now,files,required_source_files=requirements[digest]))
  return proofs
 
 def finalized_hour_watermark(state,prefix,window_end):

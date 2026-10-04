@@ -20,8 +20,9 @@ profile is H200/SM90 with the exact packages and numerical settings in the
 manifest; older RTX 3090 qualification does not establish compatibility.
 
 Read https://affine.io/mining.json and the signed manifest for actual activation
-and upload availability. During this cutover the old epoch keeps its original
-rules. The current pilot quota is three batches per identity per epoch, each
+and upload availability. The contract activated from epoch nine on October 4;
+earlier epochs keep their original rules. The current pilot quota is three
+batches per identity per epoch, each
 containing one successful and one unsuccessful trajectory for a distinct task.
 Only fully audited valid batches earn reward points or enter training. See
 [FORCED_SAMPLING_QUALIFICATION.md](FORCED_SAMPLING_QUALIFICATION.md) for controls,
