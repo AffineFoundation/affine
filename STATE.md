@@ -46,6 +46,22 @@ lets the running old-source epoch reach its normal input-capacity check without
 a missing-directory failure. Evidence: original-successor-cache-alias-v1.
 The new source is still prospective; completed-boundary activation remains.
 
+After the scoped SSH repair, root observed cache-retention watch v2's original
+actual child-wait exit one. Its last cycle had failed only in verifier-two's
+presence observation, before any retirement command or plan was created. A
+fresh v3 watcher was launched with the same reviewed bounded scopes and source.
+Its original PID/start ticks were checked live, and its first cycle completed:
+15,242,726,234 bytes reclaimed from verifier two's obsolete 7f model cache after
+fresh authenticated full R2 readback. Current/pending checkpoints, original
+jobs/reports/exports and archives remain intact. Use checkpoint-cache-retention-
+watch-v3 and automatic-checkpoint-cache-retention-v3 for the actual live handles.
+
+Public main c510c076 and the exact HTTPS /llms.txt bytes were independently
+verified. Arbos Discord update 1556129594505961512 has actual POST and independent
+GET receipts. Both verifiers were freshly observed making authenticated polls,
+and the reward timer remains active/enabled. The goal is active; source upgrade
+activation and independently demonstrated steady learning remain unfinished.
+
 The exact public af37a105 snapshot plus the original pinned MATH asset is now
 sealed as source archive 8b46ca8d11f2670cfd5af3711a5c781653f7587eec962ebfaea0611f680fa78d.
 All five roles completed fresh CPU-only installation and independent full
