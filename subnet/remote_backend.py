@@ -11,6 +11,7 @@ from pathlib import Path
 import requests
 from nacl.signing import VerifyKey
 from .backend_jobs import canonical,file_map,FIXED_POLICY as FULL_POLICY,SOURCE_FILES,signed
+from .training_policy import epoch_policy
 from .controller import Controller
 from .scoring import score
 
@@ -83,7 +84,7 @@ class RemoteJobs:
                 or signed(job['manifest'],self.controller.authority.id)!=manifest
                 or prior['manifest_sha256']!=hashlib.sha256(canonical(manifest)).hexdigest()
                 or job.get('steps')!=steps or type(job.get('steps'))is not int or type(steps)is not int or not 1<=steps<=32
-                or job.get('training_policy')!=FULL_POLICY or job.get('replay')!=replay
+                or job.get('training_policy')!=epoch_policy(manifest) or job.get('replay')!=replay
                 or [r['sha256'] for r in job.get('submissions',[])]!=[r['sha256'] for r in submissions]):
             raise ValueError('original training request changed')
         reportpath=self.state/(prior['job_id']+'-report.json')
@@ -303,9 +304,22 @@ class RemoteController(Controller):
         return result,reports
     def train(self,manifest,reports,checkpoint_path,destination=None,steps=1,replay=None,**ignored):
         epoch=manifest['epoch'];cached=self.state/(epoch+'-training-metrics.json')
+        policy=epoch_policy(manifest)
+        from .backend_jobs import COVERED_POLICY
+        training_manifest=manifest
+        if policy==COVERED_POLICY and manifest.get('audit_policy',{}).get('version')=='bounded-random-v1':
+            training_manifest=json.loads((self.state/(epoch+'-audit-manifest.json')).read_text())
+        if policy==COVERED_POLICY:
+            from .training_policy import coverage_manifest
+            receipts=json.loads((self.state/(epoch+'-scores.json')).read_text())['receipts']
+            challenge=json.loads((self.state/(epoch+'-audit-challenge.json')).read_text())
+            if (training_manifest.get('training_policy')!=policy or training_manifest.get('epoch')!=epoch or training_manifest.get('checkpoint')!=manifest['checkpoint']):raise ValueError('original covered audit manifest binding')
+            training_manifest=coverage_manifest(training_manifest,receipts,challenge)
+            if replay is not None:raise ValueError('covered historical replay requires separate admission')
         if cached.exists():
             metrics=json.loads(cached.read_text())
-            if metrics.get('source_epoch')!=epoch or metrics.get('input_checkpoint')!=manifest['checkpoint']['id'] or metrics.get('training_policy')!=FULL_POLICY or metrics.get('weights_changed') is not True or metrics['checkpoint']!=file_map(metrics['new_checkpoint']['files']) or metrics['checkpoint']==manifest['checkpoint']['id']:raise ValueError('cached GPU training checkpoint binding')
+            if metrics.get('source_epoch')!=epoch or metrics.get('input_checkpoint')!=manifest['checkpoint']['id'] or metrics.get('training_policy')!=policy or metrics.get('weights_changed') is not True or metrics['checkpoint']!=file_map(metrics['new_checkpoint']['files']) or metrics['checkpoint']==manifest['checkpoint']['id']:raise ValueError('cached GPU training checkpoint binding')
+            if policy==COVERED_POLICY and metrics.get('training_coverage')!=training_manifest['training_coverage']:raise ValueError('cached covered training context changed')
             expected_replay=hashlib.sha256(canonical(replay)).hexdigest() if replay is not None else None
             if metrics.get('replay_inputs_sha256')!=expected_replay or metrics['steps']!=steps:raise ValueError('cached replay/current request binding')
             publication=json.loads((self.state/(epoch+'-checkpoint-publication.json')).read_text())
@@ -318,18 +332,21 @@ class RemoteController(Controller):
         submissions=[dict(url=self.bucket.presign(receipts[m]['frozen_key']),sha256=receipts[m]['sha256']) for m,r in reports.items() if r['accepted']]
         if not submissions:raise ValueError('no independently verified training data')
         extra={'replay':replay} if replay is not None else {}
-        training_manifest=manifest
-        if manifest.get('audit_policy',{}).get('version')=='bounded-random-v1':
+        if policy!=COVERED_POLICY and manifest.get('audit_policy',{}).get('version')=='bounded-random-v1':
             training_manifest=json.loads((self.state/(epoch+'-audit-manifest.json')).read_text())
         planned_bytes=training_submission_bytes(receipts,reports,manifest)
         capacity=(self.jobs.training_resume(epoch+'-train',training_manifest,submissions,steps,replay) if hasattr(self.jobs,'training_resume') else None)
         if capacity is None:
             capacity=(self.jobs.training_capacity(manifest,steps,submission_bytes=planned_bytes) if hasattr(self.jobs,'training_capacity') else self.jobs.capacity(checkpoint_path))
-        remote=self.jobs.run(epoch+'-train','train',training_manifest,checkpoint_path,submissions=submissions,steps=steps,training_policy=FULL_POLICY,**extra)
+        remote=self.jobs.run(epoch+'-train','train',training_manifest,checkpoint_path,submissions=submissions,steps=steps,training_policy=policy,**extra)
+        if policy==COVERED_POLICY:
+            if remote['training'].get('training_policy')!=policy or remote['training'].get('training_coverage')!=training_manifest['training_coverage']:raise ValueError('remote covered training context changed')
         new=dict(remote['new_checkpoint']);path=new.pop('path')
         if new['id']==manifest['checkpoint']['id']:raise ValueError('unchanged trained checkpoint')
         output=self.publish_remote_checkpoint(dict(manifest,checkpoint=new),path)
-        metrics=dict(steps=steps,weights_changed=True,full_model_finetune=True,training_policy=FULL_POLICY,updates=remote['training']['updates'],source_epoch=epoch,input_checkpoint=manifest['checkpoint']['id'],input_pairs=sum(len(r['accepted']) for r in reports.values()),checkpoint=new['id'],new_checkpoint=output,checkpoint_path=path,capacity_preflight=capacity,remote_job_id=remote['job_id'])
+        metrics=dict(steps=steps,weights_changed=True,full_model_finetune=True,training_policy=policy,updates=remote['training']['updates'],source_epoch=epoch,input_checkpoint=manifest['checkpoint']['id'],input_pairs=sum(len(r['accepted']) for r in reports.values()),checkpoint=new['id'],new_checkpoint=output,checkpoint_path=path,capacity_preflight=capacity,remote_job_id=remote['job_id'])
+        if policy==COVERED_POLICY:
+            metrics['training_coverage']=remote['training']['training_coverage'];metrics['covered_training_inputs']=remote['covered_training_inputs']
         if replay is not None:
             metrics['replay_training']=remote['replay_training'];metrics['replay_inputs_sha256']=hashlib.sha256(canonical(replay)).hexdigest()
         save(cached,metrics);self.bucket.json('public/'+epoch+'/training.json',self.signed(metrics));return output,metrics

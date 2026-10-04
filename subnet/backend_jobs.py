@@ -27,6 +27,7 @@ ROLES = {'mine','verify','train','evaluate','upload'}
 HEAD_POLICY='frozen-feature-head-adamw-v1'
 FULL_POLICY='bf16-full-adamw-checkpointed-v1'
 FIXED_POLICY='bf16-full-adamw-fixed-epoch-reference-v2'
+COVERED_POLICY='bf16-full-adamw-covered-fixed-reference-v3'
 TRAINING_ATTRIBUTION='verified-pair-v1'
 
 def validate_single_put_sizes(checkpoint, files):
@@ -233,9 +234,14 @@ def _validate(envelope, authority, now=None, *, resolve_source):
         if job['capability'].get('headers')!={'Content-Type':'application/octet-stream'}:raise ValueError('signed upload headers')
         if resolve_source and job.get('mining_subset') is not None:mining_definitions(manifest,job)
     elif 'mining_subset' in job:raise ValueError('mining subset only in signed mining jobs')
-    if job['role']=='train' and job.get('training_policy',HEAD_POLICY) not in (HEAD_POLICY,FULL_POLICY,FIXED_POLICY):raise ValueError('unapproved training objective')
+    if job['role']=='train' and job.get('training_policy',HEAD_POLICY) not in (HEAD_POLICY,FULL_POLICY,FIXED_POLICY,COVERED_POLICY):raise ValueError('unapproved training objective')
     if job['role']=='train' and (type(job.get('steps')) is not int or not 1<=job['steps']<=32):raise ValueError('training step budget')
     if job.get('training_policy')==FIXED_POLICY and manifest.get('training_policy')!=FIXED_POLICY:raise ValueError('signed fixed-reference training policy')
+    if job['role']=='train' and (manifest.get('training_policy')==COVERED_POLICY or job.get('training_policy')==COVERED_POLICY):
+        if manifest.get('training_policy')!=job.get('training_policy'):raise ValueError('signed covered training policy')
+        if not {'subnet/training_policy.py','subnet/covered_epoch_optimizer.py','subnet/epoch_optimizer.py'}<=set(job['source_files']):raise ValueError('covered training execution source pins')
+        from .training_policy import validate_coverage
+        validate_coverage(manifest,job.get('submissions'))
     if job.get('replay') is not None:
         if job['role']!='train' or job.get('training_policy')!=FIXED_POLICY:raise ValueError('replay only in signed fixed optimizer job')
         if resolve_source:
@@ -393,7 +399,7 @@ def install_source_loader(root):
     # Pure admission helpers are used before workspace/artifact access. Their
     # pinned bytes have now been checked; discard bootstrap imports so compute
     # admission reloads them through the authenticated fresh-source finder.
-    for module_name in ('subnet.backend_profiles','subnet.artifact_budget','subnet.audit_policy','subnet.auditing'):
+    for module_name in ('subnet.backend_profiles','subnet.artifact_budget','subnet.audit_policy','subnet.auditing','subnet.training_policy'):
         sys.modules.pop(module_name,None)
     for name in SOURCE_FILES:
         module_name=name[:-3].replace('/','.')
@@ -493,6 +499,11 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                 if job.get('training_policy')==FIXED_POLICY:
                     from .epoch_optimizer import train_epoch
                     destination,metrics=train_epoch(runtime,pairs,out,steps=job['steps'])
+                elif job.get('training_policy')==COVERED_POLICY:
+                    from .covered_epoch_optimizer import train_epoch,distinct_verified_pairs
+                    original_pairs=len(pairs);pairs=distinct_verified_pairs(pairs)
+                    report['covered_training_inputs']=dict(verified_pairs_before_deduplication=original_pairs,unique_verified_pairs=len(pairs),exact_duplicate_pairs_removed=original_pairs-len(pairs))
+                    destination,metrics=train_epoch(runtime,pairs,out,seed=manifest['training_coverage']['seed'],steps=job['steps'])
                 else:
                     for step in range(job['steps']):
                         definition,pos,neg=pairs[step%len(pairs)]
@@ -507,7 +518,8 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                 if not checkpoint_weights_changed(manifest['checkpoint']['files'],files):raise ValueError('training did not change checkpoint weights')
                 values_after=parameter_value_digest(runtime.model)
                 if values_before==values_after:raise ValueError('optimizer did not change parameter values')
-                report['training']=dict(steps=job['steps'],updates=metrics,training_policy=job.get('training_policy',HEAD_POLICY),full_model_finetune=job.get('training_policy',HEAD_POLICY) in (FULL_POLICY,FIXED_POLICY),weights_changed=True,parameter_values_sha256_before=values_before,parameter_values_sha256_after=values_after)
+                report['training']=dict(steps=job['steps'],updates=metrics,training_policy=job.get('training_policy',HEAD_POLICY),full_model_finetune=job.get('training_policy',HEAD_POLICY) in (FULL_POLICY,FIXED_POLICY,COVERED_POLICY),weights_changed=True,parameter_values_sha256_before=values_before,parameter_values_sha256_after=values_after)
+                if job.get('training_policy')==COVERED_POLICY:report['training']['training_coverage']=manifest['training_coverage']
                 report['full_model_finetune']=report['training']['full_model_finetune']
                 report['new_checkpoint']=dict(id=file_map(files),files=files,path=str(destination))
         else:

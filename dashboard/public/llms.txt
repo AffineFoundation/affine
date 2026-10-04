@@ -50,7 +50,10 @@ exports one final checkpoint. Ten CPU controls and an isolated H100 control
 pass: all five curated success/failure pairs contributed gradients across three
 updates, with fresh successor proof replay and a tampered-proof rejection.
 Root checked all input/successor bytes, source, frozen artifacts, reconstructed
-references and original successful process completion. This candidate is not
+references and original successful process completion. Main now integrates the
+candidate into explicitly selected signed epoch/training jobs, with immutable
+post-freeze receipt/seed binding and exact original-request recovery. Complete
+signed-worker GPU qualification is pending. This candidate is not
 the signed live training policy, and no held-out learning gain is claimed.
 See docs/COVERED_EPOCH_TRAINING.md. Future activation requires completed GPU
 workload qualification, signed policy integration and a completed-boundary handoff.

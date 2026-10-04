@@ -1,5 +1,14 @@
 # Live reward launch authorized — October 3, 2026
 
+Prospective covered training is now integrated into epoch opening, signed worker
+admission, original-request recovery and successor publication. The v2 default
+remains unchanged. Covered jobs bind the original post-freeze seed and receipt
+population, refuse changed contexts before artifact reads, collapse exact audited
+pair clones and check returned context before publishing a successor. Seventeen
+covered controls, eight original recovery controls, three real opening controls,
+and existing backend/routing/reward controls pass. The complete signed GPU worker
+path is the next qualification; no running source or policy has changed.
+
 The full-coverage training candidate passed its isolated original-process H100
 control. Five curated native success/failure pairs contributed across three
 updates, all 339 parameter tensors received gradients, and the fresh successor

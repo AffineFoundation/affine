@@ -3,7 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock,patch
 from nacl.signing import SigningKey
-from subnet.backend_jobs import BACKEND_PROFILE,NUMERICAL_POLICY,REVISION,FIXED_POLICY,canonical
+from subnet.backend_jobs import BACKEND_PROFILE,NUMERICAL_POLICY,REVISION,FIXED_POLICY,COVERED_POLICY,canonical
 from subnet.remote_backend import RemoteJobs,RemoteController
 
 
@@ -37,6 +37,19 @@ class OriginalTrainingResume(unittest.TestCase):
         self.assertEqual(self.resume()['original_phase'],'running')
         self.jobs.remote_status.assert_called_once_with('original-job');self.jobs.capacity.assert_not_called()
         self.assertIsNone(self.resume(label='new-training'))
+
+    def test_covered_original_resume_keeps_exact_policy_and_context(self):
+        self.manifest=dict(self.manifest,training_policy=COVERED_POLICY,
+            training_coverage={'seed':'ab'*32,'receipts_sha256':'cd'*32})
+        self.job=dict(self.job,manifest=self.sign(self.manifest),training_policy=COVERED_POLICY)
+        self.prior=dict(self.prior,job_sha256=hashlib.sha256(canonical(self.job)).hexdigest(),
+            manifest_sha256=hashlib.sha256(canonical(self.manifest)).hexdigest())
+        (self.root/'original-train.json').write_bytes(canonical(self.prior))
+        (self.root/'original-job-job.json').write_bytes(canonical(self.sign(self.job)))
+        result=self.resume();self.assertEqual(result['original_job_id'],'original-job')
+        self.jobs.capacity.assert_not_called()
+        with self.assertRaisesRegex(ValueError,'request changed'):
+            self.resume(manifest=dict(self.manifest,training_policy=FIXED_POLICY))
 
     def test_changed_request_or_corrupted_original_signature_refuses(self):
         for changes in ({'steps':2},{'steps':True},{'submissions':[{'sha256':'changed'}]}, {'manifest':dict(self.manifest,epoch='another')},{'replay':{'new':'inputs'}}):

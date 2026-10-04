@@ -14,6 +14,28 @@ from .storage import canonical
 POLICY = 'bf16-full-adamw-covered-fixed-reference-v3'
 
 
+def pair_identity(pair):
+    definition, positive, negative = pair
+    if (positive.get('classification') != 'positive' or
+            negative.get('classification') != 'negative' or
+            type(positive.get('index')) is not int or positive['index'] < 0 or
+            type(negative.get('index')) is not int or
+            positive['index'] != negative['index'] or
+            positive.get('env_id') != definition['env_id'] or
+            negative.get('env_id') != definition['env_id']):
+        raise ValueError('covered training pair binding')
+    return hashlib.sha256(canonical(dict(env_id=definition['env_id'],
+        index=positive['index'], positive=positive, negative=negative))).hexdigest()
+
+
+def distinct_verified_pairs(pairs):
+    """Collapse exact audited copies; clones cannot multiply a gradient group."""
+    unique = {}
+    for pair in pairs:
+        unique.setdefault(pair_identity(pair), pair)
+    return list(unique.values())
+
+
 def coverage_schedule(pairs, steps, seed):
     """Bind ordering to frozen pair contents and a post-freeze challenge seed."""
     if (type(steps) is not int or not 1 <= steps <= 32 or
@@ -22,19 +44,7 @@ def coverage_schedule(pairs, steps, seed):
     if (not isinstance(seed, str) or len(seed) != 64 or
             any(c not in '0123456789abcdef' for c in seed)):
         raise ValueError('post-freeze coverage seed')
-    identities = []
-    for definition, positive, negative in pairs:
-        if (positive.get('classification') != 'positive' or
-                negative.get('classification') != 'negative' or
-                type(positive.get('index')) is not int or positive['index'] < 0 or
-                type(negative.get('index')) is not int or
-                positive['index'] != negative['index'] or
-                positive.get('env_id') != definition['env_id'] or
-                negative.get('env_id') != definition['env_id']):
-            raise ValueError('covered training pair binding')
-        identities.append(hashlib.sha256(canonical(dict(
-            env_id=definition['env_id'], index=positive['index'],
-            positive=positive, negative=negative))).hexdigest())
+    identities = [pair_identity(pair) for pair in pairs]
     if len(set(identities)) != len(identities):
         raise ValueError('duplicate covered training pair')
     ordered = sorted(range(len(pairs)), key=lambda i: hashlib.sha256(

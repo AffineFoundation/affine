@@ -48,7 +48,18 @@ workloads still require qualification. Aggregate evidence is in
 `docs/data/covered-training-control-20261004.json`.
 
 The GPU control is a numerical/proof qualification, not evidence of genuine
-mining, a completed public epoch or held-out learning. Live workers do not select
-this module. Before activation it needs signed policy/job integration, production
-workload qualification, source admission and a completed-boundary handoff. Older signed
+mining, a completed public epoch or held-out learning. The prospective controller
+now accepts `training_policy: bf16-full-adamw-covered-fixed-reference-v3` explicitly;
+the default remains v2. It constructs a separate signed training context from
+the original post-freeze challenge, binding the epoch, input checkpoint, seed
+and receipt-set hash. Workers require exact policy agreement and source pins
+before artifact reads. Unselected batches remain ineligible for training.
+Exact copies of fully audited pairs are collapsed before accumulation so clones
+cannot multiply their gradient contribution. Original-request recovery compares
+the same signed context and policy, without reapplying a new-job disk reserve.
+Unexpected remote context changes are refused before successor publication.
+
+The deployed workers still use their original source and policy. The integrated
+signed worker path, production workloads, source admission and a completed-boundary
+handoff still require qualification. Older signed
 epochs, their training policies and their deadlines remain unchanged.

@@ -106,11 +106,10 @@ class Controller:
                 if type(definition['evaluation_only'])is not bool or (definition['evaluation_only'] and definition.get('indices')!=[]):
                     raise ValueError('evaluation-only mining indices')
         if training_policy is not None:
-            from .backend_jobs import FIXED_POLICY
+            from .training_policy import epoch_policy
             from .backend_profiles import profile
             profile(model_runtime_revision)
-            if training_policy!=FIXED_POLICY:
-                raise ValueError('unsupported epoch training policy or backend')
+            epoch_policy({'training_policy':training_policy})
         deadline=int(time.time())+duration
         if getattr(self.gateway,'direct_r2',False):
             checkpoint=dict(checkpoint,read_urls={name:self.bucket.presign(f"public/checkpoints/{checkpoint['id']}/{name}",expires=min(604800,duration+3600)) for name in checkpoint['files']})

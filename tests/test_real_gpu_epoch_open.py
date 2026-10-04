@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from subnet.backend_jobs import FIXED_POLICY,REVISION,signed
+from subnet.backend_jobs import FIXED_POLICY,COVERED_POLICY,REVISION,signed
 from subnet.controller import Controller,ENV
 from subnet.environments import legacy_spec,legacy_harness
 from subnet.gpu_service import contract
@@ -46,5 +46,24 @@ class RealGPUEpochOpening(unittest.TestCase):
                     controller.open('nonpayable-invalid',{},[],training_policy=policy,model_runtime_revision=revision)
             gateway.open.assert_not_called();self.assertEqual(bucket.objects,{})
             self.assertFalse(list(Path(folder).glob('*-manifest.json')))
+
+    def test_covered_policy_is_explicit_in_first_real_signed_epoch(self):
+        with tempfile.TemporaryDirectory()as folder:
+            spec=legacy_spec(ENV);harness=legacy_harness(spec.config)
+            config=dict(environments=[dict(spec=spec.to_dict(),indices=[0,1],harness=harness)],
+                heldout=[dict(env_id=spec.id,indices=[2,3])],source_bundle={'sha256':'a'*64,'size':1},
+                duration=60,training_policy=COVERED_POLICY)
+            bucket=MemoryBucket();gateway=Gateway(bucket,state_path=Path(folder)/'gateway.json',direct_r2=True)
+            try:
+                with patch('subnet.remote_backend.RemoteJobs'):
+                    controller=RemoteController(bucket,gateway,Path(folder)/'controller',{})
+                miner=Identity()
+                manifest=controller.open('nonpayable-covered-contract',dict(id='fixture',files={'config.json':'a'*64}),[miner.id],max_batches=3,**contract(config,0))
+                published=signed(json.loads(bucket.objects['public/nonpayable-covered-contract/manifest.json']),controller.authority.id)
+                self.assertEqual(published,manifest);self.assertEqual(manifest['training_policy'],COVERED_POLICY)
+                self.assertNotIn('training_coverage',published)
+                self.assertEqual(manifest['heldout_indices'],{spec.id:[2,3]})
+                self.assertEqual(miner.decrypt(manifest['capabilities'][miner.id])['transport'],'direct-r2-v1')
+            finally:gateway.server.shutdown();gateway.server.server_close();gateway.thread.join()
 
 if __name__=='__main__':unittest.main()
