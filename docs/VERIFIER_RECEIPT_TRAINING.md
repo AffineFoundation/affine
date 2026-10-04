@@ -1,6 +1,6 @@
 # Authenticated verifier receipts for training admission
 
-This candidate is implemented and covered by local synthetic integrity and recovery tests. It has not been sealed, deployed, or qualified by a new real GPU training run. The current E9 controller is separately held behind an operational pending-amendment gate.
+The receipt implementation is sealed as source bundle `94ff74eb335e24d4702da2ec10cc0aee068076b003e6c0b13b0e81f5090bc79c` and independently read back from R2. The E9 controller now runs that source, and the large H200 training endpoint passed source/checkpoint admission. E9 training remains held until its final accepted receipt inventory is authorized; no successful receipt-admitted GPU training run is claimed yet. The controller is restricted to finishing E9, preventing an automatic next epoch with mismatched role sources.
 
 The independent verifier performs the expensive model computation, probability, TOPLOC, exact sampling replay and environment checks. The trainer **does not repeat any of those checks**. It authenticates an operator-signed receipt, downloads the exact original frozen ZIP, checks its SHA256, byte length and bounded non-executable structure, and extracts only the batch and success/failure rollout digests accepted by that receipt. Training forward/backward passes and reference-model probability calculations remain training work.
 

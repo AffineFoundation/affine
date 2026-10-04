@@ -1,5 +1,22 @@
 # Sampling-enforced live learning goal — October 4, 2026
 
+At 20:18 UTC, sealed receipt source94ff has full independent R2 readback and
+its authority-signed descriptor. The controller runs that immutable source with
+`--once`, preserving original E9 scientific contracts and queue, and cannot
+open E10 automatically. Large H200 0a7aba3d is selected for receipt-v3 training:
+its exact 1934 source files, ten CP093 files, 34 contexts and eight native
+controls passed; CUDA was unused during admission. It has approximately1.25TB
+free. Only its train endpoint and current checkpoint cache map changed. Final
+accepted receipts/amendment remain required; no E9 train request exists yet.
+
+The original 200-reserved-problem CP093 baseline is actually terminal exit0.
+Root independently authenticated all13 original signed jobs, full reports,
+fixed task/seed cohort and final signed aggregate:141/200 correct (70.5%). This
+is a baseline, not evidence of convergence or causal training improvement.
+Private persistent-v4 optimizer-state full root readback is running separately,
+one bounded shard at a time; it does not change live training or checkpoints.
+
+
 At 19:54 UTC, the additional H200 passed all three known-good original-input
 controls and is enrolled as the third verifier. Its actual worker has claimed
 an epoch-nine audit job. The controller roster restart preserved the original
