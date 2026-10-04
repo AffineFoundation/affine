@@ -1,5 +1,36 @@
 # Sampling-enforced live learning goal — October 4, 2026
 
+At 18:08 UTC, epoch nine had 34 completed verifier jobs, 56 accepted fully
+audited batches, eighteen unchecked outcomes and one confirmed-invalid
+`InvalidSample: probabilities` outcome. Two original ENOSPC requests remain
+preserved as failed, with authenticated replacement results; two workers are
+actively auditing. The probability rejection occurs before sampling replay
+and does not establish miner intent. A separate original-input diagnostic is
+prepared for the idle evaluator H200, without changing scoring or tolerances.
+
+Verifier two is recovered. Independent full R2 readback authenticated the ten
+current checkpoint files; bounded retirement removed only a redundant physical
+copy and reclaimed 15,361,839,104 allocated bytes. The retained admitted copy,
+pending checkpoint and failed-attempt records survive. The restarted worker
+uses an explicit retained-checkpoint mapping, and its first three accepted
+batches were independently authenticated. Automatic future cache-map handover
+and verifier retention integration still need review; see
+`docs/VERIFIER_CACHE_LIFECYCLE.md`. Fourteen local cache controls pass.
+
+The isolated persistent-training H200 job has finished three local updates
+and exported successor checkpoint `30eefc49...` (ten files,
+15,242,726,226 bytes). Its original process is still exporting 23 FP32 optimizer
+shards. Complete bucket readback, authority publication, fresh restore,
+corruption controls and authenticated continuation remain pending. This is
+qualification only: live source e415/v3 and checkpoint 093 remain unchanged.
+
+An independent 200-task evaluation of current checkpoint 093 is running on
+the retained H100 under a signed, precommitted reserved cohort. Four shards
+have completed; no aggregate result or convergence claim is available yet.
+The original process is retained without restart. These checks strengthen the
+comparison beyond the small diagnostic, but qualification updates themselves
+are not public learning epochs.
+
 The operator resumed work and authorized continuous iteration, new prospective
 contracts, GitHub publication, miner-guide updates, Discord communication and
 delegated reviews. Priority order is: verified live environment sampling and
