@@ -5,7 +5,7 @@ Live mining discovery: https://affine.io/mining.json
 Current-run measurement data: https://affine.io/network-data.json
 Code: https://github.com/AffineFoundation/affine (main)
 
-## Current verified state — 2026-10-03
+## Current verified state — 2026-10-04
 
 Our SN120 validator's new-mechanism weights are active on Finney. Independent
 readback at block 9203767 confirmed exactly 19 intended recipients, their
@@ -52,8 +52,8 @@ approved source bytes. Full checkpoint hashes, original native controls, an
 honest rollout with model reload, and five tampering rejections passed. After
 actual control-process exit and GPU quiescence, the first 32-task baseline shard
 started. All eight shards are required before reporting a 128-task comparison;
-benchmark results are pending. The first baseline shard has completed all 32
-native/model-verified tasks and the second is running. This is partial coverage,
+benchmark results are pending. All four baseline shards have completed and the
+first learned shard is running. Four of eight jobs are complete. This is partial coverage,
 not a 128-task improvement result. This comparison keeps original jobs, matched
 seeds and complete coverage, and will report paired gains/losses and uncertainty.
 See https://github.com/AffineFoundation/affine/blob/main/docs/INDEPENDENT_MATH_BENCHMARK.md.
@@ -127,8 +127,16 @@ housekeeping archives and fully reads back intermediate exports before removing
 their local replicas and completed downloads. The intermediate watcher retains final learned exports. A separate automatic
 watcher can retire an obsolete completed final export only after full public
 archive checks, while protecting current/pending checkpoints and unfinished
-audits. Model caches, reports and original job records remain retained. See docs/TRAINING_RETENTION.md;
+audits. Reports and original job records remain retained. See docs/TRAINING_RETENTION.md;
 this storage change does not alter model computation or a signed mining contract.
+Separate scoped model-cache housekeeping now protects current/pending weights,
+the signed active manifest and unfinished jobs, checks every archived R2 byte,
+and retires at most one obsolete cache per cycle with an idle GPU and no open
+model files or mappings. Two actual completed cycles reclaimed 30.49 GB across
+the verifiers, preserving current weights and original evidence. It does not recursively
+scan workspaces or delete training exports. See docs/CHECKPOINT_CACHE_RETENTION.md.
+Epoch six's 78 original audit jobs have completed; its before-training evaluation
+is running. Nine cumulative updates remain the latest completed training state.
 A further streaming/conditional-copy snapshot path is tested on main but awaits
 future source admission. It does not change the current signed source. See
 docs/TRANSPORT_RECOVERY.md; follow discovery rather than assuming main is active.

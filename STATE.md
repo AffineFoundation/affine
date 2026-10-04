@@ -1,5 +1,35 @@
 # Live reward launch authorized — October 3, 2026
 
+Scoped model-cache housekeeping is now deployed as a separate actual-wait
+worker. Its first original completed cycle reclaimed 15,242,726,234 bytes from
+verifier two's obsolete f9 cache after authenticating the public descriptor and
+reading every archive object in full. Current 7f weights, R2 archives and original
+job/report evidence remain intact. A reviewed correction selects dispatched jobs
+by their actual role field, including evaluation labels such as before/after.
+The original housekeeping worker was checked sleeping between cycles with no
+children, terminated for that specific upgrade, and its actual child-wait exit
+was recorded before the corrected worker was launched. No GPU job was restarted.
+Six supervisor controls and 28 existing retention controls pass, including real
+isolated deletion, corruption refusal, busy-GPU deferral and references arriving
+during archive readback. See docs/CHECKPOINT_CACHE_RETENTION.md and
+continuous-upgrade-f590-new9-v1/automatic-checkpoint-cache-retention-v1 plus
+checkpoint-cache-retention-watch-v2. Model-cache retention is separate from
+intermediate/final training-export housekeeping; neither changes scoring.
+The corrected worker's first actual cycle subsequently reclaimed another
+15,242,726,234 bytes from verifier one's obsolete 94 cache, with full authenticated
+archive readback and checked original dispatch history. Total reclaimed by these
+two completed cache operations is 30,485,452,468 bytes. The corrected original
+worker PID/start ticks and reviewed source hashes were checked live.
+
+Epoch six completed all 78 original audit jobs and advanced to its before-training
+evaluation phase under the original controller. Cumulative updates remain nine;
+new epoch-six training and scores are not yet established. The independent
+H100 benchmark completed all four original baseline shards and is running learned
+shard zero with its original runner/child start ticks confirmed. Four of eight
+jobs are complete. A paired improvement conclusion still requires complete
+learned coverage and authenticated matched-task comparison. The goal remains
+active; steady public learning and independently demonstrated gains are unproven.
+
 The combined prospective transport/hashing source is now sealed from exact
 public commit 25230949 plus the original pinned MATH asset as archive a7d557dc….
 All five production-role machines completed new-directory CPU installation and
