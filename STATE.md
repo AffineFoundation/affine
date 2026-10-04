@@ -1,5 +1,28 @@
 # Live reward launch authorized — October 3, 2026
 
+Epoch-seven infrastructure recovery succeeded. Root authenticated all four new
+worker reports against their original signed requests, identical frozen input
+hashes, model descriptors, source/runtime pins and original job deadlines. Twelve
+batches were accepted. The four failed original jobs and their expiries remain
+unchanged; no expired lease was extended and no infrastructure penalty was
+applied. Ordinary epoch-seven audits are now advancing on both original verifiers.
+
+Candidate source b3493bd0 (public code a05dc9a8) is installed in fresh namespaces
+on all five roles, with independently checked 1,886-file inventories. All five
+read-only CPU preparations completed successfully on checkpoint 660, each with
+34 tokenizer contexts and eight native controls; original process waits and
+absence were checked. This is preparation for that checkpoint, not admission of
+the future epoch-seven successor or activation of the covered policy.
+
+A new 200-task independent benchmark was signed before the covered-policy
+handoff. Its tasks have no index or exact-problem overlap with mining, fixed32,
+or the earlier math128 cohort. A separate retained H100 is running the original
+baseline job on checkpoint 660 (twelve updates). The comparison is predetermined
+as the checkpoint after the first three nonempty completed covered-policy public
+epochs after precommit, without selecting it by benchmark score. Original runner
+and child were observed live. No result or held-out gain is claimed yet. See
+docs/INDEPENDENT_COVERED_MATH_BENCHMARK.md.
+
 The complete signed covered-training worker now passed its isolated H100 control
 on source e6f7ba6d: it downloaded the frozen R2 artifacts, fully audited five
 curated pairs, accumulated every pair across three full-model updates, and
@@ -17,7 +40,7 @@ finished. Their artifact capabilities and original frozen contents remain intact
 this is an infrastructure error, not a miner-fraud finding. Explicit recovery
 independently checked both verifier checkpoint caches and all twelve terminal
 failure logs, then issued four separate replacement jobs. Both verifier nodes
-have claimed new attempts; their completion remains to be checked. Original
+claimed new attempts; all four subsequently completed and passed root checks. Original
 signed requests, expiries and failed rows are preserved. Future epoch openings
 now give immutable model read capabilities seven
 days independently of the unchanged upload deadline. Three actual signed-opening
@@ -30,7 +53,7 @@ population, refuse changed contexts before artifact reads, collapse exact audite
 pair clones and check returned context before publishing a successor. Seventeen
 covered controls, eight original recovery controls, three real opening controls,
 and existing backend/routing/reward controls pass. The complete signed GPU worker
-path is the next qualification; no running source or policy has changed.
+path now passed as described above; no running source or policy has changed.
 
 The earlier full-coverage training candidate passed its isolated original-process H100
 control. Five curated native success/failure pairs contributed across three
@@ -42,11 +65,11 @@ reference from their verified probabilities. The actual original successful
 wait, process absence and idle GPU were checked. Ten CPU controls pass. Earlier
 admission/probe failures have terminal receipts and remain preserved. This is
 not a public mining epoch or evidence of improved held-out performance. See
-docs/COVERED_EPOCH_TRAINING.md; signed integration/deployment remain unfinished.
+docs/COVERED_EPOCH_TRAINING.md; production deployment remains unfinished.
 Evidence: future-source-af37a105-v1/covered-training-control-h100-v4.
 
 Epoch seven still uses its original source and controller. Snapshotting/publication
-has completed, but verification is waiting for the checkpoint-download recovery
+has completed and verification resumed after the checkpoint-download recovery
 described above. No upload window was extended and no active GPU job was restarted.
 
 Epoch six is complete with twelve cumulative updates. Root authenticated both

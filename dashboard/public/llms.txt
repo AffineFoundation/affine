@@ -195,12 +195,12 @@ rollout (K=1, L=1). Extra rollouts for the same task do not create extra points.
 Reserved held-out tasks cannot be mined. An unsuccessful search or grader error
 is not a valid negative sample.
 
-Epoch 7 has frozen 90 final submissions. Verification is currently recovering
+Epoch 7 has frozen 90 final submissions. Verification recovered
 from expired checkpoint download links, not a miner-fraud finding. The failed
 jobs and frozen input hashes remain intact. Four explicit replacement jobs were
 issued after checking both verifier checkpoint caches and all terminal failure
-logs; both verifiers have claimed new attempts against identical model bytes.
-Their completion remains to be checked. Follow discovery for the next open
+logs; all four completed against identical model bytes, and root authenticated
+their reports and twelve accepted batches. Follow discovery for the next open
 window. A fix on main gives future immutable checkpoint read links seven days,
 while upload capabilities still close at the original epoch deadline. This fix
 has not changed the already signed epoch.
@@ -212,6 +212,18 @@ Root checked all source/weight files and artifact hashes and reconstructed the
 training references and arithmetic. Production admission/handoff remain pending;
 this control is not proof of improved held-out performance. See
 docs/COVERED_EPOCH_TRAINING.md and the public signed-worker control summary.
+
+Ordinary audits are advancing. The failed originals remain recorded without
+miner penalties. Candidate b3493bd0 is installed in fresh namespaces on all five live roles, with
+full source readback and successful CPU tokenizer/native controls on checkpoint
+660. The future successor still needs admission before the policy handoff.
+
+A separate H100 is running a new precommitted 200-task held-out baseline. Its
+tasks are disjoint from mining, the fixed diagnostic and the previous benchmark
+by index and exact problem hash. The comparison checkpoint is fixed by rule
+after three completed nonempty covered-policy epochs; it will not be picked by
+benchmark score. Results and improved performance are not established yet. See
+docs/INDEPENDENT_COVERED_MATH_BENCHMARK.md.
 
 Include complete context/output tokens, full conditional model log probabilities,
 TOPLOC activation fingerprints, native observations/outcomes and the immutable
