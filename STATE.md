@@ -1,5 +1,26 @@
 # Sampling-enforced live learning goal — October 4, 2026
 
+At 18:27 UTC, epoch nine has 49 completed verifier reports and 74 accepted,
+fully audited batches. Two outcomes are confirmed-invalid by the deployed
+contract: one probability mismatch and one exact-sampling replay mismatch.
+The original probability rejection was independently reproduced on the idle
+evaluator H200, using the exact original source, checkpoint, frozen input and
+runtime. Shapes and float32 framing match and values are finite, but
+35,681,112 of 36,191,232 elements exceed tolerance; maximum absolute
+log-probability difference is 2.999601 versus tolerance 0.00001. The original
+diagnostic process exited successfully and root authenticated its report,
+statistics and completion. This rejects the submitted computation under the
+contract without inferring miner intent or sampling provenance from that
+particular failure. The separate sampling rejection still needs diagnosis.
+
+The qualification-only successor checkpoint is being uploaded with exact
+private PUT/GET scopes and per-object full readback; independent operator
+readback is prepared but waits for the original transfer's actual completion.
+No live checkpoint, policy or scoring record changed. The original H200
+training process continues exporting optimizer shards. Six reserved-evaluation
+shards have completed under the original 200-task run. The operator explicitly
+asked to prioritize the running mechanism and hold community work.
+
 At 18:08 UTC, epoch nine had 34 completed verifier jobs, 56 accepted fully
 audited batches, eighteen unchecked outcomes and one confirmed-invalid
 `InvalidSample: probabilities` outcome. Two original ENOSPC requests remain
