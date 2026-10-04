@@ -1,5 +1,27 @@
 # Live reward launch authorized — October 3, 2026
 
+October 4, 08:28 UTC observation: epoch seven is complete with fifteen cumulative
+training updates. Its controller diagnostic remained 20/32 before and after;
+this is not evidence of an independent held-out gain. Epoch eight opened at
+08:27:39 UTC from published checkpoint 093a61c3 under the original source and
+three-batch per-UID cap. Authenticate current discovery and the signed manifest
+for its actual upload window.
+
+All five actual-successor CPU hydrations and native admissions completed, with
+original successful waits and process absence checked. The failed initial native
+launcher and one failed hydration remain recorded; fresh scoped attempts passed.
+Completed training retention archived and retired 85,570,137,876 local bytes,
+preserving final checkpoints and original evidence. The covered-policy handoff
+did not activate: the original writer did not quiesce within the first bounded
+wait, and the next attempt reached an expired maintenance window. Its guard
+resumed the original controller without cancelling jobs or extending the lease.
+Both attempts preserved the existing compute services, reward history and cursor.
+The prepared full-coverage upgrade remains pending a future completed boundary.
+The three-batch setting is a conservative pilot quota, not measured capacity.
+
+The observations below preserve the earlier preparation history; use the current
+signed manifest rather than historical prose to determine mining availability.
+
 October 4 source preparation update: qualified source 3bacecbf (public code
 9722bbbc) is now published in R2. Root downloaded the complete 6,637,530-byte
 archive and signed descriptor and checked their exact hashes. Publication did
