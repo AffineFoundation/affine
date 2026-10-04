@@ -74,6 +74,46 @@ class RoutingTests(unittest.TestCase):
         for invalid in (True,0,-1,1.5,257*LEGACY['compressed_bytes']):
             with self.assertRaises(ValueError):self.router.training_capacity(self.manifest,3,submission_bytes=invalid)
 
+    def test_covered_capacity_keeps_full_population_and_reserves_final_plus_temporary_export(self):
+        from subnet.backend_jobs import COVERED_POLICY
+        from subnet.artifact_budget import LEGACY
+        self.router.caches={'train':{'CP':'/train/cache'}}
+        self.router.roles['train'].capacity.return_value={'checkpoint_bytes':100,'free_bytes':10**12,'required_bytes':200}
+        manifest=dict(self.manifest,training_policy=COVERED_POLICY)
+        downloads=12*LEGACY['compressed_bytes']
+        required=200+downloads+LEGACY['raw_bytes']+2*1024**3
+        for steps in (1,3,32):
+            result=self.router.training_capacity(manifest,steps,submission_bytes=downloads)
+            self.assertEqual(result['required_bytes'],required)
+            self.assertEqual(result['planned_submission_bytes'],downloads)
+            self.assertEqual(result['retained_step_checkpoints'],0)
+            self.assertEqual(result['temporary_export_copies'],1)
+            self.assertEqual(result['final_exports'],1)
+        self.router.roles['train'].capacity.return_value={'checkpoint_bytes':100,'free_bytes':required-1,'required_bytes':200}
+        with self.assertRaisesRegex(ValueError,'disk reserve'):self.router.training_capacity(manifest,3,submission_bytes=downloads)
+
+    def test_covered_missing_input_is_still_counted_on_trainer(self):
+        from subnet.backend_jobs import COVERED_POLICY
+        from subnet.artifact_budget import LEGACY
+        self.router.roles['mine'].capacity.return_value={'checkpoint_bytes':100,'free_bytes':10**12,'required_bytes':200}
+        self.router.roles['train'].python='/python'
+        self.router.roles['train'].command.return_value=json.dumps({'free_bytes':10**12})
+        result=self.router.training_capacity(dict(self.manifest,training_policy=COVERED_POLICY),3)
+        self.assertFalse(result['input_cache'])
+        self.assertEqual(result['required_bytes'],300+LEGACY['compressed_bytes']+LEGACY['raw_bytes']+2*1024**3)
+        self.router.roles['mine'].capacity.assert_called_once_with('/mine/checkpoints/CP')
+
+    def test_only_exact_covered_policy_gets_final_only_capacity(self):
+        from subnet.backend_jobs import COVERED_POLICY,FIXED_POLICY
+        from subnet.artifact_budget import LEGACY
+        self.router.caches={'train':{'CP':'/train/cache'}}
+        self.router.roles['train'].capacity.return_value={'checkpoint_bytes':100,'free_bytes':10**12,'required_bytes':200}
+        for policy in (None,FIXED_POLICY,COVERED_POLICY+'-altered'):
+            result=self.router.training_capacity(dict(self.manifest,training_policy=policy),3)
+            self.assertEqual(result['required_bytes'],400+LEGACY['compressed_bytes']+LEGACY['raw_bytes']+2*1024**3)
+            self.assertEqual(result['retained_step_checkpoints'],3)
+            self.assertEqual(result['temporary_export_copies'],0)
+
     def test_training_download_capacity_checked_on_trainer(self):
         self.router.roles['mine'].capacity.return_value={'required_bytes':100,'checkpoint_bytes':40,'free_bytes':500}
         self.router.roles['train'].python='/python'

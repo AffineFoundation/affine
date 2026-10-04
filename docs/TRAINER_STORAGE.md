@@ -10,9 +10,20 @@ job's download reserve.
 The trainer keeps those compressed ZIPs throughout the job, but decodes one
 submission at a time. Admission therefore reserves the total planned compressed
 bytes (at least one complete artifact budget), one raw-artifact working budget,
-the existing conservative model snapshot/export allowance, any missing input
+a policy-specific model snapshot/export allowance, any missing input
 checkpoint and the fixed safety reserve. Previously the compressed reserve
 covered just one submission even when the job downloaded many files.
+
+For the exact covered-pair v3 policy, future admission reserves two model-sized
+outputs: the final checkpoint and one complete temporary export. That trainer
+does not save per-update checkpoints. Other or unrecognized policies retain
+the conservative allowance of one checkpoint per update plus the final export.
+The input download is still counted if no trainer-local cache is registered;
+every selected ZIP and the raw workspace remain in the reserve. This change
+does not reduce the accepted training population to fit available space.
+Controls exercise 1, 3 and 32 updates, insufficient disk, a missing input and
+policy substitution. The change is prospective and has not replaced source
+3bacecbf or the running epoch-eight controller.
 
 Five new controls cover selecting/counting frozen files, substituted hashes,
 invalid sizes and populations, aggregate disk refusal and integer bounds.

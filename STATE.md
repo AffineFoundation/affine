@@ -1,5 +1,21 @@
 # Live reward launch authorized — October 3, 2026
 
+October 4 trainer lookup recovery: during the original epoch-eight freeze,
+root authenticated the completed epoch-seven training request/report and R2
+publication. The ten current checkpoint files were hashed on the trainer and
+linked into the original router's missing default input-cache directory.
+The original runner and child were absent and the GPU was idle. This added no
+physical model-data bytes and changed no controller PID, configuration, signed
+manifest, job, source or cache-map entry. The conservative capacity reserve
+remains unchanged; accepted training bytes are unknown until audits complete.
+
+Main also contains a prospective covered-policy capacity correction, with
+52 relevant controls passing: reserve the final checkpoint plus a temporary
+export, all selected ZIPs, one raw workspace, any missing input and the safety
+margin. It does not discard accepted pairs. This is newer than source 3bacecbf
+and requires separate source admission before deployment. The original epoch
+and the armed immutable handoff helpers remain unchanged.
+
 October 4 eligibility update: the original writer's repeated ValueError was
 independently reproduced with live chain registrations. Three positive-point
 identities in the pending hour ending 06:00 UTC had deregistered, so the previous

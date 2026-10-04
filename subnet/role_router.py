@@ -68,7 +68,8 @@ class RoutedJobs:
         """Free bytes already account for installed packages and existing caches.
 
         Legacy full training retains one complete checkpoint per optimizer step
-        plus its final export. Count those outputs and any missing input cache.
+        plus its final export. Covered training saves one final checkpoint and
+        reserves an additional full temporary export. Count missing input caches.
         Signed compressed/raw artifact budgets cover download and decoding room.
         """
         from .artifact_budget import for_manifest
@@ -89,9 +90,13 @@ class RoutedJobs:
         # Download ZIPs are retained for the entire job. Raw tensors are decoded
         # one submission at a time, so retain one raw-artifact working reserve.
         downloads=max(budget['compressed_bytes'],submission_bytes or 0)
-        required=checkpoint_bytes*(steps+1+(0 if cache else 1))+downloads+budget['raw_bytes']+2*1024**3
+        from .backend_jobs import COVERED_POLICY
+        covered=manifest.get('training_policy')==COVERED_POLICY
+        retained_steps=0 if covered else steps
+        temporary_exports=1 if covered else 0
+        required=checkpoint_bytes*(retained_steps+temporary_exports+1+(0 if cache else 1))+downloads+budget['raw_bytes']+2*1024**3
         if free<required:raise ValueError('trainer input/snapshot/export/artifact disk reserve')
-        return dict(free_bytes=free,checkpoint_bytes=checkpoint_bytes,required_bytes=required,input_cache=bool(cache),retained_step_checkpoints=steps,final_exports=1,
+        return dict(free_bytes=free,checkpoint_bytes=checkpoint_bytes,required_bytes=required,input_cache=bool(cache),retained_step_checkpoints=retained_steps,final_exports=1,temporary_export_copies=temporary_exports,
                     planned_submission_bytes=submission_bytes,download_reserve_bytes=downloads,raw_working_reserve_bytes=budget['raw_bytes'])
 
     def run(self,label,role,manifest,cache=None,**fields):
