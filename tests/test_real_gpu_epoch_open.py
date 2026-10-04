@@ -11,9 +11,10 @@ from subnet.remote_backend import RemoteController
 from subnet.storage import Gateway,Identity,canonical
 
 class MemoryBucket:
-    def __init__(self):self.objects={}
+    def __init__(self):self.objects={};self.capability_lifetimes={}
     def json(self,key,value):self.objects[key]=canonical(value)
     def presign(self,key,operation='get_object',expires=3600):
+        self.capability_lifetimes[(operation,key)]=expires
         return 'https://fixture.r2.cloudflarestorage.com/bucket/'+key+'?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=fixture'
 
 class RealGPUEpochOpening(unittest.TestCase):
@@ -31,6 +32,10 @@ class RealGPUEpochOpening(unittest.TestCase):
                 self.assertEqual(published,manifest);self.assertEqual(manifest['training_policy'],FIXED_POLICY)
                 self.assertEqual(manifest['model_runtime_revision'],REVISION);self.assertEqual(manifest['max_batches'],3)
                 self.assertEqual(manifest['heldout_indices'],{spec.id:[2,3]});self.assertIs(manifest['payable'],False)
+                # Model downloads remain possible well after mining closes,
+                # even if snapshotting and the verifier queue take hours.
+                self.assertGreaterEqual(bucket.capability_lifetimes[('get_object','public/checkpoints/fixture/config.json')],86400)
+                self.assertEqual(manifest['deadline']-manifest['start'],60)
                 self.assertEqual(json.loads((controller.state/'nonpayable-real-contract-manifest.json').read_text()),manifest)
                 self.assertEqual(miner.decrypt(manifest['capabilities'][miner.id])['transport'],'direct-r2-v1')
                 self.assertIn('public/nonpayable-real-contract/current.json',bucket.objects)

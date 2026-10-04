@@ -1,0 +1,27 @@
+{
+  "actual_original_wait_exit_code": 0,
+  "chain_transactions": false,
+  "checked_at": 1791085468.9564757,
+  "checkpoint_and_successor_all_bytes_checked": true,
+  "fresh_successor_proof_verified": true,
+  "frozen_artifacts_decoded": 5,
+  "full_signed_backend_job": true,
+  "gradient_pairs_per_update": [
+    2,
+    2,
+    1
+  ],
+  "heldout_improvement_verified": false,
+  "live_epoch_changed": false,
+  "mutation_rejected": true,
+  "parameter_tensors_with_gradients": 339,
+  "passed": true,
+  "peak_allocated_bytes": 78638168064,
+  "reference_margins_independently_reconstructed": true,
+  "remote_frozen_artifact_hashes_independently_checked": 5,
+  "source_files": 1885,
+  "trace_origin": "curated-native-controls",
+  "trainable_parameters": 7615616512,
+  "source_sha256": "e6f7ba6d8742380b79c2e4e466a12907d7fd256423621a6f50d0bbda62c04616",
+  "training_policy": "bf16-full-adamw-covered-fixed-reference-v3"
+}

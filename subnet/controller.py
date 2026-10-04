@@ -112,7 +112,9 @@ class Controller:
             epoch_policy({'training_policy':training_policy})
         deadline=int(time.time())+duration
         if getattr(self.gateway,'direct_r2',False):
-            checkpoint=dict(checkpoint,read_urls={name:self.bucket.presign(f"public/checkpoints/{checkpoint['id']}/{name}",expires=min(604800,duration+3600)) for name in checkpoint['files']})
+            # Immutable public model reads must survive freeze, queueing, audits
+            # and training. Upload capabilities still end at the epoch deadline.
+            checkpoint=dict(checkpoint,read_urls={name:self.bucket.presign(f"public/checkpoints/{checkpoint['id']}/{name}",expires=604800) for name in checkpoint['files']})
         if artifact_policy is None:
             caps=self.gateway.open(epoch,miners,deadline)
         else:

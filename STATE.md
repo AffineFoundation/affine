@@ -1,5 +1,28 @@
 # Live reward launch authorized — October 3, 2026
 
+The complete signed covered-training worker now passed its isolated H100 control
+on source e6f7ba6d: it downloaded the frozen R2 artifacts, fully audited five
+curated pairs, accumulated every pair across three full-model updates, and
+verified a fresh successor proof with independent reload and mutation rejection.
+Root separately checked all 1,885 source files, every input/successor weight file,
+remote artifact hashes and the recorded gradient/reference arithmetic. Original
+process wait succeeded and the GPU was independently observed idle. This is
+not a public mining epoch or evidence of held-out improvement. Production source
+admission and the future policy handoff remain incomplete.
+
+Epoch seven has frozen all 90 final submissions. Four verification jobs exhausted
+their bounded retries on HTTP 403 downloading the approved checkpoint: model
+read capabilities expired 90 minutes after opening, before the slow freeze
+finished. Their artifact capabilities and original frozen contents remain intact;
+this is an infrastructure error, not a miner-fraud finding. Explicit recovery
+independently checked both verifier checkpoint caches and all twelve terminal
+failure logs, then issued four separate replacement jobs. Both verifier nodes
+have claimed new attempts; their completion remains to be checked. Original
+signed requests, expiries and failed rows are preserved. Future epoch openings
+now give immutable model read capabilities seven
+days independently of the unchanged upload deadline. Three actual signed-opening
+controls, fourteen reward-bridge and eighteen remote-backend controls pass.
+
 Prospective covered training is now integrated into epoch opening, signed worker
 admission, original-request recovery and successor publication. The v2 default
 remains unchanged. Covered jobs bind the original post-freeze seed and receipt
@@ -9,7 +32,7 @@ covered controls, eight original recovery controls, three real opening controls,
 and existing backend/routing/reward controls pass. The complete signed GPU worker
 path is the next qualification; no running source or policy has changed.
 
-The full-coverage training candidate passed its isolated original-process H100
+The earlier full-coverage training candidate passed its isolated original-process H100
 control. Five curated native success/failure pairs contributed across three
 updates, all 339 parameter tensors received gradients, and the fresh successor
 passed model reload/full proof replay plus a proof-mutation rejection. Root
@@ -22,10 +45,9 @@ not a public mining epoch or evidence of improved held-out performance. See
 docs/COVERED_EPOCH_TRAINING.md; signed integration/deployment remain unfinished.
 Evidence: future-source-af37a105-v1/covered-training-control-h100-v4.
 
-Epoch seven is still closing uploads under its original source and controller.
-The freeze is making actual byte progress and has durably snapshotted 64
-submissions as of 02:53 UTC. The controller's original PID/start ticks remain
-live. No upload window was extended and no active job was restarted.
+Epoch seven still uses its original source and controller. Snapshotting/publication
+has completed, but verification is waiting for the checkpoint-download recovery
+described above. No upload window was extended and no active GPU job was restarted.
 
 Epoch six is complete with twelve cumulative updates. Root authenticated both
 original 32-task evaluation reports: 21 correct before training and 20 after.

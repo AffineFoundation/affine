@@ -59,7 +59,16 @@ cannot multiply their gradient contribution. Original-request recovery compares
 the same signed context and policy, without reapplying a new-job disk reserve.
 Unexpected remote context changes are refused before successor publication.
 
-The deployed workers still use their original source and policy. The integrated
-signed worker path, production workloads, source admission and a completed-boundary
-handoff still require qualification. Older signed
-epochs, their training policies and their deadlines remain unchanged.
+The full signed worker path has now also passed on source e6f7ba6d, using the
+original backend entry point to download frozen R2 artifacts, fully audit five
+curated pairs and run the covered updates. A fresh successor passed independent
+reload/proof replay and a tampered proof was rejected. Root independently checked
+all 1,885 source files, all input/successor checkpoint files and remote artifact
+hashes, decoded the five artifacts and reconstructed the references and update
+arithmetic. Peak allocation was 78,638,168,064 bytes. The original child wait
+succeeded; process absence and idle GPU were observed independently. See
+`docs/data/signed-covered-worker-control-20261004.json`.
+
+The deployed workers still use their original source and policy. Production
+workloads, source admission and the completed-boundary handoff remain incomplete.
+Older signed epochs, their training policies and deadlines remain unchanged.
