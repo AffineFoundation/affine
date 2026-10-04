@@ -109,3 +109,5 @@ Technical references:
 - https://github.com/AffineFoundation/affine/blob/main/docs/SUBMISSION_RETENTION.md
 
 When reporting failures, provide the epoch, approved source/checkpoint, public UID and sanitized logs. Keep wallet keys, upload grants and credentials private.
+
+Prospective optimization, not the active contract: `docs/FULL_FORWARD_SAMPLER_QUALIFICATION.md` describes a public robust-CDF gate using independently recomputed causal full-forward conditionals. A short private H200 diagnostic passed a genuine 128-token control and rejected a synthetic trajectory with recomputed valid probabilities/TOPLOC. Cross-hardware and production qualification are still pending; miners must continue to follow the signed current epoch contract.

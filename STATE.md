@@ -1,3 +1,5 @@
+Latest operational update: 2026-10-04 20:35 UTC. Three admitted H200 verifiers are now concurrently processing original E9 escalation jobs (three leased jobs, three distinct workers), after an operational-only controller dispatch patch. Controller PID1088995 retains --once; signed E9 challenge and computational sources unchanged. Patch and guide pushed to main as 27c682e0. Five legacy pods/six GPUs have isolated pinned CPU runtimes; cross-hardware qualification is still required before live admission. Root launched a private, bounded full-forward robust-CDF H200 reference diagnostic (original supervisor52082) using the freed old trainer; no queue/live contract changes. Persistent private-lab optimizer state independently read back all23shards/91,387,491,264bytes,339parameters, then committed descriptor last; this is not a live production checkpoint promotion. Training-amendment helper now binds the actual parallel-controller activation record. E9 training remains held pending final escalation reports.
+
 # Sampling-enforced live learning goal — October 4, 2026
 
 At 20:18 UTC, sealed receipt source94ff has full independent R2 readback and
