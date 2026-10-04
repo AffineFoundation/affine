@@ -11,6 +11,7 @@ from subnet.backend_jobs import _validate
 from subnet.remote_backend import RemoteJobs
 from subnet.source_bootstrap import admitted_files
 from ops import live_reward_exporter as exporter,live_reward_submit as submit
+from ops.verifier_workforce import authenticate_supplements,authorize_worker
 UNITS=tuple(n+'.'+s for n in ('affine-transition-weights','affine-hourly-burn') for s in ('timer','service'))
 
 class FinalizationPending(ValueError):
@@ -88,7 +89,7 @@ def verify_audit_lineage(state,manifest,audit,authority,c,db,now,files,*,require
  need(all(files.get(name)==digest for name,digest in job['source_files'].items()),'actual approved archive module pins')
  row=db.execute('SELECT * FROM jobs WHERE id=?',(jobid,)).fetchone();need(row is not None and row['status']=='complete','actual queue completion')
  need(canonical(json.loads(row['envelope']))==canonical(envelope),'original queue signed request')
- worker=row['worker'];need(worker in c['verifier_identities'],'approved verifier identity')
+ worker=row['worker'];workforce=authorize_worker(worker,manifest,job,row,db,c['verifier_identities'],c.get('_verifier_workforce',{}))
  request=authenticate(json.loads(row['report_request']),worker);remote=json.loads(row['report'])
  need(request['action']=='report' and request['job_id']==jobid and request['report']==remote,'actual authenticated worker report')
  need(hashlib.sha256(canonical(remote)).hexdigest()==row['report_digest'],'queue report bytes')
@@ -100,7 +101,7 @@ def verify_audit_lineage(state,manifest,audit,authority,c,db,now,files,*,require
  matches=[r for r in remote['audits'] if r['submission_sha256']==audit['submission_sha256']];need(len(matches)==1,'exact frozen report')
  bound=dict(matches[0],remote_job_id=remote['job_id'],backend_profile=remote['backend_profile'],execution_resources_enforced=remote['execution_resources_enforced'])
  need(canonical(bound)==canonical(audit),'original audit metadata, not caller score')
- return dict(job_id=jobid,job_sha256=sha(job),report_sha256=sha(remote),worker=worker,submission_sha256=audit['submission_sha256'])
+ return dict(job_id=jobid,job_sha256=sha(job),report_sha256=sha(remote),worker=worker,submission_sha256=audit['submission_sha256'],**(workforce or {}))
 
 def approved_source_members(c,authority):
  """Authenticate every operator-approved archive, retaining older epoch pins."""
@@ -246,8 +247,11 @@ def choose_hour(state,anchor,now):
  end=max(first,(end+3600 if end is not None else first))
  return end if end<=int(now)//3600*3600 else None
 
-def run_once(cutover_document,anchor_document,authority,*,execute=False,adapter_factory=ChainAdapter):
+def run_once(cutover_document,anchor_document,authority,*,execute=False,adapter_factory=ChainAdapter,verifier_workforce_supplements=None):
  c,anchor=authenticate_cutover(cutover_document,anchor_document,authority);need(type(execute)is bool,'explicit execution flag')
+ c=dict(c)
+ if verifier_workforce_supplements:
+  c['_verifier_workforce']=authenticate_supplements(verifier_workforce_supplements,authority,sha(cutover_document),c['verifier_identities'])
  with global_lock(c['global_lock_path']):
   guard_files(c);units=observe_units();identity=process_identity();now=time.time()
   seed=Path(c['authority_seed_file']);need(not seed.is_symlink() and seed.stat().st_mode&0o077==0,'private authority seed')
@@ -284,10 +288,10 @@ def run_once(cutover_document,anchor_document,authority,*,execute=False,adapter_
   return result
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--cutover',required=True);p.add_argument('--anchor',required=True);p.add_argument('--authority',required=True);p.add_argument('--execute',action='store_true');a=p.parse_args()
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--cutover',required=True);p.add_argument('--anchor',required=True);p.add_argument('--authority',required=True);p.add_argument('--execute',action='store_true');p.add_argument('--verifier-workforce-supplement',action='append',default=[]);a=p.parse_args()
  def timed_out(*_):raise TimeoutError('bounded writer invocation')
  signal.signal(signal.SIGALRM,timed_out);signal.alarm(720)
- try:result=run_once(read(a.cutover),read(a.anchor),a.authority,execute=a.execute)
+ try:result=run_once(read(a.cutover),read(a.anchor),a.authority,execute=a.execute,verifier_workforce_supplements=[read(path)for path in a.verifier_workforce_supplement])
  except Exception as error:
   print(json.dumps(dict(status='refused_or_failed',error_type=type(error).__name__,execute=a.execute)));raise SystemExit(1)
  finally:signal.alarm(0)

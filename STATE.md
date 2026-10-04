@@ -1,5 +1,26 @@
 # Sampling-enforced live learning goal — October 4, 2026
 
+At 19:54 UTC, the additional H200 passed all three known-good original-input
+controls and is enrolled as the third verifier. Its actual worker has claimed
+an epoch-nine audit job. The controller roster restart preserved the original
+scientific contracts, frozen inputs, queue and hard training gate; its new PID
+is 842437. A signed epoch-scoped workforce supplement authorizes this worker
+for the existing guarded reward writer. Nineteen workforce/writer controls pass.
+The epoch-nine queue has 105 completed, two preserved failed and three leased
+requests at this observation. This is three active verifiers, not six.
+
+The operator authorized reuse of retired Affine pods instead of more rentals.
+Five GPU-idle pods provide six GPUs (two B200, two RTX6000 Ada, one L40S and
+one RTX4090), already costing $14.41/hour. Their existing CPU services are
+preserved while isolated hardware verification is prepared. These SM100/SM89
+GPUs are not admitted by the current immutable SM90 profile. The loaded
+8-GPU legacy eval server is not claimed as idle; a legacy RTX3090 has a changed
+SSH host key and is not accessed by bypassing trust. A retained idle H200's
+runtime installation completed but its CUDA smoke failed with driver error
+999; it is not admitted. An H100 honest control also failed exact sampling
+replay, so that worker is held out rather than risking false miner penalties.
+
+
 At 19:08 UTC, the operator requested no trainer re-verification and six
 verifier machines, up from two. Four additional dedicated machines have been
 rented: one H200 ($5.70/hour) and three H100s ($1.30, $1.30 and $1.80/hour),
