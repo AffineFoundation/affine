@@ -93,6 +93,12 @@ def contract(config,round_number):
     result=dict(sample_harness_registry=registry,heldout_indices={r['env_id']:r['indices'] for r in config['heldout']},duration=config.get('duration',300),environments=definitions_all,audit_policy=config.get('audit_policy',{'mode':'full','version':1}),
         training_policy=epoch_policy(config),source_bundle=config['source_bundle'],model_runtime_revision=revision,numerical_policy=policy,
         backend_profile=profile,model_id=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'))
+    if config.get('training_input_policy') is not None:
+        if config['training_input_policy'] not in ('authenticated-verifier-receipts-v1','authenticated-verifier-compact-inputs-v2'):
+            raise ValueError('unapproved training input policy')
+        from .training_receipts import POLICIES
+        if epoch_policy(config) not in POLICIES:raise ValueError('receipt input requires covered/persistent objective')
+        result['training_input_policy']=config['training_input_policy']
     if config.get('artifact_policy') is not None:result['artifact_policy']=config['artifact_policy']
     if config.get('task_assets') is not None:result['task_assets']=config['task_assets']
     if config.get('sampling_policy') is not None:result['sampling_policy']=config['sampling_policy']
@@ -142,6 +148,7 @@ def initial_manifest(config,checkpoint):
     revision,profile,policy=for_config(config)
     from .harness import source_hash
     result=dict(sample_harness_registry=chosen['sample_harness_registry'],epoch=config['epoch_prefix']+'-initial',payable=False,training_policy=chosen['training_policy'],checkpoint=checkpoint,environments=[dict(env_id=r['spec']['id'],**r) for r in chosen['environments']],K=1,L=1,max_batches=config.get('max_batches',3),audit_policy=config.get('audit_policy',{'mode':'full','version':1}),harness_source_hash=source_hash(),model_runtime_revision=revision,numerical_policy=policy,backend_profile=profile,model_id=chosen['model_id'],transport_policy='direct-r2-v1')
+    if 'training_input_policy' in chosen:result['training_input_policy']=chosen['training_input_policy']
     if 'artifact_policy' in chosen:result['artifact_policy']=chosen['artifact_policy']
     if 'task_assets' in chosen:result['task_assets']=chosen['task_assets']
     return result

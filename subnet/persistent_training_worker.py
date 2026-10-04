@@ -27,7 +27,10 @@ def report_updates(diagnostics,job,manifest):
 
 def admitted_submission(path,obj,manifest,authority):
     """Retire only byte-authenticated input after verifier receipt admission."""
-    from .training_receipts import admitted_submission as admit
+    if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
+        from .compact_training_inputs import admitted_submission as admit
+    else:
+        from .training_receipts import admitted_submission as admit
     return admit(path,obj,manifest,authority,retire=True)
 
 
@@ -127,6 +130,9 @@ def capacity_requirement(manifest,probe,*,checkpoint_bytes,missing_input):
     """Bounded streaming disk, all pairs retained, actual resource observations."""
     from .artifact_budget import for_manifest
     binding=manifest['trainer_state_binding'];budget=for_manifest(manifest)
+    if manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2':
+        from .compact_training_inputs import MAX_BYTES,DECODE_WORKING_BYTES
+        budget=dict(compressed_bytes=256*MAX_BYTES,raw_bytes=MAX_BYTES)
     if type(checkpoint_bytes)is not int or checkpoint_bytes<=0 or type(missing_input)is not bool:
         raise ValueError('measured checkpoint hydration size')
     export=max(checkpoint_bytes,sum(r['numel']for r in binding['parameters'])*2+1024**3)
@@ -134,7 +140,8 @@ def capacity_requirement(manifest,probe,*,checkpoint_bytes,missing_input):
     disk=plan['additional_disk_required_bytes']+(checkpoint_bytes if missing_input else 0)+budget['compressed_bytes']+budget['raw_bytes']
     # Model is not loaded yet during the coordinator probe. Reserve one BF16
     # input load separately; worker repeats admission after loading the model.
-    ram=plan['cpu_additional_ram_required_bytes']+checkpoint_bytes+budget['raw_bytes']
+    working_ram=DECODE_WORKING_BYTES if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2') else budget['raw_bytes']
+    ram=plan['cpu_additional_ram_required_bytes']+checkpoint_bytes+working_ram
     if probe['free_bytes']<disk:raise ValueError('persistent trainer bounded stream/input/export/artifact disk reserve')
     if probe['available_ram_bytes']<ram:raise ValueError('persistent trainer actual CPU/cgroup memory reserve')
     return dict(probe,plan=plan,required_bytes=disk,required_available_ram_bytes=ram,

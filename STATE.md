@@ -2242,3 +2242,30 @@ transport and artifact structure; it is not fresh inference verification or
 optimizer recovery. The actual controller remains alive and honors the original
 deadline before freeze. Evidence:
 `state/gpu-wide/root-post-empty-private-R2-batch-check.json`.
+
+
+## Original E9 receipt training completed; prospective transport review
+
+Root independently matched the actual original remote runner 4415/child 4422 and
+start ticks to terminal exit 0, full report hash, signed train job and all 121
+authenticated admissions. E9 trained 183 distinct pairs across three full-model
+updates (61 each), removing three exact copies from 186 admitted pairs. Trainer
+verification was false; the independent verifiers supplied the original evidence.
+Successor checkpoint is 28d478ac16c36fb0ab816f0273aee220e42927136c1e5a8ee3c34792b6d38384.
+Independent publication and held-out improvement are not established by this
+training result. Evidence: state/root-audits/e9-original-completed-training-review-v1/review.private.json.
+
+Prospective authenticated-verifier-compact-inputs-v2 integration and independent
+audit reader are implemented, preserving historical ZIP lineage and signed
+original verifier evidence. Root ran 70 compact/old-source/native-grader controls
+and 130 receipt/backend/covered/persistent/capacity controls successfully. This
+commit does not activate v2 or amend E9. Future role source admission and actual
+durable compact readback remain necessary. New native grader runtime qualification
+is in progress; grader timeouts must be indeterminate rather than valid negatives.
+
+Original CPU hydration qualification17510/17517 exited1 at the cgroup resource
+gate before downloads. A separately reviewed v2 attempt uses the already-sealed
+conservative clean-inactive-cache accounting, with unchanged133GB memory reserve
+and separate namespace. Actual observed effective RAM was199.76GB. Neither the
+failed attempt nor a staged restore constitutes optimizer restoration or public
+persistent-v4 activation. Four qualified H200 verifier workers remain admitted.

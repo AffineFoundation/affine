@@ -96,6 +96,10 @@ class RoutedJobs:
             code="import json,os;from pathlib import Path;p=Path("+repr(trainer.workspace)+");p.mkdir(parents=True,exist_ok=True);s=os.statvfs(p);print(json.dumps(dict(free_bytes=s.f_bavail*s.f_frsize)))"
             free=json.loads(trainer.command(shlex.quote(trainer.python)+' -c '+shlex.quote(code)))['free_bytes']
         budget=for_manifest(manifest)
+        compact_input=(manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2')
+        if compact_input:
+            from .compact_training_inputs import MAX_BYTES
+            budget=dict(compressed_bytes=MAX_BYTES,raw_bytes=MAX_BYTES)
         if submission_bytes is not None and (type(submission_bytes) is not int or not 0<submission_bytes<=256*budget['compressed_bytes']):
             raise ValueError('planned training submission bytes')
         # Download ZIPs are retained for the entire job. Raw tensors are decoded

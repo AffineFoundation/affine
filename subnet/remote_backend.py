@@ -114,7 +114,12 @@ class RemoteJobs:
         if job.get('training_policy')==PERSISTENT_POLICY and [r.get('accepted_batch_sha256')for r in job['submissions']]!=[r.get('accepted_batch_sha256')for r in submissions]:
             raise ValueError('original persistent training accepted pair population changed')
         if job.get('training_policy') in RECEIPT_TRAINING_POLICIES:
-            from .training_receipts import receipt_inventory
+            if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
+                if 'subnet/compact_training_inputs.py' not in job.get('source_files',{}):
+                    raise ValueError('compact original job source pin required')
+                from .compact_training_inputs import receipt_inventory
+            else:
+                from .training_receipts import receipt_inventory
             if receipt_inventory(job['submissions'])!=receipt_inventory(submissions):
                 raise ValueError('original training verifier admission receipts changed')
         reportpath=self.state/(prior['job_id']+'-report.json')
@@ -146,7 +151,12 @@ class RemoteJobs:
             identifier=label+'-'+secrets.token_hex(4);now=time.time()
             payload=dict(schema=1,job_id=identifier,role=role,created_at=now,expires_at=now+role_time_budget(self.config,role),manifest=self.controller.signed(manifest),**self.metadata,**fields)
             if role=='train' and fields.get('training_policy') in RECEIPT_TRAINING_POLICIES:
-                from .training_receipts import VERSION,validate_job as validate_receipt_job
+                if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
+                    if 'subnet/compact_training_inputs.py' not in payload.get('source_files',{}):
+                        raise ValueError('compact dispatch source pin required')
+                    from .compact_training_inputs import VERSION,validate_job as validate_receipt_job
+                else:
+                    from .training_receipts import VERSION,validate_job as validate_receipt_job
                 payload['training_input_policy']=VERSION
                 validate_receipt_job(payload,manifest,self.controller.authority.id)
             from .persistent_cpu_adamw import POLICY as PERSISTENT_POLICY
@@ -185,7 +195,12 @@ class RemoteJobs:
         if hashlib.sha256(canonical(job)).hexdigest()!=prior['job_sha256']:
             raise ValueError('remote role original signed job binding')
         if job.get('role')=='train' and job.get('training_policy') in RECEIPT_TRAINING_POLICIES:
-            from .training_receipts import validate_report as validate_receipt_report
+            if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
+                if 'subnet/compact_training_inputs.py' not in job.get('source_files',{}):
+                    raise ValueError('compact original report source pin required')
+                from .compact_training_inputs import validate_report as validate_receipt_report
+            else:
+                from .training_receipts import validate_report as validate_receipt_report
             validate_receipt_report(report,job,manifest,self.controller.authority.id)
         created,expires,completed=job.get('created_at'),job.get('expires_at'),report.get('completed_at')
         if any(type(value) not in (int,float) or not math.isfinite(value) for value in (created,expires,completed)) or not created<=completed<expires or not 0<expires-created<=86400:
@@ -207,6 +222,12 @@ class RemoteController(Controller):
         else:self.jobs=RemoteJobs(remote,self)
     def open(self,*args,max_batches=3,**kwargs):
         if type(max_batches)is not int or not 1<=max_batches<=256:raise ValueError('per UID batch quota')
+        input_policy=kwargs.pop('training_input_policy',None)
+        if input_policy is not None:
+            if input_policy not in ('authenticated-verifier-receipts-v1','authenticated-verifier-compact-inputs-v2'):
+                raise ValueError('unapproved training input policy')
+            if kwargs.get('training_policy') not in RECEIPT_TRAINING_POLICIES:
+                raise ValueError('explicit receipt input requires covered/persistent objective')
         heldouts=kwargs.pop('heldout_indices',None)
         operator_test_policy=kwargs.pop('operator_test_policy',None)
         if operator_test_policy is not None:
@@ -228,6 +249,7 @@ class RemoteController(Controller):
         try:manifest=super().open(*args,**kwargs)
         finally:self.bucket=original
         manifest['max_batches']=max_batches
+        if input_policy is not None:manifest['training_input_policy']=input_policy
         if operator_test_policy is not None:manifest['operator_test_policy']=operator_test_policy
         if heldouts is not None:manifest['heldout_indices']=heldouts
         save(self.state/(manifest['epoch']+'-manifest.json'),manifest)
@@ -376,13 +398,18 @@ class RemoteController(Controller):
             training_manifest=coverage_manifest(training_manifest,receipts,challenge)
             if replay is not None:raise ValueError('covered historical replay requires separate admission')
         if policy==COVERED_POLICY:
-            from .training_receipts import prepare_submissions,amend_manifest,receipt_inventory
-            submissions=prepare_submissions(self,training_manifest,reports,receipts)
-            training_manifest=amend_manifest(self,training_manifest,submissions,steps)
+            if (training_manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
+                from .compact_training_inputs import prepare_submissions,receipt_inventory
+                from .compact_training_inputs import validate_report as validate_receipt_report
+                submissions=prepare_submissions(self,training_manifest,reports,receipts)
+            else:
+                from .training_receipts import prepare_submissions,amend_manifest,receipt_inventory
+                from .training_receipts import validate_report as validate_receipt_report
+                submissions=prepare_submissions(self,training_manifest,reports,receipts)
+                training_manifest=amend_manifest(self,training_manifest,submissions,steps)
         if cached.exists():
             metrics=json.loads(cached.read_text())
             if policy==COVERED_POLICY:
-                from .training_receipts import validate_report as validate_receipt_report,receipt_inventory
                 record=json.loads((self.state/'roles'/(epoch+'-train.json')).read_bytes())
                 job=signed(json.loads((self.state/'roles'/(record['job_id']+'-job.json')).read_bytes()),self.authority.id)
                 if (hashlib.sha256(canonical(job)).hexdigest()!=record['job_sha256'] or
@@ -408,10 +435,11 @@ class RemoteController(Controller):
         extra={'replay':replay} if replay is not None else {}
         if policy!=COVERED_POLICY and manifest.get('audit_policy',{}).get('version')=='bounded-random-v1':
             training_manifest=json.loads((self.state/(epoch+'-audit-manifest.json')).read_text())
-        planned_bytes=training_submission_bytes(receipts,reports,manifest)
+        planned_bytes=(sum(obj['size'] for obj in submissions) if (training_manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2')
+                       else training_submission_bytes(receipts,reports,manifest))
         capacity=(self.jobs.training_resume(epoch+'-train',training_manifest,submissions,steps,replay) if hasattr(self.jobs,'training_resume') else None)
         if capacity is None:
-            capacity=(self.jobs.training_capacity(manifest,steps,submission_bytes=planned_bytes) if hasattr(self.jobs,'training_capacity') else self.jobs.capacity(checkpoint_path))
+            capacity=(self.jobs.training_capacity(training_manifest,steps,submission_bytes=planned_bytes) if hasattr(self.jobs,'training_capacity') else self.jobs.capacity(checkpoint_path))
         remote=self.jobs.run(epoch+'-train','train',training_manifest,checkpoint_path,submissions=submissions,steps=steps,training_policy=policy,**extra)
         if policy==COVERED_POLICY:
             if remote['training'].get('training_policy')!=policy or remote['training'].get('training_coverage')!=training_manifest['training_coverage']:raise ValueError('remote covered training context changed')

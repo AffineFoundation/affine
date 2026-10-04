@@ -46,8 +46,12 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
     receipts=json.loads((controller.state/(epoch+'-scores.json')).read_text())['receipts']
     challenge=json.loads((controller.state/(epoch+'-audit-challenge.json')).read_text())
     training_manifest=coverage_manifest(training_manifest,receipts,challenge)
-    submissions=prepare_submissions(controller,training_manifest,reports,receipts)
-    training_manifest=amend_manifest(controller,training_manifest,submissions,steps)
+    if (training_manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
+        from .compact_training_inputs import prepare_submissions,receipt_inventory
+        submissions=prepare_submissions(controller,training_manifest,reports,receipts)
+    else:
+        submissions=prepare_submissions(controller,training_manifest,reports,receipts)
+        training_manifest=amend_manifest(controller,training_manifest,submissions,steps)
     cached=controller.state/(epoch+'-training-metrics.json')
     if cached.exists():
         metrics=json.loads(cached.read_text());record,job=original_request(controller,epoch)
@@ -91,7 +95,8 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
     capacity=(controller.jobs.training_resume(epoch+'-train',training_manifest,submissions,steps,None)
               if hasattr(controller.jobs,'training_resume')else None)
     if capacity is None:
-        total=training_submission_bytes(receipts,reports,manifest)
+        total=(sum(obj['size'] for obj in submissions) if (training_manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2')
+               else training_submission_bytes(receipts,reports,manifest))
         probe=getattr(controller.jobs,'persistent_training_capacity',None)or getattr(controller.jobs,'training_capacity',None)
         if probe is None:raise ValueError('persistent training requires actual trainer resource probe')
         capacity=probe(training_manifest,steps,submission_bytes=total)
