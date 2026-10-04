@@ -29,6 +29,14 @@ shard zero with its original runner/child start ticks confirmed. Four of eight
 jobs are complete. A paired improvement conclusion still requires complete
 learned coverage and authenticated matched-task comparison. The goal remains
 active; steady public learning and independently demonstrated gains are unproven.
+The original epoch-six before-training report then completed successfully and
+the original trainer launched. Its runner PID 24395 and child PID 24401 were
+checked alive with matching original start ticks at 00:18 UTC; cumulative updates
+remain nine until that original training report completes. A new Discord reply
+1556099145985560728 answers the miner's stuck-window question, explains the current
+training/next-window flow and points to discovery, /llms.txt and main. Its actual
+POST and independent GET readback are retained privately. Main 84d2e2c6 and the
+matching full HTTPS guide bytes were independently verified before this followup.
 
 The combined prospective transport/hashing source is now sealed from exact
 public commit 25230949 plus the original pinned MATH asset as archive a7d557dc….
