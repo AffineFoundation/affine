@@ -143,7 +143,7 @@ class BootstrapTests(unittest.TestCase):
         import importlib.util
         from types import SimpleNamespace, ModuleType
         client=ModuleType('subnet.client');client.identity=MagicMock(return_value=SimpleNamespace(id='miner'));client.fetch_signed=MagicMock(return_value={'epoch':'new','source_bundle':{'sha256':'b'*64}});client.checkpoint_download=MagicMock();client.direct_r2_url=MagicMock()
-        miner=ModuleType('subnet.miner');miner.Miner=MagicMock()
+        miner=ModuleType('subnet.miner');miner.Miner=MagicMock();miner.EpochClosed=type('EpochClosed',(RuntimeError,),{})
         batches=ModuleType('subnet.batches');batches.UploadBudgetExceeded=type('UploadBudgetExceeded',(Exception,),{})
         model=ModuleType('subnet.model');model.check_runtime_profile=MagicMock()
         protocol=ModuleType('subnet.protocol');protocol.entries=MagicMock();protocol.sample_key=MagicMock()

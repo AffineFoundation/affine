@@ -70,13 +70,22 @@ Pinned model/runtime packages still need installing and qualifying on the miner
 hardware. This bootstrap does not install dependencies, claim GPU compatibility,
 prove inference, submit chain weights or create/read a wallet.
 
-The initial GPU profile requires CUDA compute capability 8.6, BF16, eager
+The historical initial GPU profile requires CUDA compute capability 8.6, BF16, eager
 attention and deterministic CUBLAS with `CUBLAS_WORKSPACE_CONFIG=:4096:8` set
 before inference. The retained RTX 3090 has that architecture. The pilot's actually qualified
 runtime reports torch 2.14.0, transformers 5.14.1 and toploc 0.1.6. These are
 observed operator-runtime versions, not a promise that a clean installation or
 another GPU will reproduce them. Validate installed runtime admission before
 mining; compatibility with other hardware is not established by the bootstrap.
+
+For the prospective forced-sampling release, the qualified profile is H200/SM90
+using the signed uncached eager `text-tools-long-v2` sampler, temperature 0.8,
+top-p 1 and at most 1,024 output tokens. The same observed core package versions
+do not imply numerical portability between GPUs. Follow the active signed
+manifest rather than the historical 3090 profile. The source binds prescribed
+epoch/task/attempt draws, and full audited trajectories must exactly replay;
+TOPLOC and probability checks alone cannot qualify an arbitrary chosen answer.
+See [FORCED_SAMPLING_CUTOVER.md](FORCED_SAMPLING_CUTOVER.md).
 
 Miners may choose a bounded search on particular authorized tasks by adding
 `--env-id affine_math --indices 1553 --search-budget 32 --max-batches 1`.

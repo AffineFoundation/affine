@@ -8,10 +8,29 @@ capabilities. After the deadline, the controller freezes submissions, publishes
 an audit history, verifies/scopes duplicate environment indices, calculates
 proposed weights and trains the next checkpoint. The next epoch waits for training.
 
-## Live launch preparation — October 3, 2026
+## Forced sampling update — October 4, 2026
 
-The operator has authorized prospective live MATH rewards. Preparation is under
-way; weight setting is not live yet. Follow https://affine.io/llms.txt and
+When the signed manifest contains `forced-inverse-cdf-replay-v1`, use the newly
+admitted source and prescribed sampler. The epoch fixes randomness, checkpoint,
+task, attempt, turn and token position. Attempts range from zero to the signed
+limit minus one (currently 128 attempts). The source chooses the corresponding
+draws; an arbitrary seed or synthesized answer with valid TOPLOC does not qualify.
+Audited outputs must exactly replay, including stopping. The qualified launch
+profile is H200/SM90 with the exact packages and numerical settings in the
+manifest; older RTX 3090 qualification does not establish compatibility.
+
+Read https://affine.io/mining.json and the signed manifest for actual activation
+and upload availability. During this cutover the old epoch keeps its original
+rules. The current pilot quota is three batches per identity per epoch, each
+containing one successful and one unsuccessful trajectory for a distinct task.
+Only fully audited valid batches earn reward points or enter training. See
+[FORCED_SAMPLING_QUALIFICATION.md](FORCED_SAMPLING_QUALIFICATION.md) for controls,
+costs and limitations; they are not a completed live epoch or a learning gain.
+
+## Historical launch preparation — October 3, 2026
+
+The operator authorized prospective live MATH rewards. At that point preparation
+was under way and weight setting was not live. Follow https://affine.io/llms.txt and
 https://affine.io/mining.json for actual opening and payout status. Use an agent
 to manage mining and watch GitHub main for continual updates. Signed epoch source
 pins are authoritative; rerun the signed-source bootstrap when the source changes.
@@ -56,12 +75,13 @@ Read `authority` and `current_url` from https://affine.io/mining.json and set
 `AFFINE_AUTHORITY` and `AFFINE_CURRENT_URL` locally:
 
 ```bash
-python -m subnet.cli \
-  --gateway https://unused-gateway.invalid \
+CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
   --authority "$AFFINE_AUTHORITY" \
   --current-url "$AFFINE_CURRENT_URL" \
+  --source-cache /private/affine-approved-source \
   --key /private/miner.seed \
-  --state /private/affine-miner-cache
+  --state /private/affine-miner-cache \
+  --env-id affine_math --max-batches 3 --search-budget 24 --once
 ```
 
 The key file contains the miner's 32-byte Ed25519 seed encoded as hexadecimal;
@@ -69,6 +89,10 @@ keep it private with mode 600. Never provide a coldkey, mnemonic, bucket credent
 or wallet file to another person. Discovery is read-only; upload capabilities are
 sealed to the miner and remain private. The manifest specifies model hashes,
 environments, harness, K/L requirements, runtime, deadlines and upload limits.
+Watch for each fresh epoch and repeat the bootstrap once with its current
+source/checkpoint. Do not restart an existing attempt merely because observation
+timed out. The bootstrap downloads the approved task asset and source, verifies
+their hashes, and launches that source in an isolated interpreter.
 
 Please test download/signature checks, rollout generation, cumulative uploads,
 independent audits and checkpoint handover. Report the epoch ID, public hotkey,
