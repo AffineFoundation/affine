@@ -29,7 +29,9 @@ def validate_updates(report,job,manifest):
             diagnostics.get('state_publication_required')is not True):
         raise ValueError('persistent training diagnostics exact policy/epoch/update counters')
     definitions={row['env_id']:row for row in manifest['environments']};pairs=[]
-    for audit in report['audits']:
+    from .training_receipts import VERSION as RECEIPT_POLICY
+    inputs=report['training_admissions'] if job.get('training_input_policy')==RECEIPT_POLICY else report['audits']
+    for audit in inputs:
         for batch in audit['accepted']:
             definition=definitions[batch['env_id']]
             positives=[r for r in batch['rollouts']if r['classification']=='positive']

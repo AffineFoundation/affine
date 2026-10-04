@@ -1,5 +1,24 @@
 # Sampling-enforced live learning goal — October 4, 2026
 
+At 19:08 UTC, the operator requested no trainer re-verification and six
+verifier machines, up from two. Four additional dedicated machines have been
+rented: one H200 ($5.70/hour) and three H100s ($1.30, $1.30 and $1.80/hour),
+adding $10.10/hour. Their pinned source/runtime/checkpoint installation and
+known-good original-input controls precede queue enrollment; they are not yet
+claimed as active audit workers. The existing two workers continue auditing.
+
+Root restarted the controller with a reviewed controller-only hard gate that
+prohibits an epoch-nine training request until the authenticated-receipt
+implementation replaces it. Original computational manifests, frozen inputs,
+verifier jobs and worker processes remain unchanged. The actual new controller
+PID is 535432; its private source/approval/process records are in
+`state/root-audits/e9-pending-training-gate-activation-20261004-v2`.
+The gate's three isolated controls pass. At 19:08 UTC, the queue had 76 complete,
+two preserved failed requests and two leased jobs, and no epoch-nine training
+request. At the preceding 73-job observation, 107 batches had been accepted;
+mean job wall time was 202.9 seconds. The six-worker roster and receipt-based
+training cutover still need actual admission and activation.
+
 At 18:27 UTC, epoch nine has 49 completed verifier reports and 74 accepted,
 fully audited batches. Two outcomes are confirmed-invalid by the deployed
 contract: one probability mismatch and one exact-sampling replay mismatch.

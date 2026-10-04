@@ -15,19 +15,16 @@ from subnet.covered_epoch_optimizer import distinct_verified_pairs
 from subnet.training_policy import epoch_policy, coverage_manifest, validate_coverage
 from subnet.remote_backend import RemoteController
 from subnet.gpu_service import contract, initial_manifest
+from training_receipt_fixtures import transport_fixture
+from subnet.training_receipts import VERSION as INPUT_POLICY
 
 
 class CoveredProtocolTests(unittest.TestCase):
     def setUp(self):
         self.key = SigningKey.generate(); self.authority = self.key.verify_key.encode().hex()
-        files = {'config.json': '1'*64, 'model.safetensors': '2'*64}
-        self.manifest = dict(epoch='nonpayable-coverage', deadline=20, payable=False,
-            training_policy=COVERED_POLICY, checkpoint=dict(id=file_map(files), files=files),
-            model_runtime_revision=REVISION, backend_profile=BACKEND_PROFILE,
-            numerical_policy=NUMERICAL_POLICY, K=1, L=1, audit_policy={'mode':'full'})
-        self.receipts = {'miner': {'sha256':'3'*64, 'size':100, 'frozen_key':'frozen'}}
-        self.challenge = dict(seed='ab'*32, receipts=self.receipts, generated_after_freeze_at=21)
-        self.submissions = [dict(sha256='3'*64, url='https://test.r2.cloudflarestorage.com/x?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=test')]
+        fixture=transport_fixture(self.key)
+        self.manifest=fixture['manifest'];self.receipts=fixture['receipts'];self.challenge=fixture['challenge']
+        self.miner=fixture['miner'];self.audit=fixture['audit'];self.submissions=[fixture['submission']]
 
     def sign(self, payload):
         return dict(payload=payload, signer=self.authority,
@@ -38,12 +35,12 @@ class CoveredProtocolTests(unittest.TestCase):
 
     def job(self, manifest=None):
         names = set(SOURCE_FILES) | {'subnet/training_policy.py',
-            'subnet/covered_epoch_optimizer.py', 'subnet/epoch_optimizer.py'}
+            'subnet/covered_epoch_optimizer.py', 'subnet/epoch_optimizer.py','subnet/training_receipts.py'}
         return dict(schema=1, job_id='covered-train', role='train', created_at=22, expires_at=100,
             manifest=self.sign(self.covered() if manifest is None else manifest),
             source_files={n:'a'*64 for n in names},
             runtime_versions={'torch':'approved','transformers':'approved','toploc':'approved'},
-            submissions=self.submissions, steps=3, training_policy=COVERED_POLICY)
+            submissions=self.submissions, steps=3, training_policy=COVERED_POLICY,training_input_policy=INPUT_POLICY)
 
     def test_legacy_default_and_explicit_future_epoch_contract(self):
         self.assertEqual(epoch_policy({}), FIXED_POLICY)
@@ -91,13 +88,14 @@ class CoveredProtocolTests(unittest.TestCase):
     def controller(self, root, remote_context=None):
         c=RemoteController.__new__(RemoteController);c.state=Path(root)
         c.bucket=SimpleNamespace(presign=lambda key:self.submissions[0]['url'],json=Mock())
-        c.signed=lambda value:{'payload':value}
+        c.signed=self.sign;c.authority=SimpleNamespace(id=self.authority)
         new=dict(files={'config.json':'1'*64,'model.safetensors':'6'*64},path='/original-final')
         new['id']=file_map(new['files'])
         c.jobs=SimpleNamespace(training_resume=Mock(return_value={'resuming_original_training':True}),
             training_capacity=Mock(side_effect=AssertionError('no new job reserve')),
             run=Mock(return_value=dict(new_checkpoint=new,job_id='original-covered',
-                training=dict(updates=[],training_policy=COVERED_POLICY,training_coverage=remote_context or self.covered()['training_coverage']),
+                training=dict(updates=[],training_policy=COVERED_POLICY,training_coverage=remote_context or self.covered()['training_coverage'],
+                    training_input_policy=INPUT_POLICY,trainer_verification_performed=False,all_pairs_authenticated_verifier_receipts=True),
                 covered_training_inputs={'unique_verified_pairs':1})))
         c.publish_remote_checkpoint=Mock(return_value={k:v for k,v in new.items()if k!='path'})
         (c.state/(self.manifest['epoch']+'-scores.json')).write_bytes(canonical({'receipts':self.receipts}))
@@ -107,7 +105,8 @@ class CoveredProtocolTests(unittest.TestCase):
     def test_controller_signs_coverage_and_preserves_original_resume_path(self):
         with tempfile.TemporaryDirectory()as root:
             c=self.controller(root)
-            _, metrics=c.train(self.manifest,{'miner':{'accepted':[{}],'submission_sha256':'3'*64}},'/input',steps=3)
+            with patch('subnet.training_receipts.prepare_submissions',return_value=self.submissions):
+                _, metrics=c.train(self.manifest,{self.miner:self.audit},'/input',steps=3)
             self.assertEqual(c.jobs.training_resume.call_args.args[1],self.covered())
             self.assertEqual(c.jobs.run.call_args.kwargs['training_policy'],COVERED_POLICY)
             self.assertEqual(metrics['training_coverage'],self.covered()['training_coverage'])
@@ -116,8 +115,8 @@ class CoveredProtocolTests(unittest.TestCase):
     def test_wrong_remote_coverage_refused_before_successor_publication(self):
         with tempfile.TemporaryDirectory()as root:
             c=self.controller(root,dict(self.covered()['training_coverage'],seed='ef'*32))
-            with self.assertRaisesRegex(ValueError,'context changed'):
-                c.train(self.manifest,{'miner':{'accepted':[{}],'submission_sha256':'3'*64}},'/input',steps=3)
+            with self.assertRaisesRegex(ValueError,'context changed'),patch('subnet.training_receipts.prepare_submissions',return_value=self.submissions):
+                c.train(self.manifest,{self.miner:self.audit},'/input',steps=3)
             c.publish_remote_checkpoint.assert_not_called()
 
     def test_exact_audited_clones_do_not_multiply_gradient_pairs(self):

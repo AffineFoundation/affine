@@ -11,9 +11,11 @@ from pathlib import Path
 import requests
 from nacl.signing import VerifyKey
 from .backend_jobs import canonical,file_map,FIXED_POLICY as FULL_POLICY,SOURCE_FILES,signed
+from .backend_jobs import COVERED_POLICY,PERSISTENT_POLICY as PERSISTENT_RECEIPT_POLICY
 from .training_policy import epoch_policy
 from .controller import Controller
 from .scoring import score
+RECEIPT_TRAINING_POLICIES=(COVERED_POLICY,PERSISTENT_RECEIPT_POLICY)
 
 
 def save(path,value):
@@ -98,6 +100,10 @@ class RemoteJobs:
         from .persistent_cpu_adamw import POLICY as PERSISTENT_POLICY
         if job.get('training_policy')==PERSISTENT_POLICY and [r.get('accepted_batch_sha256')for r in job['submissions']]!=[r.get('accepted_batch_sha256')for r in submissions]:
             raise ValueError('original persistent training accepted pair population changed')
+        if job.get('training_policy') in RECEIPT_TRAINING_POLICIES:
+            from .training_receipts import receipt_inventory
+            if receipt_inventory(job['submissions'])!=receipt_inventory(submissions):
+                raise ValueError('original training verifier admission receipts changed')
         reportpath=self.state/(prior['job_id']+'-report.json')
         if reportpath.exists():
             self.checked(json.loads(reportpath.read_text()),prior,manifest);phase='complete'
@@ -126,6 +132,10 @@ class RemoteJobs:
         if prior is None:
             identifier=label+'-'+secrets.token_hex(4);now=time.time()
             payload=dict(schema=1,job_id=identifier,role=role,created_at=now,expires_at=now+role_time_budget(self.config,role),manifest=self.controller.signed(manifest),**self.metadata,**fields)
+            if role=='train' and fields.get('training_policy') in RECEIPT_TRAINING_POLICIES:
+                from .training_receipts import VERSION,validate_job as validate_receipt_job
+                payload['training_input_policy']=VERSION
+                validate_receipt_job(payload,manifest,self.controller.authority.id)
             from .persistent_cpu_adamw import POLICY as PERSISTENT_POLICY
             if role=='train'and fields.get('training_policy')==PERSISTENT_POLICY:
                 if 'persistent_training'in fields:raise ValueError('persistent capabilities are original-job scoped')
@@ -161,6 +171,9 @@ class RemoteJobs:
         job=signed(json.loads((self.state/(prior['job_id']+'-job.json')).read_text()),self.controller.authority.id)
         if hashlib.sha256(canonical(job)).hexdigest()!=prior['job_sha256']:
             raise ValueError('remote role original signed job binding')
+        if job.get('role')=='train' and job.get('training_policy') in RECEIPT_TRAINING_POLICIES:
+            from .training_receipts import validate_report as validate_receipt_report
+            validate_receipt_report(report,job,manifest,self.controller.authority.id)
         created,expires,completed=job.get('created_at'),job.get('expires_at'),report.get('completed_at')
         if any(type(value) not in (int,float) or not math.isfinite(value) for value in (created,expires,completed)) or not created<=completed<expires or not 0<expires-created<=86400:
             raise ValueError('remote role report outside signed time budget')
@@ -173,6 +186,8 @@ class RemoteJobs:
 class RemoteController(Controller):
     def __init__(self,bucket,gateway,state,remote):
         super().__init__(bucket,gateway,state)
+        self.training_execution_amendment_files=dict(remote.get('training_execution_amendment_files',{}))
+        self.training_execution_amendment_required_epochs=list(remote.get('training_execution_amendment_required_epochs',[]))
         if 'roles' in remote:
             from .role_router import RoutedJobs
             self.jobs=RoutedJobs(remote,self)
@@ -328,6 +343,8 @@ class RemoteController(Controller):
             persist_signed_compute_evidence(self,manifest,result,reports)
         return result,reports
     def train(self,manifest,reports,checkpoint_path,destination=None,steps=1,replay=None,**ignored):
+        from .training_receipts import require_execution_amendment
+        require_execution_amendment(self,manifest)
         from .persistent_cpu_adamw import POLICY as PERSISTENT_POLICY
         if epoch_policy(manifest)==PERSISTENT_POLICY:
             from .persistent_training_controller import train
@@ -345,8 +362,22 @@ class RemoteController(Controller):
             if (training_manifest.get('training_policy')!=policy or training_manifest.get('epoch')!=epoch or training_manifest.get('checkpoint')!=manifest['checkpoint']):raise ValueError('original covered audit manifest binding')
             training_manifest=coverage_manifest(training_manifest,receipts,challenge)
             if replay is not None:raise ValueError('covered historical replay requires separate admission')
+        if policy==COVERED_POLICY:
+            from .training_receipts import prepare_submissions,amend_manifest,receipt_inventory
+            submissions=prepare_submissions(self,training_manifest,reports,receipts)
+            training_manifest=amend_manifest(self,training_manifest,submissions,steps)
         if cached.exists():
             metrics=json.loads(cached.read_text())
+            if policy==COVERED_POLICY:
+                from .training_receipts import validate_report as validate_receipt_report,receipt_inventory
+                record=json.loads((self.state/'roles'/(epoch+'-train.json')).read_bytes())
+                job=signed(json.loads((self.state/'roles'/(record['job_id']+'-job.json')).read_bytes()),self.authority.id)
+                if (hashlib.sha256(canonical(job)).hexdigest()!=record['job_sha256'] or
+                        signed(job['manifest'],self.authority.id)!=training_manifest or job['steps']!=steps or
+                        receipt_inventory(job['submissions'])!=receipt_inventory(submissions) or
+                        metrics.get('verifier_receipt_inventory')!=receipt_inventory(submissions)):
+                    raise ValueError('cached original verifier-receipt training request changed')
+                validate_receipt_report(json.loads((self.state/'roles'/(record['job_id']+'-report.json')).read_bytes()),job,training_manifest,self.authority.id)
             if metrics.get('source_epoch')!=epoch or metrics.get('input_checkpoint')!=manifest['checkpoint']['id'] or metrics.get('training_policy')!=policy or metrics.get('weights_changed') is not True or metrics['checkpoint']!=file_map(metrics['new_checkpoint']['files']) or metrics['checkpoint']==manifest['checkpoint']['id']:raise ValueError('cached GPU training checkpoint binding')
             if policy==COVERED_POLICY and metrics.get('training_coverage')!=training_manifest['training_coverage']:raise ValueError('cached covered training context changed')
             expected_replay=hashlib.sha256(canonical(replay)).hexdigest() if replay is not None else None
@@ -358,7 +389,8 @@ class RemoteController(Controller):
             self.bucket.json('public/'+epoch+'/training.json',self.signed(current))
             return output,current
         receipts=json.loads((self.state/(epoch+'-scores.json')).read_text())['receipts']
-        submissions=[dict(url=self.bucket.presign(receipts[m]['frozen_key']),sha256=receipts[m]['sha256']) for m,r in reports.items() if r['accepted']]
+        if policy!=COVERED_POLICY:
+            submissions=[dict(url=self.bucket.presign(receipts[m]['frozen_key']),sha256=receipts[m]['sha256']) for m,r in reports.items() if r['accepted']]
         if not submissions:raise ValueError('no independently verified training data')
         extra={'replay':replay} if replay is not None else {}
         if policy!=COVERED_POLICY and manifest.get('audit_policy',{}).get('version')=='bounded-random-v1':
@@ -376,6 +408,9 @@ class RemoteController(Controller):
         metrics=dict(steps=steps,weights_changed=True,full_model_finetune=True,training_policy=policy,updates=remote['training']['updates'],source_epoch=epoch,input_checkpoint=manifest['checkpoint']['id'],input_pairs=sum(len(r['accepted']) for r in reports.values()),checkpoint=new['id'],new_checkpoint=output,checkpoint_path=path,capacity_preflight=capacity,remote_job_id=remote['job_id'])
         if policy==COVERED_POLICY:
             metrics['training_coverage']=remote['training']['training_coverage'];metrics['covered_training_inputs']=remote['covered_training_inputs']
+            metrics.update(training_input_policy=remote['training']['training_input_policy'],
+                trainer_verification_performed=False,all_pairs_authenticated_verifier_receipts=True,
+                verifier_receipt_inventory=receipt_inventory(submissions))
         if replay is not None:
             metrics['replay_training']=remote['replay_training'];metrics['replay_inputs_sha256']=hashlib.sha256(canonical(replay)).hexdigest()
         save(cached,metrics);self.bucket.json('public/'+epoch+'/training.json',self.signed(metrics));return output,metrics

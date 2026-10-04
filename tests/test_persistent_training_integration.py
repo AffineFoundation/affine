@@ -21,7 +21,11 @@ from subnet.persistent_cpu_adamw import POLICY,HYPERPARAMETERS,PersistentCPUAdam
 from subnet.persistent_training_state import resource_plan,admit_resources,export_state,cgroup_headroom
 from subnet.persistent_training_protocol import (EXECUTION_FILES,opening_binding,prepare_job,
     validate_job,validate_output,validate_report,independently_commit,state_pointer,validate_parent)
-from subnet.persistent_training_worker import reaudited_submission,capacity_requirement,report_updates
+from subnet.persistent_training_worker import admitted_submission,capacity_requirement,report_updates
+from training_receipt_fixtures import transport_fixture
+from subnet.training_receipts import VERSION as INPUT_POLICY, receipt_inventory
+from subnet.distributed_roles import Coordinator
+import sqlite3
 from subnet.persistent_training_controller import commit_latest,train
 from subnet.training_policy import coverage_manifest,epoch_policy
 from subnet.remote_backend import RemoteJobs,save
@@ -53,20 +57,17 @@ class PersistentIntegrationTests(unittest.TestCase):
             genesis_sha256=sha(genesis(self.inventory,self.cp['id'])))
         self.config=dict(training_policy=POLICY,source_bundle={'sha256':'7'*64},persistent_training_admission=admission)
         self.status=dict(round=10,checkpoint=self.cp)
-        self.manifest=dict(epoch='nonpayable-v4-10',deadline=20,payable=False,training_policy=POLICY,
-            checkpoint=self.cp,source_bundle=self.config['source_bundle'],K=1,L=1,max_batches=3,
-            model_runtime_revision=REVISION,backend_profile=BACKEND_PROFILE,numerical_policy=NUMERICAL_POLICY,
-            audit_policy={'mode':'full'},sampling_contract=sampling.new_contract({'version':sampling.VERSION,'max_attempts':16}),
-            sampling_source_hash=sampling.source_hash(),environments=[{'env_id':'math'}])
+        fixture=transport_fixture(self.key,policy=POLICY)
+        self.manifest=fixture['manifest'];self.rollouts=fixture['batch']['rollouts'];self.batch=fixture['batch']
+        self.miner=fixture['miner'];self.receipts=fixture['receipts'];self.challenge=fixture['challenge']
         self.manifest['trainer_state_binding']=opening_binding(self.config,self.status,self.manifest['epoch'])
-        self.rollouts=[dict(seed=i,sampling=sampling.receipt(sampling.binding(self.manifest),i),
-            classification='positive'if i==0 else 'negative',env_id='math',index=0,task_hash='6'*64,
-            turns=[dict(prompt=[1,2],output=[3+i])])for i in range(2)]
-        self.batch=dict(rollouts=self.rollouts,env_id='math',index=0)
-        self.receipts={'miner':dict(sha256='3'*64,size=100,frozen_key='private/frozen')}
-        self.challenge=dict(seed='a'*64,receipts=self.receipts,generated_after_freeze_at=21)
-        self.manifest=coverage_manifest(self.manifest,self.receipts,self.challenge)
-        self.submission=dict(sha256='3'*64,url=self.bucket.presign('private/frozen'),accepted_batch_sha256=[sha(self.batch)])
+        self.submission=fixture['submission'];self.data=fixture['data'];self.verifier_audit=dict(fixture['audit'],remote_job_id='synthetic-verify')
+        request=fixture['worker_request'];verify_job=fixture['verify_job'];report=request['payload']['report']
+        self.queue=Coordinator(self.root/'queue.sqlite',self.authority,{request['signer']:['verify']})
+        with sqlite3.connect(self.queue.path)as db:
+            db.execute('INSERT INTO jobs(id,digest,envelope,role,expires,status,worker,report,report_digest,report_request) VALUES(?,?,?,?,?,?,?,?,?,?)',
+                (verify_job['payload']['job_id'],sha(verify_job['payload']),canonical(verify_job).decode(),'verify',100,'complete',request['signer'],
+                 canonical(report).decode(),sha(report),canonical(request).decode()))
 
     def sign(self,payload):
         return dict(payload=copy.deepcopy(payload),signer=self.authority,
@@ -77,7 +78,7 @@ class PersistentIntegrationTests(unittest.TestCase):
         return dict(schema=1,job_id=identifier,role='train',created_at=22,expires_at=100,
             manifest=self.sign(manifest),source_files={n:'b'*64 for n in set(SOURCE_FILES)|set(EXECUTION_FILES)},
             runtime_versions=dict(torch='approved',transformers='approved',toploc='approved'),
-            steps=steps,training_policy=POLICY,submissions=[self.submission],
+            steps=steps,training_policy=POLICY,training_input_policy=INPUT_POLICY,submissions=[self.submission],
             persistent_training=prepare_job(self.controller,manifest,identifier,steps,3600))
 
     def report(self,job=None):
@@ -120,10 +121,16 @@ class PersistentIntegrationTests(unittest.TestCase):
             job_sha256=sha(job),epoch=manifest['epoch'],checkpoint=self.cp['id'],backend_profile=BACKEND_PROFILE,
             numerical_policy=NUMERICAL_POLICY,source_files=job['source_files'],runtime_versions=job['runtime_versions'],completed_at=40,
             training=dict(training_policy=POLICY,steps=job['steps'],weights_changed=False,global_step_before=0,
-                global_step_after=job['steps'],state_updated=True,all_pairs_independently_reaudited=True,
+                global_step_after=job['steps'],state_updated=True,training_input_policy=INPUT_POLICY,
+                trainer_verification_performed=False,all_pairs_authenticated_verifier_receipts=True,
                 parameter_values_sha256_before='d'*64,parameter_values_sha256_after='d'*64,updates=updates,
                 persistent_diagnostics=diagnostics),
-            new_checkpoint=dict(self.cp,path='/original-final'),audits=[audit],
+            new_checkpoint=dict(self.cp,path='/original-final'),audits=[],training_admissions=[dict(
+                version=INPUT_POLICY,epoch=manifest['epoch'],submission_sha256=self.submission['sha256'],
+                verifier_receipt_sha256=sha(self.submission['verifier_receipt']),accepted_batch_sha256=self.submission['accepted_batch_sha256'],
+                accepted=[self.batch],original_verify_job_id='synthetic-verify',
+                original_report_sha256=self.submission['verifier_receipt']['payload']['original_report_sha256'],
+                trainer_verification_performed=False,verification_performed_by='registered-verifier')],
             persistent_training_state=dict(namespace=namespace,descriptor_sha256=sha(descriptor),descriptor=descriptor))
         return report,job
 
@@ -199,23 +206,17 @@ class PersistentIntegrationTests(unittest.TestCase):
         commit_latest(self.controller,self.manifest['trainer_state_binding'],pointer)
         with self.assertRaises(ValueError):commit_latest(self.controller,dict(next_manifest['trainer_state_binding'],parent=stale),dict(pointer,optimizer_steps=6))
 
-    def test_training_input_retired_only_after_hash_and_complete_independent_reaudit(self):
-        data=b'frozen ZIP';path=self.root/'submission.zip';digest=hashlib.sha256(data).hexdigest()
-        obj=dict(sha256=digest,accepted_batch_sha256=[sha(self.batch)])
-        pair=({},self.rollouts[0],self.rollouts[1])
-        result=dict(submission_sha256=digest,accepted=[self.batch],outcomes=[dict(batch=0,fully_audited=True,valid=True)],
-            sampling_assurance=sampling.assurance(self.manifest),training_eligibility='fully-audited-only')
-        for bad in (dict(result,accepted=[]),dict(result,outcomes=[]),dict(result,sampling_assurance={})): 
-            path.write_bytes(data)
-            with self.assertRaises(ValueError):reaudited_submission(path,obj,self.manifest,None,auditor=lambda *args:(bad,[pair]))
-            self.assertTrue(path.exists())
+    def test_training_input_retired_only_after_exact_verifier_receipt_admission(self):
+        path=self.root/'submission.zip';path.write_bytes(self.data)
+        obj=copy.deepcopy(self.submission);obj['accepted_batch_sha256']=['e'*64]
+        with self.assertRaises(ValueError):admitted_submission(path,obj,self.manifest,self.authority)
+        self.assertTrue(path.exists())
         path.write_bytes(b'tampered')
-        auditor=Mock()
-        with self.assertRaises(ValueError):reaudited_submission(path,obj,self.manifest,None,auditor=auditor)
-        auditor.assert_not_called();self.assertTrue(path.exists())
-        path.write_bytes(data)
-        actual,pairs=reaudited_submission(path,obj,self.manifest,None,auditor=lambda *args:(result,[pair]))
-        self.assertEqual(pairs,[pair]);self.assertEqual(actual,result);self.assertFalse(path.exists())
+        with self.assertRaises(ValueError):admitted_submission(path,self.submission,self.manifest,self.authority)
+        self.assertTrue(path.exists());path.write_bytes(self.data)
+        with patch('subnet.backend_jobs.audit',side_effect=AssertionError('trainer re-verification forbidden')):
+            actual,pairs=admitted_submission(path,self.submission,self.manifest,self.authority)
+        self.assertEqual(len(pairs),1);self.assertEqual(actual['accepted'],[self.batch]);self.assertFalse(path.exists())
 
     def test_capacity_uses_one_input_and_one_shard_not_total_state_disk(self):
         probe=dict(free_bytes=30*1024**3,available_ram_bytes=50*1024**3)
@@ -259,7 +260,7 @@ class PersistentIntegrationTests(unittest.TestCase):
         report,job=self.report()
         save(self.root/(self.manifest['epoch']+'-scores.json'),{'receipts':self.receipts})
         save(self.root/(self.manifest['epoch']+'-audit-challenge.json'),self.challenge)
-        reports={'miner':report['audits'][0]}
+        reports={self.miner:self.verifier_audit}
         launches=[]
         def run(label,role,manifest,cache,**fields):
             self.assertEqual(manifest,self.manifest);self.assertEqual(fields['training_policy'],POLICY)
@@ -269,7 +270,7 @@ class PersistentIntegrationTests(unittest.TestCase):
             save(self.root/'roles'/(job['job_id']+'-job.json'),self.sign(job))
             save(self.root/'roles'/(job['job_id']+'-report.json'),report)
             return report
-        self.controller.jobs=SimpleNamespace(training_resume=Mock(return_value=None),
+        self.controller.jobs=SimpleNamespace(queue=self.queue,training_resume=Mock(return_value=None),
             training_capacity=Mock(return_value={'actual_resource_test':True}),run=Mock(side_effect=run))
         def publish(manifest,path):
             save(self.root/(self.manifest['epoch']+'-checkpoint-publication.json'),
@@ -312,8 +313,8 @@ class PersistentIntegrationTests(unittest.TestCase):
                 patch('subnet.backend_jobs.initial_configuration',return_value=(definition,{})), \
                 patch('subnet.forced_sampling.bind_runtime'), \
                 patch('subnet.backend_jobs.get_object',side_effect=download), \
-                patch('subnet.persistent_training_worker.reaudited_submission',
-                    return_value=(original['audits'][0],[(definition,*self.rollouts)])), \
+                patch('subnet.training_receipts.admitted_submission',
+                    return_value=(original['training_admissions'][0],[(definition,*self.rollouts)])), \
                 patch('subnet.persistent_training_worker.train',
                     return_value=(model_path,diagnostics,original['persistent_training_state'])), \
                 patch('subnet.model.model_files',return_value=self.cp['files']):

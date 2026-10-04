@@ -33,6 +33,8 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
     from .remote_backend import save,training_submission_bytes
     from .training_policy import coverage_manifest
     from .forced_sampling import require_report
+    from .training_receipts import prepare_submissions,amend_manifest,receipt_inventory,require_execution_amendment
+    require_execution_amendment(controller,manifest)
     epoch=manifest['epoch'];binding=validate_binding(manifest.get('trainer_state_binding'),manifest)
     if replay is not None:raise ValueError('persistent historical replay needs separate admission')
     training_manifest=manifest
@@ -44,22 +46,16 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
     receipts=json.loads((controller.state/(epoch+'-scores.json')).read_text())['receipts']
     challenge=json.loads((controller.state/(epoch+'-audit-challenge.json')).read_text())
     training_manifest=coverage_manifest(training_manifest,receipts,challenge)
-    submissions=[]
-    for miner,report in reports.items():
-        require_report(manifest,report)
-        if not report['accepted']:continue
-        if report['submission_sha256']!=receipts[miner]['sha256']:raise ValueError('accepted frozen training data binding')
-        submissions.append(dict(url=controller.bucket.presign(receipts[miner]['frozen_key']),sha256=receipts[miner]['sha256'],
-            accepted_batch_sha256=sorted(sha(batch)for batch in report['accepted'])))
-    if not submissions:raise ValueError('no independently verified persistent training data')
+    submissions=prepare_submissions(controller,training_manifest,reports,receipts)
+    training_manifest=amend_manifest(controller,training_manifest,submissions,steps)
     cached=controller.state/(epoch+'-training-metrics.json')
     if cached.exists():
         metrics=json.loads(cached.read_text());record,job=original_request(controller,epoch)
         original_manifest=signed(job['manifest'],controller.authority.id)
         report=json.loads((controller.state/'roles'/(record['job_id']+'-report.json')).read_text())
         if (original_manifest!=training_manifest or job['steps']!=steps or
-                [dict(sha256=s['sha256'],accepted_batch_sha256=s['accepted_batch_sha256'])for s in job['submissions']]!=
-                [dict(sha256=s['sha256'],accepted_batch_sha256=s['accepted_batch_sha256'])for s in submissions]):
+                receipt_inventory(job['submissions'])!=receipt_inventory(submissions)or
+                metrics.get('verifier_receipt_inventory')!=receipt_inventory(submissions)):
             raise ValueError('cached persistent original request changed')
         validate_report(report,job,training_manifest)
         pointer=validate_pointer(metrics.get('trainer_state'))
@@ -117,7 +113,9 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
         source_epoch=epoch,input_checkpoint=manifest['checkpoint']['id'],checkpoint=new['id'],
         new_checkpoint=output,checkpoint_path=path,trainer_state=pointer,capacity_preflight=capacity,
         remote_job_id=remote['job_id'],original_job_sha256=sha(job),trainer_binding_sha256=sha(binding),
-        training_coverage=training_manifest['training_coverage'],all_pairs_independently_reaudited=True,
+        training_coverage=training_manifest['training_coverage'],training_input_policy=remote['training']['training_input_policy'],
+        trainer_verification_performed=False,all_pairs_authenticated_verifier_receipts=True,
+        verifier_receipt_inventory=receipt_inventory(submissions),
         state_authority_committed=True,heldout_gain_claimed=False)
     save(cached,metrics);controller.bucket.json('public/'+epoch+'/training.json',controller.signed(metrics))
     return output,metrics

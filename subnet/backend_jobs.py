@@ -254,6 +254,9 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
         from .persistent_training_protocol import validate_job
         validate_coverage(manifest,job.get('submissions'))
         validate_job(job,manifest,authority)
+    if job['role']=='train' and job.get('training_policy') in (COVERED_POLICY,PERSISTENT_POLICY):
+        from .training_receipts import validate_job as validate_training_receipts
+        validate_training_receipts(job,manifest,authority)
     if job.get('replay') is not None:
         if job['role']!='train' or job.get('training_policy')!=FIXED_POLICY:raise ValueError('replay only in signed fixed optimizer job')
         if resolve_source:
@@ -414,7 +417,7 @@ def install_source_loader(root,additional_files=()):
     # pinned bytes have now been checked; discard bootstrap imports so compute
     # admission reloads them through the authenticated fresh-source finder.
     for module_name in ('subnet.backend_profiles','subnet.artifact_budget','subnet.audit_policy','subnet.auditing','subnet.training_policy',
-            'subnet.persistent_cpu_adamw','subnet.persistent_training_state','subnet.persistent_training_protocol'):
+            'subnet.persistent_cpu_adamw','subnet.persistent_training_state','subnet.persistent_training_protocol','subnet.training_receipts'):
         sys.modules.pop(module_name,None)
     for name in set(SOURCE_FILES)|set(additional_files):
         module_name=name[:-3].replace('/','.')
@@ -442,7 +445,9 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':raise ValueError('CUDA environment profile')
     if job.get('training_policy')==PERSISTENT_POLICY:
         from .persistent_training_protocol import EXECUTION_FILES
-        install_source_loader(root,EXECUTION_FILES)
+        install_source_loader(root,(*EXECUTION_FILES,'subnet/training_receipts.py'))
+    elif job.get('training_policy')==COVERED_POLICY:
+        install_source_loader(root,('subnet/training_receipts.py',))
     else:install_source_loader(root)
     from .backend_profiles import resolve
     revision,backend_profile,numerical_policy=resolve(manifest)
@@ -506,12 +511,15 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
             for i,obj in enumerate(job['submissions']):
                 from .artifact_budget import for_manifest
                 path=out/('submission-'+str(i)+'.zip');get_object(obj['url'],obj['sha256'],path,for_manifest(manifest)['compressed_bytes'])
-                if job['role']=='train' and job.get('training_policy')==PERSISTENT_POLICY:
-                    from .persistent_training_worker import reaudited_submission
-                    result,verified=reaudited_submission(path,obj,manifest,runtime)
+                if job['role']=='train' and job.get('training_policy') in (COVERED_POLICY,PERSISTENT_POLICY):
+                    from .training_receipts import admitted_submission
+                    result,verified=admitted_submission(path,obj,manifest,authority,
+                        retire=job.get('training_policy')==PERSISTENT_POLICY)
                 else:result,verified=audit(path.read_bytes(),manifest,runtime)
                 reports.append(result);pairs.extend(verified)
-            report['audits']=reports
+            receipt_training=job['role']=='train' and job.get('training_policy') in (COVERED_POLICY,PERSISTENT_POLICY)
+            report['audits']=[] if receipt_training else reports
+            if receipt_training:report['training_admissions']=reports
             if job['role']=='train':
                 if not pairs:raise ValueError('no verified training pairs')
                 values_before=parameter_value_digest(runtime.model)
@@ -554,9 +562,13 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                 if not persistent and values_before==values_after:raise ValueError('optimizer did not change parameter values')
                 report['training']=dict(steps=job['steps'],updates=metrics,training_policy=job.get('training_policy',HEAD_POLICY),full_model_finetune=job.get('training_policy',HEAD_POLICY) in (FULL_POLICY,FIXED_POLICY,COVERED_POLICY,PERSISTENT_POLICY),weights_changed=values_before!=values_after,parameter_values_sha256_before=values_before,parameter_values_sha256_after=values_after)
                 if job.get('training_policy')==COVERED_POLICY:report['training']['training_coverage']=manifest['training_coverage']
+                if receipt_training:
+                    from .training_receipts import VERSION as INPUT_POLICY
+                    report['training'].update(training_input_policy=INPUT_POLICY,
+                        trainer_verification_performed=False,all_pairs_authenticated_verifier_receipts=True)
                 if persistent:
                     report['training'].update(training_coverage=manifest['training_coverage'],
-                        state_updated=True,all_pairs_independently_reaudited=True,
+                        state_updated=True,
                         persistent_diagnostics=persistent_diagnostics,
                         global_step_before=manifest['trainer_state_binding']['global_step_before'],
                         global_step_after=job['persistent_training']['global_step_after'])

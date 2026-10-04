@@ -33,6 +33,7 @@ class PersistentRecoveryReviewTests(unittest.TestCase):
         jobs = RemoteJobs.__new__(RemoteJobs)
         jobs.controller = f.controller
         jobs.state = f.root/'roles'
+        jobs.queue = f.queue
         jobs.command = Mock(side_effect=AssertionError('recovery must not execute a remote command'))
         jobs.remote_status = Mock(side_effect=AssertionError('completed original report needs no remote probe'))
         f.controller.jobs = jobs
@@ -45,7 +46,7 @@ class PersistentRecoveryReviewTests(unittest.TestCase):
 
         f.controller.publish_remote_checkpoint = Mock(side_effect=publish)
         f.controller.checkpoint_with_reads = lambda cp: cp
-        return report, job, {'miner': report['audits'][0]}, jobs
+        return report, job, {f.miner: f.verifier_audit}, jobs
 
     def test_interruption_after_state_journal_before_metrics_reuses_original_job(self):
         f = self.fixture

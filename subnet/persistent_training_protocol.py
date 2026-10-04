@@ -19,7 +19,7 @@ PUBLICATION_VERSION = 'authority-persistent-trainer-state-v1'
 EXECUTION_FILES = tuple('subnet/' + name + '.py' for name in (
     'persistent_training_protocol', 'persistent_training_worker', 'persistent_cpu_adamw',
     'persistent_training_state', 'persistent_training_evidence','task_normalized_training', 'training_policy',
-    'covered_epoch_optimizer', 'epoch_optimizer'))
+    'covered_epoch_optimizer', 'epoch_optimizer', 'training_receipts'))
 
 
 def read_json(bucket,key,limit=4_000_000):
@@ -243,26 +243,19 @@ def validate_report(report,job,manifest):
             type(training.get('weights_changed'))is not bool or
             training.get('global_step_before')!=binding['global_step_before'] or
             training.get('global_step_after')!=transport['global_step_after'] or
-            training.get('state_updated')is not True or training.get('all_pairs_independently_reaudited')is not True or
-            state.get('namespace')!=transport['output_namespace']):raise ValueError('persistent training report lineage/reaudit')
+            training.get('state_updated')is not True or
+            state.get('namespace')!=transport['output_namespace']):raise ValueError('persistent training report lineage')
     descriptor=validate_output(state['descriptor'],job,manifest)
     if state.get('descriptor_sha256')!=sha(descriptor)or descriptor['inference_checkpoint']!=report['new_checkpoint']['id']:
         raise ValueError('persistent training output model/descriptor hash')
     before=training.get('parameter_values_sha256_before');after=training.get('parameter_values_sha256_after')
     checkpoint_id(before);checkpoint_id(after)
     if training['weights_changed']!=(before!=after):raise ValueError('honest inference weights_changed flag')
-    if len(report.get('audits',[]))!=len(job['submissions']):raise ValueError('complete independent training audit report population')
+    from .training_receipts import validate_report as validate_receipt_report
+    validate_receipt_report(report,job,manifest,job['manifest']['signer'])
     updates=training.get('updates');diagnostics=training.get('persistent_diagnostics')
     if not isinstance(updates,list)or len(updates)!=job['steps']or not isinstance(diagnostics,dict)or 'updates'in diagnostics:
         raise ValueError('persistent training update list and separate diagnostics required')
-    from .forced_sampling import require_report
-    for audit,submission in zip(report['audits'],job['submissions']):
-        require_report(manifest,audit)
-        if (audit.get('submission_sha256')!=submission['sha256']or audit.get('training_eligibility')!='fully-audited-only' or
-                sorted(sha(batch)for batch in audit.get('accepted',[]))!=sorted(submission['accepted_batch_sha256'])):
-            raise ValueError('exact fully reaudited training batch population')
-        outcomes={o['batch']:o for o in audit.get('outcomes',[])if o.get('fully_audited')is True and o.get('valid')is True}
-        if len(outcomes)!=len(audit['accepted']):raise ValueError('fully reaudited batch coverage')
     from .persistent_training_evidence import validate_updates
     validate_updates(report,job,manifest)
     return descriptor

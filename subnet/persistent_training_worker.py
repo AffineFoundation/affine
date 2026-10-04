@@ -25,27 +25,10 @@ def report_updates(diagnostics,job,manifest):
     return copy.deepcopy(updates),summary
 
 
-def reaudited_submission(path, obj, manifest, runtime, *, auditor=None):
-    """Retire only a signed-hash input after all training metadata is retained.
-
-    Failures preserve the original input. Every admitted batch must reproduce
-    the independent verifier's fully audited result; no silent dropping pairs.
-    """
-    from .backend_jobs import audit, digest
-    from .forced_sampling import require_report
-    if not Path(path).is_file()or Path(path).is_symlink()or digest(path)!=obj['sha256']:
-        raise ValueError('signed frozen training input hash before retirement')
-    result,pairs=(auditor or audit)(Path(path).read_bytes(),manifest,runtime)
-    require_report(manifest,result)
-    if (result.get('submission_sha256')!=obj['sha256']or result.get('training_eligibility')!='fully-audited-only' or
-            sorted(sha(batch)for batch in result.get('accepted',[]))!=sorted(obj['accepted_batch_sha256'])):
-        raise ValueError('independent training reaudits disagree with admitted batch population')
-    if len(pairs)!=len(result['accepted'])*manifest['K']:
-        raise ValueError('retain every approved positive/negative training pair')
-    outcomes=[o for o in result.get('outcomes',[])if o.get('fully_audited')is True and o.get('valid')is True]
-    if len(outcomes)!=len(result['accepted']):raise ValueError('all admitted training samples fully reaudited')
-    Path(path).unlink()
-    return result,pairs
+def admitted_submission(path,obj,manifest,authority):
+    """Retire only byte-authenticated input after verifier receipt admission."""
+    from .training_receipts import admitted_submission as admit
+    return admit(path,obj,manifest,authority,retire=True)
 
 
 def read_chunks(url, *, limit):

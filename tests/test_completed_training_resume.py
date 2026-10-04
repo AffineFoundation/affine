@@ -41,7 +41,8 @@ class OriginalTrainingResume(unittest.TestCase):
     def test_covered_original_resume_keeps_exact_policy_and_context(self):
         self.manifest=dict(self.manifest,training_policy=COVERED_POLICY,
             training_coverage={'seed':'ab'*32,'receipts_sha256':'cd'*32})
-        self.job=dict(self.job,manifest=self.sign(self.manifest),training_policy=COVERED_POLICY)
+        self.submissions=[dict(self.submissions[0],verifier_receipt={'synthetic':'original'},accepted_batch_sha256=['a'*64])]
+        self.job=dict(self.job,manifest=self.sign(self.manifest),training_policy=COVERED_POLICY,submissions=self.submissions)
         self.prior=dict(self.prior,job_sha256=hashlib.sha256(canonical(self.job)).hexdigest(),
             manifest_sha256=hashlib.sha256(canonical(self.manifest)).hexdigest())
         (self.root/'original-train.json').write_bytes(canonical(self.prior))
