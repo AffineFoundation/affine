@@ -18,13 +18,24 @@ keeps the original two-argument CLI for compatibility.
 Four controls invoke the real local math-verify script. They reproduce the
 original OS failure, check exact roundtrips and positive/negative outcomes with
 null characters, compare encoded and original grading on ordinary responses,
-and reject malformed argument arrays. This is CPU transport qualification;
-independent remote native/proof controls are still required before deployment.
+and reject malformed argument arrays.
+
+Independent remote checks now also passed on source 3bacecbf. All five role
+machines completed their original CPU admission jobs, each checking full source
+and checkpoint bytes, 34 contexts and eight native controls. A separate H100
+CPU control additionally checked 16 native outcomes including null-containing
+positive and negative replies through the actual isolated grader. The same
+source completed an H200 full-model covered-training control: five curated pairs
+contributed, fresh successor proof replay passed, and a changed proof was
+rejected. Root independently checked all 1,893 source files, the model bytes,
+artifacts, probability references and optimizer arithmetic. This remains
+qualification; the public epoch policy has not changed. Aggregate evidence is
+in `docs/data/math-grader-transport-qualification-20261004.json`.
 
 The two changed native files change the environment source hash. Existing
 signed epochs and source directories must not be edited in place. A new pinned
 source and updated environment binding are required for future work. Resuming
-the independent benchmark requires an explicit transport-only amendment that
+the independent benchmark uses an explicit signed transport-only amendment that
 preserves its task cohort, seeds, checkpoint and sampling contract. Do not drop
 the failing problems or treat transport errors as model failures. The complete
 baseline must be measured under the repaired source before the precommitted

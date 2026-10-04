@@ -1,0 +1,51 @@
+{
+  "all_five_role_CPU_admissions_completed": true,
+  "full_covered_H200_control": {
+    "GPU_peak_allocated_bytes": 78636225536,
+    "actual_GPU_idle": true,
+    "actual_original_wait_exit_code": 0,
+    "all_five_frozen_artifacts_hashed_and_decoded": true,
+    "chain_transactions": false,
+    "checked_at": 1791090524.3557072,
+    "exact_source_files": 1893,
+    "fixed_references_reconstructed_from_verified_probabilities": true,
+    "fresh_successor_full_proof_verified": true,
+    "full_parameter_gradient_tensors": 339,
+    "gradient_pairs_per_update": [
+      2,
+      2,
+      1
+    ],
+    "heldout_improvement_verified": false,
+    "input_and_successor_all_files_independently_hashed": true,
+    "live_epoch_changed": false,
+    "optimizer_state_steps": [
+      [
+        1
+      ],
+      [
+        2
+      ],
+      [
+        3
+      ]
+    ],
+    "passed": true,
+    "public_activation": false,
+    "successor_proof_mutation_rejected": true,
+    "trace_origin": "curated-native-controls",
+    "trainable_parameters": 7615616512,
+    "unique_gradient_pairs": 5
+  },
+  "heldout_improvement_verified": false,
+  "isolated_native_grader_versions": {
+    "antlr4-python3-runtime": "4.13.2",
+    "math-verify": "0.9.0",
+    "sympy": "1.14.0"
+  },
+  "native_controls_including_null": 16,
+  "native_null_CPU_control_contexts": 34,
+  "public_activation": false,
+  "source_files_independently_checked": 1893,
+  "source_sha256": "3bacecbf006f5f1aa5fc274f4a68a444e91183e6078990bc00e9f138a2c1eb08"
+}

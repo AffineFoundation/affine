@@ -207,8 +207,12 @@ The independent 200-task baseline stopped after 80 verified tasks: a model-emitt
 null character could not cross the native grader's process-argument boundary.
 The original job exited and its evidence is preserved. Main contains a tested
 transport repair that escapes and decodes the exact original text; grading rules
-are unchanged. Future source/environment admission and an explicit benchmark
-amendment remain required. This is not a completed benchmark or a learning gain.
+are unchanged. The repaired source passed all five role CPU admissions, a remote
+null-text native control, and an independently reviewed H200 training/proof
+control. The benchmark's signed amendment requires a complete 200-task baseline
+rerun with the original cohort, seeds and checkpoint. Actual-successor admission
+and the public policy handoff are still pending. This is not a completed
+benchmark or a learning gain.
 See docs/MATH_GRADER_TRANSPORT.md.
 
 Epoch 7 has frozen 90 final submissions. Verification recovered
