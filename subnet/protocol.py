@@ -5,7 +5,16 @@ from .sample_harness import validate as validate_sample_harness, resolve as reso
 
 def entries(manifest):
     """Live admission always pins the imported, approved current harness code."""
-    return _entries(manifest,harness.source_hash())
+    from .forced_sampling import binding, validate_harness
+    context=binding(manifest)
+    values=_entries(manifest,harness.source_hash())
+    if context is not None:
+        for definition in values:
+            raw=definition['harness']
+            if isinstance(raw,dict) and raw.get('version')==INDEXED_VERSION:
+                for row in raw['by_index'].values():validate_harness(row)
+            else:validate_harness(raw)
+    return values
 
 
 def read_only_archived_entries(manifest,expected_archive_harness_source_hash):

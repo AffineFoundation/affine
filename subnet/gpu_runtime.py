@@ -82,14 +82,14 @@ class GPURuntime(Runtime):
             for i in range(self.spec.max_turns):
                 prompt=self.prompt(messages,tools)
                 if len(prompt)+self.harness['max_output_tokens']>min(self.model.config.max_position_embeddings,8192):raise ValueError('GPU model context budget')
-                output=self.sample(prompt,seed+i,messages,i);text=self.tokenizer.decode(output,skip_special_tokens=True);acts,probs=self.compute(prompt,output)
+                output=self.sample_output(prompt,seed,messages,i,index,initial['task_hash']);text=self.tokenizer.decode(output,skip_special_tokens=True);acts,probs=self.compute(prompt,output)
                 proofs=self.build_proofs(acts,decode_batching_size=16,topk=128)
                 if not proofs or any(p is None for p in proofs):raise ValueError('GPU proof construction')
                 result=session.step(policy.action(text,self.harness));turns.append(dict(prompt=prompt,output=output,text=text,proofs=proofs,observations=result['observations'],done=result['done'],reward=result['reward'],classification=result['classification']));arrays.append(probs)
                 messages=messages+[dict(role='assistant',content=text)]+policy.observations(result['observations'],self.harness)
                 if result['done']:break
             if not result['done']:raise ValueError('GPU environment did not terminate')
-            return dict(schema=2,env_id=self.spec.id,environment_version=self.spec.version,index=index,sample_index=index,seed=seed,env_seed=env_seed,task_hash=initial['task_hash'],reward=result['reward'],classification=result['classification'],turns=turns),arrays
+            return dict(schema=2,env_id=self.spec.id,environment_version=self.spec.version,index=index,sample_index=index,seed=seed,env_seed=env_seed,task_hash=initial['task_hash'],reward=result['reward'],classification=result['classification'],turns=turns,**self.sampling_receipt(seed)),arrays
         finally:session.close()
 
     def head_logprob(self,rollout):

@@ -98,9 +98,18 @@ class Controller:
         if existing(legacy_key) is None:self.bucket.json(legacy_key,self.signed(descriptor))
         return checkpoint
 
-    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None):
+    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None):
         from .live_reward_bridge import prevalidate_opening_arguments
         prevalidate_opening_arguments(epoch,checkpoint,miners,duration,audit_policy,source_bundle,live_reward_anchor_document,live_reward_registration_snapshot,self.authority.id)
+        sampling_contract=None
+        if sampling_policy is not None:
+            from .forced_sampling import new_contract,validate_harness
+            sampling_contract=new_contract(sampling_policy)
+            for definition in environments or [dict(harness=harness)]:
+                raw=definition.get('harness')
+                if isinstance(raw,dict) and raw.get('version')=='indexed-harness-v1':
+                    for row in raw['by_index'].values():validate_harness(row)
+                else:validate_harness(raw)
         for definition in environments or []:
             if 'evaluation_only' in definition:
                 if type(definition['evaluation_only'])is not bool or (definition['evaluation_only'] and definition.get('indices')!=[]):
@@ -146,6 +155,10 @@ class Controller:
         if training_policy is not None:manifest['training_policy']=training_policy
         if artifact_policy is not None:manifest['artifact_policy']=artifact_policy
         if task_assets is not None:manifest['task_assets']=task_assets
+        if sampling_contract is not None:
+            from .forced_sampling import source_hash
+            manifest['sampling_contract']=sampling_contract
+            manifest['sampling_source_hash']=source_hash()
         from .runtime_factory import validate_backend
         validate_backend(manifest)
         if source_bundle is not None:manifest['source_bundle']=dict(source_bundle)

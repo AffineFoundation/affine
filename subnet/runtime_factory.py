@@ -18,9 +18,10 @@ def validate_backend(manifest):
 
 
 def runtime(checkpoint,manifest,environment,harness=None):
+ from .forced_sampling import bind_runtime
  revision=validate_backend(manifest)
  if revision==CPU_REVISION:
   from .model import Runtime
-  return Runtime(checkpoint,manifest['checkpoint']['files'],environment=environment,harness=harness)
+  return bind_runtime(Runtime(checkpoint,manifest['checkpoint']['files'],environment=environment,harness=harness),manifest)
  from .gpu_runtime import GPURuntime
- return GPURuntime(checkpoint,manifest['checkpoint']['files'],environment,harness,runtime_revision=revision)
+ return bind_runtime(GPURuntime(checkpoint,manifest['checkpoint']['files'],environment,harness,runtime_revision=revision),manifest)

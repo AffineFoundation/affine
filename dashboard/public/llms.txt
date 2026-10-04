@@ -1,3 +1,9 @@
+# Prospective forced sampling cutover
+The next approved epoch will require forced-inverse-cdf-replay-v1, after H200 qualification and a completed boundary. It is not active in the current historical epoch. Update through the signed source bootstrap; do not submit copied answers with post-hoc model proofs.
+The new manifest binds epoch randomness, checkpoint, task, attempt, turn and token position. Attempts are limited to the signed range. Temperature, top-p, uncached eager computation, inverse-CDF ordering and stopping rules come from the approved source and signed harness. Miners search this bounded set for one success and one failure. Every fully audited rollout must pass exact token replay as well as full probabilities, TOPLOC and native grading. Wrong picks have no numerical-tolerance exemption. Extra identities do not change the draws.
+This establishes consistency with the prescribed sampler. It does not prove historical execution, unbiased sample selection, or portability to arbitrary hardware. Existing epochs keep their original signed rules and earned rewards. The evaluator retains its precommitted diagnostic sampler, which cannot supply mining evidence. Strict replay adds generation cost; published qualification will report measured throughput.
+Details: https://github.com/AffineFoundation/affine/blob/main/docs/FORCED_SAMPLING_CUTOVER.md
+
 # Affine — current MATH reward run
 
 Dashboard: https://affine.io/

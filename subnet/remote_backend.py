@@ -220,6 +220,7 @@ class RemoteController(Controller):
         save(self.state/(manifest['epoch']+'-checkpoint-publication.json'),dict(checkpoint=cp['id'],objects=observed,capacity=capacity,operator_independent_hashes=True))
         return self.checkpoint_with_reads(dict(descriptor,descriptor_key=key))
     def finalize(self,manifest,checkpoint_path):
+        from .forced_sampling import require_report
         if manifest.get('payable') is not False:raise ValueError('remote experimental controller is nonpayable only')
         epoch=manifest['epoch'];saved=self.state/(epoch+'-scores.json')
         if saved.exists():
@@ -227,6 +228,7 @@ class RemoteController(Controller):
             if result.get('checkpoint')!=manifest['checkpoint']['id'] or result.get('payable') is not False or result['receipts']!=self.gateway.freeze(epoch):raise ValueError('cached finalized manifest/receipt binding')
             reports={m:json.loads((self.state/(epoch+'-'+m+'-report.json')).read_text()) for m in result['receipts']}
             if any(r.get('epoch')!=epoch or r.get('submission_sha256')!=result['receipts'][m]['sha256'] for m,r in reports.items()):raise ValueError('cached audit report binding')
+            for report in reports.values():require_report(manifest,report)
             self.bucket.json('public/'+epoch+'/scores.json',self.signed(result))
             if manifest.get('live_reward_contract') is not None:
                 from .live_reward_bridge import persist_signed_compute_evidence
@@ -264,6 +266,7 @@ class RemoteController(Controller):
         for miner,receipt,remote in verified:
             report=remote['audits'][0]
             if report['submission_sha256']!=receipt['sha256']:raise ValueError('frozen artifact report binding')
+            require_report(manifest,report)
             report.update(remote_job_id=remote['job_id'],backend_profile=remote['backend_profile'],execution_resources_enforced=remote['execution_resources_enforced'])
             save(self.state/(epoch+'-'+miner+'-report.json'),report);reports[miner]=report
             self.bucket.json('public/'+epoch+'/audits/'+miner+'.json',self.signed(report))
@@ -286,6 +289,7 @@ class RemoteController(Controller):
                     submissions=[dict(url=self.bucket.presign(receipt['frozen_key']),sha256=receipt['sha256'])])
                 report=remote['audits'][0]
                 if report['submission_sha256']!=receipt['sha256']:raise ValueError('expanded frozen artifact binding')
+                require_report(manifest,report)
                 previous={o['batch']:o for o in reports[miner]['outcomes'] if o.get('fully_audited') is True}
                 current={o['batch']:o for o in report['outcomes']}
                 if any(current.get(b,{}).get('valid')!=o.get('valid') for b,o in previous.items()):raise ValueError('expanded audit inconsistent with initial audited outcomes')

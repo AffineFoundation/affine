@@ -102,7 +102,8 @@ def run(a):
         for env_id,index in choices:
             if time.time()>=manifest['deadline'] or len(miner.batches)>=limit:break
             try:
-                miner.search(index,seed=int(time.time_ns()%2**31),max_attempts=budget,env_id=env_id);miner.upload()
+                seed=0 if manifest.get('sampling_contract') else int(time.time_ns()%2**31)
+                miner.search(index,seed=seed,max_attempts=budget,env_id=env_id);miner.upload()
             except EpochClosed:
                 logging.info('signed epoch closed; retaining prior batches without extending the deadline')
                 break

@@ -22,7 +22,7 @@ BACKEND_PROFILE = dict(device='cuda', dtype='bfloat16', attention='eager', sm=[8
     tf32=False, deterministic_algorithms=True, cublas_workspace_config=':4096:8',
     native_toploc_threads=2, torch_threads=2)
 SOURCE_FILES = tuple('subnet/'+n+'.py' for n in
-    ('audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol'))
+    ('audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling'))
 ROLES = {'mine','verify','train','evaluate','upload'}
 HEAD_POLICY='frozen-feature-head-adamw-v1'
 FULL_POLICY='bf16-full-adamw-checkpointed-v1'
@@ -143,6 +143,10 @@ def mine_cumulative(runtime,manifest,job,upload,clock=None,allow_empty=False):
     from .protocol import entries,harness_for
     clock=clock or time.time
     mining_window(manifest,clock())
+    if manifest.get('sampling_contract') is not None:
+        limit=manifest['sampling_contract']['max_attempts']
+        if type(job['seed_start'])is not int or type(job['search_budget'])is not int or not 0<=job['seed_start']<limit or not 1<=job['search_budget']<=limit-job['seed_start']:
+            raise ValueError('owned miner outside signed attempt budget')
     batches=[];search=[];data=None;uploads=0;stopped=False;capacity_reached=False
     def available():
         now=clock()
@@ -286,6 +290,7 @@ def checkpoint(manifest, workspace, cache=None):
     return target
 
 def audit(data, manifest, runtime):
+    from .forced_sampling import assurance as sampling_assurance
     from .batches import submission_records,SubmissionRejected
     from .protocol import entries, entry, classification, sample_key,harness_for
     from .artifact_budget import for_manifest
@@ -294,6 +299,7 @@ def audit(data, manifest, runtime):
     except SubmissionRejected as error:
         return dict(epoch=manifest['epoch'],submission_sha256=hashlib.sha256(data).hexdigest(),
             submission_rejected=True,rejection_stage='transport',
+            sampling_assurance=sampling_assurance(manifest),
             outcomes=[dict(batch=None,valid=False,reason=str(error),rejection_stage='transport')],
             accepted=[],training_eligibility='fully-audited-only'),[]
     from .auditing import select,assurance
@@ -337,7 +343,7 @@ def audit(data, manifest, runtime):
             outcomes.append(dict(batch=number,env_id=definition['env_id'],index=index,structural_valid=True,valid=True if number in selected_indices else None,fully_audited=number in selected_indices))
         except (ValueError,KeyError,TypeError,IndexError) as error:
             outcomes.append(dict(batch=number,valid=False,fully_audited=number in selected_indices,failure_kind='confirmed_invalid' if confirmed_invalid or isinstance(error,InvalidSample) else 'verification_error',reason=type(error).__name__+': '+str(error)[:300]))
-    return dict(epoch=manifest['epoch'],submission_sha256=hashlib.sha256(data).hexdigest(),policy=policy,selected_batches=sorted(selected_indices),assurance=assurance(len(records),len(selected_indices)),outcomes=outcomes,accepted=accepted,training_eligibility='fully-audited-only'),pairs
+    return dict(epoch=manifest['epoch'],submission_sha256=hashlib.sha256(data).hexdigest(),policy=policy,selected_batches=sorted(selected_indices),assurance=assurance(len(records),len(selected_indices)),sampling_assurance=sampling_assurance(manifest),outcomes=outcomes,accepted=accepted,training_eligibility='fully-audited-only'),pairs
 
 def full_parameter_train(runtime, pairs, destination, steps=1):
     """Measured, separately selected full BF16 AdamW; not the head-only control."""
@@ -468,6 +474,12 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                 runtime_revision=revision)
         else:
             runtime=factory(approved,manifest['checkpoint']['files'],first['spec'],initial_harness)
+        if job['role'] != 'evaluate':
+            from .forced_sampling import bind_runtime
+            bind_runtime(runtime,manifest)
+        elif manifest.get('sampling_contract') is not None:
+            runtime.sampling_context=None
+            report['sampling_scope']='heldout-diagnostic-not-mining-evidence'
         if job['role']=='mine':
             from .batches import pack
             import requests

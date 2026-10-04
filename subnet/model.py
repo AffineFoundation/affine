@@ -77,7 +77,25 @@ class Runtime:
 
     def for_environment(self, environment, harness=None):
         import copy
-        return copy.copy(self).configure(environment, harness)
+        chosen = copy.copy(self).configure(environment, harness)
+        if getattr(chosen, 'sampling_context', None) is not None:
+            from .forced_sampling import validate_harness
+            validate_harness(chosen.harness)
+        return chosen
+
+    def sample_output(self, prompt, seed, messages, turn, index, task_hash):
+        if getattr(self, 'sampling_context', None) is not None:
+            from .forced_sampling import sample
+            return sample(self, prompt, seed, turn, index, task_hash)
+        if hasattr(self, 'sample'):
+            return self.sample(prompt, seed + turn, messages, turn)
+        return policy.sample(self.model, self.tokenizer, prompt, seed + turn, self.harness, messages=messages, turn_index=turn)
+
+    def sampling_receipt(self, seed):
+        if getattr(self, 'sampling_context', None) is None:
+            return {}
+        from .forced_sampling import receipt
+        return {'sampling': receipt(self.sampling_context, seed)}
 
     def prompt(self, messages, tools=()):
         return policy.render(self.tokenizer, messages, tools,self.harness)
@@ -102,7 +120,7 @@ class Runtime:
                 prompt = self.prompt(messages, tools)
                 if len(prompt)+self.harness['max_output_tokens'] > min(getattr(self.model.config, 'max_position_embeddings', 8192), 8192):
                     raise ValueError('model context budget')
-                output = policy.sample(self.model, self.tokenizer, prompt, seed+turn_index, self.harness, messages=messages,turn_index=turn_index)
+                output = self.sample_output(prompt, seed, messages, turn_index, index, initial['task_hash'])
                 text = self.tokenizer.decode(output, skip_special_tokens=True)
                 acts, logprobs = self.compute(prompt, output)
                 proofs = self.build_proofs(acts, decode_batching_size=16, topk=128)
@@ -126,12 +144,19 @@ class Runtime:
             return dict(schema=2,env_id=self.spec.id, environment_version=self.spec.version,
                         index=index, sample_index=index, seed=seed, env_seed=env_seed,
                         task_hash=initial['task_hash'], reward=reward, classification=classification,
-                        turns=turns), arrays
+                        turns=turns, **self.sampling_receipt(seed)), arrays
         finally:
             session.close()
 
     def verify(self, rollout, arrays):
         from .audit_policy import InvalidSample
+        if getattr(self, 'sampling_context', None) is not None:
+            try:
+                expected = self.sampling_receipt(rollout.get('seed'))['sampling']
+            except ValueError as error:
+                raise InvalidSample(str(error)) from error
+            if rollout.get('sampling') != expected:
+                raise InvalidSample('sampling contract/attempt binding')
         if rollout.get('schema',1)>=2 and (rollout.get('sample_index')!=rollout.get('index') or rollout.get('env_id')!=self.spec.id or rollout.get('environment_version')!=self.spec.version):
             raise InvalidSample('required environment binding')
         if type(rollout.get('reward')) not in (int,float) or not math.isfinite(rollout['reward']):
@@ -173,6 +198,10 @@ class Runtime:
                 results = self.verify_proofs(acts, turn['proofs'], decode_batching_size=16, topk=128)
                 if len(results) != count or any(r.exp_mismatches or r.mant_err_mean or r.mant_err_median for r in results):
                     raise InvalidSample('TOPLOC')
+                if getattr(self, 'sampling_context', None) is not None:
+                    selected = self.sample_output(prompt, rollout['seed'], messages, i, rollout['index'], initial['task_hash'])
+                    if selected != output:
+                        raise InvalidSample('sampling replay mismatch')
                 result = session.step(policy.action(text,self.harness))
                 done, reward = result['done'], result['reward']
                 observations = result['observations']

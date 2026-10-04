@@ -71,6 +71,8 @@ recompute and no R2 GET. Never accept caller-miner report assertions instead.
  definitions={r['env_id']:r for r in m['environments']}
  for miner,doc in audit_documents.items():
   r=signed(doc,authority);need(r.get('epoch')==m['epoch'] and r.get('submission_sha256')==receipts[miner]['sha256'],'frozen artifact/audit binding')
+  from .forced_sampling import require_report
+  require_report(m,r)
   need(isinstance(r.get('remote_job_id'),str) and r['remote_job_id'],'authenticated verifier request reference')
   accepted=r['accepted'];seen=set()
   confirmed=[o for o in r.get('outcomes',[]) if o.get('valid') is True and o.get('fully_audited') is True]

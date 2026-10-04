@@ -95,6 +95,7 @@ def contract(config,round_number):
         backend_profile=profile,model_id=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'))
     if config.get('artifact_policy') is not None:result['artifact_policy']=config['artifact_policy']
     if config.get('task_assets') is not None:result['task_assets']=config['task_assets']
+    if config.get('sampling_policy') is not None:result['sampling_policy']=config['sampling_policy']
     if config.get('live_reward_anchor_document') is not None:result['live_reward_anchor_document']=config['live_reward_anchor_document']
     from .empty_epoch_policy import selected
     policy=selected(config,round_number)
@@ -212,7 +213,9 @@ def run(config,once=False):
                     for miner in active['identities']:
                         capability=dict(put_url=bucket.presign('private/'+epoch+'/staging/'+miner+'.zip','put_object',max(1,manifest['deadline']-int(time.time()))),headers={'Content-Type':'application/octet-stream'})
                         owned_fields=owned_mining_job_fields(config,manifest,status['round'])
-                        controller.jobs.run(epoch+'-mine-'+miner[:8],'mine',manifest,None,miner_id=miner,capability=capability,search_budget=config.get('search_budget',64),seed_start=100+status['round']*1000,**owned_fields)
+                        attempts=min(config.get('search_budget',64),manifest['sampling_contract']['max_attempts']) if manifest.get('sampling_contract') else config.get('search_budget',64)
+                        seed_start=0 if manifest.get('sampling_contract') else 100+status['round']*1000
+                        controller.jobs.run(epoch+'-mine-'+miner[:8],'mine',manifest,None,miner_id=miner,capability=capability,search_budget=attempts,seed_start=seed_start,**owned_fields)
                     status['checkpoint_path']=(controller.jobs.checkpoint_path('mine',status['checkpoint']['id']) if hasattr(controller.jobs,'checkpoint_path') else config['remote']['workspace']+'/checkpoints/'+status['checkpoint']['id'])
                 active['phase']='collect';save(statuspath,status)
             if active['phase']=='collect':

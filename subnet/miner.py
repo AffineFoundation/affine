@@ -32,6 +32,13 @@ class Miner:
             raise ValueError('stale local miner state')
 
     def search(self, index, seed=0, max_attempts=100, env_id=None):
+        contract=self.manifest.get('sampling_contract')
+        if contract is not None:
+            if type(seed)is not int or not 0<=seed<contract['max_attempts']:
+                raise ValueError('forced sampling search attempt start')
+            if type(max_attempts)is not int or max_attempts<1:
+                raise ValueError('forced sampling search budget')
+            max_attempts=min(max_attempts,contract['max_attempts']-seed)
         if time.time()>=self.manifest.get('deadline',float('inf')):
             raise EpochClosed('signed epoch window closed')
         definition = entry(self.manifest, env_id)

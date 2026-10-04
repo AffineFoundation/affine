@@ -63,7 +63,8 @@ def verify(data, manifest, checkpoint):
             outcomes.append(dict(batch=bi,env_id=env_id,index=index,valid=True if bi in selected_indices else None,structural_valid=True,fully_audited=bi in selected_indices))
         except Exception as e:
             outcomes.append(dict(batch=bi,index=batch.get('index'),valid=False,reason=str(e)))
-    return dict(epoch=manifest['epoch'],submission_sha256=sha(data),policy=policy,audit_seed=manifest.get('audit_seed'),selected_batches=selected_indices,assurance=assurance(len(records),len(selected_indices)),outcomes=outcomes,accepted=accepted,training_eligibility='fully-audited-only')
+    from .forced_sampling import assurance as sampling_assurance
+    return dict(epoch=manifest['epoch'],submission_sha256=sha(data),policy=policy,audit_seed=manifest.get('audit_seed'),selected_batches=selected_indices,assurance=assurance(len(records),len(selected_indices)),sampling_assurance=sampling_assurance(manifest),outcomes=outcomes,accepted=accepted,training_eligibility='fully-audited-only')
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('artifact');p.add_argument('manifest');p.add_argument('checkpoint');p.add_argument('report')
