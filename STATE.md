@@ -2348,3 +2348,34 @@ prospective: sealed candidate `e6ac9aaf...` passed 76 CPU controls but has not
 replaced source763 or any active worker. Future activation must retain the
 actual learned checkpoint and persistent optimizer parent. No held-out
 improvement or faster completed E10 timing has yet been demonstrated.
+
+## Retained verification capacity and E10 audits
+
+At 2026-10-04 23:54 UTC, the original E10 controller has frozen and published
+78 submission files. The other 167 registered identities had no completed
+upload; these are not invalid-sample findings. Nine verification jobs have
+completed, with 17 accepted batch documents so far. Audits are still running;
+this is neither a finalized score nor a completed training epoch.
+
+Four H200 verifier workers remain the admitted fleet. Two retained H100s were
+tested against the actual source763/checkpoint28 owned-miner artifact. Both
+original controls failed. A separately reviewed diagnostic on one H100 found
+that the positive rollout passed, while the negative rollout failed exact
+sampling replay after its probability and TOPLOC checks passed. No sampler
+tolerance, historical contract, or reward eligibility was changed to admit
+these machines. Current-contract qualification is required before reuse.
+
+The existing authenticated checkpoint-retention process retired one obsolete
+verifier-2 checkpoint replica, reclaiming 15,242,726,234 bytes. It checked the
+signed bucket descriptor, complete bucket and local file hashes, terminal old
+jobs, current checkpoint protections, and actual idle/open-file guards. The
+current checkpoint, jobs, reports, and durable R2 objects were preserved.
+Evidence is under
+`state/root-audits/h100-source763-cp28-reuse-v1/`.
+
+A fresh retained-machine inventory also found an idle legacy two-GPU B200
+benchmark host and an idle legacy evaluation service holding eight Blackwell
+GPUs. They are candidates, not enrolled workers. No new machine was rented and
+neither legacy service was stopped by this capacity review. The spare H200
+still has its observed CUDA failure. Miner, trainer, evaluator, and validator
+roles remain separate.
