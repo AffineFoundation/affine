@@ -23,10 +23,10 @@ closing their hour. This expected wait leaves prior weights and the reward curso
 intact; it does not treat unfinalized submissions as a zero-point payout.
 
 
-The storage/transport upgrade opened a fresh epoch at 20:42:25 UTC from learned
-checkpoint 7f017e949b128a27851087df1b213659ce1e41e978b478964ba006b5a4aa1adc,
+Epoch seven opened at 01:50:17 UTC on October 4 from learned
+checkpoint 660098235e1c7bce048679292f26f5255834d0a0abbee8df5dfefbf2fa3147da,
 with approved source 548effe050db7180a17719b92580f01a70d9a95dd212ba6b7fc175de95e694d3.
-Its original signed upload deadline is 21:12:25 UTC. The frozen runtime source is
+Its original signed upload deadline is 02:20:17 UTC. The frozen runtime source is
 from public commit f590bce9 plus the pinned original MATH asset. Later housekeeping
 updates on main do not change an already signed epoch. Subsequent epochs open
 after verification, training and checkpoint publication. This static guide does
@@ -37,8 +37,8 @@ at the original deadline, and during verification/training/evaluation.
 The model is Qwen/Qwen2.5-Math-7B-Instruct, 7,615,616,512 parameters, trained in
 BF16 across all parameters. The dataset has 7,496 distinct original MATH tasks:
 6,746 available for mining and 750 reserved for evaluation. The current diagnostic
-uses 32 fixed reserved tasks. The latest completed epoch improved from 20/32
-to 21/32 after three additional full-model updates, nine cumulative. This remains
+uses 32 fixed reserved tasks. The latest completed epoch declined from 21/32
+to 20/32 after three additional full-model updates, twelve cumulative. This remains
 below an earlier 22/32 diagnostic and does not establish sustained improvement
 or performance on a larger independent benchmark. Three optimizer steps remain
 configured per nonempty training epoch. Larger DeepMath/NuminaMath tasksets are
@@ -59,18 +59,28 @@ encountered a disk-reserve check before recovering the completed report. Root
 authenticated that report and published successor 660098235e1c7bce048679292f26f5255834d0a0abbee8df5dfefbf2fa3147da.
 All ten R2 objects (15,242,726,234 bytes) passed independent full-byte hash checks.
 Recovery reused the completed output; training was not repeated and the signed
-source was unchanged. The original controller advanced to post-training evaluation.
+source was unchanged. The original controller completed post-training evaluation
+and opened epoch seven from that successor.
 Discovery remains authoritative about whether mining is open.
 Main includes a prospective fix that resumes bound original training requests
 before checking a new allocation, and budgets existing-checkpoint uploads for
 metadata rather than new model copies. It is not yet a live source upgrade.
 See docs/TRAINING_REPORT_RECOVERY.md.
 
-An expiring completed-epoch deployment hold is tested and waiting for epoch six
+The epoch-six deployment hold expired and resumed its original controller
+without restarting jobs. A new exact-epoch guard is waiting for epoch seven
 to finish. It only holds a completed boundary, resumes the original controller
 within fifteen minutes if no upgrade completes, and never cancels an active
 epoch or restarts GPU jobs. Checkpoint/native/GPU admission remains separate.
 See docs/CONTROLLER_BOUNDARY_LEASE.md.
+
+The prospective recovery source passed an isolated H100 generated rollout,
+model reload and native replay, rejecting five token/proof/probability/reward/
+checkpoint-hash tampering cases. All five production roles completed separate
+CPU source/checkpoint/tokenizer/native preparation without holding mining.
+Preparation is not deployment, a universal hardware qualification or proof of
+learning. The existing signed epoch still pins source 548effe0. See
+docs/READONLY_SOURCE_ADMISSION.md for the separate preparation/deployment gates.
 
 ## How to start mining
 
@@ -82,8 +92,8 @@ source, upload grant, deadline or model checkpoint.
 
 Admission is open to every current subnet-120 identity with valid signed Affine
 Ed25519 activation. There is no operator whitelist. Each epoch snapshots the
-eligible identities; later activations enter a subsequent epoch. The 20:42 UTC
-opening snapshot contains 241 identities. Identity registration/activation is
+eligible identities; later activations enter a subsequent epoch. The signed
+current manifest contains the actual eligible identity snapshot. Registration/activation is
 separate from public dashboard access. Keep signing keys private.
 
 Start with these concrete guides:

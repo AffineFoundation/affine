@@ -1,5 +1,51 @@
 # Live reward launch authorized — October 3, 2026
 
+Epoch six is complete with twelve cumulative updates. Root authenticated both
+original 32-task evaluation reports: 21 correct before training and 20 after.
+This decline and the independent 128-task no-gain result remain visible; steady
+learning is unproven. Its expiring boundary hold released the original controller
+at the original deadline, without restarting jobs. Epoch seven opened at
+01:50:17 UTC on October 4 from successor 66009823 under the unchanged source 548.
+Its original upload deadline is 02:20:17 UTC. A new exact-epoch expiring guard
+is waiting for epoch seven's completed boundary; it cannot cancel active jobs.
+
+Recovery source 8b passed an actual isolated H100 generated rollout, independent
+model reload/native replay and five tamper rejections. Root checked the signed
+control plan, all 1,874 source files, original successful child wait, exact
+receipt binding, actual process absence and post-control GPU quiescence.
+Evidence: future-source-af37a105-v1/isolated-h100-gpu-control-v2. This does not
+prove learning or qualify all H200 configurations.
+
+Read-only CPU preparation now proceeds without a controller hold and makes no
+global-idle claim. All five roles completed 34 tokenizer contexts and eight
+original native controls on checkpoint 660; actual successful original waits
+and absent process identities were checked. The first four original helper
+versions are preserved, and verifier two used the hardened pre-import source
+check. Public tool docs/READONLY_SOURCE_ADMISSION.md describes the separate
+preparation and deployment gates; six controls pass. These receipts do not
+admit any future successor's weights or authorize live deployment by themselves.
+
+Verifier two was reachable from verifier one and continued authenticated polls
+to the coordinator while direct SSH from this host timed out. A narrowly scoped
+host-and-port SSH relay is installed with strict original host-key checks and
+no agent/key forwarding; the other verifier's effective route is unchanged.
+The same original hydration was reached and its successful result recovered.
+One SFTP evidence-copy observation timed out; it was not treated as a failed
+scientific job. Original reports/helpers and partial transfer evidence remain.
+Evidence: future-source-af37a105-v1/verifier2-scoped-ssh-route-v1 and the two
+readonly-admission directories. No pod, worker, GPU job or signed manifest
+was restarted for this access recovery.
+
+The old in-memory trainer router expects a default cache path for 660 that
+differs from the completed export. Root authenticated the signed descriptor,
+original job/report and current manifest, then created a no-copy hard-link
+alias at that exact default cache path. All ten source/destination byte hashes,
+shared inodes and unchanged modes were checked; original export and evidence
+remain intact. No GPU job was launched and no model bytes were copied. This
+lets the running old-source epoch reach its normal input-capacity check without
+a missing-directory failure. Evidence: original-successor-cache-alias-v1.
+The new source is still prospective; completed-boundary activation remains.
+
 The exact public af37a105 snapshot plus the original pinned MATH asset is now
 sealed as source archive 8b46ca8d11f2670cfd5af3711a5c781653f7587eec962ebfaea0611f680fa78d.
 All five roles completed fresh CPU-only installation and independent full
