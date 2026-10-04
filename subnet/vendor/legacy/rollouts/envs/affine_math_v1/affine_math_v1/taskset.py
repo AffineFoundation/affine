@@ -15,6 +15,7 @@ address tasks by name through `--env.taskset.tasks`.
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import verifiers.v1 as vf
@@ -32,6 +33,11 @@ SYSTEM = (
 )
 VERIFY = (Path(__file__).parent / "verify.py").read_bytes()
 BOXED_OPEN = "\\boxed{"
+
+
+def verify_args(gold: str, reply: str) -> list[str]:
+    """Transport model text without putting null bytes in process arguments."""
+    return ["--json-arguments", json.dumps([gold, reply], ensure_ascii=True)]
 
 
 def task_name(problem: str) -> str:
@@ -71,7 +77,7 @@ class MathTask(vf.Task[MathData]):
     @vf.reward(weight=1.0)
     async def correct(self, trace: vf.Trace, runtime: vf.Runtime) -> float:
         result = await runtime.run_uv_script(
-            VERIFY, args=[self.data.answer, trace.last_reply or ""])
+            VERIFY, args=verify_args(self.data.answer, trace.last_reply or ""))
         if result.exit_code != 0:
             raise RuntimeError(f"verify.py failed: {result.stderr.strip()[-500:]}")
         lines = result.stdout.strip().splitlines()
@@ -79,7 +85,7 @@ class MathTask(vf.Task[MathData]):
 
     async def validate(self, runtime: vf.Runtime) -> bool:
         result = await runtime.run_uv_script(
-            VERIFY, args=[self.data.answer, BOXED_OPEN + self.data.answer + "}"])
+            VERIFY, args=verify_args(self.data.answer, BOXED_OPEN + self.data.answer + "}"))
         if result.exit_code != 0:
             raise RuntimeError(f"verify.py failed: {result.stderr.strip()[-500:]}")
         lines = result.stdout.strip().splitlines()

@@ -203,6 +203,14 @@ was rejected. This remains qualification, not a live policy switch or evidence
 of held-out improvement. See docs/COVERED_EPOCH_TRAINING.md. The reusable scoped
 checkpoint preparation tool is documented in docs/CHECKPOINT_READ_HYDRATION.md.
 
+The independent 200-task baseline stopped after 80 verified tasks: a model-emitted
+null character could not cross the native grader's process-argument boundary.
+The original job exited and its evidence is preserved. Main contains a tested
+transport repair that escapes and decodes the exact original text; grading rules
+are unchanged. Future source/environment admission and an explicit benchmark
+amendment remain required. This is not a completed benchmark or a learning gain.
+See docs/MATH_GRADER_TRANSPORT.md.
+
 Epoch 7 has frozen 90 final submissions. Verification recovered
 from expired checkpoint download links, not a miner-fraud finding. The failed
 jobs and frozen input hashes remain intact. Four explicit replacement jobs were

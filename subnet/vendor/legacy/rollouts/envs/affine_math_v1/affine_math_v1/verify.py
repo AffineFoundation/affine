@@ -9,8 +9,13 @@ argv[2] = the model's full reply. Prints 1.0 when the LAST complete
 0.0. The last-boxed rule and brace balancing mirror affine/dialects.py
 `boxed` (the duel scores the same span), kept inline because this script
 runs with math-verify as its only dependency.
+
+The taskset uses --json-arguments followed by an escaped JSON [gold, reply]
+array so arbitrary model text, including null characters, can cross the process
+argument boundary unchanged. The original two-argument CLI remains supported.
 """
 
+import json
 import sys
 
 from math_verify import parse, verify
@@ -35,7 +40,14 @@ def last_boxed(text: str) -> str | None:
     return found
 
 
-gold, reply = sys.argv[1], sys.argv[2]
+if len(sys.argv) == 3 and sys.argv[1] == "--json-arguments":
+    arguments = json.loads(sys.argv[2])
+    if (not isinstance(arguments, list) or len(arguments) != 2
+            or any(not isinstance(value, str) for value in arguments)):
+        raise ValueError("expected JSON gold/reply string pair")
+    gold, reply = arguments
+else:
+    gold, reply = sys.argv[1], sys.argv[2]
 pred = last_boxed(reply)
 if pred is None:
     print(0.0)
