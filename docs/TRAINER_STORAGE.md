@@ -39,3 +39,10 @@ changes do not alter pinned training jobs or numerical settings.
 The ordinary completed-job and obsolete-final housekeeping entry points use
 these same bounds; obsolete-final archives reuse the cache-retention reader's
 signed-descriptor and complete streaming verification.
+
+The 32 GiB model bound governs authentication and retirement of an existing
+archive. It does not increase R2's single-request upload limit. New legacy
+unsharded exports larger than 5 GiB require multipart upload; the ordinary
+intermediate uploader currently issues single-object PUT requests. Current
+fixed/covered exports explicitly use 4 GB shards and fit that transport. See
+[Cloudflare's upload limits](https://developers.cloudflare.com/r2/platform/limits/).

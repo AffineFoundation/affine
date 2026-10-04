@@ -36,3 +36,13 @@ Neither cleanup worker deletes the original job/report or the protected successo
 Seven controls exercise disk-pressure recovery, original live-job reuse,
 changed request/signature/report refusal, failed/missing-job refusal, bounded
 streaming-upload space and controller recovery before new-job capacity checks.
+
+The same older-source reserve problem recurred after the original epoch-seven
+training finished at 07:18 UTC on October 4. Root authenticated its original
+signed job, successful runner wait and process absence, source/runtime bindings
+and all successor weight bytes. Scoped recovery collected that existing report
+and streamed its successor to R2; all ten files (15,242,726,234 bytes) passed
+independent full-byte readback at 07:40 UTC. No training was repeated and no signed
+epoch source/deadline changed. The original controller advanced to its original
+post-training evaluation. The admitted future source already includes recovery
+before a new allocation check; it remains pending production activation.

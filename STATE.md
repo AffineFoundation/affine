@@ -30,20 +30,31 @@ The original epoch-seven controller and two verifiers remain live. All 90
 submissions are frozen and all 90 submission audits completed. Independent queue
 review checked 220 completed historical jobs and preserved all four historical
 HTTP403 failures linked to independently verified successful replacement jobs.
-The original controller's training disk reserve initially refused admission.
 Two unused historical model replicas were authenticated, fully read back from
-R2 and retired locally, freeing 30,485,486,873 bytes. Current checkpoint 660 and
-all original job/report evidence remain intact. The controller then dispatched
-its original epoch-seven training job, train-995463a9. Both original remote
-runner and worker were observed alive; this does not claim training completion.
-The size-bound fix and covered-final retention safeguards passed 37 controls.
-Future-source successor hydration is
-waiting on the actual original epoch-seven training output. Private preparation,
-activation, controller-parent and verifier-parent helpers now bind the exact
-completed boundary, future checkpoint admissions, preserved reward history,
-approved source extension and covered policy. These helpers have not activated
-the upgrade; actual five-role successor admission and the original unexpired
-completed-boundary hold remain required.
+R2 and retired locally, freeing 30,485,486,873 bytes. The original epoch-seven
+training job then finished successfully at 07:18 UTC: three full-model updates,
+all 339 tensors receiving gradients. Its runner completed with exit zero and both
+original process identities were independently observed absent.
+
+The older pinned controller repeated new-job disk admission after the completed
+job consumed that reserve, blocking result collection. Explicit scoped recovery
+authenticated the exact original signed request, report, scientific source,
+runtime and all actual successor bytes; it reused the same output without new
+training. All ten successor R2 objects (15,242,726,234 bytes) passed full hash
+readback before immutable descriptor/metrics publication at 07:40 UTC. Successor
+093a61c368dc9aeee4551d87365ad5504cc7b13eb0a9bdcc999a58964e8ee570 is published.
+The original upload runner completed successfully and its original PIDs are absent.
+
+The original controller advanced to post-training evaluation. The actual fresh
+successor-preparation supervisor launched five CPU-only hydrations and completed
+successfully; original child completions remain to be inspected. The controller
+still records twelve completed updates until evaluation/epoch finalization; the
+original training result adds three. The covered-policy source is not active.
+Its five-role actual-successor native admission and original unexpired completed
+boundary remain required before activation. Eight original-training recovery
+controls pass, alongside the 37 retention controls. Completed-job housekeeping is
+archiving intermediates; current/pending checkpoints and all original evidence
+remain protected. No held-out improvement or open mining window is claimed.
 
 The following older preparation notes are retained as historical evidence; the
 3bace candidate above supersedes the earlier future-source candidates.

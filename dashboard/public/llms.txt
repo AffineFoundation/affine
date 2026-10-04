@@ -60,10 +60,18 @@ step is admission of the actual epoch-seven successor on every role and a
 completed-boundary handoff. Signed live epoch seven remains unchanged and no
 held-out learning gain is claimed. See docs/COVERED_EPOCH_TRAINING.md and
 docs/MATH_GRADER_TRANSPORT.md.
-Epoch-seven submission audits are complete. Its original training worker is
-running after safely retiring two unused, fully archive-verified model replicas
-to satisfy disk admission. The signed epoch and checkpoint inputs are unchanged;
-this is not a declaration of completed training or an open mining window.
+Epoch-seven submission audits are complete. The original training job finished
+successfully at 07:18 UTC with three full-model updates; all 339 parameter tensors
+received gradients. Root authenticated the original request, report, successful
+runner wait, process absence, source and all successor weight bytes. The older
+controller repeated its new-job disk reserve after completion and could not
+collect the result. Explicit recovery published that same completed output at 07:40 UTC: all ten
+R2 files (15,242,726,234 bytes) passed independent full-byte hash readback. Training
+was not repeated. The original controller advanced to post-training evaluation,
+and five separate CPU preparations started on the actual successor. The controller
+still records twelve completed updates until evaluation finishes; the original
+training output adds three. Mining remains closed during that work; discovery
+and the signed manifest remain authoritative.
 The independent 200-task baseline also completed: checkpoint 660 scored 131/200
 (65.5%). Root checked all thirteen original jobs, complete task identities and
 seeds, deadlines, successful process waits, source and full checkpoint bytes.
@@ -84,33 +92,16 @@ fixed 32-task diagnostic. This comparison does not assess the next checkpoint.
 See https://github.com/AffineFoundation/affine/blob/main/docs/INDEPENDENT_MATH_BENCHMARK.md
 and docs/data/math128-20261004.json for the complete aggregate result.
 
-The original epoch-six trainer completed three updates, but its controller
-encountered a disk-reserve check before recovering the completed report. Root
-authenticated that report and published successor 660098235e1c7bce048679292f26f5255834d0a0abbee8df5dfefbf2fa3147da.
-All ten R2 objects (15,242,726,234 bytes) passed independent full-byte hash checks.
-Recovery reused the completed output; training was not repeated and the signed
-source was unchanged. The original controller completed post-training evaluation
-and opened epoch seven from that successor.
-Discovery remains authoritative about whether mining is open.
-Main includes a prospective fix that resumes bound original training requests
-before checking a new allocation, and budgets existing-checkpoint uploads for
-metadata rather than new model copies. It is not yet a live source upgrade.
-See docs/TRAINING_REPORT_RECOVERY.md.
-
-The epoch-six deployment hold expired and resumed its original controller
-without restarting jobs. A new exact-epoch guard is waiting for epoch seven
-to finish. It only holds a completed boundary, resumes the original controller
-within fifteen minutes if no upgrade completes, and never cancels an active
-epoch or restarts GPU jobs. Checkpoint/native/GPU admission remains separate.
-See docs/CONTROLLER_BOUNDARY_LEASE.md.
-
-The prospective recovery source passed an isolated H100 generated rollout,
-model reload and native replay, rejecting five token/proof/probability/reward/
-checkpoint-hash tampering cases. All five production roles completed separate
-CPU source/checkpoint/tokenizer/native preparation without holding mining.
-Preparation is not deployment, a universal hardware qualification or proof of
-learning. The existing signed epoch still pins source 548effe0. See
-docs/READONLY_SOURCE_ADMISSION.md for the separate preparation/deployment gates.
+The qualified next source includes original-job recovery before new-job disk
+admission, streaming checkpoint publication, bounded concurrent submission
+publication, full-coverage training and native null-text transport. Those changes
+must be admitted for the actual successor before a completed-boundary handoff.
+The current signed epoch retains its original source and optimizer policy.
+Operator housekeeping verifies full authenticated archives before retiring unused
+replicas; it preserves current/pending checkpoints and original job evidence.
+See docs/TRAINING_REPORT_RECOVERY.md, docs/TRAINER_STORAGE.md and
+docs/READONLY_SOURCE_ADMISSION.md. The boundary guard has a fifteen-minute
+expiry and resumes the original controller if the upgrade does not finish.
 
 ## How to start mining
 
@@ -163,103 +154,31 @@ credentials. Miners need no permanent bucket credentials.
 
 ## Batch and reward rules
 
-Recent main updates add bounded parallel frozen-object publication, explicit
-miner deadline handling and verifier connection recovery. They are prospective
-until admitted for a future signed epoch. Bootstrap the archive selected by the
-current manifest; do not mix modules from main into an already signed run.
-Leave time for proof construction, compression and upload: a local candidate
-completed after the signed deadline cannot earn points.
-Operator startup now checks actual verifier process and tunnel bindings; completed
-download replicas can be removed after original signature and full archive checks.
-See docs/TRANSPORT_RECOVERY.md and docs/SUBMISSION_RETENTION.md on main. These
-operations preserve frozen submissions, reports, weights and original deadlines.
-Verifier startup now checks the actual remote seed's approved public identity
-before launch, with an explicit seed namespace option. Automatic completed-trainer
-housekeeping archives and fully reads back intermediate exports before removing
-their local replicas and completed downloads. The intermediate watcher retains final learned exports. A separate automatic
-watcher can retire an obsolete completed final export only after full public
-archive checks, while protecting current/pending checkpoints and unfinished
-audits. Reports and original job records remain retained. See docs/TRAINING_RETENTION.md;
-this storage change does not alter model computation or a signed mining contract.
-Separate scoped model-cache housekeeping now protects current/pending weights,
-the signed active manifest and unfinished jobs, checks every archived R2 byte,
-and retires at most one obsolete cache per cycle with an idle GPU and no open
-model files or mappings. Two actual completed cycles reclaimed 30.49 GB across
-the verifiers, preserving current weights and original evidence. It does not recursively
-scan workspaces or delete training exports. See docs/CHECKPOINT_CACHE_RETENTION.md.
-Epoch six's 78 original audit jobs and before-training evaluation have completed;
-its original trainer is running. Nine cumulative updates remain the latest
-completed training state until that original report completes.
-A further streaming/conditional-copy snapshot path is tested on main but awaits
-future source admission. It does not change the current signed source. See
-docs/TRANSPORT_RECOVERY.md; follow discovery rather than assuming main is active.
-A prospective complete-checkpoint reader also hashes with at most four bounded
-threads. Real CPU measurements matched every original weight hash and reduced
-hashing time on one retained machine; this is not a whole-verifier speed claim.
-The combined prospective transport/hashing/training-recovery source from public
-af37a105 plus the pinned MATH asset is installed in fresh directories on all five
-live-role machines, with independent readback of all 1,874 files per role.
-Checkpoint/native admission and a completed-epoch handoff remain; the active
-source is unchanged and no new-source GPU job has run.
-See docs/CHECKPOINT_HASHING.md.
-
 The signed per-UID submission cap is currently three batches per epoch. It is a
 conservative configurable pilot setting, not a measured throughput maximum or
 a fundamental protocol limit. Each batch covers one authorized task index on the
-approved model checkpoint, with at least one successful and one unsuccessful
-rollout (K=1, L=1). Extra rollouts for the same task do not create extra points.
+approved checkpoint and includes at least one genuine successful and one genuine
+unsuccessful rollout (K=1, L=1). Extra rollouts for the same task add no points.
 Reserved held-out tasks cannot be mined. An unsuccessful search or grader error
-is not a valid negative sample.
+is not a valid negative sample. Low per-UID limits do not prevent someone from
+registering multiple identities. Submission limits, audit budgets and reward
+penalties are separate settings; future changes are signed before the next epoch.
 
-Full-coverage training has passed an isolated five-pair H200 control on the
-prospective pinned source. Root independently checked all source and model bytes,
-the frozen artifacts, reference probabilities and update arithmetic. All five
-pairs contributed, updated-checkpoint proof replay passed, and a changed proof
-was rejected. This remains qualification, not a live policy switch or evidence
-of held-out improvement. See docs/COVERED_EPOCH_TRAINING.md. The reusable scoped
-checkpoint preparation tool is documented in docs/CHECKPOINT_READ_HYDRATION.md.
+Miners must use the exact source selected by their signed manifest. Main includes
+qualified future fixes; copying individual updated modules into a live signed
+runtime does not constitute a valid upgrade. Leave time for proof construction,
+compression and upload before the original deadline. The current candidate is
+qualified on H200, but successor admission and production activation are pending.
+See docs/COVERED_EPOCH_TRAINING.md and docs/CHECKPOINT_READ_HYDRATION.md.
 
-The independent 200-task baseline stopped after 80 verified tasks: a model-emitted
-null character could not cross the native grader's process-argument boundary.
-The original job exited and its evidence is preserved. Main contains a tested
-transport repair that escapes and decodes the exact original text; grading rules
-are unchanged. The repaired source passed all five role CPU admissions, a remote
-null-text native control, and an independently reviewed H200 training/proof
-control. The benchmark's signed amendment requires a complete 200-task baseline
-rerun with the original cohort, seeds and checkpoint. Actual-successor admission
-and the public policy handoff are still pending. This is not a completed
-benchmark or a learning gain.
-See docs/MATH_GRADER_TRANSPORT.md.
-
-Epoch 7 has frozen 90 final submissions. Verification recovered
-from expired checkpoint download links, not a miner-fraud finding. The failed
-jobs and frozen input hashes remain intact. Four explicit replacement jobs were
-issued after checking both verifier checkpoint caches and all terminal failure
-logs; all four completed against identical model bytes, and root authenticated
-their reports and twelve accepted batches. Follow discovery for the next open
-window. A fix on main gives future immutable checkpoint read links seven days,
-while upload capabilities still close at the original epoch deadline. This fix
-has not changed the already signed epoch.
-
-The full signed covered-training worker also passed an isolated H100 test on
-source e6f7ba6d: five curated pairs fully audited and used across three updates,
-followed by independent successor model/proof replay and mutation rejection.
-Root checked all source/weight files and artifact hashes and reconstructed the
-training references and arithmetic. Production admission/handoff remain pending;
-this control is not proof of improved held-out performance. See
-docs/COVERED_EPOCH_TRAINING.md and the public signed-worker control summary.
-
-Ordinary audits are advancing. The failed originals remain recorded without
-miner penalties. Candidate b3493bd0 is installed in fresh namespaces on all five live roles, with
-full source readback and successful CPU tokenizer/native controls on checkpoint
-660. The future successor still needs admission before the policy handoff.
-
-A separate H100 is running a new precommitted 200-task held-out baseline. Its
-tasks are disjoint from mining, the fixed diagnostic and the previous benchmark
-by index and exact problem hash. The comparison checkpoint is fixed by rule
-after three completed nonempty covered-policy epochs; it will not be picked by
-benchmark score. Results and improved performance are not established yet. See
-docs/INDEPENDENT_COVERED_MATH_BENCHMARK.md.
+All 90 epoch-seven submissions were frozen. Four original audit jobs failed on
+expired checkpoint read links; independently checked replacement jobs completed
+against identical frozen input and model hashes. The failed originals remain in
+history without miner-fraud penalties. Future-source model read links last seven
+days, independently of the original upload deadline. Source hashing, verifier
+transport recovery and archive checks retain their complete-byte comparisons.
+See docs/TRANSPORT_RECOVERY.md, docs/CHECKPOINT_HASHING.md,
+docs/SUBMISSION_RETENTION.md and docs/TRAINING_RETENTION.md.
 
 Include complete context/output tokens, full conditional model log probabilities,
 TOPLOC activation fingerprints, native observations/outcomes and the immutable
