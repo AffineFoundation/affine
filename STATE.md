@@ -1,5 +1,21 @@
 # Live reward launch authorized — October 3, 2026
 
+The full-coverage training candidate is now under an isolated original-process
+H100 control. Ten CPU controls pass, including actual accumulated gradients and
+updates beyond the first three pairs. The original live epoch is unchanged.
+The control freshly verified five curated native success/failure pairs against
+the cached seven-billion-parameter checkpoint and reached training; its original
+GPU PID/start ticks and transport were checked live. Earlier admission/probe
+failures have actual terminal receipts and are preserved. This is not a public
+mining epoch or evidence of improved held-out performance. See
+docs/COVERED_EPOCH_TRAINING.md; GPU results and signed policy integration remain.
+Evidence: future-source-af37a105-v1/covered-training-control-h100-v4.
+
+Epoch seven is still closing uploads under its original source and controller.
+The freeze is making actual byte progress and has durably snapshotted 64
+submissions as of 02:53 UTC. The controller's original PID/start ticks remain
+live. No upload window was extended and no active job was restarted.
+
 Epoch six is complete with twelve cumulative updates. Root authenticated both
 original 32-task evaluation reports: 21 correct before training and 20 after.
 This decline and the independent 128-task no-gain result remain visible; steady
