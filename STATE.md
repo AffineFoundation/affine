@@ -1,5 +1,24 @@
 # Live reward launch authorized — October 3, 2026
 
+October 4 eligibility update: the original writer's repeated ValueError was
+independently reproduced with live chain registrations. Three positive-point
+identities in the pending hour ending 06:00 UTC had deregistered, so the previous
+rule refused that entire hour. The signed operator cutover now opts into explicit
+`exclude-ineligible-v1` eligibility from that pending hour. Original earned scores,
+reward ledger, nonce and cursor were preserved during installation; only the
+writer receipt path changed. The timer is restored. Its actual proposal contains
+86 positive recipients and three explicit exclusions, totaling 210,000,000 units.
+The cursor entered submission; finalization and revealed vector remain to be
+independently inspected. Thirty-eight reward/writer checks pass.
+
+An original epoch-eight boundary watcher is now running with a six-hour
+observation budget and the unchanged fifteen-minute hold budget. Eight real
+process lease controls pass. It can hold only the completed original epoch and
+resumes that same controller on expiry; it cannot cancel active GPU work or
+extend an old lease. Future covered-policy preparation must inherit the current
+signed eligibility cutover and unit pointer, rather than the superseded original
+writer descriptor. Source activation remains pending; epoch eight is unchanged.
+
 October 4, 08:28 UTC observation: epoch seven is complete with fifteen cumulative
 training updates. Its controller diagnostic remained 20/32 before and after;
 this is not evidence of an independent held-out gain. Epoch eight opened at

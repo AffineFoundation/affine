@@ -15,9 +15,15 @@ come from 42 fully audited unique task batches finalized in the UTC hour ending
 through the subnet's automatic commit-reveal mechanism. All our validator's
 positive weights now go to this mechanism. This is not a statement about other
 validators' vectors or a confirmation of individual wallet receipts.
-The old burn and equal-registration writers are disabled and inactive; the
+The old burn and equal-registration writers are disabled and inactive. The
 legacy validator's suppression guard remains in place. Historical nonpayable
 experiments are not converted into reward epochs or repaid.
+The current writer records deregistered or changed-identity recipients as exclusions
+in its signed hourly proposal. The original audited scores remain in the reward
+ledger, while only currently eligible identities enter the weight denominator.
+Excluded points are not paid to a recycled UID or carried forward automatically.
+The signed operator policy begins with the pending hour ending October 4 at
+06:00 UTC. Recipient ownership is checked again before actual submission.
 The hourly writer waits for outstanding epoch audits and final scores before
 closing their hour. This expected wait leaves prior weights and the reward cursor
 intact; it does not treat unfinalized submissions as a zero-point payout.

@@ -103,12 +103,14 @@ recompute and no R2 GET. Never accept caller-miner report assertions instead.
   reward_basis=c['basis'],assurance='controller-authenticated-fully-audited-subset-not-fresh-bridge-inference',
   audit_document_sha256={k:sha(v) for k,v in audit_documents.items()})
 
-def hourly_reward_units(documents,authority,window_end,*,fresh_registrations):
+def hourly_reward_units(documents,authority,window_end,*,fresh_registrations,stale_policy='deny-hour'):
  """New reward-only reducer; original hourly_points remains unchanged for history.
 
-Aggregate rational penalties before declared integer rounding. A changed UID or
-public key refuses the entire hour, rather than renormalizing somebody away.
+Aggregate rational penalties before declared integer rounding. By default a
+changed identity refuses the hour. An explicit operator-approved eligibility
+policy excludes it with an audit record, without changing the earned ledger.
 """
+ need(stale_policy in ('deny-hour','exclude-ineligible-v1'),'known stale registration policy')
  integer(window_end,'UTC hour');need(window_end%3600==0,'integral UTC hour')
  totals={};identities={};seen=set();record_hashes=[]
  for document in documents:
@@ -122,13 +124,25 @@ public key refuses the entire hour, rather than renormalizing somebody away.
   need(set(r['adjusted_point_fractions'])==set(r['identities']),'reward identity coverage')
   for hotkey,pair in r['adjusted_point_fractions'].items():
    need(isinstance(pair,list) and len(pair)==2,'rational points');n=integer(pair[0],'point numerator',2**4096);d=integer(pair[1],'point denominator',2**4096);need(d>0,'positive denominator')
-   identity=r['identities'][hotkey];fresh=fresh_registrations.get(hotkey)
-   need(fresh is not None and all(fresh.get(k)==identity.get(k) for k in ('uid','public_key')),'stale registration denies hour')
+   identity=r['identities'][hotkey]
    if hotkey in identities:need(identities[hotkey]==identity,'UID reuse inside hour')
    identities[hotkey]=identity;totals[hotkey]=totals.get(hotkey,Fraction(0))+Fraction(n,d)
+ excluded={}
+ for hotkey in list(totals):
+  fresh=fresh_registrations.get(hotkey);identity=identities[hotkey]
+  if fresh is not None and all(fresh.get(k)==identity.get(k) for k in ('uid','public_key')):continue
+  need(stale_policy=='exclude-ineligible-v1','stale registration denies hour')
+  fraction=totals.pop(hotkey);identities.pop(hotkey)
+  excluded[hotkey]=dict(reason='not_registered' if fresh is None else 'identity_changed',
+   original_identity=identity,current_identity=fresh,
+   fractional_points=[fraction.numerator,fraction.denominator],units=int(fraction*SCALE))
  units={hotkey:int(points*SCALE) for hotkey,points in totals.items()}
- return dict(version='live-reward-hour-units-v1',window_end=window_end,units_per_point=SCALE,points=units,registrations=identities,source_reward_records=record_hashes,
+ result=dict(version='live-reward-hour-units-v1',window_end=window_end,units_per_point=SCALE,points=units,registrations=identities,source_reward_records=record_hashes,
   fractional_points={k:[p.numerator,p.denominator] for k,p in totals.items()},rounding='floor-after-hour-aggregation',chain_executed=False)
+ if stale_policy=='exclude-ineligible-v1':
+  result.update(stale_registration_policy=stale_policy,excluded_ineligible=excluded,
+   eligibility_registration_sha256=sha(fresh_registrations))
+ return result
 
 def writer_gate(receipt_document,authority,*,now,boot_id,writer_pid,writer_ticks):
  """Metadata refusal gate only; ROOT must obtain actual local process/unit proofs."""

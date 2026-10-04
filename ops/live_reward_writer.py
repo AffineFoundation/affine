@@ -51,6 +51,9 @@ def authenticate_cutover(document,anchor_document,authority):
  need(c['global_lock_path']==str(expected),'canonical global owner/netuid lock')
  need(c['chain_state']==c['reward_state'],'one writer chain/reward state')
  need(set(c.get('runtime_versions',{}))=={'torch','transformers','toploc'},'exact original job three-package runtime pins')
+ need(c.get('stale_registration_policy','deny-hour') in ('deny-hour','exclude-ineligible-v1'),'approved stale registration policy')
+ first=c.get('stale_registration_policy_first_window',0)
+ need(type(first)is int and first>=0 and first%3600==0,'integral first eligibility window')
  return c,a
 @contextmanager
 def global_lock(path):
@@ -226,6 +229,7 @@ def run_once(cutover_document,anchor_document,authority,*,execute=False,adapter_
   # Recheck after potentially slow chain identity discovery, immediately before export.
   completeness=finalized_reward_completeness(c,anchor_document,authority,window_end=end)
   export_options={'source_anchors':c['approved_source_anchors']} if 'approved_source_anchors' in c else {}
+  if 'stale_registration_policy' in c and end>=c.get('stale_registration_policy_first_window',0):export_options['stale_policy']=c['stale_registration_policy']
   exporter.run_once(c['compute_state'],state,anchor_document,authority,key,registrations,end,**export_options)
   # Fresh execution proof immediately before chain handoff, under the same held lock.
   guard_files(c);units=observe_units();identity=process_identity();now=time.time()

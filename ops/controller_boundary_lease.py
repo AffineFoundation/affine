@@ -32,7 +32,7 @@ def save(path, value):
 
 def lease(config_path, record_path, epoch, output, wait_seconds=3600, hold_seconds=600, poll=.02):
     if (not isinstance(epoch, str) or re.fullmatch('[A-Za-z0-9_-]{1,200}', epoch) is None
-            or type(wait_seconds) is not int or not 1 <= wait_seconds <= 7200
+            or type(wait_seconds) is not int or not 1 <= wait_seconds <= 21600
             or type(hold_seconds) is not int or not 1 <= hold_seconds <= 900
             or not .005 <= poll <= 1):
         raise ValueError('bounded exact epoch and lease budgets')

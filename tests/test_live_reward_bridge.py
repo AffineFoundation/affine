@@ -63,6 +63,46 @@ class BridgeTests(unittest.TestCase):
   with self.assertRaisesRegex(ValueError,'stale registration'):b.hourly_reward_units([doc],i['authority'],7200,fresh_registrations=bad)
   old=dict(r,epoch_id='nonpayable-HISTORY')
   with self.assertRaises(ValueError):b.hourly_reward_units([sign(old,key)],i['authority'],7200,fresh_registrations=regs)
+ def test_explicit_eligibility_excludes_missing_miner_without_changing_ledger(self):
+  key,i,regs,reports=fixture();doc=sign(b.project(**i),key);original=b.canonical(doc)
+  fresh={'hotkey-1':regs['hotkey-1']}
+  out=b.hourly_reward_units([doc],i['authority'],7200,fresh_registrations=fresh,stale_policy='exclude-ineligible-v1')
+  self.assertEqual(out['points'],{'hotkey-1':1000000});self.assertEqual(out['registrations'],{'hotkey-1':doc['payload']['identities']['hotkey-1']})
+  self.assertEqual(out['excluded_ineligible']['hotkey-0']['fractional_points'],[1,2])
+  self.assertEqual(out['excluded_ineligible']['hotkey-0']['reason'],'not_registered')
+  self.assertEqual(out['eligibility_registration_sha256'],b.sha(fresh));self.assertEqual(b.canonical(doc),original)
+ def test_eligibility_recycled_UID_or_changed_key_never_receives_old_points(self):
+  key,i,regs,reports=fixture();doc=sign(b.project(**i),key)
+  for field,value in [('uid',222),('public_key','f'*64)]:
+   fresh=copy.deepcopy(regs);fresh['hotkey-0'][field]=value
+   out=b.hourly_reward_units([doc],i['authority'],7200,fresh_registrations=fresh,stale_policy='exclude-ineligible-v1')
+   self.assertEqual(out['points'],{'hotkey-1':1000000});self.assertNotIn('hotkey-0',out['registrations'])
+   self.assertEqual(out['excluded_ineligible']['hotkey-0']['reason'],'identity_changed')
+ def test_eligibility_all_missing_is_empty_and_signed_inputs_still_required(self):
+  key,i,regs,reports=fixture();doc=sign(b.project(**i),key)
+  out=b.hourly_reward_units([doc],i['authority'],7200,fresh_registrations={},stale_policy='exclude-ineligible-v1')
+  self.assertEqual(out['points'],{});self.assertEqual(len(out['excluded_ineligible']),2)
+  bad=copy.deepcopy(doc);bad['payload']['adjusted_point_fractions']['hotkey-0']=[99,1]
+  with self.assertRaises(Exception):b.hourly_reward_units([bad],i['authority'],7200,fresh_registrations={},stale_policy='exclude-ineligible-v1')
+  with self.assertRaisesRegex(ValueError,'known stale'):b.hourly_reward_units([doc],i['authority'],7200,fresh_registrations=regs,stale_policy='unknown')
+ def test_eligibility_aggregates_fractional_exclusions_before_rounding(self):
+  key,i,regs,reports=fixture();r=b.project(**i);r['adjusted_point_fractions']['hotkey-0']=[1,3000000]
+  records=[]
+  for index in range(3):
+   nextrow=copy.deepcopy(r);nextrow['epoch_id']='live-math-reward-v1-'+str(index);nextrow['contract']['reward_epoch']=nextrow['epoch_id'];records.append(sign(nextrow,key))
+  out=b.hourly_reward_units(records,i['authority'],7200,fresh_registrations={'hotkey-1':regs['hotkey-1']},stale_policy='exclude-ineligible-v1')
+  self.assertEqual(out['excluded_ineligible']['hotkey-0']['units'],1)
+  self.assertEqual(out['excluded_ineligible']['hotkey-0']['fractional_points'],[1,1000000])
+ def test_real_exporter_signs_eligibility_report_and_preserves_earned_ledger(self):
+  key,i,regs,reports=fixture();doc=sign(b.project(**i),key)
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);compute=root/'compute';compute.mkdir();reward=root/'reward';reward.mkdir()
+   ledger=reward/'signed-reward-ledger.json';original=b.canonical([doc]);ledger.write_bytes(original)
+   out=worker.run_once(compute,reward,i['anchor_document'],i['authority'],key,{'hotkey-1':regs['hotkey-1']},7200,stale_policy='exclude-ineligible-v1')
+   signed_proposal=json.loads((reward/'hour-7200-reward-units.json').read_text())
+   self.assertEqual(b.signed(signed_proposal,i['authority']),out)
+   self.assertEqual(out['points'],{'hotkey-1':1000000});self.assertEqual(ledger.read_bytes(),original)
+   self.assertEqual(out['excluded_ineligible']['hotkey-0']['units'],500000)
  def test_single_writer_status_unknown_enabled_zombie_and_stale_refuse(self):
   key,i,regs,reports=fixture();receipt=dict(version='single-live-reward-writer-v1',netuid=120,boot_id='BOOT',writer_pid=11,writer_start_ticks='12',observed_at=100,global_writer_lock_held=True,legacy_validator_guard_verified=True,writer_process_state='S',old_writers=[dict(unit=u,running=False,enabled=False,status_query_succeeded=True) for u in ('affine-transition-weights.timer','affine-transition-weights.service','affine-hourly-burn.timer','affine-hourly-burn.service')])
   def gate(r):return b.writer_gate(sign(r,key),i['authority'],now=101,boot_id='BOOT',writer_pid=11,writer_ticks='12')

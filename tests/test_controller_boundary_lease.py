@@ -27,6 +27,13 @@ while True:
 
 
 class BoundaryLeaseControls(unittest.TestCase):
+    def test_long_observation_does_not_allow_extending_the_hold_budget(self):
+        with patch('ops.controller_boundary_lease.os.kill') as kill:
+            for wait,hold in [(21601,1),(21600,901),(0,1)]:
+                with self.assertRaisesRegex(ValueError,'lease budgets'):
+                    lease('unused','unused','original-epoch','unused',wait,hold)
+            kill.assert_not_called()
+
     def fixture(self, root):
         state = root / 'state'; state.mkdir()
         files = {'config.json': 'a' * 64, 'model.safetensors': 'b' * 64}
@@ -102,12 +109,13 @@ class BoundaryLeaseControls(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); child, config, record = self.fixture(root)
             with concurrent.futures.ThreadPoolExecutor(1) as pool:
-                future = pool.submit(lease, config, record, 'original-epoch', root / 'lease', 5, 1)
+                future = pool.submit(lease, config, record, 'original-epoch', root / 'lease', 21600, 1)
                 while not (root / 'lease/authorization.private.json').exists(): time.sleep(.005)
                 child.terminate(); child.wait(timeout=3)
                 result = future.result(timeout=3)
             self.assertEqual(result['reason'], 'original_controller_exited')
             self.assertFalse(json.loads((root / 'lease/release.private.json').read_text())['resumed_original'])
+            self.assertEqual(json.loads((root / 'lease/authorization.private.json').read_text())['wait_seconds'],21600)
 
     def test_missed_boundary_never_stops_next_active_epoch(self):
         with tempfile.TemporaryDirectory() as directory:

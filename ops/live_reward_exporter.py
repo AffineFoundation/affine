@@ -31,7 +31,7 @@ def epoch_anchor(manifest,anchor_document,authority,source_anchors=None):
  need(isinstance(sources,list) and isinstance(latest,list) and digest in sources and set(sources)<=set(latest),'original source approval must be retained')
  return original
 
-def run_once(compute_state,reward_state,anchor_document,authority,key,fresh_registrations,window_end,*,source_anchors=None):
+def run_once(compute_state,reward_state,anchor_document,authority,key,fresh_registrations,window_end,*,source_anchors=None,stale_policy='deny-hour'):
  need(key.verify_key.encode().hex()==authority,'operator reward authority key binding')
  compute_state=Path(compute_state);reward_state=Path(reward_state);reward_state.mkdir(parents=True,exist_ok=True);reward_state.chmod(0o700)
  with (reward_state/'reward-ledger.lock').open('a') as lock:
@@ -48,7 +48,7 @@ def run_once(compute_state,reward_state,anchor_document,authority,key,fresh_regi
    if reward_epoch in by_epoch:need(canonical(document)==canonical(by_epoch[reward_epoch]),'immutable reward ledger collision')
    else:ledger.append(document);by_epoch[reward_epoch]=document
   atomic(ledgerpath,ledger)
-  hourly=hourly_reward_units(ledger,authority,window_end,fresh_registrations=fresh_registrations)
+  hourly=hourly_reward_units(ledger,authority,window_end,fresh_registrations=fresh_registrations,stale_policy=stale_policy)
   # This is a signed proposal, not a chain transaction or activation receipt.
   atomic(reward_state/('hour-'+str(window_end)+'-reward-units.json'),sign(hourly,key))
  return hourly

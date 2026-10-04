@@ -31,6 +31,12 @@ class WriterTests(unittest.TestCase):
   key=SigningKey.generate();authority=key.verify_key.encode().hex();anchor=sign(dict(netuid=120,owner_hotkey=w.OWNER,compute_epoch_prefix='nonpayable-live-reward-math-v1-'),key)
   c=dict(version='live-single-writer-runtime-v1',netuid=120,owner_hotkey=w.OWNER,anchor_sha256=w.sha(anchor),global_lock_path=str(Path('/run/user')/str(os.getuid())/('affine-live-reward-120-'+hashlib.sha256(w.OWNER.encode()).hexdigest()+'.lock')),compute_state='/tmp/compute',reward_state='/tmp/reward',chain_state='/tmp/reward',queue_database='/tmp/queue',authority_seed_file='/tmp/seed',runtime_versions=dict(torch='test',transformers='test',toploc='test'))
   w.authenticate_cutover(sign(c,key),anchor,authority)
+  w.authenticate_cutover(sign(dict(c,stale_registration_policy='exclude-ineligible-v1'),key),anchor,authority)
+  with self.assertRaisesRegex(ValueError,'approved stale'):
+   w.authenticate_cutover(sign(dict(c,stale_registration_policy='unknown'),key),anchor,authority)
+  for first in [True,1,-3600,'7200']:
+   with self.assertRaisesRegex(ValueError,'first eligibility'):
+    w.authenticate_cutover(sign(dict(c,stale_registration_policy_first_window=first),key),anchor,authority)
   for field,value in [('owner_hotkey','OTHER'),('netuid',121),('global_lock_path','/tmp/alternate.lock'),('chain_state','/tmp/other'),('compute_state','relative')]:
    bad=dict(c);bad[field]=value
    with self.assertRaises(ValueError):w.authenticate_cutover(sign(bad,key),anchor,authority)
@@ -76,6 +82,10 @@ class RuntimeTests(unittest.TestCase):
     result=w.run_once(sign(c,key),anchor,authority,adapter_factory=lambda *a,**k:adapter)
     self.assertEqual(result['status'],'zero_points_no_submission');self.assertFalse((reward/'writer-cursor.json').exists());self.assertLess(events.index('registrations'),events.index(('submit',False)))
     proposal=w.read(reward/'hour-7200-reward-units.json');self.assertEqual(w.signed(proposal,authority)['points'],{})
+    w.run_once(sign(dict(c,stale_registration_policy='exclude-ineligible-v1'),key),anchor,authority,adapter_factory=lambda *a,**k:adapter)
+    proposal=w.signed(w.read(reward/'hour-7200-reward-units.json'),authority)
+    self.assertEqual(proposal['stale_registration_policy'],'exclude-ineligible-v1')
+    self.assertEqual(proposal['excluded_ineligible'],{})
     receipt=w.signed(w.read(reward/'actual-writer-observation.json'),authority);self.assertEqual(receipt['writer_pid'],os.getpid())
     w.run_once(sign(c,key),anchor,authority,execute=True,adapter_factory=lambda *a,**k:adapter)
     self.assertEqual(w.read(reward/'writer-cursor.json')['status'],'deferred_rate_limit')

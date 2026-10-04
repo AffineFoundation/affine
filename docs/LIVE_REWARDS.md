@@ -32,7 +32,18 @@ policy; full-audit reward contracts are refused before upload grants are created
 Hourly rewards sum exact adjusted points for epochs finalized in the completed
 UTC hour. They use one million integer units per point and round only after
 aggregation. Fresh on-chain UID/public-key ownership must match the signed
-snapshot. Changed ownership refuses the hour instead of redirecting rewards.
+snapshot. The default reducer refuses the hour when an identity changes.
+The live writer's signed operator policy now explicitly selects
+`exclude-ineligible-v1`, starting with the pending hour ending 06:00 UTC on
+October 4. Removed or changed identities are recorded in the signed hourly
+proposal with their original identity, exact fractional points and reason.
+Only currently eligible recipients enter the vector and its denominator. Earned
+epoch scores and immutable reward records remain unchanged; excluded points are
+not redirected to a recycled UID or automatically carried into a later hour.
+The chain adapter independently checks every remaining recipient immediately
+before submission. A further identity change during preparation still defers
+that proposal. This fixes a pending hour blocked by three deregistered winners.
+Policy installation and a signed proposal are not proof of chain finalization.
 
 The operator exporter is invoked as `python -m ops.live_reward_exporter` with
 private compute/reward state directories, the signed cutover anchor, validator
