@@ -2269,3 +2269,21 @@ conservative clean-inactive-cache accounting, with unchanged133GB memory reserve
 and separate namespace. Actual observed effective RAM was199.76GB. Neither the
 failed attempt nor a staged restore constitutes optimizer restoration or public
 persistent-v4 activation. Four qualified H200 verifier workers remain admitted.
+
+
+## E9 evaluation/publication independently checked
+
+The original controller completed E9 and exited successfully under --once; it
+has not opened E10. Root independently matched both original evaluation jobs
+and remote terminal reports, with the same 32 task/seed/hash contexts: before
+20/32, after 19/32, no grading failures. This is a small observed decline, not
+convergence. Root streamed and hashed all ten published successor objects
+(15,242,726,234 bytes) and authenticated the exact signed descriptor from R2.
+Evidence: state/root-audits/e9-evaluation-publication-review-v1/review.private.json.
+
+Corrected CPU hydration supervisor 17681 / child 17688 exited zero, preserving
+the earlier failed v1 attempt separately. It fully staged the original fee160
+source and private checkpoint30ee. A separately scoped restore qualification is
+being launched after a fresh complete staged-file readback, retaining original
+parent optimizer step 3, 23 shard commitments and all 339 parameter inventories.
+No public optimizer-state activation is claimed by staging.
