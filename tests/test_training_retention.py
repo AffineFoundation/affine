@@ -53,9 +53,51 @@ class TrainingRetention(unittest.TestCase):
         self.assertTrue(all(path.is_file() for path in self.paths.values()))
         self.assertTrue(remove_training_replica(p)['already_absent'])
 
+    def covered_plan(self):
+        plan=self.plan(kind='checkpoint-export',step=3)
+        old=Path(plan['directory']);target=old.with_name('checkpoint-covered-final');old.rename(target)
+        plan['directory']=str(target)
+        self.job['training_policy']='bf16-full-adamw-covered-fixed-reference-v3'
+        self.report['job_sha256']=digest(self.job)
+        self.report['training']={'training_policy':self.job['training_policy']}
+        self.report['new_checkpoint']['path']=str(target)
+        self.write_evidence()
+        plan.update({n+'_sha256':hash_file(p)for n,p in self.paths.items()})
+        return plan
+
+    def test_archived_obsolete_covered_final_can_be_retired(self):
+        p=self.covered_plan();target=Path(p['directory'])
+        self.assertEqual(remove_training_replica(p)['bytes'],sum(map(len,self.contents.values())))
+        self.assertFalse(target.exists())
+        self.assertTrue(all(path.is_file()for path in self.paths.values()))
+
+    def test_covered_current_or_misbound_final_is_preserved(self):
+        p=self.covered_plan();target=Path(p['directory'])
+        for change in [{'step':1},{'protected_checkpoints':[self.checkpoint]},
+                       {'directory':str(target.with_name('checkpoint-step-3'))}]:
+            with self.subTest(change=change),self.assertRaises(ValueError):remove_training_replica(dict(p,**change))
+            self.assertTrue(target.is_dir())
+        self.report['training']['training_policy']='other';self.write_evidence();p['report_sha256']=hash_file(self.paths['report'])
+        with self.assertRaisesRegex(ValueError,'covered final'):remove_training_replica(p)
+        self.assertTrue(target.is_dir())
+
     def test_report_before_actual_terminal_wait_is_insufficient(self):
         self.terminal.update(phase='running');self.write_evidence();p=self.plan()
         with self.assertRaisesRegex(ValueError,'completed'):remove_training_replica(p)
+        self.assertTrue((self.root/'submission-0.zip').exists())
+
+    def test_unsharded_model_size_does_not_relax_download_or_byte_checks(self):
+        p=self.plan('checkpoint-export',step=3)
+        p['files']['model.safetensors']['size']=15_231_272_152
+        with self.assertRaisesRegex(ValueError,'exact regular local replica bytes'):
+            remove_training_replica(p)
+        p['files']['model.safetensors']['size']=32*1024**3+1
+        with self.assertRaisesRegex(ValueError,'bounded archived object metadata'):
+            remove_training_replica(p)
+        self.assertTrue(Path(p['directory']).exists())
+        p=self.plan();p['files']['submission-0.zip']['size']=5*1024**3+1
+        with self.assertRaisesRegex(ValueError,'bounded archived object metadata'):
+            remove_training_replica(p)
         self.assertTrue((self.root/'submission-0.zip').exists())
 
     def test_archives_hashes_paths_and_positions_cannot_be_substituted(self):

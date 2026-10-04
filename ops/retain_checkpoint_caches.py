@@ -126,7 +126,11 @@ def archived_files(bucket, checkpoint, authority):
     def read(item):
         name, digest = item; object_key = 'public/checkpoints/' + checkpoint + '/' + name
         size = bucket.client.head_object(Bucket=bucket.name, Key=object_key)['ContentLength']
-        if type(size) is not int or not 0 < size <= 5 * 1024 ** 3:
+        # save_pretrained may export a 7B BF16 model as one ~15 GB object.
+        # Tokenizer/config bounds remain unchanged; every object still needs
+        # a complete streamed hash check against the signed descriptor.
+        limit = (32 if name.endswith('.safetensors') else 5) * 1024 ** 3
+        if type(size) is not int or not 0 < size <= limit:
             raise ValueError('bounded archived checkpoint size')
         return name, verified_archive(bucket, dict(archive_key=object_key, sha256=digest, size=size))
     with concurrent.futures.ThreadPoolExecutor(4) as pool:

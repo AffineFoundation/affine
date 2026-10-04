@@ -46,8 +46,12 @@ def protected_checkpoints(config,process_record,authority):
 
 def final_candidate(job,report):
     cp=report['new_checkpoint'];files=cp['files'];path=Path(cp['path'])
+    covered=job.get('training_policy')=='bf16-full-adamw-covered-fixed-reference-v3'
+    expected_name=('checkpoint-covered-final' if covered else 'checkpoint-step-'+str(job['steps']))
+    if covered and report.get('training',{}).get('training_policy')!=job['training_policy']:
+        raise ValueError('original covered training policy binding')
     if (not path.is_absolute() or len(path.parents)<3 or
-            path.name!='checkpoint-step-'+str(job['steps']) or
+            path.name!=expected_name or
             path.parent.name!=job['job_id'] or path.parents[1].name!='jobs' or
             not isinstance(files,dict) or not 1<=len(files)<=32 or
             'config.json' not in files or not any(n.endswith('.safetensors') for n in files) or

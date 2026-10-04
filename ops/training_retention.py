@@ -107,8 +107,14 @@ def remove_training_replica(plan):
             raise ValueError('original training download binding')
     elif kind=='checkpoint-export':
         step=plan['step'];checkpoint=plan['checkpoint'];protected=plan['protected_checkpoints']
+        covered=job.get('training_policy')=='bf16-full-adamw-covered-fixed-reference-v3'
+        expected_name=('checkpoint-covered-final' if covered else 'checkpoint-step-'+str(step))
+        if covered and (step!=job['steps'] or
+                report.get('training',{}).get('training_policy')!=job['training_policy'] or
+                report.get('new_checkpoint',{}).get('path')!=str(target)):
+            raise ValueError('original covered final checkpoint binding')
         if (type(step) is not int or not 1<=step<=job['steps'] or
-                target!=root/('checkpoint-step-'+str(step)) or
+                target!=root/expected_name or
                 not re.fullmatch('[0-9a-f]{64}',checkpoint) or
                 not isinstance(protected,list) or not protected or
                 any(not re.fullmatch('[0-9a-f]{64}',c) for c in protected) or checkpoint in protected or
@@ -124,7 +130,8 @@ def remove_training_replica(plan):
     for name,expected in files.items():
         if (not re.fullmatch('[A-Za-z0-9_][A-Za-z0-9_.-]*',name) or
                 not re.fullmatch('[0-9a-f]{64}',expected.get('sha256','')) or
-                type(expected.get('size')) is not int or not 0<expected['size']<=5*1024**3):
+                type(expected.get('size')) is not int or not 0<expected['size']<=
+                (32 if kind=='checkpoint-export' and name.endswith('.safetensors') else 5)*1024**3):
             raise ValueError('bounded archived object metadata')
         path=target/name
         if not path.exists():

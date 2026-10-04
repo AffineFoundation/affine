@@ -47,4 +47,17 @@ class ObsoleteExportControls(unittest.TestCase):
         for update in [{'id':'0'*64},{'path':'/root/trainer/jobs/other/checkpoint-step-3'},{'path':'/root/trainer/jobs/job-original/checkpoint-step-2'},{'files':{'config.json':'a'*64}}]:
             with self.subTest(update=update),self.assertRaises(ValueError):final_candidate(job,{'new_checkpoint':dict(report['new_checkpoint'],**update)})
 
+    def test_covered_final_requires_signed_policy_and_matching_original_report(self):
+        files={'config.json':'a'*64,'model.safetensors':'b'*64};cp=hashlib.sha256(canonical(files)).hexdigest()
+        policy='bf16-full-adamw-covered-fixed-reference-v3'
+        job={'job_id':'job-covered','steps':3,'training_policy':policy}
+        report={'training':{'training_policy':policy},'new_checkpoint':{'id':cp,'files':files,'path':'/root/trainer/jobs/job-covered/checkpoint-covered-final'}}
+        self.assertEqual(final_candidate(job,report)['step'],3)
+        for changed_job,changed_report in [
+            (dict(job,training_policy='bf16-full-adamw-fixed-reference-v2'),report),
+            (job,dict(report,training={'training_policy':'other'})),
+            (job,dict(report,new_checkpoint=dict(report['new_checkpoint'],path='/root/trainer/jobs/job-covered/checkpoint-step-3'))),
+        ]:
+            with self.subTest(job=changed_job),self.assertRaises(ValueError):final_candidate(changed_job,changed_report)
+
 if __name__=='__main__':unittest.main()

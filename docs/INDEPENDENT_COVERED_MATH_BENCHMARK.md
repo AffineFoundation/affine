@@ -20,8 +20,14 @@ The baseline is checkpoint
 after twelve public training updates. A retained independent H100 runs thirteen
 bounded shards through signed GPU jobs, full model/TOPLOC verification and the
 original native grader. Each shard retains its original request and report;
-completion requires all 200 original rows without grader failures. The original
-baseline runner and child have been observed live; the run is not complete.
+completion requires all 200 original rows without grader failures. The complete
+amended baseline and all original process waits now passed independent review:
+131/200 successes (65.5%) at twelve training updates. All thirteen requests,
+reports, original deadlines, task identities and seeds were checked, with fresh
+full source and checkpoint hash readbacks. The original supervisor and all
+remote job children exited successfully. This is a baseline, not an improvement
+result. The credential-free aggregate is in
+[math200-baseline-20261004.json](data/math200-baseline-20261004.json).
 
 The comparison checkpoint is predetermined: the checkpoint after the first three
 nonempty, completed public epochs using
@@ -54,10 +60,10 @@ generation, GPU, harness and proof computation module bytes are unchanged from
 the precommit. Normal/null-text native controls and the repaired source's H200
 training/proof control passed independent review before applying the amendment.
 
-All 200 baseline problems are being run again under that amended transport,
+All 200 baseline problems were run again under that amended transport,
 with the original checkpoint, indices, seeds, harness, comparison-checkpoint
 selection rule and statistical test unchanged. The complete amended baseline
-must pass independent review; the first 80 old rows are not mixed into its
+passed independent review; the first 80 old rows were not mixed into its
 results. The comparison must use the same amended transport. This amendment
 is a disclosed infrastructure repair, not selection of a different cohort or
 checkpoint based on benchmark scores. See [the transport qualification](MATH_GRADER_TRANSPORT.md).

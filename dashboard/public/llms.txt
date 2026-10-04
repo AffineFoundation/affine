@@ -60,6 +60,19 @@ step is admission of the actual epoch-seven successor on every role and a
 completed-boundary handoff. Signed live epoch seven remains unchanged and no
 held-out learning gain is claimed. See docs/COVERED_EPOCH_TRAINING.md and
 docs/MATH_GRADER_TRANSPORT.md.
+Epoch-seven submission audits are complete. Its original training worker is
+running after safely retiring two unused, fully archive-verified model replicas
+to satisfy disk admission. The signed epoch and checkpoint inputs are unchanged;
+this is not a declaration of completed training or an open mining window.
+The independent 200-task baseline also completed: checkpoint 660 scored 131/200
+(65.5%). Root checked all thirteen original jobs, complete task identities and
+seeds, deadlines, successful process waits, source and full checkpoint bytes.
+These tasks have no index or exact-problem overlap with mining, fixed32 or the
+previous 128-task benchmark. The precommitted comparison remains the checkpoint
+after three nonempty completed public covered-policy epochs. It has not run,
+and this baseline does not establish improvement. See
+docs/INDEPENDENT_COVERED_MATH_BENCHMARK.md and
+docs/data/math200-baseline-20261004.json.
 The separate precommitted 128-task benchmark has completed on the retained H100.
 Root independently checked all eight original signed jobs and bound reports,
 matched seeds/task identities, complete native/model verification, the signed

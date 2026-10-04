@@ -62,6 +62,21 @@ class CheckpointRetirement(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'idle GPU'):remove_checkpoint_replica(plan)
             self.assertTrue(root.exists())
 
+    def test_unsharded_model_bound_still_requires_exact_local_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan,root=self.fixture(directory)
+            plan['files']['model.safetensors']['size']=15_231_272_152
+            with self.assertRaisesRegex(ValueError,'local object type or size'):
+                remove_checkpoint_replica(plan)
+            self.assertTrue(root.exists())
+            plan['files']['model.safetensors']['size']=32*1024**3+1
+            with self.assertRaisesRegex(ValueError,'metadata'):
+                remove_checkpoint_replica(plan)
+            plan['files']['model.safetensors']['size']=10
+            plan['files']['config.json']['size']=5*1024**3+1
+            with self.assertRaisesRegex(ValueError,'metadata'):
+                remove_checkpoint_replica(plan)
+
     def test_missing_protection_or_hardlinked_weights_cannot_retire(self):
         with tempfile.TemporaryDirectory() as directory:
             plan,root=self.fixture(directory)

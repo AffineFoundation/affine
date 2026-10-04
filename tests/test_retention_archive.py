@@ -35,6 +35,32 @@ class ArchiveReadback(unittest.TestCase):
         result=verified_archive(bucket,plan)
         self.assertEqual(result['archive_read_bytes'],len(data));self.assertTrue(body.closed)
 
+    def test_signed_unsharded_checkpoint_uses_full_readback_and_bounded_model_size(self):
+        import base64
+        from nacl.signing import SigningKey
+        from subnet.storage import canonical
+        from ops.retain_checkpoint_caches import archived_files
+        key=SigningKey.generate();authority=key.verify_key.encode().hex()
+        files={'config.json':'a'*64,'model.safetensors':'b'*64}
+        cp=hashlib.sha256(canonical(files)).hexdigest()
+        descriptor={'id':cp,'files':files}
+        envelope={'payload':descriptor,'signer':authority,
+                  'signature':base64.b64encode(key.sign(canonical(descriptor)).signature).decode()}
+        sizes={'config.json':2,'model.safetensors':15_231_272_152}
+        client=SimpleNamespace(head_object=lambda **kw:dict(ContentLength=sizes[kw['Key'].rsplit('/',1)[1]]))
+        bucket=SimpleNamespace(client=client,name='private',get=lambda _:canonical(envelope))
+        with patch('ops.retain_checkpoint_caches.verified_archive',side_effect=lambda _,p:dict(p,archive_verified=True)) as check:
+            result=archived_files(bucket,cp,authority)
+            self.assertEqual(result['model.safetensors']['size'],15_231_272_152)
+            self.assertEqual(check.call_count,2)
+            self.assertEqual({c.args[1]['sha256']for c in check.call_args_list},set(files.values()))
+        for name,invalid in [('model.safetensors',32*1024**3+1),('config.json',5*1024**3+1),
+                             ('model.safetensors',0),('model.safetensors',True)]:
+            old=sizes[name];sizes[name]=invalid
+            with self.subTest(name=name,size=invalid),patch('ops.retain_checkpoint_caches.verified_archive',side_effect=lambda _,p:p),self.assertRaisesRegex(ValueError,'bounded archived checkpoint size'):
+                archived_files(bucket,cp,authority)
+            sizes[name]=old
+
 
 class RetentionCycleControls(unittest.TestCase):
     def fixture(self, root):

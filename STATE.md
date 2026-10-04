@@ -19,13 +19,25 @@ contained a null character rejected by the grader's argv transport. Original
 failed runner/child terminal evidence and those 80 diagnostic records remain.
 A signed transport-only amendment preserves all 200 problems, seeds, checkpoint
 660, harness and statistical test; the entire baseline is running again under
-the repaired source. Its original supervisor is live and four shards completed
-at the latest observation. No benchmark score or improvement is claimed yet.
+the repaired source. All thirteen original shards and all 200 rows completed.
+Independent review authenticated the original requests, source, runtime, model
+bytes, task identities, seeds, deadlines and actual process completions. The
+baseline scored 131/200 (65.5%). No post-training comparison or improvement is
+claimed; the predetermined comparison remains after three nonempty completed
+public covered-policy epochs. See docs/data/math200-baseline-20261004.json.
 
 The original epoch-seven controller and two verifiers remain live. All 90
-submissions are frozen, with 88 completed submission audits at the latest
-observation. Four historical HTTP403 failures remain linked to independently
-verified successful replacement jobs. Future-source successor hydration is
+submissions are frozen and all 90 submission audits completed. Independent queue
+review checked 220 completed historical jobs and preserved all four historical
+HTTP403 failures linked to independently verified successful replacement jobs.
+The original controller's training disk reserve initially refused admission.
+Two unused historical model replicas were authenticated, fully read back from
+R2 and retired locally, freeing 30,485,486,873 bytes. Current checkpoint 660 and
+all original job/report evidence remain intact. The controller then dispatched
+its original epoch-seven training job, train-995463a9. Both original remote
+runner and worker were observed alive; this does not claim training completion.
+The size-bound fix and covered-final retention safeguards passed 37 controls.
+Future-source successor hydration is
 waiting on the actual original epoch-seven training output. Private preparation,
 activation, controller-parent and verifier-parent helpers now bind the exact
 completed boundary, future checkpoint admissions, preserved reward history,

@@ -32,7 +32,8 @@ def remove_checkpoint_replica(plan):
                 {'.json','.safetensors','.txt','.model','.jinja','.tiktoken'} for n in files)):
         raise ValueError('approved safe checkpoint descriptor required')
     if any(not isinstance(v,dict) or not re.fullmatch('[0-9a-f]{64}',v.get('sha256','')) or
-            type(v.get('size')) is not int or not 0<v['size']<=5*1024**3 for v in files.values()):
+            type(v.get('size')) is not int or not 0<v['size']<=(32 if n.endswith('.safetensors') else 5)*1024**3
+            for n,v in files.items()):
         raise ValueError('archived checkpoint object metadata required')
     if digest({name:row['sha256'] for name,row in files.items()})!=checkpoint:
         raise ValueError('checkpoint descriptor digest changed')

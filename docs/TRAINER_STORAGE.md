@@ -20,3 +20,19 @@ Existing routing, remote-backend and capacity controls pass. This changes future
 disk admission, not training mathematics or artifact/numerical budgets. Active
 signed jobs retain their original code and capacity receipts. This source needs
 future role admission before activation.
+
+Completed trainer exports use policy-specific paths: legacy jobs retain
+`checkpoint-step-N`, while the covered-pair policy writes one
+`checkpoint-covered-final`. Housekeeping authenticates the original job,
+report and actual runner completion before selecting either form. Current or
+referenced checkpoints, open files and GPU use prevent retirement. Every
+retired file must first be read back completely from its authenticated R2
+archive and match its original local size and hash; job and report evidence
+remain intact.
+
+Unsharded BF16 exports can exceed the old 5 GiB per-object housekeeping bound.
+Model `.safetensors` objects now have a 32 GiB bound; other checkpoint files and
+submission downloads retain their 5 GiB bound. This admits the existing 7B
+model's approximately 15 GB single-file export without weakening signature,
+full-byte verification or active-checkpoint protections. These operator-only
+changes do not alter pinned training jobs or numerical settings.
