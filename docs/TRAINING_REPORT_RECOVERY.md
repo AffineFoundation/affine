@@ -21,9 +21,11 @@ model/proof tolerance, audit policy or optimizer objective changes.
 During the October 4 epoch-six recovery, the operator authenticated the original
 completed three-update report and protected its actual successor in controller
 state, retaining the active training phase and nine cumulative completed updates.
-Publication and metrics recovery reuse that completed output; they do not rerun
-training or change the signed epoch source. Public code fixes apply to a future
-admitted source. Recovery progress and original job evidence remain private.
+Publication and metrics recovery reused that completed output without rerunning
+training or changing the signed epoch source. All ten R2 objects, totalling
+15,242,726,234 bytes, passed independent full-byte hash readback before publication.
+The original controller advanced to post-training evaluation. Public code fixes
+apply to a future admitted source. Original job evidence remains private.
 
 The obsolete-export guard now also checks the original current-epoch training
 job/report and protects its completed successor before `next_checkpoint` appears

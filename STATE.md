@@ -1,5 +1,31 @@
 # Live reward launch authorized — October 3, 2026
 
+Epoch-six recovery is now complete. The original three-update output 66009823
+was uploaded through its checked original publication job; all ten R2 objects,
+15,242,726,234 bytes, passed independent full-byte readback before the immutable
+descriptor and recovered metrics were published. The original controller
+advanced naturally to after-training evaluation. Its original evaluator runner
+20662 and child 20669 were checked live with matching start ticks. Completed
+epoch accounting remains nine cumulative updates until after-evaluation finishes;
+the pending successor records twelve. No training was repeated. Main 1dbcaa1d
+and full HTTPS /llms.txt bytes were independently checked; Discord update
+1556113701810086071 has actual POST and independent GET receipts. The new reward
+writer's hour ending 01:00 reports submitted at block 9206105; this is a submission
+record, not an independent latest reveal/recipient-balance confirmation. All
+four actual legacy writer units were freshly confirmed disabled and inactive.
+
+The recovered trainer verified 175 available pairs but its fixed three-update
+optimizer only uses three of them. Avoid interpreting `input_pairs` as the number
+of pairs contributing gradients. Together with the complete 128-task no-gain
+result, this motivates a larger, better distributed training sample and lower
+redundant verification/reference cost, subject to a future signed contract/source.
+The in-memory old role router may also need a completed-boundary restart to read
+the recovered successor's trainer cache mapping; its configured default cache
+path differs from the actual final export. Do not cancel the after-evaluation or
+reuse the previously staged a7 source as though it includes the 1dbc recovery fix.
+Continue with exact new-source admission and a controlled completed-boundary
+handoff. The full goal is active and steady independent improvement is unproven.
+
 The first separate 128-task paired comparison finished on October 4. Root checked
 all eight original signed jobs and bound reports, full matched indices/seeds/task
 hashes and binary verified native outcomes, the signed cohort and final result,

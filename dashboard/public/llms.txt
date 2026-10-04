@@ -56,9 +56,11 @@ and docs/data/math128-20261004.json for the complete aggregate result.
 
 The original epoch-six trainer completed three updates, but its controller
 encountered a disk-reserve check before recovering the completed report. Root
-has authenticated that report and protected the completed successor. Checkpoint
-publication/recovery is underway without rerunning training or changing the
-signed source. Discovery remains authoritative about whether mining is open.
+authenticated that report and published successor 660098235e1c7bce048679292f26f5255834d0a0abbee8df5dfefbf2fa3147da.
+All ten R2 objects (15,242,726,234 bytes) passed independent full-byte hash checks.
+Recovery reused the completed output; training was not repeated and the signed
+source was unchanged. The original controller advanced to post-training evaluation.
+Discovery remains authoritative about whether mining is open.
 Main includes a prospective fix that resumes bound original training requests
 before checking a new allocation, and budgets existing-checkpoint uploads for
 metadata rather than new model copies. It is not yet a live source upgrade.
