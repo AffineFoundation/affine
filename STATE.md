@@ -2301,3 +2301,50 @@ review asset hash before committing. Evidence:
 state/root-audits/math-grader-security-20261004-v1/final-prospective-review.private.json.
 The historical E9 source and reports remain unchanged. Production source sealing
 and prospective role admission are still required before opening E10.
+
+## E10 active: native grading, compact inputs, persistent optimizer
+
+As of 2026-10-04 23:10 UTC, epoch
+`nonpayable-live-reward-math-v1--1791154261-10` is collecting until 23:21:01 UTC.
+The running controller uses immutable source
+`7630e0d25f388fe480341614c861fa5be1650f110b49e343dc9134c05e492ab0` and
+starts from the fully published E9 checkpoint28, with explicit persistent-v4
+optimizer genesis at step zero. Native indeterminate grading and compact-v2
+training inputs are active. This is not a completed persistent training epoch.
+Four existing H200 verifier identities now run this same source; miner,
+trainer, evaluator and coordinator sources are aligned. A signed additive
+reward-source authorization preserves the original historical cutover.
+
+The original independent CPU restore completed with exit zero, authenticating
+all 23 private optimizer shards and all 339 parameter slot inventories. Its
+private step-three state is qualification evidence, not E10's public counter.
+Current configuration and activation records are under
+`state/root-audits/e10-native-compact-persistent-unsigned-preparation-20261004-v1/root-activation-preparation-v1/`.
+
+One owned public test miner (UID131) is actually running on the retained H200,
+using the signed E10 source/checkpoint and delegated epoch-only upload access.
+At this observation it is generating on GPU but has no complete uploaded pair.
+Do not restart it or count an unobserved attempt as a submission. The two idle
+H100 candidates are hydrating source763/checkpoint28 for fresh current-contract
+compatibility checks; they are not enrolled. The spare H200 remains CUDA999
+after its single scoped pod reboot and is not usable verification capacity.
+
+The normal-completion lifecycle retired 121 completed E9 trainer ZIP replicas
+(78,664,386,387 bytes) after full current R2 archive readback. The original
+retirement supervisor exited zero. Models, optimizer state and original records
+were preserved. A fresh trainer observation found 157,610,639,360 available RAM
+bytes and 1,237,442,359,296 free disk bytes; actual training must still pass its
+launch-time resource admission. Evidence is in
+`state/root-audits/persistent-receipt-continuation-cp30ee-20261004-v3/original-E9-normal-completion-lifecycle-v1/`.
+
+The discovery monitor was corrected to track the actual new controller/config
+instead of the retired process. Root verified public `affine.io/mining.json`
+returns the open E10 window and `affine.io/llms.txt` exactly matches the current
+17,314-byte guide (SHA256
+`2f7b08128f2dbecaaabf26194d3606a91f9dd29b4bbeec7e06ccba60c0061df1`).
+The reviewed source-authorization, guide, worker-cache selector and completion
+hook are on GitHub main through `0e3ba462`. The worker-cache selector is only
+prospective: sealed candidate `e6ac9aaf...` passed 76 CPU controls but has not
+replaced source763 or any active worker. Future activation must retain the
+actual learned checkpoint and persistent optimizer parent. No held-out
+improvement or faster completed E10 timing has yet been demonstrated.
