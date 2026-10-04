@@ -83,3 +83,19 @@ workloads and the completed-boundary handoff remain incomplete. CPU source
 admission for the current checkpoint does not admit the next checkpoint;
 the actual successor must receive fresh byte, tokenizer and native checks.
 Older signed epochs, their training policies and deadlines remain unchanged.
+
+The epoch-eight handoff observer is now running against the original live
+controller. It waits for the completed boundary and five fresh successor
+admissions before attempting one upgrade. Refusal leaves original work intact;
+failed stages are preserved for inspection rather than automatically repeated.
+The upgrade must inherit the current signed deregistration eligibility policy,
+reward ledger, cursor and nonce. It also advances the writer receipt pointer so
+later maintenance cannot accidentally restore a superseded payout policy.
+
+The proposed full-coverage configuration gives newly created training jobs a
+24-hour signed lifetime, while retaining the existing budgets for mining,
+verification, evaluation and publication. This allows additional backward
+computation without extending any existing job or lease. Twenty remote-backend
+controls pass, including a signed new training deadline and unchanged original
+job bytes when configuration changes during recovery. This is an operational
+budget, not evidence that a full public training epoch finishes within it.

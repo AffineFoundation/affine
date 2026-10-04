@@ -67,8 +67,34 @@ class RemoteReportBinding(unittest.TestCase):
             result=self.jobs.run('fresh-evaluation','evaluate',self.manifest)
         self.assertEqual(result['completed_at'],1100)
         self.jobs.copy_to.assert_called_once()
+    def test_new_full_coverage_training_job_binds_longer_deadline_at_creation(self):
+        self.jobs.config={'job_ttl_seconds_by_role':{'train':86400,'evaluate':10800}}
+        self.jobs.metadata=dict(source_files=self.prior['source_files'],runtime_versions=self.prior['runtime_versions'])
+        self.jobs.workspace='/remote';self.jobs.code='/frozen';self.jobs.python='/python'
+        self.jobs.controller.signed=lambda payload:dict(payload=payload,signer=self.operator,signature=base64.b64encode(self.key.sign(canonical(payload)).signature).decode())
+        self.jobs.command=Mock();self.jobs.copy_to=Mock();self.jobs.remote_status=Mock(return_value={'phase':'complete'})
+        def fetch(remote,local):
+            job=signed(json.loads(next(self.jobs.state.glob('covered-training-*-job.json')).read_text()),self.operator)
+            self.assertEqual(job['expires_at']-job['created_at'],86400)
+            local.write_text(json.dumps(dict(self.report,job_id=job['job_id'],role='train',job_sha256=hashlib.sha256(canonical(job)).hexdigest(),completed_at=1100)))
+        self.jobs.copy_from=fetch
+        with patch('subnet.remote_backend.time.time',return_value=1000):
+            self.jobs.run('covered-training','train',self.manifest)
+        original=next(self.jobs.state.glob('covered-training-*-job.json')).read_bytes()
+        self.jobs.config['job_ttl_seconds_by_role']['train']=7200
+        with patch('subnet.remote_backend.time.time',return_value=2000):
+            self.jobs.run('covered-training','train',self.manifest)
+        self.assertEqual(next(self.jobs.state.glob('covered-training-*-job.json')).read_bytes(),original)
+        self.jobs.copy_to.assert_called_once()
 
 class RoleTimeBudget(unittest.TestCase):
+    def test_full_coverage_training_budget_preserves_other_role_deadlines(self):
+        original={'verify':3600,'train':7200,'evaluate':10800,'upload':3600,'mine':3600}
+        prospective=dict(original,train=86400)
+        for role in original:
+            self.assertEqual(role_time_budget({'job_ttl_seconds_by_role':original},role),original[role])
+            self.assertEqual(role_time_budget({'job_ttl_seconds_by_role':prospective},role),86400 if role=='train' else original[role])
+        self.assertEqual(original['train'],7200)
     def test_expanded_evaluation_does_not_extend_other_roles(self):
         config={'job_ttl_seconds_by_role':{'evaluate':10800}}
         self.assertEqual(role_time_budget(config,'evaluate'),10800)

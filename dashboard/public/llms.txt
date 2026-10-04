@@ -72,6 +72,13 @@ absence. The bounded maintenance window expired before the handoff; the original
 controller resumed and opened epoch eight under the existing source. No
 held-out learning gain is claimed. See docs/COVERED_EPOCH_TRAINING.md and
 docs/MATH_GRADER_TRANSPORT.md.
+An original-process handoff observer is now waiting for epoch eight to finish
+and for five fresh successor admissions. It may attempt the reviewed upgrade
+only at that completed boundary; the covered policy is still not deployed.
+It preserves the current signed payout eligibility policy and original job
+deadlines. Future covered training jobs are proposed with a 24-hour signed
+budget, while other role budgets and the three-batch submission cap stay the
+same. This is not a throughput or learning-gain claim.
 Epoch-seven submission audits are complete. The original training job finished
 successfully at 07:18 UTC with three full-model updates; all 339 parameter tensors
 received gradients. Root authenticated the original request, report, successful
