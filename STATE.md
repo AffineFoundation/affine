@@ -1,5 +1,18 @@
 # Live reward launch authorized — October 3, 2026
 
+The exact public af37a105 snapshot plus the original pinned MATH asset is now
+sealed as source archive 8b46ca8d11f2670cfd5af3711a5c781653f7587eec962ebfaea0611f680fa78d.
+All five roles completed fresh CPU-only installation and independent full
+readback of all 1,874 files. This candidate includes the newly tested training
+recovery/streaming-publication fixes as well as the earlier parallel hashing and
+transport changes. Original numerical execution modules are byte-identical;
+model computation outside the hashing inventory is AST-identical. Runtime changes
+are model.py, paired_evaluation.py, remote_backend.py, role_router.py and storage.py.
+It supersedes the a7 candidate for future handoff, without erasing its evidence.
+No active workspace, signed manifest or writer anchor changed and no new-source
+GPU job ran. Checkpoint/native admission and completed-boundary deployment remain.
+Evidence: distributed-preparation/future-source-af37a105-v1/source-install-v1.
+
 Epoch-six recovery is now complete. The original three-update output 66009823
 was uploaded through its checked original publication job; all ten R2 objects,
 15,242,726,234 bytes, passed independent full-byte readback before the immutable
