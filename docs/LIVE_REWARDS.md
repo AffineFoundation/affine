@@ -43,7 +43,11 @@ not redirected to a recycled UID or automatically carried into a later hour.
 The chain adapter independently checks every remaining recipient immediately
 before submission. A further identity change during preparation still defers
 that proposal. This fixes a pending hour blocked by three deregistered winners.
-Policy installation and a signed proposal are not proof of chain finalization.
+The original writer then reported successful submission and exited. Independent
+readback at block 9208448 confirmed exactly 86 positive recipients, identical
+normalized shares and current ownership. The next scheduled invocation advanced
+to the following pending hour. These weights do not establish wallet receipts
+or model improvement.
 
 The operator exporter is invoked as `python -m ops.live_reward_exporter` with
 private compute/reward state directories, the signed cutover anchor, validator

@@ -4,6 +4,7 @@ Dashboard: https://affine.io/
 Live mining discovery: https://affine.io/mining.json
 Current-run measurement data: https://affine.io/network-data.json
 Code: https://github.com/AffineFoundation/affine (main)
+Signed payout eligibility policy: https://affine.io/reward-policy.json
 
 ## Current verified state — 2026-10-04
 
@@ -24,6 +25,9 @@ ledger, while only currently eligible identities enter the weight denominator.
 Excluded points are not paid to a recycled UID or carried forward automatically.
 The signed operator policy begins with the pending hour ending October 4 at
 06:00 UTC. Recipient ownership is checked again before actual submission.
+That pending hour subsequently submitted successfully. Independent readback at
+block 9208448 confirmed all 86 intended recipients, exact normalized shares,
+and current ownership. The writer advanced to the next pending hour.
 The hourly writer waits for outstanding epoch audits and final scores before
 closing their hour. This expected wait leaves prior weights and the reward cursor
 intact; it does not treat unfinalized submissions as a zero-point payout.

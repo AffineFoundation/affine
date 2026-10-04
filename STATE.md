@@ -8,8 +8,10 @@ rule refused that entire hour. The signed operator cutover now opts into explici
 reward ledger, nonce and cursor were preserved during installation; only the
 writer receipt path changed. The timer is restored. Its actual proposal contains
 86 positive recipients and three explicit exclusions, totaling 210,000,000 units.
-The cursor entered submission; finalization and revealed vector remain to be
-independently inspected. Thirty-eight reward/writer checks pass.
+The original writer reported successful submission and exited; the next scheduled
+invocation advanced to the following hour. Independent chain readback at block
+9208448 found exactly the 86 intended positive UIDs, identical normalized shares
+and current ownership for every recipient. Thirty-eight reward/writer checks pass.
 
 An original epoch-eight boundary watcher is now running with a six-hour
 observation budget and the unchanged fifteen-minute hold budget. Eight real
