@@ -39,3 +39,25 @@ and independent source, checkpoint, request, report and outcome review.
 Evidence is retained under
 `state/live-math-launch-preparation-v1/continuous-upgrade-f590-new9-v1/independent-covered-math200-precommit-v1`.
 The benchmark does not change a public mining epoch or submit chain weights.
+
+The first baseline attempt stopped after 80 verified rows: a generated null
+character caused the original native grader's subprocess argv transport to
+raise `ValueError: embedded null byte`. Those original jobs, failed process
+waits and first 80 diagnostic rows are preserved. An exception is not counted
+as a model failure and no task is removed from the cohort.
+
+A separately signed transport-only amendment binds source
+`3bacecbf006f5f1aa5fc274f4a68a444e91183e6078990bc00e9f138a2c1eb08`
+and its native environment fingerprint. JSON argument transport preserves the
+exact model text and leaves the grading predicate unchanged. All model,
+generation, GPU, harness and proof computation module bytes are unchanged from
+the precommit. Normal/null-text native controls and the repaired source's H200
+training/proof control passed independent review before applying the amendment.
+
+All 200 baseline problems are being run again under that amended transport,
+with the original checkpoint, indices, seeds, harness, comparison-checkpoint
+selection rule and statistical test unchanged. The complete amended baseline
+must pass independent review; the first 80 old rows are not mixed into its
+results. The comparison must use the same amended transport. This amendment
+is a disclosed infrastructure repair, not selection of a different cohort or
+checkpoint based on benchmark scores. See [the transport qualification](MATH_GRADER_TRANSPORT.md).
