@@ -1,140 +1,30 @@
-# Prospective forced sampling cutover
-The next approved epoch will require forced-inverse-cdf-replay-v1, after H200 qualification and a completed boundary. It is not active in the current historical epoch. Update through the signed source bootstrap; do not submit copied answers with post-hoc model proofs.
-The new manifest binds epoch randomness, checkpoint, task, attempt, turn and token position. Attempts are limited to the signed range. Temperature, top-p, uncached eager computation, inverse-CDF ordering and stopping rules come from the approved source and signed harness. Miners search this bounded set for one success and one failure. Every fully audited rollout must pass exact token replay as well as full probabilities, TOPLOC and native grading. Wrong picks have no numerical-tolerance exemption. Extra identities do not change the draws.
-This establishes consistency with the prescribed sampler. It does not prove historical execution, unbiased sample selection, or portability to arbitrary hardware. Existing epochs keep their original signed rules and earned rewards. The evaluator retains its precommitted diagnostic sampler, which cannot supply mining evidence. Strict replay adds generation cost; published qualification will report measured throughput.
-Details: https://github.com/AffineFoundation/affine/blob/main/docs/FORCED_SAMPLING_CUTOVER.md
-
-# Affine — current MATH reward run
+# Affine — MATH mining, verification and training
 
 Dashboard: https://affine.io/
 Live mining discovery: https://affine.io/mining.json
-Current-run measurement data: https://affine.io/network-data.json
+Measurements: https://affine.io/network-data.json
 Code: https://github.com/AffineFoundation/affine (main)
 Signed payout eligibility policy: https://affine.io/reward-policy.json
 
-## Current verified state — 2026-10-04
+## Sampling cutover
 
-Our SN120 validator's new-mechanism weights are active on Finney. Independent
-readback at block 9203767 confirmed exactly 19 intended recipients, their
-normalized shares and current ownership of every winning UID. Those weights
-come from 42 fully audited unique task batches finalized in the UTC hour ending
-16:00. The transaction first finalized as an encrypted commitment, then revealed
-through the subnet's automatic commit-reveal mechanism. All our validator's
-positive weights now go to this mechanism. This is not a statement about other
-validators' vectors or a confirmation of individual wallet receipts.
-The old burn and equal-registration writers are disabled and inactive. The
-legacy validator's suppression guard remains in place. Historical nonpayable
-experiments are not converted into reward epochs or repaid.
-The current writer records deregistered or changed-identity recipients as exclusions
-in its signed hourly proposal. The original audited scores remain in the reward
-ledger, while only currently eligible identities enter the weight denominator.
-Excluded points are not paid to a recycled UID or carried forward automatically.
-The signed operator policy begins with the pending hour ending October 4 at
-06:00 UTC. Recipient ownership is checked again before actual submission.
-That pending hour subsequently submitted successfully. Independent readback at
-block 9208448 confirmed all 86 intended recipients, exact normalized shares,
-and current ownership. The writer advanced to the next pending hour.
-The hourly writer waits for outstanding epoch audits and final scores before
-closing their hour. This expected wait leaves prior weights and the reward cursor
-intact; it does not treat unfinalized submissions as a zero-point payout.
+Cutover state: qualified, waiting for the original epoch to finish. The replacement is not yet active.
 
+The replacement source is 310492f6a87721760630b196e375bd2ba43cbe05, with immutable bundle SHA256 e415623e5a8017133ff7bef3925b724441862f34b6d034ed0deb6b731a26e657. Later operator housekeeping commits do not change that bundle. Every epoch's signed manifest is authoritative; mining.json closes uploads during audits, training, evaluation or controller absence.
 
-Epoch eight opened at 08:27:39 UTC on October 4 from learned
-checkpoint 093a61c368dc9aeee4551d87365ad5504cc7b13eb0a9bdcc999a58964e8ee570,
-with approved source 548effe050db7180a17719b92580f01a70d9a95dd212ba6b7fc175de95e694d3.
-Read its exact upload deadline from the signed current manifest. The frozen runtime source is
-from public commit f590bce9 plus the pinned original MATH asset. Later housekeeping
-updates on main do not change an already signed epoch. Subsequent epochs open
-after verification, training and checkpoint publication. This static guide does
-not declare a window open: check mining.json and authenticate the signed current
-manifest before every attempt. Discovery closes when the controller is absent,
-at the original deadline, and during verification/training/evaluation.
+The new forced-inverse-cdf-replay-v1 contract binds epoch randomness, checkpoint, environment/task, bounded attempt number, turn and token position. Miner identity does not change the draws. The signed attempt budget is 128: attempt numbers 0 through 127. Miners can search these attempts for one success and one failure, but cannot select an arbitrary seed, substitute answers, change temperature/top-p or change the sampler. The approved v1 harness is text-tools-long-v2: uncached eager autoregressive computation, at most 1,024 output tokens per turn, temperature 0.8 and top-p 1. The signed manifest and source take precedence over this guide.
 
-The model is Qwen/Qwen2.5-Math-7B-Instruct, 7,615,616,512 parameters, trained in
-BF16 across all parameters. The dataset has 7,496 distinct original MATH tasks:
-6,746 available for mining and 750 reserved for evaluation. The current diagnostic
-uses 32 fixed reserved tasks. The latest completed epoch remained at 20/32
-after three additional full-model updates, fifteen cumulative. This remains
-below an earlier 22/32 diagnostic and does not establish sustained improvement
-or performance on a larger independent benchmark. Three optimizer steps remain
-configured per nonempty training epoch. Larger DeepMath/NuminaMath tasksets are
-not part of the active mining contract.
-The current trainer verifies every selected pair but applies gradients to only
-three pairs. The qualified full-coverage candidate accumulates every verified
-pair across the configured optimizer updates and exports one final checkpoint.
-Its signed jobs bind the original post-freeze receipt population and random seed,
-including exact original-request recovery. Independent H100 and H200 controls
-passed: all five curated pairs contributed, all 339 parameter tensors received
-gradients, successor proof replay passed and a changed proof was rejected.
-The latest qualified source also preserves arbitrary model text, including null
-characters, through the unchanged native math grading predicate. All five roles
-passed read-only preparation on checkpoint 660; the complete H200 training control
-and separate normal/null-text native controls also passed root review.
-The qualified immutable source bundle has now been published to R2 with exact
-archive and signed-descriptor readback. Publication is not deployment: the next
-step is a completed-boundary handoff. All five actual-successor CPU hydrations
-and native admissions passed, including successful original waits and process
-absence. The bounded maintenance window expired before the handoff; the original
-controller resumed and opened epoch eight under the existing source. No
-held-out learning gain is claimed. See docs/COVERED_EPOCH_TRAINING.md and
-docs/MATH_GRADER_TRANSPORT.md.
-An original-process handoff observer is now waiting for epoch eight to finish
-and for five fresh successor admissions. It may attempt the reviewed upgrade
-only at that completed boundary; the covered policy is still not deployed.
-It preserves the current signed payout eligibility policy and original job
-deadlines. Future covered training jobs are proposed with a 24-hour signed
-budget, while other role budgets and the three-batch submission cap stay the
-same. This is not a throughput or learning-gain claim.
-Main now also contains a prospective policy-specific disk admission fix: the
-covered trainer reserves its final checkpoint plus a complete temporary export,
-rather than intermediate checkpoints it never writes. All selected submission
-downloads, raw workspace and missing input weights remain counted. Fifty-two
-routing, recovery, training and capacity controls pass. This newer change still
-requires source admission; it is not in the immutable source of the running
-controller or the currently qualified handoff candidate.
-Epoch-seven submission audits are complete. The original training job finished
-successfully at 07:18 UTC with three full-model updates; all 339 parameter tensors
-received gradients. Root authenticated the original request, report, successful
-runner wait, process absence, source and all successor weight bytes. The older
-controller repeated its new-job disk reserve after completion and could not
-collect the result. Explicit recovery published that same completed output at 07:40 UTC: all ten
-R2 files (15,242,726,234 bytes) passed independent full-byte hash readback. Training
-was not repeated. The original controller completed post-training evaluation
-and finalized epoch seven, recording fifteen cumulative updates. Its 32-task
-diagnostic remained 20/32. Completed-job retention archived and retired about
-85.57 GB of intermediates and frozen local uploads while preserving final
-checkpoints and original evidence. Epoch eight has opened; discovery and the
-signed manifest remain authoritative about whether uploads are currently open.
-The independent 200-task baseline also completed: checkpoint 660 scored 131/200
-(65.5%). Root checked all thirteen original jobs, complete task identities and
-seeds, deadlines, successful process waits, source and full checkpoint bytes.
-These tasks have no index or exact-problem overlap with mining, fixed32 or the
-previous 128-task benchmark. The precommitted comparison remains the checkpoint
-after three nonempty completed public covered-policy epochs. It has not run,
-and this baseline does not establish improvement. See
-docs/INDEPENDENT_COVERED_MATH_BENCHMARK.md and
-docs/data/math200-baseline-20261004.json.
-The separate precommitted 128-task benchmark has completed on the retained H100.
-Root independently checked all eight original signed jobs and bound reports,
-matched seeds/task identities, complete native/model verification, the signed
-final result and the original supervisor's successful wait. The base checkpoint
-scored 88/128 (68.75%); the nine-update checkpoint scored 89/128 (69.53%), with
-six paired gains and five losses. Exact two-sided McNemar p=1.0: this does not
-establish improvement or sustained learning. It excludes mining tasks and the
-fixed 32-task diagnostic. This comparison does not assess the next checkpoint.
-See https://github.com/AffineFoundation/affine/blob/main/docs/INDEPENDENT_MATH_BENCHMARK.md
-and docs/data/math128-20261004.json for the complete aggregate result.
+An expensive audit regenerates the complete audited output and requires exact token and stopping agreement, then independently checks full conditional probabilities, TOPLOC fingerprints and native grading. Wrong sampler picks have no match-rate or numerical-tolerance exemption. This establishes consistency with the prescribed computation and sampler; it does not prove historical execution or unbiased selection of successes and failures. TOPLOC without this replay cannot distinguish sampled outputs from copied answers passed through the model afterward.
 
-The qualified next source includes original-job recovery before new-job disk
-admission, streaming checkpoint publication, bounded concurrent submission
-publication, full-coverage training and native null-text transport. Those changes
-must be admitted for the actual successor before a completed-boundary handoff.
-The current signed epoch retains its original source and optimizer policy.
-Operator housekeeping verifies full authenticated archives before retiring unused
-replicas; it preserves current/pending checkpoints and original job evidence.
-See docs/TRAINING_REPORT_RECOVERY.md, docs/TRAINER_STORAGE.md and
-docs/READONLY_SOURCE_ADMISSION.md. The boundary guard has a fifteen-minute
-expiry and resumes the original controller if the upgrade does not finish.
+Qualification used real H200 generation: one successful 746-token output and one failed 1,024-token output, independent replay with zero honest false rejections, and three rejected attacks. A copied correct answer with newly computed genuine probabilities and TOPLOC proofs passed the old verification but failed the new sampler check. A separate H200 verified the genuine pair through the production signed-job path, and the trainer independently re-audited it and performed a full-model covered update. These are qualification controls, not a completed new public epoch or a learning-gain claim. Details: https://github.com/AffineFoundation/affine/blob/main/docs/FORCED_SAMPLING_QUALIFICATION.md
+
+Existing epochs finish under their original signed rules. They retain their scores, original evidence and writer cursor. The cutover is prospective; old-contract data cannot become new-contract reward or training evidence. The old burn and equal-registration writers remain disabled, and historical nonpayable experiments are not paid retroactively. The single reward writer preserves the signed policy for currently owned, eligible registered UIDs.
+
+## Model and taskset
+
+Qwen/Qwen2.5-Math-7B-Instruct has 7,615,616,512 parameters. Training updates all parameters in BF16. The active original MATH taskset contains 7,496 distinct usable problems: 6,746 mining tasks and 750 reserved held-out tasks. DeepMath and NuminaMath are not yet part of this contract. K=1 and L=1: one genuinely graded success and one genuinely graded failure for the same task on the approved checkpoint.
+
+Held-out evaluation retains the previous precommitted sampler and fixed task/seed identities, so the sampling cutover does not redefine the measurement. Its outputs are diagnostic and cannot supply mining evidence. The latest completed fixed 32-task diagnostic was 20/32, after fifteen cumulative optimizer updates; this is below an earlier 22/32 and does not demonstrate sustained improvement or a larger benchmark result.
 
 ## How to start mining
 
@@ -154,7 +44,7 @@ Start with these concrete guides:
 - https://github.com/AffineFoundation/affine/blob/main/docs/MINER_QUICKSTART.md
 - https://github.com/AffineFoundation/affine/blob/main/docs/MATH_MINER_BOOTSTRAP.md
 - https://github.com/AffineFoundation/affine/blob/main/docs/DISTRIBUTED_GPU_ROLES.md
-- https://github.com/AffineFoundation/affine/blob/main/docs/CACHED_SAMPLING.md
+- https://github.com/AffineFoundation/affine/blob/main/docs/FORCED_SAMPLING_CUTOVER.md
 
 Use the exact runtime and hardware profile pinned in the signed manifest.
 H200/SM90, CUDA BF16 eager, disabled TF32 and CUBLAS_WORKSPACE_CONFIG=:4096:8
@@ -187,91 +77,31 @@ credentials. Miners need no permanent bucket credentials.
 
 ## Batch and reward rules
 
-The signed per-UID submission cap is currently three batches per epoch. It is a
-conservative configurable pilot setting, not a measured throughput maximum or
-a fundamental protocol limit. Each batch covers one authorized task index on the
-approved checkpoint and includes at least one genuine successful and one genuine
-unsuccessful rollout (K=1, L=1). Extra rollouts for the same task add no points.
-Reserved held-out tasks cannot be mined. An unsuccessful search or grader error
-is not a valid negative sample. Low per-UID limits do not prevent someone from
-registering multiple identities. Submission limits, audit budgets and reward
-penalties are separate settings; future changes are signed before the next epoch.
+The current signed quota is three batches per UID per epoch, with artifact-size and rollout limits enforced independently. This is a conservative configurable pilot cap, not a protocol maximum. A batch covers one authorized mining task index on one epoch/checkpoint and includes complete input/output token contexts, full conditional log probabilities, TOPLOC fingerprints, native observations/outcomes, immutable task/model/source identities, and, for new-contract rollouts, the sampler receipt. Extra rollouts on the same task add no points. Grader errors and unsuccessful searches are not valid negative samples.
 
-Miners must use the exact source selected by their signed manifest. Main includes
-qualified future fixes; copying individual updated modules into a live signed
-runtime does not constitute a valid upgrade. Leave time for proof construction,
-compression and upload before the original deadline. The current candidate is
-qualified on H200, but successor admission and production activation are pending.
-See docs/COVERED_EPOCH_TRAINING.md and docs/CHECKPOINT_READ_HYDRATION.md.
+Uploads are cumulative replacements of one private epoch object, using an encrypted per-identity presigned capability. Replacements reuse the same three slots. Only the final completed in-window upload is frozen. Upload deadlines are not extended to rescue a worker. Frozen artifacts and authenticated audit history are published for inspection; miners do not need permanent R2 credentials.
 
-All 90 epoch-seven submissions were frozen. Four original audit jobs failed on
-expired checkpoint read links; independently checked replacement jobs completed
-against identical frozen input and model hashes. The failed originals remain in
-history without miner-fraud penalties. Future-source model read links last seven
-days, independently of the original upload deadline. Source hashing, verifier
-transport recovery and archive checks retain their complete-byte comparisons.
-See docs/TRANSPORT_RECOVERY.md, docs/CHECKPOINT_HASHING.md,
-docs/SUBMISSION_RETENTION.md and docs/TRAINING_RETENTION.md.
-
-Include complete context/output tokens, full conditional model log probabilities,
-TOPLOC activation fingerprints, native observations/outcomes and the immutable
-epoch/task/model/source identities. The current manifest selects the explicit
-text-tools-long-kv-v3 cached sampler. A genuine same-task success/failure pair
-passed independent H200 replay with exact full probabilities, zero TOPLOC
-mismatches and eight tampering rejections before activation. Full teacher-forced
-verification remains intact. This verifies target-model computation on submitted
-trajectories; it does not cryptographically prove their original sampling seed.
-
-Upload cumulatively to your private single-object epoch capability. Replacements
-use the same three slots. Only the final completed in-window upload is frozen;
-the deadline is never extended to rescue a worker. Frozen hash-addressed artifacts
-and audit history are published for independent inspection.
-
-Cheap bounded structure/quota checks apply to every submission. Expensive audits
-are randomly allocated after freeze, with configured budgets, minimum/maximum
-checks per submitting identity and escalation after confirmed invalid samples.
-Independent verifier nodes claim jobs with leases/retries and authenticate their
-reports. Infrastructure faults trigger retries, rather than fraud penalties.
-Only fully audited valid task pairs earn points or enter training. Observed
-cross-miner duplicate task keys receive zero for all competing miners. Unchecked
-duplicate claims remain unresolved and that limitation is recorded.
+Cheap bounded structure and quota checks apply to every submission. Expensive audits use the signed random allocation, minimum/maximum per identity, total budget and escalation rules. Reports bind the frozen batch hash, signed original request, approved source, exact checkpoint and winning job lease. Infrastructure faults trigger retries rather than fraud penalties. Only fully audited valid pairs earn points or enter training; observed cross-miner duplicate task keys receive zero for all competing miners. Unchecked duplicate claims remain unresolved and that limitation is recorded.
 
 Adjusted points = unique fully verified task points * 0.5 ** invalid_batches.
-Structural failures earn no batch points; they do not currently multiply the
-remaining points. Epoch-zero thresholds are disabled in the current policy.
-These penalties reduce rewards, never confiscate wallet funds. Exact adjusted
-points are summed over epochs finalized in the completed UTC hour, then
-normalized across eligible current owners. Settings are signed before mining;
-upgrades apply to new epochs, never rewrite closed history.
+Structural failures earn no batch points but do not multiply the remaining points. Epoch-zero thresholds are disabled in the current policy. Penalties reduce rewards; they do not take wallet funds. Exact adjusted points are summed over finalized epochs in the completed UTC hour and normalized across currently eligible owners. The writer waits for pending audits/final scores before closing their hour and does not treat unresolved work as zero. Every policy change applies prospectively through a signed manifest.
 
-## System and measurements
+## Independent roles and durable history
 
-Arbos.life runs the validator/controller, authenticated audit queue, single chain
-writer, discovery monitor and dashboard. Five independent retained Lium H200
-nodes run one test miner, two verifiers, one trainer and one evaluator. R2 holds
-signed manifests, frozen batches, reports, scores, checkpoints and history.
-Two additional machines remain retained for independent qualification: the H200
-with the CUDA-context failure ($3.40/hour) and the alternate H100 ($1.30/hour).
-Independent evaluation does not compete with the five live role GPUs. The H100
-checks do not yet broaden the approved public-miner hardware profile.
-The trainer rechecks selected accepted pairs, performs full-model preference
-updates against the fixed input-checkpoint reference and publishes a new immutable
-checkpoint. The synchronous next epoch waits for this publication. Configured
-steps do not imply that every accepted pair was used in an optimizer update.
+Arbos.life is the operator host running the validator/controller, authenticated audit queue, single chain writer, discovery monitor and dashboard. Five retained Lium H200 machines provide one test miner, two independent verifiers, one trainer and one evaluator. Shared R2 stores signed manifests, frozen submissions, reports, scores, checkpoints and history. This dashboard is at affine.io; the Arbos website and DNS are unchanged.
 
-The dashboard shows only this current reward run, with exactly two charts and
-no historical-run dropdowns: matched held-out math performance over time and
-frozen submitted batches per finalized epoch. Submitted counts include rejected
-or unchecked batches; tooltips distinguish accepted totals. Scoring finalization
-alone does not establish completed training. No invented performance values or
-promised improvements are displayed. Five phone viewports and a desktop size
-passed browser checks, including touch tooltips and no horizontal overflow.
+Verifier nodes lease jobs and publish authenticated results. The replacement trainer re-audits every selected accepted pair and accumulates all verified pairs across three configured full-model optimizer updates against the fixed input-checkpoint reference. It publishes one immutable successor checkpoint. The synchronous next epoch waits for completed verification, training, held-out evaluation and publication. A configured step count is not evidence of completed training.
 
-Audit and architecture details:
+Automatic completed-download retention keeps R2 and original reports intact and removes only authenticated, completed local submission replicas after complete archive hash/size readback. It does not claim automatic retirement of every old model cache. Extra machines retained for independent qualification are outside the five live role nodes; this guide does not expand hardware approval to them.
+
+The dashboard has two charts: matched held-out math performance over time and frozen submitted batches per finalized epoch. Submitted counts include rejected and unchecked batches; tooltips distinguish accepted totals. It displays observed results, not promised improvements.
+
+Technical references:
+- https://github.com/AffineFoundation/affine/blob/main/docs/FORCED_SAMPLING_CUTOVER.md
+- https://github.com/AffineFoundation/affine/blob/main/docs/FORCED_SAMPLING_QUALIFICATION.md
+- https://github.com/AffineFoundation/affine/blob/main/docs/COVERED_EPOCH_TRAINING.md
 - https://github.com/AffineFoundation/affine/blob/main/docs/AUDIT_SAMPLING.md
 - https://github.com/AffineFoundation/affine/blob/main/docs/LIVE_REWARDS.md
-- https://github.com/AffineFoundation/affine/blob/main/docs/ARCHITECTURE.md
+- https://github.com/AffineFoundation/affine/blob/main/docs/SUBMISSION_RETENTION.md
 
-Please test with real miner submissions and report reproducible client, proof,
-upload or verification failures. Provide the epoch, approved source/checkpoint,
-public UID and sanitized logs. Keep private keys and upload grants out of reports.
+When reporting failures, provide the epoch, approved source/checkpoint, public UID and sanitized logs. Keep wallet keys, upload grants and credentials private.

@@ -30,6 +30,27 @@ need separate admission and archive checks before a continuous fleet can claim
 bounded long-term disk usage. Removing download replicas does not change scoring,
 penalties, original jobs, deadlines, or scientific verification.
 
+The operator host also provides `ops.automatic_submission_retention`, a bounded
+oneshot suitable for a systemd timer. It follows the authenticated current writer
+pointer, supports original and newly approved controller workspaces, and keeps
+a durable per-job/report ledger. Each run checks actual replica presence before
+streaming R2 data. Its two-worker maximum and per-worker quota bound each pass;
+worker infrastructure errors are recorded without miner penalties. This is
+completed-download retention, not model-cache or bucket-object deletion.
+
+```
+PYTHONPATH=. .venv/bin/python -B -m ops.automatic_submission_retention \
+  --original-config PRIVATE_ORIGINAL_CONTROLLER_CONFIG \
+  --future-config PRIVATE_NEW_CONTROLLER_CONFIG \
+  --writer-pointer PRIVATE_AUTHENTICATED_WRITER_POINTER \
+  --authority OPERATOR_PUBLIC_KEY --output PRIVATE_RETENTION_RECEIPTS \
+  --per-worker 8 --apply
+```
+
+The deployed operator timer runs again two minutes after the previous pass
+finishes. It leaves the original signed requests, local reports and all R2
+objects intact. It never changes approved scientific source on a worker.
+
 Operators can run a single bounded pass or a continuous watcher:
 
 ```
