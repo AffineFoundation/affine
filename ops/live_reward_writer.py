@@ -12,6 +12,7 @@ from subnet.remote_backend import RemoteJobs
 from subnet.source_bootstrap import admitted_files
 from ops import live_reward_exporter as exporter,live_reward_submit as submit
 from ops.verifier_workforce import authenticate_supplements,authorize_worker
+from ops.live_reward_source_approval import apply_source_approvals,source_verifiers
 UNITS=tuple(n+'.'+s for n in ('affine-transition-weights','affine-hourly-burn') for s in ('timer','service'))
 
 class FinalizationPending(ValueError):
@@ -89,7 +90,7 @@ def verify_audit_lineage(state,manifest,audit,authority,c,db,now,files,*,require
  need(all(files.get(name)==digest for name,digest in job['source_files'].items()),'actual approved archive module pins')
  row=db.execute('SELECT * FROM jobs WHERE id=?',(jobid,)).fetchone();need(row is not None and row['status']=='complete','actual queue completion')
  need(canonical(json.loads(row['envelope']))==canonical(envelope),'original queue signed request')
- worker=row['worker'];workforce=authorize_worker(worker,manifest,job,row,db,c['verifier_identities'],c.get('_verifier_workforce',{}))
+ worker=row['worker'];workforce=authorize_worker(worker,manifest,job,row,db,source_verifiers(c,manifest,job),c.get('_verifier_workforce',{}))
  request=authenticate(json.loads(row['report_request']),worker);remote=json.loads(row['report'])
  need(request['action']=='report' and request['job_id']==jobid and request['report']==remote,'actual authenticated worker report')
  need(hashlib.sha256(canonical(remote)).hexdigest()==row['report_digest'],'queue report bytes')
@@ -247,9 +248,10 @@ def choose_hour(state,anchor,now):
  end=max(first,(end+3600 if end is not None else first))
  return end if end<=int(now)//3600*3600 else None
 
-def run_once(cutover_document,anchor_document,authority,*,execute=False,adapter_factory=ChainAdapter,verifier_workforce_supplements=None):
+def run_once(cutover_document,anchor_document,authority,*,execute=False,adapter_factory=ChainAdapter,verifier_workforce_supplements=None,compute_source_approvals=None):
  c,anchor=authenticate_cutover(cutover_document,anchor_document,authority);need(type(execute)is bool,'explicit execution flag')
- c=dict(c)
+ c,anchor_document=apply_source_approvals(c,anchor_document,authority,cutover_document,compute_source_approvals or [])
+ anchor=signed(anchor_document,authority)
  if verifier_workforce_supplements:
   c['_verifier_workforce']=authenticate_supplements(verifier_workforce_supplements,authority,sha(cutover_document),c['verifier_identities'])
  with global_lock(c['global_lock_path']):
@@ -288,10 +290,10 @@ def run_once(cutover_document,anchor_document,authority,*,execute=False,adapter_
   return result
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--cutover',required=True);p.add_argument('--anchor',required=True);p.add_argument('--authority',required=True);p.add_argument('--execute',action='store_true');p.add_argument('--verifier-workforce-supplement',action='append',default=[]);a=p.parse_args()
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--cutover',required=True);p.add_argument('--anchor',required=True);p.add_argument('--authority',required=True);p.add_argument('--execute',action='store_true');p.add_argument('--verifier-workforce-supplement',action='append',default=[]);p.add_argument('--compute-source-approval',action='append',default=[]);a=p.parse_args()
  def timed_out(*_):raise TimeoutError('bounded writer invocation')
  signal.signal(signal.SIGALRM,timed_out);signal.alarm(720)
- try:result=run_once(read(a.cutover),read(a.anchor),a.authority,execute=a.execute,verifier_workforce_supplements=[read(path)for path in a.verifier_workforce_supplement])
+ try:result=run_once(read(a.cutover),read(a.anchor),a.authority,execute=a.execute,verifier_workforce_supplements=[read(path)for path in a.verifier_workforce_supplement],compute_source_approvals=[read(path)for path in a.compute_source_approval])
  except Exception as error:
   print(json.dumps(dict(status='refused_or_failed',error_type=type(error).__name__,execute=a.execute)));raise SystemExit(1)
  finally:signal.alarm(0)
