@@ -39,6 +39,43 @@ discovery and `/llms.txt` independently match the active source and guide.
 Audit credit, successful new training, chain inclusion of new-contract rewards
 and held-out learning have not yet been established by these launch records.
 
+At 16:49 UTC, epoch nine had frozen and published 126 submissions totaling
+82,230,766,806 bytes. Three independent worker jobs had completed successfully,
+each reporting one valid fully audited success/failure batch under the exact
+forced sampler. This is live audit evidence, not yet finalized epoch scoring,
+new-contract chain inclusion, successful training or held-out improvement.
+The owned UID 131 submission is still awaiting its audit in the full population.
+A separate large-disk H200 has been rented for trainer qualification at
+$4.22/hour and retained; actual initial observation shows approximately 1.29 TB
+free disk and 207 GB available RAM. No live trainer replacement has occurred.
+
+At 17:17 UTC, nine epoch-nine verifier jobs had completed with fifteen valid,
+fully audited batches and no confirmed invalid outcome among those completed
+checks. Two original requests failed after verifier two exhausted its disk;
+all three attempt logs for each request preserve ENOSPC evidence. The idle
+worker was quarantined and both original requests were replaced under their
+unchanged scientific contract with separate authenticated recovery records.
+Both replacement jobs completed on verifier one. Original failed records remain;
+infrastructure errors impose no miner penalty. Verification of the remaining
+population is ongoing. Scores, new training and new-contract chain rewards are
+not yet finalized.
+
+The prospective persistent FP32 master/moment policy is committed at 51093ce9;
+forty persistent/security controls and 114 backend/sampler regressions pass.
+Its separate source fee16055 is signed and published for qualification only,
+not admitted into any live epoch. Actual full-model H200 training, durable state
+export/readback and authenticated continuation still need qualification. The
+large-disk node is receiving the exact approved checkpoint/runtime; no optimizer
+or inference-state reset has been applied to the live run. This is not evidence
+of held-out convergence.
+
+The polished two-chart affine.io frontend is deployed and passed actual public
+checks at desktop, mobile and narrow-mobile widths. Chart records and headlines
+match the public JSON, assets and guide match checkout, and empty/offline/cohort
+controls pass. Arbos.life was not changed. A prospective bounded upload broker
+also has twelve passing local controls and actual tiny-R2 size/conditional/expiry
+checks; it remains unintegrated and does not alter current raw-PUT grants.
+
 The operator removed the earlier paused tracker record. The replacement live
 learning goal was created successfully and is active. The new priority order
 and acceptance criteria above govern continued work. No incomplete goal was
