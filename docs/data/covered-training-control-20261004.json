@@ -1,0 +1,39 @@
+{
+  "GPU_peak_allocated_bytes": 78644184064,
+  "actual_GPU_idle": true,
+  "actual_original_wait_exit_code": 0,
+  "all_five_frozen_artifacts_hashed_and_decoded": true,
+  "chain_transactions": false,
+  "checked_at": 1791082789.6518729,
+  "exact_source_files": 1875,
+  "fixed_references_reconstructed_from_verified_probabilities": true,
+  "fresh_successor_full_proof_verified": true,
+  "full_parameter_gradient_tensors": 339,
+  "gradient_pairs_per_update": [
+    2,
+    2,
+    1
+  ],
+  "heldout_improvement_verified": false,
+  "input_and_successor_all_files_independently_hashed": true,
+  "live_epoch_changed": false,
+  "optimizer_state_steps": [
+    [
+      1
+    ],
+    [
+      2
+    ],
+    [
+      3
+    ]
+  ],
+  "passed": true,
+  "public_activation": false,
+  "successor_proof_mutation_rejected": true,
+  "trace_origin": "curated-native-controls",
+  "trainable_parameters": 7615616512,
+  "unique_gradient_pairs": 5,
+  "scope": "operator-signed isolated H100 numerical/proof control on five curated MATH success/failure pairs; no public activation or heldout improvement",
+  "training_policy": "bf16-full-adamw-covered-fixed-reference-v3"
+}

@@ -1,14 +1,16 @@
 # Live reward launch authorized — October 3, 2026
 
-The full-coverage training candidate is now under an isolated original-process
-H100 control. Ten CPU controls pass, including actual accumulated gradients and
-updates beyond the first three pairs. The original live epoch is unchanged.
-The control freshly verified five curated native success/failure pairs against
-the cached seven-billion-parameter checkpoint and reached training; its original
-GPU PID/start ticks and transport were checked live. Earlier admission/probe
-failures have actual terminal receipts and are preserved. This is not a public
-mining epoch or evidence of improved held-out performance. See
-docs/COVERED_EPOCH_TRAINING.md; GPU results and signed policy integration remain.
+The full-coverage training candidate passed its isolated original-process H100
+control. Five curated native success/failure pairs contributed across three
+updates, all 339 parameter tensors received gradients, and the fresh successor
+passed model reload/full proof replay plus a proof-mutation rejection. Root
+independently read every input/successor checkpoint byte and all source files,
+hashed/decoded all five original artifacts and reconstructed each fixed
+reference from their verified probabilities. The actual original successful
+wait, process absence and idle GPU were checked. Ten CPU controls pass. Earlier
+admission/probe failures have terminal receipts and remain preserved. This is
+not a public mining epoch or evidence of improved held-out performance. See
+docs/COVERED_EPOCH_TRAINING.md; signed integration/deployment remain unfinished.
 Evidence: future-source-af37a105-v1/covered-training-control-h100-v4.
 
 Epoch seven is still closing uploads under its original source and controller.

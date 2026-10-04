@@ -35,8 +35,20 @@ native success/failure pairs on approved mining tasks, full input-model proofs,
 three accumulated updates, changed parameter values, a fresh successor model
 reload and proof replay, and rejection of a tampered successor proof.
 
+The H100 control completed successfully on the 7,615,616,512-parameter model.
+All five pairs contributed in groups of two, two and one; all 339 parameter
+tensors received gradients and the persistent optimizer counters reached three.
+The fresh successor passed independent model reload and full native/proof replay,
+and a tampered proof was rejected. Root separately read every byte of the input
+and successor checkpoints, all 1,875 source files and the five original frozen
+artifacts, reconstructed fixed references from their full probabilities, and
+checked the original successful wait, process absence and idle GPU. Peak GPU
+allocation was 78,644,184,064 bytes; larger trajectories and H200 production
+workloads still require qualification. Aggregate evidence is in
+`docs/data/covered-training-control-20261004.json`.
+
 The GPU control is a numerical/proof qualification, not evidence of genuine
 mining, a completed public epoch or held-out learning. Live workers do not select
-this module. Before activation it needs actual GPU results, signed policy/job
-integration, source admission and a completed-boundary handoff. Older signed
+this module. Before activation it needs signed policy/job integration, production
+workload qualification, source admission and a completed-boundary handoff. Older signed
 epochs, their training policies and their deadlines remain unchanged.

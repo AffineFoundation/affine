@@ -46,11 +46,14 @@ not part of the active mining contract.
 The current trainer verifies every selected pair but applies gradients to only
 three pairs. Main now contains a separate full-coverage training candidate that
 accumulates every verified pair across the configured optimizer updates and
-exports one final checkpoint. Ten CPU controls pass; an isolated H100 control
-has verified five curated success/failure pairs and reached training. This
-candidate is not the signed live training policy, and no learning gain is claimed.
+exports one final checkpoint. Ten CPU controls and an isolated H100 control
+pass: all five curated success/failure pairs contributed gradients across three
+updates, with fresh successor proof replay and a tampered-proof rejection.
+Root checked all input/successor bytes, source, frozen artifacts, reconstructed
+references and original successful process completion. This candidate is not
+the signed live training policy, and no held-out learning gain is claimed.
 See docs/COVERED_EPOCH_TRAINING.md. Future activation requires completed GPU
-qualification, signed policy integration and a completed-boundary handoff.
+workload qualification, signed policy integration and a completed-boundary handoff.
 The separate precommitted 128-task benchmark has completed on the retained H100.
 Root independently checked all eight original signed jobs and bound reports,
 matched seeds/task identities, complete native/model verification, the signed
