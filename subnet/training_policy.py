@@ -4,21 +4,22 @@ import math
 import re
 
 from .backend_jobs import FIXED_POLICY, COVERED_POLICY, canonical
+from .persistent_cpu_adamw import POLICY as PERSISTENT_POLICY
 
 COVERAGE_REVISION = 'frozen-verified-pairs-v1'
 
 
 def epoch_policy(config):
     policy = config.get('training_policy', FIXED_POLICY)
-    if policy not in (FIXED_POLICY, COVERED_POLICY):
+    if policy not in (FIXED_POLICY, COVERED_POLICY, PERSISTENT_POLICY):
         raise ValueError('approved epoch training policy')
-    if policy == COVERED_POLICY and config.get('balanced_replay'):
+    if policy in (COVERED_POLICY,PERSISTENT_POLICY) and config.get('balanced_replay'):
         raise ValueError('covered historical replay requires separate admission')
     return policy
 
 
 def coverage_manifest(manifest, receipts, challenge):
-    if epoch_policy(manifest) != COVERED_POLICY:
+    if epoch_policy(manifest) not in (COVERED_POLICY,PERSISTENT_POLICY):
         raise ValueError('explicit covered training manifest required')
     timestamp = challenge.get('generated_after_freeze_at')
     if (type(timestamp) not in (int, float) or not math.isfinite(timestamp) or

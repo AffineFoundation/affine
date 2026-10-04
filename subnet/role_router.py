@@ -78,6 +78,17 @@ class RoutedJobs:
         cache=self.caches.get('train',{}).get(checkpoint)
         source=self.roles[self.initial_role]
         source_path=self.caches.get(self.initial_role,{}).get(checkpoint) or self.checkpoint_path(self.initial_role,checkpoint)
+        from .persistent_cpu_adamw import POLICY as PERSISTENT_POLICY
+        if manifest.get('training_policy')==PERSISTENT_POLICY:
+            from .persistent_training_worker import capacity_requirement
+            code="import json;from subnet.persistent_training_worker import capacity_probe;print(json.dumps(capacity_probe("+repr(trainer.workspace)+","+repr(cache)+")))"
+            probe=json.loads(trainer.command('cd '+shlex.quote(trainer.code)+' && '+shlex.quote(trainer.python)+' -I -B -c '+shlex.quote("import sys;sys.path.insert(0,"+repr(trainer.code)+");"+code)))
+            if cache:checkpoint_bytes=probe['checkpoint_bytes']
+            else:
+                owner=self.owners.get(source_path,self.initial_role)
+                measured=self.roles[owner].publication_capacity(source_path)
+                checkpoint_bytes=measured['checkpoint_bytes']
+            return capacity_requirement(manifest,probe,checkpoint_bytes=checkpoint_bytes,missing_input=cache is None)
         if cache:
             measured=trainer.capacity(cache);checkpoint_bytes=measured['checkpoint_bytes'];free=measured['free_bytes']
         else:

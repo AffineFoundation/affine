@@ -74,6 +74,14 @@ class RemoteJobs:
         result=json.loads(self.command(shlex.quote(self.python)+' -I -B -c '+shlex.quote(code)))
         if result['checkpoint_bytes']<=0 or result['free_bytes']<1024**2:raise ValueError('existing checkpoint upload metadata reserve')
         return dict(result,required_bytes=1024**2,purpose='existing-checkpoint-streaming-upload')
+    def persistent_training_capacity(self,manifest,steps,submission_bytes=None):
+        from .persistent_cpu_adamw import POLICY as PERSISTENT_POLICY
+        if manifest.get('training_policy')!=PERSISTENT_POLICY:raise ValueError('single-host prospective persistent capacity only')
+        from .persistent_training_worker import capacity_requirement
+        cache=self.workspace+'/checkpoints/'+manifest['checkpoint']['id']
+        code="import json;from subnet.persistent_training_worker import capacity_probe;print(json.dumps(capacity_probe("+repr(self.workspace)+","+repr(cache)+")))"
+        probe=json.loads(self.command('cd '+shlex.quote(self.code)+' && '+shlex.quote(self.python)+' -I -B -c '+shlex.quote("import sys;sys.path.insert(0,"+repr(self.code)+");"+code)))
+        return capacity_requirement(manifest,probe,checkpoint_bytes=probe['checkpoint_bytes'],missing_input=False)
     def training_resume(self,label,manifest,submissions,steps,replay):
         record=self.state/(label+'.json')
         if not record.exists():return None
@@ -87,6 +95,9 @@ class RemoteJobs:
                 or job.get('training_policy')!=epoch_policy(manifest) or job.get('replay')!=replay
                 or [r['sha256'] for r in job.get('submissions',[])]!=[r['sha256'] for r in submissions]):
             raise ValueError('original training request changed')
+        from .persistent_cpu_adamw import POLICY as PERSISTENT_POLICY
+        if job.get('training_policy')==PERSISTENT_POLICY and [r.get('accepted_batch_sha256')for r in job['submissions']]!=[r.get('accepted_batch_sha256')for r in submissions]:
+            raise ValueError('original persistent training accepted pair population changed')
         reportpath=self.state/(prior['job_id']+'-report.json')
         if reportpath.exists():
             self.checked(json.loads(reportpath.read_text()),prior,manifest);phase='complete'
@@ -115,6 +126,12 @@ class RemoteJobs:
         if prior is None:
             identifier=label+'-'+secrets.token_hex(4);now=time.time()
             payload=dict(schema=1,job_id=identifier,role=role,created_at=now,expires_at=now+role_time_budget(self.config,role),manifest=self.controller.signed(manifest),**self.metadata,**fields)
+            from .persistent_cpu_adamw import POLICY as PERSISTENT_POLICY
+            if role=='train'and fields.get('training_policy')==PERSISTENT_POLICY:
+                if 'persistent_training'in fields:raise ValueError('persistent capabilities are original-job scoped')
+                from .persistent_training_protocol import prepare_job,validate_job
+                payload['persistent_training']=prepare_job(self.controller,manifest,identifier,fields['steps'],role_time_budget(self.config,role))
+                validate_job(payload,manifest,self.controller.authority.id)
             jobpath=self.state/(identifier+'-job.json');save(jobpath,self.controller.signed(payload))
             prior=dict(job_id=identifier,role=role,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],job_sha256=hashlib.sha256(canonical(payload)).hexdigest(),manifest_sha256=hashlib.sha256(canonical(manifest)).hexdigest(),source_files=self.metadata['source_files'],runtime_versions=self.metadata['runtime_versions'])
             save(record,prior);remotejob=self.workspace+'/'+identifier+'.json'
@@ -147,6 +164,10 @@ class RemoteJobs:
         created,expires,completed=job.get('created_at'),job.get('expires_at'),report.get('completed_at')
         if any(type(value) not in (int,float) or not math.isfinite(value) for value in (created,expires,completed)) or not created<=completed<expires or not 0<expires-created<=86400:
             raise ValueError('remote role report outside signed time budget')
+        from .persistent_cpu_adamw import POLICY as PERSISTENT_POLICY
+        if job.get('training_policy')==PERSISTENT_POLICY:
+            from .persistent_training_protocol import validate_job,validate_report
+            validate_job(job,manifest,self.controller.authority.id);validate_report(report,job,manifest)
         return report
 
 class RemoteController(Controller):
@@ -307,6 +328,10 @@ class RemoteController(Controller):
             persist_signed_compute_evidence(self,manifest,result,reports)
         return result,reports
     def train(self,manifest,reports,checkpoint_path,destination=None,steps=1,replay=None,**ignored):
+        from .persistent_cpu_adamw import POLICY as PERSISTENT_POLICY
+        if epoch_policy(manifest)==PERSISTENT_POLICY:
+            from .persistent_training_controller import train
+            return train(self,manifest,reports,checkpoint_path,steps=steps,replay=replay)
         epoch=manifest['epoch'];cached=self.state/(epoch+'-training-metrics.json')
         policy=epoch_policy(manifest)
         from .backend_jobs import COVERED_POLICY

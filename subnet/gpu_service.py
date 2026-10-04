@@ -194,6 +194,13 @@ def run(config,once=False):
                     gateway.freeze(epoch);save(state/(epoch+'-opening-aborted.json'),dict(epoch=epoch,payable=False,reason='interrupted before published manifest'));status['active']=None;status['round']+=1;save(statuspath,status);continue
                 else:
                     opening_contract=contract(config,status['round'])
+                    from .persistent_cpu_adamw import POLICY as PERSISTENT_POLICY
+                    if opening_contract['training_policy']==PERSISTENT_POLICY:
+                        from .persistent_training_protocol import opening_binding
+                        journal=state/'latest-trainer-state.json'
+                        latest=json.loads(journal.read_text())if journal.exists()else None
+                        if latest!=status.get('trainer_state'):raise ValueError('controller latest committed trainer-state journal mismatch')
+                        opening_contract['trainer_state_binding']=opening_binding(config,status,epoch)
                     if anchor_document is not None:opening_contract['live_reward_registration_snapshot']=active['registrations']
                     manifest=controller.open(epoch,status['checkpoint'],active['identities'],max_batches=config.get('max_batches',3),**opening_contract)
                 if manifest['max_batches']!=config.get('max_batches',3):raise ValueError('immutable epoch quota/config mismatch')
@@ -252,10 +259,13 @@ def run(config,once=False):
                         from .replay_commit import commit
                         commit(state/'replay-reuse-ledger.json',epoch,metrics)
                     active['next_checkpoint']=cp;active['next_path']=metrics['checkpoint_path'];active['next_steps']=status['training_steps']+metrics['steps']
+                    if metrics.get('trainer_state')is not None:
+                        active['next_trainer_state']=metrics['trainer_state']
                 else:
                     save(state/(epoch+'-empty-closed.json'),dict(epoch=epoch,status='closed_no_accepted_batches',payable=False,checkpoint=status['checkpoint']['id']))
                     bucket.json('public/'+epoch+'/training.json',controller.signed(dict(status='closed_no_accepted_batches',checkpoint=status['checkpoint']['id'])))
                     active['next_checkpoint']=status['checkpoint'];active['next_path']=status['checkpoint_path'];active['next_steps']=status['training_steps']
+                    if status.get('trainer_state')is not None:active['next_trainer_state']=status['trainer_state']
                 active['phase']='after';save(statuspath,status)
             if active['phase']=='after':
                 nextmanifest=dict(manifest,checkpoint=active['next_checkpoint']);evaluate(controller,nextmanifest,active['next_path'],'after',active['next_steps'],config)
@@ -263,6 +273,8 @@ def run(config,once=False):
                 publish_history(controller,prefix,json.loads(ledgerpath.read_text()),config['source_bundle'])
                 # A failed history publication must remain in the after phase:
                 # resume reuses the completed evaluation and never retrains.
+                if active.get('next_trainer_state')is not None:
+                    status.update(trainer_state=active['next_trainer_state'],persistent_state_committed=True)
                 status.update(checkpoint=active['next_checkpoint'],checkpoint_path=active['next_path'],training_steps=active['next_steps'],active=None,round=status['round']+1);save(statuspath,status)
                 if once:return
         except Exception as error:

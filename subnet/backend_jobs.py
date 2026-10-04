@@ -28,6 +28,7 @@ HEAD_POLICY='frozen-feature-head-adamw-v1'
 FULL_POLICY='bf16-full-adamw-checkpointed-v1'
 FIXED_POLICY='bf16-full-adamw-fixed-epoch-reference-v2'
 COVERED_POLICY='bf16-full-adamw-covered-fixed-reference-v3'
+PERSISTENT_POLICY='bf16-cpu-fp32-master-task-normalized-persistent-v4'
 TRAINING_ATTRIBUTION='verified-pair-v1'
 
 def validate_single_put_sizes(checkpoint, files):
@@ -239,7 +240,7 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
         if job['capability'].get('headers')!={'Content-Type':'application/octet-stream'}:raise ValueError('signed upload headers')
         if resolve_source and job.get('mining_subset') is not None:mining_definitions(manifest,job)
     elif 'mining_subset' in job:raise ValueError('mining subset only in signed mining jobs')
-    if job['role']=='train' and job.get('training_policy',HEAD_POLICY) not in (HEAD_POLICY,FULL_POLICY,FIXED_POLICY,COVERED_POLICY):raise ValueError('unapproved training objective')
+    if job['role']=='train' and job.get('training_policy',HEAD_POLICY) not in (HEAD_POLICY,FULL_POLICY,FIXED_POLICY,COVERED_POLICY,PERSISTENT_POLICY):raise ValueError('unapproved training objective')
     if job['role']=='train' and (type(job.get('steps')) is not int or not 1<=job['steps']<=32):raise ValueError('training step budget')
     if job.get('training_policy')==FIXED_POLICY and manifest.get('training_policy')!=FIXED_POLICY:raise ValueError('signed fixed-reference training policy')
     if job['role']=='train' and (manifest.get('training_policy')==COVERED_POLICY or job.get('training_policy')==COVERED_POLICY):
@@ -247,6 +248,12 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
         if not {'subnet/training_policy.py','subnet/covered_epoch_optimizer.py','subnet/epoch_optimizer.py'}<=set(job['source_files']):raise ValueError('covered training execution source pins')
         from .training_policy import validate_coverage
         validate_coverage(manifest,job.get('submissions'))
+    if job['role']=='train' and (manifest.get('training_policy')==PERSISTENT_POLICY or job.get('training_policy')==PERSISTENT_POLICY):
+        if manifest.get('training_policy')!=job.get('training_policy'):raise ValueError('signed persistent training policy')
+        from .training_policy import validate_coverage
+        from .persistent_training_protocol import validate_job
+        validate_coverage(manifest,job.get('submissions'))
+        validate_job(job,manifest,authority)
     if job.get('replay') is not None:
         if job['role']!='train' or job.get('training_policy')!=FIXED_POLICY:raise ValueError('replay only in signed fixed optimizer job')
         if resolve_source:
@@ -402,13 +409,14 @@ class FreshSourceFinder(importlib.abc.MetaPathFinder):
                 exec(compile(location.read_bytes(),str(location),'exec'),module.__dict__)
         return importlib.util.spec_from_file_location(fullname,location,loader=Loader())
 
-def install_source_loader(root):
+def install_source_loader(root,additional_files=()):
     # Pure admission helpers are used before workspace/artifact access. Their
     # pinned bytes have now been checked; discard bootstrap imports so compute
     # admission reloads them through the authenticated fresh-source finder.
-    for module_name in ('subnet.backend_profiles','subnet.artifact_budget','subnet.audit_policy','subnet.auditing','subnet.training_policy'):
+    for module_name in ('subnet.backend_profiles','subnet.artifact_budget','subnet.audit_policy','subnet.auditing','subnet.training_policy',
+            'subnet.persistent_cpu_adamw','subnet.persistent_training_state','subnet.persistent_training_protocol'):
         sys.modules.pop(module_name,None)
-    for name in SOURCE_FILES:
+    for name in set(SOURCE_FILES)|set(additional_files):
         module_name=name[:-3].replace('/','.')
         if module_name in sys.modules and module_name!='subnet.backend_jobs':
             raise ValueError('GPU worker requires fresh process before runtime imports')
@@ -432,7 +440,10 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     for name,expected in job['runtime_versions'].items():
         if version(name)!=expected:raise ValueError('runtime package mismatch')
     if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':raise ValueError('CUDA environment profile')
-    install_source_loader(root)
+    if job.get('training_policy')==PERSISTENT_POLICY:
+        from .persistent_training_protocol import EXECUTION_FILES
+        install_source_loader(root,EXECUTION_FILES)
+    else:install_source_loader(root)
     from .backend_profiles import resolve
     revision,backend_profile,numerical_policy=resolve(manifest)
     from .artifact_budget import for_manifest
@@ -495,7 +506,11 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
             for i,obj in enumerate(job['submissions']):
                 from .artifact_budget import for_manifest
                 path=out/('submission-'+str(i)+'.zip');get_object(obj['url'],obj['sha256'],path,for_manifest(manifest)['compressed_bytes'])
-                result,verified=audit(path.read_bytes(),manifest,runtime);reports.append(result);pairs.extend(verified)
+                if job['role']=='train' and job.get('training_policy')==PERSISTENT_POLICY:
+                    from .persistent_training_worker import reaudited_submission
+                    result,verified=reaudited_submission(path,obj,manifest,runtime)
+                else:result,verified=audit(path.read_bytes(),manifest,runtime)
+                reports.append(result);pairs.extend(verified)
             report['audits']=reports
             if job['role']=='train':
                 if not pairs:raise ValueError('no verified training pairs')
@@ -509,7 +524,12 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                     report['replay_training']=replay_report
                     if job['steps']<len(pairs):raise ValueError('each fresh/replay family needs an optimizer step')
                 metrics=[];destination=None
-                if job.get('training_policy')==FIXED_POLICY:
+                if job.get('training_policy')==PERSISTENT_POLICY:
+                    from .persistent_training_worker import train,report_updates
+                    destination,persistent_diagnostics,persistent_state=train(runtime,pairs,out,manifest,job,authority,approved_checkpoint=approved)
+                    metrics,persistent_diagnostics=report_updates(persistent_diagnostics,job,manifest)
+                    report['persistent_training_state']=persistent_state
+                elif job.get('training_policy')==FIXED_POLICY:
                     from .epoch_optimizer import train_epoch
                     destination,metrics=train_epoch(runtime,pairs,out,steps=job['steps'])
                 elif job.get('training_policy')==COVERED_POLICY:
@@ -528,11 +548,18 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                         update.update(pair_attribution(definition,pos,neg,step));metrics.append(update)
                 from .model import model_files
                 files=model_files(destination)
-                if not checkpoint_weights_changed(manifest['checkpoint']['files'],files):raise ValueError('training did not change checkpoint weights')
+                persistent=job.get('training_policy')==PERSISTENT_POLICY
+                if not persistent and not checkpoint_weights_changed(manifest['checkpoint']['files'],files):raise ValueError('training did not change checkpoint weights')
                 values_after=parameter_value_digest(runtime.model)
-                if values_before==values_after:raise ValueError('optimizer did not change parameter values')
-                report['training']=dict(steps=job['steps'],updates=metrics,training_policy=job.get('training_policy',HEAD_POLICY),full_model_finetune=job.get('training_policy',HEAD_POLICY) in (FULL_POLICY,FIXED_POLICY,COVERED_POLICY),weights_changed=True,parameter_values_sha256_before=values_before,parameter_values_sha256_after=values_after)
+                if not persistent and values_before==values_after:raise ValueError('optimizer did not change parameter values')
+                report['training']=dict(steps=job['steps'],updates=metrics,training_policy=job.get('training_policy',HEAD_POLICY),full_model_finetune=job.get('training_policy',HEAD_POLICY) in (FULL_POLICY,FIXED_POLICY,COVERED_POLICY,PERSISTENT_POLICY),weights_changed=values_before!=values_after,parameter_values_sha256_before=values_before,parameter_values_sha256_after=values_after)
                 if job.get('training_policy')==COVERED_POLICY:report['training']['training_coverage']=manifest['training_coverage']
+                if persistent:
+                    report['training'].update(training_coverage=manifest['training_coverage'],
+                        state_updated=True,all_pairs_independently_reaudited=True,
+                        persistent_diagnostics=persistent_diagnostics,
+                        global_step_before=manifest['trainer_state_binding']['global_step_before'],
+                        global_step_after=job['persistent_training']['global_step_after'])
                 report['full_model_finetune']=report['training']['full_model_finetune']
                 report['new_checkpoint']=dict(id=file_map(files),files=files,path=str(destination))
         else:
