@@ -5,21 +5,33 @@
 <meta name="description" content="Affine subnet 120. Actual held-out evaluation performance over time and batches per epoch.">
 <title>Affine</title>
 <link rel="icon" href="/network-favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/network.css?v=20261003-current-run"><script src="/network.js?v=20261003-current-run" defer></script>
+<link rel="preload" href="/network-haffer.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="/network.css?v=20261004-research"><script src="/network.js?v=20261004-research" defer></script>
 </head>
 <body>
-<header><a class="wordmark" href="/" aria-label="Affine home"><svg viewBox="0 0 22 23" aria-hidden="true"><path d="M2 20 11 3l9 17"/></svg><span>FFINE</span></a></header>
-<main>
+<a class="skip-link" href="#main">Skip to network measurements</a>
+<header>
+<a class="wordmark" href="/" aria-label="Affine home"><svg viewBox="0 0 22 23" aria-hidden="true"><path d="M2 20 11 3l9 17"/></svg><span>FFINE</span></a>
+<nav aria-label="Project links"><a href="/llms.txt">llms.txt <span aria-hidden="true">↗</span></a><a href="https://github.com/AffineFoundation/affine">GitHub <span aria-hidden="true">↗</span></a></nav>
+</header>
+<main id="main">
 <section aria-labelledby="evaluation-title">
-<div class="section-label"><h1 id="evaluation-title">Math performance / time</h1></div>
-<div class="chart-wrap"><svg id="evaluation-chart" role="img" aria-label="Held-out evaluation performance over time"></svg><p id="evaluation-empty" class="empty" hidden>No completed held-out evaluations yet.</p><output id="evaluation-tip" class="chart-tip" hidden></output></div>
+<div class="section-label">
+<div class="chart-heading"><span class="section-index" aria-hidden="true">01 / EVALUATION</span><h1 id="evaluation-title">Held-out math performance</h1></div>
+<div class="latest-reading"><span id="evaluation-value">—</span><span id="evaluation-reading">Awaiting a completed evaluation</span></div>
+</div>
+<div class="chart-wrap"><svg id="evaluation-chart" role="group" aria-label="Held-out evaluation performance over time" aria-describedby="evaluation-period evaluation-note"></svg><p id="evaluation-empty" class="empty">Loading held-out measurements.</p><output id="evaluation-tip" class="chart-tip" aria-live="polite" hidden></output></div>
 <div class="chart-caption"><span id="evaluation-period">Completed evaluations · UTC</span><span id="evaluation-note">Actual held-out measurements</span></div>
 </section>
 <section aria-labelledby="batch-title">
-<div class="section-label"><h2 id="batch-title">Batches / epoch</h2></div>
-<div class="chart-wrap"><svg id="batch-chart" role="img" aria-label="Batches submitted per finalized epoch"></svg><p id="batch-empty" class="empty" hidden>No finalized epochs yet.</p><output id="batch-tip" class="chart-tip" hidden></output></div>
-<div class="chart-caption"><span id="batch-period">Finalized epochs · UTC</span><span>Frozen submitted batches · accepted totals in tooltips</span></div>
+<div class="section-label">
+<div class="chart-heading"><span class="section-index" aria-hidden="true">02 / CONTRIBUTIONS</span><h2 id="batch-title">Batches per epoch</h2></div>
+<div class="latest-reading"><span id="batch-value">—</span><span id="batch-reading">Awaiting a finalized epoch</span></div>
+</div>
+<div class="chart-wrap"><svg id="batch-chart" role="group" aria-label="Frozen submitted batches per finalized epoch" aria-describedby="batch-period batch-note"></svg><p id="batch-empty" class="empty">Loading epoch records.</p><output id="batch-tip" class="chart-tip" aria-live="polite" hidden></output></div>
+<div class="chart-caption"><span id="batch-period">Finalized epochs · UTC</span><span id="batch-note">Frozen submissions · inspect a point for audit results</span></div>
 </section>
 </main>
-<footer><span>Affine · Subnet 120</span><span id="connection" role="status">Connecting</span><a href="/llms.txt">llms.txt ↗</a></footer>
+<footer><span>Affine <span class="footer-divider" aria-hidden="true">/</span> Subnet 120</span><span id="connection" role="status">Connecting to network records</span><a href="/llms.txt">Read the mechanism <span aria-hidden="true">↗</span></a></footer>
+<noscript><p class="noscript">Enable JavaScript to view the network measurements. The current mechanism is available in <a href="/llms.txt">llms.txt</a>.</p></noscript>
 </body></html>
