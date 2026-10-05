@@ -143,6 +143,26 @@ class ContinuousAuditor:
   # Empty current hour is a real zero-weight snapshot, not last-hour reuse.
   documents=[self.hourly_snapshot(c['epoch'],c['round'],c.get('inputcheckpoint',c.get('checkpoint')),cutoff)for c in sorted(selected,key=lambda c:(c['completed_at'],c['epoch']))]
   document=self.controller.signed(hourly_aggregate(documents,self.controller.authority.id,cutoff));atomic(target,document);self.publish_immutable('public/continuous-audit/hourly/'+str(cutoff)+'.json',document);return document
+ def reconcile_hours(self,completed,current_cutoff):
+  from .continuous_audit_policy import finite
+  if type(current_cutoff)is not int or current_cutoff<0 or current_cutoff%3600:raise ValueError('real whole UTC cutoff')
+  cutoffs={current_cutoff}
+  for c in completed:
+   at=finite(c['completed_at'],0,2**53,'original learner completion timestamp')
+   if c['epoch']not in self.state['populations']:continue
+   cutoff=int(__import__('math').ceil(at/3600))*3600
+   if cutoff<=current_cutoff:cutoffs.add(cutoff)
+  published=self.state.setdefault('published_hours',{});count=0
+  for cutoff in sorted(cutoffs):
+   target=self.directory/('hourly-weights-'+str(cutoff)+'.json');known=published.get(str(cutoff))
+   if known is not None:
+    if not target.is_file()or digest(json.loads(target.read_text()))!=known:raise ValueError('original published hourly journal mismatch')
+    continue
+   document=self.hourly_completed(completed,cutoff)
+   # Set only AFTER exact conditional publication/readback succeeds. A crash
+   # after local atomic write is retried with the saved immutable document.
+   published[str(cutoff)]=digest(document);self.persist();count+=1
+  return dict(completed_hours=count,current_cutoff=current_cutoff)
  def hourly_snapshot(self,epoch,round,checkpoint,cutoff):
   target=self.directory/('snapshot-'+str(cutoff)+'-'+epoch+'.json')
   if target.exists():
@@ -177,7 +197,7 @@ def main(argv=None):
   for path in sorted(state.glob('*-continuous-audit-population.json')):service.admit(json.loads(path.read_text()))
   result=service.tick();atomic(state/'continuous-audit-health.json',dict(at=time.time(),**result))
   cutoff=int(time.time()//3600)*3600
-  service.hourly_completed([json.loads(path.read_text())for path in sorted(state.glob('*-learner-completion.json'))],cutoff)
+  service.reconcile_hours([json.loads(path.read_text())for path in sorted(state.glob('*-learner-completion.json'))],cutoff)
   if a.once:return 0
   time.sleep(c.get('poll_seconds',10))
 
