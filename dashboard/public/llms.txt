@@ -78,6 +78,10 @@ New main-branch code also adds default-off sole-current FP32 optimizer caching
 and prompt-only native MATH eligibility. Those changes are NOT in the sealed
 FE archive and are not enabled in live jobs. They require a new signed source
 contract and qualification before activation; main branch alone is not a contract.
+Prospective optimizer export also checks each serialized FP32 slice once,
+rather than rescanning a whole parameter for every split shard. Real tiny
+serial/parallel export, restoration and invalid-state controls pass; this change
+is not in FE or the staged complete package, and no live speedup is claimed.
 An independent coordinator API option is also default-off and prospective: it
 keeps verifier HTTP availability separate from learner initialization/recovery,
 using the same authenticated queue and leases. It is not deployed in FE.

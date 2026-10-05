@@ -420,8 +420,12 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
             value = optimizer.rows[metadata['parameter']][metadata['slot']]
             if value.device.type != 'cpu' or value.dtype != torch.float32 or not value.is_contiguous():
                 raise ValueError('export CPU FP32 tensor profile')
-            finite(torch, value, nonnegative=metadata['slot'] == 'exp_avg_sq')
-            tensors[metadata['key']] = value.reshape(-1)[metadata['start']:metadata['start'] + metadata['count']]
+            # Plans partition every slot into disjoint, exhaustive slices. Check
+            # the bytes actually serialized once, rather than rescanning an
+            # entire large parameter for each shard that contains part of it.
+            part = value.reshape(-1)[metadata['start']:metadata['start'] + metadata['count']]
+            finite(torch, part, nonnegative=metadata['slot'] == 'exp_avg_sq')
+            tensors[metadata['key']] = part
         save_file(tensors, str(path)); path.chmod(0o600); del tensors
         actual_sha, size = _hash_file(path)
         if not 1 <= size <= shard_bytes: raise ValueError('actual state shard exceeds object cap')

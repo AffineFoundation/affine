@@ -56,6 +56,31 @@ class ParallelState(unittest.TestCase):
         for slot,value in before.items():self.assertTrue(torch.equal(restored[1]['w'][slot],value))
         self.assertEqual(restored[1]['w']['step'],1)
         self.assertEqual(self.optimizer.global_step,1)
+    def test_export_validates_each_serialized_slot_element_once(self):
+        from subnet.persistent_cpu_adamw import finite
+        observed=[]
+        def check(module, tensor, **kwargs):
+            with self.lock:observed.append((tensor.numel(),kwargs['nonnegative']))
+            return finite(module,tensor,**kwargs)
+        with patch('subnet.persistent_training_state.finite',side_effect=check):
+            self.export()
+        self.assertEqual(sum(size for size,_ in observed),3*16)
+        self.assertEqual(sum(size for size,nonnegative in observed if nonnegative),16)
+        self.assertTrue(all(size<=4 for size,_ in observed))
+
+    def test_late_shard_nonfinite_or_negative_moment_never_commits(self):
+        from test_persistent_training_policy import MemoryStorage
+        for slot,value in (('exp_avg',float('nan')),('exp_avg_sq',-1.0)):
+            with self.subTest(slot=slot):
+                original=self.optimizer.rows['w'][slot][-1].item()
+                self.optimizer.rows['w'][slot][-1]=value;store=MemoryStorage()
+                try:
+                    with self.assertRaises(ValueError):
+                        self.export(publish_shard=store.publish,readback_shard=store.readback,
+                            commit_descriptor=store.commit)
+                    self.assertFalse(store.committed)
+                finally:self.optimizer.rows['w'][slot][-1]=original
+
     def test_parallel_descriptor_is_byte_identical_to_serial_transport(self):
         from test_persistent_training_policy import MemoryStorage
         parallel,_=self.export();store=MemoryStorage()
