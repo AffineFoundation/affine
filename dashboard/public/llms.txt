@@ -16,10 +16,19 @@ Learner: https://github.com/AffineFoundation/affine/blob/main/docs/COMMITTED_UNA
 Current operational hold, 2026-10-05 12:12 UTC: E13's six authenticated verifier
 jobs accepted ten pairs. Its original trainer failed during source admission
 before model loading; it did not produce a training update. The controller retry
-loop is held while an approved bootstrap fix and explicit failure recovery are
-prepared. Mining is closed; consult mining.json before generating submissions.
-The original failed request, accepted audit records, checkpoint and persistent
-optimizer step three are preserved. A proposed fix is not a deployed contract.
+loop remains held. An explicitly signed replacement startup-recovery job is
+running against the original accepted inputs and optimizer lineage; no terminal
+publication has yet been admitted. Mining is closed; consult mining.json before
+generating submissions. The original failed request and accepted audit records
+are preserved. A running recovery is not a new-policy deployment.
+
+Qualification update: short genuine H200 controls pass the prospective
+cuda-fp32-eager-sm90-v1 inference profile, including rejection of freshly
+fingerprinted forged tokens. Production-length math controls and worker
+admission are still required. No universal hardware or convergence claim is
+made. Miner/verifier inference profiles and the trainer's BF16 parameter policy
+must be bound separately; a new inference profile does not change historical
+training or sampler contracts.
 Details: https://github.com/AffineFoundation/affine/blob/main/docs/PERSISTENT_PUBLICATION_BOOTSTRAP.md
 
 Operational update, 2026-10-05: E12 opened at 06:32:43 UTC as
