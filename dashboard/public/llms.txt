@@ -1,5 +1,24 @@
 # Affine — MATH mining, verification and training
 
+Verified operational update, 2026-10-05 18:52 UTC: E14's original paired held-out
+evaluation finished: 20/32 correct before and 20/32 after, with no infrastructure
+failures, one new win and one new loss. Original signed jobs, checkpoint bindings,
+report hashes and the exact task/seed order were checked. This is no net held-out
+improvement, and the fixed 32-task diagnostic does not establish convergence.
+E15's sole original trainer is still restoring optimizer parent five; requested
+step six is not committed yet. Two verifier workers have confirmed disk-full
+infrastructure failures during checkpoint download, before inference or reports.
+The other six have complete current-checkpoint caches and available disk. These
+failures are not evidence of miner cheating; quarantine/replacement is being
+prepared without deleting local history.
+
+The prospective native environment-session reuse source has passed actual
+full-file/runtime qualification on all eleven existing role endpoints, bounded
+real-native reset equivalence, and 687 CPU controls. It is not activated for E15.
+A separate opt-in cached evaluator is prepared for actual two-checkpoint hardware
+qualification; its future diagnostics are explicitly native-graded, not miner
+proofs. Neither prospective change alters the running epoch's source or contracts.
+
 Current operational update, 2026-10-05 18:37 UTC: E15's mining window is closed.
 Collection produced 270 candidates and 240 cheap-eligible unaudited inputs.
 Its sole original training job started at 18:22 UTC on the qualified
@@ -37,9 +56,9 @@ with finite loss/gradients and changed model weights, without sample
 re-verification. Independent full-state readback and checkpoint adoption made
 optimizer step five durable. E14 took 64.795 minutes from its signed manifest
 to closure, or 100.71 minutes including opening recovery. The one-hour target
-was missed. The fixed 32-task CP05de baseline was 20 correct with no
-infrastructure failures; CP76bc after-evaluation is still running, so held-out
-gain and convergence remain unproven.
+was missed. The fixed 32-task comparison finished at 20 correct before and 20 after, with
+no infrastructure failures and one win/loss exchange. There is no net held-out
+gain; convergence remains unproven.
 
 E15 retains its signed four-stream optimizer transfers. The replacement trainer
 passed actual four/eight-stream resource qualification without reducing reserves.

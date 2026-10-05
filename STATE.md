@@ -1,3 +1,22 @@
+Verified operational update, 2026-10-05 18:52 UTC: E14's original paired held-out
+evaluation finished: 20/32 correct before and 20/32 after, with no infrastructure
+failures, one new win and one new loss. Original signed jobs, checkpoint bindings,
+report hashes and the exact task/seed order were checked. This is no net held-out
+improvement, and the fixed 32-task diagnostic does not establish convergence.
+E15's sole original trainer is still restoring optimizer parent five; requested
+step six is not committed yet. Two verifier workers have confirmed disk-full
+infrastructure failures during checkpoint download, before inference or reports.
+The other six have complete current-checkpoint caches and available disk. These
+failures are not evidence of miner cheating; quarantine/replacement is being
+prepared without deleting local history.
+
+The prospective native environment-session reuse source has passed actual
+full-file/runtime qualification on all eleven existing role endpoints, bounded
+real-native reset equivalence, and 687 CPU controls. It is not activated for E15.
+A separate opt-in cached evaluator is prepared for actual two-checkpoint hardware
+qualification; its future diagnostics are explicitly native-graded, not miner
+proofs. Neither prospective change alters the running epoch's source or contracts.
+
 Verified operational update, 2026-10-05 18:37 UTC: the original E15 trainer
 started at 18:22 UTC after a reviewed pre-dispatch physical-role swap. The
 previous owned miner H200 is now trainer; the previous trainer is now miner.
