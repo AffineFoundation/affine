@@ -76,7 +76,11 @@ one live observation showed34,740kB RSS. No GPU/model cache or authority commit
 was used. The durable control evidence key is
 `private/root-transport-qualification/independent-reader-original-E10-20261005-v5/evidence.json`,
 SHA256 `5e9477430bb04286d14c151851cf0bcce420c47e42f4e24e48659daf4a32f632`.
-Root qualification admission and deployment remain separate steps.
+Root subsequently validated the original production job, report, descriptor,
+ordered object inventory, signed receipt and actual child wait, and signed a
+qualification admission for that evaluator-host reader. Deployment remains a
+separate step. A dedicated CPU reader on another host needs its own measurement
+and admission; the evaluator's qualification cannot be transferred to it.
 
 Original E10 runner→report was5474.477 seconds. Actual final BF16 file mtimes
 bound all pre-state-export work to768.708 seconds; subsequent state export,
