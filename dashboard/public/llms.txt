@@ -16,20 +16,24 @@ Audits: https://github.com/AffineFoundation/affine/blob/main/docs/CONTINUOUS_AUD
 Statistical rewards and trainer precision: https://github.com/AffineFoundation/affine/blob/main/docs/CONTINUOUS_STATISTICAL_REWARD_BRIDGE.md
 Successor checkpoint qualification: https://github.com/AffineFoundation/affine/blob/main/docs/SUCCESSOR_CALIBRATION.md
 
-Current operational hold, 2026-10-05 12:12 UTC: E13's six authenticated verifier
-jobs accepted ten pairs. Its original trainer failed during source admission
-before model loading; it did not produce a training update. The controller retry
-loop remains held. An explicitly signed replacement startup-recovery job is
-running against the original accepted inputs and optimizer lineage; no terminal
-publication has yet been admitted. Mining is closed; consult mining.json before
-generating submissions. The original failed request and accepted audit records
-are preserved. A running recovery is not a new-policy deployment.
+Current operational hold, 2026-10-05: E13's explicit recovery is committed and
+the original epoch is closed. Checkpoint
+05de656e9c215a139f4329ffc9954e7c83955872929a17c35fd1a9bd9eae0923
+and persistent optimizer step four are authoritative. Original failed requests,
+opening rules, and accepted audit records remain preserved. Mining remains
+closed while this checkpoint and the prospective source are qualified; consult
+mining.json before generating submissions. Recovery completion is not activation
+of the decoupled mechanism.
 
-Qualification update: short genuine H200 controls pass the prospective
-cuda-fp32-eager-sm90-v1 inference profile, including rejection of freshly
-fingerprinted forged tokens. Production-length math controls and worker
-admission are still required. No universal hardware or convergence claim is
-made. Miner/verifier inference profiles and the trainer's BF16 parameter policy
+Qualification update: eight distinct H200s completed production-length controls
+against the predecessor checkpoint. Fifteen of sixteen honest fast-prefill
+checks verified directly; one was numerically ambiguous. Genuine cached-reference
+verification accepted all sixteen honest cases and rejected all sixteen freshly
+fingerprinted forged controls. The prospective v3 code adds automatic reference
+adjudication for ambiguous intervals; unavailable reference computation remains
+unknown, rather than fraud. Final source admission and qualification of the new
+checkpoint are pending. No universal hardware or convergence claim is made.
+Miner/verifier inference profiles and the trainer's BF16 parameter policy
 must be bound separately; a new inference profile does not change historical
 training or sampler contracts.
 Details: https://github.com/AffineFoundation/affine/blob/main/docs/PERSISTENT_PUBLICATION_BOOTSTRAP.md
