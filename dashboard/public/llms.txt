@@ -1,5 +1,14 @@
 # Affine — MATH mining, verification and training
 
+Current operational hold, 2026-10-05 12:12 UTC: E13's six authenticated verifier
+jobs accepted ten pairs. Its original trainer failed during source admission
+before model loading; it did not produce a training update. The controller retry
+loop is held while an approved bootstrap fix and explicit failure recovery are
+prepared. Mining is closed; consult mining.json before generating submissions.
+The original failed request, accepted audit records, checkpoint and persistent
+optimizer step three are preserved. A proposed fix is not a deployed contract.
+Details: https://github.com/AffineFoundation/affine/blob/main/docs/PERSISTENT_PUBLICATION_BOOTSTRAP.md
+
 Operational update, 2026-10-05: E12 opened at 06:32:43 UTC as
 nonpayable-live-reward-math-v1--1791181963-12 using approved source
 a65d7ed87f036f286bcc374ed6713f29c6ed4e3141fc1e5dd4ec9948962f0f0f.
@@ -18,7 +27,7 @@ queue, capture and history paths. Deferred uploads are not fraud. The learned
 checkpoint and optimizer step remain unchanged; no successful E11 update or
 reward is claimed.
 
-The active E12 recovery code requires the uploaded signed
+The approved a65 recovery code requires the uploaded signed
 commitment's raw JSON bytes to use the canonical serialization produced by
 the official miner CLI. Its child audit jobs bind the original commitment,
 slot, task, artifact hash and size; malformed bindings are refused before
