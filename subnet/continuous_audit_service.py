@@ -4,6 +4,7 @@ Learner progress never waits for this service. It joins the original SQLite
 queue without binding another HTTP listener. No blockchain writes occur here.
 """
 import argparse,hashlib,json,os,secrets,sqlite3,time
+from concurrent.futures import ThreadPoolExecutor,as_completed
 from pathlib import Path
 from .continuous_audit_policy import VERSION,policy,population,digest,random_selection,verifier_contract,admit_queue_reports,snapshot
 from .distributed_roles import authenticate
@@ -15,6 +16,8 @@ class InvalidCommittedArtifact(ValueError):pass
 def admitted_service_config(config,authority):
  sources=authenticate(config['source_admission'],authority)
  if sources.get('version')!='continuous-audit-service-sources-v1':raise ValueError('operator admitted exact audit source/runtime metadata')
+ workers=config.get('capture_workers',1)
+ if workers not in (1,4,8)or type(workers)is not int or sources.get('capture_workers',1)!=workers:raise ValueError('exact signed bounded capture concurrency')
  expected=policy(config['policy'])
  if canonical(sources.get('audit_policy'))!=canonical(expected):raise ValueError('continuous penalty policy requires exact signed admission')
  return sources
@@ -51,7 +54,9 @@ def register_population(manifest_document,receipts,round,committed_at,authority,
 
 
 class ContinuousAuditor:
- def __init__(self,controller,queue,*,directory,approved_sources,job_metadata,audit_policy,max_inflight=8,budget_per_tick=8,job_seconds=900):
+ def __init__(self,controller,queue,*,directory,approved_sources,job_metadata,audit_policy,max_inflight=8,budget_per_tick=8,job_seconds=900,capture_workers=1):
+  if type(capture_workers)is not int or capture_workers not in (1,4,8):raise ValueError('bounded capture workers')
+  self.capture_workers=capture_workers
   self.controller=controller;self.queue=queue;self.directory=Path(directory);self.directory.mkdir(parents=True,exist_ok=True,mode=0o700);self.sources=approved_sources;self.metadata=job_metadata;self.policy=policy(audit_policy)
   if type(max_inflight)is not int or not 1<=max_inflight<=128 or type(budget_per_tick)is not int or not 1<=budget_per_tick<=128 or type(job_seconds)is not int or not 60<=job_seconds<=86400:raise ValueError('bounded continuous audit scheduler')
   self.max_inflight=max_inflight;self.budget=budget_per_tick;self.job_seconds=job_seconds
@@ -104,14 +109,26 @@ class ContinuousAuditor:
   # Persist selection before any mutable proof HEAD. Retries use the SAME draw.
   for row in selected:self.state['draws'][digest(row)]=dict(row=row,seed=seed,selected_at=now)
   self.persist()
-  for row in retry+selected:
+  candidates=retry+selected
+  # Workers perform storage-only capture. All authority signing and journal/queue
+  # changes remain on this owner thread, and selection was already persisted.
+  def captured_rows():
+   fresh=[]
+   for row in candidates:
+    identity=digest(row);original=self.directory/('continuous-audit-'+identity[:32]+'-job.json')
+    if original.exists():yield row,None;continue
+    p=authenticate(self.state['populations'][row['epoch']],self.controller.authority.id);fresh.append((row,p))
+   with ThreadPoolExecutor(max_workers=self.capture_workers)as pool:
+    futures={pool.submit(self._capture,row,p):row for row,p in fresh}
+    for future in as_completed(futures):yield futures[future],future
+  for row,future in captured_rows():
    identity=digest(row);seed=self.state['draws'][identity]['seed'];p=authenticate(self.state['populations'][row['epoch']],self.controller.authority.id)
    jobid='continuous-audit-'+identity[:32];original=self.directory/(jobid+'-job.json')
    if original.exists():
     envelope=json.loads(original.read_text());job=authenticate(envelope,self.controller.authority.id)
     if job['job_id']!=jobid:raise ValueError('original selected request identity')
     self.queue.enqueue(envelope);self.queue.archive(jobid,self.controller.bucket,'public/continuous-audit/jobs');self.state['jobs'][jobid]=dict(row_sha256=identity,job_sha256=digest(job));self.persist();enqueued+=1;continue
-   try:manifest,receipt,artifact=self._capture(row,p)
+   try:manifest,receipt,artifact=future.result()
    except Exception as error:
     from botocore.exceptions import ClientError
     missing=isinstance(error,ClientError)and str(error.response.get('Error',{}).get('Code'))in('NoSuchKey','NotFound','404')
@@ -124,7 +141,8 @@ class ContinuousAuditor:
    if manifest.get('proof_copy_policy')is not None:audit_manifest['proof_copy_receipts']={row['miner']:{str(artifact['slot']):{k:artifact[k]for k in ('sha256','size','etag','key','frozen_key','read_url')}}}
    ref=dict(miner=row['miner'],commitment_sha256=row['commitment_sha256'],**{k:artifact[k]for k in ('slot','env_id','index','batch_sha256','size','frozen_key')})
    metadata=self.metadata[manifest['source_bundle']['sha256']];jobid='continuous-audit-'+identity[:32]
-   job=dict(schema=1,job_id=jobid,role='verify',created_at=now,expires_at=now+self.job_seconds,manifest=self.controller.signed(audit_manifest),**metadata,submissions=[dict(url=artifact['read_url'],sha256=row['proof_sha256'],commitment_miner=row['miner'],commitment_ref=ref)])
+   created_at=time.time()
+   job=dict(schema=1,job_id=jobid,role='verify',created_at=created_at,expires_at=created_at+self.job_seconds,manifest=self.controller.signed(audit_manifest),**metadata,submissions=[dict(url=artifact['read_url'],sha256=row['proof_sha256'],commitment_miner=row['miner'],commitment_ref=ref)])
    envelope=self.controller.signed(job);atomic(self.directory/(jobid+'-job.json'),envelope);self.queue.enqueue(envelope);self.queue.archive(jobid,self.controller.bucket,'public/continuous-audit/jobs');self.state['jobs'][jobid]=dict(row_sha256=identity,job_sha256=digest(job));self.persist();enqueued+=1
   return dict(enqueued=enqueued,selected=len(selected),retried=len(retry),backpressure=False,source_deferred=deferred)
  def publish_immutable(self,key,document):
@@ -192,7 +210,7 @@ def main(argv=None):
  if seed.is_symlink()or not seed.is_file()or seed.stat().st_mode&0o077:raise ValueError('original private authority required; never generate another authority')
  controller=Controller(Bucket(config['bucket']),None,state);c=config['continuous_audit_service'];queue=Coordinator(state/'roles/verifier-queue.sqlite3',controller.authority.id,{e['worker_identity']:['verify']for e in config['remote']['roles']['verify']})
  sources=admitted_service_config(c,controller.authority.id)
- service=ContinuousAuditor(controller,queue,directory=state/'continuous-audit',approved_sources=sources['approved_sources'],job_metadata=sources['job_metadata'],audit_policy=c['policy'],max_inflight=c.get('max_inflight',8),budget_per_tick=c.get('budget_per_tick',8),job_seconds=c.get('job_seconds',900))
+ service=ContinuousAuditor(controller,queue,directory=state/'continuous-audit',approved_sources=sources['approved_sources'],job_metadata=sources['job_metadata'],audit_policy=c['policy'],max_inflight=c.get('max_inflight',8),budget_per_tick=c.get('budget_per_tick',8),job_seconds=c.get('job_seconds',900),capture_workers=c.get('capture_workers',1))
  while True:
   for path in sorted(state.glob('*-continuous-audit-population.json')):service.admit(json.loads(path.read_text()))
   result=service.tick();atomic(state/'continuous-audit-health.json',dict(at=time.time(),**result))
