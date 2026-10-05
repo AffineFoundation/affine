@@ -4,6 +4,17 @@ from subnet.backend_profiles import profile, resolve, for_config, HOPPER_REVISIO
 import test_backend_jobs
 
 class GPUProfiles(unittest.TestCase):
+    def test_fp32_candidate_is_a_distinct_exact_profile(self):
+        from subnet.backend_profiles import HOPPER_FP32_REVISION
+        revision,backend,policy=profile(HOPPER_FP32_REVISION)
+        self.assertEqual(backend['dtype'],'float32');self.assertFalse(backend['tf32'])
+        manifest=dict(model_runtime_revision=revision,backend_profile=backend,numerical_policy=policy)
+        self.assertEqual(resolve(manifest),(revision,backend,policy))
+        wrong=copy.deepcopy(manifest);wrong['backend_profile']['dtype']='bfloat16'
+        with self.assertRaises(ValueError):resolve(wrong)
+        wrong=copy.deepcopy(manifest);wrong['model_runtime_revision']=HOPPER_REVISION
+        with self.assertRaises(ValueError):resolve(wrong)
+
     def test_legacy_default_remains_exact(self):
         from subnet.backend_jobs import REVISION, BACKEND_PROFILE, NUMERICAL_POLICY
         self.assertEqual(for_config({}), (REVISION, BACKEND_PROFILE, NUMERICAL_POLICY))

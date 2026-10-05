@@ -4,13 +4,14 @@ import json
 
 LEGACY_REVISION = 'cuda-bf16-eager-sm86-v1'
 HOPPER_REVISION = 'cuda-bf16-eager-sm90-v1'
+HOPPER_FP32_REVISION = 'cuda-fp32-eager-sm90-v1'
 NUMERICAL_POLICY = dict(logprob_atol=1e-5, logprob_rtol=0,
     toploc_exp_mismatches=0, toploc_mant_err_mean=0, toploc_mant_err_median=0)
 
 def profile(revision):
-    if revision not in (LEGACY_REVISION, HOPPER_REVISION):
+    if revision not in (LEGACY_REVISION, HOPPER_REVISION, HOPPER_FP32_REVISION):
         raise ValueError('GPU profile or numerical policy: unknown runtime revision')
-    return (revision, dict(device='cuda', dtype='bfloat16', attention='eager',
+    return (revision, dict(device='cuda', dtype='float32' if revision==HOPPER_FP32_REVISION else 'bfloat16', attention='eager',
         sm=[8,6] if revision == LEGACY_REVISION else [9,0], tf32=False,
         deterministic_algorithms=True, cublas_workspace_config=':4096:8',
         native_toploc_threads=2, torch_threads=2), deepcopy(NUMERICAL_POLICY))
