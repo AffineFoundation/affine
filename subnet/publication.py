@@ -13,8 +13,14 @@ def public_key(key):
     return key
 
 
-def publish_source_bundle(controller,path):
+def publish_source_bundle(controller,path,*,environments=None,approved_files=None):
     """Caller supplies an already reviewed, credential-free source archive."""
+    if environments is not None:
+        if approved_files is None:raise ValueError('native source publication requires authenticated dependency inventory')
+        from ops.native_source_snapshot_guard import validate_archive_snapshots
+        validate_archive_snapshots(path,environments,approved_files)
+    elif approved_files is not None:
+        raise ValueError('native dependency inventory requires environment specifications')
     data=path.read_bytes();digest=sha(data);key=f'public/sources/{digest}/source.tar.gz'
     try:existing=controller.bucket.get(key)
     except Exception as exc:
