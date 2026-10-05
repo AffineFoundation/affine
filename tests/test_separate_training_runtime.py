@@ -24,6 +24,9 @@ class Controls(unittest.TestCase):
    with self.assertRaisesRegex(ValueError,'separate'):p.execution_profile(m,'train')
   m=copy.deepcopy(self.m);m['training_runtime']['backend_profile']['dtype']='float32'
   with self.assertRaisesRegex(ValueError,'separate'):p.execution_profile(m,'train')
+ def test_boolean_and_numeric_profile_types_are_exact(self):
+  m=copy.deepcopy(self.m);m['training_runtime']['backend_profile']['deterministic_algorithms']=1
+  with self.assertRaisesRegex(ValueError,'separate'):p.execution_profile(m,'train')
  def test_computation_binding_includes_signed_training_override(self):
   from subnet.training_receipts import computation_binding
   m=dict(self.m,checkpoint={'id':'a'*64,'files':{}})
