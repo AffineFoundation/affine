@@ -4,11 +4,12 @@ import hashlib
 import tempfile
 import time
 import unittest
+import threading
 from pathlib import Path
 from unittest.mock import Mock, patch
 from types import SimpleNamespace
 from nacl.signing import SigningKey
-from subnet.distributed_worker import Worker
+from subnet.distributed_worker import Worker, ExpiredCompletedLease
 from subnet.storage import canonical
 from subnet.distributed_roles import digest
 
@@ -135,6 +136,26 @@ class CheckpointCandidateTests(CheckpointCacheTests):
 if __name__=='__main__':unittest.main()
 
 class AutomaticLifetimeWorkerTests(WorkerTests):
+    def test_lease_lost_during_backend_only_returns_after_original_backend_exits(self):
+        targets=[];finished=[]
+        stopped=Mock();stopped.wait.return_value=False;lost=threading.Event()
+        def thread(target,daemon):
+            targets.append(target)
+            return SimpleNamespace(start=lambda:None,join=lambda **kwargs:None)
+        def run(args,**kwargs):
+            targets[0]()
+            finished.append(True)
+            return SimpleNamespace(returncode=0)
+        self.claim['lease_until']=time.time()-1
+        self.worker.request=Mock(side_effect=[{'claim':self.claim},ValueError('renewal refused')])
+        with patch('subnet.distributed_worker.threading.Event',side_effect=[stopped,lost]),patch('subnet.distributed_worker.threading.Thread',side_effect=thread),patch('subnet.distributed_worker.subprocess.run',side_effect=run):
+            with self.assertRaises(ExpiredCompletedLease):self.worker.once()
+        self.assertEqual(finished,[True]);self.assertEqual(self.worker.request.call_count,2)
+        diagnostic=json.loads((Path(self.folder.name)/'verify-job'/'attempt-1'/'expired-completed-lease.json').read_text())
+        self.assertEqual(diagnostic['stage'],'backend_completed')
+        self.assertTrue(diagnostic['backend_terminal']);self.assertEqual(diagnostic['backend_exit'],0)
+        self.assertFalse(diagnostic['report_acknowledged']);self.assertNotIn('token',diagnostic)
+
     def test_successful_ack_retires_inputs_keeps_reports(self):
         def run(args,**kwargs):
             workspace=Path(args[args.index('--workspace')+1]);out=workspace/'jobs'/'verify-job';out.mkdir(parents=True)
@@ -155,6 +176,10 @@ class AutomaticLifetimeWorkerTests(WorkerTests):
         with patch('subnet.distributed_worker.subprocess.run',side_effect=run),self.assertRaises(ValueError):self.worker.once()
         self.assertTrue((Path(self.folder.name)/'backend'/'jobs'/'verify-job'/'submission-0.zip').exists())
         self.assertTrue((Path(self.folder.name)/'verify-job'/'attempt-1'/'pending-report.json').exists())
+        diagnostic=json.loads((Path(self.folder.name)/'verify-job'/'attempt-1'/'expired-completed-lease.json').read_text())
+        self.assertEqual(diagnostic['stage'],'report_acknowledgment')
+        self.assertTrue(diagnostic['backend_terminal'])
+        self.assertFalse(diagnostic['report_acknowledged'])
 
 class RootSourceRegistryTests(unittest.TestCase):
     def test_old_and_new_archives_route_exact_installed_code(self):

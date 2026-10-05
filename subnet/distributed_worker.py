@@ -21,6 +21,10 @@ from .storage import canonical
 from .cache_lifecycle import CacheLifecycle
 
 
+class ExpiredCompletedLease(ValueError):
+    """The original backend has exited, but its lease no longer permits ACK."""
+
+
 def checkpoint_cache_candidate(path,files):
     """Select a local candidate without reading weights; this is NOT admission.
 
@@ -166,7 +170,17 @@ class Worker:
             with (attempt/'worker.log').open('xb') as output:
                 (attempt/'worker.log').chmod(0o600)
                 result=subprocess.run(command,stdout=output,stderr=subprocess.STDOUT,env=environment,pass_fds=tuple(lease_fds),cwd=backend_source)
-            if lost.is_set(): raise ValueError('lease expired during execution; retained diagnostic only')
+            def expired_completed_lease(stage):
+                evidence=attempt/'expired-completed-lease.json'
+                with evidence.open('xb') as stream:
+                    stream.write(canonical(dict(job_id=job['job_id'],
+                        job_sha256=claim['job_sha256'],attempt=claim['attempt'],
+                        stage=stage,backend_terminal=True,backend_exit=result.returncode,
+                        lease_until=claim['lease_until'],observed_at=time.time(),
+                        report_acknowledged=False)))
+                evidence.chmod(0o600)
+                return ExpiredCompletedLease('completed backend lost its lease; retained diagnostic only')
+            if lost.is_set(): raise expired_completed_lease('backend_completed')
             if result.returncode:
                 self.request('fail',job_id=job['job_id'],token=claim['token'])
                 lifecycle.retire_downloads(job['job_id']); return True
@@ -177,8 +191,9 @@ class Worker:
             while True:
                 try:
                     self.request('report',job_id=job['job_id'],token=claim['token'],report=report);break
-                except (requests.RequestException,ValueError):
-                    if lost.is_set() or time.time()>=claim['lease_until']: raise
+                except (requests.RequestException,ValueError) as error:
+                    if lost.is_set() or time.time()>=claim['lease_until']:
+                        raise expired_completed_lease('report_acknowledgment') from error
                     time.sleep(2)
             # Coordinator ACK releases disposable inputs, never reports/logs.
             # An original, source-pinned backend also supports this operator
@@ -206,6 +221,8 @@ class Worker:
 def serve(worker, pause=time.sleep):
     """Retry transport outages while retaining original jobs and leases.
 
+    A completed backend whose lease expired retains diagnostics and returns to
+    polling. This never resubmits its report or restarts that physical attempt.
     Authority, integrity and unclassified failures still stop the worker.
     """
     while True:
@@ -213,6 +230,10 @@ def serve(worker, pause=time.sleep):
             worked=worker.once()
         except requests.RequestException as error:
             logging.warning('verifier transport unavailable (%s); retrying in 5 seconds',type(error).__name__)
+            pause(5)
+            continue
+        except ExpiredCompletedLease:
+            logging.warning('completed verifier attempt lost its lease; retaining diagnostics and polling again')
             pause(5)
             continue
         if not worked:pause(5)
