@@ -18,6 +18,14 @@ penalties, and independent evaluation. No unaudited batch earns verified points
 or enters training. Continue using the active signed source and manifest below
 until a new manifest explicitly admits the replacement protocol.
 
+Prospective publication support now overlaps checkpoint publication with a
+qualified independent CPU reader of the complete persistent optimizer state.
+An actual control read and hash-checked all 23 original E10 state objects
+(91,387,491,264 bytes) in 278 seconds. This measures readback only, not a full
+export/restore or a completed hourly epoch. Parallel transport, reader recovery,
+and the new contract still require qualification before live activation.
+Details: https://github.com/AffineFoundation/affine/blob/main/docs/PARALLEL_PERSISTENT_PUBLICATION.md
+
 Dashboard: https://affine.io/
 Live mining discovery: https://affine.io/mining.json
 Measurements: https://affine.io/network-data.json
