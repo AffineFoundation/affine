@@ -300,7 +300,7 @@ def run(config,once=False):
                     save(state/'health.json',dict(status='collecting',epoch=epoch,deadline=manifest['deadline'],time=time.time()));time.sleep(min(10,max(1,manifest['deadline']-time.time())));continue
                 from .capture_status import InfrastructureSkipped,close_epoch
                 if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
-                    training_manifest,submissions,population=controller.collect_learner_inputs(manifest)
+                    training_manifest,submissions,population=controller.collect_learner_inputs(manifest,round_number=status['round'])
                     save(state/(epoch+'-learner-population.json'),dict(version='committed-unaudited-training-v1',manifest=training_manifest,submissions=submissions,population=population))
                     transition_phase(active,'before');save(statuspath,status)
                     continue

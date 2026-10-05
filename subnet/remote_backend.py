@@ -387,9 +387,9 @@ class RemoteController(Controller):
         return self.checkpoint_with_reads(dict(descriptor,descriptor_key=key))
     def publish_remote_checkpoint(self,manifest,remote_path):
         return self.commit_remote_checkpoint(manifest,self.stage_remote_checkpoint(manifest,remote_path))
-    def collect_learner_inputs(self,manifest):
+    def collect_learner_inputs(self,manifest,*,round_number=None):
         from .committed_training_inputs import collect
-        return collect(self,manifest)
+        return collect(self,manifest,round_number=round_number)
     def finalize(self,manifest,checkpoint_path):
         from .forced_sampling import require_report
         if manifest.get('payable') is not False:raise ValueError('remote experimental controller is nonpayable only')
