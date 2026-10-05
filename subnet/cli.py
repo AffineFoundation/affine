@@ -49,6 +49,7 @@ def main():
     p=argparse.ArgumentParser();p.add_argument('--gateway',required=True);p.add_argument('--authority',required=True)
     p.add_argument('--source-bundle-sha256');p.add_argument('--manifest-url');p.add_argument('--current-url');p.add_argument('--key');p.add_argument('--cap-file');p.add_argument('--state',default='state/miner');p.add_argument('--once',action='store_true');p.add_argument('--max-batches',type=int)
     p.add_argument('--env-id');p.add_argument('--indices',nargs='+',type=int);p.add_argument('--search-budget',type=int,default=50)
+    p.add_argument('--compression-level',type=int,choices=range(10),help='assert the signed manifest DEFLATE level; omitted follows manifest (historical default 6)')
     a=p.parse_args()
     if a.manifest_url and a.current_url:p.error('--manifest-url and --current-url are mutually exclusive')
     while True:
@@ -82,6 +83,10 @@ def run(a):
             if current.get('transport_policy')=='direct-r2-v1' and manifest.get('transport_policy')!='direct-r2-v1':raise ValueError('direct R2 transport downgrade')
             expected_source=getattr(a,'source_bundle_sha256',None)
             if expected_source and manifest.get('source_bundle',{}).get('sha256')!=expected_source:raise ValueError('source changed; rerun signed-source bootstrap')
+            from .batches import compression_for_manifest
+            level=compression_for_manifest(manifest)
+            requested=getattr(a,'compression_level',None)
+            if requested is not None and (type(requested)is not int or requested!=level):raise ValueError('CLI compression level must match signed manifest')
             plan=selected_tasks(manifest,getattr(a,'env_id',None),getattr(a,'indices',None))
             check_runtime_profile(manifest)
             if key.id not in manifest['capabilities']:raise ValueError('identity not registered for epoch')

@@ -214,10 +214,10 @@ def validate_deferred(manifest,receipt,report):
 
 
 def pair_artifact(batch,arrays,manifest):
- """One-pass stable ZIP framing; exact historical canonical artifact bytes."""
- from .batches import pack
+ """Stable lossless ZIP; absent policy preserves exact historical default bytes."""
+ from .batches import pack,compression_for_manifest
  from .artifact_budget import for_manifest
- return pack([(batch,arrays)],budget=for_manifest(manifest),stable=True)
+ return pack([(batch,arrays)],budget=for_manifest(manifest),stable=True,compression_level=compression_for_manifest(manifest))
 
 
 class UploadJournal:
@@ -265,7 +265,8 @@ def check_prepared_cumulative(packed,manifest,maximum):
     # Array DEFLATE bytes do not depend on member names. Account for exact
     # hypothetical cumulative ZIP framing and combined canonical manifest,
     # including two-digit slot prefixes, without decoding model arrays.
-    manifest_bytes=canonical(records);codec=zlib.compressobj(wbits=-15)
+    from .batches import compression_for_manifest
+    manifest_bytes=canonical(records);codec=zlib.compressobj(level=compression_for_manifest(manifest),wbits=-15)
     manifest_compressed=codec.compress(manifest_bytes)+codec.flush()
     cumulative_raw=array_raw+len(manifest_bytes)
     cumulative_compressed=array_compressed+framing+76+2*len('manifest.json')+len(manifest_compressed)

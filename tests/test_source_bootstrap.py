@@ -159,9 +159,10 @@ class BootstrapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             key=Path(tmp)/'explicit-key';key.write_bytes(b'do-not-read-or-modify')
             with patch.object(b,'manifest',return_value={'source_bundle':desc}),patch.object(b,'download',return_value=body),patch.object(b,'execute') as execute:
-                b.main(['--authority','a'*64,'--current-url',URL,'--key',str(key),'--state',str(Path(tmp)/'state'),'--source-cache',str(Path(tmp)/'cache'),'--once','--max-batches','2'])
+                b.main(['--authority','a'*64,'--current-url',URL,'--key',str(key),'--state',str(Path(tmp)/'state'),'--source-cache',str(Path(tmp)/'cache'),'--once','--max-batches','2','--compression-level','1'])
             args=execute.call_args.args[1]
             self.assertIn('--once',args);self.assertEqual(args[args.index('--source-bundle-sha256')+1],desc['sha256'])
+            self.assertEqual(args[args.index('--compression-level')+1],'1')
             self.assertEqual(key.read_bytes(),b'do-not-read-or-modify')
             self.assertFalse((Path(tmp)/'state').exists())
 
