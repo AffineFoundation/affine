@@ -27,16 +27,17 @@ def atomic(path,value):
  temporary.chmod(0o600);temporary.replace(path)
 
 
-def register_population(manifest_document,receipts,round,committed_at,authority,eligible_pairs=None):
+def register_population(manifest_document,receipts,round,committed_at,authority,eligible_pairs=None,*,version='continuous-audit-population-v2'):
  """Return a signed-service input proposal from original immutable captures."""
  from .commitment_transport import validate
+ if version not in ('continuous-audit-population-v1','continuous-audit-population-v2'):raise ValueError('explicit population ordering version')
  manifest=authenticate(manifest_document,authority);rows=[]
  for miner,receipt in sorted(receipts.items()):
   document=validate(canonical(receipt['commitment_document']),manifest['epoch'],miner,manifest['max_batches'])
   if digest(document)!=receipt['sha256']or document['payload']['checkpoint']!=manifest['checkpoint']['id']or document['payload']['source']!=manifest['source_bundle']['sha256']:raise ValueError('original signed committed population')
   for b in document['payload']['batches']:
    rows.append(dict(epoch=manifest['epoch'],round=round,checkpoint=manifest['checkpoint']['id'],miner=miner,env_id=b['env_id'],index=b['index'],batch_sha256=b['batch_sha256'],proof_sha256=b['sha256'],commitment_sha256=receipt['sha256'],verifier_contract_sha256=verifier_contract(manifest),committed_at=committed_at))
- result=dict(version='continuous-audit-population-v1',round=round,committed_at=committed_at,manifest_document=manifest_document,receipts=receipts,records=population(rows))
+ result=dict(version=version,round=round,committed_at=committed_at,manifest_document=manifest_document,receipts=receipts,records=population(rows,ordered=version=='continuous-audit-population-v2'))
  if eligible_pairs is not None:
   if type(eligible_pairs)is not list or any(type(p)is not dict or set(p)!={'miner','commitment_sha256','batch_sha256','proof_sha256'}for p in eligible_pairs):raise ValueError('exact actual eligible immutable pairs')
   ids=[]
@@ -58,11 +59,11 @@ class ContinuousAuditor:
  def persist(self):atomic(self.state_path,self.state)
  def admit(self,document):
   p=authenticate(document,self.controller.authority.id)
-  if p.get('version')!='continuous-audit-population-v1':raise ValueError('continuous immutable population admission')
+  if p.get('version')not in('continuous-audit-population-v1','continuous-audit-population-v2'):raise ValueError('continuous immutable population admission')
   if 'eligible_evidence_ids'not in p:raise ValueError('explicit learner eligibility required for audit reward population')
   selected=[r for r in p['records']if digest(r)in p['eligible_evidence_ids']]
   pairs=[{k:r[k]for k in ('miner','commitment_sha256','batch_sha256','proof_sha256')}for r in selected]
-  expected=register_population(p['manifest_document'],p['receipts'],p['round'],p['committed_at'],self.controller.authority.id,eligible_pairs=pairs)
+  expected=register_population(p['manifest_document'],p['receipts'],p['round'],p['committed_at'],self.controller.authority.id,eligible_pairs=pairs,version=p['version'])
   if p!=expected:raise ValueError('canonical signed population registration')
   epoch=authenticate(p['manifest_document'],self.controller.authority.id)['epoch'];old=self.state['populations'].get(epoch)
   if old is not None and old!=document:raise ValueError('immutable audit population cannot be replaced')

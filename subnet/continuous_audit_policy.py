@@ -5,7 +5,8 @@ admit the immutable commitment population and verifier execution/source pins.
 """
 import hashlib,json,math
 from .distributed_roles import authenticate
-VERSION='continuous-probabilistic-audit-v1'
+LEGACY_VERSION='continuous-probabilistic-audit-v1'
+VERSION='continuous-probabilistic-audit-v2'
 canonical=lambda v:json.dumps(v,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
 digest=lambda v:hashlib.sha256(canonical(v)).hexdigest()
 def need(v,message):
@@ -15,14 +16,14 @@ def finite(v,low,high,name):need(type(v)in(int,float)and math.isfinite(v)and low
 def valid_digest(v):return type(v)is str and len(v)==64 and all(c in '0123456789abcdef'for c in v)
 def policy(value):
  fields={'version','recent_epochs','decay','prior_alpha','prior_beta','invalid_multiplier','zero_epoch_after','blacklist_after','blacklist_epochs'}
- need(type(value)is dict and set(value)==fields and value['version']==VERSION,'exact continuous audit policy')
+ need(type(value)is dict and set(value)==fields and value['version']in(VERSION,LEGACY_VERSION),'exact continuous audit policy')
  result=dict(value);integer(value['recent_epochs'],1,128,'recent cohort window');finite(value['decay'],0.01,1,'cohort decay')
  for name in ('prior_alpha','prior_beta'):finite(value[name],0.01,100,'bounded prior')
  finite(value['invalid_multiplier'],0,1,'invalid reward multiplier')
  for name in ('zero_epoch_after','blacklist_after'):integer(value[name],0,10000,name)
  integer(value['blacklist_epochs'],0,128,'blacklist duration');return result
 
-def population(records):
+def population(records,*,ordered=False):
  """All rows are immutable cheap-admitted submissions, not verified samples."""
  need(type(records)is list and len(records)<=1000000,'bounded immutable population');seen=set();result=[]
  for row in records:
@@ -31,7 +32,7 @@ def population(records):
   integer(row['round'],0,2**31-1,'epoch round');integer(row['index'],0,2**31-1,'task index');finite(row['committed_at'],0,2**53,'completion time')
   need(type(row['epoch'])is str and 0<len(row['epoch'])<=200 and type(row['env_id'])is str and 0<len(row['env_id'])<=100,'epoch/environment')
   key=(row['epoch'],row['miner'],row['batch_sha256']);need(key not in seen,'duplicate committed batch');seen.add(key);result.append(dict(row))
- return sorted(result,key=lambda r:(r['round'],r['epoch'],r['miner'],r['batch_sha256']))
+ return sorted(result,key=lambda r:(r['round'],r['epoch'],r['miner'],r['batch_sha256']))if ordered else result
 
 def random_selection(records,seed,count,already=()):
  """Unpredictable seed is committed only after this immutable population closes."""
@@ -85,7 +86,7 @@ def snapshot(records,envelopes,verifiers,*,epoch,round,checkpoint,cutoff,audit_p
  The caller authenticates immutable opening/policy and signs this exact result.
  No pending/ambiguous/infra observation counts as valid or fraudulent.
  """
- p=policy(audit_policy);rows=population(records);integer(round,0,2**31-1,'snapshot round');need(valid_digest(checkpoint),'current immutable checkpoint')
+ p=policy(audit_policy);rows=population(records,ordered=p['version']==VERSION);integer(round,0,2**31-1,'snapshot round');need(valid_digest(checkpoint),'current immutable checkpoint')
  need(all(r['round']<=round and r['committed_at']<=cutoff for r in rows),'future or postcutoff committed population')
  current=[r for r in rows if r['epoch']==epoch];need(all(r['round']==round and r['checkpoint']==checkpoint for r in current),'current epoch/checkpoint binding')
  audits=observations(envelopes,rows,verifiers,cutoff,admitted_jobs=admitted_jobs,adjudications=adjudications,authority=authority);miners=sorted({r['miner']for r in current});points={};details={}
@@ -112,7 +113,7 @@ def snapshot(records,envelopes,verifiers,*,epoch,round,checkpoint,cutoff,audit_p
   points[miner]=eligible*probability*multiplier
   details[miner]=dict(unique_eligible_batches=eligible,validity_probability=probability,recent_posterior_mean=overall,current_cohort_posterior_mean=cohort,confirmed_invalid_current=invalid_current,confirmed_invalid_recent=invalid_recent,reward_multiplier=multiplier,blacklisted=blacklisted)
  total=sum(points.values());weights={m:(v/total if total else 0.)for m,v in points.items()}
- return dict(version=VERSION,epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,policy=p,population_sha256=digest(rows),eligible_evidence_ids=sorted(eligible_set)if eligible_set is not None else None,evidence_ids=sorted(o['evidence_id']for o in audits),miners=details,points=points,weights=weights,training_waits_for_audits=False,unaudited_samples_claimed_verified=False)
+ return dict(version=p['version'],epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,policy=p,population_sha256=digest(rows),eligible_evidence_ids=sorted(eligible_set)if eligible_set is not None else None,evidence_ids=sorted(o['evidence_id']for o in audits),miners=details,points=points,weights=weights,training_waits_for_audits=False,unaudited_samples_claimed_verified=False)
 
 def verifier_contract(manifest):
  """A change of source, sampler, numerics or runtime starts another cohort."""
@@ -171,7 +172,7 @@ def hourly_aggregate(documents,authority,cutoff):
  points={};epochs=[];policies=[]
  for document in documents:
   result=authenticate(document,authority)
-  need(result.get('version')==VERSION and result.get('cutoff')==cutoff,'original same-cutoff epoch snapshot')
+  need(result.get('version')in(VERSION,LEGACY_VERSION) and result.get('cutoff')==cutoff,'original same-cutoff epoch snapshot')
   need(result['epoch']not in epochs,'epoch can earn once in hourly aggregate');epochs.append(result['epoch']);policies.append(digest(policy(result['policy'])))
   for miner,value in result['points'].items():
    need(valid_digest(miner),'hourly miner identity');finite(value,0,1e6,'bounded raw epoch points');points[miner]=points.get(miner,0.)+value
