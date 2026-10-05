@@ -60,11 +60,11 @@ request/launch envelopes, lowers CPU priority to19, clears CUDA_VISIBLE_DEVICES,
 and uses the existing four-stream1MiB reader. No worker enrollment occurs.
 
 The original root/remote dispatch namespaces are exclusive. Root preserves the
-original PID/ticks, real child wait and complete receipt. A failed or ambiguous
-dispatch never silently retries. This initial integration fails closed and
-requires explicit original-process recovery if an attempt already exists; it
-does not yet automate that recovery. The authority adapter durably persists and
-reads back authenticated evidence before publishing optimizer authority last.
+original PID/ticks, real child wait and complete receipt. Observation recovery
+reuses that signed request and exact original handle, without launching a new
+process. Incomplete preparation or an expired request remains an explicit
+operator recovery gate. The authority adapter durably persists and reads back
+authenticated evidence before publishing optimizer authority last.
 
 ## Actual measurement and remaining qualification
 
