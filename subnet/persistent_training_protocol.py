@@ -268,8 +268,8 @@ def validate_report(report,job,manifest):
     return descriptor
 
 
-def independently_commit(controller,report,job,manifest,read_chunks=None,*,readback_workers=4):
-    """Authority signs last after hashing actual durable bytes independently.
+def independently_verify(controller,report,job,manifest,read_chunks=None,*,readback_workers=4):
+    """Verify all actual durable bytes without writing any authority publication.
 
     read_chunks(key) is a bounded streaming test/transport seam. The production
     path reads directly through the operator's R2 client without hydrating state.
@@ -305,8 +305,15 @@ def independently_commit(controller,report,job,manifest,read_chunks=None,*,readb
         # Consume every result before signing; submitted checks cannot publish
         # partial success or leave a stream active after this scope exits.
         list(pool.map(check_shard,descriptor['shards']))
-    return _publish_verified_descriptor(controller, descriptor, job, namespace)
+    return descriptor,namespace
 
+
+
+def independently_commit(controller,report,job,manifest,read_chunks=None,*,readback_workers=4):
+    """Existing serial boundary: every full shard passes before signing last."""
+    descriptor,namespace=independently_verify(controller,report,job,manifest,
+        read_chunks,readback_workers=readback_workers)
+    return _publish_verified_descriptor(controller,descriptor,job,namespace)
 
 def _publish_verified_descriptor(controller,descriptor,job,namespace):
     """Publish only after the calling independent-readback path fully succeeds."""

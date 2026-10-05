@@ -196,7 +196,7 @@ class SuccessorCheckpointReads(unittest.TestCase):
         self.controller.bucket=SimpleNamespace(presign=Mock(side_effect=url),get=Mock(side_effect=KeyError('missing')),json=Mock())
     def response(self,url,**kwargs):
         name=url.split('?',1)[0].rsplit('/',1)[1];body=self.bodies[name]
-        result=Mock();result.status_code=200;result.iter_content.return_value=[body];result.__enter__=Mock(return_value=result);result.__exit__=Mock(return_value=False);return result
+        result=Mock();result.status_code=200;result.headers={'Content-Length':str(len(body))};result.iter_content.return_value=[body];result.__enter__=Mock(return_value=result);result.__exit__=Mock(return_value=False);return result
     def publish(self):
         # S3 missing-key shape, not an unchecked network failure.
         from botocore.exceptions import ClientError
@@ -212,6 +212,40 @@ class SuccessorCheckpointReads(unittest.TestCase):
         self.bodies['model.safetensors']=b'changed-after-upload'
         with self.assertRaisesRegex(ValueError,'independent checkpoint integrity'):self.publish()
         self.controller.bucket.json.assert_not_called()
+    def test_signed_parallel_policy_checks_all_bytes_before_descriptor(self):
+        import threading
+        from botocore.exceptions import ClientError
+        from subnet.persistent_publication import VERSION
+        barrier=threading.Barrier(2,timeout=3);lock=threading.Lock();finished=set()
+        def response(url,**kwargs):
+            result=self.response(url,**kwargs);name=url.split('?',1)[0].rsplit('/',1)[1]
+            def chunks(size):
+                self.assertEqual(size,1024**2);barrier.wait()
+                self.controller.bucket.json.assert_not_called()
+                yield self.bodies[name]
+                with lock:finished.add(name)
+            result.iter_content.side_effect=chunks
+            return result
+        policy=dict(version=VERSION,state_readback='local-full',checkpoint_readback_workers=2)
+        self.controller.bucket.get=Mock(side_effect=ClientError({'Error':{'Code':'NoSuchKey'}},'GetObject'))
+        with patch('subnet.remote_backend.requests.get',side_effect=response):
+            result=self.controller.publish_remote_checkpoint(dict(epoch='nonpayable-source',checkpoint=self.cp,persistent_publication_policy=policy),'/trainer/exact-output')
+        self.assertEqual(finished,set(self.files));self.assertEqual(result['id'],self.cp['id'])
+        self.controller.bucket.json.assert_called_once()
+    def test_encoded_or_truncated_checkpoint_never_signs_descriptor(self):
+        original=self.response
+        for malformed in ('encoding','truncated'):
+            with self.subTest(malformed=malformed):
+                def response(url,**kwargs):
+                    result=original(url,**kwargs)
+                    if malformed=='encoding':result.headers['Content-Encoding']='gzip'
+                    else:result.headers['Content-Length']=str(int(result.headers['Content-Length'])+1)
+                    return result
+                from botocore.exceptions import ClientError
+                self.controller.bucket.get=Mock(side_effect=ClientError({'Error':{'Code':'NoSuchKey'}},'GetObject'))
+                with patch('subnet.remote_backend.requests.get',side_effect=response),self.assertRaises(ValueError):
+                    self.controller.publish_remote_checkpoint({'epoch':'nonpayable-source','checkpoint':self.cp},'/trainer/exact-output')
+                self.controller.bucket.json.assert_not_called()
     def test_cached_training_refreshes_narrow_reads_without_gpu_or_saved_metrics_mutation(self):
         from subnet.remote_backend import FULL_POLICY
         metrics=dict(source_epoch='nonpayable-source',input_checkpoint='input',training_policy=FULL_POLICY,weights_changed=True,checkpoint=self.cp['id'],new_checkpoint=self.cp,steps=1)

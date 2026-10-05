@@ -31,6 +31,11 @@ job=dict(schema=1,job_id='fresh-owned',role='mine',created_at=now-1,expires_at=n
 if mode=='invalid':job['mining_subset']={'control':[99]}
 if mode=='tampered':job['source_files']['subnet/protocol.py']='0'*64
 if mode=='preimport':import subnet.protocol
+if mode in ('publication','publication-preimport'):
+    manifest['persistent_publication_policy']=dict(version='parallel-persistent-publication-v1',state_readback='local-full',checkpoint_readback_workers=4)
+    job['manifest']=sign(manifest)
+    job['source_files']['subnet/persistent_publication.py']=b.digest(root/'subnet/persistent_publication.py')
+    if mode=='publication-preimport':import subnet.persistent_publication
 if mode=='commitment':
     manifest.update(submission_transport_policy='small-commitment-pairs-v1',max_batches=1)
     job['manifest']=sign(manifest)
@@ -49,11 +54,12 @@ with tempfile.TemporaryDirectory() as directory:
         except (ValueError,RuntimeError) as error:
             expected={'valid':'qualified checkpoint boundary','invalid':'outside authorized training indices',
                       'tampered':'worker source mismatch','preimport':'requires fresh process',
-                      'commitment':'qualified checkpoint boundary'}[mode]
+                      'commitment':'qualified checkpoint boundary','publication':'qualified checkpoint boundary',
+                      'publication-preimport':'requires fresh process'}[mode]
             assert expected in str(error),repr(error)
         else:raise AssertionError('worker must stop at test boundary')
-        assert cp.call_count==(1 if mode in ('valid','commitment') else 0)
-        if mode not in ('valid','commitment'):assert not list(Path(directory).iterdir())
+        assert cp.call_count==(1 if mode in ('valid','commitment','publication') else 0)
+        if mode not in ('valid','commitment','publication'):assert not list(Path(directory).iterdir())
         if mode=='tampered':assert 'subnet.protocol' not in sys.modules
 print('fresh admission '+mode+' passed')
 '''
@@ -62,7 +68,7 @@ print('fresh admission '+mode+' passed')
 class FreshOwnedWorkerAdmission(unittest.TestCase):
     def test_actual_fresh_loader_precedes_subset_semantics_and_artifacts(self):
         root=Path(__file__).resolve().parent.parent
-        for mode in ('valid','invalid','tampered','preimport','commitment'):
+        for mode in ('valid','invalid','tampered','preimport','commitment','publication','publication-preimport'):
             with self.subTest(mode=mode):
                 result=subprocess.run([sys.executable,'-B','-c',SCRIPT,mode],cwd=root,
                                       capture_output=True,text=True,timeout=60)

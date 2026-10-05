@@ -231,6 +231,10 @@ class RemoteJobs:
 class RemoteController(Controller):
     def __init__(self,bucket,gateway,state,remote):
         super().__init__(bucket,gateway,state)
+        self.independent_state_reader=None
+        if remote.get('independent_state_reader') is not None:
+            from .independent_state_dispatch import IndependentStateReader
+            self.independent_state_reader=IndependentStateReader(remote['independent_state_reader'],self)
         self.training_execution_amendment_files=dict(remote.get('training_execution_amendment_files',{}))
         self.training_execution_amendment_required_epochs=list(remote.get('training_execution_amendment_required_epochs',[]))
         if 'roles' in remote:
@@ -298,14 +302,28 @@ class RemoteController(Controller):
         cp=manifest['checkpoint'];capacity=(self.jobs.publication_capacity(remote_path) if hasattr(self.jobs,'publication_capacity') else self.jobs.capacity(remote_path))
         report=self.jobs.run(manifest['epoch']+'-publish-'+cp['id'][:8],'upload',manifest,remote_path,
             put_urls={n:self.bucket.presign('public/checkpoints/'+cp['id']+'/'+n,'put_object',3600) for n in cp['files']})
-        observed={}
-        for name,expected in cp['files'].items():
-            h=hashlib.sha256();size=0
-            with requests.get(self.bucket.presign('public/checkpoints/'+cp['id']+'/'+name),stream=True,timeout=180,allow_redirects=False) as response:
-                if response.status_code!=200:raise ValueError('operator R2 checkpoint read status')
-                for part in response.iter_content(1024*1024):h.update(part);size+=len(part)
+        workers=1
+        if manifest.get('persistent_publication_policy') is not None:
+            from .persistent_publication import validate_policy
+            workers=validate_policy(manifest['persistent_publication_policy'])['checkpoint_readback_workers']
+        def check(row):
+            name,expected=row;h=hashlib.sha256();size=0
+            with requests.get(self.bucket.presign('public/checkpoints/'+cp['id']+'/'+name),
+                    stream=True,timeout=180,allow_redirects=False,
+                    headers={'Accept-Encoding':'identity'}) as response:
+                if response.status_code!=200 or response.headers.get('Content-Encoding','identity')!='identity':
+                    raise ValueError('operator R2 checkpoint read status/encoding')
+                declared=response.headers.get('Content-Length')
+                for part in response.iter_content(1024*1024):
+                    if not part:continue
+                    if not isinstance(part,bytes) or len(part)>1024*1024:
+                        raise ValueError('bounded checkpoint read chunk')
+                    h.update(part);size+=len(part)
+                if declared is not None and size!=int(declared):raise ValueError('checkpoint full object size')
             if h.hexdigest()!=expected:raise ValueError('operator independent checkpoint integrity')
-            observed[name]=dict(sha256=h.hexdigest(),bytes=size)
+            return name,dict(sha256=h.hexdigest(),bytes=size)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=workers)as pool:observed=dict(pool.map(check,cp['files'].items()))
         descriptor=dict(id=cp['id'],files=cp['files']);key='public/checkpoints/'+cp['id']+'/authorities/'+self.authority.id+'/checkpoint.json'
         from botocore.exceptions import ClientError
         try:existing=json.loads(self.bucket.get(key))

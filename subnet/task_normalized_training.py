@@ -7,6 +7,7 @@ capacity before this implementation receives a production job.
 import hashlib
 import math
 import copy
+import time
 from pathlib import Path
 
 from .covered_epoch_optimizer import distinct_verified_pairs, pair_identity
@@ -97,9 +98,11 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
         raise ValueError('qualified dropout-free CUDA BF16 full-model profile required')
     destination = Path(destination_root)/'checkpoint-persistent-final'
     if destination.exists(): raise ValueError('refuse persistent checkpoint overwrite')
+    phase_seconds={};phase_started=time.monotonic()
     optimizer = PersistentCPUAdamW(model.named_parameters(), input_checkpoint,
         approved_genesis=approved_genesis, approved_genesis_sha256=approved_genesis_sha256,
         restored=restored_state, resource_admission=resource_admission)
+    phase_seconds['optimizer_initialization']=time.monotonic()-phase_started
     start_step = optimizer.global_step
 
     def sequence(rollout):
@@ -120,22 +123,29 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
         return sequence(positive) - sequence(negative)
 
     model.eval()
+    torch.cuda.synchronize();phase_started=time.monotonic()
     with torch.no_grad(): references = [float(margin(i)) for i in range(len(pairs))]
+    torch.cuda.synchronize();phase_seconds['reference_forward']=time.monotonic()-phase_started
     if not all(math.isfinite(v) for v in references):
         raise ValueError('nonfinite immutable BF16 input reference')
     for parameter in parameters: parameter.requires_grad_(True)
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant': False})
     model.train(); updates = []; seen = set(); torch.cuda.reset_peak_memory_stats()
+    gradient_seconds=[];optimizer_seconds=[]
     try:
         for step, indices in enumerate(groups):
             optimizer.zero_grad()
+            torch.cuda.synchronize();phase_started=time.monotonic()
             observations = accumulate_tasks(torch, margin, references, tasks, indices,
                                             HYPERPARAMETERS['preference_beta'])
             if any(p.grad is None for p in parameters):
                 raise ValueError('full-model task-normalized gradient coverage')
             norm = torch.nn.utils.clip_grad_norm_(parameters,
                 HYPERPARAMETERS['max_grad_norm'], error_if_nonfinite=True)
+            torch.cuda.synchronize();gradient_seconds.append(time.monotonic()-phase_started)
+            phase_started=time.monotonic()
             precision = optimizer.step(); seen.update(indices)
+            torch.cuda.synchronize();optimizer_seconds.append(time.monotonic()-phase_started)
             updates.append(dict(training_policy=POLICY, steps=1,
                 epoch_optimizer_step=step+1, global_optimizer_step=optimizer.global_step,
                 input_checkpoint=input_checkpoint, reference_scope='immutable-BF16-epoch-input',
@@ -153,15 +163,21 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
                 gpu_peak_reserved_bytes=torch.cuda.max_memory_reserved()))
         if seen != set(range(len(tasks))): raise ValueError('incomplete task gradient coverage')
         model.eval()
+        torch.cuda.synchronize();phase_started=time.monotonic()
         with torch.no_grad(): after_margins = [float(margin(i)) for i in range(len(pairs))]
+        torch.cuda.synchronize();phase_seconds['post_update_forward']=time.monotonic()-phase_started
         if not all(math.isfinite(v) for v in after_margins):
             raise ValueError('nonfinite post-update training margin')
+        phase_started=time.monotonic()
         destination.mkdir(mode=0o700)
         model.save_pretrained(destination, safe_serialization=True, max_shard_size='3.9GB')
         runtime.tokenizer.save_pretrained(destination)
         if any(path.stat().st_size > 4_000_000_000 for path in destination.iterdir() if path.is_file()):
             raise ValueError('actual BF16 export object cap')
-        diagnostics = dict(training_policy=POLICY, optimizer_steps=steps,
+        phase_seconds.update(checkpoint_save=time.monotonic()-phase_started,
+            gradient_and_clip_by_step=gradient_seconds,CPU_optimizer_by_step=optimizer_seconds,
+            GPU_timings_synchronized=True)
+        diagnostics = dict(phase_seconds=phase_seconds,training_policy=POLICY, optimizer_steps=steps,
             global_optimizer_step_before=start_step, global_optimizer_step_after=optimizer.global_step,
             task_count=len(tasks), pair_count=len(pairs), updates=updates,
             master_state_updated=any(r['precision']['master_changed_elements'] for r in updates),

@@ -332,6 +332,12 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
         for row in job['heldout']:
             if len(row['indices'])!=len(row['seeds']) or not 1<=len(row['indices'])<=32 or any(type(i) is not int or i<0 for i in row['indices']+row['seeds']):raise ValueError('heldout index/seed budget')
             if row['harness'].get('policy')!='autoregressive' or row['harness'].get('turn_overrides'):raise ValueError('heldout must use free autoregressive policy')
+    if manifest.get('persistent_publication_policy') is not None:
+        if resolve_source:
+            from .persistent_publication import validate_policy
+            validate_policy(manifest['persistent_publication_policy'])
+        if 'subnet/persistent_publication.py' not in job['source_files']:
+            raise ValueError('prospective publication execution source pin')
     if job['role']=='upload':
         if set(job.get('put_urls',{}))!=set(cp['files']):raise ValueError('upload capability file binding')
         for url in job['put_urls'].values():r2_url(url,'PUT')
@@ -521,13 +527,17 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     for name,expected in job['runtime_versions'].items():
         if version(name)!=expected:raise ValueError('runtime package mismatch')
     if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':raise ValueError('CUDA environment profile')
+    publication_files=('subnet/persistent_publication.py',) if manifest.get('persistent_publication_policy') is not None else ()
     compact_files=('subnet/compact_training_inputs.py',) if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2') else ()
     if job.get('training_policy')==PERSISTENT_POLICY:
         from .persistent_training_protocol import EXECUTION_FILES
-        install_source_loader(root,(*EXECUTION_FILES,'subnet/training_receipts.py',*compact_files))
+        install_source_loader(root,(*EXECUTION_FILES,'subnet/training_receipts.py',*compact_files,*publication_files))
     elif job.get('training_policy')==COVERED_POLICY:
-        install_source_loader(root,('subnet/training_receipts.py',*compact_files))
-    else:install_source_loader(root,compact_files)
+        install_source_loader(root,('subnet/training_receipts.py',*compact_files,*publication_files))
+    else:install_source_loader(root,(*compact_files,*publication_files))
+    if publication_files:
+        from .persistent_publication import validate_policy
+        validate_policy(manifest['persistent_publication_policy'])
     from .backend_profiles import resolve
     revision,backend_profile,numerical_policy=resolve(manifest)
     from .artifact_budget import for_manifest
@@ -555,10 +565,17 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     if job['role']=='upload':
         import requests
         validate_single_put_sizes(approved,manifest['checkpoint']['files'])
-        for name,url in job['put_urls'].items():
+        def upload(row):
+            name,url=row
             with (approved/name).open('rb') as body:
                 response=requests.put(url,data=body,headers={'Content-Type':'application/octet-stream'},timeout=600,allow_redirects=False)
             if response.status_code not in (200,201,204):raise ValueError('R2 PUT status '+str(response.status_code))
+        workers=1
+        if manifest.get('persistent_publication_policy') is not None:
+            from .persistent_publication import validate_policy
+            workers=validate_policy(manifest['persistent_publication_policy'])['checkpoint_readback_workers']
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=workers) as pool:list(pool.map(upload,job['put_urls'].items()))
         report['uploaded_files']=manifest['checkpoint']['files']
     else:
         from .protocol import entries,entry,harness_for

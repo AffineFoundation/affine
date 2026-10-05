@@ -103,6 +103,9 @@ def contract(config,round_number):
     if config.get('artifact_policy') is not None:result['artifact_policy']=config['artifact_policy']
     if config.get('task_assets') is not None:result['task_assets']=config['task_assets']
     if config.get('sampling_policy') is not None:result['sampling_policy']=config['sampling_policy']
+    if config.get('persistent_publication_policy') is not None:
+        from .persistent_publication import validate_policy
+        result['persistent_publication_policy']=validate_policy(config['persistent_publication_policy'])
     if config.get('optimizer_state_transport') is not None:
         from .persistent_training_state import transport_concurrency
         transport_concurrency(config)

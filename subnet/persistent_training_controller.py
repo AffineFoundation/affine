@@ -109,8 +109,8 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
     new=dict(remote['new_checkpoint']);path=new.pop('path')
     # BF16 values may still be identical while masters/moments advance. Publish
     # the actual immutable file map and keep weights_changed honest.
-    output=controller.publish_remote_checkpoint(dict(manifest,checkpoint=new),path)
-    pointer=independently_commit(controller,remote,job,training_manifest)
+    from .persistent_publication import complete
+    output,pointer,publication_timings=complete(controller,remote,job,training_manifest,path)
     commit_latest(controller,binding,pointer)
     metrics=dict(steps=steps,weights_changed=remote['training']['weights_changed'],state_updated=True,
         full_model_finetune=True,training_policy=POLICY,updates=remote['training']['updates'],
@@ -122,5 +122,6 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
         trainer_verification_performed=False,all_pairs_authenticated_verifier_receipts=True,
         verifier_receipt_inventory=receipt_inventory(submissions),
         state_authority_committed=True,heldout_gain_claimed=False)
+    if publication_timings is not None:metrics['publication_timings']=publication_timings
     save(cached,metrics);controller.bucket.json('public/'+epoch+'/training.json',controller.signed(metrics))
     return output,metrics
