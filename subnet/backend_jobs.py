@@ -620,13 +620,24 @@ def initial_configuration(manifest,job):
     if first is None:raise ValueError('no authorized mining samples for model role')
     return first,harness_for(first,first['indices'][0])
 
+def measured_phase(timings,name,operation,*args,**kwargs):
+    """Record completed original operations; never repeat or swallow failures."""
+    started=time.monotonic()
+    result=operation(*args,**kwargs)
+    row=timings.setdefault(name,dict(seconds=0.0,calls=0))
+    row['seconds']+=time.monotonic()-started;row['calls']+=1
+    return result
+
 def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
-    job,manifest=_validate(envelope,authority,resolve_source=False)
+    startup_timings={}
+    job,manifest=measured_phase(startup_timings,'job_validation',_validate,envelope,authority,resolve_source=False)
+    source_started=time.monotonic()
     root=Path(__file__).resolve().parent.parent
     for name,expected in job['source_files'].items():
         if (root/name).is_symlink() or digest(root/name)!=expected:raise ValueError('worker source mismatch')
     for name,expected in job['runtime_versions'].items():
         if version(name)!=expected:raise ValueError('runtime package mismatch')
+    startup_timings['source_runtime_authentication']=dict(seconds=time.monotonic()-source_started,calls=1)
     if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':raise ValueError('CUDA environment profile')
     publication_files=('subnet/persistent_publication.py',) if manifest.get('persistent_publication_policy') is not None else ()
     recovery_files=('subnet/training_startup_recovery.py',)if manifest.get('training_startup_recovery')is not None else ()
@@ -651,7 +662,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     if manifest.get('task_assets'):
         asset_root.mkdir(parents=True,exist_ok=True);asset_root.chmod(0o700)
         os.environ['AFFINE_MATH_CORPUS_ASSET_ROOT']=str(asset_root.resolve())
-    hydrate_manifest(asset_root,manifest)
+    measured_phase(startup_timings,'task_asset_hydration',hydrate_manifest,asset_root,manifest)
     # Resolve against authenticated fresh source before any artifact, workspace,
     # checkpoint or model is opened. Public validate() remains fully strict.
     if job.get('mining_subset') is not None:mining_definitions(manifest,job)
@@ -660,12 +671,14 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         admitted(manifest,job['replay'],authority)
     workspace=Path(workspace);out=workspace/'jobs'/job['job_id']
     out.mkdir(parents=True,exist_ok=False);out.chmod(0o700)
-    approved=checkpoint(manifest,workspace,cache)
+    approved=measured_phase(startup_timings,'checkpoint_materialization_and_authentication',checkpoint,manifest,workspace,cache)
     report=dict(schema=1,job_id=job['job_id'],role=job['role'],operator=authority,
         job_sha256=hashlib.sha256(canonical(job)).hexdigest(),checkpoint=manifest['checkpoint']['id'],
         epoch=manifest['epoch'],backend_profile=backend_profile,numerical_policy=numerical_policy,
         source_files=job['source_files'],runtime_versions=job['runtime_versions'],
-        chain_transactions=False,full_model_finetune=False,execution_resources_enforced=False)
+        chain_transactions=False,full_model_finetune=False,execution_resources_enforced=False,
+        startup_timings=dict(version="original-role-phase-timings-v1",clock="monotonic",
+            GPU_synchronized=False,phases=startup_timings))
     if manifest.get('training_runtime')is not None:
         report['execution_runtime_revision']=revision
         report['generation_runtime_revision']=manifest['model_runtime_revision']
@@ -694,10 +707,10 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
             from .successor_calibration import preflight_native_spec
             preflight_native_spec(first['spec'])
         if runtime_factory is None:
-            runtime=factory(approved,manifest['checkpoint']['files'],first['spec'],initial_harness,
+            runtime=measured_phase(startup_timings,'runtime_model_construction',factory,approved,manifest['checkpoint']['files'],first['spec'],initial_harness,
                 runtime_revision=revision)
         else:
-            runtime=factory(approved,manifest['checkpoint']['files'],first['spec'],initial_harness)
+            runtime=measured_phase(startup_timings,'runtime_model_construction',factory,approved,manifest['checkpoint']['files'],first['spec'],initial_harness)
         if job['role'] != 'evaluate':
             from .forced_sampling import bind_runtime
             bind_runtime(runtime,manifest)
@@ -727,7 +740,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                 compact_input=job['role']=='train' and manifest.get('training_input_policy')in ('authenticated-verifier-compact-inputs-v2','committed-unaudited-training-v1')
                 path=out/('submission-'+str(i)+('.json' if compact_input else '.zip'))
                 limit=obj['size'] if compact_input else for_manifest(manifest)['compressed_bytes']
-                try:get_object(obj['url'],obj['sha256'],path,limit)
+                try:measured_phase(startup_timings,'submission_download_and_authentication',get_object,obj['url'],obj['sha256'],path,limit)
                 except ArtifactRejected:
                     if job['role']!='verify'or not manifest.get('submission_transport_policy'):raise
                     from .forced_sampling import assurance
@@ -739,7 +752,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                         from .compact_training_inputs import admitted_submission
                     else:
                         from .training_receipts import admitted_submission
-                    result,verified=admitted_submission(path,obj,manifest,authority,
+                    result,verified=measured_phase(startup_timings,'submission_eligibility_admission',admitted_submission,path,obj,manifest,authority,
                         retire=job.get('training_policy')==PERSISTENT_POLICY)
                 else:result,verified=audit(path.read_bytes(),manifest,runtime,commitment_miner=obj.get('commitment_miner'))
                 reports.append(result);pairs.extend(verified)
@@ -750,8 +763,8 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                 if not pairs:raise ValueError('no admitted training pairs')
                 if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
                     from .committed_training_inputs import validate_native_prompt
-                    validate_native_prompt(runtime,pairs,manifest)
-                values_before=parameter_value_digest(runtime.model)
+                    measured_phase(startup_timings,'native_prompt_eligibility',validate_native_prompt,runtime,pairs,manifest)
+                values_before=measured_phase(startup_timings,'parameter_digest_before',parameter_value_digest,runtime.model)
                 if job.get('replay') is not None:
                     from .replay_training import verified_pairs,merge_pairs
                     historical,replay_report=verified_pairs(runtime,manifest,job['replay'],authority)
@@ -787,7 +800,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                 files=model_files(destination)
                 persistent=job.get('training_policy')==PERSISTENT_POLICY
                 if not persistent and not checkpoint_weights_changed(manifest['checkpoint']['files'],files):raise ValueError('training did not change checkpoint weights')
-                values_after=parameter_value_digest(runtime.model)
+                values_after=measured_phase(startup_timings,'parameter_digest_after',parameter_value_digest,runtime.model)
                 if not persistent and values_before==values_after:raise ValueError('optimizer did not change parameter values')
                 report['training']=dict(steps=job['steps'],updates=metrics,training_policy=job.get('training_policy',HEAD_POLICY),full_model_finetune=job.get('training_policy',HEAD_POLICY) in (FULL_POLICY,FIXED_POLICY,COVERED_POLICY,PERSISTENT_POLICY),weights_changed=values_before!=values_after,parameter_values_sha256_before=values_before,parameter_values_sha256_after=values_after)
                 if job.get('training_policy')==COVERED_POLICY:report['training']['training_coverage']=manifest['training_coverage']
