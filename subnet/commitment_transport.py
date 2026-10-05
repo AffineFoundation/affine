@@ -140,6 +140,9 @@ def freeze(gateway,epoch):
    state['commitment_metadata_incomplete']=dict(reason='tiny_GET_infrastructure_incomplete',at=time.time(),unresolved=unresolved,error_types=[type(x).__name__ for x in metadata_failures]);gateway.persist()
    raise FreezeMetadataIncomplete('complete tiny commitment admission unavailable')from(metadata_failures[0]if metadata_failures else None)
   state['commitment_capture_complete']=True;state['commitment_capture_completed_at']=time.time();state.pop('commitment_metadata_incomplete',None);gateway.persist()
+ if state['commitment_binding'].get('proof_copy_policy') is not None:
+  from .selected_proof_copy import freeze_metadata
+  return freeze_metadata(gateway,epoch)
  # The unpredictable order is persisted once AFTER every tiny document was
  # authenticated. Recovery never draws again or rereads a mutable commitment.
  if 'commitment_copy_order'not in state:

@@ -1,0 +1,13 @@
+# Selected proof transport (prospective)
+
+An epoch may explicitly sign `proof_copy_policy={"version":"selected-proof-copy-v1","workers":4}`. It requires bounded random auditing, the hourly phase budget, and `small-commitment-pairs-v1`. Absent this policy, historical eager-copy behavior and receipts are unchanged. This policy is not evidence of production activation.
+
+Freeze authenticates every bounded miner commitment and captures every declared artifact's size, original ETag, and bucket completion time. A missing or unavailable HEAD prevents a finalized population rather than silently dropping the miner. Invalid declared size/time is structural rejection. The complete committed population—not the subset whose large objects happened to copy fastest—is the audit population.
+
+After the immutable population is frozen, the existing persisted unpredictable audit challenge determines the selected slots. Four workers conditionally copy only these original objects using the captured ETags. Each successful copy journals the exact original SHA, size, ETag, staging key, and public destination. Recovery reuses those completions and the original selection. It never rereads a mutable commitment, changes a draw after copy failure, or rewards an unaudited artifact.
+
+The controller dispatches a selected miner's existing full inference/forced-sampling/TOPLOC/environment audit only after all its selected copies succeed. Copy outages, ETag changes, and budget exhaustion defer the miner without classifying them as fraudulent. A partly copied miner receives no fabricated audit credit. Verifiers still hash the full object and bind its batch to the exact signed parent commitment, model, environment, and slot; trainers still consume authenticated compact outputs without rerunning inference.
+
+Public commitment inventories distinguish `copied-selected-proof` from `not-publicly-copied`; only completed copy journals produce public proof URLs. Unselected proofs remain private staging objects. This first implementation does not claim that the entire population is publicly downloadable or implement an asynchronous full-history backfill. Retention must preserve staging inputs while an audit is in flight. Auditing more proofs or later public backfill needs its own explicit lifecycle and budget.
+
+The speed improvement removes large unselected object copies from the freeze critical path. It does not change sampler science, selection probabilities, scoring, penalties, training objectives, or the batch cap. Actual epoch timing must be measured after a separately admitted source and signed policy are deployed.

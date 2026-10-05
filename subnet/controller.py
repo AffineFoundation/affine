@@ -98,7 +98,7 @@ class Controller:
         if existing(legacy_key) is None:self.bucket.json(legacy_key,self.signed(descriptor))
         return checkpoint
 
-    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None,persistent_publication_policy=None,reward_publication_policy=None,optimizer_state_export_policy=None,artifact_compression_policy=None):
+    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None,persistent_publication_policy=None,reward_publication_policy=None,optimizer_state_export_policy=None,artifact_compression_policy=None,proof_copy_policy=None):
         if artifact_compression_policy is not None:
             from .batches import compression_policy
             artifact_compression_policy=compression_policy(artifact_compression_policy)
@@ -143,6 +143,10 @@ class Controller:
             # Immutable public model reads must survive freeze, queueing, audits
             # and training. Upload capabilities still end at the epoch deadline.
             checkpoint=dict(checkpoint,read_urls={name:self.bucket.presign(f"public/checkpoints/{checkpoint['id']}/{name}",expires=604800) for name in checkpoint['files']})
+        if proof_copy_policy is not None:
+            from .selected_proof_copy import validate_policy
+            proof_copy_policy=validate_policy(proof_copy_policy)
+            if submission_transport_policy is None or audit_policy is None or audit_policy.get("version")!="bounded-random-v1" or hourly_execution_policy is None:raise ValueError("selected proof copy requires bounded hourly commitments")
         commitment_binding=None
         if submission_transport_policy is not None:
             from .commitment_transport import VERSION
@@ -156,6 +160,7 @@ class Controller:
             hourly_execution_policy=validate(hourly_execution_policy,duration)
             if commitment_binding is None:raise ValueError('hourly policy requires small commitments')
             commitment_binding['freeze_until']=deadline+hourly_execution_policy['freeze_seconds']
+        if proof_copy_policy is not None:commitment_binding['proof_copy_policy']=proof_copy_policy
         from .artifact_budget import for_manifest
         budget=for_manifest(dict(artifact_policy=artifact_policy,model_runtime_revision=model_runtime_revision,backend_profile=backend_profile,numerical_policy=numerical_policy)) if artifact_policy is not None else {'compressed_bytes':100_000_000}
         caps=self.gateway.open(epoch,miners,deadline,upload_limit=budget['compressed_bytes'],**({'commitment_binding':commitment_binding}if commitment_binding else {}))
@@ -177,6 +182,7 @@ class Controller:
         if sample_harness_registry is not None:manifest['sample_harness_registry']=sample_harness_registry
         if submission_transport_policy is not None:manifest['submission_transport_policy']=submission_transport_policy
         if artifact_compression_policy is not None:manifest['artifact_compression_policy']=artifact_compression_policy
+        if proof_copy_policy is not None:manifest['proof_copy_policy']=proof_copy_policy
         if hourly_execution_policy is not None:manifest['hourly_execution_policy']=hourly_execution_policy
         if reward_publication_policy is not None:manifest['reward_publication_policy']=reward_publication_policy
         manifest['transport_policy']='direct-r2-v1' if getattr(self.gateway,'direct_r2',False) else 'gateway-v1'

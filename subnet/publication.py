@@ -110,8 +110,16 @@ def frozen_submission(controller,manifest,miner,receipt):
         if (any(artifact.get(field)!=value for field,value in batch.items()) or
                 artifact.get('frozen_key')!=root+'/'+str(batch['slot'])+'.zip'):
             raise ValueError('frozen commitment history inventory')
-        children.append(dict(batch,url=route(artifact['frozen_key']),
-            hash_assurance='declared-payload-hash-until-selected-verifier'))
+        if manifest.get('proof_copy_policy') is not None:
+            from .selected_proof_copy import validate_policy
+            validate_policy(manifest['proof_copy_policy'])
+            copied=controller.gateway.epochs[manifest['epoch']].get('selected_proof_copies',{}).get(miner,{}).get(str(batch['slot']))
+            expected={k:artifact[k]for k in ('sha256','size','etag','key','frozen_key')}
+            if copied is not None and copied!=expected:raise ValueError('public selected proof copy binding')
+            children.append(dict(batch,**({'url':route(artifact['frozen_key']),'availability':'copied-selected-proof'}if copied is not None else {'availability':'not-publicly-copied'}),hash_assurance='declared-payload-hash-until-selected-verifier'))
+        else:
+            children.append(dict(batch,url=route(artifact['frozen_key']),
+                hash_assurance='declared-payload-hash-until-selected-verifier'))
     if not cached:
         # Root-local immutable admissions bind original bytes, not renewable URLs.
         # Every reuse still authenticates these bytes and the complete inventory.

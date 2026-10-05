@@ -456,6 +456,17 @@ class RemoteController(Controller):
                 report=unchecked(audit_manifest,r);reports[m]=report
                 save(self.state/(epoch+'-'+m+'-report.json'),report);self.bucket.json('public/'+epoch+'/audits/'+m+'.json',self.signed(report))
         timings.setdefault('audits_started_at',time.time());save(timings_path,timings)
+        if manifest.get('proof_copy_policy') is not None:
+            from .selected_proof_copy import copy_selected
+            copy_errors=copy_selected(self.gateway,manifest,receipts,selected_slots,audit_until)
+            from .commitment_transport import deferred
+            for miner,error in copy_errors.items():
+                report=deferred(audit_manifest,receipts[miner],'budget_deferred' if audit_until is not None and time.time()>=audit_until else 'infrastructure_deferred',time.time());reports[miner]=report
+                save(self.state/(epoch+'-'+miner+'-report.json'),report);self.bucket.json('public/'+epoch+'/audits/'+miner+'.json',self.signed(report))
+            selected_items=[item for item in selected_items if item[0]not in copy_errors]
+            from .selected_proof_copy import signed_copy_inventory
+            audit_manifest['proof_copy_receipts']=signed_copy_inventory(self.gateway,epoch)
+            save(self.state/(epoch+'-audit-manifest.json'),audit_manifest)
         verified=dispatch_verifications(self.jobs,selected_items,verify_one)
         timings.setdefault('audits_completed_at',time.time());timings['selected_miner_jobs']=len(selected_items);save(timings_path,timings)
         for miner,receipt,remote in verified:

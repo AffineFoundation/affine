@@ -80,7 +80,15 @@ def validate_frozen_submissions(manifest, submissions):
         expected_key='public/'+manifest['epoch']+'/submissions/'+ref['miner']+'/'+receipt['sha256']+'/'+str(ref['slot'])+'.zip'
         if ref['frozen_key']!=expected_key:
             raise ValueError('selected child exact epoch/miner/parent storage key')
-        url=urlsplit(obj['url']);original=urlsplit(artifact['read_url'])
+        original_artifact=artifact
+        if manifest.get('proof_copy_policy') is not None:
+            from .selected_proof_copy import validate_policy
+            validate_policy(manifest['proof_copy_policy'])
+            copied=manifest.get('proof_copy_receipts',{}).get(ref['miner'],{}).get(str(ref['slot']))
+            expected={k:artifact[k]for k in ('sha256','size','etag','key','frozen_key')}
+            if type(copied)is not dict or set(copied)!=set(expected)|{'read_url'} or any(copied[k]!=v for k,v in expected.items()):raise ValueError('signed original selected proof copy receipt')
+            original_artifact=copied
+        url=urlsplit(obj['url']);original=urlsplit(original_artifact['read_url'])
         if (url.scheme!='https' or url.netloc!=original.netloc or
                 unquote(url.path)!=unquote(original.path) or
                 not unquote(url.path).endswith('/'+ref['frozen_key']) or url.fragment):
