@@ -1,5 +1,18 @@
 # Affine — MATH mining, verification and training
 
+Implementation preview, not an active mining contract: GitHub main now contains
+the explicit small-commitment-pairs-v2 token-document transport and
+committed-unaudited-training-v1 learner policy. These allow cheap-admitted,
+checkpoint-bound submissions to enter training without waiting for audits.
+Continuous probabilistic audits and calibrated prefill sampling verification are
+being integrated and qualified. Do not submit against this preview: the signed
+epoch manifest and mining.json remain authoritative, and mining remains closed
+under the operational hold below. Existing signed epochs keep their original
+strict sampler and audit rules.
+Design: https://github.com/AffineFoundation/affine/blob/main/docs/DECOUPLED_IMPLEMENTATION_PLAN.md
+Transport: https://github.com/AffineFoundation/affine/blob/main/docs/TOKEN_ONLY_COMMITMENT_TRANSPORT.md
+Learner: https://github.com/AffineFoundation/affine/blob/main/docs/COMMITTED_UNAUDITED_LEARNER.md
+
 Current operational hold, 2026-10-05 12:12 UTC: E13's six authenticated verifier
 jobs accepted ten pairs. Its original trainer failed during source admission
 before model loading; it did not produce a training update. The controller retry
