@@ -43,3 +43,17 @@ count and public optimizer counter. Its duration does not assert chain submissio
 proves the complete epoch including actual chain weights. Mining/audit time budgets
 must account for measured training, 91.4 GB optimizer-state publication and 15.24 GB
 inference checkpoint publication. A configured budget alone proves no one-hour SLA.
+
+Queue identity is the checkpoint and exact cohort/runtime/source/experiment
+fingerprint, independent of epoch, URL refreshes and requested step labels. An
+adjoining epoch references the original execution rather than running the same
+checkpoint twice. An authenticated retained historical job may seed this queue
+only when its original signed manifest, source/runtime fingerprint, cohort and
+actual report match. Its original run ID, time and training-step labels remain
+unchanged; a reference is not a fresh execution.
+
+Terminal or corrupt requests remain visible in a separate failure ledger, never
+as zero rewards or completed evaluations. The scheduler advances other requests
+only after authoritative original-job probes confirm the evaluator GPU is idle.
+Unknown SSH liveness blocks new dispatch. Transient idle errors back off with
+bounded retries; observation timeouts continue observing the same live job.

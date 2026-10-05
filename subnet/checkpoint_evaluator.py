@@ -23,6 +23,49 @@ def evaluation_mode(config):
     if mode not in ('synchronous-v1',VERSION):raise ValueError('evaluation mode')
     return mode
 
+def fingerprint(manifest,config,plan):
+    """Checkpoint, cohort and runtime identity; epoch/URLs/step labels are not identity."""
+    return hashlib.sha256(canonical(dict(version=VERSION,
+        checkpoint=dict(id=manifest['checkpoint']['id'],files=manifest['checkpoint'].get('files')),
+        heldout=plan,environments=[dict(env_id=r['env_id'],spec=r['spec']) for r in manifest['environments'] if any(v['env_id']==r['env_id'] for v in plan)],
+        runtime={k:manifest.get(k) for k in ('model_runtime_revision','backend_profile','numerical_policy','harness_source_hash')},
+        source_bundle=manifest.get('source_bundle'),model=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'),
+        experiment_id=config.get('evaluation_experiment_id','gpu-continuous-fixed128'),
+        evaluation_seed=config.get('evaluation_seed',20260930)))).hexdigest()
+
+def historical_request(controller,identity,config,plan):
+    """Reference only a locally retained authenticated completed original job.
+
+    Source/runtime/cohort differences fail matching. No status probe, dispatch,
+    new signature or invented training counter is performed during this scan.
+    """
+    from .backend_jobs import signed
+    jobs=getattr(controller.jobs,'roles',{}).get('evaluate',controller.jobs)
+    checker=getattr(jobs,'checked',None)
+    if checker is None:return None
+    for path in (controller.state/'roles').glob('*-eval-*.json'):
+        try:
+            prior=json.loads(path.read_text())
+            if prior.get('role')!='evaluate' or not path.stem.endswith(('-eval-before','-eval-after')):continue
+            reportpath=path.parent/(prior['job_id']+'-report.json')
+            if not reportpath.exists():continue
+            job=signed(json.loads((path.parent/(prior['job_id']+'-job.json')).read_text()),controller.authority.id)
+            manifest=signed(job['manifest'],controller.authority.id)
+            if job.get('heldout')!=plan or fingerprint(manifest,config,plan)!=identity:continue
+            report=checker(json.loads(reportpath.read_text()),prior,manifest)
+            label=path.stem;phase=label.rsplit('-eval-',1)[1]
+            records=[json.loads((Path(config.get('evaluation_state','state/evaluations'))/(label+'-'+suite['env_id']+'.json')).read_text()) for suite in plan]
+            if any(r.get('remote_job_id')!=report['job_id'] or r.get('checkpoint')!=manifest['checkpoint']['id'] or r.get('timestamp')!=report['completed_at'] for r in records):continue
+            steps={r['training_steps'] for r in records}
+            if len(steps)!=1:continue
+            counters={r.get('public_optimizer_steps') for r in records}
+            if len(counters)!=1:continue
+            return dict(version=VERSION,label=label,manifest=manifest,cache=None,phase=phase,
+                        training_steps=steps.pop(),public_optimizer_steps=counters.pop(),
+                        config={k:config[k] for k in CONFIG_FIELDS if k in config},heldout_plan=plan)
+        except (ValueError,KeyError,TypeError,OSError):continue
+    return None
+
 def enqueue(controller,manifest,cache,phase,steps,config,*,public_optimizer_steps=None):
     from .gpu_service import heldout
     if evaluation_mode(config)!=VERSION:raise ValueError('independent evaluation admission')
@@ -38,13 +81,24 @@ def enqueue(controller,manifest,cache,phase,steps,config,*,public_optimizer_step
     request=dict(version=VERSION,label=label,manifest=manifest,cache=cache,
                  phase=phase,training_steps=steps,public_optimizer_steps=public_optimizer_steps,config=selected,heldout_plan=plan)
     digest=hashlib.sha256(canonical(request)).hexdigest()
-    path=controller.state/'checkpoint-evaluations'/(label+'.json')
+    identity=fingerprint(manifest,config,plan)
+    path=controller.state/'checkpoint-evaluations'/(identity+'.json')
+    reference=dict(version=VERSION,evaluation_id=identity,original_label=label,requested_epoch=manifest['epoch'],phase=phase,checkpoint=manifest['checkpoint']['id'])
     if path.exists():
         previous=json.loads(path.read_text())
-        if previous['request']!=request or previous['request_sha256']!=digest:
+        original=previous['request']
+        if (hashlib.sha256(canonical(original)).hexdigest()!=previous['request_sha256'] or
+                fingerprint(original['manifest'],original['config'],original['heldout_plan'])!=identity):
             raise ValueError('immutable checkpoint evaluation request changed')
+        reference.update(original_label=original['label'],original_training_steps=original['training_steps'],reuses_original_execution=True)
+        save(controller.state/'checkpoint-evaluation-references'/(label+'.json'),reference)
         return previous
-    record=dict(request=request,request_sha256=digest,queued_at=time.time(),status='queued')
+    historical=historical_request(controller,identity,config,plan)
+    if historical is not None:
+        request=historical;digest=hashlib.sha256(canonical(request)).hexdigest()
+        reference.update(original_label=request['label'],original_training_steps=request['training_steps'],reuses_original_execution=True)
+    record=dict(evaluation_id=identity,request=request,request_sha256=digest,queued_at=time.time(),status='queued')
+    save(controller.state/'checkpoint-evaluation-references'/(label+'.json'),reference)
     save(path,record)
     return record
 
@@ -55,7 +109,7 @@ def evaluate_one(controller,path):
             hashlib.sha256(canonical(request)).hexdigest()!=record['request_sha256'] or
             heldout(request['config'],request['manifest'])!=request['heldout_plan']):
         raise ValueError('checkpoint evaluation queue binding')
-    if record['status']=='complete':return record
+    if record['status'] in ('complete','failed','unresolved'):return record
     try:
         records=evaluate(controller,request['manifest'],request['cache'],
                          request['phase'],request['training_steps'],request['config'])
@@ -79,16 +133,63 @@ def evaluate_one(controller,path):
     save(path,record)
     return record
 
+def pending_pass(controller,now=None):
+    """Advance terminal bad requests; never run another job while GPU liveness is unknown."""
+    now=time.time() if now is None else now
+    files=list((controller.state/'checkpoint-evaluations').glob('*.json'))
+    def order(path):
+        try:return json.loads(path.read_text()).get('queued_at',0)
+        except (ValueError,OSError,AttributeError):return 0
+    for path in sorted(files,key=order):
+        fault=controller.state/'checkpoint-evaluation-faults'/path.name
+        if fault.exists() and json.loads(fault.read_text()).get('status') in ('failed','unresolved'):continue
+        try:
+            record=json.loads(path.read_text())
+            if record.get('status') in ('complete','failed','unresolved') or record.get('retry_after',0)>now:continue
+            result=evaluate_one(controller,path)
+            if result['status']=='observing_original_job':return result
+            return result
+        except Exception as error:
+            # Check authoritative original role liveness before any other GPU
+            # dispatch. A broken SSH probe is not permission to launch another.
+            try:busy=controller.jobs.busy()
+            except Exception:busy=None
+            attempts=(json.loads(fault.read_text()).get('attempts',0) if fault.exists() else 0)+1
+            terminal=isinstance(error,(ValueError,KeyError,TypeError,AttributeError)) or getattr(error,'terminal_job',False)
+            status='failed' if terminal and busy is False else ('unresolved' if attempts>=8 and busy is False else 'retry_original_request')
+            evidence=dict(status=status,error_type=type(error).__name__,attempts=attempts,
+                          original_request=path.name,gpu_busy=busy,time=now,retry_after=now+min(300,10*2**min(attempts,5)))
+            save(fault,evidence)
+            if busy is not False:return evidence
+            if status=='retry_original_request':
+                # Retry same request later without monopolizing a known-idle GPU.
+                try:
+                    record=json.loads(path.read_text());record['retry_after']=evidence['retry_after'];save(path,record)
+                except (ValueError,OSError):pass
+            # A terminal corrupt/failed request remains forensic evidence and
+            # never receives a fabricated completed result or zero model reward.
+            continue
+    return None
+
 def progress(state):
     """Latest training and evaluation are independent, explicitly labeled."""
     state=Path(state);status=json.loads((state/'controller.json').read_text())
-    rows=[json.loads(p.read_text()) for p in (state/'checkpoint-evaluations').glob('*.json')]
+    rows=[];corrupt=0
+    for path in (state/'checkpoint-evaluations').glob('*.json'):
+        try:
+            row=json.loads(path.read_text())
+            if not isinstance(row,dict) or 'status' not in row or 'request' not in row:
+                raise ValueError('malformed evaluation queue')
+            rows.append(row)
+        except (ValueError,OSError):corrupt+=1
+    faults=[json.loads(p.read_text()) for p in (state/'checkpoint-evaluation-faults').glob('*.json')]
     completed=[r for r in rows if r['status']=='complete' and all(v['status']=='complete' for v in r['records'])]
     latest=max(completed,key=lambda r:(r['request']['training_steps'],r['completed_at'])) if completed else None
     return dict(version=VERSION,latest_training_checkpoint=status['checkpoint']['id'],
                 latest_evaluated_checkpoint=latest['request']['manifest']['checkpoint']['id'] if latest else None,
                 latest_evaluation_report_ids=[r['run_id'] for r in latest['records']] if latest else [],
-                pending_checkpoints=sum(r['status']!='complete' for r in rows),
+                pending_checkpoints=sum(r['status']!='complete' for r in rows)+corrupt,
+                unresolved_requests=sum(r['status'] in ('failed','unresolved') for r in faults),
                 public_optimizer_steps=status.get('public_optimizer_steps'),
                 evaluation_caught_up=bool(latest and latest['request']['manifest']['checkpoint']['id']==status['checkpoint']['id']))
 
@@ -112,21 +213,20 @@ def run(config,once=False):
                       job_ttl_seconds_by_role=remote.get('job_ttl_seconds_by_role',{}),retain_original_jobs=True)
         remote_jobs=RemoteJobs(endpoint,controller)
         class EvaluationJobs:
+            def busy(self):
+                for path in remote_jobs.state.glob('*.json'):
+                    try:prior=json.loads(path.read_text())
+                    except ValueError:continue
+                    if prior.get('role')!='evaluate' or 'job_id' not in prior or 'job_sha256' not in prior:continue
+                    if remote_jobs.remote_status(prior['job_id'])['phase']=='running':return True
+                return False
             def run(self,label,role,manifest,cache=None,**fields):
                 if role!='evaluate':raise ValueError('independent evaluator cannot dispatch other roles')
                 local=endpoint.get('checkpoint_caches',{}).get(manifest['checkpoint']['id']) if 'roles' in remote else cache
                 return remote_jobs.run(label,role,manifest,local,**fields)
         controller.jobs=EvaluationJobs()
         while True:
-            files=sorted((state/'checkpoint-evaluations').glob('*.json'),key=lambda p:json.loads(p.read_text())['queued_at'])
-            for path in files:
-                if json.loads(path.read_text())['status']=='complete':continue
-                try:evaluate_one(controller,path)
-                except Exception as error:
-                    # Faults do not become zero rewards or completed reports.
-                    save(state/'checkpoint-evaluator-health.json',dict(status='retry_original_request',request=path.name,error_type=type(error).__name__,time=time.time()))
-                    logging.exception('independent evaluation retains original request')
-                break
+            pending_pass(controller)
             value=progress(state);save(state/'checkpoint-evaluation-progress.json',value)
             bucket.json('public/streams/'+config['epoch_prefix']+'/evaluation-progress.json',controller.signed(value))
             if once:return

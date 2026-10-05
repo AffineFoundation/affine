@@ -59,6 +59,9 @@ def dispatch_verifications(jobs, items, operation):
             return list(pool.map(operation, items))
     return [operation(item) for item in items]
 
+class RemoteJobTerminalError(RuntimeError):
+    terminal_job=True
+
 class RemoteObservationTimeout(TimeoutError):
     """An observation window elapsed; the original remote job is still live."""
     def __init__(self,job_id,role):
@@ -156,7 +159,7 @@ class RemoteJobs:
                 self.copy_from(self.workspace+'/jobs/'+prior['job_id']+'/report.json',reportpath)
                 return self.checked(json.loads(reportpath.read_text()),prior,manifest)
             if status['phase'] in ('failed','not_launched'):
-                if role=='train' or getattr(self,'config',{}).get('retain_original_jobs',False):raise RuntimeError('original role terminal or absent; refuse automatic relaunch')
+                if role=='train' or getattr(self,'config',{}).get('retain_original_jobs',False):raise RemoteJobTerminalError('original role terminal or absent; refuse automatic relaunch')
                 save(self.state/(prior['job_id']+'-failure.json'),status);prior=None
             elif status['phase']!='running':raise ValueError('unknown authoritative remote job status')
         if prior is None:
@@ -192,7 +195,7 @@ class RemoteJobs:
                 self.copy_from(self.workspace+'/jobs/'+prior['job_id']+'/report.json',reportpath)
                 return self.checked(json.loads(reportpath.read_text()),prior,manifest)
             if status['phase']=='failed':
-                save(self.state/(prior['job_id']+'-failure.json'),status);raise RuntimeError('remote role exited: '+str(status.get('exit_code',status.get('reason'))))
+                save(self.state/(prior['job_id']+'-failure.json'),status);raise RemoteJobTerminalError('remote role exited: '+str(status.get('exit_code',status.get('reason'))))
             if status['phase']=='not_launched' and time.time()-started>30:raise RuntimeError('remote launcher marker absent; retain job record for authoritative recovery')
             if time.time()-started>1800:raise RemoteObservationTimeout(prior['job_id'],role)
             time.sleep(5)

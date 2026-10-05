@@ -2,7 +2,7 @@ import copy,json,tempfile,unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock,patch
-from subnet.checkpoint_evaluator import enqueue,evaluate_one,progress,VERSION
+from subnet.checkpoint_evaluator import enqueue,evaluate_one,progress,pending_pass,VERSION
 from subnet.remote_backend import RemoteObservationTimeout
 from test_gpu_service import GPUFixedHeldout
 
@@ -16,8 +16,8 @@ class IndependentEvaluator(unittest.TestCase):
         self.controller=SimpleNamespace(state=self.state,bucket=SimpleNamespace(json=Mock()),signed=lambda v:v,jobs=SimpleNamespace(run=Mock(return_value=self.report)))
         self.patch=patch('subnet.gpu_service.definitions',return_value=[self.row]);self.patch.start();self.addCleanup(self.patch.stop)
     def queued(self):
-        enqueue(self.controller,self.manifest,'cache','after',3,self.config)
-        return self.state/'checkpoint-evaluations'/(self.manifest['epoch']+'-eval-after.json')
+        record=enqueue(self.controller,self.manifest,'cache','after',3,self.config)
+        return self.state/'checkpoint-evaluations'/(record['evaluation_id']+'.json')
     def test_enqueue_performs_no_gpu_work_and_pins_exact_plan(self):
         path=self.queued();self.controller.jobs.run.assert_not_called()
         original=path.read_bytes();self.queued();self.assertEqual(path.read_bytes(),original)
@@ -25,7 +25,8 @@ class IndependentEvaluator(unittest.TestCase):
         self.assertEqual(request['heldout_plan'][0]['indices'],[2,3])
         self.assertEqual(request['heldout_plan'][0]['seeds'],[2100,3100])
         self.config['heldout'][0]['seed']=999
-        with self.assertRaisesRegex(ValueError,'immutable'):self.queued()
+        changed=self.queued();self.assertNotEqual(changed,path)
+        self.assertEqual(path.read_bytes(),original)
     def test_actual_result_preserves_cohort_ids_and_provenance(self):
         path=self.queued();record=evaluate_one(self.controller,path)
         result=record['records'][0]
@@ -69,6 +70,69 @@ class IndependentEvaluator(unittest.TestCase):
                 self.assertEqual(first['experiment_id'],second['experiment_id'])
                 self.assertEqual(first['fixed_task_ids'],second['fixed_task_ids'])
                 self.assertNotEqual(first['checkpoint'],second['checkpoint'])
+    def test_adjacent_epochs_evaluate_checkpoint_once_without_relabeling(self):
+        path=self.queued();first=evaluate_one(self.controller,path)
+        self.manifest=dict(self.manifest,epoch='nonpayable-next')
+        reused=enqueue(self.controller,self.manifest,'different-cache','before',999,self.config)
+        self.assertEqual(reused['request']['training_steps'],3)
+        self.assertEqual(reused['request']['manifest']['epoch'],'nonpayable-gpu-test')
+        self.assertEqual(reused['records'],first['records'])
+        self.assertEqual(len(list((self.state/'checkpoint-evaluations').glob('*.json'))),1)
+        evaluate_one(self.controller,path);self.controller.jobs.run.assert_called_once()
+        reference=json.loads((self.state/'checkpoint-evaluation-references'/'nonpayable-next-eval-before.json').read_text())
+        self.assertTrue(reference['reuses_original_execution']);self.assertEqual(reference['original_training_steps'],3)
+    def test_authenticated_historical_baseline_keeps_original_execution_labels(self):
+        import base64,hashlib
+        from nacl.signing import SigningKey
+        from subnet.storage import canonical
+        from subnet.remote_backend import RemoteJobs
+        key=SigningKey.generate();operator=key.verify_key.encode().hex()
+        sign=lambda value:dict(payload=value,signer=operator,signature=base64.b64encode(key.sign(canonical(value)).signature).decode())
+        label=self.manifest['epoch']+'-eval-after';jobid=label+'-original'
+        from subnet.gpu_service import heldout
+        job=dict(job_id=jobid,role='evaluate',manifest=sign(self.manifest),heldout=heldout(self.config,self.manifest),created_at=10,expires_at=100)
+        digest=hashlib.sha256(canonical(job)).hexdigest()
+        prior=dict(job_id=jobid,role='evaluate',job_sha256=digest,source_files=self.report['source_files'],runtime_versions=self.report['runtime_versions'],manifest_sha256=hashlib.sha256(canonical(self.manifest)).hexdigest())
+        report=dict(self.report,job_id=jobid,role='evaluate',operator=operator,job_sha256=digest,checkpoint=self.manifest['checkpoint']['id'],epoch=self.manifest['epoch'],success=True,chain_transactions=False,backend_profile=self.manifest['backend_profile'],numerical_policy=self.manifest['numerical_policy'])
+        roles=self.state/'roles';roles.mkdir()
+        for name,value in [(label+'.json',prior),(jobid+'-job.json',sign(job)),(jobid+'-report.json',report)]:
+            (roles/name).write_text(json.dumps(value))
+        folder=Path(self.config['evaluation_state']);folder.mkdir()
+        (folder/(label+'-env.json')).write_text(json.dumps(dict(remote_job_id=jobid,checkpoint='approved',timestamp=77,training_steps=7)))
+        jobs=RemoteJobs.__new__(RemoteJobs);jobs.state=roles;jobs.config={'retain_original_jobs':True};jobs.controller=SimpleNamespace(authority=SimpleNamespace(id=operator))
+        self.controller.jobs=jobs;self.controller.authority=jobs.controller.authority
+        self.manifest=dict(self.manifest,epoch='nonpayable-new-reference')
+        record=enqueue(self.controller,self.manifest,'cache','before',999,self.config)
+        self.assertEqual(record['request']['label'],label);self.assertEqual(record['request']['training_steps'],7)
+        self.assertEqual(record['request']['manifest']['epoch'],'nonpayable-gpu-test')
+        final=evaluate_one(self.controller,self.state/'checkpoint-evaluations'/(record['evaluation_id']+'.json'))
+        self.assertEqual(final['records'][0]['remote_job_id'],jobid)
+        self.assertEqual(final['records'][0]['training_steps'],7)
+    def test_failed_old_request_does_not_starve_new_checkpoint(self):
+        from subnet.remote_backend import RemoteJobTerminalError
+        old=self.queued()
+        self.manifest=dict(self.manifest,epoch='nonpayable-new',checkpoint={'id':'new'})
+        new=self.queued();self.controller.jobs.busy=Mock(return_value=False)
+        self.controller.jobs.run.side_effect=[RemoteJobTerminalError('failed original'),self.report]
+        result=pending_pass(self.controller)
+        self.assertEqual(result['status'],'complete');self.assertEqual(result['request']['manifest']['checkpoint']['id'],'new')
+        failure=json.loads((self.state/'checkpoint-evaluation-faults'/old.name).read_text())
+        self.assertEqual(failure['status'],'failed');self.assertNotIn('records',failure)
+        pending_pass(self.controller);self.assertEqual(self.controller.jobs.run.call_count,2)
+    def test_corrupt_request_is_retained_and_new_checkpoint_runs_when_idle(self):
+        old=self.queued();old.write_text('{broken')
+        self.manifest=dict(self.manifest,epoch='nonpayable-new',checkpoint={'id':'new'});new=self.queued()
+        self.controller.jobs.busy=Mock(return_value=False)
+        result=pending_pass(self.controller)
+        self.assertEqual(result['status'],'complete');self.assertEqual(old.read_text(),'{broken')
+        self.assertEqual(json.loads((self.state/'checkpoint-evaluation-faults'/old.name).read_text())['status'],'failed')
+    def test_unknown_gpu_liveness_does_not_dispatch_new_checkpoint(self):
+        from subnet.remote_backend import RemoteJobTerminalError
+        old=self.queued();self.manifest=dict(self.manifest,epoch='nonpayable-new',checkpoint={'id':'new'});self.queued()
+        self.controller.jobs.busy=Mock(side_effect=OSError('SSH unavailable'))
+        self.controller.jobs.run.side_effect=RemoteJobTerminalError('original failed but liveness unknown')
+        result=pending_pass(self.controller)
+        self.assertEqual(result['status'],'retry_original_request');self.assertEqual(self.controller.jobs.run.call_count,1)
     def test_tampered_queue_or_wrong_cohort_fails_before_dispatch(self):
         path=self.queued();record=json.loads(path.read_text());record['request']['heldout_plan'][0]['seeds'][0]+=1
         path.write_text(json.dumps(record))
