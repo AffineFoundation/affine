@@ -20,17 +20,24 @@ calibration initially failed before model execution because that source archive
 omitted its required native math snapshot. Exact approved dataset hydration and
 native preflight now pass on all ten owned compute roles. The corrected path
 and its truthful environment source hash are explicitly admitted. Fresh
-calibration and confirmation both passed; E17 is collecting submissions and
-the owned miner is dispatched. The original failed job remains recorded.
+calibration and confirmation both passed. E17 collected 71 committed batches,
+admitted 65 through cheap checks and selected all 65 for UNAUDITED training.
+Freeze and admission took about 36 seconds after the ten-minute collection
+deadline. Its original training job is running; optimizer step eight has not
+yet been durably published. The original failed job remains recorded.
 This owned-fleet bootstrap does not establish external-client compatibility.
 The main branch provides ops/native_task_asset_deployment.py for verified
-CPU-only asset bootstrap (see docs/NATIVE_TASK_ASSET_DEPLOYMENT.md). Automatic
-asset inclusion in the next complete source package is still being implemented;
-external cold-client readiness is not yet claimed. This is not a completed E17 or proof
+CPU-only asset bootstrap (see docs/NATIVE_TASK_ASSET_DEPLOYMENT.md).
+The next complete package includes the approved native dataset automatically.
+Its actual cold CPU bootstrap, full R2 archive readback and staging on ten roles
+passed. It remains qualification-only until the next durable checkpoint boundary;
+external end-to-end miner readiness is not yet claimed. This is not a completed E17 or proof
 of a faster epoch. Follow only the latest
 signed OPEN manifest for mining. Chain weight submissions remain disabled.
-The independent fixed 128-task E16 baseline is 78/128; the matched successor
-evaluation is running. No E16 improvement or convergence is claimed yet.
+The independent fixed 128-task E16 evaluation declined from 78/128 to 71/128,
+with two improvements and nine regressions. Eight regressed tasks reached the
+successor's 1,024-generation-call cap; this is a diagnostic proxy, not confirmed
+truncation or an explanation of causality. No convergence is claimed.
 
 The dashboard now distinguishes committed submitted batches, cheap-eligible
 training inputs and expensive audit results. Its E15 counts are 270 submitted,
@@ -58,7 +65,8 @@ authenticated legacy adoption has now retired obsolete models and accepted
 historical input downloads across all seven, without pausing healthy workers. The
 trainer has 160.50 GB free after explicit software retirement of old models.
 Automatic trainer hooks are included in the new FE controller source; its first
-training job has not run yet. E16 retained its historical lifecycle contract.
+training job is now running; successful post-ACK trainer retirement remains to
+be observed. E16 retained its historical lifecycle contract.
 A replacement H200 passed fresh honest and forged sampling/TOPLOC controls but
 has not joined the production queue. Runtime/source qualification remains
 mandatory for each participating verifier.
