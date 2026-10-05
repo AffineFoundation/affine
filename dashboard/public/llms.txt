@@ -192,3 +192,22 @@ old slot PUTs; signed commitment publication remains last. Legacy transport is
 unchanged. Local state contains epoch rollouts; epoch publication rules are unchanged.
 This is prospective code, not evidence that a new
 source or live contract has been activated.
+
+## Prospective optimizer transfer acceleration
+
+The signed bounded-parallel-fp32-state-v1 policy supports one through four
+streams. A separate bounded-eight-fp32-state-v1 policy explicitly requests
+eight streams; it is never inferred from a worker count or enabled by default.
+Both retain full FP32 masters and AdamW moments, exact shard hashes and
+restored-buffer checks. Optimizer-state authority publication still waits for
+complete independent readback. These transport choices do not change the
+sampler, proof checks, training objective or reward eligibility.
+
+The production-sized four-stream CPU control published and read back all
+91,387,491,264 bytes in 1,209 seconds, restored them in 488 seconds, and passed
+exact restored-buffer comparisons. This isolated zero-gradient control is
+transport evidence, not a trained production epoch or convergence result.
+Eight-stream full-size throughput and peak memory are not yet qualified.
+Resource reservations alone do not prove peak-memory fit. Miners must follow
+the approved source and signed epoch manifest; GitHub preparation does not
+activate a new live contract.
