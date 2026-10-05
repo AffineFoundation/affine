@@ -137,3 +137,18 @@ class LearnerFreshBootstrapTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 result=subprocess.run([sys.executable,'-B','-c',script,mode],cwd=Path(__file__).resolve().parent.parent,capture_output=True,text=True,timeout=30)
                 self.assertEqual(result.returncode,0,result.stderr)
+
+class AuditPopulationHandoffTests(LearnerCollectionTests):
+    def test_original_signed_population_handoff_includes_actual_round(self):
+        import sys
+        controller=self.controller();calls=[]
+        def register(manifest_document,receipts,round_number,committed_at,authority):
+            calls.append((manifest_document,receipts,round_number))
+            self.assertNotIn('training_coverage',manifest_document['payload']) if 'training_coverage'not in self.manifest else None
+            return dict(version='continuous-audit-population-v1',manifest_document=manifest_document,receipts=receipts,round=round_number,committed_at=committed_at,records=[])
+        with patch.dict(sys.modules,{'subnet.continuous_audit_service':SimpleNamespace(register_population=register)}):
+            learner.collect(controller,self.manifest,round_number=12)
+        self.assertEqual(calls[0][2],12)
+        audit=__import__('json').loads((self.root/(self.manifest['epoch']+'-continuous-audit-population.json')).read_bytes())
+        self.assertEqual(audit['payload']['round'],12)
+        self.assertEqual(audit['payload']['manifest_document']['payload'],self.manifest)

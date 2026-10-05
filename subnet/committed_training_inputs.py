@@ -202,7 +202,7 @@ def validate_native_prompt(runtime,pairs,manifest):
                 raise ValueError('trusted native math task/prompt/tokenizer eligibility')
 
 
-def collect(controller,manifest):
+def collect(controller,manifest,*,round_number=None):
     """Freeze small documents and issue truthful cheap-eligibility admissions.
 
     Duplicate task indices across miners are excluded from learner inputs. The
@@ -217,9 +217,18 @@ def collect(controller,manifest):
         from .training_receipts import computation_binding
         if value['version']!=VERSION or computation_binding(value['manifest'])!=computation_binding(manifest):raise ValueError('saved learner population original computation context')
         return value['manifest'],value['submissions'],value['population']
+    if round_number is not None and (type(round_number)is not int or round_number<0):raise ValueError('actual learner round required')
     capture=getattr(controller.gateway,'capture_learner',None)
     if capture is None:raise ValueError('learner requires independent small-document capture API')
     receipts=capture(manifest['epoch'])
+    if round_number is not None:
+        from .continuous_audit_service import register_population
+        audit_population=register_population(controller.signed(manifest),receipts,round_number,time.time(),controller.authority.id)
+        audit_path=controller.state/(manifest['epoch']+'-continuous-audit-population.json')
+        if audit_path.exists():
+            saved=authenticate(json.loads(audit_path.read_bytes()),controller.authority.id)
+            if (saved.get('manifest_document')!=audit_population['manifest_document']or saved.get('receipts')!=receipts or saved.get('round')!=round_number):raise ValueError('immutable original continuous audit population')
+        else:save(audit_path,controller.signed(audit_population))
     candidates=[];counts={};exclusions=[]
     for miner,receipt in sorted(receipts.items()):
         original=receipt['commitment_document'];payload=authenticate(original,miner)
