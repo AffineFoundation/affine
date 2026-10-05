@@ -1,3 +1,17 @@
+Latest verified operational update, 2026-10-05 12:12 UTC: E13 completed six
+authenticated verifier queue jobs containing ten accepted pairs and no rejected
+pairs. The two audit waves took approximately326 seconds; freeze took45 seconds.
+The original trainer child exited1 before model loading with a fresh-source
+bootstrap admission error. No training update or checkpoint publication occurred;
+the committed persistent optimizer remains at step3. ROOT stopped only the
+identified controller retry loop after checking its PID/start ticks, train phase,
+zero children and original terminal failure. The controller state bytes, failed
+request, audits, checkpoint and optimizer lineage are unchanged. Recovery needs
+an approved source fix and explicit original-failure handling, not deleting or
+relaunching the failed request. Parallel work covers this startup blocker,
+asynchronous mining deadlines and bounded selected-proof storage copies. The
+one-hour epoch and sustained learning goal remain active and unproved.
+
 Latest verified completion, 2026-10-05 03:30 UTC: original E10 after-evaluation
 completed with21/32 correct versus19/32 before, with exact matching task/seed
 identities, source and runtime. The controller is now idle at round11, learned
