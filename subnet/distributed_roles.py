@@ -24,6 +24,69 @@ def authenticate(envelope, identity):
     return envelope['payload']
 
 
+def validate_frozen_submissions(manifest, submissions):
+    """Bind selected child capabilities to authenticated miner commitment slots."""
+    frozen = manifest.get('audit_frozen_receipts', {})
+    if not submissions or len(submissions) > 256:
+        raise ValueError('frozen submission binding')
+    if manifest.get('submission_transport_policy') is None:
+        allowed = {r['sha256'] for r in frozen.values()}
+        if any(s.get('sha256') not in allowed for s in submissions):
+            raise ValueError('frozen submission binding')
+        return
+    from .commitment_transport import VERSION, validate
+    from urllib.parse import urlsplit, unquote
+    if manifest['submission_transport_policy'] != VERSION:
+        raise ValueError('explicit child commitment transport')
+    fields = {'miner','commitment_sha256','slot','env_id','index','batch_sha256','size','frozen_key'}
+    seen = set()
+    for obj in submissions:
+        ref = obj.get('commitment_ref')
+        if (not isinstance(ref,dict) or set(ref)!=fields or
+                obj.get('commitment_miner')!=ref['miner'] or
+                type(ref['slot'])is not int or type(ref['index'])is not int or
+                type(ref['size'])is not int):
+            raise ValueError('exact selected child metadata')
+        environments=[e for e in manifest.get('environments',[])if e.get('env_id')==ref['env_id']]
+        if len(environments)!=1 or ref['index']not in environments[0].get('indices',[]):
+            raise ValueError('selected child approved environment/index')
+        receipt=frozen.get(ref['miner'])
+        if not isinstance(receipt,dict) or receipt.get('sha256')!=ref['commitment_sha256']:
+            raise ValueError('selected child parent/miner commitment')
+        from nacl.exceptions import BadSignatureError
+        try:
+            envelope=validate(canonical(receipt['commitment_document']),manifest['epoch'],ref['miner'],manifest['max_batches'])
+        except (KeyError,TypeError,ValueError,BadSignatureError)as error:
+            raise ValueError('authenticated miner child commitment required')from error
+        if digest(envelope)!=receipt['sha256']:
+            raise ValueError('exact canonical parent commitment digest')
+        payload=envelope['payload']
+        if (payload['source']!=manifest['source_bundle']['sha256'] or
+                payload['checkpoint']!=manifest['checkpoint']['id']):
+            raise ValueError('selected child source/checkpoint commitment')
+        rows=[r for r in payload['batches']if r['slot']==ref['slot']]
+        artifacts=[r for r in receipt['artifacts']if r['slot']==ref['slot']]
+        if len(rows)!=1 or len(artifacts)!=1:
+            raise ValueError('selected child exact slot')
+        row=rows[0];artifact=artifacts[0]
+        if (any(ref[k]!=row[k]for k in ('slot','env_id','index','batch_sha256','size')) or
+                obj.get('sha256')!=row['sha256'] or
+                any(artifact.get(k)!=row[k]for k in row) or
+                ref['frozen_key']!=artifact.get('frozen_key')):
+            raise ValueError('selected child inventory binding')
+        expected_key='public/'+manifest['epoch']+'/submissions/'+ref['miner']+'/'+receipt['sha256']+'/'+str(ref['slot'])+'.zip'
+        if ref['frozen_key']!=expected_key:
+            raise ValueError('selected child exact epoch/miner/parent storage key')
+        url=urlsplit(obj['url']);original=urlsplit(artifact['read_url'])
+        if (url.scheme!='https' or url.netloc!=original.netloc or
+                unquote(url.path)!=unquote(original.path) or
+                not unquote(url.path).endswith('/'+ref['frozen_key']) or url.fragment):
+            raise ValueError('selected child frozen URL/key binding')
+        identity=(ref['miner'],ref['slot'])
+        if identity in seen:raise ValueError('duplicate selected child slot')
+        seen.add(identity)
+
+
 class Coordinator:
     """SQLite is the claim authority; R2 holds immutable history, never lock files.
 
@@ -80,9 +143,7 @@ class Coordinator:
             raise ValueError('signed job lifetime')
         submissions = job.get('submissions', [])
         frozen = manifest.get('audit_frozen_receipts', {})
-        allowed = {r['sha256'] for r in frozen.values()}
-        if not submissions or len(submissions) > 256 or any(s.get('sha256') not in allowed for s in submissions):
-            raise ValueError('frozen submission binding')
+        validate_frozen_submissions(manifest,submissions)
         with self.transaction() as db:
             old = db.execute('SELECT digest FROM jobs WHERE id=?', (job['job_id'],)).fetchone()
             if old:
@@ -155,6 +216,14 @@ class Coordinator:
             raise ValueError('report signed deadline')
         if [r.get('submission_sha256') for r in report.get('audits',[])] != [r['sha256'] for r in job['submissions']]:
             raise ValueError('report frozen artifact binding')
+        if manifest.get('submission_transport_policy') is not None:
+            validate_frozen_submissions(manifest,job['submissions'])
+            for audit,obj in zip(report['audits'],job['submissions'],strict=True):
+                ref=obj['commitment_ref'];accepted=audit.get('accepted',[])
+                if (len(accepted)>1 or any(type(b.get('index'))is not int or b.get('env_id')!=ref['env_id']or b.get('index')!=ref['index']for b in accepted)):
+                    raise ValueError('report selected child environment/index binding')
+                if any(digest(b)!=ref['batch_sha256']for b in accepted):
+                    raise ValueError('report exact committed accepted batch digest')
         if any(r.get('epoch') != manifest['epoch'] or any(b.get('epoch') != manifest['epoch'] or b.get('checkpoint') != manifest['checkpoint']['id'] for b in r.get('accepted', [])) for r in report['audits']):
             raise ValueError('audit epoch/checkpoint binding')
 

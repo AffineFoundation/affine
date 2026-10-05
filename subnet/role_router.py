@@ -140,6 +140,10 @@ class RoutedJobs:
             original=envelope['payload']
             if original.get('role')!=role or [r['sha256'] for r in original.get('submissions',[])] != [r['sha256'] for r in fields.get('submissions',[])]:
                 raise ValueError('immutable queue role/frozen inputs')
+            if manifest.get('submission_transport_policy') is not None:
+                fields_without_url=lambda rows:[{k:v for k,v in r.items()if k!='url'}for r in rows]
+                if fields_without_url(original['submissions'])!=fields_without_url(fields.get('submissions',[])):
+                    raise ValueError('immutable selected child metadata')
         else:
             now=time.time(); identifier=label+'-'+secrets.token_hex(4)
             payload=dict(schema=1,job_id=identifier,role=role,created_at=now,
