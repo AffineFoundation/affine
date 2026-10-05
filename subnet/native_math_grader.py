@@ -20,7 +20,7 @@ def runtime_lock():
         raise ValueError('native MATH grader lock schema')
     if value['python_version'] != [3, 12, 3]:
         raise ValueError('native MATH grader interpreter profile')
-    if not isinstance(value['profiles'], list) or len(value['profiles']) != 2:
+    if not isinstance(value['profiles'], list) or len(value['profiles']) != 3:
         raise ValueError('native MATH grader exact approved profile count')
     seen = set()
     for profile in value['profiles']:

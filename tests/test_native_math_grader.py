@@ -52,7 +52,7 @@ class NativeMathGrader(unittest.TestCase):
    self.assertEqual(result.returncode,0,result.stderr);self.assertFalse(sentinel.exists())
    self.assertTrue(json.loads(result.stdout)['site_disabled'])
  def test_binary_and_stdlib_profiles_cannot_be_mixed(self):
-  lock=runtime_lock();source=ASSET.read_text().replace(lock['profiles'][0]['stdlib']['files_sha256'],lock['profiles'][1]['stdlib']['files_sha256'])
+  lock=runtime_lock();selected=json.loads(self.run_grader('--runtime-check').stdout)['selected_profile'];other=next(p for p in lock['profiles']if p!=selected);source=ASSET.read_text().replace(selected['stdlib']['files_sha256'],other['stdlib']['files_sha256'])
   result=self.run_grader('--runtime-check',source=source);self.assertEqual(result.returncode,75);self.assertEqual(json.loads(result.stderr)['reason'],'grader_runtime_mismatch')
  def test_actual_native_task_boundary_does_not_record_timeout_as_reward(self):
   import asyncio,importlib.util
