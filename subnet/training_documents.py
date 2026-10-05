@@ -29,12 +29,13 @@ def capture(gateway,epoch):
  from .storage import SubmissionPolicyError
  state=gateway.epochs[epoch];need(state.get('commitment_capture_complete')is True,'complete signed commitment capture required')
  pending=state['commitment_pending'];journal=state.setdefault('training_document_snapshots',{});cutoff=state['commitment_binding'].get('freeze_until')
- items=[(miner,b)for miner,p in sorted(pending.items())if miner not in state['rejections']for b in p['document']['payload']['batches']if str(b['slot'])not in journal.get(miner,{})]
+ def remaining():return [(miner,b)for miner,p in sorted(pending.items())if miner not in state['rejections']for b in p['document']['payload']['batches']if str(b['slot'])not in journal.get(miner,{})]
+ client=gateway.bucket.commitment_read_client()if hasattr(gateway.bucket,'commitment_read_client')else gateway.bucket.client
  def fetch(item):
   miner,b=item;key='private/'+epoch+'/training/'+miner+'/'+str(b['slot'])+'.json'
   try:
    if cutoff is not None and time.time()>=cutoff:raise TimeoutError('token capture cutoff')
-   response=gateway.bucket.client.get_object(Bucket=gateway.bucket.name,Key=key);body=response['Body']
+   response=client.get_object(Bucket=gateway.bucket.name,Key=key);body=response['Body']
    try:data=body.read(MAX_BYTES+1)
    finally:body.close()
    if not state['start']<=response['LastModified'].timestamp()<state['deadline']:raise SubmissionPolicyError('token document upload time')
@@ -48,27 +49,39 @@ def capture(gateway,epoch):
    if isinstance(exc,ClientError)and str(exc.response.get('Error',{}).get('Code'))in('NoSuchKey','NotFound','404'):exc=SubmissionPolicyError('missing completed token document')
    return miner,b,None,None,exc
  failures=[]
- with ThreadPoolExecutor(max_workers=4)as pool:
-  for miner,b,data,receipt,error in pool.map(fetch,items):
-   if isinstance(error,SubmissionPolicyError):state['rejections'][miner]=str(error);gateway.persist()
-   elif error is not None:failures.append(error)
-   else:
-    gateway.bucket.put(receipt['frozen_key'],data)
-    journal.setdefault(miner,{})[str(b['slot'])]=receipt;gateway.persist()
- if failures:
-  state['training_document_capture_incomplete']=dict(at=time.time(),error_types=[type(x).__name__ for x in failures]);gateway.persist()
-  raise FreezeMetadataIncomplete('token capture infrastructure incomplete')from failures[0]
+ try:
+  while remaining():
+   items=remaining();wave_errors=[]
+   with ThreadPoolExecutor(max_workers=4)as pool:
+    for miner,b,data,receipt,error in pool.map(fetch,items):
+     if isinstance(error,SubmissionPolicyError):state['rejections'][miner]=str(error);gateway.persist()
+     elif error is not None:wave_errors.append(error)
+     else:
+      try:gateway.bucket.put(receipt['frozen_key'],data)
+      except Exception as exc:wave_errors.append(exc);continue
+      journal.setdefault(miner,{})[str(b['slot'])]=receipt;gateway.persist()
+   failures.extend(wave_errors)
+   if not remaining():break
+   if cutoff is None:raise FreezeMetadataIncomplete('bounded signed token capture cutoff required')
+   if time.time()>=cutoff:break
+   time.sleep(min(.25,max(0,cutoff-time.time())))
+ finally:
+  if client is not gateway.bucket.client:client.close()
+ deferred=state.setdefault('training_document_deferred',{})
+ for miner,b in remaining():deferred.setdefault(miner,{})[str(b['slot'])]=dict(reason='infrastructure_deferred',closed_at=time.time())
  state.pop('training_document_capture_incomplete',None);state['training_document_capture_complete']=True;gateway.persist()
  return journal
 
 def attach(state,receipts):
  for miner,receipt in receipts.items():
   rows=state.get('training_document_snapshots',{}).get(miner,{})
-  need(len(rows)==len(receipt['artifacts']),'complete token snapshots')
   for b in receipt['artifacts']:
+   if str(b['slot'])not in rows:continue
    row=rows[str(b['slot'])];need(set(row)=={'slot','sha256','size','frozen_key','captured_at','assurance'}and row['slot']==b['slot']and type(row['slot'])is int and row['sha256']==b['training_sha256']and row['size']==b['training_size']and type(row['size'])is int and row['assurance']=='unaudited','captured token journal integrity')
    need(row['frozen_key']==state['commitment_pending'][miner]['root']+'/training/'+str(b['slot'])+'.json','captured token immutable location')
-  receipt['training_documents']=[dict(rows[str(b['slot'])])for b in receipt['artifacts']]
+  receipt['training_documents']=[dict(rows[str(b['slot'])])for b in receipt['artifacts']if str(b['slot'])in rows]
+  receipt['training_document_deferred_slots']=[b['slot']for b in receipt['artifacts']if str(b['slot'])not in rows]
+  receipt['training_document_capture_status']='captured'if not receipt['training_document_deferred_slots']else'infrastructure_deferred'
  return receipts
 
 

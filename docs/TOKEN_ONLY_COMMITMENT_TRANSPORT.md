@@ -19,7 +19,11 @@ is explicitly unaudited. Declared proof ZIPs are neither fetched nor described
 as verified during this capture; independent audit workers later capture and
 verify selected proofs under their separately signed policy. Missing or malformed
 token documents structurally exclude their miner without a fraud finding;
-ambiguous infrastructure failures defer capture rather than award certainty.
+ambiguous infrastructure failures retry until the signed capture cutoff. At that
+cutoff, only genuinely captured documents enter the learner; remaining slots are
+explicitly infrastructure-deferred without fraud or invented verification. The
+full small signed commitment population remains available to the independent
+auditor.
 
 These are admission byte limits. Presigned object PUT does not itself enforce an
 ingress byte quota; oversized private uploads remain an explicit storage-abuse

@@ -45,8 +45,19 @@ class DocumentTests(unittest.TestCase):
   capture(gateway,'token-v2');self.assertIn(self.identity.id,state['rejections']);self.assertEqual(freeze_receipts(gateway,'token-v2'),{})
  def test_corrupt_document_excludes_only_miner_without_fraud_claim(self):
   gateway,state,puts,calls=self.gateway(b'corrupt');capture(gateway,'token-v2');self.assertIn(self.identity.id,state['rejections']);self.assertFalse(puts);self.assertNotIn('confirmed_invalid',str(state))
- def test_infrastructure_timeout_does_not_become_fraud_or_exclusion(self):
-  gateway,state,puts,calls=self.gateway();gateway.bucket.client.get_object=lambda **kw:(_ for _ in()).throw(TimeoutError('infra'))
-  with self.assertRaises(FreezeMetadataIncomplete):capture(gateway,'token-v2')
-  self.assertFalse(state['rejections']);self.assertFalse(puts)
+ def test_infrastructure_timeout_deferred_without_fraud_or_blocking_captured_sibling(self):
+  gateway,state,puts,calls=self.gateway();state['commitment_binding']['freeze_until']=time.time()+.001
+  gateway.bucket.client.get_object=lambda **kw:(_ for _ in()).throw(TimeoutError('infra'))
+  capture(gateway,'token-v2');receipts=freeze_receipts(gateway,'token-v2')
+  self.assertFalse(state['rejections']);self.assertEqual(receipts[self.identity.id]['training_documents'],[])
+  self.assertEqual(receipts[self.identity.id]['training_document_deferred_slots'],[0]);self.assertEqual(receipts[self.identity.id]['training_document_capture_status'],'infrastructure_deferred')
+ def test_transient_infra_retries_original_slot_and_then_captures(self):
+  gateway,state,puts,calls=self.gateway();original=gateway.bucket.client.get_object;count=[0]
+  def get(**kw):
+   count[0]+=1
+   if count[0]==1:raise TimeoutError('retry')
+   return original(**kw)
+  gateway.bucket.client.get_object=get
+  with patch('subnet.training_documents.time.sleep'):capture(gateway,'token-v2')
+  self.assertEqual(count[0],2);self.assertEqual(len(puts),1);self.assertFalse(state.get('training_document_deferred'))
 if __name__=='__main__':unittest.main()
