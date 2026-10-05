@@ -1,3 +1,24 @@
+Verified operational update, 2026-10-05 18:09 UTC: E15's collection captured
+270 candidate contributions, of which 240 passed cheap eligibility checks.
+No original training request has been issued. The current trainer's measured
+usable RAM is 172.38 GB versus the fixed 177.07 GB requirement; the reserve is
+independent of the 240-versus-161 batch count. ROOT held only the local controller
+at its unchanged pre-dispatch train phase, preserving CP76bc and optimizer five.
+The queue API now runs separately during this routing handoff; audits and the
+original evaluator continue. The original miner H200 passed actual BF16,
+source/runtime and resource qualification as an alternate trainer. Its measured
+309 GB RAM and 130 GB disk exceed the unchanged four/eight-stream requirements.
+The disabled role swap is awaiting ROOT-reviewed ledger remapping and activation;
+it has not dispatched training. E15 retains its signed four-stream contract.
+
+The real 18:00 UTC reward snapshot for completed E14 was authenticated,
+recomputed and read back byte-for-byte from R2. It contains 77 nonzero normalized
+weights totaling one, based on continuing audit estimates; chain transactions
+remain false. E15 is correctly excluded because it has not completed. The first
+owned E15 batch was committed before the deadline; a later upload timed out and
+the original failed miner job remains preserved. No paired held-out gain is
+claimed while the original E14 after-evaluation is pending.
+
 Continuous-auditor recovery, 2026-10-05 17:49 UTC: the previous auditor exited
 because its completion-file glob read both unsigned local mirrors and signed
 envelopes. The repaired operator service authenticates signed closures only,

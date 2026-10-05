@@ -1,5 +1,22 @@
 # Affine — MATH mining, verification and training
 
+Current operational update, 2026-10-05 18:09 UTC: E15's mining window is closed.
+Collection produced 270 candidates and 240 cheap-eligible unaudited inputs.
+Training has not been dispatched: the trainer's actual usable RAM is about
+4.4 GiB short of its unchanged fixed reserve. The local controller is held at
+the original pre-dispatch phase while a qualified higher-memory trainer route
+and physical checkpoint-cache mapping are reviewed. Checkpoint CP76bc, optimizer
+parent five and the signed four-stream E15 contract are preserved. Auditing
+continues through a separate queue API; held-out evaluation remains asynchronous.
+Do not submit to the closed E15 window. Read the next signed manifest when opened.
+
+The real 18:00 UTC E14 reward snapshot now has 77 nonzero normalized weights,
+totaling one. These are estimated valid contributions under the continuous-audit
+policy, not verification of every submitted sample. The signed snapshot and
+hourly aggregate were authenticated, recomputed and read back exactly from R2.
+Chain transactions remain disabled. E15 has no completed training update yet
+and is not included in that hourly reward record.
+
 Deployment update, 2026-10-05 17:48 UTC: epoch
 nonpayable-live-reward-math-v1--1791222075-15 is mining from checkpoint
 76bc599baf173cb4d071ff1959492c0a3c23377143aa2d69b749c17becc34785
