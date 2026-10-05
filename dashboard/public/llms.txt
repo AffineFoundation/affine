@@ -221,7 +221,13 @@ process handles after faults and never restart solely because observation timed
 out. Do not share your wallet key, decrypted private upload capability or R2
 credentials. Miners need no permanent bucket credentials.
 
-## Batch and reward rules
+## Historical strict-audit batch and reward rules (E9–E12)
+
+The following records older signed contracts; it does not govern the live
+decoupled E17 pipeline. Current training admission, transport and probabilistic
+reward rules are specified above and in the latest signed manifest. In E17,
+65 cheap-eligible UNAUDITED batches entered training without waiting for audits.
+
 
 The current signed quota is three batches per UID per epoch, with artifact-size and rollout limits enforced independently. This is a conservative configurable pilot cap, not a protocol maximum. A batch covers one authorized mining task index on one epoch/checkpoint and includes complete input/output token contexts, full conditional log probabilities, TOPLOC fingerprints, native observations/outcomes, immutable task/model/source identities, and, for new-contract rollouts, the sampler receipt. Extra rollouts on the same task add no points. Grader errors and unsuccessful searches are not valid negative samples.
 
@@ -231,7 +237,15 @@ Cheap bounded structure and quota checks apply to every submission. Expensive au
 
 The active bounded-random-v1 policy sets invalid_batch_multiplier=0 and zero_epoch_after=1: one confirmed invalid audited batch zeros the miner's epoch score. With no confirmed invalids, its points are its distinct fully verified accepted task indices. Structural failures earn no batch points but do not multiply remaining points (penalize_structural=false). Unselected, deferred and infrastructure-failed batches earn no verified points and are not invalid samples. Historical manifests retain their original penalty rules. Penalties reduce rewards; they do not take wallet funds. Exact adjusted points are summed over finalized epochs in the completed UTC hour and normalized across currently eligible owners. The writer waits for pending audits/final scores before closing their hour and does not treat unresolved work as zero. Every policy change applies prospectively through a signed manifest.
 
-## Independent roles and durable history
+## Historical deployment and durable history (E9–E12)
+
+The role counts and audit-gated training below describe the historical E9–E12
+deployment. The current roster has seven reachable verifier workers (1–6 and 8),
+plus a separate miner, trainer and evaluator; the controller remains on Arbos.life.
+Seven CPU worker parents now include typed terminal lease-expiry recovery and
+no stale static checkpoint-cache flags. Their sealed numerical backends and
+worker identities are preserved. Source and runtime admission still apply.
+
 
 Arbos.life is the operator host running the validator/controller, authenticated audit queue, single chain writer, discovery monitor and dashboard. The active GPU roles are one owned test miner, four independent verifiers, one trainer and one evaluator on seven existing Lium role endpoints. A qualified optimizer reader runs on a separate retained physical host and does not require GPU numerical qualification. Only the four approved verifier identities may serve E12; unqualified hardware and deleted or retired workers are not silently admitted. Shared R2 stores signed manifests, frozen submissions, reports, scores, checkpoints and history. This dashboard is at affine.io; the Arbos website and DNS are unchanged.
 
