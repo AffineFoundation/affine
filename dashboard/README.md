@@ -81,3 +81,55 @@ stale snapshots. They are never published as network measurements. Screenshots
 and the `two-chart-browser-check.json` receipt are written to the requested output
 directory. If no completed current evaluation exists, cohort/refresh fixtures
 are explicitly reported as skipped rather than claimed as tested.
+
+The Incentive chart shows the per-UID miner emission distribution in Grid and
+Bars views. Bars are sorted by each UID's emission. Its slider selects a completed
+SN120 chain epoch and redraws that epoch's distribution; inspecting a UID never
+changes the selected epoch. Epoch selection is preserved across views, currency
+changes and shared URLs. These epochs have a 360-block tempo and
+are separate from the training epochs used by the other charts.
+
+`state/dashboard-incentive.json` holds the latest snapshot and up to 72 historical
+snapshots of actual `IncentiveAlphaEmittedToMiners` events. The collector backfills
+24 completed epochs by following the chain's recorded mechanism steps, using
+block timestamps rather than estimating dates. Only observed epochs are selectable; missing events are never invented. Values are alpha allocated by Yuma, with 1 alpha = 1,000,000,000 rao;
+they exclude validator dividends and do not represent post-burn wallet payouts.
+
+`affine-incentive.timer` checks for new epochs every five minutes using the
+Bittensor virtual environment. Unit sources are in `dashboard/systemd/` and the
+installed user units are in `~/.config/systemd/user/`. Valid events are published
+atomically as each is fetched, so archive gaps cannot block the current epoch.
+A failed request preserves the previous snapshot; observations older than 15
+minutes are labelled delayed. The export loop performs no RPC requests.
+
+Run a one-off read with:
+
+```sh
+.venv/bin/python -m dashboard.incentive --output state/dashboard-incentive.json
+```
+
+The collector only reads public chain state.
+
+The emission unit control switches Alpha / TAO / USD and labels both axes.
+Alpha is the recorded amount. TAO and USD are estimated current valuations of
+those amounts across all displayed epochs, not historical exchange prices or
+executable swaps. Alpha/TAO uses SN120's current chain pool reserve ratio;
+TAO/USD uses CoinGecko's public Bittensor quote and its `last_updated_at` value.
+The tooltip includes rates and observation times; converted views say “At
+current prices.” Quotes refresh with the chain collector. The backend exports
+only numeric, validated rates and the allowlisted source. Price failures retain
+previous observations, without advancing their timestamps. The browser disables
+conversions once required quotes are more than 30 minutes old and retains the
+recorded Alpha view.
+
+The dashboard uses a fixed dark theme. CSS variables define the page, controls,
+tooltip surfaces and chart palette; SVG plots and inline distribution bars read
+those same variables to stay consistent. The HTML declares dark color scheme
+and the matching browser theme color. Changing appearance requires only frontend
+publication, without restarting chain collection or network services.
+
+The compact header price row shows TAO/USD and SN120 alpha/USD, plus the
+alpha/TAO pool ratio. It reuses the validated collector quotes: alpha/USD is
+alpha/TAO multiplied by TAO/USD. Missing quotes show a dash; observations older
+than 30 minutes retain their last values with a visible Delayed label. Price
+source and observation time are available in the value's title text.

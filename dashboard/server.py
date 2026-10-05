@@ -8,6 +8,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from dashboard.incentive import normalize as normalize_incentive, normalize_history, normalize_prices
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = Path(__file__).parent / 'public'
@@ -92,12 +93,25 @@ class Database:
                 if trial.get('uid') is not None and len(verified) == 1:
                     identity_uids.setdefault(next(iter(verified)), trial['uid'])
                 grid = [0]*256
+                grid_outcomes = {key:[0]*256 for key in ('verified','rejected','unchecked')}
+                outcome_breakdown_valid = True
                 outside = 0
                 for identity, audit in verified.items():
                     uid = identity_uids.get(identity)
                     count = len(audit.get('outcomes', []))
                     if type(uid) is int and 0 <= uid < 256:
                         grid[uid] += count
+                        passed = len(audit.get('accepted', []))
+                        unchecked = sum(
+                            outcome.get('valid', 'missing') is None and not outcome.get('fully_audited', False)
+                            for outcome in audit.get('outcomes', []) if isinstance(outcome, dict)
+                        )
+                        rejected = count-passed-unchecked
+                        if rejected < 0:
+                            outcome_breakdown_valid = False
+                        else:
+                            for key,value in (('verified',passed),('rejected',rejected),('unchecked',unchecked)):
+                                grid_outcomes[key][uid] += value
                     else:
                         outside += count
                 points = scores.get('points', {})
@@ -119,7 +133,9 @@ class Database:
                            participants=len(doc.get('capabilities', {})), submissions=len(reports),
                            accepted=accepted_batches, rejected=batches-accepted_batches-unchecked_batches,
                            unchecked=unchecked_batches, points=sum(points.values()),
-                           batches=batches, grid=grid, unassigned_batches=outside,
+                           batches=batches, batches_available=bool(reports) or scorepath.exists(), grid=grid,
+                           grid_outcomes=grid_outcomes if outcome_breakdown_valid else None,
+                           unassigned_batches=outside,
                            miners=[dict(identity=identity, points=value, weight=scores.get('weights', {}).get(identity, 0))
                                    for identity, value in points.items()], training=None,
                            audit_policy=doc.get('audit_policy', ''), source=source_name)
@@ -250,7 +266,13 @@ class Database:
                 rejected=sum(row['rejected'] for row in epochs),
                 unchecked=sum(row['unchecked'] for row in epochs),
                 training_steps=sum((row.get('training') or {}).get('steps',0) or 0 for row in epochs))
-        return dict(summary=summary, epochs=sorted(epochs, key=lambda x:x['start'], reverse=True),
+        incentive=read(self.source/'dashboard-incentive.json', {})
+        if not isinstance(incentive,dict):
+            incentive={}
+        return dict(summary=summary, incentive=normalize_incentive(incentive),
+                    incentive_history=normalize_history(incentive.get('epochs', [])),
+                    incentive_prices=normalize_prices(incentive.get('prices')),
+                    epochs=sorted(epochs, key=lambda x:x['start'], reverse=True),
                     evaluations=sorted(evaluations,key=lambda x:x['timestamp']))
 
 

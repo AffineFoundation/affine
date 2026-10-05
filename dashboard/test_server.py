@@ -7,6 +7,139 @@ from dashboard.server import Database, export_snapshot
 
 
 class PublicProjectionTests(unittest.TestCase):
+    def test_emission_conversion_prices_allowlist_and_validate(self):
+        from dashboard.incentive import normalize_prices,market_prices
+        from unittest.mock import patch
+        quote=dict(alpha_tao=.05,alpha_tao_at=1000,tao_usd=300,tao_usd_at=999,source='coingecko',private='PRIVATE')
+        self.assertNotIn('PRIVATE',json.dumps(normalize_prices(quote)))
+        for value in (0,-1,True,float('nan'),float('inf')):
+            self.assertIsNone(normalize_prices(dict(quote,alpha_tao=value)))
+            self.assertNotIn('tao_usd',normalize_prices(dict(quote,tao_usd=value)))
+        self.assertNotIn('tao_usd',normalize_prices(dict(quote,source='UNKNOWN')))
+        with patch('urllib.request.urlopen',side_effect=OSError('market unavailable')):
+            result=market_prices(dict(tao_in=6,alpha_in=100),quote)
+        self.assertEqual(result['alpha_tao'],.06)
+        self.assertEqual(result['tao_usd_at'],999)
+        self.assertEqual(result['tao_usd'],300)
+
+    def test_incentive_history_sorts_deduplicates_and_allowlists(self):
+        from dashboard.incentive import normalize_history
+        row=dict(block=100,observed_block=1000,tempo=360,timestamp=1000,
+                 observed_at=1010,emission_rao=[0,1000000000],private='PRIVATE')
+        result=normalize_history([dict(row,block=820),None,row,dict(row,block=460),row])
+        self.assertEqual([r['block'] for r in result],[100,460,820])
+        self.assertNotIn('PRIVATE',json.dumps(result))
+        self.assertEqual(len(normalize_history([dict(row,block=i+1) for i in range(100)])),72)
+
+    def test_chain_collector_preserves_snapshot_on_failure_and_publishes_before_archive_failure(self):
+        from dashboard.incentive import collect
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        from datetime import datetime, timezone
+        class Chain:
+            failed=False
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def runtime(self,*args,**kwargs):
+                if self.failed or kwargs:raise RuntimeError('RPC unavailable')
+                return dict(last_step=100,block=110,tempo=360)
+            def at(self,block):return self
+            def query(self,*args):return [dict(module_id='SubtensorModule',event_id='IncentiveAlphaEmittedToMiners',attributes=dict(netuid=120,emissions=[0,1000000000]))]
+            def timestamp(self):return datetime.fromtimestamp(1000,timezone.utc)
+        modules={'bittensor':SimpleNamespace(Subtensor=lambda _:Chain()),
+                 'bittensor._generated.storage':SimpleNamespace(System=SimpleNamespace(Events='events')),
+                 'bittensor._generated.runtime_apis':SimpleNamespace(SubnetInfoRuntimeApi=SimpleNamespace(get_metagraph='meta'))}
+        with tempfile.TemporaryDirectory() as temp,patch.dict('sys.modules',modules):
+            path=Path(temp)/'incentive.json';path.write_text('{}')
+            Chain.failed=True
+            with self.assertRaises(RuntimeError):collect(path)
+            self.assertEqual(path.read_text(),'{}')
+            Chain.failed=False;collect(path)
+            result=json.loads(path.read_text())
+            self.assertEqual(result['block'],100)
+            self.assertEqual(result['epochs'][0]['emission_rao'],[0,1000000000])
+
+    def test_incentive_projection_allowlists_fields_and_rejects_invalid_values(self):
+        from dashboard.incentive import normalize
+        sample=dict(block=100,observed_block=110,tempo=360,timestamp=1000,
+                    observed_at=1010,emission_rao=[0,1000000000],private_key='PRIVATE')
+        self.assertNotIn('private_key',normalize(sample))
+        self.assertEqual(normalize(sample)['emission_rao'],[0,1000000000])
+        for values in ([True],[-1],[float('nan')],[2**53],[],[1.5]):
+            self.assertIsNone(normalize(dict(sample,emission_rao=values)))
+        self.assertIsNone(normalize(dict(sample,observed_block=99)))
+        self.assertIsNone(normalize(dict(sample,observed_at=float('inf'))))
+
+    def test_snapshot_includes_only_valid_optional_incentive(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);state=root/'state';state.mkdir()
+            database=Database(root/'network.sqlite',state)
+            self.assertIsNone(database.snapshot()['incentive'])
+            sample=dict(block=100,observed_block=110,tempo=360,timestamp=1000,
+                        observed_at=1010,emission_rao=[0,1000000000],private='PRIVATE')
+            (state/'dashboard-incentive.json').write_text(json.dumps(sample))
+            self.assertNotIn('PRIVATE',json.dumps(database.snapshot()))
+            self.assertEqual(database.snapshot()['incentive']['block'],100)
+            (state/'dashboard-incentive.json').write_text('{')
+            self.assertIsNone(database.snapshot()['incentive'])
+
+    def test_pending_audit_is_distinct_from_published_zero_batches(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);state=root/'state';folder=state/'live'
+            folder.mkdir(parents=True);epoch='pending-audit'
+            (folder/f'{epoch}-manifest.json').write_text(json.dumps(dict(epoch=epoch,start=1,deadline=2)))
+            database=Database(root/'network.sqlite',state)
+            database.refresh()
+            row=database.snapshot()['epochs'][0]
+            self.assertEqual(row['batches'],0)
+            self.assertFalse(row['batches_available'])
+            report=folder/f'{epoch}-miner-report.json'
+            report.write_text(json.dumps(dict(outcomes=[],accepted=[])))
+            database.refresh()
+            row=database.snapshot()['epochs'][0]
+            self.assertEqual(row['batches'],0)
+            self.assertTrue(row['batches_available'])
+            report.write_text(json.dumps(dict(outcomes=[dict(valid=True)],accepted=[{}])))
+            database.refresh()
+            row=database.snapshot()['epochs'][0]
+            self.assertEqual(row['batches'],1)
+            self.assertTrue(row['batches_available'])
+            report.unlink()
+            (folder/f'{epoch}-scores.json').write_text(json.dumps(dict(points={})))
+            database.refresh()
+            row=database.snapshot()['epochs'][0]
+            self.assertEqual(row['batches'],0)
+            self.assertTrue(row['batches_available'])
+            self.assertTrue(row['finalized'])
+
+    def test_per_uid_outcomes_merge_identities_and_exclude_unassigned_batches(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);state=root/'state';folder=state/'live'
+            folder.mkdir(parents=True);epoch='miner-outcomes'
+            (folder/f'{epoch}-manifest.json').write_text(json.dumps(dict(epoch=epoch,start=1,deadline=2)))
+            registry={'a':dict(public_key='a',uid=17),'b':dict(public_key='b',uid=17)}
+            (folder/'registrations.json').write_text(json.dumps(registry))
+            reports={
+                'a':dict(accepted=[{'private_url':'PRIVATE_SAMPLE'}],outcomes=[
+                    dict(valid=True,fully_audited=True),dict(valid=False,fully_audited=True),
+                    dict(valid=None,fully_audited=False)]),
+                'b':dict(accepted=[{}],outcomes=[dict(valid=True,fully_audited=True)]),
+                'unassigned':dict(accepted=[{}],outcomes=[dict(valid=True,fully_audited=True)]),
+            }
+            path=folder/f'{epoch}-verified.json';path.write_text(json.dumps(reports))
+            database=Database(root/'network.sqlite',state);database.refresh()
+            snapshot=database.snapshot();row=snapshot['epochs'][0]
+            self.assertEqual(row['grid'][17],4)
+            self.assertEqual(row['unassigned_batches'],1)
+            self.assertEqual({key:values[17] for key,values in row['grid_outcomes'].items()},
+                             dict(verified=2,rejected=1,unchecked=1))
+            self.assertEqual([sum(row['grid_outcomes'][key]) for key in ('verified','rejected','unchecked')],[2,1,1])
+            self.assertTrue(all(len(values)==256 for values in row['grid_outcomes'].values()))
+            self.assertNotIn('PRIVATE_SAMPLE',json.dumps(snapshot))
+            reports['a']['accepted']=[{}]*4
+            path.write_text(json.dumps(reports));database.refresh()
+            self.assertIsNone(database.snapshot()['epochs'][0]['grid_outcomes'])
+
     def test_live_reward_epoch_and_actual_eval_are_public_without_upload_capabilities(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);state=root/'state'

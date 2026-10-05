@@ -1,0 +1,10 @@
+[Unit]
+Description=Affine public miner incentive chain snapshot
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/const/subnet120-rewrite
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -m dashboard.incentive --output /home/const/subnet120-rewrite/state/dashboard-incentive.json
+TimeoutStartSec=150
+UMask=0077
+NoNewPrivileges=true
