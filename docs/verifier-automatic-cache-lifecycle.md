@@ -16,7 +16,7 @@ cache.evict_checkpoints(exclude=[new_current_cp_id], keep=0)
 cache.retire_downloads(original_job_id)
 ```
 
-`export_path` is restricted to `root/checkpoints/<cp_id>` or `root/jobs/<job_id>/checkpoint-persistent-final` (also `checkpoint-final`). The caller must supply already authenticated model inventory and durability acknowledgement. The API does not create a new proof or check publication itself. Never retire the trainer successor before model and optimizer durability are acknowledged.
+`export_path` is restricted to `root/checkpoints/<cp_id>` (explicit adoption also accepts historical `root/checkpoint/<cp_id>`) or `root/jobs/<job_id>/checkpoint-persistent-final` (also `checkpoint-final`). The caller must supply already authenticated model inventory and durability acknowledgement. The API does not create a new proof or check publication itself. Never retire the trainer successor before model and optimizer durability are acknowledged.
 
 ## Source-preserving deployment for historical jobs
 
