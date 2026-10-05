@@ -39,3 +39,10 @@ class Controls(unittest.TestCase):
   with tarfile.open(archive,'w:gz'):pass
   with self.assertRaisesRegex(ValueError,'missing exact native snapshot'):
    publish_source_bundle(SimpleNamespace(bucket=ForbiddenBucket()),archive,environments=self.env,approved_files=self.files)
+
+ def test_only_exact_public_FE_metadata_paths_are_bootstrap_admitted(self):
+  from subnet.source_bootstrap import public_path
+  for name in ('LIVE_LAUNCH_PLAN.md','configs/bounded-audit-policy.json'):
+   self.assertEqual(public_path(name),name)
+  for name in ('other-launch-plan.md','configs/secret.json','configs/bounded-audit-policy.json/secret','configs/../wallets/key','wallets/key','credentials.json'):
+   with self.assertRaises(ValueError):public_path(name)
