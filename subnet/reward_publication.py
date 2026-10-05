@@ -30,7 +30,8 @@ def checked_evidence(state,manifest,authority,publication=None,checkpoint_docume
     metrics=json.loads(metrics_path.read_text());binding=manifest['trainer_state_binding']
     pointer=validate_pointer(metrics['trainer_state']);steps=metrics['steps']
     if (type(steps)is not int or steps<=0 or pointer['optimizer_steps']!=binding['global_step_before']+steps or metrics['source_epoch']!=epoch or metrics['input_checkpoint']!=base['input_checkpoint'] or metrics['new_checkpoint']['id']!=pointer['inference_checkpoint']):raise ValueError('actual advanced persistent training')
-    record=read(Path(state)/'roles',epoch,'train');job=decode(read(Path(state)/'roles',record['job_id'],'job'),authority)
+    from .training_startup_recovery import local_request
+    record,job,recovery_evidence=local_request(state,epoch,authority)
     report=read(Path(state)/'roles',record['job_id'],'report');training_manifest=decode(job['manifest'],authority)
     if (job['job_id']!=record['job_id'] or sha(job)!=record['job_sha256'] or metrics['original_job_sha256']!=sha(job) or metrics['trainer_binding_sha256']!=sha(binding) or training_manifest['trainer_state_binding']!=binding or training_manifest.get('reward_publication_policy')!=VERSION or job['steps']!=steps):raise ValueError('original trained reward execution binding')
     validate_report(report,job,training_manifest)
@@ -44,6 +45,7 @@ def checked_evidence(state,manifest,authority,publication=None,checkpoint_docume
     if cpbody!={'id':cp['id'],'files':cp['files']}:raise ValueError('authority durable inference checkpoint')
     receipt=read(state,epoch,'checkpoint-publication')
     if receipt['checkpoint']!=cp['id'] or receipt.get('operator_independent_hashes')is not True or {n:r['sha256']for n,r in receipt['objects'].items()}!=cp['files']:raise ValueError('actual inference publication receipt')
+    if recovery_evidence is not None:base['training_startup_recovery']=recovery_evidence
     return dict(base,status='durably_trained',training_steps=steps,output_checkpoint=cp['id'],optimizer_steps=pointer['optimizer_steps'],parent_optimizer_steps=binding['global_step_before'],input_parent=binding['parent'],trainer_binding_sha256=sha(binding),original_job_id=job['job_id'],original_job_sha256=sha(job),source_files_sha256=sha(job['source_files']),runtime_versions_sha256=sha(job['runtime_versions']),trainer_state=pointer,metrics_sha256=sha(metrics),checkpoint_receipt_sha256=sha(receipt),publication=publication,checkpoint_document=checkpoint_document)
 def checked_ready(document,state,manifest,authority):
     ready=signed(document,authority)

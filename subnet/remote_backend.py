@@ -263,6 +263,7 @@ class RemoteController(Controller):
         if remote.get('independent_state_reader') is not None:
             from .independent_state_dispatch import IndependentStateReader
             self.independent_state_reader=IndependentStateReader(remote['independent_state_reader'],self)
+        self.training_startup_recovery_files=dict(remote.get('training_startup_recovery_files',{}))
         self.training_execution_amendment_files=dict(remote.get('training_execution_amendment_files',{}))
         self.training_execution_amendment_required_epochs=list(remote.get('training_execution_amendment_required_epochs',[]))
         if 'roles' in remote:
