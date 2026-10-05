@@ -106,6 +106,7 @@ class Worker:
                     if time.time()>=claim['lease_until']: lost.set(); return
         thread=threading.Thread(target=renew,daemon=True); thread.start()
         cache_leases=ExitStack()
+        lifecycle=None;runspace=None
         try:
             environment=dict(os.environ,CUBLAS_WORKSPACE_CONFIG=':4096:8')
             runspace=self.workspace/'backend' if claim['attempt']==1 else attempt/'backend'
@@ -155,6 +156,10 @@ class Worker:
             return True
         finally:
             cache_leases.close()
+            # Retry workspaces are disposable model inputs, not independent
+            # long-lived caches. Their report/job diagnostics remain in place.
+            if lifecycle is not None and runspace!=self.workspace/'backend':
+                lifecycle.evict_checkpoints(keep=0)
             stopped.set(); thread.join(timeout=31)
 
 
