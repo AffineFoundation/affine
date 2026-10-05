@@ -376,7 +376,7 @@ After admission, E11 configures one full-model update over accepted audited pair
 
 Automatic completed-download retention keeps R2 and original reports intact and removes only authenticated, completed local submission replicas after complete archive hash/size readback. It does not claim automatic retirement of every old model cache. Extra machines retained for independent qualification are outside the five live role nodes; this guide does not expand hardware approval to them.
 
-The dashboard has two charts: matched held-out math performance over time and frozen submitted batches per finalized epoch. Submitted counts include rejected and unchecked batches; tooltips distinguish accepted totals. It displays observed results, not promised improvements.
+The dashboard has two charts: matched held-out math performance over time and committed submitted batches per epoch. New-policy submitted counts come from authenticated signed commitment inventories; learner-eligible counts are authenticated cheap admissions, explicitly unaudited, and do not certify generation or grading. Tooltips distinguish eligibility from accepted audits. The latest available epoch is selected, including active training epochs. It displays observed results, not promised improvements.
 
 Technical references:
 - https://github.com/AffineFoundation/affine/blob/main/docs/FORCED_SAMPLING_CUTOVER.md

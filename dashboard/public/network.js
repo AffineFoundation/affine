@@ -194,6 +194,7 @@
   function batchDetails(row) {
     const lines = [`${epochName(row)} · ${batchPhase(row)}`,`${utc(row.start)} UTC`,batchAvailable(row)?`${number(row.batches)} submitted batches`:'Batch counts pending audit'];
     if (!batchAvailable(row)) return lines.join('\n');
+    if (row.learner_input_assurance==='unaudited' && count(row.learner_eligible)) lines.push(`${number(row.learner_eligible)} learner-eligible · unaudited inputs`,`${number(row.learner_excluded)} excluded from training admission`);
     if (validOutcomes(row)) lines.push(`${number(row.accepted)} accepted · ${number(row.unchecked)} unchecked · ${number(row.rejected)} rejected`);
     else lines.push('Verification breakdown unavailable');
     if (Array.isArray(row.grid) && row.grid.length===256 && row.grid.every(count)) {
@@ -204,7 +205,7 @@
     return lines.join('\n');
   }
   function defaultRecord(kind, rows) {
-    const finalized=kind==='batch'?rows.findLastIndex(row=>row.finalized):-1;
+    const finalized=kind==='batch'?rows.findLastIndex(row=>row.batches_available!==false):-1;
     return finalized>=0?finalized:rows.length-1;
   }
   function syncEvaluationLegend(rows,row){
