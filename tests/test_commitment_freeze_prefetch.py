@@ -53,3 +53,17 @@ class BoundedCommitmentFreeze(unittest.TestCase):
  def test_malformed_prefetched_sibling_does_not_block_authenticated_other_miners(self):
   gateway,ids,_=self.fixture(12);miner=ids[0].id;gateway.bucket.put('private/e/commitments/'+miner+'.json',b'x'*(c.MAX_BYTES+100))
   result=c.freeze(gateway,'e');self.assertEqual(len(result),11);self.assertIn(miner,gateway.epochs['e']['rejections']);self.assertNotIn(miner,result);self.assertEqual(gateway.bucket.heavy_reads,0)
+
+ def test_public_receipt_put_retry_reuses_exact_frozen_journal_without_fetch_copy(self):
+  gateway,ids,_=self.fixture(5);bucket=gateway.bucket;original=bucket.json;attempts=[]
+  def publish(key,value):
+   attempts.append(key)
+   if len(attempts)==1:raise RuntimeError('temporary public PUT outage')
+   return original(key,value)
+  bucket.json=publish
+  with self.assertRaisesRegex(RuntimeError,'PUT outage'):c.freeze(gateway,'e')
+  frozen=copy.deepcopy(gateway.epochs['e']['frozen_receipts'])
+  with patch.object(bucket,'get_object',side_effect=AssertionError('no repeat fetch')),patch.object(bucket,'copy',side_effect=AssertionError('no repeat copy')):
+   self.assertEqual(c.freeze(gateway,'e'),frozen)
+  self.assertEqual(attempts,['public/e/receipts.json']*2)
+  self.assertEqual(bucket.objects['public/e/receipts.json'][0],canonical(frozen))
