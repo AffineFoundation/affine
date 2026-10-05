@@ -1,3 +1,15 @@
+Verified preparation update, 2026-10-05: the combined learner/transport code is
+on GitHub main at eddef1f81f409b27830b2a2941460586745558fa; later integration
+changes remain under review. Four added H200 runtimes are installed but not
+enrolled. The calibration node downloaded checkpoint 6a2bb631 in 88 seconds,
+with all 15,242,726,226 bytes checked against the pinned file hashes; numerical
+GPU qualification has not yet passed. Dedicated recovery source 156aa5fb
+passed 470 CPU controls, full R2 archive/member readback, and seven-role CPU
+staging. Fresh trainer readiness found no original processes, no GPU compute
+apps, no original output objects, and all ten original compact inputs intact
+with persistent optimizer parent step three. These are preparation results,
+not a completed recovery or new-policy deployment. Cleanup remains deferred.
+
 Active goal implementation update, 2026-10-05: the decoupled learning and
 continuous-audit goal is registered and active. Three parallel agents own
 learner/controller, fast audits/scoring, and fleet/miner transport respectively.
