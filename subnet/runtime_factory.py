@@ -10,7 +10,7 @@ def validate_backend(manifest):
  if revision==CPU_REVISION:
   if manifest.get('backend_profile') not in (None,{'device':'cpu','dtype':'float32','attention':'eager'}):raise ValueError('CPU backend profile mismatch')
   if manifest.get('numerical_policy','cpu-float32-eager-exact-toploc-logprob-atol1e-5')!='cpu-float32-eager-exact-toploc-logprob-atol1e-5':raise ValueError('CPU numerical policy mismatch')
- elif revision in (GPU_REVISION,'cuda-bf16-eager-sm90-v1'):
+ elif revision in (GPU_REVISION,'cuda-bf16-eager-sm90-v1','cuda-fp32-eager-sm90-v1'):
   from .backend_profiles import resolve
   resolve(manifest)
  else:raise ValueError('unsupported numerical runtime revision')
