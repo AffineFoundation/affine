@@ -2,7 +2,7 @@ import io
 import unittest
 import numpy as np
 from subnet.artifact_budget import for_manifest,LEGACY,LONG,LONG_REVISION
-from subnet.backend_profiles import profile,HOPPER_REVISION
+from subnet.backend_profiles import profile,HOPPER_REVISION,HOPPER_FP32_REVISION
 from subnet.batches import pack,unpack,bounded_tensor
 from subnet.harness import normalize
 
@@ -31,3 +31,11 @@ class ArtifactBudgets(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'token budget'):normalize({'max_output_tokens':1024})
         self.assertEqual(normalize({'version':'text-tools-long-v2','max_output_tokens':2048})['max_output_tokens'],2048)
         with self.assertRaisesRegex(ValueError,'token budget'):normalize({'version':'text-tools-long-v2','max_output_tokens':2049})
+
+    def test_fp32_hopper_long_budget_retains_all_caps_and_exact_profile(self):
+        revision,backend,numerical=profile(HOPPER_FP32_REVISION)
+        manifest=dict(model_runtime_revision=revision,backend_profile=backend,numerical_policy=numerical,artifact_policy=LONG_REVISION)
+        self.assertEqual(for_manifest(manifest),LONG)
+        for update in ({'backend_profile':dict(backend,dtype='bfloat16')},{'numerical_policy':{}},{'model_runtime_revision':'cuda-fp32-eager-sm86-v1'}):
+            with self.subTest(update=update),self.assertRaises(ValueError):for_manifest(dict(manifest,**update))
+        self.assertEqual(for_manifest(dict(manifest,artifact_policy=None)),LEGACY)
