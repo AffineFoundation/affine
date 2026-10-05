@@ -266,12 +266,15 @@ def restore_state(descriptor, approved_sha256, input_checkpoint, inventory, *,
         with counter_lock:
             counters['inflight']+=1;counters['maximum']=max(counters['maximum'],counters['inflight'])
         try:
-            path = transfer/shard['name']; fetch_shard(shard['name'], path)
+            path = transfer/shard['name']; phase=time.monotonic()
+            fetch_shard(shard['name'], path); fetch_seconds=time.monotonic()-phase
             if not path.is_file() or path.is_symlink():
                 raise ValueError('downloaded state regular file required')
-            actual_sha, size = _hash_file(path)
+            phase=time.monotonic(); actual_sha, size = _hash_file(path)
+            hash_seconds=time.monotonic()-phase
             if (actual_sha, size) != (shard['sha256'], shard['size']):
                 raise ValueError('downloaded state shard digest/size')
+            phase=time.monotonic()
             with safe_open(path, framework='pt', device='cpu') as source:
                 if set(source.keys()) != {r['key'] for r in shard['tensors']}:
                     raise ValueError('state shard tensor allowlist')
@@ -287,8 +290,11 @@ def restore_state(descriptor, approved_sha256, input_checkpoint, inventory, *,
                     # overlapping approved slice or publish these private rows.
                     target[start:start + count].copy_(value)
                     del value, target
+            materialize_seconds=time.monotonic()-phase
             path.unlink()
             receipt=dict(name=shard['name'],sha256=actual_sha,size=size,
+                         phase_seconds=dict(fetch=fetch_seconds,SHA256=hash_seconds,
+                             tensor_schema_finite_and_copy=materialize_seconds),
                          verified_materialization=True,local_shard_retired=True,
                          started_at=started,completed_at=time.time())
             if concurrency>1:

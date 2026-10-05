@@ -82,6 +82,10 @@ Prospective optimizer export also checks each serialized FP32 slice once,
 rather than rescanning a whole parameter for every split shard. Real tiny
 serial/parallel export, restoration and invalid-state controls pass; this change
 is not in FE or the staged complete package, and no live speedup is claimed.
+Prospective per-shard restore reports separately time fetch, SHA256 and tensor
+schema/finite-value checks plus copying. Parallel timings are observations,
+not additive wall-clock durations. These fields are not retroactively added
+to historical reports.
 An independent coordinator API option is also default-off and prospective: it
 keeps verifier HTTP availability separate from learner initialization/recovery,
 using the same authenticated queue and leases. It is not deployed in FE.

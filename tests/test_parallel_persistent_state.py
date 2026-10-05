@@ -54,6 +54,10 @@ class ParallelState(unittest.TestCase):
         restored,receipts=restore_state(descriptor,sha(descriptor),'22'*32,self.inventory,workspace=self.root,
             fetch_shard=lambda name,path:path.write_bytes(self.objects[name]),resource_admission=self.admission)
         for slot,value in before.items():self.assertTrue(torch.equal(restored[1]['w'][slot],value))
+        for receipt in receipts:
+            self.assertEqual(set(receipt['phase_seconds']),
+                {'fetch','SHA256','tensor_schema_finite_and_copy'})
+            self.assertTrue(all(seconds>=0 for seconds in receipt['phase_seconds'].values()))
         self.assertEqual(restored[1]['w']['step'],1)
         self.assertEqual(self.optimizer.global_step,1)
     def test_export_validates_each_serialized_slot_element_once(self):
