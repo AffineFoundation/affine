@@ -19,8 +19,11 @@ def _decode(data):
             result[key]=value
         return result
     def invalid(value):raise ValueError("nonfinite learner JSON")
-    result=json.loads(data,object_pairs_hook=unique,parse_constant=invalid)
-    if canonical(result)!=data:raise ValueError("canonical learner JSON required")
+    try:
+        result=json.loads(data,object_pairs_hook=unique,parse_constant=invalid)
+        if canonical(result)!=data:raise ValueError("canonical learner JSON required")
+    except (UnicodeError,RecursionError,TypeError,json.JSONDecodeError)as error:
+        raise ValueError("bounded learner JSON framing")from error
     return result
 
 VERSION='committed-unaudited-training-v1'
@@ -112,6 +115,7 @@ def admitted_submission(path,obj,manifest,authority,*,retire=False):
         signature=sha([dict(prompt=t['prompt'],output=t['output'])for t in turns])
         if signature in seen:raise ValueError('duplicate learner trajectory')
         seen.add(signature)
+        if rollout.get('classification')not in ('positive','negative'):raise ValueError('explicit claimed learner class required')
         category=classification(rollout)
         if category=='positive':positives.append(rollout)
         elif category=='negative':negatives.append(rollout)
