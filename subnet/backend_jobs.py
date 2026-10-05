@@ -295,6 +295,8 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
     manifest=signed(job['manifest'],authority)
     from .backend_profiles import resolve
     resolve(manifest)
+    from .backend_profiles import execution_profile
+    execution_profile(manifest,job['role'])
     from .artifact_budget import for_manifest
     for_manifest(manifest)
     cp=manifest['checkpoint'];identifier=file_map(cp['files'])
@@ -630,7 +632,8 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         from .persistent_publication import validate_policy
         validate_policy(manifest['persistent_publication_policy'])
     from .backend_profiles import resolve
-    revision,backend_profile,numerical_policy=resolve(manifest)
+    from .backend_profiles import execution_profile
+    revision,backend_profile,numerical_policy=execution_profile(manifest,job['role'])
     from .artifact_budget import for_manifest
     for_manifest(manifest)
     from .task_assets import hydrate_manifest
@@ -653,6 +656,10 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         epoch=manifest['epoch'],backend_profile=backend_profile,numerical_policy=numerical_policy,
         source_files=job['source_files'],runtime_versions=job['runtime_versions'],
         chain_transactions=False,full_model_finetune=False,execution_resources_enforced=False)
+    if manifest.get('training_runtime')is not None:
+        report['execution_runtime_revision']=revision
+        report['generation_runtime_revision']=manifest['model_runtime_revision']
+        report['training_runtime_sha256']=hashlib.sha256(canonical(manifest['training_runtime'])).hexdigest()
     if job['role']=='upload':
         import requests
         validate_single_put_sizes(approved,manifest['checkpoint']['files'])

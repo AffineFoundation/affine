@@ -98,7 +98,7 @@ class Controller:
         if existing(legacy_key) is None:self.bucket.json(legacy_key,self.signed(descriptor))
         return checkpoint
 
-    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None,persistent_publication_policy=None,reward_publication_policy=None,optimizer_state_export_policy=None,artifact_compression_policy=None,proof_copy_policy=None,training_input_policy=None):
+    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None,persistent_publication_policy=None,reward_publication_policy=None,optimizer_state_export_policy=None,artifact_compression_policy=None,proof_copy_policy=None,training_input_policy=None,continuous_reward_activation_document=None,continuous_reward_registration_snapshot=None,training_runtime=None):
         if artifact_compression_policy is not None:
             from .batches import compression_policy
             artifact_compression_policy=compression_policy(artifact_compression_policy)
@@ -114,6 +114,14 @@ class Controller:
             transport_concurrency({'optimizer_state_transport':optimizer_state_transport})
         from .live_reward_bridge import prevalidate_opening_arguments
         prevalidate_opening_arguments(epoch,checkpoint,miners,duration,audit_policy,source_bundle,live_reward_anchor_document,live_reward_registration_snapshot,self.authority.id)
+        if continuous_reward_activation_document is not None:
+            if live_reward_anchor_document is not None:raise ValueError('strict and statistical reward contracts are exclusive')
+            from .continuous_reward_bridge import inject_opening
+            inject_opening(dict(epoch=epoch,start=time.time(),checkpoint=checkpoint,source_bundle=source_bundle,training_input_policy=training_input_policy,payable=False,capabilities={m:None for m in miners}),continuous_reward_activation_document,self.authority.id,continuous_reward_registration_snapshot)
+        elif continuous_reward_registration_snapshot is not None:raise ValueError('statistical registrations require signed activation')
+        if training_runtime is not None:
+            from .backend_profiles import execution_profile
+            execution_profile(dict(training_runtime=training_runtime,training_policy=training_policy,training_input_policy=training_input_policy,model_runtime_revision=model_runtime_revision,backend_profile=backend_profile,numerical_policy=numerical_policy),'train')
         sampling_contract=None
         if sampling_policy is not None:
             from .forced_sampling import new_contract,validate_harness
@@ -185,6 +193,7 @@ class Controller:
         if sample_harness_registry is not None:manifest['sample_harness_registry']=sample_harness_registry
         if submission_transport_policy is not None:manifest['submission_transport_policy']=submission_transport_policy
         if training_input_policy is not None:manifest['training_input_policy']=training_input_policy
+        if training_runtime is not None:manifest['training_runtime']=training_runtime
         if artifact_compression_policy is not None:manifest['artifact_compression_policy']=artifact_compression_policy
         if proof_copy_policy is not None:manifest['proof_copy_policy']=proof_copy_policy
         if hourly_execution_policy is not None:manifest['hourly_execution_policy']=hourly_execution_policy
@@ -215,6 +224,9 @@ class Controller:
             manifest=inject_opening_manifest(manifest,live_reward_anchor_document,self.authority.id,live_reward_registration_snapshot)
         elif live_reward_registration_snapshot is not None:
             raise ValueError('reward registration snapshot requires signed forward-live contract')
+        if continuous_reward_activation_document is not None:
+            from .continuous_reward_bridge import inject_opening
+            manifest=inject_opening(manifest,continuous_reward_activation_document,self.authority.id,continuous_reward_registration_snapshot)
         from .protocol import entries as validate_entries
         validate_entries(manifest)
         save_manifest(self.state/f'{epoch}-manifest.json', manifest)

@@ -27,3 +27,16 @@ def resolve(manifest):
 
 def for_config(config):
     return profile(config.get('model_runtime_revision', LEGACY_REVISION))
+
+def execution_profile(manifest,role):
+    """Signed prospective BF16 learner override; inference profile stays FP32."""
+    generation=resolve(manifest)
+    override=manifest.get('training_runtime')
+    if override is None:return generation
+    from .persistent_cpu_adamw import POLICY
+    expected=dict(version='separate-bf16-persistent-training-runtime-v1',model_runtime_revision=HOPPER_REVISION,
+        backend_profile=profile(HOPPER_REVISION)[1],numerical_policy=profile(HOPPER_REVISION)[2])
+    if (manifest.get('training_input_policy')!='committed-unaudited-training-v1' or manifest.get('training_policy')!=POLICY or
+        generation[0]!=HOPPER_FP32_REVISION or override!=expected):
+        raise ValueError('explicit separate BF16 persistent training runtime')
+    return profile(HOPPER_REVISION) if role=='train' else generation

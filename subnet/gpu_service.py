@@ -138,6 +138,8 @@ def contract(config,round_number):
         transport_concurrency(config)
         result['optimizer_state_transport']=dict(config['optimizer_state_transport'])
     if config.get('live_reward_anchor_document') is not None:result['live_reward_anchor_document']=config['live_reward_anchor_document']
+    if config.get('continuous_reward_activation_document') is not None:result['continuous_reward_activation_document']=config['continuous_reward_activation_document']
+    if config.get('training_runtime') is not None:result['training_runtime']=config['training_runtime']
     from .empty_epoch_policy import selected
     policy=selected(config,round_number)
     if policy is not None:result['operator_test_policy']=policy
@@ -254,6 +256,7 @@ def run(config,once=False):
                         if latest!=status.get('trainer_state'):raise ValueError('controller latest committed trainer-state journal mismatch')
                         opening_contract['trainer_state_binding']=opening_binding(config,status,epoch)
                     if anchor_document is not None:opening_contract['live_reward_registration_snapshot']=active['registrations']
+                    if opening_contract.get('continuous_reward_activation_document') is not None:opening_contract['continuous_reward_registration_snapshot']=active['registrations']
                     manifest=controller.open(epoch,status['checkpoint'],active['identities'],max_batches=config.get('max_batches',3),**opening_contract)
                 if manifest['max_batches']!=config.get('max_batches',3):raise ValueError('immutable epoch quota/config mismatch')
                 if manifest.get('live_reward_contract') is not None:
@@ -261,6 +264,10 @@ def run(config,once=False):
                     # Missing expired opening attestations fail closed, never backdate.
                     bucket.json('public/'+epoch+'/manifest.json',controller.signed(manifest))
                     from .live_reward_bridge import emit_opening_documents
+                    emit_opening_documents(controller,manifest,active['registrations'])
+                if manifest.get('continuous_reward_contract') is not None:
+                    bucket.json('public/'+epoch+'/manifest.json',controller.signed(manifest))
+                    from .continuous_reward_bridge import emit_opening_documents
                     emit_opening_documents(controller,manifest,active['registrations'])
                 ledger=json.loads(ledgerpath.read_text()) if ledgerpath.exists() else []
                 key='public/streams/'+prefix+'/current.json';pointer=dict(epoch=epoch,manifest='public/'+epoch+'/manifest.json',manifest_url=bucket.presign('public/'+epoch+'/manifest.json'),current_url=bucket.presign(key),current_url_expires_at=time.time()+604800,transport_policy='direct-r2-v1',history_url=publish_history(controller,prefix,ledger,config['source_bundle']))
@@ -314,6 +321,10 @@ def run(config,once=False):
                 save(state/(epoch+'-verified.json'),reports)
                 from .empty_epoch_policy import validate_empty_completion
                 validate_empty_completion(manifest,result,reports)
+                if manifest.get('continuous_reward_contract') is not None:
+                    bucket.json('public/'+epoch+'/manifest.json',controller.signed(manifest))
+                    from .continuous_reward_bridge import emit_opening_documents
+                    emit_opening_documents(controller,manifest,active['registrations'])
                 ledger=json.loads(ledgerpath.read_text()) if ledgerpath.exists() else []
                 if not any(r['epoch_id']==epoch for r in ledger):ledger.append(dict(result,points={active['identities'][m]:p for m,p in result['points'].items()}))
                 save(ledgerpath,ledger);transition_phase(active,'before');save(statuspath,status)
@@ -388,6 +399,10 @@ def run(config,once=False):
                 if unaudited:
                     status['last_completed_epoch']=dict(epoch=epoch,round=status['round'],checkpoint=manifest['checkpoint']['id'],next_checkpoint=active['next_checkpoint']['id'],completed_at=timing['controller_completed_at'],input_assurance='unaudited')
                     save(state/(epoch+'-learner-completion.json'),status['last_completed_epoch'])
+                    if manifest.get('continuous_reward_contract')is not None:
+                        completion=controller.signed(status['last_completed_epoch'])
+                        save(state/(epoch+'-signed-learner-completion.json'),completion)
+                        bucket.json('public/'+epoch+'/learner-completion.json',completion)
                 status.update(checkpoint=active['next_checkpoint'],checkpoint_path=active['next_path'],training_steps=active['next_steps'],active=None,round=status['round']+1);save(statuspath,status)
                 if once:return
         except Exception as error:

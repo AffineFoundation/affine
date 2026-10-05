@@ -241,9 +241,11 @@ class RemoteJobs:
             if time.time()-started>1800:raise RemoteObservationTimeout(prior['job_id'],role)
             time.sleep(5)
     def checked(self,report,prior,manifest):
-        from .backend_profiles import resolve
-        _,profile,policy=resolve(manifest)
+        from .backend_profiles import execution_profile
+        revision,profile,policy=execution_profile(manifest,prior['role'])
         if report.get('job_id')!=prior['job_id'] or report.get('operator')!=self.controller.authority.id or report.get('job_sha256')!=prior['job_sha256'] or report.get('checkpoint')!=manifest['checkpoint']['id'] or report.get('epoch')!=manifest['epoch'] or report.get('role')!=prior['role'] or report.get('success') is not True or report.get('chain_transactions') is not False or canonical(report.get('backend_profile'))!=canonical(profile) or canonical(report.get('numerical_policy'))!=canonical(policy) or report.get('source_files')!=prior['source_files'] or report.get('runtime_versions')!=prior['runtime_versions'] or hashlib.sha256(canonical(manifest)).hexdigest()!=prior['manifest_sha256']:raise ValueError('remote role report binding')
+        if manifest.get('training_runtime')is not None:
+            if (report.get('execution_runtime_revision')!=revision or report.get('generation_runtime_revision')!=manifest['model_runtime_revision'] or report.get('training_runtime_sha256')!=hashlib.sha256(canonical(manifest['training_runtime'])).hexdigest()):raise ValueError('signed separate training runtime report binding')
         # Older dispatch records omit timestamps; reconstruct them from their
         # original signed job, never from mutable local configuration or a new
         # signature. A live observation timeout does not affect this check.
@@ -336,6 +338,9 @@ class RemoteController(Controller):
         if manifest.get('live_reward_contract') is not None:
             from .live_reward_bridge import emit_opening_documents
             emit_opening_documents(self,manifest,live_registrations)
+        if manifest.get('continuous_reward_contract') is not None:
+            from .continuous_reward_bridge import emit_opening_documents
+            emit_opening_documents(self,manifest,kwargs.get('continuous_reward_registration_snapshot'))
         return manifest
     def checkpoint_with_reads(self,checkpoint):
         files=checkpoint['files']
