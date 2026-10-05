@@ -1,3 +1,37 @@
+# Active goal: one complete Affine epoch per hour
+
+Operator refinement on 2026-10-05: complete the full mining → bounded sampled
+verification → training → durable checkpoint publication → validator weight
+setting loop in no more than 3,600 seconds, targeting 24 completed epochs/day.
+Preserve the existing goal of measured held-out model improvement.
+
+Adjust the amount of verification to the available time, not the epoch length.
+Remove mandatory full-population inference verification. Retain unpredictable
+post-commit audit selection, honest on-policy sampler/TOPLOC checks on selected
+samples, authenticated reports, and cheap bounded admission on every submission.
+Train only on audited accepted data. Confirmed invalid samples must strongly
+reduce rewards and can trigger a configurable temporary blacklist. Infrastructure
+errors, verification timeouts and exhausted budgets are not fraud findings.
+All scoring, penalty and exclusion rules must be explicit in the signed contract
+and public llms.txt; do not claim unexamined samples are independently verified.
+
+Account for the full critical path: mining, freezing/copying artifacts, audits,
+training, optimizer-state/checkpoint publication and the chain weight writer.
+Do not simply give verification an hour and add training afterward. Preserve
+committed FP32 optimizer lineage, fixed held-out comparisons, historical reports
+and chain-policy authorization. Model improvement must be measured, not promised.
+
+Completion evidence: several consecutive real end-to-end epochs <=3,600 seconds;
+actual selected audits and correct invalid-vs-infrastructure penalty controls;
+actual training updates and durable monotonic optimizer/checkpoint history;
+actual validator weight submissions; compatible external miner/public contracts;
+and comparable held-out performance demonstrating improvement. Until all are
+proved, leave the goal active. Initial audit/time allocations are calibrated
+from measured throughput and may be adjusted prospectively between epochs.
+
+The preceding goal and observations below are historical; latest operator
+instructions and the active signed manifests govern the current mechanism.
+
 # Active goal: multi-environment Affine pipeline
 
 Operator authorized continuing autonomously on September30,2026.
