@@ -1,0 +1,9 @@
+# Prospective current-parent optimizer cache
+
+Not wired into any worker or deployed. R2 remains authoritative. The helper admits a ROOT-signed exact descriptor/checkpoint/genesis/counter/inventory after original durable adoption and independent full readback. Local shard bytes require full SHA and size; missing/corrupt bytes request the exact existing parent from R2. The unchanged restore path still enforces complete tensor spans, allowlists, FP32 shapes and finite moments. No optimizer reset exists.
+
+Before activation, add explicit signed retain-current mode to export, retaining pending bytes without declaring adoption. Promote only after authenticated original authority adoption and independent readback. Account for the exact additional full-state payload (about 90 GB) as well as fresh export and bounded transfer reserves. Canonical resource-plan verification must include this field; the helper alone does not alter the existing resource plan. Require filesystem available-space admission before retaining anything.
+
+Only one adopted current parent may be addressed. Replacing it requires a separate authorized automatic lifecycle transition; this proposal implements no historical retention or deletion, because lifecycle work remains deferred. No existing E14 jobs, source or receipts change.
+
+Qualification: real multi-shard same-host export/adoption/restore comparison; byte-exact state and optimizer counter equivalence against R2-only restore; corrupt/partial/symlink/wrong parent and unavailable disk controls; independent durable readback proof; source/runtime qualification and signed resource plan. Until these integrations and controls pass, this helper cannot reduce live download time.
