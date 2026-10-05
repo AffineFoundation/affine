@@ -18,6 +18,10 @@ class PolicyControls(unittest.TestCase):
   r=hourly_aggregate([signed(self.authority,a),signed(self.authority,b)],self.root,3600);self.assertEqual(r['weights']['b'*64],.2);self.assertEqual(r['weights']['3'*64],.8);self.assertEqual(len(r['snapshot_bindings']),2)
   with self.assertRaises(ValueError):hourly_aggregate([signed(self.authority,a),signed(self.authority,a)],self.root,3600)
   self.assertFalse(r['chain_transactions'])
+ def test_declared_but_ineligible_batch_does_not_earn_points(self):
+  r=self.calculate(eligible_evidence_ids=[]);self.assertEqual(r['points']['b'*64],0.)
+  r=self.calculate(obs=[self.observation('confirmed_invalid')],eligible_evidence_ids=[]);self.assertEqual(r['miners']['b'*64]['confirmed_invalid_current'],1);self.assertEqual(r['points']['b'*64],0.)
+  with self.assertRaises(ValueError):self.calculate(eligible_evidence_ids=['0'*64])
  def test_prior_not_a_verified_claim(self):
   r=self.calculate();self.assertEqual(r['points']['b'*64],.5);self.assertFalse(r['unaudited_samples_claimed_verified']);self.assertFalse(r['training_waits_for_audits'])
  def test_probability_falls_and_repeat_deduplicates(self):

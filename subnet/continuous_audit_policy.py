@@ -74,7 +74,7 @@ def observations(envelopes,records,verifiers,cutoff,*,admitted_jobs=None,adjudic
   result[key]=dict(p,round=row['round'],evidence_id=key,verifier=signer)
  return list(result.values())
 
-def snapshot(records,envelopes,verifiers,*,epoch,round,checkpoint,cutoff,audit_policy,admitted_jobs=None,adjudications=(),authority=None):
+def snapshot(records,envelopes,verifiers,*,epoch,round,checkpoint,cutoff,audit_policy,admitted_jobs=None,adjudications=(),authority=None,eligible_evidence_ids=None):
  """Validity estimate can decrease; current cohort bounds historical reputation.
 
  The caller authenticates immutable opening/policy and signs this exact result.
@@ -84,11 +84,14 @@ def snapshot(records,envelopes,verifiers,*,epoch,round,checkpoint,cutoff,audit_p
  need(all(r['round']<=round and r['committed_at']<=cutoff for r in rows),'future or postcutoff committed population')
  current=[r for r in rows if r['epoch']==epoch];need(all(r['round']==round and r['checkpoint']==checkpoint for r in current),'current epoch/checkpoint binding')
  audits=observations(envelopes,rows,verifiers,cutoff,admitted_jobs=admitted_jobs,adjudications=adjudications,authority=authority);miners=sorted({r['miner']for r in current});points={};details={}
+ eligible_set=None if eligible_evidence_ids is None else set(eligible_evidence_ids)
+ if eligible_set is not None:need(all(valid_digest(v)for v in eligible_set)and eligible_set<=set(digest(r)for r in current),'actual admitted eligible population subset')
+ score_rows=[r for r in current if eligible_set is None or digest(r)in eligible_set]
  counts={}
- for row in current:
+ for row in score_rows:
   key=(row['env_id'],row['index']);counts.setdefault(key,set()).add(row['miner'])
  for miner in miners:
-  eligible=len({(r['env_id'],r['index'])for r in current if r['miner']==miner and len(counts[(r['env_id'],r['index'])])==1})
+  eligible=len({(r['env_id'],r['index'])for r in score_rows if r['miner']==miner and len(counts[(r['env_id'],r['index'])])==1})
   recent=[o for o in audits if o['miner']==miner and 0<=round-o['round']<p['recent_epochs'] and o['outcome']in('verified_valid','confirmed_invalid')]
   alpha=float(p['prior_alpha']);beta=float(p['prior_beta']);ca=alpha;cb=beta;invalid_current=0;invalid_recent=0;latest_bad_round=None
   for o in recent:
@@ -104,7 +107,7 @@ def snapshot(records,envelopes,verifiers,*,epoch,round,checkpoint,cutoff,audit_p
   points[miner]=eligible*probability*multiplier
   details[miner]=dict(unique_eligible_batches=eligible,validity_probability=probability,recent_posterior_mean=overall,current_cohort_posterior_mean=cohort,confirmed_invalid_current=invalid_current,confirmed_invalid_recent=invalid_recent,reward_multiplier=multiplier,blacklisted=blacklisted)
  total=sum(points.values());weights={m:(v/total if total else 0.)for m,v in points.items()}
- return dict(version=VERSION,epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,policy=p,population_sha256=digest(rows),evidence_ids=sorted(o['evidence_id']for o in audits),miners=details,points=points,weights=weights,training_waits_for_audits=False,unaudited_samples_claimed_verified=False)
+ return dict(version=VERSION,epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,policy=p,population_sha256=digest(rows),eligible_evidence_ids=sorted(eligible_set)if eligible_set is not None else None,evidence_ids=sorted(o['evidence_id']for o in audits),miners=details,points=points,weights=weights,training_waits_for_audits=False,unaudited_samples_claimed_verified=False)
 
 def verifier_contract(manifest):
  """A change of source, sampler, numerics or runtime starts another cohort."""

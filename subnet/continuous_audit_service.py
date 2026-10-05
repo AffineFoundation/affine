@@ -20,7 +20,7 @@ def atomic(path,value):
  temporary.chmod(0o600);temporary.replace(path)
 
 
-def register_population(manifest_document,receipts,round,committed_at,authority):
+def register_population(manifest_document,receipts,round,committed_at,authority,eligible_pairs=None):
  """Return a signed-service input proposal from original immutable captures."""
  from .commitment_transport import validate
  manifest=authenticate(manifest_document,authority);rows=[]
@@ -29,7 +29,17 @@ def register_population(manifest_document,receipts,round,committed_at,authority)
   if digest(document)!=receipt['sha256']or document['payload']['checkpoint']!=manifest['checkpoint']['id']or document['payload']['source']!=manifest['source_bundle']['sha256']:raise ValueError('original signed committed population')
   for b in document['payload']['batches']:
    rows.append(dict(epoch=manifest['epoch'],round=round,checkpoint=manifest['checkpoint']['id'],miner=miner,env_id=b['env_id'],index=b['index'],batch_sha256=b['batch_sha256'],proof_sha256=b['sha256'],commitment_sha256=receipt['sha256'],verifier_contract_sha256=verifier_contract(manifest),committed_at=committed_at))
- return dict(version='continuous-audit-population-v1',round=round,committed_at=committed_at,manifest_document=manifest_document,receipts=receipts,records=population(rows))
+ result=dict(version='continuous-audit-population-v1',round=round,committed_at=committed_at,manifest_document=manifest_document,receipts=receipts,records=population(rows))
+ if eligible_pairs is not None:
+  if type(eligible_pairs)is not list or any(type(p)is not dict or set(p)!={'miner','commitment_sha256','batch_sha256','proof_sha256'}for p in eligible_pairs):raise ValueError('exact actual eligible immutable pairs')
+  ids=[]
+  for pair in eligible_pairs:
+   matching=[r for r in rows if all(r[k]==v for k,v in pair.items())]
+   if len(matching)!=1:raise ValueError('eligible pair original committed population')
+   ids.append(digest(matching[0]))
+  if len(ids)!=len(set(ids)):raise ValueError('duplicate eligible pair')
+  result['eligible_evidence_ids']=sorted(ids)
+ return result
 
 
 class ContinuousAuditor:
@@ -42,7 +52,10 @@ class ContinuousAuditor:
  def admit(self,document):
   p=authenticate(document,self.controller.authority.id)
   if p.get('version')!='continuous-audit-population-v1':raise ValueError('continuous immutable population admission')
-  expected=register_population(p['manifest_document'],p['receipts'],p['round'],p['committed_at'],self.controller.authority.id)
+  if 'eligible_evidence_ids'not in p:raise ValueError('explicit learner eligibility required for audit reward population')
+  selected=[r for r in p['records']if digest(r)in p['eligible_evidence_ids']]
+  pairs=[{k:r[k]for k in ('miner','commitment_sha256','batch_sha256','proof_sha256')}for r in selected]
+  expected=register_population(p['manifest_document'],p['receipts'],p['round'],p['committed_at'],self.controller.authority.id,eligible_pairs=pairs)
   if p!=expected:raise ValueError('canonical signed population registration')
   epoch=authenticate(p['manifest_document'],self.controller.authority.id)['epoch'];old=self.state['populations'].get(epoch)
   if old is not None and old!=document:raise ValueError('immutable audit population cannot be replaced')
@@ -131,7 +144,7 @@ class ContinuousAuditor:
   from .continuous_audit_policy import admit_artifact_failures
   failures=[f['document']for f in self.state['capture_failures'].values()if f['kind']=='confirmed_invalid_artifact' and authenticate(f['document'],self.controller.authority.id)['row']in records];admissions.update(admit_artifact_failures(failures,records,self.controller.authority.id))
   verifiers={**self.queue.workers,self.controller.authority.id:['operator-artifact-capture']}
-  pointers=[dict(admitted_queue_job_sha256=key)for key in admissions];result=snapshot(records,pointers,verifiers,epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,audit_policy=self.policy,admitted_jobs=admissions,adjudications=[json.loads(path.read_text())for path in sorted(self.directory.glob('*-adjudication.json'))],authority=self.controller.authority.id)
+  pointers=[dict(admitted_queue_job_sha256=key)for key in admissions];result=snapshot(records,pointers,verifiers,epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,audit_policy=self.policy,admitted_jobs=admissions,eligible_evidence_ids=authenticate(self.state['populations'][epoch],self.controller.authority.id)['eligible_evidence_ids'],adjudications=[json.loads(path.read_text())for path in sorted(self.directory.glob('*-adjudication.json'))],authority=self.controller.authority.id)
   document=self.controller.signed(result);atomic(target,document);self.publish_immutable('public/continuous-audit/snapshots/'+str(cutoff)+'-'+epoch+'.json',document);return document
 
 
