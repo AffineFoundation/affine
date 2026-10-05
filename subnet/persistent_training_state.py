@@ -356,7 +356,7 @@ def _plans(inventory, shard_bytes):
 
 def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
                  publish_shard, readback_shard, commit_descriptor,
-                 resource_admission, shard_bytes=MAX_SHARD_BYTES, concurrency=1, readback_mode='trainer-full'):
+                 resource_admission, shard_bytes=MAX_SHARD_BYTES, concurrency=1, readback_mode='trainer-full',retain_shard=None):
     """Upload/read back bounded concurrent shards; transport the descriptor last.
 
     readback_shard(name) yields actual bounded byte chunks from durable storage.
@@ -444,9 +444,12 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
         finally:
             with counter_lock:counters['transport_inflight']-=1
         transport_completed=time.time()
-        path.unlink()
+        retained=retain_shard(name,path,actual_sha,size)if retain_shard is not None else False
+        if type(retained)is not bool or (retained and (path.exists()or path.is_symlink())):
+            raise ValueError('actual owned optimizer candidate retention required')
+        if not retained:path.unlink()
         return number,dict(name=name,sha256=actual_sha,size=size,tensors=plan),dict(name=name,sha256=actual_sha,size=size,
-            durable_readback_verified=readback_mode=='trainer-full',local_shard_retired=True,started_at=started,completed_at=time.time(),
+            durable_readback_verified=readback_mode=='trainer-full',local_shard_retired=not retained,started_at=started,completed_at=time.time(),
             transport_started_at=transport_started,transport_completed_at=transport_completed)
     plans=_plans(optimizer.inventory,shard_bytes);results={}
     if concurrency==1:
@@ -497,17 +500,17 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
     return descriptor, dict(shards=evidence, descriptor_sha256=digest,
         descriptor_published_last=True,descriptor_committed_last=acknowledgement.get('authority_committed')is True,
         authority_commit_required=acknowledgement.get('authority_committed')is not True,
-        no_full_state_disk_hydration=True,transport_concurrency=concurrency,
+        no_full_state_disk_hydration=retain_shard is None,transport_concurrency=concurrency,
         actual_maximum_inflight_shards=counters['maximum'],actual_maximum_inflight_transfers=counters['transport_maximum'],
         transport_timing_measured=True,**(dict(optimizer_state_export_policy=readback_mode,trainer_full_readback_performed=False,independent_full_readback_required=True)if readback_mode!='trainer-full'else {}))
 
 
 def export_state(optimizer, *, epoch, inference_checkpoint, workspace,
                  publish_shard, readback_shard, commit_descriptor,
-                 resource_admission, shard_bytes=MAX_SHARD_BYTES, concurrency=1, readback_mode='trainer-full'):
+                 resource_admission, shard_bytes=MAX_SHARD_BYTES, concurrency=1, readback_mode='trainer-full',retain_shard=None):
     """Seal normal optimizer mutations until descriptor-last publication ends."""
     with optimizer.freeze_for_publication():
         return _export_state(optimizer, epoch=epoch, inference_checkpoint=inference_checkpoint,
             workspace=workspace, publish_shard=publish_shard, readback_shard=readback_shard,
             commit_descriptor=commit_descriptor, resource_admission=resource_admission,
-            shard_bytes=shard_bytes,concurrency=concurrency,readback_mode=readback_mode)
+            shard_bytes=shard_bytes,concurrency=concurrency,readback_mode=readback_mode,retain_shard=retain_shard)

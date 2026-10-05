@@ -192,6 +192,10 @@ def validate_job(job,manifest,authority):
     binding=validate_binding(manifest.get('trainer_state_binding'),manifest)
     from .persistent_training_state import transport_concurrency
     transport_concurrency(manifest)
+    if manifest.get('optimizer_state_local_cache')is not None:
+        from .optimizer_state_cache import policy
+        policy(manifest)
+        if 'subnet/optimizer_state_cache.py'not in job['source_files']:raise ValueError('optimizer cache execution source pin required')
     from .persistent_publication import export_policy
     if export_policy(manifest)!='trainer-full' and 'subnet/persistent_publication.py'not in job['source_files']:
         raise ValueError('upload-only export policy module source pin required')

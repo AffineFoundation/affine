@@ -98,7 +98,7 @@ class Controller:
         if existing(legacy_key) is None:self.bucket.json(legacy_key,self.signed(descriptor))
         return checkpoint
 
-    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None,persistent_publication_policy=None,reward_publication_policy=None,optimizer_state_export_policy=None,artifact_compression_policy=None,proof_copy_policy=None,training_input_policy=None,continuous_reward_activation_document=None,continuous_reward_registration_snapshot=None,training_runtime=None,independent_state_readback_budget=None):
+    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None,persistent_publication_policy=None,reward_publication_policy=None,optimizer_state_export_policy=None,artifact_compression_policy=None,proof_copy_policy=None,training_input_policy=None,continuous_reward_activation_document=None,continuous_reward_registration_snapshot=None,training_runtime=None,independent_state_readback_budget=None,optimizer_state_local_cache=None):
         if artifact_compression_policy is not None:
             from .batches import compression_policy
             artifact_compression_policy=compression_policy(artifact_compression_policy)
@@ -114,6 +114,9 @@ class Controller:
         if optimizer_state_export_policy is not None:
             from .persistent_publication import export_policy
             export_policy(dict(optimizer_state_export_policy=optimizer_state_export_policy,persistent_publication_policy=persistent_publication_policy))
+        if optimizer_state_local_cache is not None:
+            from .optimizer_state_cache import policy
+            optimizer_state_local_cache=policy(dict(optimizer_state_local_cache=optimizer_state_local_cache,persistent_publication_policy=persistent_publication_policy))
         if optimizer_state_transport is not None:
             from .persistent_training_state import transport_concurrency
             transport_concurrency({'optimizer_state_transport':optimizer_state_transport})
@@ -211,6 +214,7 @@ class Controller:
         if training_policy is not None:manifest['training_policy']=training_policy
         if trainer_state_binding is not None:manifest['trainer_state_binding']=trainer_state_binding
         if optimizer_state_export_policy is not None:manifest['optimizer_state_export_policy']=optimizer_state_export_policy
+        if optimizer_state_local_cache is not None:manifest['optimizer_state_local_cache']=optimizer_state_local_cache
         if independent_state_readback_budget is not None:manifest['independent_state_readback_budget']=dict(independent_state_readback_budget)
         if optimizer_state_transport is not None:manifest['optimizer_state_transport']=dict(optimizer_state_transport)
         if persistent_publication_policy is not None:manifest['persistent_publication_policy']=persistent_publication_policy

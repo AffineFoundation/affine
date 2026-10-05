@@ -77,53 +77,68 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
     # additional to existing input weights and measured available resources.
     concurrency=transport_concurrency(manifest)
     plan=resource_plan(inventory,bf16_export_bytes=export_bytes,concurrency=concurrency)
-    admission=admit_resources(out,plan);restored=None;restore_evidence=[]
-    transport=job['persistent_training']
-    restore_started=time.monotonic()
-    if parent is not None:
-        shards={s['name']:s for s in parent['shards']}
-        def fetch(name,path):
-            row=shards[name]
-            get_object(transport['parent_read_urls'][name],row['sha256'],path,row['size'])
-        restored,restore_evidence=restore_state(parent,binding['parent']['descriptor_sha256'],
-            binding['input_checkpoint'],inventory,workspace=out,fetch_shard=fetch,resource_admission=admission,concurrency=concurrency)
-    restore_seconds=time.monotonic()-restore_started
-    train_started=time.monotonic()
-    destination,optimizer,diagnostics=train_epoch(runtime,pairs,out,
-        input_checkpoint=binding['input_checkpoint'],epoch=manifest['epoch'],
-        seed=manifest['training_coverage']['seed'],steps=job['steps'],
-        approved_genesis=binding['genesis'],approved_genesis_sha256=binding['genesis_sha256']if parent is None else None,
-        restored_state=restored,resource_admission=admission)
-    training_and_checkpoint_seconds=time.monotonic()-train_started
-    files=model_files(destination);checkpoint=file_map(files)
-    def publish(name,path):put_file(transport['output_shards'][name]['put_url'],path)
-    def readback(name):return read_chunks(transport['output_shards'][name]['get_url'],limit=MAX_SHARD_BYTES)
-    def stage_descriptor(document):
-        validate_output(document,job,manifest)
-        data=canonical(document)
-        if len(data)>4_000_000:raise ValueError('bounded staged state descriptor')
-        path=Path(out)/'staged-state.json';path.write_bytes(data);path.chmod(0o600)
-        put_file(transport['descriptor_put_url'],path)
-        data=b''.join(read_chunks(transport['descriptor_read_url'],limit=4_000_000))
-        if data!=canonical(document):raise ValueError('durable staged descriptor readback')
-        path.unlink()
-        return dict(descriptor_sha256=sha(document),durable_readback_verified=True,authority_committed=False)
-    from .persistent_publication import export_policy
-    readback_mode=export_policy(manifest)
-    export_started=time.monotonic()
-    descriptor,evidence=export_state(optimizer,epoch=manifest['epoch'],inference_checkpoint=checkpoint,
-        workspace=out,publish_shard=publish,readback_shard=readback,
-        commit_descriptor=stage_descriptor,resource_admission=admission,concurrency=concurrency,readback_mode=readback_mode)
-    diagnostics['transport_phase_seconds']=dict(parent_state_restore=restore_seconds,
-        training_and_checkpoint=training_and_checkpoint_seconds,
-        **({'state_export_upload_only':time.monotonic()-export_started}if readback_mode!='trainer-full'else {'state_export_and_trainer_full_readback':time.monotonic()-export_started}),
-        state_transfer_concurrency=concurrency,parent_restore_performed=parent is not None)
-    diagnostics.update(state_staged=True,authority_commit_required=True,complete=False)
-    state=dict(namespace=transport['output_namespace'],descriptor_sha256=sha(descriptor),descriptor=descriptor,
-        authority_committed=False,restore_evidence=restore_evidence,publication_evidence=evidence,
-        resource_admission=admission)
-    del optimizer,restored;gc.collect()
-    return destination,diagnostics,state
+    from contextlib import nullcontext
+    local_cache=None
+    if manifest.get('optimizer_state_local_cache')is not None:
+        from .optimizer_state_cache import policy,StateCache
+        policy(manifest)
+        local_cache=StateCache(Path(out).parent.parent,job,manifest,authority)
+    with local_cache if local_cache else nullcontext():
+        cache_bytes=local_cache.prepare_parent(parent,manifest['source_bundle']['sha256'])if local_cache else 0
+        cache_budget=local_cache.admit(plan,reclaimable_parent_bytes=cache_bytes)if local_cache else None
+        admission=admit_resources(out,plan);restored=None;restore_evidence=[]
+        transport=job['persistent_training']
+        restore_started=time.monotonic()
+        if parent is not None:
+            shards={s['name']:s for s in parent['shards']}
+            def fetch(name,path):
+                row=shards[name]
+                def cold(name,path):get_object(transport['parent_read_urls'][name],row['sha256'],path,row['size'])
+                if local_cache:local_cache.fetch(name,path,cold)
+                else:cold(name,path)
+            restored,restore_evidence=restore_state(parent,binding['parent']['descriptor_sha256'],
+                binding['input_checkpoint'],inventory,workspace=out,fetch_shard=fetch,resource_admission=admission,concurrency=concurrency)
+        restore_seconds=time.monotonic()-restore_started
+        train_started=time.monotonic()
+        destination,optimizer,diagnostics=train_epoch(runtime,pairs,out,
+            input_checkpoint=binding['input_checkpoint'],epoch=manifest['epoch'],
+            seed=manifest['training_coverage']['seed'],steps=job['steps'],
+            approved_genesis=binding['genesis'],approved_genesis_sha256=binding['genesis_sha256']if parent is None else None,
+            restored_state=restored,resource_admission=admission)
+        training_and_checkpoint_seconds=time.monotonic()-train_started
+        files=model_files(destination);checkpoint=file_map(files)
+        def publish(name,path):put_file(transport['output_shards'][name]['put_url'],path)
+        def readback(name):return read_chunks(transport['output_shards'][name]['get_url'],limit=MAX_SHARD_BYTES)
+        def stage_descriptor(document):
+            validate_output(document,job,manifest)
+            data=canonical(document)
+            if len(data)>4_000_000:raise ValueError('bounded staged state descriptor')
+            path=Path(out)/'staged-state.json';path.write_bytes(data);path.chmod(0o600)
+            put_file(transport['descriptor_put_url'],path)
+            data=b''.join(read_chunks(transport['descriptor_read_url'],limit=4_000_000))
+            if data!=canonical(document):raise ValueError('durable staged descriptor readback')
+            path.unlink()
+            return dict(descriptor_sha256=sha(document),durable_readback_verified=True,authority_committed=False)
+        from .persistent_publication import export_policy
+        readback_mode=export_policy(manifest)
+        if local_cache:local_cache.begin_candidate()
+        export_started=time.monotonic()
+        descriptor,evidence=export_state(optimizer,epoch=manifest['epoch'],inference_checkpoint=checkpoint,
+            workspace=out,publish_shard=publish,readback_shard=readback,
+            commit_descriptor=stage_descriptor,resource_admission=admission,concurrency=concurrency,readback_mode=readback_mode,retain_shard=local_cache.retain if local_cache else None)
+        diagnostics['transport_phase_seconds']=dict(parent_state_restore=restore_seconds,
+            training_and_checkpoint=training_and_checkpoint_seconds,
+            **({'state_export_upload_only':time.monotonic()-export_started}if readback_mode!='trainer-full'else {'state_export_and_trainer_full_readback':time.monotonic()-export_started}),
+            state_transfer_concurrency=concurrency,parent_restore_performed=parent is not None)
+        diagnostics.update(state_staged=True,authority_commit_required=True,complete=False)
+        state=dict(namespace=transport['output_namespace'],descriptor_sha256=sha(descriptor),descriptor=descriptor,
+            authority_committed=False,restore_evidence=restore_evidence,publication_evidence=evidence,
+            resource_admission=admission)
+        if local_cache:
+            state['local_optimizer_cache_candidate']=local_cache.finish(descriptor)
+            state['local_optimizer_cache_candidate']['disk_admission']=cache_budget
+        del optimizer,restored;gc.collect()
+        return destination,diagnostics,state
 
 
 def capacity_probe(workspace,cache=None):

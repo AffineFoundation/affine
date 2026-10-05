@@ -674,6 +674,8 @@ def install_source_loader(root,additional_files=()):
     for module_name in ('subnet.successor_calibration','subnet.backend_profiles','subnet.artifact_budget','subnet.audit_policy','subnet.auditing','subnet.training_policy','subnet.commitment_transport',
             'subnet.persistent_cpu_adamw','subnet.persistent_training_state','subnet.persistent_training_protocol','subnet.training_receipts'):
         sys.modules.pop(module_name,None)
+    if 'subnet/optimizer_state_cache.py'in additional_files:
+        sys.modules.pop('subnet.optimizer_state_cache',None)
     if 'subnet/training_startup_recovery.py'in additional_files:
         sys.modules.pop('subnet.training_startup_recovery',None)
     if 'subnet/committed_training_inputs.py'in additional_files:
