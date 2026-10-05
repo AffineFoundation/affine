@@ -2735,3 +2735,14 @@ training, evaluation and continuous audit jobs are preserved. Eight-stream
 transport is prepared prospectively, without changing E14's four-stream
 contract or claiming deployment. Current-parent cache work is isolated and
 unmerged. Cleanup remains deferred and chain transactions remain disabled.
+
+E14 subsequently closed at 1791220857.4448066 with original full-state reader
+and checkpoint publication complete, actual parent counter five and checkpoint
+76bc599b. The one-shot controller exited zero. Recorded wall time was 6042.57
+seconds, including 2157.71 seconds of opening recovery; mining through closure
+took 3884.86 seconds. Hourly completion remains false. Fresh actual CPU/cgroup
+capacity admits four streams (179,005,138,944 bytes required) but rejects eight
+(195,005,138,944 required versus 187,602,862,080 available). The cgroup maximum
+is 206,158,430,208 bytes. No reserve was reduced. The next four-stream opening
+is being prepared against the actual committed step-five parent; independent
+evaluations and the continuous auditor remain separate from that opening.
