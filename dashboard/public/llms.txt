@@ -9,6 +9,14 @@ and persistent optimizer step three; no optimizer reset is authorized.
 The original E10 matched 32-task diagnostic changed from 19/32 to 21/32.
 That small measurement is not sustained convergence or a one-hour epoch.
 Check mining.json and the signed manifest for current phase and availability.
+E11 is currently held for infrastructure recovery: inline freeze copies
+exhausted its metadata budget, and the coordinator's legacy whole-object hash
+gate could not admit selected child artifacts. Its audit window expired with
+no queued audits and no accepted training samples. The original no-update
+closure also exposed a legacy-only history renderer; fixes are being tested
+for a future source boundary. Deferred uploads are not fraud. The learned
+checkpoint and optimizer step remain unchanged; no successful E11 update or
+reward is claimed.
 
 E11 activates small signed commitments plus separate immutable pair objects,
 600 seconds for mining, 12 initial random expensive audits plus four reserved
@@ -248,3 +256,9 @@ UID and reverse-hotkey maps returned the same 246 activated identities in
 snapshot semantics are unchanged. E11's sealed source does not contain this
 optimization; adoption requires a future signed source and epoch boundary.
 See docs/BATCHED_FIXED_BLOCK_REGISTRATION_SNAPSHOT.md.
+
+Public machine-readable endpoints /llms.txt, /mining.json, /network-data.json
+and /reward-policy.json allow normal CLI GET/HEAD requests. The affine.io
+Cloudflare rule skips only Browser Integrity Check on those exact public
+paths; it does not grant storage credentials or upload access. Read the signed
+manifest for miner-specific capabilities and current deadlines.
