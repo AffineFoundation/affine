@@ -25,11 +25,14 @@ def evaluation_mode(config):
 
 def fingerprint(manifest,config,plan):
     """Checkpoint, cohort and runtime identity; epoch/URLs/step labels are not identity."""
+    bundle=manifest.get('source_bundle')
+    source_identity=({k:bundle.get(k) for k in ('sha256','format')}
+                     if isinstance(bundle,dict) else bundle)
     return hashlib.sha256(canonical(dict(version=VERSION,
         checkpoint=dict(id=manifest['checkpoint']['id'],files=manifest['checkpoint'].get('files')),
         heldout=plan,environments=[dict(env_id=r['env_id'],spec=r['spec']) for r in manifest['environments'] if any(v['env_id']==r['env_id'] for v in plan)],
         runtime={k:manifest.get(k) for k in ('model_runtime_revision','backend_profile','numerical_policy','harness_source_hash')},
-        source_bundle=manifest.get('source_bundle'),model=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'),
+        source_bundle=source_identity,model=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'),
         experiment_id=config.get('evaluation_experiment_id','gpu-continuous-fixed128'),
         evaluation_seed=config.get('evaluation_seed',20260930)))).hexdigest()
 

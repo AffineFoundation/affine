@@ -35,6 +35,13 @@ class IndependentEvaluator(unittest.TestCase):
         self.assertEqual(result['training_steps'],3)
         self.controller.jobs.run.assert_called_once()
         evaluate_one(self.controller,path);self.controller.jobs.run.assert_called_once()
+    def test_source_url_refresh_reuses_bytes_but_source_change_does_not(self):
+        self.manifest['source_bundle']=dict(sha256='a'*64,format='tar.gz',url='original-capability')
+        first=self.queued()
+        self.manifest['source_bundle']=dict(sha256='a'*64,format='tar.gz',url='renewed-capability')
+        self.assertEqual(self.queued(),first)
+        self.manifest['source_bundle']=dict(sha256='b'*64,format='tar.gz',url='renewed-capability')
+        self.assertNotEqual(self.queued(),first)
     def test_observation_timeout_preserves_request_and_original_job(self):
         path=self.queued();self.controller.jobs.run.side_effect=[RemoteObservationTimeout('original','evaluate'),self.report]
         request=json.loads(path.read_text())['request']
