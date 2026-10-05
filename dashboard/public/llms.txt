@@ -23,8 +23,11 @@ and its truthful environment source hash are explicitly admitted. Fresh
 calibration and confirmation both passed. E17 collected 71 committed batches,
 admitted 65 through cheap checks and selected all 65 for UNAUDITED training.
 Freeze and admission took about 36 seconds after the ten-minute collection
-deadline. Its original training job is running; optimizer step eight has not
-yet been durably published. The original failed job remains recorded.
+deadline. Its original training job completed successfully in 50.23 minutes,
+with changed model weights and staged optimizer step eight. The independent
+reader authenticated all 23 optimizer objects in about 202 seconds. Controller
+adoption and final checkpoint publication are still pending; public parent
+remains optimizer step seven. The original failed job remains recorded.
 This owned-fleet bootstrap does not establish external-client compatibility.
 The main branch provides ops/native_task_asset_deployment.py for verified
 CPU-only asset bootstrap (see docs/NATIVE_TASK_ASSET_DEPLOYMENT.md).
@@ -65,7 +68,7 @@ authenticated legacy adoption has now retired obsolete models and accepted
 historical input downloads across all seven, without pausing healthy workers. The
 trainer has 160.50 GB free after explicit software retirement of old models.
 Automatic trainer hooks are included in the new FE controller source; its first
-training job is now running; successful post-ACK trainer retirement remains to
+training job has completed; successful post-ACK trainer retirement remains to
 be observed. E16 retained its historical lifecycle contract.
 A replacement H200 passed fresh honest and forged sampling/TOPLOC controls but
 has not joined the production queue. Runtime/source qualification remains
