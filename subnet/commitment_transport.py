@@ -89,7 +89,9 @@ def freeze(gateway,epoch):
  from .storage import SubmissionPolicyError
  from botocore.exceptions import ClientError
  state=gateway.epochs[epoch];state['closed']=True;gateway.persist()
- if 'frozen_receipts'in state:return state['frozen_receipts']
+ if 'frozen_receipts'in state:
+  # A previous public PUT may have failed after the local durable journal.
+  gateway.bucket.json('public/'+epoch+'/receipts.json',state['frozen_receipts']);return state['frozen_receipts']
  snapshots=state.setdefault('commitment_snapshots',{});pending=state.setdefault('commitment_pending',{});rejections=state.setdefault('rejections',{});failures=[]
  candidates=[m for m in sorted(state['miners'])if m not in snapshots and m not in rejections and m not in pending]
  reads=_bounded_small_reads(gateway,epoch,candidates,state['commitment_binding'].get('freeze_until'))
