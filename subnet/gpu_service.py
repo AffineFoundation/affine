@@ -385,6 +385,7 @@ def run(config,once=False):
                 save(state/(epoch+'-controller-timing.json'),timing)
                 if unaudited:
                     status['last_completed_epoch']=dict(epoch=epoch,round=status['round'],checkpoint=manifest['checkpoint']['id'],next_checkpoint=active['next_checkpoint']['id'],completed_at=timing['controller_completed_at'],input_assurance='unaudited')
+                    save(state/(epoch+'-learner-completion.json'),status['last_completed_epoch'])
                 status.update(checkpoint=active['next_checkpoint'],checkpoint_path=active['next_path'],training_steps=active['next_steps'],active=None,round=status['round']+1);save(statuspath,status)
                 if once:return
         except Exception as error:
