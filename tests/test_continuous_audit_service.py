@@ -30,8 +30,8 @@ class ServiceControls(unittest.TestCase):
   import hashlib
   self.row=dict(epoch='e1',round=1,checkpoint='a'*64,miner='b'*64,env_id='math',index=0,batch_sha256='c'*64,proof_sha256=hashlib.sha256(b'proof').hexdigest(),commitment_sha256='e'*64,verifier_contract_sha256='f'*64,committed_at=20)
   artifact=dict(slot=0,batch_sha256='c'*64,sha256=self.row['proof_sha256'],size=5,key='original',frozen_key='immutable')
-  self.p=dict(manifest_document=signed(self.key,dict(epoch='e1',start=10,deadline=20)),receipts={'b'*64:{'artifacts':[artifact]}},records=[self.row])
-  self.service.state['populations']['e1']=signed(self.key,self.p)
+  self.p=dict(manifest_document=signed(self.key,dict(epoch='e1',start=10,deadline=20,source_bundle={'sha256':'9'*64})),receipts={'b'*64:{'artifacts':[artifact]}},records=[self.row])
+  self.service.state['populations']['e1']=signed(self.key,self.p);self.service.sources['9'*64]={};self.service.metadata['9'*64]={}
  def test_hour_boundary_includes_all_new_completed_epochs_once(self):
   self.service.state['populations']['e2']=self.service.state['populations']['e1'];calls=[]
   def snapshot(epoch,round,checkpoint,cutoff):
@@ -40,6 +40,16 @@ class ServiceControls(unittest.TestCase):
   with patch.object(self.service,'hourly_snapshot',side_effect=snapshot),patch.object(self.service,'publish_immutable'):
    document=self.service.hourly_completed(completed,3600);self.service.hourly_completed(completed,3600)
   self.assertEqual(calls,['e1','e2']);self.assertEqual(document['payload']['points']['b'*64],2.)
+ def test_penalty_hyperparameters_require_exact_operator_admission(self):
+  from subnet.continuous_audit_service import admitted_service_config
+  p=dict(version='continuous-audit-service-sources-v1',approved_sources={},job_metadata={},audit_policy=self.service.policy);config=dict(source_admission=signed(self.key,p),policy=self.service.policy)
+  self.assertEqual(admitted_service_config(config,self.root),p)
+  config['policy']={**self.service.policy,'invalid_multiplier':1.}
+  with self.assertRaises(ValueError):admitted_service_config(config,self.root)
+ def test_unsupported_source_is_deferred_before_proof_io(self):
+  self.service.metadata.clear()
+  with patch.object(self.service,'_capture',side_effect=AssertionError('unsupported source must not fetch proof')):result=self.service.tick(now=25)
+  self.assertEqual(result['source_deferred'],1);self.assertEqual(result['selected'],0);self.assertEqual(self.service.state['draws'],{})
  def test_actual_conditional_copy_full_hash_before_capability(self):
   _,_,captured=self.service._capture(self.row,self.p);self.assertEqual(self.bucket.copies,[('original','immutable','original-etag')]);self.assertEqual(captured['read_url'],'https://private/immutable')
  def test_corrupt_full_bytes_cannot_claim_verified(self):
