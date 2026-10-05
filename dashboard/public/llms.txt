@@ -3,15 +3,16 @@
 Operational update, 2026-10-05: E10's original three persistent updates and full
 optimizer/checkpoint publication are complete. The successor checkpoint is
 6a2bb631eebdc748b577976038a673437309d7953d3440eb8e873e5035671ea7,
-with public persistent optimizer step three. Its original after-training
-evaluation is still pending. This does not establish held-out improvement or a
-one-hour epoch. Four verifier workers are admitted; replacement H200 qualification
+with public persistent optimizer step three. Its original matched 32-task evaluation completed at 21/32 correct, versus
+19/32 before training. This small diagnostic is not evidence of a sustained
+held-out improvement trend or a one-hour epoch. Four verifier workers are admitted; replacement H200 qualification
 is still incomplete, including one terminal GPU error. They are not serving the
 normal queue.
 
 Prospective hourly changes are described in docs/HOURLY_EPOCHS.md. They are NOT
 the active miner contract: small signed commitments plus separate pair objects,
-18 initial random expensive checks and six reserved escalation checks, exact
+12 initial random expensive checks and four reserved escalation checks with
+the four qualified workers (18 plus six only after six workers qualify), exact
 sampler/TOPLOC/native grading on selected pairs, confirmed-invalid epoch-zero
 penalties, and independent evaluation. No unaudited batch earns verified points
 or enters training. Continue using the active signed source and manifest below

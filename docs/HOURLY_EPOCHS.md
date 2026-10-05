@@ -29,10 +29,12 @@ bounded to eight. Every shard must match its declared size and SHA256 before
 the authority signs the durable descriptor. This changes transport concurrency,
 not model computation, sampling tolerances, or optimizer lineage.
 
-Verified status at 2026-10-05 03:21 UTC: original epoch 10 completed its three
+Verified status at 2026-10-05 03:30 UTC: original epoch 10 completed its three
 training updates, committed all 23 FP32 optimizer shards (91,387,491,264 bytes),
 and published checkpoint `6a2bb631…`. Its original after-training evaluation
-remains live; the controller has not opened a successor. Four verifiers are
+completed at 21/32, compared with 19/32 on the same pre-training cohort. This
+small diagnostic does not establish a trend. The controller is idle at round
+eleven with the same committed learned parent; it has not opened a successor. Four verifiers are
 admitted. One replacement H200 is running its original isolated qualification control;
 the other terminated with a GPU error and remains unenrolled. Neither is serving
 normal audit jobs. The two earlier reserve machines were deleted by the
@@ -44,7 +46,8 @@ job measurements give a mean cost of 80.76 verifier-seconds per selected pair
 and a job-cost p90 of 132.16 seconds per pair. These measurements do not establish
 the throughput of six workers running the new source.
 
-The next preparation uses 18 initial checks and six reserved escalation checks,
+The next preparation uses 12 initial checks and four reserved escalation checks
+for the four qualified workers, or 18 plus six after six workers qualify,
 with a hard 600-second audit window. Minimum allocation is zero when capacity
 cannot cover every identity; maximum remains three per identity. Escalation
 charges repeated checks as well. Only completed accepted audits earn points or

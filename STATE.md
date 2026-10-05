@@ -1,3 +1,14 @@
+Latest verified completion, 2026-10-05 03:30 UTC: original E10 after-evaluation
+completed with21/32 correct versus19/32 before, with exact matching task/seed
+identities, source and runtime. The controller is now idle at round11, learned
+checkpoint6a2bb631… and committed optimizer step3. A sustained held-out trend
+and full-hour epoch remain unproved. The next preparation is capacity-bound to
+the FOUR currently qualified verifiers:12 initial audits+4 reserved escalation
+checks, increasing to18+6 only after six workers actually qualify. The new
+owned-commitment upload budget propagation fix32331b1b passed the actual128MB
+ZIP regression without increasing signed limits. V8 remains failed and immutable;
+a fresh V9 GPU qualification is being prepared.
+
 Latest verified update, 2026-10-05 03:21 UTC: E10 has completed its original
 three full-model persistent updates. Its authority-committed 23-shard FP32 state
 is 91,387,491,264 bytes at global step three, and checkpoint 6a2bb631… is durably
