@@ -18,9 +18,14 @@ def source_hash():
 
 
 def validate(value):
-    if not isinstance(value, dict) or set(value) != FIELDS:
+    from .fast_prefill_audit import VERSION as FAST,calibration
+    expected=FIELDS|{'calibration'}if isinstance(value,dict)and value.get('version')==FAST else FIELDS
+    if not isinstance(value, dict) or set(value) != expected:
         raise ValueError('forced sampling contract fields')
-    if value['version'] != VERSION or value['verification'] != 'exact-token-replay' or value['generation'] != 'uncached-eager-inverse-cdf':
+    if value['version']==FAST:
+        if value['verification']!='prefill-cdf-calibrated' or value['generation']!='cached-eager-inverse-cdf':raise ValueError('fast sampling contract version')
+        calibration(value['calibration'])
+    elif value['version'] != VERSION or value['verification'] != 'exact-token-replay' or value['generation'] != 'uncached-eager-inverse-cdf':
         raise ValueError('forced sampling contract version')
     random = value['randomness']
     if not isinstance(random, str) or len(random) != 64 or any(c not in '0123456789abcdef' for c in random):
@@ -31,13 +36,17 @@ def validate(value):
 
 
 def new_contract(config):
+    from .fast_prefill_audit import VERSION as FAST
+    if isinstance(config,dict)and config.get('version')==FAST:
+        if set(config)!={'version','max_attempts','calibration'}:raise ValueError('fast sampling opening configuration')
+        return validate(dict(config,randomness=secrets.token_hex(32),verification='prefill-cdf-calibrated',generation='cached-eager-inverse-cdf'))
     if not isinstance(config, dict) or set(config) != {'version', 'max_attempts'}:
         raise ValueError('forced sampling opening configuration')
     return validate(dict(config, randomness=secrets.token_hex(32),
                          verification='exact-token-replay', generation='uncached-eager-inverse-cdf'))
 
 
-def validate_harness(config):
+def validate_harness(config,contract=None):
     from .harness import normalize
     c = normalize(config)
     if c['policy'] != 'autoregressive' or c.get('turn_overrides'):
@@ -67,13 +76,18 @@ def bind_runtime(runtime, manifest):
     context = binding(manifest)
     if context is not None:
         validate_harness(runtime.harness)
+    if context is not None and context['contract']['version']!=VERSION:
+        from .fast_prefill_audit import bind
+        runtime.fast_sampling_calibration=bind(manifest,runtime.harness)
+        runtime.fast_sampling_manifest=manifest
+    else:runtime.fast_sampling_calibration=None
     runtime.sampling_context = context
     return runtime
 
 
 def receipt(context, attempt):
     validate_attempt(context, attempt)
-    return {'version': VERSION, 'binding_sha256': hashlib.sha256(canonical(context)).hexdigest(), 'attempt': attempt}
+    return {'version': context['contract']['version'], 'binding_sha256': hashlib.sha256(canonical(context)).hexdigest(), 'attempt': attempt}
 
 
 def validate_attempt(context, attempt):
@@ -117,6 +131,9 @@ def pick(logits, u, temperature, top_p):
 def sample(runtime, prompt, attempt, turn, index, task_hash):
     import torch
     context = runtime.sampling_context
+    if context['contract']['version']!=VERSION:
+        from .fast_prefill_audit import cached_sample
+        return cached_sample(runtime,prompt,attempt,turn,index,task_hash)
     validate_attempt(context, attempt)
     config = validate_harness(runtime.harness)
     device = next(runtime.model.parameters()).device
@@ -143,8 +160,8 @@ def assurance(manifest):
     if context is None:
         return {'sampling_required': False, 'scope': 'model-computation-and-environment-only'}
     return {'sampling_required': True, 'scope': 'fully-audited-rollouts-only',
-            'version': VERSION, 'binding_sha256': hashlib.sha256(canonical(context)).hexdigest(),
-            'verification': 'exact-token-replay', 'historical_execution_proven': False}
+            'version': context['contract']['version'], 'binding_sha256': hashlib.sha256(canonical(context)).hexdigest(),
+            'verification': context['contract']['verification'], 'historical_execution_proven': False}
 
 
 def require_report(manifest, report):
