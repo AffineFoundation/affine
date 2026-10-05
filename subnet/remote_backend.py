@@ -313,6 +313,13 @@ class RemoteController(Controller):
         else:self.jobs=RemoteJobs(remote,self)
     def open(self,*args,max_batches=3,**kwargs):
         if type(max_batches)is not int or not 1<=max_batches<=256:raise ValueError('per UID batch quota')
+        budget=kwargs.get('independent_state_readback_budget')
+        if budget is not None:
+            from .remote_optimizer_readback import stream_budget
+            budget=stream_budget(budget)
+            if self.independent_state_reader is None or canonical(self.independent_state_reader.config.get('stream_budget'))!=canonical(budget):
+                raise ValueError('opening readback stream budget requires exact qualified reader admission')
+
         if kwargs.get('submission_transport_policy')is not None:kwargs['commitment_max_batches']=max_batches
         exclusion_policy=kwargs.pop('temporary_exclusion_policy',None)
         exclusion_snapshot=None

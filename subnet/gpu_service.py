@@ -129,7 +129,13 @@ def contract(config,round_number):
     if config.get('persistent_publication_policy') is not None:
         from .persistent_publication import validate_policy
         result['persistent_publication_policy']=validate_policy(config['persistent_publication_policy'])
+    if config.get('independent_state_readback_budget') is not None:
+        from .remote_optimizer_readback import stream_budget
+        result['independent_state_readback_budget']=stream_budget(config['independent_state_readback_budget'])
+        if result.get('persistent_publication_policy',{}).get('state_readback')!='qualified-remote-full':
+            raise ValueError('stream budget requires qualified independent state publication')
     if config.get('optimizer_state_export_policy') is not None:
+
         from .persistent_publication import export_policy
         export_policy(config)
         result['optimizer_state_export_policy']=config['optimizer_state_export_policy']
