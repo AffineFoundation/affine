@@ -139,7 +139,15 @@ print(json.dumps(dict(resource_admission=resource_admission,observed_at=time.tim
         root=controller.state/'independent-state-readbacks'/job['job_id'];root.parent.mkdir(mode=0o700,exist_ok=True)
         if root.exists():
             return self._recover_original(controller,root,job,binding,objects)
-        preflight,observed=self.preflight();root.mkdir(mode=0o700,exist_ok=False)
+        # This command is read-only and occurs before any reader reservation,
+        # capability signing or remote namespace/launch. Transport timeout is
+        # safe to retry through the original coordinator phase. Once a request
+        # exists, _recover_original alone controls observation; never redispatch.
+        try:preflight,observed=self.preflight()
+        except subprocess.TimeoutExpired as exc:
+            from .remote_backend import RemoteObservationTimeout
+            raise RemoteObservationTimeout(job['job_id'],'independent-reader-preflight')from exc
+        root.mkdir(mode=0o700,exist_ok=False)
         write_once(root/'reservation.private.json',dict(original_job_sha256=reader.sha(job),
             CPU_nice=19,hash_streams=reader.concurrency({'stream_budget':budget}if budget is not None else {}),chunk_bytes=1024**2,GPU_use=False,authority_commit=False,
             original_preflight=observed,created_at=time.time()))
