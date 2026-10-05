@@ -491,7 +491,7 @@ def install_source_loader(root,additional_files=()):
     # Pure admission helpers are used before workspace/artifact access. Their
     # pinned bytes have now been checked; discard bootstrap imports so compute
     # admission reloads them through the authenticated fresh-source finder.
-    for module_name in ('subnet.backend_profiles','subnet.artifact_budget','subnet.audit_policy','subnet.auditing','subnet.training_policy',
+    for module_name in ('subnet.backend_profiles','subnet.artifact_budget','subnet.audit_policy','subnet.auditing','subnet.training_policy','subnet.commitment_transport',
             'subnet.persistent_cpu_adamw','subnet.persistent_training_state','subnet.persistent_training_protocol','subnet.training_receipts'):
         sys.modules.pop(module_name,None)
     if 'subnet/compact_training_inputs.py' in additional_files:

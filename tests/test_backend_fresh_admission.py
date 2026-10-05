@@ -31,6 +31,11 @@ job=dict(schema=1,job_id='fresh-owned',role='mine',created_at=now-1,expires_at=n
 if mode=='invalid':job['mining_subset']={'control':[99]}
 if mode=='tampered':job['source_files']['subnet/protocol.py']='0'*64
 if mode=='preimport':import subnet.protocol
+if mode=='commitment':
+    manifest.update(submission_transport_policy='small-commitment-pairs-v1',max_batches=1)
+    job['manifest']=sign(manifest)
+    job['miner_identity_file']='/root/scoped-miner.seed'
+    job['capability']['batch_put_urls']=[job['capability']['put_url']]
 os.environ['CUBLAS_WORKSPACE_CONFIG']=':4096:8'
 with tempfile.TemporaryDirectory() as directory:
     def checkpoint(*args):
@@ -43,11 +48,12 @@ with tempfile.TemporaryDirectory() as directory:
         try:b.execute(sign(job),authority,directory)
         except (ValueError,RuntimeError) as error:
             expected={'valid':'qualified checkpoint boundary','invalid':'outside authorized training indices',
-                      'tampered':'worker source mismatch','preimport':'requires fresh process'}[mode]
+                      'tampered':'worker source mismatch','preimport':'requires fresh process',
+                      'commitment':'qualified checkpoint boundary'}[mode]
             assert expected in str(error),repr(error)
         else:raise AssertionError('worker must stop at test boundary')
-        assert cp.call_count==(1 if mode=='valid' else 0)
-        if mode!='valid':assert not list(Path(directory).iterdir())
+        assert cp.call_count==(1 if mode in ('valid','commitment') else 0)
+        if mode not in ('valid','commitment'):assert not list(Path(directory).iterdir())
         if mode=='tampered':assert 'subnet.protocol' not in sys.modules
 print('fresh admission '+mode+' passed')
 '''
@@ -56,7 +62,7 @@ print('fresh admission '+mode+' passed')
 class FreshOwnedWorkerAdmission(unittest.TestCase):
     def test_actual_fresh_loader_precedes_subset_semantics_and_artifacts(self):
         root=Path(__file__).resolve().parent.parent
-        for mode in ('valid','invalid','tampered','preimport'):
+        for mode in ('valid','invalid','tampered','preimport','commitment'):
             with self.subTest(mode=mode):
                 result=subprocess.run([sys.executable,'-B','-c',SCRIPT,mode],cwd=root,
                                       capture_output=True,text=True,timeout=60)
