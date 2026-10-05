@@ -107,4 +107,32 @@ class GPUHistoryCompletion(unittest.TestCase):
             self.assertEqual(final['checkpoint'],new);self.assertEqual(final['training_steps'],2)
             controller.train.assert_not_called()
 
+class GPUObservationRecovery(unittest.TestCase):
+    def test_once_reobserves_original_training_after_window_without_new_epoch(self):
+        from subnet.remote_backend import RemoteObservationTimeout
+        with tempfile.TemporaryDirectory()as d:
+            state=Path(d);epoch='nonpayable-observation';old=dict(id='old',files={});new=dict(id='new',files={})
+            active=dict(epoch=epoch,phase='train');status=dict(active=active,round=1,training_steps=1,checkpoint=old,checkpoint_path='old-path',initial_published=True)
+            for name,value in [('controller.json',status),(epoch+'-manifest.json',dict(epoch=epoch,checkpoint=old)),(epoch+'-verified.json',{'miner':{'accepted':[{}]}}),(epoch+'-scores.json',dict(weights={})),('finalized-reports.json',[])]:
+                (state/name).write_text(json.dumps(value))
+            config=dict(state=d,bucket={},remote={},source_bundle={},epoch_prefix='nonpayable-observation',registration_allowlist=[])
+            def finished(*args,**kwargs):
+                return new,dict(checkpoint_path='new-path',steps=1)
+            controller=SimpleNamespace(train=Mock(side_effect=[RemoteObservationTimeout('original-job','train'),finished()]),signed=lambda v:v)
+            with patch('subnet.gpu_service.Bucket'),patch('subnet.gpu_service.Gateway'),patch('subnet.gpu_service.RemoteController',return_value=controller),patch('subnet.gpu_service.ChainAdapter'),patch('subnet.gpu_service.evaluate'),patch('subnet.gpu_service.publish_history'),patch('subnet.gpu_service.log.exception'),patch('subnet.gpu_service.time.sleep')as wait:
+                run(config,once=True)
+            self.assertEqual(controller.train.call_count,2);self.assertEqual(controller.train.call_args_list[0],controller.train.call_args_list[1]);wait.assert_called_once_with(30)
+            final=json.loads((state/'controller.json').read_text());self.assertIsNone(final['active']);self.assertEqual(final['round'],2);self.assertEqual(final['checkpoint'],new)
+    def test_once_terminal_or_stale_handle_error_is_not_observation_retry(self):
+        from subnet.remote_backend import RemoteJobTerminalError
+        for error in (RemoteJobTerminalError('actual terminal1'),ValueError('stale original handle')):
+            with self.subTest(error=type(error).__name__),tempfile.TemporaryDirectory()as d:
+                state=Path(d);epoch='nonpayable-observation';old=dict(id='old',files={});status=dict(active=dict(epoch=epoch,phase='train'),round=1,training_steps=1,checkpoint=old,checkpoint_path='old-path',initial_published=True)
+                for name,value in [('controller.json',status),(epoch+'-manifest.json',dict(epoch=epoch,checkpoint=old)),(epoch+'-verified.json',{'miner':{'accepted':[{}]}})]:
+                    (state/name).write_text(json.dumps(value))
+                c=dict(state=d,bucket={},remote={},source_bundle={},epoch_prefix='nonpayable-observation',registration_allowlist=[]);controller=SimpleNamespace(train=Mock(side_effect=error))
+                with patch('subnet.gpu_service.Bucket'),patch('subnet.gpu_service.Gateway'),patch('subnet.gpu_service.RemoteController',return_value=controller),patch('subnet.gpu_service.ChainAdapter'),patch('subnet.gpu_service.log.exception'),patch('subnet.gpu_service.time.sleep')as wait,self.assertRaises(type(error)):
+                    run(c,once=True)
+                self.assertEqual(json.loads((state/'controller.json').read_text()),status);controller.train.assert_called_once();wait.assert_not_called()
+
 if __name__=='__main__':unittest.main()
