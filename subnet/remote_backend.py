@@ -211,7 +211,11 @@ class RemoteJobs:
             if role=='train'and fields.get('training_policy')==PERSISTENT_POLICY:
                 if 'persistent_training'in fields:raise ValueError('persistent capabilities are original-job scoped')
                 from .persistent_training_protocol import prepare_job,validate_job
-                payload['persistent_training']=prepare_job(self.controller,manifest,identifier,fields['steps'],role_time_budget(self.config,role))
+                transport_ttl=role_time_budget(self.config,role)
+                if manifest.get('training_startup_recovery')is not None:
+                    transport_ttl=int(payload['expires_at']-time.time())
+                    if transport_ttl<=0:raise ValueError('startup recovery authorization expired before capability issue')
+                payload['persistent_training']=prepare_job(self.controller,manifest,identifier,fields['steps'],transport_ttl)
                 validate_job(payload,manifest,self.controller.authority.id)
             jobpath=self.state/(identifier+'-job.json');save(jobpath,self.controller.signed(payload))
             prior=dict(job_id=identifier,role=role,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],job_sha256=hashlib.sha256(canonical(payload)).hexdigest(),manifest_sha256=hashlib.sha256(canonical(manifest)).hexdigest(),source_files=self.metadata['source_files'],runtime_versions=self.metadata['runtime_versions'])
