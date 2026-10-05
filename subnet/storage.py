@@ -60,6 +60,32 @@ class Bucket:
             retries={'mode': 'standard', 'total_max_attempts': 1}))
         return boto3.client('s3', **self._client_options, config=bounded)
 
+    def complete_commitment_listing(self, epoch, miners, cutoff=None):
+        """Complete bounded namespace discovery; listed data is not authentication."""
+        prefix='private/'+epoch+'/commitments/'
+        allowed={prefix+miner+'.json':miner for miner in miners}
+        client=self.commitment_read_client();found=set();token=None;seen=set();count=0
+        try:
+            while True:
+                if cutoff is not None and time.time()>=cutoff:raise TimeoutError('commitment listing deadline; no complete discovery')
+                kwargs=dict(Bucket=self.name,Prefix=prefix,MaxKeys=1000)
+                if token is not None:kwargs['ContinuationToken']=token
+                page=client.list_objects_v2(**kwargs)
+                if type(page)is not dict or type(page.get('Contents',[]))is not list:raise ValueError('complete commitment listing shape')
+                for entry in page.get('Contents',[]):
+                    count+=1
+                    if count>10000:raise ValueError('bounded commitment namespace listing')
+                    if type(entry)is not dict or type(entry.get('Key'))is not str:raise ValueError('commitment listed key shape')
+                    key=entry['Key']
+                    if key in allowed:found.add(allowed[key])
+                truncated=page.get('IsTruncated')
+                if type(truncated)is not bool:raise ValueError('complete commitment pagination flag')
+                if not truncated:return sorted(found)
+                token=page.get('NextContinuationToken')
+                if not isinstance(token,str) or not token or token in seen:raise ValueError('complete commitment continuation required')
+                seen.add(token)
+        finally:client.close()
+
     def put(self, key, data, content_type='application/octet-stream'):
         self.client.put_object(Bucket=self.name, Key=key, Body=data, ContentType=content_type)
 
