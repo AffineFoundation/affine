@@ -16,10 +16,15 @@ No new optimizer step was fabricated or rerun to recover publication.
 The next controller uses immutable source
 fe871019d5e6cba169db32bc8a3b56342d54f7d8193e5a8156c8586fb1c46493,
 with automatic trainer retention and parallel input fetching. E17 opening
-calibration failed before model execution because that source archive omitted
-its required native math snapshot. Recovery is being prepared with an exact
-hash-verified external dataset; the failed original job remains recorded.
-This is not a completed E17 or proof of a faster epoch. Follow only the latest
+calibration initially failed before model execution because that source archive
+omitted its required native math snapshot. Exact approved dataset hydration and
+native preflight now pass on all ten owned compute roles. The corrected path
+and its truthful environment source hash are explicitly admitted, and a fresh
+calibration request is running; the original failed job remains recorded.
+This owned-fleet bootstrap does not establish external-client compatibility.
+A complete source package/client bootstrap must provide that dataset to new
+miners before public readiness is claimed. This is not a completed E17 or proof
+of a faster epoch. Follow only the latest
 signed OPEN manifest for mining. Chain weight submissions remain disabled.
 The independent fixed 128-task E16 baseline is 78/128; the matched successor
 evaluation is running. No E16 improvement or convergence is claimed yet.
