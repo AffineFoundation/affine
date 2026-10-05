@@ -225,14 +225,6 @@ def collect(controller,manifest,*,round_number=None):
     capture=getattr(controller.gateway,'capture_learner',None)
     if capture is None:raise ValueError('learner requires independent small-document capture API')
     receipts=capture(manifest['epoch'])
-    if round_number is not None:
-        from .continuous_audit_service import register_population
-        audit_population=register_population(controller.signed(manifest),receipts,round_number,time.time(),controller.authority.id)
-        audit_path=controller.state/(manifest['epoch']+'-continuous-audit-population.json')
-        if audit_path.exists():
-            saved=authenticate(json.loads(audit_path.read_bytes()),controller.authority.id)
-            if (saved.get('manifest_document')!=audit_population['manifest_document']or saved.get('receipts')!=receipts or saved.get('round')!=round_number):raise ValueError('immutable original continuous audit population')
-        else:save(audit_path,controller.signed(audit_population))
     candidates=[];counts={};exclusions=[]
     for miner,receipt in sorted(receipts.items()):
         original=receipt['commitment_document'];payload=authenticate(original,miner)
@@ -263,6 +255,15 @@ def collect(controller,manifest,*,round_number=None):
     for key,obj,_ in candidates:
         if counts[key]>1:exclusions.append(dict(document_sha256=obj['sha256'],reason='duplicate_task'))
     if len(submissions)>256:raise ValueError('learner population bounded 256 documents')
+    if round_number is not None:
+        from .continuous_audit_service import register_population
+        audit_population=register_population(controller.signed(manifest),receipts,round_number,time.time(),controller.authority.id,
+            eligible_pairs=[dict(miner=o['learner_admission']['payload']['miner_identity'],commitment_sha256=o['learner_admission']['payload']['commitment_sha256'],batch_sha256=o['learner_admission']['payload']['batch_sha256'],proof_sha256=o['learner_admission']['payload']['proof_sha256'])for o in submissions])
+        audit_path=controller.state/(manifest['epoch']+'-continuous-audit-population.json')
+        if audit_path.exists():
+            saved=authenticate(json.loads(audit_path.read_bytes()),controller.authority.id)
+            if (saved.get('manifest_document')!=audit_population['manifest_document']or saved.get('receipts')!=receipts or saved.get('round')!=round_number or saved.get('eligible_evidence_ids')!=audit_population.get('eligible_evidence_ids')):raise ValueError('immutable original continuous audit population')
+        else:save(audit_path,controller.signed(audit_population))
     population=dict(version=COVERAGE_VERSION,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],
         assurance='unaudited',eligible_count=len(submissions),committed_count=len(candidates),
         eligible_inventory=receipt_inventory(submissions),exclusions=exclusions,capture_receipts_sha256=sha(receipts),
