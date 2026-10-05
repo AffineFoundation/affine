@@ -13,3 +13,9 @@ Each epoch's score is unique eligible task count multiplied by a recent-cohort v
 At each UTC hour cutoff H, completed epochs in `H-3600 < completed_at <= H` receive immutable snapshots using evidence available by H. Raw penalty-adjusted points are summed across all these epochs and normalized once into `continuous-hourly-weights-v1`. Earlier epochs remain available for audits and recent-history evidence but do not repeatedly earn old points. Snapshot references bind their epoch, round, checkpoint and population hash. The artifact proposes weights; this module does not transact on chain. The historical strict reward writer must not consume this new contract implicitly.
 
 The service joins the existing authenticated verifier SQLite queue and does not create another listener. It bounds outstanding jobs and selections per tick, persists selections before proof access, and recovers an already-written original signed job without changing its selection, source or URLs. A terminal expired job without authenticated scientific evidence remains unknown; automatic capability renewal and a separately authenticated reference execution still require explicit integration.
+
+Continuous-auditor activation binds the penalty and confidence policy inside the
+operator-signed source admission. The private runtime configuration must match
+that signed policy exactly. Historical cohorts whose source lacks an approved
+execution mapping remain retained and explicitly deferred before proof access;
+they are not counted as fraudulent or dispatched under a different source.
