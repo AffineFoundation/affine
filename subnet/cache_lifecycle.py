@@ -95,7 +95,7 @@ class CacheLifecycle:
         for name,sha in approved_files.items():self.record_checkpoint_member(cp,name,approved_files,sha,origin)
         return True
 
-    def adopt_checkpoint(self,cp,path,approved_files,durability_ack):
+    def adopt_checkpoint(self,cp,path,approved_files,durability_ack,expected_stats=None):
         """Explicit verified export adoption after authenticated durable ACK.
 
         This is an operator API, not miner-supplied configuration. No arbitrary
@@ -117,10 +117,12 @@ class CacheLifecycle:
             if Path(name).name!=name or name in ('.','..') or re.fullmatch('[0-9a-f]{64}',sha or '') is None:
                 raise ValueError('approved inventory')
             members[name]=dict(sha256=sha,stat=snapshot(directory/name),origin='durable-publication-ACK')
+        if expected_stats is not None and {name:record['stat']for name,record in members.items()}!=expected_stats:
+            raise ValueError('authority-observed checkpoint inode changed')
         self._save(self._receipt(cp),dict(cp=cp,path=str(relative),files=approved_files,members=members,
                                         touched=time.time(),durability_ack=durability_ack))
 
-    def evict_checkpoints(self,exclude=(),keep=1,required_free_bytes=0):
+    def evict_checkpoints(self,exclude=(),keep=1,required_free_bytes=0,only=None):
         if keep<0 or required_free_bytes<0:raise ValueError('retention budget')
         excluded=set(exclude);records=[];removed=[]
         for path in self.meta.glob('*.json'):
@@ -129,7 +131,7 @@ class CacheLifecycle:
         records.sort(reverse=True)
         retained={cp for _,cp,_ in records[:keep]}|excluded
         for _,cp,value in reversed(records):
-            if cp in retained:continue
+            if cp in retained or (only is not None and cp not in only):continue
             if required_free_bytes and os.statvfs(self.root).f_bavail*os.statvfs(self.root).f_frsize>=required_free_bytes:break
             try:
                 with self.lease_checkpoint(cp,blocking=False):
@@ -153,12 +155,13 @@ class CacheLifecycle:
         value=json.loads(receipt.read_text()) if receipt.exists() else {}
         value[str(relative)]=dict(sha256=verified_sha256,stat=snapshot(path));self._save(receipt,value)
 
-    def retire_downloads(self,job_id):
+    def retire_downloads(self,job_id,only=None):
         """Call only after coordinator ACK; retain reports and all diagnostics."""
         receipt=self.meta/('download-'+identifier(job_id)+'.json')
         if not receipt.exists():return []
         value=json.loads(receipt.read_text());removed=[]
         for relative,record in list(value.items()):
+            if only is not None and relative not in only:continue
             path=self._path(relative)
             try:
                 if snapshot(path)!=record['stat']:continue
