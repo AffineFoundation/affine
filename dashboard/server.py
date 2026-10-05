@@ -8,6 +8,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from dashboard.learner_projection import project as project_learner
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = Path(__file__).parent / 'public'
@@ -123,6 +124,23 @@ class Database:
                            miners=[dict(identity=identity, points=value, weight=scores.get('weights', {}).get(identity, 0))
                                    for identity, value in points.items()], training=None,
                            audit_policy=doc.get('audit_policy', ''), source=source_name)
+                learner = project_learner(read(folder/f'{eid}-learner-population.json', {}), doc, identity_uids)
+                if learner is not None and accepted_batches + (batches-accepted_batches-unchecked_batches) <= learner['submitted']:
+                    row.update(batches=learner['submitted'], batches_available=True,
+                               grid=learner['submitted_grid'], unassigned_batches=learner['unassigned'],
+                               submissions=learner['submitting_identities'],
+                               learner_eligible=learner['learner_eligible'], learner_excluded=learner['learner_excluded'],
+                               learner_grid=learner['eligible_grid'], learner_input_assurance='unaudited',
+                               audit_breakdown_available=bool(reports),
+                               learner_eligible_identities=learner['eligible_identities'],
+                               batch_count_source=learner['source'], learner_provenance_sha256=learner['provenance_sha256'])
+                    audited = accepted_batches + (batches-accepted_batches-unchecked_batches)
+                    row['grid_outcomes'] = None
+                    if audited <= learner['submitted']:
+                        row['unchecked'] = learner['submitted']-audited
+                    active = read(folder/'controller.json', {}).get('active')
+                    if isinstance(active, dict) and active.get('epoch') == eid:
+                        row['phase'] = active.get('phase', row['phase'])
                 epochs[eid] = row
                 metrics = read(folder/f'{eid}-training-metrics.json', {})
                 if metrics:

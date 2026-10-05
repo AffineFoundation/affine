@@ -14,8 +14,8 @@
   function ceiling(value){const magnitude=10 ** Math.floor(Math.log10(Math.max(1,value)));return Math.ceil(value/magnitude)*magnitude;}
   function detail(kind, row){
     if(kind==='evaluation')return `${utc(row.time)} UTC · ${percent(row.value)} · ${row.successes}/${row.count} solved · checkpoint ${String(row.checkpoint||'').slice(0,12)}${row.recovered_count?` · ${row.recovered_count} explicit recoveries`:''}`;
-    const audit = ['accepted','rejected','unchecked'].map(key=>count(row[key])?`${number(row[key])} ${key==='accepted'?'fully audited and accepted':key==='rejected'?'rejected':'unchecked'}`:`${key} count unavailable`).join(' · ');
-    return `${epochName(row)} · ${utc(row.time)} UTC · ${number(row.value)} submitted · ${audit}`;
+    const audit = row.audit_breakdown_available===false?'Independent audit breakdown unavailable here':['accepted','rejected','unchecked'].map(key=>count(row[key])?`${number(row[key])} ${key==='accepted'?'fully audited and accepted':key==='rejected'?'rejected':'unchecked'}`:`${key} count unavailable`).join(' · ');
+    return `${epochName(row)} · ${utc(row.time)} UTC · ${number(row.value)} submitted${row.learner_input_assurance==='unaudited'?` · ${number(row.learner_eligible)} learner-eligible (unaudited) · ${number(row.learner_excluded)} excluded`:''} · ${audit}`;
   }
   function draw(kind, rows){
     const s=$(kind+'-chart'),tip=$(kind+'-tip'),activeRecord=s.contains(document.activeElement)?document.activeElement.getAttribute('data-record'):null;s.replaceChildren();tip.hidden=true;
@@ -28,14 +28,14 @@
       s.append(svg('text',{x:x0-12,y:y+4,'text-anchor':'end'},kind==='evaluation'?percent(value):number(Number(value.toFixed(2)))));
     }
     $(kind+'-empty').hidden=rows.length>0;
-    $(kind+'-empty').textContent=kind==='evaluation'?'Awaiting a completed held-out evaluation.\nOnly measured results from this run appear here.':'Awaiting a finalized epoch.\nFrozen submission counts will appear here.';
+    $(kind+'-empty').textContent=kind==='evaluation'?'Awaiting a completed held-out evaluation.\nOnly measured results from this run appear here.':'Awaiting a committed epoch.\nCommitted submission counts will appear here.';
     const first=rows[0]?.time,last=rows.at(-1)?.time;
     const x=(e,i)=>kind==='batch'?(rows.length===1?x0+w/2:x0+w*i/(rows.length-1)):(last===first?x0+w/2:x0+w*(e.time-first)/(last-first));
     const y=e=>y0+h-h*e.value/high;
     if(rows.length){
       s.append(svg('polyline',{points:rows.map((e,i)=>`${x(e,i)},${y(e)}`).join(' '),fill:'none',stroke:'#111','stroke-width':1.75,'stroke-linejoin':'round'}));
-      s.setAttribute('aria-label',`${kind==='evaluation'?'Held-out math performance':'Frozen batches per epoch'}, ${rows.length} measurements. Use left and right arrow keys to inspect points.`);
-    }else s.setAttribute('aria-label',kind==='evaluation'?'No completed held-out evaluations for the current run':'No finalized epochs for the current run');
+      s.setAttribute('aria-label',`${kind==='evaluation'?'Held-out math performance':'Committed batches per epoch'}, ${rows.length} measurements. Use left and right arrow keys to inspect points.`);
+    }else s.setAttribute('aria-label',kind==='evaluation'?'No completed held-out evaluations for the current run':'No committed epochs for the current run');
     const selection=svg('g',{class:'chart-selection'}),guide=svg('line',{y1:y0,y2:y0+h,stroke:'#aaa','stroke-dasharray':'3 4'}),marker=svg('circle',{r:5,fill:'#111',stroke:'#fff','stroke-width':2});
     selection.append(guide,marker);
     const hits=[];
@@ -69,19 +69,19 @@
     }
     const restored=hits.find(hit=>hit.getAttribute('data-record')===activeRecord);
     if(restored){hits.forEach(hit=>hit.setAttribute('tabindex',hit===restored?0:-1));restored.focus({preventScroll:true});}
-    $(kind+'-period').textContent=`${rows.length} ${kind==='evaluation'?'completed evaluations · UTC':'finalized epochs · current run'}`;
+    $(kind+'-period').textContent=`${rows.length} ${kind==='evaluation'?'completed evaluations · UTC':'committed epochs · current run'}`;
   }
   function render(){
     const epochs=data.epochs.filter(e=>e.source==='live-reward-math'&&finite(e.start)).sort((a,b)=>a.start-b.start),ids=new Set(epochs.map(e=>e.id));
     const evals=data.evaluations.filter(e=>ids.has(e.epoch_id)&&e.env_id==='affine_math'&&e.status==='complete'&&finite(e.timestamp)&&finite(e.mean_reward)&&e.mean_reward>=0&&e.mean_reward<=1&&count(e.count)&&e.count>0&&count(e.successes)&&e.successes<=e.count).sort((a,b)=>a.timestamp-b.timestamp);
-    const latest=evals.at(-1),comparable=latest?evals.filter(e=>cohortKey(e)===cohortKey(latest)):[],finalized=epochs.filter(e=>e.finalized&&count(e.batches)),lastEpoch=finalized.at(-1);
+    const latest=evals.at(-1),comparable=latest?evals.filter(e=>cohortKey(e)===cohortKey(latest)):[],finalized=epochs.filter(e=>e.batches_available!==false&&count(e.batches)),lastEpoch=finalized.at(-1);
     $('evaluation-value').textContent=latest?percent(latest.mean_reward):'—';
     $('evaluation-reading').textContent=latest?`${latest.successes} / ${latest.count} problems solved`:'Awaiting a completed evaluation';
     $('evaluation-note').textContent=latest?`${latest.count} fixed held-out problems · same evaluation settings`:'Actual held-out measurements only';
     $('evaluation-note').title='Only the current run and latest comparable task/runtime/sampling cohort. Small diagnostic cohorts do not establish broad improvement.';
     $('batch-value').textContent=lastEpoch?number(lastEpoch.batches):'—';
-    $('batch-reading').textContent=lastEpoch?`${epochName(lastEpoch)} · frozen submissions`:'Awaiting a finalized epoch';
-    $('batch-note').textContent=lastEpoch&&count(lastEpoch.accepted)&&count(lastEpoch.unchecked)?`${number(lastEpoch.accepted)} fully audited and accepted · ${number(lastEpoch.unchecked)} unchecked`:'Frozen submissions · inspect a point for audit results';
+    $('batch-reading').textContent=lastEpoch?`${epochName(lastEpoch)} · committed submissions`:'Awaiting a committed epoch';
+    $('batch-note').textContent=lastEpoch?.learner_input_assurance==='unaudited'?`${number(lastEpoch.learner_eligible)} learner-eligible · unaudited inputs · independent audits`:lastEpoch&&count(lastEpoch.accepted)&&count(lastEpoch.unchecked)?`${number(lastEpoch.accepted)} fully audited and accepted · ${number(lastEpoch.unchecked)} unchecked`:'Frozen submissions · inspect a point for audit results';
     draw('evaluation',comparable.map(e=>({...e,time:e.timestamp,value:e.mean_reward})));
     draw('batch',finalized.map(e=>({...e,time:e.start,value:e.batches})));
     const updated=data.summary?.updated_at,stale=finite(updated)&&Date.now()/1000-updated>120;
