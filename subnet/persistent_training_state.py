@@ -22,14 +22,18 @@ MAX_SHARD_BYTES = 4_000_000_000
 SLOTS = ('master', 'exp_avg', 'exp_avg_sq')
 HEADER_RESERVE = 1_048_576
 TRANSPORT_VERSION='bounded-parallel-fp32-state-v1'
+EIGHT_STREAM_TRANSPORT_VERSION='bounded-eight-fp32-state-v1'
+SUPPORTED_CONCURRENCY=(1,2,3,4,8)
 
 def transport_concurrency(manifest):
     value=manifest.get('optimizer_state_transport')
     if value is None:return 1
-    if (not isinstance(value,dict) or set(value)!={'version','concurrency'} or value['version']!=TRANSPORT_VERSION):
+    if not isinstance(value,dict) or set(value)!={'version','concurrency'}:
         raise ValueError('signed bounded optimizer state transport')
-    concurrency=value['concurrency']
-    if type(concurrency) is not int or not 1<=concurrency<=4:
+    concurrency=value['concurrency'];version=value['version']
+    if type(concurrency) is not int or not (
+            (version==TRANSPORT_VERSION and 1<=concurrency<=4) or
+            (version==EIGHT_STREAM_TRANSPORT_VERSION and concurrency==8)):
         raise ValueError('optimizer state transport concurrency bound')
     return concurrency
 
@@ -48,7 +52,7 @@ def resource_plan(inventory, *, bf16_export_bytes, transfer_bytes=MAX_SHARD_BYTE
             type(transfer_bytes) is not int or not 1 <= transfer_bytes <= MAX_SHARD_BYTES or
             type(disk_reserve_bytes) is not int or disk_reserve_bytes < 0 or
             type(ram_reserve_bytes) is not int or ram_reserve_bytes < 0 or
-            type(concurrency) is not int or not 1<=concurrency<=4):
+            type(concurrency) is not int or concurrency not in SUPPORTED_CONCURRENCY):
         raise ValueError('explicit bounded resource plan')
     _inventory_valid(inventory)
     count = sum(r['numel'] for r in inventory); largest = max(r['numel'] for r in inventory)
@@ -239,7 +243,7 @@ def restore_state(descriptor, approved_sha256, input_checkpoint, inventory, *,
     if resource_admission.get('admitted') is not True:
         raise ValueError('actual RAM/disk admission required before state allocation')
     concurrency=resource_admission.get('state_transfer_concurrency',1) if concurrency is None else concurrency
-    if (type(concurrency) is not int or not 1<=concurrency<=4 or
+    if (type(concurrency) is not int or concurrency not in SUPPORTED_CONCURRENCY or
             concurrency!=resource_admission.get('state_transfer_concurrency',1)):
         raise ValueError('signed restore concurrency/admission binding')
     required = resource_plan(inventory, bf16_export_bytes=resource_admission['bf16_export_bytes'],
@@ -370,7 +374,7 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
     if (type(optimizer.global_step) is not int or optimizer.global_step < 1 or
             any(row['step'] != optimizer.global_step for row in optimizer.rows.values())):
         raise ValueError('only completed full-parameter updates may publish state')
-    if (type(concurrency) is not int or not 1<=concurrency<=4 or
+    if (type(concurrency) is not int or concurrency not in SUPPORTED_CONCURRENCY or
             resource_admission.get('state_transfer_concurrency',1)!=concurrency or
             resource_admission.get('admitted') is not True or
             shard_bytes > resource_admission['bounded_transfer_bytes']):
