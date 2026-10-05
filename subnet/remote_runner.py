@@ -47,7 +47,15 @@ def main():
     from .cache_lifecycle import CacheLifecycle
     os.environ['AFFINE_CACHE_LIFECYCLE_ROOT']=str(root.absolute())
     with CacheLifecycle(root).lease_checkpoint(manifest['checkpoint']['id'])as lease,log.open('wb') as output:
+        if envelope['payload']['role']=='evaluate':
+            from .evaluator_cache_lifecycle import retain
+            retain(root,manifest['checkpoint']['id'])
         log.chmod(0o600);child=subprocess.Popen(args,stdout=output,stderr=subprocess.STDOUT,pass_fds=(lease,))
         status.update(child_pid=child.pid,child_pid_ticks=ticks(child.pid));save(path,status);code=child.wait()
     status.update(phase='complete' if code==0 else 'failed',exit_code=code,finished_at=time.time());save(path,status)
+    if envelope['payload']['role']=='evaluate':
+        from .evaluator_cache_lifecycle import retain
+        try:retention=retain(root,manifest['checkpoint']['id'])
+        except Exception as error:retention=dict(status='deferred',reason=type(error).__name__)
+        save(markers/(identifier+'-cache-retention.json'),retention)
 if __name__=='__main__':main()
