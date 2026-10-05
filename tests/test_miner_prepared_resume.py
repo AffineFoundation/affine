@@ -77,6 +77,12 @@ class PreparedMiner(unittest.TestCase):
   with patch('requests.put',side_effect=expire):
    with self.assertRaisesRegex(EpochClosed,'commitment upload deadline'):first.upload()
   self.assertEqual(self.calls,['PAIR0']);self.assertEqual(self.objects['COMMIT'],old)
+ def test_resume_rejects_aggregate_compressed_overflow_before_tensor_decode(self):
+  first=self.miner();batch,arrays=self.rows[0];first.batches=[self.rows[0],(dict(batch,index=batch['index']+1,sample_index=batch['index']+1),arrays)]
+  with patch('requests.put',side_effect=self.put):first.upload()
+  value=json.loads(self.state.read_bytes());limit=max(p['size']for p in value['pairs'])+1
+  with patch('subnet.artifact_budget.for_manifest',return_value={'compressed_bytes':limit}),patch('subnet.batches.unpack',side_effect=AssertionError('tensor decode before aggregate admission')):
+   with self.assertRaisesRegex(ValueError,'aggregate compressed cap'):read_prepared_state(self.state,self.m)
  def test_mutating_existing_batch_cannot_replace_prepared_slot(self):
   first=self.miner();first.batches=self.rows
   with patch('requests.put',side_effect=self.put):first.upload()
