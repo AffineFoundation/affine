@@ -1,18 +1,28 @@
 # Affine — MATH mining, verification and training
 
 Current operational status, 2026-10-05:
-E16 is training from its original committed checkpoint and manifest. Capture
-completed with 359 committed documents; 309 passed cheap eligibility checks.
-A trainer-cap retry loop was corrected with a persisted post-freeze selection:
-256 documents are selected for the pending original training job, while all
-309 remain eligible for continuous auditing and reward estimates. The 53
-eligible unselected documents are not treated as invalid. These inputs are
-UNAUDITED; training does not await inference audits or repeat verification.
-No completed step seven or faster epoch is claimed yet. The durable parent is
-optimizer step six / checkpoint 2ba9497519650fbb29ba2213782e5bb76ee22a6721f4b16882f18a7596b039cc.
-The prior completed E15 used 240 eligible pairs from 270 committed documents.
-Follow the latest signed OPEN manifest for mining; E16's window has closed.
-Chain weight submissions remain disabled in this pilot.
+E16 completed and durably published optimizer step seven / checkpoint
+9cd6f6a6d61a4aba1bc30a83afa3792820d6a3630b660041cbd52eaecfdd82b0.
+It received 359 committed documents; 309 passed cheap eligibility checks,
+and 256 were selected for training. The 53 eligible unselected documents
+remain eligible for continuous audits and reward estimates, not invalid.
+Training used UNAUDITED inputs without waiting for inference audits.
+The original physical training job took 47.09 minutes; opening to durable
+closure took 125.29 minutes, including an independent-reader SSH outage.
+A qualified backup CPU reader verified the same original 23 FP32 optimizer
+objects (91,387,491,264 bytes), preserving the original training job and lineage.
+No new optimizer step was fabricated or rerun to recover publication.
+
+The next controller uses immutable source
+fe871019d5e6cba169db32bc8a3b56342d54f7d8193e5a8156c8586fb1c46493,
+with automatic trainer retention and parallel input fetching. E17 opening
+calibration failed before model execution because that source archive omitted
+its required native math snapshot. Recovery is being prepared with an exact
+hash-verified external dataset; the failed original job remains recorded.
+This is not a completed E17 or proof of a faster epoch. Follow only the latest
+signed OPEN manifest for mining. Chain weight submissions remain disabled.
+The independent fixed 128-task E16 baseline is 78/128; the matched successor
+evaluation is running. No E16 improvement or convergence is claimed yet.
 
 The dashboard now distinguishes committed submitted batches, cheap-eligible
 training inputs and expensive audit results. Its E15 counts are 270 submitted,
@@ -25,9 +35,9 @@ physical training job took 60.49 minutes: 17.58 restoring FP32 optimizer state,
 8.70 training/checkpointing, 18.48 uploading FP32 state, and 15.72 other overhead.
 This misses the one-hour target. More verifiers alone do not shorten that path.
 An actual eight-stream independent reader checked all 23 optimizer objects,
-91,387,491,264 bytes, in 429.28 seconds. Eight-stream transfer contracts and
-startup timing instrumentation are reviewed for the next epoch; historical
-four-stream manifests remain unchanged.
+91,387,491,264 bytes, in 429.28 seconds. Eight-stream transfer contracts and startup timing instrumentation are included
+in the FE controller source; historical four-stream manifests remain unchanged.
+The qualified backup completed the original E16 production readback in 228.41 seconds.
 
 Two disk-full verifier workers were stopped without treating infrastructure
 errors as miner fraud; the other six continued. Automatic owned-cache lifecycle
@@ -39,8 +49,8 @@ retirement. Seven reachable workers now run the automatic lifecycle wrapper;
 authenticated legacy adoption has now retired obsolete models and accepted
 historical input downloads across all seven, without pausing healthy workers. The
 trainer has 160.50 GB free after explicit software retirement of old models.
-Future automatic trainer hooks are on main and prepared for E17; they are not
-yet active in E16.
+Automatic trainer hooks are included in the new FE controller source; its first
+training job has not run yet. E16 retained its historical lifecycle contract.
 A replacement H200 passed fresh honest and forged sampling/TOPLOC controls but
 has not joined the production queue. Runtime/source qualification remains
 mandatory for each participating verifier.
@@ -48,13 +58,14 @@ mandatory for each participating verifier.
 The matched E14 held-out diagnostic was 20/32 before and 20/32 after, with zero
 infrastructure failures. The independent fixed 128-task paired evaluation completed: 83/128 before
 and 82/128 after, with three gains, four losses and zero infrastructure errors. No sustained improvement or convergence is claimed.
-The published prospective source adds transport, cache lifecycle, pinned source
-routing and native environment-session reuse. It is not active until a new
-signed manifest names its exact archive and runtime inventory.
+New main-branch code also adds default-off sole-current FP32 optimizer caching
+and prompt-only native MATH eligibility. Those changes are NOT in the sealed
+FE archive and are not enabled in live jobs. They require a new signed source
+contract and qualification before activation; main branch alone is not a contract.
 
-The configured immutable source is
-7459c28cbe11b0999b41644aea2aa672d40eb44faa94ccb261e176d8f71b0d46
-for the original E16 controller. Closed historical E15 keeps source6a85c310...;
+The completed original E16 keeps immutable source
+7459c28cbe11b0999b41644aea2aa672d40eb44faa94ccb261e176d8f71b0d46.
+The next controller names FE source above; closed historical E15 keeps source6a85c310...;
 only the latest signed OPEN manifest authorizes new mining.
 The qualified H200 verifier roster shares the existing queue; active worker
 counts are given in the current operational status above.
