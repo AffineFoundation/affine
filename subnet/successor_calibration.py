@@ -25,6 +25,12 @@ def request(value):
     if type(seed)is not str or len(seed)!=64 or any(x not in '0123456789abcdef'for x in seed):raise ValueError('qualification public draws')
     return dict(value,harness=h)
 
+def preflight_native_spec(spec):
+    """Authenticate code/data/dependencies on the worker before model loading."""
+    from .environments import create_session
+    session=create_session(spec)
+    session.close()
+
 def execute(runtime, manifest, value):
     from . import fast_prefill_audit as fast,forced_sampling as forced
     import torch
@@ -90,14 +96,17 @@ def before_open(controller,config,status,opening):
     manifest['harness_source_hash']=harness_hash()
     manifest.pop('sampling_policy',None);manifest['sampling_contract']=new_contract(dict(version=STRICT,max_attempts=16));manifest['sampling_source_hash']=source_hash()
     # Stable nonce/original manifest is retained before remote dispatch.
-    key=digest(dict(checkpoint=status['checkpoint'],request={k:v for k,v in req.items()if k!='draw_contract'},sampling_policy=config['sampling_policy'],source=opening['source_bundle']['sha256'],runtime=opening['model_runtime_revision'],profile=opening['backend_profile']))
+    key=digest(dict(calibration_environment=row,checkpoint=status['checkpoint'],request={k:v for k,v in req.items()if k!='draw_contract'},sampling_policy=config['sampling_policy'],source=opening['source_bundle']['sha256'],runtime=opening['model_runtime_revision'],profile=opening['backend_profile']))
+    manifest['epoch']+='-'+key[:12]
     path=controller.state/'successor-calibration'/(key+'.json')
     if path.exists():
         record=json.loads(path.read_text());manifest=record['manifest']
+        if canonical(record.get('calibration_environment'))!=canonical(row) or not any(canonical(r)==canonical(row)for r in manifest.get('environments',[])):
+            raise ValueError('immutable successor native environment binding changed')
         if {k:v for k,v in record['request'].items()if k!='draw_contract'}!={k:v for k,v in req.items()if k!='draw_contract'} or record['checkpoint']!=status['checkpoint'] or record['source_sha256']!=opening['source_bundle']['sha256']:raise ValueError('immutable successor calibration original changed')
         req=record['request']
     else:
-        record=dict(manifest=manifest,request=req,checkpoint=status['checkpoint'],source_sha256=opening['source_bundle']['sha256']);save(path,record)
+        record=dict(calibration_environment=row,manifest=manifest,request=req,checkpoint=status['checkpoint'],source_sha256=opening['source_bundle']['sha256']);save(path,record)
     # The sole trainer is free only after its durable publication completed.
     # Do not compete with the independently running held-out evaluator.
     jobs=getattr(controller.jobs,'roles',{}).get('train',controller.jobs)

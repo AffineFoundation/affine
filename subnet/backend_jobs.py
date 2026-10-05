@@ -683,6 +683,9 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         from .gpu_runtime import GPURuntime
         factory=runtime_factory or GPURuntime;definitions=entries(manifest)
         first,initial_harness=initial_configuration(manifest,job)
+        if job['role']=='evaluate' and job.get('successor_calibration')is not None:
+            from .successor_calibration import preflight_native_spec
+            preflight_native_spec(first['spec'])
         if runtime_factory is None:
             runtime=factory(approved,manifest['checkpoint']['files'],first['spec'],initial_harness,
                 runtime_revision=revision)
