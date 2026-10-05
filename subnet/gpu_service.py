@@ -68,6 +68,23 @@ def owned_mining_job_fields(config,manifest,round_number):
     mining_definitions(manifest,fields)
     return fields
 
+def owned_dispatch_identities(config,manifest,identities):
+    """Select operator jobs without restricting the published participant snapshot.
+
+    Paths are remote miner-only references; the coordinator never reads keys.
+    Legacy transports retain their historical dispatch behavior.
+    """
+    if manifest.get('submission_transport_policy') is None:return list(identities)
+    from .commitment_transport import VERSION
+    if manifest['submission_transport_policy']!=VERSION:raise ValueError('owned commitment transport')
+    paths=config.get('owned_miner_identity_files',{})
+    if not isinstance(paths,dict):raise ValueError('owned miner scoped identity files')
+    for key,path in paths.items():
+        if (not isinstance(key,str) or len(key)!=64 or any(c not in '0123456789abcdef' for c in key)
+                or not isinstance(path,str) or not path.startswith('/') or '\x00' in path):
+            raise ValueError('owned miner scoped identity files')
+    return [miner for miner in identities if miner in paths]
+
 def contract(config,round_number):
     revision,profile,policy=for_config(config)
     rows=definitions(config)
@@ -240,7 +257,7 @@ def run(config,once=False):
             manifest=json.loads(manifestpath.read_text())
             if active['phase']=='mine':
                 if owned_dispatch_allowed(config,manifest) and time.time()<manifest['deadline']:
-                    for miner in active['identities']:
+                    for miner in owned_dispatch_identities(config,manifest,active['identities']):
                         capability=dict(put_url=bucket.presign('private/'+epoch+'/staging/'+miner+'.zip','put_object',max(1,manifest['deadline']-int(time.time()))),headers={'Content-Type':'application/octet-stream'})
                         owned_fields=owned_mining_job_fields(config,manifest,status['round'])
                         attempts=min(config.get('search_budget',64),manifest['sampling_contract']['max_attempts']) if manifest.get('sampling_contract') else config.get('search_budget',64)
