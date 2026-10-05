@@ -155,10 +155,13 @@ class Worker:
             if runspace!=self.workspace/'backend':
                 lease_fds.append(cache_leases.enter_context(lifecycle.lease_checkpoint(approved['id'])))
             environment['AFFINE_CACHE_LIFECYCLE_ROOT']=str(runspace)
+            selected_cache=None
             approved_cache=self.checkpoint_caches.get(approved['id'])
             if approved_cache and checkpoint_cache_candidate(approved_cache,approved['files']):
+                selected_cache=Path(approved_cache)
                 command+=['--checkpoint-cache',str(approved_cache)]
             elif claim['attempt']>1 and checkpoint_cache_candidate(cache,approved['files']):
+                selected_cache=cache
                 command+=['--checkpoint-cache',str(cache)]
             with (attempt/'worker.log').open('xb') as output:
                 (attempt/'worker.log').chmod(0o600)
@@ -184,7 +187,11 @@ class Worker:
                 path=runspace/'jobs'/job['job_id']/('submission-'+str(i)+'.zip')
                 if path.exists():lifecycle.record_download(path,obj['sha256'])
             lifecycle.retire_downloads(job['job_id'])
-            try:lifecycle.record_checkpoint(approved['id'],approved['files'])
+            try:
+                if selected_cache is None:lifecycle.record_checkpoint(approved['id'],approved['files'])
+                elif selected_cache==cache:shared_lifecycle.record_checkpoint(approved['id'],approved['files'])
+                # External mapped caches were verified at their own path; never
+                # label a different same-ID owned copy as that verified input.
             except ValueError:logging.warning('cache changed after verified job; retaining checkpoint')
             return True
         finally:
