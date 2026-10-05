@@ -112,7 +112,7 @@ def contract(config,round_number):
         training_policy=epoch_policy(config),source_bundle=config['source_bundle'],model_runtime_revision=revision,numerical_policy=policy,
         backend_profile=profile,model_id=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'))
     if config.get('training_input_policy') is not None:
-        if config['training_input_policy'] not in ('authenticated-verifier-receipts-v1','authenticated-verifier-compact-inputs-v2'):
+        if config['training_input_policy'] not in ('authenticated-verifier-receipts-v1','authenticated-verifier-compact-inputs-v2','committed-unaudited-training-v1'):
             raise ValueError('unapproved training input policy')
         from .training_receipts import POLICIES
         if epoch_policy(config) not in POLICIES:raise ValueError('receipt input requires covered/persistent objective')
@@ -296,6 +296,11 @@ def run(config,once=False):
                 if time.time()<manifest['deadline']:
                     save(state/'health.json',dict(status='collecting',epoch=epoch,deadline=manifest['deadline'],time=time.time()));time.sleep(min(10,max(1,manifest['deadline']-time.time())));continue
                 from .capture_status import InfrastructureSkipped,close_epoch
+                if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
+                    training_manifest,submissions,population=controller.collect_learner_inputs(manifest)
+                    save(state/(epoch+'-learner-population.json'),dict(version='committed-unaudited-training-v1',manifest=training_manifest,submissions=submissions,population=population))
+                    transition_phase(active,'before');save(statuspath,status)
+                    continue
                 try:result,reports=controller.finalize(manifest,status['checkpoint_path'])
                 except InfrastructureSkipped:
                     close_epoch(controller,manifest,status,statuspath,prefix)
@@ -307,7 +312,9 @@ def run(config,once=False):
                 ledger=json.loads(ledgerpath.read_text()) if ledgerpath.exists() else []
                 if not any(r['epoch_id']==epoch for r in ledger):ledger.append(dict(result,points={active['identities'][m]:p for m,p in result['points'].items()}))
                 save(ledgerpath,ledger);transition_phase(active,'before');save(statuspath,status)
-            reports=json.loads((state/(epoch+'-verified.json')).read_text())
+            unaudited=manifest.get('training_input_policy')=='committed-unaudited-training-v1'
+            learner=json.loads((state/(epoch+'-learner-population.json')).read_text()) if unaudited else None
+            reports={} if unaudited else json.loads((state/(epoch+'-verified.json')).read_text())
             if active['phase']=='before':
                 if independent_evaluation:
                     from .checkpoint_evaluator import enqueue
@@ -316,8 +323,9 @@ def run(config,once=False):
                     evaluate(controller,manifest,status['checkpoint_path'],'before',status['training_steps'],config)
                 transition_phase(active,'train');save(statuspath,status)
             if active['phase']=='train':
-                if any(r['accepted'] for r in reports.values()):
+                if (bool(learner['submissions']) if unaudited else any(r['accepted'] for r in reports.values())):
                     replay=None;steps=config.get('training_steps',1)
+                    if unaudited and config.get('balanced_replay'):raise ValueError('unaudited historical replay requires separate admission')
                     if config.get('balanced_replay'):
                         from .replay_pool_preparation import prepare
                         from .replay_training import admitted
@@ -331,7 +339,7 @@ def run(config,once=False):
                         _,selection=admitted(manifest,replay,controller.authority.id)
                         families={r['environment_id'] for r in selection['selected']}|{b['env_id'] for r in reports.values() for b in r['accepted']}
                         steps=len(families)
-                    cp,metrics=controller.train(manifest,reports,status['checkpoint_path'],steps=steps,replay=replay)
+                    cp,metrics=controller.train(learner['manifest'] if unaudited else manifest,reports,status['checkpoint_path'],steps=steps,replay=replay)
                     if replay is not None:
                         from .replay_commit import commit
                         commit(state/'replay-reuse-ledger.json',epoch,metrics)
@@ -339,8 +347,9 @@ def run(config,once=False):
                     if metrics.get('trainer_state')is not None:
                         active['next_trainer_state']=metrics['trainer_state']
                 else:
-                    save(state/(epoch+'-empty-closed.json'),dict(epoch=epoch,status='closed_no_accepted_batches',payable=False,checkpoint=status['checkpoint']['id']))
-                    bucket.json('public/'+epoch+'/training.json',controller.signed(dict(status='closed_no_accepted_batches',checkpoint=status['checkpoint']['id'])))
+                    empty_status='closed_no_eligible_batches' if unaudited else 'closed_no_accepted_batches'
+                    save(state/(epoch+'-empty-closed.json'),dict(epoch=epoch,status=empty_status,payable=False,checkpoint=status['checkpoint']['id']))
+                    bucket.json('public/'+epoch+'/training.json',controller.signed(dict(status=empty_status,checkpoint=status['checkpoint']['id'])))
                     active['next_checkpoint']=status['checkpoint'];active['next_path']=status['checkpoint_path'];active['next_steps']=status['training_steps']
                     if status.get('trainer_state')is not None:active['next_trainer_state']=status['trainer_state']
                 transition_phase(active,'after');save(statuspath,status)
@@ -351,8 +360,11 @@ def run(config,once=False):
                     enqueue(controller,nextmanifest,active['next_path'],'after',active['next_steps'],config,public_optimizer_steps=active.get('next_trainer_state',{}).get('optimizer_steps'))
                 else:
                     evaluate(controller,nextmanifest,active['next_path'],'after',active['next_steps'],config)
-                save(state/(epoch+'-proposed-weights.json'),dict(epoch_id=epoch,payable=False,weights=json.loads((state/(epoch+'-scores.json')).read_text())['weights'],chain_transactions=False))
-                publish_history(controller,prefix,json.loads(ledgerpath.read_text()),config['source_bundle'])
+                if not unaudited:
+                    save(state/(epoch+'-proposed-weights.json'),dict(epoch_id=epoch,payable=False,weights=json.loads((state/(epoch+'-scores.json')).read_text())['weights'],chain_transactions=False))
+                    publish_history(controller,prefix,json.loads(ledgerpath.read_text()),config['source_bundle'])
+                else:
+                    bucket.json('public/'+epoch+'/learning-status.json',controller.signed(dict(epoch=epoch,input_assurance='unaudited',checkpoint=active['next_checkpoint']['id'],training_steps=active['next_steps'],audit_reward_snapshot_pending=True)))
                 # A failed history publication must remain in the after phase:
                 # resume reuses the completed evaluation and never retrains.
                 if active.get('next_trainer_state')is not None:
@@ -362,8 +374,9 @@ def run(config,once=False):
                     if committed['inference_checkpoint']!=active['next_checkpoint']['id']:
                         raise ValueError('next committed trainer state checkpoint mismatch')
                     status.update(trainer_state=committed,persistent_state_committed=True,public_optimizer_steps=committed['optimizer_steps'])
-                from .reward_publication import emit
-                emit(controller,manifest)
+                if not unaudited:
+                    from .reward_publication import emit
+                    emit(controller,manifest)
                 timing=epoch_completion(active,manifest,status['training_steps'])
                 bucket.json('public/'+epoch+'/controller-timing.json',controller.signed(timing))
                 save(state/(epoch+'-controller-timing.json'),timing)
