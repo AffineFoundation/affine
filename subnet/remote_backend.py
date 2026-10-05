@@ -140,14 +140,39 @@ class RemoteJobs:
             if phase not in ('running','complete'):raise ValueError('original training not resumable; inspect without relaunch')
         return dict(resuming_original_training=True,original_job_id=prior['job_id'],original_phase=phase,
                     new_training_started=False,new_disk_reserve_not_required=True)
-    def remote_status(self,identifier):
-        code="from subnet.remote_runner import probe;import json;print(json.dumps(probe("+repr(self.workspace)+","+repr(identifier)+")))"
-        return json.loads(self.command('cd '+shlex.quote(self.code)+' && '+shlex.quote(self.python)+' -B -c '+shlex.quote(code)))
-    def run(self,label,role,manifest,cache=None,**fields):
+    def remote_status(self,identifier,timeout=1800,physical=False):
+        code="from subnet.remote_runner import probe;import json;print(json.dumps(probe("+repr(self.workspace)+","+repr(identifier)+(",physical=True"if physical else "")+")))"
+        return json.loads(self.command('cd '+shlex.quote(self.code)+' && '+shlex.quote(self.python)+' -B -c '+shlex.quote(code),timeout=timeout))
+    def mine_reservation(self,label):
+        """A collection deadline never releases the original physical miner."""
+        for path in sorted(self.state.glob('*.json')):
+            prior=json.loads(path.read_text())
+            if not isinstance(prior,dict) or prior.get('role')!='mine' or 'manifest_sha256'not in prior or path.name==label+'.json':continue
+            original=signed(json.loads((self.state/(prior['job_id']+'-job.json')).read_text()),self.controller.authority.id)
+            if original.get('role')!='mine' or original.get('job_id')!=prior['job_id'] or hashlib.sha256(canonical(original)).hexdigest()!=prior['job_sha256']:
+                raise ValueError('original miner reservation binding')
+            if signed(original['manifest'],self.controller.authority.id).get('hourly_execution_policy')is None:continue
+            if prior.get('physical_workspace',self.workspace)!=self.workspace:raise RemoteMinerReserved(prior['job_id'])
+            terminal=self.state/(prior['job_id']+'-physical-terminal.json')
+            if terminal.exists():
+                value=json.loads(terminal.read_text())
+                if value.get('job_sha256')!=prior['job_sha256'] or value.get('phase')not in ('complete','failed'):raise ValueError('miner terminal reservation evidence')
+                continue
+            try:status=self.remote_status(prior['job_id'],timeout=20,physical=True)
+            except Exception as exc:raise RemoteMinerReserved(prior['job_id'])from exc
+            if status.get('phase')not in ('complete','failed'):raise RemoteMinerReserved(prior['job_id'])
+            save(terminal,dict(job_id=prior['job_id'],job_sha256=prior['job_sha256'],phase=status['phase'],observed_at=time.time(),original_status=status))
+    def run(self,label,role,manifest,cache=None,dispatch_only=False,**fields):
+        if type(dispatch_only)is not bool or dispatch_only and (role!='mine' or manifest.get('hourly_execution_policy')is None):raise ValueError('dispatch-only requires signed hourly miner')
         if not label.replace('-','').replace('_','').isalnum():raise ValueError('job label')
         record=self.state/(label+'.json');prior=None
+        if dispatch_only:self.mine_reservation(label)
         if record.exists():
             prior=json.loads(record.read_text());reportpath=self.state/(prior['job_id']+'-report.json')
+            if dispatch_only:
+                original=signed(json.loads((self.state/(prior['job_id']+'-job.json')).read_text()),self.controller.authority.id)
+                if (original.get('role')!='mine' or original.get('miner_id')!=fields.get('miner_id') or signed(original['manifest'],self.controller.authority.id)!=manifest or hashlib.sha256(canonical(original)).hexdigest()!=prior['job_sha256']):raise ValueError('original miner request changed')
+                return dict(dispatch_only=True,original_job_id=prior['job_id'],job_sha256=prior['job_sha256'],terminal_observed=False,new_job_started=False)
             if getattr(self,'config',{}).get('retain_original_jobs',False) and role=='evaluate':
                 original=signed(json.loads((self.state/(prior['job_id']+'-job.json')).read_text()),self.controller.authority.id)
                 if (original.get('role')!=role or original.get('heldout')!=fields.get('heldout')
@@ -183,11 +208,14 @@ class RemoteJobs:
                 validate_job(payload,manifest,self.controller.authority.id)
             jobpath=self.state/(identifier+'-job.json');save(jobpath,self.controller.signed(payload))
             prior=dict(job_id=identifier,role=role,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],job_sha256=hashlib.sha256(canonical(payload)).hexdigest(),manifest_sha256=hashlib.sha256(canonical(manifest)).hexdigest(),source_files=self.metadata['source_files'],runtime_versions=self.metadata['runtime_versions'])
+            if dispatch_only:prior['physical_workspace']=self.workspace
             save(record,prior);remotejob=self.workspace+'/'+identifier+'.json'
             self.command('mkdir -p '+shlex.quote(self.workspace));self.copy_to(jobpath,remotejob)
             command='cd '+shlex.quote(self.code)+' && CUBLAS_WORKSPACE_CONFIG=:4096:8 nohup '+shlex.quote(self.python)+' -B -m subnet.remote_runner '+shlex.quote(remotejob)+' --authority '+self.controller.authority.id+' --workspace '+shlex.quote(self.workspace)
             if cache:command+=' --checkpoint-cache '+shlex.quote(cache)
             self.command(command+' > '+shlex.quote(self.workspace+'/'+identifier+'-runner.log')+' 2>&1 < /dev/null &')
+        if dispatch_only:
+            return dict(dispatch_only=True,original_job_id=prior['job_id'],job_sha256=prior['job_sha256'],terminal_observed=False,new_job_started=True)
         reportpath=self.state/(prior['job_id']+'-report.json')
         started=time.time()
         while True:
@@ -567,3 +595,8 @@ class RemoteController(Controller):
         if replay is not None:
             metrics['replay_training']=remote['replay_training'];metrics['replay_inputs_sha256']=hashlib.sha256(canonical(replay)).hexdigest()
         save(cached,metrics);self.bucket.json('public/'+epoch+'/training.json',self.signed(metrics));return output,metrics
+
+class RemoteMinerReserved(RuntimeError):
+    def __init__(self,job_id):
+        self.job_id=job_id
+        super().__init__("original physical miner remains reserved: "+job_id)
