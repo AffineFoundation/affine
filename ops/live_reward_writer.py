@@ -258,6 +258,9 @@ def finalized_reward_completeness(c,anchor_document,authority,*,window_end):
   first=signed(read(state/(epoch+'-first-signed-manifest.json')),authority)
   need(canonical(first)==canonical(read(state/(epoch+'-manifest.json'))),'original final manifest binding')
   need(all((state/(epoch+'-signed-compute-audit-'+miner+'.json')).is_file() for miner in original['receipts']),'incomplete finalized audit sidecars')
+  from subnet.reward_publication import require,PublicationPending
+  try:require(state,first,authority)
+  except PublicationPending as pending:raise FinalizationPending(pending.epoch)
   original_anchor=exporter.epoch_anchor(first,anchor_document,authority,c.get('approved_source_anchors'))
   expected=exporter.export_epoch(state,epoch,original_anchor,authority)
   if epoch in indexed:need(canonical(indexed[epoch])==canonical(expected),'immutable ledger versus original finalized evidence')

@@ -117,6 +117,9 @@ def contract(config,round_number):
     if config.get('submission_transport_policy') is not None:result['submission_transport_policy']=config['submission_transport_policy']
     if config.get('hourly_execution_policy')is not None:result['hourly_execution_policy']=config['hourly_execution_policy']
     if config.get('temporary_exclusion_policy')is not None:result['temporary_exclusion_policy']=config['temporary_exclusion_policy']
+    if config.get('reward_publication_policy')is not None:
+        from .reward_publication import validate_policy
+        result['reward_publication_policy']=validate_policy(config['reward_publication_policy'])
     return result
 
 def heldout(config,manifest):
@@ -317,6 +320,8 @@ def run(config,once=False):
                     if committed['inference_checkpoint']!=active['next_checkpoint']['id']:
                         raise ValueError('next committed trainer state checkpoint mismatch')
                     status.update(trainer_state=committed,persistent_state_committed=True,public_optimizer_steps=committed['optimizer_steps'])
+                from .reward_publication import emit
+                emit(controller,manifest)
                 timing=epoch_completion(active,manifest,status['training_steps'])
                 bucket.json('public/'+epoch+'/controller-timing.json',controller.signed(timing))
                 save(state/(epoch+'-controller-timing.json'),timing)
