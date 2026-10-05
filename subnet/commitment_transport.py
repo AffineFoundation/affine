@@ -58,6 +58,32 @@ def validate_unchecked(manifest,receipt,report):
  need(report==unchecked(manifest,receipt),'exact no-credit unaudited report')
  return True
 
+def _read_small_commitment(bucket,key):
+ """Worker reads only bounded commitment bytes, never state or heavy artifacts."""
+ response=bucket.client.get_object(Bucket=bucket.name,Key=key);body=response['Body']
+ try:data=body.read(MAX_BYTES+1)
+ finally:body.close()
+ return dict(data=data,ETag=response['ETag'],LastModified=response['LastModified'])
+
+def _bounded_small_reads(gateway,epoch,miners,cutoff):
+ """At most four in-flight GETs; journals remain serial and deterministic."""
+ from concurrent.futures import ThreadPoolExecutor
+ from collections import deque
+ remaining=iter(miners);inflight=deque()
+ with ThreadPoolExecutor(max_workers=4)as pool:
+  def fill():
+   while len(inflight)<4:
+    if cutoff is not None and time.time()>=cutoff:return
+    try:miner=next(remaining)
+    except StopIteration:return
+    key='private/'+epoch+'/commitments/'+miner+'.json'
+    inflight.append((miner,pool.submit(_read_small_commitment,gateway.bucket,key)))
+  fill()
+  while inflight:
+   item=inflight.popleft()
+   yield item
+   fill()
+
 def freeze(gateway,epoch):
  """Persist each successful small receipt; infrastructure failures retry safely."""
  from .storage import SubmissionPolicyError
@@ -65,6 +91,8 @@ def freeze(gateway,epoch):
  state=gateway.epochs[epoch];state['closed']=True;gateway.persist()
  if 'frozen_receipts'in state:return state['frozen_receipts']
  snapshots=state.setdefault('commitment_snapshots',{});pending=state.setdefault('commitment_pending',{});rejections=state.setdefault('rejections',{});failures=[]
+ candidates=[m for m in sorted(state['miners'])if m not in snapshots and m not in rejections and m not in pending]
+ reads=_bounded_small_reads(gateway,epoch,candidates,state['commitment_binding'].get('freeze_until'))
  for miner in sorted(state['miners']):
   if miner in snapshots or miner in rejections:continue
   cutoff=state['commitment_binding'].get('freeze_until')
@@ -72,10 +100,9 @@ def freeze(gateway,epoch):
    state.setdefault('commitment_deferred',{})[miner]=dict(reason='freeze_infrastructure_budget_deferred',closed_at=time.time());gateway.persist();continue
   try:
    if miner not in pending:
-    key='private/'+epoch+'/commitments/'+miner+'.json';r=gateway.bucket.client.get_object(Bucket=gateway.bucket.name,Key=key)
-    body=r['Body']
-    try:data=body.read(MAX_BYTES+1)
-    finally:body.close()
+    key='private/'+epoch+'/commitments/'+miner+'.json';read_miner,future=next(reads)
+    need(read_miner==miner,'ordered bounded commitment read')
+    r=future.result();data=r['data']
     if not state['start']<=r['LastModified'].timestamp()<state['deadline']:raise SubmissionPolicyError('commitment time')
     try:
      env=validate(data,epoch,miner,state['max_batches'])
@@ -103,6 +130,7 @@ def freeze(gateway,epoch):
    if str(exc.response.get('Error',{}).get('Code'))in('NoSuchKey','404','NotFound'):rejections[miner]='missing completed commitment/artifact';gateway.persist()
    else:failures.append(exc)
   except Exception as exc:failures.append(exc)
+ reads.close()
  cutoff=state['commitment_binding'].get('freeze_until')
  if failures and (cutoff is None or time.time()<cutoff):raise failures[0]
  if failures:
