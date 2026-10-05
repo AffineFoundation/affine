@@ -80,3 +80,6 @@ Unknown launch outcomes or a matching live child never authorize retirement or
 cold fallback. Terminal evidence includes child PID, process start identity and
 confirmed process exit; a fast child that exited before identity capture must
 also have a confirmed exit code and no extant process at that PID.
+A terminal failed promotion is consumed exactly once under the cache lease: its
+full signed failure record is archived before the active guard is removed. The
+old ACK consequently cannot block a later approved parent after training advances.

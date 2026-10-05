@@ -105,6 +105,8 @@ class StateCache:
                     if sha(candidate_job)!=candidate['job_sha256']:raise ValueError('failed cache candidate original ownership')
                     self.discard(candidate,'terminal-promotion-failure-cold-fallback')
                     self.save(self.root/('failed-'+candidate['job_id']+'-'+name),candidate);marker.unlink()
+                self.save(self.root/('failed-promotion-'+identifier(confirmed['job_id'])+'.json'),intent)
+                promotion.unlink()
                 self.cache_evidence.append(dict(outcome='cold',reason='confirmed-terminal-promotion-failure',job_id=confirmed['job_id']))
                 return 0
             if intent.get('phase')=='pending':
