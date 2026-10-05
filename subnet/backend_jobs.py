@@ -556,6 +556,12 @@ def install_source_loader(root,additional_files=()):
         sys.modules.pop(module_name,None)
     if 'subnet/compact_training_inputs.py' in additional_files:
         sys.modules.pop('subnet.compact_training_inputs',None)
+    if 'subnet/persistent_publication.py' in additional_files:
+        # _validate() uses this module's pure policy admission before execute()
+        # authenticates every pinned source byte. Reload it through the finder,
+        # just like the other bootstrap admission helpers; never retain its
+        # pre-validation implementation for training or publication.
+        sys.modules.pop('subnet.persistent_publication',None)
     for name in set(SOURCE_FILES)|set(additional_files):
         module_name=name[:-3].replace('/','.')
         if module_name in sys.modules and module_name!='subnet.backend_jobs':
