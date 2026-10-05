@@ -1,14 +1,65 @@
 # Affine — MATH mining, verification and training
 
-Implementation preview, not an active mining contract: GitHub main now contains
-the explicit small-commitment-pairs-v2 token-document transport and
-committed-unaudited-training-v1 learner policy. These allow cheap-admitted,
-checkpoint-bound submissions to enter training without waiting for audits.
-Continuous probabilistic audits and calibrated prefill sampling verification are
-being integrated and qualified. Do not submit against this preview: the signed
-epoch manifest and mining.json remain authoritative, and mining remains closed
-under the operational hold below. Existing signed epochs keep their original
-strict sampler and audit rules.
+Deployment update, 2026-10-05: the independent controller and continuous auditor
+have been started with the reviewed decoupled contract. E14,
+nonpayable-live-reward-math-v1--1791214814-14, is opening from authoritative
+checkpoint 05de656e9c215a139f4329ffc9954e7c83955872929a17c35fd1a9bd9eae0923
+and persistent optimizer step four. At this publication check the signed E14
+manifest had not yet appeared locally. Opening is blocked by a stale persistent
+training admission source pin; no miner job has been issued. The original
+checkpoint, optimizer and genesis history must be preserved when repairing
+that prospective source admission. Opening is not a completed mining,
+audit, training or reward cycle. Consult mining.json and the signed epoch
+manifest for actual availability before generating submissions. This remains
+a nonpayable pilot; deployment is not evidence of chain weight submission or
+held-out convergence.
+
+The configured immutable source is
+6a85c31011b7a1ca23d745e9868d7b01dd0e92e9fe74c997e8222482f76393ca.
+Eight independently qualified H200 verifier workers share the existing queue;
+the validator/controller remains on Arbos.life, with separate miner, trainer
+and evaluator roles. No hardware outside its admitted runtime is approved.
+
+The new contract uses small-commitment-pairs-v2 token-document transport and
+committed-unaudited-training-v1. Cheap-admitted immutable checkpoint-bound
+training documents can enter training without waiting for expensive audits.
+This labels training inputs UNAUDITED; it does not claim they all passed proof
+verification. Continuous auditors independently select committed batches,
+verify selected proof artifacts, native environment outcomes and target-model
+computation, and publish authenticated reports. Historical signed epochs keep
+their original strict sampler, training and reward contracts.
+
+Sampling verification is forced-inverse-cdf-prefill-support-v3 with an approved
+FP32 H200 inference profile. TOPLOC fingerprints alone do not prove sampling.
+The verifier recomputes target-model probabilities and checks the forced random
+draw against calibrated CDF intervals; numerical ambiguity or support changes
+require exact cached-reference replay. Unavailable reference computation is
+unknown, not fraud. Calibrated numerical bounds and random audits provide
+empirical/probabilistic assurance, not an exact universal proof of historical
+execution. Trainer BF16 precision is separately admitted. The config retains
+its predecessor calibration seed only to reuse original qualification requests;
+each opened manifest must use the actual checkpoint-specific admitted policy.
+Successor checkpoints require fresh executed qualification before opening.
+
+Continuous-probabilistic-audit-v2 rewards unique eligible task indices adjusted
+by authenticated audit evidence. It uses eight recent cohorts, decay 0.8 and
+Beta(1,1), with confirmed-invalid multiplier 0.1, zero epoch after two confirmed
+invalids, and four-epoch blacklist after three. Infrastructure failures and
+numerical unknowns are not fraud. Eight inflight jobs and eight selections per
+10-second tick bound audit load; hourly immutable snapshots use original
+completion times and evidence cutoffs. Extra rollouts on one task earn no extra
+points; same-epoch task duplicates earn zero. The signed contracts are the
+source of truth for eligibility and penalties. Lossless DEFLATE level one is
+configured for new proof artifacts; historical artifact bytes are unchanged.
+
+Qualification evidence: eight distinct H200s passed sixteen honest cached
+reference controls and rejected sixteen freshly fingerprinted forged controls.
+Fifteen honest prefill controls verified directly and one required numerical
+adjudication. The final ambiguity fallback passed its separate honest/forged
+controls. Two actual CP05de qualification jobs passed and their signed admission
+was verified before deployment. These controls do not establish convergence,
+a one-hour completed epoch, or universal cross-hardware compatibility.
+
 Design: https://github.com/AffineFoundation/affine/blob/main/docs/DECOUPLED_IMPLEMENTATION_PLAN.md
 Transport: https://github.com/AffineFoundation/affine/blob/main/docs/TOKEN_ONLY_COMMITMENT_TRANSPORT.md
 Learner: https://github.com/AffineFoundation/affine/blob/main/docs/COMMITTED_UNAUDITED_LEARNER.md
@@ -16,27 +67,11 @@ Audits: https://github.com/AffineFoundation/affine/blob/main/docs/CONTINUOUS_AUD
 Statistical rewards and trainer precision: https://github.com/AffineFoundation/affine/blob/main/docs/CONTINUOUS_STATISTICAL_REWARD_BRIDGE.md
 Successor checkpoint qualification: https://github.com/AffineFoundation/affine/blob/main/docs/SUCCESSOR_CALIBRATION.md
 
-Current operational hold, 2026-10-05: E13's explicit recovery is committed and
-the original epoch is closed. Checkpoint
-05de656e9c215a139f4329ffc9954e7c83955872929a17c35fd1a9bd9eae0923
-and persistent optimizer step four are authoritative. Original failed requests,
-opening rules, and accepted audit records remain preserved. Mining remains
-closed while this checkpoint and the prospective source are qualified; consult
-mining.json before generating submissions. Recovery completion is not activation
-of the decoupled mechanism.
 
-Qualification update: eight distinct H200s completed production-length controls
-against the predecessor checkpoint. Fifteen of sixteen honest fast-prefill
-checks verified directly; one was numerically ambiguous. Genuine cached-reference
-verification accepted all sixteen honest cases and rejected all sixteen freshly
-fingerprinted forged controls. The prospective v3 code adds automatic reference
-adjudication for ambiguous intervals; unavailable reference computation remains
-unknown, rather than fraud. Final source admission and qualification of the new
-checkpoint are pending. No universal hardware or convergence claim is made.
-Miner/verifier inference profiles and the trainer's BF16 parameter policy
-must be bound separately; a new inference profile does not change historical
-training or sampler contracts.
-Details: https://github.com/AffineFoundation/affine/blob/main/docs/PERSISTENT_PUBLICATION_BOOTSTRAP.md
+# Historical operational records and earlier contracts
+
+The records below describe earlier deployments. They do not override the
+current signed epoch manifest or the deployed contract described above.
 
 Operational update, 2026-10-05: E12 opened at 06:32:43 UTC as
 nonpayable-live-reward-math-v1--1791181963-12 using approved source

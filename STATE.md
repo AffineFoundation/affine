@@ -2645,3 +2645,35 @@ full object hashing and actual original terminal evidence are still required,
 with authority publication last. An operator-controlled reader attestation is
 not a cryptographic proof against a malicious reader. Current scientific
 sampler, model, TOPLOC tolerances and historical contracts are unchanged.
+
+
+## 2026-10-05 decoupled continuous-audit deployment
+
+ROOT started the reviewed controller and independent continuous auditor using
+source `6a85c31011b7a1ca23d745e9868d7b01dd0e92e9fe74c997e8222482f76393ca`.
+Eight actual verifier workers are running on the approved source. E14
+`nonpayable-live-reward-math-v1--1791214814-14` was observed in `opening`,
+with registration inventory present and no local signed epoch manifest yet.
+The opening then rejected a stale persistent-training admission source pin
+(a65 instead of 6a85); no mining job was issued. Repair must prospectively bind
+the new source while preserving CP05de, optimizer four and genesis history.
+No produced batches, completed update, or chain payout is claimed by this
+deployment record. The original E13 recovery committed checkpoint
+`05de656e9c215a139f4329ffc9954e7c83955872929a17c35fd1a9bd9eae0923`
+and optimizer step four; its failed requests and closure remain preserved.
+
+Active config requests token-only v2 commitments, unaudited learner admission,
+FP32 v3 forced-CDF prefill checks with exact cached-reference adjudication,
+separate BF16 trainer runtime, lossless level-one packing, and independent
+continuous probabilistic audits. Both real CP05de qualification jobs passed
+before activation. Original predecessor sampling seed is retained solely to
+reuse those immutable calibration requests; opening resolves the actual
+checkpoint-specific signed policy. Historical contracts are unchanged.
+
+Signed audit policy V2 uses eight recent cohorts, decay .8, Beta(1,1), invalid
+multiplier .1, zero epoch after two confirmed invalids, and blacklist after
+three for four epochs. Numerical ambiguity and infrastructure failures remain
+unknown, not fraud. Hourly publication reconciles original completion times
+and evidence cutoffs; learner training does not wait for audit completion.
+This is a nonpayable pilot, not convergence evidence or a universal provenance
+proof. Public guide now distinguishes current deployment from historical rules.
