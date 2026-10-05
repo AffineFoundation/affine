@@ -64,9 +64,9 @@ class LearnerAdmissionTests(unittest.TestCase):
         runtime=SimpleNamespace(tokenizer=object(),model=SimpleNamespace(config=SimpleNamespace(vocab_size=10)))
         session=SimpleNamespace(reset=lambda *a:dict(task_hash='6'*64,messages=[],tools=[]),close=lambda:None)
         with patch('subnet.native_math_prompt.NativeMathPromptSession',return_value=session),patch('subnet.harness.render',return_value=[1,2]):
-            learner.validate_native_prompt(runtime,pairs,self.manifest)
+            learner.validate_native_prompt(runtime,pairs,self.manifest,prompt_only=True)
             pos['turns'][0]['prompt']=[8]
-            with self.assertRaisesRegex(ValueError,'prompt'):learner.validate_native_prompt(runtime,pairs,self.manifest)
+            with self.assertRaisesRegex(ValueError,'prompt'):learner.validate_native_prompt(runtime,pairs,self.manifest,prompt_only=True)
 
 if __name__=='__main__':unittest.main()
 
@@ -121,6 +121,9 @@ class UnauditedPersistentEvidenceTests(unittest.TestCase):
                 from subnet.backend_jobs import validate
                 validate(fx.sign(job),fx.authority,now=30)
                 missing=copy.deepcopy(job);missing['source_files'].pop('subnet/native_math_prompt.py')
+                validate(fx.sign(missing),fx.authority,now=30)
+                feature_manifest=copy.deepcopy(manifest);feature_manifest['native_math_prompt_eligibility_policy']='authenticated-original-math-prompt-v1'
+                missing['manifest']=fx.sign(feature_manifest)
                 with self.assertRaisesRegex(ValueError,'prompt eligibility source pin'):
                     validate(fx.sign(missing),fx.authority,now=30)
                 from subnet.persistent_training_protocol import validate_report
