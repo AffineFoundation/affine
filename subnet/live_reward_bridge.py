@@ -225,6 +225,8 @@ def export_epoch(compute_state,epoch,anchor_document,authority):
  state=Path(compute_state)
  def read(label):return json.loads((state/(epoch+'-'+label+'.json')).read_text())
  scores=read('signed-compute-scores');payload=signed(scores,authority)
+ from .reward_publication import require
+ require(state,signed(read('first-signed-manifest'),authority),authority)
  audits={miner:read('signed-compute-audit-'+miner) for miner in payload['receipts']}
  return project(manifest_document=read('first-signed-manifest'),opening_document=read('opening-attestation'),score_document=scores,audit_documents=audits,
   registrations_document=read('signed-registrations'),anchor_document=anchor_document,authority=authority)
