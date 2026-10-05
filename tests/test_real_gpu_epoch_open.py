@@ -71,4 +71,42 @@ class RealGPUEpochOpening(unittest.TestCase):
                 self.assertEqual(miner.decrypt(manifest['capabilities'][miner.id])['transport'],'direct-r2-v1')
             finally:gateway.server.shutdown();gateway.server.server_close();gateway.thread.join()
 
-if __name__=='__main__':unittest.main()
+
+
+    def test_readback_budget_flows_from_service_config_to_first_signed_manifest(self):
+        from types import SimpleNamespace
+        from subnet.remote_optimizer_readback import STREAM_BUDGET_VERSION
+        from subnet.persistent_publication import VERSION
+        from subnet.training_receipts import computation_binding
+        budget=dict(version=STREAM_BUDGET_VERSION,concurrency=8,ram_reserve_bytes=1024**3)
+        policy=dict(version=VERSION,state_readback='qualified-remote-full',checkpoint_readback_workers=4)
+        with tempfile.TemporaryDirectory() as folder:
+            spec=legacy_spec(ENV);harness=legacy_harness(spec.config)
+            config=dict(environments=[dict(spec=spec.to_dict(),indices=[0,1],harness=harness)],
+                heldout=[dict(env_id=spec.id,indices=[2,3])],source_bundle={'sha256':'a'*64,'size':1,'key':'public/source.tar.gz'},duration=60,
+                independent_state_readback_budget=budget,persistent_publication_policy=policy)
+            bucket=MemoryBucket();gateway=Gateway(bucket,state_path=Path(folder)/'gateway.json',direct_r2=True)
+            try:
+                with patch('subnet.remote_backend.RemoteJobs'):
+                    controller=RemoteController(bucket,gateway,Path(folder)/'controller',{})
+                controller.independent_state_reader=SimpleNamespace(config={'stream_budget':dict(budget)})
+                miner=Identity();manifest=controller.open('nonpayable-budget-open',dict(id='fixture',files={'config.json':'a'*64}),[miner.id],**contract(config,0))
+                published=signed(json.loads(bucket.objects['public/nonpayable-budget-open/manifest.json']),controller.authority.id)
+                self.assertEqual(published['independent_state_readback_budget'],budget)
+                self.assertEqual(computation_binding(manifest)['independent_state_readback_budget'],budget)
+                budget['concurrency']=4
+                self.assertEqual(published['independent_state_readback_budget']['concurrency'],8)
+            finally:gateway.server.shutdown();gateway.server.server_close();gateway.thread.join()
+
+    def test_stream_budget_refuses_opening_without_matching_reader_before_publication(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from subnet.remote_optimizer_readback import STREAM_BUDGET_VERSION
+        budget=dict(version=STREAM_BUDGET_VERSION,concurrency=8,ram_reserve_bytes=1024**3)
+        with tempfile.TemporaryDirectory() as folder,patch('subnet.remote_backend.RemoteJobs'):
+            bucket=MemoryBucket();gateway=Mock();controller=RemoteController(bucket,gateway,folder,{})
+            for reader in [None,SimpleNamespace(config={'stream_budget':dict(budget,concurrency=4)})]:
+                controller.independent_state_reader=reader
+                with self.assertRaisesRegex(ValueError,'exact qualified reader admission'):
+                    controller.open('nonpayable-invalid-budget',{},[],independent_state_readback_budget=budget)
+            gateway.open.assert_not_called();self.assertEqual(bucket.objects,{})

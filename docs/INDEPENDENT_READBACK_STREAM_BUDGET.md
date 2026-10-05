@@ -62,3 +62,14 @@ This exposes the previously uninstrumented roughly 15-minute E15 pre-restore
 interval, rather than attributing it all to native environment construction.
 The prospective instrumentation changes backend_jobs source bytes and therefore
 needs a separately signed source bundle/qualification before production use.
+
+## Opening and configuration integration
+
+`gpu_service.contract` carries the validated configured budget into opening arguments.
+`RemoteController.open` refuses it before publication unless its ROOT-qualified
+reader configuration carries the exact same budget. `Controller.open` validates
+the budget and requires qualified-remote-full publication, then includes it in the
+first signed challenge. `training_receipts.computation_binding` includes the field
+only when present, so historical computation digests remain unchanged and future
+receipt/admission bindings cannot silently drop or change the prospective budget.
+The epoch service already passes these contract arguments through to opening.

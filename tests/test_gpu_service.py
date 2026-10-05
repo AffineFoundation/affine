@@ -47,6 +47,18 @@ class GPUFixedHeldout(unittest.TestCase):
             with self.assertRaises(ValueError):
                 contract(dict(source_bundle={},heldout=[],optimizer_state_transport=dict(policy,extra=True)),0)
             self.assertNotIn('optimizer_state_transport',contract(dict(source_bundle={},heldout=[]),0))
+    def test_readback_budget_requires_qualified_remote_publication(self):
+        from subnet.remote_optimizer_readback import STREAM_BUDGET_VERSION
+        from subnet.persistent_publication import VERSION
+        budget=dict(version=STREAM_BUDGET_VERSION,concurrency=8,ram_reserve_bytes=1024**3)
+        with patch('subnet.gpu_service.definitions',return_value=[self.row]):
+            with self.assertRaisesRegex(ValueError,'qualified independent'):
+                contract(dict(source_bundle={},heldout=[],independent_state_readback_budget=budget),0)
+            policy=dict(version=VERSION,state_readback='local-full',checkpoint_readback_workers=4)
+            with self.assertRaisesRegex(ValueError,'qualified independent'):
+                contract(dict(source_bundle={},heldout=[],independent_state_readback_budget=budget,persistent_publication_policy=policy),0)
+            self.assertNotIn('independent_state_readback_budget',contract(dict(source_bundle={},heldout=[]),0))
+
     def report(self):
         return dict(job_id='job',completed_at=77,runtime_versions={'torch':'approved'},source_files={n:'approved' for n in ('subnet/model.py','subnet/gpu_runtime.py','subnet/environments.py','subnet/harness.py','subnet/proofs.py')},heldout=[dict(env_id='env',index=i,seed=100+i*1000,task_hash=str(i)*64,verified=True,reward=0,classification='negative') for i in [2,3]])
     def test_evaluation_uses_actual_hashes_and_worker_completion_time(self):
