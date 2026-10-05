@@ -1,3 +1,21 @@
+2026-10-05 hourly cutover implementation update: reviewed sampled commitments,
+post-freeze bounded audit cutoffs, confirmed-invalid-only penalties/exclusions,
+stable append-only pair uploads, and compatible reward-reader changes are on
+GitHub main as15df44fe. Root reran156 focused regression tests; preparation
+agent ran298 combined tests. The actual new-source candidate is sealed e0e48d95,
+with1,941 members and149 runtime files; seven original roles plus verifier6
+have independent complete CPU source readbacks. This is not live activation.
+
+A separate root-signed CPU-only production-size transport control is actually
+running on idle verifier6: original supervisor2337 / child2344, explicit isolated
+zero-gradient control, no network-training epoch or public optimizer promotion.
+It measures actual four-stream91GB export/full-R2-readback/restore. Original E10
+trainer10045 and guarded controller3262639 are unchanged and still running.
+The UID131 miner-only signing seed was installed at0600 on the miner host and
+matched to its original registered public key; no authority key was exported.
+Genuine new-transport GPU qualification and safe learned-parent cutover remain.
+The full-hourly target and held-out convergence remain unproved; goal stays active.
+
 Latest independently observed update: 2026-10-05 01:57 UTC. E10 has completed
 78 authenticated audit jobs with 176 accepted batch documents and 168 adjusted
 points across 75 nonzero proposed weights. Four verifiers are active. Two more
