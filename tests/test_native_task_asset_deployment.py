@@ -26,6 +26,10 @@ class Controls(unittest.TestCase):
  def test_external_symlink_rejected(self):
   root=pathlib.Path(self.tmp.name);(root/m.SHA).symlink_to(root,target_is_directory=True)
   with self.assertRaises(ValueError):m.install_snapshot(self.data,root)
+ def test_existing_shared_writable_asset_directory_rejected(self):
+  root=pathlib.Path(self.tmp.name);folder=root/m.SHA;folder.mkdir();folder.chmod(0o777)
+  with self.assertRaisesRegex(ValueError,'private owned asset directory'):m.install_snapshot(self.data,root)
+  self.assertFalse((folder/'original-math7496.tasks.json').exists())
  def test_path_only_original_binding_preserved(self):
   c={'source_bundle':{'sha256':'original'},'environments':[{'spec':{'id':'affine_math','source_hash':'same','config':{'task_snapshot':m.SNAPSHOT}},'indices':[1,2]}]};v=m.path_only_config(c,'/external/exact.json');self.assertEqual(c['environments'][0]['spec']['config']['task_snapshot'],m.SNAPSHOT);v['environments'][0]['spec']['config']['task_snapshot']=m.SNAPSHOT;self.assertEqual(v,c)
  def test_wrong_snapshot_does_not_change_contract(self):

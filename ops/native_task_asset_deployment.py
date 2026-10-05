@@ -29,16 +29,20 @@ def install_snapshot(data,root):
     if root.stat().st_uid!=os.geteuid()or root.stat().st_mode&0o022:raise ValueError('private owned asset root')
     folder=root/SHA
     if folder.is_symlink():raise ValueError('asset directory symlink')
-    folder.mkdir(mode=0o700,exist_ok=True);target=folder/'original-math7496.tasks.json'
+    folder.mkdir(mode=0o700,exist_ok=True)
+    if folder.stat().st_uid!=os.geteuid()or folder.stat().st_mode&0o022:raise ValueError('private owned asset directory')
+    target=folder/'original-math7496.tasks.json'
     def checked():
         if target.is_symlink()or not target.is_file()or target.stat().st_size!=SIZE or hashlib.sha256(target.read_bytes()).hexdigest()!=SHA:raise ValueError('existing task snapshot changed')
         return target
     if target.exists()or target.is_symlink():return checked()
     tmp=folder/('.incomplete-'+secrets.token_hex(12));fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
     with os.fdopen(fd,'wb')as f:f.write(data);f.flush();os.fsync(f.fileno())
-    try:os.link(tmp,target)
-    except FileExistsError:checked()
-    tmp.unlink();dirfd=os.open(folder,os.O_RDONLY)
+    try:
+        try:os.link(tmp,target)
+        except FileExistsError:checked()
+    finally:tmp.unlink(missing_ok=True)
+    dirfd=os.open(folder,os.O_RDONLY)
     try:os.fsync(dirfd)
     finally:os.close(dirfd)
     return checked()

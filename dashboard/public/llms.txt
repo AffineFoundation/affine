@@ -19,11 +19,14 @@ with automatic trainer retention and parallel input fetching. E17 opening
 calibration initially failed before model execution because that source archive
 omitted its required native math snapshot. Exact approved dataset hydration and
 native preflight now pass on all ten owned compute roles. The corrected path
-and its truthful environment source hash are explicitly admitted, and a fresh
-calibration request is running; the original failed job remains recorded.
+and its truthful environment source hash are explicitly admitted. Fresh
+calibration and confirmation both passed; E17 is collecting submissions and
+the owned miner is dispatched. The original failed job remains recorded.
 This owned-fleet bootstrap does not establish external-client compatibility.
-A complete source package/client bootstrap must provide that dataset to new
-miners before public readiness is claimed. This is not a completed E17 or proof
+The main branch provides ops/native_task_asset_deployment.py for verified
+CPU-only asset bootstrap (see docs/NATIVE_TASK_ASSET_DEPLOYMENT.md). Automatic
+asset inclusion in the next complete source package is still being implemented;
+external cold-client readiness is not yet claimed. This is not a completed E17 or proof
 of a faster epoch. Follow only the latest
 signed OPEN manifest for mining. Chain weight submissions remain disabled.
 The independent fixed 128-task E16 baseline is 78/128; the matched successor
