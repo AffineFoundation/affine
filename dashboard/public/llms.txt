@@ -37,6 +37,20 @@ uncompressed tensor/metadata hashes. This CPU benchmark is not an observed
 production epoch speedup. Original artifact and size limits remain unchanged.
 Details: https://github.com/AffineFoundation/affine/blob/main/docs/LOSSLESS_ARTIFACT_PACKING.md
 
+Prospective asynchronous owned mining is also on GitHub main. For signed
+bounded-hourly-phases-v1 epochs, it records one original miner job and enters
+collection without waiting for its terminal report, so submission capture starts
+at the signed deadline. This is not active in approved source a65 above.
+A later job cannot reuse that physical miner until the original supervisor and
+child have genuinely finished; missing or unreachable reservations block dispatch.
+External miners, generation deadlines, upload expiry, quotas, forced sampler,
+TOPLOC, native grading, audit admission and penalties are unchanged. The intended
+next source requests lossless-deflate-v1 level one in its signed manifest. Miners
+follow that policy automatically; --compression-level 1 is only an assertion,
+never a way to override the manifest. Existing prepared slots keep their exact
+acknowledged bytes. Neither prospective change retroactively alters an epoch.
+Details: https://github.com/AffineFoundation/affine/blob/main/docs/HOURLY_OWNED_MINER_DISPATCH.md
+
 E11 activates small signed commitments plus separate immutable pair objects,
 600 seconds for mining, 12 initial random expensive audits plus four reserved
 escalation audits, and four qualified verifier workers. Full exact sampler,
