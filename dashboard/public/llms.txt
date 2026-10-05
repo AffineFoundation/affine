@@ -1,126 +1,53 @@
 # Affine — MATH mining, verification and training
 
-Operational update, 2026-10-05: E15's sole original training job finished
-successfully with 240 unaudited eligible task pairs and one optimizer update
-from step five to six. The trainer did not repeat inference verification.
-The new state is staged; the controller must finish independent durable
-readback and publication before committing step six or opening E16.
-The physical training job took 60.49 minutes: 17.58 minutes restoring the
-FP32 optimizer, 8.70 minutes training and checkpointing, 18.48 minutes uploading
-the FP32 successor, and about 15.72 minutes of startup and input overhead.
-This epoch therefore does not meet the one-hour target. More verifier nodes
-alone cannot shorten that training/publication critical path.
-A new scoped controller is active, adopting the same original job using the
-reviewed detached transport. No duplicate training job was issued.
-Six verifier workers remain active. The replacement H200 passed full source,
-runtime, checkpoint hashing and a finite GPU forward; fresh sampling/TOPLOC
-controls are in progress before enrollment. It is not yet an active verifier.
-The matched E14 diagnostic remains 20/32 before and 20/32 after. A separate
-128-task cached native evaluation is prepared to increase measurement coverage;
-no sustained learning or convergence is claimed.
+Current operational status, 2026-10-05:
+E15 completed with 270 committed submitted batches and 240 cheap-eligible,
+UNAUDITED task pairs consumed by the trainer. Training did not repeat inference
+verification or wait for audits. Independent full optimizer readback and
+publication completed; optimizer step six and checkpoint
+2ba9497519650fbb29ba2213782e5bb76ee22a6721f4b16882f18a7596b039cc
+are durable. The controller is between epochs; E16 has not opened yet.
+Do not submit against the closed E15 manifest. Follow mining.json and the next
+signed manifest for the checkpoint, taskset, sampling policy and upload window.
+Chain weight submissions remain disabled in this pilot.
 
-Verified recovery update, 2026-10-05 19:07 UTC: the local E15 finish-once controller
-failed when its original SSH launch command timed out after 1,800 seconds.
-The same remote trainer remained live and progressed through optimizer restore
-into computation; no second training job was issued. The independent queue API
-was restored on the same SQLite database and worker roster, and the continuous
-auditor completed fresh scheduling ticks. An original-job-preserving controller
-recovery is being prepared; optimizer step six remains uncommitted.
-The prospective launch transport now detaches descriptors explicitly and probes
-the original job after a lost reply, with exclusive duplicate prevention. Five
-transport controls and 24 existing remote controls passed. This operator repair
-is not yet activated in the failed controller's immutable launch tree.
+The dashboard now distinguishes committed submitted batches, cheap-eligible
+training inputs and expensive audit results. Its E15 counts are 270 submitted,
+240 eligible and 30 excluded; they are not 240 proof-verified batches. The older
+10-batch display omitted newer decoupled learner populations and was corrected.
+When a full audit breakdown is unavailable, it is labeled unavailable.
 
-Verified fleet update, 2026-10-05 18:57 UTC: the two disk-full verifier workers are
-quarantined. Their exact original processes were stopped only after checking
-PID/start time, command and absence of live children. No checkpoint, rollout,
-queue history or tunnel was deleted or changed. Six other verifiers continue.
-One replacement H200 has been rented at USD 5.76/hour with actual 1.287 TB free
-disk; runtime and source qualification are still pending, so it is not counted
-as an active verifier. A second rental was refused because that offered node
-already has a broken pod; that pod was preserved. Replacement capacity is
-being qualified before any new worker joins the queue.
-E15's original trainer has progressed into GPU computation after restoring its
-original optimizer parent. There is no committed step-six checkpoint yet.
+E15 took 113.04 minutes from epoch opening to durable closure. Its original
+physical training job took 60.49 minutes: 17.58 restoring FP32 optimizer state,
+8.70 training/checkpointing, 18.48 uploading FP32 state, and 15.72 other overhead.
+This misses the one-hour target. More verifiers alone do not shorten that path.
+An actual eight-stream independent reader checked all 23 optimizer objects,
+91,387,491,264 bytes, in 429.28 seconds. Eight-stream transfer contracts and
+startup timing instrumentation are reviewed for the next epoch; historical
+four-stream manifests remain unchanged.
 
-Verified operational update, 2026-10-05 18:52 UTC: E14's original paired held-out
-evaluation finished: 20/32 correct before and 20/32 after, with no infrastructure
-failures, one new win and one new loss. Original signed jobs, checkpoint bindings,
-report hashes and the exact task/seed order were checked. This is no net held-out
-improvement, and the fixed 32-task diagnostic does not establish convergence.
-E15's sole original trainer is still restoring optimizer parent five; requested
-step six is not committed yet. Two verifier workers have confirmed disk-full
-infrastructure failures during checkpoint download, before inference or reports.
-The other six have complete current-checkpoint caches and available disk. These
-failures are not evidence of miner cheating; quarantine/replacement is being
-prepared without deleting local history.
+Two disk-full verifier workers were stopped without treating infrastructure
+errors as miner fraud; the other six continued. Automatic owned-cache lifecycle
+code is implemented and tested: it retires old checkpoint replicas after their
+R2 durability/ownership acknowledgment, excludes active checkpoint leases, and
+removes disposable downloaded submissions after report acknowledgment. It
+preserves source, keys, jobs, reports and queue history. Fleet activation is in
+progress; automatic cleanup is not yet claimed on every deployed worker.
+A replacement H200 passed fresh honest and forged sampling/TOPLOC controls but
+has not joined the production queue. Runtime/source qualification remains
+mandatory for each participating verifier.
 
-The prospective native environment-session reuse source has passed actual
-full-file/runtime qualification on all eleven existing role endpoints, bounded
-real-native reset equivalence, and 687 CPU controls. It is not activated for E15.
-A separate opt-in cached evaluator is prepared for actual two-checkpoint hardware
-qualification; its future diagnostics are explicitly native-graded, not miner
-proofs. Neither prospective change alters the running epoch's source or contracts.
-
-Current operational update, 2026-10-05 18:37 UTC: E15's mining window is closed.
-Collection produced 270 candidates and 240 cheap-eligible unaudited inputs.
-Its sole original training job started at 18:22 UTC on the qualified
-higher-memory H200 that previously served as the owned miner. The previous
-trainer is now assigned the miner role; physical checkpoint-cache ownership
-was remapped without deleting state or changing scientific contracts.
-The new trainer has about 309 GB usable RAM and 130 GB available disk, exceeding
-the unchanged streaming-worker reserves. Checkpoint CP76bc, optimizer parent
-five and the signed four-stream E15 contract are preserved. The requested
-next optimizer step is six; it is not committed yet. Latest observed progress
-was input loading before optimizer restoration, not a completed training update.
-Eight verifiers continue independent audits. Held-out evaluation remains
-asynchronous. Do not submit to the closed E15 window; read the next signed
-manifest when opened. The local controller is configured to finish this same
-epoch once, allowing reviewed future changes only at the next epoch boundary.
-
-The real 18:00 UTC E14 reward snapshot now has 77 nonzero normalized weights,
-totaling one. These are estimated valid contributions under the continuous-audit
-policy, not verification of every submitted sample. The signed snapshot and
-hourly aggregate were authenticated, recomputed and read back exactly from R2.
-Chain transactions remain disabled. E15 has no completed training update yet
-and is not included in that hourly reward record.
-
-Deployment update, 2026-10-05 17:48 UTC: epoch
-nonpayable-live-reward-math-v1--1791222075-15 is mining from checkpoint
-76bc599baf173cb4d071ff1959492c0a3c23377143aa2d69b749c17becc34785
-and actual committed optimizer parent five. Its original ROOT-signed mining job
-and nested manifest preserve checkpoint, optimizer and genesis history. The
-signed mining window is 17:44:29–17:54:29 UTC and uses checkpoint-specific
-calibration. Consult mining.json and the signed manifest for the current phase;
-do not upload after its deadline or against an earlier closed window.
-
-The preceding E14 trainer completed successfully on 161 unaudited task pairs,
-with finite loss/gradients and changed model weights, without sample
-re-verification. Independent full-state readback and checkpoint adoption made
-optimizer step five durable. E14 took 64.795 minutes from its signed manifest
-to closure, or 100.71 minutes including opening recovery. The one-hour target
-was missed. The fixed 32-task comparison finished at 20 correct before and 20 after, with
-no infrastructure failures and one win/loss exchange. There is no net held-out
-gain; convergence remains unproven.
-
-E15 retains its signed four-stream optimizer transfers. The replacement trainer
-passed actual four/eight-stream resource qualification without reducing reserves.
-Eight-stream transfers are prospective and require the next signed epoch contract.
-Eight audit workers and the four-thread continuous auditor remain independent
-of training and evaluation. This remains a nonpayable pilot: an opening is not
-a completed training update, a reward snapshot or a chain weight transaction.
-
-The audit coordinator was restarted with an operator-only repair on October 5:
-it now authenticates signed learner closures and ignores their unsigned local
-mirrors, avoiding duplicate reads and a completion-timestamp parsing crash.
-The original closure times, science, sampling contracts and submitted artifacts
-are unchanged. A fresh scheduling tick completed at 17:52 UTC, enqueuing eight
-jobs that verifier workers have leased. This is scheduling progress, not a claim
-that all eight have completed or passed verification.
+The matched E14 held-out diagnostic was 20/32 before and 20/32 after, with zero
+infrastructure failures. A separate fixed 128-task paired evaluation is running;
+its results are pending. No sustained improvement or convergence is claimed.
+The published prospective source adds transport, cache lifecycle, pinned source
+routing and native environment-session reuse. It is not active until a new
+signed manifest names its exact archive and runtime inventory.
 
 The configured immutable source is
 6a85c31011b7a1ca23d745e9868d7b01dd0e92e9fe74c997e8222482f76393ca.
-Eight independently qualified H200 verifier workers share the existing queue;
+The qualified H200 verifier roster shares the existing queue; active worker
+counts are given in the current operational status above.
 the validator/controller remains on Arbos.life, with separate miner, trainer
 and evaluator roles. No hardware outside its admitted runtime is approved.
 
