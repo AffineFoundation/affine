@@ -67,3 +67,27 @@ class BoundedCommitmentFreeze(unittest.TestCase):
    self.assertEqual(c.freeze(gateway,'e'),frozen)
   self.assertEqual(attempts,['public/e/receipts.json']*2)
   self.assertEqual(bucket.objects['public/e/receipts.json'][0],canonical(frozen))
+ def test_signed_hourly_small_reads_use_dedicated_client_and_timeout_is_infra(self):
+  from botocore.exceptions import ReadTimeoutError
+  from unittest.mock import Mock
+  gateway,ids,_=self.fixture(5);miner=ids[0].id;gateway.epochs['e']['commitment_binding']['freeze_until']=time_limit=10**12
+  original=gateway.bucket.get_object
+  def read(**kw):
+   if miner in kw['Key']:raise ReadTimeoutError(endpoint_url='https://same-storage')
+   return original(**kw)
+  dedicated=Mock();dedicated.get_object.side_effect=read;gateway.bucket.commitment_read_client=Mock(return_value=dedicated)
+  with self.assertRaises(ReadTimeoutError):c.freeze(gateway,'e')
+  dedicated.close.assert_called_once();self.assertNotIn(miner,gateway.epochs['e']['rejections']);self.assertEqual(len(gateway.epochs['e']['commitment_snapshots']),4)
+ def test_isolated_boto_transport_preserves_endpoint_credentials_and_shared_config(self):
+  import tempfile
+  from pathlib import Path
+  from unittest.mock import Mock
+  from botocore.config import Config
+  from subnet.storage import Bucket
+  shared=Mock();shared.meta.config=Config(connect_timeout=60,read_timeout=60,retries={'mode':'legacy'})
+  with tempfile.TemporaryDirectory()as d:
+   path=Path(d)/'scoped-credentials';path.write_text('R2_ACCESS_KEY_ID=test-access\nR2_SECRET_ACCESS_KEY=test-secret\n')
+   with patch('subnet.storage.boto3.client',side_effect=[shared,Mock()])as factory:
+    bucket=Bucket(dict(bucket='same',endpoint='https://same.r2.cloudflarestorage.com',credentials_file=str(path)));bucket.commitment_read_client()
+   initial=factory.call_args_list[0].kwargs;scoped=factory.call_args_list[1].kwargs
+   self.assertEqual(initial,{k:v for k,v in scoped.items()if k!='config'});self.assertEqual(scoped['config'].connect_timeout,5);self.assertEqual(scoped['config'].read_timeout,10);self.assertEqual(scoped['config'].retries['total_max_attempts'],1);self.assertEqual(shared.meta.config.read_timeout,60)
