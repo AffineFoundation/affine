@@ -219,3 +219,27 @@ receipt publication remain serialized. The original signature, upload-window,
 artifact-hash and conditional-copy checks still apply. This does not establish
 a measured freeze time for a fully populated epoch and does not activate a
 different live submission deadline.
+
+## Prospective upload-only state export with independent full verification
+
+The opt-in signed optimizer_state_export_policy="upload-only-independent-full-v1"
+requires persistent_publication_policy.state_readback="qualified-remote-full".
+The trainer completes shard PUTs and records local hashes, explicitly marking
+those shard receipts durable_readback_verified=false and
+independent_full_readback_required=true. It does not claim that uploaded bytes
+have been read back. The small staged descriptor still receives a full readback.
+
+A qualified operator reader on a different physical machine must GET and hash
+every output optimizer shard against the exact approved original job/descriptor.
+Checkpoint byte upload and full independent hashing may run concurrently, but
+neither authority checkpoint nor optimizer-state descriptor is signed until
+both complete paths pass, including the authenticated original reader terminal.
+Durable reward readiness follows those publications. There is no local or
+unqualified fallback. Absent this signed field, the existing trainer full-shard
+readback remains unchanged. This changes transport, not sampling or TOPLOC,
+training objectives, parent lineage or public optimizer-step counters.
+
+This mode remains prospective until the signed epoch selects it. CPU controls
+and private benchmarks are not live training epochs or proof of one-hour
+completion. See docs/UPLOAD_ONLY_INDEPENDENT_STATE_READBACK.md in GitHub for the
+exact policy and receipt semantics.
