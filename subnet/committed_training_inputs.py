@@ -184,7 +184,7 @@ def validate_report(report,job,manifest,authority):
 
 def validate_native_prompt(runtime,pairs,manifest):
     """Trusted one-turn math context only; no model calls or outcome grading."""
-    from .environments import create_session
+    from .native_math_prompt import NativeMathPromptSession
     from .protocol import harness_for
     from . import harness
     sessions={}
@@ -195,7 +195,7 @@ def validate_native_prompt(runtime,pairs,manifest):
                 raise ValueError('unaudited learner currently requires one-turn native math')
             config=spec.get('config',{});env_seed=int(config.get('seed',0))
             session_key=canonical(spec)
-            if session_key not in sessions:sessions[session_key]=create_session(spec)
+            if session_key not in sessions:sessions[session_key]=NativeMathPromptSession(spec)
             initial=sessions[session_key].reset(positive['index'],env_seed)
             policy=harness_for(definition,positive['index'])
             prompt=harness.render(runtime.tokenizer,initial['messages'],initial.get('tools',[]),policy)

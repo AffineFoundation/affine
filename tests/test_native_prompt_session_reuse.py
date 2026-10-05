@@ -12,7 +12,7 @@ class NativeReuse(unittest.TestCase):
   def reset(index,seed):s.resets.append((index,seed));return {'task_hash':'task'+str(index),'messages':[],'tools':[]}
   s.reset=reset;s.close=lambda:setattr(s,'closed',True);self.sessions.append(s);return s
  def run_pairs(self,pairs):
-  with patch('subnet.environments.create_session',side_effect=self.create),patch('subnet.protocol.harness_for',return_value={'max_output_tokens':64}),patch('subnet.harness.render',return_value=[1,2]):validate_native_prompt(self.runtime,pairs,{'checkpoint':{'id':'cp'}})
+  with patch('subnet.native_math_prompt.NativeMathPromptSession',side_effect=self.create),patch('subnet.protocol.harness_for',return_value={'max_output_tokens':64}),patch('subnet.harness.render',return_value=[1,2]):validate_native_prompt(self.runtime,pairs,{'checkpoint':{'id':'cp'}})
  def test_same_exact_spec_constructed_once_each_task_reset(self):
   second=copy.deepcopy(self.pairs[0])
   for rollout in second[1:]:rollout.update(index=1,task_hash='task1')
@@ -29,7 +29,7 @@ class NativeReuse(unittest.TestCase):
   self.assertTrue(self.sessions[0].closed)
  def test_reset_failure_closes_already_constructed_session(self):
   def create(spec):s=self.create(spec);s.reset=lambda *a:(_ for _ in ()).throw(RuntimeError('native failure'));return s
-  with patch('subnet.environments.create_session',side_effect=create):
+  with patch('subnet.native_math_prompt.NativeMathPromptSession',side_effect=create):
    with self.assertRaises(RuntimeError):validate_native_prompt(self.runtime,self.pairs,{})
   self.assertTrue(self.sessions[0].closed)
 if __name__=='__main__':unittest.main()

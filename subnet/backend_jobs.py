@@ -321,6 +321,8 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
             raise ValueError('compact policy source pins required for every role')
     if manifest.get('training_input_policy')=='committed-unaudited-training-v1' and 'subnet/committed_training_inputs.py'not in job.get('source_files',{}):
         raise ValueError('unaudited learner source pin required')
+    if manifest.get('training_input_policy')=='committed-unaudited-training-v1'and job.get('role')=='train'and 'subnet/native_math_prompt.py'not in job.get('source_files',{}):
+        raise ValueError('native MATH prompt eligibility source pin required')
     # Prospective native MATH contracts pin the imported grader transport helper.
     # Historical signed epochs without this marker keep their original pin set.
     definitions = manifest.get('environments', [])
@@ -681,6 +683,8 @@ def install_source_loader(root,additional_files=()):
         sys.modules.pop('subnet.training_startup_recovery',None)
     if 'subnet/committed_training_inputs.py'in additional_files:
         sys.modules.pop('subnet.committed_training_inputs',None)
+    if 'subnet/native_math_prompt.py'in additional_files:
+        sys.modules.pop('subnet.native_math_prompt',None)
     if 'subnet/compact_training_inputs.py' in additional_files:
         sys.modules.pop('subnet.compact_training_inputs',None)
     if 'subnet/persistent_publication.py' in additional_files:
@@ -729,6 +733,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     publication_files=('subnet/persistent_publication.py',) if manifest.get('persistent_publication_policy') is not None else ()
     recovery_files=('subnet/training_startup_recovery.py',)if manifest.get('training_startup_recovery')is not None else ()
     learner_files=('subnet/committed_training_inputs.py',)if manifest.get('training_input_policy')=='committed-unaudited-training-v1'else ()
+    if learner_files and job['role']=='train':learner_files+=('subnet/native_math_prompt.py',)
     compact_files=('subnet/compact_training_inputs.py',) if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2') else ()
     if job.get('training_policy')==PERSISTENT_POLICY:
         from .persistent_training_protocol import EXECUTION_FILES,CACHE_EXECUTION_FILES

@@ -63,7 +63,7 @@ class LearnerAdmissionTests(unittest.TestCase):
         definition['spec'].update(id='affine_math',max_turns=1,max_output_tokens=64);pos['env_seed']=neg['env_seed']=0
         runtime=SimpleNamespace(tokenizer=object(),model=SimpleNamespace(config=SimpleNamespace(vocab_size=10)))
         session=SimpleNamespace(reset=lambda *a:dict(task_hash='6'*64,messages=[],tools=[]),close=lambda:None)
-        with patch('subnet.environments.create_session',return_value=session),patch('subnet.harness.render',return_value=[1,2]):
+        with patch('subnet.native_math_prompt.NativeMathPromptSession',return_value=session),patch('subnet.harness.render',return_value=[1,2]):
             learner.validate_native_prompt(runtime,pairs,self.manifest)
             pos['turns'][0]['prompt']=[8]
             with self.assertRaisesRegex(ValueError,'prompt'):learner.validate_native_prompt(runtime,pairs,self.manifest)
@@ -115,10 +115,14 @@ class UnauditedPersistentEvidenceTests(unittest.TestCase):
                 manifest=learner.coverage_manifest(manifest,[obj],seed=fx.manifest['training_coverage']['seed'],captured_at=21)
                 job.update(training_input_policy=learner.VERSION,submissions=[obj],manifest=fx.sign(manifest))
                 job['source_files']['subnet/committed_training_inputs.py']='b'*64
+                job['source_files']['subnet/native_math_prompt.py']='b'*64
                 report['training_admissions']=[summary]
                 report['training'].update(training_input_policy=learner.VERSION,all_pairs_authenticated_verifier_receipts=False,input_assurance='unaudited')
                 from subnet.backend_jobs import validate
                 validate(fx.sign(job),fx.authority,now=30)
+                missing=copy.deepcopy(job);missing['source_files'].pop('subnet/native_math_prompt.py')
+                with self.assertRaisesRegex(ValueError,'prompt eligibility source pin'):
+                    validate(fx.sign(missing),fx.authority,now=30)
                 from subnet.persistent_training_protocol import validate_report
                 validate_report(report,job,manifest)
                 self.assertEqual(report['persistent_training_state']['descriptor']['optimizer_steps'],3)
