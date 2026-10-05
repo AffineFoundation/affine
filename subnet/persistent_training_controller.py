@@ -33,31 +33,43 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
     from .backend_jobs import signed,file_map
     from .remote_backend import save,training_submission_bytes
     from .training_policy import coverage_manifest
+    from .training_startup_recovery import label
     from .forced_sampling import require_report
     from .training_receipts import prepare_submissions,amend_manifest,receipt_inventory,require_execution_amendment
     require_execution_amendment(controller,manifest)
     epoch=manifest['epoch'];binding=validate_binding(manifest.get('trainer_state_binding'),manifest)
     if replay is not None:raise ValueError('persistent historical replay needs separate admission')
-    training_manifest=manifest
-    if manifest.get('audit_policy',{}).get('version')=='bounded-random-v1':
-        training_manifest=json.loads((controller.state/(epoch+'-audit-manifest.json')).read_text())
-    if (training_manifest.get('trainer_state_binding')!=binding or
-            training_manifest.get('training_policy')!=POLICY or training_manifest.get('checkpoint')!=manifest['checkpoint']):
-        raise ValueError('original persistent audit manifest binding')
-    receipts=json.loads((controller.state/(epoch+'-scores.json')).read_text())['receipts']
-    challenge=json.loads((controller.state/(epoch+'-audit-challenge.json')).read_text())
-    training_manifest=coverage_manifest(training_manifest,receipts,challenge)
-    from .training_startup_recovery import declaration,apply,label
-    recovery=declaration(controller,epoch)
-    if recovery is not None:
-        from .compact_training_inputs import receipt_inventory
-        training_manifest,submissions=apply(controller,training_manifest,steps)
-    elif (training_manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
-        from .compact_training_inputs import prepare_submissions,receipt_inventory
-        submissions=prepare_submissions(controller,training_manifest,reports,receipts)
+    learner=manifest.get('training_input_policy')=='committed-unaudited-training-v1'
+    if learner:
+        from .committed_training_inputs import receipt_inventory
+        saved=json.loads((controller.state/(epoch+'-learner-population.json')).read_text())
+        training_manifest=saved['manifest'];submissions=saved['submissions']
+        if saved['version']!=manifest['training_input_policy'] or saved['population'].get('assurance')!='unaudited':
+            raise ValueError('immutable unaudited learner population')
+        from .training_receipts import computation_binding
+        if computation_binding(training_manifest)!=computation_binding(manifest):raise ValueError('learner original epoch computation binding')
+        receipts={}
     else:
-        submissions=prepare_submissions(controller,training_manifest,reports,receipts)
-        training_manifest=amend_manifest(controller,training_manifest,submissions,steps)
+        training_manifest=manifest
+        if manifest.get('audit_policy',{}).get('version')=='bounded-random-v1':
+            training_manifest=json.loads((controller.state/(epoch+'-audit-manifest.json')).read_text())
+        if (training_manifest.get('trainer_state_binding')!=binding or
+                training_manifest.get('training_policy')!=POLICY or training_manifest.get('checkpoint')!=manifest['checkpoint']):
+            raise ValueError('original persistent audit manifest binding')
+        receipts=json.loads((controller.state/(epoch+'-scores.json')).read_text())['receipts']
+        challenge=json.loads((controller.state/(epoch+'-audit-challenge.json')).read_text())
+        training_manifest=coverage_manifest(training_manifest,receipts,challenge)
+        from .training_startup_recovery import declaration,apply,label
+        recovery=declaration(controller,epoch)
+        if recovery is not None:
+            from .compact_training_inputs import receipt_inventory
+            training_manifest,submissions=apply(controller,training_manifest,steps)
+        elif (training_manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
+            from .compact_training_inputs import prepare_submissions,receipt_inventory
+            submissions=prepare_submissions(controller,training_manifest,reports,receipts)
+        else:
+            submissions=prepare_submissions(controller,training_manifest,reports,receipts)
+            training_manifest=amend_manifest(controller,training_manifest,submissions,steps)
     cached=controller.state/(epoch+'-training-metrics.json')
     if cached.exists():
         metrics=json.loads(cached.read_text());record,job=original_request(controller,epoch)
@@ -65,7 +77,7 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
         report=json.loads((controller.state/'roles'/(record['job_id']+'-report.json')).read_text())
         if (original_manifest!=training_manifest or job['steps']!=steps or
                 receipt_inventory(job['submissions'])!=receipt_inventory(submissions)or
-                metrics.get('verifier_receipt_inventory')!=receipt_inventory(submissions)):
+                metrics.get('learner_admission_inventory'if learner else 'verifier_receipt_inventory')!=receipt_inventory(submissions)):
             raise ValueError('cached persistent original request changed')
         validate_report(report,job,training_manifest)
         pointer=validate_pointer(metrics.get('trainer_state'))
@@ -101,7 +113,7 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
     capacity=(controller.jobs.training_resume(label(controller,epoch),training_manifest,submissions,steps,None)
               if hasattr(controller.jobs,'training_resume')else None)
     if capacity is None:
-        total=(sum(obj['size'] for obj in submissions) if (training_manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2')
+        total=(sum(obj['size'] for obj in submissions) if training_manifest.get('training_input_policy')in ('authenticated-verifier-compact-inputs-v2','committed-unaudited-training-v1')
                else training_submission_bytes(receipts,reports,manifest))
         probe=getattr(controller.jobs,'persistent_training_capacity',None)or getattr(controller.jobs,'training_capacity',None)
         if probe is None:raise ValueError('persistent training requires actual trainer resource probe')
@@ -125,9 +137,12 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
         new_checkpoint=output,checkpoint_path=path,trainer_state=pointer,capacity_preflight=capacity,
         remote_job_id=remote['job_id'],original_job_sha256=sha(job),trainer_binding_sha256=sha(binding),
         training_coverage=training_manifest['training_coverage'],training_input_policy=remote['training']['training_input_policy'],
-        trainer_verification_performed=False,all_pairs_authenticated_verifier_receipts=True,
+        trainer_verification_performed=False,all_pairs_authenticated_verifier_receipts=not learner,
         verifier_receipt_inventory=receipt_inventory(submissions),
         state_authority_committed=True,heldout_gain_claimed=False)
+    if learner:
+        metrics.update(input_assurance='unaudited',learner_admission_inventory=receipt_inventory(submissions))
+        metrics.pop('verifier_receipt_inventory',None)
     if publication_timings is not None:metrics['publication_timings']=publication_timings
     save(cached,metrics);controller.bucket.json('public/'+epoch+'/training.json',controller.signed(metrics))
     return output,metrics

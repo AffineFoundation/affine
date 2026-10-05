@@ -124,7 +124,9 @@ class RemoteJobs:
         if job.get('training_policy')==PERSISTENT_POLICY and [r.get('accepted_batch_sha256')for r in job['submissions']]!=[r.get('accepted_batch_sha256')for r in submissions]:
             raise ValueError('original persistent training accepted pair population changed')
         if job.get('training_policy') in RECEIPT_TRAINING_POLICIES:
-            if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
+            if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
+                from .committed_training_inputs import receipt_inventory
+            elif (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
                 if 'subnet/compact_training_inputs.py' not in job.get('source_files',{}):
                     raise ValueError('compact original job source pin required')
                 from .compact_training_inputs import receipt_inventory
@@ -192,7 +194,9 @@ class RemoteJobs:
             identifier=label+'-'+secrets.token_hex(4);now=time.time()
             payload=dict(schema=1,job_id=identifier,role=role,created_at=now,expires_at=now+role_time_budget(self.config,role),manifest=self.controller.signed(manifest),**self.metadata,**fields)
             if role=='train' and fields.get('training_policy') in RECEIPT_TRAINING_POLICIES:
-                if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
+                if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
+                    from .committed_training_inputs import VERSION,validate_job as validate_receipt_job
+                elif (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
                     if 'subnet/compact_training_inputs.py' not in payload.get('source_files',{}):
                         raise ValueError('compact dispatch source pin required')
                     from .compact_training_inputs import VERSION,validate_job as validate_receipt_job
@@ -239,7 +243,9 @@ class RemoteJobs:
         if hashlib.sha256(canonical(job)).hexdigest()!=prior['job_sha256']:
             raise ValueError('remote role original signed job binding')
         if job.get('role')=='train' and job.get('training_policy') in RECEIPT_TRAINING_POLICIES:
-            if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
+            if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
+                from .committed_training_inputs import validate_report as validate_receipt_report
+            elif (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
                 if 'subnet/compact_training_inputs.py' not in job.get('source_files',{}):
                     raise ValueError('compact original report source pin required')
                 from .compact_training_inputs import validate_report as validate_receipt_report
@@ -283,11 +289,11 @@ class RemoteController(Controller):
             exclusion_snapshot=dict(policy=exclusion_policy,history=self.signed(history),excluded_miners=snapshot(history,exclusion_policy))
         input_policy=kwargs.pop('training_input_policy',None)
         if input_policy is not None:
-            if input_policy not in ('authenticated-verifier-receipts-v1','authenticated-verifier-compact-inputs-v2'):
+            if input_policy not in ('authenticated-verifier-receipts-v1','authenticated-verifier-compact-inputs-v2','committed-unaudited-training-v1'):
                 raise ValueError('unapproved training input policy')
             if kwargs.get('training_policy') not in RECEIPT_TRAINING_POLICIES:
                 raise ValueError('explicit receipt input requires covered/persistent objective')
-        if kwargs.get('submission_transport_policy')and input_policy!='authenticated-verifier-compact-inputs-v2':raise ValueError('per-pair transport requires compact audited-only training')
+        if kwargs.get('submission_transport_policy')and input_policy not in ('authenticated-verifier-compact-inputs-v2','committed-unaudited-training-v1'):raise ValueError('per-pair transport requires compact audited-only training')
         heldouts=kwargs.pop('heldout_indices',None)
         operator_test_policy=kwargs.pop('operator_test_policy',None)
         if operator_test_policy is not None:
@@ -380,6 +386,9 @@ class RemoteController(Controller):
         return self.checkpoint_with_reads(dict(descriptor,descriptor_key=key))
     def publish_remote_checkpoint(self,manifest,remote_path):
         return self.commit_remote_checkpoint(manifest,self.stage_remote_checkpoint(manifest,remote_path))
+    def collect_learner_inputs(self,manifest):
+        from .committed_training_inputs import collect
+        return collect(self,manifest)
     def finalize(self,manifest,checkpoint_path):
         from .forced_sampling import require_report
         if manifest.get('payable') is not False:raise ValueError('remote experimental controller is nonpayable only')

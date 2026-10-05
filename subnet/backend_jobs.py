@@ -302,13 +302,15 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
     urls=cp.get('read_urls',{})
     if urls and set(urls)!=set(cp['files']):raise ValueError('checkpoint capability file binding')
     for url in urls.values():r2_url(url,'GET')
-    if manifest.get('training_input_policy') not in (None,'authenticated-verifier-receipts-v1','authenticated-verifier-compact-inputs-v2'):
+    if manifest.get('training_input_policy') not in (None,'authenticated-verifier-receipts-v1','authenticated-verifier-compact-inputs-v2','committed-unaudited-training-v1'):
         raise ValueError('unapproved training input policy')
     if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
         if manifest.get('training_policy') not in (COVERED_POLICY,PERSISTENT_POLICY):
             raise ValueError('compact input requires covered/persistent objective')
         if not {'subnet/compact_training_inputs.py','subnet/training_receipts.py'} <= set(job.get('source_files',{})):
             raise ValueError('compact policy source pins required for every role')
+    if manifest.get('training_input_policy')=='committed-unaudited-training-v1' and 'subnet/committed_training_inputs.py'not in job.get('source_files',{}):
+        raise ValueError('unaudited learner source pin required')
     # Prospective native MATH contracts pin the imported grader transport helper.
     # Historical signed epochs without this marker keep their original pin set.
     definitions = manifest.get('environments', [])
@@ -370,7 +372,7 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
         if manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2':
             from .compact_training_inputs import original_submissions
             coverage_inputs=original_submissions(coverage_inputs,manifest,authority)
-        validate_coverage(manifest,coverage_inputs)
+        if manifest.get('training_input_policy')!='committed-unaudited-training-v1':validate_coverage(manifest,coverage_inputs)
     if job['role']=='train' and (manifest.get('training_policy')==PERSISTENT_POLICY or job.get('training_policy')==PERSISTENT_POLICY):
         if manifest.get('training_policy')!=job.get('training_policy'):raise ValueError('signed persistent training policy')
         from .training_policy import validate_coverage
@@ -379,10 +381,12 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
         if manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2':
             from .compact_training_inputs import original_submissions
             coverage_inputs=original_submissions(coverage_inputs,manifest,authority)
-        validate_coverage(manifest,coverage_inputs)
+        if manifest.get('training_input_policy')!='committed-unaudited-training-v1':validate_coverage(manifest,coverage_inputs)
         validate_job(job,manifest,authority)
     if job['role']=='train' and job.get('training_policy') in (COVERED_POLICY,PERSISTENT_POLICY):
-        if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
+        if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
+            from .committed_training_inputs import validate_job as validate_training_receipts
+        elif (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
             from .compact_training_inputs import validate_job as validate_training_receipts
         else:
             from .training_receipts import validate_job as validate_training_receipts
@@ -568,6 +572,8 @@ def install_source_loader(root,additional_files=()):
         sys.modules.pop(module_name,None)
     if 'subnet/training_startup_recovery.py'in additional_files:
         sys.modules.pop('subnet.training_startup_recovery',None)
+    if 'subnet/committed_training_inputs.py'in additional_files:
+        sys.modules.pop('subnet.committed_training_inputs',None)
     if 'subnet/compact_training_inputs.py' in additional_files:
         sys.modules.pop('subnet.compact_training_inputs',None)
     if 'subnet/persistent_publication.py' in additional_files:
@@ -602,13 +608,14 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':raise ValueError('CUDA environment profile')
     publication_files=('subnet/persistent_publication.py',) if manifest.get('persistent_publication_policy') is not None else ()
     recovery_files=('subnet/training_startup_recovery.py',)if manifest.get('training_startup_recovery')is not None else ()
+    learner_files=('subnet/committed_training_inputs.py',)if manifest.get('training_input_policy')=='committed-unaudited-training-v1'else ()
     compact_files=('subnet/compact_training_inputs.py',) if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2') else ()
     if job.get('training_policy')==PERSISTENT_POLICY:
         from .persistent_training_protocol import EXECUTION_FILES
-        install_source_loader(root,(*EXECUTION_FILES,'subnet/training_receipts.py',*compact_files,*publication_files,*recovery_files))
+        install_source_loader(root,(*EXECUTION_FILES,'subnet/training_receipts.py',*compact_files,*learner_files,*publication_files,*recovery_files))
     elif job.get('training_policy')==COVERED_POLICY:
-        install_source_loader(root,('subnet/training_receipts.py',*compact_files,*publication_files,*recovery_files))
-    else:install_source_loader(root,(*compact_files,*publication_files,*recovery_files))
+        install_source_loader(root,('subnet/training_receipts.py',*compact_files,*learner_files,*publication_files,*recovery_files))
+    else:install_source_loader(root,(*compact_files,*learner_files,*publication_files,*recovery_files))
     if publication_files:
         from .persistent_publication import validate_policy
         validate_policy(manifest['persistent_publication_policy'])
@@ -687,7 +694,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
             reports=[];pairs=[]
             for i,obj in enumerate(job['submissions']):
                 from .artifact_budget import for_manifest
-                compact_input=job['role']=='train' and (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2')
+                compact_input=job['role']=='train' and manifest.get('training_input_policy')in ('authenticated-verifier-compact-inputs-v2','committed-unaudited-training-v1')
                 path=out/('submission-'+str(i)+('.json' if compact_input else '.zip'))
                 limit=obj['size'] if compact_input else for_manifest(manifest)['compressed_bytes']
                 try:get_object(obj['url'],obj['sha256'],path,limit)
@@ -696,7 +703,9 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                     from .forced_sampling import assurance
                     reports.append(dict(epoch=manifest['epoch'],submission_sha256=obj['sha256'],accepted=[],outcomes=[dict(batch=0,valid=False,fully_audited=False,failure_kind='structural_invalid')],sampling_assurance=assurance(manifest),training_eligibility='fully-audited-only'));continue
                 if job['role']=='train' and job.get('training_policy') in (COVERED_POLICY,PERSISTENT_POLICY):
-                    if compact_input:
+                    if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
+                        from .committed_training_inputs import admitted_submission
+                    elif compact_input:
                         from .compact_training_inputs import admitted_submission
                     else:
                         from .training_receipts import admitted_submission
@@ -708,7 +717,10 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
             report['audits']=[] if receipt_training else reports
             if receipt_training:report['training_admissions']=reports
             if job['role']=='train':
-                if not pairs:raise ValueError('no verified training pairs')
+                if not pairs:raise ValueError('no admitted training pairs')
+                if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
+                    from .committed_training_inputs import validate_native_prompt
+                    validate_native_prompt(runtime,pairs,manifest)
                 values_before=parameter_value_digest(runtime.model)
                 if job.get('replay') is not None:
                     from .replay_training import verified_pairs,merge_pairs
@@ -750,12 +762,15 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                 report['training']=dict(steps=job['steps'],updates=metrics,training_policy=job.get('training_policy',HEAD_POLICY),full_model_finetune=job.get('training_policy',HEAD_POLICY) in (FULL_POLICY,FIXED_POLICY,COVERED_POLICY,PERSISTENT_POLICY),weights_changed=values_before!=values_after,parameter_values_sha256_before=values_before,parameter_values_sha256_after=values_after)
                 if job.get('training_policy')==COVERED_POLICY:report['training']['training_coverage']=manifest['training_coverage']
                 if receipt_training:
-                    if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
+                    if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
+                        from .committed_training_inputs import VERSION as INPUT_POLICY
+                    elif (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
                         from .compact_training_inputs import VERSION as INPUT_POLICY
                     else:
                         from .training_receipts import VERSION as INPUT_POLICY
                     report['training'].update(training_input_policy=INPUT_POLICY,
-                        trainer_verification_performed=False,all_pairs_authenticated_verifier_receipts=True)
+                        trainer_verification_performed=False,all_pairs_authenticated_verifier_receipts=INPUT_POLICY!='committed-unaudited-training-v1')
+                    if INPUT_POLICY=='committed-unaudited-training-v1':report['training']['input_assurance']='unaudited'
                 if persistent:
                     report['training'].update(training_coverage=manifest['training_coverage'],
                         state_updated=True,

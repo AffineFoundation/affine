@@ -274,7 +274,9 @@ def validate_report(report,job,manifest):
     before=training.get('parameter_values_sha256_before');after=training.get('parameter_values_sha256_after')
     checkpoint_id(before);checkpoint_id(after)
     if training['weights_changed']!=(before!=after):raise ValueError('honest inference weights_changed flag')
-    if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
+    if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
+        from .committed_training_inputs import validate_report as validate_receipt_report
+    elif (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
         if 'subnet/compact_training_inputs.py' not in job.get('source_files',{}):
             raise ValueError('compact persistent report source pin required')
         from .compact_training_inputs import validate_report as validate_receipt_report

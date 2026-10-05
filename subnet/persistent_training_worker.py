@@ -28,6 +28,9 @@ def report_updates(diagnostics,job,manifest):
 
 def admitted_submission(path,obj,manifest,authority):
     """Retire only byte-authenticated input after verifier receipt admission."""
+    if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
+        from .committed_training_inputs import admitted_submission as admit
+        return admit(path,obj,manifest,authority,retire=True)
     if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
         from .compact_training_inputs import admitted_submission as admit
     else:
@@ -143,7 +146,7 @@ def capacity_requirement(manifest,probe,*,checkpoint_bytes,missing_input):
     """Bounded streaming disk, all pairs retained, actual resource observations."""
     from .artifact_budget import for_manifest
     binding=manifest['trainer_state_binding'];budget=for_manifest(manifest)
-    if manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2':
+    if manifest.get('training_input_policy')in ('authenticated-verifier-compact-inputs-v2','committed-unaudited-training-v1'):
         from .compact_training_inputs import MAX_BYTES,DECODE_WORKING_BYTES
         budget=dict(compressed_bytes=256*MAX_BYTES,raw_bytes=MAX_BYTES)
     if type(checkpoint_bytes)is not int or checkpoint_bytes<=0 or type(missing_input)is not bool:
@@ -153,7 +156,8 @@ def capacity_requirement(manifest,probe,*,checkpoint_bytes,missing_input):
     disk=plan['additional_disk_required_bytes']+(checkpoint_bytes if missing_input else 0)+budget['compressed_bytes']+budget['raw_bytes']
     # Model is not loaded yet during the coordinator probe. Reserve one BF16
     # input load separately; worker repeats admission after loading the model.
-    working_ram=DECODE_WORKING_BYTES if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2') else budget['raw_bytes']
+    working_ram=DECODE_WORKING_BYTES if (manifest.get('training_input_policy')in ('authenticated-verifier-compact-inputs-v2','committed-unaudited-training-v1')) else budget['raw_bytes']
+    if manifest.get('training_input_policy')=='committed-unaudited-training-v1':working_ram*=256
     ram=plan['cpu_additional_ram_required_bytes']+checkpoint_bytes+working_ram
     if probe['free_bytes']<disk:raise ValueError('persistent trainer bounded stream/input/export/artifact disk reserve')
     if probe['available_ram_bytes']<ram:raise ValueError('persistent trainer actual CPU/cgroup memory reserve')
