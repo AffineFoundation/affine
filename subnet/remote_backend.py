@@ -270,7 +270,9 @@ class RemoteJobs:
     def retire_training_cache(self,job,report,pointer,input_cache=None):
         """Best-effort CPU housekeeping only after the coordinator's durable ACK."""
         overlay=self.config.get('cache_lifecycle_overlay')
+        manifest=signed(job['manifest'],self.controller.authority.id)
         names=('subnet/cache_lifecycle.py','subnet/trainer_cache_lifecycle.py')
+        if manifest.get('optimizer_state_local_cache')is not None:names+=('subnet/optimizer_state_cache.py',)
         if overlay is not None:
             if set(overlay)!={'code','files'}or set(overlay['files'])!=set(names):raise ValueError('exact lifecycle operator overlay')
             code=overlay['code'];files=overlay['files']
@@ -291,12 +293,73 @@ import subnet
 for name in DATA['files']:
  path=Path(DATA['code'])/name
  assert path.is_file()and not path.is_symlink()and hashlib.sha256(path.read_bytes()).hexdigest()==DATA['files'][name]
-for name in ('cache_lifecycle','trainer_cache_lifecycle'):
+for name in ('cache_lifecycle','optimizer_state_cache','trainer_cache_lifecycle'):
+ if 'subnet/'+name+'.py'not in DATA['files']:continue
  spec=importlib.util.spec_from_file_location('subnet.'+name,Path(DATA['code'])/'subnet'/(name+'.py'))
  module=importlib.util.module_from_spec(spec);sys.modules['subnet.'+name]=module;spec.loader.exec_module(module)
 print(json.dumps(module.retire(DATA['ack'],DATA['authority'],DATA['workspace'])))
 '''
+        if manifest.get('optimizer_state_local_cache')is not None:
+            return self._durable_cache_ack(script,ack,job['job_id'])
         return json.loads(self.command(shlex.quote(self.python)+' -I -B -c '+shlex.quote(script),timeout=60))
+
+    def _durable_cache_ack(self,script,ack,job_id):
+        """Observe one detached, bounded ACK action; transport loss never retries it."""
+        digest=hashlib.sha256(canonical(ack)).hexdigest()
+        handle=self.workspace+'/'+job_id+'-cache-ACK-'+digest
+        result=handle+'-result.json';attempt=handle+'-attempt.json'
+        guard=self.workspace+'/.optimizer-state-cache/promotion.json'
+        runner='DATA='+repr(dict(script=script,python=self.python,result=result,guard=guard,ack=ack))+'\n'+'''import json,os,subprocess,time
+from pathlib import Path
+def save(path,value):
+ p=Path(path);tmp=p.with_suffix('.tmp')
+ fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_TRUNC|os.O_NOFOLLOW,0o600)
+ with os.fdopen(fd,'w')as stream:stream.write(json.dumps(value));stream.flush();os.fsync(stream.fileno())
+ tmp.replace(p)
+try:
+ output=subprocess.check_output([DATA['python'],'-I','-B','-c',DATA['script']],text=True,timeout=1800)
+ receipt=json.loads(output);save(DATA['result'],dict(phase='complete',receipt=receipt))
+ save(DATA['guard'],dict(phase='complete',ack=DATA['ack']))
+except BaseException as exc:
+ save(DATA['result'],dict(phase='failed',reason=type(exc).__name__))
+ save(DATA['guard'],dict(phase='failed',ack=DATA['ack']))
+'''
+        launcher='DATA='+repr(dict(attempt=attempt,result=result,guard=guard,ack=ack,python=self.python,runner=runner))+'\n'+'''import json,os,subprocess
+from pathlib import Path
+result=Path(DATA['result']);attempt=Path(DATA['attempt'])
+for path in (result.parent,Path(DATA['guard']).parent):
+ if path.exists()and path.absolute()!=path.resolve():raise ValueError('owned ACK directory without symlinks')
+for path in (result,attempt,Path(DATA['guard'])):
+ if path.exists()or path.is_symlink():
+  st=path.lstat()
+  if not __import__('stat').S_ISREG(st.st_mode)or st.st_uid!=os.geteuid()or st.st_nlink!=1:raise ValueError('owned ACK files')
+if attempt.exists()and json.loads(attempt.read_text())['ack']!=DATA['ack']:raise ValueError('exact original ACK handle')
+if result.exists():print(result.read_text())
+elif attempt.exists():print(json.dumps(dict(phase='pending',original_handle=str(attempt))))
+else:
+ Path(DATA['guard']).parent.mkdir(mode=0o700,exist_ok=True)
+ # The durable intent precedes the one launch attempt. Unknown launch outcome
+ # is retained for observation; never launch again on an SSH timeout.
+ fd=os.open(attempt,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+ os.write(fd,json.dumps(dict(ack=DATA['ack'])).encode());os.close(fd)
+ guard=Path(DATA['guard']);tmp=guard.with_suffix('.tmp')
+ fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_TRUNC|os.O_NOFOLLOW,0o600)
+ with os.fdopen(fd,'w')as stream:stream.write(json.dumps(dict(phase='pending',ack=DATA['ack'])));stream.flush();os.fsync(stream.fileno())
+ tmp.replace(guard)
+ child=subprocess.Popen([DATA['python'],'-I','-B','-c',DATA['runner']],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True,close_fds=True)
+ print(json.dumps(dict(phase='pending',original_handle=str(attempt),pid=child.pid)))
+'''
+        observed=json.loads(self.command(shlex.quote(self.python)+' -I -B -c '+shlex.quote(launcher),timeout=60))
+        # Cleanup already runs outside the epoch thread. Each SSH observation is
+        # short, while the original supervisor has its own bounded 30min budget.
+        started=time.monotonic()
+        while observed['phase']=='pending' and time.monotonic()-started<1800:
+            time.sleep(1)
+            probe='from pathlib import Path;import json;p=Path('+repr(result)+');print(p.read_text()if p.exists()else json.dumps(dict(phase="pending")))'
+            observed=json.loads(self.command(shlex.quote(self.python)+' -I -B -c '+shlex.quote(probe),timeout=60))
+        if observed['phase']=='complete':return observed['receipt']
+        return dict(status='deferred',reason='original-cache-ACK-'+observed['phase'],original_handle=handle,removed_checkpoints=[])
+
 
     def checked(self,report,prior,manifest):
         from .backend_profiles import execution_profile

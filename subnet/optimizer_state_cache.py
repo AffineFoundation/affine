@@ -74,6 +74,11 @@ class StateCache:
         self.save(self.root/('retired-'+value['job_id']+'.json'),dict(job_id=value['job_id'],descriptor_sha256=value.get('descriptor_sha256'),reason=reason,removed=removed))
         return removed
     def prepare_parent(self,descriptor,source):
+        promotion=self.root/'promotion.json'
+        if promotion.exists():
+            snapshot(promotion)
+            intent=json.loads(promotion.read_bytes());authenticate(intent['ack'],self.authority)
+            if intent.get('phase')!='complete':raise ValueError('original post-ACK promotion requires terminal observation before next training')
         pending=self.root/'pending.json'
         marker=self.root/'current.json'
         if pending.exists():
@@ -82,7 +87,12 @@ class StateCache:
             if current is not None and current['job_id']==abandoned['job_id']:
                 # Recovery of a crash between atomic promotion and removal of
                 # the pending marker; the promoted bytes remain current.
-                authenticate(current['ROOT_ack'],self.authority);pending.unlink()
+                confirmed=authenticate(current['ROOT_ack'],self.authority)
+                if ({k:v for k,v in current.items()if k!='ROOT_ack'}!=abandoned or
+                    confirmed['job_id']!=current['job_id']or confirmed['job_sha256']!=current['job_sha256']or
+                    confirmed['trainer_state']['descriptor_sha256']!=current['descriptor_sha256']):
+                    raise ValueError('recovered promotion exact current/pending/ACK lineage')
+                pending.unlink()
             elif abandoned['job_id']==self.job['job_id']:
                 raise ValueError('original job has staged cache candidate; recover completion instead of retraining')
             else:
@@ -182,7 +192,21 @@ def promote(ack,authority,workspace):
         raise ValueError('exact ROOT committed optimizer cache ACK')
     with StateCache(workspace,job,manifest,authority)as cache:
         pending=cache.root/'pending.json'
-        if not pending.exists():return dict(promoted=False,reason='no-owned-candidate')
+        marker=cache.root/'current.json'
+        already=json.loads(marker.read_bytes())if marker.exists()else None
+        if already is not None and already['job_id']==job['job_id']:
+            if (already.get('descriptor_sha256')!=state['descriptor_sha256'] or already.get('job_sha256')!=sha(job) or
+                already.get('source_sha256')!=manifest['source_bundle']['sha256'] or
+                authenticate(already['ROOT_ack'],authority)!=value):
+                raise ValueError('idempotent promotion exact confirmed lineage')
+            if pending.exists():
+                orphan=json.loads(pending.read_bytes())
+                if {k:v for k,v in already.items()if k!='ROOT_ack'}!=orphan:raise ValueError('promotion pending/current mismatch')
+                pending.unlink()
+            return dict(promoted=True,idempotent=True,descriptor_sha256=state['descriptor_sha256'],bytes=sum(s['size']for s in state['descriptor']['shards']))
+        if not pending.exists():
+            if already is not None:raise ValueError('missing candidate does not match confirmed current lineage')
+            return dict(promoted=False,reason='no-owned-candidate')
         candidate=json.loads(pending.read_bytes());descriptor=state['descriptor'];shards={s['name']:s for s in descriptor['shards']}
         if candidate['job_id']!=job['job_id']or candidate['job_sha256']!=sha(job)or candidate['source_sha256']!=manifest['source_bundle']['sha256']or candidate['descriptor_sha256']!=sha(descriptor)or set(candidate['files'])!=set(shards):
             raise ValueError('original candidate/job/source/descriptor binding')
@@ -194,6 +218,8 @@ def promote(ack,authority,workspace):
             previous=json.loads(marker.read_bytes())
             previous_ack=authenticate(previous['ROOT_ack'],authority)
             if previous_ack['trainer_state']['optimizer_steps']>value['trainer_state']['optimizer_steps']:raise ValueError('optimizer cache lineage rollback')
+            if previous_ack['trainer_state']['optimizer_steps']==value['trainer_state']['optimizer_steps']and previous_ack['trainer_state']['descriptor_sha256']!=value['trainer_state']['descriptor_sha256']:
+                raise ValueError('same optimizer counter different promotion lineage')
             if previous['job_id']!=candidate['job_id']:cache.discard(previous,'superseded-after-durable-ROOT-ACK')
         candidate['ROOT_ack']=ack;cache.save(marker,candidate);pending.unlink()
         return dict(promoted=True,descriptor_sha256=sha(descriptor),bytes=sum(s['size']for s in shards.values()))
