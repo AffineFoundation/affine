@@ -440,11 +440,12 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
 class ArtifactRejected(ValueError):
     '''Complete observed bytes violate the signed digest/size; not network failure.'''
 
-def get_object(url, expected, destination, limit):
+def get_object(url, expected, destination, limit, *, session=None, record_lifecycle=True):
     import requests
     temporary=destination.with_suffix(destination.suffix+'.partial');h=hashlib.sha256();size=0
     try:
-        with requests.get(r2_url(url,'GET'),stream=True,timeout=180,allow_redirects=False) as response:
+        client=session if session is not None else requests
+        with client.get(r2_url(url,'GET'),stream=True,timeout=180,allow_redirects=False) as response:
             if response.status_code!=200:raise ValueError('R2 GET status '+str(response.status_code))
             with temporary.open('wb') as f:
                 for part in response.iter_content(1024*1024):
@@ -454,10 +455,74 @@ def get_object(url, expected, destination, limit):
         if h.hexdigest()!=expected:raise ArtifactRejected('artifact digest')
         temporary.replace(destination)
         lifecycle_root=os.environ.get("AFFINE_CACHE_LIFECYCLE_ROOT")
-        if lifecycle_root and destination.name.startswith("submission-"):
+        if record_lifecycle and lifecycle_root and destination.name.startswith("submission-"):
             from .cache_lifecycle import CacheLifecycle
             CacheLifecycle(lifecycle_root).record_download(destination,expected)
     finally:temporary.unlink(missing_ok=True)
+
+
+def prefetched_training_submissions(submissions,out,timings,*,workers=4,session_factory=None):
+    """Bounded four-ahead reads; admission and ownership receipts stay serial.
+
+    Each HTTP session belongs to exactly one executor thread and is retained
+    only for this job. No model/proof validation is performed by downloader
+    threads. Preserve submission ordering and fail before training on errors.
+    Caller must close this generator when eligibility admission fails.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from collections import deque
+    import threading
+    import requests
+    if type(workers)is not int or not 1<=workers<=4:raise ValueError('bounded training download concurrency')
+    local=threading.local();sessions=[];lock=threading.Lock();pending=deque()
+    factory=session_factory or requests.Session
+    def fetch(i,obj):
+        if type(obj.get('size'))is not int or not 0<obj['size']<=2_000_000:
+            raise ArtifactRejected('bounded compact training artifact size')
+        if not hasattr(local,'session'):
+            local.session=factory()
+            with lock:sessions.append(local.session)
+        path=out/('submission-'+str(i)+'.json');started=time.monotonic()
+        try:get_object(obj['url'],obj['sha256'],path,obj['size'],session=local.session,record_lifecycle=False)
+        except requests.RequestException:raise ValueError('R2 training artifact transport failure')from None
+        return i,obj,path,time.monotonic()-started
+    pool=ThreadPoolExecutor(max_workers=workers);items=iter(enumerate(submissions));started=time.monotonic()
+    def record_download(obj,path):
+        lifecycle_root=os.environ.get('AFFINE_CACHE_LIFECYCLE_ROOT')
+        if lifecycle_root:
+            from .cache_lifecycle import CacheLifecycle
+            CacheLifecycle(lifecycle_root).record_download(path,obj['sha256'])
+    def submit_next():
+        try:i,obj=next(items)
+        except StopIteration:return
+        pending.append(pool.submit(fetch,i,obj))
+    try:
+        for _ in range(workers):submit_next()
+        while pending:
+            i,obj,path,seconds=pending.popleft().result()
+            # All receipt writes execute on this consumer thread. Concurrent
+            # record_download updates for the same job would lose members.
+            record_download(obj,path)
+            row=timings.setdefault('submission_download_and_authentication',dict(seconds=0.0,calls=0))
+            row['seconds']+=seconds;row['calls']+=1
+            yield i,obj,path
+            submit_next()
+    finally:
+        for future in pending:future.cancel()
+        pool.shutdown(wait=True,cancel_futures=True)
+        # Completed reads ahead of a failed admission are still owned,
+        # authenticated downloads, not admitted training data. Record them
+        # serially so a later terminal cleanup can retire these inputs too.
+        try:
+            for future in pending:
+                if future.cancelled():continue
+                try:i,obj,path,seconds=future.result()
+                except Exception:continue
+                record_download(obj,path)
+        finally:
+            for session in sessions:session.close()
+        timings['submission_prefetch_pipeline_wall']=dict(seconds=time.monotonic()-started,calls=1,
+            workers=workers,includes_ordered_eligibility_admission=True)
 
 def checkpoint(manifest, workspace, cache=None):
     cp=manifest['checkpoint'];target=Path(cache) if cache else workspace/'checkpoints'/cp['id']
@@ -756,27 +821,36 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
             report.update(miner_id=job['miner_id'],submission_sha256=hashlib.sha256(data).hexdigest() if data is not None else None,submission_size=len(data) if data is not None else 0,operator_authorized_experiment=True,**mining)
         elif job['role'] in ('verify','train'):
             reports=[];pairs=[]
-            for i,obj in enumerate(job['submissions']):
-                from .artifact_budget import for_manifest
-                compact_input=job['role']=='train' and manifest.get('training_input_policy')in ('authenticated-verifier-compact-inputs-v2','committed-unaudited-training-v1')
-                path=out/('submission-'+str(i)+('.json' if compact_input else '.zip'))
-                limit=obj['size'] if compact_input else for_manifest(manifest)['compressed_bytes']
-                try:measured_phase(startup_timings,'submission_download_and_authentication',get_object,obj['url'],obj['sha256'],path,limit)
-                except ArtifactRejected:
-                    if job['role']!='verify'or not manifest.get('submission_transport_policy'):raise
-                    from .forced_sampling import assurance
-                    reports.append(dict(epoch=manifest['epoch'],submission_sha256=obj['sha256'],accepted=[],outcomes=[dict(batch=0,valid=False,fully_audited=False,failure_kind='structural_invalid')],sampling_assurance=assurance(manifest),training_eligibility='fully-audited-only'));continue
-                if job['role']=='train' and job.get('training_policy') in (COVERED_POLICY,PERSISTENT_POLICY):
-                    if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
-                        from .committed_training_inputs import admitted_submission
-                    elif compact_input:
-                        from .compact_training_inputs import admitted_submission
-                    else:
-                        from .training_receipts import admitted_submission
-                    result,verified=measured_phase(startup_timings,'submission_eligibility_admission',admitted_submission,path,obj,manifest,authority,
-                        retire=job.get('training_policy')==PERSISTENT_POLICY)
-                else:result,verified=audit(path.read_bytes(),manifest,runtime,commitment_miner=obj.get('commitment_miner'))
-                reports.append(result);pairs.extend(verified)
+            from contextlib import closing,nullcontext
+            compact_training=(job['role']=='train' and job.get('training_policy')in (COVERED_POLICY,PERSISTENT_POLICY) and
+                manifest.get('training_input_policy')in ('authenticated-verifier-compact-inputs-v2','committed-unaudited-training-v1'))
+            prefetch=prefetched_training_submissions(job['submissions'],out,startup_timings)if compact_training else None
+            with closing(prefetch)if prefetch is not None else nullcontext():
+                for i,obj in enumerate(job['submissions']):
+                    from .artifact_budget import for_manifest
+                    compact_input=job['role']=='train' and manifest.get('training_input_policy')in ('authenticated-verifier-compact-inputs-v2','committed-unaudited-training-v1')
+                    path=out/('submission-'+str(i)+('.json' if compact_input else '.zip'))
+                    limit=obj['size'] if compact_input else for_manifest(manifest)['compressed_bytes']
+                    try:
+                        if prefetch is not None:
+                            actual_i,actual_obj,actual_path=next(prefetch)
+                            if actual_i!=i or actual_obj!=obj or actual_path!=path:raise ValueError('ordered training input binding')
+                        else:measured_phase(startup_timings,'submission_download_and_authentication',get_object,obj['url'],obj['sha256'],path,limit)
+                    except ArtifactRejected:
+                        if job['role']!='verify'or not manifest.get('submission_transport_policy'):raise
+                        from .forced_sampling import assurance
+                        reports.append(dict(epoch=manifest['epoch'],submission_sha256=obj['sha256'],accepted=[],outcomes=[dict(batch=0,valid=False,fully_audited=False,failure_kind='structural_invalid')],sampling_assurance=assurance(manifest),training_eligibility='fully-audited-only'));continue
+                    if job['role']=='train' and job.get('training_policy') in (COVERED_POLICY,PERSISTENT_POLICY):
+                        if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
+                            from .committed_training_inputs import admitted_submission
+                        elif compact_input:
+                            from .compact_training_inputs import admitted_submission
+                        else:
+                            from .training_receipts import admitted_submission
+                        result,verified=measured_phase(startup_timings,'submission_eligibility_admission',admitted_submission,path,obj,manifest,authority,
+                            retire=job.get('training_policy')==PERSISTENT_POLICY)
+                    else:result,verified=audit(path.read_bytes(),manifest,runtime,commitment_miner=obj.get('commitment_miner'))
+                    reports.append(result);pairs.extend(verified)
             receipt_training=job['role']=='train' and job.get('training_policy') in (COVERED_POLICY,PERSISTENT_POLICY)
             report['audits']=[] if receipt_training else reports
             if receipt_training:report['training_admissions']=reports
