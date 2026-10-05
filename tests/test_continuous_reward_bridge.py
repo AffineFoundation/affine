@@ -9,7 +9,7 @@ from subnet.continuous_audit_policy import snapshot,hourly_aggregate,VERSION
 
 class BridgeControls(unittest.TestCase):
  def setUp(self):
-  fx=LearnerAdmissionTests();fx.setUp();self.addCleanup(fx.doCleanups);self.key=fx.operator;self.authority=fx.authority;self.identity=fx.identity
+  fx=LearnerAdmissionTests();fx.setUp();self.addCleanup(fx.doCleanups);self.key=fx.operator;self.authority=fx.authority;self.identity=fx.identity;self.miner_key=fx.miner
   self.sign=lambda p:signed(self.key,p)
   self.anchor=self.sign(dict(version=b.ANCHOR,netuid=120,owner_hotkey='owner',activation_id='new-statistical-policy',effective_at=3600,approved_sources=[fx.manifest['source_bundle']['sha256']],units_per_point=b.SCALE,rounding='floor-after-hour-aggregation'))
   self.regs={'miner-hotkey':dict(uid=85,public_key=self.identity,snapshot_block=123)}
@@ -56,6 +56,20 @@ class BridgeControls(unittest.TestCase):
  def test_missing_population_or_eligibility_refused(self):
   self.pop['payload']['eligible_evidence_ids']=[];self.pop=self.sign(self.pop['payload'])
   with self.assertRaisesRegex(ValueError,'eligibility'):self.project()
+ def test_multiple_completed_epochs_keep_identity_across_new_registration_blocks(self):
+  epoch2=self.manifest['epoch']+'-next';m2=copy.deepcopy(self.manifest);m2.update(epoch=epoch2,start=4200,deadline=4500,registration_snapshot_block=124);m2.pop('continuous_reward_contract')
+  regs2=copy.deepcopy(self.regs);regs2['miner-hotkey']['snapshot_block']=124
+  m2=b.inject_opening(m2,self.anchor,self.authority,regs2);md2=self.sign(m2)
+  original=copy.deepcopy(next(iter(self.pop['payload']['receipts'].values()))['commitment_document']['payload']);original['epoch']=epoch2;commitment=signed(self.miner_key,original)
+  child=original['batches'][0];pair=dict(miner=self.identity,commitment_sha256=b.sha(commitment),batch_sha256=child['batch_sha256'],proof_sha256=child['sha256'])
+  pop2=self.sign(register_population(md2,{self.identity:dict(commitment_document=commitment,sha256=b.sha(commitment))},5,4501,self.authority,eligible_pairs=[pair]))
+  snap2=self.sign(snapshot(self.pop['payload']['records']+pop2['payload']['records'],[],{},epoch=epoch2,round=5,checkpoint=m2['checkpoint']['id'],cutoff=7200,audit_policy=self.snap['payload']['policy'],eligible_evidence_ids=pop2['payload']['eligible_evidence_ids']))
+  hour=self.sign(hourly_aggregate([self.snap,snap2],self.authority,7200))
+  openings=dict(self.openings);openings[epoch2]=self.sign(dict(version='immutable-first-manifest-v1',epoch=epoch2,first_manifest_sha256=b.sha(md2),published_at=4201))
+  regdocs=dict(self.regdocs);regdocs[epoch2]=self.sign(dict(epoch=epoch2,snapshot_block=124,registrations=regs2))
+  completions=dict(self.completions);completions[epoch2]=self.sign(dict(epoch=epoch2,round=5,checkpoint=m2['checkpoint']['id'],next_checkpoint='e'*64,completed_at=4600,input_assurance='unaudited'))
+  result=b.project(hour,[self.snap,snap2],[self.pop,pop2],openings,regdocs,completions,self.anchor,self.authority,fresh_registrations=regs2)
+  self.assertEqual(result['points'],{'miner-hotkey':1000000});self.assertEqual(result['registrations']['miner-hotkey']['snapshot_block'],124)
  def test_submission_dryrun_and_execute_require_single_writer(self):
   doc=self.sign(self.project());adapter=SimpleNamespace(submit_hour=Mock(return_value={'status':'dry_run'}))
   args=dict(now=7201,boot_id='b',writer_pid=1,writer_ticks='1')
