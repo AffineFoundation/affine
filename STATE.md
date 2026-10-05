@@ -1,3 +1,12 @@
+Continuous-auditor recovery, 2026-10-05 17:49 UTC: the previous auditor exited
+because its completion-file glob read both unsigned local mirrors and signed
+envelopes. The repaired operator service authenticates signed closures only,
+preserving their original timestamps and counting each once. Thirty-three audit
+controls, thirteen parallel-capture controls and twenty-one reward-bridge controls
+passed. The new auditor service is active and workers have claimed new jobs;
+a fully completed post-restart tick is not yet claimed. Science, sampling rules,
+existing job envelopes, worker processes and the learner were unchanged.
+
 Verified live update, 2026-10-05 17:48 UTC: E15
 `nonpayable-live-reward-math-v1--1791222075-15` is mining on immutable source
 6a85c31011b7a1ca23d745e9868d7b01dd0e92e9fe74c997e8222482f76393ca,
