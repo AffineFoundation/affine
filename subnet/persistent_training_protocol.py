@@ -305,6 +305,11 @@ def independently_commit(controller,report,job,manifest,read_chunks=None,*,readb
         # Consume every result before signing; submitted checks cannot publish
         # partial success or leave a stream active after this scope exits.
         list(pool.map(check_shard,descriptor['shards']))
+    return _publish_verified_descriptor(controller, descriptor, job, namespace)
+
+
+def _publish_verified_descriptor(controller,descriptor,job,namespace):
+    """Publish only after the calling independent-readback path fully succeeds."""
     publication=dict(version=PUBLICATION_VERSION,namespace=namespace,job_id=job['job_id'],
         job_sha256=sha(job),descriptor_sha256=sha(descriptor),descriptor=descriptor)
     key=namespace+'/authority-state.json'
