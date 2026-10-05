@@ -547,19 +547,22 @@ class FreshSourceFinder(importlib.abc.MetaPathFinder):
                 exec(compile(location.read_bytes(),str(location),'exec'),module.__dict__)
         return importlib.util.spec_from_file_location(fullname,location,loader=Loader())
 
-def install_source_loader(root,additional_files=()):
+def install_source_loader(root,additional_files=(),bootstrap_publication=False):
     # Pure admission helpers are used before workspace/artifact access. Their
     # pinned bytes have now been checked; discard bootstrap imports so compute
     # admission reloads them through the authenticated fresh-source finder.
     for module_name in ('subnet.backend_profiles','subnet.artifact_budget','subnet.audit_policy','subnet.auditing','subnet.training_policy','subnet.commitment_transport',
             'subnet.persistent_cpu_adamw','subnet.persistent_training_state','subnet.persistent_training_protocol','subnet.training_receipts'):
         sys.modules.pop(module_name,None)
+    if bootstrap_publication:
+        if 'subnet/persistent_publication.py'not in additional_files:raise ValueError('publication bootstrap requires authenticated source pin')
+        sys.modules.pop('subnet.persistent_publication',None)
     if 'subnet/compact_training_inputs.py' in additional_files:
         sys.modules.pop('subnet.compact_training_inputs',None)
     for name in set(SOURCE_FILES)|set(additional_files):
         module_name=name[:-3].replace('/','.')
         if module_name in sys.modules and module_name!='subnet.backend_jobs':
-            raise ValueError('GPU worker requires fresh process before runtime imports')
+            raise ValueError('GPU worker requires fresh process before runtime imports: '+module_name)
     sys.meta_path.insert(0,FreshSourceFinder(root))
 
 def initial_configuration(manifest,job):
@@ -573,6 +576,7 @@ def initial_configuration(manifest,job):
     return first,harness_for(first,first['indices'][0])
 
 def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
+    publication_preloaded='subnet.persistent_publication'in sys.modules
     job,manifest=_validate(envelope,authority,resolve_source=False)
     root=Path(__file__).resolve().parent.parent
     for name,expected in job['source_files'].items():
@@ -581,13 +585,14 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         if version(name)!=expected:raise ValueError('runtime package mismatch')
     if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':raise ValueError('CUDA environment profile')
     publication_files=('subnet/persistent_publication.py',) if manifest.get('persistent_publication_policy') is not None else ()
+    bootstrap_publication=bool(publication_files and not publication_preloaded and 'subnet.persistent_publication'in sys.modules)
     compact_files=('subnet/compact_training_inputs.py',) if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2') else ()
     if job.get('training_policy')==PERSISTENT_POLICY:
         from .persistent_training_protocol import EXECUTION_FILES
-        install_source_loader(root,(*EXECUTION_FILES,'subnet/training_receipts.py',*compact_files,*publication_files))
+        install_source_loader(root,(*EXECUTION_FILES,'subnet/training_receipts.py',*compact_files,*publication_files),bootstrap_publication=bootstrap_publication)
     elif job.get('training_policy')==COVERED_POLICY:
-        install_source_loader(root,('subnet/training_receipts.py',*compact_files,*publication_files))
-    else:install_source_loader(root,(*compact_files,*publication_files))
+        install_source_loader(root,('subnet/training_receipts.py',*compact_files,*publication_files),bootstrap_publication=bootstrap_publication)
+    else:install_source_loader(root,(*compact_files,*publication_files),bootstrap_publication=bootstrap_publication)
     if publication_files:
         from .persistent_publication import validate_policy
         validate_policy(manifest['persistent_publication_policy'])
