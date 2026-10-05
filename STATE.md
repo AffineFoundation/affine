@@ -1,3 +1,69 @@
+Active goal implementation update, 2026-10-05: the decoupled learning and
+continuous-audit goal is registered and active. Three parallel agents own
+learner/controller, fast audits/scoring, and fleet/miner transport respectively.
+Four additional single-H200 machines were rented at a combined $23.02/hour;
+qualification and enrollment are pending. Rentals do not establish active audit
+capacity. The new contracts are not deployed. See
+docs/DECOUPLED_IMPLEMENTATION_PLAN.md. Historical E13 and optimizer lineage
+remain preserved; cleanup work remains deferred.
+
+Earlier operator fleet planning note, 2026-10-05: double the verifier fleet from four
+qualified single-H200 nodes to eight, adding four more H200 verifier machines
+for the continuous-audit architecture. This request is to record the expansion;
+no additional rentals, admission or deployment are performed by this note.
+
+Operator epoch architecture direction, 2026-10-05: decouple continuous audits
+from the miner/trainer checkpoint loop. Miners submit immutable checkpoint-bound
+batches during a collection window; the trainer may consume eligible committed
+inputs as they arrive or after a bounded initial window, without waiting for
+expensive audits. The operator explicitly removes the requirement that training
+inputs or their submitting miners must already have been verified. Unaudited
+submissions may enter training after cheap structural/identity/checkpoint/task
+eligibility checks; they must remain labelled unaudited, not certified correct.
+Confirmed invalid submissions can be excluded from future consumption while
+continuous audits independently adjust incentives. After the training step and durable checkpoint publication,
+advance the authoritative epoch/checkpoint pointer and have miners switch to the
+new weights and stop searching against the previous checkpoint. Freeze exact
+old submission identities/cutoff so ongoing historical audits cannot observe
+mutable replacements. Verifiers independently sample current and historical
+batches and publish authenticated evidence for statistical per-miner scoring.
+Hourly reward snapshots need explicit evidence cutoffs and versioned score
+estimates; no audit completion should gate checkpoint advancement in this target
+design. Cheap eligibility checks and training safety remain necessary. This
+direction is not yet implemented; existing live/recovery policies remain exact
+and cannot be silently reinterpreted. Cleanup work remains deferred.
+
+Operator design direction, 2026-10-05: move toward incentive-based statistical
+assurance rather than requiring every rewarded/training rollout to receive a
+full exact audit. Verifiers should continuously sample immutable current and
+historical submissions, preferably using qualified fast prefill checks, and
+accumulate per-miner evidence. Epoch scores should combine eligible unique batch
+count with an estimated valid fraction/confidence adjustment and explicit
+penalty hyperparameters. This is not implemented or activated. Numerical
+ambiguity and infrastructure errors must not be counted as fraud; ambiguous
+fast checks need calibrated reference adjudication. Confidence is not proof of
+all unaudited data, must be able to decrease, and needs current-data sampling
+and checkpoint/verifier-version accounting to avoid reputation laundering.
+Training risk controls and honest false-positive rates remain design work.
+Local-data cleanup remains explicitly deferred; this direction does not resume it.
+
+Operator performance note, 2026-10-05: current uncached token-by-token sampling
+replay is unacceptable for scaling; the operator described it as a couple of
+orders of magnitude too slow. That is a requested performance target/assessment,
+not a measured speedup. Latest single-batch claim-to-report time was103–164s.
+Investigate and qualify a faster shared miner/verifier runtime, including KV
+caching, while preserving exact sampling checks and exploit resistance. Measure
+stage timings and genuine end-to-end speed before claiming improvement. This
+note does not change the currently approved sampler or authorize a silent swap.
+
+Deferred by operator, 2026-10-05: make every role's local data lifecycle fully
+automatic, with R2 as the durable record. Download epoch-pinned weights and
+required inputs; upload and confirm durable results; remove obsolete local
+rollouts, training data, models and optimizer-state replicas while protecting
+current and in-flight data. Existing coverage is incomplete. Record this
+requirement only; do not work on lifecycle changes until the operator resumes
+that work. Trainer recovery and the core epoch/learning goal remain separate.
+
 Latest verified operational update, 2026-10-05 12:12 UTC: E13 completed six
 authenticated verifier queue jobs containing ten accepted pairs and no rejected
 pairs. The two audit waves took approximately326 seconds; freeze took45 seconds.
