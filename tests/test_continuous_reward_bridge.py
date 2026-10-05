@@ -56,6 +56,12 @@ class BridgeControls(unittest.TestCase):
  def test_missing_population_or_eligibility_refused(self):
   self.pop['payload']['eligible_evidence_ids']=[];self.pop=self.sign(self.pop['payload'])
   with self.assertRaisesRegex(ValueError,'eligibility'):self.project()
+ def test_legacy_population_and_snapshot_hashes_remain_accepted(self):
+  p=copy.deepcopy(self.pop['payload']);p['version']='continuous-audit-population-v1';self.pop=self.sign(p)
+  old_policy=dict(self.snap['payload']['policy'],version='continuous-probabilistic-audit-v1')
+  s=snapshot(p['records'],[],{},epoch=self.manifest['epoch'],round=4,checkpoint=self.manifest['checkpoint']['id'],cutoff=7200,audit_policy=old_policy,eligible_evidence_ids=p['eligible_evidence_ids'])
+  self.snap=self.sign(s);self.hour=self.sign(hourly_aggregate([self.snap],self.authority,7200))
+  self.assertEqual(self.project()['points'],{'miner-hotkey':500000})
  def test_multiple_completed_epochs_keep_identity_across_new_registration_blocks(self):
   epoch2=self.manifest['epoch']+'-next';m2=copy.deepcopy(self.manifest);m2.update(epoch=epoch2,start=4200,deadline=4500,registration_snapshot_block=124);m2.pop('continuous_reward_contract')
   regs2=copy.deepcopy(self.regs);regs2['miner-hotkey']['snapshot_block']=124
