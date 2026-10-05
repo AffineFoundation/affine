@@ -1,24 +1,24 @@
 # Affine — MATH mining, verification and training
 
-Operational update, 2026-10-05: E11 opened at 05:37:24 UTC as
-nonpayable-live-reward-math-v1--1791178644-11 using approved source
-5bcb01b6ca4187e6dce785c67256688faa950058c39dc7db70ce5b24e03e016f.
+Operational update, 2026-10-05: E12 opened at 06:32:43 UTC as
+nonpayable-live-reward-math-v1--1791181963-12 using approved source
+a65d7ed87f036f286bcc374ed6713f29c6ed4e3141fc1e5dd4ec9948962f0f0f.
 It preserves E10's learned checkpoint
 6a2bb631eebdc748b577976038a673437309d7953d3440eb8e873e5035671ea7
 and persistent optimizer step three; no optimizer reset is authorized.
 The original E10 matched 32-task diagnostic changed from 19/32 to 21/32.
 That small measurement is not sustained convergence or a one-hour epoch.
 Check mining.json and the signed manifest for current phase and availability.
-E11 is currently held for infrastructure recovery: inline freeze copies
+E11 closed without a training update after infrastructure recovery: inline freeze copies
 exhausted its metadata budget, and the coordinator's legacy whole-object hash
 gate could not admit selected child artifacts. Its audit window expired with
 no queued audits and no accepted training samples. The original no-update
-closure also exposed a legacy-only history renderer; fixes are being tested
-for a future source boundary. Deferred uploads are not fraud. The learned
+closure also exposed a legacy-only history renderer. E12 includes the corrected
+queue, capture and history paths. Deferred uploads are not fraud. The learned
 checkpoint and optimizer step remain unchanged; no successful E11 update or
 reward is claimed.
 
-Prospective recovery code on GitHub main requires the uploaded signed
+The active E12 recovery code requires the uploaded signed
 commitment's raw JSON bytes to use the canonical serialization produced by
 the official miner CLI. Its child audit jobs bind the original commitment,
 slot, task, artifact hash and size; malformed bindings are refused before
@@ -27,6 +27,15 @@ conditional copies. If metadata capture remains incomplete at the signed
 cutoff, a separate signed infrastructure-skip record preserves the partial
 journals and advances without fabricated receipts, audits, rewards or training.
 These changes do not rewrite E11's original frozen compute source.
+
+Prospective lossless packing code on GitHub main adds a signed
+artifact_compression_policy (lossless-deflate-v1) and official CLI support.
+E12 does not enable it and retains historical DEFLATE level six. A measured
+existing 1.17 GB uncompressed pair packed in 16.1 seconds at level one versus
+145.5 seconds at level six, with 13.2% more compressed bytes and identical
+uncompressed tensor/metadata hashes. This CPU benchmark is not an observed
+production epoch speedup. Original artifact and size limits remain unchanged.
+Details: https://github.com/AffineFoundation/affine/blob/main/docs/LOSSLESS_ARTIFACT_PACKING.md
 
 E11 activates small signed commitments plus separate immutable pair objects,
 600 seconds for mining, 12 initial random expensive audits plus four reserved
