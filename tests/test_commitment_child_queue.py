@@ -48,6 +48,11 @@ class ChildQueueTests(unittest.TestCase):
     if name.startswith('ref:'):job['submissions'][0]['commitment_ref'][name[4:]]=value
     else:job['submissions'][0][name]=value
     with self.assertRaises(ValueError):self.enqueue(job)
+ def test_reject_malformed_child_objects_before_queue_insertion(self):
+  for obj in (None,'bad',dict(self.obj,url=None),dict(self.obj,unexpected=True)):
+   job=copy.deepcopy(self.job);job['submissions']=[obj]
+   with self.assertRaises(ValueError):self.enqueue(job)
+  with self.queue.transaction()as db:self.assertEqual(db.execute('select count(*)from jobs').fetchone()[0],0)
  def test_reject_parent_payload_scope_and_foreign_artifact_inventory(self):
   for what in ('source','checkpoint','artifact','signature'):
    with self.subTest(what=what):

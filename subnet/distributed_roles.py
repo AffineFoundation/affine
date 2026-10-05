@@ -27,25 +27,28 @@ def authenticate(envelope, identity):
 def validate_frozen_submissions(manifest, submissions):
     """Bind selected child capabilities to authenticated miner commitment slots."""
     frozen = manifest.get('audit_frozen_receipts', {})
-    if not submissions or len(submissions) > 256:
+    if type(submissions)is not list or not submissions or len(submissions) > 256:
         raise ValueError('frozen submission binding')
     if manifest.get('submission_transport_policy') is None:
         allowed = {r['sha256'] for r in frozen.values()}
         if any(s.get('sha256') not in allowed for s in submissions):
             raise ValueError('frozen submission binding')
         return
-    from .commitment_transport import VERSION, validate
+    from .commitment_transport import VERSION, validate, is_digest
     from urllib.parse import urlsplit, unquote
     if manifest['submission_transport_policy'] != VERSION:
         raise ValueError('explicit child commitment transport')
     fields = {'miner','commitment_sha256','slot','env_id','index','batch_sha256','size','frozen_key'}
     seen = set()
     for obj in submissions:
+        if type(obj)is not dict or set(obj)!={'url','sha256','commitment_miner','commitment_ref'} or type(obj['url'])is not str:
+            raise ValueError('exact selected child object fields')
         ref = obj.get('commitment_ref')
         if (not isinstance(ref,dict) or set(ref)!=fields or
                 obj.get('commitment_miner')!=ref['miner'] or
                 type(ref['slot'])is not int or type(ref['index'])is not int or
-                type(ref['size'])is not int):
+                type(ref['size'])is not int or type(ref['frozen_key'])is not str or
+                not all(is_digest(ref[k])for k in ('miner','commitment_sha256','batch_sha256'))):
             raise ValueError('exact selected child metadata')
         environments=[e for e in manifest.get('environments',[])if e.get('env_id')==ref['env_id']]
         if len(environments)!=1 or ref['index']not in environments[0].get('indices',[]):
