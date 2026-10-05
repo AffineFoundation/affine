@@ -163,3 +163,15 @@ batch counts, without response text, tokens, arrays, proofs, keys or upload URLs
 Observation write failures do not change mining. Source763 does not contain this
 telemetry; miners must keep using the signed source. Progress counters never
 replace an uploaded artifact, authenticated audit or reward evidence.
+
+Prospective owned-miner implementation (requires freshly approved source):
+bounded-round-robin-v1 searches at most eight active tasks, two attempts per
+sweep, preserving original per-task seeds and signed attempt limits. Canonical
+pair ZIPs are prepared in one pass with byte-identical framing; already
+acknowledged pairs are reused. Both independent-pair sums and hypothetical
+cumulative ZIP raw/compressed sizes must fit the existing signed cumulative
+artifact limits. The commitment remains signed and PUT last. No proof, sampler
+or scoring rule changes. Safe phase telemetry contains counts/timings only.
+See docs/BOUNDED_MINER_SEARCH_AND_ONE_PASS_UPLOAD.md on GitHub. Historical sealed
+sources and their outcomes are unchanged; live activation requires a new
+qualified source and genuine in-window upload and audit.

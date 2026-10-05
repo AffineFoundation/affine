@@ -11,24 +11,35 @@ MAX_UPLOAD = 100_000_000
 class UploadBudgetExceeded(ValueError):
     """A complete candidate cannot fit the bounded cumulative object."""
 
-def pack(batches, *, budget=None):
+def pack(batches, *, budget=None, stable=False):
     from .artifact_budget import LEGACY,LONG
     budget=dict(LEGACY if budget is None else budget)
     if budget not in (LEGACY,LONG):raise ValueError('artifact budget')
+    if type(stable)is not bool:raise ValueError('stable framing flag')
     out = io.BytesIO()
     manifest = []
+    def write(archive,name,data):
+        if not stable:return archive.writestr(name,data)
+        info=zipfile.ZipInfo(name,date_time=(1980,1,1,0,0,0));info.compress_type=zipfile.ZIP_DEFLATED
+        info.create_system=3;info.external_attr=0o600<<16
+        return archive.writestr(info,data)
     with zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED) as z:
         for bi, (batch, arrays) in enumerate(batches):
+            if stable and (bi>=32 or len(arrays)>32):raise ValueError('stable batch/rollout budget')
             refs = []
             for ri, turns in enumerate(arrays):
+                if stable and len(turns)>32:raise ValueError('stable turn budget')
                 row = []
                 for ti, tensor in enumerate(turns):
+                    if stable and (not isinstance(tensor,np.ndarray) or tensor.dtype!=np.dtype(np.float32) or tensor.ndim!=2 or any(n<=0 for n in tensor.shape) or tensor.shape[0]>budget['tensor_rows'] or tensor.shape[1]>200000):raise ValueError('stable tensor shape or dtype')
                     name = f'{bi}-{ri}-{ti}.npy'
                     buf = io.BytesIO(); np.save(buf, tensor, allow_pickle=False)
-                    z.writestr(name, buf.getvalue()); row.append(name)
+                    write(z,name,buf.getvalue()); row.append(name)
                 refs.append(row)
             manifest.append(dict(batch=batch, arrays=refs))
-        z.writestr('manifest.json', canonical(manifest))
+        metadata=canonical(manifest)
+        if stable and (len(metadata)>2_000_000 or len(z.infolist())+1>4096):raise ValueError('stable manifest/archive entry budget')
+        write(z,'manifest.json',metadata)
     with zipfile.ZipFile(io.BytesIO(out.getvalue())) as archive:
         if sum(e.file_size for e in archive.infolist())>budget['raw_bytes']:
             raise UploadBudgetExceeded('raw upload exceeds budget')

@@ -126,18 +126,11 @@ def validate_deferred(manifest,receipt,report):
 
 
 def pair_artifact(batch,arrays,manifest):
- """Stable ZIP framing only; original model arrays and batch bytes unchanged."""
- import io,zipfile
+ """One-pass stable ZIP framing; exact historical canonical artifact bytes."""
  from .batches import pack
  from .artifact_budget import for_manifest
- original=pack([(batch,arrays)],budget=for_manifest(manifest));out=io.BytesIO()
- with zipfile.ZipFile(io.BytesIO(original))as source,zipfile.ZipFile(out,'w',compression=zipfile.ZIP_DEFLATED)as target:
-  for old in source.infolist():
-   info=zipfile.ZipInfo(old.filename,date_time=(1980,1,1,0,0,0));info.compress_type=zipfile.ZIP_DEFLATED;info.create_system=3;info.external_attr=0o600<<16
-   target.writestr(info,source.read(old.filename))
- data=out.getvalue()
- if len(data)>for_manifest(manifest)['compressed_bytes']:raise ValueError('stable pair compressed cap')
- return data
+ return pack([(batch,arrays)],budget=for_manifest(manifest),stable=True)
+
 
 class UploadJournal:
  """Append-only acknowledged slot hashes, durable across owned/client restart."""
