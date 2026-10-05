@@ -1,8 +1,9 @@
 """Future opt-in generation ONLY; no live integration or replay/proof changes."""
 import inspect
+import time
 import torch
 
-def sample(model,prompt,*,seed,max_output_tokens,temperature,top_p,eos_token_id=None,mode='kv-last-logits-v1',capture_logits=False):
+def sample(model,prompt,*,seed,max_output_tokens,temperature,top_p,eos_token_id=None,mode='kv-last-logits-v1',capture_logits=False,telemetry=None):
  if model.config.model_type!='qwen2' or not {'past_key_values','use_cache','logits_to_keep'}<=set(inspect.signature(model.forward).parameters):raise ValueError('explicit Qwen2 cache/last-logits API required')
  if mode not in ('legacy','last-logits-v1','kv-last-logits-v1'):raise ValueError('explicit future sampling revision')
  if not prompt or any(type(t) is not int or not 0<=t<model.config.vocab_size for t in prompt):raise ValueError('actual token IDs')
@@ -11,6 +12,7 @@ def sample(model,prompt,*,seed,max_output_tokens,temperature,top_p,eos_token_id=
  device=next(model.parameters()).device;rng=torch.Generator(device=device).manual_seed(seed);output=[];cache=None;logits=[]
  with torch.inference_mode():
   for _ in range(max_output_tokens):
+   started=time.perf_counter()
    cached=mode=='kv-last-logits-v1';ids=[output[-1]] if cached and cache is not None else prompt+output
    kw={'use_cache':cached}
    if mode!='legacy':kw['logits_to_keep']=1
@@ -26,6 +28,7 @@ def sample(model,prompt,*,seed,max_output_tokens,temperature,top_p,eos_token_id=
     sorted_values,indices=probs.sort(descending=True);sorted_values[sorted_values.cumsum(0)-sorted_values>top_p]=0
     probs=torch.zeros_like(probs).scatter(0,indices,sorted_values);probs/=probs.sum()
    token=int(torch.multinomial(probs,1,generator=rng));output.append(token)
+   if telemetry is not None:telemetry(dict(input_tokens=len(ids),cache_reused=kw.get("past_key_values")is not None,forward_and_sampling_seconds=time.perf_counter()-started))
    if eos_token_id is not None and token==eos_token_id:break
  # Cache belongs to this call only and is never passed to proof/logprob replay.
  return output,logits

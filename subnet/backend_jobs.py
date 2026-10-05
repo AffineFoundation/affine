@@ -22,7 +22,7 @@ BACKEND_PROFILE = dict(device='cuda', dtype='bfloat16', attention='eager', sm=[8
     tf32=False, deterministic_algorithms=True, cublas_workspace_config=':4096:8',
     native_toploc_threads=2, torch_threads=2)
 SOURCE_FILES = tuple('subnet/'+n+'.py' for n in
-    ('successor_calibration','training_documents','fast_prefill_audit','continuous_audit_policy','selected_proof_copy','commitment_transport','hourly_policy','audit_exclusion','audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling'))
+    ('owned_cached_evaluation','cached_sampling','successor_calibration','training_documents','fast_prefill_audit','continuous_audit_policy','selected_proof_copy','commitment_transport','hourly_policy','audit_exclusion','audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling'))
 ROLES = {'mine','verify','train','evaluate','upload'}
 HEAD_POLICY='frozen-feature-head-adamw-v1'
 FULL_POLICY='bf16-full-adamw-checkpointed-v1'
@@ -398,6 +398,13 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
         if resolve_source:
             from .replay_training import admitted
             admitted(manifest,job['replay'],authority)
+    owned=job.get('owned_evaluation_policy')
+    if owned is not None:
+        expected={'version':'owned-cached-native-evaluation-v1','trust_scope':'operator-owned-process-native-grader','proof_reverification':False}
+        if (job['role']!='evaluate' or job.get('successor_calibration')is not None or not isinstance(owned,dict)or set(owned)!=set(expected)or any(type(owned[k])is not type(v)or owned[k]!=v for k,v in expected.items())):raise ValueError('explicit owned cached evaluation role/policy')
+        if not {'subnet/owned_cached_evaluation.py','subnet/cached_sampling.py'}.issubset(job['source_files']):raise ValueError('owned evaluator execution source pins')
+        for suite in job.get('heldout',[]):
+            if suite['harness'].get('version')!='text-tools-long-kv-v3':raise ValueError('explicit cached diagnostic harness required')
     if job.get('successor_calibration') is not None and job['role']!='evaluate':raise ValueError('calibration evaluate role only')
     if job['role']=='evaluate' and job.get('successor_calibration') is not None:
         from .successor_calibration import request
@@ -802,6 +809,10 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                         global_step_after=job['persistent_training']['global_step_after'])
                 report['full_model_finetune']=report['training']['full_model_finetune']
                 report['new_checkpoint']=dict(id=file_map(files),files=files,path=str(destination))
+        elif job.get('owned_evaluation_policy') is not None:
+            from .owned_cached_evaluation import evaluate as evaluate_owned
+            from .environments import create_session
+            report['heldout'],report['heldout_failures'],report['owned_cached_evaluation']=evaluate_owned(runtime,manifest,job,create_session=create_session)
         elif job.get('successor_calibration') is not None:
             from .successor_calibration import execute as execute_calibration
             report['successor_calibration']=execute_calibration(runtime,manifest,job['successor_calibration'])
