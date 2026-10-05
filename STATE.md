@@ -1,3 +1,30 @@
+Latest verified update, 2026-10-05 03:21 UTC: E10 has completed its original
+three full-model persistent updates. Its authority-committed 23-shard FP32 state
+is 91,387,491,264 bytes at global step three, and checkpoint 6a2bb631… is durably
+published. Original after-evaluation job eval-after-a5969492 remains live under
+runner34132/ticks212283728 and child34139/ticks212283739. No successor is open;
+the exact learned optimizer parent must be retained at cutover.
+
+Three acceleration tracks now run in parallel: one replacement H200 is executing its original isolated verification control;
+the other control terminated with a GPU error and remains unenrolled; the reader
+agent is integrating overlap of optimizer and checkpoint publication; and the
+source agent is fixing a V8 upload admission bug. The original V8 miner found
+a success/failure pair but exited before upload because the owned upload path
+used the legacy decoder budget instead of the signed larger artifact budget.
+No successful new-transport GPU audit is claimed.
+Four verifiers remain admitted. Qualification is not normal queue enrollment.
+
+The old sampled budget256 effectively audited every submitted pair. Authenticated
+E10 job costs support preparing 18 initial checks plus six reserved escalation
+checks within a 600-second audit window, with zero minimum allocation when the
+identity population exceeds capacity. This is not a live policy change or proof
+of six-worker throughput. The prospective full-hour phase budget, one training
+update, independent evaluation and confirmed-invalid epoch-zero penalty remain
+gated on genuine GPU qualification, measured state transport, source admission,
+and the safe learned-parent boundary. No hourly completion or learning gain is
+claimed. See docs/HOURLY_EPOCHS.md and the private parallel-hourly-acceleration
+preparation for the measured basis. Older snapshots below are historical.
+
 2026-10-05 hourly cutover implementation update: reviewed sampled commitments,
 post-freeze bounded audit cutoffs, confirmed-invalid-only penalties/exclusions,
 stable append-only pair uploads, and compatible reward-reader changes are on

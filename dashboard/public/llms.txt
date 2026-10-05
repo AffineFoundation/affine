@@ -1,5 +1,22 @@
 # Affine — MATH mining, verification and training
 
+Operational update, 2026-10-05: E10's original three persistent updates and full
+optimizer/checkpoint publication are complete. The successor checkpoint is
+6a2bb631eebdc748b577976038a673437309d7953d3440eb8e873e5035671ea7,
+with public persistent optimizer step three. Its original after-training
+evaluation is still pending. This does not establish held-out improvement or a
+one-hour epoch. Four verifier workers are admitted; replacement H200 qualification
+is still incomplete, including one terminal GPU error. They are not serving the
+normal queue.
+
+Prospective hourly changes are described in docs/HOURLY_EPOCHS.md. They are NOT
+the active miner contract: small signed commitments plus separate pair objects,
+18 initial random expensive checks and six reserved escalation checks, exact
+sampler/TOPLOC/native grading on selected pairs, confirmed-invalid epoch-zero
+penalties, and independent evaluation. No unaudited batch earns verified points
+or enters training. Continue using the active signed source and manifest below
+until a new manifest explicitly admits the replacement protocol.
+
 Dashboard: https://affine.io/
 Live mining discovery: https://affine.io/mining.json
 Measurements: https://affine.io/network-data.json

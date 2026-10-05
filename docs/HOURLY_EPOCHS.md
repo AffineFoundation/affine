@@ -29,11 +29,38 @@ bounded to eight. Every shard must match its declared size and SHA256 before
 the authority signs the durable descriptor. This changes transport concurrency,
 not model computation, sampling tolerances, or optimizer lineage.
 
-Current status on 2026-10-05: the original epoch 10 finished its full audit and
-pre-training evaluation, and its original three-update trainer job is running.
-Four verifiers are active. A fifth has passed genuine verification controls;
-the sixth is undergoing qualification. Small-commitment sampled auditing and
-independent evaluation are being integrated and are not the active contract.
+Verified status at 2026-10-05 03:21 UTC: original epoch 10 completed its three
+training updates, committed all 23 FP32 optimizer shards (91,387,491,264 bytes),
+and published checkpoint `6a2bb631…`. Its original after-training evaluation
+remains live; the controller has not opened a successor. Four verifiers are
+admitted. One replacement H200 is running its original isolated qualification control;
+the other terminated with a GPU error and remains unenrolled. Neither is serving
+normal audit jobs. The two earlier reserve machines were deleted by the
+legacy reaper; retained replacement protection is now explicit.
+
+The old audit budget of 256 was larger than the submitted population, so its
+nominally sampled policy effectively checked every pair. Authenticated original
+job measurements give a mean cost of 80.76 verifier-seconds per selected pair
+and a job-cost p90 of 132.16 seconds per pair. These measurements do not establish
+the throughput of six workers running the new source.
+
+The next preparation uses 18 initial checks and six reserved escalation checks,
+with a hard 600-second audit window. Minimum allocation is zero when capacity
+cannot cover every identity; maximum remains three per identity. Escalation
+charges repeated checks as well. Only completed accepted audits earn points or
+feed training. Unallocated or unfinished batches are not fraud. One confirmed
+invalid audit would zero the miner's epoch points under this prospective policy.
+
+The proposed phase budget is 600 seconds mining, 300 freezing, 600 auditing,
+1,200 training/publication, 300 weight handoff, and 600 slack. One configured
+update still covers its admitted training cohort: reducing three updates to one
+does not itself reduce the number of task forwards. The smaller audit cohort,
+parallel state publication/readback, and independent checkpoint evaluation must
+be measured together before asserting a one-hour epoch.
+
+These budgets and penalties are preparations, not the active contract.
+Small-commitment sampled auditing and independent evaluation still require the
+genuine GPU control, source admission, and safe learned-parent cutover.
 The published epoch manifest and llms.txt govern external miners until a
 prospective source and contract are explicitly activated.
 
