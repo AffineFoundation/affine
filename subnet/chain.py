@@ -76,6 +76,18 @@ class ChainAdapter:
         block, registered = int(self.chain.block), {}
         rows = self.chain.query_map(self.bt.storage.Commitments.RevealedCommitments,
                                     [self.netuid], block=block)
+        # Materialize BOTH directions at the identical immutable block. Map
+        # ambiguity is an infrastructure error, never a fabricated empty roster.
+        uids = {}
+        for hotkey, uid in self.chain.query_map(self.bt.storage.SubtensorModule.Uids, [self.netuid], block=block):
+            if not isinstance(hotkey, str) or type(uid) is not int or uid < 0 or hotkey in uids or uid in uids.values():
+                raise ValueError('ambiguous fixed-block UID map')
+            uids[hotkey] = uid
+        keys = {}
+        for uid, hotkey in self.chain.query_map(self.bt.storage.SubtensorModule.Keys, [self.netuid], block=block):
+            if type(uid) is not int or uid < 0 or not isinstance(hotkey, str) or uid in keys or hotkey in keys.values():
+                raise ValueError('ambiguous fixed-block hotkey map')
+            keys[uid] = hotkey
         for hotkey, entries in rows:
             if hotkey == self.owner:
                 continue
@@ -88,8 +100,8 @@ class ChainAdapter:
                     key = self.keypair_type(ss58_address=hotkey, crypto_type=0)
                     if len(signature) != 64 or not key.verify(activation_message(hotkey, self.netuid), signature):
                         continue
-                    uid = self.query('Uids', [self.netuid, hotkey], block)
-                    if uid is None or self.query('Keys', [self.netuid, int(uid)], block) != hotkey:
+                    uid = uids.get(hotkey)
+                    if uid is None or keys.get(uid) != hotkey:
                         continue
                     registered[hotkey] = {'uid': int(uid), 'public_key': bytes(key.public_key).hex(),
                                          'activate_block': int(activation_block), 'snapshot_block': block}
