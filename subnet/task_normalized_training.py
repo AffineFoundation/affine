@@ -1,8 +1,10 @@
-"""Prospective task-normalized preference updates with persistent FP32 state.
+"""Task-normalized preference updates with persistent FP32 state.
 
-Not selected by existing workers. Callers must independently verify every pair,
-authenticate parent state/genesis, and qualify actual GPU forward/backward
-capacity before this implementation receives a production job.
+Callers authenticate parent state/genesis and the manifest-selected admission
+policy. An explicit committed-unaudited-training policy permits eligible pairs
+without inference audit receipts; historical audited policies retain their
+receipt requirements. GPU capacity and numerical contracts remain pinned by
+the original job. Pair validity must not be inferred from legacy helper names.
 """
 import hashlib
 import math
