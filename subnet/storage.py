@@ -49,9 +49,16 @@ class Bucket:
                 k, v = line.split('=', 1)
                 values[k.strip()] = v.strip().strip('\"\'')
         self.name = config['bucket']
-        self.client = boto3.client('s3', endpoint_url=config['endpoint'], region_name='auto',
-                                   aws_access_key_id=values['R2_ACCESS_KEY_ID'],
-                                   aws_secret_access_key=values['R2_SECRET_ACCESS_KEY'])
+        self._client_options = dict(endpoint_url=config['endpoint'], region_name='auto',
+            aws_access_key_id=values['R2_ACCESS_KEY_ID'], aws_secret_access_key=values['R2_SECRET_ACCESS_KEY'])
+        self.client = boto3.client('s3', **self._client_options)
+
+    def commitment_read_client(self):
+        """Hourly small-GET transport; shared client and storage trust unchanged."""
+        from botocore.config import Config
+        bounded = self.client.meta.config.merge(Config(connect_timeout=5, read_timeout=10,
+            retries={'mode': 'standard', 'total_max_attempts': 1}))
+        return boto3.client('s3', **self._client_options, config=bounded)
 
     def put(self, key, data, content_type='application/octet-stream'):
         self.client.put_object(Bucket=self.name, Key=key, Body=data, ContentType=content_type)

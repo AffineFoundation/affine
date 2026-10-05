@@ -58,9 +58,9 @@ def validate_unchecked(manifest,receipt,report):
  need(report==unchecked(manifest,receipt),'exact no-credit unaudited report')
  return True
 
-def _read_small_commitment(bucket,key):
+def _read_small_commitment(bucket,key,client=None):
  """Worker reads only bounded commitment bytes, never state or heavy artifacts."""
- response=bucket.client.get_object(Bucket=bucket.name,Key=key);body=response['Body']
+ response=(bucket.client if client is None else client).get_object(Bucket=bucket.name,Key=key);body=response['Body']
  try:data=body.read(MAX_BYTES+1)
  finally:body.close()
  return dict(data=data,ETag=response['ETag'],LastModified=response['LastModified'])
@@ -70,19 +70,23 @@ def _bounded_small_reads(gateway,epoch,miners,cutoff):
  from concurrent.futures import ThreadPoolExecutor
  from collections import deque
  remaining=iter(miners);inflight=deque()
- with ThreadPoolExecutor(max_workers=4)as pool:
-  def fill():
-   while len(inflight)<4:
-    if cutoff is not None and time.time()>=cutoff:return
-    try:miner=next(remaining)
-    except StopIteration:return
-    key='private/'+epoch+'/commitments/'+miner+'.json'
-    inflight.append((miner,pool.submit(_read_small_commitment,gateway.bucket,key)))
-  fill()
-  while inflight:
-   item=inflight.popleft()
-   yield item
+ client=gateway.bucket.commitment_read_client()if cutoff is not None and hasattr(gateway.bucket,'commitment_read_client')else None
+ try:
+  with ThreadPoolExecutor(max_workers=4)as pool:
+   def fill():
+    while len(inflight)<4:
+     if cutoff is not None and time.time()>=cutoff:return
+     try:miner=next(remaining)
+     except StopIteration:return
+     key='private/'+epoch+'/commitments/'+miner+'.json'
+     inflight.append((miner,pool.submit(_read_small_commitment,gateway.bucket,key,client)))
    fill()
+   while inflight:
+    item=inflight.popleft()
+    yield item
+    fill()
+ finally:
+  if client is not None:client.close()
 
 def freeze(gateway,epoch):
  """Persist each successful small receipt; infrastructure failures retry safely."""
