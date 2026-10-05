@@ -52,6 +52,9 @@ def retire(ack,authority,workspace):
             raise ValueError('same counter different cleanup lineage')
         result=_retire_owned(lifecycle,value,ack,jobid,root)
         lifecycle._save(marker,dict(optimizer_steps=value['trainer_state']['optimizer_steps'],descriptor_sha256=value['trainer_state']['descriptor_sha256']))
+        if manifest.get('optimizer_state_local_cache')is not None:
+            from .optimizer_state_cache import promote
+            result['optimizer_cache_promotion']=promote(ack,authority,workspace)
         return result
 
 def _retire_owned(lifecycle,value,ack,jobid,root):

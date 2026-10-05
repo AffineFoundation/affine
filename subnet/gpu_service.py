@@ -134,6 +134,9 @@ def contract(config,round_number):
         result['independent_state_readback_budget']=stream_budget(config['independent_state_readback_budget'])
         if result.get('persistent_publication_policy',{}).get('state_readback')!='qualified-remote-full':
             raise ValueError('stream budget requires qualified independent state publication')
+    if config.get('optimizer_state_local_cache')is not None:
+        from .optimizer_state_cache import policy
+        result['optimizer_state_local_cache']=policy(config)
     if config.get('optimizer_state_export_policy') is not None:
 
         from .persistent_publication import export_policy

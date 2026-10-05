@@ -59,6 +59,19 @@ class GPUFixedHeldout(unittest.TestCase):
                 contract(dict(source_bundle={},heldout=[],independent_state_readback_budget=budget,persistent_publication_policy=policy),0)
             self.assertNotIn('independent_state_readback_budget',contract(dict(source_bundle={},heldout=[]),0))
 
+    def test_local_optimizer_cache_is_default_off_and_explicitly_bounded(self):
+        from subnet.optimizer_state_cache import VERSION as CACHE_VERSION
+        from subnet.persistent_publication import VERSION as PUBLICATION_VERSION
+        cache=dict(version=CACHE_VERSION,max_checkpoint_bytes=128*1024**3)
+        publication=dict(version=PUBLICATION_VERSION,state_readback='qualified-remote-full',checkpoint_readback_workers=4)
+        with patch('subnet.gpu_service.definitions',return_value=[self.row]):
+            self.assertNotIn('optimizer_state_local_cache',contract(dict(source_bundle={},heldout=[]),0))
+            value=contract(dict(source_bundle={},heldout=[],optimizer_state_local_cache=cache,persistent_publication_policy=publication),0)
+            self.assertEqual(value['optimizer_state_local_cache'],cache)
+            cache['max_checkpoint_bytes']=0
+            self.assertEqual(value['optimizer_state_local_cache']['max_checkpoint_bytes'],128*1024**3)
+            with self.assertRaises(ValueError):contract(dict(source_bundle={},heldout=[],optimizer_state_local_cache=cache,persistent_publication_policy=publication),0)
+
     def report(self):
         return dict(job_id='job',completed_at=77,runtime_versions={'torch':'approved'},source_files={n:'approved' for n in ('subnet/model.py','subnet/gpu_runtime.py','subnet/environments.py','subnet/harness.py','subnet/proofs.py')},heldout=[dict(env_id='env',index=i,seed=100+i*1000,task_hash=str(i)*64,verified=True,reward=0,classification='negative') for i in [2,3]])
     def test_evaluation_uses_actual_hashes_and_worker_completion_time(self):
