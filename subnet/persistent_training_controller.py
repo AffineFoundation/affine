@@ -29,6 +29,30 @@ def commit_latest(controller,binding,pointer):
     save(path,pointer)
 
 
+_cleanup_threads={}
+_cleanup_lock=__import__('threading').Lock()
+
+def retire_completed_cache(controller,job,report,pointer):
+    """Post-ACK housekeeping runs separately and never gates the next epoch."""
+    from .remote_backend import save
+    import threading
+    path=controller.state/'roles'/(job['job_id']+'-trainer-cache-cleanup.json')
+    if path.exists()and json.loads(path.read_text()).get('status')=='complete':return
+    action=getattr(controller.jobs,'retire_training_cache',None)
+    if action is None:return
+    def finish():
+        try:result=action(job,report,pointer)
+        except Exception as exc:result=dict(status='deferred',reason=type(exc).__name__,removed_checkpoints=[])
+        try:save(path,result)
+        except OSError:pass
+    with _cleanup_lock:
+        key=str(path)
+        prior=_cleanup_threads.get(key)
+        if prior is not None and prior.is_alive():return prior
+        thread=threading.Thread(target=finish,name='trainer-cache-cleanup',daemon=False)
+        _cleanup_threads[key]=thread;thread.start();return thread
+
+
 def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
     from .backend_jobs import signed,file_map
     from .remote_backend import save,training_submission_bytes
@@ -109,6 +133,7 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
         output=controller.checkpoint_with_reads(metrics['new_checkpoint'])
         metrics=dict(metrics,new_checkpoint=output)
         controller.bucket.json('public/'+epoch+'/training.json',controller.signed(metrics))
+        retire_completed_cache(controller,job,report,pointer)
         return output,metrics
     capacity=(controller.jobs.training_resume(label(controller,epoch),training_manifest,submissions,steps,None)
               if hasattr(controller.jobs,'training_resume')else None)
@@ -145,4 +170,5 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
         metrics.pop('verifier_receipt_inventory',None)
     if publication_timings is not None:metrics['publication_timings']=publication_timings
     save(cached,metrics);controller.bucket.json('public/'+epoch+'/training.json',controller.signed(metrics))
+    retire_completed_cache(controller,job,remote,pointer)
     return output,metrics

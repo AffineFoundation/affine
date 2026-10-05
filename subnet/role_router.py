@@ -37,6 +37,7 @@ class RoutedJobs:
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True); self.thread.start()
         self.owner_path=self.state/'checkpoint-owners.json'
         self.owners=json.loads(self.owner_path.read_text()) if self.owner_path.exists() else {}
+        self.cache_lock=threading.RLock()
         self.cache_path=self.state/'role-checkpoint-caches.json'
         self.caches=json.loads(self.cache_path.read_text()) if self.cache_path.exists() else {role:dict(endpoint.get('checkpoint_caches',{})) for role,endpoint in endpoints.items() if role!='verify'}
         self.initial_role=config.get('initial_checkpoint_role','mine')
@@ -60,6 +61,20 @@ class RoutedJobs:
 
     def publication_capacity(self,cache):
         return self.roles[self.owners.get(cache,self.initial_role)].publication_capacity(cache)
+
+    def retire_training_cache(self,job,report,pointer):
+        from .backend_jobs import signed
+        from .remote_backend import save
+        manifest=signed(job['manifest'],self.controller.authority.id)
+        result=self.roles['train'].retire_training_cache(job,report,pointer,
+            self.caches.get('train',{}).get(manifest['checkpoint']['id']))
+        with self.cache_lock:
+            removed=set(result.get('removed_checkpoints',[]));train=self.caches.setdefault('train',{})
+            for cp in removed:
+                path=train.pop(cp,None)
+                if path and self.owners.get(path)=='train':self.owners.pop(path,None)
+            if removed:save(self.cache_path,self.caches);save(self.owner_path,self.owners)
+        return result
 
     def training_resume(self,label,manifest,submissions,steps,replay):
         return self.roles['train'].training_resume(label,manifest,submissions,steps,replay)
@@ -127,12 +142,13 @@ class RoutedJobs:
             kwargs=dict(fields)
             if dispatch_only:kwargs['dispatch_only']=True
             report=self.roles[selected].run(label,role,manifest,local_cache,**kwargs)
-            if role!='upload':
-                self.caches.setdefault(selected,{})[manifest['checkpoint']['id']]=local_cache or self.checkpoint_path(selected,manifest['checkpoint']['id'])
-                save(self.cache_path,self.caches)
-            if role=='train':
-                self.owners[report['new_checkpoint']['path']]='train'; save(self.owner_path,self.owners)
-                self.caches.setdefault('train',{})[report['new_checkpoint']['id']]=report['new_checkpoint']['path'];save(self.cache_path,self.caches)
+            with self.cache_lock:
+                if role!='upload':
+                    self.caches.setdefault(selected,{})[manifest['checkpoint']['id']]=local_cache or self.checkpoint_path(selected,manifest['checkpoint']['id'])
+                    save(self.cache_path,self.caches)
+                if role=='train':
+                    self.owners[report['new_checkpoint']['path']]='train'; save(self.owner_path,self.owners)
+                    self.caches.setdefault('train',{})[report['new_checkpoint']['id']]=report['new_checkpoint']['path'];save(self.cache_path,self.caches)
             return report
         if not label.replace('-','').replace('_','').isalnum(): raise ValueError('job label')
         record=self.state/(label+'.json')
