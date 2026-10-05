@@ -151,3 +151,9 @@ class SelectedCopies(unittest.TestCase):
   with patch.object(f.b,'head_object',side_effect=RuntimeError('storage unreachable')),patch('subnet.selected_proof_copy.time.time',return_value=30):
    with self.assertRaises(c.FreezeMetadataIncomplete):c.freeze(f.g,'e')
   self.assertNotIn(f.ids[0].id,f.g.epochs['e']['rejections']);self.assertNotIn('frozen_receipts',f.g.epochs['e'])
+
+ def test_deadline_boundary_uses_same_completion_time_for_status_and_receipt(self):
+  f=self.fixture(1);r=self.freeze(f);artifact=next(iter(r.values()))['artifacts'][0]
+  with patch('subnet.selected_proof_copy.time.time',side_effect=[100,101,680]):
+   result=s.conditional_snapshot(f.b,artifact,680)
+  self.assertEqual(result['finished_at'],680);self.assertEqual(result['status'],'budget_deferred')

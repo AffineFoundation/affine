@@ -104,8 +104,9 @@ def conditional_snapshot(bucket,artifact,until):
             started_at=start,finished_at=time.time(),error_type=type(error).__name__)
     finally:
         if client is not None:client.close()
-    return dict(status='copied'if time.time()<until else'budget_deferred',started_at=start,
-        finished_at=time.time(),conditional_copy_completed=True,full_SHA_verified=False,
+    finish=time.time()
+    return dict(status='copied'if finish<until else'budget_deferred',started_at=start,
+        finished_at=finish,conditional_copy_completed=True,full_SHA_verified=False,
         destination_etag=head['ETag'])
 
 def selected_slots(manifest,receipts):
