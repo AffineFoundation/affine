@@ -9,7 +9,7 @@ ANCHOR_ID=('version','netuid','owner_hotkey','effective_at','compute_epoch_prefi
 
 def apply_source_approvals(c,anchor_document,authority,cutover_document,documents):
  need(isinstance(documents,list)and len(documents)<=16,'bounded source approvals')
- result=copy.deepcopy(c);current=anchor_document;grants={}
+ result=copy.deepcopy(c);current=anchor_document;grants={};prior_ids=set(c['verifier_identities']) if documents else set()
  for document in documents:
   a=signed(document,authority);need(set(a)==FIELDS and a['version']=='live-compute-source-approval-v1','exact source approval schema')
   need(a['original_cutover_sha256']==sha(cutover_document),'original writer authority binding')
@@ -32,12 +32,12 @@ def apply_source_approvals(c,anchor_document,authority,cutover_document,document
   need(set(required)<=set(actual),'required modules in complete runtime inventory')
   need(a['runtime_source_files']==actual,'exact complete runtime source inventory')
   need(a['runtime_versions']==c['runtime_versions'],'unchanged runtime versions')
-  ids=a['verifier_identities'];need(isinstance(ids,list)and len(ids)==4 and len(set(ids))==4 and set(c['verifier_identities'])<=set(ids)and all(isinstance(v,str)and re.fullmatch('[0-9a-f]{64}',v)for v in ids),'same four distinct reviewed verifiers')
+  ids=a['verifier_identities'];need(isinstance(ids,list)and 4<=len(ids)<=6 and len(set(ids))==len(ids) and prior_ids<=set(ids)and all(isinstance(v,str)and re.fullmatch('[0-9a-f]{64}',v)for v in ids),'bounded distinct reviewed verifier workforce must preserve prior identities')
   result.setdefault('approved_sources',{})[digest]=copy.deepcopy(s)
   result.setdefault('approved_source_anchors',{})[digest]=copy.deepcopy(a['anchor_document'])
   for prior in result['approved_source_anchors']:
    epoch_anchor({'source_bundle':{'sha256':prior}},a['anchor_document'],authority,result['approved_source_anchors'])
-  grants[digest]=dict(a,approval_document_sha256=sha(document));current=a['anchor_document']
+  grants[digest]=dict(a,approval_document_sha256=sha(document));current=a['anchor_document'];prior_ids=set(ids)
  result['_source_authorizations']=grants
  return result,current
 

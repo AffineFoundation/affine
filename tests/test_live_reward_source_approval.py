@@ -48,4 +48,34 @@ class ApprovalTests(unittest.TestCase):
   with self.assertRaises(ValueError):apply_source_approvals(self.c,self.anchor,self.auth,self.cutover,[doc,doc])
   p=copy.deepcopy(self.payload);p['source_waiver']=True
   with self.assertRaises(ValueError):self.apply(p)
+ def test_no_approvals_preserves_original_consumer_without_new_roster_requirement(self):
+  c,a=apply_source_approvals({},self.anchor,self.auth,self.cutover,[])
+  self.assertEqual(a,self.anchor);self.assertEqual(c,{'_source_authorizations':{}})
+ def source_chain(self,rosters):
+  documents=[];anchor=self.anchor
+  for ordinal,ids in enumerate(rosters):
+   data={'subnet/__init__.py':b'', 'subnet/cli.py':str(ordinal).encode(),TASK_ASSET:b'{}','subnet/backend_jobs.py':b"SOURCE_FILES=('subnet/backend_jobs.py',)\n"};raw=io.BytesIO()
+   with tarfile.open(fileobj=raw,mode='w')as tar:
+    for n,b in data.items():entry=tarfile.TarInfo(n);entry.size=len(b);tar.addfile(entry,io.BytesIO(b))
+   body=gzip.compress(raw.getvalue(),mtime=0);digest=hashlib.sha256(body).hexdigest();root=Path(self.t.name);archive=root/('source-'+str(ordinal)+'.tar.gz');archive.write_bytes(body);descriptor=root/('descriptor-'+str(ordinal)+'.json');descriptor.write_text(json.dumps(sign({'sha256':digest,'size':len(body)},self.key)))
+   payload=copy.deepcopy(self.payload);new=copy.deepcopy(anchor['payload']);new['approved_compute_sources'].append(digest)
+   payload.update(previous_anchor_sha256=sha(anchor),effective_at=200+ordinal,source=dict(sha256=digest,archive_path=str(archive),descriptor_path=str(descriptor)),runtime_source_files={n:hashlib.sha256(b).hexdigest()for n,b in data.items()if n.endswith('.py')},verifier_identities=ids,anchor_document=sign(new,self.key));documents.append(sign(payload,self.key));anchor=payload['anchor_document']
+  return documents
+ def test_four_to_five_to_six_chain_preserves_each_historical_scope(self):
+  ids=self.ids+[format(5,'064x'),format(6,'064x')];docs=self.source_chain([ids[:4],ids[:5],ids]);before=copy.deepcopy(docs)
+  c,_=apply_source_approvals(self.c,self.anchor,self.auth,self.cutover,docs);self.assertEqual(docs,before)
+  for n,doc in enumerate(docs):
+   p=doc['payload'];m={'source_bundle':{'sha256':p['source']['sha256']},'start':p['effective_at'],'epoch':p['epoch_prefix']+'NEW'};j={'source_files':p['runtime_source_files'],'runtime_versions':p['runtime_versions']}
+   self.assertEqual(source_verifiers(c,m,j),ids[:4+n])
+  self.assertEqual(c['verifier_identities'],self.ids[:2])
+ def test_approval_chain_cannot_remove_or_swap_prior_workers(self):
+  five=self.ids+[format(5,'064x')]
+  for replacement in [self.ids,self.ids+[format(6,'064x')],self.ids[:3]+[format(5,'064x')]]:
+   docs=self.source_chain([five,replacement])
+   with self.assertRaisesRegex(ValueError,'preserve prior identities'):apply_source_approvals(self.c,self.anchor,self.auth,self.cutover,docs)
+ def test_roster_bounds_duplicates_original_omission_and_unsigned_refused(self):
+  for ids in [self.ids[:3],self.ids+[format(i,'064x')for i in (5,6,7)],self.ids+[self.ids[0]],self.ids[1:]+[format(5,'064x')]]:
+   with self.assertRaisesRegex(ValueError,'preserve prior identities'):apply_source_approvals(self.c,self.anchor,self.auth,self.cutover,self.source_chain([ids]))
+  doc=self.source_chain([self.ids])[0]
+  with self.assertRaises(Exception):apply_source_approvals(self.c,self.anchor,self.auth,self.cutover,[{'payload':doc['payload']}])
 if __name__=='__main__':unittest.main()
