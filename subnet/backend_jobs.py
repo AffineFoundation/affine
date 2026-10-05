@@ -22,7 +22,7 @@ BACKEND_PROFILE = dict(device='cuda', dtype='bfloat16', attention='eager', sm=[8
     tf32=False, deterministic_algorithms=True, cublas_workspace_config=':4096:8',
     native_toploc_threads=2, torch_threads=2)
 SOURCE_FILES = tuple('subnet/'+n+'.py' for n in
-    ('selected_proof_copy','commitment_transport','hourly_policy','audit_exclusion','audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling'))
+    ('training_documents','selected_proof_copy','commitment_transport','hourly_policy','audit_exclusion','audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling'))
 ROLES = {'mine','verify','train','evaluate','upload'}
 HEAD_POLICY='frozen-feature-head-adamw-v1'
 FULL_POLICY='bf16-full-adamw-checkpointed-v1'
@@ -137,7 +137,7 @@ def owned_commitment_upload(job,manifest,progress_path=None):
     """Use only the miner's local scoped signing seed; never authority material."""
     from .storage import Identity
     from .batches import unpack,pack
-    from .commitment_transport import make,VERSION,canonical,pair_artifact,UploadJournal
+    from .commitment_transport import make,VERSION,VERSION2,canonical,pair_artifact,UploadJournal
     import stat,requests
     path=Path(job['miner_identity_file'])
     if not path.is_absolute() or path.is_symlink() or not stat.S_ISREG(path.stat().st_mode) or path.stat().st_mode & 0o077:raise ValueError('private local miner identity file')
@@ -159,6 +159,12 @@ def owned_commitment_upload(job,manifest,progress_path=None):
         for slot,(url,(_,artifact))in enumerate(zip(job['capability']['batch_put_urls'],packed)):
             if journal.known(slot,artifact):continue
             put(url,artifact);journal.acknowledge(slot,artifact)
+        if manifest['submission_transport_policy']==VERSION2:
+            from .training_documents import document
+            for slot,(batch,_)in enumerate(packed):
+                body=document(batch,manifest,identity.id,slot)
+                if journal.known('training-'+str(slot),body):continue
+                put(job['capability']['training_put_urls'][slot],body);journal.acknowledge('training-'+str(slot),body)
         commitment=canonical(make(identity,manifest,packed));put(job['capability']['put_url'],commitment)
         return commitment
     def upload(data,timeout):
@@ -340,11 +346,15 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
         r2_url(job['capability']['put_url'],'PUT')
         if job['capability'].get('headers')!={'Content-Type':'application/octet-stream'}:raise ValueError('signed upload headers')
         if manifest.get('submission_transport_policy') is not None:
-            from .commitment_transport import VERSION
-            if manifest['submission_transport_policy']!=VERSION or not isinstance(job.get('miner_identity_file'),str) or not Path(job['miner_identity_file']).is_absolute():raise ValueError('owned commitment miner identity path')
+            from .commitment_transport import VERSION,VERSIONS,VERSION2
+            if manifest['submission_transport_policy']not in VERSIONS or not isinstance(job.get('miner_identity_file'),str) or not Path(job['miner_identity_file']).is_absolute():raise ValueError('owned commitment miner identity path')
             urls=job['capability'].get('batch_put_urls')
             if not isinstance(urls,list) or len(urls)!=manifest['max_batches']:raise ValueError('owned commitment capability slots')
             for url in urls:r2_url(url,'PUT')
+            if manifest['submission_transport_policy']==VERSION2:
+                tokens=job['capability'].get('training_put_urls')
+                if type(tokens)is not list or len(tokens)!=manifest['max_batches']:raise ValueError('owned token document capability slots')
+                for url in tokens:r2_url(url,'PUT')
         if resolve_source and job.get('mining_subset') is not None:mining_definitions(manifest,job)
     elif 'mining_subset' in job:raise ValueError('mining subset only in signed mining jobs')
     if job['role']=='train' and job.get('training_policy',HEAD_POLICY) not in (HEAD_POLICY,FULL_POLICY,FIXED_POLICY,COVERED_POLICY,PERSISTENT_POLICY):raise ValueError('unapproved training objective')
@@ -441,8 +451,8 @@ def audit(data, manifest, runtime, *, commitment_miner=None):
             outcomes=[dict(batch=None,valid=False,reason=str(error),rejection_stage='transport')],
             accepted=[],training_eligibility='fully-audited-only'),[]
     if manifest.get('submission_transport_policy'):
-        from .commitment_transport import VERSION
-        if manifest['submission_transport_policy']!=VERSION:raise ValueError('unsupported commitment policy')
+        from .commitment_transport import VERSIONS
+        if manifest['submission_transport_policy']not in VERSIONS:raise ValueError('unsupported commitment policy')
         digest=hashlib.sha256(data).hexdigest()
         root=manifest.get('audit_frozen_receipts',{}).get(commitment_miner,{})
         claims=[b for b in root.get('artifacts',[])if b['sha256']==digest]

@@ -83,6 +83,9 @@ class Miner:
             if manifest.get('submission_transport_policy'):
                 if len(self.cap.get('batch_put_urls',[]))!=manifest['max_batches']:raise ValueError('bound per-batch upload slots')
                 for url in self.cap['batch_put_urls']:direct_r2_url(url)
+                if manifest['submission_transport_policy']=='small-commitment-pairs-v2':
+                    if len(self.cap.get('training_put_urls',[]))!=manifest['max_batches']:raise ValueError('bound token upload slots')
+                    for url in self.cap['training_put_urls']:direct_r2_url(url)
         entries(manifest)
         self.checkpoint=checkpoint;self.runtime=None;self.runtimes={}
         self.state_path = Path(state_path) if state_path else None
@@ -195,8 +198,8 @@ class Miner:
         if time.time()>=self.manifest.get('deadline',float('inf')):
             raise EpochClosed('signed epoch upload window closed')
         if self.manifest.get('submission_transport_policy'):
-            from .commitment_transport import VERSION,make,canonical,UploadJournal,write_prepared_state
-            if self.manifest['submission_transport_policy']!=VERSION:raise ValueError('unsupported commitment upload')
+            from .commitment_transport import VERSION2,VERSIONS,make,canonical,UploadJournal,write_prepared_state
+            if self.manifest['submission_transport_policy']not in VERSIONS:raise ValueError('unsupported commitment upload')
             packed=self._prepared()
             if self.state_path:write_prepared_state(self.state_path,self.manifest,packed)
             journal=getattr(self,'_commitment_upload_journal',None)
@@ -207,6 +210,14 @@ class Miner:
                 remaining=min(120,self.manifest['deadline']-time.time()-1)
                 if remaining<=0:raise EpochClosed('batch upload deadline')
                 response=requests.put(self.cap['batch_put_urls'][slot],data=body,headers=self.cap.get('headers',{}),timeout=remaining);response.raise_for_status();journal.acknowledge(slot,body)
+            if self.manifest['submission_transport_policy']==VERSION2:
+                from .training_documents import document
+                for slot,(batch,_)in enumerate(packed):
+                    body=document(batch,self.manifest,self.identity.id,slot)
+                    if journal.known('training-'+str(slot),body):continue
+                    remaining=min(120,self.manifest['deadline']-time.time()-1)
+                    if remaining<=0:raise EpochClosed('token document upload deadline')
+                    response=requests.put(self.cap['training_put_urls'][slot],data=body,headers=self.cap.get('headers',{}),timeout=remaining,allow_redirects=False);response.raise_for_status();journal.acknowledge('training-'+str(slot),body)
             if time.time()>=self.manifest['deadline']:raise EpochClosed('commitment upload deadline')
             data=canonical(make(self.identity,self.manifest,packed))
         else:
