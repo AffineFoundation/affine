@@ -123,6 +123,10 @@ def contract(config,round_number):
     if config.get('persistent_publication_policy') is not None:
         from .persistent_publication import validate_policy
         result['persistent_publication_policy']=validate_policy(config['persistent_publication_policy'])
+    if config.get('optimizer_state_export_policy') is not None:
+        from .persistent_publication import export_policy
+        export_policy(config)
+        result['optimizer_state_export_policy']=config['optimizer_state_export_policy']
     if config.get('optimizer_state_transport') is not None:
         from .persistent_training_state import transport_concurrency
         transport_concurrency(config)

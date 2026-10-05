@@ -105,13 +105,15 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
         if data!=canonical(document):raise ValueError('durable staged descriptor readback')
         path.unlink()
         return dict(descriptor_sha256=sha(document),durable_readback_verified=True,authority_committed=False)
+    from .persistent_publication import export_policy
+    readback_mode=export_policy(manifest)
     export_started=time.monotonic()
     descriptor,evidence=export_state(optimizer,epoch=manifest['epoch'],inference_checkpoint=checkpoint,
         workspace=out,publish_shard=publish,readback_shard=readback,
-        commit_descriptor=stage_descriptor,resource_admission=admission,concurrency=concurrency)
+        commit_descriptor=stage_descriptor,resource_admission=admission,concurrency=concurrency,readback_mode=readback_mode)
     diagnostics['transport_phase_seconds']=dict(parent_state_restore=restore_seconds,
         training_and_checkpoint=training_and_checkpoint_seconds,
-        state_export_and_trainer_full_readback=time.monotonic()-export_started,
+        **({'state_export_upload_only':time.monotonic()-export_started}if readback_mode!='trainer-full'else {'state_export_and_trainer_full_readback':time.monotonic()-export_started}),
         state_transfer_concurrency=concurrency,parent_restore_performed=parent is not None)
     diagnostics.update(state_staged=True,authority_commit_required=True,complete=False)
     state=dict(namespace=transport['output_namespace'],descriptor_sha256=sha(descriptor),descriptor=descriptor,
