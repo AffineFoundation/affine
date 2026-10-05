@@ -2692,3 +2692,26 @@ completed training update, reward publication or chain transaction is claimed
 by this record. The signed contract uses calibrated CDF checks plus exact
 cached-reference adjudication for ambiguity/support mismatches; this is
 empirical/probabilistic assurance, not universal historical execution proof.
+
+
+## 2026-10-05 actual audits and operator parallel capture
+
+E14 has closed mining and captured its submissions. Actual completed verifier
+reports passed authenticated source/runtime/profile/TOPLOC/sampler/grader
+checks; at least the initial fourteen valid completions were independently
+observed. At this update SQLite shows21 complete/6 leased continuous jobs;
+queue completion count alone is not a reward-admission claim. Trainer phase
+is `train`, parent optimizer counter remains four, and actual GPU computation
+has begun. Step five, durable publication and held-out improvement remain
+unvalidated. No optimizer reset or new chain transaction is claimed.
+
+ROOT deployed auditor-only four-thread proof capture and an explicitly signed
+standard-backend execution-evidence policy, effective at the next17:00 UTC
+hour cutoff. Original jobs, draw seeds, artifact checks and expiry timestamps
+remain unchanged. The standard scientific backend reports resource enforcement
+false by implementation; admission now binds that truthful flag to exact source
+6a85/module inventory/profile/runtime rather than inventing a true OS-enforcement
+claim. New snapshots record the execution policy digest and explicitly say
+historical execution is not proven. Old snapshot interpretation is preserved.
+Worker science source remains immutable6a85; only reviewed operator modules
+changed. Eight H200 verification workers remain independent of training.

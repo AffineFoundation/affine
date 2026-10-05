@@ -1,17 +1,16 @@
 # Affine — MATH mining, verification and training
 
-Deployment update, 2026-10-05: the repaired controller has published E14's
-first signed manifest and mining is open under the new decoupled contract.
-Epoch nonpayable-live-reward-math-v1--1791214814-14 uses checkpoint
-05de656e9c215a139f4329ffc9954e7c83955872929a17c35fd1a9bd9eae0923
-and persistent optimizer step four, with mining deadline 1791217569 (UTC Unix
-seconds). The owned miner job has started; produced batches, a completed
-training update and reward publication have not yet been established by this
-opening record. The stale persistent-training source admission was corrected
-prospectively while preserving the original checkpoint, optimizer and genesis
-history. Auditor and evaluator remain independent. Consult mining.json and the
-signed epoch manifest for actual availability. This remains a nonpayable pilot;
-opening is not evidence of chain weight submission or held-out convergence.
+Deployment update, 2026-10-05: E14's signed mining window has closed and
+submissions have been captured. The independent continuous auditor is running;
+actual completed reports have passed authentication and valid-sample checks.
+The trainer has progressed into GPU computation from parent optimizer step four.
+Step five, its durable checkpoint/state publication and held-out gain have not
+yet been validated. Epoch nonpayable-live-reward-math-v1--1791214814-14 uses
+checkpoint 05de656e9c215a139f4329ffc9954e7c83955872929a17c35fd1a9bd9eae0923.
+The corrected opening preserved original checkpoint, optimizer and genesis
+history. Consult mining.json and signed reports for current phase; do not upload
+against a closed window. This remains a nonpayable pilot with no new chain
+weight transaction claimed.
 
 The configured immutable source is
 6a85c31011b7a1ca23d745e9868d7b01dd0e92e9fe74c997e8222482f76393ca.
@@ -45,11 +44,26 @@ by authenticated audit evidence. It uses eight recent cohorts, decay 0.8 and
 Beta(1,1), with confirmed-invalid multiplier 0.1, zero epoch after two confirmed
 invalids, and four-epoch blacklist after three. Infrastructure failures and
 numerical unknowns are not fraud. Eight inflight jobs and eight selections per
-10-second tick bound audit load; hourly immutable snapshots use original
+10-second tick bound audit load. Four parallel storage-capture threads preserve
+every committed draw, conditional object copy and complete SHA check; queue and
+authority journals remain serialized. Fresh job TTL starts after capture, while
+original job envelopes and expiries are never extended. Hourly immutable snapshots use original
 completion times and evidence cutoffs. Extra rollouts on one task earn no extra
 points; same-epoch task duplicates earn zero. The signed contracts are the
 source of truth for eligibility and penalties. Lossless DEFLATE level one is
 configured for new proof artifacts; historical artifact bytes are unchanged.
+
+The independently signed operator execution-evidence policy becomes effective
+at the next 17:00 UTC hourly cutoff. For the exact approved standard backend,
+source inventory, FP32 profile and runtime pins, the immutable verifier report
+must truthfully retain execution_resources_enforced=false: this backend does
+not implement the separate long-context OS resource enforcement. False does
+not mean failed model verification. No report is rewritten to true, and unknown
+sources/profiles or forged flags are rejected. Other backend contracts keep
+their required true enforcement flag. Original report signatures, model/source,
+checkpoint, TOPLOC, sampler and grading checks remain required. The new signed
+snapshots explicitly disclaim OS enforcement and proof of historical execution;
+earlier snapshots and historical signed contracts are unchanged.
 
 Qualification evidence: eight distinct H200s passed sixteen honest cached
 reference controls and rejected sixteen freshly fingerprinted forged controls.
