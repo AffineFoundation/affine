@@ -1,35 +1,41 @@
 # Affine — MATH mining, verification and training
 
-Operational update, 2026-10-05: E10's original three persistent updates and full
-optimizer/checkpoint publication are complete. The successor checkpoint is
-6a2bb631eebdc748b577976038a673437309d7953d3440eb8e873e5035671ea7,
-with public persistent optimizer step three. Its original matched 32-task evaluation completed at 21/32 correct, versus
-19/32 before training. This small diagnostic is not evidence of a sustained
-held-out improvement trend or a one-hour epoch. Four verifier workers are admitted; replacement H200 qualification
-is still incomplete, including one terminal GPU error. They are not serving the
-normal queue.
+Operational update, 2026-10-05: E11 opened at 05:37:24 UTC as
+nonpayable-live-reward-math-v1--1791178644-11 using approved source
+5bcb01b6ca4187e6dce785c67256688faa950058c39dc7db70ce5b24e03e016f.
+It preserves E10's learned checkpoint
+6a2bb631eebdc748b577976038a673437309d7953d3440eb8e873e5035671ea7
+and persistent optimizer step three; no optimizer reset is authorized.
+The original E10 matched 32-task diagnostic changed from 19/32 to 21/32.
+That small measurement is not sustained convergence or a one-hour epoch.
+Check mining.json and the signed manifest for current phase and availability.
 
-Prospective hourly changes are described in docs/HOURLY_EPOCHS.md. They are NOT
-the active miner contract: small signed commitments plus separate pair objects,
-12 initial random expensive checks and four reserved escalation checks with
-the four qualified workers (18 plus six only after six workers qualify), exact
-sampler/TOPLOC/native grading on selected pairs, confirmed-invalid epoch-zero
-penalties, and independent evaluation. No unaudited batch earns verified points
-or enters training. Continue using the active signed source and manifest below
-until a new manifest explicitly admits the replacement protocol.
+E11 activates small signed commitments plus separate immutable pair objects,
+600 seconds for mining, 12 initial random expensive audits plus four reserved
+escalation audits, and four qualified verifier workers. Full exact sampler,
+TOPLOC and native grading remain mandatory for selected pairs. Only accepted,
+fully audited pairs earn points or train. One confirmed invalid batch zeros
+that miner's epoch score; infrastructure failures and unselected submissions
+are not fraud. Audit budgets and deadlines do not guarantee hourly completion.
+Details: https://github.com/AffineFoundation/affine/blob/main/docs/HOURLY_EPOCHS.md
 
-Prospective publication support now overlaps checkpoint publication with a
-qualified independent CPU reader of the complete persistent optimizer state.
-An actual control read and hash-checked all 23 original E10 state objects
-(91,387,491,264 bytes) in 278 seconds. This measures readback only, not a full
-export/restore or a completed hourly epoch. Parallel transport, reader recovery,
-and the new contract still require qualification before live activation.
-Details: https://github.com/AffineFoundation/affine/blob/main/docs/PARALLEL_PERSISTENT_PUBLICATION.md
+The trainer uses authenticated compact audit inputs without repeating model
+verification. E11 requests one actual persistent update and four optimizer-state
+transport streams. upload-only-independent-full-v1 removes the trainer's
+redundant full shard download. A qualified reader on a separate physical machine
+must fully download and SHA-check every state shard. Checkpoint byte staging
+can overlap that readback, but both authority publications and reward readiness
+wait for validated original receipts and successful terminal evidence.
+The independent evaluator observes committed checkpoints outside the epoch's
+training critical path. E11 has not yet completed training or publication.
+Details: https://github.com/AffineFoundation/affine/blob/main/docs/UPLOAD_ONLY_INDEPENDENT_STATE_READBACK.md
 
-The prospective durable-training-before-reward-v1 policy holds chain eligibility
-until the controller publishes a signed readiness record bound to the original
-training job, audited scores, advanced optimizer lineage and durable checkpoint.
-It does not change historical rewards and does not establish hourly completion.
+The active durable-training-before-reward-v1 policy holds chain eligibility
+until signed readiness binds audited scores, the original training job,
+advanced persistent lineage and durable checkpoint/state publication. The GPU
+compute manifest remains nonpayable by design; the separately authorized single
+reward writer handles eligible live rewards. A successful writer invocation
+alone is not an epoch reward or chain-inclusion receipt.
 Details: https://github.com/AffineFoundation/affine/blob/main/docs/DURABLE_REWARD_PUBLICATION.md
 
 Dashboard: https://affine.io/
@@ -42,7 +48,7 @@ Signed payout eligibility policy: https://affine.io/reward-policy.json
 
 Cutover state: sampling enforcement began with epoch nonpayable-live-reward-math-v1--1791128338-9. The current native-grader, compact-input and persistent-optimizer contract is active from epoch nonpayable-live-reward-math-v1--1791154261-10. Check mining.json and the signed manifest for current upload availability.
 
-The current immutable source bundle is SHA256 7630e0d25f388fe480341614c861fa5be1650f110b49e343dc9134c05e492ab0, admitted on all seven role machines. It preserves the forced-sampler computation and adds pinned native grading, authenticated-verifier-compact-inputs-v2 and persistent FP32 training. Historical E9 inference used e415623e5a8017133ff7bef3925b724441862f34b6d034ed0deb6b731a26e657; its receipt trainer used 94ff74eb335e24d4702da2ec10cc0aee068076b003e6c0b13b0e81f5090bc79c. Every epoch's signed manifest and source are authoritative. GitHub main may contain prospective optimizations; do not substitute a checkout for the signed bundle. mining.json closes uploads during audits, training, evaluation or controller absence.
+The current immutable source bundle is SHA256 5bcb01b6ca4187e6dce785c67256688faa950058c39dc7db70ce5b24e03e016f, admitted on all seven role machines. E10 used historical source7630e0d25f388fe480341614c861fa5be1650f110b49e343dc9134c05e492ab0; those jobs are unchanged. It preserves the forced-sampler computation and adds pinned native grading, authenticated-verifier-compact-inputs-v2 and persistent FP32 training. Historical E9 inference used e415623e5a8017133ff7bef3925b724441862f34b6d034ed0deb6b731a26e657; its receipt trainer used 94ff74eb335e24d4702da2ec10cc0aee068076b003e6c0b13b0e81f5090bc79c. Every epoch's signed manifest and source are authoritative. GitHub main may contain prospective optimizations; do not substitute a checkout for the signed bundle. mining.json closes uploads during audits, training, evaluation or controller absence.
 
 The new forced-inverse-cdf-replay-v1 contract binds epoch randomness, checkpoint, environment/task, bounded attempt number, turn and token position. Miner identity does not change the draws. The signed attempt budget is 128: attempt numbers 0 through 127. Miners can search these attempts for one success and one failure, but cannot select an arbitrary seed, substitute answers, change temperature/top-p or change the sampler. The approved v1 harness is text-tools-long-v2: uncached eager autoregressive computation, at most 1,024 output tokens per turn, temperature 0.8 and top-p 1. The signed manifest and source take precedence over this guide.
 
@@ -118,22 +124,21 @@ credentials. Miners need no permanent bucket credentials.
 
 The current signed quota is three batches per UID per epoch, with artifact-size and rollout limits enforced independently. This is a conservative configurable pilot cap, not a protocol maximum. A batch covers one authorized mining task index on one epoch/checkpoint and includes complete input/output token contexts, full conditional log probabilities, TOPLOC fingerprints, native observations/outcomes, immutable task/model/source identities, and, for new-contract rollouts, the sampler receipt. Extra rollouts on the same task add no points. Grader errors and unsuccessful searches are not valid negative samples.
 
-Uploads are cumulative replacements of one private epoch object, using an encrypted per-identity presigned capability. Replacements reuse the same three slots. Only the final completed in-window upload is frozen. Upload deadlines are not extended to rescue a worker. Frozen artifacts and authenticated audit history are published for inspection; miners do not need permanent R2 credentials.
+The active small-commitment-pairs-v1 transport uploads each proof pair to one private slot, then PUTs the signed cumulative commitment last using encrypted per-identity presigned capabilities. Already acknowledged pairs are reused without recompression. Replacements reuse the same three slots. Only completed in-window objects named by the final valid commitment are frozen. Legacy single-object transport is used only if an older signed manifest explicitly requests it. Upload deadlines are not extended to rescue a worker. Frozen artifacts and authenticated audit history are published for inspection; miners do not need permanent R2 credentials.
 
 Cheap bounded structure and quota checks apply to every submission. Expensive audits use the signed random allocation, minimum/maximum per identity, total budget and escalation rules. Reports bind the frozen batch hash, signed original request, approved source, exact checkpoint and winning job lease. Infrastructure faults trigger retries rather than fraud penalties. Only fully audited valid pairs earn points or enter training; observed cross-miner duplicate task keys receive zero for all competing miners. Unchecked duplicate claims remain unresolved and that limitation is recorded.
 
-Adjusted points = unique fully verified task points * 0.5 ** invalid_batches.
-Structural failures earn no batch points but do not multiply the remaining points. Epoch-zero thresholds are disabled in the current policy. Penalties reduce rewards; they do not take wallet funds. Exact adjusted points are summed over finalized epochs in the completed UTC hour and normalized across currently eligible owners. The writer waits for pending audits/final scores before closing their hour and does not treat unresolved work as zero. Every policy change applies prospectively through a signed manifest.
+The active bounded-random-v1 policy sets invalid_batch_multiplier=0 and zero_epoch_after=1: one confirmed invalid audited batch zeros the miner's epoch score. With no confirmed invalids, its points are its distinct fully verified accepted task indices. Structural failures earn no batch points but do not multiply remaining points (penalize_structural=false). Unselected, deferred and infrastructure-failed batches earn no verified points and are not invalid samples. Historical manifests retain their original penalty rules. Penalties reduce rewards; they do not take wallet funds. Exact adjusted points are summed over finalized epochs in the completed UTC hour and normalized across currently eligible owners. The writer waits for pending audits/final scores before closing their hour and does not treat unresolved work as zero. Every policy change applies prospectively through a signed manifest.
 
 ## Independent roles and durable history
 
-Arbos.life is the operator host running the validator/controller, authenticated audit queue, single chain writer, discovery monitor and dashboard. The five original Lium H200 role machines provide one test miner, two independent verifiers, one trainer and one evaluator. Four additional verifier machines have been rented: one H200 and three H100s, adding $10.10/hour. The additional H200 passed three known-good original-input controls and is enrolled as the third verifier. The freed original trainer H200 also passed all three original-E9 controls and is now running as the fourth verifier, with a cumulative signed epoch-scoped workforce authorization. Four workers are admitted; no new machine was rented for the fourth worker. Two H100s passed short prospective full-forward CDF controls but remain ineligible for the current E9 sampling contract. Legacy GPU qualification remains incomplete; six active audit workers are not claimed. Original scientific contracts and numerical tolerances remain unchanged. Shared R2 stores signed manifests, frozen submissions, reports, scores, checkpoints and history. This dashboard is at affine.io; the Arbos website and DNS are unchanged.
+Arbos.life is the operator host running the validator/controller, authenticated audit queue, single chain writer, discovery monitor and dashboard. The active GPU roles are one owned test miner, four independent verifiers, one trainer and one evaluator on seven existing Lium role endpoints. A qualified optimizer reader runs on a separate retained physical host and does not require GPU numerical qualification. Only the four approved verifier identities may serve E11; unqualified hardware and deleted or retired workers are not silently admitted. Shared R2 stores signed manifests, frozen submissions, reports, scores, checkpoints and history. This dashboard is at affine.io; the Arbos website and DNS are unchanged.
 
-Verifier nodes lease jobs and publish authenticated results. Four verifier workers run source763 in parallel; they retain their existing identities and queue history. E9 completed 183 distinct gradient pairs over three updates, produced CP28, and passed full R2 publication readback. Its historical 20/32 to 19/32 evaluation remains visible. In E10, the coordinator derives canonical accepted batch documents only from original COMPLETE jobs and authenticated worker report requests. The trainer authenticates the nested audit receipts and exact canonical tokens/outcomes, without repeating inference, TOPLOC, sampler or environment verification. Original proof ZIPs remain durable in R2. Reports distinguish training admissions from audits and explicitly record trainer_verification_performed=false. Authenticated audit points and configured penalties determine normalized proposed rewards; new-source authorization preserves historical E9 signatures.
+Verifier nodes lease jobs and publish authenticated results. Four verifier workers run approved E11 source5bcb01b6 in parallel; they retain their existing identities and queue history. E9 completed 183 distinct gradient pairs over three updates, produced CP28, and passed full R2 publication readback. Its historical 20/32 to 19/32 evaluation remains visible. In E10, the coordinator derives canonical accepted batch documents only from original COMPLETE jobs and authenticated worker report requests. The trainer authenticates the nested audit receipts and exact canonical tokens/outcomes, without repeating inference, TOPLOC, sampler or environment verification. Original proof ZIPs remain durable in R2. Reports distinguish training admissions from audits and explicitly record trainer_verification_performed=false. Authenticated audit points and configured penalties determine normalized proposed rewards; new-source authorization preserves historical E9 signatures.
 
-Historical E9 used an explicit signed training amendment binding its accepted receipts to the original three-update covered-v3 objective. It is complete and is not rewritten as a persistent epoch. Current E10 uses source763 consistently across miner, verifier, trainer, evaluator and coordinator, with a separate signed additive reward-source authorization. This preserves old signed cutover documents and authorizes the four existing verifier identities only for the new source.
+Historical E9 used an explicit signed training amendment binding its accepted receipts to the original three-update covered-v3 objective. It is complete and is not rewritten as a persistent epoch. Historical E10 used source763 consistently across miner, verifier, trainer, evaluator and coordinator, with a separate signed additive reward-source authorization. This preserves old signed cutover documents and authorizes the four existing verifier identities only for the new source.
 
-After admission, the trainer accumulates accepted pairs over three configured full-model updates against the fixed input-checkpoint reference and publishes one immutable successor checkpoint plus sharded FP32 optimizer state. The next epoch waits for verification, training, matched held-out evaluation and durable publication. Persistent-v4 requires the authority-committed latest parent and monotonically increasing optimizer counters, even if a small update leaves the BF16 inference hash unchanged. Missing or corrupted state cannot silently reset the optimizer. Mining can open while completed-download retention runs; actual training must pass its current RAM/disk/GPU admission. A configured step count is not a completed update or learning-gain claim.
+After admission, E11 configures one full-model update over accepted audited pairs against the fixed input-checkpoint reference and publishes one immutable successor checkpoint plus sharded FP32 optimizer state. The next epoch waits for verification, actual training and durable publication. Matched held-out evaluation runs independently on its dedicated machine; it cannot supply training evidence. Persistent-v4 requires the authority-committed latest parent and monotonically increasing optimizer counters, even if a small update leaves the BF16 inference hash unchanged. Missing or corrupted state cannot silently reset the optimizer. Mining can open while completed-download retention runs; actual training must pass its current RAM/disk/GPU admission. A configured step count is not a completed update or learning-gain claim.
 
 Automatic completed-download retention keeps R2 and original reports intact and removes only authenticated, completed local submission replicas after complete archive hash/size readback. It does not claim automatic retirement of every old model cache. Extra machines retained for independent qualification are outside the five live role nodes; this guide does not expand hardware approval to them.
 
@@ -166,11 +171,11 @@ The signed environment binds approved Python 3.12.3 interpreter/stdlib profiles,
 GitHub main adds a private, bounded epoch-and-identity progress sidecar for the
 next approved source. It records task/attempt timing, outcome counts and completed
 batch counts, without response text, tokens, arrays, proofs, keys or upload URLs.
-Observation write failures do not change mining. Source763 does not contain this
-telemetry; miners must keep using the signed source. Progress counters never
+Observation write failures do not change mining. E11 source includes bounded
+phase telemetry; miners must keep using the signed source. Progress counters never
 replace an uploaded artifact, authenticated audit or reward evidence.
 
-Prospective owned-miner implementation (requires freshly approved source):
+E11 approved owned-miner implementation:
 bounded-round-robin-v1 searches at most eight active tasks, two attempts per
 sweep, preserving original per-task seeds and signed attempt limits. Canonical
 pair ZIPs are prepared in one pass with byte-identical framing; already
@@ -179,10 +184,10 @@ cumulative ZIP raw/compressed sizes must fit the existing signed cumulative
 artifact limits. The commitment remains signed and PUT last. No proof, sampler
 or scoring rule changes. Safe phase telemetry contains counts/timings only.
 See docs/BOUNDED_MINER_SEARCH_AND_ONE_PASS_UPLOAD.md on GitHub. Historical sealed
-sources and their outcomes are unchanged; live activation requires a new
-qualified source and genuine in-window upload and audit.
+sources and their outcomes are unchanged. E11 generation and upload are observed;
+its post-freeze audit and training outcomes must be verified separately.
 
-Prospective public Miner parity: small-commitment pairs are compressed once and
+E11 public Miner transport: small-commitment pairs are compressed once and
 cached immutably; legacy cumulative ZIP state is migrated once. The existing
 local state filename becomes a private prepared-miner-pairs-v1 JSON index with
 adjacent <state-name>.pairs/ SHA-addressed artifacts. Restart verifies full
@@ -190,8 +195,8 @@ artifact hashes and original epoch/checkpoint/source/sampling-contract binding,
 then reuses exact bytes without recompression. Existing acknowledgements skip
 old slot PUTs; signed commitment publication remains last. Legacy transport is
 unchanged. Local state contains epoch rollouts; epoch publication rules are unchanged.
-This is prospective code, not evidence that a new
-source or live contract has been activated.
+This transport is admitted in the signed E11 source. Upload acknowledgments
+do not establish an accepted audit or completed training update.
 
 ## Prospective optimizer transfer acceleration
 
@@ -207,12 +212,12 @@ The production-sized four-stream CPU control published and read back all
 91,387,491,264 bytes in 1,209 seconds, restored them in 488 seconds, and passed
 exact restored-buffer comparisons. This isolated zero-gradient control is
 transport evidence, not a trained production epoch or convergence result.
-Eight-stream full-size throughput and peak memory are not yet qualified.
+An isolated eight-stream CPU control completed all 23 exact shard comparisons and restored every FP32 buffer. Export plus full readback took 819 seconds and restore took 444 seconds; peak process memory was 138.316 GB. It was not model training. Eight streams remain prospective for the production trainer and require its own resource admission; E11 uses four.
 Resource reservations alone do not prove peak-memory fit. Miners must follow
 the approved source and signed epoch manifest; GitHub preparation does not
 activate a new live contract.
 
-Prospective freeze optimization: at most four bounded commitment-document GETs
+E11 freeze optimization: at most four bounded commitment-document GETs
 run concurrently. Each document remains capped at 65,536 bytes; heavy rollout
 ZIPs are not prefetched. Snapshot journals, conditional copies and final
 receipt publication remain serialized. The original signature, upload-window,
@@ -226,7 +231,7 @@ Timeouts preserve completed snapshots and remain infrastructure failures, not
 fraud. The cutoff stops new reads; it is not a guarantee that every network
 operation has stopped at that exact instant.
 
-Prospective upload-only-independent-full-v1 removes the trainer's redundant
+The active E11 upload-only-independent-full-v1 policy removes the trainer's redundant
 full optimizer-shard GET. Trainer receipts explicitly report local SHA checks
 and completed uploads, not verified durable readback. This signed policy is
 valid only with a qualified reader on a different physical machine performing
@@ -235,4 +240,11 @@ readback; checkpoint and optimizer authority publication wait for its validated
 original request, signed receipt and successful terminal result. Rewards still
 wait for durable training publication. Default historical export behavior is
 unchanged. See docs/UPLOAD_ONLY_INDEPENDENT_STATE_READBACK.md on GitHub; this
-preparation is not a live activation or a measured one-hour epoch.
+policy is live in E11, but a completed one-hour epoch is not yet demonstrated.
+
+Prospective registration optimization on GitHub main: fixed-block commitment,
+UID and reverse-hotkey maps returned the same 246 activated identities in
+16.5 seconds versus 101.9 seconds for serial lookups. Signature checks and
+snapshot semantics are unchanged. E11's sealed source does not contain this
+optimization; adoption requires a future signed source and epoch boundary.
+See docs/BATCHED_FIXED_BLOCK_REGISTRATION_SNAPSHOT.md.
