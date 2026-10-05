@@ -1,6 +1,7 @@
 """Opt-in single-prefill CDF verification with bounded calibrated ambiguity.
 
-A near-boundary result is UNKNOWN, never a fabricated verification success.
+A near-boundary result stays UNKNOWN unless opt-in v3 exact cached replay
+adjudicates it. Unavailable replay never fabricates verification success.
 Calibration is an executed-control artifact admitted by the signed opening.
 """
 import hashlib,json,math
@@ -73,9 +74,13 @@ def verify_sampling(runtime,rollout,turn_index,prompt,output,logprobs):
  if any(token==stop for token in output[:-1])or len(output)<config['max_output_tokens']and output[-1]!=stop:raise InvalidSample('forced generation stop condition')
  draws=[uniform(context,runtime.spec.id,rollout['task_hash'],rollout['index'],rollout['seed'],turn_index,i)for i in range(len(output))]
  try:return verify_intervals(logprobs,output,draws,config['temperature'],config['top_p'],p['cdf_abs_error'])
- except SupportMismatch:
+ except (SupportMismatch,NumericalAmbiguity) as uncertainty:
   if context['contract']['version']!=SUPPORT_VERSION:raise
-  return verify_cached_reference(runtime,prompt,output,rollout['seed'],turn_index,rollout['index'],rollout['task_hash'])
+  try:return verify_cached_reference(runtime,prompt,output,rollout['seed'],turn_index,rollout['index'],rollout['task_hash'])
+  except InvalidSample:raise
+  except Exception as exc:
+   if isinstance(uncertainty,NumericalAmbiguity):raise NumericalAmbiguity('cached reference unavailable for ambiguous interval')from exc
+   raise
 
 
 def verify_cached_reference(runtime,prompt,output,attempt,turn,index,task_hash):

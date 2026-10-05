@@ -43,6 +43,22 @@ class Controls(unittest.TestCase):
   if forged[0]==output[0]:forged[0]=(forged[0]+1)%6
   for position,token in enumerate(forged):probs[position].fill_(-30.);probs[position,(token+1)%7]=0.
   with self.assertRaises(InvalidSample):fast.verify_sampling(runtime,rollout,0,prompt,forged,probs)
+ def test_v3_boundary_ambiguity_requires_real_cached_reference(self):
+  runtime,m=self.support_runtime();prompt=[0,1];task='c'*64;output=fast.cached_sample(runtime,prompt,0,0,2,task);rollout=dict(seed=0,index=2,task_hash=task)
+  before=runtime.model.calls
+  with patch.object(fast,'verify_intervals',side_effect=fast.NumericalAmbiguity('simulated boundary crossing')):
+   result=fast.verify_sampling(runtime,rollout,0,prompt,output,torch.zeros((len(output),7)))
+   self.assertTrue(result['cached_reference_adjudication']);self.assertEqual(runtime.model.calls-before,len(output))
+   forged=list(output);forged[0]=(forged[0]+1)%6
+   with self.assertRaises(InvalidSample):fast.verify_sampling(runtime,rollout,0,prompt,forged,torch.zeros((len(output),7)))
+ def test_v3_reference_infrastructure_failure_remains_unknown(self):
+  runtime,m=self.support_runtime();prompt=[0,1];task='c'*64;output=fast.cached_sample(runtime,prompt,0,0,2,task)
+  with patch.object(fast,'verify_intervals',side_effect=fast.NumericalAmbiguity('boundary')),patch.object(fast,'verify_cached_reference',side_effect=RuntimeError('GPU unavailable')):
+   with self.assertRaises(fast.NumericalAmbiguity):fast.verify_sampling(runtime,dict(seed=0,index=2,task_hash=task),0,prompt,output,torch.zeros((len(output),7)))
+ def test_old_v2_ambiguity_does_not_gain_reference_fallback(self):
+  runtime,m=self.runtime();prompt=[0,1];task='c'*64;output=fast.cached_sample(runtime,prompt,0,0,2,task)
+  with patch.object(fast,'verify_intervals',side_effect=fast.NumericalAmbiguity('boundary')),patch.object(fast,'verify_cached_reference',side_effect=AssertionError('old contract must not replay')):
+   with self.assertRaises(fast.NumericalAmbiguity):fast.verify_sampling(runtime,dict(seed=0,index=2,task_hash=task),0,prompt,output,torch.zeros((len(output),7)))
  def test_old_fast_contract_support_exclusion_stays_invalid(self):
   runtime,m=self.runtime();runtime.harness={**runtime.harness,'top_p':.9};output=fast.cached_sample(runtime,[0,1],0,0,2,'c'*64);probs=torch.full((len(output),7),-30.)
   for position,token in enumerate(output):probs[position,(token+1)%7]=0.
