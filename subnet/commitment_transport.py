@@ -161,6 +161,8 @@ def check_prepared_cumulative(packed,manifest,maximum):
         compressed+=len(artifact)
         with zipfile.ZipFile(io.BytesIO(artifact))as archive:
             raw+=sum(e.file_size for e in archive.infolist())
+            if len(archive.infolist())>4096 or archive.getinfo('manifest.json').file_size>2_000_000:raise ValueError('prepared archive metadata budget')
+            if raw>budget['raw_bytes']or compressed>budget['compressed_bytes']:raise UploadBudgetExceeded('prepared pairs exceed cumulative artifact budget')
             record=json.loads(archive.read('manifest.json'))
             if len(record)!=1 or record[0]['batch']!=batch:raise ValueError('prepared batch metadata')
             row=record[0];refs=[]
@@ -208,6 +210,7 @@ def write_prepared_state(path,manifest,packed):
 
 def read_prepared_state(path,manifest):
  """Resume exact original bytes after full hash/admission; no recompression."""
+ import io,zipfile
  from pathlib import Path
  from .batches import unpack
  from .artifact_budget import for_manifest
@@ -216,12 +219,17 @@ def read_prepared_state(path,manifest):
  need(value['epoch']==manifest['epoch']and value['checkpoint']==manifest['checkpoint']['id']and value['source']==manifest['source_bundle']['sha256']and value['sampling_contract_sha256']==sha(canonical(manifest.get('sampling_contract'))),'stale local prepared miner state')
  need(type(value['pairs'])is list and len(value['pairs'])<=manifest['max_batches'],'prepared state slot cap')
  directory=path.with_name(path.name+'.pairs');need(not directory.is_symlink(),'private prepared artifact directory');packed=[]
+ need(all(type(r)is dict and type(r.get('size'))is int and r['size']>0 for r in value['pairs'])and sum(r['size']for r in value['pairs'])<=for_manifest(manifest)['compressed_bytes'],'prepared aggregate compressed cap')
  for row in value['pairs']:
   need(type(row)is dict and set(row)=={'sha256','size','batch_sha256'}and is_digest(row['sha256'])and is_digest(row['batch_sha256'])and type(row['size'])is int and 0<row['size']<=for_manifest(manifest)['compressed_bytes'],'prepared state integrity fields')
   target=directory/(row['sha256']+'.zip');need(not target.is_symlink()and target.stat().st_size==row['size'],'prepared local artifact size/path')
   data=target.read_bytes();need(sha(data)==row['sha256'],'prepared local artifact full SHA256')
+  with zipfile.ZipFile(io.BytesIO(data))as archive:
+   need(archive.getinfo('manifest.json').file_size<=2_000_000,'prepared archive metadata budget');preview=json.loads(archive.read('manifest.json'))
+  need(type(preview)is list and len(preview)==1,'prepared pair single batch');batch=preview[0]['batch']
+  check_prepared_cumulative(packed+[(batch,data)],manifest,manifest['max_batches'])
   records=unpack(data,budget=for_manifest(manifest));need(len(records)==1,'prepared pair single batch')
   batch,arrays=records[0];need(sha(canonical(batch))==row['batch_sha256']and batch['epoch']==manifest['epoch']and batch['checkpoint']==manifest['checkpoint']['id'],'prepared local batch binding')
-  packed.append((batch,data))
+  packed.append((batch,data));del arrays,records
  check_prepared_cumulative(packed,manifest,manifest['max_batches'])
  return packed
