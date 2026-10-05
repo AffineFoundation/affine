@@ -147,7 +147,8 @@ def owned_commitment_upload(job,manifest,progress_path=None):
     if identity.id!=job['miner_id']:raise ValueError('local miner signer binding')
     journal=UploadJournal(manifest,progress_path)
     def upload(data,timeout):
-        rows=unpack(data);packed=[(batch,pair_artifact(batch,arrays,manifest))for batch,arrays in rows]
+        from .artifact_budget import for_manifest
+        rows=unpack(data,budget=for_manifest(manifest));packed=[(batch,pair_artifact(batch,arrays,manifest))for batch,arrays in rows]
         urls=job['capability']['batch_put_urls']
         if len(packed)>len(urls):raise ValueError('owned commitment slot cap')
         start=time.monotonic()
