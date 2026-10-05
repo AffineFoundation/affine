@@ -84,8 +84,11 @@ No pending epoch and no historical strict epoch can earn through this bridge.
   need(set(s['points'])<=set(by_public),'score identities from original registration')
   for miner in s['points']:
    hotkey,row=by_public[miner]
-   if miner in identities:need(identities[miner]==(hotkey,row),'UID/key changed inside paid hour')
-   identities[miner]=(hotkey,row)
+   if miner in identities:
+    old_hotkey,old_row=identities[miner]
+    need(old_hotkey==hotkey and all(old_row[k]==row[k]for k in ('uid','public_key')),'UID/key changed inside paid hour')
+    if row['snapshot_block']>=old_row['snapshot_block']:identities[miner]=(hotkey,row)
+   else:identities[miner]=(hotkey,row)
  units={};regs={};raw={}
  for miner,points in h['points'].items():
   hotkey,row=identities[miner];current=fresh_registrations.get(hotkey)
