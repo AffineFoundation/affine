@@ -1,8 +1,10 @@
 # Affine — MATH mining, verification and training
 
 Deployment update, 2026-10-05: the independent controller and continuous auditor
-have been started with the reviewed decoupled contract. E14,
-nonpayable-live-reward-math-v1--1791214814-14, is opening from authoritative
+were started with the reviewed decoupled contract. The controller is now held
+and stopped while its prospective admission pin is corrected; the independent
+auditor and evaluator remain running. E14,
+nonpayable-live-reward-math-v1--1791214814-14, was held before publishing its manifest, from authoritative
 checkpoint 05de656e9c215a139f4329ffc9954e7c83955872929a17c35fd1a9bd9eae0923
 and persistent optimizer step four. At this publication check the signed E14
 manifest had not yet appeared locally. Opening is blocked by a stale persistent

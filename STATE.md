@@ -2654,8 +2654,9 @@ source `6a85c31011b7a1ca23d745e9868d7b01dd0e92e9fe74c997e8222482f76393ca`.
 Eight actual verifier workers are running on the approved source. E14
 `nonpayable-live-reward-math-v1--1791214814-14` was observed in `opening`,
 with registration inventory present and no local signed epoch manifest yet.
-The opening then rejected a stale persistent-training admission source pin
-(a65 instead of 6a85); no mining job was issued. Repair must prospectively bind
+The controller was stopped after opening rejected a stale persistent-training admission source pin
+(a65 instead of 6a85); no mining job was issued. Auditor and evaluator remain
+running. Repair must prospectively bind
 the new source while preserving CP05de, optimizer four and genesis history.
 No produced batches, completed update, or chain payout is claimed by this
 deployment record. The original E13 recovery committed checkpoint
