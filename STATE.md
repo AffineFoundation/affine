@@ -2445,3 +2445,39 @@ GPUs. They are candidates, not enrolled workers. No new machine was rented and
 neither legacy service was stopped by this capacity review. The spare H200
 still has its observed CUDA failure. Miner, trainer, evaluator, and validator
 roles remain separate.
+
+
+## 2026-10-05 hourly rollout qualification and capacity recovery
+
+The original E10 training job completed successfully: three full-model updates,
+optimizer counter 0→3 for all 339 parameters, and changed checkpoint
+`6a2bb631eebdc748b577976038a673437309d7953d3440eb8e873e5035671ea7`.
+The trainer did not repeat verification. Independent optimizer-state commitment,
+checkpoint publication and finalization remain pending; this is not yet a
+completed hourly epoch or evidence of held-out improvement.
+
+The genuine V7 commitment miner test terminated before model initialization:
+admission imported the pure commitment parser, then the fresh-source guard
+rejected that already-loaded module. The corrected loader discards only that
+verified admission parser and reloads it through the authenticated finder.
+Fresh-process tests retain rejection of pre-imported computation modules.
+Original failed job and source remain immutable; a new source and fresh
+qualification are required before activation. The affected regression suite
+passed 122 tests.
+
+Two reserve verifier rentals were removed by the legacy reaper because the
+legacy ownership registry did not include them. The interrupted CPU transport
+control observed 12/23 fully uploaded/read-back optimizer shards (47.99 GB),
+not a complete export/restore. A narrow retained-owner rule now protects the
+`affine-verifier-capacity-*` fleet; unrelated cleanup enforcement is unchanged.
+Four physical verifiers remain admitted. One replacement H200 has been rented
+and a distinct retained H200 is being qualified. Neither is an admitted fifth
+or sixth worker yet; an idle GPU alone does not establish an unused machine.
+
+Prospective operator code supports explicit signed verifier retirements in a
+new-source roster while preserving historical source-specific grants. An
+independent CPU-only optimizer reader adapter is also present but unwired:
+full object hashing and actual original terminal evidence are still required,
+with authority publication last. An operator-controlled reader attestation is
+not a cryptographic proof against a malicious reader. Current scientific
+sampler, model, TOPLOC tolerances and historical contracts are unchanged.
