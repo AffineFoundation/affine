@@ -84,11 +84,32 @@ class Miner:
         entries(manifest)
         self.checkpoint=checkpoint;self.runtime=None;self.runtimes={}
         self.state_path = Path(state_path) if state_path else None
-        self.batches = unpack(self.state_path.read_bytes(),budget=for_manifest(manifest)) if self.state_path and self.state_path.exists() else []
+        self._prepared_pairs=[];state_bytes=None
+        if self.state_path and self.state_path.exists():
+            if self.state_path.is_symlink():raise ValueError('private local miner state path')
+            with self.state_path.open('rb')as stream:header=stream.read(2)
+            if manifest.get('submission_transport_policy') and header!=b'PK':
+                from .commitment_transport import read_prepared_state
+                self._prepared_pairs=read_prepared_state(self.state_path,manifest)
+                self.batches=[(batch,None)for batch,data in self._prepared_pairs]
+            else:self.batches=unpack(self.state_path.read_bytes(),budget=for_manifest(manifest))
+        else:self.batches=[]
         self.progress = MinerProgress(progress_path, manifest) if progress_path else None
         self._progress('epoch_start')
         if any(b['epoch'] != manifest['epoch'] or b['checkpoint'] != manifest['checkpoint']['id'] for b,_ in self.batches):
             raise ValueError('stale local miner state')
+
+    def _prepared(self):
+        from .commitment_transport import pair_artifact,check_prepared_cumulative
+        prepared=list(getattr(self,'_prepared_pairs',[]))
+        if len(prepared)>len(self.batches):raise ValueError('prepared local batch count')
+        for slot,(batch,arrays)in enumerate(self.batches):
+            if slot<len(prepared):
+                if prepared[slot][0]!=batch:raise ValueError('prepared local batch replacement')
+            else:prepared.append((batch,pair_artifact(batch,arrays,self.manifest)))
+        check_prepared_cumulative(prepared,self.manifest,len(self.cap['batch_put_urls']))
+        self._prepared_pairs=prepared
+        return prepared
 
     def _progress(self, event, **fields):
         observer = getattr(self, "progress", None)
@@ -152,11 +173,17 @@ class Miner:
                              env_id=env_id, environment_version=runtime.spec.version, sample_index=index, index=index, rollouts=positive+negative)
                 candidate = self.batches + [(batch, arrays_pos+arrays_neg)]
                 # A rejected addition must not poison previously uploaded state.
-                pack(candidate,budget=for_manifest(self.manifest))
+                if self.manifest.get('submission_transport_policy'):
+                    from .commitment_transport import pair_artifact,check_prepared_cumulative
+                    prepared=self._prepared()+[(batch,pair_artifact(batch,arrays_pos+arrays_neg,self.manifest))]
+                    check_prepared_cumulative(prepared,self.manifest,len(self.cap['batch_put_urls']))
+                else:pack(candidate,budget=for_manifest(self.manifest))
                 if time.time()>=self.manifest.get('deadline',float('inf')):
                     self._progress('task_deadline', env_id=env_id, index=index)
                     raise EpochClosed('batch construction completed after signed deadline')
-                self.batches = candidate
+                if self.manifest.get('submission_transport_policy'):
+                    self._prepared_pairs=prepared;self.batches=[(b,None)for b,a in candidate]
+                else:self.batches=candidate
                 self._progress("batch_complete", env_id=env_id, index=index)
                 return batch
         self._progress('task_exhausted', env_id=env_id, index=index)
@@ -165,26 +192,30 @@ class Miner:
     def upload(self):
         if time.time()>=self.manifest.get('deadline',float('inf')):
             raise EpochClosed('signed epoch upload window closed')
-        data = pack(self.batches,budget=for_manifest(self.manifest))
-        if self.state_path:
-            self.state_path.parent.mkdir(parents=True,exist_ok=True)
-            temporary = self.state_path.with_suffix('.tmp');temporary.write_bytes(data);temporary.chmod(0o600);temporary.replace(self.state_path)
-        if time.time()>=self.manifest.get('deadline',float('inf')):
-            raise EpochClosed('upload preparation completed after signed deadline')
         if self.manifest.get('submission_transport_policy'):
-            from .commitment_transport import VERSION,make,canonical,pair_artifact,UploadJournal
+            from .commitment_transport import VERSION,make,canonical,UploadJournal,write_prepared_state
             if self.manifest['submission_transport_policy']!=VERSION:raise ValueError('unsupported commitment upload')
+            packed=self._prepared()
+            if self.state_path:write_prepared_state(self.state_path,self.manifest,packed)
             journal=getattr(self,'_commitment_upload_journal',None)
             if journal is None:
                 journal=UploadJournal(self.manifest,self.state_path.with_suffix('.commitment-upload.json')if self.state_path else None);self._commitment_upload_journal=journal
-            packed=[(batch,pair_artifact(batch,arrays,self.manifest))for batch,arrays in self.batches]
             for slot,(_,body)in enumerate(packed):
                 if journal.known(slot,body):continue
-                if time.time()>=self.manifest['deadline']:raise EpochClosed('batch upload deadline')
-                response=requests.put(self.cap['batch_put_urls'][slot],data=body,headers=self.cap.get('headers',{}),timeout=120);response.raise_for_status();journal.acknowledge(slot,body)
+                remaining=min(120,self.manifest['deadline']-time.time()-1)
+                if remaining<=0:raise EpochClosed('batch upload deadline')
+                response=requests.put(self.cap['batch_put_urls'][slot],data=body,headers=self.cap.get('headers',{}),timeout=remaining);response.raise_for_status();journal.acknowledge(slot,body)
             if time.time()>=self.manifest['deadline']:raise EpochClosed('commitment upload deadline')
             data=canonical(make(self.identity,self.manifest,packed))
-        result = requests.put(self.cap['put_url'], data=data,headers=self.cap.get('headers',{}),timeout=120)
+        else:
+            data=pack(self.batches,budget=for_manifest(self.manifest))
+            if self.state_path:
+                self.state_path.parent.mkdir(parents=True,exist_ok=True)
+                temporary=self.state_path.with_suffix('.tmp');temporary.write_bytes(data);temporary.chmod(0o600);temporary.replace(self.state_path)
+        now=time.time()
+        if now>=self.manifest.get('deadline',float('inf')):raise EpochClosed('upload preparation completed after signed deadline')
+        timeout=min(120,max(.001,self.manifest['deadline']-now-1))if self.manifest.get('submission_transport_policy')else 120
+        result = requests.put(self.cap['put_url'], data=data,headers=self.cap.get('headers',{}),timeout=timeout)
         if result.status_code==403 and time.time()>=self.manifest.get('deadline',float('inf')):
             raise EpochClosed('upload capability expired during request')
         result.raise_for_status()
