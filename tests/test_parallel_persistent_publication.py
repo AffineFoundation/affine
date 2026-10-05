@@ -121,3 +121,57 @@ class ReaderAdmissionControls(unittest.TestCase):
             payload=dict(self.config['qualification']['payload'],qualified_at=value)
             self.config['qualification']=r.sign(payload,self.key)
             with self.subTest(value=value),self.assertRaises(ValueError):IndependentStateReader(self.config,self.controller)
+
+class OriginalReaderRecoveryControls(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name)
+        self.key=SigningKey.generate();self.readerkey=SigningKey.generate();self.authority=bytes(self.key.verify_key).hex();self.identity=bytes(self.readerkey.verify_key).hex()
+        self.reader=object.__new__(IndependentStateReader);self.reader.authority=self.authority
+        self.reader.endpoint=dict(namespace='/qualified-reader',python='/python',known_hosts=str(self.root/'reader'))
+        self.reader.config=dict(reader_identity=self.identity,module_hashes={n:'a'*64 for n in ('helper.py','supervisor.py','remote_optimizer_readback.py')},reader_host={'ssh_host_key_sha256':''},trainer_host={'ssh_host_key_sha256':''},trainer_known_hosts=str(self.root/'trainer'))
+        import hashlib
+        for host in ('reader','trainer'):
+            p=self.root/host;p.write_text(host);self.reader.config[host+'_host']['ssh_host_key_sha256']=hashlib.sha256(p.read_bytes()).hexdigest()
+        self.job={'job_id':'original'};self.binding=dict(purpose='production-training-state',provenance={n:'c'*64 for n in ('signed_job_envelope_sha256','original_report_sha256','signed_manifest_envelope_sha256')},job_id='original',job_sha256=r.sha(self.job),source_sha256='d'*64,namespace='private/original',descriptor_sha256='e'*64,reader_host_record_sha256='f'*64,trainer_host_record_sha256='1'*64,storage_origin='https://storage.example',storage_bucket='private-bucket',storage_addressing='path')
+        self.objects=[dict(name='state-'+str(i)+'.safetensors',size=1,sha256=hashlib.sha256(b'x').hexdigest())for i in range(23)]
+        started=time.time();payload=dict(version=r.VERSION,**self.binding,reader_identity=self.identity,created_at=started,expires_at=started+300,max_wall_seconds=300,objects=self.objects,capabilities={o['name']:'https://storage.example/private-bucket/private/original/'+o['name']+'?signed=GET'for o in self.objects});self.request=r.sign(payload,self.key)
+        self.dispatch=self.reader.endpoint['namespace']+'/production-original';self.requestfile=self.root/'request.ROOT-SIGNED.private.json';write_once(self.requestfile,self.request)
+        e=self.reader.endpoint;c=self.reader.config
+        launch=dict(version='independent-state-readback-launch-v1',python=e['python'],helper_path=e['namespace']+'/helper.py',helper_sha256=c['module_hashes']['helper.py'],module_path=e['namespace']+'/remote_optimizer_readback.py',module_sha256=c['module_hashes']['remote_optimizer_readback.py'],supervisor_sha256=c['module_hashes']['supervisor.py'],request_path=self.dispatch+'/request.ROOT-SIGNED.private.json',request_sha256=hashlib.sha256(self.requestfile.read_bytes()).hexdigest(),reader_seed_path=e['namespace']+'/reader.seed',result_path=self.dispatch+'/run/result.private.json',workspace=self.dispatch+'/run',max_wall_seconds=300,created_at=started,expires_at=started+300)
+        self.launchfile=self.root/'launch.ROOT-SIGNED.private.json';write_once(self.launchfile,r.sign(launch,self.key));write_once(self.root/'reservation.private.json',{'original_job_sha256':r.sha(self.job)})
+        receipt=r.execute(self.request,self.authority,self.readerkey,approved_binding=self.binding,approved_objects=self.objects,qualified_reader=self.identity,read_chunks=lambda _:iter([b'x']))
+        marker=dict(pid=123,ticks='456',request_file_sha256=hashlib.sha256(self.requestfile.read_bytes()).hexdigest(),launch_file_sha256=hashlib.sha256(self.launchfile.read_bytes()).hexdigest())
+        self.status=dict(original_supervisor=marker,supervisor_live=False,child={'pid':789,'ticks':'012'},terminal={'actual_child_wait_completed':True,'exit_code':0,'timed_out':False,'pid':789,'ticks':'012'},result=receipt)
+    def recover(self):return self.reader._recover_original(None,self.root,self.job,self.binding,self.objects)
+    def test_same_signed_original_resumes_without_new_sign_copy_or_spawn(self):
+        before=self.requestfile.read_bytes();self.reader.command=Mock(return_value=self.status)
+        with patch('subprocess.Popen')as spawn,patch('subprocess.run')as copy:result=self.recover()
+        spawn.assert_not_called();copy.assert_not_called();self.assertEqual(result['receipt'],self.status['result']);self.assertEqual(before,self.requestfile.read_bytes());self.assertEqual(result['original_child'],self.status['child'])
+        # Re-observe a completed original without overwriting its immutable evidence.
+        self.recover();self.assertEqual(self.reader.command.call_count,2)
+    def test_transient_SSH_observation_loss_keeps_original_handle(self):
+        self.reader.command=Mock(side_effect=[RuntimeError('lost SSH response'),self.status])
+        with patch('subnet.independent_state_dispatch.time.sleep'):result=self.recover()
+        self.assertEqual(self.reader.command.call_count,2);self.assertEqual(result['original_child']['pid'],789)
+    def test_changed_original_supervisor_ticks_and_child_wait_are_rejected(self):
+        write_once(self.root/'original-supervisor-launch.private.json',dict(self.status['original_supervisor'],ticks='different'))
+        self.reader.command=Mock(return_value=self.status)
+        with self.assertRaisesRegex(ValueError,'PID/ticks'):self.recover()
+        (self.root/'original-supervisor-launch.private.json').unlink();self.status['terminal']['ticks']='different'
+        with self.assertRaisesRegex(ValueError,'child wait'):self.recover()
+    def test_altered_signed_launch_or_original_job_binding_is_rejected(self):
+        launch=json.loads(self.launchfile.read_bytes());launch['payload']['workspace']='/replacement';self.launchfile.write_bytes(r.canonical(r.sign(launch['payload'],self.key)))
+        self.reader.command=Mock()
+        with self.assertRaisesRegex(ValueError,'launch binding'):self.recover()
+        with self.assertRaisesRegex(ValueError,'job binding'):self.reader._recover_original(None,self.root,{'job_id':'different'},self.binding,self.objects)
+        self.reader.command.assert_not_called()
+    def test_partial_preparation_and_expired_request_never_redispatch(self):
+        self.launchfile.unlink();self.reader.command=Mock()
+        with self.assertRaisesRegex(ValueError,'incomplete'):self.recover()
+        write_once(self.launchfile,{})
+        payload=dict(self.request['payload'],created_at=time.time()-100,expires_at=time.time()-1);self.requestfile.write_bytes(r.canonical(r.sign(payload,self.key)))
+        with self.assertRaisesRegex(ValueError,'expired'):self.recover()
+        self.reader.command.assert_not_called()
+    def test_changed_receipt_full_object_hash_fails_original_recovery(self):
+        receipt=self.status['result'];payload=dict(receipt['payload'],objects=[dict(self.objects[0],sha256='0'*64)]+self.objects[1:]);self.status['result']=r.sign(payload,self.readerkey);self.reader.command=Mock(return_value=self.status)
+        with self.assertRaisesRegex(ValueError,'request-bound receipt'):self.recover()

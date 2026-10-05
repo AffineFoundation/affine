@@ -99,3 +99,24 @@ A smaller prospective audited cohort is also needed to reduce those computations
 Use the actual committed step3 parent and advance to4, never reset genesis or
 rewrite E10. No one-step throughput, convergence or <=3600-second epoch is
 established by the CPU transport measurement.
+
+Original dispatch recovery now reuses the retained signed request and launch,
+exact namespace and original supervisor PID/start ticks. It does not sign a
+replacement, copy a replacement envelope or start another process. A transient
+SSH observation failure leaves these files intact and polls the original handle;
+a controller retry reconstructs the binding from the same job/report/manifest and
+observes that original process. Full receipt, copied-envelope hashes, actual
+child-wait PID/ticks and host trust bytes still have to pass. Missing original
+handles, partial pre-launch preparation, changed records and expired capabilities
+remain explicit operator recovery gates. This does not extend an expired signed
+request or turn a lost observation into a successful result.
+
+For a reader hosted on the evaluator, the initial fresh idle gate alone is not
+mutual exclusion with the independent checkpoint evaluator. Activation must
+reserve that evaluator for the CPU reader until the original readback terminal,
+or select a distinct dedicated CPU reader host and qualify its scoped signer and
+actual full-state readback. A local flock alone is insufficient after a controller
+crash while its remote child remains live. This implementation does not weaken the
+idle gate or claim that scheduler coordination exists. Resuming an already
+admitted CPU-only reader does not start a GPU workload and does not require a new
+idle probe; any later evaluation overlap must be labeled in performance evidence.

@@ -120,7 +120,8 @@ print(json.dumps(dict(observed_at=time.time(),hashes=hashes,reader_identity=byte
             reader_host_record_sha256=reader.sha(c['reader_host']),trainer_host_record_sha256=reader.sha(c['trainer_host']),
             storage_origin=bucket.client.meta.endpoint_url,storage_bucket=bucket.name,storage_addressing='path')
         root=controller.state/'independent-state-readbacks'/job['job_id'];root.parent.mkdir(mode=0o700,exist_ok=True)
-        if root.exists():raise ValueError('original reader dispatch already exists; explicit original-process recovery required')
+        if root.exists():
+            return self._recover_original(controller,root,job,binding,objects)
         preflight,observed=self.preflight();root.mkdir(mode=0o700,exist_ok=False)
         write_once(root/'reservation.private.json',dict(original_job_sha256=reader.sha(job),
             CPU_nice=19,hash_streams=4,chunk_bytes=1024**2,GPU_use=False,authority_commit=False,
@@ -154,28 +155,104 @@ print(json.dumps(dict(observed_at=time.time(),hashes=hashes,reader_identity=byte
         copied='import hashlib;from pathlib import Path\nassert hashlib.sha256(Path('+repr(dispatch+'/request.ROOT-SIGNED.private.json')+').read_bytes()).hexdigest()=='+repr(file_sha(requestfile))+'\nassert hashlib.sha256(Path('+repr(dispatch+'/launch.ROOT-SIGNED.private.json')+').read_bytes()).hexdigest()=='+repr(file_sha(launchfile))+'\n'
         code=gate+copied+launch_code(data);compile(code,'qualified-reader-final-launch','exec')
         marker=self.command(code);write_once(root/'original-supervisor-launch.private.json',marker)
-        while time.time()<payload['expires_at']:
-            data=dict(dispatch=dispatch)
-            status=self.command('DATA='+repr(data)+'\n'+'''
-import json
+        return self._wait_original(root,request,launchfile,binding,objects,dispatch)
+
+    def _recover_original(self,controller,root,job,binding,objects):
+        """Observe only the original signed dispatch; never sign, copy or spawn."""
+        reservation=json.loads((root/'reservation.private.json').read_bytes())
+        if reservation.get('original_job_sha256')!=reader.sha(job):
+            raise ValueError('original reader recovery job binding')
+        requestfile=root/'request.ROOT-SIGNED.private.json';launchfile=root/'launch.ROOT-SIGNED.private.json'
+        # Partial pre-dispatch preparation cannot prove an original handle. It
+        # remains an explicit operator recovery condition, never an auto launch.
+        if not requestfile.is_file() or not launchfile.is_file():
+            raise ValueError('original reader preparation incomplete; no automatic redispatch')
+        request=json.loads(requestfile.read_bytes())
+        reader.validate_request(request,self.authority,now=time.time(),approved_binding=binding,
+            approved_objects=objects,qualified_reader=self.config['reader_identity'])
+        launch=reader.verify(json.loads(launchfile.read_bytes()),self.authority)
+        dispatch=self.endpoint['namespace']+'/production-'+job['job_id']
+        c=self.config;e=self.endpoint;payload=request['payload']
+        expected=dict(version='independent-state-readback-launch-v1',python=e['python'],
+            helper_path=e['namespace']+'/helper.py',helper_sha256=c['module_hashes']['helper.py'],
+            module_path=e['namespace']+'/remote_optimizer_readback.py',module_sha256=c['module_hashes']['remote_optimizer_readback.py'],
+            supervisor_sha256=c['module_hashes']['supervisor.py'],request_path=dispatch+'/request.ROOT-SIGNED.private.json',
+            request_sha256=file_sha(requestfile),reader_seed_path=e['namespace']+'/reader.seed',
+            result_path=dispatch+'/run/result.private.json',workspace=dispatch+'/run',
+            max_wall_seconds=payload['max_wall_seconds'],created_at=payload['created_at'],expires_at=payload['expires_at'])
+        if canonical(launch)!=canonical(expected):raise ValueError('exact original recovery launch binding')
+        # Pin trust again without demanding GPU idle: the same already admitted
+        # CPU-only process may overlap a later evaluation. No new process starts.
+        if (file_sha(e['known_hosts'])!=c['reader_host']['ssh_host_key_sha256'] or
+                file_sha(c['trainer_known_hosts'])!=c['trainer_host']['ssh_host_key_sha256']):
+            raise ValueError('original recovery host trust bytes changed')
+        return self._wait_original(root,request,launchfile,binding,objects,dispatch)
+
+    def _wait_original(self,root,request,launchfile,binding,objects,dispatch):
+        c=self.config;requestfile=root/'request.ROOT-SIGNED.private.json';payload=request['payload']
+        data=dict(dispatch=dispatch,request_sha256=file_sha(requestfile),launch_sha256=file_sha(launchfile))
+        code='DATA='+repr(data)+'\n'+'''
+import hashlib,json
 from pathlib import Path
-p=Path(DATA['dispatch'])/'run';v={}
+p=Path(DATA['dispatch']);v={}
+for name in ('request','launch'):
+ q=p/(name+'.ROOT-SIGNED.private.json');assert hashlib.sha256(q.read_bytes()).hexdigest()==DATA[name+'_sha256']
+q=p/'supervision'/'original-supervisor-launch.private.json'
+assert q.is_file(), 'original reader handle unavailable; never redispatch'
+marker=json.loads(q.read_bytes());assert marker['request_file_sha256']==DATA['request_sha256'] and marker['launch_file_sha256']==DATA['launch_sha256']
+v['original_supervisor']=marker
+q=Path('/proc',str(marker['pid']),'stat')
+if q.exists():
+ parts=q.read_text().rsplit(')',1)[1].split();v['supervisor_live']=parts[0]not in ('Z','X')and parts[19]==str(marker['ticks'])
+else:v['supervisor_live']=False
 for name in ('child','terminal','result'):
- q=p/(name+'.private.json')
- if q.exists():v[name]=json.loads(q.read_text())
+ q=p/'run'/(name+'.private.json')
+ if q.exists():v[name]=json.loads(q.read_bytes())
 print(json.dumps(v))
-''')
+'''
+        while time.time()<payload['expires_at']:
+            try:status=self.command(code)
+            except (RuntimeError,subprocess.TimeoutExpired):
+                # A lost SSH response is observation loss, not child failure.
+                # Keep the same request/namespace; next controller retry can
+                # resume the same original handle even if this turn is lost.
+                time.sleep(min(5,max(.01,payload['expires_at']-time.time())))
+                continue
+            marker=status['original_supervisor'];markerpath=root/'original-supervisor-launch.private.json'
+            if markerpath.exists():
+                if canonical(json.loads(markerpath.read_bytes()))!=canonical(marker):
+                    raise ValueError('original reader supervisor PID/ticks changed')
+            else:write_once(markerpath,marker)
+            if (type(marker.get('pid'))is not int or marker['pid']<=0 or
+                    not str(marker.get('ticks','')).isdigit() or
+                    marker.get('request_file_sha256')!=data['request_sha256'] or
+                    marker.get('launch_file_sha256')!=data['launch_sha256']):
+                raise ValueError('exact original reader supervisor handle')
             if 'terminal'in status:
-                write_once(root/'actual-terminal-and-result.private.json',status)
                 terminal=status['terminal']
-                if terminal.get('exit_code')!=0 or terminal.get('timed_out')is not False or 'result'not in status:
+                if (terminal.get('actual_child_wait_completed')is not True or
+                        terminal.get('exit_code')!=0 or terminal.get('timed_out')is not False or
+                        'result'not in status or 'child'not in status):
                     raise ValueError('original independent reader failed; no authority commit')
+                if (terminal.get('pid')!=status['child'].get('pid') or
+                        terminal.get('ticks')!=status['child'].get('ticks')):
+                    raise ValueError('original actual child wait handle changed')
                 reader.validate_receipt(status['result'],request,self.authority,
                     approved_binding=binding,approved_objects=objects,qualified_reader=c['reader_identity'],now=time.time())
+                evidence=root/'actual-terminal-and-result.private.json'
+                if evidence.exists():
+                    prior=json.loads(evidence.read_bytes())
+                    # Liveness can change after completion; signed receipt,
+                    # original marker/child and terminal must remain identical.
+                    if any(canonical(prior[k])!=canonical(status[k])for k in ('original_supervisor','child','terminal','result')):
+                        raise ValueError('original completed reader evidence changed')
+                else:write_once(evidence,status)
                 return dict(request_bytes=requestfile.read_bytes(),receipt=status['result'],
                     launch_envelope=json.loads(launchfile.read_text()),terminal=terminal,
                     qualified_reader=c['reader_identity'],reader_host=c['reader_host'],trainer_host=c['trainer_host'],
                     storage_binding={k:binding[k]for k in ('storage_origin','storage_bucket','storage_addressing')},
                     original_child=status['child'],now=time.time())
+            if status.get('supervisor_live')is not True:
+                raise ValueError('original reader no longer live and no actual wait receipt; retain evidence')
             time.sleep(min(5,max(.01,payload['expires_at']-time.time())))
-        raise TimeoutError('original bounded independent reader request expired; retain evidence')
+        raise TimeoutError('original bounded independent reader request expired; retain evidence, never redispatch')
