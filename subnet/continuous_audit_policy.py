@@ -68,6 +68,11 @@ def observations(envelopes,records,verifiers,cutoff,*,admitted_jobs=None,adjudic
   key=digest(row);old=result.get(key)
   if old is not None:
    if old['outcome']==p['outcome']:continue
+   # Failed infrastructure is not a scientific assertion. An authenticated
+   # retry can resolve it without fabricating a fraud adjudication.
+   if p['outcome']=='infrastructure_error':continue
+   if old['outcome']=='infrastructure_error':
+    result[key]=dict(p,round=row['round'],evidence_id=key,verifier=signer);continue
    resolutions=[authenticate(a,authority)for a in adjudications]if authority else []
    expected=dict(version='continuous-audit-adjudication-v1',evidence_id=key,original_job_sha256=old['job_sha256'],reference_job_sha256=p['job_sha256'],outcome=p['outcome'])
    need(expected in resolutions and old['outcome']=='numerical_ambiguous'and p['outcome']in('verified_valid','confirmed_invalid'),'conflicting authenticated audits require explicit reference adjudication')
