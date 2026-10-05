@@ -43,4 +43,4 @@ class LearnerProjectionTests(unittest.TestCase):
    self.assertEqual(rows['test-13']['accepted'],10)
    self.assertEqual((rows['test-14']['batches'],rows['test-14']['learner_eligible']),(165,161))
    self.assertEqual((rows['test-15']['batches'],rows['test-15']['learner_eligible'],rows['test-15']['accepted'],rows['test-15']['unchecked']),(270,240,0,270))
-   self.assertEqual(rows['test-15']['phase'],'train');self.assertTrue(rows['test-15']['batches_available'])
+   self.assertFalse(rows['test-15']['audit_breakdown_available']);self.assertEqual(rows['test-15']['phase'],'train');self.assertTrue(rows['test-15']['batches_available'])

@@ -147,6 +147,7 @@ class Database:
                                submissions=learner['submitting_identities'],
                                learner_eligible=learner['learner_eligible'], learner_excluded=learner['learner_excluded'],
                                learner_grid=learner['eligible_grid'], learner_input_assurance='unaudited',
+                               audit_breakdown_available=bool(reports),
                                learner_eligible_identities=learner['eligible_identities'],
                                batch_count_source=learner['source'], learner_provenance_sha256=learner['provenance_sha256'])
                     audited = accepted_batches + (batches-accepted_batches-unchecked_batches)

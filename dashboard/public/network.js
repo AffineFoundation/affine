@@ -187,7 +187,7 @@
     return `${epochName({id:row.epoch_id})} · ${evaluationPhase(row)}\n${utc(row.timestamp)} UTC\n${percent(evaluationValue(row))} · ${number(row.successes)}/${number(row.count)} solved\n${number(row.count-row.successes)} not solved\nEvaluation setup ${row.display_setup||1}${row.setup_changed?' · changed since prior result':''}\nCheckpoint ${String(row.checkpoint||'unavailable').slice(0,12)}${row.recovered_count?`\n${number(row.recovered_count)} explicit recoveries`:''}`;
   }
   function validOutcomes(row) {
-    return ['accepted','unchecked','rejected'].every(key=>count(row[key])) && row.accepted+row.unchecked+row.rejected===row.batches;
+    return row.audit_breakdown_available!==false && ['accepted','unchecked','rejected'].every(key=>count(row[key])) && row.accepted+row.unchecked+row.rejected===row.batches;
   }
   const batchAvailable=row=>row?.batches_available!==false;
   const batchPhase=row=>row.finalized?'Finalized':!batchAvailable(row)&&row.phase!=='collecting'?'Awaiting audit':row.phase||'Unfinalized';
@@ -196,7 +196,7 @@
     if (!batchAvailable(row)) return lines.join('\n');
     if (row.learner_input_assurance==='unaudited' && count(row.learner_eligible)) lines.push(`${number(row.learner_eligible)} learner-eligible · unaudited inputs`,`${number(row.learner_excluded)} excluded from training admission`);
     if (validOutcomes(row)) lines.push(`${number(row.accepted)} accepted · ${number(row.unchecked)} unchecked · ${number(row.rejected)} rejected`);
-    else lines.push('Verification breakdown unavailable');
+    else lines.push('Audit breakdown unavailable in this projection; continuous audits are independent');
     if (Array.isArray(row.grid) && row.grid.length===256 && row.grid.every(count)) {
       lines.push(`${number(row.grid.filter(value=>value>0).length)} submitting UIDs`);
     }
