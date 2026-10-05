@@ -139,6 +139,7 @@ def contract(config,round_number):
     policy=selected(config,round_number)
     if policy is not None:result['operator_test_policy']=policy
     if config.get('submission_transport_policy') is not None:result['submission_transport_policy']=config['submission_transport_policy']
+    if config.get('proof_copy_policy') is not None:result['proof_copy_policy']=config['proof_copy_policy']
     if config.get('hourly_execution_policy')is not None:result['hourly_execution_policy']=config['hourly_execution_policy']
     if config.get('temporary_exclusion_policy')is not None:result['temporary_exclusion_policy']=config['temporary_exclusion_policy']
     if config.get('reward_publication_policy')is not None:

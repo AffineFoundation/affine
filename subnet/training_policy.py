@@ -27,7 +27,11 @@ def coverage_manifest(manifest, receipts, challenge):
             not receipts or not isinstance(challenge.get('seed'), str) or
             re.fullmatch('[0-9a-f]{64}', challenge['seed']) is None):
         raise ValueError('original frozen coverage challenge')
-    if ('audit_frozen_receipts' in manifest and manifest['audit_frozen_receipts'] != receipts
+    original_receipts=manifest.get('audit_frozen_receipts')
+    if manifest.get('proof_copy_policy')is not None and original_receipts is not None:
+        from .selected_proof_copy import captured_inventory
+        original_receipts=captured_inventory(manifest)
+    if ('audit_frozen_receipts' in manifest and original_receipts != receipts
             or 'audit_seed' in manifest and manifest['audit_seed'] != challenge['seed']):
         raise ValueError('coverage and original audit population binding')
     context = dict(version=COVERAGE_REVISION, epoch=manifest['epoch'],
@@ -36,7 +40,7 @@ def coverage_manifest(manifest, receipts, challenge):
                    generated_after_freeze_at=timestamp)
     if 'training_coverage' in manifest and manifest['training_coverage'] != context:
         raise ValueError('immutable covered training context')
-    return dict(manifest, audit_seed=challenge['seed'], audit_frozen_receipts=receipts,
+    return dict(manifest, audit_seed=challenge['seed'], audit_frozen_receipts=(manifest['audit_frozen_receipts']if manifest.get('proof_copy_policy')else receipts),
                 training_coverage=context)
 
 
@@ -46,9 +50,13 @@ def validate_coverage(manifest, submissions):
     receipts = manifest.get('audit_frozen_receipts')
     if not isinstance(context, dict) or not isinstance(receipts, dict):
         raise ValueError('signed covered training context required')
-    challenge = dict(seed=context.get('seed'), receipts=receipts,
+    captured=receipts
+    if manifest.get('proof_copy_policy'):
+        from .selected_proof_copy import captured_inventory
+        captured=captured_inventory(manifest)
+    challenge = dict(seed=context.get('seed'), receipts=captured,
                      generated_after_freeze_at=context.get('generated_after_freeze_at'))
-    expected = coverage_manifest(manifest, receipts, challenge)
+    expected = coverage_manifest(manifest, captured, challenge)
     if expected['training_coverage'] != context:
         raise ValueError('signed covered training context fields')
     hashes = {b['sha256']for r in receipts.values()for b in r['artifacts']}if manifest.get('submission_transport_policy')else{r['sha256'] for r in receipts.values()}

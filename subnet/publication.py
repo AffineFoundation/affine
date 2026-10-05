@@ -105,13 +105,37 @@ def frozen_submission(controller,manifest,miner,receipt):
     declared=document['payload']['batches'];artifacts=receipt['artifacts']
     if type(artifacts)is not list or len(artifacts)!=len(declared):
         raise ValueError('frozen commitment history inventory')
+    audit=None
+    if manifest.get('proof_copy_policy')is not None:
+        path=controller.state/(manifest['epoch']+'-audit-manifest.json')
+        audit=json.loads(path.read_text())if path.exists()else None
+        if audit is not None:
+            from .selected_proof_copy import require_snapshot
+            import copy
+            if any(audit.get(k)!=manifest.get(k)for k in ('epoch','checkpoint','source_bundle','start','deadline','proof_copy_policy','hourly_execution_policy')):
+                raise ValueError('original selected copy history manifest binding')
+            captured=copy.deepcopy(audit.get('audit_frozen_receipts',{}).get(miner))
+            if not isinstance(captured,dict):raise ValueError('original selected copy history inventory binding')
+            for child in captured.get('artifacts',[]):
+                if 'read_url'in child:
+                    require_snapshot(audit,miner,child);del child['read_url']
+            if captured!=receipt:raise ValueError('original selected copy history inventory binding')
     children=[]
     for batch,artifact in zip(declared,artifacts):
         if (any(artifact.get(field)!=value for field,value in batch.items()) or
                 artifact.get('frozen_key')!=root+'/'+str(batch['slot'])+'.zip'):
             raise ValueError('frozen commitment history inventory')
-        children.append(dict(batch,url=route(artifact['frozen_key']),
-            hash_assurance='declared-payload-hash-until-selected-verifier'))
+        child=dict(batch,hash_assurance='declared-payload-hash-until-selected-verifier')
+        if manifest.get('proof_copy_policy') is None:
+            child['url']=route(artifact['frozen_key'])
+        else:
+            child['snapshot_status']='metadata_captured'
+            if audit is not None:
+                row=audit.get('selected_proof_copy_receipts',{}).get(miner+'/'+str(batch['slot']))
+                if row and row.get('status')=='copied':
+                    require_snapshot(audit,miner,artifact)
+                    child.update(url=route(artifact['frozen_key']),snapshot_status='conditionally_copied')
+        children.append(child)
     if not cached:
         # Root-local immutable admissions bind original bytes, not renewable URLs.
         # Every reuse still authenticates these bytes and the complete inventory.

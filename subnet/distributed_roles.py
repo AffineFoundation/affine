@@ -77,6 +77,9 @@ def validate_frozen_submissions(manifest, submissions):
                 any(artifact.get(k)!=row[k]for k in row) or
                 ref['frozen_key']!=artifact.get('frozen_key')):
             raise ValueError('selected child inventory binding')
+        if manifest.get('proof_copy_policy')is not None:
+            from .selected_proof_copy import require_snapshot
+            require_snapshot(manifest,ref['miner'],artifact)
         expected_key='public/'+manifest['epoch']+'/submissions/'+ref['miner']+'/'+receipt['sha256']+'/'+str(ref['slot'])+'.zip'
         if ref['frozen_key']!=expected_key:
             raise ValueError('selected child exact epoch/miner/parent storage key')
@@ -146,6 +149,7 @@ class Coordinator:
             raise ValueError('signed job lifetime')
         submissions = job.get('submissions', [])
         frozen = manifest.get('audit_frozen_receipts', {})
+        if manifest.get('proof_copy_policy')and 'subnet/selected_proof_copy.py'not in job.get('source_files',{}):raise ValueError('prospective selected copy verifier source required')
         validate_frozen_submissions(manifest,submissions)
         with self.transaction() as db:
             old = db.execute('SELECT digest FROM jobs WHERE id=?', (job['job_id'],)).fetchone()

@@ -26,7 +26,7 @@ COMPUTATION_FIELDS = ('epoch', 'checkpoint', 'source_bundle', 'start', 'deadline
     'indices', 'environments', 'sample_harness_registry', 'heldout_indices',
     'harness', 'harness_source_hash', 'model_id', 'model_runtime_revision', 'backend_profile',
     'numerical_policy', 'tokenizer_binding', 'sampling_contract', 'sampling_source_hash',
-    'task_assets', 'reward_publication_policy', 'persistent_publication_policy', 'optimizer_state_export_policy', 'optimizer_state_transport', 'submission_transport_policy', 'hourly_execution_policy', 'audit_exclusion_snapshot')
+    'task_assets', 'reward_publication_policy', 'persistent_publication_policy', 'optimizer_state_export_policy', 'optimizer_state_transport', 'submission_transport_policy', 'hourly_execution_policy', 'audit_exclusion_snapshot', 'proof_copy_policy')
 
 
 def sha(value):
@@ -106,6 +106,9 @@ def frozen_matches(manifest,miner,frozen):
     root=manifest.get('audit_frozen_receipts',{}).get(miner)
     if manifest.get('submission_transport_policy'):
         from .commitment_transport import VERSION
+        if manifest.get('proof_copy_policy')is not None:
+            from .selected_proof_copy import require_snapshot
+            require_snapshot(manifest,miner,frozen)
         return manifest['submission_transport_policy']==VERSION and isinstance(root,dict)and frozen in root.get('artifacts',[])
     return root==frozen
 

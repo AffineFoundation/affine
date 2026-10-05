@@ -428,13 +428,22 @@ class RemoteController(Controller):
                 selected_slots={m:selection(len(r['artifacts']),allocations[m],challenge['seed'],r['sha256'])for m,r in receipts.items()}
                 audit_manifest['audit_policy']['submission_counts'].update({b['sha256']:1 for m,r in receipts.items()for b in r['artifacts']if b['slot']in selected_slots[m]})
             save(self.state/(epoch+'-audit-plan.json'),dict(allocations=allocations,population_basis='actual-committed-pair-count'if manifest.get('submission_transport_policy')else'signed-per-miner-upper-bound',policy=policy))
+        if manifest.get('proof_copy_policy') is not None:
+            from .selected_proof_copy import snapshot_selected,audit_inventory
+            copies=snapshot_selected(self.gateway,audit_manifest,selected_slots)
+            audit_manifest['selected_proof_copy_receipts']=copies
+            audit_manifest['audit_frozen_receipts']=audit_inventory(audit_manifest,self.bucket)
+            save(self.state/(epoch+'-selected-proof-copies.json'),copies)
+            self.bucket.json('public/'+epoch+'/selected-proof-copies.json',self.signed(dict(epoch=epoch,copies=copies)))
         save(self.state/(epoch+'-audit-manifest.json'),audit_manifest);reports={}
         from .hourly_policy import cutoff
         audit_until=cutoff(manifest,'audit')
         def verify_one(item):
             miner,receipt=item
-            submissions=[dict(url=self.bucket.presign(b['frozen_key']),sha256=b['sha256'],commitment_miner=miner,commitment_ref=dict(miner=miner,commitment_sha256=receipt['sha256'],**{k:b[k]for k in ('slot','env_id','index','batch_sha256','size','frozen_key')}))for b in receipt['artifacts']if b['slot']in selected_slots[miner]]if manifest.get('submission_transport_policy')else[dict(url=self.bucket.presign(receipt['frozen_key']),sha256=receipt['sha256'])]
+            receipt=audit_manifest['audit_frozen_receipts'][miner]if manifest.get('proof_copy_policy')else receipt
+            submissions=[dict(url=self.bucket.presign(b['frozen_key']),sha256=b['sha256'],commitment_miner=miner,commitment_ref=dict(miner=miner,commitment_sha256=receipt['sha256'],**{k:b[k]for k in ('slot','env_id','index','batch_sha256','size','frozen_key')}))for b in receipt['artifacts']if b['slot']in selected_slots[miner]and (not manifest.get('proof_copy_policy')or audit_manifest['selected_proof_copy_receipts'][miner+'/'+str(b['slot'])]['status']=='copied')]if manifest.get('submission_transport_policy')else[dict(url=self.bucket.presign(receipt['frozen_key']),sha256=receipt['sha256'])]
             try:
+                if not submissions:raise RuntimeError('selected proofs unavailable; original draw retained')
                 if audit_until is not None and time.time()>=audit_until:raise TimeoutError('signed audit cutoff elapsed')
                 extra={'observe_until':audit_until}if audit_until is not None and hasattr(self.jobs,'queue')else {}
                 remote=self.jobs.run(epoch+'-verify-'+miner[:8],'verify',audit_manifest,checkpoint_path,submissions=submissions,**extra)
@@ -464,6 +473,9 @@ class RemoteController(Controller):
             if manifest.get('submission_transport_policy'):
                 from .commitment_transport import combine
                 report=combine(audit_manifest,receipt,remote)
+                if manifest.get('proof_copy_policy'):
+                    from .selected_proof_copy import annotate_deferrals
+                    report=annotate_deferrals(audit_manifest,miner,report)
             else:report=remote['audits'][0]
             if report['submission_sha256']!=receipt['sha256']:raise ValueError('frozen artifact report binding')
             require_report(manifest,report)

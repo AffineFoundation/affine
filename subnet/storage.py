@@ -60,6 +60,15 @@ class Bucket:
             retries={'mode': 'standard', 'total_max_attempts': 1}))
         return boto3.client('s3', **self._client_options, config=bounded)
 
+    def selected_proof_client(self, remaining):
+        """Bounded conditional-COPY transport; no SDK retry or shared mutation."""
+        from botocore.config import Config
+        if remaining<=0:raise TimeoutError('selected proof deadline')
+        bounded=self.client.meta.config.merge(Config(connect_timeout=min(5,max(.1,remaining/4)),
+            read_timeout=min(30,max(.1,remaining/2)),
+            retries={'mode':'standard','total_max_attempts':1}))
+        return boto3.client('s3',**self._client_options,config=bounded)
+
     def complete_commitment_listing(self, epoch, miners, cutoff=None):
         """Complete bounded namespace discovery; listed data is not authentication."""
         prefix='private/'+epoch+'/commitments/'

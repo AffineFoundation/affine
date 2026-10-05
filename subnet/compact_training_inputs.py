@@ -196,6 +196,7 @@ def validate_job(job, manifest, authority):
             or not {'subnet/compact_training_inputs.py','subnet/training_receipts.py'} <= set(job.get('source_files',{}))
             or manifest.get('training_execution_amendment') is not None):
         raise ValueError('prospective compact job/source/policy required; v1 amendments cannot opt in')
+    if manifest.get('proof_copy_policy')and 'subnet/selected_proof_copy.py'not in job.get('source_files',{}):raise ValueError('prospective selected copy training source required')
     submissions = job.get('submissions')
     if not isinstance(submissions,list) or not 1 <= len(submissions) <= 256:
         raise ValueError('bounded compact submission inventory')
@@ -276,7 +277,8 @@ def prepare_submissions(controller, manifest, reports, receipts):
         if manifest.get('submission_transport_policy'):
             for child in audit['artifact_audits']:
                 if child.get('accepted'):
-                    frozen=next(b for b in receipts[miner]['artifacts']if b['sha256']==child['submission_sha256']);rows.append((miner,child,frozen))
+                    original=manifest['audit_frozen_receipts'][miner]if manifest.get('proof_copy_policy')is not None else receipts[miner]
+                    frozen=next(b for b in original['artifacts']if b['sha256']==child['submission_sha256']);rows.append((miner,child,frozen))
         else:rows.append((miner,audit,receipts[miner]))
     for miner,audit,frozen in rows:
         original = v1.issue(controller,manifest,miner,frozen,audit)
