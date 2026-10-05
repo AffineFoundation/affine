@@ -1,0 +1,7 @@
+# Native MATH prompt eligibility
+
+Prospective trainer eligibility reconstructs the original one-turn `affine_math` task context from an authenticated snapshot, using the original MathTask data/configuration classes and task hash. It authenticates the complete environment source and dependency closure once per spec, parses the snapshot once, and rejects a changed snapshot before each task lookup. The new adapter must be explicitly pinned in a signed training job and reloaded through the authenticated source finder.
+
+This is only a prompt/tokenizer eligibility optimization. It does not check an outcome, model sampling, grader readiness, or an inference proof. Actual mining and verifier environment execution still use the original runtime, setup and grader. The original MATH setup checks grader health without changing the task prompt; avoiding that subprocess during prompt-only eligibility changes no training tokens or optimizer operation. Other environments and multi-turn contexts are rejected.
+
+A local CPU conformance benchmark used 256 distinct synthetic questions with the original MathTask implementation. All initial messages, tools and task hashes matched exactly. Native resets, including grader setup, took 56.720 seconds; prompt-only admission/construction took 0.106 seconds and all resets took 0.031 seconds. This is a synthetic local control, not a measured production speedup or evidence of grading these questions. Deployment requires a new immutable source bundle and qualification; existing source contracts remain unchanged.
