@@ -33,8 +33,12 @@ class RoutedJobs:
         q=config['verifier_queue']; workers={identity:['verify'] for identity in worker_ids}
         self.queue=Coordinator(self.state/'verifier-queue.sqlite3',controller.authority.id,workers,
                                lease_seconds=q.get('lease_seconds',300),max_attempts=q.get('max_attempts',3))
-        self.server=CoordinatorServer((q.get('host','127.0.0.1'),q['port']),self.queue,controller.signed)
-        self.thread=threading.Thread(target=self.server.serve_forever,daemon=True); self.thread.start()
+        external=q.get('external_api',False)
+        if type(external)is not bool:raise ValueError('external coordinator API must be boolean')
+        self.server=None; self.thread=None
+        if not external:
+            self.server=CoordinatorServer((q.get('host','127.0.0.1'),q['port']),self.queue,controller.signed)
+            self.thread=threading.Thread(target=self.server.serve_forever,daemon=True); self.thread.start()
         self.owner_path=self.state/'checkpoint-owners.json'
         self.owners=json.loads(self.owner_path.read_text()) if self.owner_path.exists() else {}
         self.cache_lock=threading.RLock()
@@ -188,4 +192,5 @@ class RoutedJobs:
             time.sleep(2)
 
     def stop(self):
-        self.server.shutdown(); self.server.server_close()
+        if self.server is not None:
+            self.server.shutdown(); self.server.server_close()

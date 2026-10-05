@@ -62,6 +62,9 @@ New main-branch code also adds default-off sole-current FP32 optimizer caching
 and prompt-only native MATH eligibility. Those changes are NOT in the sealed
 FE archive and are not enabled in live jobs. They require a new signed source
 contract and qualification before activation; main branch alone is not a contract.
+An independent coordinator API option is also default-off and prospective: it
+keeps verifier HTTP availability separate from learner initialization/recovery,
+using the same authenticated queue and leases. It is not deployed in FE.
 
 The completed original E16 keeps immutable source
 7459c28cbe11b0999b41644aea2aa672d40eb44faa94ccb261e176d8f71b0d46.
