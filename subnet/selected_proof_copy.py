@@ -13,26 +13,33 @@ def freeze_metadata(gateway,epoch):
  state=gateway.epochs[epoch];validate_policy(state['commitment_binding']['proof_copy_policy'])
  cutoff=state['commitment_binding'].get('freeze_until');pending=state['commitment_pending'];receipts={}
  # Full population is authenticated before this pass. Each declared child HEAD
- # is captured before the signed boundary; missing/outage never fabricates a
- # finalized population or erases a previously captured ETag.
+ # is captured before the signed boundary. Confirmed absent objects reject
+ # only their miner; bucket/access/outage ambiguity cannot finalize a population.
  items=[(miner,b)for miner,p in sorted(pending.items())if miner not in state['rejections']for b in p['document']['payload']['batches']if str(b['slot'])not in p['artifact_plans']]
+ def missing_child(error):
+  from botocore.exceptions import ClientError
+  return isinstance(error,ClientError)and str(error.response.get('Error',{}).get('Code'))in('NoSuchKey','NotFound','404')
  def head_one(item):
   miner,b=item
   try:
    if cutoff is not None and time.time()>=cutoff:raise TimeoutError('complete child metadata cutoff')
    key='private/'+epoch+'/staging/'+miner+'/'+str(b['slot'])+'.zip'
    meta=gateway.bucket.client.head_object(Bucket=gateway.bucket.name,Key=key)
+   if cutoff is not None and time.time()>=cutoff:raise TimeoutError('completed child metadata after cutoff')
    if b['size']>state.get('upload_limit',100_000_000)or meta['ContentLength']!=b['size']or not state['start']<=meta['LastModified'].timestamp()<state['deadline']:raise SubmissionPolicyError('artifact size/time')
    return miner,b,dict(etag=meta['ETag'],received_at=meta['LastModified'].timestamp()),None
-  except Exception as exc:return miner,b,None,exc
+  except Exception as exc:
+   if cutoff is not None and time.time()>=cutoff:exc=TimeoutError('child metadata boundary expired')
+   return miner,b,None,exc
  failures=[]
  with ThreadPoolExecutor(max_workers=4)as pool:
   for miner,b,meta,error in pool.map(head_one,items):
-   if isinstance(error,SubmissionPolicyError):state['rejections'][miner]=str(error);gateway.persist()
+   if missing_child(error):state['rejections'][miner]='missing completed declared artifact';gateway.persist()
+   elif isinstance(error,SubmissionPolicyError):state['rejections'][miner]=str(error);gateway.persist()
    elif error is not None:failures.append(error)
    else:pending[miner]['artifact_plans'][str(b['slot'])]=meta;gateway.persist()
  if failures:
-  state['commitment_metadata_incomplete']=dict(reason='child_HEAD_infrastructure_incomplete',at=time.time(),error_type=type(failures[0]).__name__);gateway.persist()
+  state['commitment_metadata_incomplete']=dict(reason='child_HEAD_budget_incomplete'if cutoff is not None and time.time()>=cutoff else'child_HEAD_infrastructure_incomplete',at=time.time(),error_type=type(failures[0]).__name__);gateway.persist()
   raise FreezeMetadataIncomplete('complete child metadata unavailable')from failures[0]
  for miner,p in sorted(pending.items()):
   if miner in state['rejections']:continue

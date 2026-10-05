@@ -110,3 +110,30 @@ class Controls(unittest.TestCase):
    finally:
     with lock:count['active']-=1
   g.bucket.head_object=head;self.assertEqual(len(c.freeze(g,'e')),12);self.assertEqual(count['peak'],4);self.assertEqual({thread for thread,_ in journals},{threading.get_ident()})
+ def test_confirmed_missing_child_rejects_only_incomplete_miner_not_others(self):
+  from botocore.exceptions import ClientError
+  for code in ('NoSuchKey','NotFound','404'):
+   with self.subTest(code=code):
+    g,ids=self.fixture();miner=ids[0].id;old=g.bucket.head_object
+    def head(**kw):
+     if miner in kw['Key']:raise ClientError({'Error':{'Code':code},'ResponseMetadata':{'HTTPStatusCode':404}},'HeadObject')
+     return old(**kw)
+    g.bucket.head_object=head;receipts=c.freeze(g,'e');self.assertEqual(set(receipts),{i.id for i in ids[1:]});self.assertEqual(g.epochs['e']['rejections'],{miner:'missing completed declared artifact'});self.assertNotIn('commitment_metadata_incomplete',g.epochs['e']);self.assertEqual(g.bucket.copies,[])
+ def test_actual_missing_bucket_access_and_503_remain_global_infrastructure(self):
+  from botocore.exceptions import ClientError
+  for code,status in (('NoSuchBucket',404),('AccessDenied',403),('ServiceUnavailable',503),('503',503)):
+   with self.subTest(code=code):
+    g,ids=self.fixture();miner=ids[0].id;old=g.bucket.head_object
+    def head(**kw):
+     if miner in kw['Key']:raise ClientError({'Error':{'Code':code},'ResponseMetadata':{'HTTPStatusCode':status}},'HeadObject')
+     return old(**kw)
+    g.bucket.head_object=head
+    with self.assertRaises(c.FreezeMetadataIncomplete):c.freeze(g,'e')
+    self.assertNotIn('frozen_receipts',g.epochs['e']);self.assertEqual(g.epochs['e']['rejections'],{});self.assertEqual(g.bucket.copies,[]);self.assertEqual(g.epochs['e']['commitment_metadata_incomplete']['reason'],'child_HEAD_infrastructure_incomplete')
+ def test_successful_head_returning_after_cutoff_is_global_budget_not_fraud(self):
+  g,ids=self.fixture();clock=[0];g.epochs['e']['commitment_binding']['freeze_until']=25;old=g.bucket.head_object
+  def late(**kw):
+   value=old(**kw);clock[0]=30;return value
+  g.bucket.head_object=late
+  with patch('subnet.selected_proof_copy.time.time',side_effect=lambda:clock[0]),self.assertRaises(c.FreezeMetadataIncomplete):c.freeze(g,'e')
+  self.assertNotIn('frozen_receipts',g.epochs['e']);self.assertEqual(g.epochs['e']['rejections'],{});self.assertEqual(g.epochs['e']['commitment_metadata_incomplete']['reason'],'child_HEAD_budget_incomplete');self.assertEqual(g.bucket.copies,[])
