@@ -20,3 +20,13 @@ GPU jobs already support the <=256 selected document limit. A controller-only
 operational overlay for an existing epoch requires an explicit authority scope
 binding the original manifest and immutable captured receipts; source publication
 for future epochs must contain the permanent implementation.
+
+Prospective cheap admission reads use four concurrent object GETs, with original
+sorted miner/slot processing preserved. Transport allocation is capped at the
+signed small-document byte size (maximum 2 MB), pending raw results total at most
+8 MB, and JSON decoding remains serial under the existing 128 MB working-budget
+profile. This does not parallelize model execution or certify unaudited samples.
+Transport and immutable-object faults still abort collection rather than count
+as fraudulent submissions. A diagnostic sidecar records capture, metadata,
+read/decode, selection and publication timings; its publication does not gate
+training and it is separate from computation/scoring bindings.

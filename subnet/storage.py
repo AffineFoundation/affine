@@ -92,6 +92,17 @@ class Bucket:
     def get(self, key):
         return self.client.get_object(Bucket=self.name, Key=key)['Body'].read()
 
+    def get_bounded(self, key, *, limit):
+        """Read immutable small documents with a hard transport allocation bound."""
+        if type(limit)is not int or not 0<limit<=2_000_000:raise ValueError('bounded document GET size')
+        response=self.client.get_object(Bucket=self.name,Key=key);body=response['Body']
+        try:
+            if response['ContentLength']!=limit:raise ValueError('immutable learner capture byte size')
+            data=body.read(limit+1)
+            if len(data)!=limit:raise ValueError('immutable learner capture byte size')
+            return data
+        finally:body.close()
+
     def json(self, key, value):
         self.put(key, canonical(value), 'application/json')
 
