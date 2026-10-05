@@ -95,7 +95,9 @@ def frozen_submission(controller,manifest,miner,receipt):
     else:data=controller.bucket.get(key)
     if len(data)!=receipt['size'] or sha(data)!=receipt['sha256']:
         raise ValueError('frozen commitment history content mismatch')
-    document=validate(data,manifest['epoch'],miner)
+    # Historical frozen receipts can predate the prospective canonical wire gate.
+    # Authenticate the parsed signed document while retaining its original byte SHA.
+    document=validate(canonical(json.loads(data)),manifest['epoch'],miner)
     if (document!=receipt['commitment_document'] or
             document['payload']['checkpoint']!=manifest['checkpoint']['id'] or
             document['payload']['source']!=manifest['source_bundle']['sha256']):
