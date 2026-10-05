@@ -98,7 +98,11 @@ class Controller:
         if existing(legacy_key) is None:self.bucket.json(legacy_key,self.signed(descriptor))
         return checkpoint
 
-    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None,persistent_publication_policy=None,reward_publication_policy=None,optimizer_state_export_policy=None):
+    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None,persistent_publication_policy=None,reward_publication_policy=None,optimizer_state_export_policy=None,artifact_compression_policy=None):
+        if artifact_compression_policy is not None:
+            from .batches import compression_policy
+            artifact_compression_policy=compression_policy(artifact_compression_policy)
+            if submission_transport_policy is None:raise ValueError('prospective compression requires per-pair commitments')
         if persistent_publication_policy is not None:
             from .persistent_publication import validate_policy
             persistent_publication_policy=validate_policy(persistent_publication_policy)
@@ -172,6 +176,7 @@ class Controller:
                       environment_revision='trusted-adapter-registry-v1')
         if sample_harness_registry is not None:manifest['sample_harness_registry']=sample_harness_registry
         if submission_transport_policy is not None:manifest['submission_transport_policy']=submission_transport_policy
+        if artifact_compression_policy is not None:manifest['artifact_compression_policy']=artifact_compression_policy
         if hourly_execution_policy is not None:manifest['hourly_execution_policy']=hourly_execution_policy
         if reward_publication_policy is not None:manifest['reward_publication_policy']=reward_publication_policy
         manifest['transport_policy']='direct-r2-v1' if getattr(self.gateway,'direct_r2',False) else 'gateway-v1'

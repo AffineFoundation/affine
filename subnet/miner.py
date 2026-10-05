@@ -70,6 +70,8 @@ class MinerProgress:
 
 class Miner:
     def __init__(self, identity, manifest, checkpoint, capability=None, state_path=None, progress_path=None):
+        from .batches import compression_for_manifest
+        compression_for_manifest(manifest)
         check_runtime_profile(manifest)
         for_manifest(manifest)
         self.identity, self.manifest = identity, manifest

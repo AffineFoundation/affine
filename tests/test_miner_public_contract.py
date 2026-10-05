@@ -98,6 +98,13 @@ class PublicMinerContract(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'epoch mismatch'):cli.run(args)
                 download.assert_not_called()
 
+    def test_compression_assertion_cannot_override_signed_manifest_before_download(self):
+        with tempfile.TemporaryDirectory()as temp:
+            capfile=Path(temp)/'cap.json';capfile.write_text(json.dumps(self.capability()))
+            args=SimpleNamespace(cap_file=str(capfile),key=None,state=temp,manifest_url='https://manifest.invalid',current_url=None,authority='trusted',compression_level=1)
+            with patch.object(cli,'fetch_signed',return_value=self.manifest()),patch.object(cli,'checkpoint_download')as download,self.assertRaisesRegex(ValueError,'must match signed manifest'):cli.run(args)
+            download.assert_not_called()
+
     def test_unapproved_artifact_escalation_refuses_before_runtime(self):
         manifest=self.manifest();manifest['model_runtime_revision']='cuda-bf16-eager-sm86-v1'
         with patch('subnet.miner.make_runtime') as runtime,self.assertRaisesRegex(ValueError,'artifact policy'):

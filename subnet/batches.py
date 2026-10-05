@@ -11,19 +11,27 @@ MAX_UPLOAD = 100_000_000
 class UploadBudgetExceeded(ValueError):
     """A complete candidate cannot fit the bounded cumulative object."""
 
-def pack(batches, *, budget=None, stable=False):
+def compression_policy(raw):
+    if type(raw)is not dict or set(raw)!={'version','level'} or raw['version']!='lossless-deflate-v1' or type(raw['level'])is not int or not 0<=raw['level']<=9:raise ValueError('signed lossless artifact compression policy')
+    return dict(raw)
+
+def compression_for_manifest(manifest):
+    return 6 if 'artifact_compression_policy'not in manifest else compression_policy(manifest['artifact_compression_policy'])['level']
+
+def pack(batches, *, budget=None, stable=False, compression_level=6):
     from .artifact_budget import LEGACY,LONG
     budget=dict(LEGACY if budget is None else budget)
     if budget not in (LEGACY,LONG):raise ValueError('artifact budget')
     if type(stable)is not bool:raise ValueError('stable framing flag')
+    if type(compression_level)is not int or not 0<=compression_level<=9:raise ValueError('lossless DEFLATE compression level')
     out = io.BytesIO()
     manifest = []
     def write(archive,name,data):
-        if not stable:return archive.writestr(name,data)
+        if not stable:return archive.writestr(name,data,compresslevel=compression_level)
         info=zipfile.ZipInfo(name,date_time=(1980,1,1,0,0,0));info.compress_type=zipfile.ZIP_DEFLATED
         info.create_system=3;info.external_attr=0o600<<16
-        return archive.writestr(info,data)
-    with zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED) as z:
+        return archive.writestr(info,data,compresslevel=compression_level)
+    with zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED,compresslevel=compression_level) as z:
         for bi, (batch, arrays) in enumerate(batches):
             if stable and (bi>=32 or len(arrays)>32):raise ValueError('stable batch/rollout budget')
             refs = []

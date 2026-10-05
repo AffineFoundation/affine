@@ -118,6 +118,9 @@ def contract(config,round_number):
         if epoch_policy(config) not in POLICIES:raise ValueError('receipt input requires covered/persistent objective')
         result['training_input_policy']=config['training_input_policy']
     if config.get('artifact_policy') is not None:result['artifact_policy']=config['artifact_policy']
+    if config.get('artifact_compression_policy') is not None:
+        from .batches import compression_policy
+        result['artifact_compression_policy']=compression_policy(config['artifact_compression_policy'])
     if config.get('task_assets') is not None:result['task_assets']=config['task_assets']
     if config.get('sampling_policy') is not None:result['sampling_policy']=config['sampling_policy']
     if config.get('persistent_publication_policy') is not None:

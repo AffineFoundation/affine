@@ -183,6 +183,7 @@ def main(argv=None):
     credential=p.add_mutually_exclusive_group(required=True)
     credential.add_argument('--key');credential.add_argument('--cap-file')
     p.add_argument('--gateway',default='https://unused.invalid');p.add_argument('--once',action='store_true');p.add_argument('--max-batches',type=int)
+    p.add_argument('--compression-level',type=int,choices=range(10),help='assert signed epoch compression level')
     p.add_argument('--env-id');p.add_argument('--indices',nargs='+',type=int);p.add_argument('--search-budget',type=int)
     a=p.parse_args(argv)
     credential_flag='--cap-file' if a.cap_file else '--key'
@@ -197,6 +198,7 @@ def main(argv=None):
     arguments=['--authority',a.authority,'--current-url',a.current_url,'--gateway',a.gateway,credential_flag,str(credential_path),'--state',str(state),'--source-bundle-sha256',descriptor['sha256']]
     if a.once:arguments+=['--once']
     if a.max_batches is not None:arguments+=['--max-batches',str(a.max_batches)]
+    if a.compression_level is not None:arguments+=['--compression-level',str(a.compression_level)]
     if a.env_id is not None:arguments+=['--env-id',a.env_id]
     if a.indices is not None:arguments+=['--indices',*[str(i) for i in a.indices]]
     if a.search_budget is not None:arguments+=['--search-budget',str(a.search_budget)]
