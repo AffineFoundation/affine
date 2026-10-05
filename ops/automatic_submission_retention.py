@@ -14,9 +14,11 @@ import sqlite3
 import subprocess
 import time
 from ops.live_reward_writer import approved_source_members
+from ops.live_reward_source_approval import apply_source_approvals, source_verifiers
+from ops.verifier_workforce import authenticate_supplements, authorize_worker
 from ops.live_reward_exporter import atomic
 from ops.submission_retention import completed_replicas, digest
-from subnet.live_reward_bridge import signed
+from subnet.live_reward_bridge import signed, sha
 from subnet.storage import Bucket
 
 
@@ -45,17 +47,57 @@ def archived(bucket, plan):
     return dict(plan,archive_verified=True)
 
 
-def run(original_config, writer_pointer, authority, output, future_config=None, *, apply=False, per_worker=8):
-    if type(per_worker)is not int or not 1<=per_worker<=32:raise ValueError('bounded retention rate')
-    output=Path(output);output.mkdir(parents=True,exist_ok=True);output.chmod(0o700)
-    original=json.loads(Path(original_config).read_text());pointer=json.loads(Path(writer_pointer).read_text())
+def retention_writer(pointer, authority, source_approvals, workforce_supplements):
     document=json.loads(Path(pointer['cutover_path']).read_text())
     if hashlib.sha256(Path(pointer['cutover_path']).read_bytes()).hexdigest()!=pointer['cutover_sha256']:
         raise ValueError('actual writer pointer binding')
-    writer=signed(document,authority);sources=approved_source_members(writer,authority)
-    configs={original['source_bundle']['sha256']:original}
-    if future_config and Path(future_config).exists():
-        future=json.loads(Path(future_config).read_text());configs[future['source_bundle']['sha256']]=future
+    writer=signed(document,authority)
+    if source_approvals:
+        anchor=json.loads(Path(pointer['anchor_path']).read_text())
+        if writer['anchor_sha256']!=sha(anchor):raise ValueError('original writer anchor binding')
+        writer,_=apply_source_approvals(writer,anchor,authority,document,source_approvals)
+    writer['_verifier_workforce']=authenticate_supplements(
+        workforce_supplements,authority,sha(document),writer['verifier_identities'])
+    return writer
+
+
+def retention_configs(original, future_configs, writer, sources):
+    if not isinstance(future_configs,list) or len(future_configs)>16:
+        raise ValueError('bounded future retention configs')
+    configs={}
+    for config in [original,*future_configs]:
+        source=config['source_bundle']['sha256']
+        if source not in sources:raise ValueError('approved configured source required')
+        state=Path(config['state'])
+        if not state.is_absolute() or state.resolve()!=state or str(state/'roles/verifier-queue.sqlite3')!=writer['queue_database']:
+            raise ValueError('exact original queue/config state binding')
+        if config['bucket']!=original['bucket']:raise ValueError('same durable bucket required')
+        endpoints=config['remote']['roles']['verify']
+        if not isinstance(endpoints,list) or not 1<=len(endpoints)<=8:
+            raise ValueError('bounded verifier endpoints')
+        workers={}
+        for endpoint in endpoints:
+            identity=endpoint['worker_identity'];workspace=Path(endpoint['workspace'])
+            if identity in workers or not workspace.is_absolute() or '..' in workspace.parts or str(workspace)!=endpoint['workspace']:
+                raise ValueError('distinct exact configured worker/workspace required')
+            workers[identity]=endpoint
+        if source in configs and configs[source]!=config:
+            raise ValueError('ambiguous source endpoint configuration')
+        configs[source]=config
+    return configs
+
+
+def run(original_config, writer_pointer, authority, output, future_config=None, *, apply=False, per_worker=8,
+        future_configs=None, compute_source_approvals=None, verifier_workforce_supplements=None):
+    if type(per_worker)is not int or not 1<=per_worker<=32:raise ValueError('bounded retention rate')
+    output=Path(output);output.mkdir(parents=True,exist_ok=True);output.chmod(0o700)
+    original=json.loads(Path(original_config).read_text());pointer=json.loads(Path(writer_pointer).read_text())
+    writer=retention_writer(pointer,authority,compute_source_approvals or [],verifier_workforce_supplements or [])
+    sources=approved_source_members(writer,authority)
+    paths=list(future_configs or [])
+    if future_config:paths.insert(0,future_config)
+    if len(paths)>16:raise ValueError('bounded future retention configs')
+    configs=retention_configs(original,[json.loads(Path(path).read_text())for path in paths],writer,sources)
     ledger_path=output/'completed-cache-retention.json';ledger=json.loads(ledger_path.read_text())if ledger_path.exists()else{}
     candidates={};endpoints={}
     with sqlite3.connect(Path(writer['queue_database']).as_uri()+'?mode=ro',uri=True)as db:
@@ -68,6 +110,8 @@ def run(original_config, writer_pointer, authority, output, future_config=None, 
             if config is None:continue
             workers={e['worker_identity']:e for e in config['remote']['roles']['verify']}
             if row['worker']not in workers:raise ValueError('configured completed-worker identity required')
+            authorize_worker(row['worker'],manifest,job,row,db,
+                source_verifiers(writer,manifest,job),writer['_verifier_workforce'])
             endpoint=workers[row['worker']];group=digest(dict(identity=row['worker'],workspace=endpoint['workspace']))
             if len(candidates.setdefault(group,[]))>=per_worker:continue
             plans=completed_replicas(row,authority,{k:e['workspace']for k,e in workers.items()},sources,now=time.time())
@@ -108,5 +152,5 @@ def run(original_config, writer_pointer, authority, output, future_config=None, 
     return result
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--original-config',required=True);parser.add_argument('--writer-pointer',required=True);parser.add_argument('--authority',required=True);parser.add_argument('--output',required=True);parser.add_argument('--future-config');parser.add_argument('--apply',action='store_true');parser.add_argument('--per-worker',type=int,default=8)
-    args=parser.parse_args();run(args.original_config,args.writer_pointer,args.authority,args.output,args.future_config,apply=args.apply,per_worker=args.per_worker)
+    parser=argparse.ArgumentParser();parser.add_argument('--original-config',required=True);parser.add_argument('--writer-pointer',required=True);parser.add_argument('--authority',required=True);parser.add_argument('--output',required=True);parser.add_argument('--future-config',action='append',default=[]);parser.add_argument('--compute-source-approval',action='append',default=[]);parser.add_argument('--verifier-workforce-supplement',action='append',default=[]);parser.add_argument('--apply',action='store_true');parser.add_argument('--per-worker',type=int,default=8)
+    args=parser.parse_args();run(args.original_config,args.writer_pointer,args.authority,args.output,apply=args.apply,per_worker=args.per_worker,future_configs=args.future_config,compute_source_approvals=[json.loads(Path(p).read_text())for p in args.compute_source_approval],verifier_workforce_supplements=[json.loads(Path(p).read_text())for p in args.verifier_workforce_supplement])
