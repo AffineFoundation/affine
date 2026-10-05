@@ -31,11 +31,16 @@ with(root/'supervisor.stdout.private.log').open('xb')as out,(root/'supervisor.st
 '''
 
 class IndependentStateReader:
+    shared_lease=None
     def __init__(self,config,controller):
         required={'endpoint','reader_host','trainer_host','trainer_known_hosts',
                   'reader_identity','module_hashes','qualification','max_wall_seconds'}
-        if set(config)!=required:raise ValueError('exact admitted CPU reader configuration')
+        if set(config)-{'shared_node_reservation'}!=required:raise ValueError('exact admitted CPU reader configuration')
         self.config=config;self.endpoint=config['endpoint'];self.authority=controller.authority.id
+        self.shared_lease=None
+        if config.get('shared_node_reservation') is not None:
+            from .shared_node_reservation import SharedNodeReservation
+            self.shared_lease=SharedNodeReservation(config['shared_node_reservation'],provider_uuid=config['reader_host']['provider_UUID'])
         if set(self.endpoint)!={'host','port','user','known_hosts','python','workspace','namespace'}:
             raise ValueError('exact qualified reader endpoint')
         admission=reader.verify(config['qualification'],self.authority)
@@ -103,6 +108,12 @@ print(json.dumps(dict(observed_at=time.time(),hashes=hashes,reader_identity=byte
         return code,observed
 
     def prepare_original_readback(self,controller,report,envelope):
+        if self.shared_lease is None:return self._prepare_original_readback(controller,report,envelope)
+        job=reader.verify(envelope,self.authority)
+        with self.shared_lease.executing(reader.sha(job)):
+            return self._prepare_original_readback(controller,report,envelope)
+
+    def _prepare_original_readback(self,controller,report,envelope):
         c=self.config;e=self.endpoint;job=reader.verify(envelope,self.authority)
         if not isinstance(job.get('job_id'),str) or not re.fullmatch('[A-Za-z0-9_-]{1,100}',job['job_id']):raise ValueError('original safe reader dispatch job ID')
         manifest=reader.verify(job['manifest'],self.authority);descriptor=validate_report(report,job,manifest)
@@ -119,6 +130,7 @@ print(json.dumps(dict(observed_at=time.time(),hashes=hashes,reader_identity=byte
             namespace=namespace,descriptor_sha256=reader.sha(descriptor),
             reader_host_record_sha256=reader.sha(c['reader_host']),trainer_host_record_sha256=reader.sha(c['trainer_host']),
             storage_origin=bucket.client.meta.endpoint_url,storage_bucket=bucket.name,storage_addressing='path')
+        if self.shared_lease is not None:self.shared_lease.claim('reader',reader.sha(job))
         root=controller.state/'independent-state-readbacks'/job['job_id'];root.parent.mkdir(mode=0o700,exist_ok=True)
         if root.exists():
             return self._recover_original(controller,root,job,binding,objects)
@@ -191,6 +203,7 @@ print(json.dumps(dict(observed_at=time.time(),hashes=hashes,reader_identity=byte
     def _wait_original(self,root,request,launchfile,binding,objects,dispatch):
         c=self.config;requestfile=root/'request.ROOT-SIGNED.private.json';payload=request['payload']
         data=dict(dispatch=dispatch,request_sha256=file_sha(requestfile),launch_sha256=file_sha(launchfile))
+        if self.shared_lease is not None:self.shared_lease.bind(binding['job_sha256'],data['request_sha256'])
         code='DATA='+repr(data)+'\n'+'''
 import hashlib,json
 from pathlib import Path
@@ -228,8 +241,16 @@ print(json.dumps(v))
                     marker.get('request_file_sha256')!=data['request_sha256'] or
                     marker.get('launch_file_sha256')!=data['launch_sha256']):
                 raise ValueError('exact original reader supervisor handle')
+            if self.shared_lease is not None and 'child'in status:
+                child=status['child'];self.shared_lease.bind(binding['job_sha256'],data['request_sha256'],dict(pid=child.get('pid'),ticks=child.get('ticks')))
             if 'terminal'in status:
                 terminal=status['terminal']
+                if self.shared_lease is not None:
+                    child=status.get('child',{})
+                    handle=dict(pid=child.get('pid'),ticks=child.get('ticks'))
+                    if terminal.get('pid')!=handle['pid']or terminal.get('ticks')!=handle['ticks']:raise ValueError('shared reader original child handle')
+                    self.shared_lease.bind(binding['job_sha256'],data['request_sha256'],handle)
+                    self.shared_lease.terminal(binding['job_sha256'],data['request_sha256'],handle,terminal)
                 if (terminal.get('actual_child_wait_completed')is not True or
                         terminal.get('exit_code')!=0 or terminal.get('timed_out')is not False or
                         'result'not in status or 'child'not in status):

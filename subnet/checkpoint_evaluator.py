@@ -215,8 +215,13 @@ def run(config,once=False):
         endpoint=dict(remote.get('roles',{}).get('evaluate',remote),
                       job_ttl_seconds_by_role=remote.get('job_ttl_seconds_by_role',{}),retain_original_jobs=True)
         remote_jobs=RemoteJobs(endpoint,controller)
+        lease=None
+        if config.get('shared_node_reservation') is not None:
+            from .shared_node_reservation import SharedNodeReservation
+            lease=SharedNodeReservation(config['shared_node_reservation'],provider_uuid=Path(endpoint['known_hosts']).name)
         class EvaluationJobs:
             def busy(self):
+                if lease is not None and lease.blocked():return True
                 for path in remote_jobs.state.glob('*.json'):
                     try:prior=json.loads(path.read_text())
                     except ValueError:continue
@@ -226,6 +231,9 @@ def run(config,once=False):
             def run(self,label,role,manifest,cache=None,**fields):
                 if role!='evaluate':raise ValueError('independent evaluator cannot dispatch other roles')
                 local=endpoint.get('checkpoint_caches',{}).get(manifest['checkpoint']['id']) if 'roles' in remote else cache
+                if lease is not None:
+                    from .shared_node_reservation import reserved_evaluation_run
+                    return reserved_evaluation_run(lease,remote_jobs,label,manifest,local,fields)
                 return remote_jobs.run(label,role,manifest,local,**fields)
         controller.jobs=EvaluationJobs()
         while True:
