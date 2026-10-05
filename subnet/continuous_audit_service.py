@@ -68,7 +68,7 @@ class ContinuousAuditor:
   now=time.time()if now is None else now;available=self.max_inflight
   for jobid in self.state['jobs']:
    status=self.queue.status(jobid)
-   if status and status['status']in('pending','leased'):available-=1
+   if status and status['status']in('queued','leased'):available-=1
   if available<=0:return dict(enqueued=0,backpressure=True)
   rows=self.records();done=set(self.state['draws']);queued={r['row_sha256']for r in self.state['jobs'].values()};remaining=min(self.budget,available)
   retry=[d['row']for identity,d in self.state['draws'].items()if identity not in queued and self.state['capture_failures'].get(identity,{}).get('kind')!='confirmed_invalid_artifact'][:remaining]
@@ -78,6 +78,11 @@ class ContinuousAuditor:
   self.persist()
   for row in retry+selected:
    identity=digest(row);seed=self.state['draws'][identity]['seed'];p=authenticate(self.state['populations'][row['epoch']],self.controller.authority.id)
+   jobid='continuous-audit-'+identity[:32];original=self.directory/(jobid+'-job.json')
+   if original.exists():
+    envelope=json.loads(original.read_text());job=authenticate(envelope,self.controller.authority.id)
+    if job['job_id']!=jobid:raise ValueError('original selected request identity')
+    self.queue.enqueue(envelope);self.queue.archive(jobid,self.controller.bucket,'public/continuous-audit/jobs');self.state['jobs'][jobid]=dict(row_sha256=identity,job_sha256=digest(job));self.persist();enqueued+=1;continue
    try:manifest,receipt,artifact=self._capture(row,p)
    except Exception as error:
     from botocore.exceptions import ClientError
@@ -109,7 +114,7 @@ class ContinuousAuditor:
   from .continuous_audit_policy import admit_artifact_failures
   failures=[f['document']for f in self.state['capture_failures'].values()if f['kind']=='confirmed_invalid_artifact' and authenticate(f['document'],self.controller.authority.id)['row']in records];admissions.update(admit_artifact_failures(failures,records,self.controller.authority.id))
   verifiers={**self.queue.workers,self.controller.authority.id:['operator-artifact-capture']}
-  pointers=[dict(admitted_queue_job_sha256=key)for key in admissions];result=snapshot(records,pointers,verifiers,epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,audit_policy=self.policy,admitted_jobs=admissions)
+  pointers=[dict(admitted_queue_job_sha256=key)for key in admissions];result=snapshot(records,pointers,verifiers,epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,audit_policy=self.policy,admitted_jobs=admissions,adjudications=[json.loads(path.read_text())for path in sorted(self.directory.glob('*-adjudication.json'))],authority=self.controller.authority.id)
   document=self.controller.signed(result);atomic(target,document);self.controller.bucket.json('public/continuous-audit/snapshots/'+str(cutoff)+'-'+epoch+'.json',document);return document
 
 
@@ -130,7 +135,7 @@ def main(argv=None):
   cutoff=int(time.time()//3600)*3600
   for path in sorted(state.glob('*-learner-completion.json')):
    completed=json.loads(path.read_text())
-   if completed['completed_at']<=cutoff and completed['epoch']in service.state['populations']:service.hourly_snapshot(completed['epoch'],completed['round'],completed['inputcheckpoint'],cutoff)
+   if completed['completed_at']<=cutoff and completed['epoch']in service.state['populations']:service.hourly_snapshot(completed['epoch'],completed['round'],completed.get('inputcheckpoint',completed.get('checkpoint')),cutoff)
   if a.once:return 0
   time.sleep(c.get('poll_seconds',10))
 
