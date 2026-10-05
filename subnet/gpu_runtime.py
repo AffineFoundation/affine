@@ -1,5 +1,6 @@
 """Isolated strict same-GPU runtime pilot; not selected by the live controller."""
 import gc
+import time
 import os
 from pathlib import Path
 import torch
@@ -79,13 +80,22 @@ class GPURuntime(Runtime):
         env_seed=int(self.spec.config.get('seed',0));session=create_session(self.spec)
         try:
             initial=session.reset(index,env_seed);messages=initial['messages'];tools=initial.get('tools',[]);turns=[];arrays=[]
+            def progress(phase,**metrics):
+                callback=getattr(self,'mining_progress',None)
+                if callback is not None:callback(phase,**metrics)
             for i in range(self.spec.max_turns):
                 prompt=self.prompt(messages,tools)
                 if len(prompt)+self.harness['max_output_tokens']>min(self.model.config.max_position_embeddings,8192):raise ValueError('GPU model context budget')
-                output=self.sample_output(prompt,seed,messages,i,index,initial['task_hash']);text=self.tokenizer.decode(output,skip_special_tokens=True);acts,probs=self.compute(prompt,output)
+                progress('generation_started',turn=i,prompt_tokens=len(prompt));started=time.monotonic()
+                output=self.sample_output(prompt,seed,messages,i,index,initial['task_hash'])
+                progress('generation_completed',turn=i,output_tokens=len(output),elapsed_seconds=time.monotonic()-started)
+                text=self.tokenizer.decode(output,skip_special_tokens=True);started=time.monotonic()
+                acts,probs=self.compute(prompt,output)
+                progress('probabilities_completed',turn=i,elapsed_seconds=time.monotonic()-started);started=time.monotonic()
                 proofs=self.build_proofs(acts,decode_batching_size=16,topk=128)
                 if not proofs or any(p is None for p in proofs):raise ValueError('GPU proof construction')
-                result=session.step(policy.action(text,self.harness));turns.append(dict(prompt=prompt,output=output,text=text,proofs=proofs,observations=result['observations'],done=result['done'],reward=result['reward'],classification=result['classification']));arrays.append(probs)
+                progress('TOPLOC_completed',turn=i,elapsed_seconds=time.monotonic()-started);started=time.monotonic()
+                result=session.step(policy.action(text,self.harness));progress('grading_completed',turn=i,classification=result['classification'],elapsed_seconds=time.monotonic()-started);turns.append(dict(prompt=prompt,output=output,text=text,proofs=proofs,observations=result['observations'],done=result['done'],reward=result['reward'],classification=result['classification']));arrays.append(probs)
                 messages=messages+[dict(role='assistant',content=text)]+policy.observations(result['observations'],self.harness)
                 if result['done']:break
             if not result['done']:raise ValueError('GPU environment did not terminate')

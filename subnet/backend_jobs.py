@@ -146,24 +146,60 @@ def owned_commitment_upload(job,manifest,progress_path=None):
     identity=Identity(seed)
     if identity.id!=job['miner_id']:raise ValueError('local miner signer binding')
     journal=UploadJournal(manifest,progress_path)
-    def upload(data,timeout):
+    def check_prepared(packed):
+        # Sum independent archive sizes/raw framing conservatively: duplicated
+        # manifests count toward the SAME historical cumulative caps.
+        import io,zipfile,zlib
         from .artifact_budget import for_manifest
-        rows=unpack(data,budget=for_manifest(manifest));packed=[(batch,pair_artifact(batch,arrays,manifest))for batch,arrays in rows]
-        urls=job['capability']['batch_put_urls']
-        if len(packed)>len(urls):raise ValueError('owned commitment slot cap')
-        start=time.monotonic()
+        from .batches import UploadBudgetExceeded
+        budget=for_manifest(manifest);raw=0;compressed=0;array_raw=0;array_compressed=0;framing=22;records=[]
+        if len(packed)>len(job['capability']['batch_put_urls']):raise ValueError('owned commitment slot cap')
+        for slot,(batch,artifact) in enumerate(packed):
+            compressed+=len(artifact)
+            with zipfile.ZipFile(io.BytesIO(artifact))as archive:
+                raw+=sum(e.file_size for e in archive.infolist())
+                record=json.loads(archive.read('manifest.json'))
+                if len(record)!=1 or record[0]['batch']!=batch:raise ValueError('prepared batch metadata')
+                row=record[0];refs=[]
+                for turns in row['arrays']:
+                    renamed=[]
+                    for name in turns:
+                        info=archive.getinfo(name);target=str(slot)+name[name.index('-'):]
+                        array_raw+=info.file_size;array_compressed+=info.compress_size
+                        framing+=76+2*len(target.encode());renamed.append(target)
+                    refs.append(renamed)
+                records.append(dict(batch=batch,arrays=refs))
+        # Array DEFLATE bytes do not depend on member names. Account for exact
+        # hypothetical cumulative ZIP framing and combined canonical manifest,
+        # including two-digit slot prefixes, without decoding model arrays.
+        manifest_bytes=canonical(records);codec=zlib.compressobj(wbits=-15)
+        manifest_compressed=codec.compress(manifest_bytes)+codec.flush()
+        cumulative_raw=array_raw+len(manifest_bytes)
+        cumulative_compressed=array_compressed+framing+76+2*len('manifest.json')+len(manifest_compressed)
+        raw=max(raw,cumulative_raw);compressed=max(compressed,cumulative_compressed)
+        if raw>budget['raw_bytes']or compressed>budget['compressed_bytes']:raise UploadBudgetExceeded('prepared pairs exceed cumulative artifact budget')
+    def upload_pairs(packed,timeout):
+        check_prepared(packed);start=time.monotonic()
         def put(url,data):
             remaining=min(timeout-(time.monotonic()-start),manifest['deadline']-time.time()-1)
             if remaining<=0:raise TimeoutError('owned upload deadline; previous commitment retained')
             response=requests.put(url,data=data,headers=job['capability']['headers'],timeout=remaining,allow_redirects=False)
             if response.status_code not in (200,201,204):raise ValueError('R2 PUT status '+str(response.status_code))
-        for slot,(url,(_,artifact))in enumerate(zip(urls,packed)):
+        for slot,(url,(_,artifact))in enumerate(zip(job['capability']['batch_put_urls'],packed)):
             if journal.known(slot,artifact):continue
             put(url,artifact);journal.acknowledge(slot,artifact)
-        put(job['capability']['put_url'],canonical(make(identity,manifest,packed)))
+        commitment=canonical(make(identity,manifest,packed));put(job['capability']['put_url'],commitment)
+        return commitment
+    def upload(data,timeout):
+        from .artifact_budget import for_manifest
+        rows=unpack(data,budget=for_manifest(manifest))
+        return upload_pairs([(batch,pair_artifact(batch,arrays,manifest))for batch,arrays in rows],timeout)
+    upload.prepare_pair=lambda batch,arrays:pair_artifact(batch,arrays,manifest)
+    upload.check_prepared=check_prepared
+    upload.upload_pairs=upload_pairs
     return upload
 
-def mine_cumulative(runtime,manifest,job,upload,clock=None,allow_empty=False):
+def mine_cumulative(runtime,manifest,job,upload,clock=None,allow_empty=False,progress=None):
     """Publish each complete private batch before searching the next task.
 
     The last acknowledged snapshot is authoritative if subsequent search runs
@@ -178,48 +214,94 @@ def mine_cumulative(runtime,manifest,job,upload,clock=None,allow_empty=False):
         limit=manifest['sampling_contract']['max_attempts']
         if type(job['seed_start'])is not int or type(job['search_budget'])is not int or not 0<=job['seed_start']<limit or not 1<=job['search_budget']<=limit-job['seed_start']:
             raise ValueError('owned miner outside signed attempt budget')
-    batches=[];search=[];data=None;uploads=0;stopped=False;capacity_reached=False
+    batches=[];prepared=[];search=[];data=None;uploads=0;stopped=False;capacity_reached=False
     def available():
         now=clock()
         return manifest['start']<=now<manifest['deadline']-10
-    for definition in mining_definitions(manifest,job):
-        if len(batches)>=manifest.get('max_batches',4) or not available():break
-        for index in definition['indices']:
-            selected=runtime.for_environment(definition['spec'],harness_for(definition,index))
+    # Keep a bounded frontier, rather than exhausting one task's attempt budget
+    # while later tasks never get a chance to produce a success/failure pair.
+    tasks=iter((definition,index) for definition in mining_definitions(manifest,job)
+               for index in definition['indices'])
+    search_policy=job.get('owned_search_policy',dict(version='bounded-round-robin-v1',active_tasks=8,dwell_attempts=2))
+    if (not isinstance(search_policy,dict) or set(search_policy)!={'version','active_tasks','dwell_attempts'}
+            or search_policy['version']!='bounded-round-robin-v1'
+            or type(search_policy['active_tasks'])is not int or not 1<=search_policy['active_tasks']<=8
+            or type(search_policy['dwell_attempts'])is not int or not 1<=search_policy['dwell_attempts']<=2):
+        raise ValueError('bounded owned search policy')
+    frontier=[]
+    def refill():
+        while len(frontier)<search_policy['active_tasks']:
+            try:definition,index=next(tasks)
+            except StopIteration:break
+            frontier.append(dict(definition=definition,index=index,classes={'positive':[],'negative':[]},
+                fingerprints=set(),attempts=0,observed={'positive':0,'negative':0},selected=None,row=None))
+    def emit(state,phase,**extra):
+        if progress is not None:
+            progress(dict(phase=phase,env_id=state['definition']['env_id'],index=state['index'],
+                attempts=state['attempts'],observed_positive=state['observed']['positive'],
+                observed_negative=state['observed']['negative'],completed_batches=len(batches),
+                cumulative_uploads=uploads,at=clock(),**extra))
+    refill()
+    while frontier and not stopped and not capacity_reached and len(batches)<manifest.get('max_batches',4):
+        for state in list(frontier):
             if not available():stopped=True;break
-            classes={'positive':[],'negative':[]};fingerprints=set();attempts=0;observed={'positive':0,'negative':0}
-            for attempt in range(job['search_budget']):
+            definition,index=state['definition'],state['index']
+            if state['selected'] is None:
+                state['selected']=runtime.for_environment(definition['spec'],harness_for(definition,index))
+            selected=state['selected'];classes=state['classes'];fingerprints=state['fingerprints'];observed=state['observed']
+            if state['row'] is None:
+                state['row']=dict(env_id=definition['env_id'],index=index);search.append(state['row'])
+            for _ in range(min(search_policy['dwell_attempts'],job['search_budget']-state['attempts'])):
                 if not available():stopped=True;break
-                rollout,arrays=selected.rollout(index,job['seed_start']+attempt);attempts+=1
+                seed=job['seed_start']+state['attempts']
+                selected.mining_progress=lambda phase,**metrics:emit(state,phase,seed=seed,**metrics)
+                emit(state,'attempt_started',seed=seed)
+                started=clock();rollout,arrays=selected.rollout(index,seed);state['attempts']+=1
                 label=rollout['classification']
                 if label not in classes:raise ValueError('rollout classification')
                 observed[label]+=1
                 signature=tuple(tuple(t['output']) for t in rollout['turns'])
                 quota=manifest['K'] if label=='positive' else manifest['L']
-                if label in classes and len(classes[label])<quota and signature not in fingerprints:
+                if len(classes[label])<quota and signature not in fingerprints:
                     classes[label].append((rollout,arrays));fingerprints.add(signature)
+                state['row'].update(attempts=state['attempts'],positive=len(classes['positive']),negative=len(classes['negative']),observed_positive=observed['positive'],observed_negative=observed['negative'])
+                emit(state,'attempt_completed',seed=seed,classification=label,
+                     output_tokens=sum(len(t['output']) for t in rollout['turns']),elapsed_seconds=clock()-started)
                 if len(classes['positive'])==manifest['K'] and len(classes['negative'])==manifest['L']:break
-            search.append(dict(env_id=definition['env_id'],index=index,attempts=attempts,positive=len(classes['positive']),negative=len(classes['negative']),observed_positive=observed['positive'],observed_negative=observed['negative']))
-            if len(classes['positive'])==manifest['K'] and len(classes['negative'])==manifest['L']:
-                # A rollout can finish across the deadline. Keep the previously
-                # uploaded snapshot instead of replacing it with a late object.
+            complete=len(classes['positive'])==manifest['K'] and len(classes['negative'])==manifest['L']
+            if complete:
                 if not available():stopped=True;break
                 found=classes['positive']+classes['negative']
                 batch=dict(schema=2,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],env_id=definition['env_id'],environment_version=selected.spec.version,index=index,sample_index=index,rollouts=[r for r,a in found])
                 candidate=batches+[(batch,[a for r,a in found])]
                 from .artifact_budget import for_manifest
+                structured=callable(getattr(upload,'prepare_pair',None))
+                pack_started=clock();emit(state,'artifact_pack_started')
                 try:
-                    candidate_data=(pack(candidate,budget=for_manifest(manifest))
-                        if manifest.get('artifact_policy') is not None else pack(candidate))
+                    if structured:
+                        candidate_prepared=prepared+[(batch,upload.prepare_pair(batch,[a for r,a in found]))]
+                        upload.check_prepared(candidate_prepared);candidate_data=None
+                    else:
+                        candidate_data=(pack(candidate,budget=for_manifest(manifest))
+                            if manifest.get('artifact_policy') is not None else pack(candidate))
                 except UploadBudgetExceeded:
-                    search[-1]['submission_status']='exceeds_cumulative_upload_budget'
+                    state['row']['submission_status']='exceeds_cumulative_upload_budget'
+                    frontier.remove(state)
                     if batches:capacity_reached=True;break
                     continue
+                emit(state,'artifact_pack_completed',elapsed_seconds=clock()-pack_started)
                 if not available():stopped=True;break
-                upload(candidate_data,min(180,manifest['deadline']-clock()-1))
-                batches=candidate;data=candidate_data;uploads+=1
+                put_started=clock();emit(state,'cumulative_upload_started')
+                timeout=min(180,manifest['deadline']-clock()-1)
+                if structured:
+                    candidate_data=upload.upload_pairs(candidate_prepared,timeout);prepared=candidate_prepared
+                else:upload(candidate_data,timeout)
+                batches=([(b,None)for b,a in candidate] if structured else candidate);data=candidate_data;uploads+=1
+                emit(state,'cumulative_upload_completed',elapsed_seconds=clock()-put_started)
+                emit(state,'cumulative_upload_acknowledged',submission_bytes=len(data))
+            if complete or state['attempts']>=job['search_budget']:frontier.remove(state)
             if stopped or len(batches)>=manifest.get('max_batches',4):break
-        if stopped or capacity_reached:break
+        if not stopped and not capacity_reached:refill()
     if data is None and not allow_empty:raise ValueError('GPU bounded search found no complete batch before epoch window closed')
     return data,dict(batches=len(batches),search=search,cumulative_uploads=uploads,search_stopped_at_deadline=stopped,search_stopped_at_capacity=capacity_reached,mining_status='complete_batches_uploaded' if data is not None else 'no_complete_KL_batch')
 
@@ -600,8 +682,14 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                 response=requests.put(job['capability']['put_url'],data=data,headers=job['capability']['headers'],timeout=timeout,allow_redirects=False)
                 if response.status_code not in (200,201,204):raise ValueError('R2 PUT status '+str(response.status_code))
             if manifest.get('submission_transport_policy') is not None:upload=owned_commitment_upload(job,manifest,out/'commitment-upload-journal.json')
-            data,mining=mine_cumulative(runtime,manifest,job,upload,allow_empty=True)
-            if data is not None:(out/'submission.zip').write_bytes(data)
+            def progress(value):
+                path=out/'mining-progress.json';temp=out/'mining-progress.tmp'
+                temp.write_bytes(canonical(value));temp.chmod(0o600);temp.replace(path)
+                print(canonical(value).decode(),flush=True)
+            data,mining=mine_cumulative(runtime,manifest,job,upload,allow_empty=True,progress=progress)
+            if data is not None:
+                name='submission-commitment.json' if manifest.get('submission_transport_policy') is not None else 'submission.zip'
+                (out/name).write_bytes(data)
             report.update(miner_id=job['miner_id'],submission_sha256=hashlib.sha256(data).hexdigest() if data is not None else None,submission_size=len(data) if data is not None else 0,operator_authorized_experiment=True,**mining)
         elif job['role'] in ('verify','train'):
             reports=[];pairs=[]

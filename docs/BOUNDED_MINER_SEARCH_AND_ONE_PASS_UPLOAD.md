@@ -1,0 +1,44 @@
+# Prospective bounded miner search and one-pass upload
+
+This changes owned-miner scheduling and transport preparation, not the signed
+sampler, per-task attempt namespace, required success/failure quota, proof
+contents, grader, or public artifact format. Existing sealed sources retain
+their original executions.
+
+The owned worker searches a bounded frontier of at most eight tasks, taking two
+attempts per task per sweep. It retains each task's existing class pools and
+continues with that task's next original seed. Exhausted or completed pools are
+retired. The root-signed job may specify `owned_search_policy` with version
+`bounded-round-robin-v1`, `active_tasks` in 1..8 and `dwell_attempts` in 1..2.
+This cannot expand the signed maximum attempts. Runtime selection remains lazy;
+no additional model is loaded per pool.
+
+Small-commitment mining prepares each newly completed pair directly from its
+original arrays into one stable ZIP pass. Framing is byte-identical to the old
+canonical pair ZIP: DEFLATED members, timestamp 1980-01-01, Unix creator, mode
+0600. There is no initial cumulative ZIP encode/decode and no canonical ZIP
+recompression. Already acknowledged immutable pair bytes are reused.
+
+The historical signed cumulative compressed and raw limits still apply. The
+uploader checks both the conservative sum of independent pair archives and the
+hypothetical cumulative ZIP's exact framing, array compressed sizes and combined
+canonical manifest. This handles two-digit slot prefixes without decoding or
+recompressing arrays; exceeding either cap prevents all PUTs. A pair PUT is
+journaled only after actual success. The signed small commitment is uploaded
+last, so a partial failure preserves the previous authoritative snapshot.
+
+The local diagnostic for this transport is `submission-commitment.json`, the
+actual uploaded small signed document; legacy transport retains `submission.zip`.
+The miner report hashes and sizes the bytes actually submitted.
+
+`mining-progress.json` and logs expose task index, attempt seed/count,
+classification, token counts, completed batches and elapsed phase times:
+generation, probability computation, TOPLOC, grading, artifact packing and PUT.
+They contain no tokens, prompts, probabilities, proofs, capabilities or signing
+material. Phase records are operational telemetry, not scientific proof.
+
+The original V9 control found a pair but failed before its first PUT when
+redundant serialization exhausted the unchanged upload deadline. It ran
+1192.6007 seconds and produced no R2 artifact or accepted verifier result.
+The new source requires its own fresh-nonce genuine GPU qualification; CPU tests
+alone do not demonstrate its mining throughput.
