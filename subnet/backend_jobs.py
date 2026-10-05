@@ -676,6 +676,7 @@ def install_source_loader(root,additional_files=()):
         sys.modules.pop(module_name,None)
     if 'subnet/optimizer_state_cache.py'in additional_files:
         sys.modules.pop('subnet.optimizer_state_cache',None)
+        sys.modules.pop('subnet.cache_lifecycle',None)
     if 'subnet/training_startup_recovery.py'in additional_files:
         sys.modules.pop('subnet.training_startup_recovery',None)
     if 'subnet/committed_training_inputs.py'in additional_files:
@@ -730,8 +731,9 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     learner_files=('subnet/committed_training_inputs.py',)if manifest.get('training_input_policy')=='committed-unaudited-training-v1'else ()
     compact_files=('subnet/compact_training_inputs.py',) if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2') else ()
     if job.get('training_policy')==PERSISTENT_POLICY:
-        from .persistent_training_protocol import EXECUTION_FILES
-        install_source_loader(root,(*EXECUTION_FILES,'subnet/training_receipts.py',*compact_files,*learner_files,*publication_files,*recovery_files))
+        from .persistent_training_protocol import EXECUTION_FILES,CACHE_EXECUTION_FILES
+        cache_files=CACHE_EXECUTION_FILES if manifest.get('optimizer_state_local_cache')is not None else ()
+        install_source_loader(root,(*EXECUTION_FILES,*cache_files,'subnet/training_receipts.py',*compact_files,*learner_files,*publication_files,*recovery_files))
     elif job.get('training_policy')==COVERED_POLICY:
         install_source_loader(root,('subnet/training_receipts.py',*compact_files,*learner_files,*publication_files,*recovery_files))
     else:install_source_loader(root,(*compact_files,*learner_files,*publication_files,*recovery_files))

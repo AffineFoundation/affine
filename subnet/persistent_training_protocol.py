@@ -22,6 +22,21 @@ EXECUTION_FILES = tuple('subnet/' + name + '.py' for name in (
     'covered_epoch_optimizer', 'epoch_optimizer', 'training_receipts'))
 
 
+CACHE_EXECUTION_FILES = ('subnet/optimizer_state_cache.py', 'subnet/cache_lifecycle.py')
+
+def optimizer_cache_policy(manifest):
+    """Pure pre-authentication admission: never import execution/cache code."""
+    value=manifest.get('optimizer_state_local_cache')
+    if value is None:return None
+    if (type(value)is not dict or set(value)!={'version','max_checkpoint_bytes'} or value['version']!='sole-current-fp32-state-cache-v1' or
+        type(value['max_checkpoint_bytes'])is not int or not 1<=value['max_checkpoint_bytes']<=128*1024**3):
+        raise ValueError('explicit bounded optimizer cache policy')
+    publication=manifest.get('persistent_publication_policy')
+    if not isinstance(publication,dict)or publication.get('state_readback')!='qualified-remote-full':
+        raise ValueError('optimizer cache requires full independent durable state readback')
+    return dict(value)
+
+
 def read_json(bucket,key,limit=4_000_000):
     """Bound operator descriptor reads before allocation or JSON parsing."""
     response=bucket.client.get_object(Bucket=bucket.name,Key=key);body=response['Body']
@@ -193,9 +208,8 @@ def validate_job(job,manifest,authority):
     from .persistent_training_state import transport_concurrency
     transport_concurrency(manifest)
     if manifest.get('optimizer_state_local_cache')is not None:
-        from .optimizer_state_cache import policy
-        policy(manifest)
-        if 'subnet/optimizer_state_cache.py'not in job['source_files']:raise ValueError('optimizer cache execution source pin required')
+        optimizer_cache_policy(manifest)
+        if not set(CACHE_EXECUTION_FILES)<=set(job['source_files']):raise ValueError('optimizer cache execution source pin required')
     from .persistent_publication import export_policy
     if export_policy(manifest)!='trainer-full' and 'subnet/persistent_publication.py'not in job['source_files']:
         raise ValueError('upload-only export policy module source pin required')

@@ -52,3 +52,19 @@ corruption, missing files, incorrect sources, signed ACK failures, leases,
 ownership guards, capacity and stale lineage. No full-size GPU timing or epoch
 speedup has been measured. The intended traffic reduction is one complete
 parent-state GET per warm job; export and independent full readback remain.
+
+Post-ACK activation pins and loads `optimizer_state_cache.py` explicitly alongside
+both lifecycle helpers. Cache-enabled GPU execution additionally authenticates
+`cache_lifecycle.py`; policy admission before source authentication is pure and
+does not import either cache implementation. Both execution modules are loaded
+through the authenticated fresh-source finder.
+
+Cache-enabled cleanup uses one detached CPU supervisor identified by the exact
+original job and signed ACK hash. The launch intent is durable before launching;
+a lost SSH response only causes observation of that original handle. The helper
+has a 30-minute execution bound and short SSH status probes. A terminal failure
+or unknown launch outcome requires operator recovery; it never triggers a second
+trainer execution. A signed promotion intent prevents the next trainer from
+consuming or abandoning pending state until promotion completes. Exact confirmed
+`current.json` promotion is idempotent, including a crash immediately before
+`pending.json` removal, and never rehashes shards on a successful ACK retry.
