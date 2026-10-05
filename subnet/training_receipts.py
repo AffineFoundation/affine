@@ -26,7 +26,7 @@ COMPUTATION_FIELDS = ('epoch', 'checkpoint', 'source_bundle', 'start', 'deadline
     'indices', 'environments', 'sample_harness_registry', 'heldout_indices',
     'harness', 'harness_source_hash', 'model_id', 'model_runtime_revision', 'backend_profile',
     'numerical_policy', 'tokenizer_binding', 'sampling_contract', 'sampling_source_hash',
-    'task_assets', 'reward_publication_policy', 'persistent_publication_policy', 'optimizer_state_export_policy', 'optimizer_state_transport', 'submission_transport_policy', 'hourly_execution_policy', 'audit_exclusion_snapshot')
+    'task_assets', 'reward_publication_policy', 'persistent_publication_policy', 'optimizer_state_export_policy', 'optimizer_state_transport', 'proof_copy_policy', 'submission_transport_policy', 'hourly_execution_policy', 'audit_exclusion_snapshot')
 
 
 def sha(value):
@@ -62,6 +62,10 @@ def computation_binding(manifest):
 
 
 def original_computation_manifest(manifest, authority):
+    if manifest.get('training_startup_recovery')is not None:
+        if manifest.get('training_execution_amendment')is not None:raise ValueError('startup recovery cannot combine v1 amendment')
+        from .training_startup_recovery import original_manifest
+        return original_manifest(manifest,authority)
     amendment = manifest.get('training_execution_amendment')
     if amendment is None:
         return manifest

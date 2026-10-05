@@ -10,7 +10,8 @@ from .storage import canonical
 
 def original_request(controller,epoch):
     from .backend_jobs import signed
-    record=json.loads((controller.state/'roles'/(epoch+'-train.json')).read_text())
+    from .training_startup_recovery import label
+    record=json.loads((controller.state/'roles'/(label(controller,epoch)+'.json')).read_text())
     job=signed(json.loads((controller.state/'roles'/(record['job_id']+'-job.json')).read_text()),controller.authority.id)
     if sha(job)!=record['job_sha256']:raise ValueError('original persistent training request record hash')
     return record,job
@@ -46,7 +47,12 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
     receipts=json.loads((controller.state/(epoch+'-scores.json')).read_text())['receipts']
     challenge=json.loads((controller.state/(epoch+'-audit-challenge.json')).read_text())
     training_manifest=coverage_manifest(training_manifest,receipts,challenge)
-    if (training_manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
+    from .training_startup_recovery import declaration,apply,label
+    recovery=declaration(controller,epoch)
+    if recovery is not None:
+        from .compact_training_inputs import receipt_inventory
+        training_manifest,submissions=apply(controller,training_manifest,steps)
+    elif (training_manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
         from .compact_training_inputs import prepare_submissions,receipt_inventory
         submissions=prepare_submissions(controller,training_manifest,reports,receipts)
     else:
@@ -92,7 +98,7 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
         metrics=dict(metrics,new_checkpoint=output)
         controller.bucket.json('public/'+epoch+'/training.json',controller.signed(metrics))
         return output,metrics
-    capacity=(controller.jobs.training_resume(epoch+'-train',training_manifest,submissions,steps,None)
+    capacity=(controller.jobs.training_resume(label(controller,epoch),training_manifest,submissions,steps,None)
               if hasattr(controller.jobs,'training_resume')else None)
     if capacity is None:
         total=(sum(obj['size'] for obj in submissions) if (training_manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2')
@@ -100,7 +106,7 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
         probe=getattr(controller.jobs,'persistent_training_capacity',None)or getattr(controller.jobs,'training_capacity',None)
         if probe is None:raise ValueError('persistent training requires actual trainer resource probe')
         capacity=probe(training_manifest,steps,submission_bytes=total)
-    remote=controller.jobs.run(epoch+'-train','train',training_manifest,checkpoint_path,
+    remote=controller.jobs.run(label(controller,epoch),'train',training_manifest,checkpoint_path,
         submissions=submissions,steps=steps,training_policy=POLICY)
     record,job=original_request(controller,epoch)
     if signed(job['manifest'],controller.authority.id)!=training_manifest or job['steps']!=steps:

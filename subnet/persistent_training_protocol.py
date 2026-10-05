@@ -116,6 +116,9 @@ def opening_binding(config, status, epoch):
 
 
 def validate_binding(binding, manifest):
+    if manifest.get('training_startup_recovery')is not None:
+        from .training_startup_recovery import original_manifest
+        manifest=original_manifest(manifest,manifest['training_startup_recovery']['signer'])
     fields={'version','policy','epoch','input_checkpoint','hyperparameters','parameters',
             'parameters_sha256','source_sha256','gpu_qualification_sha256','genesis_sha256',
             'genesis','parent','global_step_before'}
