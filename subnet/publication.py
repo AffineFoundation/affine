@@ -1,8 +1,9 @@
 """Renewable signed audit routes over immutable, frozen public artifacts."""
+import base64
 import json
 import time
-from pathlib import PurePosixPath
-from .storage import sha
+from pathlib import Path,PurePosixPath
+from .storage import sha,canonical
 
 
 def public_key(key):
@@ -72,7 +73,23 @@ def frozen_submission(controller,manifest,miner,receipt):
     # Read only the bounded commitment. Child ZIP hashes remain declared;
     # actual verifier evidence is available through the separate audit route.
     if not 0<receipt['size']<=MAX_BYTES:raise ValueError('bounded commitment history')
-    if hasattr(controller.bucket,'client'):
+    binding=dict(manifest_sha256=sha(canonical(manifest)),receipt_sha256=sha(canonical(receipt)),
+        epoch=manifest['epoch'],miner=miner,source=manifest['source_bundle']['sha256'],
+        commitment_key=key,sha256=receipt['sha256'],size=receipt['size'])
+    folder=Path(controller.state)/'history-commitment-admissions'
+    journal=folder/(sha(canonical(binding))+'.json')
+    if folder.is_symlink():raise ValueError('commitment history journal directory')
+    cached=journal.exists() or journal.is_symlink()
+    if cached:
+        if journal.is_symlink() or not journal.is_file():raise ValueError('commitment history journal file')
+        with journal.open('rb')as stream:encoded=stream.read(2*MAX_BYTES+1)
+        if len(encoded)>2*MAX_BYTES:raise ValueError('bounded commitment history journal')
+        saved=json.loads(encoded)
+        if (set(saved)!={'version','binding','original_bytes_base64'} or
+                saved['version']!='frozen-commitment-history-admission-v1' or saved['binding']!=binding):
+            raise ValueError('commitment history journal binding')
+        data=base64.b64decode(saved['original_bytes_base64'],validate=True)
+    elif hasattr(controller.bucket,'client'):
         from .commitment_transport import _read_small_commitment
         data=_read_small_commitment(controller.bucket,key)['data']
     else:data=controller.bucket.get(key)
@@ -93,9 +110,50 @@ def frozen_submission(controller,manifest,miner,receipt):
             raise ValueError('frozen commitment history inventory')
         children.append(dict(batch,url=route(artifact['frozen_key']),
             hash_assurance='declared-payload-hash-until-selected-verifier'))
+    if not cached:
+        # Root-local immutable admissions bind original bytes, not renewable URLs.
+        # Every reuse still authenticates these bytes and the complete inventory.
+        from .controller import save_manifest
+        folder.mkdir(mode=0o700,parents=True,exist_ok=True)
+        if folder.is_symlink():raise ValueError('commitment history journal directory')
+        save_manifest(journal,dict(version='frozen-commitment-history-admission-v1',
+            binding=binding,original_bytes_base64=base64.b64encode(data).decode()))
+        journal.chmod(0o600)
     commitment=dict(url=route(key),sha256=receipt['sha256'],size=receipt['size'])
     return dict(transport_policy=VERSION,commitment=commitment,artifacts=children,
         hash_assurance='declared-payload-hashes-until-selected-verifier')
+
+
+def infrastructure_history(controller):
+    """Separate incomplete captures from finalized scientific epoch history."""
+    ledger=controller.state/'infrastructure-skipped-epochs.json'
+    if not ledger.exists():return []
+    from .backend_jobs import signed
+    rows=[]
+    for closure in json.loads(ledger.read_bytes()):
+        epoch=closure['epoch']
+        if not isinstance(epoch,str) or '/'in epoch or '..'in epoch:raise ValueError('infrastructure history epoch')
+        raw=(controller.state/(epoch+'-capture-status.json')).read_bytes()
+        envelope=json.loads(raw);payload=signed(envelope,controller.authority.id)
+        manifest=json.loads((controller.state/(epoch+'-manifest.json')).read_bytes())
+        if (closure.get('status')!='infrastructure_skipped_metadata_incomplete' or
+                closure.get('capture_status_sha256')!=sha(canonical(envelope)) or
+                type(closure.get('training_updates'))is not int or closure['training_updates']!=0 or
+                any(closure.get(k)is not False for k in ('verification_claim','payable','chain_transactions')) or
+                payload.get('version')!='commitment-capture-status-v1' or payload.get('epoch')!=epoch or
+                payload.get('status')!='metadata_incomplete' or
+                any(payload.get(k)is not False for k in ('complete','verification_claim','audits_started','rewards_eligible')) or
+                type(payload.get('accepted_batches'))is not int or payload['accepted_batches']!=0 or
+                payload.get('manifest_sha256')!=sha(canonical(manifest)) or
+                payload.get('source_sha256')!=manifest['source_bundle']['sha256'] or
+                payload.get('checkpoint')!=manifest['checkpoint']['id'] or
+                closure.get('checkpoint')!=manifest['checkpoint']['id']):
+            raise ValueError('incomplete infrastructure history binding')
+        rows.append(dict(closure,capture_status=dict(
+            url=controller.bucket.presign(public_key('public/'+epoch+'/capture-status.json')),
+            sha256=sha(raw),size=len(raw)),infrastructure_status_url=controller.bucket.presign(
+                public_key('public/'+epoch+'/infrastructure-skipped.json'))))
+    return rows
 
 
 def history(controller,ledger,source_bundle=None,source_reconstructions=()):
@@ -145,7 +203,7 @@ def history(controller,ledger,source_bundle=None,source_reconstructions=()):
         if sha(data)!=digest or len(data)!=descriptor['size']:
             raise ValueError('source reconstruction content mismatch')
         supplements.append(dict(descriptor,read_url=route(key)))
-    return dict(version=1,authority=controller.authority.id,refreshed_at=time.time(),routes_expire_at=time.time()+604800,epochs=rows,source_reconstruction_supplements=supplements)
+    return dict(version=1,authority=controller.authority.id,refreshed_at=time.time(),routes_expire_at=time.time()+604800,epochs=rows,source_reconstruction_supplements=supplements,infrastructure_skips=infrastructure_history(controller))
 
 
 def publish_history(controller,prefix,ledger,source_bundle=None,source_reconstructions=()):
