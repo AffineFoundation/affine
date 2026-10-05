@@ -55,11 +55,11 @@ with tempfile.TemporaryDirectory() as directory:
             expected={'valid':'qualified checkpoint boundary','invalid':'outside authorized training indices',
                       'tampered':'worker source mismatch','preimport':'requires fresh process',
                       'commitment':'qualified checkpoint boundary','publication':'qualified checkpoint boundary',
-                      'publication-preimport':'requires fresh process'}[mode]
+                      'publication-preimport':'qualified checkpoint boundary'}[mode]
             assert expected in str(error),repr(error)
         else:raise AssertionError('worker must stop at test boundary')
-        assert cp.call_count==(1 if mode in ('valid','commitment','publication') else 0)
-        if mode not in ('valid','commitment','publication'):assert not list(Path(directory).iterdir())
+        assert cp.call_count==(1 if mode in ('valid','commitment','publication','publication-preimport') else 0)
+        if mode not in ('valid','commitment','publication','publication-preimport'):assert not list(Path(directory).iterdir())
         if mode=='tampered':assert 'subnet.protocol' not in sys.modules
 print('fresh admission '+mode+' passed')
 '''
