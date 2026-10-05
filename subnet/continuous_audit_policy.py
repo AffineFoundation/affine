@@ -1,0 +1,157 @@
+"""Prospective immutable hourly scores from independently authenticated audits.
+
+No inference, blockchain calls, or unaudited-sample validity claim. Caller must
+admit the immutable commitment population and verifier execution/source pins.
+"""
+import hashlib,json,math
+from .distributed_roles import authenticate
+VERSION='continuous-probabilistic-audit-v1'
+canonical=lambda v:json.dumps(v,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
+digest=lambda v:hashlib.sha256(canonical(v)).hexdigest()
+def need(v,message):
+ if not v:raise ValueError(message)
+def integer(v,minimum,maximum,name):need(type(v)is int and minimum<=v<=maximum,name);return v
+def finite(v,low,high,name):need(type(v)in(int,float)and math.isfinite(v)and low<=v<=high,name);return float(v)
+def valid_digest(v):return type(v)is str and len(v)==64 and all(c in '0123456789abcdef'for c in v)
+def policy(value):
+ fields={'version','recent_epochs','decay','prior_alpha','prior_beta','invalid_multiplier','zero_epoch_after','blacklist_after','blacklist_epochs'}
+ need(type(value)is dict and set(value)==fields and value['version']==VERSION,'exact continuous audit policy')
+ result=dict(value);integer(value['recent_epochs'],1,128,'recent cohort window');finite(value['decay'],0.01,1,'cohort decay')
+ for name in ('prior_alpha','prior_beta'):finite(value[name],0.01,100,'bounded prior')
+ finite(value['invalid_multiplier'],0,1,'invalid reward multiplier')
+ for name in ('zero_epoch_after','blacklist_after'):integer(value[name],0,10000,name)
+ integer(value['blacklist_epochs'],0,128,'blacklist duration');return result
+
+def population(records):
+ """All rows are immutable cheap-admitted submissions, not verified samples."""
+ need(type(records)is list and len(records)<=1000000,'bounded immutable population');seen=set();result=[]
+ for row in records:
+  need(type(row)is dict and set(row)=={'epoch','round','checkpoint','miner','env_id','index','batch_sha256','proof_sha256','commitment_sha256','verifier_contract_sha256','committed_at'},'exact committed audit row')
+  for field in ('checkpoint','miner','batch_sha256','proof_sha256','commitment_sha256','verifier_contract_sha256'):need(valid_digest(row[field]),'committed digest')
+  integer(row['round'],0,2**31-1,'epoch round');integer(row['index'],0,2**31-1,'task index');finite(row['committed_at'],0,2**53,'completion time')
+  need(type(row['epoch'])is str and 0<len(row['epoch'])<=200 and type(row['env_id'])is str and 0<len(row['env_id'])<=100,'epoch/environment')
+  key=(row['epoch'],row['miner'],row['batch_sha256']);need(key not in seen,'duplicate committed batch');seen.add(key);result.append(dict(row))
+ return result
+
+def random_selection(records,seed,count,already=()):
+ """Unpredictable seed is committed only after this immutable population closes."""
+ rows=population(records);need(valid_digest(seed),'postcommit randomness');integer(count,0,1000000,'audit count')
+ excluded=set(already);need(all(valid_digest(x)for x in excluded),'previous audited evidence ids')
+ ordered=sorted((row for row in rows if digest(row)not in excluded),key=lambda row:digest(dict(domain=VERSION,seed=seed,row=row)))
+ return ordered[:count]
+
+def observations(envelopes,records,verifiers,cutoff,*,admitted_jobs=None,adjudications=(),authority=None):
+ """Reject substitution/conflicts; repeats never increase confidence or penalties."""
+ rows=population(records);lookup={(r['epoch'],r['miner'],r['batch_sha256']):r for r in rows};result={}
+ finite(cutoff,0,2**53,'immutable hourly cutoff');need(type(envelopes)is list and len(envelopes)<=1000000,'bounded audit evidence')
+ inputs=[]
+ for envelope in envelopes:
+  if type(envelope)is dict and set(envelope)=={'admitted_queue_job_sha256'}:
+   admission=(admitted_jobs or {}).get(envelope['admitted_queue_job_sha256']);need(admission is not None,'original admitted queue pointer')
+   inputs.extend((admission['verifier'],p)for p in admission['observations'])
+  else:
+   signer=envelope.get('signer');need(signer in verifiers,'admitted verifier identity');inputs.append((signer,authenticate(envelope,signer)))
+ for signer,p in inputs:
+  need(signer in verifiers,'admitted verifier identity')
+  fields={'version','epoch','checkpoint','miner','batch_sha256','commitment_sha256','verifier_contract_sha256','outcome','completed_at','job_sha256'}
+  need(set(p)==fields and p['version']=='continuous-audit-observation-v1','exact audit observation')
+  finite(p['completed_at'],0,2**53,'audit completion');need(valid_digest(p['job_sha256']),'original audit execution request')
+  need(p['outcome']in('verified_valid','confirmed_invalid','numerical_ambiguous','infrastructure_error'),'typed audit result')
+  row=lookup.get((p['epoch'],p['miner'],p['batch_sha256']));need(row is not None,'audit original commitment population')
+  need(all(p[k]==row[k]for k in ('epoch','checkpoint','miner','batch_sha256','commitment_sha256','verifier_contract_sha256')),'audit checkpoint/version/commitment binding')
+  need(p['completed_at']>=row['committed_at'],'postcommit audit completion')
+  if p['completed_at']>cutoff:continue
+  admission=(admitted_jobs or {}).get(p['job_sha256'])
+  need(admission is not None and admission['verifier']==signer,'original admitted execution request required')
+  matches=[o for o in admission['observations']if all(o.get(k)==p[k]for k in fields)]
+  need(len(matches)==1,'original queued audit result binding')
+  key=digest(row);old=result.get(key)
+  if old is not None:
+   if old['outcome']==p['outcome']:continue
+   resolutions=[authenticate(a,authority)for a in adjudications]if authority else []
+   expected=dict(version='continuous-audit-adjudication-v1',evidence_id=key,original_job_sha256=old['job_sha256'],reference_job_sha256=p['job_sha256'],outcome=p['outcome'])
+   need(expected in resolutions and old['outcome']=='numerical_ambiguous'and p['outcome']in('verified_valid','confirmed_invalid'),'conflicting authenticated audits require explicit reference adjudication')
+  result[key]=dict(p,round=row['round'],evidence_id=key,verifier=signer)
+ return list(result.values())
+
+def snapshot(records,envelopes,verifiers,*,epoch,round,checkpoint,cutoff,audit_policy,admitted_jobs=None,adjudications=(),authority=None):
+ """Validity estimate can decrease; current cohort bounds historical reputation.
+
+ The caller authenticates immutable opening/policy and signs this exact result.
+ No pending/ambiguous/infra observation counts as valid or fraudulent.
+ """
+ p=policy(audit_policy);rows=population(records);integer(round,0,2**31-1,'snapshot round');need(valid_digest(checkpoint),'current immutable checkpoint')
+ need(all(r['round']<=round and r['committed_at']<=cutoff for r in rows),'future or postcutoff committed population')
+ current=[r for r in rows if r['epoch']==epoch];need(all(r['round']==round and r['checkpoint']==checkpoint for r in current),'current epoch/checkpoint binding')
+ audits=observations(envelopes,rows,verifiers,cutoff,admitted_jobs=admitted_jobs,adjudications=adjudications,authority=authority);miners=sorted({r['miner']for r in current});points={};details={}
+ counts={}
+ for row in current:
+  key=(row['env_id'],row['index']);counts.setdefault(key,set()).add(row['miner'])
+ for miner in miners:
+  eligible=len({(r['env_id'],r['index'])for r in current if r['miner']==miner and len(counts[(r['env_id'],r['index'])])==1})
+  recent=[o for o in audits if o['miner']==miner and 0<=round-o['round']<p['recent_epochs'] and o['outcome']in('verified_valid','confirmed_invalid')]
+  alpha=float(p['prior_alpha']);beta=float(p['prior_beta']);ca=alpha;cb=beta;invalid_current=0;invalid_recent=0;latest_bad_round=None
+  for o in recent:
+   weight=p['decay']**(round-o['round'])
+   if o['outcome']=='verified_valid':alpha+=weight
+   else:beta+=weight;invalid_recent+=1;latest_bad_round=max(o['round'],latest_bad_round if latest_bad_round is not None else o['round'])
+   if o['epoch']==epoch and o['checkpoint']==checkpoint:
+    if o['outcome']=='verified_valid':ca+=1
+    else:cb+=1;invalid_current+=1
+  overall=alpha/(alpha+beta);cohort=ca/(ca+cb);probability=min(overall,cohort)
+  blacklisted=bool(p['blacklist_after'] and invalid_recent>=p['blacklist_after'] and latest_bad_round is not None and round-latest_bad_round<p['blacklist_epochs'])
+  multiplier=0. if blacklisted or p['zero_epoch_after']and invalid_current>=p['zero_epoch_after'] else p['invalid_multiplier']**invalid_current
+  points[miner]=eligible*probability*multiplier
+  details[miner]=dict(unique_eligible_batches=eligible,validity_probability=probability,recent_posterior_mean=overall,current_cohort_posterior_mean=cohort,confirmed_invalid_current=invalid_current,confirmed_invalid_recent=invalid_recent,reward_multiplier=multiplier,blacklisted=blacklisted)
+ total=sum(points.values());weights={m:(v/total if total else 0.)for m,v in points.items()}
+ return dict(version=VERSION,epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,policy=p,population_sha256=digest(rows),evidence_ids=sorted(o['evidence_id']for o in audits),miners=details,points=points,weights=weights,training_waits_for_audits=False,unaudited_samples_claimed_verified=False)
+
+def verifier_contract(manifest):
+ """A change of source, sampler, numerics or runtime starts another cohort."""
+ fields=('sampling_contract','sampling_source_hash','model_runtime_revision','backend_profile','numerical_policy','source_bundle')
+ need(all(k in manifest for k in fields),'complete verifier execution contract')
+ return digest({k:manifest[k]for k in fields})
+
+def admit_queue_reports(queue_rows,records,authority,verifiers,approved_sources):
+ """Authenticate original SQLite terminal report requests before estimating.
+
+ approved_sources must come from actual authenticated ROOT source admission;
+ its mapping binds complete executed runtime module hashes, not file labels.
+ """
+ rows=population(records);lookup={(r['epoch'],r['miner'],r['batch_sha256']):r for r in rows};admissions={}
+ def parsed(value):return json.loads(value)if type(value)is str else value
+ for queue in queue_rows:
+  need(queue.get('status')=='complete'and queue.get('role')=='verify','actually completed verifier job')
+  worker=queue['worker'];need(worker in verifiers,'admitted actual worker')
+  job=authenticate(parsed(queue['envelope']),authority);manifest=authenticate(job['manifest'],authority);report=parsed(queue['report']);request=authenticate(parsed(queue['report_request']),worker)
+  need(job['role']=='verify'and job['job_id']==queue['id']and digest(job)==queue['digest'],'original queue request digest')
+  need(digest(report)==queue['report_digest']and request.get('action')=='report'and request.get('job_id')==job['job_id']and request.get('token')==queue['token']and request.get('report')==report,'original worker terminal report request')
+  need(report.get('success')is True and report.get('role')=='verify'and report.get('job_id')==job['job_id']and report.get('job_sha256')==digest(job)and report.get('operator')==authority and report.get('epoch')==manifest['epoch']and report.get('checkpoint')==manifest['checkpoint']['id'],'executed audit identity/checkpoint')
+  source=manifest['source_bundle']['sha256'];pins=approved_sources.get(source);need(type(pins)is dict and job.get('source_files')and all(pins.get(k)==v for k,v in job['source_files'].items()),'admitted executed source pins')
+  need(report.get('source_files')==job['source_files']and all(report.get('runtime_versions',{}).get(k)==v for k,v in job['runtime_versions'].items())and report.get('backend_profile')==manifest['backend_profile']and report.get('numerical_policy')==manifest['numerical_policy']and report.get('execution_resources_enforced')is True,'actual runtime/profile/numerical/source evidence')
+  contract=verifier_contract(manifest);completed=finite(report['completed_at'],0,2**53,'original report completion');observed=[]
+  audits=report.get('audits');need(type(audits)is list and len(audits)==len(job['submissions']),'original full child report population')
+  for obj,audit in zip(job['submissions'],audits):
+   ref=obj['commitment_ref'];row=lookup.get((manifest['epoch'],ref['miner'],ref['batch_sha256']));need(row is not None and row['proof_sha256']==obj['sha256']and row['commitment_sha256']==ref['commitment_sha256']and row['checkpoint']==manifest['checkpoint']['id']and row['verifier_contract_sha256']==contract,'audit immutable committed child/execution cohort')
+   need(audit.get('submission_sha256')==row['proof_sha256']and audit.get('epoch')==manifest['epoch'],'original audited proof digest')
+   outcomes=audit.get('outcomes');need(type(outcomes)is list and len(outcomes)==1,'single committed batch outcome');o=outcomes[0]
+   if o.get('fully_audited')is True and type(o.get('valid'))is bool and o['valid']:outcome='verified_valid'
+   elif o.get('fully_audited')is True and o.get('valid')is False and o.get('failure_kind')=='confirmed_invalid':outcome='confirmed_invalid'
+   elif o.get('valid')is None and o.get('failure_kind')=='numerical_ambiguous':outcome='numerical_ambiguous'
+   else:outcome='infrastructure_error'
+   observed.append(dict(version='continuous-audit-observation-v1',epoch=row['epoch'],checkpoint=row['checkpoint'],miner=row['miner'],batch_sha256=row['batch_sha256'],commitment_sha256=row['commitment_sha256'],verifier_contract_sha256=contract,outcome=outcome,completed_at=completed,job_sha256=digest(job)))
+  key=digest(job);value=dict(verifier=worker,observations=observed,original_report_request_sha256=digest(parsed(queue['report_request'])))
+  need(key not in admissions or admissions[key]==value,'conflicting original queued job');admissions[key]=value
+ return admissions
+
+def admit_artifact_failures(documents,records,authority):
+ """ROOT storage evidence, not a claim that a GPU evaluated the model."""
+ lookup={digest(r):r for r in population(records)};result={}
+ for document in documents:
+  p=authenticate(document,authority)
+  need(set(p)=={'version','row','outcome','completed_at','reason','original_selection_sha256','scientific_model_execution_claim'}and p['version']=='continuous-artifact-capture-failure-v1'and p['outcome']=='confirmed_invalid'and p['scientific_model_execution_claim']is False,'original operator invalid artifact evidence')
+  row=lookup.get(digest(p['row']));need(row is not None and row==p['row']and valid_digest(p['original_selection_sha256']),'original immutable invalid artifact selection')
+  finite(p['completed_at'],row['committed_at'],2**53,'actual invalid artifact observation');key=digest(document)
+  observation=dict(version='continuous-audit-observation-v1',epoch=row['epoch'],checkpoint=row['checkpoint'],miner=row['miner'],batch_sha256=row['batch_sha256'],commitment_sha256=row['commitment_sha256'],verifier_contract_sha256=row['verifier_contract_sha256'],outcome='confirmed_invalid',completed_at=p['completed_at'],job_sha256=key)
+  result[key]=dict(verifier=authority,observations=[observation],original_report_request_sha256=key,scientific_model_execution_claim=False)
+ return result

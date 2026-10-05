@@ -22,7 +22,7 @@ BACKEND_PROFILE = dict(device='cuda', dtype='bfloat16', attention='eager', sm=[8
     tf32=False, deterministic_algorithms=True, cublas_workspace_config=':4096:8',
     native_toploc_threads=2, torch_threads=2)
 SOURCE_FILES = tuple('subnet/'+n+'.py' for n in
-    ('training_documents','selected_proof_copy','commitment_transport','hourly_policy','audit_exclusion','audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling'))
+    ('training_documents','fast_prefill_audit','continuous_audit_policy','selected_proof_copy','commitment_transport','hourly_policy','audit_exclusion','audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling'))
 ROLES = {'mine','verify','train','evaluate','upload'}
 HEAD_POLICY='frozen-feature-head-adamw-v1'
 FULL_POLICY='bf16-full-adamw-checkpointed-v1'
@@ -445,6 +445,7 @@ def checkpoint(manifest, workspace, cache=None):
 
 def audit(data, manifest, runtime, *, commitment_miner=None):
     from .forced_sampling import assurance as sampling_assurance
+    from .fast_prefill_audit import NumericalAmbiguity
     from .batches import submission_records,SubmissionRejected
     from .protocol import entries, entry, classification, sample_key,harness_for
     from .artifact_budget import for_manifest
@@ -490,7 +491,7 @@ def audit(data, manifest, runtime, *, commitment_miner=None):
                 tokens.add(signature)
                 if number in selected_indices:
                     try:verified=selected.verify(rollout,probs)
-                    except InvalidSample:raise
+                    except (InvalidSample,NumericalAmbiguity):raise
                     except Exception as error:
                         if policy.get('version')=='bounded-random-v1':
                             raise RuntimeError('audit execution failed; retry without miner penalty') from error
@@ -503,6 +504,8 @@ def audit(data, manifest, runtime, *, commitment_miner=None):
             if number in selected_indices:
                 accepted.append(batch);pairs.extend((definition,p,n) for p,n in zip(pos,neg))
             outcomes.append(dict(batch=number,env_id=definition['env_id'],index=index,structural_valid=True,valid=True if number in selected_indices else None,fully_audited=number in selected_indices))
+        except NumericalAmbiguity as error:
+            outcomes.append(dict(batch=number,valid=None,fully_audited=False,failure_kind='numerical_ambiguous',reason=str(error)[:300]))
         except (ValueError,KeyError,TypeError,IndexError) as error:
             outcomes.append(dict(batch=number,valid=False,fully_audited=number in selected_indices,failure_kind='confirmed_invalid' if confirmed_invalid or isinstance(error,InvalidSample) else 'verification_error',reason=type(error).__name__+': '+str(error)[:300]))
     return dict(epoch=manifest['epoch'],submission_sha256=hashlib.sha256(data).hexdigest(),policy=policy,selected_batches=sorted(selected_indices),assurance=assurance(len(records),len(selected_indices)),sampling_assurance=sampling_assurance(manifest),outcomes=outcomes,accepted=accepted,training_eligibility='fully-audited-only'),pairs
