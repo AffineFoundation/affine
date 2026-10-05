@@ -7,3 +7,15 @@ Run `ops/native_task_asset_deployment.py --descriptor <original ROOT-signed sour
 The default content-addressed cache is `/var/tmp/affine-approved-native-task-assets/<snapshot SHA>/original-math7496.tasks.json`. The controller and every executing role need their own verified copy. Changing `task_snapshot` changes the native environment source hash because that hash includes configuration. Recompute that hash under the exact executable source, check native sessions on all executing roles, then approve the new path-bound specification. Do not relabel historical specifications or retry their failed jobs as though they had succeeded.
 
 Owned-fleet recovery is separate from public miner compatibility. External miners need the descriptor/bootstrap data contract and the approved declared path before the FE archive can be described as self-contained or automatically runnable. This CPU deployment command neither dispatches calibration nor creates a model or signs authority documents.
+
+For the next immutable source, `ops.native_source_snapshot_guard.seal_source_archive`
+automatically includes each relative native `task_snapshot` from an authenticated
+approved source inventory, even when the asset is ignored by Git. Its complete
+inventory contains the data file and the archive is checked again before it can
+be published. Call `publish_source_bundle(..., environments=approved_envs,
+approved_files=approved_inventory)` to reject missing, changed, duplicate, or
+nonregular dependencies before any bucket operation. Existing historical calls
+remain unchanged. Absolute external recovery paths are deliberately rejected by
+this self-contained packaging gate; use the original relative native spec for a
+new complete archive. The authenticated client bootstrap then extracts the
+snapshot with the other approved source files.
