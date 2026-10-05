@@ -32,6 +32,14 @@ class ServiceControls(unittest.TestCase):
   artifact=dict(slot=0,batch_sha256='c'*64,sha256=self.row['proof_sha256'],size=5,key='original',frozen_key='immutable')
   self.p=dict(manifest_document=signed(self.key,dict(epoch='e1',start=10,deadline=20)),receipts={'b'*64:{'artifacts':[artifact]}},records=[self.row])
   self.service.state['populations']['e1']=signed(self.key,self.p)
+ def test_hour_boundary_includes_all_new_completed_epochs_once(self):
+  self.service.state['populations']['e2']=self.service.state['populations']['e1'];calls=[]
+  def snapshot(epoch,round,checkpoint,cutoff):
+   calls.append(epoch);return signed(self.key,dict(version=VERSION,epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,policy=self.service.policy,population_sha256='1'*64,points={'b'*64:1}))
+  completed=[dict(epoch='e1',round=1,checkpoint='a'*64,completed_at=1),dict(epoch='e2',round=2,checkpoint='a'*64,completed_at=3600),dict(epoch='old',round=0,checkpoint='a'*64,completed_at=0),dict(epoch='future',round=3,checkpoint='a'*64,completed_at=3601)]
+  with patch.object(self.service,'hourly_snapshot',side_effect=snapshot),patch.object(self.service,'publish_immutable'):
+   document=self.service.hourly_completed(completed,3600);self.service.hourly_completed(completed,3600)
+  self.assertEqual(calls,['e1','e2']);self.assertEqual(document['payload']['points']['b'*64],2.)
  def test_actual_conditional_copy_full_hash_before_capability(self):
   _,_,captured=self.service._capture(self.row,self.p);self.assertEqual(self.bucket.copies,[('original','immutable','original-etag')]);self.assertEqual(captured['read_url'],'https://private/immutable')
  def test_corrupt_full_bytes_cannot_claim_verified(self):
