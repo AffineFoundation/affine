@@ -401,7 +401,10 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
     if job.get('successor_calibration') is not None and job['role']!='evaluate':raise ValueError('calibration evaluate role only')
     if job['role']=='evaluate' and job.get('successor_calibration') is not None:
         from .successor_calibration import request
-        request(job['successor_calibration'])
+        r=request(job['successor_calibration'])
+        row=next((v for v in manifest.get('environments',[])if v.get('env_id')==r['env_id']),None)
+        if row is None or not set(r['task_indices'])<=set(row.get('indices',[])):raise ValueError('calibration approved task scope')
+        if set(r['task_indices'])&set(manifest.get('heldout_indices',{}).get(r['env_id'],[])):raise ValueError('calibration heldout leakage')
         if job.get('heldout') is not None:raise ValueError('calibration is not heldout evaluation')
     elif job['role']=='evaluate':
         if not job.get('heldout') or len(job['heldout'])>64:raise ValueError('heldout budget')
