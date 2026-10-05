@@ -1,3 +1,36 @@
+Current verified deployment update, 2026-10-05:
+The E16 controller is running on immutable source
+7459c28cbe11b0999b41644aea2aa672d40eb44faa94ccb261e176d8f71b0d46.
+Epoch nonpayable-live-reward-math-v1--1791231289-16 is opening from durable
+optimizer parent six and checkpoint 2ba94975...; mining has not yet been observed.
+Its prospective contract uses eight-stream optimizer restore/upload and the
+actual qualified eight-stream independent full-state reader. The initial
+startup failed before opening because verifier one used an incomplete staged
+path. Corrected routes passed actual constructor/source preflight on ten nodes;
+seven physical verifiers are configured, with the eighth unavailable historical
+signer retained for reports/renewals but disabled for new claims.
+
+Automatic verifier cache lifecycle is active on restored nodes one and two:
+both completed signed audit jobs, retired their downloaded inputs after ACK,
+and retained only the current managed checkpoint. Software adoption recovered
+61.4 GB and 30.9 GB of obsolete model replicas respectively. Remaining reachable
+workers are rolling to the same pinned-source lifecycle wrapper at idle handoff.
+Trainer post-durability software cleanup removed 45.7 GB of old owned models;
+current CP2ba remains and actual free disk is 160.50 GB. FP32 transfer shards
+already self-delete after successful transfers; none remain in the trainer job.
+Automatic future trainer completion hooks are on GitHub but require the separate
+reviewed E17 source deployment, which is prepared and not activated yet.
+
+The latest finished epoch took 113.04 minutes. E15's physical training job was
+60.49 minutes; only 8.70 minutes were training/checkpointing, versus 17.58 restore
+and 18.48 FP32 upload. Eight-reader qualification checked all 23 shards/91.39 GB
+in 429.28 seconds. These are measured improvements and bottlenecks, not proof of
+a completed faster epoch or sustained model convergence. The 128-task paired
+evaluation has finished its original before job and is executing its original
+after job. All original evidence and optimizer ancestry remain intact.
+
+Earlier timestamped observations follow; newer verified updates supersede them.
+
 Operator instruction, 2026-10-05: automatic storage lifecycle is now a priority.
 This supersedes the earlier request to defer local cache cleanup. Implement job-
 owned model and downloaded-rollout retirement in normal worker completion and
@@ -10,7 +43,7 @@ checkpoint 2ba9497519650fbb29ba2213782e5bb76ee22a6721f4b16882f18a7596b039cc.
 The independent queue API was restored after the finish-once controller exited.
 The dashboard's legacy audited-counter projection omits unaudited learner input
 populations: E15 trained on 240 eligible pairs from 270 candidates, not only the
-old ten audited batches displayed. A count/provenance projection fix is underway.
+old ten audited batches displayed. The count/provenance projection fix is live on affine.io.
 Training does not wait for each batch to pass full inference audits.
 
 Verified recovery update, 2026-10-05 19:07 UTC: the local E15 finish-once controller

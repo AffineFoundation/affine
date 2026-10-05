@@ -6,7 +6,8 @@ UNAUDITED task pairs consumed by the trainer. Training did not repeat inference
 verification or wait for audits. Independent full optimizer readback and
 publication completed; optimizer step six and checkpoint
 2ba9497519650fbb29ba2213782e5bb76ee22a6721f4b16882f18a7596b039cc
-are durable. The controller is between epochs; E16 has not opened yet.
+are durable. The E16 controller is opening the next epoch from this durable parent. Mining
+activation is pending fresh checkpoint calibration and manifest publication.
 Do not submit against the closed E15 manifest. Follow mining.json and the next
 signed manifest for the checkpoint, taskset, sampling policy and upload window.
 Chain weight submissions remain disabled in this pilot.
@@ -31,8 +32,11 @@ errors as miner fraud; the other six continued. Automatic owned-cache lifecycle
 code is implemented and tested: it retires old checkpoint replicas after their
 R2 durability/ownership acknowledgment, excludes active checkpoint leases, and
 removes disposable downloaded submissions after report acknowledgment. It
-preserves source, keys, jobs, reports and queue history. Fleet activation is in
-progress; automatic cleanup is not yet claimed on every deployed worker.
+preserves source, keys, jobs, reports and queue history. Nodes one and two have completed real audit jobs with automatic post-ACK input
+retirement; the other reachable workers are rolling at idle job handoff. The
+trainer has 160.50 GB free after explicit software retirement of old models.
+Future automatic trainer hooks are on main and prepared for E17; they are not
+yet active in E16.
 A replacement H200 passed fresh honest and forged sampling/TOPLOC controls but
 has not joined the production queue. Runtime/source qualification remains
 mandatory for each participating verifier.
@@ -45,7 +49,9 @@ routing and native environment-session reuse. It is not active until a new
 signed manifest names its exact archive and runtime inventory.
 
 The configured immutable source is
-6a85c31011b7a1ca23d745e9868d7b01dd0e92e9fe74c997e8222482f76393ca.
+7459c28cbe11b0999b41644aea2aa672d40eb44faa94ccb261e176d8f71b0d46
+for the opening E16 controller. Closed historical E15 keeps source6a85c310...;
+only the latest signed OPEN manifest authorizes new mining.
 The qualified H200 verifier roster shares the existing queue; active worker
 counts are given in the current operational status above.
 the validator/controller remains on Arbos.life, with separate miner, trainer
