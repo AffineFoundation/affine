@@ -1,5 +1,17 @@
 # Affine — MATH mining, verification and training
 
+Verified fleet update, 2026-10-05 18:57 UTC: the two disk-full verifier workers are
+quarantined. Their exact original processes were stopped only after checking
+PID/start time, command and absence of live children. No checkpoint, rollout,
+queue history or tunnel was deleted or changed. Six other verifiers continue.
+One replacement H200 has been rented at USD 5.76/hour with actual 1.287 TB free
+disk; runtime and source qualification are still pending, so it is not counted
+as an active verifier. A second rental was refused because that offered node
+already has a broken pod; that pod was preserved. Replacement capacity is
+being qualified before any new worker joins the queue.
+E15's original trainer has progressed into GPU computation after restoring its
+original optimizer parent. There is no committed step-six checkpoint yet.
+
 Verified operational update, 2026-10-05 18:52 UTC: E14's original paired held-out
 evaluation finished: 20/32 correct before and 20/32 after, with no infrastructure
 failures, one new win and one new loss. Original signed jobs, checkpoint bindings,
