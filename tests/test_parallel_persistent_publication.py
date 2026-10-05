@@ -207,3 +207,30 @@ class OriginalReaderRecoveryControls(unittest.TestCase):
             self.status['result']=r.sign(dict(original['payload'],completed_at=completed),self.readerkey)
             self.reader.command=Mock(return_value=self.status)
             with patch('subnet.independent_state_dispatch.time.time',return_value=observed),self.assertRaises(ValueError):self.recover()
+
+class ReaderPreflightTransportControls(unittest.TestCase):
+    def test_readonly_timeout_leaves_no_request_and_retries_same_original_before_reservation(self):
+        from subnet.remote_backend import RemoteObservationTimeout
+        import subprocess
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory()as d:
+            state=Path(d);key=SigningKey.generate();authority=key.verify_key.encode().hex()
+            m={'trainer_state_binding':{'source_sha256':'a'*64}}
+            job={'job_id':'original','manifest':r.sign(m,key),'persistent_training':{'output_namespace':'private/original'}}
+            envelope=r.sign(job,key);desc={'optimizer_steps':7};bucket=SimpleNamespace(client=SimpleNamespace(meta=SimpleNamespace(endpoint_url='https://storage.example')),name='private')
+            controller=SimpleNamespace(state=state,bucket=bucket,signed=Mock(side_effect=AssertionError('no signing before preflight')))
+            instance=IndependentStateReader.__new__(IndependentStateReader);instance.authority=authority;instance.endpoint={};instance.config={'reader_host':{'id':'reader'},'trainer_host':{'id':'trainer'}}
+            instance.preflight=Mock(side_effect=subprocess.TimeoutExpired('read-only SSH',45))
+            objects=[{'name':str(i),'size':1,'sha256':'b'*64}for i in range(23)]
+            with patch('subnet.independent_state_dispatch.validate_report',return_value=desc),patch('subnet.independent_state_dispatch.read_json',return_value=desc),patch('subnet.independent_state_dispatch.readback_objects',return_value=objects),patch('subprocess.run')as transport:
+                with self.assertRaises(RemoteObservationTimeout)as error:instance.prepare_original_readback(controller,{},envelope)
+                self.assertEqual(error.exception.job_id,'original');self.assertEqual(error.exception.role,'independent-reader-preflight')
+                self.assertFalse((state/'independent-state-readbacks/original').exists());controller.signed.assert_not_called();transport.assert_not_called()
+                for failure in (ValueError('reader module/hash corrupt'),RuntimeError('unknown SSH failure')):
+                    instance.preflight=Mock(side_effect=failure)
+                    with self.assertRaises(type(failure)):instance.prepare_original_readback(controller,{},envelope)
+                    self.assertFalse((state/'independent-state-readbacks/original').exists());controller.signed.assert_not_called()
+                instance.preflight=Mock(return_value=('same-read-only-code',{}))
+                with patch('subnet.independent_state_dispatch.write_once',side_effect=RuntimeError('reached first reservation'))as reserve:
+                    with self.assertRaisesRegex(RuntimeError,'first reservation'):instance.prepare_original_readback(controller,{},envelope)
+                self.assertEqual(reserve.call_args.args[1]['original_job_sha256'],r.sha(job));instance.preflight.assert_called_once();controller.signed.assert_not_called()
