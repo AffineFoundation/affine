@@ -142,13 +142,28 @@ class AuditPopulationHandoffTests(LearnerCollectionTests):
     def test_original_signed_population_handoff_includes_actual_round(self):
         import sys
         controller=self.controller();calls=[]
-        def register(manifest_document,receipts,round_number,committed_at,authority):
-            calls.append((manifest_document,receipts,round_number))
+        def register(manifest_document,receipts,round_number,committed_at,authority,*,eligible_pairs=None):
+            calls.append((manifest_document,receipts,round_number,eligible_pairs))
             self.assertNotIn('training_coverage',manifest_document['payload']) if 'training_coverage'not in self.manifest else None
             return dict(version='continuous-audit-population-v1',manifest_document=manifest_document,receipts=receipts,round=round_number,committed_at=committed_at,records=[])
         with patch.dict(sys.modules,{'subnet.continuous_audit_service':SimpleNamespace(register_population=register)}):
             learner.collect(controller,self.manifest,round_number=12)
         self.assertEqual(calls[0][2],12)
+        self.assertEqual(len(calls[0][3]),1)
+        self.assertEqual(calls[0][3][0]['miner'],self.identity)
         audit=__import__('json').loads((self.root/(self.manifest['epoch']+'-continuous-audit-population.json')).read_bytes())
         self.assertEqual(audit['payload']['round'],12)
         self.assertEqual(audit['payload']['manifest_document']['payload'],self.manifest)
+
+    def test_structurally_bad_declared_pair_remains_audit_candidate_not_reward_eligible(self):
+        import sys
+        self.batch['rollouts'][0]['turns'][0]['output']=[True];self.build()
+        calls=[]
+        def register(manifest_document,receipts,round_number,committed_at,authority,*,eligible_pairs=None):
+            calls.append((receipts,eligible_pairs))
+            return dict(version='continuous-audit-population-v1',manifest_document=manifest_document,receipts=receipts,round=round_number,committed_at=committed_at,records=[],eligible_evidence_ids=[])
+        with patch.dict(sys.modules,{'subnet.continuous_audit_service':SimpleNamespace(register_population=register)}):
+            _,inputs,_=learner.collect(self.controller(),self.manifest,round_number=12)
+        self.assertEqual(inputs,[])
+        self.assertIn(self.identity,calls[0][0])
+        self.assertEqual(calls[0][1],[])
