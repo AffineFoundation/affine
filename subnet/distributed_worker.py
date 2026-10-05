@@ -1,5 +1,6 @@
 """Narrow-key verifier worker; signed job capabilities perform all R2 reads."""
 import argparse
+from contextlib import ExitStack
 import base64
 import json
 import hashlib
@@ -17,6 +18,7 @@ import requests
 from nacl.signing import SigningKey
 from .distributed_roles import authenticate, digest
 from .storage import canonical
+from .cache_lifecycle import CacheLifecycle
 
 
 def checkpoint_cache_candidate(path,files):
@@ -66,10 +68,11 @@ def complete_checkpoint_cache(path,files):
 
 
 class Worker:
-    def __init__(self, url, seed, authority, workspace, python=sys.executable, checkpoint_caches=None):
+    def __init__(self, url, seed, authority, workspace, python=sys.executable, checkpoint_caches=None, backend_source=None):
         self.url=url.rstrip('/'); self.key=SigningKey(seed); self.identity=self.key.verify_key.encode().hex()
         self.authority=authority; self.workspace=Path(workspace); self.python=python
         self.checkpoint_caches=dict(checkpoint_caches or {})
+        self.backend_source=backend_source
         self.workspace.mkdir(parents=True,exist_ok=True); self.workspace.chmod(0o700)
         if not self.url.startswith(('https://','http://127.0.0.1:','http://localhost:')):
             raise ValueError('coordinator requires TLS or local SSH forwarding')
@@ -102,6 +105,7 @@ class Worker:
                     # replacement. Retry until the known lease expires.
                     if time.time()>=claim['lease_until']: lost.set(); return
         thread=threading.Thread(target=renew,daemon=True); thread.start()
+        cache_leases=ExitStack()
         try:
             environment=dict(os.environ,CUBLAS_WORKSPACE_CONFIG=':4096:8')
             runspace=self.workspace/'backend' if claim['attempt']==1 else attempt/'backend'
@@ -109,6 +113,14 @@ class Worker:
             command=[self.python,'-B','-m','subnet.backend_jobs',str(jobpath),
                 '--authority',self.authority,'--workspace',str(runspace)]
             approved=job['manifest']['payload']['checkpoint']
+            lifecycle=CacheLifecycle(runspace)
+            shared_lifecycle=CacheLifecycle(self.workspace/'backend')
+            shared_lifecycle.evict_checkpoints(exclude=[approved['id']],keep=0)
+            lifecycle.evict_checkpoints(exclude=[approved['id']],keep=0)
+            lease_fds=[cache_leases.enter_context(shared_lifecycle.lease_checkpoint(approved['id']))]
+            if runspace!=self.workspace/'backend':
+                lease_fds.append(cache_leases.enter_context(lifecycle.lease_checkpoint(approved['id'])))
+            environment['AFFINE_CACHE_LIFECYCLE_ROOT']=str(runspace)
             approved_cache=self.checkpoint_caches.get(approved['id'])
             if approved_cache and checkpoint_cache_candidate(approved_cache,approved['files']):
                 command+=['--checkpoint-cache',str(approved_cache)]
@@ -116,10 +128,11 @@ class Worker:
                 command+=['--checkpoint-cache',str(cache)]
             with (attempt/'worker.log').open('xb') as output:
                 (attempt/'worker.log').chmod(0o600)
-                result=subprocess.run(command,stdout=output,stderr=subprocess.STDOUT,env=environment)
+                result=subprocess.run(command,stdout=output,stderr=subprocess.STDOUT,env=environment,pass_fds=tuple(lease_fds),cwd=self.backend_source)
             if lost.is_set(): raise ValueError('lease expired during execution; retained diagnostic only')
             if result.returncode:
-                self.request('fail',job_id=job['job_id'],token=claim['token']); return True
+                self.request('fail',job_id=job['job_id'],token=claim['token'])
+                lifecycle.retire_downloads(job['job_id']); return True
             report=json.loads((runspace/'jobs'/job['job_id']/'report.json').read_text())
             # Persist the exact report before transport; every retry uses the
             # same report bytes and fresh authenticated request nonce.
@@ -130,8 +143,18 @@ class Worker:
                 except (requests.RequestException,ValueError):
                     if lost.is_set() or time.time()>=claim['lease_until']: raise
                     time.sleep(2)
+            # Coordinator ACK releases disposable inputs, never reports/logs.
+            # An original, source-pinned backend also supports this operator
+            # wrapper: successful report ACK follows its existing digest checks.
+            for i,obj in enumerate(job.get('submissions',[])):
+                path=runspace/'jobs'/job['job_id']/('submission-'+str(i)+'.zip')
+                if path.exists():lifecycle.record_download(path,obj['sha256'])
+            lifecycle.retire_downloads(job['job_id'])
+            try:lifecycle.record_checkpoint(approved['id'],approved['files'])
+            except ValueError:logging.warning('cache changed after verified job; retaining checkpoint')
             return True
         finally:
+            cache_leases.close()
             stopped.set(); thread.join(timeout=31)
 
 
@@ -153,7 +176,7 @@ def serve(worker, pause=time.sleep):
 def main():
     parser=argparse.ArgumentParser(); parser.add_argument('--coordinator',required=True)
     parser.add_argument('--seed-file',required=True); parser.add_argument('--authority',required=True)
-    parser.add_argument('--workspace',required=True); parser.add_argument('--once',action='store_true')
+    parser.add_argument('--backend-source');parser.add_argument('--workspace',required=True); parser.add_argument('--once',action='store_true')
     parser.add_argument('--checkpoint-cache',action='append',default=[],metavar='CHECKPOINT_ID=LOCAL_PATH')
     args=parser.parse_args(); path=Path(args.seed_file)
     if path.stat().st_mode & 0o077: raise ValueError('worker key must be private')
@@ -163,7 +186,7 @@ def main():
         if len(bytes.fromhex(identifier))!=32 or not Path(local).is_absolute():raise ValueError('exact checkpoint cache mapping')
         if identifier in caches:raise ValueError('duplicate checkpoint cache mapping')
         caches[identifier]=local
-    worker=Worker(args.coordinator,bytes.fromhex(path.read_text().strip()),args.authority,args.workspace,checkpoint_caches=caches)
+    worker=Worker(args.coordinator,bytes.fromhex(path.read_text().strip()),args.authority,args.workspace,checkpoint_caches=caches,backend_source=args.backend_source)
     if args.once:
         worker.once()
         return

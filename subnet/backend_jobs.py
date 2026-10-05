@@ -445,17 +445,28 @@ def get_object(url, expected, destination, limit):
                     h.update(part);f.write(part)
         if h.hexdigest()!=expected:raise ArtifactRejected('artifact digest')
         temporary.replace(destination)
+        lifecycle_root=os.environ.get("AFFINE_CACHE_LIFECYCLE_ROOT")
+        if lifecycle_root and destination.name.startswith("submission-"):
+            from .cache_lifecycle import CacheLifecycle
+            CacheLifecycle(lifecycle_root).record_download(destination,expected)
     finally:temporary.unlink(missing_ok=True)
 
 def checkpoint(manifest, workspace, cache=None):
     cp=manifest['checkpoint'];target=Path(cache) if cache else workspace/'checkpoints'/cp['id']
     target.mkdir(parents=True,exist_ok=True)
+    lifecycle=None
+    if os.environ.get('AFFINE_CACHE_LIFECYCLE_ROOT') and not cache:
+        from .cache_lifecycle import CacheLifecycle
+        lifecycle=CacheLifecycle(workspace)
     for name,sha in cp['files'].items():
         path=target/name
         if path.is_symlink():raise ValueError('checkpoint symlink')
-        if path.is_file() and digest(path)==sha:continue
+        if path.is_file() and digest(path)==sha:
+            if lifecycle:lifecycle.record_checkpoint_member(cp["id"],name,cp["files"],sha)
+            continue
         if cache:raise ValueError('approved cached checkpoint mismatch')
         get_object(cp['read_urls'][name],sha,path,20_000_000_000)
+        if lifecycle:lifecycle.record_checkpoint_member(cp['id'],name,cp['files'],sha)
     from .model import model_files
     if model_files(target)!=cp['files']:raise ValueError('checkpoint exact allowlist')
     return target
