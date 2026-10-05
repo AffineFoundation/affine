@@ -1,3 +1,25 @@
+Verified operational update, 2026-10-05 18:37 UTC: the original E15 trainer
+started at 18:22 UTC after a reviewed pre-dispatch physical-role swap. The
+previous owned miner H200 is now trainer; the previous trainer is now miner.
+The existing independent CPU state reader and evaluator remain separate.
+Physical checkpoint-cache ownership was remapped exactly, preserving paths.
+The new trainer's actual 309 GB usable RAM and 130 GB disk exceed unchanged
+four/eight-stream streaming-worker reserves. E15 remains four-stream, on
+immutable science source 6a85c31011b7a1ca23d745e9868d7b01dd0e92e9fe74c997e8222482f76393ca.
+Its sole original train job has 240 cheap-eligible UNAUDITED inputs, parent five,
+and requests step six. At latest observation it was loading inputs before
+optimizer restoration; there is no completed step-six report or adoption yet.
+The original runner/child handles are preserved, with no duplicate dispatch.
+The local finish-once controller and repaired continuous auditor are active;
+eight verifiers continue auditing. The original E14 after-evaluation remains
+pending, so no paired held-out gain is claimed. E14's authenticated 18:00 UTC
+reward aggregate has 77 nonzero normalized shares, totaling one, with no chain
+transactions. A native environment-session reuse optimization is being prepared
+for a future epoch only; no active E15 scientific file was changed.
+
+Historical pre-dispatch observation follows; the hold described here was resolved
+by the above qualified role swap and original dispatch.
+
 Verified operational update, 2026-10-05 18:09 UTC: E15's collection captured
 270 candidate contributions, of which 240 passed cheap eligibility checks.
 No original training request has been issued. The current trainer's measured

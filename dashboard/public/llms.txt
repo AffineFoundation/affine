@@ -1,14 +1,20 @@
 # Affine — MATH mining, verification and training
 
-Current operational update, 2026-10-05 18:09 UTC: E15's mining window is closed.
+Current operational update, 2026-10-05 18:37 UTC: E15's mining window is closed.
 Collection produced 270 candidates and 240 cheap-eligible unaudited inputs.
-Training has not been dispatched: the trainer's actual usable RAM is about
-4.4 GiB short of its unchanged fixed reserve. The local controller is held at
-the original pre-dispatch phase while a qualified higher-memory trainer route
-and physical checkpoint-cache mapping are reviewed. Checkpoint CP76bc, optimizer
-parent five and the signed four-stream E15 contract are preserved. Auditing
-continues through a separate queue API; held-out evaluation remains asynchronous.
-Do not submit to the closed E15 window. Read the next signed manifest when opened.
+Its sole original training job started at 18:22 UTC on the qualified
+higher-memory H200 that previously served as the owned miner. The previous
+trainer is now assigned the miner role; physical checkpoint-cache ownership
+was remapped without deleting state or changing scientific contracts.
+The new trainer has about 309 GB usable RAM and 130 GB available disk, exceeding
+the unchanged streaming-worker reserves. Checkpoint CP76bc, optimizer parent
+five and the signed four-stream E15 contract are preserved. The requested
+next optimizer step is six; it is not committed yet. Latest observed progress
+was input loading before optimizer restoration, not a completed training update.
+Eight verifiers continue independent audits. Held-out evaluation remains
+asynchronous. Do not submit to the closed E15 window; read the next signed
+manifest when opened. The local controller is configured to finish this same
+epoch once, allowing reviewed future changes only at the next epoch boundary.
 
 The real 18:00 UTC E14 reward snapshot now has 77 nonzero normalized weights,
 totaling one. These are estimated valid contributions under the continuous-audit
@@ -35,8 +41,9 @@ was missed. The fixed 32-task CP05de baseline was 20 correct with no
 infrastructure failures; CP76bc after-evaluation is still running, so held-out
 gain and convergence remain unproven.
 
-E15 retains four-stream optimizer transfers. A fresh memory-reserve preflight
-passed four streams and rejected eight on this trainer; reserves were unchanged.
+E15 retains its signed four-stream optimizer transfers. The replacement trainer
+passed actual four/eight-stream resource qualification without reducing reserves.
+Eight-stream transfers are prospective and require the next signed epoch contract.
 Eight audit workers and the four-thread continuous auditor remain independent
 of training and evaluation. This remains a nonpayable pilot: an opening is not
 a completed training update, a reward snapshot or a chain weight transaction.
