@@ -32,8 +32,17 @@ class CommitmentHistoryTests(unittest.TestCase):
   self.assertEqual(signed(envelope,self.c.authority.id)['epochs'],doc['epochs'])
   self.assertEqual(self.f.b.heavy_reads,0);self.assertEqual(result,saved)
  def test_original_noncanonical_commitment_bytes_are_preserved(self):
-  key='private/e/commitments/'+self.miner+'.json';env=json.loads(self.f.b.objects[key][0]);data=json.dumps(env,indent=2).encode();self.f.b.put(key,data)
-  result=self.freeze();row=history(self.c,[result])['epochs'][0]['frozen'][self.miner]
+  # Explicit historical frozen fixture: the old source admitted signed JSON
+  # before the prospective canonical wire gate. Do not pass it through new freeze.
+  result=self.freeze();receipt=result['receipts'][self.miner]
+  data=json.dumps(receipt['commitment_document'],indent=2).encode()
+  root='public/e/submissions/'+self.miner+'/'+transport.sha(data)
+  oldchild=receipt['artifacts'][0]['frozen_key']
+  receipt.update(sha256=transport.sha(data),size=len(data),commitment_key=root+'/commitment.json')
+  receipt['artifacts'][0]['frozen_key']=root+'/0.zip'
+  self.f.b.put(receipt['commitment_key'],data)
+  self.f.b.objects[root+'/0.zip']=self.f.b.objects[oldchild]
+  row=history(self.c,[result])['epochs'][0]['frozen'][self.miner]
   self.assertEqual(row['commitment']['size'],len(data));self.assertEqual(row['commitment']['sha256'],transport.sha(data))
  def test_inventory_and_scope_corruption_fail_before_publication(self):
   original=self.freeze()
