@@ -266,13 +266,17 @@ def validate_report(report,job,manifest):
     return descriptor
 
 
-def independently_commit(controller,report,job,manifest,read_chunks=None):
+def independently_commit(controller,report,job,manifest,read_chunks=None,*,readback_workers=4):
     """Authority signs last after hashing actual durable bytes independently.
 
     read_chunks(key) is a bounded streaming test/transport seam. The production
     path reads directly through the operator's R2 client without hydrating state.
     Repeating an original job commits the same publication; never a new update.
+    Independent shards stream concurrently with bounded memory. Every shard
+    must pass before the authority publication is written.
     """
+    if type(readback_workers) is not int or not 1<=readback_workers<=8:
+        raise ValueError('bounded state readback concurrency')
     descriptor=validate_report(report,job,manifest);namespace=job['persistent_training']['output_namespace']
     staged=read_json(controller.bucket,namespace+'/staged-state.json')
     if canonical(staged)!=canonical(descriptor):raise ValueError('independent staged descriptor readback')
@@ -286,7 +290,7 @@ def independently_commit(controller,report,job,manifest,read_chunks=None):
                 yield part
         finally:body.close()
     read_chunks=read_chunks or chunks
-    for shard in descriptor['shards']:
+    def check_shard(shard):
         h=hashlib.sha256();size=0
         for part in read_chunks(namespace+'/'+shard['name']):
             if not isinstance(part,bytes)or not part or len(part)>16*1024**2:raise ValueError('independent bounded state readback')
@@ -294,6 +298,11 @@ def independently_commit(controller,report,job,manifest,read_chunks=None):
             if size>shard['size']:raise ValueError('independent state object size')
             h.update(part)
         if (h.hexdigest(),size)!=(shard['sha256'],shard['size']):raise ValueError('operator independent trainer state integrity')
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(readback_workers,len(descriptor['shards']))) as pool:
+        # Consume every result before signing; submitted checks cannot publish
+        # partial success or leave a stream active after this scope exits.
+        list(pool.map(check_shard,descriptor['shards']))
     publication=dict(version=PUBLICATION_VERSION,namespace=namespace,job_id=job['job_id'],
         job_sha256=sha(job),descriptor_sha256=sha(descriptor),descriptor=descriptor)
     key=namespace+'/authority-state.json'
