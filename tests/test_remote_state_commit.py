@@ -128,3 +128,83 @@ class RemoteAdmission(unittest.TestCase):
         self.receipt=r.sign(dict(self.receipt['payload'],completed_at=301),self.reader)
         with self.assertRaises(ValueError):self.run_commit(now=500)
         self.bucket.json.assert_not_called();self.publish.assert_not_called()
+
+    def use_stream_budget(self, value):
+        self.manifest['independent_state_readback_budget']=value
+        self.job['manifest']=r.sign(self.manifest,self.root)
+        self.job_env=r.sign(self.job,self.root)
+        self.binding.update(job_sha256=r.sha(self.job),provenance=dict(
+            signed_job_envelope_sha256=r.sha(self.job_env),original_report_sha256=r.sha(self.report),
+            signed_manifest_envelope_sha256=r.sha(self.job['manifest'])))
+        payload=dict(self.request['payload'],**self.binding,stream_budget=value)
+        self.request=r.sign(payload,self.root);self.request_bytes=r.canonical(self.request)
+        filehash=hashlib.sha256(self.request_bytes).hexdigest()
+        self.launch=r.sign(dict(self.launch['payload'],request_sha256=filehash),self.root)
+        self.terminal['request_sha256']=filehash
+
+    def test_eight_streams_read_all_original_objects_and_commit_with_matching_budget(self):
+        import threading
+        budget=dict(version=r.STREAM_BUDGET_VERSION,concurrency=8,ram_reserve_bytes=1024**3)
+        self.use_stream_budget(budget)
+        lock=threading.Lock();barrier=threading.Barrier(8,timeout=5)
+        active=maximum=0;complete=set()
+        def chunks(url):
+            nonlocal active,maximum
+            index=int(url.rsplit('/',1)[1][6:12])
+            with lock:active+=1;maximum=max(active,maximum)
+            try:
+                if index<8:barrier.wait()
+                yield bytes([index])*31
+            finally:
+                with lock:active-=1;complete.add(index)
+        with patch.object(r,'available_ram_bytes',return_value=2*1024**3):
+            self.receipt=r.execute(self.request,self.authority,self.reader,
+                approved_binding=self.binding,approved_objects=self.objects,
+                qualified_reader=self.identity,read_chunks=chunks,clock=lambda:150)
+        self.assertEqual(maximum,8);self.assertEqual(complete,set(range(23)))
+        self.assertEqual(self.receipt['payload']['concurrency'],8)
+        self.assertEqual(self.receipt['payload']['objects'],self.objects)
+        self.run_commit();self.publish.assert_called_once()
+
+    def test_historical_request_keeps_exact_four_stream_receipt(self):
+        self.assertNotIn('stream_budget',self.request['payload'])
+        self.assertEqual(self.receipt['payload']['concurrency'],4)
+        self.run_commit()
+
+    def test_new_budget_requires_ram_admission_before_any_object_is_read(self):
+        self.use_stream_budget(dict(version=r.STREAM_BUDGET_VERSION,concurrency=8,ram_reserve_bytes=1024**3))
+        chunks=Mock()
+        with patch.object(r,'available_ram_bytes',return_value=1024**3),self.assertRaisesRegex(ValueError,'RAM budget'):
+            r.execute(self.request,self.authority,self.reader,approved_binding=self.binding,
+                approved_objects=self.objects,qualified_reader=self.identity,read_chunks=chunks,clock=lambda:150)
+        chunks.assert_not_called()
+
+    def test_stream_budget_types_bounds_and_unknown_fields_rejected(self):
+        good=dict(version=r.STREAM_BUDGET_VERSION,concurrency=8,ram_reserve_bytes=1024**3)
+        for change in ({'concurrency':True},{'concurrency':8.0},{'concurrency':3},
+                {'concurrency':9},{'ram_reserve_bytes':True},{'ram_reserve_bytes':0},
+                {'ram_reserve_bytes':65*1024**3},{'version':'unknown'},{'extra':1}):
+            with self.subTest(change=change),self.assertRaises(ValueError):r.stream_budget(dict(good,**change))
+
+    def test_eight_stream_request_cannot_be_added_to_historical_manifest(self):
+        payload=dict(self.request['payload'],stream_budget=dict(version=r.STREAM_BUDGET_VERSION,concurrency=8,ram_reserve_bytes=1024**3))
+        self.request=r.sign(payload,self.root);self.request_bytes=r.canonical(self.request)
+        with self.assertRaisesRegex(ValueError,'original manifest'):
+            self.run_commit()
+        self.bucket.json.assert_not_called()
+
+    def test_four_stream_receipt_cannot_be_relabelled_as_eight(self):
+        self.use_stream_budget(dict(version=r.STREAM_BUDGET_VERSION,concurrency=8,ram_reserve_bytes=1024**3))
+        self.receipt=r.sign(dict(self.receipt['payload'],request_sha256=r.sha(self.request['payload']),
+            signed_request_sha256=r.sha(self.request),job_sha256=r.sha(self.job),
+            provenance=self.binding['provenance']),self.reader)
+        with self.assertRaisesRegex(ValueError,'request-bound receipt'):self.run_commit()
+        self.bucket.json.assert_not_called();self.publish.assert_not_called()
+
+    def test_eight_stream_corruption_cannot_produce_success_receipt(self):
+        self.use_stream_budget(dict(version=r.STREAM_BUDGET_VERSION,concurrency=8,ram_reserve_bytes=1024**3))
+        def chunks(url):
+            index=int(url.rsplit('/',1)[1][6:12]);yield b'x'*31 if index==22 else bytes([index])*31
+        with patch.object(r,'available_ram_bytes',return_value=2*1024**3),self.assertRaisesRegex(ValueError,'integrity'):
+            r.execute(self.request,self.authority,self.reader,approved_binding=self.binding,
+                approved_objects=self.objects,qualified_reader=self.identity,read_chunks=chunks,clock=lambda:150)

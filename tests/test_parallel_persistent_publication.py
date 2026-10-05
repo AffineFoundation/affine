@@ -122,6 +122,17 @@ class ReaderAdmissionControls(unittest.TestCase):
             self.config['qualification']=r.sign(payload,self.key)
             with self.subTest(value=value),self.assertRaises(ValueError):IndependentStateReader(self.config,self.controller)
 
+    def test_stream_budget_requires_exact_root_signed_qualification(self):
+        budget=dict(version=r.STREAM_BUDGET_VERSION,concurrency=8,ram_reserve_bytes=1024**3)
+        self.config['stream_budget']=budget
+        with self.assertRaisesRegex(ValueError,'qualification admission'):
+            IndependentStateReader(self.config,self.controller)
+        self.config['qualification']=r.sign(dict(self.config['qualification']['payload'],stream_budget=budget),self.key)
+        IndependentStateReader(self.config,self.controller)
+        self.config['stream_budget']=dict(budget,concurrency=4)
+        with self.assertRaisesRegex(ValueError,'qualification admission'):
+            IndependentStateReader(self.config,self.controller)
+
 class OriginalReaderRecoveryControls(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name)
