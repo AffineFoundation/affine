@@ -56,6 +56,48 @@ def source_archive_key(controller,source):
     return key
 
 
+def frozen_submission(controller,manifest,miner,receipt):
+    """Renew frozen routes without promoting declared child hashes to audits."""
+    def route(key):return controller.bucket.presign(public_key(key))
+    from .commitment_transport import VERSION,validate,is_digest,MAX_BYTES
+    if manifest.get('submission_transport_policy') != VERSION:
+        if 'commitment_key' in receipt or 'artifacts' in receipt:
+            raise ValueError('commitment history requires signed transport policy')
+        return dict(url=route(receipt['frozen_key']),sha256=receipt['sha256'],size=receipt.get('size'))
+    if not is_digest(receipt.get('sha256')) or type(receipt.get('size')) is not int:
+        raise ValueError('commitment history digest/size')
+    root=f"public/{manifest['epoch']}/submissions/{miner}/{receipt['sha256']}"
+    key=public_key(receipt['commitment_key'])
+    if key!=root+'/commitment.json':raise ValueError('frozen commitment history scope')
+    # Read only the bounded commitment. Child ZIP hashes remain declared;
+    # actual verifier evidence is available through the separate audit route.
+    if not 0<receipt['size']<=MAX_BYTES:raise ValueError('bounded commitment history')
+    if hasattr(controller.bucket,'client'):
+        from .commitment_transport import _read_small_commitment
+        data=_read_small_commitment(controller.bucket,key)['data']
+    else:data=controller.bucket.get(key)
+    if len(data)!=receipt['size'] or sha(data)!=receipt['sha256']:
+        raise ValueError('frozen commitment history content mismatch')
+    document=validate(data,manifest['epoch'],miner)
+    if (document!=receipt['commitment_document'] or
+            document['payload']['checkpoint']!=manifest['checkpoint']['id'] or
+            document['payload']['source']!=manifest['source_bundle']['sha256']):
+        raise ValueError('frozen commitment history model/source binding')
+    declared=document['payload']['batches'];artifacts=receipt['artifacts']
+    if type(artifacts)is not list or len(artifacts)!=len(declared):
+        raise ValueError('frozen commitment history inventory')
+    children=[]
+    for batch,artifact in zip(declared,artifacts):
+        if (any(artifact.get(field)!=value for field,value in batch.items()) or
+                artifact.get('frozen_key')!=root+'/'+str(batch['slot'])+'.zip'):
+            raise ValueError('frozen commitment history inventory')
+        children.append(dict(batch,url=route(artifact['frozen_key']),
+            hash_assurance='declared-payload-hash-until-selected-verifier'))
+    commitment=dict(url=route(key),sha256=receipt['sha256'],size=receipt['size'])
+    return dict(transport_policy=VERSION,commitment=commitment,artifacts=children,
+        hash_assurance='declared-payload-hashes-until-selected-verifier')
+
+
 def history(controller,ledger,source_bundle=None,source_reconstructions=()):
     rows=[]
     def route(key):return controller.bucket.presign(public_key(key))
@@ -64,7 +106,7 @@ def history(controller,ledger,source_bundle=None,source_reconstructions=()):
         if '/' in epoch or '..' in epoch:raise ValueError('epoch audit path')
         manifest=json.loads((controller.state/f'{epoch}-manifest.json').read_text())
         objects={name:route(f'public/{epoch}/{name}.json') for name in ('manifest','scores','audit-challenge','receipts','training')}
-        frozen={miner:dict(url=route(receipt['frozen_key']),sha256=receipt['sha256'],size=receipt.get('size')) for miner,receipt in result['receipts'].items()}
+        frozen={miner:frozen_submission(controller,manifest,miner,receipt) for miner,receipt in result['receipts'].items()}
         audits={miner:route(f'public/{epoch}/audits/{miner}.json') for miner in result['receipts']}
         approved=manifest['checkpoint']
         checkpoint=dict(id=approved['id'],files=approved['files'],read_urls={name:route(f"public/checkpoints/{approved['id']}/{name}") for name in approved['files']})
