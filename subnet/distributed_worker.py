@@ -68,11 +68,13 @@ def complete_checkpoint_cache(path,files):
 
 
 class Worker:
-    def __init__(self, url, seed, authority, workspace, python=sys.executable, checkpoint_caches=None, backend_source=None):
+    def __init__(self, url, seed, authority, workspace, python=sys.executable, checkpoint_caches=None, backend_source=None, source_registry=None):
         self.url=url.rstrip('/'); self.key=SigningKey(seed); self.identity=self.key.verify_key.encode().hex()
         self.authority=authority; self.workspace=Path(workspace); self.python=python
         self.checkpoint_caches=dict(checkpoint_caches or {})
         self.backend_source=backend_source
+        self.source_registry=dict(source_registry or {})
+        self._source_inventory_checked=set()
         self.workspace.mkdir(parents=True,exist_ok=True); self.workspace.chmod(0o700)
         if not self.url.startswith(('https://','http://127.0.0.1:','http://localhost:')):
             raise ValueError('coordinator requires TLS or local SSH forwarding')
@@ -83,6 +85,36 @@ class Worker:
         response=requests.post(self.url+'/request',json=envelope,timeout=30,allow_redirects=False)
         if response.status_code!=200: raise ValueError('coordinator request rejected')
         return authenticate(response.json(),self.authority)
+
+    def source_for_job(self,job):
+        """ROOT registry routes pinned archives; manifest never supplies a path.
+
+        Verify each configured runtime inventory once per worker start. Backend
+        retains its existing signed per-job source checks. No 2053-file scan or
+        checkpoint rehash is added to each job.
+        """
+        if not self.source_registry:
+            if self.backend_source:raise ValueError('operator backend requires explicit pinned source registry')
+            return None
+        bundle=job['manifest']['payload'].get('source_bundle',{}).get('sha256')
+        entry=self.source_registry.get(bundle)
+        if entry is None:raise ValueError('job source archive not in ROOT registry')
+        code=Path(entry['path'])
+        if not code.is_absolute() or code!=code.resolve() or not code.is_dir():raise ValueError('ROOT source path')
+        files=entry['source_files']
+        if not files or files!=job.get('source_files'):raise ValueError('job runtime source inventory differs from ROOT registry')
+        if bundle not in self._source_inventory_checked:
+            for name,expected in files.items():
+                relative=Path(name)
+                if relative.is_absolute() or '..' in relative.parts:raise ValueError('source member path')
+                path=code/relative
+                if path!=path.resolve() or not path.is_file():raise ValueError('source member symlink or missing')
+                h=hashlib.sha256()
+                with path.open('rb') as stream:
+                    for block in iter(lambda:stream.read(1024*1024),b''):h.update(block)
+                if h.hexdigest()!=expected:raise ValueError('staged ROOT source changed')
+            self._source_inventory_checked.add(bundle)
+        return str(code)
 
     def once(self):
         claim=self.request('claim',role='verify')['claim']
@@ -108,6 +140,7 @@ class Worker:
         cache_leases=ExitStack()
         lifecycle=None;runspace=None
         try:
+            backend_source=self.source_for_job(job)
             environment=dict(os.environ,CUBLAS_WORKSPACE_CONFIG=':4096:8')
             runspace=self.workspace/'backend' if claim['attempt']==1 else attempt/'backend'
             cache=self.workspace/'backend'/'checkpoints'/job['manifest']['payload']['checkpoint']['id']
@@ -129,7 +162,7 @@ class Worker:
                 command+=['--checkpoint-cache',str(cache)]
             with (attempt/'worker.log').open('xb') as output:
                 (attempt/'worker.log').chmod(0o600)
-                result=subprocess.run(command,stdout=output,stderr=subprocess.STDOUT,env=environment,pass_fds=tuple(lease_fds),cwd=self.backend_source)
+                result=subprocess.run(command,stdout=output,stderr=subprocess.STDOUT,env=environment,pass_fds=tuple(lease_fds),cwd=backend_source)
             if lost.is_set(): raise ValueError('lease expired during execution; retained diagnostic only')
             if result.returncode:
                 self.request('fail',job_id=job['job_id'],token=claim['token'])
@@ -181,7 +214,7 @@ def serve(worker, pause=time.sleep):
 def main():
     parser=argparse.ArgumentParser(); parser.add_argument('--coordinator',required=True)
     parser.add_argument('--seed-file',required=True); parser.add_argument('--authority',required=True)
-    parser.add_argument('--backend-source');parser.add_argument('--workspace',required=True); parser.add_argument('--once',action='store_true')
+    parser.add_argument('--source-registry');parser.add_argument('--backend-source');parser.add_argument('--workspace',required=True); parser.add_argument('--once',action='store_true')
     parser.add_argument('--checkpoint-cache',action='append',default=[],metavar='CHECKPOINT_ID=LOCAL_PATH')
     args=parser.parse_args(); path=Path(args.seed_file)
     if path.stat().st_mode & 0o077: raise ValueError('worker key must be private')
@@ -191,7 +224,8 @@ def main():
         if len(bytes.fromhex(identifier))!=32 or not Path(local).is_absolute():raise ValueError('exact checkpoint cache mapping')
         if identifier in caches:raise ValueError('duplicate checkpoint cache mapping')
         caches[identifier]=local
-    worker=Worker(args.coordinator,bytes.fromhex(path.read_text().strip()),args.authority,args.workspace,checkpoint_caches=caches,backend_source=args.backend_source)
+    registry=json.loads(Path(args.source_registry).read_text()) if args.source_registry else {}
+    worker=Worker(args.coordinator,bytes.fromhex(path.read_text().strip()),args.authority,args.workspace,checkpoint_caches=caches,backend_source=args.backend_source,source_registry=registry)
     if args.once:
         worker.once()
         return

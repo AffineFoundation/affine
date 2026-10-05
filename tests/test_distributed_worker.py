@@ -155,3 +155,27 @@ class AutomaticLifetimeWorkerTests(WorkerTests):
         with patch('subnet.distributed_worker.subprocess.run',side_effect=run),self.assertRaises(ValueError):self.worker.once()
         self.assertTrue((Path(self.folder.name)/'backend'/'jobs'/'verify-job'/'submission-0.zip').exists())
         self.assertTrue((Path(self.folder.name)/'verify-job'/'attempt-1'/'pending-report.json').exists())
+
+class RootSourceRegistryTests(unittest.TestCase):
+    def test_old_and_new_archives_route_exact_installed_code(self):
+        with tempfile.TemporaryDirectory() as folder:
+            a=Path(folder)/'old';b=Path(folder)/'new';a.mkdir();b.mkdir()
+            (a/'backend.py').write_bytes(b'old');(b/'backend.py').write_bytes(b'new')
+            files_old={'backend.py':hashlib.sha256(b'old').hexdigest()};files_new={'backend.py':hashlib.sha256(b'new').hexdigest()}
+            registry={'6a':{'path':str(a),'source_files':files_old},'new':{'path':str(b),'source_files':files_new}}
+            worker=Worker('http://localhost:1',bytes(SigningKey.generate()),'a'*64,folder,backend_source=str(a),source_registry=registry)
+            def job(bundle,files):return {'manifest':{'payload':{'source_bundle':{'sha256':bundle,'path':'/miner/arbitrary'}}},'source_files':files}
+            self.assertEqual(worker.source_for_job(job('6a',files_old)),str(a));self.assertEqual(worker.source_for_job(job('new',files_new)),str(b))
+            with self.assertRaisesRegex(ValueError,'not in ROOT'):worker.source_for_job(job('unknown',files_new))
+            with self.assertRaisesRegex(ValueError,'differs'):worker.source_for_job(job('6a',files_new))
+            # Subsequent routing adds no new inventory hashing; backend still
+            # performs its original per-job inventory validation independently.
+            with patch.object(Path,'open',side_effect=AssertionError('extra source hash')):
+                self.assertEqual(worker.source_for_job(job('6a',files_old)),str(a))
+    def test_unpinned_fallback_or_modified_staged_source_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            worker=Worker('http://localhost:1',bytes(SigningKey.generate()),'a'*64,folder,backend_source=folder)
+            with self.assertRaisesRegex(ValueError,'explicit pinned'):worker.source_for_job({})
+            p=Path(folder)/'backend.py';p.write_bytes(b'changed');files={'backend.py':hashlib.sha256(b'old').hexdigest()}
+            worker.source_registry={'6a':{'path':folder,'source_files':files}}
+            with self.assertRaisesRegex(ValueError,'source changed'):worker.source_for_job({'manifest':{'payload':{'source_bundle':{'sha256':'6a'}}},'source_files':files})
