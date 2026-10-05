@@ -103,6 +103,10 @@ def contract(config,round_number):
     if config.get('artifact_policy') is not None:result['artifact_policy']=config['artifact_policy']
     if config.get('task_assets') is not None:result['task_assets']=config['task_assets']
     if config.get('sampling_policy') is not None:result['sampling_policy']=config['sampling_policy']
+    if config.get('optimizer_state_transport') is not None:
+        from .persistent_training_state import transport_concurrency
+        transport_concurrency(config)
+        result['optimizer_state_transport']=dict(config['optimizer_state_transport'])
     if config.get('live_reward_anchor_document') is not None:result['live_reward_anchor_document']=config['live_reward_anchor_document']
     from .empty_epoch_policy import selected
     policy=selected(config,round_number)

@@ -98,7 +98,10 @@ class Controller:
         if existing(legacy_key) is None:self.bucket.json(legacy_key,self.signed(descriptor))
         return checkpoint
 
-    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None):
+    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,optimizer_state_transport=None):
+        if optimizer_state_transport is not None:
+            from .persistent_training_state import transport_concurrency
+            transport_concurrency({'optimizer_state_transport':optimizer_state_transport})
         from .live_reward_bridge import prevalidate_opening_arguments
         prevalidate_opening_arguments(epoch,checkpoint,miners,duration,audit_policy,source_bundle,live_reward_anchor_document,live_reward_registration_snapshot,self.authority.id)
         sampling_contract=None
@@ -160,6 +163,7 @@ class Controller:
         if model_id is not None:manifest['model_id']=model_id
         if training_policy is not None:manifest['training_policy']=training_policy
         if trainer_state_binding is not None:manifest['trainer_state_binding']=trainer_state_binding
+        if optimizer_state_transport is not None:manifest['optimizer_state_transport']=dict(optimizer_state_transport)
         if artifact_policy is not None:manifest['artifact_policy']=artifact_policy
         if task_assets is not None:manifest['task_assets']=task_assets
         if sampling_contract is not None:

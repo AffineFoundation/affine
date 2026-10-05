@@ -34,6 +34,19 @@ class GPUFixedHeldout(unittest.TestCase):
         with patch('subnet.gpu_service.definitions',return_value=[self.row]):
             value=contract(dict(source_bundle={},heldout=[]),17)
         self.assertEqual(value['environments'][0]['indices'],[0,1])
+    def test_signed_optimizer_transport_has_strict_bounded_admission(self):
+        policy={'version':'bounded-parallel-fp32-state-v1','concurrency':4}
+        with patch('subnet.gpu_service.definitions',return_value=[self.row]):
+            value=contract(dict(source_bundle={},heldout=[],optimizer_state_transport=policy),0)
+            self.assertEqual(value['optimizer_state_transport'],policy)
+            policy['concurrency']=2
+            self.assertEqual(value['optimizer_state_transport']['concurrency'],4)
+            for bad in (True,0,5,1.5):
+                with self.assertRaises(ValueError):
+                    contract(dict(source_bundle={},heldout=[],optimizer_state_transport=dict(policy,concurrency=bad)),0)
+            with self.assertRaises(ValueError):
+                contract(dict(source_bundle={},heldout=[],optimizer_state_transport=dict(policy,extra=True)),0)
+            self.assertNotIn('optimizer_state_transport',contract(dict(source_bundle={},heldout=[]),0))
     def report(self):
         return dict(job_id='job',completed_at=77,runtime_versions={'torch':'approved'},source_files={n:'approved' for n in ('subnet/model.py','subnet/gpu_runtime.py','subnet/environments.py','subnet/harness.py','subnet/proofs.py')},heldout=[dict(env_id='env',index=i,seed=100+i*1000,task_hash=str(i)*64,verified=True,reward=0,classification='negative') for i in [2,3]])
     def test_evaluation_uses_actual_hashes_and_worker_completion_time(self):
