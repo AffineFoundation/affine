@@ -1,3 +1,27 @@
+Current operational continuation, 2026-10-05:
+E16's 256-document trainer cap caused a retry loop after successful capture.
+ROOT resumed the original signed manifest under a bounded training-only
+selection amendment: 359 committed documents, 309 cheap-eligible contributions,
+256 selected for the original pending training job and 53 eligible unselected.
+All 309 remain eligible for continuous audit/reward estimation. These are
+UNAUDITED inputs; there is no inference-audit training barrier. The original
+training job is live; optimizer step seven and faster epoch completion are not
+claimed until durable publication. Its predecessor remains committed step six.
+
+All seven reachable verifier workers now run automatic completion cleanup.
+Fresh authenticated legacy adoption also retired old models and accepted input
+downloads without pausing workers. Actual free space is approximately 57, 33,
+672, 86, 184, 1,239 and 1,241 GB on nodes 1, 2, 3, 4, 5, 6 and 8 respectively.
+Keys, scientific source, diagnostics, queue and bucket history were preserved.
+The owned miner's missing identity on its replacement machine was corrected
+with a miner-key-only transfer and exact public-identity verification. Its
+failed original E16 job remains failed; it was not rerun or relabeled.
+A new full prospective source will combine trainer completion cleanup, bounded
+training selection, early identity checks, fixed terminal reservations and
+four-way bounded cheap-document reads. This future source is not yet active.
+
+Earlier verified deployment update follows; this continuation supersedes it.
+
 Current verified deployment update, 2026-10-05:
 The E16 controller is running on immutable source
 7459c28cbe11b0999b41644aea2aa672d40eb44faa94ccb261e176d8f71b0d46.
