@@ -133,18 +133,26 @@ def mining_definitions(manifest, job):
     return result
 
 
-def owned_commitment_upload(job,manifest,progress_path=None):
-    """Use only the miner's local scoped signing seed; never authority material."""
+def owned_miner_identity(job):
+    """Cheap local signer admission before checkpoint/model allocation."""
     from .storage import Identity
-    from .batches import unpack,pack
-    from .commitment_transport import make,VERSION,VERSION2,canonical,pair_artifact,UploadJournal
-    import stat,requests
+    import stat
     path=Path(job['miner_identity_file'])
     if not path.is_absolute() or path.is_symlink() or not stat.S_ISREG(path.stat().st_mode) or path.stat().st_mode & 0o077:raise ValueError('private local miner identity file')
     seed=bytes.fromhex(path.read_text().strip())
     if len(seed)!=32:raise ValueError('miner signing seed size')
     identity=Identity(seed)
     if identity.id!=job['miner_id']:raise ValueError('local miner signer binding')
+    return identity
+
+
+def owned_commitment_upload(job,manifest,progress_path=None):
+    """Use only the miner's local scoped signing seed; never authority material."""
+    from .storage import Identity
+    from .batches import unpack,pack
+    from .commitment_transport import make,VERSION,VERSION2,canonical,pair_artifact,UploadJournal
+    import stat,requests
+    identity=owned_miner_identity(job)
     journal=UploadJournal(manifest,progress_path)
     def check_prepared(packed):
         from .commitment_transport import check_prepared_cumulative
@@ -660,6 +668,8 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     elif job.get('training_policy')==COVERED_POLICY:
         install_source_loader(root,('subnet/training_receipts.py',*compact_files,*learner_files,*publication_files,*recovery_files))
     else:install_source_loader(root,(*compact_files,*learner_files,*publication_files,*recovery_files))
+    if job['role']=='mine' and manifest.get('submission_transport_policy') is not None:
+        owned_miner_identity(job)
     if publication_files:
         from .persistent_publication import validate_policy
         validate_policy(manifest['persistent_publication_policy'])
