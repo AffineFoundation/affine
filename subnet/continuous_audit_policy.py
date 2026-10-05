@@ -155,3 +155,18 @@ def admit_artifact_failures(documents,records,authority):
   observation=dict(version='continuous-audit-observation-v1',epoch=row['epoch'],checkpoint=row['checkpoint'],miner=row['miner'],batch_sha256=row['batch_sha256'],commitment_sha256=row['commitment_sha256'],verifier_contract_sha256=row['verifier_contract_sha256'],outcome='confirmed_invalid',completed_at=p['completed_at'],job_sha256=key)
   result[key]=dict(verifier=authority,observations=[observation],original_report_request_sha256=key,scientific_model_execution_claim=False)
  return result
+
+
+def hourly_aggregate(documents,authority,cutoff):
+ """Normalize summed raw points once; never average already normalized weights."""
+ finite(cutoff,0,2**53,'hourly cutoff');need(cutoff%3600==0,'whole UTC hourly cutoff')
+ points={};epochs=[];policies=[]
+ for document in documents:
+  result=authenticate(document,authority)
+  need(result.get('version')==VERSION and result.get('cutoff')==cutoff,'original same-cutoff epoch snapshot')
+  need(result['epoch']not in epochs,'epoch can earn once in hourly aggregate');epochs.append(result['epoch']);policies.append(digest(policy(result['policy'])))
+  for miner,value in result['points'].items():
+   need(valid_digest(miner),'hourly miner identity');finite(value,0,1e6,'bounded raw epoch points');points[miner]=points.get(miner,0.)+value
+ need(len(set(policies))<=1,'single prospective penalty policy per hourly snapshot')
+ total=sum(points.values())
+ return dict(version='continuous-hourly-weights-v1',cutoff=cutoff,epochs=sorted(epochs),epoch_snapshot_sha256=sorted(digest(d)for d in documents),snapshot_bindings=[dict(epoch=d['payload']['epoch'],round=d['payload']['round'],checkpoint=d['payload']['checkpoint'],population_sha256=d['payload']['population_sha256'],signed_snapshot_sha256=digest(d))for d in documents],points=points,weights={m:v/total if total else 0. for m,v in points.items()},chain_transactions=False)

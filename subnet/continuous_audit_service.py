@@ -99,9 +99,26 @@ class ContinuousAuditor:
    job=dict(schema=1,job_id=jobid,role='verify',created_at=now,expires_at=now+self.job_seconds,manifest=self.controller.signed(audit_manifest),**metadata,submissions=[dict(url=artifact['read_url'],sha256=row['proof_sha256'],commitment_miner=row['miner'],commitment_ref=ref)])
    envelope=self.controller.signed(job);atomic(self.directory/(jobid+'-job.json'),envelope);self.queue.enqueue(envelope);self.queue.archive(jobid,self.controller.bucket,'public/continuous-audit/jobs');self.state['jobs'][jobid]=dict(row_sha256=identity,job_sha256=digest(job));self.persist();enqueued+=1
   return dict(enqueued=enqueued,selected=len(selected),retried=len(retry),backpressure=False)
+ def publish_immutable(self,key,document):
+  body=canonical(document)
+  try:self.controller.bucket.client.put_object(Bucket=self.controller.bucket.name,Key=key,Body=body,ContentType='application/json',IfNoneMatch='*')
+  except Exception as error:
+   code=getattr(error,'response',{}).get('Error',{}).get('Code')
+   if code not in ('PreconditionFailed','412'):raise
+   if self.controller.bucket.get(key)!=body:raise ValueError('immutable hourly publication collision')from None
+ def hourly_completed(self,completed,cutoff):
+  from .continuous_audit_policy import hourly_aggregate
+  target=self.directory/('hourly-weights-'+str(cutoff)+'.json')
+  if target.exists():
+   document=json.loads(target.read_text());self.publish_immutable('public/continuous-audit/hourly/'+str(cutoff)+'.json',document);return document
+  selected=[c for c in completed if cutoff-3600<c['completed_at']<=cutoff and c['epoch']in self.state['populations']]
+  # Empty current hour is a real zero-weight snapshot, not last-hour reuse.
+  documents=[self.hourly_snapshot(c['epoch'],c['round'],c.get('inputcheckpoint',c.get('checkpoint')),cutoff)for c in sorted(selected,key=lambda c:(c['completed_at'],c['epoch']))]
+  document=self.controller.signed(hourly_aggregate(documents,self.controller.authority.id,cutoff));atomic(target,document);self.publish_immutable('public/continuous-audit/hourly/'+str(cutoff)+'.json',document);return document
  def hourly_snapshot(self,epoch,round,checkpoint,cutoff):
   target=self.directory/('snapshot-'+str(cutoff)+'-'+epoch+'.json')
-  if target.exists():return json.loads(target.read_text())
+  if target.exists():
+   document=json.loads(target.read_text());self.publish_immutable('public/continuous-audit/snapshots/'+str(cutoff)+'-'+epoch+'.json',document);return document
   queued=[]
   for jobid in self.state['jobs']:
    row=self.queue.status(jobid)
@@ -115,7 +132,7 @@ class ContinuousAuditor:
   failures=[f['document']for f in self.state['capture_failures'].values()if f['kind']=='confirmed_invalid_artifact' and authenticate(f['document'],self.controller.authority.id)['row']in records];admissions.update(admit_artifact_failures(failures,records,self.controller.authority.id))
   verifiers={**self.queue.workers,self.controller.authority.id:['operator-artifact-capture']}
   pointers=[dict(admitted_queue_job_sha256=key)for key in admissions];result=snapshot(records,pointers,verifiers,epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,audit_policy=self.policy,admitted_jobs=admissions,adjudications=[json.loads(path.read_text())for path in sorted(self.directory.glob('*-adjudication.json'))],authority=self.controller.authority.id)
-  document=self.controller.signed(result);atomic(target,document);self.controller.bucket.json('public/continuous-audit/snapshots/'+str(cutoff)+'-'+epoch+'.json',document);return document
+  document=self.controller.signed(result);atomic(target,document);self.publish_immutable('public/continuous-audit/snapshots/'+str(cutoff)+'-'+epoch+'.json',document);return document
 
 
 def main(argv=None):
@@ -133,9 +150,7 @@ def main(argv=None):
   for path in sorted(state.glob('*-continuous-audit-population.json')):service.admit(json.loads(path.read_text()))
   result=service.tick();atomic(state/'continuous-audit-health.json',dict(at=time.time(),**result))
   cutoff=int(time.time()//3600)*3600
-  for path in sorted(state.glob('*-learner-completion.json')):
-   completed=json.loads(path.read_text())
-   if completed['completed_at']<=cutoff and completed['epoch']in service.state['populations']:service.hourly_snapshot(completed['epoch'],completed['round'],completed.get('inputcheckpoint',completed.get('checkpoint')),cutoff)
+  service.hourly_completed([json.loads(path.read_text())for path in sorted(state.glob('*-learner-completion.json'))],cutoff)
   if a.once:return 0
   time.sleep(c.get('poll_seconds',10))
 

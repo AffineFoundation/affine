@@ -12,6 +12,12 @@ class PolicyControls(unittest.TestCase):
   return dict(version='continuous-audit-observation-v1',**{k:self.row[k]for k in ('epoch','checkpoint','miner','batch_sha256','commitment_sha256','verifier_contract_sha256')},outcome=outcome,completed_at=at,job_sha256=job)
  def calculate(self,rows=None,obs=(),**kw):
   jobs={o['job_sha256']:dict(verifier=self.worker,observations=[o])for o in obs};return snapshot(rows or[self.row],[signed(self.key,o)for o in obs],{self.worker:['verify']},epoch='e1',round=1,checkpoint='a'*64,cutoff=30,audit_policy=self.p,admitted_jobs=jobs,**kw)
+ def test_hourly_sum_raw_points_not_normalized_shares(self):
+  a=self.calculate();a['cutoff']=3600;a['points']={'b'*64:2,'3'*64:1}
+  b=dict(a,epoch='e2',round=2,points={'b'*64:0,'3'*64:7})
+  r=hourly_aggregate([signed(self.authority,a),signed(self.authority,b)],self.root,3600);self.assertEqual(r['weights']['b'*64],.2);self.assertEqual(r['weights']['3'*64],.8);self.assertEqual(len(r['snapshot_bindings']),2)
+  with self.assertRaises(ValueError):hourly_aggregate([signed(self.authority,a),signed(self.authority,a)],self.root,3600)
+  self.assertFalse(r['chain_transactions'])
  def test_prior_not_a_verified_claim(self):
   r=self.calculate();self.assertEqual(r['points']['b'*64],.5);self.assertFalse(r['unaudited_samples_claimed_verified']);self.assertFalse(r['training_waits_for_audits'])
  def test_probability_falls_and_repeat_deduplicates(self):
