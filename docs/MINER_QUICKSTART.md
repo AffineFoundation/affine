@@ -112,3 +112,6 @@ task snapshot and exact approved source. Use the [signed-source bootstrap](MATH_
 with your registered, activated identity and the published runtime and live discovery URL.
 The [MATH pilot plan](MATH_PILOT.md) describes the task split and pending launch
 checks; preparation is not a public mining invitation or demonstrated improvement.
+
+
+Prospective hourly transport: see [SMALL_COMMITMENT_HOURLY_CONTRACT.md](SMALL_COMMITMENT_HOURLY_CONTRACT.md) for the versioned small-commitment, selected-only audit contract. It applies only when the signed epoch manifest explicitly activates that policy; existing epochs retain their original contract.

@@ -98,7 +98,7 @@ class Controller:
         if existing(legacy_key) is None:self.bucket.json(legacy_key,self.signed(descriptor))
         return checkpoint
 
-    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,optimizer_state_transport=None):
+    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None):
         if optimizer_state_transport is not None:
             from .persistent_training_state import transport_concurrency
             transport_concurrency({'optimizer_state_transport':optimizer_state_transport})
@@ -133,13 +133,19 @@ class Controller:
             # Immutable public model reads must survive freeze, queueing, audits
             # and training. Upload capabilities still end at the epoch deadline.
             checkpoint=dict(checkpoint,read_urls={name:self.bucket.presign(f"public/checkpoints/{checkpoint['id']}/{name}",expires=604800) for name in checkpoint['files']})
-        if artifact_policy is None:
-            caps=self.gateway.open(epoch,miners,deadline)
-        else:
-            from .artifact_budget import for_manifest
-            budget=for_manifest(dict(artifact_policy=artifact_policy,model_runtime_revision=model_runtime_revision,
-                backend_profile=backend_profile,numerical_policy=numerical_policy))
-            caps=self.gateway.open(epoch,miners,deadline,upload_limit=budget['compressed_bytes'])
+        commitment_binding=None
+        if submission_transport_policy is not None:
+            from .commitment_transport import VERSION
+            if submission_transport_policy!=VERSION or type(commitment_max_batches)is not int or not 1<=commitment_max_batches<=256:raise ValueError('commitment transport policy/cap')
+            commitment_binding=dict(version=VERSION,checkpoint=checkpoint['id'],source=source_bundle['sha256'],max_batches=commitment_max_batches)
+        if hourly_execution_policy is not None:
+            from .hourly_policy import validate
+            hourly_execution_policy=validate(hourly_execution_policy,duration)
+            if commitment_binding is None:raise ValueError('hourly policy requires small commitments')
+            commitment_binding['freeze_until']=deadline+hourly_execution_policy['freeze_seconds']
+        from .artifact_budget import for_manifest
+        budget=for_manifest(dict(artifact_policy=artifact_policy,model_runtime_revision=model_runtime_revision,backend_profile=backend_profile,numerical_policy=numerical_policy)) if artifact_policy is not None else {'compressed_bytes':100_000_000}
+        caps=self.gateway.open(epoch,miners,deadline,upload_limit=budget['compressed_bytes'],**({'commitment_binding':commitment_binding}if commitment_binding else {}))
         env=dict(environment or ENV)
         definitions=[]
         for definition in environments or [dict(spec=env,harness=harness)]:
@@ -156,6 +162,8 @@ class Controller:
                       numerical_policy='cpu-float32-eager-exact-toploc-logprob-atol1e-5',model_runtime_revision=NUMERICAL_RUNTIME_REVISION,runtime_profile=dict(runtime_profile or {}),
                       environment_revision='trusted-adapter-registry-v1')
         if sample_harness_registry is not None:manifest['sample_harness_registry']=sample_harness_registry
+        if submission_transport_policy is not None:manifest['submission_transport_policy']=submission_transport_policy
+        if hourly_execution_policy is not None:manifest['hourly_execution_policy']=hourly_execution_policy
         manifest['transport_policy']='direct-r2-v1' if getattr(self.gateway,'direct_r2',False) else 'gateway-v1'
         if model_runtime_revision is not None:manifest['model_runtime_revision']=model_runtime_revision
         if numerical_policy is not None:manifest['numerical_policy']=numerical_policy

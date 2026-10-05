@@ -251,7 +251,7 @@ class Gateway:
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
 
-    def open(self, epoch, miners, deadline, *, upload_limit=100_000_000):
+    def open(self, epoch, miners, deadline, *, upload_limit=100_000_000, commitment_binding=None):
         if type(upload_limit)is not int or upload_limit not in (100_000_000,2_000_000_000):
             raise ValueError('upload limit policy')
         with self.lock:
@@ -259,8 +259,16 @@ class Gateway:
                 raise ValueError('epoch already exists')
             self.epochs[epoch] = dict(closed=False, miners=set(miners), uploads={},transport='direct-r2-v1' if self.direct_r2 else 'gateway-v1',start=int(time.time()),deadline=deadline)
             if upload_limit!=100_000_000:self.epochs[epoch]['upload_limit']=upload_limit
+            if commitment_binding is not None:
+                if not self.direct_r2:raise ValueError('commitment transport requires direct R2')
+                self.epochs[epoch].update(commitment_binding=commitment_binding,max_batches=commitment_binding['max_batches'])
             caps = {}
             for miner in miners:
+                if commitment_binding is not None:
+                    from .commitment_transport import VERSION
+                    expiry=max(1,deadline-int(time.time()))
+                    caps[miner]=encrypt(miner,dict(transport=VERSION,put_url=self.bucket.presign('private/'+epoch+'/commitments/'+miner+'.json','put_object',expiry),batch_put_urls=[self.bucket.presign('private/'+epoch+'/staging/'+miner+'/'+str(i)+'.zip','put_object',expiry)for i in range(commitment_binding['max_batches'])],headers={'Content-Type':'application/octet-stream'},deadline=deadline))
+                    continue
                 if self.direct_r2:
                     key=f'private/{epoch}/staging/{miner}.zip'
                     expiry=max(1,deadline-int(time.time()))
@@ -283,6 +291,9 @@ class Gateway:
     def freeze(self, epoch):
         with self.lock:
             state = self.epochs[epoch]
+            if 'commitment_binding'in state:
+                from .commitment_transport import freeze
+                return freeze(self,epoch)
             state['closed'] = True
             self.persist()
             if state.get('transport')=='direct-r2-v1' and 'frozen_receipts' in state:

@@ -51,7 +51,7 @@ def validate_coverage(manifest, submissions):
     expected = coverage_manifest(manifest, receipts, challenge)
     if expected['training_coverage'] != context:
         raise ValueError('signed covered training context fields')
-    hashes = {r['sha256'] for r in receipts.values()}
+    hashes = {b['sha256']for r in receipts.values()for b in r['artifacts']}if manifest.get('submission_transport_policy')else{r['sha256'] for r in receipts.values()}
     if (not submissions or any(r.get('sha256') not in hashes for r in submissions)):
         raise ValueError('training submissions outside frozen coverage population')
     return context

@@ -114,7 +114,7 @@ class RoutedJobs:
         return dict(free_bytes=free,checkpoint_bytes=checkpoint_bytes,required_bytes=required,input_cache=bool(cache),retained_step_checkpoints=retained_steps,final_exports=1,temporary_export_copies=temporary_exports,
                     planned_submission_bytes=submission_bytes,download_reserve_bytes=downloads,raw_working_reserve_bytes=budget['raw_bytes'])
 
-    def run(self,label,role,manifest,cache=None,**fields):
+    def run(self,label,role,manifest,cache=None,observe_until=None,**fields):
         from .remote_backend import save,role_time_budget
         if manifest.get('payable') is not False: raise ValueError('distributed nonpayable only')
         if role != 'verify':
@@ -148,9 +148,11 @@ class RoutedJobs:
             prior=dict(job_id=identifier,role=role,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],
                        job_sha256=hashlib.sha256(canonical(payload)).hexdigest(),manifest_sha256=hashlib.sha256(canonical(manifest)).hexdigest(),**self.metadata)
             save(self.state/(identifier+'-job.json'),envelope); save(record,prior)
+        if observe_until is not None and time.time()>=observe_until:raise TimeoutError('audit budget closed; original request retained')
         self.queue.enqueue(envelope); self.queue.archive(prior['job_id'],self.controller.bucket,self.history_prefix)
         started=time.time()
         while True:
+            if observe_until is not None and time.time()>=observe_until:raise TimeoutError('audit budget closed; original lease retained')
             status=self.queue.status(prior['job_id'])
             if status['status']=='complete':
                 report=status['report']; self.verifiers[0].checked(report,prior,manifest)

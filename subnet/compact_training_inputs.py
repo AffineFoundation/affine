@@ -202,9 +202,10 @@ def validate_job(job, manifest, authority):
     identities = set(); artifacts = set()
     for obj in submissions:
         _, original = validate_receipt(obj.get('verifier_receipt'),obj,manifest,authority)
-        if original['miner_identity'] in identities or obj['sha256'] in artifacts:
+        identity=(original['miner_identity'],original['submission_sha256'])if manifest.get('submission_transport_policy')else original['miner_identity']
+        if identity in identities or obj['sha256'] in artifacts:
             raise ValueError('one compact admission per original miner/artifact')
-        identities.add(original['miner_identity']); artifacts.add(obj['sha256'])
+        identities.add(identity); artifacts.add(obj['sha256'])
 
 
 def validate_report(report, job, manifest, authority):
@@ -269,11 +270,18 @@ def prepare_submissions(controller, manifest, reports, receipts):
     if not 1 <= sum(bool(audit.get('accepted')) for audit in reports.values()) <= 256:
         raise ValueError('bounded authenticated compact submission population')
     result = []
+    rows=[]
     for miner,audit in reports.items():
         if not audit.get('accepted'):continue
-        original = v1.issue(controller,manifest,miner,receipts[miner],audit)
+        if manifest.get('submission_transport_policy'):
+            for child in audit['artifact_audits']:
+                if child.get('accepted'):
+                    frozen=next(b for b in receipts[miner]['artifacts']if b['sha256']==child['submission_sha256']);rows.append((miner,child,frozen))
+        else:rows.append((miner,audit,receipts[miner]))
+    for miner,audit,frozen in rows:
+        original = v1.issue(controller,manifest,miner,frozen,audit)
         data,payload = prepare_from_queue(queue.path,controller.authority.id,queue.workers,
-            manifest,miner,receipts[miner],audit,original)
+            manifest,miner,frozen,audit,original)
         key = 'private/compact-training-inputs/' + payload['compact_sha256'] + '.json'
         controller.bucket.put(key,data,'application/json')
         response = controller.bucket.client.get_object(Bucket=controller.bucket.name,Key=key)

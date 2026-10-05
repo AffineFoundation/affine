@@ -73,7 +73,12 @@ recompute and no R2 GET. Never accept caller-miner report assertions instead.
   r=signed(doc,authority);need(r.get('epoch')==m['epoch'] and r.get('submission_sha256')==receipts[miner]['sha256'],'frozen artifact/audit binding')
   from .forced_sampling import require_report
   require_report(m,r)
-  need(isinstance(r.get('remote_job_id'),str) and r['remote_job_id'],'authenticated verifier request reference')
+  if m.get('submission_transport_policy')and r.get('commitment_status')in('not_selected','budget_deferred','infrastructure_deferred'):
+   from .commitment_transport import validate_unchecked
+   # The original postfreeze allocation is authenticated by the writer; this
+   # projector separately refuses any unselected points, jobs or sample validity.
+   need(not r.get('accepted')and not r.get('selected_batches')and 'remote_job_id'not in r,'unselected no-credit report')
+  need((m.get('submission_transport_policy')and r.get('commitment_status')in('not_selected','budget_deferred','infrastructure_deferred'))or isinstance(r.get('remote_job_id'),str) and r['remote_job_id'],'authenticated verifier request reference')
   accepted=r['accepted'];seen=set()
   confirmed=[o for o in r.get('outcomes',[]) if o.get('valid') is True and o.get('fully_audited') is True]
   need(len(confirmed)==len(accepted),'every credited batch fully audited')

@@ -99,8 +99,13 @@ def verify_audit_lineage(state,manifest,audit,authority,c,db,now,files,*,require
  prior=dict(job_id=jobid,job_sha256=hashlib.sha256(canonical(job)).hexdigest(),role='verify',source_files=job['source_files'],runtime_versions=job['runtime_versions'],manifest_sha256=sha(jm))
  reader=RemoteJobs.__new__(RemoteJobs);reader.state=state/'roles';reader.controller=SimpleNamespace(authority=SimpleNamespace(id=authority))
  reader.checked(remote,prior,jm)
- matches=[r for r in remote['audits'] if r['submission_sha256']==audit['submission_sha256']];need(len(matches)==1,'exact frozen report')
- bound=dict(matches[0],remote_job_id=remote['job_id'],backend_profile=remote['backend_profile'],execution_resources_enforced=remote['execution_resources_enforced'])
+ if manifest.get('submission_transport_policy'):
+  from subnet.commitment_transport import combine
+  receipt=jm['audit_frozen_receipts'][audit['miner_identity']]if 'miner_identity'in audit else next(r for r in jm['audit_frozen_receipts'].values()if r['sha256']==audit['submission_sha256'])
+  bound=combine(jm,receipt,remote)
+ else:
+  matches=[r for r in remote['audits'] if r['submission_sha256']==audit['submission_sha256']];need(len(matches)==1,'exact frozen report')
+  bound=dict(matches[0],remote_job_id=remote['job_id'],backend_profile=remote['backend_profile'],execution_resources_enforced=remote['execution_resources_enforced'])
  need(canonical(bound)==canonical(audit),'original audit metadata, not caller score')
  return dict(job_id=jobid,job_sha256=sha(job),report_sha256=sha(remote),worker=worker,submission_sha256=audit['submission_sha256'],**(workforce or {}))
 
@@ -168,10 +173,37 @@ def verify_completed_evidence(c,authority,now):
    m=signed(read(first),authority);epoch=m['epoch'];scores=state/(epoch+'-signed-compute-scores.json')
    if not scores.exists():continue
    digest=m['source_bundle']['sha256'];need(digest in inventories,'approved live source only');files=inventories[digest]
+   exclusion=m.get('audit_exclusion_snapshot')
+   if exclusion is not None:
+    from subnet.audit_exclusion import snapshot
+    history=signed(exclusion['history'],authority)
+    need(snapshot(history,exclusion['policy'])==exclusion['excluded_miners'],'exact confirmed-invalid temporary exclusion')
+    for event in history['epochs']:
+     for oldminer,oldreport in event['reports'].items():
+      oldmanifest=signed(read(state/(event['epoch']+'-first-signed-manifest.json')),authority)
+      actual=signed(read(state/(event['epoch']+'-signed-compute-audit-'+oldminer+'.json')),authority)
+      need(actual==oldreport,'original historical confirmed-invalid audit')
+      olddigest=oldmanifest['source_bundle']['sha256'];need(olddigest in inventories,'historical approved source')
+      verify_audit_lineage(state,oldmanifest,actual,authority,c,db,now,inventories[olddigest],required_source_files=requirements[olddigest])
    score=signed(read(scores),authority)
    for miner in score['receipts']:
     audit=signed(read(state/(epoch+'-signed-compute-audit-'+miner+'.json')),authority)
     need(audit['submission_sha256']==score['receipts'][miner]['sha256'],'signed frozen receipt binding')
+    if m.get('submission_transport_policy')and audit.get('commitment_status')in('budget_deferred','infrastructure_deferred'):
+     from subnet.commitment_transport import validate_deferred
+     audit_manifest=read(state/(epoch+'-audit-manifest.json'));challenge=read(state/(epoch+'-audit-challenge.json'))
+     need(challenge['receipts']==score['receipts']and challenge['generated_after_freeze_at']>=m['deadline'],'deferred frozen population/challenge')
+     validate_deferred(audit_manifest,score['receipts'][miner],audit)
+     continue
+    if m.get('submission_transport_policy')and audit.get('commitment_status')=='not_selected':
+     from subnet.commitment_transport import validate_unchecked
+     challenge=read(state/(epoch+'-audit-challenge.json'));plan=read(state/(epoch+'-audit-plan.json'));audit_manifest=read(state/(epoch+'-audit-manifest.json'))
+     need(challenge['receipts']==score['receipts']and challenge['generated_after_freeze_at']>=m['deadline'],'original committed population/challenge')
+     from subnet.audit_policy import allocate
+     expected=allocate({k:(0 if k in m.get('audit_exclusion_snapshot',{}).get('excluded_miners',[])else len(v['artifacts']))for k,v in score['receipts'].items()},m['audit_policy'],challenge['seed'])
+     need(expected==plan['allocations']and expected[miner]==0,'original zero-slot allocation')
+     validate_unchecked(audit_manifest,score['receipts'][miner],audit)
+     continue
     proofs.append(verify_audit_lineage(state,m,audit,authority,c,db,now,files,required_source_files=requirements[digest]))
  return proofs
 

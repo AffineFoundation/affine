@@ -111,6 +111,9 @@ def contract(config,round_number):
     from .empty_epoch_policy import selected
     policy=selected(config,round_number)
     if policy is not None:result['operator_test_policy']=policy
+    if config.get('submission_transport_policy') is not None:result['submission_transport_policy']=config['submission_transport_policy']
+    if config.get('hourly_execution_policy')is not None:result['hourly_execution_policy']=config['hourly_execution_policy']
+    if config.get('temporary_exclusion_policy')is not None:result['temporary_exclusion_policy']=config['temporary_exclusion_policy']
     return result
 
 def heldout(config,manifest):
@@ -236,6 +239,14 @@ def run(config,once=False):
                         owned_fields=owned_mining_job_fields(config,manifest,status['round'])
                         attempts=min(config.get('search_budget',64),manifest['sampling_contract']['max_attempts']) if manifest.get('sampling_contract') else config.get('search_budget',64)
                         seed_start=0 if manifest.get('sampling_contract') else 100+status['round']*1000
+                        if manifest.get('submission_transport_policy') is not None:
+                            from .commitment_transport import VERSION
+                            if manifest['submission_transport_policy']!=VERSION:raise ValueError('owned commitment transport')
+                            capability['put_url']=bucket.presign('private/'+epoch+'/commitments/'+miner+'.json','put_object',max(1,manifest['deadline']-int(time.time())))
+                            capability['batch_put_urls']=[bucket.presign('private/'+epoch+'/staging/'+miner+'/'+str(i)+'.zip','put_object',max(1,manifest['deadline']-int(time.time())))for i in range(manifest['max_batches'])]
+                            paths=config.get('owned_miner_identity_files',{})
+                            if not isinstance(paths,dict) or miner not in paths:raise ValueError('owned miner scoped identity file required')
+                            owned_fields=dict(owned_fields,miner_identity_file=paths[miner])
                         controller.jobs.run(epoch+'-mine-'+miner[:8],'mine',manifest,None,miner_id=miner,capability=capability,search_budget=attempts,seed_start=seed_start,**owned_fields)
                     status['checkpoint_path']=(controller.jobs.checkpoint_path('mine',status['checkpoint']['id']) if hasattr(controller.jobs,'checkpoint_path') else config['remote']['workspace']+'/checkpoints/'+status['checkpoint']['id'])
                 transition_phase(active,'collect');save(statuspath,status)

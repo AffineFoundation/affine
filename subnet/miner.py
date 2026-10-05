@@ -76,8 +76,11 @@ class Miner:
         self.cap = capability or identity.decrypt(manifest['capabilities'][identity.id])
         if manifest.get('transport_policy')=='direct-r2-v1':
             from .client import direct_r2_url
-            if self.cap.get('transport')!='direct-r2-v1':raise ValueError('direct R2 upload capability binding')
+            if self.cap.get('transport')!=manifest.get('submission_transport_policy','direct-r2-v1'):raise ValueError('direct R2 upload capability binding')
             direct_r2_url(self.cap.get('put_url'))
+            if manifest.get('submission_transport_policy'):
+                if len(self.cap.get('batch_put_urls',[]))!=manifest['max_batches']:raise ValueError('bound per-batch upload slots')
+                for url in self.cap['batch_put_urls']:direct_r2_url(url)
         entries(manifest)
         self.checkpoint=checkpoint;self.runtime=None;self.runtimes={}
         self.state_path = Path(state_path) if state_path else None
@@ -168,6 +171,19 @@ class Miner:
             temporary = self.state_path.with_suffix('.tmp');temporary.write_bytes(data);temporary.chmod(0o600);temporary.replace(self.state_path)
         if time.time()>=self.manifest.get('deadline',float('inf')):
             raise EpochClosed('upload preparation completed after signed deadline')
+        if self.manifest.get('submission_transport_policy'):
+            from .commitment_transport import VERSION,make,canonical,pair_artifact,UploadJournal
+            if self.manifest['submission_transport_policy']!=VERSION:raise ValueError('unsupported commitment upload')
+            journal=getattr(self,'_commitment_upload_journal',None)
+            if journal is None:
+                journal=UploadJournal(self.manifest,self.state_path.with_suffix('.commitment-upload.json')if self.state_path else None);self._commitment_upload_journal=journal
+            packed=[(batch,pair_artifact(batch,arrays,self.manifest))for batch,arrays in self.batches]
+            for slot,(_,body)in enumerate(packed):
+                if journal.known(slot,body):continue
+                if time.time()>=self.manifest['deadline']:raise EpochClosed('batch upload deadline')
+                response=requests.put(self.cap['batch_put_urls'][slot],data=body,headers=self.cap.get('headers',{}),timeout=120);response.raise_for_status();journal.acknowledge(slot,body)
+            if time.time()>=self.manifest['deadline']:raise EpochClosed('commitment upload deadline')
+            data=canonical(make(self.identity,self.manifest,packed))
         result = requests.put(self.cap['put_url'], data=data,headers=self.cap.get('headers',{}),timeout=120)
         if result.status_code==403 and time.time()>=self.manifest.get('deadline',float('inf')):
             raise EpochClosed('upload capability expired during request')

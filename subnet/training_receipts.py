@@ -26,7 +26,7 @@ COMPUTATION_FIELDS = ('epoch', 'checkpoint', 'source_bundle', 'start', 'deadline
     'indices', 'environments', 'sample_harness_registry', 'heldout_indices',
     'harness', 'harness_source_hash', 'model_id', 'model_runtime_revision', 'backend_profile',
     'numerical_policy', 'tokenizer_binding', 'sampling_contract', 'sampling_source_hash',
-    'task_assets', 'optimizer_state_transport')
+    'task_assets', 'optimizer_state_transport', 'submission_transport_policy', 'hourly_execution_policy', 'audit_exclusion_snapshot')
 
 
 def sha(value):
@@ -102,6 +102,14 @@ def _targets(audit, manifest):
     return sorted(targets, key=lambda target:target['batch_number'])
 
 
+def frozen_matches(manifest,miner,frozen):
+    root=manifest.get('audit_frozen_receipts',{}).get(miner)
+    if manifest.get('submission_transport_policy'):
+        from .commitment_transport import VERSION
+        return manifest['submission_transport_policy']==VERSION and isinstance(root,dict)and frozen in root.get('artifacts',[])
+    return root==frozen
+
+
 def receipt_payload(job_envelope, worker_request, authority, workers, manifest, miner,
                     frozen_receipt, local_audit):
     """Authenticate ORIGINAL evidence before minting an operator attestation.
@@ -134,7 +142,7 @@ def receipt_payload(job_envelope, worker_request, authority, workers, manifest, 
     matches = [audit for audit in report.get('audits', [])
                if audit.get('submission_sha256') == frozen_receipt['sha256']]
     if (len(matches) != 1 or not any(obj.get('sha256') == frozen_receipt['sha256'] for obj in job['submissions'])
-            or original.get('audit_frozen_receipts', {}).get(miner) != frozen_receipt
+            or not frozen_matches(original,miner,frozen_receipt)
             or any(local_audit.get(key) != value for key, value in matches[0].items())):
         raise ValueError('original authenticated frozen audit bytes')
     audit = matches[0]
@@ -287,6 +295,9 @@ def validate_receipt(envelope, obj, manifest, authority):
             or value['original_report_completed_at']>value['coordinator_accepted_report_at']):
         raise ValueError('original verifier report identity/time binding')
     frozen = manifest.get('audit_frozen_receipts', {}).get(value['miner_identity'])
+    if manifest.get('submission_transport_policy')and isinstance(frozen,dict):
+        matches=[b for b in frozen['artifacts']if b['sha256']==obj['sha256']]
+        frozen=matches[0]if len(matches)==1 else None
     if (not isinstance(frozen,dict) or frozen.get('sha256') != obj['sha256'] or frozen.get('size') != obj['size']
             or frozen.get('frozen_key') != value['frozen_key'] or type(obj['size']) is not int or obj['size'] <= 0):
         raise ValueError('exact original miner frozen receipt')
@@ -321,9 +332,10 @@ def validate_job(job, manifest, authority):
     identities = set()
     for obj in job['submissions']:
         value = validate_receipt(obj.get('verifier_receipt'),obj,manifest,authority)
-        if value['miner_identity'] in identities:
+        identity=(value['miner_identity'],value['submission_sha256'])if manifest.get('submission_transport_policy')else value['miner_identity']
+        if identity in identities:
             raise ValueError('one frozen admission per miner')
-        identities.add(value['miner_identity'])
+        identities.add(identity)
 
 
 def admitted_submission(path, obj, manifest, authority, *, retire=False):

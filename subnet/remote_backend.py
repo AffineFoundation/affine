@@ -68,6 +68,7 @@ class RemoteObservationTimeout(TimeoutError):
         self.job_id=job_id;self.role=role
         super().__init__('same remote role remains active; retain job identity: '+job_id)
 
+
 class RemoteJobs:
     def __init__(self,config,controller):
         role_time_budget(config,'evaluate')
@@ -226,6 +227,7 @@ class RemoteJobs:
             validate_job(job,manifest,self.controller.authority.id);validate_report(report,job,manifest)
         return report
 
+
 class RemoteController(Controller):
     def __init__(self,bucket,gateway,state,remote):
         super().__init__(bucket,gateway,state)
@@ -237,12 +239,22 @@ class RemoteController(Controller):
         else:self.jobs=RemoteJobs(remote,self)
     def open(self,*args,max_batches=3,**kwargs):
         if type(max_batches)is not int or not 1<=max_batches<=256:raise ValueError('per UID batch quota')
+        if kwargs.get('submission_transport_policy')is not None:kwargs['commitment_max_batches']=max_batches
+        exclusion_policy=kwargs.pop('temporary_exclusion_policy',None)
+        exclusion_snapshot=None
+        if exclusion_policy is not None:
+            from .audit_exclusion import validate,snapshot
+            exclusion_policy=validate(exclusion_policy)
+            history_path=self.state/'confirmed-invalid-history.json'
+            history=json.loads(history_path.read_text())if history_path.exists()else dict(version='authenticated-confirmed-invalid-history-v1',epochs=[])
+            exclusion_snapshot=dict(policy=exclusion_policy,history=self.signed(history),excluded_miners=snapshot(history,exclusion_policy))
         input_policy=kwargs.pop('training_input_policy',None)
         if input_policy is not None:
             if input_policy not in ('authenticated-verifier-receipts-v1','authenticated-verifier-compact-inputs-v2'):
                 raise ValueError('unapproved training input policy')
             if kwargs.get('training_policy') not in RECEIPT_TRAINING_POLICIES:
                 raise ValueError('explicit receipt input requires covered/persistent objective')
+        if kwargs.get('submission_transport_policy')and input_policy!='authenticated-verifier-compact-inputs-v2':raise ValueError('per-pair transport requires compact audited-only training')
         heldouts=kwargs.pop('heldout_indices',None)
         operator_test_policy=kwargs.pop('operator_test_policy',None)
         if operator_test_policy is not None:
@@ -264,6 +276,7 @@ class RemoteController(Controller):
         try:manifest=super().open(*args,**kwargs)
         finally:self.bucket=original
         manifest['max_batches']=max_batches
+        if exclusion_snapshot is not None:manifest['audit_exclusion_snapshot']=exclusion_snapshot
         if input_policy is not None:manifest['training_input_policy']=input_policy
         if operator_test_policy is not None:manifest['operator_test_policy']=operator_test_policy
         if heldouts is not None:manifest['heldout_indices']=heldouts
@@ -320,7 +333,10 @@ class RemoteController(Controller):
                 from .live_reward_bridge import persist_signed_compute_evidence
                 persist_signed_compute_evidence(self,manifest,result,reports)
             return result,reports
-        receipts=self.gateway.freeze(epoch);challengepath=self.state/(epoch+'-audit-challenge.json')
+        timings_path=self.state/(epoch+'-finalize-timings.json');timings=json.loads(timings_path.read_text())if timings_path.exists()else {}
+        timings.setdefault('freeze_started_at',time.time());save(timings_path,timings)
+        receipts=self.gateway.freeze(epoch);timings.setdefault('freeze_completed_at',time.time());save(timings_path,timings)
+        challengepath=self.state/(epoch+'-audit-challenge.json')
         if challengepath.exists():challenge=json.loads(challengepath.read_text())
         else:
             challenge=dict(seed=secrets.token_hex(32),generated_after_freeze_at=time.time(),receipts=receipts);save(challengepath,challenge)
@@ -330,31 +346,63 @@ class RemoteController(Controller):
         if bounded:
             from .audit_policy import validate,allocate
             policy=validate(manifest['audit_policy'])
-            allocations=allocate({m:manifest['max_batches'] for m in receipts},policy,challenge['seed'])
+            allocations=allocate({m:(0 if m in manifest.get('audit_exclusion_snapshot',{}).get('excluded_miners',[])else len(r['artifacts'])if manifest.get('submission_transport_policy')else manifest['max_batches']) for m,r in receipts.items()},policy,challenge['seed'])
             from collections import Counter
             multiplicity=Counter(r['sha256'] for r in receipts.values())
             # Byte-identical cross-miner submissions cannot earn unique points.
             # Do not let one shared hash apply another UID's allocation.
             allocations={m:(n if multiplicity[receipts[m]['sha256']]==1 else 0) for m,n in allocations.items()}
             audit_manifest['audit_policy']=dict(policy,submission_counts={r['sha256']:allocations[m] for m,r in receipts.items()})
-            save(self.state/(epoch+'-audit-plan.json'),dict(allocations=allocations,population_basis='signed-per-miner-upper-bound',policy=policy))
+            if manifest.get('submission_transport_policy'):
+                from .audit_policy import selection
+                selected_slots={m:selection(len(r['artifacts']),allocations[m],challenge['seed'],r['sha256'])for m,r in receipts.items()}
+                audit_manifest['audit_policy']['submission_counts'].update({b['sha256']:1 for m,r in receipts.items()for b in r['artifacts']if b['slot']in selected_slots[m]})
+            save(self.state/(epoch+'-audit-plan.json'),dict(allocations=allocations,population_basis='actual-committed-pair-count'if manifest.get('submission_transport_policy')else'signed-per-miner-upper-bound',policy=policy))
         save(self.state/(epoch+'-audit-manifest.json'),audit_manifest);reports={}
+        from .hourly_policy import cutoff
+        audit_until=cutoff(manifest,'audit')
         def verify_one(item):
             miner,receipt=item
-            remote=self.jobs.run(epoch+'-verify-'+miner[:8],'verify',audit_manifest,checkpoint_path,
-                submissions=[dict(url=self.bucket.presign(receipt['frozen_key']),sha256=receipt['sha256'])])
-            return miner,receipt,remote
-        verified=dispatch_verifications(self.jobs,receipts.items(),verify_one)
+            submissions=[dict(url=self.bucket.presign(b['frozen_key']),sha256=b['sha256'],commitment_miner=miner)for b in receipt['artifacts']if b['slot']in selected_slots[miner]]if manifest.get('submission_transport_policy')else[dict(url=self.bucket.presign(receipt['frozen_key']),sha256=receipt['sha256'])]
+            try:
+                if audit_until is not None and time.time()>=audit_until:raise TimeoutError('signed audit cutoff elapsed')
+                extra={'observe_until':audit_until}if audit_until is not None and hasattr(self.jobs,'queue')else {}
+                remote=self.jobs.run(epoch+'-verify-'+miner[:8],'verify',audit_manifest,checkpoint_path,submissions=submissions,**extra)
+                if audit_until is not None and time.time()>=audit_until:raise TimeoutError('original report arrived after cutoff; retained for forensic audit')
+                return miner,receipt,remote
+            except (TimeoutError,RuntimeError)as exc:
+                if audit_until is None:raise
+                from .commitment_transport import deferred
+                reason='budget_deferred'if time.time()>=audit_until else 'infrastructure_deferred'
+                report=deferred(audit_manifest,receipt,reason,time.time())
+                save(self.state/(epoch+'-'+miner+'-deferral.json'),dict(report=report,error_type=type(exc).__name__,observed_at=time.time()))
+                return miner,receipt,{'deferred_report':report}
+        selected_items=list(receipts.items())
+        if manifest.get('submission_transport_policy'):
+            from .commitment_transport import unchecked
+            selected_items=[(m,r)for m,r in receipts.items()if selected_slots[m]]
+            for m,r in receipts.items():
+                if selected_slots[m]:continue
+                report=unchecked(audit_manifest,r);reports[m]=report
+                save(self.state/(epoch+'-'+m+'-report.json'),report);self.bucket.json('public/'+epoch+'/audits/'+m+'.json',self.signed(report))
+        timings.setdefault('audits_started_at',time.time());save(timings_path,timings)
+        verified=dispatch_verifications(self.jobs,selected_items,verify_one)
+        timings.setdefault('audits_completed_at',time.time());timings['selected_miner_jobs']=len(selected_items);save(timings_path,timings)
         for miner,receipt,remote in verified:
-            report=remote['audits'][0]
+            if 'deferred_report'in remote:
+                report=remote['deferred_report'];reports[miner]=report;save(self.state/(epoch+'-'+miner+'-report.json'),report);self.bucket.json('public/'+epoch+'/audits/'+miner+'.json',self.signed(report));continue
+            if manifest.get('submission_transport_policy'):
+                from .commitment_transport import combine
+                report=combine(audit_manifest,receipt,remote)
+            else:report=remote['audits'][0]
             if report['submission_sha256']!=receipt['sha256']:raise ValueError('frozen artifact report binding')
             require_report(manifest,report)
             report.update(remote_job_id=remote['job_id'],backend_profile=remote['backend_profile'],execution_resources_enforced=remote['execution_resources_enforced'])
             save(self.state/(epoch+'-'+miner+'-report.json'),report);reports[miner]=report
             self.bucket.json('public/'+epoch+'/audits/'+miner+'.json',self.signed(report))
             artifact=self.state/(epoch+'-'+miner+'.zip')
-            if not hasattr(self.jobs,'queue') and not artifact.exists():self.bucket.download(receipt['frozen_key'],artifact)
-        if bounded:
+            if not manifest.get('submission_transport_policy')and not hasattr(self.jobs,'queue') and not artifact.exists():self.bucket.download(receipt['frozen_key'],artifact)
+        if bounded and not manifest.get('submission_transport_policy'):
             from .audit_policy import escalation_allocations,penalty_count
             remaining={m:manifest['max_batches']
                        for m,r in reports.items() if penalty_count(r,policy['penalties'])}
@@ -385,8 +433,15 @@ class RemoteController(Controller):
                 self.bucket.json('public/'+epoch+'/audits/'+miner+'.json',self.signed(report))
             audit_manifest=expanded
             save(self.state/(epoch+'-audit-manifest.json'),audit_manifest)
-            self.bucket.json('public/'+epoch+'/audit-plan.json',self.signed(dict(allocations=allocations,escalations=additions,policy=policy,population_basis='signed-per-miner-upper-bound')))
+            self.bucket.json('public/'+epoch+'/audit-plan.json',self.signed(dict(allocations=allocations,escalations=additions,policy=policy,population_basis='actual-committed-pair-count'if manifest.get('submission_transport_policy')else'signed-per-miner-upper-bound')))
         result=score(reports,policy['penalties'] if bounded else None);result.update(payable=False,epoch_id=epoch,finalized_at=time.time(),receipts=receipts,checkpoint=manifest['checkpoint']['id'])
+        if manifest.get('audit_exclusion_snapshot')is not None:
+            from .audit_exclusion import confirmed
+            history_path=self.state/'confirmed-invalid-history.json'
+            history=json.loads(history_path.read_text())if history_path.exists()else dict(version='authenticated-confirmed-invalid-history-v1',epochs=[])
+            if not any(row['epoch']==epoch for row in history['epochs']):
+                history['epochs'].append(dict(epoch=epoch,reports={m:r for m,r in reports.items()if confirmed(r)}));save(history_path,history)
+                self.bucket.json('public/audits/confirmed-invalid-history.json',self.signed(history))
         save(saved,result);self.bucket.json('public/'+epoch+'/scores.json',self.signed(result))
         if manifest.get('live_reward_contract') is not None:
             from .live_reward_bridge import persist_signed_compute_evidence
