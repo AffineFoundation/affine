@@ -341,7 +341,7 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
             from .audit_policy import validate
             validate({k:v for k,v in audit_policy.items() if k!='count'})
             if job['role']!='mine':
-                if not audit_policy.get('submission_counts') and 'count' not in audit_policy:raise ValueError('missing signed audit allocation')
+                if not (job['role']=='train'and manifest.get('training_input_policy')=='committed-unaudited-training-v1')and not audit_policy.get('submission_counts') and 'count'not in audit_policy:raise ValueError('missing signed audit allocation')
         if any(type(manifest.get(k)) is not int or not 1<=manifest[k]<=16 for k in ('K','L')):raise ValueError('class quota')
     if job['role']=='mine':
         mining_window(manifest,now)

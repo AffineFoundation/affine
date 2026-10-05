@@ -166,10 +166,15 @@ def validate_report(report,job,manifest,authority):
         training.get('training_input_policy')!=VERSION or training.get('trainer_verification_performed')is not False or
         training.get('all_pairs_authenticated_verifier_receipts')is not False or training.get('input_assurance')!='unaudited'):
         raise ValueError('truthful unaudited learner report required')
+    expected_fields={'version','epoch','document_sha256','document_size','learner_admission_sha256','commitment_sha256','proof_sha256','batch_sha256','miner_identity','slot','env_id','index','assurance','trainer_verification_performed','claimed_batch'}
     for row,obj in zip(rows,job['submissions']):
+        if not isinstance(row,dict) or set(row)!=expected_fields or row.get('trainer_verification_performed')is not False:raise ValueError('exact unaudited report admission fields')
         value,child=validate_admission(obj['learner_admission'],obj,manifest,authority)
         if (row.get('document_sha256')!=obj['sha256'] or row.get('learner_admission_sha256')!=sha(obj['learner_admission']) or
-            row.get('assurance')!='unaudited' or row.get('proof_sha256')!=value['proof_sha256'] or
+            row.get('version')!=VERSION or row.get('epoch')!=manifest['epoch'] or row.get('document_size')!=obj['size'] or
+            row.get('commitment_sha256')!=value['commitment_sha256'] or row.get('miner_identity')!=value['miner_identity'] or
+            row.get('slot')!=value['slot'] or row.get('env_id')!=child['env_id'] or row.get('index')!=child['index'] or
+            row.get('batch_sha256')!=value['batch_sha256'] or row.get('assurance')!='unaudited' or row.get('proof_sha256')!=value['proof_sha256'] or
             sha(row.get('claimed_batch'))!=value['batch_sha256']):raise ValueError('learner report original input provenance')
 
 
@@ -248,7 +253,7 @@ def collect(controller,manifest):
     population=dict(version=COVERAGE_VERSION,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],
         assurance='unaudited',eligible_count=len(submissions),committed_count=len(candidates),
         eligible_inventory=receipt_inventory(submissions),exclusions=exclusions,capture_receipts_sha256=sha(receipts),
-        committed_inventory=[dict(miner=miner,commitment_sha256=sha(row['commitment_document']),commitment_document=row['commitment_document'],training_documents=row.get('training_documents',[]))for miner,row in sorted(receipts.items())])
+        committed_inventory=[dict(miner=miner,commitment_sha256=sha(row['commitment_document']),commitment_document=row['commitment_document'],training_documents=row.get('training_documents',[]),training_document_deferred_slots=row.get('training_document_deferred_slots',[]))for miner,row in sorted(receipts.items())])
     training_manifest=coverage_manifest(manifest,submissions,seed=secrets.token_hex(32),captured_at=time.time())
     value=dict(version=VERSION,manifest=training_manifest,submissions=submissions,population=population)
     save(path,value)

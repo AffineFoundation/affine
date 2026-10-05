@@ -226,7 +226,8 @@ def validate_job(job,manifest,authority):
     capability(transport['descriptor_put_url'],'PUT',transport['output_namespace']+'/staged-state.json')
     capability(transport['descriptor_read_url'],'GET',transport['output_namespace']+'/staged-state.json')
     for submission in job['submissions']:
-        hashes=submission.get('accepted_batch_sha256')
+        hashes=([submission.get('learner_admission',{}).get('payload',{}).get('batch_sha256')]
+                if manifest.get('training_input_policy')=='committed-unaudited-training-v1'else submission.get('accepted_batch_sha256'))
         if not isinstance(hashes,list)or not hashes or len(hashes)!=len(set(hashes)):raise ValueError('independent accepted batch commitment')
         for digest in hashes:checkpoint_id(digest)
     return binding,descriptor
