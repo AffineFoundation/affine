@@ -12,12 +12,20 @@ def retain(workspace,current,*,required_free_bytes=0):
                                        required_free_bytes=required_free_bytes)
     return dict(removed=removed,free_bytes=shutil.disk_usage(workspace).free)
 
+def live_original(status):
+    for field in ('runner_pid','child_pid'):
+        pid=status.get(field);ticks=status.get(field+'_ticks')
+        if not pid or ticks is None:continue
+        try:parts=(Path('/proc')/str(pid)/'stat').read_text().rsplit(')',1)[1].split()
+        except FileNotFoundError:continue
+        if parts[0]!='Z'and parts[19]==str(ticks):return True
+    return False
+
 def adopt(envelope,authority,*,now=None):
     value=signed(envelope,authority);now=time.time()if now is None else now
     if (value.get('version')!=VERSION or value.get('quiescent_readers_confirmed')is not True or
         not value['created_at']<=now<value['expires_at']):
         raise ValueError('fresh explicit evaluator ownership catalog required')
-    from .trainer_cache_lifecycle import live_original
     results=[]
     for entry in value['roots']:
         root=Path(entry['root'])
@@ -29,7 +37,9 @@ def adopt(envelope,authority,*,now=None):
         reviewed=[]
         for row in entry['checkpoints']:
             cp=signed(row['checkpoint_document'],authority);cp=cp.get('checkpoint',cp)
-            directory=root/row['relative_path']
+            relative=Path(row['relative_path'])
+            if relative.is_absolute()or '..'in relative.parts:raise ValueError('owned relative evaluator cache')
+            directory=root/relative
             if directory.resolve()!=directory.absolute():raise ValueError('symlink evaluator cache')
             if set(p.name for p in directory.iterdir())!=set(cp['files']):raise ValueError('exact checkpoint inventory')
             for name,digest in cp['files'].items():
