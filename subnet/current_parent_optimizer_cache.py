@@ -55,3 +55,82 @@ def fetcher(cache, descriptor, remote_fetch, *, document, authority, checkpoint,
             remote_fetch(name, destination)
             telemetry['remote_requested_bytes'] += row['size']
     return fetch, telemetry
+
+
+def pending_retention(cache_root, signed_policy, authority, *, current_bytes, pending_bytes,
+                      fresh_disk_bytes):
+    """Export publish callback wrapper, opt-in only; never declares adoption."""
+    import os
+    policy = authenticate(signed_policy, authority)
+    if policy.get('version') != 'retain-pending-parent-cache-v1':
+        raise ValueError('signed pending retention policy')
+    for key,value in dict(current_bytes=current_bytes,pending_bytes=pending_bytes,
+                          fresh_disk_bytes=fresh_disk_bytes).items():
+        if type(value) is not int or value < 0 or policy.get(key) != value:
+            raise ValueError('canonical simultaneous cache disk admission')
+    root=Path(cache_root)
+    if not root.is_dir() or root.is_symlink():raise ValueError('regular cache root')
+    required=current_bytes+pending_bytes+fresh_disk_bytes
+    if policy.get('total_disk_required_bytes') != required or shutil.disk_usage(root).free < pending_bytes+fresh_disk_bytes:
+        raise ValueError('actual pending plus fresh filesystem reserve')
+    # One pending namespace, named by the original signed job hash. Never reuse
+    # an interrupted namespace or accumulate additional history.
+    from .persistent_training_state import checkpoint_id
+    checkpoint_id(policy['job_sha256'])
+    destination=root/('pending-'+policy['job_sha256'])
+    destination.mkdir(mode=0o700,exist_ok=False)
+    import threading
+    retained={}; lock=threading.Lock()
+    def wrap(publish):
+        def retain(name,path):
+            with lock:
+                if Path(name).name!=name or name in retained:raise ValueError('pending shard collision')
+                digest,size=_hash_file(Path(path))
+                if sum(v['size']for v in retained.values())+size>pending_bytes:
+                    raise ValueError('pending payload exceeds admission')
+                target=destination/name
+                with target.open('xb')as output,Path(path).open('rb')as source:
+                    shutil.copyfileobj(source,output,1024**2);output.flush();os.fsync(output.fileno())
+                target.chmod(0o600)
+                if _hash_file(target)!=(digest,size):raise ValueError('pending copy digest')
+                retained[name]=dict(sha256=digest,size=size)
+            publish(name,path)
+        return retain
+    return destination,wrap,retained
+
+
+def promote_pending(pending, *, signed_policy, authority, adoption, readback_request,
+                    readback_receipt, now):
+    """ROOT authorizes exact original evidence; no unattested readback booleans."""
+    from .remote_optimizer_readback import validate_receipt
+    policy=authenticate(signed_policy,authority)
+    if policy.get('version')!='promote-current-parent-cache-v1':raise ValueError('signed promotion policy')
+    for field,envelope in [('adoption_sha256',adoption),('readback_request_sha256',readback_request),
+                           ('readback_receipt_sha256',readback_receipt)]:
+        if policy.get(field)!=sha(envelope):raise ValueError('original evidence digest '+field)
+    adopted=authenticate(adoption,authority)
+    descriptor=adopted['descriptor']
+    if adopted.get('descriptor_sha256')!=sha(descriptor) or adopted.get('job_sha256')!=policy['job_sha256']:
+        raise ValueError('original adoption job/descriptor')
+    validate_descriptor(descriptor,policy['descriptor_sha256'],policy['checkpoint'],policy['inventory'])
+    if (descriptor['genesis_sha256']!=policy['genesis_sha256'] or
+            descriptor['optimizer_steps']!=policy['optimizer_steps']):raise ValueError('promotion genesis/counter')
+    binding=policy['approved_readback_binding']
+    if binding.get('descriptor_sha256')!=sha(descriptor) or binding.get('job_sha256')!=policy['job_sha256']:
+        raise ValueError('readback parent binding')
+    validate_receipt(readback_receipt,readback_request,authority,approved_binding=binding,
+        approved_objects=policy['approved_readback_objects'],qualified_reader=policy['qualified_reader'],now=now)
+    root=Path(pending)
+    if root.is_symlink() or root.name!='pending-'+policy['job_sha256']:raise ValueError('original pending namespace')
+    if set(p.name for p in root.iterdir())!={s['name']for s in descriptor['shards']}:
+        raise ValueError('partial pending inventory')
+    for shard in descriptor['shards']:
+        path=root/shard['name']
+        if path.is_symlink() or not path.is_file() or _hash_file(path)!=(shard['sha256'],shard['size']):
+            raise ValueError('pending complete full hash')
+    # Do not replace an existing CURRENT or delete history. The operator must
+    # arrange an authorized lifecycle transition before another promotion.
+    target=root.parent/'current'
+    if target.exists() or target.is_symlink():raise ValueError('current cache collision requires lifecycle transition')
+    root.rename(target)
+    return target

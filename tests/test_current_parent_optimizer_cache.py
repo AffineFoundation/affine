@@ -45,3 +45,33 @@ class CacheControl(ParallelState):
     def test_missing_extra_disk_admission_rejected(self):
         descriptor,cache=self.setup_cache();self.fields['resource_admission']=self.admission
         with self.assertRaises(ValueError):fetcher(cache,descriptor,self.remote_fetch,**self.fields)
+
+class PendingControl(CacheControl):
+    def test_pending_export_interruption_not_current(self):
+        from subnet.current_parent_optimizer_cache import pending_retention
+        descriptor,cache=self.setup_cache();total=sum(s['size']for s in descriptor['shards'])
+        policy=dict(version='retain-pending-parent-cache-v1',job_sha256='ab'*32,current_bytes=total,
+            pending_bytes=total,fresh_disk_bytes=100,total_disk_required_bytes=total*2+100)
+        pending,wrap,retained=pending_retention(cache,self.sign(policy),self.authority,
+            current_bytes=total,pending_bytes=total,fresh_disk_bytes=100)
+        name=descriptor['shards'][0]['name'];source=cache/name
+        def fail(name,path):raise ConnectionError('interrupted actual publication')
+        with self.assertRaises(ConnectionError):wrap(fail)(name,source)
+        self.assertTrue((pending/name).exists());self.assertFalse((cache/'current').exists())
+        self.assertEqual(retained[name]['sha256'],descriptor['shards'][0]['sha256'])
+        with self.assertRaises(FileExistsError):pending_retention(cache,self.sign(policy),self.authority,
+            current_bytes=total,pending_bytes=total,fresh_disk_bytes=100)
+    def test_pending_disk_underestimate_rejected(self):
+        from subnet.current_parent_optimizer_cache import pending_retention
+        _,cache=self.setup_cache()
+        policy=dict(version='retain-pending-parent-cache-v1',job_sha256='ab'*32,current_bytes=90,
+            pending_bytes=90,fresh_disk_bytes=100,total_disk_required_bytes=190)
+        with self.assertRaisesRegex(ValueError,'filesystem reserve'):
+            pending_retention(cache,self.sign(policy),self.authority,current_bytes=90,pending_bytes=90,fresh_disk_bytes=100)
+    def test_wrong_original_adoption_digest_rejected(self):
+        from subnet.current_parent_optimizer_cache import promote_pending
+        _,cache=self.setup_cache()
+        policy=dict(version='promote-current-parent-cache-v1',adoption_sha256='00'*32)
+        with self.assertRaisesRegex(ValueError,'original evidence digest'):
+            promote_pending(cache,signed_policy=self.sign(policy),authority=self.authority,
+                adoption=self.sign({}),readback_request={},readback_receipt={},now=1)
