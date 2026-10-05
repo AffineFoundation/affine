@@ -209,6 +209,39 @@ def validate_native_prompt(runtime,pairs,manifest):
     finally:
         for session in sessions.values():session.close()
 
+SELECTION_VERSION='bounded-postfreeze-learner-selection-v1'
+TRAINING_DOCUMENT_CAP=256
+
+def select_training_documents(controller,manifest,eligible,receipts):
+    """Persist the postfreeze draw once; retain all eligible inputs for audits."""
+    import secrets,time,os,tempfile
+    from .training_receipts import computation_binding
+    path=controller.state/(manifest['epoch']+'-learner-training-selection.json')
+    binding=dict(version=SELECTION_VERSION,epoch=manifest['epoch'],
+        computation_sha256=sha(computation_binding(manifest)),capture_receipts_sha256=sha(receipts),
+        eligible_inventory_sha256=sha(receipt_inventory(eligible)),cap=TRAINING_DOCUMENT_CAP)
+    if not path.exists():
+        value=dict(binding,seed=secrets.token_hex(32),captured_at=time.time())
+        fd,tmp=tempfile.mkstemp(dir=controller.state,prefix='learner-selection-')
+        try:
+            with os.fdopen(fd,'wb')as stream:stream.write(canonical(value));stream.flush();os.fsync(stream.fileno())
+            try:os.link(tmp,path)
+            except FileExistsError:pass
+        finally:os.unlink(tmp)
+    if path.is_symlink():raise ValueError('selection journal symlink')
+    value=_decode(path.read_bytes())
+    if set(value)!=set(binding)|{'seed','captured_at'}or any(value[k]!=v for k,v in binding.items()):
+        raise ValueError('immutable original learner training selection context')
+    digest(value['seed'])
+    if type(value['captured_at'])not in(int,float)or not math.isfinite(value['captured_at'])or value['captured_at']<manifest['deadline']:
+        raise ValueError('postfreeze selection time')
+    ranked=sorted(range(len(eligible)),key=lambda i:(sha(dict(seed=value['seed'],input=receipt_inventory([eligible[i]])[0])),i))
+    selected=set(ranked[:TRAINING_DOCUMENT_CAP])
+    submissions=[obj for i,obj in enumerate(eligible)if i in selected]
+    report=dict(value,eligible_count=len(eligible),training_count=len(submissions),
+        selected_inventory_sha256=sha(receipt_inventory(submissions)),unselected_count=len(eligible)-len(submissions))
+    return submissions,report
+
 def collect(controller,manifest,*,round_number=None):
     """Freeze small documents and issue truthful cheap-eligibility admissions.
 
@@ -257,21 +290,22 @@ def collect(controller,manifest,*,round_number=None):
     submissions=[obj for key,obj,_ in candidates if counts[key]==1]
     for key,obj,_ in candidates:
         if counts[key]>1:exclusions.append(dict(document_sha256=obj['sha256'],reason='duplicate_task'))
-    if len(submissions)>256:raise ValueError('learner population bounded 256 documents')
+    eligible=submissions
+    submissions,selection=select_training_documents(controller,manifest,eligible,receipts)
     if round_number is not None:
         from .continuous_audit_service import register_population
         audit_population=register_population(controller.signed(manifest),receipts,round_number,time.time(),controller.authority.id,
-            eligible_pairs=[dict(miner=o['learner_admission']['payload']['miner_identity'],commitment_sha256=o['learner_admission']['payload']['commitment_sha256'],batch_sha256=o['learner_admission']['payload']['batch_sha256'],proof_sha256=o['learner_admission']['payload']['proof_sha256'])for o in submissions])
+            eligible_pairs=[dict(miner=o['learner_admission']['payload']['miner_identity'],commitment_sha256=o['learner_admission']['payload']['commitment_sha256'],batch_sha256=o['learner_admission']['payload']['batch_sha256'],proof_sha256=o['learner_admission']['payload']['proof_sha256'])for o in eligible])
         audit_path=controller.state/(manifest['epoch']+'-continuous-audit-population.json')
         if audit_path.exists():
             saved=authenticate(json.loads(audit_path.read_bytes()),controller.authority.id)
             if (saved.get('manifest_document')!=audit_population['manifest_document']or saved.get('receipts')!=receipts or saved.get('round')!=round_number or saved.get('eligible_evidence_ids')!=audit_population.get('eligible_evidence_ids')):raise ValueError('immutable original continuous audit population')
         else:save(audit_path,controller.signed(audit_population))
     population=dict(version=COVERAGE_VERSION,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],
-        assurance='unaudited',eligible_count=len(submissions),committed_count=len(candidates),
-        eligible_inventory=receipt_inventory(submissions),exclusions=exclusions,capture_receipts_sha256=sha(receipts),
+        assurance='unaudited',eligible_count=len(eligible),training_count=len(submissions),training_selection=selection,committed_count=len(candidates),
+        eligible_inventory=receipt_inventory(eligible),exclusions=exclusions,capture_receipts_sha256=sha(receipts),
         committed_inventory=[dict(miner=miner,commitment_sha256=sha(row['commitment_document']),commitment_document=row['commitment_document'],training_documents=row.get('training_documents',[]),training_document_deferred_slots=row.get('training_document_deferred_slots',[]))for miner,row in sorted(receipts.items())])
-    training_manifest=coverage_manifest(manifest,submissions,seed=secrets.token_hex(32),captured_at=time.time())
+    training_manifest=coverage_manifest(manifest,submissions,seed=selection['seed'],captured_at=selection['captured_at'])
     value=dict(version=VERSION,manifest=training_manifest,submissions=submissions,population=population)
     save(path,value)
     controller.bucket.json('public/'+manifest['epoch']+'/learner-population.json',controller.signed(population))
