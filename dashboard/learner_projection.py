@@ -22,16 +22,36 @@ def project(document,manifest,identity_uids,authority=AUTHORITY):
     committed[key]=(row,child);uid=identity_uids.get(miner)
     if type(uid)is int and 0<=uid<256:grid[uid]+=1
     else:outside+=1
-  eligible=set();inventory=[]
+  # Eligibility is the entire authenticated committed-child inventory; bounded
+  # training submissions contain only a selected subset of those documents.
+  candidates={}
+  for key,(_,child) in committed.items():
+   child_key=(child['training_sha256'],child['training_size'])
+   candidates.setdefault(child_key,[]).append(key)
+  eligible=set();full_inventory={}
+  for row in population['eligible_inventory']:
+   if set(row)!={'learner_admission_sha256','sha256','size'}or type(row['size'])is not int or row['size']<=0:raise ValueError('eligible inventory shape')
+   admission_digest=row['learner_admission_sha256']
+   if not isinstance(admission_digest,str)or len(admission_digest)!=64 or any(c not in '0123456789abcdef'for c in admission_digest):raise ValueError('eligible admission digest')
+   matches=candidates.get((row['sha256'],row['size']),[])
+   if len(matches)!=1 or matches[0]in eligible or admission_digest in full_inventory:raise ValueError('unique exact eligible signed child')
+   key=matches[0];eligible.add(key);full_inventory[admission_digest]=row;uid=identity_uids.get(key[0])
+   if type(uid)is int and 0<=uid<256:eligible_grid[uid]+=1
+  selected=set();inventory=[]
   for row in document['submissions']:
    signed=row['learner_admission'];p=authenticated(signed,authority);key=(p['miner_identity'],p['slot'])
-   if key in eligible or key not in committed or p['version']!='committed-unaudited-training-v1'or p['assurance']!='unaudited'or p['epoch']!=epoch or p['checkpoint']!=checkpoint or p['source_sha256']!=source:raise ValueError('eligible admission scope')
+   if key in selected or key not in eligible or p['version']!='committed-unaudited-training-v1'or p['assurance']!='unaudited'or p['epoch']!=epoch or p['checkpoint']!=checkpoint or p['source_sha256']!=source:raise ValueError('eligible admission scope')
    original,child=committed[key]
    if p['commitment_sha256']!=original['commitment_sha256']or digest(p['original_commitment'])!=original['commitment_sha256']or p['batch_sha256']!=child['batch_sha256']or p['proof_sha256']!=child['sha256']or p['document_sha256']!=child['training_sha256']or row['sha256']!=p['document_sha256']or row['size']!=p['document_size']or p['document_size']!=child['training_size']:raise ValueError('exact declared child admission')
-   inventory.append({'learner_admission_sha256':digest(signed),'sha256':row['sha256'],'size':row['size']});eligible.add(key);uid=identity_uids.get(key[0])
-   if type(uid)is int and 0<=uid<256:eligible_grid[uid]+=1
-  if population['committed_count']!=len(committed)or population['eligible_count']!=len(eligible)or sorted(population['eligible_inventory'],key=lambda r:r['learner_admission_sha256'])!=sorted(inventory,key=lambda r:r['learner_admission_sha256']):raise ValueError('actual inventory counts')
-  return dict(submitted=len(committed),learner_eligible=len(eligible),learner_excluded=len(committed)-len(eligible),submitted_grid=grid,eligible_grid=eligible_grid,unassigned=outside,submitting_identities=len({key[0]for key in committed}),eligible_identities=len({key[0]for key in eligible}),input_assurance='unaudited',proof_verification_claimed=False,source='authenticated-committed-learner-population',provenance_sha256=digest(document))
+   item={'learner_admission_sha256':digest(signed),'sha256':row['sha256'],'size':row['size']}
+   if full_inventory.get(item['learner_admission_sha256'])!=item:raise ValueError('selected admission is exact eligible subset')
+   inventory.append(item);selected.add(key)
+  if population['committed_count']!=len(committed)or population['eligible_count']!=len(eligible)or population.get('training_count',len(eligible))!=len(selected):raise ValueError('actual inventory counts')
+  if 'training_selection'in population:
+   selection=population['training_selection']
+   if (selection['version']!='bounded-postfreeze-learner-selection-v1'or selection['eligible_count']!=len(eligible)or selection['training_count']!=len(selected)or selection['unselected_count']!=len(eligible)-len(selected)or selection['cap']!=256 or len(selected)>256 or selection['eligible_inventory_sha256']!=digest(population['eligible_inventory'])or selection['selected_inventory_sha256']!=digest(inventory)):raise ValueError('bounded training selection inventory')
+  elif len(selected)!=len(eligible):raise ValueError('historical unbounded projection requires complete admitted inventory')
+  return dict(submitted=len(committed),learner_training_selected=len(selected),learner_eligible=len(eligible),learner_excluded=len(committed)-len(eligible),submitted_grid=grid,eligible_grid=eligible_grid,unassigned=outside,submitting_identities=len({key[0]for key in committed}),eligible_identities=len({key[0]for key in eligible}),input_assurance='unaudited',proof_verification_claimed=False,source='authenticated-committed-learner-population',provenance_sha256=digest(document))
  except Exception:
   # Public state never contains the submitted documents, capabilities, or traces.
   # Invalid projection is unavailable; never silently invent a zero population.

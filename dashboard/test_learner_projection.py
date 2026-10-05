@@ -26,6 +26,16 @@ class LearnerProjectionTests(unittest.TestCase):
   d,m,u,a=self.fixture(3,2)
   for mutate in [lambda x:x['population'].__setitem__('eligible_count',3),lambda x:x['submissions'].append(x['submissions'][0]),lambda x:x['submissions'][0]['learner_admission']['payload'].__setitem__('checkpoint','old'),lambda x:x['population']['committed_inventory'][0]['commitment_document']['payload'].__setitem__('epoch','old')]:
    bad=copy.deepcopy(d);mutate(bad);self.assertIsNone(project(bad,m,u,a))
+ def test_bounded_training_subset_preserves_full_eligible_population(self):
+  d,m,u,a=self.fixture(359,309)
+  full=d['population']['eligible_inventory'];d['submissions']=d['submissions'][:256]
+  selected=[dict(learner_admission_sha256=digest(x['learner_admission']),sha256=x['sha256'],size=x['size'])for x in d['submissions']]
+  d['population'].update(training_count=256,training_selection=dict(version='bounded-postfreeze-learner-selection-v1',eligible_count=309,training_count=256,unselected_count=53,cap=256,eligible_inventory_sha256=digest(full),selected_inventory_sha256=digest(selected)))
+  r=project(d,m,u,a)
+  self.assertEqual((r['submitted'],r['learner_eligible'],r['learner_training_selected'],r['learner_excluded']),(359,309,256,50))
+  self.assertEqual(r['eligible_grid'][85],309);self.assertFalse(r['proof_verification_claimed']);self.assertNotIn('PRIVATE',json.dumps(r))
+  for mutate in [lambda x:x['population']['eligible_inventory'][-1].__setitem__('sha256','fake'),lambda x:x['population']['eligible_inventory'][-1].__setitem__('size',999),lambda x:x['population']['eligible_inventory'].append(x['population']['eligible_inventory'][0]),lambda x:x['population']['training_selection'].__setitem__('training_count',309),lambda x:x['population']['eligible_inventory'][0].__setitem__('learner_admission_sha256','0'*64),lambda x:x['submissions'].append(x['submissions'][0])]:
+   bad=copy.deepcopy(d);mutate(bad);self.assertIsNone(project(bad,m,u,a))
  def test_database_legacy_and_active_learner_counts_no_double_count(self):
   with tempfile.TemporaryDirectory()as tmp:
    source=Path(tmp)/'state';folder=source/'live';folder.mkdir(parents=True)
