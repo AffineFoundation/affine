@@ -244,6 +244,8 @@ def run(config,once=False):
                     gateway.freeze(epoch);save(state/(epoch+'-opening-aborted.json'),dict(epoch=epoch,payable=False,reason='interrupted before published manifest'));status['active']=None;status['round']+=1;save(statuspath,status);continue
                 else:
                     opening_contract=contract(config,status['round'])
+                    from .successor_calibration import before_open
+                    opening_contract=before_open(controller,config,status,opening_contract)
                     from .persistent_cpu_adamw import POLICY as PERSISTENT_POLICY
                     if opening_contract['training_policy']==PERSISTENT_POLICY:
                         from .persistent_training_protocol import opening_binding

@@ -22,7 +22,7 @@ BACKEND_PROFILE = dict(device='cuda', dtype='bfloat16', attention='eager', sm=[8
     tf32=False, deterministic_algorithms=True, cublas_workspace_config=':4096:8',
     native_toploc_threads=2, torch_threads=2)
 SOURCE_FILES = tuple('subnet/'+n+'.py' for n in
-    ('training_documents','fast_prefill_audit','continuous_audit_policy','selected_proof_copy','commitment_transport','hourly_policy','audit_exclusion','audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling'))
+    ('successor_calibration','training_documents','fast_prefill_audit','continuous_audit_policy','selected_proof_copy','commitment_transport','hourly_policy','audit_exclusion','audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling'))
 ROLES = {'mine','verify','train','evaluate','upload'}
 HEAD_POLICY='frozen-feature-head-adamw-v1'
 FULL_POLICY='bf16-full-adamw-checkpointed-v1'
@@ -159,7 +159,7 @@ def owned_commitment_upload(job,manifest,progress_path=None):
         for slot,(url,(_,artifact))in enumerate(zip(job['capability']['batch_put_urls'],packed)):
             if journal.known(slot,artifact):continue
             put(url,artifact);journal.acknowledge(slot,artifact)
-        if manifest['submission_transport_policy']==VERSION2:
+        if manifest.get('submission_transport_policy',VERSION)==VERSION2:
             from .training_documents import document
             for slot,(batch,_)in enumerate(packed):
                 body=document(batch,manifest,identity.id,slot)
@@ -355,7 +355,7 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
             urls=job['capability'].get('batch_put_urls')
             if not isinstance(urls,list) or len(urls)!=manifest['max_batches']:raise ValueError('owned commitment capability slots')
             for url in urls:r2_url(url,'PUT')
-            if manifest['submission_transport_policy']==VERSION2:
+            if manifest.get('submission_transport_policy',VERSION)==VERSION2:
                 tokens=job['capability'].get('training_put_urls')
                 if type(tokens)is not list or len(tokens)!=manifest['max_batches']:raise ValueError('owned token document capability slots')
                 for url in tokens:r2_url(url,'PUT')
@@ -396,7 +396,12 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
         if resolve_source:
             from .replay_training import admitted
             admitted(manifest,job['replay'],authority)
-    if job['role']=='evaluate':
+    if job.get('successor_calibration') is not None and job['role']!='evaluate':raise ValueError('calibration evaluate role only')
+    if job['role']=='evaluate' and job.get('successor_calibration') is not None:
+        from .successor_calibration import request
+        request(job['successor_calibration'])
+        if job.get('heldout') is not None:raise ValueError('calibration is not heldout evaluation')
+    elif job['role']=='evaluate':
         if not job.get('heldout') or len(job['heldout'])>64:raise ValueError('heldout budget')
         for row in job['heldout']:
             if len(row['indices'])!=len(row['seeds']) or not 1<=len(row['indices'])<=32 or any(type(i) is not int or i<0 for i in row['indices']+row['seeds']):raise ValueError('heldout index/seed budget')
@@ -570,7 +575,7 @@ def install_source_loader(root,additional_files=()):
     # Pure admission helpers are used before workspace/artifact access. Their
     # pinned bytes have now been checked; discard bootstrap imports so compute
     # admission reloads them through the authenticated fresh-source finder.
-    for module_name in ('subnet.backend_profiles','subnet.artifact_budget','subnet.audit_policy','subnet.auditing','subnet.training_policy','subnet.commitment_transport',
+    for module_name in ('subnet.successor_calibration','subnet.backend_profiles','subnet.artifact_budget','subnet.audit_policy','subnet.auditing','subnet.training_policy','subnet.commitment_transport',
             'subnet.persistent_cpu_adamw','subnet.persistent_training_state','subnet.persistent_training_protocol','subnet.training_receipts'):
         sys.modules.pop(module_name,None)
     if 'subnet/training_startup_recovery.py'in additional_files:
@@ -594,6 +599,8 @@ def install_source_loader(root,additional_files=()):
 def initial_configuration(manifest,job):
     from .protocol import entries,entry,harness_for
     definitions=entries(manifest)
+    if job['role']=='evaluate' and job.get('successor_calibration') is not None:
+        r=job['successor_calibration'];return entry(manifest,r['env_id']),r['harness']
     if job['role']=='evaluate':
         suite=job['heldout'][0]
         return entry(manifest,suite['env_id']),suite['harness']
@@ -782,6 +789,9 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                         global_step_after=job['persistent_training']['global_step_after'])
                 report['full_model_finetune']=report['training']['full_model_finetune']
                 report['new_checkpoint']=dict(id=file_map(files),files=files,path=str(destination))
+        elif job.get('successor_calibration') is not None:
+            from .successor_calibration import execute as execute_calibration
+            report['successor_calibration']=execute_calibration(runtime,manifest,job['successor_calibration'])
         else:
             values=[];failures=[]
             for row in job['heldout']:
