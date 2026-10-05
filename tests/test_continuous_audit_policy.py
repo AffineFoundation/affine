@@ -70,6 +70,25 @@ class PolicyControls(unittest.TestCase):
   with self.assertRaises(ValueError):admit_queue_reports([queue],[self.row],self.root,{self.worker:['verify']},{'9'*64:{'model.py':'0'*64}})
   queue['token']='substitution'
   with self.assertRaises(ValueError):admit_queue_reports([queue],[self.row],self.root,{self.worker:['verify']},pins)
+ def standard_fixture(self):
+  queue,pins=self.queue_fixture();job=queue['envelope']['payload'];job['source_files']={'subnet/backend_jobs.py':'8'*64};queue['envelope']=signed(self.authority,job);queue['digest']=digest(job);report=queue['report'];report.update(job_sha256=digest(job),source_files=job['source_files'],execution_resources_enforced=False);queue['report_request']=signed(self.key,dict(action='report',job_id='job-1',token='lease-token',report=report));queue['report_digest']=digest(report);pins={'9'*64:job['source_files']};manifest=job['manifest']['payload'];ep=dict(version='explicit-backend-execution-evidence-v1',effective_cutoff=30,sources={'9'*64:dict(backend='standard-backend-no-os-resource-enforcement-v1',backend_module_sha256='8'*64,model_runtime_revision=manifest['model_runtime_revision'],backend_profile=manifest['backend_profile'],numerical_policy=manifest['numerical_policy'],runtime_versions=job['runtime_versions'],execution_resources_enforced=False)})
+  return queue,pins,ep
+ def test_explicit_standard_false_truthful_admission(self):
+  queue,pins,ep=self.standard_fixture();result=admit_queue_reports([queue],[self.row],self.root,{self.worker:['verify']},pins,execution_evidence_policy=ep,cutoff=30);self.assertEqual(next(iter(result.values()))['observations'][0]['outcome'],'verified_valid');self.assertIs(queue['report']['execution_resources_enforced'],False)
+ def test_standard_false_still_rejected_without_policy_or_before_cutover(self):
+  queue,pins,ep=self.standard_fixture()
+  with self.assertRaises(ValueError):admit_queue_reports([queue],[self.row],self.root,{self.worker:['verify']},pins)
+  with self.assertRaises(ValueError):admit_queue_reports([queue],[self.row],self.root,{self.worker:['verify']},pins,execution_evidence_policy=ep,cutoff=29)
+ def test_standard_fake_true_and_unknown_source_or_profile_rejected(self):
+  import copy
+  queue,pins,ep=self.standard_fixture()
+  for mutation in ('true','source','profile','downgrade'):
+   q=copy.deepcopy(queue);p=copy.deepcopy(ep)
+   if mutation=='true':q['report']['execution_resources_enforced']=True;q['report_digest']=digest(q['report']);q['report_request']=signed(self.key,dict(action='report',job_id='job-1',token='lease-token',report=q['report']))
+   elif mutation=='source':p['sources']={'0'*64:next(iter(p['sources'].values()))}
+   elif mutation=='profile':p['sources']['9'*64]['backend_profile']={'other':True}
+   else:p['sources']['9'*64]['execution_resources_enforced']=True
+   with self.assertRaises(ValueError):admit_queue_reports([q],[self.row],self.root,{self.worker:['verify']},pins,execution_evidence_policy=p,cutoff=30)
  def test_authentic_structurally_invalid_proof_is_invalid(self):
   queue,pins=self.queue_fixture('structural_invalid');admitted=admit_queue_reports([queue],[self.row],self.root,{self.worker:['verify']},pins);self.assertEqual(next(iter(admitted.values()))['observations'][0]['outcome'],'confirmed_invalid')
  def test_artifact_failure_is_authenticated_storage_not_gpu(self):

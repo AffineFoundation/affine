@@ -121,7 +121,7 @@ def verifier_contract(manifest):
  need(all(k in manifest for k in fields),'complete verifier execution contract')
  return digest({k:manifest[k]for k in fields})
 
-def admit_queue_reports(queue_rows,records,authority,verifiers,approved_sources):
+def admit_queue_reports(queue_rows,records,authority,verifiers,approved_sources,*,execution_evidence_policy=None,cutoff=None):
  """Authenticate original SQLite terminal report requests before estimating.
 
  approved_sources must come from actual authenticated ROOT source admission;
@@ -137,7 +137,18 @@ def admit_queue_reports(queue_rows,records,authority,verifiers,approved_sources)
   need(digest(report)==queue['report_digest']and request.get('action')=='report'and request.get('job_id')==job['job_id']and request.get('token')==queue['token']and request.get('report')==report,'original worker terminal report request')
   need(report.get('success')is True and report.get('role')=='verify'and report.get('job_id')==job['job_id']and report.get('job_sha256')==digest(job)and report.get('operator')==authority and report.get('epoch')==manifest['epoch']and report.get('checkpoint')==manifest['checkpoint']['id'],'executed audit identity/checkpoint')
   source=manifest['source_bundle']['sha256'];pins=approved_sources.get(source);need(type(pins)is dict and job.get('source_files')and all(pins.get(k)==v for k,v in job['source_files'].items()),'admitted executed source pins')
-  need(report.get('source_files')==job['source_files']and all(report.get('runtime_versions',{}).get(k)==v for k,v in job['runtime_versions'].items())and report.get('backend_profile')==manifest['backend_profile']and report.get('numerical_policy')==manifest['numerical_policy']and report.get('execution_resources_enforced')is True,'actual runtime/profile/numerical/source evidence')
+  expected_enforced=True
+  if execution_evidence_policy is not None:
+   ep=execution_evidence_policy
+   need(type(ep)is dict and set(ep)=={'version','effective_cutoff','sources'}and ep['version']=='explicit-backend-execution-evidence-v1','explicit operator execution evidence policy')
+   finite(ep['effective_cutoff'],0,2**53,'prospective execution evidence cutoff');need(type(cutoff)in(int,float)and cutoff>=ep['effective_cutoff'],'prospective execution evidence cutoff not reached')
+   entry=ep['sources'].get(source)
+   if entry is not None:
+    need(type(entry)is dict and set(entry)=={'backend','backend_module_sha256','model_runtime_revision','backend_profile','numerical_policy','runtime_versions','execution_resources_enforced'},'exact admitted backend evidence scope')
+    need(entry['backend']=='standard-backend-no-os-resource-enforcement-v1'and entry['execution_resources_enforced']is False and pins.get('subnet/backend_jobs.py')==entry['backend_module_sha256']and job['source_files']==pins,'complete exact standard backend source')
+    need(manifest['model_runtime_revision']==entry['model_runtime_revision']and manifest['backend_profile']==entry['backend_profile']and manifest['numerical_policy']==entry['numerical_policy']and job['runtime_versions']==entry['runtime_versions'],'exact admitted backend runtime/profile/numerical scope')
+    expected_enforced=False
+  need(report.get('source_files')==job['source_files']and all(report.get('runtime_versions',{}).get(k)==v for k,v in job['runtime_versions'].items())and report.get('backend_profile')==manifest['backend_profile']and report.get('numerical_policy')==manifest['numerical_policy']and report.get('execution_resources_enforced')is expected_enforced,'actual runtime/profile/numerical/source evidence')
   contract=verifier_contract(manifest);completed=finite(report['completed_at'],0,2**53,'original report completion');observed=[]
   audits=report.get('audits');need(type(audits)is list and len(audits)==len(job['submissions']),'original full child report population')
   for obj,audit in zip(job['submissions'],audits):

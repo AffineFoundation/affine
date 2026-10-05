@@ -54,9 +54,9 @@ def register_population(manifest_document,receipts,round,committed_at,authority,
 
 
 class ContinuousAuditor:
- def __init__(self,controller,queue,*,directory,approved_sources,job_metadata,audit_policy,max_inflight=8,budget_per_tick=8,job_seconds=900,capture_workers=1):
+ def __init__(self,controller,queue,*,directory,approved_sources,job_metadata,audit_policy,max_inflight=8,budget_per_tick=8,job_seconds=900,capture_workers=1,execution_evidence_policy=None):
   if type(capture_workers)is not int or capture_workers not in (1,4,8):raise ValueError('bounded capture workers')
-  self.capture_workers=capture_workers
+  self.capture_workers=capture_workers;self.execution_evidence_policy=execution_evidence_policy
   self.controller=controller;self.queue=queue;self.directory=Path(directory);self.directory.mkdir(parents=True,exist_ok=True,mode=0o700);self.sources=approved_sources;self.metadata=job_metadata;self.policy=policy(audit_policy)
   if type(max_inflight)is not int or not 1<=max_inflight<=128 or type(budget_per_tick)is not int or not 1<=budget_per_tick<=128 or type(job_seconds)is not int or not 60<=job_seconds<=86400:raise ValueError('bounded continuous audit scheduler')
   self.max_inflight=max_inflight;self.budget=budget_per_tick;self.job_seconds=job_seconds
@@ -193,11 +193,13 @@ class ContinuousAuditor:
     # is read transactionally from this same authenticated queue below.
     with self.queue.transaction()as db:actual=db.execute('select * from jobs where id=?',(jobid,)).fetchone()
     queued.append(dict(actual))
-  records=[r for r in self.records() if r['round']<=round and r['committed_at']<=cutoff];admissions=admit_queue_reports(queued,records,self.controller.authority.id,self.queue.workers,self.sources)
+  records=[r for r in self.records() if r['round']<=round and r['committed_at']<=cutoff];admissions=admit_queue_reports(queued,records,self.controller.authority.id,self.queue.workers,self.sources,execution_evidence_policy=self.execution_evidence_policy if self.execution_evidence_policy is not None and cutoff>=self.execution_evidence_policy['effective_cutoff']else None,cutoff=cutoff)
   from .continuous_audit_policy import admit_artifact_failures
   failures=[f['document']for f in self.state['capture_failures'].values()if f['kind']=='confirmed_invalid_artifact' and authenticate(f['document'],self.controller.authority.id)['row']in records];admissions.update(admit_artifact_failures(failures,records,self.controller.authority.id))
   verifiers={**self.queue.workers,self.controller.authority.id:['operator-artifact-capture']}
   pointers=[dict(admitted_queue_job_sha256=key)for key in admissions];result=snapshot(records,pointers,verifiers,epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,audit_policy=self.policy,admitted_jobs=admissions,eligible_evidence_ids=authenticate(self.state['populations'][epoch],self.controller.authority.id)['eligible_evidence_ids'],adjudications=[json.loads(path.read_text())for path in sorted(self.directory.glob('*-adjudication.json'))],authority=self.controller.authority.id)
+  if self.execution_evidence_policy is not None and cutoff>=self.execution_evidence_policy['effective_cutoff']:
+   result['execution_evidence_policy_sha256']=digest(self.execution_evidence_policy);result['execution_evidence_policy_version']=self.execution_evidence_policy['version'];result['os_resource_enforcement_claimed']=False;result['historical_execution_proven']=False
   document=self.controller.signed(result);atomic(target,document);self.publish_immutable('public/continuous-audit/snapshots/'+str(cutoff)+'-'+epoch+'.json',document);return document
 
 
@@ -210,7 +212,7 @@ def main(argv=None):
  if seed.is_symlink()or not seed.is_file()or seed.stat().st_mode&0o077:raise ValueError('original private authority required; never generate another authority')
  controller=Controller(Bucket(config['bucket']),None,state);c=config['continuous_audit_service'];queue=Coordinator(state/'roles/verifier-queue.sqlite3',controller.authority.id,{e['worker_identity']:['verify']for e in config['remote']['roles']['verify']})
  sources=admitted_service_config(c,controller.authority.id)
- service=ContinuousAuditor(controller,queue,directory=state/'continuous-audit',approved_sources=sources['approved_sources'],job_metadata=sources['job_metadata'],audit_policy=c['policy'],max_inflight=c.get('max_inflight',8),budget_per_tick=c.get('budget_per_tick',8),job_seconds=c.get('job_seconds',900),capture_workers=c.get('capture_workers',1))
+ service=ContinuousAuditor(controller,queue,directory=state/'continuous-audit',approved_sources=sources['approved_sources'],job_metadata=sources['job_metadata'],audit_policy=c['policy'],max_inflight=c.get('max_inflight',8),budget_per_tick=c.get('budget_per_tick',8),job_seconds=c.get('job_seconds',900),capture_workers=c.get('capture_workers',1),execution_evidence_policy=sources.get('execution_evidence_policy'))
  while True:
   for path in sorted(state.glob('*-continuous-audit-population.json')):service.admit(json.loads(path.read_text()))
   result=service.tick();atomic(state/'continuous-audit-health.json',dict(at=time.time(),**result))
