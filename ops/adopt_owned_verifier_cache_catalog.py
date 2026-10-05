@@ -28,7 +28,7 @@ def apply(envelope,authority,*,now=None):
         # input eviction does not require another full checkpoint download.
         for cp in entry['checkpoints']:
             with cache.lease_checkpoint(cp['id'],blocking=False):
-                cache.adopt_checkpoint(cp['id'],root/'checkpoints'/cp['id'],cp['files'],cp['durability_ack'])
+                cache.adopt_checkpoint(cp['id'],root/cp.get('relative_path',str(Path('checkpoints')/cp['id'])),cp['files'],cp['durability_ack'])
         removed=cache.evict_checkpoints(exclude=entry.get('keep',[]),keep=0)
         results.append(dict(root=str(root),removed=removed,available_bytes=__import__('shutil').disk_usage(root).free))
     return results

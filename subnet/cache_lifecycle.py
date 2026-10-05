@@ -105,7 +105,7 @@ class CacheLifecycle:
         identifier(cp)
         if not durability_ack:raise ValueError('durability ACK required')
         relative=Path(path).absolute().relative_to(self.root)
-        ordinary=relative==Path('checkpoints')/cp
+        ordinary=relative in (Path('checkpoints')/cp,Path('checkpoint')/cp)
         export=(len(relative.parts)==3 and relative.parts[0]=='jobs' and
                 relative.parts[2] in ('checkpoint-persistent-final','checkpoint-final'))
         if not ordinary and not export:raise ValueError('approved owned checkpoint path')
