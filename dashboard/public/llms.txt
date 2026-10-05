@@ -26,6 +26,12 @@ export/restore or a completed hourly epoch. Parallel transport, reader recovery,
 and the new contract still require qualification before live activation.
 Details: https://github.com/AffineFoundation/affine/blob/main/docs/PARALLEL_PERSISTENT_PUBLICATION.md
 
+The prospective durable-training-before-reward-v1 policy holds chain eligibility
+until the controller publishes a signed readiness record bound to the original
+training job, audited scores, advanced optimizer lineage and durable checkpoint.
+It does not change historical rewards and does not establish hourly completion.
+Details: https://github.com/AffineFoundation/affine/blob/main/docs/DURABLE_REWARD_PUBLICATION.md
+
 Dashboard: https://affine.io/
 Live mining discovery: https://affine.io/mining.json
 Measurements: https://affine.io/network-data.json
