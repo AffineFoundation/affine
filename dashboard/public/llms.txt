@@ -219,3 +219,20 @@ receipt publication remain serialized. The original signature, upload-window,
 artifact-hash and conditional-copy checks still apply. This does not establish
 a measured freeze time for a fully populated epoch and does not activate a
 different live submission deadline.
+
+Hourly commitment reads use a separate storage client with a five-second
+connect timeout, ten-second socket-read timeout and one transport attempt.
+Timeouts preserve completed snapshots and remain infrastructure failures, not
+fraud. The cutoff stops new reads; it is not a guarantee that every network
+operation has stopped at that exact instant.
+
+Prospective upload-only-independent-full-v1 removes the trainer's redundant
+full optimizer-shard GET. Trainer receipts explicitly report local SHA checks
+and completed uploads, not verified durable readback. This signed policy is
+valid only with a qualified reader on a different physical machine performing
+full GET and SHA checks for every shard. Checkpoint byte staging overlaps that
+readback; checkpoint and optimizer authority publication wait for its validated
+original request, signed receipt and successful terminal result. Rewards still
+wait for durable training publication. Default historical export behavior is
+unchanged. See docs/UPLOAD_ONLY_INDEPENDENT_STATE_READBACK.md on GitHub; this
+preparation is not a live activation or a measured one-hour epoch.
