@@ -18,11 +18,12 @@ def source_hash():
 
 
 def validate(value):
-    from .fast_prefill_audit import VERSION as FAST,calibration
-    expected=FIELDS|{'calibration'}if isinstance(value,dict)and value.get('version')==FAST else FIELDS
+    from .fast_prefill_audit import VERSION as FAST,SUPPORT_VERSION as SUPPORT,calibration
+    expected=(FIELDS|{'calibration','support_adjudication'}if isinstance(value,dict)and value.get('version')==SUPPORT else FIELDS|{'calibration'}if isinstance(value,dict)and value.get('version')==FAST else FIELDS)
     if not isinstance(value, dict) or set(value) != expected:
         raise ValueError('forced sampling contract fields')
-    if value['version']==FAST:
+    if value['version']in(FAST,SUPPORT):
+        if value['version']==SUPPORT and value['support_adjudication']!='exact-cached-replay-v1':raise ValueError('explicit cached support adjudication')
         if value['verification']!='prefill-cdf-calibrated' or value['generation']!='cached-eager-inverse-cdf':raise ValueError('fast sampling contract version')
         calibration(value['calibration'])
     elif value['version'] != VERSION or value['verification'] != 'exact-token-replay' or value['generation'] != 'uncached-eager-inverse-cdf':
@@ -36,9 +37,10 @@ def validate(value):
 
 
 def new_contract(config):
-    from .fast_prefill_audit import VERSION as FAST
-    if isinstance(config,dict)and config.get('version')==FAST:
-        if set(config)!={'version','max_attempts','calibration'}:raise ValueError('fast sampling opening configuration')
+    from .fast_prefill_audit import VERSION as FAST,SUPPORT_VERSION as SUPPORT
+    if isinstance(config,dict)and config.get('version')in(FAST,SUPPORT):
+        expected={'version','max_attempts','calibration'}|({'support_adjudication'}if config['version']==SUPPORT else set())
+        if set(config)!=expected:raise ValueError('fast sampling opening configuration')
         return validate(dict(config,randomness=secrets.token_hex(32),verification='prefill-cdf-calibrated',generation='cached-eager-inverse-cdf'))
     if not isinstance(config, dict) or set(config) != {'version', 'max_attempts'}:
         raise ValueError('forced sampling opening configuration')
