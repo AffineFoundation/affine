@@ -18,6 +18,16 @@ for a future source boundary. Deferred uploads are not fraud. The learned
 checkpoint and optimizer step remain unchanged; no successful E11 update or
 reward is claimed.
 
+Prospective recovery code on GitHub main requires the uploaded signed
+commitment's raw JSON bytes to use the canonical serialization produced by
+the official miner CLI. Its child audit jobs bind the original commitment,
+slot, task, artifact hash and size; malformed bindings are refused before
+queue admission. Capture reads all discovered small commitments before large
+conditional copies. If metadata capture remains incomplete at the signed
+cutoff, a separate signed infrastructure-skip record preserves the partial
+journals and advances without fabricated receipts, audits, rewards or training.
+These changes do not rewrite E11's original frozen compute source.
+
 E11 activates small signed commitments plus separate immutable pair objects,
 600 seconds for mining, 12 initial random expensive audits plus four reserved
 escalation audits, and four qualified verifier workers. Full exact sampler,
