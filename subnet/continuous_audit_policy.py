@@ -136,7 +136,7 @@ def admit_queue_reports(queue_rows,records,authority,verifiers,approved_sources)
    need(audit.get('submission_sha256')==row['proof_sha256']and audit.get('epoch')==manifest['epoch'],'original audited proof digest')
    outcomes=audit.get('outcomes');need(type(outcomes)is list and len(outcomes)==1,'single committed batch outcome');o=outcomes[0]
    if o.get('fully_audited')is True and type(o.get('valid'))is bool and o['valid']:outcome='verified_valid'
-   elif o.get('fully_audited')is True and o.get('valid')is False and o.get('failure_kind')=='confirmed_invalid':outcome='confirmed_invalid'
+   elif o.get('valid')is False and (o.get('fully_audited')is True and o.get('failure_kind')=='confirmed_invalid' or o.get('failure_kind')=='structural_invalid'):outcome='confirmed_invalid'
    elif o.get('valid')is None and o.get('failure_kind')=='numerical_ambiguous':outcome='numerical_ambiguous'
    else:outcome='infrastructure_error'
    observed.append(dict(version='continuous-audit-observation-v1',epoch=row['epoch'],checkpoint=row['checkpoint'],miner=row['miner'],batch_sha256=row['batch_sha256'],commitment_sha256=row['commitment_sha256'],verifier_contract_sha256=contract,outcome=outcome,completed_at=completed,job_sha256=digest(job)))
