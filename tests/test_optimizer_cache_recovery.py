@@ -56,10 +56,25 @@ class CacheACKRecovery(StateCacheControls):
         with StateCache(self.root,newer,self.manifest,self.authority)as cache:
             self.assertEqual(cache.prepare_parent(descriptor,'aa'*32),0)
             self.assertEqual(cache.cache_evidence[-1]['reason'],'confirmed-terminal-promotion-failure')
-        self.assertTrue(guard.exists());self.assertTrue((self.root/'original.json').exists());self.assertTrue((self.out/'report.json').exists())
+        self.assertFalse(guard.exists());self.assertTrue((self.root/'.optimizer-state-cache/failed-promotion-original.json').exists());self.assertTrue((self.root/'original.json').exists());self.assertTrue((self.out/'report.json').exists())
         self.assertTrue((self.root/'.optimizer-state-cache/failed-original-pending.json').exists())
         self.assertFalse(list((self.root/'.optimizer-state-cache/candidate-original').glob('*.safetensors')))
         self.assertTrue(self.objects)
+    def test_consumed_terminal_failure_does_not_poison_later_approved_parent(self):
+        descriptor=self.candidate();guard=self.root/'.optimizer-state-cache/promotion.json'
+        failure=dict(phase='failed',ack=self.ack,child_pid=99999999,child_ticks='1',child_terminal_confirmed=True)
+        guard.write_bytes(canonical(failure))
+        newer=copy.deepcopy(self.job);newer['job_id']='next'
+        with StateCache(self.root,newer,self.manifest,self.authority)as cache:
+            self.assertEqual(cache.prepare_parent(descriptor,'aa'*32),0)
+        later=copy.deepcopy(descriptor);later['optimizer_steps']+=1
+        newest=copy.deepcopy(self.job);newest['job_id']='following'
+        with StateCache(self.root,newest,self.manifest,self.authority)as cache:
+            self.assertEqual(cache.prepare_parent(later,'aa'*32),0)
+            self.assertEqual(cache.cache_evidence[-1]['reason'],'no-promoted-cache')
+        archived=json.loads((self.root/'.optimizer-state-cache/failed-promotion-original.json').read_bytes())
+        self.assertEqual(archived,failure);self.assertFalse(guard.exists());self.assertTrue(self.objects)
+
     def test_fast_child_without_captured_ticks_requires_confirmed_exit_and_absent_pid(self):
         descriptor=self.candidate();guard=self.root/'.optimizer-state-cache/promotion.json'
         guard.write_bytes(canonical(dict(phase='failed',ack=self.ack,child_pid=99999999,child_ticks=None,child_exit_code=1,child_terminal_confirmed=True)))
