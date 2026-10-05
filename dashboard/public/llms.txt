@@ -3,14 +3,22 @@
 Deployment update, 2026-10-05: E14's signed mining window has closed and
 submissions have been captured. The independent continuous auditor is running;
 actual completed reports have passed authentication and valid-sample checks.
-The trainer has progressed into GPU computation from parent optimizer step four.
-Step five, its durable checkpoint/state publication and held-out gain have not
-yet been validated. Epoch nonpayable-live-reward-math-v1--1791214814-14 uses
+The original trainer completed successfully on 161 unaudited task pairs, with
+finite loss/gradients and changed model weights, without sample re-verification.
+Optimizer step five is staged; independent full-state readback and durable
+checkpoint adoption remain pending. Held-out gain is unproven.
+Epoch nonpayable-live-reward-math-v1--1791214814-14 uses
 checkpoint 05de656e9c215a139f4329ffc9954e7c83955872929a17c35fd1a9bd9eae0923.
 The corrected opening preserved original checkpoint, optimizer and genesis
 history. Consult mining.json and signed reports for current phase; do not upload
 against a closed window. This remains a nonpayable pilot with no new chain
 weight transaction claimed.
+
+The controller is finishing this same epoch in one-shot mode before the next
+opening, so a reviewed eight-stream optimizer transfer mode can be activated
+at the actual committed boundary. This does not change the in-flight training
+job or audit workers. Four-stream transfer remains the original E14 contract;
+eight-stream activation and performance are not yet claimed.
 
 The configured immutable source is
 6a85c31011b7a1ca23d745e9868d7b01dd0e92e9fe74c997e8222482f76393ca.

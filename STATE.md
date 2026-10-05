@@ -2715,3 +2715,23 @@ claim. New snapshots record the execution policy digest and explicitly say
 historical execution is not proven. Old snapshot interpretation is preserved.
 Worker science source remains immutable6a85; only reviewed operator modules
 changed. Eight H200 verification workers remain independent of training.
+
+## 2026-10-05 E14 actual training execution, publication pending
+
+The original E14 train job exited zero at 1791220154.837078. Its authenticated
+report matches the original signed job, source 6a85, manifest and BF16 runtime:
+161 unaudited task pairs, zero trainer audits, 339 gradient tensors, finite loss
+0.69314718 and gradient norm 0.02844238. Staged optimizer counter advances four
+to five; 778,502,279 exported BF16 elements changed. Mean training-pair margin
+rose by 0.0213843, which is not held-out improvement. Staged checkpoint is
+76bc599baf173cb4d071ff1959492c0a3c23377143aa2d69b749c17becc34785.
+Independent full-state readback and authoritative adoption are still pending.
+
+Actual state restore took 860.65 seconds, training/checkpoint work 324.40
+seconds and upload-only state export 969.46 seconds. The signed 2100-second
+training/publication target was missed. The local controller now finishes
+the same original job in existing one-shot mode before opening E15; remote
+training, evaluation and continuous audit jobs are preserved. Eight-stream
+transport is prepared prospectively, without changing E14's four-stream
+contract or claiming deployment. Current-parent cache work is isolated and
+unmerged. Cleanup remains deferred and chain transactions remain disabled.
