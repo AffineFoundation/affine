@@ -3,8 +3,8 @@ because its completion-file glob read both unsigned local mirrors and signed
 envelopes. The repaired operator service authenticates signed closures only,
 preserving their original timestamps and counting each once. Thirty-three audit
 controls, thirteen parallel-capture controls and twenty-one reward-bridge controls
-passed. The new auditor service is active and workers have claimed new jobs;
-a fully completed post-restart tick is not yet claimed. Science, sampling rules,
+passed. The new auditor service completed a fresh scheduling tick at
+17:52 UTC, enqueuing eight jobs that workers have leased. Science, sampling rules,
 existing job envelopes, worker processes and the learner were unchanged.
 
 Verified live update, 2026-10-05 17:48 UTC: E15

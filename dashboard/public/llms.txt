@@ -28,8 +28,9 @@ The audit coordinator was restarted with an operator-only repair on October 5:
 it now authenticates signed learner closures and ignores their unsigned local
 mirrors, avoiding duplicate reads and a completion-timestamp parsing crash.
 The original closure times, science, sampling contracts and submitted artifacts
-are unchanged. Workers have claimed new jobs after this restart; a completed
-post-restart scheduling tick is still being observed.
+are unchanged. A fresh scheduling tick completed at 17:52 UTC, enqueuing eight
+jobs that verifier workers have leased. This is scheduling progress, not a claim
+that all eight have completed or passed verification.
 
 The configured immutable source is
 6a85c31011b7a1ca23d745e9868d7b01dd0e92e9fe74c997e8222482f76393ca.
