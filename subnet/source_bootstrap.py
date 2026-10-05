@@ -25,7 +25,7 @@ COMPRESSED_LIMIT = 32 * 1024**2
 RAW_LIMIT = 256 * 1024**2
 JSON_LIMIT = 32 * 1024**2
 MAX_FILES = 20000
-ROOT_FILES = {'AGENTS.md', 'GOAL.md', 'IMPLEMENTATION_PLAN.md', 'README.md', 'STATE.md', 'pyproject.toml', '.gitignore', 'LICENSE'}
+ROOT_FILES = {'AGENTS.md', 'GOAL.md', 'IMPLEMENTATION_PLAN.md', 'README.md', 'STATE.md', 'pyproject.toml', '.gitignore', 'LICENSE', 'LIVE_LAUNCH_PLAN.md', 'configs/bounded-audit-policy.json'}
 PUBLIC_NAMESPACES = {'subnet', 'ops', 'tests', 'docs', 'dashboard', 'examples', 'prototype', 'systemd'}
 TASK_ASSET = 'assets/original-math7496.tasks.json'
 
