@@ -42,16 +42,19 @@ def adopt(envelope,authority,*,now=None):
             directory=root/relative
             if directory.resolve()!=directory.absolute():raise ValueError('symlink evaluator cache')
             if set(p.name for p in directory.iterdir())!=set(cp['files']):raise ValueError('exact checkpoint inventory')
+            stats={}
             for name,digest in cp['files'].items():
+                if Path(name).name!=name or name in ('.','..'):raise ValueError('exact checkpoint member name')
                 path=directory/name
                 from .cache_lifecycle import snapshot
                 before=snapshot(path);h=hashlib.sha256()
                 with path.open('rb')as stream:
                     for chunk in iter(lambda:stream.read(4*1024**2),b''):h.update(chunk)
                 if h.hexdigest()!=digest or snapshot(path)!=before:raise ValueError('authenticated evaluator cache bytes changed')
-            reviewed.append((cp,directory,row['checkpoint_document']))
-        for cp,directory,document in reviewed:
+                stats[name]=before
+            reviewed.append((cp,directory,row['checkpoint_document'],stats))
+        for cp,directory,document,stats in reviewed:
             with cache.lease_checkpoint(cp['id'],blocking=False):
-                cache.adopt_checkpoint(cp['id'],directory,cp['files'],document)
+                cache.adopt_checkpoint(cp['id'],directory,cp['files'],document,expected_stats=stats)
         results.append(dict(root=str(root),**retain(root,entry['current_checkpoint'])))
     return results
