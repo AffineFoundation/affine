@@ -242,6 +242,40 @@ def select_training_documents(controller,manifest,eligible,receipts):
         selected_inventory_sha256=sha(receipt_inventory(submissions)),unselected_count=len(eligible)-len(submissions))
     return submissions,report
 
+CHEAP_READ_CONCURRENCY=4
+
+def bounded_document_reads(bucket,entries):
+    """At most four bounded raw documents; main thread alone decodes JSON.
+
+    entries are already admitted and ordered. A transport failure propagates
+    unchanged and never becomes a structural exclusion or a fraud verdict.
+    """
+    import time
+    from collections import deque
+    from concurrent.futures import ThreadPoolExecutor
+    def read(entry):
+        row=entry[3];start=time.monotonic()
+        bounded=getattr(bucket,'get_bounded',None)
+        data=bounded(row['frozen_key'],limit=row['size'])if bounded else bucket.get(row['frozen_key'])
+        if len(data)!=row['size']:raise ValueError('immutable learner capture byte size')
+        return data,time.monotonic()-start
+    pending=deque();iterator=iter(entries)
+    with ThreadPoolExecutor(max_workers=CHEAP_READ_CONCURRENCY)as pool:
+        for _ in range(CHEAP_READ_CONCURRENCY):
+            try:entry=next(iterator)
+            except StopIteration:break
+            pending.append((entry,pool.submit(read,entry)))
+        while pending:
+            entry,future=pending.popleft();data,elapsed=future.result()
+            # Yield before replenishing so processing + pending results together
+            # contain no more than four raw documents (8 MB at protocol maximum).
+            yield entry,data,elapsed
+            del data,future
+            try:entry=next(iterator)
+            except StopIteration:continue
+            pending.append((entry,pool.submit(read,entry)))
+
+
 def collect(controller,manifest,*,round_number=None):
     """Freeze small documents and issue truthful cheap-eligibility admissions.
 
@@ -260,7 +294,13 @@ def collect(controller,manifest,*,round_number=None):
     if round_number is not None and (type(round_number)is not int or round_number<0):raise ValueError('actual learner round required')
     capture=getattr(controller.gateway,'capture_learner',None)
     if capture is None:raise ValueError('learner requires independent small-document capture API')
+    started=time.monotonic();capture_started=started
     receipts=capture(manifest['epoch'])
+    timings=dict(version='learner-cheap-collection-timings-v1',epoch=manifest['epoch'],
+        capture_seconds=time.monotonic()-capture_started,read_concurrency=CHEAP_READ_CONCURRENCY,
+        max_pending_raw_bytes=CHEAP_READ_CONCURRENCY*MAX_BYTES,
+        decode_working_budget_bytes=DECODE_WORKING_BYTES,read_seconds_sum=0.,decode_seconds=0.)
+    metadata_started=time.monotonic();entries=[]
     candidates=[];counts={};exclusions=[]
     for miner,receipt in sorted(receipts.items()):
         original=receipt['commitment_document'];payload=authenticate(original,miner)
@@ -276,9 +316,12 @@ def collect(controller,manifest,*,round_number=None):
             obj=dict(sha256=row['sha256'],size=row['size'],url=controller.bucket.presign(row['frozen_key'],'get_object',86400),
                 learner_admission=controller.signed(admission))
             validate_admission(obj['learner_admission'],obj,manifest,controller.authority.id)
-            import tempfile
-            data=controller.bucket.get(row['frozen_key'])
-            if len(data)!=row['size']:raise ValueError('immutable learner capture byte size')
+            entries.append((miner,child,obj,row))
+    timings['metadata_seconds']=time.monotonic()-metadata_started;reads_started=time.monotonic()
+    for (_,child,obj,row),data,elapsed in bounded_document_reads(controller.bucket,entries):
+        timings['read_seconds_sum']+=elapsed;decode_started=time.monotonic()
+        import tempfile
+        try:
             with tempfile.TemporaryDirectory()as folder:
                 target=Path(folder)/'document.json';target.write_bytes(data)
                 try:admitted_submission(target,obj,manifest,controller.authority.id)
@@ -287,11 +330,17 @@ def collect(controller,manifest,*,round_number=None):
                     continue
             key=(child['env_id'],child['index']);counts[key]=counts.get(key,0)+1
             candidates.append((key,obj,row['frozen_key']))
+        finally:
+            timings['decode_seconds']+=time.monotonic()-decode_started
+            del data
+    timings['reads_and_decode_wall_seconds']=time.monotonic()-reads_started
     submissions=[obj for key,obj,_ in candidates if counts[key]==1]
     for key,obj,_ in candidates:
         if counts[key]>1:exclusions.append(dict(document_sha256=obj['sha256'],reason='duplicate_task'))
     eligible=submissions
+    selection_started=time.monotonic()
     submissions,selection=select_training_documents(controller,manifest,eligible,receipts)
+    timings['selection_seconds']=time.monotonic()-selection_started
     if round_number is not None:
         from .continuous_audit_service import register_population
         audit_population=register_population(controller.signed(manifest),receipts,round_number,time.time(),controller.authority.id,
@@ -307,6 +356,11 @@ def collect(controller,manifest,*,round_number=None):
         committed_inventory=[dict(miner=miner,commitment_sha256=sha(row['commitment_document']),commitment_document=row['commitment_document'],training_documents=row.get('training_documents',[]),training_document_deferred_slots=row.get('training_document_deferred_slots',[]))for miner,row in sorted(receipts.items())])
     training_manifest=coverage_manifest(manifest,submissions,seed=selection['seed'],captured_at=selection['captured_at'])
     value=dict(version=VERSION,manifest=training_manifest,submissions=submissions,population=population)
-    save(path,value)
+    publication_started=time.monotonic();save(path,value)
     controller.bucket.json('public/'+manifest['epoch']+'/learner-population.json',controller.signed(population))
+    timings.update(publication_seconds=time.monotonic()-publication_started,total_seconds=time.monotonic()-started,
+        document_count=len(entries),eligible_count=len(eligible),training_count=len(submissions))
+    # Diagnostic publication must never gate a completed learner population.
+    try:save(controller.state/(manifest['epoch']+'-learner-collection-timings.json'),timings)
+    except OSError:pass
     return training_manifest,submissions,population
