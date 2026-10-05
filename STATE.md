@@ -1,3 +1,17 @@
+Verified implementation update, 2026-10-05 14:08 UTC: GitHub main contains
+reviewed integration d3a5d026, including explicit eligibility-bound continuous
+scores, authenticated infrastructure retry handling, and a prospective FP32
+Hopper inference profile. The latest 21 continuous-audit, 14 recovery and four
+runtime-profile controls pass. These are implementation controls, not a live
+mechanism qualification. Recovery replacement job E13-startup-recovery-v1-0da1aeb6
+is actually running with original supervisor36171 and child36178; its report is
+not yet present. The original failure and optimizer lineage remain preserved.
+Actual BF16 H200 controls passed native TOPLOC and three honest selected-token
+interval checks, and rejected three freshly fingerprinted forged controls, but
+exceeded the current global numerical calibration bounds; no fast-policy
+admission was signed. A distinct FP32 calibration is running on the reserved
+H200. Four added verifier nodes remain unenrolled. Cleanup remains deferred.
+
 Verified preparation update, 2026-10-05: the combined learner/transport code is
 on GitHub main at eddef1f81f409b27830b2a2941460586745558fa; later integration
 changes remain under review. Four added H200 runtimes are installed but not
