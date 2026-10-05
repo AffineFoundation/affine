@@ -15,9 +15,9 @@ def ticks(pid):
 def save(path,value):
     temp=path.with_suffix('.tmp');temp.write_bytes(canonical(value));temp.chmod(0o600);temp.replace(path)
 
-def probe(workspace,identifier):
+def probe(workspace,identifier,physical=False):
     path=Path(workspace)/'runner-status'/(identifier+'.json')
-    if (Path(workspace)/'jobs'/identifier/'report.json').is_file():return dict(phase='complete',job_id=identifier)
+    if not physical and (Path(workspace)/'jobs'/identifier/'report.json').is_file():return dict(phase='complete',job_id=identifier)
     if not path.exists():
         argument=(str(Path(workspace)/(identifier+'.json'))).encode()
         for item in Path('/proc').iterdir():

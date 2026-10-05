@@ -114,8 +114,9 @@ class RoutedJobs:
         return dict(free_bytes=free,checkpoint_bytes=checkpoint_bytes,required_bytes=required,input_cache=bool(cache),retained_step_checkpoints=retained_steps,final_exports=1,temporary_export_copies=temporary_exports,
                     planned_submission_bytes=submission_bytes,download_reserve_bytes=downloads,raw_working_reserve_bytes=budget['raw_bytes'])
 
-    def run(self,label,role,manifest,cache=None,observe_until=None,**fields):
+    def run(self,label,role,manifest,cache=None,observe_until=None,dispatch_only=False,**fields):
         from .remote_backend import save,role_time_budget
+        if type(dispatch_only)is not bool or dispatch_only and (role!='mine' or manifest.get('hourly_execution_policy')is None):raise ValueError('dispatch-only requires signed hourly miner')
         if manifest.get('payable') is not False: raise ValueError('distributed nonpayable only')
         if role != 'verify':
             selected=self.owners.get(cache,self.initial_role) if role=='upload' else role
@@ -123,7 +124,9 @@ class RoutedJobs:
             # Only upload reads an explicitly owned local checkpoint. Every
             # compute role resolves the exact signed R2 map on its own host.
             local_cache=cache if role=='upload' else self.caches.get(selected,{}).get(manifest['checkpoint']['id'])
-            report=self.roles[selected].run(label,role,manifest,local_cache,**fields)
+            kwargs=dict(fields)
+            if dispatch_only:kwargs['dispatch_only']=True
+            report=self.roles[selected].run(label,role,manifest,local_cache,**kwargs)
             if role!='upload':
                 self.caches.setdefault(selected,{})[manifest['checkpoint']['id']]=local_cache or self.checkpoint_path(selected,manifest['checkpoint']['id'])
                 save(self.cache_path,self.caches)

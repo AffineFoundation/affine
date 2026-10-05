@@ -277,7 +277,16 @@ def run(config,once=False):
                             paths=config.get('owned_miner_identity_files',{})
                             if not isinstance(paths,dict) or miner not in paths:raise ValueError('owned miner scoped identity file required')
                             owned_fields=dict(owned_fields,miner_identity_file=paths[miner])
-                        controller.jobs.run(epoch+'-mine-'+miner[:8],'mine',manifest,None,miner_id=miner,capability=capability,search_budget=attempts,seed_start=seed_start,**owned_fields)
+                        dispatch_fields=dict(owned_fields)
+                        if manifest.get('hourly_execution_policy')is not None:dispatch_fields['dispatch_only']=True
+                        from .remote_backend import RemoteMinerReserved
+                        try:
+                            observation=controller.jobs.run(epoch+'-mine-'+miner[:8],'mine',manifest,None,miner_id=miner,capability=capability,search_budget=attempts,seed_start=seed_start,**dispatch_fields)
+                        except RemoteMinerReserved as exc:
+                            observation=dict(dispatch_only=True,blocked_by_original_job=exc.job_id,new_job_started=False,terminal_observed=False)
+                        if manifest.get('hourly_execution_policy')is not None:
+                            active.setdefault('owned_miner_dispatches',{})[miner]=observation
+                            save(statuspath,status)
                     status['checkpoint_path']=(controller.jobs.checkpoint_path('mine',status['checkpoint']['id']) if hasattr(controller.jobs,'checkpoint_path') else config['remote']['workspace']+'/checkpoints/'+status['checkpoint']['id'])
                 transition_phase(active,'collect');save(statuspath,status)
             if active['phase']=='collect':
