@@ -30,7 +30,7 @@ class BoundedCommitmentFreeze(unittest.TestCase):
   def copied(key,destination,expected_etag=None):
    if key.endswith('json'):
     miner=key.split('/')[-1][:-5]
-    self.assertTrue(any(miner in s.get('commitment_pending',{})for _,s in journals))
+    self.assertTrue(any(len(s.get('commitment_pending',{}))==12 and s.get('commitment_capture_complete')for _,s in journals))
    return oldcopy(key,destination,expected_etag)
   bucket.get_object=get;bucket.copy=copied
   result=c.freeze(gateway,'e')
@@ -48,8 +48,8 @@ class BoundedCommitmentFreeze(unittest.TestCase):
  def test_cutoff_launches_no_speculative_get_and_has_no_fraud_penalty(self):
   gateway,ids,_=self.fixture(12);gateway.epochs['e']['commitment_binding']['freeze_until']=25
   with patch('subnet.commitment_transport.time.time',return_value=30),patch.object(gateway.bucket,'get_object',side_effect=AssertionError('no expired GET')):
-   self.assertEqual(c.freeze(gateway,'e'),{})
-  self.assertEqual(len(gateway.epochs['e']['commitment_deferred']),12);self.assertEqual(gateway.epochs['e']['rejections'],{})
+   with self.assertRaises(c.FreezeMetadataIncomplete):c.freeze(gateway,'e')
+  self.assertNotIn('frozen_receipts',gateway.epochs['e']);self.assertEqual(gateway.epochs['e']['rejections'],{});self.assertIn('commitment_metadata_incomplete',gateway.epochs['e'])
  def test_malformed_prefetched_sibling_does_not_block_authenticated_other_miners(self):
   gateway,ids,_=self.fixture(12);miner=ids[0].id;gateway.bucket.put('private/e/commitments/'+miner+'.json',b'x'*(c.MAX_BYTES+100))
   result=c.freeze(gateway,'e');self.assertEqual(len(result),11);self.assertIn(miner,gateway.epochs['e']['rejections']);self.assertNotIn(miner,result);self.assertEqual(gateway.bucket.heavy_reads,0)
@@ -76,8 +76,8 @@ class BoundedCommitmentFreeze(unittest.TestCase):
    if miner in kw['Key']:raise ReadTimeoutError(endpoint_url='https://same-storage')
    return original(**kw)
   dedicated=Mock();dedicated.get_object.side_effect=read;gateway.bucket.commitment_read_client=Mock(return_value=dedicated)
-  with self.assertRaises(ReadTimeoutError):c.freeze(gateway,'e')
-  dedicated.close.assert_called_once();self.assertNotIn(miner,gateway.epochs['e']['rejections']);self.assertEqual(len(gateway.epochs['e']['commitment_snapshots']),4)
+  with self.assertRaises(c.FreezeMetadataIncomplete):c.freeze(gateway,'e')
+  dedicated.close.assert_called_once();self.assertNotIn(miner,gateway.epochs['e']['rejections']);self.assertEqual(len(gateway.epochs['e']['commitment_pending']),4);self.assertEqual(len(gateway.epochs['e']['commitment_snapshots']),0);self.assertEqual(gateway.bucket.copies,[])
  def test_isolated_boto_transport_preserves_endpoint_credentials_and_shared_config(self):
   import tempfile
   from pathlib import Path
