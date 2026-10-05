@@ -132,3 +132,32 @@ class RecoveryPublication(unittest.TestCase):
   metrics=dict(trainer_state=pointer,steps=3,source_epoch=epoch,input_checkpoint=f.cp['id'],new_checkpoint=cp,original_job_sha256=sha(job),trainer_binding_sha256=sha(oldmanifest['trainer_state_binding']));save(f.root/(epoch+'-training-metrics.json'),metrics)
   ready=emit(f.controller,oldmanifest);self.assertEqual(ready['evidence']['original_job_id'],job['job_id']);self.assertEqual(ready['evidence']['training_startup_recovery']['original_failed_job_id'],original['job_id']);self.assertTrue(ready['evidence']['training_startup_recovery']['late_recovery']);self.assertEqual(require(f.root,oldmanifest,f.authority),ready)
   self.assertFalse((f.root/'roles'/(original['job_id']+'-report.json')).exists())
+
+class RecoveryDispatchLifetimeTests(unittest.TestCase):
+ def test_actual_dispatch_clips_86400_role_and_scoped_state_urls_to_existing_7200_declaration(self):
+  from unittest.mock import Mock,patch
+  from test_compact_training_integration import CompactPersistentIntegrationTests
+  from subnet.remote_backend import RemoteJobs
+  from subnet.backend_jobs import signed
+  f=CompactPersistentIntegrationTests();f.setUp();self.addCleanup(f.doCleanups)
+  original=f.job();old=copy.deepcopy(f.manifest)
+  terminal=dict(phase='failed',job_id=original['job_id'],exit_code=1,runner_pid=10,runner_pid_ticks='10',child_pid=11,child_pid_ticks='11',started_at=23,finished_at=24)
+  value=dict(version=r.VERSION,epoch=old['epoch'],original_signed_job=f.sign(original),original_job_sha256=sha(original),original_terminal=terminal,
+   startup_witness=dict(version='operator-startup-failure-witness-v1',observed_at=30,exception='fresh-source-bootstrap-admission',execution_started=False,cuda_allocated=False,model_loaded=False,original_processes_absent=True,output_namespace_empty=True,physical_gpu_idle=True,evidence_sha256='f'*64),
+   replacement_source_bundle={'sha256':'f'*64},replacement_job_label='same-declaration-recovery',created_at=31,expires_at=7231)
+  manifest=dict(old,source_bundle=value['replacement_source_bundle'],training_startup_recovery=f.sign(value))
+  jobs=RemoteJobs.__new__(RemoteJobs);jobs.controller=f.controller;jobs.state=f.root/'roles';jobs.state.mkdir(exist_ok=True)
+  jobs.config={'job_ttl_seconds_by_role':{'train':86400}};jobs.metadata=dict(source_files=dict(original['source_files'],**{'subnet/training_startup_recovery.py':'1'*64}),runtime_versions=original['runtime_versions'])
+  jobs.workspace='/synthetic';jobs.code='/synthetic/code';jobs.python='/synthetic/python';jobs.command=Mock();jobs.copy_to=Mock()
+  jobs.remote_status=Mock(return_value={'phase':'complete'});jobs.checked=Mock(side_effect=lambda report,*a:report)
+  jobs.copy_from=lambda remote,local:local.write_text('{}')
+  lifetimes=[];presign=f.bucket.presign
+  def bounded_presign(key,operation='get_object',expires=3600):lifetimes.append(expires);return presign(key,operation,expires)
+  with patch.object(f.bucket,'presign',side_effect=bounded_presign),patch('subnet.remote_backend.time.time',return_value=32):
+   jobs.run(value['replacement_job_label'],'train',manifest,submissions=original['submissions'],steps=original['steps'],training_policy=original['training_policy'])
+  record=json.loads((jobs.state/(value['replacement_job_label']+'.json')).read_bytes())
+  job=signed(json.loads((jobs.state/(record['job_id']+'-job.json')).read_bytes()),f.authority)
+  self.assertEqual(job['expires_at'],7231);self.assertEqual(job['created_at'],32)
+  self.assertTrue(lifetimes);self.assertTrue(all(v<=7199 for v in lifetimes))
+  self.assertEqual(job['manifest']['payload']['training_startup_recovery'],f.sign(value))
+  self.assertEqual(job['submissions'],original['submissions'])
