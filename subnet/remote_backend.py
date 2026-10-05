@@ -396,7 +396,7 @@ class RemoteController(Controller):
         audit_until=cutoff(manifest,'audit')
         def verify_one(item):
             miner,receipt=item
-            submissions=[dict(url=self.bucket.presign(b['frozen_key']),sha256=b['sha256'],commitment_miner=miner)for b in receipt['artifacts']if b['slot']in selected_slots[miner]]if manifest.get('submission_transport_policy')else[dict(url=self.bucket.presign(receipt['frozen_key']),sha256=receipt['sha256'])]
+            submissions=[dict(url=self.bucket.presign(b['frozen_key']),sha256=b['sha256'],commitment_miner=miner,commitment_ref=dict(miner=miner,commitment_sha256=receipt['sha256'],**{k:b[k]for k in ('slot','env_id','index','batch_sha256','size','frozen_key')}))for b in receipt['artifacts']if b['slot']in selected_slots[miner]]if manifest.get('submission_transport_policy')else[dict(url=self.bucket.presign(receipt['frozen_key']),sha256=receipt['sha256'])]
             try:
                 if audit_until is not None and time.time()>=audit_until:raise TimeoutError('signed audit cutoff elapsed')
                 extra={'observe_until':audit_until}if audit_until is not None and hasattr(self.jobs,'queue')else {}
