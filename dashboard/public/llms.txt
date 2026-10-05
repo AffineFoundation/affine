@@ -211,3 +211,11 @@ Eight-stream full-size throughput and peak memory are not yet qualified.
 Resource reservations alone do not prove peak-memory fit. Miners must follow
 the approved source and signed epoch manifest; GitHub preparation does not
 activate a new live contract.
+
+Prospective freeze optimization: at most four bounded commitment-document GETs
+run concurrently. Each document remains capped at 65,536 bytes; heavy rollout
+ZIPs are not prefetched. Snapshot journals, conditional copies and final
+receipt publication remain serialized. The original signature, upload-window,
+artifact-hash and conditional-copy checks still apply. This does not establish
+a measured freeze time for a fully populated epoch and does not activate a
+different live submission deadline.
