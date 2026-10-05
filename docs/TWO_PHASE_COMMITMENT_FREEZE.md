@@ -37,6 +37,19 @@ protocol change to selected-only freezing. Full public receipt publication and
 selected verifier SHA/readback rules remain unchanged. Only a newly reviewed and
 sealed source can activate this behavior.
 
+If complete metadata capture is still impossible after the explicitly signed
+hourly freeze cutoff, the remote controller closes that epoch as
+`infrastructure_skipped_metadata_incomplete`. It publishes a signed
+`capture-status.json` with `complete:false`, known captured commitment hashes,
+unresolved identities and infrastructure evidence; it never fabricates an empty
+`receipts.json`, audit challenge, score or accepted-data claim. A separate signed
+infrastructure-skip history records the zero-update closure. Only the epoch
+counter advances: checkpoint, checkpoint path, optimizer parent and public
+training counters are unchanged. No inference, training, evaluation or reward
+dispatch is required for this closure. A failed status publication retries the
+same original signed evidence before advancing. Historical manifests without
+the explicit hourly cutoff keep their existing retry behavior.
+
 Controls cover a 246-identity roster with only one present object, exact paginated
 namespace filtering, failed pagination/GET fail-closed behavior, four real
 overlapping copy threads with serial journals, complete metadata capture before
