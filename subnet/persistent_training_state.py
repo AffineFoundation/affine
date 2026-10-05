@@ -356,7 +356,7 @@ def _plans(inventory, shard_bytes):
 
 def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
                  publish_shard, readback_shard, commit_descriptor,
-                 resource_admission, shard_bytes=MAX_SHARD_BYTES, concurrency=1):
+                 resource_admission, shard_bytes=MAX_SHARD_BYTES, concurrency=1, readback_mode='trainer-full'):
     """Upload/read back bounded concurrent shards; transport the descriptor last.
 
     readback_shard(name) yields actual bounded byte chunks from durable storage.
@@ -368,6 +368,7 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
     """
     import torch
     from safetensors.torch import save_file
+    if readback_mode not in ('trainer-full','upload-only-independent-full-v1'):raise ValueError('explicit export readback mode')
     checkpoint_id(inference_checkpoint)
     if not isinstance(epoch, str) or not epoch or len(epoch) > 200:
         raise ValueError('completed epoch binding required before shard export')
@@ -430,21 +431,22 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
             counters['transport_maximum']=max(counters['transport_maximum'],counters['transport_inflight'])
         try:
             publish_shard(name, path)
-            h = hashlib.sha256(); actual_size = 0
-            for part in readback_shard(name):
-                if not isinstance(part, bytes) or not part or len(part) > 16*1024**2:
-                    raise ValueError('bounded actual durable readback chunks required')
-                actual_size += len(part)
-                if actual_size > size: raise ValueError('durable state readback oversized')
-                h.update(part)
-            if (h.hexdigest(), actual_size) != (actual_sha, size):
-                raise ValueError('durable state shard readback mismatch')
+            if readback_mode=='trainer-full':
+                h = hashlib.sha256(); actual_size = 0
+                for part in readback_shard(name):
+                    if not isinstance(part, bytes) or not part or len(part) > 16*1024**2:
+                        raise ValueError('bounded actual durable readback chunks required')
+                    actual_size += len(part)
+                    if actual_size > size: raise ValueError('durable state readback oversized')
+                    h.update(part)
+                if (h.hexdigest(), actual_size) != (actual_sha, size):
+                    raise ValueError('durable state shard readback mismatch')
         finally:
             with counter_lock:counters['transport_inflight']-=1
         transport_completed=time.time()
         path.unlink()
         return number,dict(name=name,sha256=actual_sha,size=size,tensors=plan),dict(name=name,sha256=actual_sha,size=size,
-            durable_readback_verified=True,local_shard_retired=True,started_at=started,completed_at=time.time(),
+            durable_readback_verified=readback_mode=='trainer-full',local_shard_retired=True,started_at=started,completed_at=time.time(),
             transport_started_at=transport_started,transport_completed_at=transport_completed)
     plans=_plans(optimizer.inventory,shard_bytes);results={}
     if concurrency==1:
@@ -479,12 +481,16 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
         parent_state_sha256=optimizer.parent_state_sha256, genesis_sha256=optimizer.genesis_sha256,
         optimizer_steps=optimizer.global_step,
         parameter_steps={name: row['step'] for name, row in optimizer.rows.items()}, shards=shards)
+    if readback_mode!='trainer-full':
+        for receipt in evidence:receipt.update(export_verification='uploaded-local-sha-only',local_sha_verified=True,upload_completed=True,independent_full_readback_required=True)
     digest = sha(descriptor)
     validate_descriptor(descriptor, digest, inference_checkpoint, optimizer.inventory)
     acknowledgement = commit_descriptor(descriptor)
     if (not isinstance(acknowledgement, dict) or acknowledgement.get('descriptor_sha256') != digest or
             acknowledgement.get('durable_readback_verified') is not True):
         raise ValueError('authenticated descriptor-last publication/readback acknowledgement')
+    if readback_mode!='trainer-full' and acknowledgement.get('authority_committed')is not False:
+        raise ValueError('upload-only descriptor cannot claim authority commit')
     if concurrency>1:
         for path in transfer.glob('evidence-*.json'):path.unlink()
     transfer.rmdir()
@@ -493,15 +499,15 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
         authority_commit_required=acknowledgement.get('authority_committed')is not True,
         no_full_state_disk_hydration=True,transport_concurrency=concurrency,
         actual_maximum_inflight_shards=counters['maximum'],actual_maximum_inflight_transfers=counters['transport_maximum'],
-        transport_timing_measured=True)
+        transport_timing_measured=True,**(dict(optimizer_state_export_policy=readback_mode,trainer_full_readback_performed=False,independent_full_readback_required=True)if readback_mode!='trainer-full'else {}))
 
 
 def export_state(optimizer, *, epoch, inference_checkpoint, workspace,
                  publish_shard, readback_shard, commit_descriptor,
-                 resource_admission, shard_bytes=MAX_SHARD_BYTES, concurrency=1):
+                 resource_admission, shard_bytes=MAX_SHARD_BYTES, concurrency=1, readback_mode='trainer-full'):
     """Seal normal optimizer mutations until descriptor-last publication ends."""
     with optimizer.freeze_for_publication():
         return _export_state(optimizer, epoch=epoch, inference_checkpoint=inference_checkpoint,
             workspace=workspace, publish_shard=publish_shard, readback_shard=readback_shard,
             commit_descriptor=commit_descriptor, resource_admission=resource_admission,
-            shard_bytes=shard_bytes,concurrency=concurrency)
+            shard_bytes=shard_bytes,concurrency=concurrency,readback_mode=readback_mode)

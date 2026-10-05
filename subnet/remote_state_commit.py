@@ -19,7 +19,7 @@ def readback_objects(descriptor):
 
 def independently_commit_remote(controller, report, original_job_envelope,
         request_bytes, receipt, launch_envelope, terminal, *, qualified_reader,
-        reader_host, trainer_host, storage_binding, original_child, now):
+        reader_host, trainer_host, storage_binding, original_child, now, verify_only=False):
     """Expectations come only from original root records, never returned receipts.
 
     ``terminal`` and ``original_child`` must be independently observed by root
@@ -27,6 +27,7 @@ def independently_commit_remote(controller, report, original_job_envelope,
     its key; it does not prove correctness against a malicious reader host.
     This explicit entrypoint never silently falls back or accepts CPU controls.
     """
+    if type(verify_only)is not bool:raise ValueError('explicit independent verification-only flag')
     authority = controller.authority.id
     job = reader.verify(original_job_envelope, authority)
     manifest = reader.verify(job['manifest'], authority)
@@ -85,6 +86,7 @@ def independently_commit_remote(controller, report, original_job_envelope,
                 payload['completed_at'] <= finish <= now < launch['expires_at'] or
             finish-start > launch['max_wall_seconds']):
         raise ValueError('original reader terminal time budget')
+    if verify_only:return dict(independent_full_readback_verified=True,descriptor_sha256=reader.sha(descriptor),authority_publication_written=False)
     # Persist authenticated complete readback evidence before authority-last.
     evidence=dict(version='independent-state-readback-evidence-v1',
         request=request,receipt=receipt,launch=launch_envelope,

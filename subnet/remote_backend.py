@@ -298,7 +298,8 @@ class RemoteController(Controller):
         if checkpoint['id']!=file_map(files):raise ValueError('checkpoint read capability file-map binding')
         return dict(checkpoint,read_urls={name:self.bucket.presign('public/checkpoints/'+checkpoint['id']+'/'+name) for name in files})
 
-    def publish_remote_checkpoint(self,manifest,remote_path):
+    def stage_remote_checkpoint(self,manifest,remote_path):
+        """Upload and independently hash bytes without signing an authority descriptor."""
         cp=manifest['checkpoint'];capacity=(self.jobs.publication_capacity(remote_path) if hasattr(self.jobs,'publication_capacity') else self.jobs.capacity(remote_path))
         report=self.jobs.run(manifest['epoch']+'-publish-'+cp['id'][:8],'upload',manifest,remote_path,
             put_urls={n:self.bucket.presign('public/checkpoints/'+cp['id']+'/'+n,'put_object',3600) for n in cp['files']})
@@ -324,6 +325,18 @@ class RemoteController(Controller):
             return name,dict(sha256=h.hexdigest(),bytes=size)
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=workers)as pool:observed=dict(pool.map(check,cp['files'].items()))
+        staged=dict(checkpoint=cp['id'],objects=observed,capacity=capacity,operator_independent_hashes=True)
+        save(self.state/(manifest['epoch']+'-checkpoint-staging.json'),staged)
+        return staged
+
+    def commit_remote_checkpoint(self,manifest,staged):
+        """Commit only the exact locally journaled independently hashed objects."""
+        cp=manifest['checkpoint'];path=self.state/(manifest['epoch']+'-checkpoint-staging.json')
+        if not path.is_file()or canonical(json.loads(path.read_text()))!=canonical(staged):raise ValueError('original checkpoint staging journal')
+        if (staged.get('checkpoint')!=cp['id']or staged.get('operator_independent_hashes')is not True
+                or {n:v.get('sha256')for n,v in staged.get('objects',{}).items()}!=cp['files']
+                or any(type(v.get('bytes'))is not int or v['bytes']<=0 for v in staged['objects'].values())):
+            raise ValueError('actual checkpoint staging full integrity receipt')
         descriptor=dict(id=cp['id'],files=cp['files']);key='public/checkpoints/'+cp['id']+'/authorities/'+self.authority.id+'/checkpoint.json'
         from botocore.exceptions import ClientError
         try:existing=json.loads(self.bucket.get(key))
@@ -334,8 +347,10 @@ class RemoteController(Controller):
             if existing['signer']!=self.authority.id:raise ValueError('checkpoint descriptor signer')
             VerifyKey(bytes.fromhex(self.authority.id)).verify(canonical(existing['payload']),base64.b64decode(existing['signature'],validate=True))
             if existing['payload']!=descriptor:raise ValueError('immutable checkpoint descriptor collision')
-        save(self.state/(manifest['epoch']+'-checkpoint-publication.json'),dict(checkpoint=cp['id'],objects=observed,capacity=capacity,operator_independent_hashes=True))
+        save(self.state/(manifest['epoch']+'-checkpoint-publication.json'),staged)
         return self.checkpoint_with_reads(dict(descriptor,descriptor_key=key))
+    def publish_remote_checkpoint(self,manifest,remote_path):
+        return self.commit_remote_checkpoint(manifest,self.stage_remote_checkpoint(manifest,remote_path))
     def finalize(self,manifest,checkpoint_path):
         from .forced_sampling import require_report
         if manifest.get('payable') is not False:raise ValueError('remote experimental controller is nonpayable only')

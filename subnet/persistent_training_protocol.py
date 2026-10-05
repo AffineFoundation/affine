@@ -189,6 +189,9 @@ def validate_job(job,manifest,authority):
     binding=validate_binding(manifest.get('trainer_state_binding'),manifest)
     from .persistent_training_state import transport_concurrency
     transport_concurrency(manifest)
+    from .persistent_publication import export_policy
+    if export_policy(manifest)!='trainer-full' and 'subnet/persistent_publication.py'not in job['source_files']:
+        raise ValueError('upload-only export policy module source pin required')
     if job.get('role')!='train'or job.get('training_policy')!=POLICY:
         raise ValueError('persistent lineage applies only to selected training jobs')
     if not manifest.get('sampling_contract'):raise ValueError('persistent training requires forced sampling contract')
@@ -247,6 +250,21 @@ def validate_report(report,job,manifest):
             training.get('global_step_after')!=transport['global_step_after'] or
             training.get('state_updated')is not True or
             state.get('namespace')!=transport['output_namespace']):raise ValueError('persistent training report lineage')
+    from .persistent_publication import export_policy,EXPORT_POLICY
+    if export_policy(manifest)==EXPORT_POLICY:
+        if 'subnet/persistent_publication.py'not in job['source_files']:raise ValueError('upload-only export policy module source pin required')
+        evidence=state.get('publication_evidence',{})
+        if (state.get('authority_committed')is not False or evidence.get('optimizer_state_export_policy')!=EXPORT_POLICY
+                or evidence.get('trainer_full_readback_performed')is not False or evidence.get('independent_full_readback_required')is not True
+                or evidence.get('descriptor_committed_last')is not False or evidence.get('authority_commit_required')is not True):
+            raise ValueError('explicit upload-only report cannot claim independent durability')
+        rows=evidence.get('shards');shards=state['descriptor'].get('shards',[])
+        if not isinstance(rows,list)or len(rows)!=len(shards):raise ValueError('all uploaded state shard evidence required')
+        for row,shard in zip(rows,shards):
+            if (any(row.get(k)!=shard[k]for k in ('name','size','sha256')) or row.get('durable_readback_verified')is not False
+                    or row.get('local_sha_verified')is not True or row.get('upload_completed')is not True
+                    or row.get('export_verification')!='uploaded-local-sha-only' or row.get('independent_full_readback_required')is not True):
+                raise ValueError('strict uploaded-not-readback shard receipts')
     descriptor=validate_output(state['descriptor'],job,manifest)
     if state.get('descriptor_sha256')!=sha(descriptor)or descriptor['inference_checkpoint']!=report['new_checkpoint']['id']:
         raise ValueError('persistent training output model/descriptor hash')
@@ -279,6 +297,8 @@ def independently_verify(controller,report,job,manifest,read_chunks=None,*,readb
     """
     if type(readback_workers) is not int or not 1<=readback_workers<=8:
         raise ValueError('bounded state readback concurrency')
+    from .persistent_publication import export_policy
+    if export_policy(manifest)!='trainer-full':raise ValueError('upload-only export requires physical qualified remote reader; no local fallback')
     descriptor=validate_report(report,job,manifest);namespace=job['persistent_training']['output_namespace']
     staged=read_json(controller.bucket,namespace+'/staged-state.json')
     if canonical(staged)!=canonical(descriptor):raise ValueError('independent staged descriptor readback')
