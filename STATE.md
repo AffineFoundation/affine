@@ -1,3 +1,28 @@
+Latest verified operational snapshot: 2026-10-05 00:33 UTC. E10's original
+controller PID2059490 remains live in the audit phase. Independently
+signature-checked queue reports show 53 completed submission jobs and 115
+accepted batch documents, with four existing H200 workers still processing.
+These are partial audit totals, not finalized unique points or a learning gain.
+The owned UID131 genuine batch passed on H200; the same artifact's negative
+rollout failed exact sampling replay on retained H100. H100s remain unenrolled.
+
+One additional H200 was rented for the authorized six-verifier expansion at
+$5.30/hour. Exact source763, all ten checkpoint files, runtime and native grader
+controls passed. Its original bounded honest/adversarial verification process
+is live (supervisor1865, child1872); no successful scientific result or worker
+enrollment is claimed yet. A fresh provider listing has no second H200 offer.
+Four verifiers are active, not five or six. Trainer capacity readback shows
+207.19GB available RAM and 1.237TB free disk. The original E10 training gate
+still waits for its complete authenticated audits.
+
+Completed-download retention now supports authorized source upgrades; commit
+ee3b09f0 is on main. The prospective f775 source is independently byte-reviewed
+and published, but is not active. Its reader-compatible boundary package
+preserves the SAME controller state, actual committed public optimizer parent
+and counter. Continuous next epochs must only be enabled after original E10
+completion and durable state/checkpoint publication. No genesis reset, proof
+relaxation, training replay duplication or convergence claim is authorized.
+
 2026-10-04 operational continuation: all8 E9 escalation audits complete. Root signed exact receipt inventory for121submissions/186acceptedbatches and3requestedupdates, independently admitted1.25TBtrainer capacity against114,297,322,503requiredbytes. Original signed training job nonpayable-live-reward-math-v1--1791128338-9-train-b4b84b02 now exists, source94ff/141runtimefiles, authenticated-verifier-receipts-v1; controller1154992 phase=train. No completion claim yet. Short prospectiveCDF H200reference independently passed; all3 legacy target original supervisors exited0 but genuine probabilities failed unchangedtolerance (B2002.1558,L40S5.6279,40903.7422maxabs). Noneenrolled. Originaldiagnosticreceipts private understate/root-audits/legacy-full-forward-cdf-qualification-20261004-v1. Separatefp32acc-profile r2 prepared only; freedoldtrainerH20005b27 alternative fourthverifier control draft underway. Corecomputecontractunchanged.
 
 Latest operational update: 2026-10-04 20:35 UTC. Three admitted H200 verifiers are now concurrently processing original E9 escalation jobs (three leased jobs, three distinct workers), after an operational-only controller dispatch patch. Controller PID1088995 retains --once; signed E9 challenge and computational sources unchanged. Patch and guide pushed to main as 27c682e0. Five legacy pods/six GPUs have isolated pinned CPU runtimes; cross-hardware qualification is still required before live admission. Root launched a private, bounded full-forward robust-CDF H200 reference diagnostic (original supervisor52082) using the freed old trainer; no queue/live contract changes. Persistent private-lab optimizer state independently read back all23shards/91,387,491,264bytes,339parameters, then committed descriptor last; this is not a live production checkpoint promotion. Training-amendment helper now binds the actual parallel-controller activation record. E9 training remains held pending final escalation reports.
