@@ -12,6 +12,9 @@ strict sampler and audit rules.
 Design: https://github.com/AffineFoundation/affine/blob/main/docs/DECOUPLED_IMPLEMENTATION_PLAN.md
 Transport: https://github.com/AffineFoundation/affine/blob/main/docs/TOKEN_ONLY_COMMITMENT_TRANSPORT.md
 Learner: https://github.com/AffineFoundation/affine/blob/main/docs/COMMITTED_UNAUDITED_LEARNER.md
+Audits: https://github.com/AffineFoundation/affine/blob/main/docs/CONTINUOUS_AUDIT_PREFILL.md
+Statistical rewards and trainer precision: https://github.com/AffineFoundation/affine/blob/main/docs/CONTINUOUS_STATISTICAL_REWARD_BRIDGE.md
+Successor checkpoint qualification: https://github.com/AffineFoundation/affine/blob/main/docs/SUCCESSOR_CALIBRATION.md
 
 Current operational hold, 2026-10-05 12:12 UTC: E13's six authenticated verifier
 jobs accepted ten pairs. Its original trainer failed during source admission
