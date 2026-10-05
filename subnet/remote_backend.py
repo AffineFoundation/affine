@@ -193,6 +193,9 @@ class RemoteJobs:
         if prior is None:
             identifier=label+'-'+secrets.token_hex(4);now=time.time()
             payload=dict(schema=1,job_id=identifier,role=role,created_at=now,expires_at=now+role_time_budget(self.config,role),manifest=self.controller.signed(manifest),**self.metadata,**fields)
+            if role=='train' and manifest.get('training_startup_recovery') is not None:
+                recovery=signed(manifest['training_startup_recovery'],self.controller.authority.id)
+                payload['expires_at']=min(payload['expires_at'],recovery['expires_at'])
             if role=='train' and fields.get('training_policy') in RECEIPT_TRAINING_POLICIES:
                 if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
                     from .committed_training_inputs import VERSION,validate_job as validate_receipt_job
