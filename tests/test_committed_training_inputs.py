@@ -95,3 +95,45 @@ class LearnerCollectionTests(LearnerAdmissionTests):
         controller=self.controller();learner.collect(controller,self.manifest)
         changed=copy.deepcopy(self.manifest);changed['source_bundle']['sha256']='f'*64
         with self.assertRaisesRegex(ValueError,'context'):learner.collect(controller,changed)
+
+class UnauditedPersistentEvidenceTests(unittest.TestCase):
+    def test_real_fp32_publication_accepts_truthful_unaudited_admission(self):
+        from test_persistent_training_integration import PersistentIntegrationTests
+        fx=PersistentIntegrationTests();fx.setUp()
+        try:
+            for rollout in fx.batch['rollouts']:rollout['environment_version']='synthetic-v1'
+            report,job=fx.report()
+            setup=LearnerAdmissionTests();setup.setUp()
+            try:
+                manifest=copy.deepcopy(fx.manifest)
+                manifest['training_input_policy']=learner.VERSION
+                setup.operator=fx.key;setup.authority=fx.authority
+                setup.manifest=manifest;setup.batch=fx.batch
+                for rollout in setup.batch['rollouts']:rollout['environment_version']='synthetic-v1'
+                setup.build();summary,_=setup.admit()
+                obj=setup.obj;obj['url']=fx.submission['url']
+                manifest=learner.coverage_manifest(manifest,[obj],seed=fx.manifest['training_coverage']['seed'],captured_at=21)
+                job.update(training_input_policy=learner.VERSION,submissions=[obj],manifest=fx.sign(manifest))
+                job['source_files']['subnet/committed_training_inputs.py']='b'*64
+                report['training_admissions']=[summary]
+                report['training'].update(training_input_policy=learner.VERSION,all_pairs_authenticated_verifier_receipts=False,input_assurance='unaudited')
+                from subnet.backend_jobs import validate
+                validate(fx.sign(job),fx.authority,now=30)
+                from subnet.persistent_training_protocol import validate_report
+                validate_report(report,job,manifest)
+                self.assertEqual(report['persistent_training_state']['descriptor']['optimizer_steps'],3)
+                self.assertEqual(report['audits'],[])
+                report['training_admissions'][0]['fully_audited']=True
+                with self.assertRaisesRegex(ValueError,'exact unaudited'):validate_report(report,job,manifest)
+            finally:setup.doCleanups()
+        finally:fx.doCleanups()
+
+class LearnerFreshBootstrapTests(unittest.TestCase):
+    def test_declared_pure_learner_reload_without_gpu_preload_exception(self):
+        import subprocess,sys
+        from test_persistent_publication_bootstrap import SCRIPT
+        script=SCRIPT.replace('persistent_publication','committed_training_inputs')
+        for mode in ('reload','runtime-preload','undeclared','bad-hash'):
+            with self.subTest(mode=mode):
+                result=subprocess.run([sys.executable,'-B','-c',script,mode],cwd=Path(__file__).resolve().parent.parent,capture_output=True,text=True,timeout=30)
+                self.assertEqual(result.returncode,0,result.stderr)

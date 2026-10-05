@@ -30,9 +30,10 @@ def validate_updates(report,job,manifest):
         raise ValueError('persistent training diagnostics exact policy/epoch/update counters')
     definitions={row['env_id']:row for row in manifest['environments']};pairs=[]
     from .training_receipts import VERSION as RECEIPT_POLICY
-    inputs=report['training_admissions'] if job.get('training_input_policy') in (RECEIPT_POLICY,'authenticated-verifier-compact-inputs-v2') else report['audits']
+    inputs=report['training_admissions'] if job.get('training_input_policy') in (RECEIPT_POLICY,'authenticated-verifier-compact-inputs-v2','committed-unaudited-training-v1') else report['audits']
     for audit in inputs:
-        for batch in audit['accepted']:
+        batches=[audit['claimed_batch']]if job.get('training_input_policy')=='committed-unaudited-training-v1'else audit['accepted']
+        for batch in batches:
             definition=definitions[batch['env_id']]
             positives=[r for r in batch['rollouts']if r['classification']=='positive']
             negatives=[r for r in batch['rollouts']if r['classification']=='negative']

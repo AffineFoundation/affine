@@ -312,6 +312,7 @@ class RemoteController(Controller):
             def __getattr__(self,name):return getattr(original,name)
             def json(self,key,value):self.writes.append((key,value))
         buffered=Buffered();self.bucket=buffered
+        if input_policy=='committed-unaudited-training-v1':kwargs['training_input_policy']=input_policy
         try:manifest=super().open(*args,**kwargs)
         finally:self.bucket=original
         manifest['max_batches']=max_batches
