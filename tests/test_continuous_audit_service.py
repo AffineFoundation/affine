@@ -50,6 +50,20 @@ class ServiceControls(unittest.TestCase):
   self.service.metadata.clear()
   with patch.object(self.service,'_capture',side_effect=AssertionError('unsupported source must not fetch proof')):result=self.service.tick(now=25)
   self.assertEqual(result['source_deferred'],1);self.assertEqual(result['selected'],0);self.assertEqual(self.service.state['draws'],{})
+ def test_missed_hours_reconcile_original_completion_times_idempotently(self):
+  self.service.state['populations']['e2']=self.service.state['populations']['e1'];self.service.state['populations']['e3']=self.service.state['populations']['e1'];calls=[]
+  completed=[dict(epoch='e1',completed_at=3600),dict(epoch='e2',completed_at=3600.1),dict(epoch='e3',completed_at=10801)]
+  def publish(c,cutoff):
+   calls.append(cutoff);document=signed(self.key,dict(cutoff=cutoff));atomic(Path(self.directory.name)/('hourly-weights-'+str(cutoff)+'.json'),document);return document
+  with patch.object(self.service,'hourly_completed',side_effect=publish):
+   self.service.reconcile_hours(completed,10800);self.service.reconcile_hours(completed,10800)
+  self.assertEqual(calls,[3600,7200,10800]);self.assertNotIn('14400',self.service.state['published_hours'])
+ def test_failed_publication_not_marked_complete_or_backdated(self):
+  completed=[dict(epoch='e1',completed_at=3601)];self.service.state['published_hours']={}
+  with patch.object(self.service,'hourly_completed',side_effect=OSError('bucket unavailable')):
+   with self.assertRaises(OSError):self.service.reconcile_hours(completed,7200)
+  self.assertEqual(self.service.state['published_hours'],{})
+  self.assertEqual(completed[0]['completed_at'],3601)
  def test_actual_conditional_copy_full_hash_before_capability(self):
   _,_,captured=self.service._capture(self.row,self.p);self.assertEqual(self.bucket.copies,[('original','immutable','original-etag')]);self.assertEqual(captured['read_url'],'https://private/immutable')
  def test_corrupt_full_bytes_cannot_claim_verified(self):
