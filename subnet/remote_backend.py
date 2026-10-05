@@ -66,7 +66,7 @@ class RemoteObservationTimeout(TimeoutError):
     """An observation window elapsed; the original remote job is still live."""
     def __init__(self,job_id,role):
         self.job_id=job_id;self.role=role
-        super().__init__('same remote role remains active; retain job identity: '+job_id)
+        super().__init__('original remote role needs further observation; retain job identity: '+job_id)
 
 
 class RemoteJobs:
@@ -82,6 +82,32 @@ class RemoteJobs:
         if not set(SOURCE_FILES)<=set(self.metadata['source_files']):raise ValueError('remote source inventory incomplete')
     def command(self,command,timeout=1800):
         return subprocess.check_output(self.ssh+[command],text=True,timeout=timeout)
+    def launch_runner(self, identifier, remotejob, cache=None):
+        """Detach all inherited SSH descriptors; preserve one launch attempt."""
+        arguments=[self.python,'-B','-m','subnet.remote_runner',remotejob,
+                   '--authority',self.controller.authority.id,'--workspace',self.workspace]
+        if cache:arguments+=['--checkpoint-cache',cache]
+        code=("import json,os,subprocess,time;from pathlib import Path;"
+              "root=Path("+repr(self.workspace)+");"
+              "marker=root/"+repr(identifier+'-dispatch-attempt.json')+";"
+              "fd=os.open(marker,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600);"
+              "os.write(fd,json.dumps({'job_id':"+repr(identifier)+",'attempted_at':time.time()}).encode());os.close(fd);"
+              "log=open(root/"+repr(identifier+'-runner.log')+",'ab');"
+              "child=subprocess.Popen("+repr(arguments)+",cwd="+repr(self.code)+","
+              "stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,"
+              "start_new_session=True,close_fds=True,"
+              "env=dict(os.environ,CUBLAS_WORKSPACE_CONFIG=':4096:8'));"
+              "log.close();print(json.dumps({'job_id':"+repr(identifier)+",'launcher_pid':child.pid}))")
+        command=shlex.quote(self.python)+' -I -B -c '+shlex.quote(code)
+        try:self.command(command,timeout=30)
+        except subprocess.TimeoutExpired:
+            # A lost SSH reply does not prove the original detached job failed.
+            # Observe that same identity and never execute the launcher twice.
+            status=self.remote_status(identifier,timeout=30)
+            if status['phase']=='failed':raise RemoteJobTerminalError('original remote launch reported failure')
+            if status['phase'] not in ('running','complete'):
+                raise RemoteObservationTimeout(identifier,'launch') from None
+
     def copy_to(self,local,remote):
         subprocess.run(self.scp+[str(local),self.peer+':'+remote],check=True,timeout=600)
     def copy_from(self,remote,local):
@@ -224,9 +250,7 @@ class RemoteJobs:
             if dispatch_only:prior['physical_workspace']=self.workspace
             save(record,prior);remotejob=self.workspace+'/'+identifier+'.json'
             self.command('mkdir -p '+shlex.quote(self.workspace));self.copy_to(jobpath,remotejob)
-            command='cd '+shlex.quote(self.code)+' && CUBLAS_WORKSPACE_CONFIG=:4096:8 nohup '+shlex.quote(self.python)+' -B -m subnet.remote_runner '+shlex.quote(remotejob)+' --authority '+self.controller.authority.id+' --workspace '+shlex.quote(self.workspace)
-            if cache:command+=' --checkpoint-cache '+shlex.quote(cache)
-            self.command(command+' > '+shlex.quote(self.workspace+'/'+identifier+'-runner.log')+' 2>&1 < /dev/null &')
+            self.launch_runner(identifier,remotejob,cache)
         if dispatch_only:
             return dict(dispatch_only=True,original_job_id=prior['job_id'],job_sha256=prior['job_sha256'],terminal_observed=False,new_job_started=True)
         reportpath=self.state/(prior['job_id']+'-report.json')

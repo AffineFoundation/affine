@@ -1,5 +1,17 @@
 # Affine — MATH mining, verification and training
 
+Verified recovery update, 2026-10-05 19:07 UTC: the local E15 finish-once controller
+failed when its original SSH launch command timed out after 1,800 seconds.
+The same remote trainer remained live and progressed through optimizer restore
+into computation; no second training job was issued. The independent queue API
+was restored on the same SQLite database and worker roster, and the continuous
+auditor completed fresh scheduling ticks. An original-job-preserving controller
+recovery is being prepared; optimizer step six remains uncommitted.
+The prospective launch transport now detaches descriptors explicitly and probes
+the original job after a lost reply, with exclusive duplicate prevention. Five
+transport controls and 24 existing remote controls passed. This operator repair
+is not yet activated in the failed controller's immutable launch tree.
+
 Verified fleet update, 2026-10-05 18:57 UTC: the two disk-full verifier workers are
 quarantined. Their exact original processes were stopped only after checking
 PID/start time, command and absence of live children. No checkpoint, rollout,
