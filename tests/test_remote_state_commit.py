@@ -54,7 +54,7 @@ class RemoteAdmission(unittest.TestCase):
         self.bucket=Mock();self.controller=SimpleNamespace(bucket=self.bucket,
             authority=SimpleNamespace(id=self.authority),signed=lambda v:r.sign(v,self.root))
 
-    def run_commit(self):
+    def run_commit(self,now=152):
         def read(bucket,key):
             if key.endswith('staged-state.json'):return self.descriptor
             return self.bucket.json.call_args.args[1]
@@ -65,7 +65,7 @@ class RemoteAdmission(unittest.TestCase):
             result=independently_commit_remote(self.controller,self.report,self.job_env,
                 self.request_bytes,self.receipt,self.launch,self.terminal,
                 qualified_reader=self.identity,reader_host=self.host,trainer_host=self.trainer,
-                storage_binding=self.storage,original_child=self.child,now=152)
+                storage_binding=self.storage,original_child=self.child,now=now)
             return result
 
     def test_full_request_and_actual_wait_persist_evidence_before_authority(self):
@@ -110,4 +110,21 @@ class RemoteAdmission(unittest.TestCase):
         p=copy.deepcopy(self.receipt['payload']);p['purpose']='cpu-transport-qualification'
         self.receipt=r.sign(p,self.reader)
         with self.assertRaises(ValueError):self.run_commit()
+        self.bucket.json.assert_not_called();self.publish.assert_not_called()
+
+    def test_late_observation_preserves_original_completion_and_actual_clock(self):
+        self.run_commit(now=500)
+        payload=self.bucket.json.call_args.args[1]['payload']
+        self.assertEqual(payload['observed_at'],500)
+        self.assertEqual(payload['receipt_validation_time'],150)
+        self.assertEqual(payload['request']['payload']['expires_at'],300)
+        self.publish.assert_called_once()
+    def test_terminal_after_expiry_or_after_observation_rejected(self):
+        for finish in (300,501):
+            self.terminal['finished_at']=finish
+            with self.assertRaises(ValueError):self.run_commit(now=500)
+            self.bucket.json.assert_not_called();self.publish.assert_not_called()
+    def test_completed_receipt_outside_ttl_is_not_historical_adoption(self):
+        self.receipt=r.sign(dict(self.receipt['payload'],completed_at=301),self.reader)
+        with self.assertRaises(ValueError):self.run_commit(now=500)
         self.bucket.json.assert_not_called();self.publish.assert_not_called()

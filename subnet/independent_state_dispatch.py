@@ -168,7 +168,7 @@ print(json.dumps(dict(observed_at=time.time(),hashes=hashes,reader_identity=byte
         if not requestfile.is_file() or not launchfile.is_file():
             raise ValueError('original reader preparation incomplete; no automatic redispatch')
         request=json.loads(requestfile.read_bytes())
-        reader.validate_request(request,self.authority,now=time.time(),approved_binding=binding,
+        reader.validate_request(request,self.authority,now=reader.verify(request,self.authority)['created_at'],approved_binding=binding,
             approved_objects=objects,qualified_reader=self.config['reader_identity'])
         launch=reader.verify(json.loads(launchfile.read_bytes()),self.authority)
         dispatch=self.endpoint['namespace']+'/production-'+job['job_id']
@@ -210,12 +210,16 @@ for name in ('child','terminal','result'):
  if q.exists():v[name]=json.loads(q.read_bytes())
 print(json.dumps(v))
 '''
-        while time.time()<payload['expires_at']:
+        # Observe once even after expiry; only an already successful original
+        # terminal can be adopted. This never extends execution or capabilities.
+        while True:
             try:status=self.command(code)
             except (RuntimeError,subprocess.TimeoutExpired):
                 # A lost SSH response is observation loss, not child failure.
                 # Keep the same request/namespace; next controller retry can
                 # resume the same original handle even if this turn is lost.
+                if time.time()>=payload['expires_at']:
+                    raise TimeoutError('expired original reader observation unavailable; never redispatch')
                 time.sleep(min(5,max(.01,payload['expires_at']-time.time())))
                 continue
             marker=status['original_supervisor'];markerpath=root/'original-supervisor-launch.private.json'
@@ -237,8 +241,12 @@ print(json.dumps(v))
                 if (terminal.get('pid')!=status['child'].get('pid') or
                         terminal.get('ticks')!=status['child'].get('ticks')):
                     raise ValueError('original actual child wait handle changed')
+                observed_at=time.time()
+                completed_at=reader.verify(status['result'],c['reader_identity'])['completed_at']
                 reader.validate_receipt(status['result'],request,self.authority,
-                    approved_binding=binding,approved_objects=objects,qualified_reader=c['reader_identity'],now=time.time())
+                    approved_binding=binding,approved_objects=objects,qualified_reader=c['reader_identity'],now=completed_at)
+                if completed_at>observed_at:
+                    raise ValueError('original reader completion is in the future')
                 evidence=root/'actual-terminal-and-result.private.json'
                 if evidence.exists():
                     prior=json.loads(evidence.read_bytes())
@@ -252,6 +260,8 @@ print(json.dumps(v))
                     qualified_reader=c['reader_identity'],reader_host=c['reader_host'],trainer_host=c['trainer_host'],
                     storage_binding={k:binding[k]for k in ('storage_origin','storage_bucket','storage_addressing')},
                     original_child=status['child'],now=time.time())
+            if time.time()>=payload['expires_at']:
+                raise TimeoutError('original bounded independent reader request expired without successful terminal; never redispatch')
             if status.get('supervisor_live')is not True:
                 raise ValueError('original reader no longer live and no actual wait receipt; retain evidence')
             time.sleep(min(5,max(.01,payload['expires_at']-time.time())))

@@ -27,6 +27,7 @@ def independently_commit_remote(controller, report, original_job_envelope,
     its key; it does not prove correctness against a malicious reader host.
     This explicit entrypoint never silently falls back or accepts CPU controls.
     """
+    if type(now)not in (int,float) or not math.isfinite(now):raise ValueError('actual observation time')
     if type(verify_only)is not bool:raise ValueError('explicit independent verification-only flag')
     authority = controller.authority.id
     job = reader.verify(original_job_envelope, authority)
@@ -65,9 +66,12 @@ def independently_commit_remote(controller, report, original_job_envelope,
             launch.get('module_sha256') != hashlib.sha256(
                 __import__('pathlib').Path(reader.__file__).read_bytes()).hexdigest()):
         raise ValueError('original root-approved reader launch bytes')
+    # Receipt completion is signed by the original reader. Observation may be
+    # later than the capability lifetime, but execution/completion may not be.
+    completed_at = reader.verify(receipt, qualified_reader)['completed_at']
     payload = reader.validate_receipt(receipt, request, authority,
         approved_binding=binding, approved_objects=readback_objects(descriptor),
-        qualified_reader=qualified_reader, now=now)
+        qualified_reader=qualified_reader, now=completed_at)
     if (terminal.get('actual_child_wait_completed') is not True or
             type(terminal.get('exit_code')) is not int or terminal['exit_code'] != 0 or
             terminal.get('timed_out') is not False or
@@ -82,8 +86,8 @@ def independently_commit_remote(controller, report, original_job_envelope,
         raise ValueError('actual original successful bounded reader process')
     start=terminal.get('started_at');finish=terminal.get('finished_at')
     if (not all(type(v) in (int,float) and math.isfinite(v) for v in (start,finish)) or
-            not launch['created_at'] <= start <= payload['started_at'] <=
-                payload['completed_at'] <= finish <= now < launch['expires_at'] or
+            not (launch['created_at'] <= start <= payload['started_at'] <=
+                payload['completed_at'] <= finish < launch['expires_at'] and finish <= now) or
             finish-start > launch['max_wall_seconds']):
         raise ValueError('original reader terminal time budget')
     if verify_only:return dict(independent_full_readback_verified=True,descriptor_sha256=reader.sha(descriptor),authority_publication_written=False)
@@ -91,7 +95,8 @@ def independently_commit_remote(controller, report, original_job_envelope,
     evidence=dict(version='independent-state-readback-evidence-v1',
         request=request,receipt=receipt,launch=launch_envelope,
         terminal=terminal,original_child=original_child,
-        request_file_sha256=request_file_sha256)
+        request_file_sha256=request_file_sha256,observed_at=now,
+        receipt_validation_time=completed_at)
     evidence_key=namespace+'/independent-readbacks/'+reader.sha(evidence)+'.json'
     controller.bucket.json(evidence_key,controller.signed(evidence))
     observed=reader.verify(state.read_json(controller.bucket,evidence_key),authority)
