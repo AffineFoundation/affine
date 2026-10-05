@@ -34,9 +34,9 @@ def validate_frozen_submissions(manifest, submissions):
         if any(s.get('sha256') not in allowed for s in submissions):
             raise ValueError('frozen submission binding')
         return
-    from .commitment_transport import VERSION, validate, is_digest
+    from .commitment_transport import VERSIONS, validate, is_digest
     from urllib.parse import urlsplit, unquote
-    if manifest['submission_transport_policy'] != VERSION:
+    if manifest['submission_transport_policy'] not in VERSIONS:
         raise ValueError('explicit child commitment transport')
     fields = {'miner','commitment_sha256','slot','env_id','index','batch_sha256','size','frozen_key'}
     seen = set()
@@ -64,6 +64,8 @@ def validate_frozen_submissions(manifest, submissions):
         if digest(envelope)!=receipt['sha256']:
             raise ValueError('exact canonical parent commitment digest')
         payload=envelope['payload']
+        if payload['version']!=manifest['submission_transport_policy']:
+            raise ValueError('exact original miner commitment transport version')
         if (payload['source']!=manifest['source_bundle']['sha256'] or
                 payload['checkpoint']!=manifest['checkpoint']['id']):
             raise ValueError('selected child source/checkpoint commitment')

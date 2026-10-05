@@ -87,3 +87,20 @@ class ChildQueueTests(unittest.TestCase):
    with self.assertRaises(ValueError):self.req('report',job_id=self.job['job_id'],token=claim['token'],report=report)
  def test_legacy_frozen_zip_remains_supported(self):
   m=copy.deepcopy(self.manifest);del m['submission_transport_policy'];m['audit_frozen_receipts']={'legacy':{'sha256':'oldZIP'}};j=dict(self.job,manifest=sign(self.root,m),submissions=[{'url':'oldcap','sha256':'oldZIP'}]);self.enqueue(j);self.assertIsNotNone(self.req('claim',role='verify')['claim'])
+
+class V2ChildQueueTests(ChildQueueTests):
+ def setUp(self):
+  super().setUp()
+  from subnet.commitment_transport import VERSION2
+  self.manifest['submission_transport_policy']=VERSION2
+  envelope=make(self.identity,self.manifest,[(self.batch,b'ZIP actual bytes')]);row=envelope['payload']['batches'][0];key='public/'+self.manifest['epoch']+'/submissions/'+self.identity.id+'/'+digest(envelope)+'/0.zip';url='https://example.r2.cloudflarestorage.com/bucket/'+key+'?X-Amz-Signature=test';artifact=dict(row,frozen_key=key,read_url=url);receipt=dict(sha256=digest(envelope),commitment_document=envelope,artifacts=[artifact]);self.manifest['audit_frozen_receipts']={self.identity.id:receipt}
+  self.obj=dict(url=url,sha256=row['sha256'],commitment_miner=self.identity.id,commitment_ref=dict(miner=self.identity.id,commitment_sha256=receipt['sha256'],**{k:artifact[k]for k in ('slot','env_id','index','batch_sha256','size','frozen_key')}));self.job.update(manifest=sign(self.root,self.manifest),submissions=[self.obj])
+ def test_v2_token_digest_binding_cannot_be_substituted(self):
+  m=copy.deepcopy(self.manifest);m['audit_frozen_receipts'][self.identity.id]['artifacts'][0]['training_sha256']='9'*64
+  with self.assertRaisesRegex(ValueError,'inventory binding'):self.enqueue(dict(self.job,manifest=sign(self.root,m)))
+ def test_transport_downgrade_rejected(self):
+  m=copy.deepcopy(self.manifest);m['submission_transport_policy']=VERSION
+  with self.assertRaisesRegex(ValueError,'original miner commitment transport'):self.enqueue(dict(self.job,manifest=sign(self.root,m)))
+ def test_unknown_transport_rejected(self):
+  m=copy.deepcopy(self.manifest);m['submission_transport_policy']='unknown'
+  with self.assertRaisesRegex(ValueError,'explicit child'):self.enqueue(dict(self.job,manifest=sign(self.root,m)))
