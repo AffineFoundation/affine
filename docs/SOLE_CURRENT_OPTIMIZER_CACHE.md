@@ -68,3 +68,15 @@ trainer execution. A signed promotion intent prevents the next trainer from
 consuming or abandoning pending state until promotion completes. Exact confirmed
 `current.json` promotion is idempotent, including a crash immediately before
 `pending.json` removal, and never rehashes shards on a successful ACK retry.
+
+Dispatch checks promotion status before creating the next original trainer job.
+If promotion starts during worker startup, the worker releases its cache lease
+while waiting boundedly, allowing the original helper to complete, then continues
+the same training job. Confirmed terminal promotion failure affects only the
+optional byte cache: the worker authenticates the original signed ACK, job,
+report and exact approved parent descriptor, preserves those records and failed
+candidate inventories, retires only the owned cache bytes, and restores from R2.
+Unknown launch outcomes or a matching live child never authorize retirement or
+cold fallback. Terminal evidence includes child PID, process start identity and
+confirmed process exit; a fast child that exited before identity capture must
+also have a confirmed exit code and no extant process at that PID.

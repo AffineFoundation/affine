@@ -221,6 +221,7 @@ class RemoteJobs:
                 save(self.state/(prior['job_id']+'-failure.json'),status);prior=None
             elif status['phase']!='running':raise ValueError('unknown authoritative remote job status')
         if prior is None:
+            if role=='train'and manifest.get('optimizer_state_local_cache')is not None:self.wait_training_cache_ack()
             identifier=label+'-'+secrets.token_hex(4);now=time.time()
             payload=dict(schema=1,job_id=identifier,role=role,created_at=now,expires_at=now+role_time_budget(self.config,role),manifest=self.controller.signed(manifest),**self.metadata,**fields)
             if role=='train' and manifest.get('training_startup_recovery') is not None:
@@ -303,6 +304,34 @@ print(json.dumps(module.retire(DATA['ack'],DATA['authority'],DATA['workspace']))
             return self._durable_cache_ack(script,ack,job['job_id'])
         return json.loads(self.command(shlex.quote(self.python)+' -I -B -c '+shlex.quote(script),timeout=60))
 
+    def wait_training_cache_ack(self,budget=1800):
+        """Wait before allocating/signing a new trainer job, not inside compute."""
+        guard=self.workspace+'/.optimizer-state-cache/promotion.json'
+        script='DATA='+repr(dict(guard=guard,authority=self.controller.authority.id,code=self.code))+'\n'+'''import sys,json,os
+from pathlib import Path
+sys.path.insert(0,DATA['code'])
+from subnet.backend_jobs import signed
+p=Path(DATA['guard'])
+if not p.exists():print(json.dumps(dict(ready=True)))
+else:
+ if p.is_symlink()or p.stat().st_uid!=os.geteuid()or p.stat().st_nlink!=1:raise ValueError('owned promotion guard')
+ value=json.loads(p.read_text());ack=signed(value['ack'],DATA['authority'])
+ ready=value.get('phase')=='complete'
+ if value.get('phase')=='failed'and value.get('child_terminal_confirmed')is True:
+  pid=value.get('child_pid');ticks=value.get('child_ticks')
+  if type(pid)is not int or (not isinstance(ticks,str)and not(ticks is None and type(value.get('child_exit_code'))is int)):raise ValueError('terminal promotion child identity')
+  try:fields=(Path('/proc')/str(pid)/'stat').read_text().rsplit(')',1)[1].split()
+  except FileNotFoundError:fields=None
+  ready=not(fields and (ticks is None or fields[0]!='Z'and fields[19]==ticks))
+ print(json.dumps(dict(ready=ready,job_id=ack['job_id'])))
+'''
+        started=time.monotonic()
+        while True:
+            result=json.loads(self.command(shlex.quote(self.python)+' -I -B -c '+shlex.quote(script),timeout=60))
+            if result['ready']:return result
+            if time.monotonic()-started>=budget:raise RemoteObservationTimeout(result['job_id'],'cache-ACK-before-train')
+            time.sleep(1)
+
     def _durable_cache_ack(self,script,ack,job_id):
         """Observe one detached, bounded ACK action; transport loss never retries it."""
         digest=hashlib.sha256(canonical(ack)).hexdigest()
@@ -316,13 +345,22 @@ def save(path,value):
  fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_TRUNC|os.O_NOFOLLOW,0o600)
  with os.fdopen(fd,'w')as stream:stream.write(json.dumps(value));stream.flush();os.fsync(stream.fileno())
  tmp.replace(p)
+child=None;ticks=None
 try:
- output=subprocess.check_output([DATA['python'],'-I','-B','-c',DATA['script']],text=True,timeout=1800)
- receipt=json.loads(output);save(DATA['result'],dict(phase='complete',receipt=receipt))
- save(DATA['guard'],dict(phase='complete',ack=DATA['ack']))
+ child=subprocess.Popen([DATA['python'],'-I','-B','-c',DATA['script']],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
+ try:ticks=(Path('/proc')/str(child.pid)/'stat').read_text().rsplit(')',1)[1].split()[19]
+ except FileNotFoundError:child.wait()
+ save(DATA['guard'],dict(phase='pending',ack=DATA['ack'],child_pid=child.pid,child_ticks=ticks))
+ try:output,_=child.communicate(timeout=1800)
+ except subprocess.TimeoutExpired:
+  child.kill();child.communicate();raise
+ if child.returncode:raise RuntimeError('cache ACK child failed')
+ receipt=json.loads(output);save(DATA['guard'],dict(phase='complete',ack=DATA['ack'],child_pid=child.pid,child_ticks=ticks,child_terminal_confirmed=True))
+ save(DATA['result'],dict(phase='complete',receipt=receipt))
 except BaseException as exc:
+ terminal=child is not None and child.poll()is not None
+ save(DATA['guard'],dict(phase='failed',ack=DATA['ack'],child_pid=child.pid if child else None,child_ticks=ticks,child_exit_code=child.returncode if child else None,child_terminal_confirmed=terminal))
  save(DATA['result'],dict(phase='failed',reason=type(exc).__name__))
- save(DATA['guard'],dict(phase='failed',ack=DATA['ack']))
 '''
         launcher='DATA='+repr(dict(attempt=attempt,result=result,guard=guard,ack=ack,python=self.python,runner=runner))+'\n'+'''import json,os,subprocess
 from pathlib import Path
