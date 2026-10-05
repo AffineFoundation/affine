@@ -12,6 +12,7 @@ def is_digest(v):return isinstance(v,str)and re.fullmatch('[0-9a-f]{64}',v)is no
 def validate(data,epoch,miner,maximum=256):
  need(type(data)is bytes and 0<len(data)<=MAX_BYTES,'bounded commitment')
  envelope=json.loads(data);need(type(envelope)is dict and set(envelope)=={'payload','signer','signature'}and envelope['signer']==miner,'miner signature binding')
+ need(data==canonical(envelope),'canonical commitment envelope encoding')
  p=envelope['payload'];VerifyKey(bytes.fromhex(miner)).verify(canonical(p),base64.b64decode(envelope['signature'],validate=True))
  need(type(p)is dict and set(p)=={'version','epoch','miner','checkpoint','source','batches'}and p['version']==VERSION and p['epoch']==epoch and p['miner']==miner,'commitment scope')
  need(is_digest(p['checkpoint'])and is_digest(p['source']),'model/source digest')
@@ -88,59 +89,112 @@ def _bounded_small_reads(gateway,epoch,miners,cutoff):
  finally:
   if client is not None:client.close()
 
+class FreezeMetadataIncomplete(RuntimeError):
+ """No finalized receipt set can be inferred from partial infrastructure reads."""
+
 def freeze(gateway,epoch):
- """Persist each successful small receipt; infrastructure failures retry safely."""
+ """Capture ALL tiny commitments first; fair <=4 copies, serial durable journals."""
+ import secrets
+ from concurrent.futures import ThreadPoolExecutor,wait,FIRST_COMPLETED
  from .storage import SubmissionPolicyError
  from botocore.exceptions import ClientError
  state=gateway.epochs[epoch];state['closed']=True;gateway.persist()
  if 'frozen_receipts'in state:
-  # A previous public PUT may have failed after the local durable journal.
   gateway.bucket.json('public/'+epoch+'/receipts.json',state['frozen_receipts']);return state['frozen_receipts']
  snapshots=state.setdefault('commitment_snapshots',{});pending=state.setdefault('commitment_pending',{});rejections=state.setdefault('rejections',{});failures=[]
- candidates=[m for m in sorted(state['miners'])if m not in snapshots and m not in rejections and m not in pending]
- reads=_bounded_small_reads(gateway,epoch,candidates,state['commitment_binding'].get('freeze_until'))
- for miner in sorted(state['miners']):
-  if miner in snapshots or miner in rejections:continue
-  cutoff=state['commitment_binding'].get('freeze_until')
-  if cutoff is not None and time.time()>=cutoff:
-   state.setdefault('commitment_deferred',{})[miner]=dict(reason='freeze_infrastructure_budget_deferred',closed_at=time.time());gateway.persist();continue
+ cutoff=state['commitment_binding'].get('freeze_until')
+ def expired():return cutoff is not None and time.time()>=cutoff
+ def missing(exc):return isinstance(exc,ClientError)and str(exc.response.get('Error',{}).get('Code'))in('NoSuchKey','404','NotFound')
+ if not state.get('commitment_capture_complete'):
+  allminers=sorted(state['miners']);discovery=state.get('commitment_discovery')
+  if discovery is None:
+   try:
+    if expired():raise TimeoutError('tiny commitment discovery deadline')
+    listed=gateway.bucket.complete_commitment_listing(epoch,allminers,cutoff)if hasattr(gateway.bucket,'complete_commitment_listing')else allminers
+    need(type(listed)is list and len(listed)==len(set(listed))and set(listed)<=set(allminers),'exact activated commitment discovery')
+    discovery=dict(miners=listed,at=time.time(),complete=True,method='complete-prefix-list-advisory'if hasattr(gateway.bucket,'complete_commitment_listing')else'bounded-GET-all')
+    state['commitment_discovery']=discovery;gateway.persist()
+   except Exception as exc:
+    state['commitment_metadata_incomplete']=dict(reason='discovery_infrastructure_incomplete',at=time.time(),error_type=type(exc).__name__);gateway.persist()
+    raise FreezeMetadataIncomplete('complete tiny commitment discovery unavailable')from exc
+  remaining=[m for m in discovery['miners']if m not in pending and m not in snapshots and m not in rejections]
+  reads=_bounded_small_reads(gateway,epoch,remaining,cutoff);metadata_failures=[]
   try:
-   if miner not in pending:
-    key='private/'+epoch+'/commitments/'+miner+'.json';read_miner,future=next(reads)
-    need(read_miner==miner,'ordered bounded commitment read')
-    r=future.result();data=r['data']
-    if not state['start']<=r['LastModified'].timestamp()<state['deadline']:raise SubmissionPolicyError('commitment time')
+   for miner,future in reads:
     try:
-     env=validate(data,epoch,miner,state['max_batches'])
-     need(env['payload']['checkpoint']==state['commitment_binding']['checkpoint']and env['payload']['source']==state['commitment_binding']['source'],'committed source/model')
-    except Exception as exc:raise SubmissionPolicyError('malformed commitment')from exc
-    digest=sha(data);root='public/'+epoch+'/submissions/'+miner+'/'+digest
-    # Persist exact first observed signed commitment BEFORE conditional copying.
-    pending[miner]=dict(key=key,etag=r['ETag'],document=env,sha256=digest,size=len(data),received_at=r['LastModified'].timestamp(),root=root,artifacts=[],artifact_plans={},commitment_copied=False);gateway.persist()
-   progress=pending[miner];root=progress['root'];env=progress['document']
-   if not progress['commitment_copied']:
-    gateway.bucket.copy(progress['key'],root+'/commitment.json',expected_etag=progress['etag']);progress['commitment_copied']=True;gateway.persist()
-   for b in env['payload']['batches']:
+     r=future.result();data=r['data']
+     if not state['start']<=r['LastModified'].timestamp()<state['deadline']:raise SubmissionPolicyError('commitment time')
+     try:
+      env=validate(data,epoch,miner,state['max_batches'])
+      need(env['payload']['checkpoint']==state['commitment_binding']['checkpoint']and env['payload']['source']==state['commitment_binding']['source'],'committed source/model')
+     except Exception as exc:raise SubmissionPolicyError('malformed commitment')from exc
+     digest=sha(data);root='public/'+epoch+'/submissions/'+miner+'/'+digest
+     pending[miner]=dict(key='private/'+epoch+'/commitments/'+miner+'.json',etag=r['ETag'],document=env,sha256=digest,size=len(data),received_at=r['LastModified'].timestamp(),root=root,artifacts=[],artifact_plans={},commitment_copied=False);gateway.persist()
+    except SubmissionPolicyError as exc:rejections[miner]=str(exc);gateway.persist()
+    except Exception as exc:
+     if missing(exc):rejections[miner]='missing completed commitment/artifact';gateway.persist()
+     else:metadata_failures.append(exc)
+  finally:reads.close()
+  unresolved=[m for m in remaining if m not in pending and m not in snapshots and m not in rejections]
+  if metadata_failures or unresolved:
+   state['commitment_metadata_incomplete']=dict(reason='tiny_GET_infrastructure_incomplete',at=time.time(),unresolved=unresolved,error_types=[type(x).__name__ for x in metadata_failures]);gateway.persist()
+   raise FreezeMetadataIncomplete('complete tiny commitment admission unavailable')from(metadata_failures[0]if metadata_failures else None)
+  state['commitment_capture_complete']=True;state['commitment_capture_completed_at']=time.time();state.pop('commitment_metadata_incomplete',None);gateway.persist()
+ # The unpredictable order is persisted once AFTER every tiny document was
+ # authenticated. Recovery never draws again or rereads a mutable commitment.
+ if 'commitment_copy_order'not in state:
+  seed=secrets.token_hex(32);state['commitment_copy_order_seed']=seed
+  state['commitment_copy_order']=sorted(pending,key=lambda m:sha(bytes.fromhex(seed)+bytes.fromhex(m)));gateway.persist()
+ def plan(miner):
+  progress=pending[miner]
+  for b in progress['document']['payload']['batches']:
+   if str(b['slot'])in progress['artifact_plans']:continue
+   if expired():raise TimeoutError('heavy copy planning cutoff')
+   staging='private/'+epoch+'/staging/'+miner+'/'+str(b['slot'])+'.zip'
+   meta=gateway.bucket.client.head_object(Bucket=gateway.bucket.name,Key=staging)
+   if b['size']>state.get('upload_limit',100_000_000)or meta['ContentLength']!=b['size']or not state['start']<=meta['LastModified'].timestamp()<state['deadline']:raise SubmissionPolicyError('artifact size/time')
+   progress['artifact_plans'][str(b['slot'])]=dict(etag=meta['ETag'],received_at=meta['LastModified'].timestamp());gateway.persist()
+ def copy_one(miner):
+  progress=pending[miner];root=progress['root'];copied=progress['commitment_copied'];artifacts=[]
+  try:
+   if not copied:
+    gateway.bucket.copy(progress['key'],root+'/commitment.json',expected_etag=progress['etag']);copied=True
+   for b in progress['document']['payload']['batches']:
     slot=b['slot']
     if any(x['slot']==slot for x in progress['artifacts']):continue
-    staging='private/'+epoch+'/staging/'+miner+'/'+str(slot)+'.zip';plan=progress['artifact_plans'].get(str(slot))
-    if plan is None:
-     meta=gateway.bucket.client.head_object(Bucket=gateway.bucket.name,Key=staging)
-     if b['size']>state.get('upload_limit',100_000_000)or meta['ContentLength']!=b['size']or not state['start']<=meta['LastModified'].timestamp()<state['deadline']:raise SubmissionPolicyError('artifact size/time')
-     plan=dict(etag=meta['ETag'],received_at=meta['LastModified'].timestamp());progress['artifact_plans'][str(slot)]=plan;gateway.persist()
-    frozen=root+'/'+str(slot)+'.zip';gateway.bucket.copy(staging,frozen,expected_etag=plan['etag'])
-    progress['artifacts'].append(dict(b,key=staging,frozen_key=frozen,etag=plan['etag'],received_at=plan['received_at'],read_url=gateway.bucket.presign(frozen)));gateway.persist()
-   snapshots[miner]=dict(sha256=progress['sha256'],commitment_document=env,commitment_key=root+'/commitment.json',artifacts=progress['artifacts'],size=progress['size'],received_at=progress['received_at'],hash_assurance='declared-payload-hashes-until-selected-verifier');gateway.persist()
-  except SubmissionPolicyError as exc:rejections[miner]=str(exc);gateway.persist()
-  except ClientError as exc:
-   if str(exc.response.get('Error',{}).get('Code'))in('NoSuchKey','404','NotFound'):rejections[miner]='missing completed commitment/artifact';gateway.persist()
+    if expired():raise TimeoutError('heavy copy launch cutoff')
+    staging='private/'+epoch+'/staging/'+miner+'/'+str(slot)+'.zip';frozen=root+'/'+str(slot)+'.zip';ap=progress['artifact_plans'][str(slot)]
+    gateway.bucket.copy(staging,frozen,expected_etag=ap['etag'])
+    artifacts.append(dict(b,key=staging,frozen_key=frozen,etag=ap['etag'],received_at=ap['received_at'],read_url=gateway.bucket.presign(frozen)))
+   return miner,copied,artifacts,None
+  except Exception as exc:return miner,copied,artifacts,exc
+ def finish(result):
+  miner,copied,artifacts,exc=result;progress=pending[miner];progress['commitment_copied']=copied;progress['artifacts'].extend(artifacts);gateway.persist()
+  if exc is not None:
+   if isinstance(exc,SubmissionPolicyError)or missing(exc):rejections[miner]=str(exc);gateway.persist()
    else:failures.append(exc)
-  except Exception as exc:failures.append(exc)
- reads.close()
- cutoff=state['commitment_binding'].get('freeze_until')
- if failures and (cutoff is None or time.time()<cutoff):raise failures[0]
- if failures:
-  state.setdefault('commitment_deferred',{}).update({m:dict(reason='freeze_infrastructure_budget_deferred',closed_at=time.time())for m in pending if m not in snapshots and m not in rejections});gateway.persist()
+   return
+  snapshots[miner]=dict(sha256=progress['sha256'],commitment_document=progress['document'],commitment_key=progress['root']+'/commitment.json',artifacts=progress['artifacts'],size=progress['size'],received_at=progress['received_at'],hash_assurance='declared-payload-hashes-until-selected-verifier');gateway.persist()
+ candidates=iter(m for m in state['commitment_copy_order']if m not in snapshots and m not in rejections)
+ with ThreadPoolExecutor(max_workers=4)as pool:
+  active={};exhausted=False
+  while active or not exhausted:
+   while len(active)<4 and not exhausted and not expired():
+    try:miner=next(candidates)
+    except StopIteration:exhausted=True;break
+    try:plan(miner)
+    except Exception as exc:
+     if isinstance(exc,SubmissionPolicyError)or missing(exc):rejections[miner]=str(exc);gateway.persist()
+     else:failures.append(exc)
+     continue
+    if expired():break
+    active[pool.submit(copy_one,miner)]=miner
+   if not active:break
+   done,_=wait(active,return_when=FIRST_COMPLETED)
+   for future in done:finish(future.result());active.pop(future)
+ if failures and not expired():raise failures[0]
+ for miner in pending:
+  if miner not in snapshots and miner not in rejections:state.setdefault('commitment_deferred',{})[miner]=dict(reason='freeze_infrastructure_budget_deferred',closed_at=time.time())
  state['frozen_receipts']=dict(snapshots);gateway.persist();gateway.bucket.json('public/'+epoch+'/receipts.json',state['frozen_receipts']);return state['frozen_receipts']
 
 
