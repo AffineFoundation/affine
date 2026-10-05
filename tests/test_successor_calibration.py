@@ -50,3 +50,40 @@ class Controls(unittest.TestCase):
     r=dict(self.result,request_sha256=c.digest(fields['successor_calibration']));r['reports'][0]['measured_cdf_abs_error']=.02;return dict(job_id='original',successor_calibration=r)
    ctrl=SimpleNamespace(state=Path(tmp),jobs=SimpleNamespace(run=run),checkpoint_with_reads=lambda v:v)
    with self.assertRaises(ValueError):c.before_open(ctrl,config,{'checkpoint':{'id':'a'*64}},opening)
+
+ def test_native_spec_changes_create_new_job_and_never_reuse_old_manifest(self):
+  with tempfile.TemporaryDirectory()as tmp:
+   opening=dict(environments=[dict(spec={'id':'math','source_hash':'old'},indices=[1,2],harness=self.h)],source_bundle={'sha256':'c'*64},model_runtime_revision='runtime',backend_profile={'dtype':'float32'})
+   config=dict(sampling_policy={'version':f.VERSION,'max_attempts':16,'calibration':c.admitted_policy(self.result,self.m,self.req)},successor_calibration={'version':c.VERSION,'env_id':'math'})
+   seen=[]
+   def run(label,role,manifest,cache,**fields):
+    seen.append((label,manifest));return dict(job_id=label,successor_calibration=dict(self.result,request_sha256=c.digest(fields['successor_calibration'])))
+   ctrl=SimpleNamespace(state=Path(tmp),jobs=SimpleNamespace(run=run),checkpoint_with_reads=lambda v:v);status={'checkpoint':{'id':'a'*64}}
+   c.before_open(ctrl,config,status,opening)
+   opening['environments'][0]['spec']=dict(id='math',source_hash='new')
+   c.before_open(ctrl,config,status,opening)
+   self.assertNotEqual(seen[0][0],seen[2][0]);self.assertNotEqual(seen[0][1]['epoch'],seen[2][1]['epoch'])
+   self.assertEqual(seen[0][1]['environments'][0]['spec']['source_hash'],'old');self.assertEqual(seen[2][1]['environments'][0]['spec']['source_hash'],'new')
+   files=list((Path(tmp)/'successor-calibration').glob('*.json'));self.assertEqual(len(files),2)
+   import json
+   for path in files:
+    doc=json.loads(path.read_text());doc['calibration_environment']['spec']['source_hash']='tampered';path.write_text(json.dumps(doc))
+   count=len(seen)
+   with self.assertRaisesRegex(ValueError,'native environment binding'):c.before_open(ctrl,config,status,opening)
+   self.assertEqual(len(seen),count)
+ def test_native_preflight_fails_without_model_or_inference(self):
+  with patch('subnet.environments.create_session',side_effect=ValueError('trusted environment code or data hash mismatch'))as create:
+   with self.assertRaisesRegex(ValueError,'hash mismatch'):c.preflight_native_spec({'id':'math'})
+   create.assert_called_once_with({'id':'math'})
+  session=SimpleNamespace(close=unittest.mock.Mock())
+  with patch('subnet.environments.create_session',return_value=session):c.preflight_native_spec({'id':'math'})
+  session.close.assert_called_once()
+ def test_worker_rejects_untrusted_native_spec_before_model_factory(self):
+  from subnet.backend_jobs import execute
+  from unittest.mock import Mock
+  job=dict(job_id='bounded-native-preflight',role='evaluate',source_files={},runtime_versions={},successor_calibration=self.req)
+  manifest=dict(epoch='nonpayable-calibration',checkpoint={'id':'a'*64,'files':{}},model_runtime_revision='runtime')
+  factory=Mock();first={'spec':{'id':'math'},'indices':[1,2],'harness':self.h}
+  with tempfile.TemporaryDirectory()as tmp,patch('subnet.backend_jobs._validate',return_value=(job,manifest)),patch('subnet.backend_jobs.install_source_loader'),patch.dict('os.environ',{'CUBLAS_WORKSPACE_CONFIG':':4096:8'}),patch('subnet.backend_profiles.execution_profile',return_value=('runtime',{},{})),patch('subnet.artifact_budget.for_manifest'),patch('subnet.task_assets.hydrate_manifest'),patch('subnet.backend_jobs.checkpoint',return_value=tmp),patch('subnet.protocol.entries',return_value=[first]),patch('subnet.backend_jobs.initial_configuration',return_value=(first,self.h)),patch('subnet.environments.create_session',side_effect=ValueError('trusted environment code or data hash mismatch'))as session:
+   with self.assertRaisesRegex(ValueError,'hash mismatch'):execute({},'authority',tmp,runtime_factory=factory)
+  session.assert_called_once_with(first['spec']);factory.assert_not_called()
