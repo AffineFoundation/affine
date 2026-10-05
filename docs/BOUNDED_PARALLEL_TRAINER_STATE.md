@@ -36,3 +36,15 @@ safetensors files: overlapping four-way transfers, exact serial/parallel descrip
 identity, deterministic order, round-trip restoration, corrupted readback rejection,
 failed-file retention, and increased coordinator/worker resource bounds. Production
 throughput must be measured after deploying an admitted prospective source.
+
+The same signed prospective concurrency and resource admission also bound parent
+restoration. Descriptor validation establishes exact disjoint tensor coverage
+before any buffers or workers are created. Up to four workers download, hash,
+open safetensors, check dtype/shape/finiteness and copy only their approved
+non-overlapping slices. Evidence remains in deterministic original shard order.
+No optimizer, training update or partially restored state is returned until every
+shard passes. A failure cancels pending work and waits for every active worker;
+failed data and forensic receipts remain, while independently verified successful
+temporary files are retired. Absent prospective concurrency, restoration remains
+serial. Actual restore overlap and per-shard timestamps are recorded separately
+from the model's optimizer counter.

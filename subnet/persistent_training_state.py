@@ -231,18 +231,22 @@ def _transfer_directory(workspace):
 
 
 def restore_state(descriptor, approved_sha256, input_checkpoint, inventory, *,
-                  workspace, fetch_shard, resource_admission):
-    """fetch_shard(name, path) writes one approved object; no URLs in state."""
+                  workspace, fetch_shard, resource_admission, concurrency=None):
+    """Restore approved disjoint spans; never expose partially materialized rows."""
     import torch
     from safetensors import safe_open
     validate_descriptor(descriptor, approved_sha256, input_checkpoint, inventory)
     if resource_admission.get('admitted') is not True:
         raise ValueError('actual RAM/disk admission required before state allocation')
+    concurrency=resource_admission.get('state_transfer_concurrency',1) if concurrency is None else concurrency
+    if (type(concurrency) is not int or not 1<=concurrency<=4 or
+            concurrency!=resource_admission.get('state_transfer_concurrency',1)):
+        raise ValueError('signed restore concurrency/admission binding')
     required = resource_plan(inventory, bf16_export_bytes=resource_admission['bf16_export_bytes'],
                              transfer_bytes=resource_admission['bounded_transfer_bytes'],
                              disk_reserve_bytes=resource_admission['disk_reserve_bytes'],
                              ram_reserve_bytes=resource_admission['ram_reserve_bytes'],
-                             concurrency=resource_admission.get('state_transfer_concurrency',1))
+                             concurrency=concurrency)
     if any(resource_admission.get(k) != v for k, v in required.items()):
         raise ValueError('state admission/inventory mismatch')
     if max(s['size'] for s in descriptor['shards']) > required['bounded_transfer_bytes']:
@@ -252,9 +256,12 @@ def restore_state(descriptor, approved_sha256, input_checkpoint, inventory, *,
                        for s in SLOTS} for r in inventory}
     for row in rows.values(): row['step'] = descriptor['optimizer_steps']
     transfer = _transfer_directory(workspace)
-    evidence = []
-    try:
-        for shard in descriptor['shards']:
+    counters={'inflight':0,'maximum':0};counter_lock=threading.Lock()
+    def restore_one(number,shard):
+        started=time.time()
+        with counter_lock:
+            counters['inflight']+=1;counters['maximum']=max(counters['maximum'],counters['inflight'])
+        try:
             path = transfer/shard['name']; fetch_shard(shard['name'], path)
             if not path.is_file() or path.is_symlink():
                 raise ValueError('downloaded state regular file required')
@@ -271,16 +278,57 @@ def restore_state(descriptor, approved_sha256, input_checkpoint, inventory, *,
                     finite(torch, value, nonnegative=metadata['slot'] == 'exp_avg_sq')
                     target = rows[metadata['parameter']][metadata['slot']].reshape(-1)
                     start, count = metadata['start'], metadata['count']
+                    # validate_descriptor established exact, disjoint coverage
+                    # before allocation. Concurrent tasks cannot write an
+                    # overlapping approved slice or publish these private rows.
                     target[start:start + count].copy_(value)
                     del value, target
             path.unlink()
-            evidence.append(dict(name=shard['name'], sha256=actual_sha, size=size,
-                                 verified_materialization=True, local_shard_retired=True))
-        transfer.rmdir()
-        return (descriptor, rows, approved_sha256), evidence
-    except Exception:
-        # Preserve failed transfers; incomplete rows must never reach training.
-        raise
+            receipt=dict(name=shard['name'],sha256=actual_sha,size=size,
+                         verified_materialization=True,local_shard_retired=True,
+                         started_at=started,completed_at=time.time())
+            if concurrency>1:
+                path=transfer/('restore-evidence-'+format(number,'06d')+'.json')
+                path.write_text(json.dumps(receipt,sort_keys=True));path.chmod(0o600)
+            return number,receipt
+        except Exception as error:
+            if concurrency>1:
+                path=transfer/('restore-failure-'+format(number,'06d')+'.json')
+                path.write_text(json.dumps(dict(name=shard['name'],error_type=type(error).__name__,
+                    started_at=started,completed_at=time.time()),sort_keys=True));path.chmod(0o600)
+            raise
+        finally:
+            with counter_lock:counters['inflight']-=1
+    results={}
+    if concurrency==1:
+        for number,shard in enumerate(descriptor['shards']):
+            index,receipt=restore_one(number,shard);results[index]=receipt
+    else:
+        from concurrent.futures import ThreadPoolExecutor,wait,FIRST_COMPLETED
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            remaining=iter(enumerate(descriptor['shards']));pending={}
+            def submit_next():
+                item=next(remaining,None)
+                if item is not None:pending[pool.submit(restore_one,*item)]=item[0]
+            for _ in range(concurrency):submit_next()
+            try:
+                while pending:
+                    done,_=wait(pending,return_when=FIRST_COMPLETED)
+                    for future in done:
+                        pending.pop(future);index,receipt=future.result();results[index]=receipt
+                    for _ in done:submit_next()
+            except Exception:
+                for future in pending:future.cancel()
+                # Executor scope waits every active task. No incomplete row
+                # object escapes; failed bytes and receipts remain evidence.
+                raise
+    evidence=[results[number] for number in range(len(descriptor['shards']))]
+    for receipt in evidence:
+        receipt.update(restore_concurrency=concurrency,actual_maximum_inflight_shards=counters['maximum'])
+    if concurrency>1:
+        for path in transfer.glob('restore-evidence-*.json'):path.unlink()
+    transfer.rmdir()
+    return (descriptor, rows, approved_sha256), evidence
 
 
 def _plans(inventory, shard_bytes):

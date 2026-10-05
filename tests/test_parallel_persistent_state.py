@@ -85,6 +85,52 @@ class ParallelState(unittest.TestCase):
         with patch('subnet.persistent_training_state.available_ram_bytes',return_value=4*self.cap-1):
             with self.assertRaisesRegex(ValueError,'RAM reserve'):self.export()
         self.assertFalse(self.committed);self.assertFalse(self.objects)
+    def restore_parallel(self,descriptor,mutate=None):
+        barrier=threading.Barrier(4);lock=threading.Lock();observed={'active':0,'maximum':0,'files':0}
+        first={row['name'] for row in descriptor['shards'][:4]}
+        def fetch(name,path):
+            with lock:
+                observed['active']+=1;observed['maximum']=max(observed['maximum'],observed['active'])
+            try:
+                data=self.objects[name];path.write_bytes(mutate(name,data) if mutate else data)
+                with lock:observed['files']=max(observed['files'],len(list(path.parent.glob('*.safetensors'))))
+                if name in first:barrier.wait(timeout=5)
+            finally:
+                with lock:observed['active']-=1
+        return restore_state(descriptor,sha(descriptor),'22'*32,self.inventory,workspace=self.root,
+            fetch_shard=fetch,resource_admission=self.admission,concurrency=4),observed
+    def test_four_parallel_restores_copy_only_exact_disjoint_slices(self):
+        descriptor,_=self.export()
+        (state,receipts),observed=self.restore_parallel(descriptor)
+        self.assertEqual(observed['maximum'],4);self.assertEqual(observed['active'],0)
+        self.assertLessEqual(observed['files'],4)
+        self.assertEqual([r['name'] for r in receipts],[r['name'] for r in descriptor['shards']])
+        self.assertTrue(all(r['actual_maximum_inflight_shards']==4 for r in receipts))
+        for slot in ('master','exp_avg','exp_avg_sq'):
+            self.assertTrue(torch.equal(state[1]['w'][slot],self.optimizer.rows['w'][slot]))
+        self.assertEqual(state[1]['w']['step'],self.optimizer.global_step)
+        self.assertFalse(list(self.root.iterdir()))
+    def test_corrupt_parallel_restore_returns_no_partial_state_and_waits_workers(self):
+        descriptor,_=self.export();returned=None
+        def corrupt(name,data):return b'bad' if name=='state-000001.safetensors' else data
+        with self.assertRaisesRegex(ValueError,'digest/size'):
+            returned=self.restore_parallel(descriptor,mutate=corrupt)
+        self.assertIsNone(returned)
+        self.assertEqual(len(list(self.root.rglob('state-000001.safetensors'))),1)
+        self.assertTrue(list(self.root.rglob('restore-failure-000001.json')))
+        # Other active workers finished and retired their validated temporary
+        # files before the failure escaped; only the bad data file remains.
+        self.assertEqual([p.name for p in self.root.rglob('*.safetensors')],['state-000001.safetensors'])
+        self.assertTrue(list(self.root.rglob('restore-evidence-*.json')))
+    def test_parallel_restore_rejects_serial_reserve_and_overlapping_descriptor(self):
+        descriptor,_=self.export();fetch=lambda name,path:path.write_bytes(self.objects[name])
+        serial=admit_resources(self.root,resource_plan(self.inventory,bf16_export_bytes=100,transfer_bytes=self.cap,disk_reserve_bytes=0,ram_reserve_bytes=0))
+        with self.assertRaisesRegex(ValueError,'concurrency/admission'):
+            restore_state(descriptor,sha(descriptor),'22'*32,self.inventory,workspace=self.root,fetch_shard=fetch,resource_admission=serial,concurrency=4)
+        bad=copy.deepcopy(descriptor);bad['shards'][1]['tensors'][0]['start']=0
+        with self.assertRaisesRegex(ValueError,'overlapping or missing'):
+            restore_state(bad,sha(bad),'22'*32,self.inventory,workspace=self.root,fetch_shard=fetch,resource_admission=self.admission,concurrency=4)
+        self.assertFalse(list(self.root.iterdir()))
     def test_coordinator_probe_reserves_every_signed_inflight_shard(self):
         from subnet.persistent_training_worker import capacity_requirement
         manifest=dict(trainer_state_binding=dict(parameters=self.inventory))

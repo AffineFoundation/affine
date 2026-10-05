@@ -81,7 +81,7 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
             row=shards[name]
             get_object(transport['parent_read_urls'][name],row['sha256'],path,row['size'])
         restored,restore_evidence=restore_state(parent,binding['parent']['descriptor_sha256'],
-            binding['input_checkpoint'],inventory,workspace=out,fetch_shard=fetch,resource_admission=admission)
+            binding['input_checkpoint'],inventory,workspace=out,fetch_shard=fetch,resource_admission=admission,concurrency=concurrency)
     destination,optimizer,diagnostics=train_epoch(runtime,pairs,out,
         input_checkpoint=binding['input_checkpoint'],epoch=manifest['epoch'],
         seed=manifest['training_coverage']['seed'],steps=job['steps'],
