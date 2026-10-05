@@ -2678,3 +2678,17 @@ unknown, not fraud. Hourly publication reconciles original completion times
 and evidence cutoffs; learner training does not wait for audit completion.
 This is a nonpayable pilot, not convergence evidence or a universal provenance
 proof. Public guide now distinguishes current deployment from historical rules.
+
+
+## 2026-10-05 corrected E14 opening
+
+The prospective persistent-training admission repair preserved CP05de, optimizer
+step four and original genesis history. E14 now has its immutable first signed
+manifest: source 6a85, checkpoint CP05de, mining deadline 1791217569,
+`sampling_contract.version=forced-inverse-cdf-prefill-support-v3`, and
+`training_input_policy=committed-unaudited-training-v1`. The owned UID131 miner
+job has started. The prior opening hold is resolved; no produced batches,
+completed training update, reward publication or chain transaction is claimed
+by this record. The signed contract uses calibrated CDF checks plus exact
+cached-reference adjudication for ambiguity/support mismatches; this is
+empirical/probabilistic assurance, not universal historical execution proof.

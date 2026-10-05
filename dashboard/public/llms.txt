@@ -1,20 +1,17 @@
 # Affine — MATH mining, verification and training
 
-Deployment update, 2026-10-05: the independent controller and continuous auditor
-were started with the reviewed decoupled contract. The controller is now held
-and stopped while its prospective admission pin is corrected; the independent
-auditor and evaluator remain running. E14,
-nonpayable-live-reward-math-v1--1791214814-14, was held before publishing its manifest, from authoritative
-checkpoint 05de656e9c215a139f4329ffc9954e7c83955872929a17c35fd1a9bd9eae0923
-and persistent optimizer step four. At this publication check the signed E14
-manifest had not yet appeared locally. Opening is blocked by a stale persistent
-training admission source pin; no miner job has been issued. The original
-checkpoint, optimizer and genesis history must be preserved when repairing
-that prospective source admission. Opening is not a completed mining,
-audit, training or reward cycle. Consult mining.json and the signed epoch
-manifest for actual availability before generating submissions. This remains
-a nonpayable pilot; deployment is not evidence of chain weight submission or
-held-out convergence.
+Deployment update, 2026-10-05: the repaired controller has published E14's
+first signed manifest and mining is open under the new decoupled contract.
+Epoch nonpayable-live-reward-math-v1--1791214814-14 uses checkpoint
+05de656e9c215a139f4329ffc9954e7c83955872929a17c35fd1a9bd9eae0923
+and persistent optimizer step four, with mining deadline 1791217569 (UTC Unix
+seconds). The owned miner job has started; produced batches, a completed
+training update and reward publication have not yet been established by this
+opening record. The stale persistent-training source admission was corrected
+prospectively while preserving the original checkpoint, optimizer and genesis
+history. Auditor and evaluator remain independent. Consult mining.json and the
+signed epoch manifest for actual availability. This remains a nonpayable pilot;
+opening is not evidence of chain weight submission or held-out convergence.
 
 The configured immutable source is
 6a85c31011b7a1ca23d745e9868d7b01dd0e92e9fe74c997e8222482f76393ca.
