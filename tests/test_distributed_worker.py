@@ -133,3 +133,25 @@ class CheckpointCandidateTests(CheckpointCacheTests):
         self.assertFalse(checkpoint_cache_candidate(self.root,self.files))
 
 if __name__=='__main__':unittest.main()
+
+class AutomaticLifetimeWorkerTests(WorkerTests):
+    def test_successful_ack_retires_inputs_keeps_reports(self):
+        def run(args,**kwargs):
+            workspace=Path(args[args.index('--workspace')+1]);out=workspace/'jobs'/'verify-job';out.mkdir(parents=True)
+            (out/'report.json').write_text('{}');(out/'submission-0.zip').write_bytes(b'x')
+            cp=workspace/'checkpoints'/'CP';cp.mkdir(parents=True);(cp/'config.json').write_bytes(b'{}');(cp/'model.safetensors').write_bytes(b'weights')
+            self.assertTrue(kwargs['pass_fds']);return SimpleNamespace(returncode=0)
+        self.job['submissions']=[{'sha256':hashlib.sha256(b'x').hexdigest()}]
+        self.claim['job']['signature']=base64.b64encode(self.key.sign(canonical(self.job)).signature).decode();self.claim['job_sha256']=digest(self.job)
+        self.worker.request=Mock(side_effect=[{'claim':self.claim},{'accepted':True}])
+        with patch('subnet.distributed_worker.subprocess.run',side_effect=run):self.worker.once()
+        out=Path(self.folder.name)/'backend'/'jobs'/'verify-job'
+        self.assertFalse((out/'submission-0.zip').exists());self.assertTrue((out/'report.json').exists())
+    def test_missing_ack_preserves_submission_and_pending_report(self):
+        def run(args,**kwargs):
+            workspace=Path(args[args.index('--workspace')+1]);out=workspace/'jobs'/'verify-job';out.mkdir(parents=True)
+            (out/'report.json').write_text('{}');(out/'submission-0.zip').write_bytes(b'x');return SimpleNamespace(returncode=0)
+        self.worker.request=Mock(side_effect=[{'claim':self.claim},ValueError('no ACK')]);self.claim['lease_until']=time.time()-1
+        with patch('subnet.distributed_worker.subprocess.run',side_effect=run),self.assertRaises(ValueError):self.worker.once()
+        self.assertTrue((Path(self.folder.name)/'backend'/'jobs'/'verify-job'/'submission-0.zip').exists())
+        self.assertTrue((Path(self.folder.name)/'verify-job'/'attempt-1'/'pending-report.json').exists())
