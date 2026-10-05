@@ -1,3 +1,23 @@
+Verified recovery and qualification update, 2026-10-05: original E13 is now
+closed after its explicit late recovery. The committed inference checkpoint is
+05de656e9c215a139f4329ffc9954e7c83955872929a17c35fd1a9bd9eae0923,
+and the persistent optimizer counter is four. Controller round fourteen has no
+active epoch. The original opening manifest, failed job, and failure evidence
+remain unchanged; no replacement training or chain transaction was initiated
+by closure. Actual completion and closure receipts are retained in operator
+state, not committed as public artifacts.
+
+All eight distinct H200 qualification jobs completed against source f6b39633
+and checkpoint 6a2bb631: fifteen of sixteen honest fast-prefill cases verified
+directly; one remained numerically ambiguous. The genuine cached-reference
+check accepted all sixteen honest cases and rejected all sixteen freshly
+fingerprinted forged controls. These controls do not prove arbitrary-hardware
+compatibility or qualify checkpoint 05de656e. A narrow prospective v3 change
+adds automatic reference adjudication for numerical ambiguity; unavailable
+reference computation remains unknown rather than fraud. Its focused tests
+pass, while actual GPU confirmation and final source admission are pending.
+The decoupled mechanism is not activated yet. Cleanup remains deferred.
+
 Verified implementation update, 2026-10-05 14:08 UTC: GitHub main contains
 reviewed integration d3a5d026, including explicit eligibility-bound continuous
 scores, authenticated infrastructure retry handling, and a prospective FP32
