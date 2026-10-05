@@ -19,6 +19,34 @@ class Controls(unittest.TestCase):
   calibration=dict(version=fast.CALIBRATION,checkpoint='a'*64,model_runtime_revision='cpu-test-v1',backend_profile_sha256=fast.digest(manifest['backend_profile']),harness_sha256=fast.digest(normalize(runtime.harness)),report_sha256='c'*64,cdf_abs_error=1e-5,logprob_atol=1e-5,toploc_exp_mismatches=0,toploc_mant_err_mean=0,toploc_mant_err_median=0)
   manifest['sampling_contract']=f.new_contract(dict(version=fast.VERSION,max_attempts=16,calibration=calibration));manifest['sampling_contract']['randomness']='b'*64
   return f.bind_runtime(runtime,manifest),manifest
+ def support_runtime(self):
+  runtime,manifest=self.runtime();manifest['sampling_contract']=f.new_contract(dict(version=fast.SUPPORT_VERSION,max_attempts=16,calibration=manifest['sampling_contract']['calibration'],support_adjudication='exact-cached-replay-v1'));manifest['sampling_contract']['randomness']='b'*64
+  return f.bind_runtime(runtime,manifest),manifest
+ def test_support_option_requires_exact_signed_contract(self):
+  runtime,m=self.support_runtime();self.assertEqual(f.validate(m['sampling_contract'])['support_adjudication'],'exact-cached-replay-v1')
+  for change in ('missing','wrong'):
+   wrong=copy.deepcopy(m['sampling_contract'])
+   if change=='missing':wrong.pop('support_adjudication')
+   else:wrong['support_adjudication']='accept-excluded-tokens'
+   with self.assertRaises(ValueError):f.validate(wrong)
+  wrong=copy.deepcopy(m['sampling_contract']);wrong['version']=fast.VERSION
+  with self.assertRaises(ValueError):f.validate(wrong)
+ def test_honest_support_shift_uses_actual_reference_and_forged_tail_fails(self):
+  runtime,m=self.support_runtime();prompt=[0,1];task='c'*64;output=fast.cached_sample(runtime,prompt,0,0,2,task);rollout=dict(seed=0,index=2,task_hash=task)
+  # Isolate a nucleus support crossing in reference probabilities. Actual
+  # cached execution determines the verdict; no tolerance makes zero valid.
+  runtime.harness={**runtime.harness,'top_p':.9};output=fast.cached_sample(runtime,prompt,0,0,2,task)
+  probs=torch.full((len(output),7),-30.)
+  for position,token in enumerate(output):probs[position,(token+1)%7]=0.
+  before=runtime.model.calls;result=fast.verify_sampling(runtime,rollout,0,prompt,output,probs);self.assertTrue(result['cached_reference_adjudication']);self.assertEqual(runtime.model.calls-before,len(output))
+  forged=list(output);forged[0]=(forged[0]+1)%6
+  if forged[0]==output[0]:forged[0]=(forged[0]+1)%6
+  for position,token in enumerate(forged):probs[position].fill_(-30.);probs[position,(token+1)%7]=0.
+  with self.assertRaises(InvalidSample):fast.verify_sampling(runtime,rollout,0,prompt,forged,probs)
+ def test_old_fast_contract_support_exclusion_stays_invalid(self):
+  runtime,m=self.runtime();runtime.harness={**runtime.harness,'top_p':.9};output=fast.cached_sample(runtime,[0,1],0,0,2,'c'*64);probs=torch.full((len(output),7),-30.)
+  for position,token in enumerate(output):probs[position,(token+1)%7]=0.
+  with self.assertRaises(fast.SupportMismatch):fast.verify_sampling(runtime,dict(seed=0,index=2,task_hash='c'*64),0,[0,1],output,probs)
  def test_real_cached_generation_toploc_and_one_prefill_verification(self):
   miner,m=self.runtime();verifier,_=self.runtime();verifier.sampling_context=miner.sampling_context
   with patch('subnet.model.create_session',return_value=fixture.Session()):

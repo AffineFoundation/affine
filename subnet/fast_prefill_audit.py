@@ -5,11 +5,14 @@ Calibration is an executed-control artifact admitted by the signed opening.
 """
 import hashlib,json,math
 VERSION='forced-inverse-cdf-prefill-v2'
+SUPPORT_VERSION='forced-inverse-cdf-prefill-support-v3'
 CALIBRATION='cached-prefill-calibration-v1'
 canonical=lambda v:json.dumps(v,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
 digest=lambda v:hashlib.sha256(canonical(v)).hexdigest()
 class NumericalAmbiguity(RuntimeError):pass
 class CalibrationRequired(RuntimeError):pass
+from .audit_policy import InvalidSample
+class SupportMismatch(InvalidSample):pass
 
 def calibration(value):
  fields={'version','checkpoint','model_runtime_revision','backend_profile_sha256','harness_sha256','report_sha256','cdf_abs_error','logprob_atol','toploc_exp_mismatches','toploc_mant_err_mean','toploc_mant_err_median'}
@@ -55,7 +58,8 @@ def verify_intervals(logprobs,tokens,uniforms,temperature,top_p,error):
  indices=torch.tensor(tokens,dtype=torch.int64,device=probs.device);positions=torch.arange(n,device=probs.device);cdf=probs.cumsum(-1);cdf[:,-1]=1.
  high=cdf[positions,indices];low=high-probs[positions,indices];u=torch.tensor(uniforms,dtype=torch.float64,device=probs.device);mass=probs[positions,indices]
  # A zero-mass nucleus exclusion is not legalized by boundary tolerance.
- if bool((mass<=0).any())or bool(((u<low-error)|(u>=high+error)).any()):raise InvalidSample('forced CDF interval outside calibrated region')
+ if bool((mass<=0).any()):raise SupportMismatch('token excluded by reference nucleus')
+ if bool(((u<low-error)|(u>=high+error)).any()):raise InvalidSample('forced CDF interval outside calibrated region')
  outside=(u<low)|(u>=high)
  if error and bool(outside.any()):raise NumericalAmbiguity('forced CDF boundary within calibrated numerical uncertainty')
  if bool(outside.any()):raise InvalidSample('forced CDF interval mismatch')
@@ -68,7 +72,29 @@ def verify_sampling(runtime,rollout,turn_index,prompt,output,logprobs):
  stop=runtime.tokenizer.eos_token_id
  if any(token==stop for token in output[:-1])or len(output)<config['max_output_tokens']and output[-1]!=stop:raise InvalidSample('forced generation stop condition')
  draws=[uniform(context,runtime.spec.id,rollout['task_hash'],rollout['index'],rollout['seed'],turn_index,i)for i in range(len(output))]
- return verify_intervals(logprobs,output,draws,config['temperature'],config['top_p'],p['cdf_abs_error'])
+ try:return verify_intervals(logprobs,output,draws,config['temperature'],config['top_p'],p['cdf_abs_error'])
+ except SupportMismatch:
+  if context['contract']['version']!=SUPPORT_VERSION:raise
+  return verify_cached_reference(runtime,prompt,output,rollout['seed'],turn_index,rollout['index'],rollout['task_hash'])
+
+
+def verify_cached_reference(runtime,prompt,output,attempt,turn,index,task_hash):
+ """Nucleus support adjudication uses actual pinned cached sampling, not a bound.
+
+ Recompute the claimed sequence under original public draws. Every prefix must
+ match before feeding it back. No synthetic trace becomes valid via ambiguity.
+ """
+ import torch
+ from .forced_sampling import uniform,pick,validate_attempt
+ context=runtime.sampling_context;validate_attempt(context,attempt);config=runtime.harness;device=next(runtime.model.parameters()).device
+ cache=None;tokens=torch.tensor([prompt],device=device)
+ with torch.inference_mode():
+  for position,claimed in enumerate(output):
+   result=runtime.model(tokens,past_key_values=cache,use_cache=True)
+   expected=pick(result.logits[0,-1],uniform(context,runtime.spec.id,task_hash,index,attempt,turn,position),config['temperature'],config['top_p'])
+   if claimed!=expected:raise InvalidSample('original cached sampler reference mismatch')
+   cache=result.past_key_values;tokens=torch.tensor([[expected]],device=device)
+ return dict(positions=len(output),cached_reference_adjudication=True,all_intervals_verified=True)
 
 def cached_sample(runtime,prompt,attempt,turn,index,task_hash):
  import torch
