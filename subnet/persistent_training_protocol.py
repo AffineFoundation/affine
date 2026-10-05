@@ -187,6 +187,8 @@ def prepare_job(controller, manifest, identifier, steps, ttl):
 def validate_job(job,manifest,authority):
     from .backend_jobs import r2_url
     binding=validate_binding(manifest.get('trainer_state_binding'),manifest)
+    from .persistent_training_state import transport_concurrency
+    transport_concurrency(manifest)
     if job.get('role')!='train'or job.get('training_policy')!=POLICY:
         raise ValueError('persistent lineage applies only to selected training jobs')
     if not manifest.get('sampling_contract'):raise ValueError('persistent training requires forced sampling contract')

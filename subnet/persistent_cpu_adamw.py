@@ -103,7 +103,8 @@ class PersistentCPUAdamW:
                 bf16_export_bytes=resource_admission['bf16_export_bytes'],
                 transfer_bytes=resource_admission['bounded_transfer_bytes'],
                 disk_reserve_bytes=resource_admission['disk_reserve_bytes'],
-                ram_reserve_bytes=resource_admission['ram_reserve_bytes'])
+                ram_reserve_bytes=resource_admission['ram_reserve_bytes'],
+                concurrency=resource_admission.get('state_transfer_concurrency',1))
             if any(resource_admission.get(k) != v for k, v in plan.items()):
                 raise ValueError('genesis resource/inventory binding')
             admit_resources(resource_admission['workspace'], plan)

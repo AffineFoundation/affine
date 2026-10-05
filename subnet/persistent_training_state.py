@@ -10,6 +10,9 @@ import os
 import shutil
 import uuid
 import copy
+import time
+import threading
+import json
 from pathlib import Path
 
 from .persistent_cpu_adamw import POLICY, HYPERPARAMETERS, checkpoint_id, finite, sha
@@ -18,29 +21,43 @@ VERSION = 'sharded-fp32-master-adamw-state-v1'
 MAX_SHARD_BYTES = 4_000_000_000
 SLOTS = ('master', 'exp_avg', 'exp_avg_sq')
 HEADER_RESERVE = 1_048_576
+TRANSPORT_VERSION='bounded-parallel-fp32-state-v1'
+
+def transport_concurrency(manifest):
+    value=manifest.get('optimizer_state_transport')
+    if value is None:return 1
+    if (not isinstance(value,dict) or set(value)!={'version','concurrency'} or value['version']!=TRANSPORT_VERSION):
+        raise ValueError('signed bounded optimizer state transport')
+    concurrency=value['concurrency']
+    if type(concurrency) is not int or not 1<=concurrency<=4:
+        raise ValueError('optimizer state transport concurrency bound')
+    return concurrency
 
 
 def resource_plan(inventory, *, bf16_export_bytes, transfer_bytes=MAX_SHARD_BYTES,
-                  disk_reserve_bytes=8*1024**3, ram_reserve_bytes=8*1024**3):
+                  disk_reserve_bytes=8*1024**3, ram_reserve_bytes=8*1024**3,
+                  concurrency=1):
     """Additional RAM/disk beyond already loaded model and existing files.
 
     CPU state is three FP32 buffers. RAM also reserves a shard serialization
     buffer and six FP32-equivalent largest-parameter temporaries. Disk keeps
-    one transfer shard and one complete BF16 export; state input is streamed.
+    at most concurrency transfer shards and one complete BF16 export; state input is streamed.
     No promise is made about model forward/backward GPU capacity.
     """
     if (not inventory or type(bf16_export_bytes) is not int or bf16_export_bytes < 1 or
             type(transfer_bytes) is not int or not 1 <= transfer_bytes <= MAX_SHARD_BYTES or
             type(disk_reserve_bytes) is not int or disk_reserve_bytes < 0 or
-            type(ram_reserve_bytes) is not int or ram_reserve_bytes < 0):
+            type(ram_reserve_bytes) is not int or ram_reserve_bytes < 0 or
+            type(concurrency) is not int or not 1<=concurrency<=4):
         raise ValueError('explicit bounded resource plan')
     _inventory_valid(inventory)
     count = sum(r['numel'] for r in inventory); largest = max(r['numel'] for r in inventory)
     if bf16_export_bytes < count*2:
         raise ValueError('BF16 export reserve below parameter payload')
     return dict(cpu_state_bytes=count*12, bounded_transfer_bytes=transfer_bytes,
-        cpu_additional_ram_required_bytes=count*12 + largest*24 + transfer_bytes + ram_reserve_bytes,
-        additional_disk_required_bytes=bf16_export_bytes + transfer_bytes + disk_reserve_bytes,
+        state_transfer_concurrency=concurrency,bounded_inflight_transfer_bytes=transfer_bytes*concurrency,
+        cpu_additional_ram_required_bytes=count*12 + largest*24 + transfer_bytes*concurrency + ram_reserve_bytes,
+        additional_disk_required_bytes=bf16_export_bytes + transfer_bytes*concurrency + disk_reserve_bytes,
         bf16_export_bytes=bf16_export_bytes, ram_reserve_bytes=ram_reserve_bytes,
         disk_reserve_bytes=disk_reserve_bytes, full_state_disk_hydration=False,
         gpu_forward_backward_capacity_qualified=False)
@@ -224,7 +241,8 @@ def restore_state(descriptor, approved_sha256, input_checkpoint, inventory, *,
     required = resource_plan(inventory, bf16_export_bytes=resource_admission['bf16_export_bytes'],
                              transfer_bytes=resource_admission['bounded_transfer_bytes'],
                              disk_reserve_bytes=resource_admission['disk_reserve_bytes'],
-                             ram_reserve_bytes=resource_admission['ram_reserve_bytes'])
+                             ram_reserve_bytes=resource_admission['ram_reserve_bytes'],
+                             concurrency=resource_admission.get('state_transfer_concurrency',1))
     if any(resource_admission.get(k) != v for k, v in required.items()):
         raise ValueError('state admission/inventory mismatch')
     if max(s['size'] for s in descriptor['shards']) > required['bounded_transfer_bytes']:
@@ -286,8 +304,8 @@ def _plans(inventory, shard_bytes):
 
 def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
                  publish_shard, readback_shard, commit_descriptor,
-                 resource_admission, shard_bytes=MAX_SHARD_BYTES):
-    """Upload/read back one shard; transport the descriptor last.
+                 resource_admission, shard_bytes=MAX_SHARD_BYTES, concurrency=1):
+    """Upload/read back bounded concurrent shards; transport the descriptor last.
 
     readback_shard(name) yields actual bounded byte chunks from durable storage.
     commit_descriptor(doc) publishes/reads back actual bytes and returns its
@@ -304,17 +322,45 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
     if (type(optimizer.global_step) is not int or optimizer.global_step < 1 or
             any(row['step'] != optimizer.global_step for row in optimizer.rows.values())):
         raise ValueError('only completed full-parameter updates may publish state')
-    if (resource_admission.get('admitted') is not True or
+    if (type(concurrency) is not int or not 1<=concurrency<=4 or
+            resource_admission.get('state_transfer_concurrency',1)!=concurrency or
+            resource_admission.get('admitted') is not True or
             shard_bytes > resource_admission['bounded_transfer_bytes']):
         raise ValueError('actual bounded transfer admission required')
+    expected=resource_plan(optimizer.inventory,bf16_export_bytes=resource_admission['bf16_export_bytes'],
+        transfer_bytes=resource_admission['bounded_transfer_bytes'],disk_reserve_bytes=resource_admission['disk_reserve_bytes'],
+        ram_reserve_bytes=resource_admission['ram_reserve_bytes'],concurrency=concurrency)
+    if any(resource_admission.get(k)!=v for k,v in expected.items()):
+        raise ValueError('parallel export resource admission binding')
     if (not Path(workspace).is_dir() or Path(workspace).is_symlink() or
-            shutil.disk_usage(workspace).free < shard_bytes + resource_admission['disk_reserve_bytes']):
+            shutil.disk_usage(workspace).free < shard_bytes*concurrency + resource_admission['disk_reserve_bytes']):
         raise ValueError('actual transfer disk reserve at publication')
     for name, parameter in optimizer.parameters:
         if not torch.equal(optimizer.rows[name]['master'].to(torch.bfloat16), parameter.detach().cpu()):
             raise ValueError('export master/BF16 inference projection')
+    if concurrency>1 and available_ram_bytes()<shard_bytes*concurrency+resource_admission['ram_reserve_bytes']:
+        raise ValueError('actual parallel publication RAM reserve')
     transfer = _transfer_directory(workspace); shards = []; evidence = []
-    for number, plan in enumerate(_plans(optimizer.inventory, shard_bytes)):
+    counters={'inflight':0,'maximum':0,'transport_inflight':0,'transport_maximum':0}; counter_lock=threading.Lock()
+    def transfer_one(number,plan):
+        started=time.time()
+        with counter_lock:
+            counters['inflight']+=1;counters['maximum']=max(counters['maximum'],counters['inflight'])
+        try:
+            result=materialize(number,plan,started)
+            if concurrency>1:
+                receipt=transfer/('evidence-'+format(number,'06d')+'.json')
+                receipt.write_text(json.dumps(result[2],sort_keys=True));receipt.chmod(0o600)
+            return result
+        except Exception as error:
+            if concurrency>1:
+                receipt=transfer/('failure-'+format(number,'06d')+'.json')
+                receipt.write_text(json.dumps(dict(name='state-'+format(number,'06d')+'.safetensors',
+                    error_type=type(error).__name__,started_at=started,completed_at=time.time()),sort_keys=True));receipt.chmod(0o600)
+            raise
+        finally:
+            with counter_lock:counters['inflight']-=1
+    def materialize(number,plan,started):
         name = 'state-' + format(number, '06d') + '.safetensors'; path = transfer/name
         tensors = {}
         for metadata in plan:
@@ -326,20 +372,54 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
         save_file(tensors, str(path)); path.chmod(0o600); del tensors
         actual_sha, size = _hash_file(path)
         if not 1 <= size <= shard_bytes: raise ValueError('actual state shard exceeds object cap')
-        publish_shard(name, path)
-        h = hashlib.sha256(); actual_size = 0
-        for part in readback_shard(name):
-            if not isinstance(part, bytes) or not part or len(part) > 16*1024**2:
-                raise ValueError('bounded actual durable readback chunks required')
-            actual_size += len(part)
-            if actual_size > size: raise ValueError('durable state readback oversized')
-            h.update(part)
-        if (h.hexdigest(), actual_size) != (actual_sha, size):
-            raise ValueError('durable state shard readback mismatch')
-        shards.append(dict(name=name, sha256=actual_sha, size=size, tensors=plan))
-        evidence.append(dict(name=name, sha256=actual_sha, size=size,
-                             durable_readback_verified=True, local_shard_retired=True))
+        transport_started=time.time()
+        with counter_lock:
+            counters['transport_inflight']+=1
+            counters['transport_maximum']=max(counters['transport_maximum'],counters['transport_inflight'])
+        try:
+            publish_shard(name, path)
+            h = hashlib.sha256(); actual_size = 0
+            for part in readback_shard(name):
+                if not isinstance(part, bytes) or not part or len(part) > 16*1024**2:
+                    raise ValueError('bounded actual durable readback chunks required')
+                actual_size += len(part)
+                if actual_size > size: raise ValueError('durable state readback oversized')
+                h.update(part)
+            if (h.hexdigest(), actual_size) != (actual_sha, size):
+                raise ValueError('durable state shard readback mismatch')
+        finally:
+            with counter_lock:counters['transport_inflight']-=1
+        transport_completed=time.time()
         path.unlink()
+        return number,dict(name=name,sha256=actual_sha,size=size,tensors=plan),dict(name=name,sha256=actual_sha,size=size,
+            durable_readback_verified=True,local_shard_retired=True,started_at=started,completed_at=time.time(),
+            transport_started_at=transport_started,transport_completed_at=transport_completed)
+    plans=_plans(optimizer.inventory,shard_bytes);results={}
+    if concurrency==1:
+        for number,plan in enumerate(plans):
+            index,shard,receipt=transfer_one(number,plan);results[index]=(shard,receipt)
+    else:
+        from concurrent.futures import ThreadPoolExecutor,wait,FIRST_COMPLETED
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            remaining=iter(enumerate(plans));pending={}
+            def submit_next():
+                item=next(remaining,None)
+                if item is not None:pending[pool.submit(transfer_one,*item)]=item[0]
+            for _ in range(concurrency):submit_next()
+            try:
+                while pending:
+                    done,_=wait(pending,return_when=FIRST_COMPLETED)
+                    for future in done:
+                        pending.pop(future)
+                        index,shard,receipt=future.result();results[index]=(shard,receipt)
+                    for _ in done:submit_next()
+            except Exception:
+                for future in pending:future.cancel()
+                # Running transfers finish under the publication freeze. Failed
+                # shard files remain forensic evidence; descriptor is never called.
+                raise
+    for number in range(len(plans)):
+        shard,receipt=results[number];shards.append(shard);evidence.append(receipt)
     descriptor = dict(version=VERSION, policy=POLICY,
         hyperparameters=copy.deepcopy(HYPERPARAMETERS), parameters=copy.deepcopy(optimizer.inventory),
         parameters_sha256=sha(optimizer.inventory), input_checkpoint=optimizer.input_checkpoint,
@@ -353,19 +433,23 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
     if (not isinstance(acknowledgement, dict) or acknowledgement.get('descriptor_sha256') != digest or
             acknowledgement.get('durable_readback_verified') is not True):
         raise ValueError('authenticated descriptor-last publication/readback acknowledgement')
+    if concurrency>1:
+        for path in transfer.glob('evidence-*.json'):path.unlink()
     transfer.rmdir()
     return descriptor, dict(shards=evidence, descriptor_sha256=digest,
         descriptor_published_last=True,descriptor_committed_last=acknowledgement.get('authority_committed')is True,
         authority_commit_required=acknowledgement.get('authority_committed')is not True,
-        no_full_state_disk_hydration=True)
+        no_full_state_disk_hydration=True,transport_concurrency=concurrency,
+        actual_maximum_inflight_shards=counters['maximum'],actual_maximum_inflight_transfers=counters['transport_maximum'],
+        transport_timing_measured=True)
 
 
 def export_state(optimizer, *, epoch, inference_checkpoint, workspace,
                  publish_shard, readback_shard, commit_descriptor,
-                 resource_admission, shard_bytes=MAX_SHARD_BYTES):
+                 resource_admission, shard_bytes=MAX_SHARD_BYTES, concurrency=1):
     """Seal normal optimizer mutations until descriptor-last publication ends."""
     with optimizer.freeze_for_publication():
         return _export_state(optimizer, epoch=epoch, inference_checkpoint=inference_checkpoint,
             workspace=workspace, publish_shard=publish_shard, readback_shard=readback_shard,
             commit_descriptor=commit_descriptor, resource_admission=resource_admission,
-            shard_bytes=shard_bytes)
+            shard_bytes=shard_bytes,concurrency=concurrency)

@@ -8,7 +8,7 @@ from pathlib import Path
 from .persistent_cpu_adamw import parameter_inventory, sha
 from .persistent_training_protocol import validate_job, validate_output
 from .persistent_training_state import (MAX_SHARD_BYTES, resource_plan,
-    admit_resources, restore_state, export_state)
+    admit_resources, restore_state, export_state,transport_concurrency)
 from .storage import canonical
 
 
@@ -71,7 +71,8 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
                      if approved_checkpoint is not None else 0, sum(r['numel']for r in inventory)*2+1024**3)
     # Actual model is already loaded and ZIP arrays released. The margin is
     # additional to existing input weights and measured available resources.
-    plan=resource_plan(inventory,bf16_export_bytes=export_bytes)
+    concurrency=transport_concurrency(manifest)
+    plan=resource_plan(inventory,bf16_export_bytes=export_bytes,concurrency=concurrency)
     admission=admit_resources(out,plan);restored=None;restore_evidence=[]
     transport=job['persistent_training']
     if parent is not None:
@@ -101,7 +102,7 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
         return dict(descriptor_sha256=sha(document),durable_readback_verified=True,authority_committed=False)
     descriptor,evidence=export_state(optimizer,epoch=manifest['epoch'],inference_checkpoint=checkpoint,
         workspace=out,publish_shard=publish,readback_shard=readback,
-        commit_descriptor=stage_descriptor,resource_admission=admission)
+        commit_descriptor=stage_descriptor,resource_admission=admission,concurrency=concurrency)
     diagnostics.update(state_staged=True,authority_commit_required=True,complete=False)
     state=dict(namespace=transport['output_namespace'],descriptor_sha256=sha(descriptor),descriptor=descriptor,
         authority_committed=False,restore_evidence=restore_evidence,publication_evidence=evidence,
@@ -136,7 +137,7 @@ def capacity_requirement(manifest,probe,*,checkpoint_bytes,missing_input):
     if type(checkpoint_bytes)is not int or checkpoint_bytes<=0 or type(missing_input)is not bool:
         raise ValueError('measured checkpoint hydration size')
     export=max(checkpoint_bytes,sum(r['numel']for r in binding['parameters'])*2+1024**3)
-    plan=resource_plan(binding['parameters'],bf16_export_bytes=export)
+    plan=resource_plan(binding['parameters'],bf16_export_bytes=export,concurrency=transport_concurrency(manifest))
     disk=plan['additional_disk_required_bytes']+(checkpoint_bytes if missing_input else 0)+budget['compressed_bytes']+budget['raw_bytes']
     # Model is not loaded yet during the coordinator probe. Reserve one BF16
     # input load separately; worker repeats admission after loading the model.
