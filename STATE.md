@@ -1,3 +1,23 @@
+Verified live update, 2026-10-05 17:48 UTC: E15
+`nonpayable-live-reward-math-v1--1791222075-15` is mining on immutable source
+6a85c31011b7a1ca23d745e9868d7b01dd0e92e9fe74c997e8222482f76393ca,
+checkpoint 76bc599baf173cb4d071ff1959492c0a3c23377143aa2d69b749c17becc34785
+and actual committed optimizer parent five. The original ROOT-signed mining job
+and its nested manifest match the local opening and lineage record. The signed
+window is 17:44:29–17:54:29 UTC, with checkpoint-specific calibration, four-stream
+optimizer transfers, and no genesis reset. Eight verifier workers and the
+four-thread continuous auditor remain independent. No E15 batch, training
+completion, held-out gain or new chain transaction is claimed by this opening.
+
+E14 actually completed one update on 161 unaudited task pairs, with full
+independent readback and durable checkpoint/state publication. Its signed
+manifest-to-closure time was 64.795 minutes; total elapsed time including
+opening recovery was 100.71 minutes. Both missed the one-hour goal. Fresh
+CPU/cgroup admission passed four streams and rejected eight without reducing
+reserves. The fixed 32-task baseline on CP05de was 20/32 with no infrastructure
+failures; the original CP76bc after-evaluation remains in progress, so held-out
+convergence is not established. Earlier observations below are historical.
+
 Verified recovery and qualification update, 2026-10-05: original E13 is now
 closed after its explicit late recovery. The committed inference checkpoint is
 05de656e9c215a139f4329ffc9954e7c83955872929a17c35fd1a9bd9eae0923,
@@ -2743,6 +2763,6 @@ seconds, including 2157.71 seconds of opening recovery; mining through closure
 took 3884.86 seconds. Hourly completion remains false. Fresh actual CPU/cgroup
 capacity admits four streams (179,005,138,944 bytes required) but rejects eight
 (195,005,138,944 required versus 187,602,862,080 available). The cgroup maximum
-is 206,158,430,208 bytes. No reserve was reduced. The next four-stream opening
-is being prepared against the actual committed step-five parent; independent
-evaluations and the continuous auditor remain separate from that opening.
+is 206,158,430,208 bytes. No reserve was reduced. E15 subsequently opened against that actual committed step-five parent using
+four streams; independent evaluations and the continuous auditor remain
+separate from its mining and learning phases.
