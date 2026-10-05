@@ -187,24 +187,27 @@ def validate_native_prompt(runtime,pairs,manifest):
     from .environments import create_session
     from .protocol import harness_for
     from . import harness
-    for definition,positive,negative in pairs:
-        spec=definition['spec']
-        if spec.get('id')!='affine_math' or spec.get('max_turns')!=1:
-            raise ValueError('unaudited learner currently requires one-turn native math')
-        config=spec.get('config',{});env_seed=int(config.get('seed',0))
-        session=create_session(spec)
-        try:initial=session.reset(positive['index'],env_seed)
-        finally:session.close()
-        policy=harness_for(definition,positive['index'])
-        prompt=harness.render(runtime.tokenizer,initial['messages'],initial.get('tools',[]),policy)
-        vocab=runtime.model.config.vocab_size
-        for rollout in (positive,negative):
-            if (rollout['task_hash']!=initial['task_hash'] or rollout.get('env_seed')!=env_seed or
-                len(rollout['turns'])!=1 or rollout['turns'][0]['prompt']!=prompt or
-                len(rollout['turns'][0]['output'])>min(spec['max_output_tokens'],policy['max_output_tokens']) or
-                any(t>=vocab for t in rollout['turns'][0]['output'])):
-                raise ValueError('trusted native math task/prompt/tokenizer eligibility')
-
+    sessions={}
+    try:
+        for definition,positive,negative in pairs:
+            spec=definition['spec']
+            if spec.get('id')!='affine_math' or spec.get('max_turns')!=1:
+                raise ValueError('unaudited learner currently requires one-turn native math')
+            config=spec.get('config',{});env_seed=int(config.get('seed',0))
+            session_key=canonical(spec)
+            if session_key not in sessions:sessions[session_key]=create_session(spec)
+            initial=sessions[session_key].reset(positive['index'],env_seed)
+            policy=harness_for(definition,positive['index'])
+            prompt=harness.render(runtime.tokenizer,initial['messages'],initial.get('tools',[]),policy)
+            vocab=runtime.model.config.vocab_size
+            for rollout in (positive,negative):
+                if (rollout['task_hash']!=initial['task_hash'] or rollout.get('env_seed')!=env_seed or
+                    len(rollout['turns'])!=1 or rollout['turns'][0]['prompt']!=prompt or
+                    len(rollout['turns'][0]['output'])>min(spec['max_output_tokens'],policy['max_output_tokens']) or
+                    any(t>=vocab for t in rollout['turns'][0]['output'])):
+                    raise ValueError('trusted native math task/prompt/tokenizer eligibility')
+    finally:
+        for session in sessions.values():session.close()
 
 def collect(controller,manifest,*,round_number=None):
     """Freeze small documents and issue truthful cheap-eligibility admissions.
