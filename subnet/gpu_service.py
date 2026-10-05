@@ -409,7 +409,13 @@ def run(config,once=False):
                 if once:return
         except Exception as error:
             log.exception('GPU epoch paused for retry');save(state/'health.json',dict(status='error_retry',error_type=type(error).__name__,time=time.time(),epoch=status.get('active',{}).get('epoch') if status.get('active') else None))
-            if once:raise
+            from .remote_backend import RemoteObservationTimeout
+            if isinstance(error,RemoteObservationTimeout):
+                # Observation expiry is not remote failure. Re-enter the same
+                # persisted phase/request; RemoteJobs authenticates its record
+                # and reobserves its original handle without signing a new job.
+                save(state/'health.json',dict(status='original_job_observation_retry',job_id=error.job_id,role=error.role,time=time.time(),epoch=status.get('active',{}).get('epoch')if status.get('active')else None))
+            elif once:raise
             time.sleep(30)
 
 def main():
