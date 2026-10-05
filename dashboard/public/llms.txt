@@ -488,3 +488,5 @@ and /reward-policy.json allow normal CLI GET/HEAD requests. The affine.io
 Cloudflare rule skips only Browser Integrity Check on those exact public
 paths; it does not grant storage credentials or upload access. Read the signed
 manifest for miner-specific capabilities and current deadlines.
+
+Dashboard batch counts use authenticated signed commitments and ROOT-signed learner admissions for the current decoupled epochs. Learner-eligible means cheap admission of unaudited inputs, never proof verification. Independent continuous audit totals are unavailable in this chart unless an actual epoch audit record is present. The latest available committed epoch appears before reward finalization.
