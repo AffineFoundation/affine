@@ -17,8 +17,8 @@ def admit(document, authority, descriptor, checkpoint, inventory, resource_admis
                     optimizer_steps=descriptor['optimizer_steps'], parameters_sha256=sha(inventory))
     if any(policy.get(k) != v for k, v in bindings.items()):
         raise ValueError('current parent cache lineage')
-    if policy.get('independent_durable_readback_verified') is not True or policy.get('authority_committed') is not True:
-        raise ValueError('original durable adoption and independent readback required')
+    validate_adoption_evidence(policy, authority, descriptor)
+
     needed = sum(s['size'] for s in descriptor['shards'])
     if (type(policy.get('retained_cache_bytes')) is not int or policy['retained_cache_bytes'] != needed or
             resource_admission.get('current_parent_cache_bytes') != needed or
@@ -99,6 +99,26 @@ def pending_retention(cache_root, signed_policy, authority, *, current_bytes, pe
     return destination,wrap,retained
 
 
+def validate_adoption_evidence(policy, authority, descriptor):
+    from .remote_optimizer_readback import validate_receipt
+    from .persistent_training_protocol import PUBLICATION_VERSION
+    adoption=policy['adoption']; request=policy['readback_request']; receipt=policy['readback_receipt']
+    for field,envelope in [('adoption_sha256',adoption),('readback_request_sha256',request),('readback_receipt_sha256',receipt)]:
+        if policy.get(field)!=sha(envelope):raise ValueError('original evidence digest '+field)
+    adopted=authenticate(adoption,authority)
+    binding=policy['approved_readback_binding']
+    if (adopted.get('version')!=PUBLICATION_VERSION or adopted.get('descriptor')!=descriptor or
+            adopted.get('descriptor_sha256')!=sha(descriptor) or adopted.get('job_sha256')!=policy['job_sha256'] or
+            adopted.get('job_id')!=binding['job_id'] or adopted.get('namespace')!=binding['namespace'] or
+            binding['job_sha256']!=policy['job_sha256'] or binding['descriptor_sha256']!=sha(descriptor) or
+            binding['source_sha256']!=policy['source_sha256'] or binding['purpose']!='production-training-state'):
+        raise ValueError('original adoption source/job/namespace/descriptor')
+    objects=[{k:s[k]for k in ('name','size','sha256')}for s in descriptor['shards']]
+    if policy['approved_readback_objects']!=objects:raise ValueError('exact descriptor readback object inventory')
+    return validate_receipt(receipt,request,authority,approved_binding=binding,
+        approved_objects=objects,qualified_reader=policy['qualified_reader'],now=policy['original_evidence_observed_at'])
+
+
 def promote_pending(pending, *, signed_policy, authority, adoption, readback_request,
                     readback_receipt, now):
     """ROOT authorizes exact original evidence; no unattested readback booleans."""
@@ -108,8 +128,11 @@ def promote_pending(pending, *, signed_policy, authority, adoption, readback_req
     for field,envelope in [('adoption_sha256',adoption),('readback_request_sha256',readback_request),
                            ('readback_receipt_sha256',readback_receipt)]:
         if policy.get(field)!=sha(envelope):raise ValueError('original evidence digest '+field)
+    if policy.get('adoption')!=adoption or policy.get('readback_request')!=readback_request or policy.get('readback_receipt')!=readback_receipt:
+        raise ValueError('exact original promotion evidence envelopes')
     adopted=authenticate(adoption,authority)
     descriptor=adopted['descriptor']
+    validate_adoption_evidence(policy,authority,descriptor)
     if adopted.get('descriptor_sha256')!=sha(descriptor) or adopted.get('job_sha256')!=policy['job_sha256']:
         raise ValueError('original adoption job/descriptor')
     validate_descriptor(descriptor,policy['descriptor_sha256'],policy['checkpoint'],policy['inventory'])
