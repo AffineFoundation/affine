@@ -179,3 +179,20 @@ class RootSourceRegistryTests(unittest.TestCase):
             p=Path(folder)/'backend.py';p.write_bytes(b'changed');files={'backend.py':hashlib.sha256(b'old').hexdigest()}
             worker.source_registry={'6a':{'path':folder,'source_files':files}}
             with self.assertRaisesRegex(ValueError,'source changed'):worker.source_for_job({'manifest':{'payload':{'source_bundle':{'sha256':'6a'}}},'source_files':files})
+
+class ReceiptInputPathTests(WorkerTests):
+    def test_external_verified_cache_does_not_attest_same_id_unverified_owned_copy(self):
+        root=Path(self.folder.name);external=root/'external';external.mkdir()
+        (external/'config.json').write_bytes(b'{}');(external/'model.safetensors').write_bytes(b'weights')
+        owned=root/'backend'/'checkpoints'/'CP';owned.mkdir(parents=True)
+        (owned/'config.json').write_bytes(b'{}');(owned/'model.safetensors').write_bytes(b'unverified different bytes')
+        self.worker.checkpoint_caches={'CP':external}
+        self.worker.request=Mock(side_effect=[{'claim':self.claim},{'accepted':True}])
+        def run(args,**kwargs):
+            self.assertEqual(args[args.index('--checkpoint-cache')+1],str(external))
+            out=root/'backend'/'jobs'/'verify-job';out.mkdir(parents=True);(out/'report.json').write_text('{}')
+            return SimpleNamespace(returncode=0)
+        with patch('subnet.distributed_worker.subprocess.run',side_effect=run):self.worker.once()
+        self.assertFalse((root/'backend'/'.cache-lifecycle'/'CP.json').exists())
+        self.assertEqual((owned/'model.safetensors').read_bytes(),b'unverified different bytes')
+        self.assertTrue(external.exists())
