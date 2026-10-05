@@ -1,3 +1,18 @@
+Operator instruction, 2026-10-05: automatic storage lifecycle is now a priority.
+This supersedes the earlier request to defer local cache cleanup. Implement job-
+owned model and downloaded-rollout retirement in normal worker completion and
+capacity admission; R2 retains durable checkpoints, inputs and audit history.
+Do not depend on operator/manual per-machine clearing. Preserve live leases,
+current trainer state awaiting publication, private keys, code and job reports.
+
+E15 has closed successfully with independently published optimizer step six and
+checkpoint 2ba9497519650fbb29ba2213782e5bb76ee22a6721f4b16882f18a7596b039cc.
+The independent queue API was restored after the finish-once controller exited.
+The dashboard's legacy audited-counter projection omits unaudited learner input
+populations: E15 trained on 240 eligible pairs from 270 candidates, not only the
+old ten audited batches displayed. A count/provenance projection fix is underway.
+Training does not wait for each batch to pass full inference audits.
+
 Verified recovery update, 2026-10-05 19:07 UTC: the local E15 finish-once controller
 failed when its original SSH launch command timed out after 1,800 seconds.
 The same remote trainer remained live and progressed through optimizer restore
