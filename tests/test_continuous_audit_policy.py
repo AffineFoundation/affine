@@ -22,6 +22,10 @@ class PolicyControls(unittest.TestCase):
   r=self.calculate(eligible_evidence_ids=[]);self.assertEqual(r['points']['b'*64],0.)
   r=self.calculate(obs=[self.observation('confirmed_invalid')],eligible_evidence_ids=[]);self.assertEqual(r['miners']['b'*64]['confirmed_invalid_current'],1);self.assertEqual(r['points']['b'*64],0.)
   with self.assertRaises(ValueError):self.calculate(eligible_evidence_ids=['0'*64])
+ def test_infra_then_real_retry_not_conflicting_scientific_evidence(self):
+  infra=self.observation('infrastructure_error');good=self.observation(job='2'*64)
+  for evidence in ([infra,good],[good,infra]):
+   r=self.calculate(obs=evidence);self.assertGreater(r['points']['b'*64],.5);self.assertEqual(r['miners']['b'*64]['confirmed_invalid_current'],0)
  def test_prior_not_a_verified_claim(self):
   r=self.calculate();self.assertEqual(r['points']['b'*64],.5);self.assertFalse(r['unaudited_samples_claimed_verified']);self.assertFalse(r['training_waits_for_audits'])
  def test_probability_falls_and_repeat_deduplicates(self):
