@@ -148,3 +148,80 @@ class UploadJournal:
   self.slots[str(slot)]=sha(data)
   if self.path:
    self.path.parent.mkdir(parents=True,exist_ok=True);tmp=self.path.with_suffix('.tmp');tmp.write_bytes(canonical(dict(binding=self.binding,slots=self.slots)));tmp.chmod(0o600);tmp.replace(self.path)
+
+def check_prepared_cumulative(packed,manifest,maximum):
+    # Sum independent archive sizes/raw framing conservatively: duplicated
+    # manifests count toward the SAME historical cumulative caps.
+    import io,zipfile,zlib
+    from .artifact_budget import for_manifest
+    from .batches import UploadBudgetExceeded
+    budget=for_manifest(manifest);raw=0;compressed=0;array_raw=0;array_compressed=0;framing=22;records=[]
+    if len(packed)>maximum:raise ValueError('owned commitment slot cap')
+    for slot,(batch,artifact) in enumerate(packed):
+        compressed+=len(artifact)
+        with zipfile.ZipFile(io.BytesIO(artifact))as archive:
+            raw+=sum(e.file_size for e in archive.infolist())
+            record=json.loads(archive.read('manifest.json'))
+            if len(record)!=1 or record[0]['batch']!=batch:raise ValueError('prepared batch metadata')
+            row=record[0];refs=[]
+            for turns in row['arrays']:
+                renamed=[]
+                for name in turns:
+                    info=archive.getinfo(name);target=str(slot)+name[name.index('-'):]
+                    array_raw+=info.file_size;array_compressed+=info.compress_size
+                    framing+=76+2*len(target.encode());renamed.append(target)
+                refs.append(renamed)
+            records.append(dict(batch=batch,arrays=refs))
+    # Array DEFLATE bytes do not depend on member names. Account for exact
+    # hypothetical cumulative ZIP framing and combined canonical manifest,
+    # including two-digit slot prefixes, without decoding model arrays.
+    manifest_bytes=canonical(records);codec=zlib.compressobj(wbits=-15)
+    manifest_compressed=codec.compress(manifest_bytes)+codec.flush()
+    cumulative_raw=array_raw+len(manifest_bytes)
+    cumulative_compressed=array_compressed+framing+76+2*len('manifest.json')+len(manifest_compressed)
+    raw=max(raw,cumulative_raw);compressed=max(compressed,cumulative_compressed)
+    if raw>budget['raw_bytes']or compressed>budget['compressed_bytes']:raise UploadBudgetExceeded('prepared pairs exceed cumulative artifact budget')
+
+PREPARED_STATE='prepared-miner-pairs-v1'
+
+def write_prepared_state(path,manifest,packed):
+ """Persist immutable actual pair bytes, then atomically replace private index."""
+ import os
+ from pathlib import Path
+ check_prepared_cumulative(packed,manifest,manifest['max_batches'])
+ path=Path(path);directory=path.with_name(path.name+'.pairs')
+ need(not path.is_symlink()and not directory.is_symlink(),'private prepared state path')
+ directory.mkdir(parents=True,exist_ok=True,mode=0o700);directory.chmod(0o700)
+ rows=[]
+ for batch,data in packed:
+  digest=sha(data);target=directory/(digest+'.zip');need(not target.is_symlink(),'private prepared artifact path')
+  if target.exists():need(target.read_bytes()==data,'immutable prepared local artifact')
+  else:
+   temporary=directory/(digest+'.tmp-'+str(os.getpid()));need(not temporary.is_symlink(),'private prepared temporary path')
+   with temporary.open('xb')as stream:stream.write(data);stream.flush();os.fsync(stream.fileno())
+   temporary.chmod(0o600);temporary.replace(target)
+  rows.append(dict(sha256=digest,size=len(data),batch_sha256=sha(canonical(batch))))
+ value=dict(version=PREPARED_STATE,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],source=manifest['source_bundle']['sha256'],sampling_contract_sha256=sha(canonical(manifest.get('sampling_contract'))),pairs=rows)
+ path.parent.mkdir(parents=True,exist_ok=True);temporary=path.with_name(path.name+'.tmp-'+str(os.getpid()));need(not temporary.is_symlink(),'private prepared index temporary')
+ with temporary.open('xb')as stream:stream.write(canonical(value));stream.flush();os.fsync(stream.fileno())
+ temporary.chmod(0o600);temporary.replace(path)
+
+def read_prepared_state(path,manifest):
+ """Resume exact original bytes after full hash/admission; no recompression."""
+ from pathlib import Path
+ from .batches import unpack
+ from .artifact_budget import for_manifest
+ path=Path(path);need(not path.is_symlink()and path.stat().st_size<=65536,'private prepared state path');value=json.loads(path.read_bytes())
+ need(type(value)is dict and set(value)=={'version','epoch','checkpoint','source','sampling_contract_sha256','pairs'}and value['version']==PREPARED_STATE,'prepared state version')
+ need(value['epoch']==manifest['epoch']and value['checkpoint']==manifest['checkpoint']['id']and value['source']==manifest['source_bundle']['sha256']and value['sampling_contract_sha256']==sha(canonical(manifest.get('sampling_contract'))),'stale local prepared miner state')
+ need(type(value['pairs'])is list and len(value['pairs'])<=manifest['max_batches'],'prepared state slot cap')
+ directory=path.with_name(path.name+'.pairs');need(not directory.is_symlink(),'private prepared artifact directory');packed=[]
+ for row in value['pairs']:
+  need(type(row)is dict and set(row)=={'sha256','size','batch_sha256'}and is_digest(row['sha256'])and is_digest(row['batch_sha256'])and type(row['size'])is int and 0<row['size']<=for_manifest(manifest)['compressed_bytes'],'prepared state integrity fields')
+  target=directory/(row['sha256']+'.zip');need(not target.is_symlink()and target.stat().st_size==row['size'],'prepared local artifact size/path')
+  data=target.read_bytes();need(sha(data)==row['sha256'],'prepared local artifact full SHA256')
+  records=unpack(data,budget=for_manifest(manifest));need(len(records)==1,'prepared pair single batch')
+  batch,arrays=records[0];need(sha(canonical(batch))==row['batch_sha256']and batch['epoch']==manifest['epoch']and batch['checkpoint']==manifest['checkpoint']['id'],'prepared local batch binding')
+  packed.append((batch,data))
+ check_prepared_cumulative(packed,manifest,manifest['max_batches'])
+ return packed

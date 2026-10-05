@@ -181,3 +181,14 @@ or scoring rule changes. Safe phase telemetry contains counts/timings only.
 See docs/BOUNDED_MINER_SEARCH_AND_ONE_PASS_UPLOAD.md on GitHub. Historical sealed
 sources and their outcomes are unchanged; live activation requires a new
 qualified source and genuine in-window upload and audit.
+
+Prospective public Miner parity: small-commitment pairs are compressed once and
+cached immutably; legacy cumulative ZIP state is migrated once. The existing
+local state filename becomes a private prepared-miner-pairs-v1 JSON index with
+adjacent <state-name>.pairs/ SHA-addressed artifacts. Restart verifies full
+artifact hashes and original epoch/checkpoint/source/sampling-contract binding,
+then reuses exact bytes without recompression. Existing acknowledgements skip
+old slot PUTs; signed commitment publication remains last. Legacy transport is
+unchanged. Local state contains epoch rollouts; epoch publication rules are unchanged.
+This is prospective code, not evidence that a new
+source or live contract has been activated.

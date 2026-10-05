@@ -147,37 +147,8 @@ def owned_commitment_upload(job,manifest,progress_path=None):
     if identity.id!=job['miner_id']:raise ValueError('local miner signer binding')
     journal=UploadJournal(manifest,progress_path)
     def check_prepared(packed):
-        # Sum independent archive sizes/raw framing conservatively: duplicated
-        # manifests count toward the SAME historical cumulative caps.
-        import io,zipfile,zlib
-        from .artifact_budget import for_manifest
-        from .batches import UploadBudgetExceeded
-        budget=for_manifest(manifest);raw=0;compressed=0;array_raw=0;array_compressed=0;framing=22;records=[]
-        if len(packed)>len(job['capability']['batch_put_urls']):raise ValueError('owned commitment slot cap')
-        for slot,(batch,artifact) in enumerate(packed):
-            compressed+=len(artifact)
-            with zipfile.ZipFile(io.BytesIO(artifact))as archive:
-                raw+=sum(e.file_size for e in archive.infolist())
-                record=json.loads(archive.read('manifest.json'))
-                if len(record)!=1 or record[0]['batch']!=batch:raise ValueError('prepared batch metadata')
-                row=record[0];refs=[]
-                for turns in row['arrays']:
-                    renamed=[]
-                    for name in turns:
-                        info=archive.getinfo(name);target=str(slot)+name[name.index('-'):]
-                        array_raw+=info.file_size;array_compressed+=info.compress_size
-                        framing+=76+2*len(target.encode());renamed.append(target)
-                    refs.append(renamed)
-                records.append(dict(batch=batch,arrays=refs))
-        # Array DEFLATE bytes do not depend on member names. Account for exact
-        # hypothetical cumulative ZIP framing and combined canonical manifest,
-        # including two-digit slot prefixes, without decoding model arrays.
-        manifest_bytes=canonical(records);codec=zlib.compressobj(wbits=-15)
-        manifest_compressed=codec.compress(manifest_bytes)+codec.flush()
-        cumulative_raw=array_raw+len(manifest_bytes)
-        cumulative_compressed=array_compressed+framing+76+2*len('manifest.json')+len(manifest_compressed)
-        raw=max(raw,cumulative_raw);compressed=max(compressed,cumulative_compressed)
-        if raw>budget['raw_bytes']or compressed>budget['compressed_bytes']:raise UploadBudgetExceeded('prepared pairs exceed cumulative artifact budget')
+        from .commitment_transport import check_prepared_cumulative
+        return check_prepared_cumulative(packed,manifest,len(job['capability']['batch_put_urls']))
     def upload_pairs(packed,timeout):
         check_prepared(packed);start=time.monotonic()
         def put(url,data):
