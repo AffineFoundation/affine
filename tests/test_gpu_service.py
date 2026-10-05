@@ -68,7 +68,7 @@ class GPUHistoryCompletion(unittest.TestCase):
             for name,value in [('controller.json',status),(epoch+'-manifest.json',dict(epoch=epoch,checkpoint=old)),(epoch+'-verified.json',{}),(epoch+'-scores.json',dict(weights={})),('finalized-reports.json',[])]:
                 (state/name).write_text(json.dumps(value))
             config=dict(state=d,bucket={},remote={},source_bundle={},epoch_prefix='nonpayable-history',registration_allowlist=[])
-            controller=SimpleNamespace(train=Mock())
+            controller=SimpleNamespace(train=Mock(),signed=lambda value:value)
             with patch('subnet.gpu_service.Bucket'),patch('subnet.gpu_service.Gateway'),patch('subnet.gpu_service.RemoteController',return_value=controller),patch('subnet.gpu_service.ChainAdapter'),patch('subnet.gpu_service.evaluate') as evaluate_after,patch('subnet.gpu_service.publish_history',side_effect=KeyError('key')),patch('subnet.gpu_service.log.exception'):
                 with self.assertRaises(KeyError):run(config,once=True)
                 evaluate_after.assert_called_once()

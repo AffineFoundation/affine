@@ -2,7 +2,7 @@ import copy,json,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch,Mock
 from types import SimpleNamespace
-from subnet.remote_backend import RemoteJobs,RemoteController,role_time_budget
+from subnet.remote_backend import RemoteJobs,RemoteController,role_time_budget,RemoteObservationTimeout
 from nacl.signing import SigningKey
 import base64
 from subnet.backend_jobs import BACKEND_PROFILE,NUMERICAL_POLICY,REVISION,canonical,signed
@@ -34,6 +34,36 @@ class RemoteReportBinding(unittest.TestCase):
             self.jobs.copy_from=fetch
             with patch('subnet.remote_backend.time.sleep'):result=self.jobs.run('label','verify',self.manifest)
             self.assertTrue(result['success']);self.jobs.command.assert_not_called();self.jobs.copy_to.assert_not_called()
+    def test_observation_timeout_resumes_same_original_job_without_new_signature(self):
+        self.jobs.config={};self.jobs.workspace='/remote'
+        (self.jobs.state/'label.json').write_text(json.dumps(self.prior))
+        self.jobs.remote_status=Mock(return_value={'phase':'running'})
+        self.jobs.command=Mock();self.jobs.copy_to=Mock()
+        original=(self.jobs.state/'same-job-job.json').read_bytes()
+        with patch('subnet.remote_backend.time.time',side_effect=[0,1801]),patch('subnet.remote_backend.time.sleep'):
+            with self.assertRaises(RemoteObservationTimeout) as caught:self.jobs.run('label','verify',self.manifest)
+        self.assertEqual(caught.exception.job_id,'same-job')
+        self.jobs.remote_status=Mock(return_value={'phase':'complete'})
+        self.jobs.copy_from=lambda remote,local:local.write_text(json.dumps(self.report))
+        result=self.jobs.run('label','verify',self.manifest)
+        self.assertEqual(result['job_id'],'same-job')
+        self.assertEqual((self.jobs.state/'same-job-job.json').read_bytes(),original)
+        self.jobs.command.assert_not_called();self.jobs.copy_to.assert_not_called()
+    def test_independent_evaluation_does_not_relaunch_terminal_job(self):
+        self.jobs.config={'retain_original_jobs':True};self.jobs.workspace='/remote'
+        job=dict(self.envelope['payload'],role='evaluate',heldout=[{'indices':[1]}],manifest=self.envelope_manifest())
+        envelope=dict(payload=job,signer=self.operator,signature=base64.b64encode(self.key.sign(canonical(job)).signature).decode())
+        prior=dict(self.prior,role='evaluate',job_sha256=hashlib.sha256(canonical(job)).hexdigest())
+        (self.jobs.state/'same-job-job.json').write_text(json.dumps(envelope))
+        (self.jobs.state/'label.json').write_text(json.dumps(prior))
+        self.jobs.remote_status=Mock(return_value={'phase':'failed'});self.jobs.copy_to=Mock()
+        with self.assertRaisesRegex(RuntimeError,'refuse automatic relaunch'):
+            self.jobs.run('label','evaluate',self.manifest,heldout=[{'indices':[1]}])
+        self.jobs.copy_to.assert_not_called()
+        with self.assertRaisesRegex(ValueError,'evaluation request changed'):
+            self.jobs.run('label','evaluate',self.manifest,heldout=[{'indices':[2]}])
+    def envelope_manifest(self):
+        return dict(payload=self.manifest,signer=self.operator,signature=base64.b64encode(self.key.sign(canonical(self.manifest)).signature).decode())
     def test_status_connection_failure_never_launches_duplicate(self):
         with tempfile.TemporaryDirectory() as d:
             self.jobs.state=Path(d);(self.jobs.state/'label.json').write_text(json.dumps(self.prior));self.jobs.remote_status=Mock(side_effect=TimeoutError('SSH status unreachable'));self.jobs.copy_to=Mock()

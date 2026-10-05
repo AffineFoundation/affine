@@ -1,0 +1,18 @@
+# Operator template. Install only after the corresponding pinned source and
+# signed prospective contract/config have been admitted. Never start on E10.
+[Unit]
+Description=Affine independent pinned checkpoint evaluator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/const/subnet120-rewrite
+# Replace SOURCE and CONFIG with operator-admitted immutable paths.
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -I -B -c "import sys,runpy;sys.path.insert(0,'SOURCE');sys.argv=['checkpoint_evaluator','--config','CONFIG'];runpy.run_module('subnet.checkpoint_evaluator',run_name='__main__')"
+Restart=on-failure
+RestartSec=10
+UMask=0077
+
+[Install]
+WantedBy=default.target

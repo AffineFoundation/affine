@@ -16,6 +16,7 @@ from .service import definitions
 from .harness import normalize
 from .publication import publish_history
 from .evaluation import wilson
+from .epoch_timing import transition as transition_phase,completion as epoch_completion
 
 log=logging.getLogger('affine-gpu')
 
@@ -167,6 +168,8 @@ def run(config,once=False):
             raise ValueError('dedicated prospective compute-only reward prefix')
     if type(config.get('owned_miner_dispatch',True))is not bool:raise ValueError('owned miner dispatch must be boolean')
     registration_policy(config)
+    from .checkpoint_evaluator import evaluation_mode
+    independent_evaluation=evaluation_mode(config)=='independent-checkpoints-v1'
     epoch_policy(config)
     if config.get('audit_policy',{}).get('version')=='bounded-random-v1':
         from .audit_policy import validate
@@ -191,7 +194,7 @@ def run(config,once=False):
                 identities={r['public_key']:k for k,r in registrations.items()}
                 if len(identities)!=len(registrations):raise ValueError('duplicate registered identity')
                 epoch=prefix+'-'+str(int(time.time()))+'-'+str(status['round'])
-                status['active']=dict(epoch=epoch,registrations=registrations,identities=identities,phase='opening');save(statuspath,status)
+                status['active']=dict(epoch=epoch,registrations=registrations,identities=identities,phase='opening',started_at=time.time(),phase_started_at=time.time());save(statuspath,status)
                 save(state/(epoch+'-registrations.json'),registrations)
             active=status['active'];epoch=active['epoch'];manifestpath=state/(epoch+'-manifest.json')
             save(state/'health.json',dict(status=active['phase'],epoch=epoch,checkpoint=status['checkpoint']['id'],time=time.time(),chain_transactions=False))
@@ -220,7 +223,7 @@ def run(config,once=False):
                 ledger=json.loads(ledgerpath.read_text()) if ledgerpath.exists() else []
                 key='public/streams/'+prefix+'/current.json';pointer=dict(epoch=epoch,manifest='public/'+epoch+'/manifest.json',manifest_url=bucket.presign('public/'+epoch+'/manifest.json'),current_url=bucket.presign(key),current_url_expires_at=time.time()+604800,transport_policy='direct-r2-v1',history_url=publish_history(controller,prefix,ledger,config['source_bundle']))
                 bucket.json(key,controller.signed(pointer));save(state/'direct-discovery.json',dict(current_url=bucket.presign(key),authority=controller.authority.id,expires_at=time.time()+604800))
-                active['phase']='mine';save(statuspath,status)
+                transition_phase(active,'mine');save(statuspath,status)
             manifest=json.loads(manifestpath.read_text())
             if active['phase']=='mine':
                 if owned_dispatch_allowed(config,manifest) and time.time()<manifest['deadline']:
@@ -231,7 +234,7 @@ def run(config,once=False):
                         seed_start=0 if manifest.get('sampling_contract') else 100+status['round']*1000
                         controller.jobs.run(epoch+'-mine-'+miner[:8],'mine',manifest,None,miner_id=miner,capability=capability,search_budget=attempts,seed_start=seed_start,**owned_fields)
                     status['checkpoint_path']=(controller.jobs.checkpoint_path('mine',status['checkpoint']['id']) if hasattr(controller.jobs,'checkpoint_path') else config['remote']['workspace']+'/checkpoints/'+status['checkpoint']['id'])
-                active['phase']='collect';save(statuspath,status)
+                transition_phase(active,'collect');save(statuspath,status)
             if active['phase']=='collect':
                 if time.time()<manifest['deadline']:
                     save(state/'health.json',dict(status='collecting',epoch=epoch,deadline=manifest['deadline'],time=time.time()));time.sleep(min(10,max(1,manifest['deadline']-time.time())));continue
@@ -240,11 +243,15 @@ def run(config,once=False):
                 validate_empty_completion(manifest,result,reports)
                 ledger=json.loads(ledgerpath.read_text()) if ledgerpath.exists() else []
                 if not any(r['epoch_id']==epoch for r in ledger):ledger.append(dict(result,points={active['identities'][m]:p for m,p in result['points'].items()}))
-                save(ledgerpath,ledger);active['phase']='before';save(statuspath,status)
+                save(ledgerpath,ledger);transition_phase(active,'before');save(statuspath,status)
             reports=json.loads((state/(epoch+'-verified.json')).read_text())
             if active['phase']=='before':
-                evaluate(controller,manifest,status['checkpoint_path'],'before',status['training_steps'],config)
-                active['phase']='train';save(statuspath,status)
+                if independent_evaluation:
+                    from .checkpoint_evaluator import enqueue
+                    enqueue(controller,manifest,status['checkpoint_path'],'before',status['training_steps'],config,public_optimizer_steps=status.get('trainer_state',{}).get('optimizer_steps',manifest.get('trainer_state_binding',{}).get('global_step_before')))
+                else:
+                    evaluate(controller,manifest,status['checkpoint_path'],'before',status['training_steps'],config)
+                transition_phase(active,'train');save(statuspath,status)
             if active['phase']=='train':
                 if any(r['accepted'] for r in reports.values()):
                     replay=None;steps=config.get('training_steps',1)
@@ -273,15 +280,28 @@ def run(config,once=False):
                     bucket.json('public/'+epoch+'/training.json',controller.signed(dict(status='closed_no_accepted_batches',checkpoint=status['checkpoint']['id'])))
                     active['next_checkpoint']=status['checkpoint'];active['next_path']=status['checkpoint_path'];active['next_steps']=status['training_steps']
                     if status.get('trainer_state')is not None:active['next_trainer_state']=status['trainer_state']
-                active['phase']='after';save(statuspath,status)
+                transition_phase(active,'after');save(statuspath,status)
             if active['phase']=='after':
-                nextmanifest=dict(manifest,checkpoint=active['next_checkpoint']);evaluate(controller,nextmanifest,active['next_path'],'after',active['next_steps'],config)
+                nextmanifest=dict(manifest,checkpoint=active['next_checkpoint'])
+                if independent_evaluation:
+                    from .checkpoint_evaluator import enqueue
+                    enqueue(controller,nextmanifest,active['next_path'],'after',active['next_steps'],config,public_optimizer_steps=active.get('next_trainer_state',{}).get('optimizer_steps'))
+                else:
+                    evaluate(controller,nextmanifest,active['next_path'],'after',active['next_steps'],config)
                 save(state/(epoch+'-proposed-weights.json'),dict(epoch_id=epoch,payable=False,weights=json.loads((state/(epoch+'-scores.json')).read_text())['weights'],chain_transactions=False))
                 publish_history(controller,prefix,json.loads(ledgerpath.read_text()),config['source_bundle'])
                 # A failed history publication must remain in the after phase:
                 # resume reuses the completed evaluation and never retrains.
                 if active.get('next_trainer_state')is not None:
-                    status.update(trainer_state=active['next_trainer_state'],persistent_state_committed=True)
+                    committed=json.loads((state/'latest-trainer-state.json').read_text())
+                    if committed!=active['next_trainer_state']:
+                        raise ValueError('next committed trainer state journal mismatch')
+                    if committed['inference_checkpoint']!=active['next_checkpoint']['id']:
+                        raise ValueError('next committed trainer state checkpoint mismatch')
+                    status.update(trainer_state=committed,persistent_state_committed=True,public_optimizer_steps=committed['optimizer_steps'])
+                timing=epoch_completion(active,manifest,status['training_steps'])
+                bucket.json('public/'+epoch+'/controller-timing.json',controller.signed(timing))
+                save(state/(epoch+'-controller-timing.json'),timing)
                 status.update(checkpoint=active['next_checkpoint'],checkpoint_path=active['next_path'],training_steps=active['next_steps'],active=None,round=status['round']+1);save(statuspath,status)
                 if once:return
         except Exception as error:
