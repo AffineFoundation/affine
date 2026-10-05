@@ -6,7 +6,7 @@ from botocore.exceptions import ClientError
 from nacl.signing import SigningKey
 from test_continuous_audit_policy import signed
 from subnet.continuous_audit_policy import VERSION,digest
-from subnet.continuous_audit_service import ContinuousAuditor,InvalidCommittedArtifact,atomic
+from subnet.continuous_audit_service import ContinuousAuditor,InvalidCommittedArtifact,atomic,completed_learners
 class Bucket:
  def __init__(self):self.name='bucket';self.client=self;self.error=None;self.body=b'proof';self.copies=[]
  def head_object(self,**kw):
@@ -22,6 +22,24 @@ class Queue:
  def enqueue(self,e):self.envelopes.append(e)
  def archive(self,*a):pass
 class ServiceControls(unittest.TestCase):
+ def test_signed_closure_and_unsigned_mirror_count_once(self):
+  key=SigningKey.generate();root=key.verify_key.encode().hex()
+  with tempfile.TemporaryDirectory()as directory:
+   p=Path(directory);record=dict(epoch='e1',completed_at=3601,round=1,checkpoint='a'*64)
+   atomic(p/'e1-learner-completion.json',record);atomic(p/'e1-signed-learner-completion.json',signed(key,record))
+   self.assertEqual(completed_learners(p,root),[record])
+   atomic(p/'unsigned-learner-completion.json',dict(epoch='unsigned',completed_at=0))
+   self.assertEqual(completed_learners(p,root),[record])
+ def test_forged_signed_closure_fails_closed(self):
+  key=SigningKey.generate();other=SigningKey.generate()
+  with tempfile.TemporaryDirectory()as directory:
+   atomic(Path(directory)/'e1-signed-learner-completion.json',signed(other,dict(epoch='e1',completed_at=3601)))
+   with self.assertRaises(ValueError):completed_learners(directory,key.verify_key.encode().hex())
+ def test_signed_closure_cannot_substitute_epoch(self):
+  key=SigningKey.generate()
+  with tempfile.TemporaryDirectory()as directory:
+   atomic(Path(directory)/'e1-signed-learner-completion.json',signed(key,dict(epoch='e2',completed_at=3601)))
+   with self.assertRaises(ValueError):completed_learners(directory,key.verify_key.encode().hex())
  def setUp(self):
   self.directory=tempfile.TemporaryDirectory();self.addCleanup(self.directory.cleanup);self.key=SigningKey.generate();self.root=self.key.verify_key.encode().hex();self.bucket=Bucket();self.queue=Queue()
   self.controller=SimpleNamespace(authority=SimpleNamespace(id=self.root),bucket=self.bucket,signed=lambda p:signed(self.key,p))

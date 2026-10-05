@@ -13,6 +13,17 @@ from .storage import canonical
 
 class InvalidCommittedArtifact(ValueError):pass
 
+def completed_learners(state,authority):
+ """Read authenticated closures once, never their unsigned local mirrors."""
+ result=[]
+ for path in sorted(Path(state).glob('*-signed-learner-completion.json')):
+  completion=authenticate(json.loads(path.read_text()),authority)
+  from .continuous_audit_policy import finite
+  finite(completion['completed_at'],0,2**53,'original learner completion timestamp')
+  if path.name!=completion['epoch']+'-signed-learner-completion.json':raise ValueError('learner completion epoch identity')
+  result.append(completion)
+ return result
+
 def admitted_service_config(config,authority):
  sources=authenticate(config['source_admission'],authority)
  if sources.get('version')!='continuous-audit-service-sources-v1':raise ValueError('operator admitted exact audit source/runtime metadata')
@@ -217,7 +228,7 @@ def main(argv=None):
   for path in sorted(state.glob('*-continuous-audit-population.json')):service.admit(json.loads(path.read_text()))
   result=service.tick();atomic(state/'continuous-audit-health.json',dict(at=time.time(),**result))
   cutoff=int(time.time()//3600)*3600
-  service.reconcile_hours([json.loads(path.read_text())for path in sorted(state.glob('*-learner-completion.json'))],cutoff)
+  service.reconcile_hours(completed_learners(state,controller.authority.id),cutoff)
   if a.once:return 0
   time.sleep(c.get('poll_seconds',10))
 
