@@ -196,6 +196,9 @@ def validate_job(job, manifest, authority):
             or not {'subnet/compact_training_inputs.py','subnet/training_receipts.py'} <= set(job.get('source_files',{}))
             or manifest.get('training_execution_amendment') is not None):
         raise ValueError('prospective compact job/source/policy required; v1 amendments cannot opt in')
+    if manifest.get('training_startup_recovery')is not None:
+        from .training_startup_recovery import validate
+        validate(job,manifest,authority)
     submissions = job.get('submissions')
     if not isinstance(submissions,list) or not 1 <= len(submissions) <= 256:
         raise ValueError('bounded compact submission inventory')

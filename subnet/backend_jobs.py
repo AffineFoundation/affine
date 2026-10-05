@@ -320,6 +320,8 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
            for spec in native_specs):
         if 'subnet/native_math_grader.py' not in job.get('source_files', {}):
             raise ValueError('prospective native MATH grader source pin required')
+    if manifest.get('training_startup_recovery')is not None:
+        if job.get('role')!='train' or 'subnet/training_startup_recovery.py'not in job.get('source_files',{}):raise ValueError('explicit startup recovery source pin required')
     required=SOURCE_FILES if required_source_files is None else required_source_files
     if not required or not set(required)<=set(job.get('source_files',{})):raise ValueError('missing worker source pins')
     for name,sha in job['source_files'].items():
@@ -564,6 +566,8 @@ def install_source_loader(root,additional_files=()):
     for module_name in ('subnet.backend_profiles','subnet.artifact_budget','subnet.audit_policy','subnet.auditing','subnet.training_policy','subnet.commitment_transport',
             'subnet.persistent_cpu_adamw','subnet.persistent_training_state','subnet.persistent_training_protocol','subnet.training_receipts'):
         sys.modules.pop(module_name,None)
+    if 'subnet/training_startup_recovery.py'in additional_files:
+        sys.modules.pop('subnet.training_startup_recovery',None)
     if 'subnet/compact_training_inputs.py' in additional_files:
         sys.modules.pop('subnet.compact_training_inputs',None)
     if 'subnet/persistent_publication.py' in additional_files:
@@ -597,13 +601,14 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         if version(name)!=expected:raise ValueError('runtime package mismatch')
     if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':raise ValueError('CUDA environment profile')
     publication_files=('subnet/persistent_publication.py',) if manifest.get('persistent_publication_policy') is not None else ()
+    recovery_files=('subnet/training_startup_recovery.py',)if manifest.get('training_startup_recovery')is not None else ()
     compact_files=('subnet/compact_training_inputs.py',) if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2') else ()
     if job.get('training_policy')==PERSISTENT_POLICY:
         from .persistent_training_protocol import EXECUTION_FILES
-        install_source_loader(root,(*EXECUTION_FILES,'subnet/training_receipts.py',*compact_files,*publication_files))
+        install_source_loader(root,(*EXECUTION_FILES,'subnet/training_receipts.py',*compact_files,*publication_files,*recovery_files))
     elif job.get('training_policy')==COVERED_POLICY:
-        install_source_loader(root,('subnet/training_receipts.py',*compact_files,*publication_files))
-    else:install_source_loader(root,(*compact_files,*publication_files))
+        install_source_loader(root,('subnet/training_receipts.py',*compact_files,*publication_files,*recovery_files))
+    else:install_source_loader(root,(*compact_files,*publication_files,*recovery_files))
     if publication_files:
         from .persistent_publication import validate_policy
         validate_policy(manifest['persistent_publication_policy'])
