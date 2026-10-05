@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import threading
+import time
 from .cache_lifecycle import snapshot,identifier
 from .storage import canonical
 from .distributed_roles import authenticate
@@ -42,7 +43,7 @@ class StateCache:
         if self.policy is None:raise ValueError('optimizer cache default is off')
         self.root=self.workspace/'.optimizer-state-cache';self.root.mkdir(mode=0o700,exist_ok=True)
         if self.root!=self.root.resolve():raise ValueError('optimizer cache root symlink')
-        self.fd=None;self.lock=threading.Lock();self.current=None;self.rows={};self.cache_evidence=[]
+        self.fd=None;self.lock=threading.Lock();self.current=None;self.rows={};self.cache_evidence=[];self.promotion_wait_seconds=1800
     def __enter__(self):
         self.fd=os.open(self.root/'lease',os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
         try:
@@ -77,7 +78,48 @@ class StateCache:
         promotion=self.root/'promotion.json'
         if promotion.exists():
             snapshot(promotion)
-            intent=json.loads(promotion.read_bytes());authenticate(intent['ack'],self.authority)
+            intent=json.loads(promotion.read_bytes());confirmed=authenticate(intent['ack'],self.authority)
+            if intent.get('phase')=='failed' and intent.get('child_terminal_confirmed')is True:
+                pid=intent.get('child_pid');ticks=intent.get('child_ticks')
+                if type(pid)is not int or (not isinstance(ticks,str)and not(ticks is None and type(intent.get('child_exit_code'))is int)):raise ValueError('terminal promotion child identity')
+                proc=Path('/proc')/str(pid)/'stat'
+                try:fields=proc.read_text().rsplit(')',1)[1].split()
+                except FileNotFoundError:fields=None
+                if fields and (ticks is None or fields[0]!='Z'and fields[19]==ticks):raise ValueError('promotion child still live')
+                original=authenticate(json.loads((self.workspace/(confirmed['job_id']+'.json')).read_bytes()),self.authority)
+                report=json.loads((self.workspace/'jobs'/confirmed['job_id']/'report.json').read_bytes())
+                if (confirmed.get('version')!='durable-original-trainer-cache-ACK-v1'or confirmed.get('authority_state_committed')is not True or
+                    confirmed['job_sha256']!=sha(original)or confirmed['report_sha256']!=sha(report)or report.get('success')is not True or
+                    confirmed['trainer_state']['descriptor_sha256']!=sha(descriptor)or
+                    report['persistent_training_state']['descriptor_sha256']!=sha(descriptor)or
+                    confirmed['new_checkpoint']!=report['new_checkpoint']or
+                    confirmed['trainer_state']['optimizer_steps']!=descriptor['optimizer_steps']):
+                    raise ValueError('failed promotion cold fallback exact durable original lineage')
+                # Only the optional byte cache failed. Keep original signed job,
+                # ACK, publication report and candidate inventory as evidence.
+                for name in ('pending.json','current.json'):
+                    marker=self.root/name
+                    if not marker.exists():continue
+                    snapshot(marker);candidate=json.loads(marker.read_bytes())
+                    candidate_job=authenticate(json.loads((self.workspace/(candidate['job_id']+'.json')).read_bytes()),self.authority)
+                    if sha(candidate_job)!=candidate['job_sha256']:raise ValueError('failed cache candidate original ownership')
+                    self.discard(candidate,'terminal-promotion-failure-cold-fallback')
+                    self.save(self.root/('failed-'+candidate['job_id']+'-'+name),candidate);marker.unlink()
+                self.cache_evidence.append(dict(outcome='cold',reason='confirmed-terminal-promotion-failure',job_id=confirmed['job_id']))
+                return 0
+            if intent.get('phase')=='pending':
+                # Cover a promotion launched between coordinator predispatch
+                # admission and worker startup. Release the cache lease while
+                # waiting, so the original ACK helper can actually promote.
+                if self.fd is not None:os.close(self.fd);self.fd=None
+                deadline=time.monotonic()+self.promotion_wait_seconds
+                while time.monotonic()<deadline:
+                    time.sleep(0.1)
+                    snapshot(promotion);latest=json.loads(promotion.read_bytes());authenticate(latest['ack'],self.authority)
+                    if latest.get('phase')!='pending':
+                        self.__enter__()
+                        return self.prepare_parent(descriptor,source)
+                raise ValueError('original post-ACK promotion requires terminal observation before next training')
             if intent.get('phase')!='complete':raise ValueError('original post-ACK promotion requires terminal observation before next training')
         pending=self.root/'pending.json'
         marker=self.root/'current.json'

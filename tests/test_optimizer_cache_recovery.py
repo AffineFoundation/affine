@@ -28,8 +28,74 @@ class CacheACKRecovery(StateCacheControls):
         descriptor=self.candidate();guard=self.root/'.optimizer-state-cache/promotion.json';guard.write_bytes(canonical(dict(phase='pending',ack=self.ack)))
         newer=copy.deepcopy(self.job);newer['job_id']='next'
         with StateCache(self.root,newer,self.manifest,self.authority)as cache:
+            cache.promotion_wait_seconds=0
             with self.assertRaisesRegex(ValueError,'terminal observation'):cache.prepare_parent(descriptor,'aa'*32)
         self.assertTrue((self.root/'.optimizer-state-cache/pending.json').exists())
+
+    def test_late_pending_promotion_releases_lease_then_continues_same_training(self):
+        import threading,time
+        descriptor=self.candidate();guard=self.root/'.optimizer-state-cache/promotion.json'
+        guard.write_bytes(canonical(dict(phase='pending',ack=self.ack)))
+        completed=[]
+        def original_promotion():
+            time.sleep(.05)
+            # The original helper must be able to acquire the same owned lease.
+            completed.append(promote(self.ack,self.authority,self.root))
+            guard.write_bytes(canonical(dict(phase='complete',ack=self.ack)))
+        worker=threading.Thread(target=original_promotion)
+        newer=copy.deepcopy(self.job);newer['job_id']='next'
+        with StateCache(self.root,newer,self.manifest,self.authority)as cache:
+            cache.promotion_wait_seconds=3;worker.start()
+            self.assertGreater(cache.prepare_parent(descriptor,'aa'*32),0)
+        worker.join(3);self.assertEqual(len(completed),1);self.assertTrue(completed[0]['promoted'])
+
+    def test_confirmed_terminal_failed_promotion_falls_back_cold_preserving_ACK_evidence(self):
+        descriptor=self.candidate();guard=self.root/'.optimizer-state-cache/promotion.json'
+        guard.write_bytes(canonical(dict(phase='failed',ack=self.ack,child_pid=99999999,child_ticks='1',child_terminal_confirmed=True)))
+        newer=copy.deepcopy(self.job);newer['job_id']='next'
+        with StateCache(self.root,newer,self.manifest,self.authority)as cache:
+            self.assertEqual(cache.prepare_parent(descriptor,'aa'*32),0)
+            self.assertEqual(cache.cache_evidence[-1]['reason'],'confirmed-terminal-promotion-failure')
+        self.assertTrue(guard.exists());self.assertTrue((self.root/'original.json').exists());self.assertTrue((self.out/'report.json').exists())
+        self.assertTrue((self.root/'.optimizer-state-cache/failed-original-pending.json').exists())
+        self.assertFalse(list((self.root/'.optimizer-state-cache/candidate-original').glob('*.safetensors')))
+        self.assertTrue(self.objects)
+    def test_fast_child_without_captured_ticks_requires_confirmed_exit_and_absent_pid(self):
+        descriptor=self.candidate();guard=self.root/'.optimizer-state-cache/promotion.json'
+        guard.write_bytes(canonical(dict(phase='failed',ack=self.ack,child_pid=99999999,child_ticks=None,child_exit_code=1,child_terminal_confirmed=True)))
+        with StateCache(self.root,self.job,self.manifest,self.authority)as cache:
+            self.assertEqual(cache.prepare_parent(descriptor,'aa'*32),0)
+
+    def test_unknown_terminal_failure_cannot_discard_candidate(self):
+        descriptor=self.candidate();guard=self.root/'.optimizer-state-cache/promotion.json'
+        guard.write_bytes(canonical(dict(phase='failed',ack=self.ack,child_terminal_confirmed=False)))
+        with StateCache(self.root,self.job,self.manifest,self.authority)as cache:
+            cache.promotion_wait_seconds=0
+            with self.assertRaisesRegex(ValueError,'terminal observation'):cache.prepare_parent(descriptor,'aa'*32)
+        self.assertTrue(list((self.root/'.optimizer-state-cache/candidate-original').glob('*.safetensors')))
+    def test_live_child_even_claimed_terminal_cannot_trigger_cold_retirement(self):
+        import os
+        descriptor=self.candidate();ticks=Path('/proc',str(os.getpid()),'stat').read_text().rsplit(')',1)[1].split()[19]
+        guard=self.root/'.optimizer-state-cache/promotion.json';guard.write_bytes(canonical(dict(phase='failed',ack=self.ack,child_pid=os.getpid(),child_ticks=ticks,child_terminal_confirmed=True)))
+        with StateCache(self.root,self.job,self.manifest,self.authority)as cache:
+            with self.assertRaisesRegex(ValueError,'still live'):cache.prepare_parent(descriptor,'aa'*32)
+        self.assertTrue(list((self.root/'.optimizer-state-cache/candidate-original').glob('*.safetensors')))
+    def test_predispatch_pending_timeout_does_not_allocate_original_training_job(self):
+        from types import SimpleNamespace
+        from subnet.remote_backend import RemoteJobs,RemoteObservationTimeout
+        self.candidate();guard=self.root/'.optimizer-state-cache/promotion.json';guard.write_bytes(canonical(dict(phase='pending',ack=self.ack)))
+        remote=RemoteJobs.__new__(RemoteJobs);remote.workspace=str(self.root);remote.python=sys.executable;remote.code=str(Path(__file__).resolve().parents[1])
+        remote.controller=SimpleNamespace(authority=SimpleNamespace(id=self.authority))
+        remote.command=lambda text,timeout:subprocess.check_output(['bash','-c',text],text=True,timeout=timeout)
+        with self.assertRaises(RemoteObservationTimeout):remote.wait_training_cache_ack(budget=0)
+        remote.state=self.root/'roles';remote.state.mkdir()
+        actual_wait=remote.wait_training_cache_ack;remote.wait_training_cache_ack=lambda:actual_wait(budget=0)
+        with self.assertRaises(RemoteObservationTimeout):remote.run('next','train',self.manifest)
+        self.assertEqual(list(remote.state.iterdir()),[])
+        remote.wait_training_cache_ack=actual_wait
+        guard.write_bytes(canonical(dict(phase='failed',ack=self.ack,child_pid=99999999,child_ticks='1',child_terminal_confirmed=True)))
+        self.assertTrue(remote.wait_training_cache_ack(budget=0)['ready'])
+        self.assertEqual([p.name for p in self.root.glob('*.json')],['original.json'])
 
 class FreshCacheLoader(unittest.TestCase):
     def test_real_fresh_process_pure_admission_then_authenticated_execution_modules(self):
