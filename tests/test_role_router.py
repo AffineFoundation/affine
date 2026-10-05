@@ -1,5 +1,6 @@
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -10,7 +11,7 @@ from subnet.role_router import RoutedJobs
 class RoutingTests(unittest.TestCase):
     def setUp(self):
         self.folder=tempfile.TemporaryDirectory();self.addCleanup(self.folder.cleanup)
-        self.router=RoutedJobs.__new__(RoutedJobs);self.router.initial_role='mine'
+        self.router=RoutedJobs.__new__(RoutedJobs);self.router.cache_lock=threading.RLock();self.router.initial_role='mine'
         self.router.roles={role:Mock() for role in ('mine','train','evaluate')}
         for role,endpoint in self.router.roles.items():endpoint.workspace='/'+role
         self.router.owners={};self.router.caches={};self.router.cache_path=Path(self.folder.name)/'caches.json';self.router.owner_path=Path(self.folder.name)/'owners.json'

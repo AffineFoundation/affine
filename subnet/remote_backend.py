@@ -265,6 +265,37 @@ class RemoteJobs:
             if status['phase']=='not_launched' and time.time()-started>30:raise RuntimeError('remote launcher marker absent; retain job record for authoritative recovery')
             if time.time()-started>1800:raise RemoteObservationTimeout(prior['job_id'],role)
             time.sleep(5)
+    def retire_training_cache(self,job,report,pointer,input_cache=None):
+        """Best-effort CPU housekeeping only after the coordinator's durable ACK."""
+        overlay=self.config.get('cache_lifecycle_overlay')
+        names=('subnet/cache_lifecycle.py','subnet/trainer_cache_lifecycle.py')
+        if overlay is not None:
+            if set(overlay)!={'code','files'}or set(overlay['files'])!=set(names):raise ValueError('exact lifecycle operator overlay')
+            code=overlay['code'];files=overlay['files']
+        else:
+            code=self.code;files={n:self.metadata['source_files'].get(n)for n in names}
+        if any(not value for value in files.values()):return dict(status='not-configured',removed_checkpoints=[])
+        manifest=signed(job['manifest'],self.controller.authority.id)
+        ack=self.controller.signed(dict(version='durable-original-trainer-cache-ACK-v1',
+            job_id=job['job_id'],job_sha256=hashlib.sha256(canonical(job)).hexdigest(),
+            report_sha256=hashlib.sha256(canonical(report)).hexdigest(),input_checkpoint=manifest['checkpoint'],
+            input_cache=input_cache or self.workspace+'/checkpoints/'+manifest['checkpoint']['id'],
+            new_checkpoint=report['new_checkpoint'],trainer_state=pointer,authority_state_committed=True))
+        data=dict(code=code,files=files,workspace=self.workspace,ack=ack,authority=self.controller.authority.id,backend_code=self.code)
+        script='DATA='+repr(data)+'\n'+'''import sys,hashlib,json,importlib.util
+from pathlib import Path
+sys.dont_write_bytecode=True;sys.path.insert(0,DATA['backend_code'])
+import subnet
+for name in DATA['files']:
+ path=Path(DATA['code'])/name
+ assert path.is_file()and not path.is_symlink()and hashlib.sha256(path.read_bytes()).hexdigest()==DATA['files'][name]
+for name in ('cache_lifecycle','trainer_cache_lifecycle'):
+ spec=importlib.util.spec_from_file_location('subnet.'+name,Path(DATA['code'])/'subnet'/(name+'.py'))
+ module=importlib.util.module_from_spec(spec);sys.modules['subnet.'+name]=module;spec.loader.exec_module(module)
+print(json.dumps(module.retire(DATA['ack'],DATA['authority'],DATA['workspace'])))
+'''
+        return json.loads(self.command(shlex.quote(self.python)+' -I -B -c '+shlex.quote(script),timeout=60))
+
     def checked(self,report,prior,manifest):
         from .backend_profiles import execution_profile
         revision,profile,policy=execution_profile(manifest,prior['role'])

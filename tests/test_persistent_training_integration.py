@@ -271,7 +271,8 @@ class PersistentIntegrationTests(unittest.TestCase):
             save(self.root/'roles'/(job['job_id']+'-report.json'),report)
             return report
         self.controller.jobs=SimpleNamespace(queue=self.queue,training_resume=Mock(return_value=None),
-            training_capacity=Mock(return_value={'actual_resource_test':True}),run=Mock(side_effect=run))
+            training_capacity=Mock(return_value={'actual_resource_test':True}),run=Mock(side_effect=run),
+            retire_training_cache=Mock(return_value={'status':'complete','removed_checkpoints':[]}))
         def publish(manifest,path):
             save(self.root/(self.manifest['epoch']+'-checkpoint-publication.json'),
                 dict(checkpoint=self.cp['id'],operator_independent_hashes=True,
@@ -280,6 +281,9 @@ class PersistentIntegrationTests(unittest.TestCase):
         self.controller.publish_remote_checkpoint=Mock(side_effect=publish)
         self.controller.checkpoint_with_reads=lambda value:value
         output,first=train(self.controller,self.manifest,reports,'/input',steps=3)
+        from subnet.persistent_training_controller import _cleanup_threads
+        _cleanup_threads[str(self.root/'roles'/(job['job_id']+'-trainer-cache-cleanup.json'))].join(2)
+        self.controller.jobs.retire_training_cache.assert_called_once_with(job,report,first['trainer_state'])
         self.assertEqual(output['id'],self.cp['id']);self.assertFalse(first['weights_changed'])
         self.assertTrue(first['state_updated']);self.assertEqual(first['trainer_state']['optimizer_steps'],3)
         self.assertEqual(first['updates'],report['training']['updates']);self.assertIsInstance(first['updates'],list)
@@ -293,6 +297,14 @@ class PersistentIntegrationTests(unittest.TestCase):
         save(self.root/(self.manifest['epoch']+'-training-metrics.json'),corrupted)
         with self.assertRaises(ValueError):train(self.controller,self.manifest,reports,'/input',steps=3)
         self.controller.jobs.run.assert_called_once()
+
+    def test_publication_readback_failure_never_triggers_trainer_cleanup(self):
+        with patch('subnet.persistent_publication.complete',side_effect=ValueError('independent readback failure')):
+            with self.assertRaisesRegex(ValueError,'independent readback failure'):
+                self.test_controller_same_bf16_checkpoint_recovers_original_state_without_retraining()
+        self.controller.jobs.retire_training_cache.assert_not_called()
+        self.assertFalse((self.root/'latest-trainer-state.json').exists())
+        self.assertFalse((self.root/(self.manifest['epoch']+'-training-metrics.json')).exists())
 
     def test_worker_backend_reports_exact_update_list_with_separate_diagnostics(self):
         from subnet.backend_jobs import execute
