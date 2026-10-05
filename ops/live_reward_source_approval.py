@@ -10,7 +10,7 @@ RETIREMENT_FIELDS={'version','original_cutover_sha256','previous_anchor_sha256',
 
 def replacement_roster(a,ids,prior_ids,retired,current,authority,cutover_document,previous_authorization):
  need(a['previous_authorization_sha256']==previous_authorization,'ordered previous workforce authorization')
- retirements=a['retirements'];need(isinstance(retirements,list)and len(retirements)<=6,'bounded explicit retirements')
+ retirements=a['retirements'];need(isinstance(retirements,list)and len(retirements)<=(8 if a['version']=='live-compute-source-approval-v3' else 6),'bounded explicit retirements')
  removed=prior_ids-set(ids);records={}
  for document in retirements:
   r=signed(document,authority)
@@ -32,11 +32,12 @@ ANCHOR_ID=('version','netuid','owner_hotkey','effective_at','compute_epoch_prefi
 def apply_source_approvals(c,anchor_document,authority,cutover_document,documents):
  need(isinstance(documents,list)and len(documents)<=16,'bounded source approvals')
  result=copy.deepcopy(c);current=anchor_document;grants={};prior_ids=set(c['verifier_identities']) if documents else set()
- previous_authorization=sha(cutover_document);retired=set();v2_seen=False;previous_effective=None
+ previous_authorization=sha(cutover_document);retired=set();v2_seen=False;v3_seen=False;previous_effective=None
  for document in documents:
   a=signed(document,authority);version=a.get('version')
-  need((version=='live-compute-source-approval-v1'and set(a)==FIELDS)or(version=='live-compute-source-approval-v2'and set(a)==V2_FIELDS),'exact source approval schema')
-  need(not v2_seen or version=='live-compute-source-approval-v2','v1 cannot follow explicit retirement semantics')
+  need((version=='live-compute-source-approval-v1'and set(a)==FIELDS)or(version in ('live-compute-source-approval-v2','live-compute-source-approval-v3')and set(a)==V2_FIELDS),'exact source approval schema')
+  need(not v2_seen or version in ('live-compute-source-approval-v2','live-compute-source-approval-v3'),'v1 cannot follow explicit retirement semantics')
+  need(not v3_seen or version=='live-compute-source-approval-v3','cannot downgrade eight-node authorization semantics')
   need(a['original_cutover_sha256']==sha(cutover_document),'original writer authority binding')
   need(a['previous_anchor_sha256']==sha(current),'ordered additive source approval')
   need(type(a['effective_at'])in(int,float)and math.isfinite(a['effective_at'])and a['effective_at']>0,'finite prospective authorization time')
@@ -61,10 +62,10 @@ def apply_source_approvals(c,anchor_document,authority,cutover_document,document
   if version=='live-compute-source-approval-v1':
    need(isinstance(ids,list)and 4<=len(ids)<=6 and len(set(ids))==len(ids) and prior_ids<=set(ids)and all(isinstance(v,str)and re.fullmatch('[0-9a-f]{64}',v)for v in ids),'bounded distinct reviewed verifier workforce must preserve prior identities')
   else:
-   need(isinstance(ids,list)and 4<=len(ids)<=6 and all(isinstance(v,str)and re.fullmatch('[0-9a-f]{64}',v)for v in ids)and len(set(ids))==len(ids),'bounded distinct active verifier workforce')
+   need(isinstance(ids,list)and 4<=len(ids)<=(8 if version=='live-compute-source-approval-v3' else 6) and all(isinstance(v,str)and re.fullmatch('[0-9a-f]{64}',v)for v in ids)and len(set(ids))==len(ids),'bounded distinct active verifier workforce')
    need(a['effective_at']>=(old['effective_at']if previous_effective is None else previous_effective),'prospective replacement authorization time')
    records=replacement_roster(a,ids,prior_ids,retired,current,authority,cutover_document,previous_authorization)
-   retired.update(records);v2_seen=True
+   retired.update(records);v2_seen=True;v3_seen=v3_seen or version=='live-compute-source-approval-v3'
   result.setdefault('approved_sources',{})[digest]=copy.deepcopy(s)
   result.setdefault('approved_source_anchors',{})[digest]=copy.deepcopy(a['anchor_document'])
   for prior in result['approved_source_anchors']:
