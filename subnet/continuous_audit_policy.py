@@ -31,7 +31,7 @@ def population(records):
   integer(row['round'],0,2**31-1,'epoch round');integer(row['index'],0,2**31-1,'task index');finite(row['committed_at'],0,2**53,'completion time')
   need(type(row['epoch'])is str and 0<len(row['epoch'])<=200 and type(row['env_id'])is str and 0<len(row['env_id'])<=100,'epoch/environment')
   key=(row['epoch'],row['miner'],row['batch_sha256']);need(key not in seen,'duplicate committed batch');seen.add(key);result.append(dict(row))
- return result
+ return sorted(result,key=lambda r:(r['round'],r['epoch'],r['miner'],r['batch_sha256']))
 
 def random_selection(records,seed,count,already=()):
  """Unpredictable seed is committed only after this immutable population closes."""

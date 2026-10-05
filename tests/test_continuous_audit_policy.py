@@ -26,6 +26,10 @@ class PolicyControls(unittest.TestCase):
   infra=self.observation('infrastructure_error');good=self.observation(job='2'*64)
   for evidence in ([infra,good],[good,infra]):
    r=self.calculate(obs=evidence);self.assertGreater(r['points']['b'*64],.5);self.assertEqual(r['miners']['b'*64]['confirmed_invalid_current'],0)
+ def test_population_and_snapshot_binding_ignore_input_order(self):
+  other=dict(self.row,miner='2'*64,index=1,batch_sha256='3'*64)
+  self.assertEqual(population([self.row,other]),population([other,self.row]))
+  self.assertEqual(self.calculate([self.row,other]),self.calculate([other,self.row]))
  def test_prior_not_a_verified_claim(self):
   r=self.calculate();self.assertEqual(r['points']['b'*64],.5);self.assertFalse(r['unaudited_samples_claimed_verified']);self.assertFalse(r['training_waits_for_audits'])
  def test_probability_falls_and_repeat_deduplicates(self):
