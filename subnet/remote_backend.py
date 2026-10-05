@@ -355,6 +355,8 @@ class RemoteController(Controller):
         from .forced_sampling import require_report
         if manifest.get('payable') is not False:raise ValueError('remote experimental controller is nonpayable only')
         epoch=manifest['epoch'];saved=self.state/(epoch+'-scores.json')
+        from .capture_status import InfrastructureSkipped,terminal
+        if (self.state/(epoch+'-capture-status.json')).exists():raise InfrastructureSkipped(terminal(self,manifest))
         if saved.exists():
             result=json.loads(saved.read_text())
             if result.get('checkpoint')!=manifest['checkpoint']['id'] or result.get('payable') is not False or result['receipts']!=self.gateway.freeze(epoch):raise ValueError('cached finalized manifest/receipt binding')
@@ -368,7 +370,14 @@ class RemoteController(Controller):
             return result,reports
         timings_path=self.state/(epoch+'-finalize-timings.json');timings=json.loads(timings_path.read_text())if timings_path.exists()else {}
         timings.setdefault('freeze_started_at',time.time());save(timings_path,timings)
-        receipts=self.gateway.freeze(epoch);timings.setdefault('freeze_completed_at',time.time());save(timings_path,timings)
+        from .commitment_transport import FreezeMetadataIncomplete
+        try:receipts=self.gateway.freeze(epoch)
+        except FreezeMetadataIncomplete:
+            from .hourly_policy import cutoff
+            until=cutoff(manifest,'freeze')
+            if until is None or time.time()<until:raise
+            raise InfrastructureSkipped(terminal(self,manifest))
+        timings.setdefault('freeze_completed_at',time.time());save(timings_path,timings)
         challengepath=self.state/(epoch+'-audit-challenge.json')
         if challengepath.exists():challenge=json.loads(challengepath.read_text())
         else:

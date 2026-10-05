@@ -280,7 +280,13 @@ def run(config,once=False):
             if active['phase']=='collect':
                 if time.time()<manifest['deadline']:
                     save(state/'health.json',dict(status='collecting',epoch=epoch,deadline=manifest['deadline'],time=time.time()));time.sleep(min(10,max(1,manifest['deadline']-time.time())));continue
-                result,reports=controller.finalize(manifest,status['checkpoint_path']);save(state/(epoch+'-verified.json'),reports)
+                from .capture_status import InfrastructureSkipped,close_epoch
+                try:result,reports=controller.finalize(manifest,status['checkpoint_path'])
+                except InfrastructureSkipped:
+                    close_epoch(controller,manifest,status,statuspath,prefix)
+                    if once:return
+                    continue
+                save(state/(epoch+'-verified.json'),reports)
                 from .empty_epoch_policy import validate_empty_completion
                 validate_empty_completion(manifest,result,reports)
                 ledger=json.loads(ledgerpath.read_text()) if ledgerpath.exists() else []
