@@ -53,11 +53,11 @@ No pending epoch and no historical strict epoch can earn through this bridge.
  epochs=h['epochs'];need(set(opening_documents)==set(epochs)==set(registration_documents)==set(completion_documents),'complete original hourly evidence')
  populations={};records=[]
  for doc in population_documents:
-  p=signed(doc,authority);need(p.get('version')=='continuous-audit-population-v1'and type(p.get('eligible_evidence_ids'))is list,'explicit signed audit eligibility')
+  p=signed(doc,authority);need(p.get('version')in('continuous-audit-population-v1','continuous-audit-population-v2')and type(p.get('eligible_evidence_ids'))is list,'explicit signed audit eligibility')
   m=signed(p['manifest_document'],authority);need(m['epoch']not in populations,'unique original population')
   from .continuous_audit_service import register_population
   pairs=[{k:r[k]for k in ('miner','commitment_sha256','batch_sha256','proof_sha256')}for r in p['records']if sha(r)in p['eligible_evidence_ids']]
-  need(p==register_population(p['manifest_document'],p['receipts'],p['round'],p['committed_at'],authority,eligible_pairs=pairs),'original signed miner population and eligibility')
+  need(p==register_population(p['manifest_document'],p['receipts'],p['round'],p['committed_at'],authority,eligible_pairs=pairs,version=p['version']),'original signed miner population and eligibility')
   populations[m['epoch']]=(doc,p,m);records.extend(p['records'])
  identities={}
  for doc in snapshot_documents:
@@ -65,7 +65,7 @@ No pending epoch and no historical strict epoch can earn through this bridge.
   popdoc,p,m=populations[epoch]
   cohort=[r for r in records if r['round']<=s['round']and r['committed_at']<=h['cutoff']]
   from .continuous_audit_policy import population
-  need(s['population_sha256']==sha(population(cohort))and s['eligible_evidence_ids']==p['eligible_evidence_ids'],'original full audit cohort and learner eligibility')
+  need(s['population_sha256']==sha(population(cohort,ordered=s['version']=='continuous-probabilistic-audit-v2'))and s['eligible_evidence_ids']==p['eligible_evidence_ids'],'original full audit cohort and learner eligibility')
   need(s['checkpoint']==m['checkpoint']['id']and s['round']==p['round'],'original checkpoint and round')
   opening=signed(opening_documents[epoch],authority)
   need(opening.get('version')=='immutable-first-manifest-v1'and opening.get('epoch')==epoch and opening.get('first_manifest_sha256')==sha(p['manifest_document']),'immutable original first opening')

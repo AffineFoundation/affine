@@ -321,10 +321,6 @@ def run(config,once=False):
                 save(state/(epoch+'-verified.json'),reports)
                 from .empty_epoch_policy import validate_empty_completion
                 validate_empty_completion(manifest,result,reports)
-                if manifest.get('continuous_reward_contract') is not None:
-                    bucket.json('public/'+epoch+'/manifest.json',controller.signed(manifest))
-                    from .continuous_reward_bridge import emit_opening_documents
-                    emit_opening_documents(controller,manifest,active['registrations'])
                 ledger=json.loads(ledgerpath.read_text()) if ledgerpath.exists() else []
                 if not any(r['epoch_id']==epoch for r in ledger):ledger.append(dict(result,points={active['identities'][m]:p for m,p in result['points'].items()}))
                 save(ledgerpath,ledger);transition_phase(active,'before');save(statuspath,status)
