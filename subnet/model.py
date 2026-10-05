@@ -81,6 +81,9 @@ class Runtime:
         if getattr(chosen, 'sampling_context', None) is not None:
             from .forced_sampling import validate_harness
             validate_harness(chosen.harness)
+            if getattr(chosen,'fast_sampling_calibration',None)is not None:
+                from .fast_prefill_audit import bind
+                chosen.fast_sampling_calibration=bind(chosen.fast_sampling_manifest,chosen.harness)
         return chosen
 
     def sample_output(self, prompt, seed, messages, turn, index, task_hash):
@@ -150,6 +153,7 @@ class Runtime:
 
     def verify(self, rollout, arrays):
         from .audit_policy import InvalidSample
+        calibrated=getattr(self,'fast_sampling_calibration',None)
         if getattr(self, 'sampling_context', None) is not None:
             try:
                 expected = self.sampling_receipt(rollout.get('seed'))['sampling']
@@ -190,18 +194,21 @@ class Runtime:
                 if type(turn.get('done')) is not bool or type(turn.get('reward')) not in (int,float) or not math.isfinite(turn['reward']):
                     raise InvalidSample('turn outcome types')
                 acts, probs = self.compute(prompt, output)
-                if claimed.shape != probs.shape or not np.isfinite(claimed).all() or not np.allclose(claimed, probs, atol=1e-5, rtol=0):
+                if claimed.shape != probs.shape or not np.isfinite(claimed).all() or not np.allclose(claimed, probs, atol=calibrated['logprob_atol']if calibrated else 1e-5, rtol=0):
                     raise InvalidSample('probabilities')
                 count = 1+math.ceil(len(output)/16)
                 try:validate_framing(turn['proofs'],count)
                 except ValueError as error:raise InvalidSample('proof framing') from error
                 results = self.verify_proofs(acts, turn['proofs'], decode_batching_size=16, topk=128)
-                if len(results) != count or any(r.exp_mismatches or r.mant_err_mean or r.mant_err_median for r in results):
+                if len(results) != count or any(r.exp_mismatches>(calibrated['toploc_exp_mismatches']if calibrated else 0) or r.mant_err_mean>(calibrated['toploc_mant_err_mean']if calibrated else 0) or r.mant_err_median>(calibrated['toploc_mant_err_median']if calibrated else 0) for r in results):
                     raise InvalidSample('TOPLOC')
                 if getattr(self, 'sampling_context', None) is not None:
-                    selected = self.sample_output(prompt, rollout['seed'], messages, i, rollout['index'], initial['task_hash'])
-                    if selected != output:
-                        raise InvalidSample('sampling replay mismatch')
+                    if calibrated is not None:
+                        from .fast_prefill_audit import verify_sampling
+                        verify_sampling(self,rollout,i,prompt,output,probs)
+                    else:
+                        selected = self.sample_output(prompt, rollout['seed'], messages, i, rollout['index'], initial['task_hash'])
+                        if selected != output:raise InvalidSample('sampling replay mismatch')
                 result = session.step(policy.action(text,self.harness))
                 done, reward = result['done'], result['reward']
                 observations = result['observations']
