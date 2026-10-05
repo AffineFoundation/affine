@@ -34,7 +34,8 @@ class IndependentStateReader:
     def __init__(self,config,controller):
         required={'endpoint','reader_host','trainer_host','trainer_known_hosts',
                   'reader_identity','module_hashes','qualification','max_wall_seconds'}
-        if set(config)!=required:raise ValueError('exact admitted CPU reader configuration')
+        if set(config)not in (required,required|{'stream_budget'}):raise ValueError('exact admitted CPU reader configuration')
+        if 'stream_budget'in config:reader.stream_budget(config['stream_budget'])
         self.config=config;self.endpoint=config['endpoint'];self.authority=controller.authority.id
         if set(self.endpoint)!={'host','port','user','known_hosts','python','workspace','namespace'}:
             raise ValueError('exact qualified reader endpoint')
@@ -42,6 +43,7 @@ class IndependentStateReader:
         expected=dict(version=ADMISSION,reader_identity=config['reader_identity'],
             reader_host_record_sha256=reader.sha(config['reader_host']),
             module_hashes=config['module_hashes'],all_23_objects_full_hash=True)
+        if 'stream_budget'in config:expected['stream_budget']=config['stream_budget']
         if set(admission)!=set(expected)|{'qualification_evidence_sha256','qualified_at'} or any(canonical(admission[k])!=canonical(v) for k,v in expected.items()):
             raise ValueError('root actual full-state reader qualification admission')
         if type(admission['qualified_at']) not in (int,float) or not math.isfinite(admission['qualified_at']) or not 0<admission['qualified_at']<=time.time():
@@ -75,7 +77,7 @@ class IndependentStateReader:
                 Path(c['trainer_known_hosts']).name!=c['trainer_host']['provider_UUID'] or
                 file_sha(c['trainer_known_hosts'])!=c['trainer_host']['ssh_host_key_sha256']):
             raise ValueError('root physical host trust bytes changed')
-        data=dict(namespace=e['namespace'],workspace=e['workspace'])
+        data=dict(namespace=e['namespace'],workspace=e['workspace'],stream_budget=c.get('stream_budget'))
         code='DATA='+repr(data)+'\n'+'''
 import json,hashlib,stat,subprocess,time
 from pathlib import Path
@@ -94,12 +96,23 @@ for p in (Path(DATA['workspace'])/'runner-status').glob('*.json'):
    a=q.read_text().rsplit(')',1)[1].split()
    if a[0]!='Z'and a[19]==str(v.get(field+'_ticks')):active.append(v.get('job_id'))
 gpu=subprocess.run(['nvidia-smi','--query-compute-apps=pid','--format=csv,noheader,nounits'],capture_output=True,text=True,timeout=15)
-print(json.dumps(dict(observed_at=time.time(),hashes=hashes,reader_identity=bytes(SigningKey(bytes.fromhex(seed.read_text().strip())).verify_key).hex(),active_jobs=active,gpu_query_exit=gpu.returncode,gpu_pids=[s for s in gpu.stdout.splitlines()if s.strip()])))
+resource_admission=None
+if DATA['stream_budget']is not None:
+ import importlib.util
+ module_spec=importlib.util.spec_from_file_location('qualified_reader_resource_check',root/'remote_optimizer_readback.py')
+ module=importlib.util.module_from_spec(module_spec);module_spec.loader.exec_module(module)
+ resource_admission=module.admit_stream_resources(DATA['stream_budget'],module.available_ram_bytes())
+print(json.dumps(dict(resource_admission=resource_admission,observed_at=time.time(),hashes=hashes,reader_identity=bytes(SigningKey(bytes.fromhex(seed.read_text().strip())).verify_key).hex(),active_jobs=active,gpu_query_exit=gpu.returncode,gpu_pids=[s for s in gpu.stdout.splitlines()if s.strip()])))
 '''
         observed=self.command(code)
         if (observed['hashes']!=c['module_hashes'] or observed['reader_identity']!=c['reader_identity'] or
                 observed['active_jobs'] or observed['gpu_query_exit']!=0 or observed['gpu_pids']):
             raise ValueError('fresh qualified reader host/modules/key/GPU idle admission')
+        if 'stream_budget'in c:
+            resource=observed.get('resource_admission')
+            if not isinstance(resource,dict):raise ValueError('actual reader resource admission missing')
+            expected=reader.admit_stream_resources(c['stream_budget'],resource.get('available_ram_bytes'))
+            if any(resource.get(k)!=v for k,v in expected.items()):raise ValueError('actual reader resource admission mismatch')
         return code,observed
 
     def prepare_original_readback(self,controller,report,envelope):
@@ -109,6 +122,10 @@ print(json.dumps(dict(observed_at=time.time(),hashes=hashes,reader_identity=byte
         namespace=job['persistent_training']['output_namespace']
         if canonical(read_json(controller.bucket,namespace+'/staged-state.json'))!=canonical(descriptor):
             raise ValueError('original production staged descriptor')
+        budget=manifest.get('independent_state_readback_budget')
+        if budget is not None:
+            reader.stream_budget(budget)
+            if canonical(budget)!=canonical(c.get('stream_budget')):raise ValueError('manifest readback budget requires exact qualified admission')
         objects=readback_objects(descriptor)
         if len(objects)!=23:raise ValueError('qualified exact full-state count')
         bucket=controller.bucket
@@ -124,12 +141,13 @@ print(json.dumps(dict(observed_at=time.time(),hashes=hashes,reader_identity=byte
             return self._recover_original(controller,root,job,binding,objects)
         preflight,observed=self.preflight();root.mkdir(mode=0o700,exist_ok=False)
         write_once(root/'reservation.private.json',dict(original_job_sha256=reader.sha(job),
-            CPU_nice=19,hash_streams=4,chunk_bytes=1024**2,GPU_use=False,authority_commit=False,
+            CPU_nice=19,hash_streams=reader.concurrency({'stream_budget':budget}if budget is not None else {}),chunk_bytes=1024**2,GPU_use=False,authority_commit=False,
             original_preflight=observed,created_at=time.time()))
         started=time.time();duration=c['max_wall_seconds']
         payload=dict(version=reader.VERSION,**binding,reader_identity=c['reader_identity'],
             created_at=started,expires_at=started+duration,max_wall_seconds=duration,objects=objects,
             capabilities={s['name']:bucket.presign(namespace+'/'+s['name'],'get_object',duration)for s in objects})
+        if budget is not None:payload['stream_budget']=budget
         request=controller.signed(payload)
         reader.validate_request(request,self.authority,now=time.time(),approved_binding=binding,
             approved_objects=objects,qualified_reader=c['reader_identity'])

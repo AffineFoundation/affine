@@ -59,6 +59,11 @@ def independently_commit_remote(controller, report, original_job_envelope,
     if not isinstance(request_bytes, bytes) or len(request_bytes)>4_000_000:
         raise ValueError('bounded original signed request file')
     request = json.loads(request_bytes)
+    original_request=reader.verify(request,authority)
+    budget=manifest.get('independent_state_readback_budget')
+    if budget is not None:reader.stream_budget(budget)
+    if reader.canonical(original_request.get('stream_budget'))!=reader.canonical(budget):
+        raise ValueError('original manifest independent readback stream budget')
     request_file_sha256 = hashlib.sha256(request_bytes).hexdigest()
     launch = reader.verify(launch_envelope, authority)
     if (launch.get('version') != 'independent-state-readback-launch-v1' or
