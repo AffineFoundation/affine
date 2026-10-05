@@ -5,7 +5,9 @@ Epoch nonpayable-live-reward-math-v1--1791231289-16 has published its signed man
 optimizer parent six and checkpoint 2ba94975.... Its owned miner dispatch was
 blocked by a stale E14 reservation: authenticated terminal evidence existed,
 but the old guard checked workspace migration first. The corrected ordering
-is tested and on main; a scoped deployment/retry is being prepared.
+is tested and on main. ROOT issued exactly one owned E16 job against the
+unchanged signed manifest using the reviewed controller-only overlay; it was
+still loading at the end of the window. No completed upload is claimed.
 Its prospective contract uses eight-stream optimizer restore/upload and the
 actual qualified eight-stream independent full-state reader. The initial
 startup failed before opening because verifier one used an incomplete staged

@@ -9,7 +9,9 @@ publication completed; optimizer step six and checkpoint
 are durable. E16 has published its signed manifest and completed checkpoint
 calibration. Owned dispatch encountered a stale historical miner reservation
 after the physical role swap. A tested guard-order correction is on main;
-its scoped deployment is in progress.
+ROOT issued one owned miner job under the unchanged E16 manifest with the
+reviewed controller-only correction. It was still loading near the deadline;
+no successful upload or completed faster epoch is claimed yet.
 Do not submit against the closed E15 manifest. Follow mining.json and the next
 signed manifest for the checkpoint, taskset, sampling policy and upload window.
 Chain weight submissions remain disabled in this pilot.
