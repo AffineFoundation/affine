@@ -7,6 +7,16 @@ from . import remote_optimizer_readback as reader
 from . import persistent_training_protocol as state
 
 
+def readback_objects(descriptor):
+    """Transport hashes three fields; full descriptor retains tensor metadata.
+
+    Callers must first scientifically validate the complete original descriptor.
+    Its digest binds every tensor slot, range, parameter and optimizer counter.
+    """
+    return [{k:shard[k] for k in ('name','size','sha256')}
+            for shard in descriptor['shards']]
+
+
 def independently_commit_remote(controller, report, original_job_envelope,
         request_bytes, receipt, launch_envelope, terminal, *, qualified_reader,
         reader_host, trainer_host, storage_binding, original_child, now):
@@ -55,7 +65,7 @@ def independently_commit_remote(controller, report, original_job_envelope,
                 __import__('pathlib').Path(reader.__file__).read_bytes()).hexdigest()):
         raise ValueError('original root-approved reader launch bytes')
     payload = reader.validate_receipt(receipt, request, authority,
-        approved_binding=binding, approved_objects=descriptor['shards'],
+        approved_binding=binding, approved_objects=readback_objects(descriptor),
         qualified_reader=qualified_reader, now=now)
     if (terminal.get('actual_child_wait_completed') is not True or
             type(terminal.get('exit_code')) is not int or terminal['exit_code'] != 0 or

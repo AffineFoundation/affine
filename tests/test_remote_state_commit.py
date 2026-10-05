@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from nacl.signing import SigningKey
 from subnet import remote_optimizer_readback as r
-from subnet.remote_state_commit import independently_commit_remote
+from subnet.remote_state_commit import independently_commit_remote, readback_objects
 
 class RemoteAdmission(unittest.TestCase):
     def setUp(self):
@@ -18,7 +18,7 @@ class RemoteAdmission(unittest.TestCase):
         self.authority=bytes(self.root.verify_key).hex();self.identity=bytes(self.reader.verify_key).hex()
         self.objects=[dict(name='state-%06d.safetensors'%i,size=31,
             sha256=hashlib.sha256(bytes([i])*31).hexdigest())for i in range(23)]
-        self.descriptor=dict(shards=self.objects)
+        self.descriptor=dict(shards=[dict(o,tensors=[dict(parameter='actual.weight',slot='master',start=0,count=7,key='tensor-%08d'%i)])for i,o in enumerate(self.objects)])
         self.report={'original':'report'}
         self.manifest={'trainer_state_binding':{'source_sha256':'a'*64}}
         self.job=dict(job_id='original',manifest=r.sign(self.manifest,self.root),
@@ -71,6 +71,15 @@ class RemoteAdmission(unittest.TestCase):
     def test_full_request_and_actual_wait_persist_evidence_before_authority(self):
         self.run_commit();self.bucket.json.assert_called_once();self.publish.assert_called_once()
         self.assertIn('/independent-readbacks/',self.bucket.json.call_args.args[0])
+
+    def test_tensor_metadata_remains_in_full_descriptor_commitment(self):
+        self.assertEqual(readback_objects(self.descriptor),self.objects)
+        self.assertTrue(all('tensors' in s for s in self.descriptor['shards']))
+        self.run_commit()
+        self.assertEqual(self.publish.call_args.args[1],self.descriptor)
+        self.assertEqual(self.receipt['payload']['descriptor_sha256'],r.sha(self.descriptor))
+        changed=copy.deepcopy(self.descriptor);changed['shards'][0]['tensors'][0]['slot']='exp_avg'
+        self.assertNotEqual(r.sha(changed),r.sha(self.descriptor))
 
     def test_receipt_without_original_success_never_publishes(self):
         self.terminal['exit_code']=1
