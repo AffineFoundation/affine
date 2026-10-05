@@ -180,12 +180,14 @@ class RemoteJobs:
             if original.get('role')!='mine' or original.get('job_id')!=prior['job_id'] or hashlib.sha256(canonical(original)).hexdigest()!=prior['job_sha256']:
                 raise ValueError('original miner reservation binding')
             if signed(original['manifest'],self.controller.authority.id).get('hourly_execution_policy')is None:continue
-            if prior.get('physical_workspace',self.workspace)!=self.workspace:raise RemoteMinerReserved(prior['job_id'])
             terminal=self.state/(prior['job_id']+'-physical-terminal.json')
             if terminal.exists():
                 value=json.loads(terminal.read_text())
                 if value.get('job_sha256')!=prior['job_sha256'] or value.get('phase')not in ('complete','failed'):raise ValueError('miner terminal reservation evidence')
                 continue
+            # A verified original terminal remains authoritative after a physical
+            # role/workspace migration; only unresolved originals reserve it.
+            if prior.get('physical_workspace',self.workspace)!=self.workspace:raise RemoteMinerReserved(prior['job_id'])
             try:status=self.remote_status(prior['job_id'],timeout=20,physical=True)
             except Exception as exc:raise RemoteMinerReserved(prior['job_id'])from exc
             if status.get('phase')not in ('complete','failed'):raise RemoteMinerReserved(prior['job_id'])
