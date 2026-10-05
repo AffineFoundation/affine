@@ -12,6 +12,13 @@ from .storage import canonical
 
 class InvalidCommittedArtifact(ValueError):pass
 
+def admitted_service_config(config,authority):
+ sources=authenticate(config['source_admission'],authority)
+ if sources.get('version')!='continuous-audit-service-sources-v1':raise ValueError('operator admitted exact audit source/runtime metadata')
+ expected=policy(config['policy'])
+ if canonical(sources.get('audit_policy'))!=canonical(expected):raise ValueError('continuous penalty policy requires exact signed admission')
+ return sources
+
 def atomic(path,value):
  path=Path(path);path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
  if path.is_symlink():raise ValueError('private audit journal path')
@@ -61,6 +68,13 @@ class ContinuousAuditor:
   if old is not None and old!=document:raise ValueError('immutable audit population cannot be replaced')
   self.state['populations'][epoch]=document;self.persist()
  def records(self):return [r for document in self.state['populations'].values()for r in authenticate(document,self.controller.authority.id)['records']]
+ def dispatch_records(self):
+  rows=[];deferred=0
+  for document in self.state['populations'].values():
+   p=authenticate(document,self.controller.authority.id);manifest=authenticate(p['manifest_document'],self.controller.authority.id);source=manifest['source_bundle']['sha256']
+   if source not in self.sources or source not in self.metadata:deferred+=len(p['records']);continue
+   rows.extend(p['records'])
+  return rows,deferred
  def _capture(self,row,p):
   manifest=authenticate(p['manifest_document'],self.controller.authority.id);receipt=p['receipts'][row['miner']];selected=[b for b in receipt['artifacts']if b['batch_sha256']==row['batch_sha256']and b['sha256']==row['proof_sha256']]
   if len(selected)!=1:raise ValueError('exact selected declared child')
@@ -83,8 +97,8 @@ class ContinuousAuditor:
    status=self.queue.status(jobid)
    if status and status['status']in('queued','leased'):available-=1
   if available<=0:return dict(enqueued=0,backpressure=True)
-  rows=self.records();done=set(self.state['draws']);queued={r['row_sha256']for r in self.state['jobs'].values()};remaining=min(self.budget,available)
-  retry=[d['row']for identity,d in self.state['draws'].items()if identity not in queued and self.state['capture_failures'].get(identity,{}).get('kind')!='confirmed_invalid_artifact'][:remaining]
+  rows,deferred=self.dispatch_records();runnable=set(digest(r)for r in rows);done=set(self.state['draws']);queued={r['row_sha256']for r in self.state['jobs'].values()};remaining=min(self.budget,available)
+  retry=[d['row']for identity,d in self.state['draws'].items()if identity in runnable and identity not in queued and self.state['capture_failures'].get(identity,{}).get('kind')!='confirmed_invalid_artifact'][:remaining]
   seed=secrets.token_hex(32);selected=random_selection(rows,seed,remaining-len(retry),done);enqueued=0
   # Persist selection before any mutable proof HEAD. Retries use the SAME draw.
   for row in selected:self.state['draws'][digest(row)]=dict(row=row,seed=seed,selected_at=now)
@@ -111,7 +125,7 @@ class ContinuousAuditor:
    metadata=self.metadata[manifest['source_bundle']['sha256']];jobid='continuous-audit-'+identity[:32]
    job=dict(schema=1,job_id=jobid,role='verify',created_at=now,expires_at=now+self.job_seconds,manifest=self.controller.signed(audit_manifest),**metadata,submissions=[dict(url=artifact['read_url'],sha256=row['proof_sha256'],commitment_miner=row['miner'],commitment_ref=ref)])
    envelope=self.controller.signed(job);atomic(self.directory/(jobid+'-job.json'),envelope);self.queue.enqueue(envelope);self.queue.archive(jobid,self.controller.bucket,'public/continuous-audit/jobs');self.state['jobs'][jobid]=dict(row_sha256=identity,job_sha256=digest(job));self.persist();enqueued+=1
-  return dict(enqueued=enqueued,selected=len(selected),retried=len(retry),backpressure=False)
+  return dict(enqueued=enqueued,selected=len(selected),retried=len(retry),backpressure=False,source_deferred=deferred)
  def publish_immutable(self,key,document):
   body=canonical(document)
   try:self.controller.bucket.client.put_object(Bucket=self.controller.bucket.name,Key=key,Body=body,ContentType='application/json',IfNoneMatch='*')
@@ -156,8 +170,7 @@ def main(argv=None):
  config=json.loads(Path(a.config).read_text());state=Path(config['state']);seed=state/'authority.seed'
  if seed.is_symlink()or not seed.is_file()or seed.stat().st_mode&0o077:raise ValueError('original private authority required; never generate another authority')
  controller=Controller(Bucket(config['bucket']),None,state);c=config['continuous_audit_service'];queue=Coordinator(state/'roles/verifier-queue.sqlite3',controller.authority.id,{e['worker_identity']:['verify']for e in config['remote']['roles']['verify']})
- sources=authenticate(c['source_admission'],controller.authority.id)
- if sources.get('version')!='continuous-audit-service-sources-v1':raise ValueError('operator admitted exact audit source/runtime metadata')
+ sources=admitted_service_config(c,controller.authority.id)
  service=ContinuousAuditor(controller,queue,directory=state/'continuous-audit',approved_sources=sources['approved_sources'],job_metadata=sources['job_metadata'],audit_policy=c['policy'],max_inflight=c.get('max_inflight',8),budget_per_tick=c.get('budget_per_tick',8),job_seconds=c.get('job_seconds',900))
  while True:
   for path in sorted(state.glob('*-continuous-audit-population.json')):service.admit(json.loads(path.read_text()))
