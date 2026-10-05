@@ -75,8 +75,8 @@ def owned_dispatch_identities(config,manifest,identities):
     Legacy transports retain their historical dispatch behavior.
     """
     if manifest.get('submission_transport_policy') is None:return list(identities)
-    from .commitment_transport import VERSION
-    if manifest['submission_transport_policy']!=VERSION:raise ValueError('owned commitment transport')
+    from .commitment_transport import VERSIONS
+    if manifest['submission_transport_policy'] not in VERSIONS:raise ValueError('owned commitment transport')
     paths=config.get('owned_miner_identity_files',{})
     if not isinstance(paths,dict):raise ValueError('owned miner scoped identity files')
     for key,path in paths.items():
@@ -273,10 +273,13 @@ def run(config,once=False):
                         attempts=min(config.get('search_budget',64),manifest['sampling_contract']['max_attempts']) if manifest.get('sampling_contract') else config.get('search_budget',64)
                         seed_start=0 if manifest.get('sampling_contract') else 100+status['round']*1000
                         if manifest.get('submission_transport_policy') is not None:
-                            from .commitment_transport import VERSION
-                            if manifest['submission_transport_policy']!=VERSION:raise ValueError('owned commitment transport')
+                            from .commitment_transport import VERSIONS
+                            if manifest['submission_transport_policy'] not in VERSIONS:raise ValueError('owned commitment transport')
                             capability['put_url']=bucket.presign('private/'+epoch+'/commitments/'+miner+'.json','put_object',max(1,manifest['deadline']-int(time.time())))
                             capability['batch_put_urls']=[bucket.presign('private/'+epoch+'/staging/'+miner+'/'+str(i)+'.zip','put_object',max(1,manifest['deadline']-int(time.time())))for i in range(manifest['max_batches'])]
+                            from .commitment_transport import VERSION2
+                            if manifest['submission_transport_policy']==VERSION2:
+                                capability['training_put_urls']=[bucket.presign('private/'+epoch+'/training/'+miner+'/'+str(i)+'.json','put_object',max(1,manifest['deadline']-int(time.time())))for i in range(manifest['max_batches'])]
                             paths=config.get('owned_miner_identity_files',{})
                             if not isinstance(paths,dict) or miner not in paths:raise ValueError('owned miner scoped identity file required')
                             owned_fields=dict(owned_fields,miner_identity_file=paths[miner])
