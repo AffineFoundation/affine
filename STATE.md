@@ -1,3 +1,26 @@
+Latest independently observed update: 2026-10-05 01:57 UTC. E10 has completed
+78 authenticated audit jobs with 176 accepted batch documents and 168 adjusted
+points across 75 nonzero proposed weights. Four verifiers are active. Two more
+H200s passed genuine honest/adversarial controls but remain stopped and unenrolled.
+The original trainer job train-7761fdb3 (supervisor10038 / child10045) is still
+running; at 1791165451 its current temporary optimizer export was shard000011.
+No completed public optimizer update or learning improvement is claimed yet.
+The actual original fixed32 pre-training evaluation completed with19/32 correct.
+
+The controller observation timeout was recovered without creating a second
+training job. Guarded existing-epoch controller PID3262639 is actually running,
+using the original sealed source763, configuration and E10 requests, with --once.
+It must not open another epoch or reset the optimizer lineage.
+
+Main now includes bounded four-way FP32 export/restore and independent root
+state readback, signed optimizer transport admission, and independent checkpoint
+evaluation. These are prospective features; the original E10 still uses its
+signed serial publication code. The sampled-commitment hourly candidate is under
+independent review and real H200 qualification preparation. It retains exact
+selected-pair sampler/TOPLOC checks, audited-only rewards/training, typed no-credit
+budget/infra deferrals and confirmed-invalid-only penalties. No one-hour epoch,
+24 updates/day, six live verifiers, new-source activation or convergence is claimed.
+
 Latest verified operational snapshot: 2026-10-05 00:33 UTC. E10's original
 controller PID2059490 remains live in the audit phase. Independently
 signature-checked queue reports show 53 completed submission jobs and 115
