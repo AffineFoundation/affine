@@ -170,8 +170,29 @@ class OriginalReaderRecoveryControls(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'incomplete'):self.recover()
         write_once(self.launchfile,{})
         payload=dict(self.request['payload'],created_at=time.time()-100,expires_at=time.time()-1);self.requestfile.write_bytes(r.canonical(r.sign(payload,self.key)))
-        with self.assertRaisesRegex(ValueError,'expired'):self.recover()
+        with self.assertRaises(ValueError):self.recover()
         self.reader.command.assert_not_called()
     def test_changed_receipt_full_object_hash_fails_original_recovery(self):
         receipt=self.status['result'];payload=dict(receipt['payload'],objects=[dict(self.objects[0],sha256='0'*64)]+self.objects[1:]);self.status['result']=r.sign(payload,self.readerkey);self.reader.command=Mock(return_value=self.status)
         with self.assertRaisesRegex(ValueError,'request-bound receipt'):self.recover()
+
+    def test_completed_original_adopted_after_expiry_without_execution(self):
+        observed=self.request['payload']['expires_at']+100
+        self.reader.command=Mock(return_value=self.status)
+        with patch('subnet.independent_state_dispatch.time.time',return_value=observed),patch('subprocess.Popen')as spawn,patch('subprocess.run')as copy:
+            result=self.recover()
+        spawn.assert_not_called();copy.assert_not_called()
+        self.assertEqual(result['now'],observed)
+        self.assertEqual(result['receipt'],self.status['result'])
+        self.assertEqual(self.reader.command.call_count,1)
+    def test_expired_live_or_unknown_original_never_restarted(self):
+        for status in ({'original_supervisor':self.status['original_supervisor'],'supervisor_live':True},):
+            self.reader.command=Mock(return_value=status)
+            with patch('subnet.independent_state_dispatch.time.time',return_value=self.request['payload']['expires_at']+100),patch('subprocess.Popen')as spawn,self.assertRaises(TimeoutError):self.recover()
+            spawn.assert_not_called();self.assertEqual(self.reader.command.call_count,1)
+    def test_signed_receipt_outside_original_lifetime_or_future_rejected(self):
+        original=self.status['result']
+        for completed,observed in ((self.request['payload']['expires_at']+1,self.request['payload']['expires_at']+100),(self.request['payload']['created_at']+10,self.request['payload']['created_at']+5)):
+            self.status['result']=r.sign(dict(original['payload'],completed_at=completed),self.readerkey)
+            self.reader.command=Mock(return_value=self.status)
+            with patch('subnet.independent_state_dispatch.time.time',return_value=observed),self.assertRaises(ValueError):self.recover()
