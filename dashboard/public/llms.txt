@@ -655,6 +655,21 @@ All 80 fresh tampered traces were invalid. The long check took median 1.611s
 with one model forward versus official 21.562s with 1025 forwards, but
 inconclusive is NOT accepted or confirmed fraud; its outcome remains pending.
 Short accepted rollouts took 2.292–2.427s including original environment grading.
-These results are one H200 only; independent second-H200 qualification is
-pending. Earlier token-only checks with exact fallback passed on two H200s.
+The independent second H200 produced the identical four-rollout verdicts
+and rejected the same 80 byte-identical tampered artifacts. Its long check took
+1.435s versus official 19.628s, again inconclusive rather than accepted. Both
+original research jobs completed successfully; their evidence passed full R2
+readback. The second machine automatically retired its owned 15.24GB research
+checkpoint and resumed the independent evaluator. This is a tiny two-machine
+qualification, not a population-wide accuracy or speed claim. Earlier token-only checks with exact fallback passed on two H200s.
 Sampling consistency is not proof of historical execution.
+
+Operational changes prepared on GitHub main, not silently applied to old jobs:
+The real module-entrypoint retry-context fix passed an actual -m subprocess
+control. The currently running E21 continuation predates that fix, so active
+transport retries are not asserted for it. A bounded one-owned-checkpoint worker
+retention policy passed 129 tests and 105 subtests together with recovery controls.
+Its seven-worker rollout is underway at idle job boundaries; active GPU jobs
+are not terminated. It keeps at most one current owned model for up to 1,800 seconds,
+retires superseded or expired owned state automatically, and has a 2 GiB disk floor.
+No manual removal of checkpoint or rollout state is used for this rollout.
