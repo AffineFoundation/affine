@@ -1,3 +1,26 @@
+Current verified continuation, 2026-10-06, ~20:42 UTC:
+Epoch 29 reopened after genuine fresh calibration and independent confirmation
+on immutable source f21373d7ccb167bcd868f5ed03ce9ac7ef567d894e8ecc9e61f5d7f8645b67b8.
+Its mining window is closed; 237 committed/201 eligible unaudited task pairs
+feed the single original train09b20872 job. Optimizer19/CP19 remains committed;
+no optimizer20 publication is claimed yet. Independent SAME128 CP19 is 85/128
+(66.41%); CP18 was 86/128, so sustained learning convergence remains unproven.
+
+ROOT deployed and restart-tested durable boot-enabled CPU API, auditor and
+learner units, all Restart=on-failure. The same queue inode/WAL/schema, signed
+historical source admissions, optimizer lineage and original remote training
+job were preserved. Exact code lives in ops/durable_audit_services.py and
+ops/durable_learner_service.py; private signed policies/evidence live under
+state/root-audits/durable-CPU-service-recovery-20261006-v1 on Arbos.life.
+Seven H200 verifiers are active; hourly current-assessment weights are
+independent of training/opening. The 20:00 UTC commit finalized for 193 UIDs.
+Recent TOPLOC rejections need diagnostic/reference adjudication before
+attributing intent; generic rejection reports lack mismatch magnitudes.
+Cleanup remains automatic code, not manual cache clearing. No scientific
+proof change, token-only cutover, K2/L2 change or optimizer reset occurred.
+
+Earlier history follows and does not supersede this verified continuation.
+
 Current operational continuation, 2026-10-05:
 E16's 256-document trainer cap caused a retry loop after successful capture.
 ROOT resumed the original signed manifest under a bounded training-only

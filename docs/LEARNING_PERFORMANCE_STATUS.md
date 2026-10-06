@@ -13,14 +13,16 @@ unfinished opening are not scoring gates. Historical compute manifests retain
 their original flags; the writer keeps a separate signed hourly assessment.
 See [the exact calculation and submission controls](HOURLY_CURRENT_ASSESSMENT.md).
 
-The unchanged independent 128-task cohort scored 77, 86, 84, 78, 85, 87, 83 and 86 correct
-on checkpoints 11 through 18. Checkpoint 16 gained five and lost three tasks
+The unchanged independent 128-task cohort scored 77, 86, 84, 78, 85, 87, 83, 86 and 85 correct
+on checkpoints 11 through 19. Checkpoint 16 gained five and lost three tasks
 against checkpoint 15. Checkpoint 17 then fell to 83/128 on the same cohort. The signed summary and
 archive hash were checked; all four original job archives were acknowledged and
 the owned evaluator model retired automatically. Checkpoint 18 recovered to
 86/128 on that unchanged cohort, with all four original archives acknowledged
 and automatic owned-model retirement. Its signed summary and actual archive
-hash were checked. This is fluctuation, not established convergence. Dataset size and additional samples alone do not establish learning.
+hash were checked. Checkpoint 19 scored 85/128 (66.41%) on the same cohort;
+all four signed original reports, actual exit-zero observations and full archive
+readback acknowledgements were authenticated. This is fluctuation, not established convergence. Dataset size and additional samples alone do not establish learning.
 
 Epochs 24 and 25 completed in 50.4 and 49.3 minutes. Epoch 25 trained on 256
 distinct eligible task pairs, advanced optimizer step 15 to 16 and published
@@ -199,3 +201,22 @@ abandoned pods keep their existing release rules. This protects the replacement
 qualification rental without disabling automatic cleanup. All original research
 archives remain durable in R2. Production verifier cache retirement remains
 automatic after acknowledgement and respects active leases.
+
+## Durable CPU restart recovery
+
+The independent coordinator API, continuous auditor and ordinary learner now
+run as boot-enabled systemd user services with automatic restart on failure.
+Their durable ROOT-signed execution policies pin the same scientific source,
+configurations, authority, source admissions and queue. Policies do not bind
+a temporary startup PID or expire after the initial handoff. Scientific job
+and upload deadlines remain unchanged.
+
+Actual controlled restarts of all three CPU services passed without policy
+renewal. The original queue inode, WAL/FULL mode and schema were preserved.
+Exactly one epoch-29 training job remained; its original remote runner and
+child continued unchanged. At the last observation epoch 29 was still training
+201 eligible unaudited pairs, with committed optimizer step 19. An in-progress
+StateCache is not a completed checkpoint or durable optimizer commit.
+
+See [startup policy and guards](DURABLE_AUDIT_SERVICES.md). A hardware reboot
+was not performed; boot enablement and controlled service restart were verified.

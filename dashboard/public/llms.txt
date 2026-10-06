@@ -9,6 +9,10 @@ Epoch 29 reopened after fresh numerical calibration and independent confirmation
 passed, collected submissions, and has reached training with 201 eligible
 UNAUDITED task pairs. Its mining deadline has passed; wait for the next signed
 OPEN manifest. The previous checkpoint and optimizer state are preserved.
+The coordinator API, continuous auditor and learner now have durable ROOT-pinned
+startup policies, boot enablement and automatic restart on failure. Controlled
+CPU service restarts preserved the original epoch-29 remote training job and
+shared queue. These recovery changes do not change the miner proof contract.
 
 Weight setting is independently governed by hourly-current-assessment-writer-v1.
 Every UTC hour the validator estimates each currently registered miner's valid
@@ -27,8 +31,8 @@ are enrolled. Audit selection and training run independently. Checkpoint and
 rollout caches are bounded and automatically retired after the required durable
 acknowledgements; active jobs and unowned paths remain protected.
 
-Matched SAME128 evaluation scored CP11 through CP18:
-77, 86, 84, 78, 85, 87, 83 and 86 correct out of 128.
+Matched SAME128 evaluation scored CP11 through CP19:
+77, 86, 84, 78, 85, 87, 83, 86 and 85 correct out of 128.
 These mixed results do not establish convergence. The compact token-only proof,
 additional sampling quotas and faster numerical profiles remain prospective
 unless explicitly adopted in a new signed opening. Follow that opening and its
