@@ -24,9 +24,12 @@ Training used eligible UNAUDITED pairs with no trainer inference re-verification
 All 23 parent optimizer files (91.39 GB) were reused from the genuine recovery
 cache. Actual warm validation/restore took 256.6 seconds; training and checkpoint
 creation took 404.6 seconds; optimizer export/PUT took 892.7 seconds. The mandatory
-independent publication readback followed before commitment. Epoch 25 has opened
-from the genuinely committed checkpoint. Consecutive uninterrupted hourly
-operation and sustained learning are not yet established.
+independent publication readback followed before commitment. Epoch 25 then
+completed in 49.3 minutes, advanced optimizer step fifteen to sixteen and
+published checkpoint b2b68f9c15cc22cdd9ba812c7f79c83f65be22ae75102d957e685882cc6af66c.
+It trained on 256 eligible unaudited task pairs without inference re-verification;
+automatic trainer cleanup completed. Epoch 26 has opened. These two consecutive
+sub-hour epochs do not establish long-term uptime or sustained learning.
 E23 submissions remain closed. Miners must follow the current fresh signed
 OPEN manifest; a running controller alone is not an open submission contract.
 In E22, the owned miner completed three batches from 47 attempts within its 600-second
@@ -37,13 +40,13 @@ sustained hourly operation or held-out convergence.
 K=1/L=1, at most three batches per UID, the 16-attempt ceiling, selected-token
 logprobs plus TOPLOC, eight-stream state transport, and nonpayable operation
 are unchanged. Seven verifier workers are enrolled. The newest additive source
-and storage-capacity rollout completed on the first worker, then stopped on a
-transient read-only SQLite lock; the remaining original workers are preserved.
-The audit coordinator is currently stopped after a backend-evidence policy
-omission. Its corrected policy and safe rollout continuation are under review.
-Historical authenticated audits remain evidence for their original contracts;
-this does not claim that all current-source audits have finished. The learning
-loop remains independent of this audit outage and has advanced to epoch 25.
+and storage-capacity rollout has completed on all seven workers. The audit
+coordinator is running with indexed queue queries and short read-only reporting
+snapshots. Actual verifier admission is still being checked: historical job
+transport validation can select the wrong source before GPU execution. No new
+successful audit is implied by worker enrollment or an active coordinator.
+Historical authenticated audits remain evidence for their original contracts.
+The independent learning loop completed epoch 25 and opened epoch 26.
 Chain weight submission
 remains disabled. Follow the latest signed OPEN manifest for the
 current mining checkpoint and deadline; a published checkpoint alone is not
@@ -194,8 +197,8 @@ then retire obsolete owned files through coded lifecycle rules after terminal
 jobs and durable ACKs. Active leases and unowned paths are protected. The cache-
 stat successor has passed CPU qualification on all ten roles. Its guarded
 finish-current recovery completed and the automatic ordinary controller is
-running from the genuinely published step-fourteen checkpoint. Sustained warm
-training and uninterrupted epochs remain unproven. External miners must use
+running, with two ordinary completed warm-state epochs after recovery.
+Long-term uninterrupted operation remains unproven. External miners must use
 the current signed contract, never a research label or preparation alone.
 The guarded coded recovery cleanup retired 51.99 GB of archived partial state
 and 15.24 GB of an obsolete archived model; the current input checkpoint and
@@ -213,8 +216,11 @@ The separate matched 128-task CP13 evaluation completed: 84/128 (65.625%),
 versus CP12 86/128, with seven gains and nine losses on the exact same tasks
 and seeds. All four original 32-task jobs completed; their reports and archive
 passed full readback, and the group-owned model was automatically retired.
-This latest checkpoint declined by two tasks; sustained convergence is not
-established. No CP14 comparison is claimed. Failed-export evidence archival
+CP14 subsequently completed the same 128 tasks and scored 78/128 (60.9375%),
+with nine gains and fifteen losses against CP13. All four original jobs and
+full durable acknowledgements completed; owned model retirement completed.
+CP15's matched evaluation is running, without a completed score yet.
+Sustained convergence is not established. Failed-export evidence archival
 after a genuine replacement ACK and durable retry are available as default-off
 operator code; live adapter installation is pending and they are not part of
 the running recovery source.
@@ -223,8 +229,8 @@ Verifier download-capacity admission and automatic per-checkpoint size metadata
 are implemented and tested as operator code. They reserve missing
 model and artifact bytes before backend execution, renew the original lease
 on infrastructure deferral, and protect active checkpoint leases. The combined
-worker rollout is partially complete; this is not a claim that all live verifiers
-already enforce the new reserve policy. The independently running metadata
+worker rollout completed across seven roles. Source-bound admission validation
+is still being qualified; deployment alone does not prove successful audits. The independently running metadata
 observer follows genuinely published checkpoints and authenticated queued
 historical jobs, and delivers signed byte inventories automatically. It does
 not download models or provide proof-validity credit.
