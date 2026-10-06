@@ -152,3 +152,19 @@ the test harness omitted commitment/frozen-receipt context, so this is transport
 evidence only, not model-verifier qualification or production activation.
 A reusable CPU preflight now tests that exact commitment context before costly
 model downloads, and individual control records are persisted as they complete.
+
+All seven corrected production verifier roles have now completed authenticated
+original reports and acknowledgements. The seventh role naturally settled its
+prior lease before replacement; its old loader failures remain preserved. Its
+first corrected report was followed by automatic obsolete model/input retirement
+and a new admitted job. No active scientific process was killed or historical
+failed attempt relabeled. A snapshot contained 74 successful signed report/ACKs,
+224 valid and 19 worker-classified invalid outcomes; these counts are not an
+independent fraud finding or universal assurance.
+
+Epoch 28 subsequently completed in 53.38 minutes with 213 unaudited input pairs,
+advanced the durable optimizer to step 19 and published checkpoint
+`136c3f788eb20da982bc798ec1fb54cbc1463c6c7e1e6eeb2a4d3d8004ba0280`.
+Its signed learner closure was authenticated. Five consecutive sub-hour learning
+iterations do not establish sustained uptime or convergence; chain transactions
+remain disabled.

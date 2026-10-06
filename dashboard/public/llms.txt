@@ -254,8 +254,10 @@ are implemented and tested as operator code. They reserve missing
 model and artifact bytes before backend execution, renew the original lease
 on infrastructure deferral, and protect active checkpoint leases. The combined
 worker rollout completed across seven roles; a subsequent source-bound validation
-fix is installed on five restarted production workers. The remaining two roles
-have finite research reservations. Deployment alone does not prove successful audits. The independently running metadata
+fix is installed on all seven production workers. Every corrected role has
+completed an authenticated original report and acknowledgement; the seventh
+also automatically retired its obsolete model and input downloads after ACK.
+Numerical and invalid classifications remain tied to their original contracts. The independently running metadata
 observer follows genuinely published checkpoints and authenticated queued
 historical jobs, and delivers signed byte inventories automatically. It does
 not download models or provide proof-validity credit.
@@ -271,6 +273,7 @@ results are available only where an actual authenticated record exists.
 Implementation and contracts:
 - https://github.com/AffineFoundation/affine/blob/main/docs/DECOUPLED_IMPLEMENTATION_PLAN.md
 - https://github.com/AffineFoundation/affine/blob/main/docs/TOKEN_ONLY_COMMITMENT_TRANSPORT.md
+- https://github.com/AffineFoundation/affine/blob/main/docs/PRESCRIBED_TOKEN_PROOF.md (prospective; not live)
 - https://github.com/AffineFoundation/affine/blob/main/docs/COMMITTED_UNAUDITED_LEARNER.md
 - https://github.com/AffineFoundation/affine/blob/main/docs/CONTINUOUS_AUDIT_PREFILL.md
 - https://github.com/AffineFoundation/affine/blob/main/docs/CONTINUOUS_STATISTICAL_REWARD_BRIDGE.md
