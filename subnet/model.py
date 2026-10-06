@@ -138,7 +138,8 @@ class Runtime:
                 # structured observations rather than a guessed single feedback.
                 if self.legacy:
                     turn['feedback'] = observations[0]['content'] if observations else ''
-                turns.append(turn); arrays.append(logprobs)
+                from .probability_artifacts import encode
+                turns.append(turn); arrays.append(encode(logprobs, output, getattr(self, 'probability_artifact_policy', None)))
                 messages = messages + [dict(role='assistant', content=text)] + policy.observations(observations,self.harness)
                 if done:
                     break
@@ -154,6 +155,8 @@ class Runtime:
     def verify(self, rollout, arrays):
         from .audit_policy import InvalidSample
         calibrated=getattr(self,'fast_sampling_calibration',None)
+        if getattr(self, 'probability_artifact_policy', None) is not None and getattr(self, 'sampling_context', None) is None:
+            raise InvalidSample('compact probability artifacts require authenticated forced sampling')
         if getattr(self, 'sampling_context', None) is not None:
             try:
                 expected = self.sampling_receipt(rollout.get('seed'))['sampling']
@@ -194,8 +197,8 @@ class Runtime:
                 if type(turn.get('done')) is not bool or type(turn.get('reward')) not in (int,float) or not math.isfinite(turn['reward']):
                     raise InvalidSample('turn outcome types')
                 acts, probs = self.compute(prompt, output)
-                if claimed.shape != probs.shape or not np.isfinite(claimed).all() or not np.allclose(claimed, probs, atol=calibrated['logprob_atol']if calibrated else 1e-5, rtol=0):
-                    raise InvalidSample('probabilities')
+                from .probability_artifacts import verify_claim
+                verify_claim(claimed, probs, output, getattr(self, 'probability_artifact_policy', None), atol=calibrated['logprob_atol']if calibrated else 1e-5)
                 count = 1+math.ceil(len(output)/16)
                 try:validate_framing(turn['proofs'],count)
                 except ValueError as error:raise InvalidSample('proof framing') from error

@@ -22,7 +22,7 @@ BACKEND_PROFILE = dict(device='cuda', dtype='bfloat16', attention='eager', sm=[8
     tf32=False, deterministic_algorithms=True, cublas_workspace_config=':4096:8',
     native_toploc_threads=2, torch_threads=2)
 SOURCE_FILES = tuple('subnet/'+n+'.py' for n in
-    ('owned_cached_evaluation','cached_sampling','successor_calibration','training_documents','fast_prefill_audit','continuous_audit_policy','selected_proof_copy','commitment_transport','hourly_policy','audit_exclusion','audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling'))
+    ('owned_cached_evaluation','cached_sampling','successor_calibration','training_documents','probability_artifacts','fast_prefill_audit','continuous_audit_policy','selected_proof_copy','commitment_transport','hourly_policy','audit_exclusion','audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling'))
 ROLES = {'mine','verify','train','evaluate','upload'}
 HEAD_POLICY='frozen-feature-head-adamw-v1'
 FULL_POLICY='bf16-full-adamw-checkpointed-v1'
@@ -820,6 +820,8 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         if job['role'] != 'evaluate':
             from .forced_sampling import bind_runtime
             bind_runtime(runtime,manifest)
+            from .probability_artifacts import bind_runtime as bind_artifacts
+            bind_artifacts(runtime,manifest)
         elif manifest.get('sampling_contract') is not None:
             runtime.sampling_context=None
             report['sampling_scope']='heldout-diagnostic-not-mining-evidence'

@@ -8,6 +8,12 @@ capabilities. After the deadline, the controller freezes submissions, publishes
 an audit history, verifies/scopes duplicate environment indices, calculates
 proposed weights and trains the next checkpoint. The next epoch waits for training.
 
+The [selected-token probability artifact proposal](COMPACT_PROBABILITY_ARTIFACT_PROPOSAL.md)
+defines a prospective explicit signed policy that transports token log probabilities
+and required TOPLOC fingerprints while the verifier recomputes the complete sampling
+distribution. It is not a live activation. Existing manifests without that policy
+continue to require their original full-vocabulary probability arrays.
+
 ## Forced sampling update — October 4, 2026
 
 When the signed manifest contains `forced-inverse-cdf-replay-v1`, use the newly

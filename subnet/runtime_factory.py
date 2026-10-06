@@ -6,6 +6,8 @@ GPU_PROFILE=dict(device='cuda',dtype='bfloat16',attention='eager',sm=[8,6],tf32=
 
 
 def validate_backend(manifest):
+ from .probability_artifacts import for_manifest
+ for_manifest(manifest)
  revision=manifest.get('model_runtime_revision',CPU_REVISION)
  if revision==CPU_REVISION:
   if manifest.get('backend_profile') not in (None,{'device':'cpu','dtype':'float32','attention':'eager'}):raise ValueError('CPU backend profile mismatch')
@@ -19,9 +21,10 @@ def validate_backend(manifest):
 
 def runtime(checkpoint,manifest,environment,harness=None):
  from .forced_sampling import bind_runtime
+ from .probability_artifacts import bind_runtime as bind_artifacts
  revision=validate_backend(manifest)
  if revision==CPU_REVISION:
   from .model import Runtime
-  return bind_runtime(Runtime(checkpoint,manifest['checkpoint']['files'],environment=environment,harness=harness),manifest)
+  return bind_artifacts(bind_runtime(Runtime(checkpoint,manifest['checkpoint']['files'],environment=environment,harness=harness),manifest),manifest)
  from .gpu_runtime import GPURuntime
- return bind_runtime(GPURuntime(checkpoint,manifest['checkpoint']['files'],environment,harness,runtime_revision=revision),manifest)
+ return bind_artifacts(bind_runtime(GPURuntime(checkpoint,manifest['checkpoint']['files'],environment,harness,runtime_revision=revision),manifest),manifest)

@@ -118,6 +118,9 @@ def contract(config,round_number):
         if epoch_policy(config) not in POLICIES:raise ValueError('receipt input requires covered/persistent objective')
         result['training_input_policy']=config['training_input_policy']
     if config.get('artifact_policy') is not None:result['artifact_policy']=config['artifact_policy']
+    if 'probability_artifact_policy' in config:
+        from .probability_artifacts import validate_policy
+        result['probability_artifact_policy']=validate_policy(config['probability_artifact_policy'])
     if config.get('proof_copy_policy') is not None:
         from .selected_proof_copy import validate_policy
         result['proof_copy_policy']=validate_policy(config['proof_copy_policy'])
@@ -202,6 +205,7 @@ def initial_manifest(config,checkpoint):
     result=dict(sample_harness_registry=chosen['sample_harness_registry'],epoch=config['epoch_prefix']+'-initial',payable=False,training_policy=chosen['training_policy'],checkpoint=checkpoint,environments=[dict(env_id=r['spec']['id'],**r) for r in chosen['environments']],K=1,L=1,max_batches=config.get('max_batches',3),audit_policy=config.get('audit_policy',{'mode':'full','version':1}),harness_source_hash=source_hash(),model_runtime_revision=revision,numerical_policy=policy,backend_profile=profile,model_id=chosen['model_id'],transport_policy='direct-r2-v1')
     if 'training_input_policy' in chosen:result['training_input_policy']=chosen['training_input_policy']
     if 'artifact_policy' in chosen:result['artifact_policy']=chosen['artifact_policy']
+    if 'probability_artifact_policy' in chosen:result['probability_artifact_policy']=chosen['probability_artifact_policy']
     if 'task_assets' in chosen:result['task_assets']=chosen['task_assets']
     return result
 
