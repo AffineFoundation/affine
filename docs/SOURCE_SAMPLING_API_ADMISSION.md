@@ -1,0 +1,13 @@
+# Prospective source-specific sampler admission
+
+This default-off CPU operator guard checks authenticated worker assertions; it performs no model inference and does not turn a transport ACK into sampling proof. No service is changed by importing the module.
+
+ROOT signs a `source-specific-sampling-api-admission-v1` document containing an exact `sources` map. Each source digest maps to its complete job runtime file map, exact runtime versions, and explicitly admitted sampler versions. The CPU launcher supplies an equal source-to-local-sealed-tree map. All runtime hashes are verified before loading isolated, source-specific sampler packages. V4 requires the exact 177-file map. Historical sources retain their own modules and admitted versions.
+
+Construct `SamplingAdmission(document, authority, source_trees)` and wrap the unchanged pinned queue class with `guarded_coordinator(original_class, gate)`. Bind the guard module bytes, signed document and source trees in a new ROOT-reviewed CPU launch scope. Preserve the old API's queue file/inode, authority, workers, HTTP configuration and lease/report history. This change is not included in a scientific source archive and must not modify the original API tree on disk.
+
+Both signed enqueue and authenticated report admission check original source, sampler file hash, supported contract version, exact runtime map/versions, checkpoint/profile/harness calibration, and sampling assurance/credited rollout receipts. A v4 numerical-ambiguous outcome must remain unaccepted, not fully audited, and incomplete for sampling/environment verification. It cannot carry accepted selected-child credit. Ordinary queue authentication, original deadlines, submission bindings and report metadata checks still run afterward.
+
+Old API transport validation can authenticate a source and report without understanding its new sampler semantics. Production v4 activation therefore requires this separately approved operator guard, exact v4 source admission, and genuine fresh v4 generation/calibration evidence. Existing v3 research cannot qualify the v4 draw domain. This guard does not itself define reward coverage policy; unknown-only miners must not acquire unlimited validity credit from an unobserved posterior.
+
+Tests use portable exact legacy v3 sampler fixtures and current 177-file maps, plus a full signed enqueue/claim/report round trip in an ephemeral SQLite database. They reject old-source v4 rebinding, unknown versions, changed source hashes/runtime metadata/calibration, forged registry signatures, changed rollout receipts, and unknown-to-valid report mutations while keeping the original lease open for a truthful report.
