@@ -1,11 +1,17 @@
 # Affine — MATH mining, verification and training
 
 Current operational status, 2026-10-06:
-E21 is OPEN on approved source
+E21 collected submissions on approved source
 4db060697ab8303ee667e5787831a574b41e4a10afb8fe6a209dd7db40b9f373,
 using checkpoint 339f31e788d5fa8044dc53ea022346ff3a83a999bed481aeef6565e154a0c8c2.
-The sustained controller is running; E21's original compact miner completed
-two batches and training is underway without waiting for inference audits. The signed
+E21's original compact miner completed two batches. The whole collection
+captured 392 documents, admitted 335 through cheap checks, and selected 256
+UNAUDITED inputs without an inference-audit barrier. The original training
+attempt then failed with a parent-optimizer download read timeout during restore,
+before train_epoch or any optimizer update. Step eleven remains the durable
+parent. The failed original and its evidence are preserved; explicit pre-update
+recovery and bounded transient transport retry are being implemented, not yet
+activated. The signed
 contract requires one positive and one negative rollout per task, at most three
 batches per UID, and a 16-attempt ceiling. Generation uses cached FP32 eager
 SM90 inference and prescribed public draws. Upload selected-token logprobs and
