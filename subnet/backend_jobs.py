@@ -447,7 +447,7 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
 class ArtifactRejected(ValueError):
     '''Complete observed bytes violate the signed digest/size; not network failure.'''
 
-def get_object(url, expected, destination, limit, *, session=None, record_lifecycle=True):
+def _get_object_once(url, expected, destination, limit, *, session=None, record_lifecycle=True):
     import requests
     temporary=destination.with_suffix(destination.suffix+'.partial');h=hashlib.sha256();size=0
     try:
@@ -466,6 +466,81 @@ def get_object(url, expected, destination, limit, *, session=None, record_lifecy
             from .cache_lifecycle import CacheLifecycle
             CacheLifecycle(lifecycle_root).record_download(destination,expected)
     finally:temporary.unlink(missing_ok=True)
+
+
+
+_PARENT_READ_CONTEXT=None
+
+class StateReadInfrastructureDeferred(RuntimeError):
+    """Original bounded parent transport exhausted; no optimizer update."""
+
+def _parent_read_binding(url,expected,destination,limit):
+    context=_PARENT_READ_CONTEXT
+    if context is None:return None
+    job,manifest,authority,workspace=context
+    if job.get('role')!='train'or job.get('training_policy')!='bf16-cpu-fp32-master-task-normalized-persistent-v4':return None
+    urls=job.get('persistent_training',{}).get('parent_read_urls',{})
+    matches=[name for name,cap in urls.items()if cap==url]
+    if not matches:return None
+    if len(matches)!=1:raise ValueError('one original parent capability')
+    from .persistent_training_protocol import validate_job
+    _,parent=validate_job(job,manifest,authority)
+    row=next((r for r in parent['shards']if r['name']==matches[0]),None)if parent else None
+    path=Path(destination).absolute();out=Path(workspace).absolute()/'jobs'/job['job_id']
+    if (row is None or (expected,limit)!=(row['sha256'],row['size'])or path.name!=row['name']
+        or path!=path.resolve()or not path.is_relative_to(out)or not path.parent.name.startswith('.fp32-state-transfer-')):raise ValueError('exact original parent read scope/path')
+    return dict(row=row,expires_at=job['expires_at'],out=out)
+
+def _retry_parent_object(url,binding,destination,*,max_attempts=3,sleep=time.sleep):
+    import math,requests
+    from .persistent_training_state import _hash_file
+    row=binding['row'];expires_at=binding['expires_at'];path=Path(destination)
+    if type(max_attempts)is not int or not 1<=max_attempts<=3 or type(expires_at)not in(int,float)or not math.isfinite(expires_at):raise ValueError('bounded original parent reads')
+    evidence=dict(version='bounded-parent-state-read-retry-v1',name=row['name'],sha256=row['sha256'],size=row['size'],attempts=[],verified=False,reused_existing_bytes=False)
+    def record():
+        folder=Path(binding['out'])/'parent-state-read-retries';folder.mkdir(mode=0o700,exist_ok=True)
+        target=folder/(row['name']+'.json');temporary=target.with_suffix('.tmp')
+        temporary.write_bytes(canonical(evidence));temporary.chmod(0o600);temporary.replace(target)
+    class RetryableStatus(requests.ConnectionError):pass
+    class OneAttemptClient:
+        def get(self,*args,**kwargs):
+            response=requests.get(*args,**kwargs)
+            if response.status_code in(429,500,502,503,504):
+                status=response.status_code;response.close();error=RetryableStatus('transient parent GET status');error.status_code=status;raise error
+            return response
+    transient=(requests.Timeout,requests.ConnectionError,requests.exceptions.ChunkedEncodingError)
+    for attempt in range(max_attempts):
+        if time.time()>=expires_at:
+            evidence['status']='infrastructure_deferred_original_expiry';record();raise StateReadInfrastructureDeferred('original parent read job expired; no extension')
+        started=time.time()
+        try:
+            if path.exists():
+                st=path.stat()
+                if path.is_symlink()or path.absolute()!=path.resolve()or st.st_uid!=os.getuid()or st.st_nlink!=1 or not path.is_file():raise ValueError('owned single-link parent shard')
+                if _hash_file(path)!=(row['sha256'],row['size']):raise ArtifactRejected('existing parent shard digest/size')
+                evidence['reused_existing_bytes']=True
+            else:_get_object_once(url,row['sha256'],path,row['size'],session=OneAttemptClient(),record_lifecycle=False)
+            if path.stat().st_size!=row['size']:raise ArtifactRejected('parent shard exact size')
+            evidence['attempts'].append(dict(attempt=attempt+1,started_at=started,completed_at=time.time(),status='verified_complete'))
+            evidence.update(verified=True,status='complete')
+            if time.time()>=expires_at:
+                evidence['status']='infrastructure_deferred_original_expiry';record();raise StateReadInfrastructureDeferred('verified parent bytes arrived after original expiry; no update')
+            record();return
+        except transient as error:
+            evidence['attempts'].append(dict(attempt=attempt+1,started_at=started,completed_at=time.time(),status='transient_transport_failure',error_type=type(error).__name__,HTTP_status=getattr(error,'status_code',None)))
+            evidence['status']='retrying'if attempt+1<max_attempts else 'infrastructure_deferred_retry_exhausted';record()
+            if attempt+1==max_attempts:raise StateReadInfrastructureDeferred('bounded original parent shard reads exhausted')from error
+            delay=min(4,2**attempt)
+            if time.time()+delay>=expires_at:
+                evidence['status']='infrastructure_deferred_original_expiry';record();raise StateReadInfrastructureDeferred('original parent read expiry before retry')from error
+            sleep(delay)
+
+def get_object(url,expected,destination,limit,*,session=None,record_lifecycle=True):
+    binding=_parent_read_binding(url,expected,destination,limit)
+    if binding is not None:
+        if session is not None:raise ValueError('parent reads use dedicated one-attempt client')
+        return _retry_parent_object(url,binding,destination)
+    return _get_object_once(url,expected,destination,limit,session=session,record_lifecycle=record_lifecycle)
 
 
 def prefetched_training_submissions(submissions,out,timings,*,workers=4,session_factory=None):
@@ -763,6 +838,8 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     if publication_files:
         from .persistent_publication import validate_policy
         validate_policy(manifest['persistent_publication_policy'])
+    global _PARENT_READ_CONTEXT
+    _PARENT_READ_CONTEXT=(job,manifest,authority,str(Path(workspace).absolute()))
     from .backend_profiles import resolve
     from .backend_profiles import execution_profile
     revision,backend_profile,numerical_policy=execution_profile(manifest,job['role'])
