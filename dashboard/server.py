@@ -195,6 +195,13 @@ class Database:
                 evaluation_inputs.extend(cached_rows(read(pointer,{}),launch/'controller-state'))
             except Exception:
                 pass # Invalid diagnostic projection is unavailable, never zero reward.
+        heldout_pointer=self.source/'dashboard/heldout128-sources.ROOT-SIGNED.json'
+        if heldout_pointer.is_file():
+            try:
+                from dashboard.heldout128_projection import rows as heldout_rows
+                evaluation_inputs.extend(heldout_rows(read(heldout_pointer,{}),launch/'controller-state'))
+            except Exception:
+                pass # Incomplete or unauthenticated128 evidence is unavailable.
         for raw in evaluation_inputs:
             if not isinstance(raw,dict) or not all(isinstance(raw.get(k),str) for k in ('run_id','env_id','dataset_id','status')):
                 continue
