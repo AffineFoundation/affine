@@ -22,7 +22,7 @@ BACKEND_PROFILE = dict(device='cuda', dtype='bfloat16', attention='eager', sm=[8
     tf32=False, deterministic_algorithms=True, cublas_workspace_config=':4096:8',
     native_toploc_threads=2, torch_threads=2)
 SOURCE_FILES = tuple('subnet/'+n+'.py' for n in
-    ('owned_cached_evaluation','cached_sampling','successor_calibration','training_documents','probability_artifacts','fast_prefill_audit','continuous_audit_policy','selected_proof_copy','commitment_transport','hourly_policy','audit_exclusion','audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling'))
+    ('trusted_native_evaluation','owned_cached_evaluation','cached_sampling','successor_calibration','training_documents','probability_artifacts','fast_prefill_audit','continuous_audit_policy','selected_proof_copy','commitment_transport','hourly_policy','audit_exclusion','audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling'))
 ROLES = {'mine','verify','train','evaluate','upload'}
 HEAD_POLICY='frozen-feature-head-adamw-v1'
 FULL_POLICY='bf16-full-adamw-checkpointed-v1'
@@ -408,6 +408,11 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
         if resolve_source:
             from .replay_training import admitted
             admitted(manifest,job['replay'],authority)
+    trusted=job.get('trusted_evaluation_policy')
+    if 'trusted_evaluation_policy' in job:
+        expected={'version':'trusted-native-generation-evaluation-v1','trust_scope':'operator-owned-process-native-grader','proof_reverification':False,'sampling_policy':'unchanged-signed-runtime'}
+        if(job['role']!='evaluate'or job.get('owned_evaluation_policy')is not None or job.get('successor_calibration')is not None or not isinstance(trusted,dict)or set(trusted)!=set(expected)or any(type(trusted[k])is not type(v)or trusted[k]!=v for k,v in expected.items())):raise ValueError('explicit trusted native evaluation role/policy')
+        if 'subnet/trusted_native_evaluation.py'not in job['source_files']:raise ValueError('trusted native evaluator source pin')
     owned=job.get('owned_evaluation_policy')
     if owned is not None:
         expected={'version':'owned-cached-native-evaluation-v1','trust_scope':'operator-owned-process-native-grader','proof_reverification':False}
@@ -939,6 +944,13 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                         global_step_after=job['persistent_training']['global_step_after'])
                 report['full_model_finetune']=report['training']['full_model_finetune']
                 report['new_checkpoint']=dict(id=file_map(files),files=files,path=str(destination))
+        elif job.get('trusted_evaluation_policy') is not None:
+            from .trusted_native_evaluation import evaluate as evaluate_trusted
+            from .environments import create_session
+            def evaluation_progress(value):
+                value.update(at=time.time(),job_id=job['job_id'],checkpoint=manifest['checkpoint']['id'],verified=False,proof_verification_performed=False)
+                temporary=out/'trusted-evaluation-progress.tmp';temporary.write_bytes(canonical(value));temporary.chmod(0o600);temporary.replace(out/'trusted-evaluation-progress.json')
+            report['heldout'],report['heldout_failures'],report['trusted_native_evaluation']=evaluate_trusted(runtime,manifest,job,create_session=create_session,progress=evaluation_progress)
         elif job.get('owned_evaluation_policy') is not None:
             from .owned_cached_evaluation import evaluate as evaluate_owned
             from .environments import create_session

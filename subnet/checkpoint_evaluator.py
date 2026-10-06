@@ -22,7 +22,7 @@ from .storage import canonical
 
 VERSION='independent-checkpoints-v1'
 CONFIG_FIELDS=('heldout','environment','environments','evaluation_experiment_id','evaluation_seed',
-               'model_id','evaluation_state')
+               'model_id','evaluation_state','trusted_evaluation_policy')
 
 SOURCE_ROUTES_VERSION='independent-evaluator-source-routes-v1'
 
@@ -187,7 +187,7 @@ def fingerprint(manifest,config,plan):
         runtime={k:manifest.get(k) for k in ('model_runtime_revision','backend_profile','numerical_policy','harness_source_hash')},
         source_bundle=source_identity,model=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'),
         experiment_id=config.get('evaluation_experiment_id','gpu-continuous-fixed128'),
-        evaluation_seed=config.get('evaluation_seed',20260930)))).hexdigest()
+        evaluation_seed=config.get('evaluation_seed',20260930),**({'trusted_evaluation_policy':config['trusted_evaluation_policy']}if 'trusted_evaluation_policy'in config else {})))).hexdigest()
 
 def historical_request(controller,identity,config,plan):
     """Reference only a locally retained authenticated completed original job.
@@ -207,6 +207,7 @@ def historical_request(controller,identity,config,plan):
             if not reportpath.exists():continue
             job=signed(json.loads((path.parent/(prior['job_id']+'-job.json')).read_text()),controller.authority.id)
             manifest=signed(job['manifest'],controller.authority.id)
+            if job.get('trusted_evaluation_policy')!=config.get('trusted_evaluation_policy'):continue
             if job.get('heldout')!=plan or fingerprint(manifest,config,plan)!=identity:continue
             report=checker(json.loads(reportpath.read_text()),prior,manifest)
             label=path.stem;phase=label.rsplit('-eval-',1)[1]

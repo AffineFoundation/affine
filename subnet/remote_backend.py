@@ -208,6 +208,7 @@ class RemoteJobs:
                 if (original.get('role')!=role or original.get('heldout')!=fields.get('heldout')
                         or original.get('successor_calibration')!=fields.get('successor_calibration')
                         or original.get('owned_evaluation_policy')!=fields.get('owned_evaluation_policy')
+                        or original.get('trusted_evaluation_policy')!=fields.get('trusted_evaluation_policy')
                         or signed(original['manifest'],self.controller.authority.id)!=manifest
                         or hashlib.sha256(canonical(original)).hexdigest()!=prior['job_sha256']):
                     raise ValueError('original evaluation request changed')
