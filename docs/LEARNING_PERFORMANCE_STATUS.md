@@ -5,10 +5,12 @@ not wait for inference audits or repeat inference verification in the trainer.
 K=1/L=1 and the three-batch-per-UID cap remain the live contract. The matched
 quota research runner is default-off; see [its protocol](MATCHED_QUOTA_RESEARCH.md).
 
-The unchanged independent 128-task cohort scored 77, 86, 84, 78, 85 and 87 correct
-on checkpoints 11 through 16. Checkpoint 16 gained five and lost three tasks
-against checkpoint 15. This is an encouraging rebound, not established
-convergence. Dataset size and additional samples alone do not establish learning.
+The unchanged independent 128-task cohort scored 77, 86, 84, 78, 85, 87 and 83 correct
+on checkpoints 11 through 17. Checkpoint 16 gained five and lost three tasks
+against checkpoint 15. Checkpoint 17 then fell to 83/128 on the same cohort. The signed summary and
+archive hash were checked; all four original job archives were acknowledged and
+the owned evaluator model retired automatically. This is fluctuation, not
+established convergence. Dataset size and additional samples alone do not establish learning.
 
 Epochs 24 and 25 completed in 50.4 and 49.3 minutes. Epoch 25 trained on 256
 distinct eligible task pairs, advanced optimizer step 15 to 16 and published

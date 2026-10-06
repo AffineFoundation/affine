@@ -239,7 +239,9 @@ It solved 85/128 with nineteen gains and twelve losses against CP14.
 CP16 completed all four original jobs and full private R2 acknowledgements,
 retired its owned replica automatically and published the sixth dashboard row.
 It solved 87/128 with five gains and three losses against CP15.
-Sustained convergence is not established. Failed-export evidence archival
+CP17 subsequently completed the same unchanged 128-task cohort at 83/128, with
+all four original archives acknowledged and its owned replica retired.
+Learning is fluctuating; sustained convergence is not established. Failed-export evidence archival
 after a genuine replacement ACK and durable retry are available as default-off
 operator code; live adapter installation is pending and they are not part of
 the running recovery source.
