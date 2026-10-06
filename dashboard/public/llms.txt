@@ -278,8 +278,10 @@ Historical notes, superseded contracts and original measurements are preserved:
 https://github.com/AffineFoundation/affine/blob/main/docs/operations-history-2026-10-06-before-guide-reconciliation.md
 They do not authorize new mining or redefine the current signed manifest.
 
-Token-only research status: one H200 completed the corrected full 182-control
-matrix with a genuine successful exit, signed full archive acknowledgement and
-automatic owned-model retirement. The matching second-host run is pending.
+Token-only research status: both independent H200s completed the corrected
+182-control matrix with identical verdicts, genuine successful exits, signed full
+archive acknowledgements and automatic owned-model retirement. Each mode accepted
+three honest controls, retained one numerical unknown and rejected all 80 token
+mutations; backend native, quota and invalid-dominance controls also passed.
 This is not token-only production admission; the live miner format remains
 selected-token logprobs plus TOPLOC under the signed epoch manifest.

@@ -108,8 +108,17 @@ one unknown and 80 CDF-invalid mutations. Backend native false-outcome, same-tas
 off-policy and invalid-dominance controls passed. Total wall time was 551.27
 seconds including checkpoint download and loading. Official direct checks took
 158.87 seconds and token-only checks 125.71 seconds in a single ordered run;
-this is not a controlled speedup estimate. The matching H200 A run remains
-pending, and neither historical CP11 research nor one host admits production.
+this is not a controlled speedup estimate. H200 A subsequently completed the
+same 182 controls with matching verdicts, 192 causal forwards and zero cached
+fallbacks. Its original process exited successfully; the complete archive passed
+signed full R2 readback, and automatic completion retired all ten downloaded
+model files (15.24 GB) before production resumed. Its total wall time was 540.92
+seconds. The two-host comparison is now complete, including confirmed-invalid
+dominance over numerical unknowns and native/quota checks. This qualifies those
+research controls on the pinned checkpoint; it does not admit the new artifact
+format for production or establish general cross-hardware numerical calibration.
+The separate explicit token-only miner/backend contract is being integrated and
+still requires fresh current-checkpoint qualification before deployment.
 
 A bounded lossless-compression probe read one 4-MiB interior slice each from the
 actual checkpoint-18 FP32 master, first-moment and second-moment tensors. No
