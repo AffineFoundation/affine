@@ -117,9 +117,13 @@ Its successor qualification-only package is
 9f392dabf41278474c18c686393180833630571e49265a75b98eae88f3a95b88.
 Full R2 archive/member readback and CPU staging on all ten roles passed,
 and all seven worker registries include its exact runtime inventory.
-It includes the synchronous original-ACK fix, but is not the active epoch
-contract. E18 is durably complete; activation still requires an exact parent-nine
-launch review and fresh resource admission.
+It includes the synchronous original-ACK fix. A separately ROOT-scoped sustained
+controller now runs from actual durable parent nine, with the exact independent
+queue API and sole-current optimizer-cache opt-in. Its first new-source GPU
+calibration is running; a passed first training update and warm-cache speedup
+are not yet demonstrated. The original qualification-only descriptor is unchanged.
+The continuous auditor has separately admitted the complete five-source union,
+including9f, while preserving historical jobs, policies and numerical contracts.
 A distinct CPU byte-cache control passed on the full original 23 optimizer
 objects (91,387,491,264 bytes), including corruption detection, invalid-ACK
 rejection and exclusive leases. This does not demonstrate a production cache
@@ -448,3 +452,10 @@ prescribed random draw, token context and required TOPLOC fingerprint. Submitted
 selected probabilities never determine the reference sampler. Genuine CPU
 controls and tampering controls pass; GPU qualification and activation are pending.
 This reduces artifact size, not the required model computations.
+
+Main also adds bounded automatic retirement of verified local submission downloads
+after a typed completed-backend lease expiry, preserving original signed jobs,
+reports and diagnostics. Original signed submission hashes, private preexisting
+hydration receipts, inode/link checks and active checkpoint locks are required.
+This expired-input extension has passed CPU controls but is not yet deployed;
+all seven live workers already have immediate-ACK and idle owned-model disposal.
