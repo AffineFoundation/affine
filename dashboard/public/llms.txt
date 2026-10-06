@@ -122,7 +122,10 @@ controller now runs from actual durable parent nine, with the exact independent
 queue API and sole-current optimizer-cache opt-in. Fresh new-source calibration and confirmation passed; epoch nineteen is now
 training on 256 selected UNAUDITED batches from 351 captured documents and
 295 cheap-eligible batches. Collection and decoding took 158.63 seconds.
-Its completed training update and a warm-cache speedup are not yet demonstrated. The original qualification-only descriptor is unchanged.
+The original E19 training backend has completed successfully and staged optimizer
+step ten and its next checkpoint. Independent state readback and publication
+must still finish; a warm-cache speedup is not yet demonstrated. The original
+qualification-only descriptor is unchanged.
 The continuous auditor has separately admitted the complete five-source union,
 including9f, while preserving historical jobs, policies and numerical contracts.
 A distinct CPU byte-cache control passed on the full original 23 optimizer
@@ -451,7 +454,8 @@ The new format stores one float32 log probability per emitted token, while the
 verifier still independently computes full distributions and checks every
 prescribed random draw, token context and required TOPLOC fingerprint. Submitted
 selected probabilities never determine the reference sampler. Genuine CPU
-controls and tampering controls pass; GPU qualification and activation are pending.
+controls and tampering controls pass. A qualification-only H200 run passed five
+honest/tampering controls for a 139-token trajectory; activation is pending.
 This reduces artifact size, not the required model computations.
 
 Main also adds bounded automatic retirement of verified local submission downloads
@@ -473,8 +477,11 @@ approved 9f source with automatic evaluation retention and a signed 32 GiB
 free-disk admission floor. Unissued older sources remain deferred rather than
 being rewritten or treated as completed. Evaluation does not gate training.
 The compact probability candidate 4109ca0123cef05d37c908824b1fa32bb085d24e1e4bad3529a86899798b9aea
-passed complete R2 readback and CPU staging on all ten roles. It has not passed
-production GPU qualification or replaced the current manifest contract.
+passed complete R2 readback and CPU staging on all ten roles. Its independent
+H200 qualification produced a 4,658-byte honest artifact in a 45.28-second test
+and passed five controls, including fresh-seed and token changes rejected by
+the independently computed sampler. These are test measurements, not a
+production epoch speedup. It has not replaced the current manifest contract.
 
 The first independent E19 evaluation attempt failed before GPU execution because
 a queued trainer-local checkpoint cache was not valid on the evaluator machine.
