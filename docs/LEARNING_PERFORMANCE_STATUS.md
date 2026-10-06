@@ -309,3 +309,8 @@ each only by attempt9. These two tasks are too narrow to justify changing the
 production quota. Truncation remains a training confound, and neither supply
 nor a successful publication demonstrates held-out convergence. CP20 SAME128
 remains84/128; CP21 evaluation is not yet verified here.
+
+The CP21 fixed32 diagnostic subsequently completed at19/32 (59.375%). ROOT
+verified the original signed job, report digest and durable full-readback ACK.
+The independent SAME128 experiment is still running its original four-group
+sequence; its result cannot be inferred from this smaller diagnostic.

@@ -319,3 +319,11 @@ original capture policies. Document size, SHA, upload deadline and unaudited
 assurance are unchanged. Epoch 31 is still opening; completed-epoch capture
 throughput and sustained hourly cadence remain unproven.
 See GitHub docs/BOUNDED_TRAINING_CAPTURE.md for configuration and deployment gates.
+
+Historical verifier report admission is separate from permission to claim new
+jobs. A ROOT-signed exact retired-verifier job/report digest allowlist can retain
+authentic completed evidence after the verifier leaves the active fleet. Original
+worker report signatures, job digests, lease tokens, source/runtime checks and
+report digests still apply. This grants no new claims or API credentials. The
+CPU reconciliation repair is installed; a successful resumed audit cycle remains
+to be observed. No miner upload format or sampling contract changes with this fix.

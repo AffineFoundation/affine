@@ -1,3 +1,21 @@
+Verified continuation, 2026-10-06, 22:42 UTC:
+E31 passed genuine fresh calibration and reconfirmation, then opened collection
+fromCP21 under signed capture-v2 (8 readers,16MB in flight,16-decision checkpoints).
+Its mining window is600 seconds. CP21 diagnostic fixed32 completed19/32 with
+original job/report and ROOT full-readback ACK authenticated; independent SAME128
+is running its original grouped evaluation and has no final summary yet.
+Continuous auditor reconciliation had been restarting because50 completed
+reports from retired verifier7 were absent the active claim roster. A narrowly
+ROOT-signed exact historical job/report digest allowlist is now installed under
+the same queue/singleton;44 CPU controls and all50 original signature/admission
+checks passed. Original new auditor PID1946327 is live; first successful service
+cycle is not yet verified. API, learner, worker claim credentials and weight
+writer are unchanged. New eighth H200 qualification's original run failed on
+research helper artifact naming before verification; checkpoint full SHA download
+completed, but zero control verdicts means hardware qualification is unproven.
+The original terminal is preserved; a separately scoped helper correction is
+being prepared without changing frozen scientific code or resetting models.
+
 Verified continuation, 2026-10-06, 22:33 UTC:
 E30 publication-only recovery completed without retraining: checkpoint21 and
 optimizer step21 are committed after independent full readback of ten model
