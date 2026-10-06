@@ -1052,10 +1052,42 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     report['success']=True;report['completed_at']=time.time()
     (out/'report.json').write_bytes(canonical(report));return report
 
+JOB_ENVELOPE_MAX_BYTES=4_000_000
+RECOVERY_JOB_ENVELOPE_MAX_BYTES=8_000_000
+LARGE_RECOVERY_VERSIONS=frozenset(('terminal-parent-restore-pre-update-recovery-v2','terminal-parent-restore-pre-update-bootstrap-recovery-v3'))
+
+def load_job_envelope(path,authority):
+    """Bounded CPU parser; only explicit ROOT-authenticated recovery gets 8 MB.
+
+    Full source/protocol admission remains mandatory in execute before model
+    construction. Ordinary jobs retain their original four-million-byte cap.
+    """
+    with Path(path).open('rb')as stream:data=stream.read(RECOVERY_JOB_ENVELOPE_MAX_BYTES+1)
+    if len(data)>RECOVERY_JOB_ENVELOPE_MAX_BYTES:raise ValueError('job envelope absolute size budget')
+    envelope=json.loads(data)
+    if type(envelope)is not dict or ('payload'in envelope and type(envelope['payload'])is not dict):raise ValueError('job envelope object')
+    if len(data)<=JOB_ENVELOPE_MAX_BYTES:return envelope
+    def root_payload(document):
+        if type(document)is not dict or set(document)!={'payload','signer','signature'}or type(document.get('payload'))is not dict:raise ValueError('authenticated recovery envelope object')
+        return signed(document,authority)
+    job=root_payload(envelope)
+    if job.get('role')!='train'or job.get('training_policy')!=PERSISTENT_POLICY or job.get('training_input_policy')!='committed-unaudited-training-v1':raise ValueError('job envelope size budget')
+    manifest=root_payload(job.get('manifest'))
+    declaration=root_payload(manifest.get('training_startup_recovery'))
+    if declaration.get('version')not in LARGE_RECOVERY_VERSIONS or type(manifest.get('epoch'))is not str or not manifest['epoch']or declaration.get('epoch')!=manifest.get('epoch'):raise ValueError('explicit pre-update recovery envelope budget')
+    original=root_payload(declaration.get('original_signed_job'));old=root_payload(original.get('manifest'))
+    if (original.get('role')!='train'or original.get('training_policy')!=PERSISTENT_POLICY
+        or old.get('epoch')!=manifest.get('epoch')or original.get('training_input_policy')!=job['training_input_policy']
+        or hashlib.sha256(canonical(original)).hexdigest()!=declaration.get('original_job_sha256')
+        or type(manifest.get('source_bundle'))is not dict or type(old.get('source_bundle'))is not dict
+        or any(type(bundle.get('sha256'))is not str or re.fullmatch('[0-9a-f]{64}',bundle['sha256'])is None for bundle in (manifest['source_bundle'],old['source_bundle']))
+        or declaration.get('original_input_source_sha256')!=old['source_bundle'].get('sha256')
+        or declaration.get('replacement_execution_source_sha256')!=manifest['source_bundle'].get('sha256')):raise ValueError('explicit authenticated original recovery scope')
+    return envelope
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('job');parser.add_argument('--authority',required=True);parser.add_argument('--workspace',required=True);parser.add_argument('--checkpoint-cache')
-    args=parser.parse_args();data=Path(args.job).read_bytes()
-    if len(data)>4_000_000:raise ValueError('job envelope size budget')
-    report=execute(json.loads(data),args.authority,args.workspace,args.checkpoint_cache)
+    args=parser.parse_args();envelope=load_job_envelope(args.job,args.authority)
+    report=execute(envelope,args.authority,args.workspace,args.checkpoint_cache)
     print(json.dumps(dict(job_id=report['job_id'],role=report['role'],success=True,checkpoint=report.get('new_checkpoint',{}).get('id',report['checkpoint']))))
 if __name__=='__main__':main()
