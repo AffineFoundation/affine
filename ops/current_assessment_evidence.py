@@ -124,6 +124,7 @@ def load_evidence(audit_config_path, *, authority, cutoff, verifiers,
             refused.append(_issue('population', epoch, error))
     records = [row for p, _ in populations.values() for row in p['records']]
     record_by_id = {digest(row): row for row in records}
+    record_by_batch = {(r['epoch'], r['miner'], r['batch_sha256']): r for r in records}
     identifiers = []
     for identifier, entry in sorted(state['jobs'].items()):
         try:
@@ -177,7 +178,10 @@ def load_evidence(audit_config_path, *, authority, cutoff, verifiers,
     admitted_candidates = []
     for completed, identifier, actual in sorted(candidates):
         try:
-            admitted, delayed = admit_completed_reports([actual], records, authority, workers,
+            entry = state['jobs'][identifier]
+            selected_ids = entry['row_sha256s'] if 'row_sha256s' in entry else [entry['row_sha256']]
+            selected_records = [record_by_id[i] for i in selected_ids]
+            admitted, delayed = admit_completed_reports([actual], selected_records, authority, workers,
                 sources['approved_sources'], execution_evidence_policy=execution, cutoff=cutoff,
                 deferral_policy=sources.get('backend_evidence_deferral_policy'))
             deferred.extend(delayed)
@@ -195,7 +199,7 @@ def load_evidence(audit_config_path, *, authority, cutoff, verifiers,
                 excluded.append(dict(kind='artifact_failure', identifier=identifier, reason='original failure completed after cutoff')); continue
             if digest(p['row']) not in record_by_id:
                 excluded.append(dict(kind='artifact_failure', identifier=identifier, reason='original committed population unavailable')); continue
-            admitted = admit_artifact_failures([document], records, authority)
+            admitted = admit_artifact_failures([document], [record_by_id[digest(p['row'])]], authority)
             hashes['artifact_failures'][identifier] = digest(document)
             admitted_candidates.extend((p['completed_at'], identifier, key, value) for key, value in admitted.items())
         except (ValueError, KeyError, TypeError, AttributeError, BadSignatureError) as error:
@@ -206,7 +210,9 @@ def load_evidence(audit_config_path, *, authority, cutoff, verifiers,
         try:
             if key in admissions and admissions[key] != value:
                 raise ValueError('conflicting original admitted job')
-            candidate = observations([dict(admitted_queue_job_sha256=key)], records,
+            selected = {(o['epoch'], o['miner'], o['batch_sha256']) for o in value['observations']}
+            selected_records = [record_by_batch[k] for k in sorted(selected)]
+            candidate = observations([dict(admitted_queue_job_sha256=key)], selected_records,
                 observers, cutoff, admitted_jobs={key: value}, authority=authority)
             updates = candidate_updates(resolved, candidate, resolutions)
             # Whole grouped original job commits only after all children pass.
