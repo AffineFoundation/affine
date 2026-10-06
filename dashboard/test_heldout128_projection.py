@@ -26,6 +26,15 @@ class ProjectionTests(unittest.TestCase):
   with patch.object(hp,'AUTHORITY',self.auth):return hp.rows(self.sign(self.scope),self.prod)
  def test_full128_native_public_allowlist(self):
   row=self.rows()[0];self.assertEqual((row['successes'],row['count'],row['epoch_id']),(80,128,'production'));self.assertFalse(row['proof_verification_performed']);self.assertNotIn('private/',json.dumps(row));self.assertNotIn('archive_path',row)
+ def test_single_group_cp14_is_scoped_label_not_checkpoint_authority(self):
+  entry=self.scope['evaluations'][0];entry['groups']={'CP14':entry['groups']['CP13']}
+  self.assertEqual(self.rows()[0]['checkpoint'],'cp')
+  summary=json.loads(self.summary.read_bytes())['payload'];summary['checkpoint']={'id':'different-cp'}
+  self.summary.write_bytes(canonical(self.sign(summary)));entry['summary_sha256']=hashlib.sha256(self.summary.read_bytes()).hexdigest()
+  with self.assertRaises(ValueError):self.rows()
+ def test_single_summary_cannot_project_two_labels(self):
+  entry=self.scope['evaluations'][0];entry['groups']['CP14']=entry['groups']['CP13']
+  with self.assertRaises(ValueError):self.rows()
  def test_partial_missing_summary_never_row(self):
   self.summary.unlink();self.assertEqual(self.rows(),[])
  def test_missing_ack_or_duplicate_group_rejected(self):

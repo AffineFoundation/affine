@@ -77,7 +77,9 @@ def rows(pointer, production):
         if type(s.get('completed_at'))not in(int,float)or not math.isfinite(s['completed_at']):raise ValueError('actual finite completion time')
         if s.get('version')=='owned-cached-heldout128-checkpoint-actual-v1':
             if s.get('all_four_genuine_full_R2_ACKs')is not True or s.get('group_owned_model_retired')is not True or s['original_jobs']!=4 or s['task_count']!=128:raise ValueError('complete checkpoint summary')
-            groups={'CP13':s['group']}
+            scoped_groups=entry.get('groups')
+            if not isinstance(scoped_groups,dict) or len(scoped_groups)!=1:raise ValueError('exactly one scoped checkpoint summary group')
+            groups={next(iter(scoped_groups)):s['group']}
         elif s.get('version')=='owned-cached-heldout128-paired-actual-v1':
             if s.get('all_eight_genuine_full_R2_ACKs')is not True or s.get('all_group_owned_models_retired')is not True or s['original_jobs']!=8 or s['task_count_per_checkpoint']!=128:raise ValueError('complete paired summary')
             groups=s['groups']
