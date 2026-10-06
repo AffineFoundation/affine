@@ -42,7 +42,13 @@ def capture(gateway,epoch):
  from .storage import SubmissionPolicyError
  state=gateway.epochs[epoch];need(state.get('commitment_capture_complete')is True,'complete signed commitment capture required')
  pending=state['commitment_pending'];journal=state.setdefault('training_document_snapshots',{});cutoff=state['commitment_binding'].get('freeze_until')
- def remaining():return [(miner,b)for miner,p in sorted(pending.items())if miner not in state['rejections']for b in p['document']['payload']['batches']if str(b['slot'])not in journal.get(miner,{})]
+ from .token_capture_journal import CaptureJournal
+ durable=CaptureJournal(gateway,epoch,state);durable.replay()
+ def remaining():
+  items=[(miner,b)for miner,p in pending.items()if miner not in state['rejections']for b in p['document']['payload']['batches']if str(b['slot'])not in journal.get(miner,{})]
+  # Give every miner's first slot a chance before any miner's later slots.
+  # Epoch-bound ordering avoids permanently favoring low public identities.
+  return sorted(items,key=lambda item:(item[1]['slot'],sha((epoch+item[0]).encode())))
  client=gateway.bucket.commitment_read_client()if hasattr(gateway.bucket,'commitment_read_client')else gateway.bucket.client
  def fetch(item):
   miner,b=item;key='private/'+epoch+'/training/'+miner+'/'+str(b['slot'])+'.json'
@@ -83,7 +89,9 @@ def capture(gateway,epoch):
      if isinstance(error,SubmissionPolicyError):state['rejections'][miner]=str(error);gateway.persist()
      elif error is not None:wave_errors.append(error)
      else:
-      journal.setdefault(miner,{})[str(b['slot'])]=receipt;gateway.persist()
+      persisted=durable.append(miner,receipt)
+      journal.setdefault(miner,{})[str(b['slot'])]=receipt
+      if not persisted:gateway.persist()
      fill()
    failures.extend(wave_errors)
    if not remaining():break
