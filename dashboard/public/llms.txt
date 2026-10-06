@@ -42,7 +42,12 @@ qualification-only. A separately ROOT-scoped controller now runs complete source
 from actual parent eight. Fresh calibration and confirmation passed for
 epoch 18, which collected 311 committed batches: 276 passed cheap checks
 and 256 entered UNAUDITED training without an inference-audit barrier.
-Its original training job is running; optimizer step nine is not yet durable.
+Its original training job completed successfully and optimizer step nine is durable
+at checkpoint 5e8260ce45d420d75837f7af18b8c7238b766ce9bee69f994c0bb70349e0bbae.
+The physical job took 47.52 minutes: optimizer restoration took 15.75 minutes,
+training and checkpoint saving took 8.79 minutes, and export/upload took 15.25 minutes.
+The report records 256 unaudited inputs and trainer_verification_performed=false.
+This remains above the one-hour end-to-end target; no production warm-cache speedup is claimed.
 Collection capture took about 123 seconds, with parallel decode taking 13 seconds. External end-to-end miner readiness and a sub-hour epoch are not
 yet demonstrated. Follow only the latest
 signed OPEN manifest for mining. Chain weight submissions remain disabled.
@@ -113,7 +118,8 @@ Its successor qualification-only package is
 Full R2 archive/member readback and CPU staging on all ten roles passed,
 and all seven worker registries include its exact runtime inventory.
 It includes the synchronous original-ACK fix, but is not the active epoch
-contract; activation waits for the original E18 durable completion.
+contract. E18 is durably complete; activation still requires an exact parent-nine
+launch review and fresh resource admission.
 A distinct CPU byte-cache control passed on the full original 23 optimizer
 objects (91,387,491,264 bytes), including corruption detection, invalid-ACK
 rejection and exclusive leases. This does not demonstrate a production cache
@@ -122,9 +128,11 @@ Prospective per-shard restore reports separately time fetch, SHA256 and tensor
 schema/finite-value checks plus copying. Parallel timings are observations,
 not additive wall-clock durations. These fields are not retroactively added
 to historical reports.
-An independent coordinator API option is also default-off and prospective: it
-keeps verifier HTTP availability separate from learner initialization/recovery,
-using the same authenticated queue and leases. It is not deployed in FE.
+The original authenticated queue API now runs as an independent CPU service
+on Arbos.life, preserving the original SQLite queue, worker identities and lease
+policy. It survives learning-controller transitions. A controller-bound API pause
+delayed one completed audit acknowledgment; its expired lease is an infrastructure
+event, not evidence of miner fraud. Original reports and evidence are preserved.
 
 The completed original E16 keeps immutable source
 7459c28cbe11b0999b41644aea2aa672d40eb44faa94ccb261e176d8f71b0d46.
@@ -295,8 +303,12 @@ records the backend-verified owned inventory, releases the job's model lease,
 and deletes that owned checkpoint immediately, even without another job.
 Other active leases, changed inode snapshots and external mapped caches are
 excluded; original reports, logs and R2 records remain. The exact staged
-worker/cleanup pair passed CPU controls. First real post-roll disposal
-observations are still pending; old cleanup observations are not relabeled.
+worker/cleanup pair passed CPU controls. Genuine post-roll accepted-report
+acknowledgments have now retired owned checkpoint files automatically, while
+preserving reports and logs. All seven workers also run authenticated idle-poll
+owned-checkpoint disposal from main commit 1d571c52: it removes an obsolete owned
+checkpoint even if no next job arrives. Active leases, changed inodes and external
+mapped caches remain protected. No manual model deletion is required for this flow.
 
 
 Arbos.life is the operator host running the validator/controller, authenticated audit queue, single chain writer, discovery monitor and dashboard. The active GPU roles are one owned test miner, four independent verifiers, one trainer and one evaluator on seven existing Lium role endpoints. A qualified optimizer reader runs on a separate retained physical host and does not require GPU numerical qualification. Only the four approved verifier identities may serve E12; unqualified hardware and deleted or retired workers are not silently admitted. Shared R2 stores signed manifests, frozen submissions, reports, scores, checkpoints and history. This dashboard is at affine.io; the Arbos website and DNS are unchanged.
@@ -423,3 +435,16 @@ paths; it does not grant storage credentials or upload access. Read the signed
 manifest for miner-specific capabilities and current deadlines.
 
 Dashboard batch counts use authenticated signed commitments and ROOT-signed learner admissions for the current decoupled epochs. Learner-eligible means cheap admission of unaudited inputs, never proof verification. Independent continuous audit totals are unavailable in this chart unless an actual epoch audit record is present. The latest available committed epoch appears before reward finalization.
+
+## Prospective compact probability artifacts — not active
+
+Main provides an explicit selected-token-logprobs-v1 artifact policy, documented
+in docs/COMPACT_PROBABILITY_ARTIFACT_PROPOSAL.md. An epoch must opt in through
+its signed probability_artifact_policy, backed by a newly qualified complete
+source. Historical full-vocabulary artifacts and source9f are unchanged.
+The new format stores one float32 log probability per emitted token, while the
+verifier still independently computes full distributions and checks every
+prescribed random draw, token context and required TOPLOC fingerprint. Submitted
+selected probabilities never determine the reference sampler. Genuine CPU
+controls and tampering controls pass; GPU qualification and activation are pending.
+This reduces artifact size, not the required model computations.
