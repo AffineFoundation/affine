@@ -75,6 +75,10 @@ class EvidenceControls(unittest.TestCase):
   r=self.load();self.assertEqual(len(r['snapshots']),2);new=r['snapshots'][-1]
   self.assertEqual(new['cohort_miner_details'][self.fx.identity]['confirmed_invalid_current'],0)
   self.assertEqual(new['miners'][self.fx.identity]['confirmed_invalid_recent'],1);self.assertEqual(new['miners'][self.fx.identity]['reward_multiplier'],.25);self.assertAlmostEqual(new['miners'][self.fx.identity]['validity_probability'],1/2.8)
+ def test_group_child_outside_original_selection_cannot_partially_credit(self):
+  job=self.queue['envelope']['payload'];extra=copy.deepcopy(job['submissions'][0]);extra['sha256']='b'*64;job['submissions'].append(extra);self.queue['envelope']=signed(self.key,job);self.queue['digest']=digest(job)
+  report=self.queue['report'];report['job_sha256']=digest(job);audit=copy.deepcopy(report['audits'][0]);audit['submission_sha256']='b'*64;report['audits'].append(audit);self.queue['report_digest']=digest(report);self.queue['report_request']=signed(self.workerkey,dict(action='report',job_id='job-1',token=self.queue['token'],report=report));self.save()
+  result=self.load();self.assertTrue(result['refused']);self.assertEqual(result['snapshots'][0]['miners'][self.fx.identity]['validity_probability'],.5)
  def test_queue_outage_propagates(self):
   with patch.object(e,'queue_rows',side_effect=TimeoutError('busy')):
    with self.assertRaises(TimeoutError):self.load()
