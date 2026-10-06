@@ -273,8 +273,12 @@ change external miner upload formats until a signed epoch manifest selects it.
 Current learning status (2026-10-06): epoch 28 completed in 53.38 minutes
 with 213 eligible unaudited training pairs and durable optimizer step 19.
 Epoch 29 reopened with a 600-second mining window and 247 registered identities.
-Its window is now closed, with 237 committed pairs, 201 eligible pairs and a
-201-pair original training job completed and durably published checkpoint 20.
+Its window is now closed. The learner captured 237 training documents and used
+201 eligible pairs after duplicate-task exclusions; the original training job
+completed and durably published checkpoint 20. The full committed proof population
+was 537 timely batches from 184 identities. Bounded token-document capture deferred
+300 timely slots as infrastructure, not miner invalidity. A prospective capture
+throughput fix is being prepared; it has not changed the current contract.
 Audits did not gate that training.
 The explicitly approved bounded-confirmation policy performed genuine fresh GPU
 calibration and independent confirmation before opening. The log-probability

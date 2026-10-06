@@ -261,3 +261,27 @@ supply, truncation and the unchanged held-out cohort. The planned same-parent
 its first generation-only stage measures 16 prescribed attempts on each of two
 predeclared tasks. No new quota or learning-rate policy is activated by these
 observations.
+
+## Epoch 29 capture coverage, separately from audit coverage
+
+A later authenticated inventory distinguishes 537 timely proof batches across
+184 committed miner identities from the 237 training documents actually captured.
+The capture step deferred 300 slots as infrastructure under its four-reader,
+deadline-plus-60-second budget. R2 server upload metadata shows those 300 token
+objects were present within the signed submission window. No structural exclusion
+occurred among captured candidates; 36 duplicate-task exclusions left 201 eligible
+training pairs. Earlier references to 237 committed pairs describe this captured
+training candidate set, not the full proof submission population.
+
+The continuous auditor completed 135 original grouped jobs covering all 537
+unique proof rows: 528 accepted and nine TOPLOC rejections across three identities.
+No batch was double-counted. Reward evidence deduplicates the original population
+row before updating confidence or penalties. Two of the 201 unaudited training
+pairs were later TOPLOC-rejected; that does not alone establish intent. Conversely,
+329 audit-accepted proof rows were outside the learner-eligible set, primarily
+because their token documents were deferred by bounded capture.
+
+A prospective versioned capture policy is being prepared to improve parallel
+capture without extending submission deadlines, rewriting old deferrals or
+changing current scientific jobs. It has not been deployed. Independent TOPLOC
+reference replay and held-out checkpoint-20 results remain pending.

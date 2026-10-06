@@ -1,3 +1,15 @@
+Verified supply investigation, 2026-10-06, ~21:32 UTC:
+E30 is training its original train-c8f0ae8b job from optimizer parent20. R29
+capture coverage is now distinguished from total submissions: 537 timely proof
+batches/184 committed identities; 237 captured training candidates minus36
+same-task duplicates yielded201 eligible pairs.300 timely token documents were
+infrastructure-deferred by bounded4-reader capture. Continuous audits checked537
+unique rows (528accepted/9TOPLOCrejected), without duplicate confidence inflation.
+A prospective versioned parallel capture fix is being prepared; active jobs and
+historical deferral records remain untouched. Independent reference qualification
+is executing its distinct V3 original with owned read-only CP19 cache reuse after
+V2's missing-dependency failure. No qualification pass or proof cutover is claimed.
+
 Verified continuation, 2026-10-06, ~21:10 UTC:
 Epoch 29 completed its original 201-pair unaudited training job. Independent
 full readback authenticated all 23 optimizer shards (91,387,491,264 bytes), and
