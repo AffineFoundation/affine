@@ -101,7 +101,7 @@ class PrelaunchContinuationTests(unittest.TestCase):
         import test_owned_cached_group_operator as fixture
         f=fixture.OperatorTests();f.setUp();self.addCleanup(f.doCleanups)
         a=Adapter.__new__(Adapter);a.authority=f.authority;launched=[];a.launch=lambda p:launched.append(p);a.idle=lambda:True
-        p=dict(scope=f.sign(f.scope),original_jobs=f.jobs,workspace=str(f.root),expires_at=10**12)
+        scope=dict(f.scope,expires_at=10**12,endpoint={'workspace':str(f.root)});p=dict(scope=f.sign(scope),original_jobs=f.jobs,workspace=str(f.root),expires_at=10**12)
         a.remote=lambda *x:dict(status='observing-original')
         self.assertEqual(a.reconcile_launch(p)['status'],'observing-original');self.assertEqual(launched,[])
         a.remote=lambda *x:(_ for _ in()).throw(TimeoutError('unknown'))
@@ -110,4 +110,8 @@ class PrelaunchContinuationTests(unittest.TestCase):
         a.remote=lambda *x:dict(status='unlaunched');a.idle=lambda:False
         self.assertEqual(a.reconcile_launch(p)['status'],'physical-reservation-deferred');self.assertEqual(launched,[])
         a.idle=lambda:True;self.assertTrue(a.reconcile_launch(p)['same_original_prelaunch_continued']);self.assertEqual(len(launched),1)
-        p['expires_at']=0;self.assertEqual(a.reconcile_launch(p)['status'],'expired-unissued');self.assertEqual(len(launched),1)
+        changed=dict(p,workspace=str(f.root/'foreign'))
+        with self.assertRaises(ValueError):a.reconcile_launch(changed)
+        changed=dict(p,expires_at=1)
+        with self.assertRaises(ValueError):a.reconcile_launch(changed)
+        expired=dict(scope,expires_at=0);p.update(scope=f.sign(expired),expires_at=0);self.assertEqual(a.reconcile_launch(p)['status'],'expired-unissued');self.assertEqual(len(launched),1)
