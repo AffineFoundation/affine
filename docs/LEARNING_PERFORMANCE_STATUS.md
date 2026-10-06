@@ -110,3 +110,13 @@ seconds including checkpoint download and loading. Official direct checks took
 158.87 seconds and token-only checks 125.71 seconds in a single ordered run;
 this is not a controlled speedup estimate. The matching H200 A run remains
 pending, and neither historical CP11 research nor one host admits production.
+
+A bounded lossless-compression probe read one 4-MiB interior slice each from the
+actual checkpoint-18 FP32 master, first-moment and second-moment tensors. No
+optimizer/model bytes were changed or retained locally. Zlib levels 1, 3 and 6
+all reconstructed the slices exactly; compressed sizes were approximately
+90–93% of original size, with about 0.11–0.13 seconds compression per 4 MiB on
+the coordinator. The probe report and signed acknowledgement were fully read
+back from R2. These three slices do not establish a full-state compression ratio.
+This small saving does not support introducing a compressed state contract
+ahead of the measured parallel-download work.
