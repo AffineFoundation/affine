@@ -35,3 +35,20 @@ launch-block compatibility, signed-map/job tampering, source/hash and runtime
 mismatch, unchanged heldout seeds, unknown source/physical status, source-tree
 symlinks, unapproved future dispatch, timeout adoption and conflicting live jobs.
 No GPU qualification or deployment is asserted by these CPU controls.
+
+An opt-in `evaluation_dispatch_order: latest-approved-source-first-v1` prioritizes
+issued originals before newest unissued checkpoints. Sources with
+`new_dispatch_approved: false` retain unissued requests unchanged; a separate
+`checkpoint-evaluation-deferrals` record states that dispatch approval is pending.
+This does not create a remote-job observation or a completed score. Already issued
+requests still require original signature, source, heldout and physical-liveness
+checks and are adopted without replacement.
+
+A signed route endpoint may specify positive integer
+`evaluation_min_free_disk_bytes`. Before a new job is issued, a bounded CPU-only
+filesystem probe must meet this threshold; insufficient capacity defers the same
+request. It never blocks adoption of an already issued original. Deployments can
+approve only sources with authenticated automatic evaluator retention and defer
+older unissued sources until owned-cache retention is qualified. Historical
+requests, reports and heldout cohorts remain unchanged. Defaults retain the
+original oldest-first behavior.

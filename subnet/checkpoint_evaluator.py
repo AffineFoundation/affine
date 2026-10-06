@@ -130,6 +130,15 @@ class QualifiedEvaluationJobs:
             if phase=='running':return True
             if phase not in ('complete','failed','not_launched'):raise ValueError('unknown original evaluator physical liveness')
         return False
+    def dispatch_eligible(self,request):
+        sha=request['manifest'].get('source_bundle',{}).get('sha256')
+        if sha not in self.rows:raise ValueError('unapproved original evaluation source')
+        record=self.state/(request['label']+'.json')
+        if record.exists():
+            self.original(record)
+            return True  # Observe the same issued original, including terminal reports.
+        return self.rows[sha]['new_dispatch_approved']
+
     def run(self,label,role,manifest,cache=None,**fields):
         if role!='evaluate':raise ValueError('source router only dispatches evaluation')
         sha=manifest.get('source_bundle',{}).get('sha256')
@@ -146,6 +155,14 @@ class QualifiedEvaluationJobs:
         elif self.busy():
             raise RemoteObservationTimeout(label,role)
         remote=self.instance(sha)
+        if not record.exists() and 'evaluation_min_free_disk_bytes'in row['endpoint']:
+            import shlex
+            minimum=row['endpoint']['evaluation_min_free_disk_bytes']
+            if type(minimum)is not int or minimum<=0:raise ValueError('signed evaluator disk admission')
+            script='import json,shutil;print(json.dumps({"free":shutil.disk_usage('+repr(row['endpoint']['workspace'])+').free}))'
+            capacity=json.loads(remote.command(shlex.quote(remote.python)+' -I -B -c '+shlex.quote(script),timeout=30))
+            if type(capacity.get('free'))is not int or capacity['free']<minimum:
+                raise OSError('independent evaluator disk admission deferred')
         cache=row['endpoint'].get('checkpoint_caches',{}).get(manifest['checkpoint']['id'],cache)
         try:return remote.run(label,role,manifest,cache,**fields)
         except remote.observation_timeout_type as error:
@@ -269,19 +286,33 @@ def evaluate_one(controller,path):
     save(path,record)
     return record
 
-def pending_pass(controller,now=None):
+def pending_pass(controller,now=None,*,dispatch_order=None):
     """Advance terminal bad requests; never run another job while GPU liveness is unknown."""
     now=time.time() if now is None else now
+    if dispatch_order not in (None,'latest-approved-source-first-v1'):raise ValueError('independent evaluation dispatch order')
     files=list((controller.state/'checkpoint-evaluations').glob('*.json'))
     def order(path):
-        try:return json.loads(path.read_text()).get('queued_at',0)
-        except (ValueError,OSError,AttributeError):return 0
+        try:
+            record=json.loads(path.read_text());queued=record.get('queued_at',0)
+            if dispatch_order is None:return (0,queued)
+            original=controller.state/'roles'/(record['request']['label']+'.json')
+            return (0 if original.exists() else 1,-queued)
+        except (ValueError,OSError,AttributeError,KeyError):return (-1,0)
     for path in sorted(files,key=order):
         fault=controller.state/'checkpoint-evaluation-faults'/path.name
         if fault.exists() and json.loads(fault.read_text()).get('status') in ('failed','unresolved'):continue
         try:
             record=json.loads(path.read_text())
             if record.get('status') in ('complete','failed','unresolved') or record.get('retry_after',0)>now:continue
+            eligible=getattr(controller.jobs,'dispatch_eligible',None)
+            if eligible is not None:
+                from .gpu_service import heldout
+                request=record['request']
+                if (request.get('version')!=VERSION or hashlib.sha256(canonical(request)).hexdigest()!=record['request_sha256']or heldout(request['config'],request['manifest'])!=request['heldout_plan']):
+                    raise ValueError('checkpoint evaluation queue binding')
+                if not eligible(request):
+                    save(controller.state/'checkpoint-evaluation-deferrals'/path.name,dict(status='waiting_source_dispatch_approval',original_request_sha256=record['request_sha256'],source_sha256=request['manifest']['source_bundle']['sha256'],observed_at=now,remote_job_started=False))
+                    continue
             result=evaluate_one(controller,path)
             if result['status']=='observing_original_job':return result
             return result
@@ -365,7 +396,7 @@ def run(config,once=False):
             remote_jobs=RemoteJobs(endpoint,controller)
             controller.jobs=EvaluationJobs()
         while True:
-            pending_pass(controller)
+            pending_pass(controller,dispatch_order=config.get('evaluation_dispatch_order'))
             value=progress(state);save(state/'checkpoint-evaluation-progress.json',value)
             bucket.json('public/streams/'+config['epoch_prefix']+'/evaluation-progress.json',controller.signed(value))
             if once:return

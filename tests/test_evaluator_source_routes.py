@@ -38,6 +38,18 @@ class SourceRouting(unittest.TestCase):
         p=self.state/'roles';(p/'original-job-job.json').write_bytes(canonical(seal(job,self.authority)))
         (p/(label+'.json')).write_bytes(canonical(dict(job_id=job['job_id'],role='evaluate',job_sha256=hashlib.sha256(canonical(job)).hexdigest())))
         return m
+    def test_dispatch_eligibility_authenticates_issued_original(self):
+        r=self.router();sha='c'*64;request={'manifest':self.manifest(sha),'label':'original'}
+        self.assertFalse(r.dispatch_eligible(request));self.existing(sha);self.assertTrue(r.dispatch_eligible(request));self.assertEqual(self.calls,[])
+        path=self.state/'roles/original-job-job.json';value=json.loads(path.read_text());value['payload']['role']='train';path.write_text(json.dumps(value))
+        with self.assertRaises(BadSignatureError):r.dispatch_eligible(request)
+    def test_signed_disk_admission_blocks_new_job_but_not_original_adoption(self):
+        sha='b'*64;self.rows[sha]['endpoint']['evaluation_min_free_disk_bytes']=32
+        remote=self.remotes[sha];remote.python='python3';remote.command=Mock(return_value='{"free":31}')
+        r=self.router()
+        with self.assertRaisesRegex(OSError,'disk admission'):r.run('original','evaluate',self.manifest(sha))
+        remote.run.assert_not_called();self.existing(sha);r.run('original','evaluate',self.manifest(sha),heldout=[{'seeds':[100]}]);remote.run.assert_called_once()
+        self.assertEqual(remote.command.call_count,1)
     def test_two_source_routes_preserve_exact_labels_seeds_and_manifest(self):
         r=self.router();plan=[dict(indices=[17,42],seeds=[1700,4200])]
         for sha in ['a'*64,'b'*64]:

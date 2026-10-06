@@ -115,6 +115,32 @@ class IndependentEvaluator(unittest.TestCase):
         final=evaluate_one(self.controller,self.state/'checkpoint-evaluations'/(record['evaluation_id']+'.json'))
         self.assertEqual(final['records'][0]['remote_job_id'],jobid)
         self.assertEqual(final['records'][0]['training_steps'],7)
+    def test_deferred_old_source_preserves_original_and_runs_newest_approved(self):
+        self.manifest['source_bundle']={'sha256':'a'*64};old=self.queued();original=old.read_bytes()
+        self.manifest=dict(self.manifest,epoch='nonpayable-new',checkpoint={'id':'new'},source_bundle={'sha256':'b'*64});self.queued()
+        self.controller.jobs.dispatch_eligible=lambda r:r['manifest']['source_bundle']['sha256']=='b'*64
+        result=pending_pass(self.controller)
+        self.assertEqual(result['request']['manifest']['checkpoint']['id'],'new');self.assertEqual(old.read_bytes(),original)
+        deferred=json.loads((self.state/'checkpoint-evaluation-deferrals'/old.name).read_text());self.assertFalse(deferred['remote_job_started'])
+        self.controller.jobs.run.assert_called_once()
+    def test_newest_first_keeps_issued_original_timeout_first(self):
+        old=self.queued();record=json.loads(old.read_text());(self.state/'roles').mkdir()
+        (self.state/'roles'/(record['request']['label']+'.json')).write_text('{}')
+        self.manifest=dict(self.manifest,epoch='nonpayable-new',checkpoint={'id':'new'});new=self.queued()
+        self.controller.jobs.dispatch_eligible=lambda r:True
+        self.controller.jobs.run.side_effect=RemoteObservationTimeout('same-issued-original','evaluate')
+        result=pending_pass(self.controller,dispatch_order='latest-approved-source-first-v1')
+        self.assertEqual(result['remote_job_id'],'same-issued-original');self.assertEqual(self.controller.jobs.run.call_args.args[0],record['request']['label'])
+        self.assertEqual(json.loads(new.read_text())['status'],'queued')
+    def test_newest_first_runs_latest_preserving_old_request(self):
+        old=self.queued();original=old.read_bytes();self.manifest=dict(self.manifest,epoch='nonpayable-new',checkpoint={'id':'new'});self.queued()
+        result=pending_pass(self.controller,dispatch_order='latest-approved-source-first-v1')
+        self.assertEqual(result['request']['manifest']['checkpoint']['id'],'new');self.assertEqual(old.read_bytes(),original)
+    def test_tampered_deferred_queue_fails_closed(self):
+        old=self.queued();record=json.loads(old.read_text());record['request']['training_steps']=99;old.write_text(json.dumps(record))
+        self.controller.jobs.dispatch_eligible=lambda r:False;self.controller.jobs.busy=lambda:False
+        self.assertIsNone(pending_pass(self.controller));self.assertFalse((self.state/'checkpoint-evaluation-deferrals'/old.name).exists())
+        self.assertEqual(json.loads((self.state/'checkpoint-evaluation-faults'/old.name).read_text())['status'],'failed');self.controller.jobs.run.assert_not_called()
     def test_failed_old_request_does_not_starve_new_checkpoint(self):
         from subnet.remote_backend import RemoteJobTerminalError
         old=self.queued()
