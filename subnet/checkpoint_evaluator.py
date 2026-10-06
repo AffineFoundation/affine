@@ -22,7 +22,7 @@ from .storage import canonical
 
 VERSION='independent-checkpoints-v1'
 CONFIG_FIELDS=('heldout','environment','environments','evaluation_experiment_id','evaluation_seed',
-               'model_id','evaluation_state','trusted_evaluation_policy')
+               'model_id','evaluation_state','trusted_evaluation_policy','owned_evaluation_policy')
 
 SOURCE_ROUTES_VERSION='independent-evaluator-source-routes-v1'
 
@@ -178,6 +178,8 @@ def evaluation_mode(config):
 
 def fingerprint(manifest,config,plan):
     """Checkpoint, cohort and runtime identity; epoch/URLs/step labels are not identity."""
+    from .gpu_service import evaluation_policies
+    evaluation_policies(config)
     bundle=manifest.get('source_bundle')
     source_identity=({k:bundle.get(k) for k in ('sha256','format')}
                      if isinstance(bundle,dict) else bundle)
@@ -187,7 +189,7 @@ def fingerprint(manifest,config,plan):
         runtime={k:manifest.get(k) for k in ('model_runtime_revision','backend_profile','numerical_policy','harness_source_hash')},
         source_bundle=source_identity,model=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'),
         experiment_id=config.get('evaluation_experiment_id','gpu-continuous-fixed128'),
-        evaluation_seed=config.get('evaluation_seed',20260930),**({'trusted_evaluation_policy':config['trusted_evaluation_policy']}if 'trusted_evaluation_policy'in config else {})))).hexdigest()
+        evaluation_seed=config.get('evaluation_seed',20260930),**({'trusted_evaluation_policy':config['trusted_evaluation_policy']}if 'trusted_evaluation_policy'in config else {}),**({'owned_evaluation_policy':config['owned_evaluation_policy']}if 'owned_evaluation_policy'in config else {})))).hexdigest()
 
 def historical_request(controller,identity,config,plan):
     """Reference only a locally retained authenticated completed original job.
@@ -208,6 +210,7 @@ def historical_request(controller,identity,config,plan):
             job=signed(json.loads((path.parent/(prior['job_id']+'-job.json')).read_text()),controller.authority.id)
             manifest=signed(job['manifest'],controller.authority.id)
             if job.get('trusted_evaluation_policy')!=config.get('trusted_evaluation_policy'):continue
+            if job.get('owned_evaluation_policy')!=config.get('owned_evaluation_policy'):continue
             if job.get('heldout')!=plan or fingerprint(manifest,config,plan)!=identity:continue
             report=checker(json.loads(reportpath.read_text()),prior,manifest)
             label=path.stem;phase=label.rsplit('-eval-',1)[1]
