@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-05:
+Current operational status, 2026-10-06:
 E16 completed and durably published optimizer step seven / checkpoint
 9cd6f6a6d61a4aba1bc30a83afa3792820d6a3630b660041cbd52eaecfdd82b0.
 It received 359 committed documents; 309 passed cheap eligibility checks,
@@ -39,14 +39,19 @@ Its actual cold CPU bootstrap, full R2 archive readback and staging on ten roles
 passed. The original qualification descriptor remains immutable and
 qualification-only. A separately ROOT-scoped controller now runs complete source
 7f580e4d118e3cf6ce9efc3ff916dce7a54275105c47866923ed36e72355a618
-from actual parent eight, with fresh checkpoint calibration in progress for
-epoch 18. External end-to-end miner readiness and a sub-hour epoch are not
+from actual parent eight. Fresh calibration and confirmation passed for
+epoch 18, which collected 311 committed batches: 276 passed cheap checks
+and 256 entered UNAUDITED training without an inference-audit barrier.
+Its original training job is running; optimizer step nine is not yet durable.
+Collection capture took about 123 seconds, with parallel decode taking 13 seconds. External end-to-end miner readiness and a sub-hour epoch are not
 yet demonstrated. Follow only the latest
 signed OPEN manifest for mining. Chain weight submissions remain disabled.
 The independent fixed 128-task E16 evaluation declined from 78/128 to 71/128,
 with two improvements and nine regressions. Eight regressed tasks reached the
 successor's 1,024-generation-call cap; this is a diagnostic proxy, not confirmed
-truncation or an explanation of causality. No convergence is claimed.
+truncation or an explanation of causality. No convergence is claimed. A separate 2,048-token diagnostic has completed
+its original BEFORE evaluation at 80/128; the matched AFTER run is in progress.
+These are fresh matched controls and do not replace the historical 1,024-token results.
 
 The dashboard now distinguishes committed submitted batches, cheap-eligible
 training inputs and expensive audit results. Its E15 counts are 270 submitted,
@@ -91,7 +96,16 @@ contract and qualification before activation; main branch alone is not a contrac
 Prospective optimizer export also checks each serialized FP32 slice once,
 rather than rescanning a whole parameter for every split shard. Real tiny
 serial/parallel export, restoration and invalid-state controls pass; this change
-is not in FE or the staged complete package, and no live speedup is claimed.
+is not in the active 7f source, and no live speedup is claimed. A new optimized
+complete package, 7846d811955b623f10d31da9b8a16d927f49511979cb5c238d991a22fc3092d9,
+has full R2 readback and CPU qualification on all ten compute roles. It is
+qualification-only and has not activated a GPU job. Its default-off optimizer
+cache must establish its exact durable acknowledgment before a subsequent
+warm job; an asynchronous acknowledgment race is being fixed before activation.
+A distinct CPU byte-cache control passed on the full original 23 optimizer
+objects (91,387,491,264 bytes), including corruption detection, invalid-ACK
+rejection and exclusive leases. This does not demonstrate a production cache
+promotion or warm-training speedup.
 Prospective per-shard restore reports separately time fetch, SHA256 and tensor
 schema/finite-value checks plus copying. Parallel timings are observations,
 not additive wall-clock durations. These fields are not retroactively added
