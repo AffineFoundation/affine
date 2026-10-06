@@ -8,8 +8,10 @@ at optimizer step nineteen. Epochs 24 through 28 each finished below one hour.
 Epoch 29 reopened after fresh numerical calibration and independent confirmation
 passed, trained on 201 eligible UNAUDITED task pairs, and durably published
 checkpoint 94e8999b75838cddf70d3e767318e7b169a5421c890ea9c7eeef2e2aa6104e6d
-at optimizer step twenty after independent full-state readback. Round 30 is
-training after its mining window closed. Independent checkpoint-20 evaluation
+at optimizer step twenty after independent full-state readback. Round 30 trained 79 eligible unaudited task pairs, but its original checkpoint
+upload failed with an SSL EOF during R2 transfer. The staged next model is intact;
+publication-only recovery is in progress. Checkpoint 20 remains the committed
+parent until full durable readbacks and authority commitment succeed. Independent checkpoint-20 evaluation
 completed at 84/128, versus 85/128 for checkpoint 19 and 86/128 for checkpoint 18.
 This does not show sustained improvement. Optimizer lineage is preserved.
 The coordinator API, continuous auditor and learner now have durable ROOT-pinned

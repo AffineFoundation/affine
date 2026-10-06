@@ -1,3 +1,24 @@
+Verified continuation, 2026-10-06, 22:01 UTC:
+E30 original train-c8f0ae8b genuinely exited zero: 79 unaudited task pairs,
+339 gradient tensors, optimizer20→21 staged. Warm parent restore took46.61s;
+training checkpoint357.78s and export/upload-state1022.29s. The original model
+publisher137ae110 genuinely failed with an SSL EOF during R2 PUT. Authority
+remains checkpoint20/optimizer20; CP21 is not yet durably published. All ten
+local CP21 export files (15,242,726,226 bytes) were independently rehashed and
+unchanged; original publisher processes are absent. Publication-only recovery
+is being prepared under a distinct authorization, preserving original training,
+failed publication and completed 23-shard readback. No retraining is needed.
+
+E30 declared549 batches/192 identities, captured91 and trained79 after12 task
+duplicates;458 were infrastructure-deferred, not penalized as fraud. A prospective
+whole-stage durable capture WAL plus bounded parallel reads passed40 CPU controls,
+including three genuine crash/recovery cases; live benefit is not yet measured.
+All nine original E29 TOPLOC rejections now have independent original terminal
+reference runs showing small fingerprint deviations. These do not prove fraud
+or establish sampler/grader completion. Exact UNKNOWN resolution is under review;
+original evidence remains immutable. CP20 SAME128 is84/128, so learning convergence
+and sustained hourly cadence remain unproven.
+
 Verified independent TOPLOC research, 2026-10-06, ~21:49 UTC:
 Four original E29 batches completed independent H100 diagnostics under exact
 CP19/f213/artifact bindings. All four reproduced zero-tolerance TOPLOC rejection;
