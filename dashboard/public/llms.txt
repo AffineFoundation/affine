@@ -331,3 +331,19 @@ worker report signatures, job digests, lease tokens, source/runtime checks and
 report digests still apply. This grants no new claims or API credentials. The
 CPU reconciliation repair completed a genuine resumed service cycle, with
 the original queue and seven active claim identities preserved. No miner upload format or sampling contract changes with this fix.
+
+CPU audit reconciliation now validates the population once per authenticated
+completed-report batch. Original signed job/report, lease, source/runtime and
+historical exact-digest gates still apply. On 2,352 enrolled reports and 7,013
+population rows, admissions and deferrals matched exactly; isolated reconciliation
+fell from 339.966 to 94.349 seconds (3.603x). The deployed auditor completed a fresh
+cycle, selecting 32 batches in eight jobs, without restarts or backpressure.
+This changes no miner format, sampler, scientific runtime, or reward rule.
+
+The additional H200 completed a bounded four-honest/sixteen-tampering qualification,
+including supported fabricated tokens with regenerated model proofs rejected by
+the CDF gate. Its original archive has a ROOT full-readback ACK. Production
+enrollment, cross-node numerical adjudication and a new tolerance profile are
+not established by these controls. The 23:00 UTC writer recorded a submission
+for 202 current UIDs; newer CP20 numerical cases remain unresolved. Learning
+convergence and epoch 31's next checkpoint remain unproven.

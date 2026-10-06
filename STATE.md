@@ -1,3 +1,32 @@
+Verified continuation, 2026-10-06, 23:05 UTC:
+The population-once CPU auditor overlay is deployed. Actual immutable comparison
+of2352 enrolled reports and7013 population rows produced identical admissions
+and deferrals:339.966s before,94.349s after (3.603x).49 CPU controls passed.
+The same auditor unit, nowPID2074147/invocation1a8172f4d4db45ee98c166019a41003c,
+completed a fresh cycle135.604s after startup with32 selected/eight jobs,
+zero restarts/backpressure/source deferrals. Startup-to-health includes the whole
+cycle and is not the isolated admission benchmark. The original queue inode,
+ROOT-signed exact50 historical reports, source/runtime and live claim roster
+are preserved; API, learner and writer did not restart for this change.
+The23UTC writer recorded a successful submission for202 currentUIDs atblock9227099,
+with stale=False under the numerical-v2 policy. This is submission evidence,
+not an independently observed reveal. Newer CP20 numerical penalties remain open.
+E31 originaltrain-b174d081 runner364368/child364393 is confirmed alive;
+no terminal report or new checkpoint is claimed. Captured574/574,eligible428,
+selected256 remain the measured collection/selection counts, not trained counts.
+Eighth-H200 V3 bounded qualification genuinely completed exit0 in287.9s:
+four honest VALID and16 required mutants INVALID, including four supported-token
+mutants with regenerated genuine proof/logprob rejected by the CDF sampling gate.
+Four seed-alias diagnostics are separate. Original failures and full archives are
+preserved. ROOT independently read all4,500,524 archive bytes fromR2, authenticated
+scope/terminal/controls, and signed/uploaded/full-read the ACK. This qualifies the
+bounded research plan, not universal forgery resistance, a new numerical profile
+or production enrollment. Nine original CP20 cross-node cases are being prepared.
+Learning updates are effective, but convergence is unproven. InR29,125/201 negative
+rollouts reached1024 tokens, with mean initial margin9.286 versus-.0777 for the
+other76. This is a sample-quality confound, not proof of causation or fraud.
+Controlled same-parent quota/EOS-completion study is still preparation only.
+
 Verified continuation, 2026-10-06, 22:48 UTC:
 E31 retained574 of574 timely batch documents from194 authenticated miners,
 zero infrastructure deferrals.146 duplicate-task exclusions left428 eligible
