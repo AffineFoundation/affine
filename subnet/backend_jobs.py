@@ -459,6 +459,7 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
     if job['role']=='upload':
         if set(job.get('put_urls',{}))!=set(cp['files']):raise ValueError('upload capability file binding')
         for url in job['put_urls'].values():r2_url(url,'PUT')
+    parallel_checkpoint_policy(manifest)
     return job,manifest
 
 class ArtifactRejected(ValueError):
@@ -623,6 +624,71 @@ def prefetched_training_submissions(submissions,out,timings,*,workers=4,session_
         timings['submission_prefetch_pipeline_wall']=dict(seconds=time.monotonic()-started,calls=1,
             workers=workers,includes_ordered_eligibility_admission=True)
 
+def parallel_checkpoint_policy(manifest):
+    """An explicit signed transport option; numerical execution is unchanged."""
+    p=manifest.get('checkpoint_download_policy')
+    if p is None:return None
+    if (type(p)is not dict or set(p)!={'version','workers','file_sizes','disk_floor_bytes'} or
+            p['version']!='bounded-parallel-checkpoint-GET-v1' or
+            type(p['workers'])is not int or not 2<=p['workers']<=4 or
+            type(p['disk_floor_bytes'])is not int or not 2*1024**3<=p['disk_floor_bytes']<=20*1024**3 or
+            type(p['file_sizes'])is not dict or set(p['file_sizes'])!=set(manifest['checkpoint']['files']) or
+            any(type(s)is not int or not 0<s<=5*1024**3 for s in p['file_sizes'].values()) or
+            sum(p['file_sizes'].values())>20*1024**3):
+        raise ValueError('bounded signed checkpoint download policy')
+    return p
+
+def _parallel_checkpoint(cp,target,workspace,policy,lifecycle):
+    import fcntl,stat,shutil,requests
+    from concurrent.futures import ThreadPoolExecutor,as_completed
+    # A separate same-checkpoint lock serializes concurrent candidate hydrations.
+    # Existing outer checkpoint leases continue protecting files from retirement.
+    if re.fullmatch('[0-9a-f]{64}',cp['id'])is None or target!=target.resolve():raise ValueError('owned checkpoint target')
+    locks=Path(workspace)/'.checkpoint-download-locks';locks.mkdir(mode=0o700,exist_ok=True)
+    if locks!=locks.resolve():raise ValueError('checkpoint lock symlink')
+    fd=os.open(locks/(cp['id']+'.lock'),os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
+    try:
+        st=os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode)or st.st_nlink!=1 or st.st_uid!=os.getuid():raise ValueError('owned checkpoint lock')
+        fcntl.flock(fd,fcntl.LOCK_EX)
+        missing=[]
+        for name,sha in cp['files'].items():
+            if Path(name).name!=name:raise ValueError('checkpoint member path')
+            path=target/name
+            if path.exists()or path.is_symlink():
+                st=path.lstat()
+                if path!=path.resolve()or not stat.S_ISREG(st.st_mode)or st.st_nlink!=1 or st.st_uid!=os.getuid():raise ValueError('owned checkpoint member')
+                if st.st_size==policy['file_sizes'][name]and digest(path)==sha:
+                    if lifecycle:lifecycle.record_checkpoint_member(cp['id'],name,cp['files'],sha)
+                    continue
+                raise ValueError('existing checkpoint digest/size mismatch')
+            missing.append((name,sha,path))
+        reserve=sum(policy['file_sizes'][n]for n,_,_ in missing)
+        reserve+=sum(sorted((policy['file_sizes'][n]for n,_,_ in missing),reverse=True)[:policy['workers']])
+        if shutil.disk_usage(target).free<reserve+policy['disk_floor_bytes']:raise ValueError('parallel checkpoint disk reserve')
+        def fetch(row):
+            name,sha,path=row
+            if path.with_suffix(path.suffix+'.partial').exists()or path.with_suffix(path.suffix+'.partial').is_symlink():raise ValueError('preexisting checkpoint partial')
+            # One independently closed session per member, never a shared pool.
+            with requests.Session()as session:
+                get_object(cp['read_urls'][name],sha,path,policy['file_sizes'][name],session=session)
+            st=path.lstat()
+            if (path!=path.resolve()or not stat.S_ISREG(st.st_mode)or st.st_nlink!=1 or st.st_uid!=os.getuid()or st.st_size!=policy['file_sizes'][name]):raise ArtifactRejected('checkpoint exact owned signed size')
+            return name
+        with ThreadPoolExecutor(max_workers=policy['workers'])as pool:
+            futures=[pool.submit(fetch,row)for row in missing];failure=None
+            for future in as_completed(futures):
+                try:name=future.result()
+                except BaseException as error:
+                    if failure is None:failure=error
+                    for pending in futures:pending.cancel()
+                    continue
+                # Serialize catalog writes, including successful in-flight reads
+                # after a sibling failure. They remain owned, never admitted yet.
+                if lifecycle:lifecycle.record_checkpoint_member(cp['id'],name,cp['files'],cp['files'][name])
+            if failure is not None:raise failure
+    finally:os.close(fd)
+
 def checkpoint(manifest, workspace, cache=None):
     cp=manifest['checkpoint'];target=Path(cache) if cache else workspace/'checkpoints'/cp['id']
     target.mkdir(parents=True,exist_ok=True)
@@ -630,6 +696,12 @@ def checkpoint(manifest, workspace, cache=None):
     if os.environ.get('AFFINE_CACHE_LIFECYCLE_ROOT') and not cache:
         from .cache_lifecycle import CacheLifecycle
         lifecycle=CacheLifecycle(workspace)
+    policy=parallel_checkpoint_policy(manifest)
+    if policy is not None and not cache:
+        _parallel_checkpoint(cp,target,workspace,policy,lifecycle)
+        from .model import model_files
+        if model_files(target)!=cp['files']:raise ValueError('checkpoint exact allowlist')
+        return target
     for name,sha in cp['files'].items():
         path=target/name
         if path.is_symlink():raise ValueError('checkpoint symlink')
