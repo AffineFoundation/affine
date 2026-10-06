@@ -5,6 +5,16 @@ VERSION='committed-training-documents-v1'
 TOKEN_VERSION='committed-token-training-documents-v2'
 MAX_BYTES=2_000_000
 TRANSPORT='small-commitment-pairs-v2'
+CAPTURE_VERSION='bounded-parallel-token-capture-v1'
+
+def capture_policy(value):
+ need(type(value)is dict and set(value)=={'version','workers','max_document_bytes','max_inflight_bytes','completion_order'},'exact prospective token capture policy')
+ need(value['version']==CAPTURE_VERSION and type(value['workers'])is int and value['workers']in(4,8,16),'bounded token capture workers')
+ need(type(value['max_document_bytes'])is int and value['max_document_bytes']==MAX_BYTES,'unchanged token document bound')
+ need(type(value['max_inflight_bytes'])is int and value['max_inflight_bytes']==value['workers']*MAX_BYTES,'exact capture byte budget')
+ need(value['completion_order']=='first-completed','bounded prospective completion policy')
+ return dict(value)
+
 
 def document(batch,manifest,miner,slot):
  version=VERSION
@@ -31,19 +41,25 @@ def validate(data,epoch,checkpoint,miner,entry,*,transport=TRANSPORT):
 def capture(gateway,epoch):
  """Complete bounded GET + exact SHA before immutable token publication.
 
- GET and immutable publication share at most four bounded workers; durable
- journal updates remain serial and follow successful publication.
+ Legacy capture uses four FIFO workers; an explicit signed policy opts into
+ bounded first-completed scheduling. Journal updates remain serial and follow
+ successful publication. The byte limit covers raw documents, not decoded
+ Python objects or HTTP buffers; each read may include one oversize sentinel byte.
  No model/grader verification is claimed. Only previously authenticated tiny
  commitments participate; same captured bytes survive retries and restarts.
  """
- from concurrent.futures import ThreadPoolExecutor
+ from concurrent.futures import ThreadPoolExecutor,wait,FIRST_COMPLETED
  from collections import deque
  from .commitment_transport import FreezeMetadataIncomplete
  from .storage import SubmissionPolicyError
  state=gateway.epochs[epoch];need(state.get('commitment_capture_complete')is True,'complete signed commitment capture required')
  pending=state['commitment_pending'];journal=state.setdefault('training_document_snapshots',{});cutoff=state['commitment_binding'].get('freeze_until')
+ policy=state['commitment_binding'].get('learner_capture_policy')
+ policy=capture_policy(policy)if policy is not None else None
+ workers=policy['workers']if policy is not None else 4
+ stats=dict(version=CAPTURE_VERSION,policy=policy,started_at=time.time(),GET_attempts=0,published_documents=0,transient_failures=0,structural_failures=0,maximum_inflight=0,raw_document_byte_limit=workers*MAX_BYTES,oversize_sentinel_byte_limit=workers)if policy is not None else None
  def remaining():return [(miner,b)for miner,p in sorted(pending.items())if miner not in state['rejections']for b in p['document']['payload']['batches']if str(b['slot'])not in journal.get(miner,{})]
- client=gateway.bucket.commitment_read_client()if hasattr(gateway.bucket,'commitment_read_client')else gateway.bucket.client
+ client=(gateway.bucket.commitment_read_client(parallel_workers=workers)if policy is not None else gateway.bucket.commitment_read_client())if hasattr(gateway.bucket,'commitment_read_client')else gateway.bucket.client
  def fetch(item):
   miner,b=item;key='private/'+epoch+'/training/'+miner+'/'+str(b['slot'])+'.json'
   try:
@@ -70,21 +86,41 @@ def capture(gateway,epoch):
  try:
   while remaining():
    items=remaining();wave_errors=[]
-   with ThreadPoolExecutor(max_workers=4)as pool:
-    waiting=deque();todo=iter(items)
-    def fill():
-     while len(waiting)<4:
-      try:item=next(todo)
-      except StopIteration:return
-      waiting.append(pool.submit(fetch,item))
-    fill()
-    while waiting:
-     miner,b,data,receipt,error=waiting.popleft().result()
-     if isinstance(error,SubmissionPolicyError):state['rejections'][miner]=str(error);gateway.persist()
-     elif error is not None:wave_errors.append(error)
-     else:
-      journal.setdefault(miner,{})[str(b['slot'])]=receipt;gateway.persist()
+   def record(result):
+    miner,b,data,receipt,error=result
+    if isinstance(error,SubmissionPolicyError):
+     state['rejections'][miner]=str(error);gateway.persist()
+     if stats is not None:stats['structural_failures']+=1
+    elif error is not None:
+     wave_errors.append(error)
+     if stats is not None:stats['transient_failures']+=1
+    else:
+     journal.setdefault(miner,{})[str(b['slot'])]=receipt;gateway.persist()
+     if stats is not None:stats['published_documents']+=1
+   with ThreadPoolExecutor(max_workers=workers)as pool:
+    if policy is None:
+     # Original f213 FIFO semantics are preserved when no new signed policy exists.
+     waiting=deque();todo=iter(items)
+     def fill():
+      while len(waiting)<4:
+       try:item=next(todo)
+       except StopIteration:return
+       waiting.append(pool.submit(fetch,item))
      fill()
+     while waiting:record(waiting.popleft().result());fill()
+    else:
+     waiting=set();todo=iter(items)
+     def fill():
+      while len(waiting)<workers and not(cutoff is not None and time.time()>=cutoff):
+       try:item=next(todo)
+       except StopIteration:return
+       waiting.add(pool.submit(fetch,item));stats['GET_attempts']+=1
+       stats['maximum_inflight']=max(stats['maximum_inflight'],len(waiting))
+     fill()
+     while waiting:
+      completed,waiting=wait(waiting,return_when=FIRST_COMPLETED)
+      for future in completed:record(future.result())
+      fill()
    failures.extend(wave_errors)
    if not remaining():break
    if cutoff is None:raise FreezeMetadataIncomplete('bounded signed token capture cutoff required')
@@ -94,7 +130,11 @@ def capture(gateway,epoch):
   if client is not gateway.bucket.client:client.close()
  deferred=state.setdefault('training_document_deferred',{})
  for miner,b in remaining():deferred.setdefault(miner,{})[str(b['slot'])]=dict(reason='infrastructure_deferred',closed_at=time.time())
- state.pop('training_document_capture_incomplete',None);state['training_document_capture_complete']=True;gateway.persist()
+ state.pop('training_document_capture_incomplete',None);state['training_document_capture_complete']=True
+ if stats is not None:
+  stats.update(finished_at=time.time(),deferred_slots=len(remaining()),cutoff=cutoff,unaudited=True)
+  state.setdefault('training_capture_runs',[]).append(stats)
+ gateway.persist()
  return journal
 
 def attach(state,receipts):

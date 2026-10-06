@@ -113,7 +113,12 @@ class Controller:
         if existing(legacy_key) is None:self.bucket.json(legacy_key,self.signed(descriptor))
         return checkpoint
 
-    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None,persistent_publication_policy=None,reward_publication_policy=None,optimizer_state_export_policy=None,artifact_compression_policy=None,proof_copy_policy=None,training_input_policy=None,continuous_reward_activation_document=None,continuous_reward_registration_snapshot=None,training_runtime=None,independent_state_readback_budget=None,optimizer_state_local_cache=None,probability_artifact_policy=None,token_artifact_policy=None,native_source_validation_policy=None,K=1,L=1):
+    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None,persistent_publication_policy=None,reward_publication_policy=None,optimizer_state_export_policy=None,artifact_compression_policy=None,proof_copy_policy=None,training_input_policy=None,continuous_reward_activation_document=None,continuous_reward_registration_snapshot=None,training_runtime=None,independent_state_readback_budget=None,optimizer_state_local_cache=None,probability_artifact_policy=None,token_artifact_policy=None,native_source_validation_policy=None,learner_capture_policy=None,K=1,L=1):
+        if learner_capture_policy is not None:
+            from .training_documents import capture_policy
+            learner_capture_policy=capture_policy(learner_capture_policy)
+            if training_input_policy!='committed-unaudited-training-v1' or submission_transport_policy not in ('small-commitment-pairs-v2','small-commitment-token-pairs-v3') or hourly_execution_policy is None:
+                raise ValueError('bounded learner capture requires hourly unaudited commitments')
         K,L=class_quotas(K,L,sampling_policy)
         if token_artifact_policy is not None:
             from .token_only_protocol import validate_policy,TRANSPORT
@@ -209,6 +214,7 @@ class Controller:
             hourly_execution_policy=validate(hourly_execution_policy,duration)
             if commitment_binding is None:raise ValueError('hourly policy requires small commitments')
             commitment_binding['freeze_until']=deadline+hourly_execution_policy['freeze_seconds']
+        if learner_capture_policy is not None:commitment_binding['learner_capture_policy']=learner_capture_policy
         if proof_copy_policy is not None:commitment_binding['proof_copy_policy']=proof_copy_policy
         from .artifact_budget import for_manifest
         budget=for_manifest(dict(artifact_policy=artifact_policy,model_runtime_revision=model_runtime_revision,backend_profile=backend_profile,numerical_policy=numerical_policy)) if artifact_policy is not None else {'compressed_bytes':100_000_000}
@@ -231,6 +237,7 @@ class Controller:
         if sample_harness_registry is not None:manifest['sample_harness_registry']=sample_harness_registry
         if submission_transport_policy is not None:manifest['submission_transport_policy']=submission_transport_policy
         if training_input_policy is not None:manifest['training_input_policy']=training_input_policy
+        if learner_capture_policy is not None:manifest['learner_capture_policy']=learner_capture_policy
         if training_runtime is not None:manifest['training_runtime']=training_runtime
         if artifact_compression_policy is not None:manifest['artifact_compression_policy']=artifact_compression_policy
         if probability_artifact_policy is not None:manifest['probability_artifact_policy']=probability_artifact_policy

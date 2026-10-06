@@ -53,11 +53,14 @@ class Bucket:
             aws_access_key_id=values['R2_ACCESS_KEY_ID'], aws_secret_access_key=values['R2_SECRET_ACCESS_KEY'])
         self.client = boto3.client('s3', **self._client_options)
 
-    def commitment_read_client(self):
+    def commitment_read_client(self, *, parallel_workers=None):
         """Hourly small-GET transport; shared client and storage trust unchanged."""
         from botocore.config import Config
         bounded = self.client.meta.config.merge(Config(connect_timeout=5, read_timeout=10,
             retries={'mode': 'standard', 'total_max_attempts': 1}))
+        if parallel_workers is not None:
+            if type(parallel_workers)is not int or parallel_workers not in (4,8,16):raise ValueError('bounded commitment reader pool')
+            bounded=bounded.merge(Config(max_pool_connections=parallel_workers))
         return boto3.client('s3', **self._client_options, config=bounded)
 
     def complete_commitment_listing(self, epoch, miners, cutoff=None):

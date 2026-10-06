@@ -296,3 +296,9 @@ target; the original total included 234.51 minutes of opening recovery.
 Results fluctuate and do not establish convergence. That research run performed no chain transaction; current hourly rewards use the separate assessment policy above.
 See https://github.com/AffineFoundation/affine/blob/main/docs/BOUNDED_SUCCESSOR_CONFIRMATION.md
 for the activated bounded-confirmation policy.
+
+Prospective capture implementation (not activated): bounded-parallel-token-capture-v1
+adds an explicit signed learner_capture_policy with 4/8/16 bounded readers and
+first-completed scheduling. Historical epochs retain four-reader FIFO capture.
+Document size, SHA, upload deadline and unaudited assurance are unchanged.
+See GitHub docs/BOUNDED_TRAINING_CAPTURE.md for configuration and deployment gates.

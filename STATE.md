@@ -1,3 +1,15 @@
+Verified continuation, 2026-10-06, ~21:43 UTC:
+Isolated CP19/f213 qualification genuinely completed 20 controls (4 honest VALID,
+16 mutations INVALID), original exit zero, no optimizer updates or production
+changes. Full 4,444,043-byte archive independently read back from R2; ROOT ACK
+preserves borrowed model for independent four-case reference diagnostics.
+Original E30 train-c8f0ae8b remains physically live with unchanged PID/ticks;
+checkpoint20/optimizer20 remains committed.
+Prospective bounded-parallel token capture is implemented default-off and passed
+35 related CPU tests, including actual signed manifest and persisted gateway
+binding. No active f213 policy/source changed; deployment and measured benefit
+remain pending. See docs/BOUNDED_TRAINING_CAPTURE.md.
+
 Verified supply investigation, 2026-10-06, ~21:32 UTC:
 E30 is training its original train-c8f0ae8b job from optimizer parent20. R29
 capture coverage is now distinguished from total submissions: 537 timely proof

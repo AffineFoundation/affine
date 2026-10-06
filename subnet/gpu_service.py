@@ -121,6 +121,11 @@ def contract(config,round_number):
         from .training_receipts import POLICIES
         if epoch_policy(config) not in POLICIES:raise ValueError('receipt input requires covered/persistent objective')
         result['training_input_policy']=config['training_input_policy']
+    if config.get('learner_capture_policy') is not None:
+        from .training_documents import capture_policy
+        result['learner_capture_policy']=capture_policy(config['learner_capture_policy'])
+        if config.get('training_input_policy')!='committed-unaudited-training-v1' or config.get('submission_transport_policy') not in ('small-commitment-pairs-v2','small-commitment-token-pairs-v3') or config.get('hourly_execution_policy') is None:
+            raise ValueError('bounded learner capture requires hourly unaudited commitments')
     if config.get('artifact_policy') is not None:result['artifact_policy']=config['artifact_policy']
     if 'probability_artifact_policy' in config:
         from .probability_artifacts import validate_policy
