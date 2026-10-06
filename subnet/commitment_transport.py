@@ -128,6 +128,27 @@ def freeze(gateway,epoch):
    except Exception as exc:
     state['commitment_metadata_incomplete']=dict(reason='discovery_infrastructure_incomplete',at=time.time(),error_type=type(exc).__name__);gateway.persist()
     raise FreezeMetadataIncomplete('complete tiny commitment discovery unavailable')from exc
+  wal=None;checkpoint_rows=0
+  policy=state['commitment_binding'].get('learner_capture_policy')
+  if policy is not None:
+   from .training_documents import capture_policy,DURABLE_CAPTURE_VERSION
+   policy=capture_policy(policy)
+   if policy['version']==DURABLE_CAPTURE_VERSION:
+    from .capture_journal import CommitmentJournal,JournalDurabilityError,checkpoint_state
+    # Persist+fsync complete discovery before creating its bound WAL header.
+    checkpoint_state(gateway)
+    wal=CommitmentJournal(gateway,epoch)
+    try:wal.replay()
+    except BaseException:wal.close();raise
+  def checkpoint_decision():
+   nonlocal checkpoint_rows
+   checkpoint_rows+=1
+   if wal is None:gateway.persist()
+   elif checkpoint_rows>=policy['state_checkpoint_documents']:
+    wal.checkpoint(gateway);checkpoint_rows=0
+  def reject(miner,reason):
+   if wal is not None:wal.rejected(miner,reason)
+   rejections[miner]=reason;checkpoint_decision()
   remaining=[m for m in discovery['miners']if m not in pending and m not in snapshots and m not in rejections]
   reads=_bounded_small_reads(gateway,epoch,remaining,cutoff);metadata_failures=[]
   try:
@@ -141,17 +162,24 @@ def freeze(gateway,epoch):
       need(env['payload']['checkpoint']==state['commitment_binding']['checkpoint']and env['payload']['source']==state['commitment_binding']['source'],'committed source/model')
      except Exception as exc:raise SubmissionPolicyError('malformed commitment')from exc
      digest=sha(data);root='public/'+epoch+'/submissions/'+miner+'/'+digest
-     pending[miner]=dict(key='private/'+epoch+'/commitments/'+miner+'.json',etag=r['ETag'],document=env,sha256=digest,size=len(data),received_at=r['LastModified'].timestamp(),root=root,artifacts=[],artifact_plans={},commitment_copied=False);gateway.persist()
-    except SubmissionPolicyError as exc:rejections[miner]=str(exc);gateway.persist()
+     progress=dict(key='private/'+epoch+'/commitments/'+miner+'.json',etag=r['ETag'],document=env,sha256=digest,size=len(data),received_at=r['LastModified'].timestamp(),root=root,artifacts=[],artifact_plans={},commitment_copied=False)
+     if wal is not None:wal.accepted(miner,progress)
+     pending[miner]=progress;checkpoint_decision()
+    except SubmissionPolicyError as exc:reject(miner,str(exc))
     except Exception as exc:
-     if missing(exc):rejections[miner]='missing completed commitment/artifact';gateway.persist()
+     if wal is not None and isinstance(exc,JournalDurabilityError):raise
+     if missing(exc):reject(miner,'missing completed commitment/artifact')
      else:metadata_failures.append(exc)
-  finally:reads.close()
+  finally:
+   reads.close()
+   if wal is not None:wal.close()
   unresolved=[m for m in remaining if m not in pending and m not in snapshots and m not in rejections]
   if metadata_failures or unresolved:
    state['commitment_metadata_incomplete']=dict(reason='tiny_GET_infrastructure_incomplete',at=time.time(),unresolved=unresolved,error_types=[type(x).__name__ for x in metadata_failures]);gateway.persist()
    raise FreezeMetadataIncomplete('complete tiny commitment admission unavailable')from(metadata_failures[0]if metadata_failures else None)
-  state['commitment_capture_complete']=True;state['commitment_capture_completed_at']=time.time();state.pop('commitment_metadata_incomplete',None);gateway.persist()
+  state['commitment_capture_complete']=True;state['commitment_capture_completed_at']=time.time();state.pop('commitment_metadata_incomplete',None)
+  if wal is None:gateway.persist()
+  else:wal.checkpoint(gateway)
  if state['commitment_binding'].get('version')in (VERSION2,VERSION3):
   from .training_documents import capture
   capture(gateway,epoch)

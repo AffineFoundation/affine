@@ -6,10 +6,16 @@ TOKEN_VERSION='committed-token-training-documents-v2'
 MAX_BYTES=2_000_000
 TRANSPORT='small-commitment-pairs-v2'
 CAPTURE_VERSION='bounded-parallel-token-capture-v1'
+DURABLE_CAPTURE_VERSION='bounded-parallel-token-capture-v2'
 
 def capture_policy(value):
- need(type(value)is dict and set(value)=={'version','workers','max_document_bytes','max_inflight_bytes','completion_order'},'exact prospective token capture policy')
- need(value['version']==CAPTURE_VERSION and type(value['workers'])is int and value['workers']in(4,8,16),'bounded token capture workers')
+ keys={'version','workers','max_document_bytes','max_inflight_bytes','completion_order'}
+ durable=type(value)is dict and value.get('version')==DURABLE_CAPTURE_VERSION
+ if durable:keys|={'journal_version','state_checkpoint_documents'}
+ need(type(value)is dict and set(value)==keys,'exact prospective token capture policy')
+ if durable:
+  need(value['journal_version']=='fsynced-per-epoch-capture-v1'and type(value['state_checkpoint_documents'])is int and 1<=value['state_checkpoint_documents']<=16,'bounded fsynced capture checkpoint')
+ need(value['version']in(CAPTURE_VERSION,DURABLE_CAPTURE_VERSION) and type(value['workers'])is int and value['workers']in(4,8,16),'bounded token capture workers')
  need(type(value['max_document_bytes'])is int and value['max_document_bytes']==MAX_BYTES,'unchanged token document bound')
  need(type(value['max_inflight_bytes'])is int and value['max_inflight_bytes']==value['workers']*MAX_BYTES,'exact capture byte budget')
  need(value['completion_order']=='first-completed','bounded prospective completion policy')
@@ -57,9 +63,33 @@ def capture(gateway,epoch):
  policy=state['commitment_binding'].get('learner_capture_policy')
  policy=capture_policy(policy)if policy is not None else None
  workers=policy['workers']if policy is not None else 4
- stats=dict(version=CAPTURE_VERSION,policy=policy,started_at=time.time(),GET_attempts=0,published_documents=0,transient_failures=0,structural_failures=0,maximum_inflight=0,raw_document_byte_limit=workers*MAX_BYTES,oversize_sentinel_byte_limit=workers)if policy is not None else None
+ stats=dict(version=policy['version']if policy is not None else CAPTURE_VERSION,policy=policy,started_at=time.time(),GET_attempts=0,published_documents=0,transient_failures=0,structural_failures=0,maximum_inflight=0,raw_document_byte_limit=workers*MAX_BYTES,oversize_sentinel_byte_limit=workers,replayed_documents=0,reconciled_publications=0,global_state_checkpoints=0)if policy is not None else None
  def remaining():return [(miner,b)for miner,p in sorted(pending.items())if miner not in state['rejections']for b in p['document']['payload']['batches']if str(b['slot'])not in journal.get(miner,{})]
  client=(gateway.bucket.commitment_read_client(parallel_workers=workers)if policy is not None else gateway.bucket.commitment_read_client())if hasattr(gateway.bucket,'commitment_read_client')else gateway.bucket.client
+ wal=None;checkpoint_rows=0
+ if policy is not None and policy['version']==DURABLE_CAPTURE_VERSION:
+  from .capture_journal import CaptureJournal,JournalDurabilityError
+  try:
+   before_replay=sum(len(v)for v in journal.values())
+   wal=CaptureJournal(gateway,epoch);wal.replay()
+   stats['replayed_documents']=sum(len(v)for v in journal.values())-before_replay
+  except BaseException:
+   if wal is not None:wal.close()
+   if client is not gateway.bucket.client:client.close()
+   raise
+ def durable_checkpoint():
+  if wal is None:gateway.persist()
+  else:
+   stats['global_state_checkpoints']+=1;wal.checkpoint(gateway)
+ def published(miner,receipt):
+  nonlocal checkpoint_rows
+  if wal is not None:wal.commit(miner,receipt)
+  journal.setdefault(miner,{})[str(receipt['slot'])]=receipt
+  state.get('training_document_deferred',{}).get(miner,{}).pop(str(receipt['slot']),None)
+  checkpoint_rows+=1
+  if wal is None or checkpoint_rows>=policy['state_checkpoint_documents']:
+   durable_checkpoint();checkpoint_rows=0
+
  def fetch(item):
   miner,b=item;key='private/'+epoch+'/training/'+miner+'/'+str(b['slot'])+'.json'
   try:
@@ -72,18 +102,38 @@ def capture(gateway,epoch):
    except (ValueError,KeyError,TypeError,json.JSONDecodeError)as exc:raise SubmissionPolicyError('token document binding')from exc
    if cutoff is not None and time.time()>=cutoff:raise TimeoutError('token capture cutoff')
    frozen=pending[miner]['root']+'/training/'+str(b['slot'])+'.json'
-   receipt=dict(slot=b['slot'],sha256=sha(data),size=len(data),frozen_key=frozen,captured_at=time.time(),assurance='unaudited')
-   try:gateway.bucket.put(frozen,data)
+   captured_at=time.time()
+   if cutoff is not None and captured_at>=cutoff:raise TimeoutError('token capture cutoff')
+   receipt=dict(slot=b['slot'],sha256=sha(data),size=len(data),frozen_key=frozen,captured_at=captured_at,assurance='unaudited')
+   try:
+    if wal is not None:wal.intent(miner,receipt)
+    gateway.bucket.put(frozen,data)
    except Exception as exc:
+    if wal is not None and isinstance(exc,JournalDurabilityError):raise
     failure=RuntimeError('token snapshot publication infrastructure failure');failure.__cause__=exc
     return miner,b,None,None,failure
    return miner,b,None,receipt,None
   except Exception as exc:
+   if wal is not None and isinstance(exc,JournalDurabilityError):raise
    from botocore.exceptions import ClientError
    if isinstance(exc,ClientError)and str(exc.response.get('Error',{}).get('Code'))in('NoSuchKey','NotFound','404'):exc=SubmissionPolicyError('missing completed token document')
    return miner,b,None,None,exc
  failures=[]
  try:
+  if wal is not None:
+   from botocore.exceptions import ClientError
+   for miner,receipt in wal.unresolved():
+    try:
+     response=client.get_object(Bucket=gateway.bucket.name,Key=receipt['frozen_key']);body=response['Body']
+     try:data=body.read(MAX_BYTES+1)
+     finally:body.close()
+    except ClientError as exc:
+     if str(exc.response.get('Error',{}).get('Code'))in('NoSuchKey','NotFound','404'):continue
+     raise
+    b=next(v for v in pending[miner]['document']['payload']['batches']if v['slot']==receipt['slot'])
+    validate(data,epoch,state['commitment_binding']['checkpoint'],miner,b,transport=state['commitment_binding'].get('version',TRANSPORT))
+    published(miner,receipt);stats['reconciled_publications']+=1
+   wal.replay()
   while remaining():
    items=remaining();wave_errors=[]
    def record(result):
@@ -95,7 +145,7 @@ def capture(gateway,epoch):
      wave_errors.append(error)
      if stats is not None:stats['transient_failures']+=1
     else:
-     journal.setdefault(miner,{})[str(b['slot'])]=receipt;gateway.persist()
+     published(miner,receipt)
      if stats is not None:stats['published_documents']+=1
    with ThreadPoolExecutor(max_workers=workers)as pool:
     if policy is None:
@@ -126,16 +176,18 @@ def capture(gateway,epoch):
    if cutoff is None:raise FreezeMetadataIncomplete('bounded signed token capture cutoff required')
    if time.time()>=cutoff:break
    time.sleep(min(.25,max(0,cutoff-time.time())))
+  deferred=state.setdefault('training_document_deferred',{})
+  for miner,b in remaining():deferred.setdefault(miner,{})[str(b['slot'])]=dict(reason='infrastructure_deferred',closed_at=time.time())
+  state.pop('training_document_capture_incomplete',None);state['training_document_capture_complete']=True
+  if stats is not None:
+   stats.update(finished_at=time.time(),deferred_slots=len(remaining()),cutoff=cutoff,unaudited=True)
+   if wal is not None:stats['journal_records']=wal.sequence
+   state.setdefault('training_capture_runs',[]).append(stats)
+  durable_checkpoint()
+  return journal
  finally:
   if client is not gateway.bucket.client:client.close()
- deferred=state.setdefault('training_document_deferred',{})
- for miner,b in remaining():deferred.setdefault(miner,{})[str(b['slot'])]=dict(reason='infrastructure_deferred',closed_at=time.time())
- state.pop('training_document_capture_incomplete',None);state['training_document_capture_complete']=True
- if stats is not None:
-  stats.update(finished_at=time.time(),deferred_slots=len(remaining()),cutoff=cutoff,unaudited=True)
-  state.setdefault('training_capture_runs',[]).append(stats)
- gateway.persist()
- return journal
+  if wal is not None:wal.close()
 
 def attach(state,receipts):
  for miner,receipt in receipts.items():
