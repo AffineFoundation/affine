@@ -1,91 +1,36 @@
 # Affine — MATH mining, verification and training
 
 Current operational status, 2026-10-06:
-E22 completed in 53.2 minutes end to end and published checkpoint
-b1606c97192e53541c226d42a529d2c51efb5200134e635b535332503cd2d0cf
-at optimizer step thirteen. It trained on 256 cheap-eligible, UNAUDITED task
-pairs without waiting for inference audits. E22 used approved source
-0380c393cbab76cfd03c1c8c91ba1a2579efe49f60ccd385f2a6f6f8d9db2e50.
-E23 then failed after its training update, during optimizer-state PUT export.
-Only thirteen of twenty-three new state objects reached R2 in the failed
-original, which is preserved. A separate explicit recovery from durable parent
-thirteen completed using the same E23 input contract and reviewed execution
-source fc401c9d6f1e2bbf724055cb02d4a394e7256021f5ed55ff0c8540467a10a505.
-All twenty-three state objects and the new model completed durable publication;
-optimizer step fourteen and checkpoint
-2ecc9b79a8b741ad18b6943d3f8255cdd32c9fbb1432b1cb3515b5b80a1380ff
-are now authoritative. The recovery service exited successfully, and the
-automatic ordinary controller opened epoch 24 from that checkpoint. Its collection
-captured 360 submission documents, found 309 eligible task batches and selected
-256 for training in 108.2 seconds. E24 completed durable publication in 50.4
-minutes end to end and advanced optimizer step fourteen to fifteen, publishing
-checkpoint ae2932c210e73a4f09c50eab86d40f91ebfd8106f8a00dfd7e1740061cd14541.
-Training used eligible UNAUDITED pairs with no trainer inference re-verification.
-All 23 parent optimizer files (91.39 GB) were reused from the genuine recovery
-cache. Actual warm validation/restore took 256.6 seconds; training and checkpoint
-creation took 404.6 seconds; optimizer export/PUT took 892.7 seconds. The mandatory
-independent publication readback followed before commitment. Epoch 25 then
-completed in 49.3 minutes, advanced optimizer step fifteen to sixteen and
-published checkpoint b2b68f9c15cc22cdd9ba812c7f79c83f65be22ae75102d957e685882cc6af66c.
-It trained on 256 eligible unaudited task pairs without inference re-verification;
-automatic trainer cleanup completed. Epoch 26 then completed in 49.4 minutes,
-trained on 253 eligible unaudited task pairs and advanced optimizer step to 17.
-Its checkpoint is 120bbf7416322d93e20502935272a6956edbc4c660f1029d07abc20f1d2c12da;
-automatic cleanup removed the old local checkpoint after durable publication.
-These three consecutive sub-hour epochs do not establish long-term uptime or
-sustained learning.
-E23 submissions remain closed. Miners must follow the current fresh signed
-OPEN manifest; a running controller alone is not an open submission contract.
-In E22, the owned miner completed three batches from 47 attempts within its 600-second
-window. Checkpoint materialization took 34.7 seconds and model construction
-18.9 seconds. Eight-stream optimizer export took 16.2 minutes; training and
-checkpoint creation took 7.7 minutes. One sub-hour epoch does not establish
-sustained hourly operation or held-out convergence.
-K=1/L=1, at most three batches per UID, the 16-attempt ceiling, selected-token
-logprobs plus TOPLOC, eight-stream state transport, and nonpayable operation
-are unchanged. Seven verifier workers are enrolled. The newest additive source
-and storage-capacity rollout has completed on all seven workers. The audit
-coordinator's indexed/read-only successor later stopped on a SQLite enqueue
-commit lock. The queue has now migrated to WAL with FULL durability, preserving
-its inode, schema and every stored row; the same API source restarted successfully.
-The successor audit service is running. A fresh canary completed its original
-leased job, with an authenticated worker report and one valid fully audited batch.
-It then automatically retired its downloaded checkpoint and claimed another job.
-The canary took 244 seconds, including 210 seconds downloading/authenticating
-15.2 GB of checkpoint files. All five production workers now have the corrected bootstrap; two roles have
-finite proof-qualification work. One successful
-canary does not establish sustained fleet-wide auditing.
-Historical authenticated audits remain evidence for their original contracts.
-The independent learning loop completed epoch 27 in 48.9 minutes, trained on
-227 eligible unaudited task pairs, and published checkpoint 18. Epochs 24 through
-27 each finished below one hour; chain submission remains outside this pilot.
-Chain weight submission
-remains disabled. Follow the latest signed OPEN manifest for the
-current mining checkpoint and deadline; a published checkpoint alone is not
-an invitation to mine outside that window.
+The learning loop completed epoch 28 in 53.4 minutes, trained on 213 eligible
+UNAUDITED task pairs and published checkpoint
+136c3f788eb20da982bc798ec1fb54cbc1463c6c7e1e6eeb2a4d3d8004ba0280
+at optimizer step nineteen. Epochs 24 through 28 each finished below one hour.
+The next opening is held for numerical calibration; follow the latest signed
+OPEN manifest, not an old checkpoint or a running controller alone.
 
-A separate compact three-way proof candidate was tested on two H200s:
-three honest rollouts accepted, one long rollout numerically inconclusive,
-and 80 token mutations rejected on each host. Both hosts agreed on verdicts.
-This candidate is NOT the active miner contract. Inconclusive outcomes are not
-confirmed fraud; their reward policy must be qualified before any cutover.
-Guarded optimizer cache-stat admission and K=2/L=2 trials are also prospective;
-external miners must continue following the signed manifest and source bundle.
+Weight setting is independently governed by hourly-current-assessment-writer-v1.
+Every UTC hour the validator estimates each currently registered miner's valid
+contributions from signed commitments and cumulative admitted audit evidence.
+It smooths estimated contribution with a six-hour half-life, applies current
+confirmed-invalid penalties immediately and normalizes across eligible miners.
+A failed training job, delayed checkpoint or incomplete opening does not block
+this writer. Historical compute manifests retain their original nonpayable flags;
+the new policy creates a separate signed current assessment rather than changing
+an old epoch or claiming that every rewarded sample was individually audited.
+The exact policy is documented in docs/HOURLY_CURRENT_ASSESSMENT.md on GitHub.
 
-The matched fixed32, 1,024-token owned cached native evaluation scored CP12
-21/32 versus CP11 18/32, with four gains, one loss and zero infrastructure
-errors. This small fixed cohort does not establish convergence or general
-held-out improvement. Historical reports and cohort identities are preserved.
+K=1/L=1, at most three batches per UID, the 16-attempt ceiling and selected-token
+logprobs plus TOPLOC remain the active miner contract. Seven verifier workers
+are enrolled. Audit selection and training run independently. Checkpoint and
+rollout caches are bounded and automatically retired after the required durable
+acknowledgements; active jobs and unowned paths remain protected.
 
-The larger matched SAME128 independent native evaluation scored CP11 77/128,
-CP12 86/128, CP13 84/128, CP14 78/128, CP15 85/128, CP16 87/128,
-CP17 83/128 and CP18 86/128.
-CP16 gained five tasks and lost three against CP15 on the same fixed cohort.
-CP14 completed all four original jobs,
-full private R2 acknowledgements and automatic owned-model retirement. These
-mixed results do not establish convergence. A prospective K=2/L=2 trial must
-compare an identical starting checkpoint and this untouched held-out cohort;
-additional samples are not automatically evidence of better learning.
+Matched SAME128 evaluation scored CP11 through CP18:
+77, 86, 84, 78, 85, 87, 83 and 86 correct out of 128.
+These mixed results do not establish convergence. The compact token-only proof,
+additional sampling quotas and faster numerical profiles remain prospective
+unless explicitly adopted in a new signed opening. Follow that opening and its
+exact source bundle for generation, not a research candidate.
 
 ## Model and taskset
 
@@ -190,19 +135,28 @@ per job, selects up to 32 rows per tick, and allows 14 jobs in flight. Audit
 selection and processing continue independently of training. An audit is a
 sampled check, not a statement that all eligible contributions were verified.
 
-The current continuous-probabilistic-audit-v2 score is unique eligible task
-count multiplied by a miner validity estimate and confirmed-invalid penalties.
-The current-cohort posterior bounds historical reputation. The operator policy
-uses eight recent epochs, decay 0.8, Beta(1,1), an invalid multiplier of 0.1,
-zero epoch score after two confirmed invalids, and a four-epoch blacklist after
-three. Infrastructure and numerical unknowns do not count as valid or fraudulent.
-Hourly raw points are summed and normalized once. Legacy bounded-random fields
-in older manifests do not replace the continuous statistical contract. Use the
-original signed opening, score policy and reports to inspect provenance.
+Hourly rewards use unique eligible task counts and the current cumulative audit
+estimate per miner, not only the fully audited batches. Same-epoch duplicates
+across miners count zero. Audit evidence remains bound to its original signed
+model, sampler, taskset and worker contract.
 
-The current pilot is NONPAYABLE. No new mechanism chain weights are submitted;
-proposed scores are not a payment promise. Historical nonpayable epochs cannot
-be made payable retroactively. Penalties concern rewards, never wallet funds.
+The current assessment uses eight recent epochs of admitted evidence, audit
+decay 0.8 and a Beta(1,1) prior. Infrastructure errors and numerical unknowns
+are neutral, not confirmed valid or fraudulent. Estimated valid contribution
+counts are smoothed with alpha = 1 - 2**(-1/6), giving a six-hour half-life.
+Penalties apply after smoothing: one confirmed invalid in the recent history
+multiplies score by 0.1, two reduce it to zero, and three trigger the configured
+four-epoch blacklist. A new unaudited epoch does not reset reputation or penalties.
+Scores are normalized across current on-chain registered identities, with fresh
+hotkey/UID ownership checks. No training-completion report is required.
+
+The writer retries chain rate limits each minute but submits at most once per
+UTC hour. A transport outage may retain the last authenticated assessment,
+explicitly marked stale. Integrity errors fail closed. If the genuine assessment
+has no positive recipients, the explicitly authorized zero-total policy uses
+the subnet owner sink. Penalties affect rewards, never wallet funds.
+Historical nonpayable compute records remain unchanged; this independent
+current-assessment policy does not retroactively relabel those epochs.
 
 ## Durable storage and performance
 
@@ -304,6 +258,6 @@ The next opening is temporarily held by its successor numerical confirmation;
 no new mining contract has been published for that opening. Bounded confirmation
 recalibration is implemented and CPU-tested but is not yet deployed. The last
 completed independent 128-task evaluation is 86 correct at checkpoint 18;
-results fluctuate and do not establish convergence. Chain transactions stay off.
+results fluctuate and do not establish convergence. That research run performed no chain transaction; current hourly rewards use the separate assessment policy above.
 See https://github.com/AffineFoundation/affine/blob/main/docs/BOUNDED_SUCCESSOR_CONFIRMATION.md
 for the prospective recovery policy.

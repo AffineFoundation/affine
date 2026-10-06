@@ -5,6 +5,14 @@ not wait for inference audits or repeat inference verification in the trainer.
 K=1/L=1 and the three-batch-per-UID cap remain the live contract. The matched
 quota research runner is default-off; see [its protocol](MATCHED_QUOTA_RESEARCH.md).
 
+The hourly weight writer now has a separate current-assessment policy rather
+than a queue of finalized training epochs. It uses committed unique task counts,
+cumulative authenticated audit estimates and immediate confirmed-invalid
+penalties, with a six-hour contribution half-life. Training failures and an
+unfinished opening are not scoring gates. Historical compute manifests retain
+their original flags; the writer keeps a separate signed hourly assessment.
+See [the exact calculation and submission controls](HOURLY_CURRENT_ASSESSMENT.md).
+
 The unchanged independent 128-task cohort scored 77, 86, 84, 78, 85, 87, 83 and 86 correct
 on checkpoints 11 through 18. Checkpoint 16 gained five and lost three tasks
 against checkpoint 15. Checkpoint 17 then fell to 83/128 on the same cohort. The signed summary and

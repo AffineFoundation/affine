@@ -18,7 +18,13 @@ estimates, then smoothed with a six-hour exponential half-life:
 The moving average uses raw estimated contribution, not previously normalized
 weights. Current penalties apply once **after** smoothing, so a new confirmed
 invalid result is not diluted by previous rewards. Scores are normalized across
-currently registered identities. The bounded seven-day history leaves less than
+currently registered identities. Audit estimates are cumulative across the
+admitted recent history, not reset when a new epoch opens. The signed policy
+uses eight recent epochs, audit decay 0.8 and a Beta(1,1) prior. One confirmed
+invalid in that recent history multiplies the current score by 0.1; two reduce
+it to zero. Three trigger the configured four-epoch blacklist. Infrastructure
+errors and numerical ambiguity do not count as confirmed invalids. Historical
+evidence retains its original contract and signatures. The bounded seven-day history leaves less than
 one billionth of a single old contribution; it is recomputed using current audit
 evidence and does not rewrite previous submission records.
 
