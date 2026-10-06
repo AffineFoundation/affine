@@ -115,3 +115,25 @@ class PrelaunchContinuationTests(unittest.TestCase):
         changed=dict(p,expires_at=1)
         with self.assertRaises(ValueError):a.reconcile_launch(changed)
         expired=dict(scope,expires_at=0);p.update(scope=f.sign(expired),expires_at=0);self.assertEqual(a.reconcile_launch(p)['status'],'expired-unissued');self.assertEqual(len(launched),1)
+
+
+class AtomicPointerTests(unittest.TestCase):
+    def test_preserves_concurrent_prior_bytes_and_atomic_idempotent_output(self):
+        from ops.continuous_owned_heldout128_ssh import compare_replace_pointer
+        with tempfile.TemporaryDirectory()as d:
+            p=Path(d)/'ROOTsigned.json';old=b'exact signed historical';p.write_bytes(old)
+            prior=hashlib.sha256(old).hexdigest();new={'payload':{'evaluations':['old','newcomplete']}}
+            compare_replace_pointer(p,new,prior);raw=p.read_bytes();self.assertEqual(json.loads(raw),new)
+            with self.assertRaises(ValueError):compare_replace_pointer(p,{'replacement':'stale'},prior)
+            self.assertEqual(p.read_bytes(),raw)
+            p.write_bytes(b'concurrent ROOT publication')
+            with self.assertRaises(ValueError):compare_replace_pointer(p,new,hashlib.sha256(raw).hexdigest())
+            self.assertEqual(p.read_bytes(),b'concurrent ROOT publication')
+    def test_absent_pointer_race_symlink_and_no_partial_output(self):
+        from ops.continuous_owned_heldout128_ssh import compare_replace_pointer
+        with tempfile.TemporaryDirectory()as d:
+            p=Path(d)/'new.json';compare_replace_pointer(p,{'complete':True},None)
+            with self.assertRaises(ValueError):compare_replace_pointer(p,{'stale':True},None)
+            foreign=Path(d)/'foreign';foreign.write_bytes(b'keep');q=Path(d)/'link';q.symlink_to(foreign)
+            with self.assertRaises(ValueError):compare_replace_pointer(q,{'wrong':True},hashlib.sha256(b'keep').hexdigest())
+            self.assertEqual(foreign.read_bytes(),b'keep')

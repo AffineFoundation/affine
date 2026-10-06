@@ -1,6 +1,8 @@
 """Pinned CPU-only SSH adapter for the default-off continuous128 service."""
 import base64
 import copy
+import fcntl
+import tempfile
 import hashlib
 import io
 import json
@@ -108,6 +110,29 @@ def emit(body, plan):
     code='import json\nPLAN=json.loads('+repr(json.dumps(plan,separators=(',',':')))+')\n'+body
     compile(code,'continuous128-emitted-private-script','exec')
     return code
+
+
+def compare_replace_pointer(path,envelope,previous_sha256):
+    """Publish only over the exact validated prior signed pointer bytes."""
+    path=Path(path);path.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
+    if path.resolve()!=path or path.is_symlink():raise ValueError('canonical approved signed output pointer')
+    lock=os.open(path.with_name(path.name+'.publication.lock'),os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
+    tmp=None
+    try:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        current=hashlib.sha256(path.read_bytes()).hexdigest()if path.exists()else None
+        if current!=previous_sha256:raise ValueError('signed pointer changed after validation; preserve concurrent rows')
+        fd,name=tempfile.mkstemp(prefix='.'+path.name+'.',dir=path.parent);tmp=Path(name)
+        with os.fdopen(fd,'wb')as f:f.write(canonical(envelope));f.flush();os.fsync(f.fileno())
+        current=hashlib.sha256(path.read_bytes()).hexdigest()if path.exists()else None
+        if current!=previous_sha256:raise ValueError('signed pointer changed before atomic replacement')
+        os.replace(tmp,path);tmp=None
+        directory=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
+        try:os.fsync(directory)
+        finally:os.close(directory)
+    finally:
+        if tmp is not None:tmp.unlink(missing_ok=True)
+        os.close(lock)
 
 
 class Adapter:
@@ -343,6 +368,7 @@ assert p.stat().st_size<=512*1024**2;print('{}')
         expected=dict(version='heldout128-dashboard-sources-v1',source_sha256=self.p['source_sha256'],
                       source_files_sha256=digest(self.p['source_files']),cohort_sha256=self.p['cohort_sha256'],
                       excluded_indices=self.p['old32_indices'])
+        previous_sha=hashlib.sha256(path.read_bytes()).hexdigest()if path.exists()else None
         pointer=signed(private_json(path),self.authority)if path.exists()else dict(expected,evaluations=[])
         if {k:pointer.get(k)for k in expected}!=expected:
             raise ValueError('preserve actual existing signed dashboard scientific scope')
@@ -360,4 +386,4 @@ assert p.stat().st_size<=512*1024**2;print('{}')
         # Run the complete hardened projection before signing/updating its scope.
         from dashboard.heldout128_projection import rows
         envelope=self.sign(pointer);rows(envelope,self.p['production_directory'])
-        path.parent.mkdir(mode=0o700,parents=True,exist_ok=True);save(path,envelope)
+        compare_replace_pointer(path,envelope,previous_sha)
