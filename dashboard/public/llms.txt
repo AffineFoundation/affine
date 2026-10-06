@@ -6,9 +6,11 @@ UNAUDITED task pairs and published checkpoint
 136c3f788eb20da982bc798ec1fb54cbc1463c6c7e1e6eeb2a4d3d8004ba0280
 at optimizer step nineteen. Epochs 24 through 28 each finished below one hour.
 Epoch 29 reopened after fresh numerical calibration and independent confirmation
-passed, collected submissions, and has reached training with 201 eligible
-UNAUDITED task pairs. Its mining deadline has passed; wait for the next signed
-OPEN manifest. The previous checkpoint and optimizer state are preserved.
+passed, trained on 201 eligible UNAUDITED task pairs, and durably published
+checkpoint 94e8999b75838cddf70d3e767318e7b169a5421c890ea9c7eeef2e2aa6104e6d
+at optimizer step twenty after independent full-state readback. Round 30 is
+opening; wait for its signed OPEN manifest before submitting. Independent
+checkpoint-20 evaluation is pending. Optimizer lineage is preserved.
 The coordinator API, continuous auditor and learner now have durable ROOT-pinned
 startup policies, boot enablement and automatic restart on failure. Controlled
 CPU service restarts preserved the original epoch-29 remote training job and
@@ -272,7 +274,8 @@ Current learning status (2026-10-06): epoch 28 completed in 53.38 minutes
 with 213 eligible unaudited training pairs and durable optimizer step 19.
 Epoch 29 reopened with a 600-second mining window and 247 registered identities.
 Its window is now closed, with 237 committed pairs, 201 eligible pairs and a
-201-pair training job dispatched. Audits do not gate that training.
+201-pair original training job completed and durably published checkpoint 20.
+Audits did not gate that training.
 The explicitly approved bounded-confirmation policy performed genuine fresh GPU
 calibration and independent confirmation before opening. The log-probability
 tolerance is 0.0016632080078125, and the confirmation measured at most
@@ -280,9 +283,12 @@ tolerance is 0.0016632080078125, and the confirmation measured at most
 f21373d7ccb167bcd868f5ed03ce9ac7ef567d894e8ecc9e61f5d7f8645b67b8.
 The existing selected-token logprobs, TOPLOC, inverse-CDF draw verification and
 native outcome grading are unchanged. Old failed reports remain preserved.
-The update is in progress; a dispatched job is not a completed training update
-or evidence of convergence. The last
-completed independent 128-task evaluation is 86 correct at checkpoint 18;
-results fluctuate and do not establish convergence. That research run performed no chain transaction; current hourly rewards use the separate assessment policy above.
+The authority committed optimizer step twenty after full independent readback
+of all 23 optimizer shards. Round 30 is opening. The last completed independent
+128-task evaluation is 85 correct at checkpoint 19 (checkpoint 18 scored 86);
+checkpoint 20 has been discovered but has no completed evaluation yet. The
+recovered collection-to-publication cycle took 66.55 minutes, missing the hourly
+target; the original total included 234.51 minutes of opening recovery.
+Results fluctuate and do not establish convergence. That research run performed no chain transaction; current hourly rewards use the separate assessment policy above.
 See https://github.com/AffineFoundation/affine/blob/main/docs/BOUNDED_SUCCESSOR_CONFIRMATION.md
 for the activated bounded-confirmation policy.

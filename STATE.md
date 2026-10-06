@@ -1,3 +1,15 @@
+Verified continuation, 2026-10-06, ~21:10 UTC:
+Epoch 29 completed its original 201-pair unaudited training job. Independent
+full readback authenticated all 23 optimizer shards (91,387,491,264 bytes), and
+the authority committed optimizer step 20 and checkpoint
+94e8999b75838cddf70d3e767318e7b169a5421c890ea9c7eeef2e2aa6104e6d.
+The learner advanced to round 30/opening; independent SAME128 evaluation has
+discovered checkpoint 20, with no completed score yet. The recovered epoch took
+66.55 minutes from opening recovery through publication, including 54.78 minutes
+in training/publication. Total original epoch wall time was 301.06 minutes,
+including 234.51 minutes of opening/calibration recovery. Hourly cadence and
+learning convergence remain unproven. This supersedes the in-progress status below.
+
 Current verified continuation, 2026-10-06, ~20:42 UTC:
 Epoch 29 reopened after genuine fresh calibration and independent confirmation
 on immutable source f21373d7ccb167bcd868f5ed03ce9ac7ef567d894e8ecc9e61f5d7f8645b67b8.

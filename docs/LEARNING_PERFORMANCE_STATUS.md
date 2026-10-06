@@ -220,3 +220,23 @@ StateCache is not a completed checkpoint or durable optimizer commit.
 
 See [startup policy and guards](DURABLE_AUDIT_SERVICES.md). A hardware reboot
 was not performed; boot enablement and controlled service restart were verified.
+
+## Epoch 29 original completion and checkpoint 20
+
+The original epoch-29 job completed with 201 eligible unaudited task pairs,
+advancing optimizer step 19 to 20. The independent reader authenticated all
+23 optimizer shards, totalling 91,387,491,264 bytes. The signed completion,
+checkpoint publication and durable authority pointer agree on checkpoint
+`94e8999b75838cddf70d3e767318e7b169a5421c890ea9c7eeef2e2aa6104e6d`.
+Round 30 is opening. The independent SAME128 evaluator discovered checkpoint 20;
+no completed score is claimed yet.
+
+The original controller recorded 301.06 minutes total, including 234.51 minutes
+of opening/calibration recovery. After reopening, collection through publication
+took 66.55 minutes, of which training/publication took 54.78 minutes. The original
+training report records 996.05 seconds of cold optimizer restore, 432.33 seconds
+of training/checkpoint work and 1,105.46 seconds of state export/upload; these
+components do not exhaust controller wall time. Source-change cache retirement
+was acknowledged automatically. A faster subsequent warm restore must be measured,
+not assumed. This completion clears the publication blocker but does not prove
+continuous hourly operation or held-out convergence.
