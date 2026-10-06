@@ -2,13 +2,44 @@
 
 Current operational status, 2026-10-06:
 Latest completed epoch: E19, 351 captured documents, 295 cheap-eligible batches,
-256 selected UNAUDITED training inputs, durable optimizer step ten. E20 is
-collecting from that checkpoint. Training does not wait for inference audits.
-The original signed full-state cache acknowledgment for step ten completed;
-the next genuine warm training job has not yet demonstrated its speedup.
+256 selected UNAUDITED training inputs, durable optimizer step ten. E20 captured
+332 documents: 294 passed cheap eligibility checks and 256 were selected for
+UNAUDITED training. Training does not wait for inference audits. Its original
+training job is exporting optimizer state; successor publication is not complete.
+The original signed full-state cache acknowledgment for step ten completed.
+E20 restored 63.98 GB of cached state in its first sixteen recorded shard reads
+without R2 downloads; the final original warm-cache report is still pending.
 Automatic owned-model and expired-input retirement runs on all seven reachable
-verifiers. The last completed epoch still took 73.7 minutes; speed remains a
-measured release gap. The chronological records below retain earlier contracts.
+verifiers. The last completed epoch still took 73.7 minutes. Current optimizer
+uploads are slower than E19 despite unchanged serialization/hash timing; adding
+verifiers does not remove this transfer bottleneck. No sub-hour epoch is claimed.
+
+A complete integrated source candidate,
+4db060697ab8303ee667e5787831a574b41e4a10afb8fe6a209dd7db40b9f373,
+passed full R2 archive/file-hash readback, CPU staging on ten roles and 204
+reviewed CPU tests. Its runtime contains 177 pinned files. It is QUALIFICATION
+ONLY, not the deployed mining contract. Live source remains the signed OPEN
+manifest's 9f392dabf41278474c18c686393180833630571e49265a75b98eae88f3a95b88.
+The integrated candidate includes compact selected-token probability artifacts,
+parallel immutable input publication and explicit native evaluation policies.
+On the existing idle H200, its original bounded qualification completed in
+214.91 seconds. All five compact-proof honest/tampering controls passed, with
+zero inconclusive cases. The honest artifact contained 192 generated tokens
+and was 5,709 bytes; verification still independently recomputed the full logits
+and checked every prescribed draw. Artifact compression is not sampling proof
+coverage reduction. For two fixed held-out tasks at a 128-token cap, cached
+native evaluation took 10.33 seconds versus 41.56 seconds for the full-proof
+baseline. Outputs and grades matched on these two tasks; this approximately
+4x speedup is a small qualification result, not a full-cohort quality trend.
+The earlier original uncached fixed-32 evaluation finished in 86.59 minutes;
+its report still requires reconciliation before any new score is claimed.
+Continuous cached evaluation routing is being prepared separately. Neither
+native evaluation policy is evidence for a miner's sampling provenance.
+
+The independent queue API now rejects unsupported explicit probability-artifact
+policies; this does not activate the compact source contract by itself. Public
+miners must follow the latest signed OPEN manifest. Chain weight submissions
+remain disabled. The chronological records below retain earlier contracts.
 
 E16 completed and durably published optimizer step seven / checkpoint
 9cd6f6a6d61a4aba1bc30a83afa3792820d6a3630b660041cbd52eaecfdd82b0.
