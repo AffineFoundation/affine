@@ -17,6 +17,22 @@ from .controller import Controller
 from .scoring import score
 RECEIPT_TRAINING_POLICIES=(COVERED_POLICY,PERSISTENT_RECEIPT_POLICY)
 
+PUBLICATION_PROJECTION_VERSION='train-recovery-publication-projection-v1'
+def publication_request(manifest, authority, policy=None):
+    """Default-off role projection; training declaration is never an upload grant."""
+    label=manifest['epoch']+'-publish-'+manifest['checkpoint']['id'][:8]
+    if policy is None:return label,manifest
+    if policy!={'version':PUBLICATION_PROJECTION_VERSION}:
+        raise ValueError('explicit publication projection policy')
+    if 'training_startup_recovery' not in manifest:return label,manifest
+    declaration=signed(manifest['training_startup_recovery'],authority)
+    if (declaration.get('version') not in ('terminal-parent-restore-pre-update-recovery-v2','terminal-parent-restore-pre-update-bootstrap-recovery-v3')
+            or declaration.get('epoch')!=manifest['epoch']
+            or declaration.get('replacement_execution_source_sha256')!=manifest['source_bundle']['sha256']):
+        raise ValueError('authenticated original train-only recovery projection')
+    projected=dict(manifest);del projected['training_startup_recovery']
+    return label+'-publication-v1',projected
+
 
 def save(path,value):
     path.parent.mkdir(parents=True,exist_ok=True)
@@ -491,6 +507,8 @@ else:
 class RemoteController(Controller):
     def __init__(self,bucket,gateway,state,remote):
         super().__init__(bucket,gateway,state)
+        self.publication_manifest_projection=remote.get('publication_manifest_projection')
+        if self.publication_manifest_projection is not None and self.publication_manifest_projection!={'version':PUBLICATION_PROJECTION_VERSION}:raise ValueError('publication projection configuration')
         self.independent_state_reader=None
         if remote.get('independent_state_reader') is not None:
             from .independent_state_dispatch import IndependentStateReader
@@ -573,7 +591,8 @@ class RemoteController(Controller):
     def stage_remote_checkpoint(self,manifest,remote_path):
         """Upload and independently hash bytes without signing an authority descriptor."""
         cp=manifest['checkpoint'];capacity=(self.jobs.publication_capacity(remote_path) if hasattr(self.jobs,'publication_capacity') else self.jobs.capacity(remote_path))
-        report=self.jobs.run(manifest['epoch']+'-publish-'+cp['id'][:8],'upload',manifest,remote_path,
+        label,upload_manifest=publication_request(manifest,self.authority.id,getattr(self,'publication_manifest_projection',None))
+        report=self.jobs.run(label,'upload',upload_manifest,remote_path,
             put_urls={n:self.bucket.presign('public/checkpoints/'+cp['id']+'/'+n,'put_object',3600) for n in cp['files']})
         workers=1
         if manifest.get('persistent_publication_policy') is not None:
