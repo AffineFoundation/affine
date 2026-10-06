@@ -3,7 +3,7 @@
   const $ = id => document.getElementById(id), ns = 'http://www.w3.org/2000/svg';
   let data = {epochs:[], evaluations:[], summary:{}}, hasRecords = false, recordsUnavailable = false;
   // A changing checkpoint is expected. A changing task/runtime/sampling cohort is not comparable.
-  const cohortKey = e => JSON.stringify([e.dataset_id,e.taskset_hash,e.fixed_task_ids,e.seed,e.count,e.requested_count,e.harness,e.environment_version,e.model,e.model_runtime_revision,e.output_token_budget,e.policy_kind]);
+  const cohortKey = e => JSON.stringify([e.dataset_id,e.taskset_hash,e.fixed_task_ids,e.seed,e.count,e.requested_count,e.harness,e.environment_version,e.model,e.model_runtime_revision,e.output_token_budget,e.policy_kind,e.sampling_policy,e.experiment_id]);
   const finite = value => typeof value === 'number' && Number.isFinite(value);
   const count = value => finite(value) && Number.isInteger(value) && value >= 0;
   const number = value => value.toLocaleString('en-GB');

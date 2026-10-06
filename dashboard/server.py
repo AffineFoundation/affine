@@ -173,7 +173,8 @@ class Database:
                 'dataset_id','seed','count','successes','mean_reward','timestamp',
                 'training_steps','status','fixed_task_ids','reward_standard_error',
                 'requested_count','completed_count','taskset_hash','policy_kind','model_runtime_revision',
-                'original_error_count','recovered_count','status_detail')
+                'original_error_count','recovered_count','status_detail','original_epoch_id',
+                'sampling_policy','experiment_id','native_graded','proof_verification_performed','original_report_sha256')
         evaluation_paths=list((self.source/'evaluations').glob('*.json'))
         evaluation_paths.extend((self.source/'prospective-separated-hopper-math-v1/evaluations').glob('*.json'))
         evaluation_paths.extend((self.source/'prospective-separated-hopper-math-recovery-v1/evaluations').glob('*.json'))
@@ -186,8 +187,15 @@ class Database:
         evaluation_paths.extend((self.source/'prospective-separated-hopper-math-v10/evaluations').glob('*.json'))
         evaluation_paths.extend((self.source/'prospective-separated-hopper-math-v11-revision2/evaluations').glob('*.json'))
         evaluation_paths.extend((launch/'evaluations').glob('*.json'))
-        for path in evaluation_paths:
-            raw = read(path,{})
+        evaluation_inputs=[read(path,{})for path in evaluation_paths]
+        pointer=self.source/'dashboard/cached-evaluator-sources.ROOT-SIGNED.json'
+        if pointer.is_file():
+            try:
+                from dashboard.cached_evaluator_projection import rows as cached_rows
+                evaluation_inputs.extend(cached_rows(read(pointer,{}),launch/'controller-state'))
+            except Exception:
+                pass # Invalid diagnostic projection is unavailable, never zero reward.
+        for raw in evaluation_inputs:
             if not isinstance(raw,dict) or not all(isinstance(raw.get(k),str) for k in ('run_id','env_id','dataset_id','status')):
                 continue
             row = {key:raw[key] for key in keys if key in raw}
