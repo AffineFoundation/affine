@@ -17,9 +17,16 @@ optimizer step fourteen and checkpoint
 are now authoritative. The recovery service exited successfully, and the
 automatic ordinary controller opened epoch 24 from that checkpoint. Its collection
 captured 360 submission documents, found 309 eligible task batches and selected
-256 for training in 108.2 seconds. The original training job is running, without
-waiting for inference audits; checkpoint fifteen is not yet claimed. All 23
-parent optimizer files (91.39 GB) were reused from the genuine recovery cache.
+256 for training in 108.2 seconds. E24 completed durable publication in 50.4
+minutes end to end and advanced optimizer step fourteen to fifteen, publishing
+checkpoint ae2932c210e73a4f09c50eab86d40f91ebfd8106f8a00dfd7e1740061cd14541.
+Training used eligible UNAUDITED pairs with no trainer inference re-verification.
+All 23 parent optimizer files (91.39 GB) were reused from the genuine recovery
+cache. Actual warm validation/restore took 256.6 seconds; training and checkpoint
+creation took 404.6 seconds; optimizer export/PUT took 892.7 seconds. The mandatory
+independent publication readback followed before commitment. Epoch 25 has opened
+from the genuinely committed checkpoint. Consecutive uninterrupted hourly
+operation and sustained learning are not yet established.
 E23 submissions remain closed. Miners must follow the current fresh signed
 OPEN manifest; a running controller alone is not an open submission contract.
 In E22, the owned miner completed three batches from 47 attempts within its 600-second
@@ -36,7 +43,7 @@ The audit coordinator is currently stopped after a backend-evidence policy
 omission. Its corrected policy and safe rollout continuation are under review.
 Historical authenticated audits remain evidence for their original contracts;
 this does not claim that all current-source audits have finished. The learning
-loop remains independent of this audit outage and continues epoch 24.
+loop remains independent of this audit outage and has advanced to epoch 25.
 Chain weight submission
 remains disabled. Follow the latest signed OPEN manifest for the
 current mining checkpoint and deadline; a published checkpoint alone is not
@@ -54,6 +61,13 @@ The matched fixed32, 1,024-token owned cached native evaluation scored CP12
 21/32 versus CP11 18/32, with four gains, one loss and zero infrastructure
 errors. This small fixed cohort does not establish convergence or general
 held-out improvement. Historical reports and cohort identities are preserved.
+
+The larger matched SAME128 independent native evaluation scored CP11 77/128,
+CP12 86/128, CP13 84/128 and CP14 78/128. CP14 completed all four original jobs,
+full private R2 acknowledgements and automatic owned-model retirement. These
+mixed results do not establish convergence. A prospective K=2/L=2 trial must
+compare an identical starting checkpoint and this untouched held-out cohort;
+additional samples are not automatically evidence of better learning.
 
 ## Model and taskset
 
