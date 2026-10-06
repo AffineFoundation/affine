@@ -22,7 +22,7 @@ AMENDMENT_VERSION = 'private-training-execution-amendment-v1'
 POLICIES = {'bf16-full-adamw-covered-fixed-reference-v3',
             'bf16-cpu-fp32-master-task-normalized-persistent-v4'}
 COMPUTATION_FIELDS = ('epoch', 'checkpoint', 'source_bundle', 'start', 'deadline', 'training_policy',
-    'K', 'L', 'max_batches', 'artifact_policy', 'probability_artifact_policy', 'environment', 'environment_revision',
+    'K', 'L', 'max_batches', 'artifact_policy', 'probability_artifact_policy', 'token_artifact_policy', 'native_source_validation_policy', 'environment', 'environment_revision',
     'indices', 'environments', 'sample_harness_registry', 'heldout_indices',
     'harness', 'harness_source_hash', 'model_id', 'model_runtime_revision', 'backend_profile',
     'numerical_policy', 'tokenizer_binding', 'sampling_contract', 'sampling_source_hash',

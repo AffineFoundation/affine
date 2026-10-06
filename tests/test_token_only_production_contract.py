@@ -139,3 +139,23 @@ class TokenNativeAdmissionControls(unittest.TestCase):
      self.assertEqual(session.step({'text':r'\boxed{'+answer+'}'})['classification'],label)
     finally:session.close()
    self.assertEqual(hashing.call_count,1)
+
+class ActualGPUOverrideControls(TokenProductionControls):
+ def generate(self,seed=0):
+  from subnet.gpu_runtime import GPURuntime
+  gpu=GPURuntime.__new__(GPURuntime);gpu.__dict__.update(self.r.__dict__);events=[];gpu.mining_progress=lambda phase,**metrics:events.append(phase)
+  with patch('subnet.gpu_runtime.create_session',return_value=fixture.Session()),patch.object(gpu,'compute',side_effect=AssertionError('real GPU override must not recompute LP')),patch.object(gpu,'build_proofs',side_effect=AssertionError('real GPU override must not build TOPLOC')):
+   value=gpu.rollout(2,seed)
+  self.assertIn('generation_started',events);self.assertIn('generation_completed',events);self.assertIn('grading_completed',events);self.assertIn('token_artifact_generated',events);self.assertNotIn('probabilities_completed',events);self.assertNotIn('TOPLOC_completed',events)
+  return value
+ def test_actual_GPU_override_passes_native_validation_to_session(self):
+  from subnet.gpu_runtime import GPURuntime
+  gpu=GPURuntime.__new__(GPURuntime);gpu.__dict__.update(self.r.__dict__);validation=object();gpu.native_source_validation=validation
+  with patch('subnet.gpu_runtime.create_session',return_value=fixture.Session())as session,patch.object(gpu,'compute',side_effect=AssertionError('no LP')),patch.object(gpu,'build_proofs',side_effect=AssertionError('no proof')):
+   rollout,arrays=gpu.rollout(2,0)
+  session.assert_called_once_with(gpu.spec,source_validation=validation);self.assertEqual(arrays,[])
+ def test_amendment_computation_digest_binds_new_policies(self):
+  from subnet.training_receipts import computation_binding
+  original=computation_binding(self.m)
+  for key in ('token_artifact_policy','native_source_validation_policy'):
+   wrong=copy.deepcopy(self.m);wrong[key]={'changed':True};self.assertNotEqual(computation_binding(wrong),original)

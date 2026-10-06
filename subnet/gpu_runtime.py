@@ -77,7 +77,12 @@ class GPURuntime(Runtime):
         return output
 
     def rollout(self,index,seed):
-        env_seed=int(self.spec.config.get('seed',0));session=create_session(self.spec)
+        token_manifest=getattr(self,'token_artifact_manifest',None)
+        if token_manifest is not None:
+            from .token_only_protocol import bind_runtime
+            bind_runtime(self,token_manifest)
+        validation=getattr(self,'native_source_validation',None)
+        env_seed=int(self.spec.config.get('seed',0));session=create_session(self.spec)if validation is None else create_session(self.spec,source_validation=validation)
         try:
             initial=session.reset(index,env_seed);messages=initial['messages'];tools=initial.get('tools',[]);turns=[];arrays=[]
             def progress(phase,**metrics):
@@ -90,13 +95,20 @@ class GPURuntime(Runtime):
                 output=self.sample_output(prompt,seed,messages,i,index,initial['task_hash'])
                 progress('generation_completed',turn=i,output_tokens=len(output),elapsed_seconds=time.monotonic()-started)
                 text=self.tokenizer.decode(output,skip_special_tokens=True);started=time.monotonic()
-                acts,probs=self.compute(prompt,output)
-                progress('probabilities_completed',turn=i,elapsed_seconds=time.monotonic()-started);started=time.monotonic()
-                proofs=self.build_proofs(acts,decode_batching_size=16,topk=128)
-                if not proofs or any(p is None for p in proofs):raise ValueError('GPU proof construction')
-                progress('TOPLOC_completed',turn=i,elapsed_seconds=time.monotonic()-started);started=time.monotonic()
-                from .probability_artifacts import encode
-                result=session.step(policy.action(text,self.harness));progress('grading_completed',turn=i,classification=result['classification'],elapsed_seconds=time.monotonic()-started);turns.append(dict(prompt=prompt,output=output,text=text,proofs=proofs,observations=result['observations'],done=result['done'],reward=result['reward'],classification=result['classification']));arrays.append(encode(probs,output,getattr(self,'probability_artifact_policy',None)))
+                if token_manifest is None:
+                    acts,probs=self.compute(prompt,output)
+                    progress('probabilities_completed',turn=i,elapsed_seconds=time.monotonic()-started);started=time.monotonic()
+                    proofs=self.build_proofs(acts,decode_batching_size=16,topk=128)
+                    if not proofs or any(p is None for p in proofs):raise ValueError('GPU proof construction')
+                    progress('TOPLOC_completed',turn=i,elapsed_seconds=time.monotonic()-started)
+                else:progress('token_artifact_generated',turn=i,probability_claims=False,TOPLOC_claims=False)
+                started=time.monotonic()
+                result=session.step(policy.action(text,self.harness));progress('grading_completed',turn=i,classification=result['classification'],elapsed_seconds=time.monotonic()-started)
+                turn=dict(prompt=prompt,output=output,text=text,observations=result['observations'],done=result['done'],reward=result['reward'],classification=result['classification'])
+                if token_manifest is None:
+                    from .probability_artifacts import encode
+                    turn['proofs']=proofs;arrays.append(encode(probs,output,getattr(self,'probability_artifact_policy',None)))
+                turns.append(turn)
                 messages=messages+[dict(role='assistant',content=text)]+policy.observations(result['observations'],self.harness)
                 if result['done']:break
             if not result['done']:raise ValueError('GPU environment did not terminate')
