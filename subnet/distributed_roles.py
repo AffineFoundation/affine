@@ -243,12 +243,36 @@ class Coordinator:
         if any(r.get('epoch') != manifest['epoch'] or any(b.get('epoch') != manifest['epoch'] or b.get('checkpoint') != manifest['checkpoint']['id'] for b in r.get('accepted', [])) for r in report['audits']):
             raise ValueError('audit epoch/checkpoint binding')
 
-    def status(self, identifier):
-        with self.transaction() as db:
-            row = db.execute('SELECT status,report,report_digest,worker,attempt FROM jobs WHERE id=?',(identifier,)).fetchone()
-            if not row: raise ValueError('unknown job')
-            value = dict(row); value['report'] = json.loads(value['report']) if value['report'] else None
-            return value
+    def status(self, identifier, *, timeout_seconds=30.0):
+        """Read the committed job snapshot without acquiring a writer lease."""
+        if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 30:
+            raise ValueError('status timeout')
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            db = None
+            try:
+                db = sqlite3.connect(Path(self.path).resolve().as_uri()+'?mode=ro', uri=True,
+                                     timeout=min(.25, max(0, deadline-time.monotonic())))
+                db.row_factory = sqlite3.Row
+                row = db.execute('SELECT status,report,report_digest,worker,attempt FROM jobs WHERE id=?',
+                                 (identifier,)).fetchone()
+                break
+            except sqlite3.OperationalError as error:
+                if db is not None:
+                    db.close()
+                    db = None
+                if not any(word in str(error).lower() for word in ('locked', 'busy')):
+                    raise
+                remaining = deadline-time.monotonic()
+                if remaining <= 0:
+                    raise
+                time.sleep(min(remaining, .025+secrets.randbelow(26)/1000))
+            finally:
+                if db is not None:
+                    db.close()
+        if not row: raise ValueError('unknown job')
+        value = dict(row); value['report'] = json.loads(value['report']) if value['report'] else None
+        return value
 
     def archive(self, identifier, bucket, prefix):
         """Operator-only conditional creation. No permanent R2 key leaves this host."""
