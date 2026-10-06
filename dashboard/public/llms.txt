@@ -92,8 +92,15 @@ warm test measured whole-rollout medians of 2.823 seconds for official compact
 verification and 2.496 seconds for token-only verification. Model computation
 took approximately 0.111 seconds in both; native environment grading dominated.
 This single-trajectory result is not an orders-of-magnitude end-to-end speedup.
-Four-rollout pair coverage and second-H200 compatibility remain unqualified;
-the token-only research policy is NOT a live mining contract.
+A subsequent qualification used two authentic E21 success/failure pairs: four
+rollouts of 225, 107, 187 and 1,024 output tokens. All four passed both official
+compact and token-only checks on the first H200. Eighty token swaps with fresh
+TOPLOC fingerprints were rejected by both checks; seed/attempt controls also
+failed as expected, with no ambiguous results. The longest rollout took 20.93
+seconds under the official check and 18.52 seconds under token-only verification.
+These are whole-check timings, not generation times or a prefill-only benchmark.
+Second-H200 testing is in progress; the token-only research policy is NOT a live
+mining contract. Sampling consistency does not prove historical execution.
 
 The independent queue API now rejects unsupported explicit probability-artifact
 policies; this does not activate the compact source contract by itself. Public
