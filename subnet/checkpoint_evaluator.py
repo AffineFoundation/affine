@@ -5,10 +5,16 @@ No checkpoint is called evaluated until its authenticated remote report passes
 all existing heldout completeness, source, seed and worker-time checks.
 """
 import argparse
+import copy
 import fcntl
 import hashlib
 import json
 import logging
+import importlib
+import inspect
+import textwrap
+import sys
+import types
 import time
 from pathlib import Path
 from .remote_backend import save, RemoteObservationTimeout
@@ -17,6 +23,127 @@ from .storage import canonical
 VERSION='independent-checkpoints-v1'
 CONFIG_FIELDS=('heldout','environment','environments','evaluation_experiment_id','evaluation_seed',
                'model_id','evaluation_state')
+
+SOURCE_ROUTES_VERSION='independent-evaluator-source-routes-v1'
+
+def detached_historical_run(module):
+    """Replace only the reviewed historical SSH launch, preserving its ABI."""
+    source=textwrap.dedent(inspect.getsource(module.RemoteJobs.run))
+    old="""        command='cd '+shlex.quote(self.code)+' && CUBLAS_WORKSPACE_CONFIG=:4096:8 nohup '+shlex.quote(self.python)+' -B -m subnet.remote_runner '+shlex.quote(remotejob)+' --authority '+self.controller.authority.id+' --workspace '+shlex.quote(self.workspace)
+        if cache:command+=' --checkpoint-cache '+shlex.quote(cache)
+        self.command(command+' > '+shlex.quote(self.workspace+'/'+identifier+'-runner.log')+' 2>&1 < /dev/null &')"""
+    if source.count(old)==1:
+        source=source.replace(old,'        self.launch_runner(identifier,remotejob,cache)')
+        namespace={}
+        exec(compile(source,module.__file__,'exec'),module.__dict__,namespace)
+        return namespace['run']
+    if 'nohup'in source or source.count('self.launch_runner(identifier,remotejob,cache)')!=1:
+        raise ValueError('unreviewed historical evaluator SSH launch shape')
+    return module.RemoteJobs.run
+
+def qualified_dispatcher(row, controller):
+    """Use the exact historical CPU admission ABI, without changing GPU code."""
+    root=Path(row['local_source_path'])
+    namespace='_affine_evaluator_'+hashlib.sha256(canonical(row)).hexdigest()
+    if namespace not in sys.modules:
+        package=types.ModuleType(namespace);package.__path__=[str(root)]
+        sys.modules[namespace]=package
+    module=importlib.import_module(namespace+'.subnet.remote_backend')
+    remote=module.RemoteJobs(row['endpoint'],controller)
+    # Only the reviewed descriptor-closing transport is shared. Historical
+    # request validation, source inventories and report checks remain original.
+    from .remote_backend import RemoteJobs
+    remote.launch_runner=types.MethodType(RemoteJobs.launch_runner,remote)
+    remote.run=types.MethodType(detached_historical_run(module),remote)
+    remote.observation_timeout_type=module.RemoteObservationTimeout
+    return remote
+
+class QualifiedEvaluationJobs:
+    """ROOT-signed source routes for a single physical evaluator and old ledger."""
+    def __init__(self, controller, document, factory=qualified_dispatcher):
+        from .backend_jobs import signed
+        self.controller=controller;self.factory=factory;self.instances={}
+        if isinstance(document,(str,Path)):document=json.loads(Path(document).read_bytes())
+        value=signed(document,controller.authority.id)
+        if (set(value)!={'version','physical_id','sources'} or value['version']!=SOURCE_ROUTES_VERSION
+                or not isinstance(value['physical_id'],str) or not value['physical_id']
+                or not isinstance(value['sources'],dict) or not value['sources']):
+            raise ValueError('independent evaluator signed source routes')
+        self.rows=copy.deepcopy(value['sources']);physical=None
+        for sha,row in self.rows.items():
+            if (not isinstance(sha,str) or len(sha)!=64 or any(c not in '0123456789abcdef' for c in sha)
+                    or set(row)!={'endpoint','local_source_path','source_files','runtime_versions','new_dispatch_approved'}
+                    or type(row['new_dispatch_approved'])is not bool):
+                raise ValueError('independent evaluator exact source route')
+            endpoint=row['endpoint'];root=Path(row['local_source_path'])
+            if not root.is_absolute() or root.is_symlink() or not root.is_dir() or (root/'subnet').is_symlink():
+                raise ValueError('qualified local evaluator source tree')
+            files=row['source_files']
+            if (not isinstance(files,dict) or not {'subnet/__init__.py','subnet/remote_backend.py','subnet/backend_jobs.py'}<=set(files)
+                    or {str(p.relative_to(root)) for p in (root/'subnet').glob('*.py')}!=set(files)):
+                raise ValueError('qualified evaluator complete runtime inventory')
+            for name,digest in files.items():
+                if (not name.startswith('subnet/') or name.count('/')!=1 or not name.endswith('.py')
+                        or (root/name).is_symlink() or hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest):
+                    raise ValueError('qualified evaluator local source hash')
+            if set(row['runtime_versions'])!={'torch','transformers','toploc'}:
+                raise ValueError('qualified evaluator runtime versions')
+            host=(endpoint['host'],endpoint['port'],endpoint.get('user','root'),endpoint['workspace'])
+            if physical is None:physical=host
+            elif host!=physical:raise ValueError('source routes must preserve one physical evaluator and workspace')
+            endpoint['retain_original_jobs']=True
+        self.state=controller.state/'roles'
+    def instance(self,sha):
+        if sha not in self.rows:raise ValueError('unapproved original evaluation source')
+        if sha not in self.instances:
+            row=self.rows[sha];remote=self.factory(row,self.controller)
+            if remote.metadata!={'source_files':row['source_files'],'runtime_versions':row['runtime_versions']}:
+                raise ValueError('qualified evaluator actual metadata mismatch')
+            self.instances[sha]=remote
+        return self.instances[sha]
+    def original(self,path):
+        from .backend_jobs import signed
+        prior=json.loads(path.read_bytes())
+        job=signed(json.loads((self.state/(prior['job_id']+'-job.json')).read_bytes()),self.controller.authority.id)
+        if (job['role']!='evaluate' or job['job_id']!=prior['job_id']
+                or hashlib.sha256(canonical(job)).hexdigest()!=prior['job_sha256']):
+            raise ValueError('original evaluator role ledger binding')
+        return prior,job,signed(job['manifest'],self.controller.authority.id)
+    def busy(self):
+        # Probe only, using any qualified CPU endpoint. An old unknown source
+        # does not permit bypassing its live physical reservation.
+        probe=self.instance(next(iter(self.rows)));seen=set()
+        for path in self.state.glob('*.json'):
+            try:prior=json.loads(path.read_bytes())
+            except ValueError:continue
+            if prior.get('role')!='evaluate' or 'job_id'not in prior or 'job_sha256'not in prior:continue
+            self.original(path)
+            if prior['job_id']in seen:continue
+            seen.add(prior['job_id'])
+            phase=probe.remote_status(prior['job_id'],timeout=30,physical=True)['phase']
+            if phase=='running':return True
+            if phase not in ('complete','failed','not_launched'):raise ValueError('unknown original evaluator physical liveness')
+        return False
+    def run(self,label,role,manifest,cache=None,**fields):
+        if role!='evaluate':raise ValueError('source router only dispatches evaluation')
+        sha=manifest.get('source_bundle',{}).get('sha256')
+        if sha not in self.rows:raise ValueError('unapproved original evaluation source')
+        row=self.rows[sha];record=self.state/(label+'.json')
+        if record.exists():
+            _,job,original=self.original(record)
+            if original!=manifest or job['source_files']!=row['source_files'] or job['runtime_versions']!=row['runtime_versions']:
+                raise ValueError('original evaluation source route changed')
+            if any(job.get(key)!=value for key,value in fields.items()):
+                raise ValueError('original evaluation source route changed')
+        elif not row['new_dispatch_approved']:
+            raise ValueError('evaluation source not approved for new GPU dispatch')
+        elif self.busy():
+            raise RemoteObservationTimeout(label,role)
+        remote=self.instance(sha)
+        cache=row['endpoint'].get('checkpoint_caches',{}).get(manifest['checkpoint']['id'],cache)
+        try:return remote.run(label,role,manifest,cache,**fields)
+        except remote.observation_timeout_type as error:
+            raise RemoteObservationTimeout(error.job_id,error.role)from error
 
 def evaluation_mode(config):
     mode=config.get('evaluation_mode','synchronous-v1')
@@ -214,7 +341,6 @@ def run(config,once=False):
         remote=config['remote']
         endpoint=dict(remote.get('roles',{}).get('evaluate',remote),
                       job_ttl_seconds_by_role=remote.get('job_ttl_seconds_by_role',{}),retain_original_jobs=True)
-        remote_jobs=RemoteJobs(endpoint,controller)
         class EvaluationJobs:
             def busy(self):
                 for path in remote_jobs.state.glob('*.json'):
@@ -227,7 +353,11 @@ def run(config,once=False):
                 if role!='evaluate':raise ValueError('independent evaluator cannot dispatch other roles')
                 local=endpoint.get('checkpoint_caches',{}).get(manifest['checkpoint']['id']) if 'roles' in remote else cache
                 return remote_jobs.run(label,role,manifest,local,**fields)
-        controller.jobs=EvaluationJobs()
+        if config.get('evaluation_source_routes')is not None:
+            controller.jobs=QualifiedEvaluationJobs(controller,config['evaluation_source_routes'])
+        else:
+            remote_jobs=RemoteJobs(endpoint,controller)
+            controller.jobs=EvaluationJobs()
         while True:
             pending_pass(controller)
             value=progress(state);save(state/'checkpoint-evaluation-progress.json',value)
