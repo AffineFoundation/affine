@@ -1,18 +1,23 @@
 # Affine — MATH mining, verification and training
 
 Current operational status, 2026-10-06:
-Latest completed epoch: E19, 351 captured documents, 295 cheap-eligible batches,
-256 selected UNAUDITED training inputs, durable optimizer step ten. E20 captured
-332 documents: 294 passed cheap eligibility checks and 256 were selected for
-UNAUDITED training. Training does not wait for inference audits. Its original
-training job is exporting optimizer state; successor publication is not complete.
-The original signed full-state cache acknowledgment for step ten completed.
-E20 restored 63.98 GB of cached state in its first sixteen recorded shard reads
-without R2 downloads; the final original warm-cache report is still pending.
+Latest completed epoch: E20, 332 captured documents, 294 cheap-eligible batches,
+256 selected UNAUDITED training inputs, and durable optimizer step eleven at
+checkpoint 339f31e788d5fa8044dc53ea022346ff3a83a999bed481aeef6565e154a0c8c2.
+Training does not wait for inference audits. The original physical training job
+and mandatory independent readback completed; all 23 optimizer objects,
+91,387,491,264 bytes, were independently verified. The full epoch took 62.8
+minutes, still above the one-hour target. Its genuine warm optimizer restore
+took 58.7 seconds versus E19's 961.5-second cold restore. Export/upload took
+24.5 minutes and remains the principal measured bottleneck.
 Automatic owned-model and expired-input retirement runs on all seven reachable
-verifiers. The last completed epoch still took 73.7 minutes. Current optimizer
-uploads are slower than E19 despite unchanged serialization/hash timing; adding
-verifiers does not remove this transfer bottleneck. No sub-hour epoch is claimed.
+verifiers. Latest forty authenticated audit jobs had median claim-to-report time
+264 seconds: checkpoint downloading/authentication accounted for 187 seconds
+and model construction 18 seconds. Main now includes default-off bounded audit
+job grouping to amortize these costs without retaining unbounded model caches.
+It is not yet enabled in the running auditor. The next mining source cutover
+is being qualified against the actual step-eleven checkpoint; a new epoch has
+not yet been opened. Chain weight submission remains disabled.
 
 A complete integrated source candidate,
 4db060697ab8303ee667e5787831a574b41e4a10afb8fe6a209dd7db40b9f373,
@@ -33,8 +38,21 @@ baseline. Outputs and grades matched on these two tasks; this approximately
 4x speedup is a small qualification result, not a full-cohort quality trend.
 The earlier original uncached fixed-32 evaluation finished in 86.59 minutes;
 its report still requires reconciliation before any new score is claimed.
-Continuous cached evaluation routing is being prepared separately. Neither
-native evaluation policy is evidence for a miner's sampling provenance.
+A separate continuous cached evaluator is now running on the independent H200.
+Its new fixed32/128-token BEFORE checkpoint-ten job is executing; AFTER is
+queued only from the genuine signed durable step-eleven closure. Automatic
+software disposal of its owned checkpoint follows authenticated report ACK
+and full R2 readback before the next download. Actual disposal and paired
+results are still being monitored. Neither native evaluation policy is
+evidence for a miner's sampling provenance.
+
+Main also provides a DEFAULT-OFF token-only prefill research verifier. It
+recomputes distributions locally and retains the prescribed public draws,
+CDF consistency checks, calibrated ambiguity handling and environment replay.
+It removes uploaded probability/TOPLOC claims rather than accepting arbitrary
+teacher-forced tokens. Forty-three CPU controls passed, including eighty
+mutated-token cases with fresh TOPLOC. GPU latency and two-H200 compatibility
+are not established yet; this research policy is NOT a live mining contract.
 
 The independent queue API now rejects unsupported explicit probability-artifact
 policies; this does not activate the compact source contract by itself. Public
