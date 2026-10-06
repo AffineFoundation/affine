@@ -26,7 +26,7 @@ def publication_request(manifest, authority, policy=None):
         raise ValueError('explicit publication projection policy')
     if 'training_startup_recovery' not in manifest:return label,manifest
     declaration=signed(manifest['training_startup_recovery'],authority)
-    if (declaration.get('version') not in ('terminal-parent-restore-pre-update-recovery-v2','terminal-parent-restore-pre-update-bootstrap-recovery-v3')
+    if (declaration.get('version') not in ('terminal-parent-restore-pre-update-recovery-v2','terminal-parent-restore-pre-update-bootstrap-recovery-v3','terminal-post-update-uncommitted-recovery-v1')
             or declaration.get('epoch')!=manifest['epoch']
             or declaration.get('replacement_execution_source_sha256')!=manifest['source_bundle']['sha256']):
         raise ValueError('authenticated original train-only recovery projection')

@@ -16,6 +16,13 @@ class FutureProjectionTests(unittest.TestCase):
  def test_authenticated_projection_only_field_fresh_label(self):
   self.m['training_startup_recovery']=self.recovery();before=copy.deepcopy(self.m);label,m=publication_request(self.m,self.authority,self.policy)
   self.assertEqual(self.m,before);self.assertEqual(set(self.m)-set(m),{'training_startup_recovery'});self.assertTrue(label.endswith('-publication-v1'));self.assertEqual(m['checkpoint'],self.m['checkpoint'])
+ def test_postupdate_projection_preserves_signed_failure_and_checkpoint(self):
+  declaration=dict(version='terminal-post-update-uncommitted-recovery-v1',epoch=self.m['epoch'],replacement_execution_source_sha256='a'*64,original_job_sha256='c'*64,failed_attempt={'optimizer_update_executed':True})
+  self.m['training_startup_recovery']=self.sign(declaration);before=copy.deepcopy(self.m)
+  label,projected=publication_request(self.m,self.authority,self.policy)
+  self.assertEqual(self.m,before);self.assertEqual(projected,{k:v for k,v in before.items()if k!='training_startup_recovery'})
+  self.assertTrue(label.endswith('-publication-v1'));self.assertEqual(projected['source_bundle'],before['source_bundle'])
+  self.assertIs(publication_request(self.m,self.authority)[1],self.m)
  def test_foreign_signature_null_scope_source_version_rejected(self):
   for change in ('signature','null','epoch','source','version'):
    with self.subTest(change=change):
