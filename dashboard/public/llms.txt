@@ -119,8 +119,8 @@ Full R2 archive/member readback and CPU staging on all ten roles passed,
 and all seven worker registries include its exact runtime inventory.
 It includes the synchronous original-ACK fix. A separately ROOT-scoped sustained
 controller now runs from actual durable parent nine, with the exact independent
-queue API and sole-current optimizer-cache opt-in. Its first new-source GPU
-calibration is running; a passed first training update and warm-cache speedup
+queue API and sole-current optimizer-cache opt-in. Fresh new-source calibration and confirmation passed; epoch nineteen is now
+collecting submissions. Its first training update and a warm-cache speedup
 are not yet demonstrated. The original qualification-only descriptor is unchanged.
 The continuous auditor has separately admitted the complete five-source union,
 including9f, while preserving historical jobs, policies and numerical contracts.
@@ -457,5 +457,11 @@ Main also adds bounded automatic retirement of verified local submission downloa
 after a typed completed-backend lease expiry, preserving original signed jobs,
 reports and diagnostics. Original signed submission hashes, private preexisting
 hydration receipts, inode/link checks and active checkpoint locks are required.
-This expired-input extension has passed CPU controls but is not yet deployed;
-all seven live workers already have immediate-ACK and idle owned-model disposal.
+The expired-input extension is now deployed on all seven workers, with
+61 exact minimal-pair CPU controls and 65 affected main-branch controls passing.
+All seven retain immediate-ACK and idle owned-model disposal. The independent
+API package now includes the full hash-pinned original170-module runtime plus
+the CPU API service, including lazy frozen-commitment validation dependencies.
+A four-file package initially rejected genuine reports; all seven pending
+reports pass the restored original CPU validator. Expired leases remain
+infrastructure outcomes, without backdated acknowledgments or fraud penalties.
