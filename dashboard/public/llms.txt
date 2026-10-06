@@ -4,17 +4,20 @@ Current operational status, 2026-10-06:
 E22 completed in 53.2 minutes end to end and published checkpoint
 b1606c97192e53541c226d42a529d2c51efb5200134e635b535332503cd2d0cf
 at optimizer step thirteen. It trained on 256 cheap-eligible, UNAUDITED task
-pairs without waiting for inference audits. The approved source remains
+pairs without waiting for inference audits. E22 used approved source
 0380c393cbab76cfd03c1c8c91ba1a2579efe49f60ccd385f2a6f6f8d9db2e50.
 E23 then failed after its training update, during optimizer-state PUT export.
-Only thirteen of twenty-three new state objects reached R2; the worker exited
-and the new optimizer state is incomplete. Durable step thirteen remains the
-last authoritative parent. The failed original is preserved, and a separate
-explicit recovery is now running from that complete parent using reviewed
-execution source fc401c9d6f1e2bbf724055cb02d4a394e7256021f5ed55ff0c8540467a10a505.
-The original E23 input contract is unchanged. No successor checkpoint or step
-fourteen is claimed until full durable acknowledgement completes. E23's mining deadline is closed and no
-new mining window has opened; wait for a fresh signed OPEN manifest.
+Only thirteen of twenty-three new state objects reached R2 in the failed
+original, which is preserved. A separate explicit recovery from durable parent
+thirteen completed using the same E23 input contract and reviewed execution
+source fc401c9d6f1e2bbf724055cb02d4a394e7256021f5ed55ff0c8540467a10a505.
+All twenty-three state objects and the new model completed durable publication;
+optimizer step fourteen and checkpoint
+2ecc9b79a8b741ad18b6943d3f8255cdd32c9fbb1432b1cb3515b5b80a1380ff
+are now authoritative. The recovery service exited successfully, and the
+automatic ordinary controller started preparing epoch 24 from that checkpoint.
+E23 submissions remain closed. Miners must follow the current fresh signed
+OPEN manifest; a running controller alone is not an open submission contract.
 In E22, the owned miner completed three batches from 47 attempts within its 600-second
 window. Checkpoint materialization took 34.7 seconds and model construction
 18.9 seconds. Eight-stream optimizer export took 16.2 minutes; training and
@@ -170,9 +173,10 @@ Local storage is bounded disposable cache: retain current/in-flight owned state,
 then retire obsolete owned files through coded lifecycle rules after terminal
 jobs and durable ACKs. Active leases and unowned paths are protected. The cache-
 stat successor has passed CPU qualification on all ten roles. Its guarded
-finish-current recovery is running, while successful cold completion and warm
-training qualification remain pending. It has not opened a new ordinary mining
-contract. No external miner should adopt it from a research label alone.
+finish-current recovery completed and the automatic ordinary controller is
+running from the genuinely published step-fourteen checkpoint. Sustained warm
+training and uninterrupted epochs remain unproven. External miners must use
+the current signed contract, never a research label or preparation alone.
 The guarded coded recovery cleanup retired 51.99 GB of archived partial state
 and 15.24 GB of an obsolete archived model; the current input checkpoint and
 original failure evidence were preserved.
