@@ -1,7 +1,7 @@
-"""Explicit operator-authorized replacement of a witnessed zero-update failure.
+"""Explicit operator-authorized fresh attempts after witnessed terminal failures.
 
 This is not original-job resume or proof that remote execution happened. The
-operator separately witnesses pre-compute or pre-update restore failure.
+operator separately witnesses pre-compute, pre-update, or uncommitted post-update failure.
 """
 import copy,hashlib,json,math,re,time
 from pathlib import Path
@@ -17,7 +17,7 @@ def original_manifest(manifest,authority):
     value=signed(manifest[FIELD],authority)
     original=signed(value['original_signed_job'],authority)
     old=signed(original['manifest'],authority)
-    if value.get('version')in RESTORE_VERSIONS:
+    if value.get('version')in INPUT_RECOVERY_VERSIONS:
         if value.get('original_input_source_sha256')!=old['source_bundle']['sha256']or value.get('replacement_execution_source_sha256')!=manifest['source_bundle']['sha256']or value.get('authorized_input_inventory_sha256')!=sha(input_inventory(original['submissions'])):raise ValueError('explicit restore old-input/new-execution manifest scope')
     normalized=copy.deepcopy(manifest);normalized.pop(FIELD,None);normalized['source_bundle']=old['source_bundle']
     def without_caps(m):
@@ -31,6 +31,7 @@ def input_inventory(rows):
 def validate(job,manifest,authority):
     if FIELD not in manifest:return None
     value=signed(manifest[FIELD],authority)
+    if value.get('version')==POST_UPDATE_VERSION:return validate_post_update(job,manifest,authority)
     if value.get('version')in RESTORE_VERSIONS:return validate_restore(job,manifest,authority)
     fields={'version','epoch','original_signed_job','original_job_sha256','original_terminal','startup_witness','replacement_source_bundle','replacement_job_label','created_at','expires_at'}
     if set(value)!=fields or value['version']!=VERSION or value['epoch']!=manifest['epoch']:raise ValueError('exact startup recovery declaration')
@@ -94,7 +95,7 @@ def apply(controller,manifest,steps):
     result=copy.deepcopy(old);result['source_bundle']=copy.deepcopy(value['replacement_source_bundle']);result[FIELD]=document
     result['checkpoint']=controller.checkpoint_with_reads(old['checkpoint'])
     rows=copy.deepcopy(original['submissions'])
-    if value.get('version')in RESTORE_VERSIONS:
+    if value.get('version')in INPUT_RECOVERY_VERSIONS:
         for obj,location in zip(rows,value['authorized_input_objects']):obj['url']=controller.bucket.presign(location['key'],'get_object',int(value['expires_at']-time.time()))
     else:
         for obj in rows:obj['url']=controller.bucket.presign('private/compact-training-inputs/'+obj['sha256']+'.json')
@@ -102,6 +103,7 @@ def apply(controller,manifest,steps):
     # preparation skeleton is never dispatched or presented as runtime evidence.
     candidate=copy.deepcopy(original);candidate.update(job_id=value['replacement_job_label']+'-preparation',created_at=time.time(),expires_at=value['expires_at'],manifest=controller.signed(result),submissions=rows)
     candidate['source_files']=dict(original['source_files'],**{'subnet/training_startup_recovery.py':'0'*64})
+    if value.get('version')==POST_UPDATE_VERSION:candidate['source_files']=copy.deepcopy(value['execution_runtime_source_files'])
     candidate['persistent_training']=dict(original['persistent_training'],output_namespace='private/startup-recovery-preparation-only')
     validate(candidate,result,controller.authority.id)
     if not reservation.exists():
@@ -112,7 +114,8 @@ def apply(controller,manifest,steps):
 
 def local_request(state,epoch,authority):
     """Select a replacement only through its immutable signed reservation."""
-    state=Path(state);reservation=reservation_path(state,epoch,BOOTSTRAP_VERSION)
+    state=Path(state);reservation=reservation_path(state,epoch,POST_UPDATE_VERSION)
+    if not reservation.exists():reservation=reservation_path(state,epoch,BOOTSTRAP_VERSION)
     if not reservation.exists():reservation=reservation_path(state,epoch,RESTORE_VERSION)
     original_record=json.loads((state/'roles'/(epoch+'-train.json')).read_bytes())
     if not reservation.exists():
@@ -121,6 +124,7 @@ def local_request(state,epoch,authority):
     value=json.loads(reservation.read_bytes())
     if set(value)!={'declaration_sha256','declaration','label','original_job_sha256'}or sha(value['declaration'])!=value['declaration_sha256']:raise ValueError('immutable local startup recovery reservation')
     declaration=signed(value['declaration'],authority)
+    if reservation==reservation_path(state,epoch,POST_UPDATE_VERSION)and declaration.get('version')!=POST_UPDATE_VERSION:raise ValueError('only explicit post-update declaration may occupy post-update reservation')
     if reservation==reservation_path(state,epoch,BOOTSTRAP_VERSION)and declaration.get('version')!=BOOTSTRAP_VERSION:raise ValueError('only explicit v3 continuation may occupy v3 reservation')
     if declaration['version']==BOOTSTRAP_VERSION:validate_predecessor_local(state,declaration,authority)
     if value['label']!=declaration['replacement_job_label']or value['original_job_sha256']!=declaration['original_job_sha256']or original_record['job_sha256']!=value['original_job_sha256']:raise ValueError('local original startup recovery identity')
@@ -132,15 +136,20 @@ def local_request(state,epoch,authority):
     job=signed(json.loads((state/'roles'/(record['job_id']+'-job.json')).read_bytes()),authority)
     if sha(job)!=record['job_sha256']or job['manifest']['payload'].get(FIELD)!=value['declaration']:raise ValueError('replacement recovery record changed')
     validate(job,job['manifest']['payload'],authority)
-    evidence=dict(version=declaration['version'],declaration_sha256=value['declaration_sha256'],original_failed_job_id=original['job_id'],original_failed_job_sha256=sha(original),original_failure_sha256=sha(failure),startup_witness_sha256=sha(declaration['restore_witness']if declaration['version']in RESTORE_VERSIONS else declaration['startup_witness']),replacement_source_sha256=job['manifest']['payload']['source_bundle']['sha256'],original_epoch_deadline=original['manifest']['payload'].get('deadline'),late_recovery=True)
+    evidence=dict(version=declaration['version'],declaration_sha256=value['declaration_sha256'],original_failed_job_id=original['job_id'],original_failed_job_sha256=sha(original),original_failure_sha256=sha(failure),startup_witness_sha256=sha(declaration['post_update_witness']if declaration['version']==POST_UPDATE_VERSION else declaration['restore_witness']if declaration['version']in RESTORE_VERSIONS else declaration['startup_witness']),replacement_source_sha256=job['manifest']['payload']['source_bundle']['sha256'],original_epoch_deadline=original['manifest']['payload'].get('deadline'),late_recovery=True)
     if declaration['version']==BOOTSTRAP_VERSION:evidence['bootstrap_predecessor']=declaration['predecessor']
     if declaration['version']in RESTORE_VERSIONS:evidence.update(original_input_source_sha256=declaration['original_input_source_sha256'],replacement_execution_source_sha256=declaration['replacement_execution_source_sha256'],original_failed_stage='parent-state-fetch-before-train_epoch',original_optimizer_updates=0)
+    if declaration['version']==POST_UPDATE_VERSION:evidence.update(original_input_source_sha256=declaration['original_input_source_sha256'],replacement_execution_source_sha256=declaration['replacement_execution_source_sha256'],original_failed_stage='post-update-persistent-state-export',original_optimizer_updates=1,original_update_uncommitted=True,restarted_from_durable_parent=True)
     return record,job,evidence
 
 RESTORE_VERSION='terminal-parent-restore-pre-update-recovery-v2'
 RESTORE_WITNESS='operator-parent-restore-pre-update-witness-v1'
 BOOTSTRAP_VERSION='terminal-parent-restore-pre-update-bootstrap-recovery-v3'
 RESTORE_VERSIONS=(RESTORE_VERSION,BOOTSTRAP_VERSION)
+POST_UPDATE_VERSION='terminal-post-update-uncommitted-recovery-v1'
+POST_UPDATE_WITNESS='operator-post-update-uncommitted-failure-witness-v1'
+INPUT_RECOVERY_VERSIONS=RESTORE_VERSIONS+(POST_UPDATE_VERSION,)
+POST_UPDATE_OPERATIONAL_MODULES=('subnet/persistent_training_worker.py','subnet/persistent_training_state.py')
 
 def validate_restore(job,manifest,authority):
     """A distinct pre-update restore failure, never a relaxed startup witness."""
@@ -159,6 +168,9 @@ def validate_restore(job,manifest,authority):
     required_frames=['persistent_training_worker.train','persistent_training_state.restore_state','persistent_training_state.restore_one','persistent_training_worker.fetch','persistent_training_worker.cold','backend_jobs.get_object']
     if set(w)!=fields or w['version']!=RESTORE_WITNESS or w['exception']!='requests.exceptions.ConnectionError'or w['cause']!='urllib3.exceptions.ReadTimeoutError'or w['failed_stage']!='parent-state-fetch-before-train_epoch'or w['callchain']!=required_frames:raise ValueError('exact actual parent read-timeout callchain')
     if any(w[k]is not True for k in ('model_loaded','cuda_allocated','original_processes_absent','physical_gpu_idle','output_checkpoint_absent','original_report_absent','optimizer_state_candidate_absent','update_ledger_absent'))or any(w[k]is not False for k in ('optimizer_step_reached','restore_state_returned','train_epoch_reached')):raise ValueError('restore recovery requires definitive zero-update witness')
+    return _validate_parent_inputs_and_fresh_attempt(value,original,old,terminal,w,job,manifest,authority)
+
+def _validate_parent_inputs_and_fresh_attempt(value,original,old,terminal,w,job,manifest,authority):
     binding=old['trainer_state_binding'];publication=signed(original['persistent_training']['parent_publication'],authority);parent=binding.get('parent')
     from .persistent_training_protocol import validate_parent
     descriptor=validate_parent(original['persistent_training']['parent_publication'],binding,authority)
@@ -182,13 +194,39 @@ def validate_restore(job,manifest,authority):
     if job.get('role')!='train'or job.get('training_policy')!=original['training_policy']or job.get('training_input_policy')!=original['training_input_policy']or type(job.get('steps'))is not int or job['steps']!=original['steps']or input_inventory(job['submissions'])!=input_inventory(original['submissions'])or job['runtime_versions']!=original['runtime_versions']:raise ValueError('same original256 inputs/objective/steps/runtime')
     source=value['replacement_source_bundle']
     if source!=manifest['source_bundle']or source.get('sha256')==old['source_bundle'].get('sha256')or re.fullmatch('[0-9a-f]{64}',source.get('sha256',''))is None or 'subnet/training_startup_recovery.py'not in job['source_files']:raise ValueError('fresh complete recovery execution source pin')
+    approved=value.get('execution_science_source_files',expected)
+    if set(approved)!=set(expected)or any(re.fullmatch('[0-9a-f]{64}',h or '')is None for h in approved.values()):raise ValueError('exact approved execution science pins')
     for name,h in expected.items():
-        if job['source_files'].get(name)!=h:raise ValueError('restore recovery scientific implementation changed: '+name)
+        if job['source_files'].get(name)!=approved[name]:raise ValueError('recovery unapproved execution implementation: '+name)
+        if approved[name]!=h and (value['version']!=POST_UPDATE_VERSION or name not in POST_UPDATE_OPERATIONAL_MODULES):raise ValueError('recovery mathematical implementation changed: '+name)
     if job.get('persistent_training',{}).get('output_namespace')==original['persistent_training'].get('output_namespace'):raise ValueError('new restore attempt needs separate output namespace')
     return value
 
+def validate_post_update(job,manifest,authority):
+    """Authorize a fresh update from durable parent; never salvage partial state."""
+    value=signed(manifest[FIELD],authority)
+    fields={'version','epoch','original_signed_job','original_job_sha256','original_terminal','post_update_witness','replacement_source_bundle','replacement_job_label','created_at','expires_at','original_input_source_sha256','replacement_execution_source_sha256','authorized_input_inventory_sha256','authorized_input_objects','execution_science_source_files','execution_runtime_source_files','approval'}
+    if set(value)!=fields or value['version']!=POST_UPDATE_VERSION or value['epoch']!=manifest['epoch']:raise ValueError('exact post-update-uncommitted declaration')
+    if type(value['approval'])is not dict or type(value['approval'].get('maximum_fresh_attempts'))is not int or any(value['approval'].get(k)is not True for k in ('fresh_attempt_from_last_durable_parent','original_update_occurred','incomplete_candidate_is_not_parent','preserve_original_failure')) or value['approval']!={'fresh_attempt_from_last_durable_parent':True,'original_update_occurred':True,'incomplete_candidate_is_not_parent':True,'preserve_original_failure':True,'maximum_fresh_attempts':1}:raise ValueError('explicit ROOT post-update fresh attempt approval')
+    original=signed(value['original_signed_job'],authority);old=original_manifest(manifest,authority)
+    pins=value['execution_runtime_source_files']
+    if type(pins)is not dict or not set(original['source_files'])<=set(pins) or any(re.fullmatch('[0-9a-f]{64}',h or '')is None for h in pins.values()) or job['source_files']!=pins or any(pins.get(n)!=h for n,h in value['execution_science_source_files'].items()):raise ValueError('exact ROOT approved full execution runtime map including orchestration')
+    if original.get('role')!='train' or original.get('training_policy')!='bf16-cpu-fp32-master-task-normalized-persistent-v4' or original.get('training_input_policy')!='committed-unaudited-training-v1' or FIELD in old or old.get('training_execution_amendment')is not None or sha(original)!=value['original_job_sha256']:raise ValueError('post-update original signed unaudited request')
+    terminal=value['original_terminal'];w=value['post_update_witness']
+    if set(terminal)!={'phase','job_id','exit_code','runner_pid','runner_pid_ticks','child_pid','child_pid_ticks','started_at','finished_at'}or terminal['phase']!='failed'or terminal['job_id']!=original['job_id']or type(terminal['exit_code'])is not int or terminal['exit_code']!=1:raise ValueError('exact post-update failed terminal')
+    for prefix in ('runner','child'):
+        if type(terminal[prefix+'_pid'])is not int or terminal[prefix+'_pid']<=0 or not isinstance(terminal[prefix+'_pid_ticks'],str)or not terminal[prefix+'_pid_ticks'].isdigit():raise ValueError('original post-update physical identity')
+    fields={'version','observed_at','exception','failed_stage','callchain','original_processes_absent','physical_gpu_idle','optimizer_step_reached','optimizer_updates','train_epoch_returned','original_report_absent','complete_candidate_descriptor_absent','candidate_publication_absent','public_optimizer_steps','parent_publication_sha256','parent_descriptor_sha256','parent_shard_count','parent_total_bytes','selected_input_count','worker_log_sha256','evidence_sha256','science_source_files','failed_output_namespace','partial_inventory_sha256','uploaded_shard_count','local_shard_count','planned_shard_count'}
+    frames=['persistent_training_worker.train','persistent_training_state.export_state','persistent_training_state._export_state','persistent_training_state.transfer_one','persistent_training_state.materialize','persistent_training_worker.publish','persistent_training_worker.put_file']
+    if set(w)!=fields or w['version']!=POST_UPDATE_WITNESS or w['exception']!='ValueError: persistent state PUT status' or w['failed_stage']!='post-update-persistent-state-export' or w['callchain']!=frames:raise ValueError('exact post-update export failure callchain')
+    if any(w[k]is not True for k in ('original_processes_absent','physical_gpu_idle','optimizer_step_reached','train_epoch_returned','original_report_absent','complete_candidate_descriptor_absent','candidate_publication_absent')) or type(w['optimizer_updates'])is not int or w['optimizer_updates']!=1:raise ValueError('explicit one actual uncommitted original update')
+    if w['failed_output_namespace']!=original['persistent_training']['output_namespace']:raise ValueError('exact original failed output namespace')
+    if type(w['planned_shard_count'])is not int or w['planned_shard_count']!=23 or any(type(w[k])is not int or not 0<=w[k]<23 for k in ('uploaded_shard_count','local_shard_count')) or w['uploaded_shard_count']>w['local_shard_count']:raise ValueError('incomplete candidate cannot be full optimizer')
+    if re.fullmatch('[0-9a-f]{64}',w['partial_inventory_sha256']or '')is None:raise ValueError('preserved partial inventory digest')
+    return _validate_parent_inputs_and_fresh_attempt(value,original,old,terminal,w,job,manifest,authority)
+
 def reservation_path(state,epoch,version):
-    suffix='-parent-restore-bootstrap-continuation-reservation.json'if version==BOOTSTRAP_VERSION else '-startup-recovery-reservation.json'
+    suffix='-post-update-uncommitted-recovery-reservation.json'if version==POST_UPDATE_VERSION else '-parent-restore-bootstrap-continuation-reservation.json'if version==BOOTSTRAP_VERSION else '-startup-recovery-reservation.json'
     return Path(state)/(epoch+suffix)
 
 def validate_bootstrap_predecessor(value,job):
