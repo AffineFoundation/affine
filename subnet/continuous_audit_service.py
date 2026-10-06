@@ -166,13 +166,40 @@ class ContinuousAuditor:
  def queue_statuses(self):
   if hasattr(self.queue,'path'):return queue_rows(self.queue,self.state['jobs'],include_deadline=True)
   return {j:self.queue.status(j)for j in self.state['jobs']}
+ def retire_expired_requests(self,now):
+  """Dispose only scheduler retries, preserving every original signed request."""
+  terminal=self.state.setdefault('expired_requests',{});count=0
+  candidates=[]
+  for identity in self.state['draws']:
+   candidates.append(('continuous-audit-'+identity[:32],[identity],None))
+  for key,plan in self.state.get('group_plans',{}).items():
+   if not plan.get('resolved'):
+    ids=plan['row_sha256s']
+    if ids!=sorted(set(ids))or not 1<=len(ids)<=4 or key!=digest(dict(version='bounded-checkpoint-audit-groups-v1',members=ids))or any(i not in self.state['draws']or self.state['draws'][i]['row']['epoch']!=plan['epoch']for i in ids):raise ValueError('exact bounded original audit group plan')
+    candidates.append(('continuous-audit-group-'+key[:32],ids,(key,plan)))
+  for jobid,ids,group in candidates:
+   path=self.directory/(jobid+'-job.json')
+   if jobid in self.state['jobs']or jobid in terminal or not path.exists():continue
+   raw=path.read_bytes();envelope=json.loads(raw);job=authenticate(envelope,self.controller.authority.id)
+   if job.get('job_id')!=jobid:raise ValueError('original selected request identity')
+   if group is not None and(job.get('audit_group',{}).get('plan_sha256')!=group[0]or not job['audit_group'].get('row_sha256s')or job['audit_group']['row_sha256s']!=sorted(set(job['audit_group']['row_sha256s']))or not set(job['audit_group']['row_sha256s'])<=set(ids)):raise ValueError('original audit group request')
+   created=job.get('created_at');expires=job.get('expires_at')
+   if any(type(v)not in(int,float)or not math.isfinite(v)for v in(created,expires))or not created<expires:raise ValueError('signed job lifetime')
+   if now<expires:continue
+   record=dict(version='continuous-expired-original-request-v1',job_id=jobid,job_sha256=digest(job),original_file_sha256=hashlib.sha256(raw).hexdigest(),row_sha256s=job.get('audit_group',{}).get('row_sha256s',ids),plan_row_sha256s=ids,original_expires_at=expires,observed_at=now,outcome='infrastructure_expired',accepted_proof=False,confirmed_fraud=False,scientific_execution_claim=False)
+   document=self.controller.signed(record);atomic(self.directory/(jobid+'-expired-before-enqueue.json'),document);terminal[jobid]=dict(row_sha256s=record['row_sha256s'],document=document)
+   if group is not None:group[1]['resolved']=True;group[1]['terminal']='infrastructure_expired'
+   self.persist();count+=1
+  return count
+ def expired_rows(self):return {i for v in self.state.get('expired_requests',{}).values()for i in v['row_sha256s']}
  def tick(self,now=None):
+  now=time.time()if now is None else now;self.retire_expired_requests(now)
   if self.group_size>1:return self.tick_grouped(now)
   now=time.time()if now is None else now;available=self.max_inflight
   for status in self.queue_statuses().values():
    if inflight_status(status,now):available-=1
   if available<=0:return dict(enqueued=0,backpressure=True)
-  rows,deferred=self.dispatch_records();runnable=set(digest(r)for r in rows);done=set(self.state['draws']);queued={i for r in self.state['jobs'].values()for i in job_rows(r)};remaining=min(self.budget,available)
+  rows,deferred=self.dispatch_records();runnable=set(digest(r)for r in rows);done=set(self.state['draws']);queued={i for r in self.state['jobs'].values()for i in job_rows(r)}|self.expired_rows();remaining=min(self.budget,available)
   retry=[d['row']for identity,d in self.state['draws'].items()if identity in runnable and identity not in queued and self.state['capture_failures'].get(identity,{}).get('kind')!='confirmed_invalid_artifact'][:remaining]
   seed=secrets.token_hex(32);selected=random_selection(rows,seed,remaining-len(retry),done);enqueued=0
   # Persist selection before any mutable proof HEAD. Retries use the SAME draw.
@@ -216,10 +243,10 @@ class ContinuousAuditor:
   return dict(enqueued=enqueued,selected=len(selected),retried=len(retry),backpressure=False,source_deferred=deferred)
  def tick_grouped(self,now=None):
   """Bounded same-opening groups; persisted draws/plans survive owner crashes."""
-  now=time.time()if now is None else now
+  now=time.time()if now is None else now;self.retire_expired_requests(now)
   available=self.max_inflight-sum(inflight_status(v,now)for v in self.queue_statuses().values())
   if available<=0:return dict(enqueued=0,backpressure=True)
-  rows,deferred=self.dispatch_records();lookup={digest(r):r for r in rows};done=set(self.state['draws']);queued={i for job in self.state['jobs'].values()for i in job_rows(job)}
+  rows,deferred=self.dispatch_records();lookup={digest(r):r for r in rows};done=set(self.state['draws']);queued={i for job in self.state['jobs'].values()for i in job_rows(job)}|self.expired_rows()
   plans=self.state.setdefault('group_plans',{});pending=[(key,v)for key,v in plans.items()if not v.get('resolved')]
   reserved={i for _,v in pending for i in v['row_sha256s']}
   remaining=min(self.budget,available*self.group_size)
