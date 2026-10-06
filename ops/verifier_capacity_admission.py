@@ -3,7 +3,7 @@
 A size grant is operational metadata, never a model/proof validity shortcut.
 Backend still hashes every member and applies the original scientific contract.
 """
-import json,os,re,stat
+import hashlib,json,os,re,stat,subprocess,sys
 from pathlib import Path
 from subnet.distributed_roles import authenticate
 from subnet.cache_lifecycle import snapshot
@@ -13,7 +13,13 @@ VERSION='owned-verifier-download-capacity-v1'
 class CapacityDeferred(Exception):
     """Infrastructure admission only; never an invalid scientific report."""
 
-def budget(job,envelope,authority):
+def budget(job,envelope,authority,*,protocol_source=None):
+    # The worker's initial protocol package can be historical. Validate input
+    # transport with the exact registry-selected job source, without replacing
+    # cached modules in a multithreaded worker or importing a model.
+    if protocol_source is not None:
+        return source_budget(job,envelope,authority,protocol_source)
+
     policy=authenticate(envelope,authority)
     expected={'version','disk_floor_bytes','extra_temporary_bytes','max_submissions','poll_seconds'}
     if set(policy)not in (expected|{'checkpoint_inventories'},expected|{'checkpoint_inventory_directory'})or policy['version']!=VERSION:raise ValueError('explicit signed capacity policy')
@@ -50,9 +56,43 @@ def budget(job,envelope,authority):
     limits=input_limits(job,manifest)
     return policy,cp,sizes,sum(limits),max(limits)
 
-def admit(job,envelope,authority,*,lifecycle,selected_cache=None,free_bytes=None,credit_lifecycle=None):
+_SOURCE_BUDGET_CODE = r"""
+import importlib.util,json,pathlib,sys
+source=pathlib.Path(sys.argv[1]);sys.path.insert(0,str(source))
+spec=importlib.util.spec_from_file_location('operator_capacity_source_budget',sys.argv[2])
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+try:
+    v=json.load(sys.stdin);result=module.budget(v['job'],v['policy'],v['authority'])
+    if 'torch' in sys.modules:raise ValueError('capacity validation must remain CPU metadata only')
+    print(json.dumps({'budget':result},separators=(',',':'),allow_nan=False))
+except Exception as error:
+    print(json.dumps({'error':type(error).__name__},separators=(',',':')))
+"""
+
+def source_budget(job,envelope,authority,source):
+    source=Path(source)
+    if not source.is_absolute() or source!=source.resolve(strict=True) or not source.is_dir():raise ValueError('exact registry-selected capacity source')
+    files=job.get('source_files')
+    actual={str(p.relative_to(source))for p in (source/'subnet').glob('*.py')}
+    if not isinstance(files,dict)or not 1<=len(files)<=256 or set(files)!=actual:raise ValueError('complete capacity protocol runtime inventory')
+    for name,expected in files.items():
+        p=source/name
+        if not isinstance(expected,str)or not re.fullmatch('[0-9a-f]{64}',expected)or p!=p.resolve()or not p.is_file()or hashlib.sha256(p.read_bytes()).hexdigest()!=expected:raise ValueError('capacity protocol source changed')
+    raw=json.dumps(dict(job=job,policy=envelope,authority=authority),separators=(',',':'),allow_nan=False).encode()
+    if len(raw)>4_000_000:raise ValueError('bounded ordinary capacity input')
+    try:
+        result=subprocess.run([sys.executable,'-I','-B','-c',_SOURCE_BUDGET_CODE,str(source),str(Path(__file__).resolve())],input=raw,capture_output=True,timeout=30,check=False,cwd=source)
+    except subprocess.TimeoutExpired as error:raise CapacityDeferred('source-bound CPU capacity validation timed out')from error
+    if result.returncode or len(result.stdout)>1_000_000:raise CapacityDeferred('source-bound CPU capacity validation unavailable')
+    value=json.loads(result.stdout)
+    if value.get('error')=='CapacityDeferred':raise CapacityDeferred('source-bound checkpoint inventory not yet authoritative')
+    if 'error'in value:raise ValueError('source-bound capacity protocol refused ('+str(value['error'])+')')
+    if set(value)!={'budget'}or not isinstance(value['budget'],list)or len(value['budget'])!=5:raise ValueError('source-bound capacity result')
+    return tuple(value['budget'])
+
+def admit(job,envelope,authority,*,lifecycle,selected_cache=None,free_bytes=None,credit_lifecycle=None,protocol_source=None):
     if envelope is None:return dict(status='disabled')
-    policy,cp,sizes,inputs,cap=budget(job,envelope,authority)
+    policy,cp,sizes,inputs,cap=budget(job,envelope,authority,protocol_source=protocol_source)
     credited_lifecycle=credit_lifecycle or lifecycle
     if credited_lifecycle.root.stat().st_dev!=lifecycle.root.stat().st_dev:raise ValueError('capacity credit must share filesystem')
     receipt_path=credited_lifecycle._receipt(cp['id']);receipt={}

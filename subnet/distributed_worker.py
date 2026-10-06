@@ -209,7 +209,7 @@ class Worker:
         if self.checkpoint_retention is None:return lifecycle.evict_checkpoints(keep=0)
         return lifecycle.retain_acknowledged_checkpoint(**self.checkpoint_retention)
 
-    def wait_for_capacity(self,job,claim,lost,lifecycle,selected_cache,attempt,credit_lifecycle=None,pause=time.sleep,clock=time.time):
+    def wait_for_capacity(self,job,claim,lost,lifecycle,selected_cache,attempt,credit_lifecycle=None,protocol_source=None,pause=time.sleep,clock=time.time):
         if self.capacity_policy_path is None:return
         from ops.verifier_capacity_admission import admit,budget,CapacityDeferred
         previous=None
@@ -218,8 +218,8 @@ class Worker:
             if self.capacity_policy_path.is_symlink():raise ValueError('operator capacity policy symlink')
             envelope=json.loads(self.capacity_policy_path.read_bytes())
             try:
-                result=admit(job,envelope,self.authority,lifecycle=lifecycle,selected_cache=selected_cache,credit_lifecycle=credit_lifecycle)
-                policy=budget(job,envelope,self.authority)[0];poll=policy['poll_seconds']
+                result=admit(job,envelope,self.authority,lifecycle=lifecycle,selected_cache=selected_cache,credit_lifecycle=credit_lifecycle,protocol_source=protocol_source)
+                policy=budget(job,envelope,self.authority,protocol_source=protocol_source)[0];poll=policy['poll_seconds']
             except CapacityDeferred as error:
                 result=dict(status='deferred',reason=str(error));poll=5
             if result!=previous:
@@ -290,7 +290,7 @@ class Worker:
             elif claim['attempt']>1 and checkpoint_cache_candidate(cache,approved['files']):
                 selected_cache=cache
                 command+=['--checkpoint-cache',str(cache)]
-            self.wait_for_capacity(job,claim,lost,lifecycle,selected_cache,attempt,credit_lifecycle=shared_lifecycle if selected_cache==cache else None)
+            self.wait_for_capacity(job,claim,lost,lifecycle,selected_cache,attempt,credit_lifecycle=shared_lifecycle if selected_cache==cache else None,protocol_source=backend_source)
             with (attempt/'worker.log').open('xb') as output:
                 (attempt/'worker.log').chmod(0o600)
                 result=subprocess.run(command,stdout=output,stderr=subprocess.STDOUT,env=environment,pass_fds=tuple(lease_fds),cwd=backend_source)
