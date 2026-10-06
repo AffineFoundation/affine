@@ -22,7 +22,7 @@ the actual 5,075,451-byte signed request through launcher and protocol validatio
 A separately authorized continuation is now running on execution source
 0380c393cbab76cfd03c1c8c91ba1a2579efe49f60ccd385f2a6f6f8d9db2e50,
 with the original 256 admissions and parent eleven. Its original runner and child
-are confirmed running. Step twelve has not been published. Recovery runs once to finish E21; it does not open a new epoch or
+are confirmed running. The original continuation has finished computing its training update and reached checkpoint export. Step twelve has not been durably published or independently read back. Recovery runs once to finish E21; it does not open a new epoch or
 rewrite the original 4db mining contract. The signed
 contract requires one positive and one negative rollout per task, at most three
 batches per UID, and a 16-attempt ceiling. Generation uses cached FP32 eager
@@ -669,7 +669,9 @@ The real module-entrypoint retry-context fix passed an actual -m subprocess
 control. The currently running E21 continuation predates that fix, so active
 transport retries are not asserted for it. A bounded one-owned-checkpoint worker
 retention policy passed 129 tests and 105 subtests together with recovery controls.
-Its seven-worker rollout is underway at idle job boundaries; active GPU jobs
-are not terminated. It keeps at most one current owned model for up to 1,800 seconds,
+Its seven-worker rollout completed at idle job boundaries: all seven new workers are independently confirmed running with these policy flags, and the same-config continuous auditor restarted. Active GPU jobs were allowed to finish. Actual consecutive-job checkpoint reuse remains under observation. It keeps at most one current owned model for up to 1,800 seconds,
 retires superseded or expired owned state automatically, and has a 2 GiB disk floor.
 No manual removal of checkpoint or rollout state is used for this rollout.
+
+Prospective compact-proof v4 qualification, not an active mining contract:
+The complete 2dc42cbd8b1ca39bbc6f1aed438e0849caec250155439c80e131f7da89065f86 candidate passed full R2 archive readback and CPU controls. It retains selected-token logprobs and TOPLOC while introducing an explicit prefill-only three-way CDF check: accepted, confirmed invalid, or numerically inconclusive. Inconclusive reports cannot become accepted proof receipts or confirmed cheating. Fresh v4 draws and calibration require new GPU qualification; old v3 rollouts and research reports are not relabeled. Authenticate the current signed manifest before changing your miner.
