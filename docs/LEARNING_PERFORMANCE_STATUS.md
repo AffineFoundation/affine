@@ -288,3 +288,24 @@ A prospective versioned capture policy is being prepared to improve parallel
 capture without extending submission deadlines, rewriting old deferrals or
 changing current scientific jobs. It has not been deployed. Independent TOPLOC
 reference replay remains pending. Held-out checkpoint 20 completed at 84/128.
+
+
+## Epoch 30 recovery and sample-supply control (2026-10-06, 22:33 UTC)
+
+Epoch30 genuinely trained79 unaudited task pairs and339 gradient tensors from
+optimizer20 to21. Original model publication failed with a transport EOF; a
+bounded publication-only recovery committedCP21 after independent full model
+and optimizer readbacks, with no retraining or lineage reset. Automatic cache
+promotion completed and the recovery process exited normally. The ordinary
+capture-v2 learner has startedE31, but its improved capture throughput is not
+yet measured. E30 captured91 of549 declared timely batches from192 identities;
+12 task duplicates left79 training pairs. Infrastructure deferrals are not fraud.
+
+A separately scoped CP19 supply experiment completed32 prescribed attempts
+across two predeclared tasks, with no optimizer updates. Task193 produced16
+successes and no failures. Task28 produced3 successes and13 failures, all13 at
+the1,024-token cap. One success/failure pair was available by attempt3; two of
+each only by attempt9. These two tasks are too narrow to justify changing the
+production quota. Truncation remains a training confound, and neither supply
+nor a successful publication demonstrates held-out convergence. CP20 SAME128
+remains84/128; CP21 evaluation is not yet verified here.

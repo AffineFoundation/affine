@@ -287,8 +287,8 @@ Its window is now closed. The learner captured 237 training documents and used
 201 eligible pairs after duplicate-task exclusions; the original training job
 completed and durably published checkpoint 20. The full committed proof population
 was 537 timely batches from 184 identities. Bounded token-document capture deferred
-300 timely slots as infrastructure, not miner invalidity. A prospective capture
-throughput fix is being prepared; it has not changed the current contract.
+300 timely slots as infrastructure, not miner invalidity. A versioned CPU capture throughput fix is now installed for the new ordinary
+learner; its live benefit is not yet measured. Historical deferrals stay unchanged.
 Audits did not gate that training.
 The explicitly approved bounded-confirmation policy performed genuine fresh GPU
 calibration and independent confirmation before opening. The log-probability
@@ -297,8 +297,12 @@ tolerance is 0.0016632080078125, and the confirmation measured at most
 f21373d7ccb167bcd868f5ed03ce9ac7ef567d894e8ecc9e61f5d7f8645b67b8.
 The existing selected-token logprobs, TOPLOC, inverse-CDF draw verification and
 native outcome grading are unchanged. Old failed reports remain preserved.
-The authority committed optimizer step twenty after full independent readback
-of all 23 optimizer shards. Round 30 is training. The latest independent 128-task
+Epoch 30 trained 79 eligible unaudited task pairs. Its original model publisher
+failed during R2 PUT; publication-only recovery then completed without retraining.
+The authority committed checkpoint 21 and optimizer step 21 after full independent
+readback of ten model files and all 23 optimizer shards. Automatic cache promotion
+completed; the original recovery service exited successfully. Round 31 is opening
+from checkpoint 21 under the sole ordinary learner. The latest independent 128-task
 evaluation is 84 correct at checkpoint 20 (checkpoint 19 scored 85; checkpoint
 18 scored 86), with all four original groups archived and acknowledged. The
 recovered collection-to-publication cycle took 66.55 minutes, missing the hourly
@@ -307,8 +311,11 @@ Results fluctuate and do not establish convergence. That research run performed 
 See https://github.com/AffineFoundation/affine/blob/main/docs/BOUNDED_SUCCESSOR_CONFIRMATION.md
 for the activated bounded-confirmation policy.
 
-Prospective capture implementation (not activated): bounded-parallel-token-capture-v1
-adds an explicit signed learner_capture_policy with 4/8/16 bounded readers and
-first-completed scheduling. Historical epochs retain four-reader FIFO capture.
-Document size, SHA, upload deadline and unaudited assurance are unchanged.
+Installed CPU capture policy: bounded-parallel-token-capture-v2 uses eight bounded
+readers, first-completed scheduling, a fsynced per-epoch capture journal and state
+checkpoints every 16 decisions. A pinned CPU-only overlay retains the f213 remote
+scientific source and optimizer-cache identity. Historical epochs retain their
+original capture policies. Document size, SHA, upload deadline and unaudited
+assurance are unchanged. Epoch 31 is still opening; completed-epoch capture
+throughput and sustained hourly cadence remain unproven.
 See GitHub docs/BOUNDED_TRAINING_CAPTURE.md for configuration and deployment gates.

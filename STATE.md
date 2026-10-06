@@ -1,3 +1,20 @@
+Verified continuation, 2026-10-06, 22:33 UTC:
+E30 publication-only recovery completed without retraining: checkpoint21 and
+optimizer step21 are committed after independent full readback of ten model
+files (15,242,726,226 bytes) and23 optimizer shards (91,387,491,264 bytes).
+Automatic cache promotion completed and the original recovery service exited
+naturally with status0. Original failed publisher and recovery records remain.
+The sole ordinary capture-v2 learner is running and E31 is opening fromCP21.
+Its pinned CPU overlay retains scientific sourcef213 and remote runtime identity;
+no model reset or optimizer reset occurred. Capture throughput benefit is not yet
+measured through a completed epoch. Seven H200 verifiers remain active; an eighth
+H200 is rented at$5.76/hour and awaits isolated20-control qualification before
+production enrollment. Newer numerical penalties remain unresolved.
+The isolated CP19 pilot32 genuinely completed32 prescribed rollouts, zero
+optimizer steps. Task193 yielded16 successes/zero failures; task28 yielded3
+successes/13 token-cap failures. This does not establish quota improvement or
+learning. The independent SAME128 result remainsCP20=84/128; convergence unproven.
+
 Verified continuation, 2026-10-06, 22:13 UTC:
 The numerical-resolution writer v2 is deployed under an isolated pinned CPU
 runtime and signed policy, first effective cutoff23:00 UTC. Real evidence dryrun
