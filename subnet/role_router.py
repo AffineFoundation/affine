@@ -66,6 +66,12 @@ class RoutedJobs:
     def publication_capacity(self,cache):
         return self.roles[self.owners.get(cache,self.initial_role)].publication_capacity(cache)
 
+    def prepare_training_cache_ack(self,job,report,pointer):
+        from .backend_jobs import signed
+        manifest=signed(job['manifest'],self.controller.authority.id)
+        return self.roles['train'].prepare_training_cache_ack(job,report,pointer,
+            self.caches.get('train',{}).get(manifest['checkpoint']['id']))
+
     def retire_training_cache(self,job,report,pointer):
         from .backend_jobs import signed
         from .remote_backend import save

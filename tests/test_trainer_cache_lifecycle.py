@@ -69,7 +69,7 @@ class TrainerRetention(unittest.TestCase):
     def test_cleanup_timeout_does_not_block_or_invalidate_epoch(self):
         entered=threading.Event();release=threading.Event()
         def action(*args):entered.set();release.wait(3);raise TimeoutError('private unreachable endpoint')
-        controller=SimpleNamespace(state=self.root,jobs=SimpleNamespace(retire_training_cache=action))
+        controller=SimpleNamespace(state=self.root,authority=self.authority,jobs=SimpleNamespace(retire_training_cache=action))
         (self.root/'roles').mkdir()
         thread=retire_completed_cache(controller,self.job,self.report,self.pointer)
         self.assertTrue(entered.wait(1));self.assertTrue(thread.is_alive())

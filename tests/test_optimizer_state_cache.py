@@ -109,6 +109,7 @@ class StateCacheControls(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'signed source'):cache.prepare_parent(descriptor,'bb'*32)
     def test_new_original_job_retires_abandoned_unpromoted_candidate_before_capacity(self):
         descriptor=self.candidate();next_job=dict(self.job,job_id='next-original')
+        descriptor=copy.deepcopy(descriptor);descriptor['optimizer_steps']+=1
         with StateCache(self.root,next_job,self.manifest,self.authority)as cache:
             self.assertEqual(cache.prepare_parent(descriptor,'aa'*32),0)
             self.assertFalse(list((self.root/'.optimizer-state-cache/candidate-original').glob('*.safetensors')))

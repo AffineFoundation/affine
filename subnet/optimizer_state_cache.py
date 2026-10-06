@@ -142,6 +142,8 @@ class StateCache:
             else:
                 original=authenticate(json.loads((self.workspace/(abandoned['job_id']+'.json')).read_bytes()),self.authority)
                 if sha(original)!=abandoned['job_sha256']:raise ValueError('abandoned candidate original ownership')
+                if descriptor is not None and abandoned.get('descriptor_sha256')==sha(descriptor):
+                    raise ValueError('approved parent candidate awaits original durability ACK; refuse cold abandonment')
                 self.discard(abandoned,'different-original-job-abandoned-unpromoted-cache');pending.unlink()
         if not marker.exists():self.cache_evidence.append(dict(outcome='cold',reason='no-promoted-cache'));return 0
         value=json.loads(marker.read_bytes());ack=authenticate(value['ROOT_ack'],self.authority)
