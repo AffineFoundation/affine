@@ -309,11 +309,11 @@ class Gateway:
             caps = {}
             for miner in miners:
                 if commitment_binding is not None:
-                    from .commitment_transport import VERSION,VERSION2
+                    from .commitment_transport import VERSION,VERSION2,VERSION3
                     version=commitment_binding.get('version',VERSION)
                     expiry=max(1,deadline-int(time.time()))
                     caps[miner]=encrypt(miner,dict(transport=version,put_url=self.bucket.presign('private/'+epoch+'/commitments/'+miner+'.json','put_object',expiry),batch_put_urls=[self.bucket.presign('private/'+epoch+'/staging/'+miner+'/'+str(i)+'.zip','put_object',expiry)for i in range(commitment_binding['max_batches'])],headers={'Content-Type':'application/octet-stream'},deadline=deadline))
-                    if version==VERSION2:
+                    if version in (VERSION2,VERSION3):
                         cap=dict(transport=version,put_url=self.bucket.presign('private/'+epoch+'/commitments/'+miner+'.json','put_object',expiry),batch_put_urls=[self.bucket.presign('private/'+epoch+'/staging/'+miner+'/'+str(i)+'.zip','put_object',expiry)for i in range(commitment_binding['max_batches'])],training_put_urls=[self.bucket.presign('private/'+epoch+'/training/'+miner+'/'+str(i)+'.json','put_object',expiry)for i in range(commitment_binding['max_batches'])],headers={'Content-Type':'application/octet-stream'},deadline=deadline)
                         caps[miner]=encrypt(miner,cap)
                     continue
@@ -338,7 +338,7 @@ class Gateway:
 
     def capture_learner(self, epoch):
         binding=self.epochs[epoch].get('commitment_binding',{})
-        if binding.get('version')!='small-commitment-pairs-v2' or binding.get('training_input_policy')!='committed-unaudited-training-v1':
+        if binding.get('version')not in ('small-commitment-pairs-v2','small-commitment-token-pairs-v3') or binding.get('training_input_policy')!='committed-unaudited-training-v1':
             raise ValueError('explicit token-only unaudited learner capture policy')
         return self.freeze(epoch)
 

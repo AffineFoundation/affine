@@ -8,6 +8,9 @@ GPU_PROFILE=dict(device='cuda',dtype='bfloat16',attention='eager',sm=[8,6],tf32=
 def validate_backend(manifest):
  from .probability_artifacts import for_manifest
  for_manifest(manifest)
+ if 'token_artifact_policy'in manifest or manifest.get('submission_transport_policy')=='small-commitment-token-pairs-v3':
+  from .token_only_protocol import for_manifest as token_policy
+  token_policy(manifest)
  revision=manifest.get('model_runtime_revision',CPU_REVISION)
  if revision==CPU_REVISION:
   if manifest.get('backend_profile') not in (None,{'device':'cpu','dtype':'float32','attention':'eager'}):raise ValueError('CPU backend profile mismatch')
@@ -25,6 +28,11 @@ def runtime(checkpoint,manifest,environment,harness=None):
  revision=validate_backend(manifest)
  if revision==CPU_REVISION:
   from .model import Runtime
-  return bind_artifacts(bind_runtime(Runtime(checkpoint,manifest['checkpoint']['files'],environment=environment,harness=harness),manifest),manifest)
- from .gpu_runtime import GPURuntime
- return bind_artifacts(bind_runtime(GPURuntime(checkpoint,manifest['checkpoint']['files'],environment,harness,runtime_revision=revision),manifest),manifest)
+  selected=bind_artifacts(bind_runtime(Runtime(checkpoint,manifest['checkpoint']['files'],environment=environment,harness=harness),manifest),manifest)
+ else:
+  from .gpu_runtime import GPURuntime
+  selected=bind_artifacts(bind_runtime(GPURuntime(checkpoint,manifest['checkpoint']['files'],environment,harness,runtime_revision=revision),manifest),manifest)
+ if 'token_artifact_policy'in manifest:
+  from .token_only_protocol import bind_runtime as bind_tokens
+  bind_tokens(selected,manifest)
+ return selected

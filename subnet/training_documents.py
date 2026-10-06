@@ -2,20 +2,30 @@
 import json,time
 from .commitment_transport import canonical,sha,need,is_digest
 VERSION='committed-training-documents-v1'
+TOKEN_VERSION='committed-token-training-documents-v2'
 MAX_BYTES=2_000_000
 TRANSPORT='small-commitment-pairs-v2'
 
 def document(batch,manifest,miner,slot):
- value=dict(version=VERSION,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],miner=miner,slot=slot,batch=batch)
+ version=VERSION
+ if 'token_artifact_policy'in manifest:
+  from .token_only_protocol import for_manifest,framing
+  for_manifest(manifest);framing(batch,[[]for _ in batch['rollouts']]);version=TOKEN_VERSION
+ value=dict(version=version,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],miner=miner,slot=slot,batch=batch)
  data=canonical(value);need(0<len(data)<=MAX_BYTES,'bounded token document');return data
 
-def validate(data,epoch,checkpoint,miner,entry):
+def validate(data,epoch,checkpoint,miner,entry,*,transport=TRANSPORT):
  need(type(data)is bytes and 0<len(data)<=MAX_BYTES,'bounded token document')
  need(len(data)==entry['training_size']and sha(data)==entry['training_sha256'],'token document declared byte binding')
+ version=TOKEN_VERSION if transport=='small-commitment-token-pairs-v3'else VERSION
+ need(transport in (TRANSPORT,'small-commitment-token-pairs-v3'),'training document transport')
  value=json.loads(data);need(data==canonical(value),'canonical token document')
- need(type(value)is dict and set(value)=={'version','epoch','checkpoint','miner','slot','batch'}and value['version']==VERSION,'token document schema')
+ need(type(value)is dict and set(value)=={'version','epoch','checkpoint','miner','slot','batch'}and value['version']==version,'token document schema')
  need(value['epoch']==epoch and value['checkpoint']==checkpoint and value['miner']==miner and type(value['slot'])is int and value['slot']==entry['slot'],'token document scope')
  b=value['batch'];need(type(b)is dict and sha(canonical(b))==entry['batch_sha256']and b.get('env_id')==entry['env_id']and type(b.get('index'))is int and b['index']==entry['index'],'token batch commitment')
+ if version==TOKEN_VERSION:
+  from .token_only_protocol import framing
+  framing(b,[[]for _ in b['rollouts']])
  return value
 
 def capture(gateway,epoch):
@@ -42,7 +52,7 @@ def capture(gateway,epoch):
    try:data=body.read(MAX_BYTES+1)
    finally:body.close()
    if not state['start']<=response['LastModified'].timestamp()<state['deadline']:raise SubmissionPolicyError('token document upload time')
-   try:validate(data,epoch,state['commitment_binding']['checkpoint'],miner,b)
+   try:validate(data,epoch,state['commitment_binding']['checkpoint'],miner,b,transport=state['commitment_binding'].get('version',TRANSPORT))
    except (ValueError,KeyError,TypeError,json.JSONDecodeError)as exc:raise SubmissionPolicyError('token document binding')from exc
    if cutoff is not None and time.time()>=cutoff:raise TimeoutError('token capture cutoff')
    frozen=pending[miner]['root']+'/training/'+str(b['slot'])+'.json'

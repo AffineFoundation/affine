@@ -78,6 +78,8 @@ class Runtime:
     def for_environment(self, environment, harness=None):
         import copy
         chosen = copy.copy(self).configure(environment, harness)
+        chosen.native_source_validation=getattr(self,'native_source_validations',{}).get(chosen.spec.id)
+        if chosen.native_source_validation is not None:chosen.native_source_validation.validate(chosen.spec)
         if getattr(chosen, 'sampling_context', None) is not None:
             from .forced_sampling import validate_harness
             validate_harness(chosen.harness)
@@ -112,8 +114,13 @@ class Runtime:
         return acts, logprobs
 
     def rollout(self, index, seed):
+        token_manifest = getattr(self, 'token_artifact_manifest', None)
+        if token_manifest is not None:
+            from .token_only_protocol import bind_runtime
+            bind_runtime(self, token_manifest)
         env_seed = int(self.spec.config.get('seed', 0))
-        session = create_session(self.spec)
+        validation=getattr(self,'native_source_validation',None)
+        session = create_session(self.spec) if validation is None else create_session(self.spec,source_validation=validation)
         try:
             initial = session.reset(index, env_seed)
             messages, tools = initial['messages'], initial.get('tools', [])
@@ -125,21 +132,30 @@ class Runtime:
                     raise ValueError('model context budget')
                 output = self.sample_output(prompt, seed, messages, turn_index, index, initial['task_hash'])
                 text = self.tokenizer.decode(output, skip_special_tokens=True)
-                acts, logprobs = self.compute(prompt, output)
-                proofs = self.build_proofs(acts, decode_batching_size=16, topk=128)
-                if not proofs or any(p is None for p in proofs):
-                    raise ValueError('proof construction failed')
+                token_manifest = getattr(self, 'token_artifact_manifest', None)
+                if token_manifest is None:
+                    acts, logprobs = self.compute(prompt, output)
+                    proofs = self.build_proofs(acts, decode_batching_size=16, topk=128)
+                    if not proofs or any(p is None for p in proofs):
+                        raise ValueError('proof construction failed')
+                else:
+                    from .token_only_protocol import bind_runtime
+                    bind_runtime(self, token_manifest)
+                    proofs = None
                 result = session.step(policy.action(text,self.harness))
                 done, reward, classification = result['done'], result['reward'], result['classification']
                 observations = result['observations']
-                turn = dict(prompt=prompt, output=output, text=text, proofs=proofs,
+                turn = dict(prompt=prompt, output=output, text=text,
                             observations=observations, done=done, reward=reward, classification=classification)
                 # Keep legacy artifacts readable; new verification authenticates
                 # structured observations rather than a guessed single feedback.
                 if self.legacy:
                     turn['feedback'] = observations[0]['content'] if observations else ''
-                from .probability_artifacts import encode
-                turns.append(turn); arrays.append(encode(logprobs, output, getattr(self, 'probability_artifact_policy', None)))
+                if token_manifest is None:
+                    turn['proofs'] = proofs
+                    from .probability_artifacts import encode
+                    arrays.append(encode(logprobs, output, getattr(self, 'probability_artifact_policy', None)))
+                turns.append(turn)
                 messages = messages + [dict(role='assistant', content=text)] + policy.observations(observations,self.harness)
                 if done:
                     break

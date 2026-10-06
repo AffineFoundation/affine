@@ -43,6 +43,10 @@ if mode=='commitment':
     job['capability']['batch_put_urls']=[job['capability']['put_url']]
 os.environ['CUBLAS_WORKSPACE_CONFIG']=':4096:8'
 with tempfile.TemporaryDirectory() as directory:
+    if mode=='commitment':
+        seed=Path(directory)/'scoped-miner.seed';seed.write_text('11'*32);seed.chmod(0o600)
+        job['miner_identity_file']=str(seed)
+        job['miner_id']=SigningKey(bytes.fromhex('11'*32)).verify_key.encode().hex()
     def checkpoint(*args):
         assert 'subnet.protocol' in sys.modules
         assert isinstance(sys.modules['subnet.protocol'].__loader__,b.importlib.abc.Loader)
