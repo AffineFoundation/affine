@@ -68,3 +68,25 @@ class FailedCandidateRetirement(unittest.TestCase):
  def test_thirteen_only_mode_preserves_failed_zero_locally(self):
   self.value['retire_failed_zero']=False;self.value['inventory']=self.value['inventory'][1:];self.value['full_readbacks']=self.value['full_readbacks'][1:]
   result=self.run_retire();self.assertEqual(result['retired_files'],1);self.assertTrue((self.transfer/'state-000000.safetensors').exists());self.assertFalse(self.candidate.exists());self.assertEqual(self.run_retire(),result)
+
+ def metadata(self):
+  self.value['retire_failed_zero']=False;self.value['inventory']=self.value['inventory'][1:];self.value['full_readbacks']=self.value['full_readbacks'][1:]
+  rows=[]
+  for name in ('evidence-000001.json','failure-000000.json'):
+   p=self.transfer/name;p.write_bytes(b'{"original":"preserved"}');st=p.stat();rows.append(dict(name=name,size=st.st_size,sha256=hashlib.sha256(p.read_bytes()).hexdigest(),device=st.st_dev,inode=st.st_ino,uid=st.st_uid,mtime_ns=st.st_mtime_ns,ctime_ns=st.st_ctime_ns))
+  self.value['preserved_transfer_metadata']=rows
+ def test_preserves_authenticated_transfer_evidence_and_failed_zero_with_replay(self):
+  self.metadata();before={p.name:p.read_bytes()for p in self.transfer.iterdir()};result=self.run_retire();self.assertEqual(result['retired_files'],1)
+  self.assertEqual({p.name:p.read_bytes()for p in self.transfer.iterdir()},before);self.assertEqual(self.run_retire(),result)
+ def test_metadata_wrong_sha_inode_source_name_or_symlink_refuses_before_journal(self):
+  self.metadata()
+  for field,new in [('sha256','0'*64),('inode',0),('name','evidence-000022.json'),('size',20000)]:
+   d=copy.deepcopy(self.value);d['preserved_transfer_metadata'][0][field]=new
+   with self.subTest(field=field),self.assertRaises(Exception):self.run_retire(d)
+  path=self.transfer/'evidence-000001.json';data=path.read_bytes();path.unlink();target=self.owner/'external.json';target.write_bytes(data);path.symlink_to(target)
+  with self.assertRaises(Exception):self.run_retire()
+  self.assertFalse(Path(self.value['journal']).exists());self.assertTrue(self.candidate.exists());self.assertTrue(target.exists())
+ def test_unlisted_new_metadata_still_refuses(self):
+  self.metadata();(self.transfer/'unowned.json').write_text('{}')
+  with self.assertRaisesRegex(ValueError,'unowned'):self.run_retire()
+  self.assertFalse(Path(self.value['journal']).exists())
