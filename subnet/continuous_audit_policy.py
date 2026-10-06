@@ -146,17 +146,33 @@ class BackendEvidenceNotAdmitted(ValueError):
   self.job_sha256=digest(job);self.source_sha256=source
   super().__init__('authenticated backend evidence not prospectively admitted')
 
-def admit_queue_reports(queue_rows,records,authority,verifiers,approved_sources,*,execution_evidence_policy=None,cutoff=None):
+def historical_report_workers(document):
+ """ROOT admission may bind exact retired-worker terminal reports only.
+
+ It grants no coordinator credentials or permission to claim fresh jobs.
+ """
+ if document is None:return {}
+ need(type(document)is dict and set(document)=={'version','reports'}and document['version']=='exact-retired-verifier-reports-v1','exact historical report policy')
+ reports=document['reports'];need(type(reports)is dict and len(reports)<=256,'bounded historical report workers')
+ for worker,jobs in reports.items():
+  need(type(worker)is str and len(worker)==64 and all(c in '0123456789abcdef'for c in worker),'historical signer identity')
+  need(type(jobs)is dict and 0<len(jobs)<=65536,'bounded exact historical jobs')
+  for job,report in jobs.items():
+   need(all(type(v)is str and len(v)==64 and all(c in '0123456789abcdef'for c in v)for v in (job,report)),'exact historical job/report digests')
+ return reports
+
+def admit_queue_reports(queue_rows,records,authority,verifiers,approved_sources,*,execution_evidence_policy=None,cutoff=None,historical_report_admission=None):
  """Authenticate original SQLite terminal report requests before estimating.
 
  approved_sources must come from actual authenticated ROOT source admission;
  its mapping binds complete executed runtime module hashes, not file labels.
  """
+ historical=historical_report_workers(historical_report_admission)
  rows=population(records);lookup={(r['epoch'],r['miner'],r['batch_sha256']):r for r in rows};admissions={}
  def parsed(value):return json.loads(value)if type(value)is str else value
  for queue in queue_rows:
   need(queue.get('status')=='complete'and queue.get('role')=='verify','actually completed verifier job')
-  worker=queue['worker'];need(worker in verifiers,'admitted actual worker')
+  worker=queue['worker'];need(worker in verifiers or historical.get(worker,{}).get(queue.get('digest'))==queue.get('report_digest') and queue.get('report_digest')is not None,'admitted actual worker')
   job=authenticate(parsed(queue['envelope']),authority);manifest=authenticate(job['manifest'],authority);report=parsed(queue['report']);request=authenticate(parsed(queue['report_request']),worker)
   need(job['role']=='verify'and job['job_id']==queue['id']and digest(job)==queue['digest'],'original queue request digest')
   need(digest(report)==queue['report_digest']and request.get('action')=='report'and request.get('job_id')==job['job_id']and request.get('token')==queue['token']and request.get('report')==report,'original worker terminal report request')

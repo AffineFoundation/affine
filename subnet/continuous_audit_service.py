@@ -6,7 +6,7 @@ queue without binding another HTTP listener. No blockchain writes occur here.
 import argparse,hashlib,json,math,os,secrets,sqlite3,time
 from concurrent.futures import ThreadPoolExecutor,as_completed
 from pathlib import Path
-from .continuous_audit_policy import VERSION,policy,population,digest,random_selection,verifier_contract,admit_queue_reports,snapshot,BackendEvidenceNotAdmitted
+from .continuous_audit_policy import VERSION,policy,population,digest,random_selection,verifier_contract,admit_queue_reports,snapshot,BackendEvidenceNotAdmitted,historical_report_workers
 from .distributed_roles import authenticate
 from .storage import canonical
 from .audit_queue_snapshot import queue_rows
@@ -64,6 +64,7 @@ def prevalidate_source_execution_rows(sources):
 
 def admitted_service_config(config,authority):
  sources=authenticate(config['source_admission'],authority)
+ historical_report_workers(sources.get('historical_report_admission'))
  prevalidate_source_execution_rows(sources)
  if sources.get('version')!='continuous-audit-service-sources-v1':raise ValueError('operator admitted exact audit source/runtime metadata')
  workers=config.get('capture_workers',1)
@@ -75,11 +76,11 @@ def admitted_service_config(config,authority):
  return sources
 
 BACKEND_DEFERRAL_POLICY='authenticated-unadmitted-backend-neutral-v1'
-def admit_completed_reports(queued,records,authority,workers,sources,*,execution_evidence_policy,cutoff,deferral_policy=None):
+def admit_completed_reports(queued,records,authority,workers,sources,*,execution_evidence_policy,cutoff,deferral_policy=None,historical_report_admission=None):
  if deferral_policy not in (None,BACKEND_DEFERRAL_POLICY):raise ValueError('explicit signed backend deferral policy')
  admitted={};deferred=[]
  for queue in queued:
-  try:admitted.update(admit_queue_reports([queue],records,authority,workers,sources,execution_evidence_policy=execution_evidence_policy,cutoff=cutoff))
+  try:admitted.update(admit_queue_reports([queue],records,authority,workers,sources,execution_evidence_policy=execution_evidence_policy,cutoff=cutoff,historical_report_admission=historical_report_admission))
   except BackendEvidenceNotAdmitted as error:
    if deferral_policy is None:raise
    deferred.append(dict(job_sha256=error.job_sha256,source_sha256=error.source_sha256,outcome='infrastructure_deferred',validity_credit=False,fraud_claim=False))
@@ -117,11 +118,12 @@ def register_population(manifest_document,receipts,round,committed_at,authority,
 
 
 class ContinuousAuditor:
- def __init__(self,controller,queue,*,directory,approved_sources,job_metadata,audit_policy,max_inflight=8,budget_per_tick=8,job_seconds=900,capture_workers=1,execution_evidence_policy=None,job_grouping_policy=None,backend_evidence_deferral_policy=None):
+ def __init__(self,controller,queue,*,directory,approved_sources,job_metadata,audit_policy,max_inflight=8,budget_per_tick=8,job_seconds=900,capture_workers=1,execution_evidence_policy=None,job_grouping_policy=None,backend_evidence_deferral_policy=None,historical_report_admission=None):
   if type(capture_workers)is not int or capture_workers not in (1,4,8):raise ValueError('bounded capture workers')
   self.group_size=grouping_policy(job_grouping_policy)
   self.capture_workers=capture_workers;self.execution_evidence_policy=execution_evidence_policy
   if backend_evidence_deferral_policy not in (None,BACKEND_DEFERRAL_POLICY):raise ValueError('explicit signed backend deferral policy')
+  self.historical_report_admission=historical_report_admission;historical_report_workers(historical_report_admission)
   self.backend_evidence_deferral_policy=backend_evidence_deferral_policy
   self.controller=controller;self.queue=queue;self.directory=Path(directory);self.directory.mkdir(parents=True,exist_ok=True,mode=0o700);self.sources=approved_sources;self.metadata=job_metadata;self.policy=policy(audit_policy)
   if type(max_inflight)is not int or not 1<=max_inflight<=128 or type(budget_per_tick)is not int or not 1<=budget_per_tick<=128 or type(job_seconds)is not int or not 60<=job_seconds<=86400:raise ValueError('bounded continuous audit scheduler')
@@ -363,10 +365,10 @@ class ContinuousAuditor:
    if actual['status']!='complete':continue
    report=json.loads(actual['report'])if type(actual['report'])is str else actual['report']
    if report['completed_at']<=cutoff:queued.append(actual)
-  records=[r for r in self.records() if r['round']<=round and r['committed_at']<=cutoff];admissions,deferred=admit_completed_reports(queued,records,self.controller.authority.id,self.queue.workers,self.sources,execution_evidence_policy=self.execution_evidence_policy if self.execution_evidence_policy is not None and cutoff>=self.execution_evidence_policy['effective_cutoff']else None,cutoff=cutoff,deferral_policy=self.backend_evidence_deferral_policy)
+  records=[r for r in self.records() if r['round']<=round and r['committed_at']<=cutoff];admissions,deferred=admit_completed_reports(queued,records,self.controller.authority.id,self.queue.workers,self.sources,execution_evidence_policy=self.execution_evidence_policy if self.execution_evidence_policy is not None and cutoff>=self.execution_evidence_policy['effective_cutoff']else None,cutoff=cutoff,deferral_policy=self.backend_evidence_deferral_policy,historical_report_admission=self.historical_report_admission)
   from .continuous_audit_policy import admit_artifact_failures
   failures=[f['document']for f in self.state['capture_failures'].values()if f['kind']=='confirmed_invalid_artifact' and authenticate(f['document'],self.controller.authority.id)['row']in records];admissions.update(admit_artifact_failures(failures,records,self.controller.authority.id))
-  verifiers={**self.queue.workers,self.controller.authority.id:['operator-artifact-capture']}
+  verifiers={**{w:['verify']for w in historical_report_workers(self.historical_report_admission)},**self.queue.workers,self.controller.authority.id:['operator-artifact-capture']}
   pointers=[dict(admitted_queue_job_sha256=key)for key in admissions];result=snapshot(records,pointers,verifiers,epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,audit_policy=self.policy,admitted_jobs=admissions,eligible_evidence_ids=authenticate(self.state['populations'][epoch],self.controller.authority.id)['eligible_evidence_ids'],adjudications=[json.loads(path.read_text())for path in sorted(self.directory.glob('*-adjudication.json'))],authority=self.controller.authority.id)
   if self.execution_evidence_policy is not None and cutoff>=self.execution_evidence_policy['effective_cutoff']:
    result['execution_evidence_policy_sha256']=digest(self.execution_evidence_policy);result['execution_evidence_policy_version']=self.execution_evidence_policy['version'];result['os_resource_enforcement_claimed']=False;result['historical_execution_proven']=False
@@ -400,7 +402,7 @@ def main(argv=None):
  if seed.is_symlink()or not seed.is_file()or seed.stat().st_mode&0o077:raise ValueError('original private authority required; never generate another authority')
  controller=Controller(Bucket(config['bucket']),None,state);c=config['continuous_audit_service'];queue=Coordinator(state/'roles/verifier-queue.sqlite3',controller.authority.id,{e['worker_identity']:['verify']for e in config['remote']['roles']['verify']})
  sources=admitted_service_config(c,controller.authority.id)
- service=ContinuousAuditor(controller,queue,directory=state/'continuous-audit',approved_sources=sources['approved_sources'],job_metadata=sources['job_metadata'],audit_policy=c['policy'],max_inflight=c.get('max_inflight',8),budget_per_tick=c.get('budget_per_tick',8),job_seconds=c.get('job_seconds',900),capture_workers=c.get('capture_workers',1),execution_evidence_policy=sources.get('execution_evidence_policy'),job_grouping_policy=c.get('job_grouping_policy'),backend_evidence_deferral_policy=sources.get('backend_evidence_deferral_policy'))
+ service=ContinuousAuditor(controller,queue,directory=state/'continuous-audit',approved_sources=sources['approved_sources'],job_metadata=sources['job_metadata'],audit_policy=c['policy'],max_inflight=c.get('max_inflight',8),budget_per_tick=c.get('budget_per_tick',8),job_seconds=c.get('job_seconds',900),capture_workers=c.get('capture_workers',1),execution_evidence_policy=sources.get('execution_evidence_policy'),job_grouping_policy=c.get('job_grouping_policy'),backend_evidence_deferral_policy=sources.get('backend_evidence_deferral_policy'),historical_report_admission=sources.get('historical_report_admission'))
  while True:
   result=service_cycle(service,state,controller.authority.id);atomic(state/'continuous-audit-health.json',result)
   if a.once:return 2 if result.get('retryable')else 0
