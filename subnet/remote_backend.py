@@ -513,6 +513,8 @@ class RemoteController(Controller):
         if remote.get('independent_state_reader') is not None:
             from .independent_state_dispatch import IndependentStateReader
             self.independent_state_reader=IndependentStateReader(remote['independent_state_reader'],self)
+        self.checkpoint_upload_recovery_files=dict(remote.get('checkpoint_upload_recovery_files',{}))
+        if any(type(k)is not str or type(v)is not str or not Path(v).is_absolute() for k,v in self.checkpoint_upload_recovery_files.items()):raise ValueError('explicit upload recovery file configuration')
         self.training_startup_recovery_files=dict(remote.get('training_startup_recovery_files',{}))
         self.training_execution_amendment_files=dict(remote.get('training_execution_amendment_files',{}))
         self.training_execution_amendment_required_epochs=list(remote.get('training_execution_amendment_required_epochs',[]))
@@ -592,8 +594,12 @@ class RemoteController(Controller):
         """Upload and independently hash bytes without signing an authority descriptor."""
         cp=manifest['checkpoint'];capacity=(self.jobs.publication_capacity(remote_path) if hasattr(self.jobs,'publication_capacity') else self.jobs.capacity(remote_path))
         label,upload_manifest=publication_request(manifest,self.authority.id,getattr(self,'publication_manifest_projection',None))
-        report=self.jobs.run(label,'upload',upload_manifest,remote_path,
-            put_urls={n:self.bucket.presign('public/checkpoints/'+cp['id']+'/'+n,'put_object',3600) for n in cp['files']})
+        from .checkpoint_upload_recovery import select_label
+        label=select_label(self,upload_manifest,remote_path,label)
+        put_urls={n:self.bucket.presign('public/checkpoints/'+cp['id']+'/'+n,'put_object',3600) for n in cp['files']}
+        from .checkpoint_upload_recovery import run_recovery_upload
+        report=run_recovery_upload(self,label,upload_manifest,remote_path,put_urls)
+        if report is None:report=self.jobs.run(label,'upload',upload_manifest,remote_path,put_urls=put_urls)
         workers=1
         if manifest.get('persistent_publication_policy') is not None:
             from .persistent_publication import validate_policy
