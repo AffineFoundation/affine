@@ -7,6 +7,7 @@ from .storage import canonical
 import hashlib
 digest=lambda v:hashlib.sha256(canonical(v)).hexdigest()
 VERSION='bounded-successor-calibration-v1'
+RECALIBRATION_VERSION='bounded-successor-confirmation-recalibration-v2'
 PROMPTS=('Solve 3x + 7 = 22. Explain each algebraic step.',
          'Find the positive integer n such that n squared equals 144. Explain the result.')
 
@@ -84,7 +85,11 @@ def before_open(controller,config,status,opening):
     import json
     if config.get('sampling_policy',{}).get('version')not in(FAST,'forced-inverse-cdf-prefill-support-v3','forced-inverse-cdf-prefill-threeway-v4'):return opening
     opt=config.get('successor_calibration')
-    if type(opt)is not dict or set(opt)!={'version','env_id'} or opt['version']!=VERSION:raise ValueError('fast openings require automatic successor calibration')
+    if type(opt)is not dict:raise ValueError('fast openings require automatic successor calibration')
+    bounded=opt.get('version')==RECALIBRATION_VERSION
+    if bounded:
+        if set(opt)!={'version','env_id','max_confirmations','deadline_seconds'} or type(opt['max_confirmations'])is not int or not 1<=opt['max_confirmations']<=4 or type(opt['deadline_seconds'])is not int or not 60<=opt['deadline_seconds']<=3600:raise ValueError('bounded successor confirmation policy')
+    elif set(opt)!={'version','env_id'} or opt['version']!=VERSION:raise ValueError('fast openings require automatic successor calibration')
     rows=[dict(r,env_id=r['spec']['id'])for r in opening['environments']];row=next(r for r in rows if r['env_id']==opt['env_id'] and r['indices'])
     from .protocol import harness_for
     harness=harness_for(row,row['indices'][0])
@@ -100,6 +105,7 @@ def before_open(controller,config,status,opening):
     manifest.pop('sampling_policy',None);manifest['sampling_contract']=new_contract(dict(version=STRICT,max_attempts=16));manifest['sampling_source_hash']=source_hash()
     # Stable nonce/original manifest is retained before remote dispatch.
     key=digest(dict(calibration_environment=row,checkpoint=status['checkpoint'],request={k:v for k,v in req.items()if k!='draw_contract'},sampling_policy=config['sampling_policy'],source=opening['source_bundle']['sha256'],runtime=opening['model_runtime_revision'],profile=opening['backend_profile']))
+    if bounded:key=digest(dict(original_key=key,recalibration_policy=opt))
     manifest['epoch']+='-'+key[:12]
     path=controller.state/'successor-calibration'/(key+'.json')
     if path.exists():
@@ -116,6 +122,7 @@ def before_open(controller,config,status,opening):
     cache=getattr(controller.jobs,'caches',{}).get('train',{}).get(status['checkpoint']['id'])
     report=jobs.run('successor-calibration-'+key[:32],'evaluate',manifest,cache,successor_calibration=req)
     policy=admitted_policy(report['successor_calibration'],manifest,req)
+    if bounded:return _bounded_confirmation(controller,config,opening,record,path,key,manifest,req,report,jobs,cache,opt)
     # The first request's predecessor calibration only seeds qualification draws.
     # Confirm the proposal using fresh final-v3-contract draws; do not fabricate
     # successor admission or reattach historical tokens to new uniforms.
@@ -130,3 +137,53 @@ def before_open(controller,config,status,opening):
     record.update(report_sha256=digest(report),original_job_id=report['job_id'],calibration=policy);save(path,record)
     result=dict(opening);result['sampling_policy']=dict(config['sampling_policy'],calibration=policy)
     return result
+
+
+def _bounded_confirmation(controller,config,opening,record,path,key,manifest,req,report,jobs,cache,opt):
+    """Admit only a fresh confirmation; reports from failed rounds seed bounds.
+
+    Job labels and draw requests are journaled before dispatch. An exhausted or
+    expired journal refuses permanently instead of replaying an outside-bound
+    report forever. RemoteJobs authenticates every returned original report.
+    """
+    import time
+    from .remote_backend import save
+    from .forced_sampling import new_contract
+    from .fast_prefill_audit import policy_from_executed_controls
+    seed=report['successor_calibration'];admitted_policy(seed,manifest,req)
+    if 'bounded_confirmations'not in record:
+        record['bounded_confirmations']=dict(version=RECALIBRATION_VERSION,created_at=time.time(),deadline=time.time()+opt['deadline_seconds'],rounds=[])
+        save(path,record)
+    journal=record['bounded_confirmations']
+    if journal.get('version')!=RECALIBRATION_VERSION or type(journal.get('rounds'))is not list or len(journal['rounds'])>opt['max_confirmations'] or type(journal.get('created_at'))not in(int,float) or type(journal.get('deadline'))not in(int,float) or journal['deadline']-journal['created_at']>opt['deadline_seconds']+1 or journal['deadline']<=journal['created_at']:raise ValueError('immutable bounded calibration journal')
+    rounds=journal['rounds'];reports=list(seed['reports'])
+    token_only=opening.get('token_artifact_policy') is not None
+    if token_only:
+        from .token_only_protocol import for_manifest
+        # Validate the explicit contract, never infer LP absence from inputs.
+        for_manifest(opening)
+    for index in range(opt['max_confirmations']):
+        policy=policy_from_executed_controls(reports,checkpoint=manifest['checkpoint']['id'],model_runtime_revision=manifest['model_runtime_revision'],backend_profile=manifest['backend_profile'],harness=req['harness'],safety_factor=4.)
+        if index<len(rounds):
+            row=rounds[index]
+            if row['policy']!=policy or row['label']!='successor-reconfirm-'+key[:24]+'-'+str(index):raise ValueError('immutable bounded calibration proposal changed')
+        else:
+            if time.time()>=journal['deadline']:raise ValueError('bounded successor confirmation deadline exhausted')
+            row=dict(policy=policy,request=dict(req,draw_contract=new_contract(dict(config['sampling_policy'],calibration=policy))),label='successor-reconfirm-'+key[:24]+'-'+str(index))
+            rounds.append(row);save(path,record)
+        if time.time()>=journal['deadline']:raise ValueError('bounded successor confirmation deadline exhausted')
+        # Reobserve the immutable signed RemoteJobs record on retries; a local
+        # journal alone cannot authenticate an edited saved report.
+        actual=jobs.run(row['label'],'evaluate',manifest,cache,successor_calibration=row['request'])
+        admitted_policy(actual['successor_calibration'],manifest,row['request'])
+        if 'report'in row and canonical(row['report'])!=canonical(actual):raise ValueError('immutable bounded confirmation report changed')
+        row['report']=actual;save(path,record)
+        if time.time()>=journal['deadline']:raise ValueError('bounded successor confirmation deadline exhausted')
+        confirmed=actual['successor_calibration']
+        admitted_policy(confirmed,manifest,row['request'])
+        passed=all(r['measured_cdf_abs_error']<=policy['cdf_abs_error'] and (token_only or r['measured_logprob_abs_error']<=policy['logprob_atol'])for r in confirmed['reports'])
+        if passed:
+            record.update(confirmation_sha256=digest(actual),confirmation_original_job_id=actual['job_id'],report_sha256=digest(report),original_job_id=report['job_id'],calibration=policy);save(path,record)
+            result=dict(opening);result['sampling_policy']=dict(config['sampling_policy'],calibration=policy);return result
+        reports.extend(confirmed['reports'])
+    raise ValueError('bounded successor confirmations exhausted; opening held')
