@@ -99,8 +99,15 @@ TOPLOC fingerprints were rejected by both checks; seed/attempt controls also
 failed as expected, with no ambiguous results. The longest rollout took 20.93
 seconds under the official check and 18.52 seconds under token-only verification.
 These are whole-check timings, not generation times or a prefill-only benchmark.
-Second-H200 testing is in progress; the token-only research policy is NOT a live
-mining contract. Sampling consistency does not prove historical execution.
+Second-H200 testing has completed on the identical original artifacts. Both
+H200s accepted all four genuine rollouts and both success/failure pairs; each
+rejected all eighty identical token mutants and forty-five seed/attempt controls,
+with zero ambiguous cases. Original terminal reports and complete result bytes
+were independently read back from private R2. The second node automatically
+retired its owned temporary checkpoint before resuming independent evaluation.
+This bounded qualification is not a statistical exploit-resistance guarantee.
+The token-only research policy is NOT a live mining contract. Sampling
+consistency does not prove historical execution.
 
 The independent queue API now rejects unsupported explicit probability-artifact
 policies; this does not activate the compact source contract by itself. Public
