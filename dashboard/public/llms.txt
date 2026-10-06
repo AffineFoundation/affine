@@ -151,7 +151,12 @@ Scores are normalized across current on-chain registered identities, with fresh
 hotkey/UID ownership checks. No training-completion report is required.
 
 The writer retries chain rate limits each minute but submits at most once per
-UTC hour. A transport outage may retain the last authenticated assessment,
+UTC hour. Subnet 120 uses commit-reveal: a successful submission commits the
+assessment, then the chain auto-reveals it on its configured schedule. The first
+new assessment for the October 6 17:00 UTC cutoff includes 196 UIDs, including
+UID 85. Its commitment finalized; activation follows the chain auto-reveal schedule.
+A finalized commitment must not be presented as already effective weights.
+A transport outage may retain the last authenticated assessment,
 explicitly marked stale. Integrity errors fail closed. If the genuine assessment
 has no positive recipients, the explicitly authorized zero-total policy uses
 the subnet owner sink. Penalties affect rewards, never wallet funds.

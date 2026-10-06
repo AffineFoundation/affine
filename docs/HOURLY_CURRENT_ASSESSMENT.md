@@ -29,7 +29,11 @@ one billionth of a single old contribution; it is recomputed using current audit
 evidence and does not rewrite previous submission records.
 
 The writer wakes every minute to retry chain rate limits, but submits at most
-once per UTC hour. It selects the current hour directly rather than waiting for
+once per UTC hour. On subnet 120 commit-reveal is enabled: the successful
+transaction is a timelocked commitment, and the chain later auto-reveals it.
+A finalized commitment is not yet an updated visible `Weights` row. The current
+chain policy uses one reveal-period epoch and tempo 360; effective rewards
+follow that chain schedule. It selects the current hour directly rather than waiting for
 an old epoch queue. It holds the existing global writer lock, suppresses the
 legacy validator's weight writes, uses an authenticated operator policy and
 rechecks hotkey/public-key/UID ownership against the chain. Unregistered
