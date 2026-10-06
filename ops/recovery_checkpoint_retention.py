@@ -12,6 +12,11 @@ from ops import checkpoint_retention as retention
 
 VERSION='held-uncommitted-recovery-obsolete-checkpoint-retention-v1'
 
+def identity(st):
+    # Full verification reads may legitimately advance atime. Only file
+    # identity/ownership/content-change guards constrain this owned rename.
+    return (st.st_mode,st.st_dev,st.st_ino,st.st_size,st.st_uid,st.st_nlink,st.st_mtime_ns,st.st_ctime_ns)
+
 def retire(envelope,authority,*,state_bytes,failure_bytes,held_guard,now=None):
     v=signed(envelope,authority);now=time.time()if now is None else now
     fields={'version','execute_allowed','created_at','expires_at','controller_state_sha256','original_failure_sha256','original_signed_job','original_job_sha256','held_controller','protected_checkpoints','active_checkpoints','required_free_bytes','max_retire_bytes','candidates'}
@@ -50,7 +55,7 @@ def retire(envelope,authority,*,state_bytes,failure_bytes,held_guard,now=None):
                 with p.open('rb')as f:
                     for block in iter(lambda:f.read(8*1024**2),b''):h.update(block)
                 if h.hexdigest()!=expected['sha256']:raise ValueError('full original model bytes')
-                before[name]=st
+                before[name]=identity(st)
             for process in retention.processes():
                 if not process.name.isdecimal():continue
                 try:descriptors=list((process/'fd').iterdir())
@@ -64,7 +69,7 @@ def retire(envelope,authority,*,state_bytes,failure_bytes,held_guard,now=None):
                 if any(len(line.split(None,5))==6 and line.split(None,5)[5].startswith(str(old)+'/')for line in maps.splitlines()):raise ValueError('old model memory mapped')
             if held_guard(v['held_controller'],original,failure,state)is not True or retention.gpu_processes():raise ValueError('held original/GPU changed before retention')
             for name,st in before.items():
-                if (old/name).lstat()!=st:raise ValueError('legacy model changed before rename')
+                if identity((old/name).lstat())!=st:raise ValueError('legacy model changed before rename')
             path.parent.mkdir(mode=0o700,exist_ok=True);old.rename(path)
         if path.exists()and any(p.lstat().st_uid!=os.getuid()for p in path.iterdir()):raise ValueError('ordinary model ownership changed')
         if held_guard(v['held_controller'],original,failure,state)is not True:raise ValueError('held original changed before removal')
