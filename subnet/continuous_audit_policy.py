@@ -7,6 +7,7 @@ import hashlib,json,math
 from .distributed_roles import authenticate
 LEGACY_VERSION='continuous-probabilistic-audit-v1'
 VERSION='continuous-probabilistic-audit-v2'
+RESOLUTION_VERSION='continuous-probabilistic-audit-v3'
 canonical=lambda v:json.dumps(v,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
 digest=lambda v:hashlib.sha256(canonical(v)).hexdigest()
 def need(v,message):
@@ -16,7 +17,7 @@ def finite(v,low,high,name):need(type(v)in(int,float)and math.isfinite(v)and low
 def valid_digest(v):return type(v)is str and len(v)==64 and all(c in '0123456789abcdef'for c in v)
 def policy(value):
  fields={'version','recent_epochs','decay','prior_alpha','prior_beta','invalid_multiplier','zero_epoch_after','blacklist_after','blacklist_epochs'}
- need(type(value)is dict and set(value)==fields and value['version']in(VERSION,LEGACY_VERSION),'exact continuous audit policy')
+ need(type(value)is dict and set(value)==fields and value['version']in(VERSION,LEGACY_VERSION,RESOLUTION_VERSION),'exact continuous audit policy')
  result=dict(value);integer(value['recent_epochs'],1,128,'recent cohort window');finite(value['decay'],0.01,1,'cohort decay')
  for name in ('prior_alpha','prior_beta'):finite(value[name],0.01,100,'bounded prior')
  finite(value['invalid_multiplier'],0,1,'invalid reward multiplier')
@@ -86,7 +87,7 @@ def snapshot(records,envelopes,verifiers,*,epoch,round,checkpoint,cutoff,audit_p
  The caller authenticates immutable opening/policy and signs this exact result.
  No pending/ambiguous/infra observation counts as valid or fraudulent.
  """
- p=policy(audit_policy);rows=population(records,ordered=p['version']==VERSION);integer(round,0,2**31-1,'snapshot round');need(valid_digest(checkpoint),'current immutable checkpoint')
+ p=policy(audit_policy);rows=population(records,ordered=p['version']in(VERSION,RESOLUTION_VERSION));integer(round,0,2**31-1,'snapshot round');need(valid_digest(checkpoint),'current immutable checkpoint')
  need(all(r['round']<=round and r['committed_at']<=cutoff for r in rows),'future or postcutoff committed population')
  current=[r for r in rows if r['epoch']==epoch];need(all(r['round']==round and r['checkpoint']==checkpoint for r in current),'current epoch/checkpoint binding')
  audits=observations(envelopes,rows,verifiers,cutoff,admitted_jobs=admitted_jobs,adjudications=adjudications,authority=authority);miners=sorted({r['miner']for r in current});points={};details={}
@@ -110,8 +111,20 @@ def snapshot(records,envelopes,verifiers,*,epoch,round,checkpoint,cutoff,audit_p
   overall=alpha/(alpha+beta);cohort=ca/(ca+cb);probability=min(overall,cohort)
   blacklisted=bool(p['blacklist_after'] and invalid_recent>=p['blacklist_after'] and latest_bad_round is not None and round-latest_bad_round<p['blacklist_epochs'])
   multiplier=0. if blacklisted or p['zero_epoch_after']and invalid_current>=p['zero_epoch_after'] else p['invalid_multiplier']**invalid_current
-  points[miner]=eligible*probability*multiplier
-  details[miner]=dict(unique_eligible_batches=eligible,validity_probability=probability,recent_posterior_mean=overall,current_cohort_posterior_mean=cohort,confirmed_invalid_current=invalid_current,confirmed_invalid_recent=invalid_recent,reward_multiplier=multiplier,blacklisted=blacklisted)
+  coverage=1.;coverage_details={}
+  if p['version']==RESOLUTION_VERSION:
+   scientific=[o for o in audits if o['miner']==miner and 0<=round-o['round']<p['recent_epochs'] and o['outcome']!='infrastructure_error']
+   resolved=sum(p['decay']**(round-o['round'])for o in scientific if o['outcome']!='numerical_ambiguous')
+   unknown=sum(p['decay']**(round-o['round'])for o in scientific if o['outcome']=='numerical_ambiguous')
+   current_scientific=[o for o in scientific if o['epoch']==epoch and o['checkpoint']==checkpoint]
+   current_resolved=sum(o['outcome']!='numerical_ambiguous'for o in current_scientific)
+   current_unknown=sum(o['outcome']=='numerical_ambiguous'for o in current_scientific)
+   recent_coverage=resolved/(resolved+unknown)if resolved+unknown else 1.
+   current_coverage=current_resolved/(current_resolved+current_unknown)if current_resolved+current_unknown else 1.
+   coverage=min(current_coverage,recent_coverage)
+   coverage_details=dict(resolution_coverage_factor=coverage,current_resolution_coverage=current_coverage,recent_resolution_coverage=recent_coverage,resolved_current=current_resolved,numerical_ambiguous_current=current_unknown,resolved_recent_weight=resolved,numerical_ambiguous_recent_weight=unknown,unresolved_is_fraud=False,infrastructure_counted_in_coverage=False)
+  points[miner]=eligible*probability*multiplier*coverage
+  details[miner]=dict(unique_eligible_batches=eligible,validity_probability=probability,recent_posterior_mean=overall,current_cohort_posterior_mean=cohort,confirmed_invalid_current=invalid_current,confirmed_invalid_recent=invalid_recent,reward_multiplier=multiplier,blacklisted=blacklisted,**coverage_details)
  total=sum(points.values());weights={m:(v/total if total else 0.)for m,v in points.items()}
  return dict(version=p['version'],epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,policy=p,population_sha256=digest(rows),eligible_evidence_ids=sorted(eligible_set)if eligible_set is not None else None,evidence_ids=sorted(o['evidence_id']for o in audits),miners=details,points=points,weights=weights,training_waits_for_audits=False,unaudited_samples_claimed_verified=False)
 
@@ -183,7 +196,7 @@ def hourly_aggregate(documents,authority,cutoff):
  points={};epochs=[];policies=[]
  for document in documents:
   result=authenticate(document,authority)
-  need(result.get('version')in(VERSION,LEGACY_VERSION) and result.get('cutoff')==cutoff,'original same-cutoff epoch snapshot')
+  need(result.get('version')in(VERSION,LEGACY_VERSION,RESOLUTION_VERSION) and result.get('cutoff')==cutoff,'original same-cutoff epoch snapshot')
   need(result['epoch']not in epochs,'epoch can earn once in hourly aggregate');epochs.append(result['epoch']);policies.append(digest(policy(result['policy'])))
   for miner,value in result['points'].items():
    need(valid_digest(miner),'hourly miner identity');finite(value,0,1e6,'bounded raw epoch points');points[miner]=points.get(miner,0.)+value

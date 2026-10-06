@@ -65,7 +65,7 @@ No pending epoch and no historical strict epoch can earn through this bridge.
   popdoc,p,m=populations[epoch]
   cohort=[r for r in records if r['round']<=s['round']and r['committed_at']<=h['cutoff']]
   from .continuous_audit_policy import population
-  need(s['population_sha256']==sha(population(cohort,ordered=s['version']=='continuous-probabilistic-audit-v2'))and s['eligible_evidence_ids']==p['eligible_evidence_ids'],'original full audit cohort and learner eligibility')
+  need(s['population_sha256']==sha(population(cohort,ordered=s['version']in('continuous-probabilistic-audit-v2','continuous-probabilistic-audit-v3')))and s['eligible_evidence_ids']==p['eligible_evidence_ids'],'original full audit cohort and learner eligibility')
   need(s['checkpoint']==m['checkpoint']['id']and s['round']==p['round'],'original checkpoint and round')
   opening=signed(opening_documents[epoch],authority)
   need(opening.get('version')=='immutable-first-manifest-v1'and opening.get('epoch')==epoch and opening.get('first_manifest_sha256')==sha(p['manifest_document']),'immutable original first opening')
