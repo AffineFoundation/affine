@@ -1,6 +1,15 @@
 # Affine — MATH mining, verification and training
 
 Current operational status, 2026-10-06:
+Latest completed epoch: E19, 351 captured documents, 295 cheap-eligible batches,
+256 selected UNAUDITED training inputs, durable optimizer step ten. E20 is
+collecting from that checkpoint. Training does not wait for inference audits.
+The original signed full-state cache acknowledgment for step ten completed;
+the next genuine warm training job has not yet demonstrated its speedup.
+Automatic owned-model and expired-input retirement runs on all seven reachable
+verifiers. The last completed epoch still took 73.7 minutes; speed remains a
+measured release gap. The chronological records below retain earlier contracts.
+
 E16 completed and durably published optimizer step seven / checkpoint
 9cd6f6a6d61a4aba1bc30a83afa3792820d6a3630b660041cbd52eaecfdd82b0.
 It received 359 committed documents; 309 passed cheap eligibility checks,
@@ -119,16 +128,17 @@ Full R2 archive/member readback and CPU staging on all ten roles passed,
 and all seven worker registries include its exact runtime inventory.
 It includes the synchronous original-ACK fix. A separately ROOT-scoped sustained
 controller now runs from actual durable parent nine, with the exact independent
-queue API and sole-current optimizer-cache opt-in. Fresh new-source calibration and confirmation passed; epoch nineteen is now
-training on 256 selected UNAUDITED batches from 351 captured documents and
+queue API and sole-current optimizer-cache opt-in. Fresh new-source calibration and confirmation passed; epoch nineteen
+trained on 256 selected UNAUDITED batches from 351 captured documents and
 295 cheap-eligible batches. Collection and decoding took 158.63 seconds.
 The original E19 training update and independent full-state readback completed;
 optimizer step ten and its next checkpoint are durably published. The measured
 epoch took 4,424.93 seconds (73.7 minutes), exceeding the one-hour target.
 Cold optimizer restoration took 961.46 seconds and export took 884.92 seconds.
 The original independent reader verified 91,387,491,264 bytes in 172.90 seconds.
-Current-state cache acknowledgment is a separate finalizer; a warm-cache
-production speedup is not yet demonstrated. The original qualification-only
+The original current-state cache acknowledgment finalizer completed and E20
+opened from optimizer step ten. A warm-cache production speedup is not yet
+demonstrated. The original qualification-only
 descriptor is unchanged.
 The continuous auditor has separately admitted the complete five-source union,
 including9f, while preserving historical jobs, policies and numerical contracts.
@@ -469,8 +479,12 @@ hydration receipts, inode/link checks and active checkpoint locks are required.
 The expired-input extension is now deployed on all seven workers, with
 61 exact minimal-pair CPU controls and 65 affected main-branch controls passing.
 All seven retain immediate-ACK and idle owned-model disposal. The independent
-API package now includes the full hash-pinned original170-module runtime plus
-the CPU API service, including lazy frozen-commitment validation dependencies.
+API package now includes the full hash-pinned original170-module runtime,
+the CPU API service and an explicit probability-policy validation module
+(172 modules total). Only the narrow policy guard changed from the restored
+171-module package; the queue database, identities, leases and historical
+contracts are preserved. This CPU guard does not activate compact mining.
+The package includes lazy frozen-commitment validation dependencies.
 A four-file package initially rejected genuine reports; all seven pending
 reports pass the restored original CPU validator. Expired leases remain
 infrastructure outcomes, without backdated acknowledgments or fraud penalties.
@@ -506,3 +520,12 @@ docs/TERMINAL_EOS_AUXILIARY_EXPERIMENT.md. It requires genuine already-present
 EOS, signed inference-audit evidence and a separate native-correctness receipt.
 Thirty-five CPU controls passed, including unchanged baseline gradients. There
 is no production caller, active objective change or experimental GPU result.
+
+Prospective trusted native evaluation is now implemented on main and default-off
+(see docs/TRUSTED_NATIVE_EVALUATOR_PROPOSAL.md). An explicit operator-owned
+evaluation policy retains the signed generation runtime, model, contexts, seeds
+and native grader, while avoiding probability-artifact construction, TOPLOC
+construction and redundant self-verification. Reports explicitly say unverified
+and native-graded; they cannot count as miner proof or reward evidence.
+161 affected ROOT CPU controls pass. This candidate has not replaced the
+original running E19 held-out job, and no H200 timing gain is claimed yet.
