@@ -73,3 +73,27 @@ continues observing the original signed job rather than issuing another job.
 both genuine durable ACK model disposals complete, including lease release.
 This is a separate cached1024 experiment; it does not convert either the
 128-token latency diagnostic or the historical uncached1024 experiment.
+
+`continuous-owned-cached-checkpoints-1024-v3` keeps the same scientific1024
+experiment and fixed32 seeds, but has a distinct CPU config/service/state. It
+requires `stop_after_pair: false`, the explicit1024 cap and1800-second original
+job budget. ROOT pins an exact allowlist of the two completed v2 requests,
+original signed jobs, authenticated reports and completed durable ACK disposals.
+The initializer verifies hashes, ROOT signatures, full R2 ACK bytes, exact
+policy/source/cohort/seed bindings and the frozen backend report validator before
+copying original bytes into the new state. It never imports an authority seed,
+changes the old state, relabels a report or resamples CP10/CP11. Scientific queue
+fingerprints remain their originals; the CPU configuration has its own version
+and hash. The canonical owned remote workspace is retained so original ACK
+ownership remains exact. Start only after v2 original terminals, cleanup and
+service exit are confirmed; every future dispatch still checks physical GPU idle.
+
+Future AFTER requests follow only the controller's signed durable completion,
+actual committed optimizer pointer and current checkpoint. A new optimizer12
+request has its own checkpoint fingerprint. Evaluation remains asynchronous and
+cannot become a trainer audit or heldout barrier. Automatic full-ACK model
+retirement runs before subsequent disk admission. Unknown/null/mixed policy,
+altered history bytes, wrong workspace, future-parent substitutions and partial
+disposals fail closed. The genuine cached1024 CP10/CP11 pair measured19/32 then
+18/32, one gain and two losses, with no infrastructure failures. Training margins
+increased but this cohort did not establish heldout improvement or convergence.
