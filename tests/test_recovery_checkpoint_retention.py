@@ -1,4 +1,4 @@
-import copy,hashlib,json,tempfile,unittest
+import copy,hashlib,json,os,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
 from ops.recovery_checkpoint_retention import retire,VERSION
@@ -57,3 +57,15 @@ class RecoveryModelRetention(unittest.TestCase):
   (self.old/'unowned.txt').unlink();p=self.old/'config.json';data=p.read_bytes();p.unlink();external=self.root/'external';external.write_bytes(data);p.symlink_to(external)
   with self.assertRaises(ValueError):self.call()
   self.assertTrue(external.exists())
+
+ def test_actual_full_SHA_read_changes_atime_without_changing_content_identity(self):
+  before={}
+  for p in self.old.iterdir():
+   st=p.stat();os.utime(p,ns=(1,st.st_mtime_ns));before[p.name]=p.stat().st_atime_ns
+  observed=[]
+  def guard(*a):
+   if self.old.exists():observed.append({p.name:p.stat().st_atime_ns for p in self.old.iterdir()})
+   return True
+  result=self.call(guard=guard)
+  self.assertEqual(result['retired_bytes'],23)
+  self.assertTrue(any(any(row[n]>before[n]for n in before)for row in observed))
