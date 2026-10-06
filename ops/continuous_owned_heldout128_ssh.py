@@ -233,6 +233,8 @@ v=dict(pid=p.pid,ticks=pathlib.Path('/proc/'+str(p.pid)+'/stat').read_text().rsp
         CPU staging, not authority to replace a request or refresh its lifetime.
         """
         scope=signed(packet['scope'],self.authority)
+        if (packet['workspace']!=scope['workspace'] or packet['expires_at']!=scope['expires_at'] or
+            scope['endpoint']['workspace']!=scope['workspace']):raise ValueError('exact original continuation physical namespace/lifetime')
         if time.time()>=packet['expires_at']:return dict(status='expired-unissued')
         jobs={signed(j,self.authority)['job_id']:digest(signed(j,self.authority))for j in packet['original_jobs']}
         if jobs!={j:v['job_sha256']for j,v in scope['original_jobs'].items()}:raise ValueError('exact original continuation identities')
