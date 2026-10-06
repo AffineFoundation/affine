@@ -4,18 +4,18 @@ from pathlib import Path
 
 from ops.continuous_owned_heldout128 import digest
 from ops.continuous_owned_heldout128_factory import prepare_packet
-from test_owned_cached_group_operator import OperatorTests
+import test_owned_cached_group_operator as fixture
 
 
 class FactoryTests(unittest.TestCase):
     def setUp(self):
-        self.f=OperatorTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixture.OperatorTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
         self.policy=dict(template_original_job=self.f.jobs[0],source_files=self.f.files,
             runtime_versions=self.f.scope['runtime_versions'],cohort_sha256=digest(self.f.groups),groups=self.f.groups,
-            endpoint=dict(host='approved',port=22,workspace=str(self.f.root)),
+            endpoint=dict(host='approved',port=22,workspace=str(self.f.root),python='/approved/python',known_hosts='/approved/knownhosts'),
             remote_root=str(self.f.root/'groups'),remote_source_path=str(self.f.root/'frozen-source'),
             group_lifetime_seconds=1000,expires_at=10000,group_scope_template=self.f.scope)
-        self.publication=dict(checkpoint_descriptor=self.f.sign(self.f.cp))
+        self.publication=dict(checkpoint_descriptor=self.f.sign(self.f.cp),optimizer_publication=self.f.sign({'descriptor':{'optimizer_steps':14}}))
     def prepare(self,refresh=lambda m,t:m):
         identity=digest([digest(self.policy),self.f.cp['id'],self.policy['cohort_sha256']])
         return prepare_packet(self.policy,self.publication,identity,self.f.authority,self.f.sign,now=10,refresh_manifest=refresh)
@@ -25,6 +25,8 @@ class FactoryTests(unittest.TestCase):
         self.assertEqual([j['heldout'][0]['indices']for j in jobs],[g['indices']for g in self.f.groups])
         self.assertTrue(all(j['manifest']['payload']['checkpoint']==self.f.cp for j in jobs))
         self.assertEqual(packet['expires_at'],1010)
+        scope=packet['scope']['payload'];self.assertEqual(scope['endpoint']['workspace'],packet['workspace'])
+        self.assertEqual(scope['endpoint']['code'],scope['source_path'])
     def test_source_runtime_checkpoint_cache_or_other_mode_reject(self):
         for field,value in [('checkpoint_cache',{'foreign':'cache'}),('trusted_evaluation_policy',{}),('successor_calibration',{})]:
             old=self.policy['template_original_job'];job=copy.deepcopy(old['payload']);job[field]=value
