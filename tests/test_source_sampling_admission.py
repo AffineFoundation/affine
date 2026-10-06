@@ -63,11 +63,38 @@ class SourceSamplerControls(unittest.TestCase):
    if change=='valid':o['valid']=True
    if change=='fully':o['fully_audited']=True
    if change=='sampling':o['sampling_verification_complete']=True
-   if change=='environment':o['environment_verification_complete']=True
+   if change=='environment':o['environment_verification_complete']=1
    if change=='positions':o.update(uncertain_token_positions=[-1],uncertain_token_position_count=-1)
    if change=='receipt':a['outcomes']=[];a['accepted']=[dict(index=2,env_id='tiny',rollouts=[dict(seed=0,sampling={'foreign':'wrong'})])]
    if change=='accepted':a['accepted']=[dict(env_id=None,index=None,rollouts=[])]
    with self.subTest(change=change),self.assertRaises(ValueError):self.gate.report(self.job,r)
+ def official_fixture(self):
+  from test_v4_invalid_dominates_unknown import InvalidDominates
+  fx=InvalidDominates();fx.setUp();fx.m['source_bundle']={'sha256':self.new}
+  fx.m['sampling_source_hash']=self.rows[self.new]['runtime_files']['subnet/forced_sampling.py']
+  return fx,self.with_manifest(fx.m)
+ def test_official_backend_native_completed_unknown_is_admitted_without_valid_credit(self):
+  fx,job=self.official_fixture();audit,pairs=fx.run_batch();report=self.report();report['audits']=[audit]
+  self.assertTrue(audit['outcomes'][0]['environment_verification_complete'])
+  self.assertTrue(self.gate.report(job,report));self.assertEqual(audit['accepted'],[]);self.assertEqual(pairs,[])
+  for malformed in (None,0,1,'true',[],{}):
+   bad=copy.deepcopy(report);bad['audits'][0]['outcomes'][0]['environment_verification_complete']=malformed
+   with self.subTest(malformed=malformed),self.assertRaises(ValueError):self.gate.report(job,bad)
+ def test_official_backend_unknown_cannot_mask_fresh_TOPLOC_offpolicy_invalid_second(self):
+  from subnet import fast_prefill_audit as fast,probability_artifacts as artifacts
+  from test_v4_invalid_dominates_unknown import PairSession
+  fx,job=self.official_fixture();bad=copy.deepcopy(fx.neg);turn=bad[0]['turns'][0];_,old_probs=fx.r.compute(turn['prompt'],turn['output'])
+  turn['output'][0]=next(int(t)for t in old_probs[0].argsort().tolist()if int(t)not in(turn['output'][0],fx.r.tokenizer.eos_token_id));turn['text']=fx.r.tokenizer.decode(turn['output']);acts,probs=fx.r.compute(turn['prompt'],turn['output']);turn['proofs']=fx.r.build_proofs(acts,decode_batching_size=16,topk=128)
+  fresh_arrays=[artifacts.encode(probs,turn['output'],fx.m['probability_artifact_policy'])]
+  native=PairSession().step({'text':turn['text']})
+  for key in ('reward','classification'):bad[0][key]=turn[key]=native[key]
+  original=fast.verify_sampling;calls=[]
+  def first_unknown_then_actual(*args):
+   calls.append(1)
+   if len(calls)==1:raise fx.unknown()
+   return original(*args)
+  audit,pairs=fx.run_batch(second=(bad[0],fresh_arrays),effects=first_unknown_then_actual);report=self.report();report['audits']=[audit]
+  outcome=audit['outcomes'][0];self.assertEqual(len(calls),2);self.assertEqual(outcome['failure_kind'],'confirmed_invalid');self.assertFalse(outcome['valid']);self.assertIn('CDF interval outside',outcome['reason']);self.assertTrue(self.gate.report(job,report));self.assertEqual(pairs,[])
  def test_registry_signature_runtime_map_and_unsupported_original_version_refused(self):
   for change in ('signature','hash','versions','missing'):
    d=copy.deepcopy(self.document)
