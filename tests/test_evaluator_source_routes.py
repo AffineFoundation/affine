@@ -50,13 +50,20 @@ class SourceRouting(unittest.TestCase):
         with self.assertRaisesRegex(OSError,'disk admission'):r.run('original','evaluate',self.manifest(sha))
         remote.run.assert_not_called();self.existing(sha);r.run('original','evaluate',self.manifest(sha),heldout=[{'seeds':[100]}]);remote.run.assert_called_once()
         self.assertEqual(remote.command.call_count,1)
+    def test_trainer_cache_hint_never_crosses_physical_evaluator_boundary(self):
+        sha='b'*64;r=self.router();r.run('new','evaluate',self.manifest(sha),'/trainer/private/checkpoint')
+        self.assertIsNone(self.remotes[sha].run.call_args.args[3])
+    def test_only_explicit_evaluator_checkpoint_cache_is_used(self):
+        sha='b'*64;self.rows[sha]['endpoint']['checkpoint_caches']={'actual-parent':'/evaluator/approved/cache'}
+        r=self.router();r.run('new','evaluate',self.manifest(sha),'/trainer/wrong/cache')
+        self.assertEqual(self.remotes[sha].run.call_args.args[3],'/evaluator/approved/cache')
     def test_two_source_routes_preserve_exact_labels_seeds_and_manifest(self):
         r=self.router();plan=[dict(indices=[17,42],seeds=[1700,4200])]
         for sha in ['a'*64,'b'*64]:
             manifest=self.manifest(sha);original=copy.deepcopy(manifest)
             r.run('original-label','evaluate',manifest,'original-cache',heldout=plan)
             self.assertEqual(manifest,original)
-            self.remotes[sha].run.assert_called_once_with('original-label','evaluate',original,'original-cache',heldout=plan)
+            self.remotes[sha].run.assert_called_once_with('original-label','evaluate',original,None,heldout=plan)
         self.assertEqual(self.calls,['a'*64,'b'*64])
     def test_unknown_source_and_non_evaluation_never_construct_or_dispatch(self):
         r=self.router()

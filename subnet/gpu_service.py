@@ -173,9 +173,13 @@ def heldout(config,manifest):
         rows.append(dict(env_id=suite['env_id'],indices=indices,seeds=[suite.get('seed',20260930)+i*1000 for i in indices],harness=harness))
     return rows
 
-def evaluate(controller,manifest,cache,phase,steps,config):
+def evaluate(controller,manifest,cache,phase,steps,config,*,label_override=None):
     revision,profile,policy=resolve(manifest)
     label=manifest['epoch']+'-eval-'+phase
+    if label_override is not None:
+        if not isinstance(label_override,str) or len(label_override)>240 or (label_override!=label and not label_override.startswith(label+'-infra-')):
+            raise ValueError('explicit evaluation infrastructure recovery label')
+        label=label_override
     rows=heldout(config,manifest);report=controller.jobs.run(label,'evaluate',manifest,cache,heldout=rows)
     records=[]
     for suite in rows:

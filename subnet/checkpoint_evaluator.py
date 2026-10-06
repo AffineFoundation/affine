@@ -163,7 +163,10 @@ class QualifiedEvaluationJobs:
             capacity=json.loads(remote.command(shlex.quote(remote.python)+' -I -B -c '+shlex.quote(script),timeout=30))
             if type(capacity.get('free'))is not int or capacity['free']<minimum:
                 raise OSError('independent evaluator disk admission deferred')
-        cache=row['endpoint'].get('checkpoint_caches',{}).get(manifest['checkpoint']['id'],cache)
+        cache=row['endpoint'].get('checkpoint_caches',{}).get(manifest['checkpoint']['id'])
+        # Queue cache hints may name a trainer filesystem; only this evaluator's
+        # explicitly approved map can cross the physical-role boundary. With
+        # no map, sealed checkpoint() uses the owned, fully authenticated cache.
         try:return remote.run(label,role,manifest,cache,**fields)
         except remote.observation_timeout_type as error:
             raise RemoteObservationTimeout(error.job_id,error.role)from error
@@ -265,7 +268,7 @@ def evaluate_one(controller,path):
     if record['status'] in ('complete','failed','unresolved'):return record
     try:
         records=evaluate(controller,request['manifest'],request['cache'],
-                         request['phase'],request['training_steps'],request['config'])
+                         request['phase'],request['training_steps'],request['config'],label_override=request['label'])
     except RemoteObservationTimeout as error:
         # RemoteJobs persists and reuses the SAME signed job and original
         # expiry on the next pass. Never generate replacement evaluation.

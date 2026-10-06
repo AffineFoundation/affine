@@ -141,6 +141,17 @@ class IndependentEvaluator(unittest.TestCase):
         self.controller.jobs.dispatch_eligible=lambda r:False;self.controller.jobs.busy=lambda:False
         self.assertIsNone(pending_pass(self.controller));self.assertFalse((self.state/'checkpoint-evaluation-deferrals'/old.name).exists())
         self.assertEqual(json.loads((self.state/'checkpoint-evaluation-faults'/old.name).read_text())['status'],'failed');self.controller.jobs.run.assert_not_called()
+    def test_explicit_infrastructure_recovery_preserves_manifest_cohort_and_provenance(self):
+        from subnet.storage import canonical
+        import hashlib
+        old=self.queued();original=old.read_bytes();r=json.loads(original)
+        r['request']['label']+='-infra-cache-route-v1';r['request_sha256']=hashlib.sha256(canonical(r['request'])).hexdigest();r['evaluation_id']+='-infra-cache-route-v1'
+        recovery=old.with_name(r['evaluation_id']+'.json');recovery.write_text(json.dumps(r))
+        result=evaluate_one(self.controller,recovery)
+        self.assertEqual(self.controller.jobs.run.call_args.args[0],r['request']['label'])
+        self.assertEqual(self.controller.jobs.run.call_args.args[2],self.manifest)
+        self.assertEqual(result['records'][0]['run_id'],r['request']['label']+'-env')
+        self.assertEqual(result['records'][0]['heldout_indices'],[2,3]);self.assertEqual(old.read_bytes(),original)
     def test_failed_old_request_does_not_starve_new_checkpoint(self):
         from subnet.remote_backend import RemoteJobTerminalError
         old=self.queued()
