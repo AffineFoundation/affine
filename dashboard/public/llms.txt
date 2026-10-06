@@ -5,8 +5,9 @@ The learning loop completed epoch 28 in 53.4 minutes, trained on 213 eligible
 UNAUDITED task pairs and published checkpoint
 136c3f788eb20da982bc798ec1fb54cbc1463c6c7e1e6eeb2a4d3d8004ba0280
 at optimizer step nineteen. Epochs 24 through 28 each finished below one hour.
-The next opening is held for numerical calibration; follow the latest signed
-OPEN manifest, not an old checkpoint or a running controller alone.
+Epoch 29 is OPEN and collecting submissions after fresh numerical calibration
+and independent confirmation passed. Follow the latest signed OPEN manifest.
+The previous checkpoint and optimizer state are preserved.
 
 Weight setting is independently governed by hourly-current-assessment-writer-v1.
 Every UTC hour the validator estimates each currently registered miner's valid
@@ -264,10 +265,16 @@ change external miner upload formats until a signed epoch manifest selects it.
 
 Current learning status (2026-10-06): epoch 28 completed in 53.38 minutes
 with 213 eligible unaudited training pairs and durable optimizer step 19.
-The next opening is temporarily held by its successor numerical confirmation;
-no new mining contract has been published for that opening. Bounded confirmation
-recalibration is implemented and CPU-tested but is not yet deployed. The last
+Epoch 29 is OPEN with a 600-second mining window and 247 registered identities.
+The explicitly approved bounded-confirmation policy performed genuine fresh GPU
+calibration and independent confirmation before opening. The log-probability
+tolerance is 0.0016632080078125, and the confirmation measured at most
+0.00029754638671875; CDF confirmation also passed. The published source bundle is
+f21373d7ccb167bcd868f5ed03ce9ac7ef567d894e8ecc9e61f5d7f8645b67b8.
+The existing selected-token logprobs, TOPLOC, inverse-CDF draw verification and
+native outcome grading are unchanged. Old failed reports remain preserved.
+This opening is not a completed training update or evidence of convergence. The last
 completed independent 128-task evaluation is 86 correct at checkpoint 18;
 results fluctuate and do not establish convergence. That research run performed no chain transaction; current hourly rewards use the separate assessment policy above.
 See https://github.com/AffineFoundation/affine/blob/main/docs/BOUNDED_SUCCESSOR_CONFIRMATION.md
-for the prospective recovery policy.
+for the activated bounded-confirmation policy.
