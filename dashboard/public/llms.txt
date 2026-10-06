@@ -122,10 +122,14 @@ controller now runs from actual durable parent nine, with the exact independent
 queue API and sole-current optimizer-cache opt-in. Fresh new-source calibration and confirmation passed; epoch nineteen is now
 training on 256 selected UNAUDITED batches from 351 captured documents and
 295 cheap-eligible batches. Collection and decoding took 158.63 seconds.
-The original E19 training backend has completed successfully and staged optimizer
-step ten and its next checkpoint. Independent state readback and publication
-must still finish; a warm-cache speedup is not yet demonstrated. The original
-qualification-only descriptor is unchanged.
+The original E19 training update and independent full-state readback completed;
+optimizer step ten and its next checkpoint are durably published. The measured
+epoch took 4,424.93 seconds (73.7 minutes), exceeding the one-hour target.
+Cold optimizer restoration took 961.46 seconds and export took 884.92 seconds.
+The original independent reader verified 91,387,491,264 bytes in 172.90 seconds.
+Current-state cache acknowledgment is a separate finalizer; a warm-cache
+production speedup is not yet demonstrated. The original qualification-only
+descriptor is unchanged.
 The continuous auditor has separately admitted the complete five-source union,
 including9f, while preserving historical jobs, policies and numerical contracts.
 A distinct CPU byte-cache control passed on the full original 23 optimizer
