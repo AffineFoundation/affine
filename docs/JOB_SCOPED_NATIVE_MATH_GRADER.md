@@ -1,0 +1,13 @@
+# Job-scoped native MATH grader prototype
+
+This prototype is default off and is not wired into a backend. Existing sealed sources and the original `verify.py` bytes are unchanged. `prepare_job_scoped_grader()` returns `None` without a policy and creates no process. Production enablement requires a separate reviewed source/policy admission.
+
+An explicit signed operator capability binds one job ID, deadline, complete source inventory, task snapshot and assets, environment source hash, prepared interpreter, exact native grader hash/runtime lock, original outer timeout, resource cap and task hashes. References come from the pinned snapshot; the caller provides only task index/hash and prediction. No prediction outputs are cached.
+
+Prepare the client **before model construction and CUDA initialization**. The client spawns a fresh isolated `-I -S` CPU interpreter with CUDA hidden, without `preexec_fn` or a Python fork in the worker. That parent authenticates the original runtime, installs its pinned import closure and preloads the original grader libraries. Only that single-threaded, Torch-free CPU parent forks. Each prediction receives a fresh child executing the byte-identical original grader tail. The parent never parses untrusted predictions. Children are reaped, and native failures remain infrastructure/indeterminate, never negative training samples.
+
+Source, asset and full dependency file identities are checked before and after grading. Added source/dependency files, replacement inodes or changed bytes invalidate reuse. Each request binds its job, monotonic sequence and task hash. Requests/results/counts/memory/CPU time and the original outer timeout are bounded. Partial input frames and idle waits expire. Closing the client kills/reaps only its dedicated CPU process group. Cross-job capabilities and calls after expiry/close fail closed.
+
+The signed scope is a prototype operator capability, not a substitute for backend admission of the original manifest, source grant and native task hash. A future adapter must derive task hashes from the genuine native reset and preserve every setup/readiness result, original task timeout, grading outcome and teardown. It must pass the same approved timeout to the scope; reducing or extending it silently changes the policy. `execute_allowed` in a scope does not activate any existing service.
+
+Qualification must include genuine signed-pair comparisons with the original isolated grader, poisoned source/assets/dependencies, expiry/job separation, child timeout/crash, malformed/nonfinite results, inherited state isolation, exact native reference failures and full-proof GPU controls. CPU timings are local measurements and do not establish a production speedup.
