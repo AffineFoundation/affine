@@ -90,8 +90,11 @@ def run(config,once=False):
         controller.jobs=IdleBoundJobs()
         while True:
             try:
+                from ops.owned_cached_evaluator_cleanup import retire_completed
+                retire_completed(controller,jobs,config)
                 observe(controller,config)
                 pending_pass(controller,dispatch_order=config.get('evaluation_dispatch_order'))
+                retire_completed(controller,jobs,config)
             except (OSError,ValueError)as error:
                 # Atomic publication files may be read across two generations.
                 # Keep the original requests and defer dispatch; no zero score.
