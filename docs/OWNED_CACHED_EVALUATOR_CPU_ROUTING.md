@@ -41,6 +41,17 @@ distinct from legacy and unchanged-generation trusted-native jobs; original
 requests require exact policy matching. Native grading is labeled `verified:
 false`; infrastructure failures leave mean reward and uncertainty absent.
 
+After an authenticated terminal report, the CPU observer publishes the exact
+original signed job and report in a private R2 ACK and verifies its full-byte
+readback. A CPU-only helper then retires that evaluated model from the new
+owned workspace, before admitting the next checkpoint. It verifies the frozen
+runtime hashes, original terminal/process absence, complete hydration receipt
+and model map, and uses the existing single-link ownership/inode checks and
+nonblocking inherited checkpoint lease. A busy lease or changed inode defers
+cleanup. External mapped caches, original production namespaces, reports and
+diagnostics are retained. This avoids retaining 15 GB after a completed
+evaluation on a node with only about 26 GB free.
+
 The genuine H200 qualification measured two 128-token tasks per arm: full-proof
 41.56 seconds, unchanged-generation native 27.88 seconds, and cached native
 10.33 seconds. Tokens and grades matched on those two tasks; both grades were
