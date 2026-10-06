@@ -99,3 +99,33 @@ class MinerOperatorScopeControls(unittest.TestCase):
      with self.assertRaisesRegex(ValueError,'different controller'):op.validate(scope,config,path)
     runtime.write_bytes(b'mutated')
     with self.assertRaisesRegex(ValueError,'runtime'):op.validate(scope,config,path)
+
+class DurableMinerScopeRenewalControls(unittest.TestCase):
+ def test_expired_same_config_scope_renews_only_identical_controller(self):
+  from ops import automatic_owned_miner_cleanup as op
+  from nacl.signing import SigningKey
+  import time
+  with tempfile.TemporaryDirectory()as tmp:
+   root=Path(tmp);tree=root/'tree';(tree/'subnet').mkdir(parents=True);runtime=tree/'subnet/one.py';runtime.write_bytes(b'original');state=root/'state';state.mkdir();key=SigningKey.generate();seed=state/'authority.seed';seed.write_text(key.encode().hex());seed.chmod(0o600)
+   config=dict(state=str(state),source_bundle={'sha256':'source'},remote={'roles':{'mine':{'host':'fixed'}}});path=root/'config.json';path.write_bytes(canonical(config));cleanup=root/'cleanup.py';cleanup.write_bytes(b'CPU-only');unit=root/'controller.service';unit.write_bytes(b'exact unit');launcher=root/'launch.py';launcher.write_bytes(b'exact launcher')
+   scope=dict(version='owned-miner-terminal-cleanup-operator-v1',created_at=0,expires_at=1,config_sha256=op.sha(path),state=str(state),max_jobs_per_cycle=8,sources={'source':{'subnet/one.py':op.sha(runtime)}},miner_endpoint={'host':'fixed'},runtime_tree=str(tree),entrypoint_sha256=op.sha(op.__file__),cleanup_module=str(cleanup),cleanup_module_sha256=op.sha(cleanup),controller={'unit':'exact.service','pid':1,'ticks':2,'invocation':'original'},renewal_authorization={'version':'identical-controller-cleanup-renewal-v1','unit_path':str(unit),'unit_sha256':op.sha(unit),'launcher_path':str(launcher),'launcher_sha256':op.sha(launcher),'process_argv_sha256':'not-used-idle'})
+   target=root/'scope.json';target.write_bytes(b'original signed scope')
+   reply='MainPID=0\nInvocationID=\nFragmentPath='+str(unit)+'\n'
+   with patch.object(op.subprocess,'check_output',return_value=reply),patch.object(op,'AUTH',key.verify_key.encode().hex()):
+    result=op.renew_authorized_scope(scope,config,path,target);self.assertGreater(result['expires_at'],time.time());self.assertEqual(result['expires_at']-result['created_at'],3600);self.assertEqual(op.authenticate(op.read(target)),result)
+    restarted=copy.deepcopy(scope);restarted['renewal_authorization']['process_argv_sha256']=hashlib.sha256(Path('/proc/self/cmdline').read_bytes()).hexdigest()
+    running='MainPID='+str(os.getpid())+'\nInvocationID=actual-restart\nFragmentPath='+str(unit)+'\n'
+    with patch.object(op.subprocess,'check_output',return_value=running):
+     rebound=op.renew_authorized_scope(restarted,config,path,target)
+     self.assertEqual(rebound['controller']['pid'],os.getpid());self.assertEqual(rebound['controller']['invocation'],'actual-restart');self.assertEqual(rebound['miner_endpoint'],scope['miner_endpoint']);self.assertEqual(rebound['config_sha256'],scope['config_sha256'])
+    for kind in ['foreign-route','new-source','changed-unit','changed-launcher','unknown-argv']:
+     trial=copy.deepcopy(scope);original=target.read_bytes()
+     if kind=='foreign-route':trial['miner_endpoint']={'host':'foreign'}
+     if kind=='new-source':trial['sources']={}
+     if kind=='changed-unit':trial['renewal_authorization']['unit_sha256']='0'*64
+     if kind=='changed-launcher':trial['renewal_authorization']['launcher_sha256']='0'*64
+     if kind=='unknown-argv':
+      trial['renewal_authorization']['process_argv_sha256']='0'*64
+      reply='MainPID='+str(os.getpid())+'\nInvocationID=foreign\nFragmentPath='+str(unit)+'\n'
+     with self.subTest(kind=kind),patch.object(op.subprocess,'check_output',return_value=reply),self.assertRaises(ValueError):op.renew_authorized_scope(trial,config,path,target)
+     self.assertEqual(target.read_bytes(),original)
