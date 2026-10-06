@@ -44,6 +44,15 @@ Any connection, compression or hardware change needs a bounded measured probe
 before it is extrapolated to the full state. Whole-host-only rental offers are
 not equivalent to an inexpensive single-GPU bandwidth upgrade.
 
+A separate single H100 was rented at $1.30/hour for isolated qualification.
+Its first bounded probe used eight 32-MiB random objects per profile, with payloads
+held only in RAM. Serial PUT plus full GET took 24.05 seconds for 256 MiB;
+eight concurrent transfers took 5.60 seconds for another 256 MiB. All 16 objects
+passed a second independent ROOT full GET/SHA256 check, and the report and signed
+ACK are durable in R2. This confirms the benefit of concurrency for those small
+objects. It does not establish a full-state advantage over the live trainer,
+which already uses eight streams. No training/model state was moved or changed.
+
 ## Training-data investigation
 
 In the selected epoch-25 pairs, 121 of 256 negative trajectories reached the
