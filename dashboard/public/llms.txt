@@ -120,8 +120,9 @@ and all seven worker registries include its exact runtime inventory.
 It includes the synchronous original-ACK fix. A separately ROOT-scoped sustained
 controller now runs from actual durable parent nine, with the exact independent
 queue API and sole-current optimizer-cache opt-in. Fresh new-source calibration and confirmation passed; epoch nineteen is now
-collecting submissions. Its first training update and a warm-cache speedup
-are not yet demonstrated. The original qualification-only descriptor is unchanged.
+training on 256 selected UNAUDITED batches from 351 captured documents and
+295 cheap-eligible batches. Collection and decoding took 158.63 seconds.
+Its completed training update and a warm-cache speedup are not yet demonstrated. The original qualification-only descriptor is unchanged.
 The continuous auditor has separately admitted the complete five-source union,
 including9f, while preserving historical jobs, policies and numerical contracts.
 A distinct CPU byte-cache control passed on the full original 23 optimizer
@@ -465,3 +466,12 @@ the CPU API service, including lazy frozen-commitment validation dependencies.
 A four-file package initially rejected genuine reports; all seven pending
 reports pass the restored original CPU validator. Expired leases remain
 infrastructure outcomes, without backdated acknowledgments or fraud penalties.
+
+Independent held-out evaluation was reactivated on 2026-10-06 with source-aware
+routing. Existing issued original jobs are observed first; new jobs use the
+approved 9f source with automatic evaluation retention and a signed 32 GiB
+free-disk admission floor. Unissued older sources remain deferred rather than
+being rewritten or treated as completed. Evaluation does not gate training.
+The compact probability candidate 4109ca0123cef05d37c908824b1fa32bb085d24e1e4bad3529a86899798b9aea
+passed complete R2 readback and CPU staging on all ten roles. It has not passed
+production GPU qualification or replaced the current manifest contract.
