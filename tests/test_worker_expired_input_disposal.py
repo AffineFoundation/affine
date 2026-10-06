@@ -64,4 +64,6 @@ class ExpiredInputDisposal(unittest.TestCase):
  def test_idle_inventory_storage_error_does_not_stop_worker(self):
   with patch.object(self.worker,'sweep_expired_inputs',side_effect=OSError('inventory unavailable')),self.assertLogs(level='WARNING'):self.assertFalse(self.worker.once())
   self.assertTrue(self.input.exists())
+ def test_other_receipted_download_outside_signed_submission_inventory_preserved(self):
+  foreign=self.input.parent/'submission-7.zip';foreign.write_bytes(b'foreign signed scope');self.lifecycle.record_download(foreign,hashlib.sha256(b'foreign signed scope').hexdigest());self.assertFalse(self.worker.once());self.assertFalse(self.input.exists());self.assertEqual(foreign.read_bytes(),b'foreign signed scope')
 if __name__=='__main__':unittest.main()
