@@ -10,12 +10,16 @@ UNAUDITED inputs without an inference-audit barrier. The original training
 attempt then failed with a parent-optimizer download read timeout during restore,
 before train_epoch or any optimizer update. Step eleven remains the durable
 parent. The failed original and its evidence are preserved. An explicitly
-authorized fresh pre-update recovery attempt is now dispatched using source
+authorized fresh pre-update recovery attempt was dispatched using source
 acdb551e24c7db36f405998a7c3b763031bfff0695c1b8ee5812444792089a5a,
 with the same 256 original admissions, parent eleven and unchanged scientific
 modules. Bounded transient optimizer-download retries are included. The new
-attempt has its own ID and output namespace; it has not completed or published
-step twelve. Recovery runs once to finish E21; it does not open a new epoch or
+attempt has its own ID and output namespace. It failed before model/GPU execution
+because its 5,073,318-byte signed envelope exceeded the legacy 4,000,000-byte
+launcher limit. Both failed attempts and the original recovery reservation are
+preserved. A narrowly bounded, authenticated recovery-envelope fix and explicit
+bootstrap-continuation authorization are being implemented; step twelve has not
+been published. Recovery runs once to finish E21; it does not open a new epoch or
 rewrite the original 4db mining contract. The signed
 contract requires one positive and one negative rollout per task, at most three
 batches per UID, and a 16-attempt ceiling. Generation uses cached FP32 eager
