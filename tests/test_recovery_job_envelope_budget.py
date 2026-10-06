@@ -1,4 +1,4 @@
-import base64,copy,hashlib,json,tempfile,unittest,sys
+import base64,copy,hashlib,json,tempfile,unittest,sys,os,subprocess
 from pathlib import Path
 from unittest.mock import patch
 from nacl.signing import SigningKey
@@ -32,6 +32,31 @@ class RecoveryEnvelopeBudgetControls(unittest.TestCase):
   self.job['role']='upload';self.write()
   with patch.object(sys,'argv',args),patch.object(backend,'execute')as execute,self.assertRaises(ValueError):backend.main()
   execute.assert_not_called()
+ def test_actual_dash_m_postupdate_51MB_loader_before_cpu_dispatch(self):
+  self.declaration['version']='terminal-post-update-uncommitted-recovery-v1'
+  self.manifest['training_startup_recovery']=self.sign(self.declaration);self.job['manifest']=self.sign(self.manifest)
+  self.write(size=5_100_000)
+  root=Path(self.tmp.name);result=root/'CPU-result.json'
+  probe="""import sys,os,json
+from pathlib import Path
+def trace(frame,event,arg):
+ if event=='call' and frame.f_code.co_name=='main' and frame.f_globals.get('__name__')=='__main__' and frame.f_code.co_filename.endswith('/subnet/backend_jobs.py'):
+  g=frame.f_globals;sys.settrace(None)
+  def execute(envelope,*args):
+   assert envelope['payload']['manifest']['payload']['training_startup_recovery']['payload']['version']=='terminal-post-update-uncommitted-recovery-v1'
+   Path(os.environ['CPU_RESULT']).write_text(json.dumps({'CPU_stub':True,'torch_imported':'torch' in sys.modules,'canonical_is_main':sys.modules['subnet.backend_jobs'] is sys.modules['__main__']}))
+   return {'job_id':'fresh','role':'train','checkpoint':'22'*32}
+  g['execute']=execute
+ return trace
+sys.settrace(trace)
+"""
+  (root/'sitecustomize.py').write_text(probe)
+  env=dict(os.environ,PYTHONPATH=str(root)+os.pathsep+str(Path(__file__).resolve().parents[1]),CPU_RESULT=str(result))
+  args=[sys.executable,'-m','subnet.backend_jobs',str(self.path),'--authority',self.authority,'--workspace',str(root/'workspace')]
+  q=subprocess.run(args,env=env,capture_output=True,text=True,timeout=30)
+  self.assertEqual(q.returncode,0,q.stderr);v=json.loads(result.read_text());self.assertTrue(v['CPU_stub']);self.assertTrue(v['canonical_is_main']);self.assertFalse(v['torch_imported'])
+  result.unlink();self.job['role']='upload';self.write();q=subprocess.run(args,env=env,capture_output=True,text=True,timeout=30)
+  self.assertNotEqual(q.returncode,0);self.assertFalse(result.exists());self.assertIn('job envelope size budget',q.stderr)
  def test_absolute8MB_cap_read_before_parse_and_normal4MB_unchanged(self):
   self.write(size=8_000_000);self.assertEqual(backend.load_job_envelope(self.path,self.authority)['payload'],self.job)
   self.path.write_bytes(b'x'*8_000_001)
