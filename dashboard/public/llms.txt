@@ -28,8 +28,12 @@ independent publication readback followed before commitment. Epoch 25 then
 completed in 49.3 minutes, advanced optimizer step fifteen to sixteen and
 published checkpoint b2b68f9c15cc22cdd9ba812c7f79c83f65be22ae75102d957e685882cc6af66c.
 It trained on 256 eligible unaudited task pairs without inference re-verification;
-automatic trainer cleanup completed. Epoch 26 has opened. These two consecutive
-sub-hour epochs do not establish long-term uptime or sustained learning.
+automatic trainer cleanup completed. Epoch 26 then completed in 49.4 minutes,
+trained on 253 eligible unaudited task pairs and advanced optimizer step to 17.
+Its checkpoint is 120bbf7416322d93e20502935272a6956edbc4c660f1029d07abc20f1d2c12da;
+automatic cleanup removed the old local checkpoint after durable publication.
+These three consecutive sub-hour epochs do not establish long-term uptime or
+sustained learning.
 E23 submissions remain closed. Miners must follow the current fresh signed
 OPEN manifest; a running controller alone is not an open submission contract.
 In E22, the owned miner completed three batches from 47 attempts within its 600-second
@@ -49,7 +53,7 @@ demonstrated. Five production workers have restarted with corrected registry-sel
 source-bound capacity validation; two other roles are reserved for finite proof
 qualification. No new successful audit is implied by an active worker alone.
 Historical authenticated audits remain evidence for their original contracts.
-The independent learning loop completed epoch 25 and opened epoch 26.
+The independent learning loop completed epoch 26 and published checkpoint 17.
 Chain weight submission
 remains disabled. Follow the latest signed OPEN manifest for the
 current mining checkpoint and deadline; a published checkpoint alone is not

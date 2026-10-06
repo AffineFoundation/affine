@@ -13,8 +13,12 @@ convergence. Dataset size and additional samples alone do not establish learning
 Epochs 24 and 25 completed in 50.4 and 49.3 minutes. Epoch 25 trained on 256
 distinct eligible task pairs, advanced optimizer step 15 to 16 and published
 checkpoint `b2b68f9c15cc22cdd9ba812c7f79c83f65be22ae75102d957e685882cc6af66c`.
-Its automatic trainer cleanup completed. These two epochs do not establish
-sustained hourly uptime.
+Its automatic trainer cleanup completed. Epoch 26 also completed in 49.4 minutes,
+trained on 253 eligible unaudited task pairs and advanced optimizer step to 17.
+It published checkpoint
+`120bbf7416322d93e20502935272a6956edbc4c660f1029d07abc20f1d2c12da`
+and automatically retired its previous local checkpoint. These three epochs do
+not establish sustained hourly uptime.
 
 ## Optimizer bandwidth
 
