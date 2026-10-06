@@ -69,3 +69,12 @@ class RetentionTests(unittest.TestCase):
    with self.assertRaises(ValueError):retire_artifacts(sign(s),sign(dict(a,R2_full_GET_verified=False)),auth,live_phase=lambda p:False)
    with self.assertRaises(ValueError):retire_artifacts(sign(s),sign(a),auth,live_phase=lambda p:True)
    foreign=directory/'replacement';foreign.write_bytes(b'original');foreign.replace(p);self.assertEqual(retire_artifacts(sign(s),sign(a),auth,live_phase=lambda p:False),[]);self.assertTrue(p.exists())
+
+class PolicyVerdictTests(unittest.TestCase):
+ def test_confirmed_invalid_stream_kept_as_evidence_not_negative(self):
+  from subnet.audit_policy import InvalidSample
+  class R:
+   def rollout(self,i,a):return stream(i)[a]['rollout'],[]
+   def verify(self,r,a):raise InvalidSample('outside calibrated prescribed CDF')
+  row,_=verify_generated(R(),2,0);self.assertEqual(row['status'],'confirmed_invalid');self.assertFalse(row['sampler_verified']);self.assertFalse(row['native_verified'])
+  x=stream();x[0]=row;a,s=select_matched({2:x},{});self.assertEqual(s[0]['confirmed_invalid'],1);self.assertEqual(a['1P1N'][0][2]['seed'],3)

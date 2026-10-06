@@ -27,7 +27,7 @@ def validate_stream(rows,index):
     for x in rows:
         if x['index']!=index or type(x.get('native_verified'))is not bool or type(x.get('sampler_verified'))is not bool:
             raise ValueError('exact native/sampler evidence types')
-        if x['status'] not in ('verified','numerical_unknown','native_error'):raise ValueError('outcome framing')
+        if x['status'] not in ('verified','numerical_unknown','native_error','confirmed_invalid'):raise ValueError('outcome framing')
         if x['status']=='verified':
             if not x['native_verified']or not x['sampler_verified']:raise ValueError('claims are not verification')
             r=x['rollout']; category=r['classification'];reward=r['reward'];task_hashes.add(r['task_hash'])
@@ -50,7 +50,7 @@ def select_matched(streams,definition):
             p=[x for x in positive if x['attempt']<prefix];n=[x for x in negative if x['attempt']<prefix]
             return max(p[k-1]['attempt'],n[k-1]['attempt'])+1 if min(len(p),len(n))>=k else None
         lengths={name:[sum(len(t['output'])for t in x['rollout']['turns'])for x in items]for name,items in [('positive',positive),('negative',negative)]}
-        supply.append(dict(index=index,positive=len(positive),negative=len(negative),unknown=sum(x['status']=='numerical_unknown'for x in rows),native_errors=sum(x['status']=='native_error'for x in rows),first1_prefix8=completion(1,8),first2_prefix8=completion(2,8),first1_prefix16=completion(1,16),first2_prefix16=completion(2,16),matched_included=min(len(positive),len(negative))>=2,class_token_lengths=lengths,class_cap_counts={k:sum(n>=1024 for n in v)for k,v in lengths.items()}))
+        supply.append(dict(index=index,positive=len(positive),negative=len(negative),unknown=sum(x['status']=='numerical_unknown'for x in rows),native_errors=sum(x['status']=='native_error'for x in rows),confirmed_invalid=sum(x['status']=='confirmed_invalid'for x in rows),first1_prefix8=completion(1,8),first2_prefix8=completion(2,8),first1_prefix16=completion(1,16),first2_prefix16=completion(2,16),matched_included=min(len(positive),len(negative))>=2,class_token_lengths=lengths,class_cap_counts={k:sum(n>=1024 for n in v)for k,v in lengths.items()}))
         if min(len(positive),len(negative))<2:continue
         for name,k in [('1P1N',1),('2P2N',2)]:
             arms[name].extend((definition,positive[i]['rollout'],negative[i]['rollout'])for i in range(k))
@@ -59,6 +59,7 @@ def select_matched(streams,definition):
 def verify_generated(runtime,index,attempt):
     """Official rollout and compact TOPLOC/CDF/native verification, not claims."""
     from subnet.fast_prefill_audit import NumericalAmbiguity
+    from subnet.audit_policy import InvalidSample
     from verifiers.v1.errors import TaskError
     try:r,arrays=runtime.rollout(index,attempt)
     except TaskError:return dict(index=index,attempt=attempt,status='native_error',native_verified=False,sampler_verified=False),None
@@ -67,6 +68,8 @@ def verify_generated(runtime,index,attempt):
         if runtime.verify(r,arrays)is not True:raise ValueError('official verifier did not accept')
     except NumericalAmbiguity as e:
         row.update(status='numerical_unknown',native_verified=getattr(e,'environment_verification_complete',False));return row,arrays
+    except InvalidSample as e:
+        row.update(status='confirmed_invalid',error_type=type(e).__name__);return row,arrays
     row.update(status='verified',native_verified=True,sampler_verified=True);return row,arrays
 
 def train_arm(runtime,pairs,output,plan,parent,fetch):
