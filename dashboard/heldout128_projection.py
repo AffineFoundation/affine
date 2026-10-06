@@ -41,13 +41,33 @@ def original(ack, source, files_sha):
            v.get('classification')!=('positive' if v['reward']==1 else 'negative')):raise ValueError('native outcomes are not verified proofs')
     return a,j,m,plan,values
 
+def comparison_binding(original):
+    _,job,manifest,plan,values=original
+    report=original[0]['original_report'];revision=manifest['model_runtime_revision'];profile=manifest['backend_profile'];numerical=manifest['numerical_policy']
+    versions=job['runtime_versions']
+    if not isinstance(versions,dict)or not versions or any(type(k)is not str or type(v)is not str for k,v in versions.items()):raise ValueError('complete runtime versions')
+    if type(revision)is not str or not revision or not isinstance(profile,dict)or not profile or not isinstance(numerical,dict)or not numerical:raise ValueError('explicit execution profile')
+    if (report.get('execution_runtime_revision')!=revision or report.get('generation_runtime_revision')!=revision or
+        digest(report.get('backend_profile'))!=digest(profile)or digest(report.get('numerical_policy'))!=digest(numerical)):raise ValueError('report execution matches signed manifest')
+    envs=[e for e in manifest['environments']if e['env_id']==plan['env_id']]
+    if len(envs)!=1:raise ValueError('single exact native definition')
+    env=envs[0];spec=env['spec']
+    if any(k not in spec for k in ('version','id','adapter','source_hash','config','num_samples','max_turns','max_output_tokens','success_reward')):raise ValueError('complete native taskset and grading settings')
+    # Ordering of the mining set is irrelevant; every other task/grader setting
+    # remains exact. Checkpoint, epoch, and request clocks are intentionally absent.
+    normalized=dict(env_id=env['env_id'],spec=spec,harness=env['harness'],indices=sorted(env['indices']))
+    binding=dict(runtime_versions=versions,model_runtime_revision=revision,backend_profile=profile,numerical_policy=numerical,
+                 environment_revision=manifest['environment_revision'],harness_source_hash=manifest['harness_source_hash'],
+                 native_environment=normalized,heldout_harness=plan['harness'])
+    return digest(binding)
+
 def rows(pointer, production):
     c=authenticated(pointer,AUTHORITY)
     if c.get('version')!='heldout128-dashboard-sources-v1':raise ValueError('explicit heldout128 source scope')
     epochs={}
     for p in Path(production).glob('*-first-signed-manifest.json'):
         m=authenticated(json.loads(p.read_bytes()),AUTHORITY);epochs.setdefault(m['checkpoint']['id'],[]).append((m['start'],m['epoch']))
-    result=[];seen=set()
+    result=[];seen=set();common_binding=None;task_hashes={}
     for entry in c['evaluations']:
         p=Path(entry['summary_path'])
         if not p.exists():continue # A running/partial group has no public row.
@@ -74,6 +94,14 @@ def rows(pointer, production):
                 acks=[json.loads(t.extractfile(x).read())for x in members if x.isfile()and x.name.startswith('durable-evaluation-acks/')and x.name.endswith('.json')]
             if len(acks)!=4:raise ValueError('four original full ACKs, never partial')
             originals=[original(a,c['source_sha256'],c['source_files_sha256'])for a in acks];originals.sort(key=lambda v:v[0]['group'])
+            for o in originals:
+                binding=comparison_binding(o)
+                if common_binding is None:common_binding=binding
+                elif binding!=common_binding:raise ValueError('comparable runtime profile native taskset across every chunk and checkpoint')
+                for value in o[4]:
+                    key=(value['index'],value['seed'])
+                    if key in task_hashes and task_hashes[key]!=value['task_hash']:raise ValueError('same native task identity across checkpoints')
+                    task_hashes[key]=value['task_hash']
             if [v[0]['group']for v in originals]!=list(range(4)) or len({v[1]['job_id']for v in originals})!=4:raise ValueError('distinct four originals')
             cp=originals[0][2]['checkpoint']['id']
             ids={v[1]['job_id']for v in originals}
