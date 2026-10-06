@@ -195,6 +195,13 @@ after a genuine replacement ACK and durable retry are available as default-off
 operator code; live adapter installation is pending and they are not part of
 the running recovery source.
 
+Verifier download-capacity admission and automatic per-checkpoint size metadata
+are implemented and tested as default-off operator code. They reserve missing
+model and artifact bytes before backend execution, renew the original lease
+on infrastructure deferral, and protect active checkpoint leases. The combined
+worker rollout is still pending; this is not a claim that all live verifiers
+already enforce the new reserve policy.
+
 ## Public interfaces and documentation
 
 Read https://affine.io/mining.json for authority and current_url. Public
