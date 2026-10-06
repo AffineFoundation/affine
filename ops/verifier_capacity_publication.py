@@ -175,7 +175,7 @@ def ssh_replicate(grant,config):
     completed=subprocess.run(config['ssh_argv']+[shlex.quote(config['python'])+' -B -c '+shlex.quote(INSTALL_SCRIPT)],input=payload,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30,check=True)
     return json.loads(completed.stdout)
 
-def main():
+def main(*,guard=None):
     import argparse,time
     from nacl.signing import SigningKey
     parser=argparse.ArgumentParser();parser.add_argument('--policy',required=True);parser.add_argument('--authority',required=True);parser.add_argument('--seed-file',required=True);parser.add_argument('--publication-state',required=True);parser.add_argument('--controller-state',required=True);parser.add_argument('--queue',required=True);parser.add_argument('--once',action='store_true');args=parser.parse_args()
@@ -189,6 +189,7 @@ def main():
     def sign(value):return dict(payload=value,signer=args.authority,signature=base64.b64encode(key.sign(canonical(value)).signature).decode())
     controller=SimpleNamespace(authority=SimpleNamespace(id=args.authority),signed=sign)
     while True:
+        if guard is not None:guard()
         try:
             policy=json.loads(Path(args.policy).read_bytes());backfill(controller,policy,publication_state=args.publication_state,controller_state=args.controller_state,queue_path=args.queue);result=flush(controller,policy,replicate=ssh_replicate)
             print(json.dumps(dict(metadata_only=True,installed=sum(x['status']=='complete'for x in result),deferred=sum(x['status']=='deferred'for x in result))),flush=True)
