@@ -21,6 +21,11 @@ class SimpleExpiry(unittest.TestCase):
   self.assertEqual(raw,path.read_bytes());self.assertEqual(draw,self.s.state['draws']);self.assertEqual(len(self.s.state['expired_requests']),1);self.assertFalse(self.s.state['jobs'])
   record=authenticate(self.s.state['expired_requests'][jid]['document'],self.f.root)
   self.assertEqual(record['outcome'],'infrastructure_expired');self.assertFalse(record['accepted_proof']);self.assertFalse(record['confirmed_fraud'])
+ def test_request_expiring_during_capture_is_terminal_not_enqueued(self):
+  jid,path=self.original(expires=26);raw=path.read_bytes()
+  with patch('subnet.continuous_audit_service.time.time',side_effect=[25,27]):
+   self.s.tick()
+  self.assertFalse(self.s.queue.envelopes);self.assertEqual(path.read_bytes(),raw);self.assertIn(jid,self.s.state['expired_requests'])
  def test_unexpired_original_retries_exact_bytes(self):
   _,path=self.original(expires=26);original=json.loads(path.read_bytes());self.s.tick(now=25);self.assertEqual(self.s.queue.envelopes,[original]);self.assertFalse(self.s.state['expired_requests'])
  def test_bad_signature_lifetime_or_identity_is_not_disposed(self):

@@ -193,8 +193,8 @@ class ContinuousAuditor:
   return count
  def expired_rows(self):return {i for v in self.state.get('expired_requests',{}).values()for i in v['row_sha256s']}
  def tick(self,now=None):
-  now=time.time()if now is None else now;self.retire_expired_requests(now)
-  if self.group_size>1:return self.tick_grouped(now)
+  clock=time.time if now is None else lambda:now;now=clock();self.retire_expired_requests(now)
+  if self.group_size>1:return self.tick_grouped(now,clock=clock)
   now=time.time()if now is None else now;available=self.max_inflight
   for status in self.queue_statuses().values():
    if inflight_status(status,now):available-=1
@@ -223,6 +223,8 @@ class ContinuousAuditor:
    if original.exists():
     envelope=json.loads(original.read_text());job=authenticate(envelope,self.controller.authority.id)
     if job['job_id']!=jobid:raise ValueError('original selected request identity')
+    self.retire_expired_requests(clock())
+    if jobid in self.state.get('expired_requests',{}):continue
     self.queue.enqueue(envelope);self.queue.archive(jobid,self.controller.bucket,'public/continuous-audit/jobs');self.state['jobs'][jobid]=dict(row_sha256=identity,job_sha256=digest(job));self.persist();enqueued+=1;continue
    try:manifest,receipt,artifact=future.result()
    except Exception as error:
@@ -241,9 +243,9 @@ class ContinuousAuditor:
    job=dict(schema=1,job_id=jobid,role='verify',created_at=created_at,expires_at=created_at+self.job_seconds,manifest=self.controller.signed(audit_manifest),**metadata,submissions=[dict(url=artifact['read_url'],sha256=row['proof_sha256'],commitment_miner=row['miner'],commitment_ref=ref)])
    envelope=self.controller.signed(job);atomic(self.directory/(jobid+'-job.json'),envelope);self.queue.enqueue(envelope);self.queue.archive(jobid,self.controller.bucket,'public/continuous-audit/jobs');self.state['jobs'][jobid]=dict(row_sha256=identity,job_sha256=digest(job));self.persist();enqueued+=1
   return dict(enqueued=enqueued,selected=len(selected),retried=len(retry),backpressure=False,source_deferred=deferred)
- def tick_grouped(self,now=None):
+ def tick_grouped(self,now=None,*,clock=None):
   """Bounded same-opening groups; persisted draws/plans survive owner crashes."""
-  now=time.time()if now is None else now;self.retire_expired_requests(now)
+  clock=clock or(time.time if now is None else lambda:now);now=clock();self.retire_expired_requests(now)
   available=self.max_inflight-sum(inflight_status(v,now)for v in self.queue_statuses().values())
   if available<=0:return dict(enqueued=0,backpressure=True)
   rows,deferred=self.dispatch_records();lookup={digest(r):r for r in rows};done=set(self.state['draws']);queued={i for job in self.state['jobs'].values()for i in job_rows(job)}|self.expired_rows()
@@ -274,6 +276,8 @@ class ContinuousAuditor:
     envelope=json.loads(path.read_text());job=authenticate(envelope,self.controller.authority.id)
     if job['job_id']!=jobid or job.get('audit_group',{}).get('plan_sha256')!=key:raise ValueError('original audit group request')
     ids=job['audit_group']['row_sha256s']
+    self.retire_expired_requests(clock())
+    if jobid in self.state.get('expired_requests',{}):continue
     self.queue.enqueue(envelope);self.queue.archive(jobid,self.controller.bucket,'public/continuous-audit/jobs');self.state['jobs'][jobid]=dict(row_sha256=ids[0],row_sha256s=ids,job_sha256=digest(job));plan['resolved']=True;self.persist();enqueued+=1;continue
    p=authenticate(self.state['populations'][plan['epoch']],self.controller.authority.id);manifest=authenticate(p['manifest_document'],self.controller.authority.id);captured=[]
    def capture(identity):
