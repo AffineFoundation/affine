@@ -1,3 +1,19 @@
+Verified continuation, 2026-10-06, 22:48 UTC:
+E31 retained574 of574 timely batch documents from194 authenticated miners,
+zero infrastructure deferrals.146 duplicate-task exclusions left428 eligible
+unaudited pairs; bounded postfreeze selection chose256 for original train-b174d081.
+The172 unselected pairs remain audit/reward eligible. Token capture took27.583s
+and finished deadline+36.839s, within cutoff+60. Whole capture74.800s; cheap reads
+and decoding22.779s; complete collection/selection98.300s. E30 retained91/549,
+so capture improvement is real; new training/checkpoint completion still pending.
+Auditor repair completed a genuine service cycle under original PID1946327,
+NRestarts0, fresh health1791326879.669209, selecting24 rows/enqueuing6 jobs,
+no source deferrals/backpressure;32 immutable hours reconciled. Original queue
+inode and seven active claim identities unchanged. No history rewritten.
+The corrected eighth-H200 qualification now runs its separately signed V2
+original supervisor2301/child2308 using authenticated read-only CP20 cache;
+qualification and prospective numerical source changes remain unproven.
+
 Verified continuation, 2026-10-06, 22:42 UTC:
 E31 passed genuine fresh calibration and reconfirmation, then opened collection
 fromCP21 under signed capture-v2 (8 readers,16MB in flight,16-decision checkpoints).

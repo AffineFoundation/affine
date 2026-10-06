@@ -316,8 +316,12 @@ readers, first-completed scheduling, a fsynced per-epoch capture journal and sta
 checkpoints every 16 decisions. A pinned CPU-only overlay retains the f213 remote
 scientific source and optimizer-cache identity. Historical epochs retain their
 original capture policies. Document size, SHA, upload deadline and unaudited
-assurance are unchanged. Epoch 31 is still opening; completed-epoch capture
-throughput and sustained hourly cadence remain unproven.
+assurance are unchanged. Epoch 31 passed opening and captured all 574 timely batch documents from 194
+miners, with zero deferrals. Duplicate-task exclusions left 428 eligible unaudited
+pairs; the bounded selector chose 256 for training and retained the other 172
+for audits/reward evidence. Token capture took 27.583 seconds; complete cheap
+collection and selection took 98.300 seconds. Training is now running; a completed
+new checkpoint, sustained hourly cadence and held-out convergence are unproven.
 See GitHub docs/BOUNDED_TRAINING_CAPTURE.md for configuration and deployment gates.
 
 Historical verifier report admission is separate from permission to claim new
@@ -325,5 +329,5 @@ jobs. A ROOT-signed exact retired-verifier job/report digest allowlist can retai
 authentic completed evidence after the verifier leaves the active fleet. Original
 worker report signatures, job digests, lease tokens, source/runtime checks and
 report digests still apply. This grants no new claims or API credentials. The
-CPU reconciliation repair is installed; a successful resumed audit cycle remains
-to be observed. No miner upload format or sampling contract changes with this fix.
+CPU reconciliation repair completed a genuine resumed service cycle, with
+the original queue and seven active claim identities preserved. No miner upload format or sampling contract changes with this fix.

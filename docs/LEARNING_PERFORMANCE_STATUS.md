@@ -314,3 +314,17 @@ The CP21 fixed32 diagnostic subsequently completed at19/32 (59.375%). ROOT
 verified the original signed job, report digest and durable full-readback ACK.
 The independent SAME128 experiment is still running its original four-group
 sequence; its result cannot be inferred from this smaller diagnostic.
+
+
+## Epoch 31 measured capture recovery
+
+The signed eight-reader capture-v2 policy retained all574 timely batch documents
+from194 authenticated miners, with zero deferrals.146 duplicate-task exclusions
+left428 eligible unaudited pairs. The bounded postfreeze selector chose256 for
+the original training job, retaining172 unselected pairs as audit/reward eligible.
+This is not a claim that574 pairs were verified or trained. Token capture took
+27.583 seconds, finishing deadline+36.839 seconds within the signed+60 budget.
+Whole capture took74.800 seconds including final commitment publication; cheap
+reads/decode22.779 seconds, complete collection/selection98.300 seconds. E30 had
+retained91/549 and trained79. More usable inputs are now reaching training, but
+new checkpoint completion and held-out gains remain to be measured.
