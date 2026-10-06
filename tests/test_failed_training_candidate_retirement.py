@@ -3,7 +3,7 @@ from pathlib import Path
 from subnet.storage import canonical
 from subnet.training_receipts import sha
 from subnet.optimizer_state_cache import identifier
-from ops.retire_failed_training_candidate import retire,VERSION
+from ops.retire_failed_training_candidate import retire,VERSION,publish_exclusive
 from test_training_parent_restore_recovery import ParentRestoreRecovery
 
 class FailedCandidateRetirement(unittest.TestCase):
@@ -53,8 +53,9 @@ class FailedCandidateRetirement(unittest.TestCase):
   from unittest.mock import patch
   original=Path.unlink;count=[0]
   def unlink(path,*args,**kwargs):
-   count[0]+=1
-   if count[0]==2:raise RuntimeError('simulated crash')
+   if path.name.startswith('state-'):
+    count[0]+=1
+    if count[0]==2:raise RuntimeError('simulated crash')
    return original(path,*args,**kwargs)
   with patch.object(Path,'unlink',unlink),self.assertRaises(RuntimeError):self.run_retire()
   self.assertTrue(Path(self.value['journal']).exists());result=self.run_retire();self.assertEqual(result['retired_files'],2);self.assertEqual(self.run_retire(),result)
@@ -68,3 +69,13 @@ class FailedCandidateRetirement(unittest.TestCase):
  def test_thirteen_only_mode_preserves_failed_zero_locally(self):
   self.value['retire_failed_zero']=False;self.value['inventory']=self.value['inventory'][1:];self.value['full_readbacks']=self.value['full_readbacks'][1:]
   result=self.run_retire();self.assertEqual(result['retired_files'],1);self.assertTrue((self.transfer/'state-000000.safetensors').exists());self.assertFalse(self.candidate.exists());self.assertEqual(self.run_retire(),result)
+ def test_journal_fsync_failure_leaves_no_partial_final_or_removed_shards(self):
+  from unittest.mock import patch
+  with patch('ops.retire_failed_training_candidate.os.fsync',side_effect=OSError('simulated write failure')),self.assertRaises(OSError):self.run_retire()
+  self.assertFalse(Path(self.value['journal']).exists());self.assertEqual(len(list(self.transfer.iterdir())),1);self.assertEqual(len(list(self.candidate.iterdir())),1)
+  self.assertTrue((self.cache/'pending.json').exists());self.assertFalse(list(self.owner.glob('.*.writing-*')))
+  self.assertEqual(self.run_retire()['retired_files'],2)
+ def test_atomic_publication_never_replaces_existing_history(self):
+  path=self.owner/'atomic-journal.json';publish_exclusive(path,{'complete':True});before=path.read_bytes()
+  with self.assertRaises(FileExistsError):publish_exclusive(path,{'complete':False})
+  self.assertEqual(path.read_bytes(),before);self.assertEqual(path.stat().st_mode&0o777,0o600);self.assertEqual(path.stat().st_nlink,1);self.assertFalse(list(self.owner.glob('.*.writing-*')))

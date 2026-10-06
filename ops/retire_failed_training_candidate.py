@@ -3,13 +3,27 @@
 This CPU-only helper never repairs/promotes optimizer state. Call from the
 recovery preflight with actual lease/process guards, not as manual cleanup.
 """
-import fcntl,hashlib,json,os,re,stat,time
+import fcntl,hashlib,json,os,re,secrets,stat,time
 from pathlib import Path
 from subnet.backend_jobs import signed
 from subnet.training_receipts import sha
 from subnet.storage import canonical
 
 VERSION='failed-uncommitted-training-candidate-retirement-v1'
+
+def publish_exclusive(path,value):
+    """Publish complete journal bytes atomically, without replacing history."""
+    temporary=path.with_name('.'+path.name+'.writing-'+secrets.token_hex(16))
+    fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+    try:
+        with os.fdopen(fd,'wb')as stream:
+            stream.write(canonical(value));stream.flush();os.fsync(stream.fileno())
+        os.link(temporary,path,follow_symlinks=False)
+        directory=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
+        try:os.fsync(directory)
+        finally:os.close(directory)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 def _retire(envelope,authority,*,workspace,guard,now=None):
     value=signed(envelope,authority);now=time.time()if now is None else now
@@ -70,11 +84,7 @@ def _retire(envelope,authority,*,workspace,guard,now=None):
     # Persist the authenticated original bytes, receipts, failure and grant
     # BEFORE any unlink. Never remove the model, reports or original job.
     if not resumed:
-        fd=os.open(journal,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
-        with os.fdopen(fd,'wb')as stream:stream.write(canonical(dict(version=VERSION,grant=envelope,prepared_at=now,preserved_pending_catalogue=catalog)));stream.flush();os.fsync(stream.fileno())
-        fd=os.open(journal.parent,os.O_RDONLY|os.O_DIRECTORY)
-        try:os.fsync(fd)
-        finally:os.close(fd)
+        publish_exclusive(journal,dict(version=VERSION,grant=envelope,prepared_at=now,preserved_pending_catalogue=catalog))
     result=dict(version=VERSION,grant_sha256=sha(envelope),original_job_sha256=sha(original),retired_bytes=sum(row['size']for row in rows),retired_files=len(rows),durable_failure_history_preserved=True,optimizer_candidate_promoted=False)
     if completion.exists():
         if completion.is_symlink()or json.loads(completion.read_bytes())!=result or checked:raise ValueError('immutable completed retirement changed')
@@ -90,11 +100,7 @@ def _retire(envelope,authority,*,workspace,guard,now=None):
     if pending.exists():
         if pending.read_bytes()!=raw:raise ValueError('pending catalogue changed during retirement')
         pending.unlink()
-    fd=os.open(completion,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
-    with os.fdopen(fd,'wb')as stream:stream.write(canonical(result));stream.flush();os.fsync(stream.fileno())
-    fd=os.open(completion.parent,os.O_RDONLY|os.O_DIRECTORY)
-    try:os.fsync(fd)
-    finally:os.close(fd)
+    publish_exclusive(completion,result)
     return result
 
 def retire(envelope,authority,*,workspace,guard,now=None):
