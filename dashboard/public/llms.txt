@@ -320,8 +320,11 @@ assurance are unchanged. Epoch 31 passed opening and captured all 574 timely bat
 miners, with zero deferrals. Duplicate-task exclusions left 428 eligible unaudited
 pairs; the bounded selector chose 256 for training and retained the other 172
 for audits/reward evidence. Token capture took 27.583 seconds; complete cheap
-collection and selection took 98.300 seconds. Training is now running; a completed
-new checkpoint, sustained hourly cadence and held-out convergence are unproven.
+collection and selection took 98.300 seconds. Epoch 31 then completed normally
+in 48.855 minutes, training 256 unaudited task pairs with optimizer step 21 to 22.
+All ten model files and 23 optimizer shards passed independent full readback
+before checkpoint 22 became authoritative. Sustained hourly cadence and held-out
+convergence remain unproven.
 See GitHub docs/BOUNDED_TRAINING_CAPTURE.md for configuration and deployment gates.
 
 Historical verifier report admission is separate from permission to claim new
@@ -346,4 +349,11 @@ the CDF gate. Its original archive has a ROOT full-readback ACK. Production
 enrollment, cross-node numerical adjudication and a new tolerance profile are
 not established by these controls. The 23:00 UTC writer recorded a submission
 for 202 current UIDs; newer CP20 numerical cases remain unresolved. Learning
-convergence and epoch 31's next checkpoint remain unproven.
+convergence remains unproven; epoch 31's checkpoint is now confirmed above.
+
+Nine original CP20 cases have also completed independent cross-node reference
+checks. Eight fit the existing narrow numerical bounds; one exceeds them. An
+eight-only historical UNKNOWN resolution is being prepared, preserving original
+reports and leaving later sampler/environment correctness unproven for traces
+that stopped at TOPLOC. This resolution is not yet deployed and does not broaden
+live proof tolerances or label those traces VALID.

@@ -1,3 +1,34 @@
+Verified continuation, 2026-10-06, 23:20 UTC:
+E31 normal closure is genuine: ROOT-signed completion at1791328815.2914548,
+2931.291s/48.855min from epoch label. Original train-b174d081 completed with256
+unaudited task pairs, effective weight changes, optimizer21→22 and no trainer
+verification. CP22=6fd7f7cc17843cf728bc98e11fb926b1c0b36c5cb3763359c8dfda68190af79b;
+optimizer descriptor1b06eee75cf9ca01c9fdc13eeff58ac157e7f6296e82b8262f959a323f5f52f3.
+Original publisher37c3d71e succeeded without a recovery run. ROOT independently
+authenticated the original full23 reader (91,387,491,264bytes), all ten model
+fullGET hashes (15,242,726,226bytes), and completion/authority checkpoint binding.
+Controller advanced to round32. Automatic cache ACK promotion was still pending
+at last remote observation; no manual cleanup or promotion performed.
+Actual report: warmrestore45.424s, training/checkpoint466.264s (gradient105.684,
+CPUoptimizer190.639,save66.236), optimizerexport942.914s, aggregate96.920MB/s.
+Eight upload lanes overlap; these timers are not independent epoch totals.
+Current epoch's original collection captured574/574, eligible428, selected256.
+This establishes one normal sub-hour closure, not sustained cadence or convergence.
+Nine original CP20 cross-node references completed under a distinct ROOT scope:
+allnine child waits0/no timeout,418.895s,18rollouts (four exact references,
+14TOPLOC rejections). ROOT authenticated the original scope/terminals/result
+hashes and independently full-read the10,601,510byte archive before signing and
+full-reading its R2 ACK. Eight cases fit the previous narrow numeric bounds;
+case1 has mean2/128 and remains excluded. Later sampler/grader gates are not
+proved for TOPLOC-rejected trajectories. Eight-only historical UNKNOWN resolver
+is CPU preparation only; no tolerance change, VALID label or reward activation.
+The same-parent learning study's BF16 proof replay defect was caught before GPU
+execution: generation uses the exact forced FP32 contract; research training
+admits only ROOT-acknowledged original generations and never compares their
+FP32 proofs using a BF16 training model. Real tiny controls pass. CPU staging
+on the retained H100 is authorized; fresh CP21 qualification and ROOT execution
+scope remain prerequisites. Production source/quota/objective are unchanged.
+
 Verified continuation, 2026-10-06, 23:05 UTC:
 The population-once CPU auditor overlay is deployed. Actual immutable comparison
 of2352 enrolled reports and7013 population rows produced identical admissions
