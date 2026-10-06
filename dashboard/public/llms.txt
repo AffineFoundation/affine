@@ -13,10 +13,12 @@ checkpoint creation took 7.7 minutes. One sub-hour epoch does not establish
 sustained hourly operation or held-out convergence.
 K=1/L=1, at most three batches per UID, the 16-attempt ceiling, selected-token
 logprobs plus TOPLOC, eight-stream state transport, and nonpayable operation
-are unchanged. Seven verifier workers have the additive source admission;
-the audit coordinator is being recovered with read-only metadata access and
-progress-based startup checks. Training continues independently. Chain weight
-submission remains disabled. Follow the latest signed OPEN manifest for the
+are unchanged. Seven verifier workers have the additive source admission.
+The audit coordinator is recovered with read-only metadata access and
+progress-based startup checks; a genuine new current-source job has been
+queued and claimed. This is producer progress, not a claim that every audit
+has finished. Training continues independently. Chain weight submission
+remains disabled. Follow the latest signed OPEN manifest for the
 current mining checkpoint and deadline; a published checkpoint alone is not
 an invitation to mine outside that window.
 
