@@ -4,13 +4,13 @@ import unittest
 from pathlib import Path
 
 from ops import continuous_owned_heldout128 as service
-from test_owned_cached_group_operator import OperatorTests
+import test_owned_cached_group_operator as fixture
 
 
 class Adapter:
     def __init__(self, test):
         self.t=test; self.launches=[]; self.lost_reply=False; self.reserved=False
-        self.result={'status':'observing-original'}; self.tamper=False
+        self.result={'status':'observing-original'}; self.tamper=False;self.pointer_calls=0
     def idle(self): return not self.reserved
     def bootstrap_complete(self, entry):return copy.deepcopy(self.t.bootstrap)
     def publication(self, row):
@@ -19,13 +19,16 @@ class Adapter:
             version='authority-persistent-trainer-state-v1',descriptor=d,descriptor_sha256=service.digest(d))))
     def prepare(self, policy, publication, identity):
         t=self.t;scope=copy.deepcopy(t.f.scope);scope['workspace']=str(t.f.root)
+        scope.update(source_path='/qualified/source',endpoint=dict(workspace=scope['workspace'],code='/qualified/source',python='/approved/python',known_hosts='/approved/knownhosts'))
         if self.tamper:scope['runtime_versions']={'fixture':'wrong'}
+        if getattr(self,'stale_endpoint',False):scope['endpoint']['workspace']='/old/CP13'
         return dict(checkpoint=t.f.cp['id'],cohort_sha256=policy['cohort_sha256'],identity=identity,
-                    original_jobs=t.f.jobs,scope=t.f.sign(scope),workspace=scope['workspace'],expires_at=1000)
+                    original_jobs=t.f.jobs,scope=t.f.sign(scope),workspace=scope['workspace'],expires_at=1000,optimizer_step=14)
     def launch(self, packet):
         self.launches.append(copy.deepcopy(packet))
         if self.lost_reply:raise TimeoutError('lost detached launch reply')
     def observe(self, packet):return copy.deepcopy(self.result)
+    def publish_pointer(self,packet,summary):self.pointer_calls+=1
     def archive_complete(self,packet,result):
         t=self.t
         return t.f.sign(dict(version='owned-cached-heldout128-checkpoint-actual-v1',checkpoint=t.f.cp,
@@ -36,7 +39,7 @@ class Adapter:
 
 class ContinuousTests(unittest.TestCase):
     def setUp(self):
-        self.f=OperatorTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixture.OperatorTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
         self.production=self.f.root/'production';self.production.mkdir();self.journal=self.f.root/'service'
         self.now=10
         self.policy=dict(version=service.VERSION,execute_allowed=True,created_at=1,expires_at=10000,
@@ -62,7 +65,9 @@ class ContinuousTests(unittest.TestCase):
         self.adapter.result=dict(status='complete',durable_ACK_count=4,owned_model_retired=True,count=128,successes=84)
         with self.loop() as loop:
             self.assertEqual(loop.step()['successes'],84)
+            self.assertEqual(loop.step()['status'],'complete128-projection-published')
             self.assertEqual(loop.step()['status'],'waiting-published-checkpoint')
+        self.assertEqual(self.adapter.pointer_calls,1)
         self.assertEqual(len(self.adapter.launches),1)
     def test_lost_reply_never_relaunches_original(self):
         with self.loop() as loop:
@@ -102,6 +107,10 @@ class ContinuousTests(unittest.TestCase):
             self.policy[key]=old
         self.adapter.tamper=True
         with self.loop() as loop,self.assertRaises(ValueError):loop.step()
+    def test_stale_CP13_endpoint_workspace_refused_before_GPU_dispatch(self):
+        self.adapter.stale_endpoint=True
+        with self.loop() as loop,self.assertRaisesRegex(ValueError,'physical group route'):loop.step()
+        self.assertFalse(self.adapter.launches)
     def test_physical_reservation_and_expired_unissued_cannot_dispatch(self):
         with self.loop() as loop:
             loop.step();self.adapter.reserved=True
@@ -123,6 +132,25 @@ class ContinuousTests(unittest.TestCase):
         self.policy['bootstrap_completed'][0]['summary_sha256']=service.digest(self.bootstrap)
         with self.assertRaises(ValueError):
             with self.loop():pass
+    def test_paired_legacy_bootstrap_preserves_original_envelope_without_new_jobs(self):
+        self.bootstrap=self.f.sign(dict(version='owned-cached-heldout128-paired-actual-v1',
+            source_sha256=service.SOURCE,cohort_sha256=self.policy['cohort_sha256'],
+            all_eight_genuine_full_R2_ACKs=True,all_group_owned_models_retired=True,
+            task_count_per_checkpoint=128,groups={'CP13':{}}))
+        self.policy['bootstrap_completed'][0].update(group_label='CP13',summary_sha256=service.digest(self.bootstrap))
+        with self.loop() as loop:
+            self.assertEqual(loop.state['checkpoints']['b'*64]['summary'],self.bootstrap)
+        self.assertFalse(self.adapter.launches)
+    def test_lost_projection_reply_resumes_pointer_only_not_GPU_group(self):
+        with self.loop() as loop:
+            loop.step();loop.step();self.adapter.result=dict(status='complete',durable_ACK_count=4,owned_model_retired=True,count=128,successes=84)
+            loop.step()
+        def lost(*a):raise TimeoutError('lost projection reply')
+        self.adapter.publish_pointer=lost
+        with self.loop() as loop,self.assertRaises(TimeoutError):loop.step()
+        self.adapter.publish_pointer=lambda *a:None
+        with self.loop() as loop:self.assertEqual(loop.step()['status'],'complete128-projection-published')
+        self.assertEqual(len(self.adapter.launches),1)
     def test_double_service_owner_fails_exclusive_lock(self):
         with self.loop():
             with self.assertRaises(BlockingIOError):

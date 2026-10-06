@@ -64,5 +64,8 @@ def prepare_packet(policy, publication, identity, authority, signer, *, now, ref
     envelope=signer(scope)
     validate_scope(envelope,authority,str(root),policy['source_files'],now=now)
     validate_originals(scope,jobs,authority)
+    from ops.owned_cached_group_ack_relay import QualifiedGroupObserver
+    QualifiedGroupObserver(scope,jobs,authority)  # Pure CPU route check before any dispatch.
     return dict(checkpoint=cp,cohort_sha256=policy['cohort_sha256'],identity=identity,
-                workspace=str(root),expires_at=expires,scope=envelope,original_jobs=jobs)
+                workspace=str(root),expires_at=expires,scope=envelope,original_jobs=jobs,
+                optimizer_step=signed(publication['optimizer_publication'],authority)['descriptor']['optimizer_steps'])

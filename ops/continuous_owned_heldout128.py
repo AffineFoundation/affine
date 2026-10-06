@@ -153,11 +153,20 @@ class Continuous128:
                 if digest(envelope)!=entry['summary_sha256']:
                     raise ValueError('exact original completed bootstrap summary')
                 value=signed(envelope,self.authority)
-                cp=value['checkpoint']['id'] if isinstance(value['checkpoint'],dict) else value['checkpoint']
+                if value.get('version')=='owned-cached-heldout128-checkpoint-actual-v1':
+                    cp=value['checkpoint']['id'] if isinstance(value['checkpoint'],dict) else value['checkpoint']
+                    complete=(value.get('all_four_genuine_full_R2_ACKs') is True and
+                              value.get('group_owned_model_retired') is True and value.get('task_count')==128)
+                elif value.get('version')=='owned-cached-heldout128-paired-actual-v1':
+                    # Adapter authenticates this scoped group's original4 ACKs
+                    # to the explicit checkpoint; the paired envelope stays intact.
+                    cp=entry['checkpoint']
+                    complete=(entry.get('group_label') in value.get('groups',{}) and
+                              value.get('all_eight_genuine_full_R2_ACKs') is True and
+                              value.get('all_group_owned_models_retired') is True and value.get('task_count_per_checkpoint')==128)
+                else:complete=False;cp=None
                 if (cp!=entry['checkpoint'] or value.get('source_sha256')!=SOURCE or
-                    value.get('cohort_sha256')!=self.policy['cohort_sha256'] or
-                    value.get('all_four_genuine_full_R2_ACKs') is not True or
-                    value.get('group_owned_model_retired') is not True or value.get('task_count')!=128):
+                    value.get('cohort_sha256')!=self.policy['cohort_sha256'] or not complete):
                     raise ValueError('complete original predecessor128 only')
                 self.state['checkpoints'][cp]=dict(checkpoint=cp,phase='complete',summary=envelope,bootstrap=True)
             save(self.path,self.state)
@@ -173,6 +182,11 @@ class Continuous128:
         validate_policy(self.envelope,self.authority,self.clock())
         if private_json(self.path)!=self.state: raise ValueError('service outbox changed')
         rows=self.state['checkpoints']
+        for row in rows.values():
+            if row['phase']=='complete' and row.get('projection_pending'):
+                self.adapter.publish_pointer(row['packet'],row['summary'])
+                row['projection_pending']=False;self.persist()
+                return dict(status='complete128-projection-published',checkpoint=row['checkpoint'])
         if any(r['phase']=='infrastructure-pending' for r in rows.values()):
             return dict(status='original-infrastructure-reconciliation-required',new_job_started=False)
         active=[r for r in rows.values() if r['phase'] in ('prepared','dispatch_attempted','observing')]
@@ -201,7 +215,7 @@ class Continuous128:
                     value.get('all_four_genuine_full_R2_ACKs') is not True or value.get('group_owned_model_retired') is not True or
                     value.get('task_count')!=128 or value.get('successes')!=result['successes']):
                     raise ValueError('actual signed full128 archive summary')
-                row.update(phase='complete',summary=summary);self.persist()
+                row.update(phase='complete',summary=summary,projection_pending=True);self.persist()
             elif result['status'] in ('original-infrastructure-failure','expired-unissued'):
                 # No fabricated zero and no replacement. Ownership/cleanup
                 # remains journaled for explicit automated reconciliation.
@@ -226,6 +240,7 @@ class Continuous128:
             packet=self.adapter.prepare(self.policy,publication,identity)
             if (packet.get('checkpoint')!=cp or packet.get('cohort_sha256')!=self.policy['cohort_sha256'] or
                 packet.get('identity')!=identity or len(packet.get('original_jobs',[]))!=4 or
+                packet.get('optimizer_step')!=descriptor['optimizer_steps'] or
                 not self.clock()<packet.get('expires_at',0)<=min(self.policy['expires_at'],self.clock()+self.policy['group_lifetime_seconds'])):
                 raise ValueError('exact bounded per-checkpoint four-original packet')
             from ops.owned_cached_group_retention import validate_scope
@@ -234,6 +249,8 @@ class Continuous128:
             if scope['groups']!=self.policy['groups'] or scope['runtime_versions']!=self.policy['runtime_versions'] or scope['checkpoint']['id']!=cp:
                 raise ValueError('exact pinned service scientific scope')
             validate_originals(scope,packet['original_jobs'],self.authority)
+            from ops.owned_cached_group_ack_relay import QualifiedGroupObserver
+            QualifiedGroupObserver(scope,packet['original_jobs'],self.authority)
             payloads=[signed(j,self.authority) for j in packet['original_jobs']]
             if len({j['job_id'] for j in payloads})!=4:
                 raise ValueError('four distinct immutable original identities')
