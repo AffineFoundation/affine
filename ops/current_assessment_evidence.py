@@ -82,7 +82,7 @@ def _population(document, epoch, authority, sources):
 
 
 def load_evidence(audit_config_path, *, authority, cutoff, verifiers,
-                  expected_source_admission_sha256=None):
+                  expected_source_admission_sha256=None, expected_numerical_resolution_policy_sha256=None):
     """Return unsigned snapshots plus original population times and diagnostics.
 
     ``verifiers`` and the optional canonical envelope digest come from the
@@ -94,6 +94,30 @@ def load_evidence(audit_config_path, *, authority, cutoff, verifiers,
         raise ValueError('explicit assessment authority/verifier policy')
     config, config_sha = _read(audit_config_path)
     service = config['continuous_audit_service']
+    numerical = {}
+    if expected_numerical_resolution_policy_sha256 is not None:
+        settings = service.get('numerical_resolution')
+        if not valid_digest(expected_numerical_resolution_policy_sha256) or type(settings) is not dict or set(settings) != {'policy_document', 'reference_archives'}:
+            raise ValueError('explicit ROOT pinned numerical resolution configuration')
+        document = settings['policy_document']
+        authenticate(document, authority)
+        if digest(document) != expected_numerical_resolution_policy_sha256:
+            raise ValueError('ROOT numerical resolution policy pin changed')
+        archive_inputs = []
+        if type(settings['reference_archives']) is not list or len(settings['reference_archives']) > 100:
+            raise ValueError('bounded numerical reference archives')
+        for entry in settings['reference_archives']:
+            if type(entry) is not dict or set(entry) != {'ack_path', 'archive_path'}:
+                raise ValueError('exact numerical reference file inputs')
+            ack, _ = _read(entry['ack_path'])
+            path = Path(entry['archive_path'])
+            if path.is_symlink(): raise ValueError('original numerical reference archive regular file')
+            with path.open('rb') as stream: raw = stream.read(64 * 1024**2 + 1)
+            if len(raw) > 64 * 1024**2: raise ValueError('bounded numerical reference archive')
+            archive_inputs.append(dict(ack=ack, archive=raw))
+        numerical = dict(numerical_resolution_policy=document,
+            expected_numerical_resolution_policy_sha256=expected_numerical_resolution_policy_sha256,
+            numerical_reference_archives=archive_inputs)
     try:
         sources = admitted_service_config(service, authority)
     except BadSignatureError as error:
@@ -229,7 +253,7 @@ def load_evidence(audit_config_path, *, authority, cutoff, verifiers,
             snap = snapshot(previous, [dict(admitted_queue_job_sha256=k) for k in joined],
                 observers, epoch=epoch, round=p['round'], checkpoint=manifest['checkpoint']['id'],
                 cutoff=cutoff, audit_policy=service['policy'], admitted_jobs=joined,
-                eligible_evidence_ids=p['eligible_evidence_ids'], adjudications=adjudications, authority=authority)
+                eligible_evidence_ids=p['eligible_evidence_ids'], adjudications=adjudications, authority=authority, **numerical)
             if execution is not None:
                 snap.update(execution_evidence_policy_sha256=digest(execution), execution_evidence_policy_version=execution['version'], os_resource_enforcement_claimed=False, historical_execution_proven=False)
             snapshots.append(snap)
@@ -238,7 +262,11 @@ def load_evidence(audit_config_path, *, authority, cutoff, verifiers,
             refused.append(_issue('snapshot', epoch, error))
     audit_observations = observations([dict(admitted_queue_job_sha256=k) for k in admissions],
         records, observers, cutoff, admitted_jobs=admissions,
-        adjudications=adjudications, authority=authority)
+        adjudications=adjudications, authority=authority, **numerical)
+    if numerical:
+        hashes['numerical_resolution_policy_sha256'] = expected_numerical_resolution_policy_sha256
+        hashes['numerical_resolution_archive_ACK_sha256'] = sorted(digest(x['ack']) for x in numerical['numerical_reference_archives'])
+        hashes['numerical_resolution_effective_observations'] = [dict(evidence_id=o['evidence_id'], original_job_sha256=o['job_sha256'], original_outcome=o['original_outcome'], outcome=o['outcome'], original_observation_sha256=o['original_observation_sha256'], review_sha256=o['numerical_resolution_review_sha256'], sampler_and_grader_completion_claimed=False) for o in audit_observations if 'numerical_resolution_review_sha256' in o]
     global_round = max((p['round'] for p, _ in populations.values()), default=0)
     global_details = current_estimates(audit_observations,
         {r['miner'] for r in records}, global_round, service['policy'])

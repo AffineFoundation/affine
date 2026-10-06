@@ -15,6 +15,7 @@ from ops.live_reward_writer import (authenticate_cutover, global_lock, guard_fil
 from ops.live_reward_exporter import atomic, sign
 
 VERSION = 'hourly-current-assessment-writer-v1'
+NUMERICAL_RESOLUTION_VERSION = 'hourly-current-assessment-writer-reviewed-numerical-v2'
 
 
 def validate_policy(document, authority, cutover_document, anchor_document):
@@ -23,8 +24,16 @@ def validate_policy(document, authority, cutover_document, anchor_document):
               'audit_config','source_admission_sha256','verifiers','module_hashes',
               'cutover_sha256','anchor_sha256','execute_enabled','zero_total_policy',
               'registration_change_policy'}
-    if set(p) != fields or p['version'] != VERSION or p['half_life_hours'] != HALF_LIFE_HOURS:
+    expected_fields = fields | ({'numerical_resolution_policy_sha256'} if p['version'] == NUMERICAL_RESOLUTION_VERSION else set())
+    if set(p) != expected_fields or p['version'] not in (VERSION, NUMERICAL_RESOLUTION_VERSION) or p['half_life_hours'] != HALF_LIFE_HOURS:
         raise ValueError('exact hourly assessment policy')
+    if p['version'] == NUMERICAL_RESOLUTION_VERSION:
+        import importlib.util
+        from subnet.continuous_audit_policy import valid_digest
+        if not valid_digest(p['numerical_resolution_policy_sha256']): raise ValueError('explicit ROOT numerical resolution digest')
+        required = {str(Path(__file__).resolve())} | {str(Path(importlib.util.find_spec(name).origin).resolve()) for name in ('subnet.numerical_resolution', 'subnet.continuous_audit_policy', 'ops.current_assessment_evidence')}
+        if not required <= {str(Path(path).resolve()) for path in p['module_hashes']}:
+            raise ValueError('present ROOT pins for numerical resolution execution modules')
     if p['netuid'] != 120 or p['owner_hotkey'] != OWNER or type(p['execute_enabled']) is not bool:
         raise ValueError('owner/netuid/execution policy')
     if p['zero_total_policy'] != 'owner-sink-v1':
@@ -76,8 +85,9 @@ def run_once(policy_document, cutover_document, anchor_document, authority, *, e
                 raise ValueError('immutable hourly assessment binding')
         else:
             try:
+                numerical = dict(expected_numerical_resolution_policy_sha256=p['numerical_resolution_policy_sha256']) if p['version'] == NUMERICAL_RESOLUTION_VERSION else {}
                 evidence = evidence_loader(p['audit_config'], authority=authority, cutoff=cutoff,
-                                           verifiers=p['verifiers'], expected_source_admission_sha256=p['source_admission_sha256'])
+                                           verifiers=p['verifiers'], expected_source_admission_sha256=p['source_admission_sha256'], **numerical)
                 assessment = calculate(evidence['snapshots'], evidence['committed_at_by_epoch'], cutoff)
                 assessment.update(evidence_cutoff=cutoff, assessment_stale=False,
                                   evidence_hashes=evidence['evidence_hashes'],

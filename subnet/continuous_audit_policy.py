@@ -42,7 +42,7 @@ def random_selection(records,seed,count,already=()):
  ordered=sorted((row for row in rows if digest(row)not in excluded),key=lambda row:digest(dict(domain=VERSION,seed=seed,row=row)))
  return ordered[:count]
 
-def observations(envelopes,records,verifiers,cutoff,*,admitted_jobs=None,adjudications=(),authority=None):
+def observations(envelopes,records,verifiers,cutoff,*,admitted_jobs=None,adjudications=(),authority=None,numerical_resolution_policy=None,expected_numerical_resolution_policy_sha256=None,numerical_reference_archives=()):
  """Reject substitution/conflicts; repeats never increase confidence or penalties."""
  rows=population(records);lookup={(r['epoch'],r['miner'],r['batch_sha256']):r for r in rows};result={}
  finite(cutoff,0,2**53,'immutable hourly cutoff');need(type(envelopes)is list and len(envelopes)<=1000000,'bounded audit evidence')
@@ -79,18 +79,20 @@ def observations(envelopes,records,verifiers,cutoff,*,admitted_jobs=None,adjudic
    expected=dict(version='continuous-audit-adjudication-v1',evidence_id=key,original_job_sha256=old['job_sha256'],reference_job_sha256=p['job_sha256'],outcome=p['outcome'])
    need(expected in resolutions and old['outcome']=='numerical_ambiguous'and p['outcome']in('verified_valid','confirmed_invalid'),'conflicting authenticated audits require explicit reference adjudication')
   result[key]=dict(p,round=row['round'],evidence_id=key,verifier=signer)
- return list(result.values())
+ from .numerical_resolution import apply
+ return apply(list(result.values()),rows,admitted_jobs or {},authority=authority,cutoff=cutoff,policy_document=numerical_resolution_policy,expected_policy_sha256=expected_numerical_resolution_policy_sha256,reference_archives=numerical_reference_archives)
 
-def snapshot(records,envelopes,verifiers,*,epoch,round,checkpoint,cutoff,audit_policy,admitted_jobs=None,adjudications=(),authority=None,eligible_evidence_ids=None):
+def snapshot(records,envelopes,verifiers,*,epoch,round,checkpoint,cutoff,audit_policy,admitted_jobs=None,adjudications=(),authority=None,eligible_evidence_ids=None,numerical_resolution_policy=None,expected_numerical_resolution_policy_sha256=None,numerical_reference_archives=()):
  """Validity estimate can decrease; current cohort bounds historical reputation.
 
  The caller authenticates immutable opening/policy and signs this exact result.
  No pending/ambiguous/infra observation counts as valid or fraudulent.
  """
  p=policy(audit_policy);rows=population(records,ordered=p['version']in(VERSION,RESOLUTION_VERSION));integer(round,0,2**31-1,'snapshot round');need(valid_digest(checkpoint),'current immutable checkpoint')
+ if expected_numerical_resolution_policy_sha256 is not None:need(p['version']==RESOLUTION_VERSION,'numerical resolution requires explicit UNKNOWN coverage policy')
  need(all(r['round']<=round and r['committed_at']<=cutoff for r in rows),'future or postcutoff committed population')
  current=[r for r in rows if r['epoch']==epoch];need(all(r['round']==round and r['checkpoint']==checkpoint for r in current),'current epoch/checkpoint binding')
- audits=observations(envelopes,rows,verifiers,cutoff,admitted_jobs=admitted_jobs,adjudications=adjudications,authority=authority);miners=sorted({r['miner']for r in current});points={};details={}
+ audits=observations(envelopes,rows,verifiers,cutoff,admitted_jobs=admitted_jobs,adjudications=adjudications,authority=authority,numerical_resolution_policy=numerical_resolution_policy,expected_numerical_resolution_policy_sha256=expected_numerical_resolution_policy_sha256,numerical_reference_archives=numerical_reference_archives);miners=sorted({r['miner']for r in current});points={};details={}
  eligible_set=None if eligible_evidence_ids is None else set(eligible_evidence_ids)
  if eligible_set is not None:need(all(valid_digest(v)for v in eligible_set)and eligible_set<=set(digest(r)for r in current),'actual admitted eligible population subset')
  score_rows=[r for r in current if eligible_set is None or digest(r)in eligible_set]
@@ -126,7 +128,11 @@ def snapshot(records,envelopes,verifiers,*,epoch,round,checkpoint,cutoff,audit_p
   points[miner]=eligible*probability*multiplier*coverage
   details[miner]=dict(unique_eligible_batches=eligible,validity_probability=probability,recent_posterior_mean=overall,current_cohort_posterior_mean=cohort,confirmed_invalid_current=invalid_current,confirmed_invalid_recent=invalid_recent,reward_multiplier=multiplier,blacklisted=blacklisted,**coverage_details)
  total=sum(points.values());weights={m:(v/total if total else 0.)for m,v in points.items()}
- return dict(version=p['version'],epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,policy=p,population_sha256=digest(rows),eligible_evidence_ids=sorted(eligible_set)if eligible_set is not None else None,evidence_ids=sorted(o['evidence_id']for o in audits),miners=details,points=points,weights=weights,training_waits_for_audits=False,unaudited_samples_claimed_verified=False)
+ result=dict(version=p['version'],epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,policy=p,population_sha256=digest(rows),eligible_evidence_ids=sorted(eligible_set)if eligible_set is not None else None,evidence_ids=sorted(o['evidence_id']for o in audits),miners=details,points=points,weights=weights,training_waits_for_audits=False,unaudited_samples_claimed_verified=False)
+ if expected_numerical_resolution_policy_sha256 is not None:
+  result['numerical_resolution_policy_sha256']=expected_numerical_resolution_policy_sha256
+  result['numerical_resolution_observations']=[dict(evidence_id=o['evidence_id'],original_job_sha256=o['job_sha256'],original_outcome=o['original_outcome'],outcome=o['outcome'],original_observation_sha256=o['original_observation_sha256'],review_sha256=o['numerical_resolution_review_sha256'],sampler_and_grader_completion_claimed=False)for o in audits if 'numerical_resolution_review_sha256'in o]
+ return result
 
 def verifier_contract(manifest):
  """A change of source, sampler, numerics or runtime starts another cohort."""
@@ -171,7 +177,7 @@ def admit_queue_reports(queue_rows,records,authority,verifiers,approved_sources,
   need(report.get('source_files')==job['source_files']and all(report.get('runtime_versions',{}).get(k)==v for k,v in job['runtime_versions'].items())and report.get('backend_profile')==manifest['backend_profile']and report.get('numerical_policy')==manifest['numerical_policy'],'actual runtime/profile/numerical/source evidence')
   if report.get('execution_resources_enforced')is False and expected_enforced is True:raise BackendEvidenceNotAdmitted(job,source)
   need(report.get('execution_resources_enforced')is expected_enforced,'actual backend resource enforcement evidence')
-  contract=verifier_contract(manifest);completed=finite(report['completed_at'],0,2**53,'original report completion');observed=[]
+  contract=verifier_contract(manifest);completed=finite(report['completed_at'],0,2**53,'original report completion');observed=[];native={}
   audits=report.get('audits');need(type(audits)is list and len(audits)==len(job['submissions']),'original full child report population')
   for obj,audit in zip(job['submissions'],audits):
    ref=obj['commitment_ref'];row=lookup.get((manifest['epoch'],ref['miner'],ref['batch_sha256']));need(row is not None and row['proof_sha256']==obj['sha256']and row['commitment_sha256']==ref['commitment_sha256']and row['checkpoint']==manifest['checkpoint']['id']and row['verifier_contract_sha256']==contract,'audit immutable committed child/execution cohort')
@@ -181,8 +187,9 @@ def admit_queue_reports(queue_rows,records,authority,verifiers,approved_sources,
    elif o.get('valid')is False and (o.get('fully_audited')is True and o.get('failure_kind')=='confirmed_invalid' or o.get('failure_kind')=='structural_invalid'):outcome='confirmed_invalid'
    elif o.get('valid')is None and o.get('failure_kind')=='numerical_ambiguous':outcome='numerical_ambiguous'
    else:outcome='infrastructure_error'
-   observed.append(dict(version='continuous-audit-observation-v1',epoch=row['epoch'],checkpoint=row['checkpoint'],miner=row['miner'],batch_sha256=row['batch_sha256'],commitment_sha256=row['commitment_sha256'],verifier_contract_sha256=contract,outcome=outcome,completed_at=completed,job_sha256=digest(job)))
-  key=digest(job);value=dict(verifier=worker,observations=observed,original_report_request_sha256=digest(parsed(queue['report_request'])))
+   observation=dict(version='continuous-audit-observation-v1',epoch=row['epoch'],checkpoint=row['checkpoint'],miner=row['miner'],batch_sha256=row['batch_sha256'],commitment_sha256=row['commitment_sha256'],verifier_contract_sha256=contract,outcome=outcome,completed_at=completed,job_sha256=digest(job));observed.append(observation)
+   native[digest(observation)]=dict(reason=o.get('reason'),failure_kind=o.get('failure_kind'),fully_audited=o.get('fully_audited'),artifact_sha256=obj['sha256'])
+  key=digest(job);value=dict(verifier=worker,observations=observed,original_report_request_sha256=digest(parsed(queue['report_request'])),original_report_sha256=digest(report),source_sha256=source,native_observations=native)
   need(key not in admissions or admissions[key]==value,'conflicting original queued job');admissions[key]=value
  return admissions
 
