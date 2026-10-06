@@ -645,7 +645,8 @@ def checkpoint(manifest, workspace, cache=None):
 
 def audit(data, manifest, runtime, *, commitment_miner=None):
     from .forced_sampling import assurance as sampling_assurance
-    from .fast_prefill_audit import NumericalAmbiguity
+    from .fast_prefill_audit import NumericalAmbiguity,THREEWAY_VERSION
+    threeway=manifest.get('sampling_contract',{}).get('version')==THREEWAY_VERSION
     from .batches import submission_records,SubmissionRejected
     from .protocol import entries, entry, classification, sample_key,harness_for
     from .artifact_budget import for_manifest
@@ -680,18 +681,21 @@ def audit(data, manifest, runtime, *, commitment_miner=None):
         # Configuration or infrastructure refusal must fail the worker honestly.
         selected=runtime.for_environment(definition['spec'],harness_for(definition,index))
         from .audit_policy import InvalidSample
-        confirmed_invalid=False
+        confirmed_invalid=False;uncertain=[]
         try:
             if batch.get('environment_version')!=selected.spec.version:raise ValueError('environment version')
             seen.add(key);rolls=batch['rollouts'];tokens=set()
             if len(rolls)!=manifest['K']+manifest['L'] or len(arrays)!=len(rolls):raise ValueError('sample count')
-            for rollout,probs in zip(rolls,arrays):
+            for rollout_number,(rollout,probs) in enumerate(zip(rolls,arrays)):
                 signature=tuple(tuple(t['output']) for t in rollout['turns'])
                 if signature in tokens or rollout['index']!=index or rollout.get('env_id')!=definition['env_id']:raise ValueError('sample binding/duplicate')
                 tokens.add(signature)
                 if number in selected_indices:
                     try:verified=selected.verify(rollout,probs)
-                    except (InvalidSample,NumericalAmbiguity):raise
+                    except NumericalAmbiguity as error:
+                        if not threeway:raise
+                        uncertain.append((rollout_number,error));continue
+                    except InvalidSample:raise
                     except Exception as error:
                         if policy.get('version')=='bounded-random-v1':
                             raise RuntimeError('audit execution failed; retry without miner penalty') from error
@@ -700,7 +704,14 @@ def audit(data, manifest, runtime, *, commitment_miner=None):
                         confirmed_invalid=True
                         raise ValueError('inference or replay')
             pos=[r for r in rolls if classification(r)=='positive'];neg=[r for r in rolls if classification(r)=='negative']
-            if len(pos)!=manifest['K'] or len(neg)!=manifest['L']:raise ValueError('positive/negative quota')
+            if len(pos)!=manifest['K'] or len(neg)!=manifest['L']:
+                raise (InvalidSample if threeway else ValueError)('positive/negative quota')
+            if uncertain:
+                error=uncertain[0][1]
+                error.environment_verification_complete=all(getattr(e,'environment_verification_complete',False)for _,e in uncertain)
+                error.uncertain_rollouts=[dict(rollout=i,turns=getattr(e,'uncertain_turns',[]),positions=getattr(e,'uncertain_positions',[]),count=getattr(e,'uncertain_position_count',0))for i,e in uncertain]
+                error.uncertain_position_count=sum(row['count']for row in error.uncertain_rollouts)
+                raise error
             if number in selected_indices:
                 accepted.append(batch);pairs.extend((definition,p,n) for p,n in zip(pos,neg))
             outcomes.append(dict(batch=number,env_id=definition['env_id'],index=index,structural_valid=True,valid=True if number in selected_indices else None,fully_audited=number in selected_indices))
@@ -708,7 +719,8 @@ def audit(data, manifest, runtime, *, commitment_miner=None):
             outcome=dict(batch=number,valid=None,fully_audited=False,failure_kind='numerical_ambiguous',reason=str(error)[:300])
             from .fast_prefill_audit import THREEWAY_VERSION
             if manifest.get('sampling_contract',{}).get('version')==THREEWAY_VERSION:
-                outcome.update(sampling_verification_complete=False,environment_verification_complete=False)
+                outcome.update(sampling_verification_complete=False,environment_verification_complete=getattr(error,'environment_verification_complete',False))
+                outcome['uncertain_rollouts']=getattr(error,'uncertain_rollouts',[])
                 if hasattr(error,'uncertain_positions'):
                     outcome.update(uncertain_token_positions=error.uncertain_positions,uncertain_token_position_count=error.uncertain_position_count)
             outcomes.append(outcome)
