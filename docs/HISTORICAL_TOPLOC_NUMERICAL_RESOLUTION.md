@@ -60,3 +60,22 @@ must include honest long/max-length cross-H200/H100 controls and adversarial
 small-coordinate proof mutations. Numerical UNKNOWN is never permission to
 accept a forged proof. That future scientific contract requires separate ROOT
 review and deployment; this historical overlay does not activate it.
+
+## Additional nine-case reference archive
+
+The resolver also understands `nine-CP20-original-reference-root-scope-v1` research archives. This adds an archive layout; it does not change the inference contract, numeric thresholds, or the existing four/five-case archive rules. It remains inactive unless a ROOT-signed resolution policy explicitly pins the original observations and acknowledged reference results.
+
+Admission checks the signed original jobs and worker report requests, the full committed batch tuple and selected batch, the exact artifact bytes, the reviewed diagnostic/runner/supervisor bytes, the independently acknowledged qualification, and all nine original case terminals. A truncated, substituted, unsigned, or incomplete archive cannot supply resolution evidence.
+
+The completed CP20 study produced 18 independent rollout checks: four exact matches and 14 TOPLOC rejections. Eight whole cases fit the existing bounds: exponent mismatch at most one, mean mantissa error at most 1/128, median error zero, and at most six affected segments per rollout. Case 1 reached 2/128 and is excluded. The proposed eight-entry addition maps only those exact observations to UNKNOWN; it grants no VALID credit and does not establish later sampler or grader checks for rejected trajectories.
+
+The additional policy is prospective CPU preparation. It cannot rewrite submitted hourly assessments. CP21 TOPLOC reports remain separate unresolved evidence until their own independent research and review; resolving CP20 alone does not establish that current miner penalties are correct or removed.
+
+Portable crypto/archive controls and the existing cutoff, metric, and original-evidence controls run with:
+
+```sh
+python -m unittest discover -s tests -p 'test_nine_reference_archive.py'
+python -m unittest discover -s tests -p 'test_numerical_resolution.py'
+```
+
+These unit fixtures test authentication and admission, not model quality or GPU qualification. The operator separately validates genuine immutable research archives and applies the policy to actual admitted original observations before reviewing any activation.

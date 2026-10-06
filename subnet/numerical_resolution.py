@@ -21,6 +21,97 @@ def valid_hash(value):
     return type(value) is str and len(value) == 64 and all(c in '0123456789abcdef' for c in value)
 
 
+def nine_reference(ack, archive, members, read, authority):
+    """Exact independently executed CP20 references; historical UNKNOWN only."""
+    names = {m.name for m in members}
+    required = {'scope.ROOT-SIGNED.json', 'original-supervisor-terminal.json',
+        'original-supervisor-intent.json', 'original-supervisor-child.json',
+        'run_nine_CP20_references.py', 'supervisor_nine_CP20_1650.py',
+        'toploc_reference_adjudication.py', 'original-output/original-terminal.json'}
+    need(required <= names, 'complete nine-reference execution archive')
+    scope_bytes = read('scope.ROOT-SIGNED.json')
+    scope = authenticate(json.loads(scope_bytes), authority)
+    terminal = json.loads(read('original-supervisor-terminal.json'))
+    need(scope.get('version') == 'nine-CP20-original-reference-root-scope-v1'
+         and scope.get('execute_allowed') is True
+         and scope.get('production_mutations') is False
+         and scope.get('production_queue_used') is False
+         and scope.get('optimizer_updates') == 0
+         and len(scope.get('cases', [])) == 9
+         and scope.get('per_case_seconds') == 150 and scope.get('total_seconds') == 1500
+         and scope.get('supervisor_wall_seconds') == 1650
+         and scope.get('CUBLAS_WORKSPACE_CONFIG') == ':4096:8', 'reviewed nine-reference bounded scope')
+    need(hashlib.sha256(scope_bytes).hexdigest() == ack.get('scope_file_sha256') == terminal.get('scope_sha256')
+         and terminal.get('exit_code') == 0 and terminal.get('timed_out') is False
+         and terminal.get('production_mutations') is False,
+         'genuine nine-reference original terminal')
+    need(ack.get('reference_execution_completed') is True and ack.get('reference_case_count') == 9,
+         'ROOT nine-reference full archive acknowledgment')
+    qualification = authenticate(scope['qualification_full_ACK'], authority)
+    need(qualification.get('full_readback_verified') is True
+         and qualification.get('scientific_qualification_passed') is True
+         and qualification.get('control_count') == 20 and qualification.get('honest_VALID') == 4
+         and qualification.get('production_changes') is False
+         and valid_hash(scope.get('qualification_result_sha256')), 'actual ROOT acknowledged qualification')
+    for name, pin in [('run_nine_CP20_references.py', 'runner_sha256'),
+                      ('supervisor_nine_CP20_1650.py', 'supervisor_sha256'),
+                      ('toploc_reference_adjudication.py', 'diagnostic_sha256')]:
+        need(hashlib.sha256(read(name)).hexdigest() == scope[pin], 'nine-reference exact execution bytes')
+    completed = json.loads(read('original-output/original-terminal.json'))
+    need(completed.get('all_nine_completed') is True and completed.get('completed_cases') == 9
+         and len(completed.get('cases', [])) == 9, 'all nine original case terminals')
+    results, jobs = {}, set()
+    for i, case in enumerate(scope['cases']):
+        row = completed['cases'][i]
+        need(row.get('case') == i and row.get('returncode') == 0 and row.get('timed_out') is False
+             and row.get('original_job_sha256') == case['original_job_sha256'], 'exact original case terminal')
+        for key, filename in [('job', 'job.json'), ('report_request', 'report_request.json'), ('artifact', 'artifact.zip')]:
+            member = 'inputs/case-' + str(i) + '/' + filename
+            need(member in names and hashlib.sha256(read(member)).hexdigest() == case['file_sha256'][key],
+                 'exact original nine-reference input bytes')
+        job = authenticate(json.loads(read('inputs/case-' + str(i) + '/job.json')), authority)
+        manifest = authenticate(job['manifest'], authority)
+        need(digest(job) == case['original_job_sha256'] and digest(job) not in jobs
+             and manifest['checkpoint']['id'] == scope['checkpoint']
+             and manifest['source_bundle']['sha256'] == scope['source_sha256'], 'exact original nine-reference job')
+        jobs.add(digest(job))
+        request = json.loads(read('inputs/case-' + str(i) + '/report_request.json'))
+        worker_request = authenticate(request, case['worker'])
+        report = worker_request['report']
+        need(worker_request['action'] == 'report' and worker_request['job_id'] == job['job_id']
+             and report['job_id'] == job['job_id'] and report['job_sha256'] == digest(job)
+             and digest(report) == case['report_sha256'], 'original report/job binding')
+        child = case['child']
+        need(type(child) is int and 0 <= child < len(job['submissions']), 'original child binding')
+        obj, audit = job['submissions'][child], report['audits'][child]
+        need(obj['commitment_ref'] == case['commitment_ref']
+             and obj['sha256'] == audit['submission_sha256'] == case['file_sha256']['artifact']
+             and audit['selected_batches'] == case['selected_batches'] == [0]
+             and len(audit['outcomes']) == 1 and audit['outcomes'][0]['batch'] == 0
+             and audit['outcomes'][0]['fully_audited'] is True, 'original committed batch selection')
+        import zipfile
+        with zipfile.ZipFile(io.BytesIO(read('inputs/case-' + str(i) + '/artifact.zip'))) as proof:
+            need(len(proof.namelist()) <= 1000 and proof.getinfo('manifest.json').file_size <= 2 * 1024**2, 'bounded artifact batch manifest')
+            batches = json.loads(proof.read('manifest.json'))
+        need(type(batches) is list and len(batches) == 1, 'original one committed batch')
+        batch, ref = batches[0]['batch'], obj['commitment_ref']
+        need(digest(batch) == ref['batch_sha256'] and batch['epoch'] == manifest['epoch']
+             and batch['checkpoint'] == scope['checkpoint'] and batch['env_id'] == ref['env_id']
+             and batch['index'] == batch.get('sample_index') == ref['index'], 'original full commitment tuple')
+        need(digest(request) == case['report_request_sha256'], 'authenticated original worker request')
+        member = 'original-output/case-' + str(i) + '-research.json'
+        raw_result = read(member); result_sha = hashlib.sha256(raw_result).hexdigest()
+        result = json.loads(raw_result)
+        need(result_sha == row['output_sha256']
+             and result['original_job_sha256'] == case['original_job_sha256']
+             and result['original_report_request_sha256'] == case['report_request_sha256']
+             and result['artifact_sha256'] == case['file_sha256']['artifact']
+             and result['checkpoint'] == scope['checkpoint']
+             and result['source_bundle_sha256'] == scope['source_sha256'], 'exact original nine-reference result binding')
+        results[result_sha] = result
+    return ack, scope, results
+
+
 def reference(document, raw, authority):
     """Recheck the archived original result, rather than trusting a summary label."""
     ack = authenticate(document, authority)
@@ -35,6 +126,8 @@ def reference(document, raw, authority):
              and all(m.isfile() and m.size <= 2 * 1024**2 for m in members), 'bounded unique archive members')
         def read(name):
             return archive.extractfile(name).read()
+        if 'scope.ROOT-SIGNED.json' in {m.name for m in members}:
+            return nine_reference(ack, archive, members, read, authority)
         scope_names = [m.name for m in members if m.name.startswith('original/scope.') and m.name.endswith('.ROOT-SIGNED.private.json')]
         terminal_names = [m.name for m in members if m.name.startswith('original/original-execute.') and m.name.endswith('.terminal.private.json')]
         need(len(scope_names) == len(terminal_names) == 1, 'one original reference scope and terminal')
