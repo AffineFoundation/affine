@@ -13,7 +13,7 @@ last authoritative parent. The failed original is preserved, and a separate
 explicit recovery is being prepared from that complete parent. No successor
 checkpoint or step fourteen is claimed. E23's mining deadline is closed and no
 new mining window has opened; wait for a fresh signed OPEN manifest.
-The owned miner completed three batches from 47 attempts within its 600-second
+In E22, the owned miner completed three batches from 47 attempts within its 600-second
 window. Checkpoint materialization took 34.7 seconds and model construction
 18.9 seconds. Eight-stream optimizer export took 16.2 minutes; training and
 checkpoint creation took 7.7 minutes. One sub-hour epoch does not establish
@@ -25,7 +25,8 @@ The audit coordinator is recovered with read-only metadata access and
 progress-based startup checks; a genuine new current-source job has been
 completed: its authenticated report accepted four fully audited batches.
 This does not claim that every audit has finished. The learning loop is
-independent of audits, but is currently held for the E23 export recovery. Chain weight submission
+independent of audits, but is currently held for the E23 export recovery.
+Chain weight submission
 remains disabled. Follow the latest signed OPEN manifest for the
 current mining checkpoint and deadline; a published checkpoint alone is not
 an invitation to mine outside that window.
