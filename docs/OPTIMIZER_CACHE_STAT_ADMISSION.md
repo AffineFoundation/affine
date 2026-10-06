@@ -14,6 +14,6 @@ Each admitted shard is opened with NOFOLLOW before its owned rename. A private r
 
 The private trainer filesystem, ownership catalogue and qualified lifecycle code are trusted. Stat identity is not a cryptographic defense against a malicious privileged host rewriting both bytes and its catalogue. ROOT-signed durable parent state remains the authority; no ROOT signature is fabricated for a local stat observation. Source changes do not alias an old cache into a new source.
 
-New timings include `parent_cache_validation_and_admission` and `parent_cache_and_restore_total` in both transport diagnostics and startup phases. Existing `parent_state_restore` stays a separate phase, so the earlier serial preparation cost is visible.
+New timings include `parent_cache_validation_and_admission` and `parent_cache_and_restore_total` in transport diagnostics. Startup phases expose the non-overlapping cache-validation and restore durations. Existing `parent_state_restore` stays a separate phase, so the earlier serial preparation cost is visible.
 
 Before production, qualify the new source pins, signed policy, full 23-file promotion and reuse on an idle qualified trainer. Compare exact restored buffers and the next optimizer update against the full-hash baseline; test real owned rename/lease continuity and all cold fallback paths. CPU fixture measurements establish only the local mechanism, not a 91GB production speed claim. Independent full-state physical readback, export SHA, optimizer lineage, numerical parameters and single-writer publication gates remain unchanged.

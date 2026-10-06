@@ -984,7 +984,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                     destination,persistent_diagnostics,persistent_state=train(runtime,pairs,out,manifest,job,authority,approved_checkpoint=approved)
                     metrics,persistent_diagnostics=report_updates(persistent_diagnostics,job,manifest)
                     phases=persistent_diagnostics.get('transport_phase_seconds',{})
-                    for name in ('parent_cache_validation_and_admission','parent_cache_and_restore_total'):
+                    for name in ('parent_cache_validation_and_admission','parent_state_restore'):
                         if name in phases:startup_timings[name]=dict(seconds=phases[name],calls=1)
                     report['persistent_training_state']=persistent_state
                 elif job.get('training_policy')==FIXED_POLICY:
