@@ -101,7 +101,12 @@ complete package, 7846d811955b623f10d31da9b8a16d927f49511979cb5c238d991a22fc3092
 has full R2 readback and CPU qualification on all ten compute roles. It is
 qualification-only and has not activated a GPU job. Its default-off optimizer
 cache must establish its exact durable acknowledgment before a subsequent
-warm job; an asynchronous acknowledgment race is being fixed before activation.
+warm job. Main now closes the asynchronous acknowledgment race with a
+synchronously persisted, original signed durability intent before epoch
+advancement. Eight new process-loss, delayed-thread and conflicting-ACK
+controls pass independently. This fix requires another immutable source seal;
+the 7846 qualification archive is unchanged and must not be activated for
+cache-enabled training.
 A distinct CPU byte-cache control passed on the full original 23 optimizer
 objects (91,387,491,264 bytes), including corruption detection, invalid-ACK
 rejection and exclusive leases. This does not demonstrate a production cache
