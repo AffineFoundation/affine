@@ -49,8 +49,9 @@ signed OPEN manifest for mining. Chain weight submissions remain disabled.
 The independent fixed 128-task E16 evaluation declined from 78/128 to 71/128,
 with two improvements and nine regressions. Eight regressed tasks reached the
 successor's 1,024-generation-call cap; this is a diagnostic proxy, not confirmed
-truncation or an explanation of causality. No convergence is claimed. A separate 2,048-token diagnostic has completed
-its original BEFORE evaluation at 80/128; the matched AFTER run is in progress.
+truncation or an explanation of causality. No convergence is claimed. A separate 2,048-token diagnostic completed
+at 80/128 BEFORE and 71/128 AFTER on the exact same fixed cohort and seeds.
+Increasing the diagnostic generation cap did not recover the successor score.
 These are fresh matched controls and do not replace the historical 1,024-token results.
 
 The dashboard now distinguishes committed submitted batches, cheap-eligible
@@ -107,6 +108,12 @@ advancement. Eight new process-loss, delayed-thread and conflicting-ACK
 controls pass independently. This fix requires another immutable source seal;
 the 7846 qualification archive is unchanged and must not be activated for
 cache-enabled training.
+Its successor qualification-only package is
+9f392dabf41278474c18c686393180833630571e49265a75b98eae88f3a95b88.
+Full R2 archive/member readback and CPU staging on all ten roles passed,
+and all seven worker registries include its exact runtime inventory.
+It includes the synchronous original-ACK fix, but is not the active epoch
+contract; activation waits for the original E18 durable completion.
 A distinct CPU byte-cache control passed on the full original 23 optimizer
 objects (91,387,491,264 bytes), including corruption detection, invalid-ACK
 rejection and exclusive leases. This does not demonstrate a production cache
@@ -282,6 +289,14 @@ plus a separate miner, trainer and evaluator; the controller remains on Arbos.li
 Seven CPU worker parents now include typed terminal lease-expiry recovery and
 no stale static checkpoint-cache flags. Their sealed numerical backends and
 worker identities are preserved. Source and runtime admission still apply.
+All seven now run the immediate post-ACK owned-checkpoint disposal wrapper
+from main commit 53dcd78d. After a successful authenticated report ACK, it
+records the backend-verified owned inventory, releases the job's model lease,
+and deletes that owned checkpoint immediately, even without another job.
+Other active leases, changed inode snapshots and external mapped caches are
+excluded; original reports, logs and R2 records remain. The exact staged
+worker/cleanup pair passed CPU controls. First real post-roll disposal
+observations are still pending; old cleanup observations are not relabeled.
 
 
 Arbos.life is the operator host running the validator/controller, authenticated audit queue, single chain writer, discovery monitor and dashboard. The active GPU roles are one owned test miner, four independent verifiers, one trainer and one evaluator on seven existing Lium role endpoints. A qualified optimizer reader runs on a separate retained physical host and does not require GPU numerical qualification. Only the four approved verifier identities may serve E12; unqualified hardware and deleted or retired workers are not silently admitted. Shared R2 stores signed manifests, frozen submissions, reports, scores, checkpoints and history. This dashboard is at affine.io; the Arbos website and DNS are unchanged.
