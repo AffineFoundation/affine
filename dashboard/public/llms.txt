@@ -1,6 +1,20 @@
 # Affine — MATH mining, verification and training
 
 Current operational status, 2026-10-06:
+E21 is OPEN on approved source
+4db060697ab8303ee667e5787831a574b41e4a10afb8fe6a209dd7db40b9f373,
+using checkpoint 339f31e788d5fa8044dc53ea022346ff3a83a999bed481aeef6565e154a0c8c2.
+The sustained controller and original compact miner are running. The signed
+contract requires one positive and one negative rollout per task, at most three
+batches per UID, and a 16-attempt ceiling. Generation uses cached FP32 eager
+SM90 inference and prescribed public draws. Upload selected-token logprobs and
+TOPLOC fingerprints under selected-token-logprobs-v1; full-vocabulary arrays
+are NOT required. Authenticate and execute the signed source bundle rather
+than assuming every research module on GitHub main is a live contract.
+The collection window is 600 seconds. Training uses cheap-eligible UNAUDITED
+inputs without an inference-audit barrier. Chain weight submission is disabled.
+The older chronological records below describe historical contracts; the latest
+signed OPEN manifest and this status take precedence.
 Latest completed epoch: E20, 332 captured documents, 294 cheap-eligible batches,
 256 selected UNAUDITED training inputs, and durable optimizer step eleven at
 checkpoint 339f31e788d5fa8044dc53ea022346ff3a83a999bed481aeef6565e154a0c8c2.
@@ -13,19 +27,19 @@ took 58.7 seconds versus E19's 961.5-second cold restore. Export/upload took
 Automatic owned-model and expired-input retirement runs on all seven reachable
 verifiers. Latest forty authenticated audit jobs had median claim-to-report time
 264 seconds: checkpoint downloading/authentication accounted for 187 seconds
-and model construction 18 seconds. Main now includes default-off bounded audit
-job grouping to amortize these costs without retaining unbounded model caches.
-It is not yet enabled in the running auditor. The next mining source cutover
-is being qualified against the actual step-eleven checkpoint; a new epoch has
-not yet been opened. Chain weight submission remains disabled.
+and model construction 18 seconds. Bounded audit grouping is now enabled:
+up to four submissions per job, 32 rows per selection tick and 14 jobs in flight.
+All seven workers have the additive approved compact-source mapping. The first
+three authenticated four-pair jobs accepted all twelve pairs, taking 335–396
+seconds per job including one shared cold checkpoint load. This is observed
+throughput, not a controlled speedup benchmark.
 
 A complete integrated source candidate,
 4db060697ab8303ee667e5787831a574b41e4a10afb8fe6a209dd7db40b9f373,
 passed full R2 archive/file-hash readback, CPU staging on ten roles and 204
-reviewed CPU tests. Its runtime contains 177 pinned files. It is QUALIFICATION
-ONLY, not the deployed mining contract. Live source remains the signed OPEN
-manifest's 9f392dabf41278474c18c686393180833630571e49265a75b98eae88f3a95b88.
-The integrated candidate includes compact selected-token probability artifacts,
+reviewed CPU tests. Its runtime contains 177 pinned files. Fresh executed
+step-eleven calibration and final public-draw confirmation passed before E21
+opened. This is now the active E21 mining source. It includes compact selected-token probability artifacts,
 parallel immutable input publication and explicit native evaluation policies.
 On the existing idle H200, its original bounded qualification completed in
 214.91 seconds. All five compact-proof honest/tampering controls passed, with
@@ -43,20 +57,25 @@ Both jobs graded all 32 tasks without infrastructure errors, but every output
 hit its short token cap and neither checkpoint solved a task. This is not a
 learning-regression result. Both owned checkpoint copies were automatically
 disposed after authenticated report ACK and full R2 readback.
-A new, separately signed fixed32/1,024-token cached evaluation experiment is
-running on the independent H200. Its original checkpoint-ten BEFORE job is
-issued; the checkpoint-eleven AFTER job waits for that job and automatic
-disposal. This experiment preserves the original fixed task indices and seeds;
-its quality comparison is pending. Neither native evaluation policy is evidence
-for a miner's sampling provenance.
+The separately signed fixed32/1,024-token cached evaluation completed on the
+independent H200: checkpoint ten scored 19/32 and checkpoint eleven 18/32,
+with one gain, two losses and zero infrastructure errors. This does not show
+improved generalization. Both original report ACKs were independently read back,
+and both owned model copies were automatically disposed. Ongoing 1,024-token
+evaluation of future durable checkpoints is being installed separately.
+Neither native evaluation policy is evidence for a miner's sampling provenance.
 
 Main also provides a DEFAULT-OFF token-only prefill research verifier. It
 recomputes distributions locally and retains the prescribed public draws,
 CDF consistency checks, calibrated ambiguity handling and environment replay.
 It removes uploaded probability/TOPLOC claims rather than accepting arbitrary
 teacher-forced tokens. Forty-three CPU controls passed, including eighty
-toy mutated-token cases with fresh TOPLOC fingerprints. GPU latency and two-H200 compatibility
-are not established yet; this research policy is NOT a live mining contract.
+toy mutated-token cases with fresh TOPLOC fingerprints. A separate real H200
+research run accepted one authentic trajectory and rejected all eighty fresh-
+TOPLOC token swaps under both the official compact and token-only checks.
+It did not acquire a complete positive/negative pair. Order-balanced latency,
+four-rollout pair coverage and second-H200 compatibility remain unqualified;
+the token-only research policy is NOT a live mining contract.
 
 The independent queue API now rejects unsupported explicit probability-artifact
 policies; this does not activate the compact source contract by itself. Public
@@ -313,12 +332,13 @@ Start with these concrete guides:
 - https://github.com/AffineFoundation/affine/blob/main/docs/FORCED_SAMPLING_CUTOVER.md
 
 Use the exact runtime and hardware profile pinned in the signed manifest.
-H200/SM90, CUDA BF16 eager, disabled TF32 and CUBLAS_WORKSPACE_CONFIG=:4096:8
+H200/SM90, CUDA FP32 eager, disabled TF32 and CUBLAS_WORKSPACE_CONFIG=:4096:8
 are the qualified profile. Core version pins are torch 2.14.0, transformers
 5.14.1 and toploc 0.1.6. A package version alone does not qualify a different
 GPU/runtime; follow the full setup/profile instructions. The manifest's numerical
-policy is authoritative. Full output probability width is 152,064, distinct from
-the tokenizer's 151,665 entries.
+policy is authoritative. The verifier computes a 152,064-wide distribution;
+miners following the current compact contract upload only selected-token
+logprobs, not that full distribution.
 
 Read authority and current_url from https://affine.io/mining.json. Run the signed
 source bootstrap using your private activated Ed25519 seed file:
@@ -333,10 +353,11 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
 
 The search budget is a local per-task choice, not the signed attempt ceiling.
 Start with eight attempts per task, then move on if no success/failure pair is
-found. Using all 128 attempts on a consistently solved or consistently failed
-task can consume the epoch without completing a batch. Budgets from one through
-128 are supported; smaller budgets do not change the model, public draws,
-temperature, proof checks or the three-batch quota.
+found. The current signed ceiling is sixteen. A local search budget cannot
+extend it; use at most the ceiling in the current manifest. Spending the entire
+budget on a consistently solved or failed task can consume the epoch without
+completing a batch. Smaller local budgets preserve the original public draw
+context, model, temperature, proof checks and three-batch quota.
 
 The authority public key is
 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd.
