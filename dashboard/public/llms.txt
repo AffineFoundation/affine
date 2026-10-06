@@ -78,7 +78,8 @@ errors. This small fixed cohort does not establish convergence or general
 held-out improvement. Historical reports and cohort identities are preserved.
 
 The larger matched SAME128 independent native evaluation scored CP11 77/128,
-CP12 86/128, CP13 84/128, CP14 78/128, CP15 85/128 and CP16 87/128.
+CP12 86/128, CP13 84/128, CP14 78/128, CP15 85/128, CP16 87/128,
+CP17 83/128 and CP18 86/128.
 CP16 gained five tasks and lost three against CP15 on the same fixed cohort.
 CP14 completed all four original jobs,
 full private R2 acknowledgements and automatic owned-model retirement. These
@@ -241,6 +242,8 @@ retired its owned replica automatically and published the sixth dashboard row.
 It solved 87/128 with five gains and three losses against CP15.
 CP17 subsequently completed the same unchanged 128-task cohort at 83/128, with
 all four original archives acknowledged and its owned replica retired.
+CP18 then scored 86/128 on the same cohort; its four original archives passed
+full R2 acknowledgement and its owned replica was retired automatically.
 Learning is fluctuating; sustained convergence is not established. Failed-export evidence archival
 after a genuine replacement ACK and durable retry are available as default-off
 operator code; live adapter installation is pending and they are not part of
@@ -285,3 +288,9 @@ three honest controls, retained one numerical unknown and rejected all 80 token
 mutations; backend native, quota and invalid-dominance controls also passed.
 This is not token-only production admission; the live miner format remains
 selected-token logprobs plus TOPLOC under the signed epoch manifest.
+
+Prospective token-only code is available on GitHub but is default-off. The new
+explicit contract skips miner probability/TOPLOC construction and uses versioned
+token transport, prescribed-draw prefill checks and fresh native grading. Current
+checkpoint GPU generation and end-to-end qualification are still required. Do not
+change external miner upload formats until a signed epoch manifest selects it.
