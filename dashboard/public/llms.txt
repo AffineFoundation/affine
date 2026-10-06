@@ -42,8 +42,10 @@ logprobs plus TOPLOC, eight-stream state transport, and nonpayable operation
 are unchanged. Seven verifier workers are enrolled. The newest additive source
 and storage-capacity rollout has completed on all seven workers. The audit
 coordinator's indexed/read-only successor later stopped on a SQLite enqueue
-commit lock. A guarded WAL concurrency fix is being prepared; auditing is not
-yet stable. Five production workers have restarted with corrected registry-selected
+commit lock. The queue has now migrated to WAL with FULL durability, preserving
+its inode, schema and every stored row; the same API source restarted successfully.
+The successor audit service is being brought up; sustained auditing is not yet
+demonstrated. Five production workers have restarted with corrected registry-selected
 source-bound capacity validation; two other roles are reserved for finite proof
 qualification. No new successful audit is implied by an active worker alone.
 Historical authenticated audits remain evidence for their original contracts.
