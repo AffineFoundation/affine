@@ -32,12 +32,19 @@ def committed_replacement(value,authority,root,original):
     if status.get('job_id')!=job['job_id']or status.get('phase')!='complete'or status.get('exit_code')!=0 or live_original(status):raise ValueError('replacement actual terminal required')
     return ack
 
-def retire(envelope,authority,*,workspace,archive,policy=None,now=None):
+def retire(envelope,authority,*,workspace,archive,policy=None,now=None,renewal=None):
     if policy is None:return dict(status='disabled',retired_bytes=0)
     if policy!={'version':VERSION}:raise ValueError('explicit failed-evidence lifecycle opt-in')
     v=signed(envelope,authority);now=time.time()if now is None else now
     required={'version','execute_allowed','created_at','expires_at','original_signed_job','original_terminal','durable_recovery_ACK','directory','files','journal'}
-    if set(v)!=required or v['version']!=VERSION or v['execute_allowed']is not True or not v['created_at']<=now<v['expires_at']or not 0<v['expires_at']-v['created_at']<=86400:raise ValueError('bounded explicit evidence retirement scope')
+    if set(v)!=required or v['version']!=VERSION or v['execute_allowed']is not True or not 0<v['expires_at']-v['created_at']<=86400:raise ValueError('bounded explicit evidence retirement scope')
+    deadline=v['expires_at']
+    if renewal is not None:
+        from ops.failed_training_evidence_queue import RENEWAL_VERSION
+        r=signed(renewal,authority)
+        if set(r)!={'version','execute_allowed','grant_sha256','created_at','expires_at'}or r['version']!=RENEWAL_VERSION or r['execute_allowed']is not True or r['grant_sha256']!=sha(envelope)or now<v['created_at']or not r['created_at']<=now<r['expires_at']or not 0<r['expires_at']-r['created_at']<=3600:raise ValueError('exact immutable grant timing-only renewal')
+        deadline=r['expires_at']
+    elif not v['created_at']<=now<deadline:raise ValueError('evidence retirement authority expired')
     root=Path(workspace).resolve(strict=True);original=signed(v['original_signed_job'],authority);jobid=original['job_id']
     if original.get('role')!='train'or not re.fullmatch('[A-Za-z0-9_-]+',jobid):raise ValueError('original failed train identity')
     terminal=json.loads((root/'runner-status'/(jobid+'.json')).read_bytes())
@@ -94,7 +101,7 @@ def retire(envelope,authority,*,workspace,archive,policy=None,now=None):
                 if json.loads(receipt_path.read_bytes())!=expected:raise ValueError('immutable full archive receipt changed')
             else:publish_exclusive(receipt_path,receipt)
             committed_replacement(v,authority,root,original);unreferenced([path])
-            if not v['created_at']<=(time.time()if now is None else now)<v['expires_at']:raise ValueError('archive completed after retirement authority expiry')
+            if not (time.time()if now is None else now)<deadline:raise ValueError('archive completed after retirement authority expiry')
             if identity(path.lstat())!=before:raise ValueError('evidence changed before unlink')
             path.unlink()
         result=dict(status='complete',version=VERSION,retired_bytes=sum(x['size']for x in rows),retired_files=len(rows),incomplete_optimizer_promoted=False,original_failure_jobs_logs_and_recovery_records_preserved=True,all_original_evidence_full_private_archive_readback=True)
@@ -123,7 +130,7 @@ def bucket_archive(bucket):
         return dict(version='full-object-readback-evidence-v1',key=key,sha256=h.hexdigest(),size=size,bytes_read=size,complete=response['ResponseMetadata']['HTTPStatusCode']==200)
     return archive
 
-def schedule_after_durability(controller,ack,policy,*,dispatch):
+def schedule_after_durability(controller,ack,policy,*,dispatch=None,queue_path=None):
     """Opt-in asynchronous CPU hook; the genuine ACK is supplied by completion.
 
     ROOT signs each exact failure blueprint once. The already trusted controller
@@ -133,6 +140,9 @@ def schedule_after_durability(controller,ack,policy,*,dispatch):
     deferred and cannot block the next training/mining epoch.
     """
     if policy is None:return []
+    if queue_path is not None:
+        from ops.failed_training_evidence_queue import enqueue
+        return enqueue(controller,ack,policy,queue_path=queue_path)
     if set(policy)!={'version','approved_failures'}or policy['version']!=VERSION or not isinstance(policy['approved_failures'],list)or not 1<=len(policy['approved_failures'])<=4:raise ValueError('bounded explicit failed-evidence scheduling policy')
     confirmed=signed(ack,controller.authority.id)
     if confirmed.get('version')!='durable-original-trainer-cache-ACK-v1'or confirmed.get('authority_state_committed')is not True:raise ValueError('schedule only after actual durability ACK')
