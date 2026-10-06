@@ -15,7 +15,11 @@ All twenty-three state objects and the new model completed durable publication;
 optimizer step fourteen and checkpoint
 2ecc9b79a8b741ad18b6943d3f8255cdd32c9fbb1432b1cb3515b5b80a1380ff
 are now authoritative. The recovery service exited successfully, and the
-automatic ordinary controller started preparing epoch 24 from that checkpoint.
+automatic ordinary controller opened epoch 24 from that checkpoint. Its collection
+captured 360 submission documents, found 309 eligible task batches and selected
+256 for training in 108.2 seconds. The original training job is running, without
+waiting for inference audits; checkpoint fifteen is not yet claimed. All 23
+parent optimizer files (91.39 GB) were reused from the genuine recovery cache.
 E23 submissions remain closed. Miners must follow the current fresh signed
 OPEN manifest; a running controller alone is not an open submission contract.
 In E22, the owned miner completed three batches from 47 attempts within its 600-second
@@ -25,12 +29,14 @@ checkpoint creation took 7.7 minutes. One sub-hour epoch does not establish
 sustained hourly operation or held-out convergence.
 K=1/L=1, at most three batches per UID, the 16-attempt ceiling, selected-token
 logprobs plus TOPLOC, eight-stream state transport, and nonpayable operation
-are unchanged. Seven verifier workers have the additive source admission.
-The audit coordinator is recovered with read-only metadata access and
-progress-based startup checks; a genuine new current-source job has been
-completed: its authenticated report accepted four fully audited batches.
-This does not claim that every audit has finished. The learning loop is
-independent of audits, but is currently held for the E23 export recovery.
+are unchanged. Seven verifier workers are enrolled. The newest additive source
+and storage-capacity rollout completed on the first worker, then stopped on a
+transient read-only SQLite lock; the remaining original workers are preserved.
+The audit coordinator is currently stopped after a backend-evidence policy
+omission. Its corrected policy and safe rollout continuation are under review.
+Historical authenticated audits remain evidence for their original contracts;
+this does not claim that all current-source audits have finished. The learning
+loop remains independent of this audit outage and continues epoch 24.
 Chain weight submission
 remains disabled. Follow the latest signed OPEN manifest for the
 current mining checkpoint and deadline; a published checkpoint alone is not
@@ -200,11 +206,14 @@ operator code; live adapter installation is pending and they are not part of
 the running recovery source.
 
 Verifier download-capacity admission and automatic per-checkpoint size metadata
-are implemented and tested as default-off operator code. They reserve missing
+are implemented and tested as operator code. They reserve missing
 model and artifact bytes before backend execution, renew the original lease
 on infrastructure deferral, and protect active checkpoint leases. The combined
-worker rollout is still pending; this is not a claim that all live verifiers
-already enforce the new reserve policy.
+worker rollout is partially complete; this is not a claim that all live verifiers
+already enforce the new reserve policy. The independently running metadata
+observer follows genuinely published checkpoints and authenticated queued
+historical jobs, and delivers signed byte inventories automatically. It does
+not download models or provide proof-validity credit.
 
 ## Public interfaces and documentation
 
