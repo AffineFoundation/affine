@@ -1,3 +1,15 @@
+Verified independent TOPLOC research, 2026-10-06, ~21:49 UTC:
+Four original E29 batches completed independent H100 diagnostics under exact
+CP19/f213/artifact bindings. All four reproduced zero-tolerance TOPLOC rejection;
+eight rollouts include2 exact passes and6 tiny mismatches (mantissa mean.0078125,
+median0, isolated exp1). Genuine original terminal exit0/no timeout, full archive
+R2 readback and ROOT ACK completed. This does not prove cheating or admit VALID;
+no production reports/rewards rewritten. Remaining5 rows and explicit numerical
+resolution policy remain pending.
+Global gateway serialization measured~.106s/21.66MB;537 rewrites project~57s
+before R2/write costs. Basic parallel capture alone is insufficient; recoverable
+small capture journaling is being prepared separately. Production unchanged.
+
 Verified independent evaluation, 2026-10-06, ~21:46 UTC:
 Checkpoint20 SAME128 completed at84/128 (65.625%), compared with85 atCP19
 and86 atCP18. ROOT summary signature, unchanged cohort SHA and four original

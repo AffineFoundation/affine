@@ -59,3 +59,27 @@ reports, while preserving every original record. For future contracts, record
 TOPLOC mismatch metrics and route suspected numeric disagreement to bounded
 reference adjudication before a confirmed-invalid penalty. This document and
 research tool do not activate such a policy.
+
+## Actual CP19/f213 independent research, 2026-10-06
+
+The isolated current-runtime qualification completed its original execution with
+four honest controls accepted and sixteen mutations rejected. Its full original
+archive was uploaded to R2 and independently read back before reference dispatch.
+
+Four original epoch-29 batches then completed independent H100 reference checks
+under their unchanged checkpoint, source, artifact and sampling bindings. All four
+reproduced a TOPLOC rejection with the original zero-tolerance calibration. Of
+eight rollouts, two passed exactly and six had small fingerprint deviations:
+nonzero mantissa means were 0.0078125 with zero medians; isolated segments also
+had one exponent mismatch. The 138.2-second original execution ended zero without
+timeout. Its original outputs and signed scope are archived with a full-readback
+ROOT acknowledgment. This is a research observation, not an admission decision.
+
+These measurements do not establish intentional cheating. They also do not turn
+the rejected artifacts into verified valid samples. Existing production reports
+and rewards have not been rewritten. A separate explicitly authorized numerical
+resolution policy is needed because the current ambiguity-only adjudication does
+not cover reports already labeled invalid. The remaining five epoch-29 TOPLOC
+rejection rows still require equivalent diagnostic coverage before any all-nine
+claim. Future diagnostic reporting should include mismatch magnitudes rather than
+reducing all numerical differences to one rejection string.
