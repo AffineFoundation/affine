@@ -201,6 +201,11 @@ class Continuous128:
                 self.adapter.launch(packet)
                 row['phase']='observing';self.persist()
                 return dict(status='observing-original',checkpoint=row['checkpoint'])
+            if row['phase']=='dispatch_attempted' and hasattr(self.adapter,'reconcile_launch'):
+                continuation=self.adapter.reconcile_launch(packet)
+                if continuation['status'] in ('expired-unissued','physical-reservation-deferred'):
+                    return continuation
+                row['phase']='observing';self.persist()
             result=self.adapter.observe(packet)
             if result['status']=='complete':
                 if (result.get('durable_ACK_count')!=4 or result.get('owned_model_retired') is not True or
