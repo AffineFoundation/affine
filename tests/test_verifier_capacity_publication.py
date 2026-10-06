@@ -41,8 +41,8 @@ class CapacityPublication(unittest.TestCase):
   remote=Remote();remote.cp=self.cp;remote.controller=self.c;install(Remote,self.policy)
   self.assertEqual(remote.commit_remote_checkpoint({},self.staged),self.cp);self.assertEqual(len(seen),1)
  def test_idle_observer_backfills_only_completed_owned_publication(self):
-  roles=self.fx.root/'roles';roles.mkdir();(roles/'original-checkpoint-publication.json').write_bytes(canonical(self.staged));self.assertEqual(len(backfill(self.c,self.policy,roles=roles)),1);self.assertEqual(len(flush(self.c,self.policy,replicate=self.replicate)),7)
-  (roles/'failed-partial.json').write_text('not a complete publication');self.assertEqual(len(backfill(self.c,self.policy,roles=roles)),1)
+  roles=self.fx.root/'roles';roles.mkdir();(self.fx.root/'controller.json').write_bytes(canonical(dict(persistent_state_committed=True,checkpoint=dict(self.cp,descriptor_key='public/checkpoints/'+self.cp['id']+'/authorities/'+self.fx.authority+'/checkpoint.json'))));(roles/'original-checkpoint-publication.json').write_bytes(canonical(self.staged));self.assertEqual(len(backfill(self.c,self.policy,publication_state=roles,controller_state=self.fx.root/'controller.json')),1);self.assertEqual(len(flush(self.c,self.policy,replicate=self.replicate)),7)
+  (roles/'failed-partial.json').write_text('not a complete publication');self.assertEqual(len(backfill(self.c,self.policy,publication_state=roles,controller_state=self.fx.root/'controller.json')),1)
  def test_eight_remote_calls_maximum_per_observer_tick(self):
   enqueue(self.c,self.policy,self.cp,self.staged);other=dict(id='e'*64,files=self.cp['files']);staged=dict(self.staged,checkpoint=other['id']);enqueue(self.c,self.policy,other,staged);calls=[]
   def fail(grant,config):calls.append(grant);raise TimeoutError()
@@ -61,3 +61,34 @@ class CapacityPublication(unittest.TestCase):
   self.assertEqual(r.returncode,0,r.stderr);self.assertTrue(json.loads(r.stdout)['installed']);original=(directory/(self.cp['id']+'.json')).read_bytes()
   bad=copy.deepcopy(payload);bad['grant']['payload']['files']['model.safetensors']['size']+=1;r=subprocess.run([sys.executable,'-c',INSTALL_SCRIPT],input=canonical(bad),capture_output=True)
   self.assertNotEqual(r.returncode,0);self.assertEqual((directory/(self.cp['id']+'.json')).read_bytes(),original)
+
+ def test_current_authority_advances_without_hardcoded_checkpoint_or_ancient_backfill(self):
+  roles=self.fx.root/'roles';roles.mkdir()
+  other=dict(self.cp,id='e'*64)
+  for label,cp in [('old',self.cp),('new',other)]:
+   (roles/(label+'-checkpoint-publication.json')).write_bytes(canonical(dict(self.staged,checkpoint=cp['id'])))
+  state=self.fx.root/'controller.json'
+  def save(cp):state.write_bytes(canonical(dict(persistent_state_committed=True,checkpoint=dict(cp,descriptor_key='public/checkpoints/'+cp['id']+'/authorities/'+self.fx.authority+'/checkpoint.json'))))
+  save(self.cp);backfill(self.c,self.policy,publication_state=roles,controller_state=state);self.assertEqual(len(list(Path(self.v['outbox']).glob('*.json'))),1)
+  save(other);backfill(self.c,self.policy,publication_state=roles,controller_state=state);self.assertEqual(len(list(Path(self.v['outbox']).glob('*.json'))),2)
+ def test_exclusive_publication_crash_beforelink_never_leaves_invalid_final(self):
+  from ops.verifier_capacity_publication import publish_exclusive
+  target=self.fx.root/'immutable.json'
+  with patch('ops.verifier_capacity_publication.os.link',side_effect=RuntimeError('crash before link')):
+   with self.assertRaises(RuntimeError):publish_exclusive(target,{'complete':True})
+  self.assertFalse(target.exists());self.assertEqual(list(self.fx.root.glob('.immutable.json.writing-*')),[]);publish_exclusive(target,{'complete':True})
+  with self.assertRaises(FileExistsError):publish_exclusive(target,{'changed':True})
+  self.assertEqual(json.loads(target.read_bytes()),{'complete':True})
+ def test_authenticated_live_historical_queue_is_included_expired_and_ancient_are_not(self):
+  import sqlite3
+  from ops.verifier_capacity_publication import current_published_models
+  publications=self.fx.root/'publications';publications.mkdir();state=self.fx.root/'authority.json';old=dict(self.cp,id='e'*64);ancient=dict(self.cp,id='f'*64)
+  state.write_bytes(canonical(dict(persistent_state_committed=True,checkpoint=dict(self.cp,descriptor_key='public/checkpoints/'+self.cp['id']+'/authorities/'+self.fx.authority+'/checkpoint.json'))))
+  for label,cp in [('current',self.cp),('old',old),('ancient',ancient)]:
+   (publications/(label+'-checkpoint-publication.json')).write_bytes(canonical(dict(self.staged,checkpoint=cp['id'])))
+  queue=self.fx.root/'queue.sqlite3';db=sqlite3.connect(queue);db.execute('create table jobs(role text,status text,expires real,envelope text)')
+  for cp,expiry in [(old,100),(ancient,9)]:
+   job=copy.deepcopy(self.fx.job);manifest=copy.deepcopy(job['manifest']['payload']);manifest['checkpoint']=cp;job['manifest']=self.fx.sign(manifest)
+   db.execute('insert into jobs values(?,?,?,?)',('verify','queued',expiry,canonical(self.fx.sign(job)).decode()))
+  db.commit();db.close();original=queue.read_bytes();rows=list(current_published_models(publication_state=publications,controller_state=state,authority=self.fx.authority,queue_path=queue,now=10))
+  self.assertEqual([cp['id']for cp,_ in rows],[self.cp['id'],old['id']]);self.assertEqual(queue.read_bytes(),original)

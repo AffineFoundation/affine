@@ -1,13 +1,25 @@
 """Default-off durable delivery of genuine full-readback model size metadata."""
-import base64,fcntl,hashlib,json,logging,os,re,stat,subprocess,tempfile
+import base64,fcntl,hashlib,json,logging,os,re,secrets,sqlite3,stat,subprocess,tempfile,time
 from pathlib import Path
 from types import SimpleNamespace
 from subnet.distributed_roles import authenticate
 from subnet.storage import canonical
 from subnet.training_receipts import sha
-from ops.retire_failed_training_candidate import publish_exclusive
 VERSION='verifier-capacity-publication-v1'
 INVENTORY_VERSION='authenticated-model-byte-inventory-v1'
+
+def publish_exclusive(path,value):
+    """Same audited exclusive complete-file publication; no history rewrite."""
+    temporary=path.with_name('.'+path.name+'.writing-'+secrets.token_hex(16))
+    fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+    try:
+        with os.fdopen(fd,'wb')as stream:
+            stream.write(canonical(value));stream.flush();os.fsync(stream.fileno())
+        os.link(temporary,path,follow_symlinks=False)
+        directory=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
+        try:os.fsync(directory)
+        finally:os.close(directory)
+    finally:temporary.unlink(missing_ok=True)
 
 def checked_policy(envelope,authority):
     v=authenticate(envelope,authority)
@@ -82,21 +94,46 @@ def flush(controller,policy,*,replicate):
         return finish()
     finally:os.close(fd)
 
-def backfill(controller,policy,*,roles):
-    """Read genuine controller-owned publication journals, never partial PUTs.
-
-    A size grant is descriptive only. Existing signed job/manifest authorization
-    remains mandatory, even if its checkpoint has a size record.
-    """
-    if policy is None:return []
-    roles=Path(roles);result=[]
-    for path in sorted(roles.glob('*-checkpoint-publication.json')):
+def current_published_models(*,publication_state,controller_state,authority,queue_path=None,now=None):
+    """Pure read-only reconstruction from explicit genuine control paths."""
+    publications=Path(publication_state);state_path=Path(controller_state)
+    if not publications.is_absolute()or not state_path.is_absolute():raise ValueError('explicit absolute publication/controller paths')
+    st=state_path.lstat()
+    if state_path.is_symlink()or not stat.S_ISREG(st.st_mode)or st.st_uid!=os.getuid()or st.st_nlink!=1 or st.st_size>8_000_000:raise ValueError('owned current authority state')
+    state=json.loads(state_path.read_bytes())
+    if state.get('persistent_state_committed')is not True:raise ValueError('current genuinely committed authority checkpoint required')
+    checkpoint=state['checkpoint']
+    expected='public/checkpoints/'+checkpoint['id']+'/authorities/'+authority+'/checkpoint.json'
+    if checkpoint.get('descriptor_key')!=expected:raise ValueError('current original authoritative model descriptor')
+    required={checkpoint['id']:checkpoint}
+    if queue_path is not None:
+        queue=Path(queue_path)
+        if not queue.is_absolute()or queue.is_symlink():raise ValueError('explicit readonly original queue')
+        db=sqlite3.connect('file:'+str(queue)+'?mode=ro',uri=True,timeout=.25,isolation_level=None)
+        try:
+            for (raw,)in db.execute("SELECT envelope FROM jobs WHERE role='verify' AND status IN ('queued','leased') AND expires>?",(time.time()if now is None else now,)):
+                job=authenticate(json.loads(raw),authority);manifest=authenticate(job['manifest'],authority)
+                if job.get('role')!='verify':raise ValueError('authenticated original verifier queue record')
+                cp=manifest['checkpoint']
+                if cp['id']in required and required[cp['id']]['files']!=cp['files']:raise ValueError('immutable same checkpoint model map')
+                required[cp['id']]=cp
+        finally:db.close()
+    journals=[]
+    for path in sorted(publications.glob('*-checkpoint-publication.json')):
         st=path.lstat()
         if path.is_symlink()or not stat.S_ISREG(st.st_mode)or st.st_uid!=os.getuid()or st.st_nlink!=1 or st.st_size>1_000_000:raise ValueError('owned full publication journal')
         staged=json.loads(path.read_bytes())
-        cp=dict(id=staged['checkpoint'],files={n:r['sha256']for n,r in staged['objects'].items()})
-        result.append(enqueue(controller,policy,cp,staged))
-    return result
+        cp=required.get(staged.get('checkpoint'))
+        if cp is None:continue
+        if staged.get('operator_independent_hashes')is not True or {n:r['sha256']for n,r in staged['objects'].items()}!=cp['files']:raise ValueError('authoritative current/queued full-readback model map')
+        journals.append((cp,staged))
+    journals.sort(key=lambda row:row[0]['id']!=checkpoint['id'])
+    yield from journals
+
+def backfill(controller,policy,*,publication_state,controller_state,queue_path=None):
+    """Current authority first; automatically follows each genuine closure."""
+    if policy is None:return []
+    return [enqueue(controller,policy,cp,staged)for cp,staged in current_published_models(publication_state=publication_state,controller_state=controller_state,authority=controller.authority.id,queue_path=queue_path)]
 
 def install(RemoteJobs,policy):
     """Install only from a separately ROOT-scoped CPU launcher, default off."""
@@ -141,7 +178,7 @@ def ssh_replicate(grant,config):
 def main():
     import argparse,time
     from nacl.signing import SigningKey
-    parser=argparse.ArgumentParser();parser.add_argument('--policy',required=True);parser.add_argument('--authority',required=True);parser.add_argument('--seed-file',required=True);parser.add_argument('--roles',required=True);parser.add_argument('--once',action='store_true');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--policy',required=True);parser.add_argument('--authority',required=True);parser.add_argument('--seed-file',required=True);parser.add_argument('--publication-state',required=True);parser.add_argument('--controller-state',required=True);parser.add_argument('--queue',required=True);parser.add_argument('--once',action='store_true');args=parser.parse_args()
     # This operator must itself be launched under a reviewed trusted-service
     # scope that pins argv/seed path/roles/operator source. It grants no job.
     checked_policy(json.loads(Path(args.policy).read_bytes()),args.authority)
@@ -153,7 +190,7 @@ def main():
     controller=SimpleNamespace(authority=SimpleNamespace(id=args.authority),signed=sign)
     while True:
         try:
-            policy=json.loads(Path(args.policy).read_bytes());backfill(controller,policy,roles=args.roles);result=flush(controller,policy,replicate=ssh_replicate)
+            policy=json.loads(Path(args.policy).read_bytes());backfill(controller,policy,publication_state=args.publication_state,controller_state=args.controller_state,queue_path=args.queue);result=flush(controller,policy,replicate=ssh_replicate)
             print(json.dumps(dict(metadata_only=True,installed=sum(x['status']=='complete'for x in result),deferred=sum(x['status']=='deferred'for x in result))),flush=True)
         except Exception as error:logging.warning('capacity metadata observer deferred (%s)',type(error).__name__)
         if args.once:return
