@@ -11,7 +11,10 @@ POLICY = {'version': VERSION, 'verification': 'prefill-cdf-calibrated',
 
 
 def validate_policy(value):
-    if type(value) is not dict or value != POLICY:
+    if (type(value) is not dict or value != POLICY
+            or type(value.get('version')) is not str
+            or type(value.get('verification')) is not str
+            or value.get('historical_execution_proof') is not False):
         raise ValueError('explicit token-only research policy required')
     return dict(value)
 
