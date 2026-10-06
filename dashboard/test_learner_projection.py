@@ -26,6 +26,15 @@ class LearnerProjectionTests(unittest.TestCase):
   d,m,u,a=self.fixture(3,2)
   for mutate in [lambda x:x['population'].__setitem__('eligible_count',3),lambda x:x['submissions'].append(x['submissions'][0]),lambda x:x['submissions'][0]['learner_admission']['payload'].__setitem__('checkpoint','old'),lambda x:x['population']['committed_inventory'][0]['commitment_document']['payload'].__setitem__('epoch','old')]:
    bad=copy.deepcopy(d);mutate(bad);self.assertIsNone(project(bad,m,u,a))
+ def test_declared_but_deferred_documents_do_not_hide_captured_population(self):
+  d,m,u,a=self.fixture(5,3);row=d['population']['committed_inventory'][0]
+  row['training_documents']=[dict(slot=i,sha256='tokens'+str(i),size=100)for i in range(4)]
+  row['training_document_deferred_slots']=[4];d['population']['committed_count']=4
+  r=project(d,m,u,a)
+  self.assertEqual((r['submitted'],r['learner_eligible'],r['learner_excluded']),(4,3,1))
+  self.assertEqual(r['submitted_grid'][85],4);self.assertFalse(r['proof_verification_claimed'])
+  for mutate in [lambda x:x['population']['committed_inventory'][0]['training_documents'][0].__setitem__('sha256','fake'),lambda x:x['population']['committed_inventory'][0]['training_documents'].append(x['population']['committed_inventory'][0]['training_documents'][0]),lambda x:x['population']['committed_inventory'][0].__setitem__('training_document_deferred_slots',[]),lambda x:x['population'].__setitem__('committed_count',5),lambda x:x['population']['committed_inventory'][0].__setitem__('training_document_deferred_slots',[True])]:
+   bad=copy.deepcopy(d);mutate(bad);self.assertIsNone(project(bad,m,u,a))
  def test_bounded_training_subset_preserves_full_eligible_population(self):
   d,m,u,a=self.fixture(359,309)
   full=d['population']['eligible_inventory'];d['submissions']=d['submissions'][:256]

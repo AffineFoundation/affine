@@ -16,7 +16,21 @@ def project(document,manifest,identity_uids,authority=AUTHORITY):
   for row in population['committed_inventory']:
    miner=row['miner'];signed=row['commitment_document'];p=authenticated(signed,miner)
    if p['epoch']!=epoch or p['checkpoint']!=checkpoint or p['source']!=source or p['miner']!=miner or digest(signed)!=row['commitment_sha256']or p['version']!='small-commitment-pairs-v2':raise ValueError('committed source/epoch/hash')
+   # A signed declaration can precede the small training-document upload.
+   # Count the captured inventory, not missing/deferred declared children.
+   captured=None
+   if 'training_documents'in row:
+    children={c['slot']:c for c in p['batches']}
+    if len(children)!=len(p['batches']):raise ValueError('duplicate declared capture slot')
+    captured={}
+    for capture in row['training_documents']:
+     slot=capture['slot'];child=children.get(slot)
+     if type(slot)is not int or slot in captured or child is None or capture['sha256']!=child['training_sha256']or type(capture['size'])is not int or capture['size']!=child['training_size']:raise ValueError('exact captured training child')
+     captured[slot]=capture
+    deferred=row.get('training_document_deferred_slots',[])
+    if type(deferred)is not list or any(type(slot)is not int for slot in deferred)or len(set(deferred))!=len(deferred)or set(deferred)!=set(children)-set(captured):raise ValueError('exact deferred capture partition')
    for child in p['batches']:
+    if captured is not None and child['slot']not in captured:continue
     key=(miner,child['slot'])
     if key in committed:raise ValueError('duplicate declared slot')
     committed[key]=(row,child);uid=identity_uids.get(miner)
