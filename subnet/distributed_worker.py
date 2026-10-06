@@ -142,7 +142,7 @@ class Worker:
                     if time.time()>=claim['lease_until']: lost.set(); return
         thread=threading.Thread(target=renew,daemon=True); thread.start()
         cache_leases=ExitStack()
-        lifecycle=None;runspace=None
+        lifecycle=None;runspace=None;acked_owned_checkpoint=None
         try:
             backend_source=self.source_for_job(job)
             environment=dict(os.environ,CUBLAS_WORKSPACE_CONFIG=':4096:8')
@@ -203,14 +203,23 @@ class Worker:
                 if path.exists():lifecycle.record_download(path,obj['sha256'])
             lifecycle.retire_downloads(job['job_id'])
             try:
-                if selected_cache is None:lifecycle.record_checkpoint(approved['id'],approved['files'])
-                elif selected_cache==cache:shared_lifecycle.record_checkpoint(approved['id'],approved['files'])
+                if selected_cache is None:
+                    if lifecycle.record_checkpoint(approved['id'],approved['files']):acked_owned_checkpoint=lifecycle
+                elif selected_cache==cache:
+                    if shared_lifecycle.record_checkpoint(approved['id'],approved['files']):acked_owned_checkpoint=shared_lifecycle
                 # External mapped caches were verified at their own path; never
                 # label a different same-ID owned copy as that verified input.
             except ValueError:logging.warning('cache changed after verified job; retaining checkpoint')
             return True
         finally:
             cache_leases.close()
+            # Only the successfully ACKed, backend-verified owned checkpoint
+            # is disposable here. Release this job's inherited flock first;
+            # another live lease or changed inode makes eviction refuse safely.
+            # External mapped caches and all reports/logs remain untouched.
+            if acked_owned_checkpoint is not None:
+                try:acked_owned_checkpoint.evict_checkpoints(only=[approved['id']],keep=0)
+                except (OSError,ValueError):logging.warning('ACKed owned checkpoint disposal deferred; retaining evidence')
             # Retry workspaces are disposable model inputs, not independent
             # long-lived caches. Their report/job diagnostics remain in place.
             if lifecycle is not None and runspace!=self.workspace/'backend':
