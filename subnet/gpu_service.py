@@ -180,15 +180,22 @@ def evaluate(controller,manifest,cache,phase,steps,config,*,label_override=None)
         if not isinstance(label_override,str) or len(label_override)>240 or (label_override!=label and not label_override.startswith(label+'-infra-')):
             raise ValueError('explicit evaluation infrastructure recovery label')
         label=label_override
-    rows=heldout(config,manifest);report=controller.jobs.run(label,'evaluate',manifest,cache,heldout=rows)
+    rows=heldout(config,manifest);extra={};trusted=config.get('trusted_evaluation_policy')
+    if 'trusted_evaluation_policy' in config:
+        from .trusted_native_evaluation import validate_policy
+        extra['trusted_evaluation_policy']=validate_policy(trusted)
+    report=controller.jobs.run(label,'evaluate',manifest,cache,heldout=rows,**extra)
+    if trusted is not None and report.get('trusted_native_evaluation',{}).get('policy')!=trusted:raise ValueError('trusted evaluation report assurance binding')
     records=[]
     for suite in rows:
         definition=next(e for e in manifest['environments'] if e['env_id']==suite['env_id']);values=[v for v in report['heldout'] if v['env_id']==suite['env_id']]
         failures=[v for v in report.get('heldout_failures',[]) if v['env_id']==suite['env_id']]
         expected=sorted(zip(suite['indices'],suite['seeds']))
         observed=sorted((v['index'],v['seed']) for v in values+failures)
-        if observed!=expected or any(v.get('verified') is not True or not isinstance(v.get('task_hash'),str) or len(v['task_hash'])!=64 for v in values):raise ValueError('remote heldout exact plan/hash completeness')
+        valid_assurance=lambda v:(v.get('verified')is False and v.get('native_graded')is True and v.get('proof_verification_performed')is False and v.get('trust_scope')==trusted['trust_scope'] and v.get('sampling_policy')==trusted['sampling_policy'])if trusted is not None else v.get('verified')is True
+        if observed!=expected or any(not valid_assurance(v) or not isinstance(v.get('task_hash'),str)or len(v['task_hash'])!=64 for v in values):raise ValueError('remote heldout exact plan/hash completeness')
         frozen=dict(env_id=suite['env_id'],environment=definition['spec'],harness=suite['harness'],indices=suite['indices'],seeds=suite['seeds'],model_runtime_revision=revision,backend_profile=profile,runtime_versions=report['runtime_versions'],harness_source_hash=manifest['harness_source_hash'],source_files={n:report['source_files'][n] for n in ('subnet/model.py','subnet/gpu_runtime.py','subnet/environments.py','subnet/harness.py','subnet/proofs.py')})
+        if trusted is not None:frozen.update(trusted_evaluation_policy=trusted,trusted_evaluator_source=report['source_files']['subnet/trusted_native_evaluation.py'])
         dataset=hashlib.sha256(canonical(frozen)).hexdigest();successes=sum(v['classification']=='positive' for v in values)
         run_id=label+'-'+suite['env_id'];stamp=report['completed_at']
         record=dict(run_id=run_id,experiment_id=config.get('evaluation_experiment_id','gpu-continuous-fixed128'),epoch_id=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],model=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'),
@@ -199,6 +206,7 @@ def evaluate(controller,manifest,cache,phase,steps,config,*,label_override=None)
             mean_reward=sum(v['reward'] for v in values)/len(values) if values and not failures else None,status='complete' if not failures else 'error',evaluation_failures=failures,uncertainty=wilson(successes,len(values)) if not failures else None,
             training_steps=steps,timestamp=stamp,timestamp_iso=datetime.datetime.fromtimestamp(stamp,datetime.timezone.utc).isoformat(),
             payable=False,weight_submission=False,backend_profile=profile,remote_job_id=report['job_id'],task_hashes=[v['task_hash'] for v in values],runtime_profile=dict(report['runtime_versions'],**profile))
+        if trusted is not None:record.update(trusted_evaluation_policy=trusted,proof_verification_performed=False,native_graded=True,verified=False)
         save(Path(config.get('evaluation_state','state/evaluations'))/(run_id+'.json'),record);records.append(record)
     return records
 
