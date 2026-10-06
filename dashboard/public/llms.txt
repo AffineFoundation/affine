@@ -489,3 +489,9 @@ publication to four workers, with serial receipt journaling only after successfu
 publication. Infrastructure publication failures remain retryable and never
 become miner fraud. This controller optimization is not in the immutable live
 9f source or compact 4109 qualification candidate and has not been activated.
+
+An isolated, default-off terminal-EOS experiment helper is available in
+docs/TERMINAL_EOS_AUXILIARY_EXPERIMENT.md. It requires genuine already-present
+EOS, signed inference-audit evidence and a separate native-correctness receipt.
+Thirty-five CPU controls passed, including unchanged baseline gradients. There
+is no production caller, active objective change or experimental GPU result.
