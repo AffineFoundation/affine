@@ -54,13 +54,39 @@ def read_chunks(url, *, limit):
 
 
 def put_file(url,path):
+    """Retry only transient failures, rewinding the same owned immutable file.
+
+    PUT is idempotent for these exact signed object bytes. Never refresh a grant,
+    follow redirects, print response bodies/URLs, or retry authorization failures.
+    """
     from .backend_jobs import r2_url
-    import requests
-    if Path(path).stat().st_size>MAX_SHARD_BYTES:raise ValueError('actual state PUT object cap')
-    with Path(path).open('rb')as body:
-        response=requests.put(r2_url(url,'PUT'),data=body,headers={'Content-Type':'application/octet-stream'},
-            timeout=1800,allow_redirects=False)
-    if response.status_code not in (200,201,204):raise ValueError('persistent state PUT status')
+    import os, stat, requests
+    target=r2_url(url,'PUT')
+    descriptor=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+    with os.fdopen(descriptor,'rb') as body:
+        before=os.fstat(body.fileno())
+        if not stat.S_ISREG(before.st_mode) or not 0<before.st_size<=MAX_SHARD_BYTES:
+            raise ValueError('actual state PUT regular object cap')
+        def unchanged():
+            now=os.fstat(body.fileno())
+            if (now.st_dev,now.st_ino,now.st_size,now.st_mtime_ns,now.st_ctime_ns)!=(before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns,before.st_ctime_ns):
+                raise ValueError('state PUT input changed during publication')
+        for attempt in range(4):
+            unchanged();body.seek(0);response=None
+            try:
+                response=requests.put(target,data=body,headers={'Content-Type':'application/octet-stream'},
+                    timeout=1800,allow_redirects=False)
+                unchanged();status=response.status_code
+                if status in (200,201,204):return
+                if status not in (408,429,500,502,503,504) or attempt==3:
+                    raise ValueError('persistent state PUT HTTP '+str(status)+' after '+str(attempt+1)+' attempt(s)')
+            except (requests.ConnectionError,requests.Timeout) as error:
+                unchanged()
+                if attempt==3:
+                    raise ValueError('persistent state PUT transient transport exhausted after 4 attempts') from None
+            finally:
+                if response is not None:response.close()
+            time.sleep(.5*(2**attempt))
 
 
 def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
