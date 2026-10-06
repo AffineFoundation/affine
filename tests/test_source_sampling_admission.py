@@ -40,6 +40,9 @@ class SourceSamplerControls(unittest.TestCase):
   self.assertTrue(response['accepted']);self.assertEqual(q.status(self.job['job_id'])['status'],'complete')
  def test_old_v3_original_source_remains_original_sampler(self):
   m=copy.deepcopy(self.manifest);sampler=self.gate.rows[self.old][2];m['source_bundle']['sha256']=self.old;m['sampling_source_hash']=self.rows[self.old]['runtime_files']['subnet/forced_sampling.py'];m['sampling_contract']=sampler.new_contract(dict(version='forced-inverse-cdf-prefill-support-v3',max_attempts=16,calibration=self.cal,support_adjudication='exact-cached-replay-v1'));j=self.with_manifest(m);j['source_files']=self.rows[self.old]['runtime_files'];self.gate.check(j);self.gate.report(j,self.report(j))
+ def test_historical_strict_149_file_map_is_not_forced_to_177(self):
+  rows=copy.deepcopy(self.rows);old=rows[self.old];essential={'subnet/'+n+'.py'for n in ('forced_sampling','harness','audit_policy','fast_prefill_audit')};names=essential|set(sorted(set(old['runtime_files'])-essential)[:145]);old['runtime_files']={n:old['runtime_files'][n]for n in names};old['sampling_versions']=['forced-inverse-cdf-replay-v1'];gate=SamplingAdmission(sign(self.key,dict(version=VERSION,sources=rows)),self.authority,self.trees)
+  m=copy.deepcopy(self.manifest);sampler=gate.rows[self.old][2];m['source_bundle']['sha256']=self.old;m['sampling_source_hash']=old['runtime_files']['subnet/forced_sampling.py'];m['sampling_contract']=sampler.new_contract(dict(version=sampler.VERSION,max_attempts=16));j=self.with_manifest(m);j['source_files']=old['runtime_files'];gate.check(j)
  def test_unknown_version_oldsource_rebinding_wronghash_runtime_refused(self):
   for change in ('oldsource','version','sampler','runtime','map','foreignsource','calibration','environment'):
    j=copy.deepcopy(self.job);m=j['manifest']['payload']

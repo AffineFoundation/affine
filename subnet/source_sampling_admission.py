@@ -27,7 +27,7 @@ class SamplingAdmission:
    prefix='_api_sampling_'+source[:16]+'_'+secrets.token_hex(8);package=types.ModuleType(prefix);package.__path__=[str(tree/'subnet')];sys.modules[prefix]=package
    sampler=importlib.import_module(prefix+'.forced_sampling')
    fast=importlib.import_module(prefix+'.fast_prefill_audit')if 'subnet/fast_prefill_audit.py'in files else None
-   supported=[sampler.VERSION,None]+([fast.VERSION,fast.SUPPORT_VERSION]+([fast.THREEWAY_VERSION]if hasattr(fast,'THREEWAY_VERSION')else [])if fast else [])
+   supported=[sampler.VERSION,None]+([getattr(fast,n)for n in ('VERSION','SUPPORT_VERSION','THREEWAY_VERSION')if hasattr(fast,n)]if fast else [])
    if any(x not in supported for x in versions):raise ValueError('sampler version unsupported by exact source')
    if fast and hasattr(fast,'THREEWAY_VERSION')and fast.THREEWAY_VERSION in versions and len(files)!=177:raise ValueError('v4 exact177 admitted runtime map')
    self.rows[source]=(row,tree,sampler,fast)
