@@ -44,6 +44,12 @@ def detached_historical_run(module):
 def qualified_dispatcher(row, controller):
     """Use the exact historical CPU admission ABI, without changing GPU code."""
     root=Path(row['local_source_path'])
+    if root.is_symlink() or (root/'subnet').is_symlink():raise ValueError('qualified evaluator source tree changed')
+    if {str(p.relative_to(root))for p in(root/'subnet').glob('*.py')}!=set(row['source_files']):
+        raise ValueError('qualified evaluator source inventory changed')
+    for name,digest in row['source_files'].items():
+        if (root/name).is_symlink() or hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest:
+            raise ValueError('qualified evaluator source bytes changed before import')
     namespace='_affine_evaluator_'+hashlib.sha256(canonical(row)).hexdigest()
     if namespace not in sys.modules:
         package=types.ModuleType(namespace);package.__path__=[str(root)]

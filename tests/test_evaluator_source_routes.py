@@ -106,6 +106,7 @@ class SourceRouting(unittest.TestCase):
             root=Path(row['local_source_path']); marker=sha[0]
             (root/'subnet/backend_jobs.py').write_text('ABI='+repr(marker)+'\n')
             (root/'subnet/remote_backend.py').write_text("from .backend_jobs import ABI\nclass RemoteObservationTimeout(TimeoutError):pass\nclass RemoteJobs:\n    def __init__(self,endpoint,controller):self.abi=ABI\n    def run(self,identifier,remotejob,cache=None):\n        self.launch_runner(identifier,remotejob,cache)\n")
+            row['source_files']={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest()for p in(root/'subnet').glob('*.py')}
             with patch.object(active.RemoteJobs,'launch_runner',autospec=True)as launch:
                 remote=qualified_dispatcher(row,self.controller)
                 remote.run('same-id','same-path','same-cache')
@@ -139,3 +140,7 @@ class SourceRouting(unittest.TestCase):
         self.remotes['a'*64].remote_status.return_value={'phase':'running'}
         with self.assertRaises(RemoteObservationTimeout):r.run('next','evaluate',self.manifest('b'*64))
         self.remotes['b'*64].run.assert_not_called()
+
+    def test_real_factory_rechecks_bytes_before_any_import_or_ssh(self):
+        row=self.rows['a'*64];(Path(row['local_source_path'])/'subnet/backend_jobs.py').write_text('raise RuntimeError("must not import")')
+        with self.assertRaisesRegex(ValueError,'bytes changed'):qualified_dispatcher(row,self.controller)
