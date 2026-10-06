@@ -29,6 +29,13 @@ this writer. Historical compute manifests retain their original nonpayable flags
 the new policy creates a separate signed current assessment rather than changing
 an old epoch or claiming that every rewarded sample was individually audited.
 The exact policy is documented in docs/HOURLY_CURRENT_ASSESSMENT.md on GitHub.
+From 23:00 UTC on 2026-10-06, an explicitly signed numerical-resolution writer
+policy treats nine independently reviewed historical TOPLOC rows as inconclusive.
+Original reports and earlier submitted assessments remain immutable; these rows
+receive neither valid-audit credit nor a confirmed-invalid penalty. This is an
+exact evidence-bound correction, not a general tolerance change. Newer numerical
+rejections are still under investigation; current miner proof requirements remain
+unchanged. See docs/HISTORICAL_TOPLOC_NUMERICAL_RESOLUTION.md on GitHub.
 
 K=1/L=1, at most three batches per UID, the 16-attempt ceiling and selected-token
 logprobs plus TOPLOC remain the active miner contract. Seven verifier workers

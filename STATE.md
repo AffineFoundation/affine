@@ -1,3 +1,22 @@
+Verified continuation, 2026-10-06, 22:13 UTC:
+The numerical-resolution writer v2 is deployed under an isolated pinned CPU
+runtime and signed policy, first effective cutoff23:00 UTC. Real evidence dryrun
+changed exactly nine reviewed historical TOPLOC rows to UNKNOWN; unrelated
+observations and50 existing refusal records remained identical. Original22:00
+assessment is unchanged. That hour genuinely committed188 currentUIDs at block
+9226798, assessment_staleFalse, excluding22 deregistered identities.
+Newer TOPLOC rejections still keep three affected miners at zero multiplier;
+those rows and prospective gate ordering/metrics require further investigation.
+Do not claim that current numerical penalties are fully repaired.
+
+Durable whole-stage capture is default-off on GitHub main after120 related
+controls. A separately pinned CPU coordinator overlay is being prepared to
+retain remote f213 scientific code and optimizer-cache identity. Publication
+recovery is still pending; committed checkpoint20 remains authoritative.
+The bounded isolated CP19 pilot32 is genuinely running one original supervisor
+PID5875/startticks280290020 under a fresh ROOT scope; no optimizer updates or
+production contract change are permitted. It measures sample supply, not learning.
+
 Verified continuation, 2026-10-06, 22:01 UTC:
 E30 original train-c8f0ae8b genuinely exited zero: 79 unaudited task pairs,
 339 gradient tensors, optimizer20→21 staged. Warm parent restore took46.61s;
