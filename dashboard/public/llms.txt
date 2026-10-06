@@ -297,3 +297,13 @@ explicit contract skips miner probability/TOPLOC construction and uses versioned
 token transport, prescribed-draw prefill checks and fresh native grading. Current
 checkpoint GPU generation and end-to-end qualification are still required. Do not
 change external miner upload formats until a signed epoch manifest selects it.
+
+Current learning status (2026-10-06): epoch 28 completed in 53.38 minutes
+with 213 eligible unaudited training pairs and durable optimizer step 19.
+The next opening is temporarily held by its successor numerical confirmation;
+no new mining contract has been published for that opening. Bounded confirmation
+recalibration is implemented and CPU-tested but is not yet deployed. The last
+completed independent 128-task evaluation is 86 correct at checkpoint 18;
+results fluctuate and do not establish convergence. Chain transactions stay off.
+See https://github.com/AffineFoundation/affine/blob/main/docs/BOUNDED_SUCCESSOR_CONFIRMATION.md
+for the prospective recovery policy.

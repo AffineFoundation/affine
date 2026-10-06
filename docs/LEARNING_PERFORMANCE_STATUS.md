@@ -168,3 +168,21 @@ advanced the durable optimizer to step 19 and published checkpoint
 Its signed learner closure was authenticated. Five consecutive sub-hour learning
 iterations do not establish sustained uptime or convergence; chain transactions
 remain disabled.
+
+The next opening, epoch 29, is held by numerical confirmation: its actual
+log-probability error was 0.00075531005859375, above the proposed
+0.0005950927734375; its CDF error remained within the proposed bound.
+Both original calibration reports completed successfully and remain preserved.
+Bounded, default-off confirmation recalibration now passes 42 CPU controls;
+it uses authenticated failed measurements to propose a new bound and requires
+a fresh confirmation, with fixed attempt/deadline limits and existing hard
+maxima. It has not yet restored the live opening.
+
+The legacy pod reaper released the explicitly retained isolated H100 on October
+6 at 16:13 UTC after incorrectly classifying it as ownerless. The provider
+release ledger confirms the deletion. An exact retained-name ownership rule
+has now been installed and tested through the actual reaper functions; other
+abandoned pods keep their existing release rules. This protects the replacement
+qualification rental without disabling automatic cleanup. All original research
+archives remain durable in R2. Production verifier cache retirement remains
+automatic after acknowledgement and respects active leases.
