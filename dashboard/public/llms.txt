@@ -26,16 +26,22 @@ Freeze and admission took about 36 seconds after the ten-minute collection
 deadline. Its original training job completed successfully in 50.23 minutes,
 with changed model weights and staged optimizer step eight. The independent
 reader authenticated all 23 optimizer objects in about 202 seconds. Controller
-adoption and final checkpoint publication are still pending; public parent
-remains optimizer step seven. The original failed job remains recorded.
+adoption and full checkpoint publication completed; optimizer step eight is
+durable at checkpoint 02221071b925861631fb1ef738e0e5974fcaf10808cacae342af588fe8d99176.
+The actual training report declares 65 unaudited inputs and
+trainer_verification_performed=false. Restore took 24.84 minutes, training and
+checkpoint save 6.13 minutes, and optimizer export/upload 15.32 minutes. The original failed job remains recorded.
 This owned-fleet bootstrap does not establish external-client compatibility.
 The main branch provides ops/native_task_asset_deployment.py for verified
 CPU-only asset bootstrap (see docs/NATIVE_TASK_ASSET_DEPLOYMENT.md).
 The next complete package includes the approved native dataset automatically.
 Its actual cold CPU bootstrap, full R2 archive readback and staging on ten roles
-passed. It remains qualification-only until the next durable checkpoint boundary;
-external end-to-end miner readiness is not yet claimed. This is not a completed E17 or proof
-of a faster epoch. Follow only the latest
+passed. The original qualification descriptor remains immutable and
+qualification-only. A separately ROOT-scoped controller now runs complete source
+7f580e4d118e3cf6ce9efc3ff916dce7a54275105c47866923ed36e72355a618
+from actual parent eight, with fresh checkpoint calibration in progress for
+epoch 18. External end-to-end miner readiness and a sub-hour epoch are not
+yet demonstrated. Follow only the latest
 signed OPEN manifest for mining. Chain weight submissions remain disabled.
 The independent fixed 128-task E16 evaluation declined from 78/128 to 71/128,
 with two improvements and nine regressions. Eight regressed tasks reached the
@@ -68,8 +74,9 @@ authenticated legacy adoption has now retired obsolete models and accepted
 historical input downloads across all seven, without pausing healthy workers. The
 trainer has 160.50 GB free after explicit software retirement of old models.
 Automatic trainer hooks are included in the new FE controller source; its first
-training job has completed; successful post-ACK trainer retirement remains to
-be observed. E16 retained its historical lifecycle contract.
+training job completed and actual post-ACK automatic retirement was observed:
+the local lifecycle marker names optimizer step eight and disk free is about
+160 GB. Cache capacity must still be rechecked before each new job. E16 retained its historical lifecycle contract.
 A replacement H200 passed fresh honest and forged sampling/TOPLOC controls but
 has not joined the production queue. Runtime/source qualification remains
 mandatory for each participating verifier.
