@@ -15,6 +15,7 @@ from nacl.exceptions import BadSignatureError
 from subnet.audit_queue_snapshot import queue_rows
 from subnet.continuous_audit_policy import (
     admit_artifact_failures, digest, finite, observations, snapshot, valid_digest, policy, RESOLUTION_VERSION,
+    historical_report_workers,
 )
 from subnet.continuous_audit_service import (
     admitted_service_config, admit_completed_reports, register_population,
@@ -131,7 +132,12 @@ def load_evidence(audit_config_path, *, authority, cutoff, verifiers,
     if any(type(state.get(key)) is not dict for key in ('populations', 'jobs', 'draws')):
         raise ValueError('original audit state registry shape')
     workers = {worker: ['verify'] for worker in verifiers}
-    observers = dict(workers, **{authority: ['operator-artifact-capture']})
+    # Retired identities may observe only their exact ROOT-admitted originals.
+    # The current claim roster remains the independently signed seven workers.
+    historical = sources.get('historical_report_admission')
+    retired = historical_report_workers(historical)
+    observers = dict(workers, **{worker: ['verify'] for worker in retired},
+                     **{authority: ['operator-artifact-capture']})
     excluded, refused, deferred, populations = [], [], [], {}
     hashes = dict(audit_config_file_sha256=config_sha, audit_state_file_sha256=state_sha,
                   source_admission_sha256=source_sha, population_documents={},
@@ -207,7 +213,8 @@ def load_evidence(audit_config_path, *, authority, cutoff, verifiers,
             selected_records = [record_by_id[i] for i in selected_ids]
             admitted, delayed = admit_completed_reports([actual], selected_records, authority, workers,
                 sources['approved_sources'], execution_evidence_policy=execution, cutoff=cutoff,
-                deferral_policy=sources.get('backend_evidence_deferral_policy'))
+                deferral_policy=sources.get('backend_evidence_deferral_policy'),
+                historical_report_admission=historical)
             deferred.extend(delayed)
             for key, value in admitted.items():
                 candidates_entry = (completed, identifier, key, value)
