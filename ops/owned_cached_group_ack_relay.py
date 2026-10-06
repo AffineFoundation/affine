@@ -64,7 +64,14 @@ def relay_step(publisher,observer):
   if jid in observer.installed:continue
   v=observer.read(jid)
   if v is None:continue
-  validate_terminal(v['terminal'],job,publisher.clock())
+  # A worker publishes its report before remote_runner atomically finalizes
+  # the marker. Report availability is not terminal/physical completion.
+  status=v['terminal']
+  if status.get('phase')in('pending','running'):
+   if status.get('job_id')!=jid or status.get('exit_code')is not None or status.get('finished_at')is not None:
+    raise ValueError('nonterminal original marker binding')
+   return dict(status='observing-original',job_id=jid,original_phase=status['phase'],GPU_dispatch=False)
+  validate_terminal(status,job,publisher.clock())
   if v['terminal']['exit_code']!=0:return dict(status='original-infrastructure-failure',job_id=jid,model_reward=None)
   if v['physical_original_absent']is not True:return dict(status='observing-original',job_id=jid)
   ack=publisher.publish(jid,v['report'],v['terminal'],physical_original_absent=True);observer.install_ack(jid,ack);observer.installed.add(jid)

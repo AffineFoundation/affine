@@ -14,6 +14,25 @@ class RelayTests(unittest.TestCase):
   publisher=self.publisher();observer=Observer(self,publisher);r=relay_step(publisher,observer);self.assertEqual(r['durable_ACK_count'],4);self.assertFalse(r['GPU_dispatch']);self.assertEqual(len(observer.calls),4);relay_step(publisher,observer);self.assertEqual(len(observer.calls),4);self.assertFalse(self.transport.launched)
  def test_no_report_or_live_original_never_receives_ACK(self):
   p=self.publisher();o=Observer(self,p);self.assertEqual(relay_step(p,o)['durable_ACK_count'],0);self.complete(0,ack=False);o.live=True;self.assertEqual(relay_step(p,o)['status'],'observing-original');self.assertFalse(o.calls)
+ def test_published_report_running_marker_waits_then_ACKs_same_original(self):
+  self.complete(0,ack=False);p=self.publisher();o=Observer(self,p);original=copy.deepcopy(self.transport.statuses['original-group-0'])
+  self.transport.statuses['original-group-0'].update(phase='running',exit_code=None,finished_at=None);o.live=True
+  r=relay_step(p,o);self.assertEqual(r['status'],'observing-original');self.assertEqual(r['original_phase'],'running');self.assertFalse(o.calls);self.assertFalse(self.bucket.objects);self.assertFalse(self.transport.launched)
+  self.transport.statuses['original-group-0']=original;o.live=False
+  relay_step(p,o);self.assertEqual(o.calls,['original-group-0']);self.assertFalse(self.transport.launched)
+ def test_pending_marker_with_existing_report_is_not_completed(self):
+  self.complete(0,ack=False);p=self.publisher();o=Observer(self,p);self.transport.statuses['original-group-0'].update(phase='pending',exit_code=None,finished_at=None)
+  self.assertEqual(relay_step(p,o)['status'],'observing-original');self.assertFalse(o.calls);self.assertFalse(self.bucket.objects)
+ def test_nonterminal_changed_identity_or_terminal_fields_rejected(self):
+  for change in ({'job_id':'foreign-original'},{'exit_code':0},{'finished_at':50}):
+   with self.subTest(change=change):
+    self.complete(0,ack=False);p=self.publisher();o=Observer(self,p);self.transport.statuses['original-group-0'].update(phase='running',exit_code=None,finished_at=None);self.transport.statuses['original-group-0'].update(change)
+    with self.assertRaisesRegex(ValueError,'nonterminal original'):relay_step(p,o)
+    self.assertFalse(o.calls)
+ def test_unknown_phase_report_is_not_silently_pending(self):
+  self.complete(0,ack=False);p=self.publisher();o=Observer(self,p);self.transport.statuses['original-group-0']['phase']='unknown'
+  with self.assertRaises(ValueError):relay_step(p,o)
+  self.assertFalse(o.calls)
  def test_scope_or_bucket_corruption_prevents_ACK(self):
   self.complete(0,ack=False);p=self.publisher();o=Observer(self,p);o.scope=copy.deepcopy(o.scope);o.scope['workspace']='/different'
   with self.assertRaises(ValueError):relay_step(p,o)
