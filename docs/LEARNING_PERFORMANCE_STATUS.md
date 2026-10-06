@@ -228,8 +228,11 @@ advancing optimizer step 19 to 20. The independent reader authenticated all
 23 optimizer shards, totalling 91,387,491,264 bytes. The signed completion,
 checkpoint publication and durable authority pointer agree on checkpoint
 `94e8999b75838cddf70d3e767318e7b169a5421c890ea9c7eeef2e2aa6104e6d`.
-Round 30 is opening. The independent SAME128 evaluator discovered checkpoint 20;
-no completed score is claimed yet.
+Round 30 is training its original job. The independent SAME128 evaluator completed
+checkpoint 20: 84/128 (65.625%), versus checkpoint 19 at 85/128 and checkpoint 18
+at 86/128. The authenticated ROOT summary binds the unchanged cohort hash
+20a077180d7cc088669f53bd551c5bf3c4aa51ded6367463f405094ad054b153
+and all four original full R2 archive acknowledgments. This does not show convergence.
 
 The original controller recorded 301.06 minutes total, including 234.51 minutes
 of opening/calibration recovery. After reopening, collection through publication
@@ -284,4 +287,4 @@ because their token documents were deferred by bounded capture.
 A prospective versioned capture policy is being prepared to improve parallel
 capture without extending submission deadlines, rewriting old deferrals or
 changing current scientific jobs. It has not been deployed. Independent TOPLOC
-reference replay and held-out checkpoint-20 results remain pending.
+reference replay remains pending. Held-out checkpoint 20 completed at 84/128.

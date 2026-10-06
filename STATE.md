@@ -1,3 +1,10 @@
+Verified independent evaluation, 2026-10-06, ~21:46 UTC:
+Checkpoint20 SAME128 completed at84/128 (65.625%), compared with85 atCP19
+and86 atCP18. ROOT summary signature, unchanged cohort SHA and four original
+full-R2-ACK claims authenticated; convergence remains unproven. Independent
+four-case TOPLOC reference job now has one bounded original execution on the
+retained H100 under fresh ROOT V8 scope; no historical reward changes.
+
 Verified continuation, 2026-10-06, ~21:43 UTC:
 Isolated CP19/f213 qualification genuinely completed 20 controls (4 honest VALID,
 16 mutations INVALID), original exit zero, no optimizer updates or production

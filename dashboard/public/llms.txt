@@ -9,8 +9,9 @@ Epoch 29 reopened after fresh numerical calibration and independent confirmation
 passed, trained on 201 eligible UNAUDITED task pairs, and durably published
 checkpoint 94e8999b75838cddf70d3e767318e7b169a5421c890ea9c7eeef2e2aa6104e6d
 at optimizer step twenty after independent full-state readback. Round 30 is
-opening; wait for its signed OPEN manifest before submitting. Independent
-checkpoint-20 evaluation is pending. Optimizer lineage is preserved.
+training after its mining window closed. Independent checkpoint-20 evaluation
+completed at 84/128, versus 85/128 for checkpoint 19 and 86/128 for checkpoint 18.
+This does not show sustained improvement. Optimizer lineage is preserved.
 The coordinator API, continuous auditor and learner now have durable ROOT-pinned
 startup policies, boot enablement and automatic restart on failure. Controlled
 CPU service restarts preserved the original epoch-29 remote training job and
@@ -288,9 +289,9 @@ f21373d7ccb167bcd868f5ed03ce9ac7ef567d894e8ecc9e61f5d7f8645b67b8.
 The existing selected-token logprobs, TOPLOC, inverse-CDF draw verification and
 native outcome grading are unchanged. Old failed reports remain preserved.
 The authority committed optimizer step twenty after full independent readback
-of all 23 optimizer shards. Round 30 is opening. The last completed independent
-128-task evaluation is 85 correct at checkpoint 19 (checkpoint 18 scored 86);
-checkpoint 20 has been discovered but has no completed evaluation yet. The
+of all 23 optimizer shards. Round 30 is training. The latest independent 128-task
+evaluation is 84 correct at checkpoint 20 (checkpoint 19 scored 85; checkpoint
+18 scored 86), with all four original groups archived and acknowledged. The
 recovered collection-to-publication cycle took 66.55 minutes, missing the hourly
 target; the original total included 234.51 minutes of opening recovery.
 Results fluctuate and do not establish convergence. That research run performed no chain transaction; current hourly rewards use the separate assessment policy above.
