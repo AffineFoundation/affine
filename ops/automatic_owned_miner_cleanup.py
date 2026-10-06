@@ -59,7 +59,17 @@ def renew_authorized_scope(approval,config,path,scope_path):
  key=SigningKey(bytes.fromhex((pathlib.Path(config['state'])/'authority.seed').read_text()))
  if key.verify_key.encode().hex()!=AUTH:raise ValueError('original ROOT authority')
  envelope=dict(payload=updated,signer=AUTH,signature=base64.b64encode(key.sign(canonical(updated)).signature).decode())
- target=pathlib.Path(scope_path);temporary=target.with_name(target.name+'.renew-'+str(time.time_ns()))
+ target=pathlib.Path(scope_path);archive=target.parent/'scope-renewal-history'
+ if target.is_symlink()or archive.is_symlink():raise ValueError('regular private renewal journal')
+ archive.mkdir(mode=0o700,exist_ok=True)
+ for raw in (target.read_bytes(),canonical(envelope)):
+  saved=archive/(hashlib.sha256(raw).hexdigest()+'.json')
+  if saved.exists():
+   if saved.is_symlink()or saved.read_bytes()!=raw:raise ValueError('immutable renewal history')
+  else:
+   with saved.open('xb')as f:f.write(raw)
+   saved.chmod(0o600)
+ temporary=target.with_name(target.name+'.renew-'+str(time.time_ns()))
  with temporary.open('xb')as f:f.write(canonical(envelope))
  temporary.chmod(0o600);temporary.replace(target)
  return updated

@@ -112,7 +112,7 @@ class DurableMinerScopeRenewalControls(unittest.TestCase):
    target=root/'scope.json';target.write_bytes(b'original signed scope')
    reply='MainPID=0\nInvocationID=\nFragmentPath='+str(unit)+'\n'
    with patch.object(op.subprocess,'check_output',return_value=reply),patch.object(op,'AUTH',key.verify_key.encode().hex()):
-    result=op.renew_authorized_scope(scope,config,path,target);self.assertGreater(result['expires_at'],time.time());self.assertEqual(result['expires_at']-result['created_at'],3600);self.assertEqual(op.authenticate(op.read(target)),result)
+    result=op.renew_authorized_scope(scope,config,path,target);self.assertGreater(result['expires_at'],time.time());self.assertEqual(result['expires_at']-result['created_at'],3600);self.assertEqual(op.authenticate(op.read(target)),result);self.assertEqual(len(list((root/'scope-renewal-history').glob('*.json'))),2);self.assertTrue(any(x.read_bytes()==b'original signed scope'for x in(root/'scope-renewal-history').glob('*.json')))
     restarted=copy.deepcopy(scope);restarted['renewal_authorization']['process_argv_sha256']=hashlib.sha256(Path('/proc/self/cmdline').read_bytes()).hexdigest()
     running='MainPID='+str(os.getpid())+'\nInvocationID=actual-restart\nFragmentPath='+str(unit)+'\n'
     with patch.object(op.subprocess,'check_output',return_value=running):
