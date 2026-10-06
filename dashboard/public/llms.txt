@@ -66,7 +66,7 @@ errors. This small fixed cohort does not establish convergence or general
 held-out improvement. Historical reports and cohort identities are preserved.
 
 The larger matched SAME128 independent native evaluation scored CP11 77/128,
-CP12 86/128, CP13 84/128 and CP14 78/128. CP14 completed all four original jobs,
+CP12 86/128, CP13 84/128, CP14 78/128 and CP15 85/128. CP14 completed all four original jobs,
 full private R2 acknowledgements and automatic owned-model retirement. These
 mixed results do not establish convergence. A prospective K=2/L=2 trial must
 compare an identical starting checkpoint and this untouched held-out cohort;
@@ -219,7 +219,10 @@ passed full readback, and the group-owned model was automatically retired.
 CP14 subsequently completed the same 128 tasks and scored 78/128 (60.9375%),
 with nine gains and fifteen losses against CP13. All four original jobs and
 full durable acknowledgements completed; owned model retirement completed.
-CP15's matched evaluation is running, without a completed score yet.
+CP15 completed all four original jobs, full private R2 acknowledgements and
+automatic replica retirement, and its dashboard row was published automatically.
+It solved 85/128 with nineteen gains and twelve losses against CP14.
+CP16's independent evaluation is being prepared automatically.
 Sustained convergence is not established. Failed-export evidence archival
 after a genuine replacement ACK and durable retry are available as default-off
 operator code; live adapter installation is pending and they are not part of
