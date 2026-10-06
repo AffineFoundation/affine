@@ -31,13 +31,17 @@ spec/grader/tokenizer; the CPU tests use controlled native fixtures and do not
 claim GPU execution. Class/reward/task/duplicate/quota mismatches reject;
 grader exceptions remain infrastructure failures. This native-only gate does
 not claim TOPLOC, model or sampler verification. A genuine qualification must
-also run the unchanged full distribution, required TOPLOC and every-token
-prescribed sampler verifier, including fresh-valid-proof off-policy tampering.
+also run the approved compact selected-token-logprob and TOPLOC verifier,
+including every-token prescribed sampler checks, including fresh-valid-proof off-policy tampering.
 
 Measure completed valid tasks/minute, attempts/class distribution/cap rate,
 actual unique-task and pair coverage, real transport bytes and gradient/weight
 updates. Retaining twice as many trajectories and training pairs can reduce
 throughput. Keep LR, beta, reference policy,600-second window and256-document
-selection cap unchanged initially. Learning remains the separately authenticated
-same-policy1024 fixed32 CP10/CP11 comparison, with paired gains and losses;
-128-token capped outcomes and historical uncached1024 must stay separate.
+selection cap unchanged initially. Learning must be compared on the same independently authenticated 128-task
+heldout cohort, pinned generation settings, and identical starting checkpoint.
+Report paired gains and losses, not training loss alone. Completed baseline
+checkpoints scored 77/128, 86/128, and 84/128; these are mixed results rather than
+established convergence. Checkpoint 14 evaluation is incomplete. The diagnostic
+32-task cohort, 128-token capped outcomes, and historical uncached1024 must stay
+separate. K2/L2 remains prospective until a fresh signed trial actually completes.
