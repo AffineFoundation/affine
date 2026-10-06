@@ -134,6 +134,12 @@ def verifier_contract(manifest):
  need(all(k in manifest for k in fields),'complete verifier execution contract')
  return digest({k:manifest[k]for k in fields})
 
+class BackendEvidenceNotAdmitted(ValueError):
+ """Authenticated report has no prospective authorization for its backend claim."""
+ def __init__(self,job,source):
+  self.job_sha256=digest(job);self.source_sha256=source
+  super().__init__('authenticated backend evidence not prospectively admitted')
+
 def admit_queue_reports(queue_rows,records,authority,verifiers,approved_sources,*,execution_evidence_policy=None,cutoff=None):
  """Authenticate original SQLite terminal report requests before estimating.
 
@@ -153,15 +159,18 @@ def admit_queue_reports(queue_rows,records,authority,verifiers,approved_sources,
   expected_enforced=True
   if execution_evidence_policy is not None:
    ep=execution_evidence_policy
-   need(type(ep)is dict and set(ep)=={'version','effective_cutoff','sources'}and ep['version']=='explicit-backend-execution-evidence-v1','explicit operator execution evidence policy')
+   need(type(ep)is dict and set(ep)=={'version','effective_cutoff','sources'}and ep['version']in('explicit-backend-execution-evidence-v1','explicit-backend-execution-evidence-v2'),'explicit operator execution evidence policy')
    finite(ep['effective_cutoff'],0,2**53,'prospective execution evidence cutoff');need(type(cutoff)in(int,float)and cutoff>=ep['effective_cutoff'],'prospective execution evidence cutoff not reached')
    entry=ep['sources'].get(source)
    if entry is not None:
-    need(type(entry)is dict and set(entry)=={'backend','backend_module_sha256','model_runtime_revision','backend_profile','numerical_policy','runtime_versions','execution_resources_enforced'},'exact admitted backend evidence scope')
+    need(type(entry)is dict and set(entry)==({'backend','backend_module_sha256','model_runtime_revision','backend_profile','numerical_policy','runtime_versions','execution_resources_enforced'}|({'effective_cutoff'}if ep['version']=='explicit-backend-execution-evidence-v2'else set())),'exact admitted backend evidence scope')
     need(entry['backend']=='standard-backend-no-os-resource-enforcement-v1'and entry['execution_resources_enforced']is False and pins.get('subnet/backend_jobs.py')==entry['backend_module_sha256']and job['source_files']==pins,'complete exact standard backend source')
     need(manifest['model_runtime_revision']==entry['model_runtime_revision']and manifest['backend_profile']==entry['backend_profile']and manifest['numerical_policy']==entry['numerical_policy']and job['runtime_versions']==entry['runtime_versions'],'exact admitted backend runtime/profile/numerical scope')
-    expected_enforced=False
-  need(report.get('source_files')==job['source_files']and all(report.get('runtime_versions',{}).get(k)==v for k,v in job['runtime_versions'].items())and report.get('backend_profile')==manifest['backend_profile']and report.get('numerical_policy')==manifest['numerical_policy']and report.get('execution_resources_enforced')is expected_enforced,'actual runtime/profile/numerical/source evidence')
+    entry_cutoff=entry.get('effective_cutoff',ep['effective_cutoff']);finite(entry_cutoff,ep['effective_cutoff'],2**53,'prospective per-source backend admission cutoff')
+    if cutoff>=entry_cutoff:expected_enforced=False
+  need(report.get('source_files')==job['source_files']and all(report.get('runtime_versions',{}).get(k)==v for k,v in job['runtime_versions'].items())and report.get('backend_profile')==manifest['backend_profile']and report.get('numerical_policy')==manifest['numerical_policy'],'actual runtime/profile/numerical/source evidence')
+  if report.get('execution_resources_enforced')is False and expected_enforced is True:raise BackendEvidenceNotAdmitted(job,source)
+  need(report.get('execution_resources_enforced')is expected_enforced,'actual backend resource enforcement evidence')
   contract=verifier_contract(manifest);completed=finite(report['completed_at'],0,2**53,'original report completion');observed=[]
   audits=report.get('audits');need(type(audits)is list and len(audits)==len(job['submissions']),'original full child report population')
   for obj,audit in zip(job['submissions'],audits):
