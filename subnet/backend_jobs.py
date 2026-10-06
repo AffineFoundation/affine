@@ -1090,4 +1090,12 @@ def main():
     args=parser.parse_args();envelope=load_job_envelope(args.job,args.authority)
     report=execute(envelope,args.authority,args.workspace,args.checkpoint_cache)
     print(json.dumps(dict(job_id=report['job_id'],role=report['role'],success=True,checkpoint=report.get('new_checkpoint',{}).get('id',report['checkpoint']))))
-if __name__=='__main__':main()
+if __name__=='__main__':
+    # -m executes this file as __main__; worker/protocol imports use the
+    # canonical name. Share the admitted implementation and parent-read scope.
+    module=sys.modules[__name__]
+    if sys.modules.get('subnet.backend_jobs',module)is not module:
+        raise ValueError('backend entrypoint requires fresh canonical module')
+    sys.modules['subnet.backend_jobs']=module
+    setattr(sys.modules['subnet'],'backend_jobs',module)
+    main()
