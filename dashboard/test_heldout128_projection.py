@@ -101,3 +101,15 @@ class ProjectionTests(unittest.TestCase):
  def test_checkpoint_profile_difference_rejected(self):
   self.second_checkpoint(lambda j,m,r:(m['backend_profile'].update(dtype='bfloat16'),r['backend_profile'].update(dtype='bfloat16')))
   with self.assertRaises(ValueError):self.rows()
+
+ def test_real_float_native_rewards_survive_strict_dashboard_snapshot(self):
+  from dashboard.server import Database
+  for g in range(4):self.rebind(g,lambda j,m,r:[v.update(reward=float(v['reward']))for v in r['heldout']])
+  self.assertIs(type(self.rows()[0]['successes']),int)
+  state=self.root/'server-state';launch=state/'live-math-launch-preparation-v1/distributed-preparation/live-controller-v1';production=launch/'controller-state';production.mkdir(parents=True)
+  (production/'production-first-signed-manifest.json').write_bytes((self.prod/'production-first-signed-manifest.json').read_bytes())
+  (production/'production-manifest.json').write_bytes(canonical(dict(epoch='production',start=1,deadline=2,checkpoint={'id':'cp'},payable=False)))
+  directory=state/'dashboard';directory.mkdir();(directory/'heldout128-sources.ROOT-SIGNED.json').write_bytes(canonical(self.sign(self.scope)))
+  with patch.object(hp,'AUTHORITY',self.auth):
+   database=Database(self.root/'network.sqlite',state);database.refresh();rows=database.snapshot()['evaluations']
+  self.assertEqual(len(rows),1);self.assertEqual((rows[0]['count'],rows[0]['successes']),(128,80));self.assertIs(type(rows[0]['successes']),int);self.assertFalse(rows[0]['proof_verification_performed'])
