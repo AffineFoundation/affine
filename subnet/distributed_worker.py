@@ -122,7 +122,13 @@ class Worker:
 
     def once(self):
         claim=self.request('claim',role='verify')['claim']
-        if claim is None: return False
+        if claim is None:
+            # No new work is required to retire already verified owned models.
+            # Lease/inode guards retain every active or changed cache; external
+            # mapped caches and report/log evidence are outside this catalog.
+            try:CacheLifecycle(self.workspace/'backend').evict_checkpoints(keep=0)
+            except (OSError,ValueError):logging.warning('idle owned checkpoint disposal deferred; retaining evidence')
+            return False
         job=authenticate(claim['job'],self.authority)
         if digest(job)!=claim['job_sha256'] or job['role']!='verify': raise ValueError('claim job binding')
         # Retry workspace differs by lease attempt; the immutable signed job ID
