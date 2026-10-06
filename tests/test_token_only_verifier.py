@@ -66,7 +66,9 @@ class TokenOnlyControls(unittest.TestCase):
         self.assertGreater(rejected,0)
 
     def test_default_off_and_unknown_or_null_policy(self):
-        for value in (None, {}, {'version': 'unknown'}):
+        for value in (None, {}, {'version': 'unknown'},
+                      {**tokens.POLICY,'historical_execution_proof':0},
+                      {**tokens.POLICY,'historical_execution_proof':0.0}):
             m = copy.deepcopy(self.manifest); m['token_only_verification_policy'] = value
             with self.assertRaises(ValueError): self.check(manifest=m)
         m = copy.deepcopy(self.manifest); m.pop('token_only_verification_policy')
