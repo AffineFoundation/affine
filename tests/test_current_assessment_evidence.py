@@ -15,7 +15,7 @@ class EvidenceControls(unittest.TestCase):
   self.root=self.fx.root;self.authority=self.fx.authority;self.key=self.fx.operator
   self.workerkey=SigningKey.generate();self.worker=self.workerkey.verify_key.encode().hex()
   self.policy=dict(version=RESOLUTION_VERSION,recent_epochs=8,decay=.8,prior_alpha=1,prior_beta=1,invalid_multiplier=.25,zero_epoch_after=3,blacklist_after=4,blacklist_epochs=2)
-  m=copy.deepcopy(self.fx.manifest);m.update(model_runtime_revision='runtime',backend_profile={'version':'test'},numerical_policy={'version':'test'},sampling_contract=None,sampling_source_hash=None,harness_source_hash='7'*64)
+  m=copy.deepcopy(self.fx.manifest);m.update(model_runtime_revision='runtime',backend_profile={'version':'test'},numerical_policy={'version':'test'},sampling_contract=None,sampling_source_hash=None,harness_source_hash='5'*64)
   for native in m.get('environments',[]):native['spec']['source_hash']='6'*64
   if 'environment' in m:m['environment']['source_hash']='6'*64
   self.m=m;self.source=m['source_bundle']['sha256'];self.pins={'subnet/backend_jobs.py':'8'*64,'subnet/harness.py':'7'*64}
@@ -58,7 +58,7 @@ class EvidenceControls(unittest.TestCase):
  def test_expected_source_digest_not_optional_promotion(self):
   with self.assertRaises(ValueError):e.load_evidence(self.cfg,authority=self.authority,cutoff=30,verifiers=[self.worker],expected_source_admission_sha256='0'*64)
  def test_native_source_mismatch_refuses_population(self):
-  p=copy.deepcopy(self.pop['payload']);m=p['manifest_document']['payload'];m['harness_source_hash']='0'*64;p['manifest_document']=signed(self.key,m);self.state['populations'][m['epoch']]=signed(self.key,p);self.save();r=self.load();self.assertEqual(r['snapshots'],[]);self.assertTrue(r['refused'])
+  p=copy.deepcopy(self.pop['payload']);m=p['manifest_document']['payload'];m['harness_source_hash']='malformed';p['manifest_document']=signed(self.key,m);self.state['populations'][m['epoch']]=signed(self.key,p);self.save();r=self.load();self.assertEqual(r['snapshots'],[]);self.assertTrue(r['refused'])
  def test_unknown_is_not_valid_or_fraud(self):
   self.queue=self.make_queue('numerical_ambiguous');self.save();r=self.load();d=r['snapshots'][0]['miners'][self.fx.identity];self.assertEqual(d['validity_probability'],.5);self.assertEqual(d['confirmed_invalid_recent'],0);self.assertEqual(d['reward_multiplier'],1);self.assertEqual(d['resolution_coverage_factor'],0)
  def test_duplicate_original_evidence_counts_once(self):

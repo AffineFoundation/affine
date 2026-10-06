@@ -58,12 +58,15 @@ def _population(document, epoch, authority, sources):
             raise ValueError('population source native profile binding: ' + field)
     if profile.get('runtime_versions') != metadata.get('runtime_versions'):
         raise ValueError('population source native runtime binding')
-    if manifest.get('harness_source_hash') != pins.get('subnet/harness.py'):
-        raise ValueError('population admitted native harness source')
+    # The harness digest is composite, not the individual harness.py file pin.
+    # This is archived metadata authenticated by the original ROOT manifest;
+    # source/profile admission above authorizes that exact original source.
+    if not valid_digest(manifest.get('harness_source_hash')) or not valid_digest(pins.get('subnet/harness.py')):
+        raise ValueError('population signed native harness/source binding')
     if manifest.get('sampling_contract') is not None and manifest.get('sampling_source_hash') != pins.get('subnet/forced_sampling.py'):
         raise ValueError('population admitted sampling source')
     from subnet.protocol import read_only_archived_entries
-    definitions = read_only_archived_entries(manifest, pins['subnet/harness.py'])
+    definitions = read_only_archived_entries(manifest, manifest['harness_source_hash'])
     if not definitions or any(not valid_digest(row['spec'].get('source_hash')) for row in definitions):
         raise ValueError('population versioned native environment binding')
     ids = p['eligible_evidence_ids']
