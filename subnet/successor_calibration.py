@@ -20,7 +20,10 @@ def request(value):
     if type(value['task_indices'])is not list or len(value['task_indices'])!=2 or any(type(i)is not int or i<0 for i in value['task_indices'])or len(set(value['task_indices']))!=2:raise ValueError('two distinct real calibration tasks')
     if type(value['max_tokens'])is not int or value['max_tokens']!=h['max_output_tokens'] or not 8<=value['max_tokens']<=2048:raise ValueError('production calibration output budget')
     d=value['draw_contract']
-    if type(d)is not dict or d.get('version')not in('forced-inverse-cdf-replay-v1','forced-inverse-cdf-prefill-v2','forced-inverse-cdf-prefill-support-v3')or type(d.get('max_attempts'))is not int or not 2<=d['max_attempts']<=128:raise ValueError('qualification draw contract')
+    if type(d)is not dict or d.get('version')not in('forced-inverse-cdf-replay-v1','forced-inverse-cdf-prefill-v2','forced-inverse-cdf-prefill-support-v3','forced-inverse-cdf-prefill-threeway-v4')or type(d.get('max_attempts'))is not int or not 2<=d['max_attempts']<=128:raise ValueError('qualification draw contract')
+    if d['version']=='forced-inverse-cdf-prefill-threeway-v4':
+        from .forced_sampling import validate
+        validate(d)
     seed=d.get('randomness')
     if type(seed)is not str or len(seed)!=64 or any(x not in '0123456789abcdef'for x in seed):raise ValueError('qualification public draws')
     return dict(value,harness=h)
@@ -79,7 +82,7 @@ def before_open(controller,config,status,opening):
     from .forced_sampling import VERSION as STRICT,new_contract,source_hash
     from .remote_backend import save
     import json
-    if config.get('sampling_policy',{}).get('version')not in(FAST,'forced-inverse-cdf-prefill-support-v3'):return opening
+    if config.get('sampling_policy',{}).get('version')not in(FAST,'forced-inverse-cdf-prefill-support-v3','forced-inverse-cdf-prefill-threeway-v4'):return opening
     opt=config.get('successor_calibration')
     if type(opt)is not dict or set(opt)!={'version','env_id'} or opt['version']!=VERSION:raise ValueError('fast openings require automatic successor calibration')
     rows=[dict(r,env_id=r['spec']['id'])for r in opening['environments']];row=next(r for r in rows if r['env_id']==opt['env_id'] and r['indices'])

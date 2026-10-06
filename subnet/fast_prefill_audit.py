@@ -7,6 +7,7 @@ Calibration is an executed-control artifact admitted by the signed opening.
 import hashlib,json,math
 VERSION='forced-inverse-cdf-prefill-v2'
 SUPPORT_VERSION='forced-inverse-cdf-prefill-support-v3'
+THREEWAY_VERSION='forced-inverse-cdf-prefill-threeway-v4'
 CALIBRATION='cached-prefill-calibration-v1'
 canonical=lambda v:json.dumps(v,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
 digest=lambda v:hashlib.sha256(canonical(v)).hexdigest()
@@ -66,6 +67,37 @@ def verify_intervals(logprobs,tokens,uniforms,temperature,top_p,error):
  if bool(outside.any()):raise InvalidSample('forced CDF interval mismatch')
  return dict(positions=n,cdf_abs_error=error,all_intervals_verified=True)
 
+def _threeway_unknown(reason,positions):
+ error=NumericalAmbiguity(reason)
+ found=positions.nonzero(as_tuple=False).flatten().tolist()
+ error.uncertain_positions=found[:128];error.uncertain_position_count=len(found)
+ return error
+
+def verify_threeway_intervals(logprobs,tokens,uniforms,temperature,top_p,error):
+ import torch
+ from .audit_policy import InvalidSample
+ if type(error)not in(int,float)or not math.isfinite(error)or not 0<=error<=1e-3:raise ValueError('bounded admitted CDF error')
+ probs=distribution(logprobs,temperature,top_p);n,v=probs.shape
+ if len(tokens)!=n or len(uniforms)!=n or any(type(t)is not int or not 0<=t<v for t in tokens):raise InvalidSample('forced sampling token framing')
+ if any(type(u)not in(int,float)or not math.isfinite(u)or not 0<=u<1 for u in uniforms):raise ValueError('trusted forced uniform framing')
+ indices=torch.tensor(tokens,dtype=torch.int64,device=probs.device);positions=torch.arange(n,device=probs.device);cdf=probs.cumsum(-1);cdf[:,-1]=1.
+ high=cdf[positions,indices];mass=probs[positions,indices];low=high-mass;u=torch.tensor(uniforms,dtype=torch.float64,device=probs.device)
+ supported=mass>0
+ # A support exclusion never becomes PASS. Its collapsed CDF boundary is
+ # checked against the SAME signed uncertainty bound as every position.
+ # Outside that bound rejects; inside stays unknown without exact replay.
+ outside=(u<low-error)|(u>=high+error)
+ if bool(outside.any()):raise InvalidSample('forced CDF interval outside calibrated region')
+ if bool((~supported).any()):raise _threeway_unknown('reference nucleus support excluded; no cached adjudication',~supported)
+ # Unlike the existing v3 fast path, BOTH sides of each boundary uncertainty
+ # band remain unknown, including a draw just inside the prefill interval.
+ ambiguous=(u<low+error)|(u>=high-error)
+ if bool(ambiguous.any()):raise _threeway_unknown('forced CDF boundary within calibrated uncertainty; no cached adjudication',ambiguous)
+ return {'positions':n,'all_intervals_verified':True,'cdf_abs_error':error,
+         'sampling_assurance':'calibrated-interior-prescribed-CDF',
+         'autoregressive_fallback':False}
+
+
 def verify_sampling(runtime,rollout,turn_index,prompt,output,logprobs):
  from .forced_sampling import uniform
  from .audit_policy import InvalidSample
@@ -73,6 +105,8 @@ def verify_sampling(runtime,rollout,turn_index,prompt,output,logprobs):
  stop=runtime.tokenizer.eos_token_id
  if any(token==stop for token in output[:-1])or len(output)<config['max_output_tokens']and output[-1]!=stop:raise InvalidSample('forced generation stop condition')
  draws=[uniform(context,runtime.spec.id,rollout['task_hash'],rollout['index'],rollout['seed'],turn_index,i)for i in range(len(output))]
+ if context['contract']['version']==THREEWAY_VERSION:
+  return verify_threeway_intervals(logprobs,output,draws,config['temperature'],config['top_p'],p['cdf_abs_error'])
  try:return verify_intervals(logprobs,output,draws,config['temperature'],config['top_p'],p['cdf_abs_error'])
  except (SupportMismatch,NumericalAmbiguity) as uncertainty:
   if context['contract']['version']!=SUPPORT_VERSION:raise
