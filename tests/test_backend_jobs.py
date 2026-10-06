@@ -321,5 +321,7 @@ class EmptyMineExecution(MiningEpochWindow):
             self.assertEqual(report['batches'],0);self.assertEqual(report['submission_size'],0);self.assertIsNone(report['submission_sha256'])
             self.assertEqual(report['mining_status'],'no_complete_KL_batch')
             self.assertEqual(report['search'][0]['observed_positive'],1)
+            self.assertEqual((Path(directory)/'jobs'/self.job['job_id']/'report.json').stat().st_mode&0o777,0o600)
+            self.assertEqual((Path(directory)/'jobs'/self.job['job_id']/'report.json').read_bytes(),canonical(report))
             self.assertFalse((Path(directory)/'jobs'/self.job['job_id']/'submission.zip').exists())
             self.assertNotIn('training',report);self.assertNotIn('scores',report)
