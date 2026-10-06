@@ -145,6 +145,30 @@ class CacheLifecycle:
             except (BlockingIOError,ValueError,FileNotFoundError):continue
         return removed
 
+    def retain_acknowledged_checkpoint(self,ttl_seconds,disk_floor_bytes,now=None):
+        """Keep one complete recent ACKed model; reuse still requires full hashing.
+
+        Partial/failed receipts cannot become current. Capacity may discard
+        current bytes; leases and inode ownership always take precedence.
+        """
+        if isinstance(ttl_seconds,bool) or not isinstance(ttl_seconds,(int,float)) or not 0<ttl_seconds<=86400:
+            raise ValueError('bounded checkpoint TTL')
+        if isinstance(disk_floor_bytes,bool) or not isinstance(disk_floor_bytes,int) or disk_floor_bytes<0:
+            raise ValueError('checkpoint disk floor')
+        now=time.time() if now is None else now;candidates=[]
+        for path in self.meta.glob('*.json'):
+            value=json.loads(path.read_text());cp=value.get('cp')
+            if not cp:continue
+            members=value.get('members',{});touched=value.get('touched',0)
+            if (0<=now-touched<ttl_seconds and members and set(members)==set(value['files'])
+                and all(m.get('origin')=='authenticated-job-ACK' for m in members.values())):
+                candidates.append((touched,cp))
+        retained=[max(candidates)[1]] if candidates else []
+        removed=self.evict_checkpoints(exclude=retained,keep=0)
+        free=os.statvfs(self.root).f_bavail*os.statvfs(self.root).f_frsize
+        if free<disk_floor_bytes:removed+=self.evict_checkpoints(keep=0,required_free_bytes=disk_floor_bytes)
+        return removed
+
     def record_download(self,path,verified_sha256):
         path=Path(path).absolute();relative=path.relative_to(self.root)
         if len(relative.parts)!=3 or relative.parts[0]!='jobs' or not re.fullmatch(r'submission-[0-9]+\.(zip|json)',relative.name):

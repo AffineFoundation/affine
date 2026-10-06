@@ -74,9 +74,18 @@ def complete_checkpoint_cache(path,files):
 
 
 class Worker:
-    def __init__(self, url, seed, authority, workspace, python=sys.executable, checkpoint_caches=None, backend_source=None, source_registry=None):
+    def __init__(self, url, seed, authority, workspace, python=sys.executable, checkpoint_caches=None, backend_source=None, source_registry=None, checkpoint_retention=None):
         self.url=url.rstrip('/'); self.key=SigningKey(seed); self.identity=self.key.verify_key.encode().hex()
         self.authority=authority; self.workspace=Path(workspace); self.python=python
+        self.checkpoint_retention=checkpoint_retention
+        if checkpoint_retention is not None:
+            if (set(checkpoint_retention)!={'ttl_seconds','disk_floor_bytes'} or
+                isinstance(checkpoint_retention['ttl_seconds'],bool) or
+                not isinstance(checkpoint_retention['ttl_seconds'],(int,float)) or
+                not 0<checkpoint_retention['ttl_seconds']<=86400 or
+                isinstance(checkpoint_retention['disk_floor_bytes'],bool) or
+                not isinstance(checkpoint_retention['disk_floor_bytes'],int) or
+                checkpoint_retention['disk_floor_bytes']<0):raise ValueError('bounded owned checkpoint retention')
         self.checkpoint_caches=dict(checkpoint_caches or {})
         self.backend_source=backend_source
         self.source_registry=dict(source_registry or {})
@@ -190,13 +199,17 @@ class Worker:
             except (OSError,ValueError):logging.warning('terminal disposable input retirement deferred; retaining diagnostics')
         self._expired_input_scan_offset=start+min(4,len(candidates))
 
+    def sweep_owned_checkpoints(self,lifecycle):
+        if self.checkpoint_retention is None:return lifecycle.evict_checkpoints(keep=0)
+        return lifecycle.retain_acknowledged_checkpoint(**self.checkpoint_retention)
+
     def once(self):
         claim=self.request('claim',role='verify')['claim']
         if claim is None:
             # No new work is required to retire already verified owned models.
             # Lease/inode guards retain every active or changed cache; external
             # mapped caches and report/log evidence are outside this catalog.
-            try:CacheLifecycle(self.workspace/'backend').evict_checkpoints(keep=0)
+            try:self.sweep_owned_checkpoints(CacheLifecycle(self.workspace/'backend'))
             except (OSError,ValueError):logging.warning('idle owned checkpoint disposal deferred; retaining evidence')
             try:self.sweep_expired_inputs()
             except (OSError,ValueError):logging.warning('terminal input inventory unavailable; retaining diagnostics')
@@ -297,11 +310,15 @@ class Worker:
                 try:self.retire_expired_inputs(expired_attempt)
                 except (OSError,ValueError):logging.warning('terminal disposable input retirement deferred; retaining diagnostics')
             # Only the successfully ACKed, backend-verified owned checkpoint
-            # is disposable here. Release this job's inherited flock first;
+            # follows the configured bounded operator retention policy. Release
+            # this job's inherited flock first;
             # another live lease or changed inode makes eviction refuse safely.
             # External mapped caches and all reports/logs remain untouched.
             if acked_owned_checkpoint is not None:
-                try:acked_owned_checkpoint.evict_checkpoints(only=[approved['id']],keep=0)
+                try:
+                    if self.checkpoint_retention is not None and acked_owned_checkpoint.root==(self.workspace/'backend').absolute():
+                        self.sweep_owned_checkpoints(acked_owned_checkpoint)
+                    else:acked_owned_checkpoint.evict_checkpoints(only=[approved['id']],keep=0)
                 except (OSError,ValueError):logging.warning('ACKed owned checkpoint disposal deferred; retaining evidence')
             # Retry workspaces are disposable model inputs, not independent
             # long-lived caches. Their report/job diagnostics remain in place.
@@ -335,9 +352,13 @@ def main():
     parser=argparse.ArgumentParser(); parser.add_argument('--coordinator',required=True)
     parser.add_argument('--seed-file',required=True); parser.add_argument('--authority',required=True)
     parser.add_argument('--source-registry');parser.add_argument('--backend-source');parser.add_argument('--workspace',required=True); parser.add_argument('--once',action='store_true')
+    parser.add_argument('--owned-checkpoint-ttl-seconds',type=int)
+    parser.add_argument('--owned-checkpoint-disk-floor-bytes',type=int)
     parser.add_argument('--checkpoint-cache',action='append',default=[],metavar='CHECKPOINT_ID=LOCAL_PATH')
     args=parser.parse_args(); path=Path(args.seed_file)
     if path.stat().st_mode & 0o077: raise ValueError('worker key must be private')
+    if (args.owned_checkpoint_ttl_seconds is None)!=(args.owned_checkpoint_disk_floor_bytes is None):raise ValueError('both owned checkpoint retention limits required')
+    retention=None if args.owned_checkpoint_ttl_seconds is None else dict(ttl_seconds=args.owned_checkpoint_ttl_seconds,disk_floor_bytes=args.owned_checkpoint_disk_floor_bytes)
     caches={}
     for value in args.checkpoint_cache:
         identifier,local=value.split('=',1)
@@ -345,7 +366,7 @@ def main():
         if identifier in caches:raise ValueError('duplicate checkpoint cache mapping')
         caches[identifier]=local
     registry=json.loads(Path(args.source_registry).read_text()) if args.source_registry else {}
-    worker=Worker(args.coordinator,bytes.fromhex(path.read_text().strip()),args.authority,args.workspace,checkpoint_caches=caches,backend_source=args.backend_source,source_registry=registry)
+    worker=Worker(args.coordinator,bytes.fromhex(path.read_text().strip()),args.authority,args.workspace,checkpoint_caches=caches,backend_source=args.backend_source,source_registry=registry,checkpoint_retention=retention)
     if args.once:
         worker.once()
         return
