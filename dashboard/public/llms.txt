@@ -1,20 +1,29 @@
 # Affine — MATH mining, verification and training
 
 Current operational status, 2026-10-06:
-E22 is open on approved source
+E22 has closed its 600-second mining window and is training on 256
+cheap-eligible, UNAUDITED task pairs without waiting for inference audits.
+The approved source is
 0380c393cbab76cfd03c1c8c91ba1a2579efe49f60ccd385f2a6f6f8d9db2e50,
-with durable checkpoint 6493a901bd009f0800d5eed97d19aee78947cc586afeb27abfb2c72032ad1924
-and optimizer parent twelve. Its authenticated signed mining window runs from
-1791273699 to 1791274299: 600 seconds. The original owned miner is generating
-on GPU using the independently hash-verified CP12 calibration cache through an
-explicit additive software routing journal. A cumulative compact batch has
-been uploaded; final mining counts and startup timings remain pending.
+using checkpoint 6493a901bd009f0800d5eed97d19aee78947cc586afeb27abfb2c72032ad1924
+and optimizer parent twelve. The owned miner completed three batches from
+47 attempts before the deadline. Its verified checkpoint materialization took
+34.7 seconds and model construction 18.9 seconds. These are measured startup
+costs, not zero-cost cache hits.
 K=1/L=1, at most three batches per UID, the 16-attempt ceiling, selected-token
-logprobs plus TOPLOC, committed UNAUDITED training inputs, eight-stream state
-transport, and nonpayable operation are unchanged. Fresh actual CP12 calibration
-and final public-draw confirmation passed before opening. Separate audits are
-not a learner barrier; new-source audit jobs require their own admitted API and
-worker source maps. No completed E22 training update is claimed yet.
+logprobs plus TOPLOC, eight-stream state transport, and nonpayable operation
+are unchanged. No completed E22 training update is claimed yet.
+Seven verifier workers have the additive source admission, but the audit
+coordinator is undergoing recovery from metadata contention. Training continues
+independently. Chain weight submission remains disabled.
+
+A separate compact three-way proof candidate was tested on two H200s:
+three honest rollouts accepted, one long rollout numerically inconclusive,
+and 80 token mutations rejected on each host. Both hosts agreed on verdicts.
+This candidate is NOT the active miner contract. Inconclusive outcomes are not
+confirmed fraud; their reward policy must be qualified before any cutover.
+Guarded optimizer cache-stat admission and K=2/L=2 trials are also prospective;
+external miners must continue following the signed manifest and source bundle.
 
 The matched fixed32, 1,024-token owned cached native evaluation scored CP12
 21/32 versus CP11 18/32, with four gains, one loss and zero infrastructure
