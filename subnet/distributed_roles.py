@@ -13,6 +13,15 @@ from nacl.signing import VerifyKey
 from .storage import canonical
 
 
+# Metadata-only indexes keep idle claims out of stored signed envelopes/reports.
+QUEUE_METADATA_INDEXES = {
+    'affine_jobs_status_expires_v1': 'CREATE INDEX affine_jobs_status_expires_v1 ON jobs(status,expires)',
+    'affine_jobs_status_lease_attempt_v1': 'CREATE INDEX affine_jobs_status_lease_attempt_v1 ON jobs(status,lease,attempt)',
+    'affine_jobs_role_status_expires_lease_attempt_v1': 'CREATE INDEX affine_jobs_role_status_expires_lease_attempt_v1 ON jobs(role,status,expires,lease,attempt)',
+    'affine_requests_expires_v1': 'CREATE INDEX affine_requests_expires_v1 ON requests(expires)',
+}
+
+
 def digest(value):
     return hashlib.sha256(canonical(value)).hexdigest()
 
@@ -116,8 +125,12 @@ class Coordinator:
         self.path = str(path); self.authority = authority; self.workers = workers
         self.lease_seconds = lease_seconds; self.max_attempts = max_attempts; self.clock = clock
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self._queue_inode = None
+        if Path(path).exists():
+            identity = Path(path).stat()
+            self._queue_inode = (identity.st_dev, identity.st_ino)
         with self.transaction() as db:
-            db.executescript('''
+            schema = '''
             CREATE TABLE IF NOT EXISTS jobs (
               id TEXT PRIMARY KEY, digest TEXT UNIQUE NOT NULL, envelope TEXT NOT NULL,
               role TEXT NOT NULL, expires REAL NOT NULL, status TEXT NOT NULL,
@@ -127,15 +140,54 @@ class Coordinator:
               PRIMARY KEY(worker,nonce));
             CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT,
               job TEXT, at REAL, kind TEXT, detail TEXT);
-            ''')
+            '''
+            # executescript implicitly commits BEGIN; individual DDL preserves
+            # atomic initialization and index admission under the same lease lock.
+            for statement in schema.split(';'):
+                if statement.strip(): db.execute(statement)
+            for name, sql in QUEUE_METADATA_INDEXES.items():
+                existing = db.execute('SELECT sql FROM sqlite_master WHERE name=?', (name,)).fetchone()
+                if existing is None: db.execute(sql)
+                elif existing[0] != sql: raise ValueError('conflicting queue metadata index')
         Path(path).chmod(0o600)
+
+    def _check_queue_identity(self):
+        identity = Path(self.path).stat()
+        observed = (identity.st_dev, identity.st_ino)
+        if self._queue_inode is None: self._queue_inode = observed
+        elif observed != self._queue_inode: raise ValueError('authoritative queue inode changed')
+
+    def _begin_transaction(self, *, budget=120, monotonic=time.monotonic, sleep=time.sleep):
+        """Retry only BEGIN acquisition; never repeat a body or failed commit."""
+        if not 0 < budget <= 120: raise ValueError('queue acquisition budget')
+        deadline = monotonic() + budget
+        while True:
+            if self._queue_inode is not None: self._check_queue_identity()
+            remaining = deadline - monotonic()
+            if remaining <= 0: raise TimeoutError('authoritative queue write lock unavailable')
+            db = sqlite3.connect(self.path, timeout=min(.25, remaining), isolation_level=None)
+            db.row_factory = sqlite3.Row
+            try:
+                self._check_queue_identity()
+                db.execute('BEGIN IMMEDIATE')
+                self._check_queue_identity()
+                return db
+            except sqlite3.OperationalError as error:
+                db.close()
+                if not any(word in str(error).lower() for word in ('locked', 'busy')): raise
+                remaining = deadline - monotonic()
+                if remaining <= 0: raise TimeoutError('authoritative queue write lock unavailable') from error
+                sleep(min(.05, remaining))
+            except BaseException:
+                db.close(); raise
 
     @contextmanager
     def transaction(self):
-        db = sqlite3.connect(self.path, timeout=30, isolation_level=None)
-        db.row_factory = sqlite3.Row
+        db = self._begin_transaction()
         try:
-            db.execute('BEGIN IMMEDIATE'); yield db; db.commit()
+            yield db
+            self._check_queue_identity()
+            db.commit()
         except BaseException:
             db.rollback(); raise
         finally:
