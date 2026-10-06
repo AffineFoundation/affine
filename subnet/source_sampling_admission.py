@@ -59,7 +59,7 @@ class SamplingAdmission:
    if fast and hasattr(fast,'THREEWAY_VERSION')and m.get('sampling_contract',{}).get('version')==fast.THREEWAY_VERSION:
     for outcome in audit.get('outcomes',[]):
      if outcome.get('failure_kind')=='numerical_ambiguous':
-      if outcome.get('valid')is not None or outcome.get('fully_audited')is not False or outcome.get('sampling_verification_complete')is not False or outcome.get('environment_verification_complete')is not False:raise ValueError('v4 unknown cannot be accepted or confirmed invalid')
+      if outcome.get('valid')is not None or outcome.get('fully_audited')is not False or outcome.get('sampling_verification_complete')is not False or type(outcome.get('environment_verification_complete'))is not bool:raise ValueError('v4 unknown cannot be accepted or confirmed invalid')
       positions=outcome.get('uncertain_token_positions');count=outcome.get('uncertain_token_position_count')
       if positions is not None or count is not None:
        if type(positions)is not list or len(positions)>128 or any(type(p)is not int or p<0 for p in positions)or type(count)is not int or not len(positions)<=count<=65536:raise ValueError('bounded v4 uncertain token metadata')
