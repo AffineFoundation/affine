@@ -343,6 +343,23 @@ class ContinuousAuditor:
   document=self.controller.signed(result);atomic(target,document);self.publish_immutable('public/continuous-audit/snapshots/'+str(cutoff)+'-'+epoch+'.json',document);return document
 
 
+def service_cycle(service,state,authority):
+ """Retry only transient SQLite contention, preserving immutable requests.
+
+ The enclosing queue transaction closes/rolls back before this returns. The
+ next cycle uses persisted original jobs and idempotent enqueue, never a new
+ signature, deadline, scientific result or an in-transaction body replay.
+ """
+ try:
+  for path in sorted(Path(state).glob('*-continuous-audit-population.json')):service.admit(json.loads(path.read_text()))
+  result=service.tick()
+  cutoff=int(time.time()//3600)*3600
+  service.reconcile_hours(completed_learners(state,authority),cutoff)
+  return dict(at=time.time(),**result)
+ except sqlite3.OperationalError as error:
+  if not any(word in str(error).lower()for word in('locked','busy')):raise
+  return dict(at=time.time(),status='retryable-queue-contention',retryable=True,error_type=type(error).__name__)
+
 def main(argv=None):
  parser=argparse.ArgumentParser();parser.add_argument('--config',required=True);parser.add_argument('--once',action='store_true');a=parser.parse_args(argv)
  from .storage import Bucket
@@ -354,11 +371,8 @@ def main(argv=None):
  sources=admitted_service_config(c,controller.authority.id)
  service=ContinuousAuditor(controller,queue,directory=state/'continuous-audit',approved_sources=sources['approved_sources'],job_metadata=sources['job_metadata'],audit_policy=c['policy'],max_inflight=c.get('max_inflight',8),budget_per_tick=c.get('budget_per_tick',8),job_seconds=c.get('job_seconds',900),capture_workers=c.get('capture_workers',1),execution_evidence_policy=sources.get('execution_evidence_policy'),job_grouping_policy=c.get('job_grouping_policy'),backend_evidence_deferral_policy=sources.get('backend_evidence_deferral_policy'))
  while True:
-  for path in sorted(state.glob('*-continuous-audit-population.json')):service.admit(json.loads(path.read_text()))
-  result=service.tick();atomic(state/'continuous-audit-health.json',dict(at=time.time(),**result))
-  cutoff=int(time.time()//3600)*3600
-  service.reconcile_hours(completed_learners(state,controller.authority.id),cutoff)
-  if a.once:return 0
+  result=service_cycle(service,state,controller.authority.id);atomic(state/'continuous-audit-health.json',result)
+  if a.once:return 2 if result.get('retryable')else 0
   time.sleep(c.get('poll_seconds',10))
 
 if __name__=='__main__':raise SystemExit(main())

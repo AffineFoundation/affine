@@ -22,6 +22,47 @@ class Queue:
  def enqueue(self,e):self.envelopes.append(e)
  def archive(self,*a):pass
 class ServiceControls(unittest.TestCase):
+ def test_failed_commit_retries_same_request_after_rollback(self):
+  import sqlite3
+  from subnet.continuous_audit_service import service_cycle
+  path=Path(self.directory.name)/'commit.sqlite3'
+  original=signed(self.key,dict(job_id='original',created_at=10,expires_at=100))
+  import json
+  raw=json.dumps(original,sort_keys=True)
+  with sqlite3.connect(path)as db:
+   db.execute('CREATE TABLE jobs(id TEXT PRIMARY KEY,original TEXT)')
+   db.execute('CREATE TABLE existing(id INTEGER)');db.execute('INSERT INTO existing VALUES(1)')
+  reader=sqlite3.connect(path,isolation_level=None)
+  reader.execute('BEGIN');reader.execute('SELECT * FROM existing').fetchall()
+  attempts=[]
+  class Service:
+   def tick(inner):
+    attempts.append(raw)
+    db=sqlite3.connect(path,timeout=.05,isolation_level=None)
+    try:
+     db.execute('BEGIN IMMEDIATE');db.execute('INSERT OR IGNORE INTO jobs VALUES(?,?)',('original',raw));db.commit()
+    finally:db.close()  # Failed commit rolls back, no body replay.
+    return dict(enqueued=1)
+   def reconcile_hours(inner,*args):pass
+  service=Service()
+  with patch('subnet.continuous_audit_service.completed_learners',return_value=[]):
+   try:
+    failed=service_cycle(service,self.directory.name,self.root)
+    self.assertEqual(failed['status'],'retryable-queue-contention')
+    self.assertNotIn('enqueued',failed)
+    with sqlite3.connect(path)as db:self.assertEqual(db.execute('SELECT count(*) FROM jobs').fetchone()[0],0)
+   finally:reader.rollback();reader.close()
+   self.assertEqual(service_cycle(service,self.directory.name,self.root)['enqueued'],1)
+   service_cycle(service,self.directory.name,self.root)
+  self.assertEqual(attempts,[raw,raw,raw])
+  with sqlite3.connect(path)as db:self.assertEqual(db.execute('SELECT * FROM jobs').fetchall(),[('original',raw)])
+ def test_service_cycle_never_masks_integrity_or_schema_failures(self):
+  import sqlite3
+  from subnet.continuous_audit_service import service_cycle
+  for error in(ValueError('signature mismatch'),sqlite3.OperationalError('no such table: jobs')):
+   service=SimpleNamespace(tick=lambda:None)
+   with patch.object(service,'tick',side_effect=error):
+    with self.assertRaises(type(error)):service_cycle(service,self.directory.name,self.root)
  def test_expired_sqlite_jobs_release_capacity_without_mutating_originals(self):
   import sqlite3
   path=Path(self.directory.name)/'queue.sqlite3'
