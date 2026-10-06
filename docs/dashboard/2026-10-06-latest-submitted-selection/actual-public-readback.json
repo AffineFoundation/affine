@@ -1,0 +1,18 @@
+{
+  "original_SHA256": "14f30439d669bf069c476f02be0592842a6b8269c3d118f387034930946cd701",
+  "deployed_SHA256": "5aec7f6c838328853fd4560525a270fd0af2b24f10b0e0b008054555e1d5bf79",
+  "deployed_bytes": 77941,
+  "public_URL": "https://affine.io/network.js?v=20261005-independent-price-freshness",
+  "public_HTTP_status": 200,
+  "readback_at": 1791250130.8181238,
+  "exact_public_asset_hash_match": true,
+  "actual_default_epoch": "nonpayable-live-reward-math-v1--1791244843-18",
+  "actual_submitted_batches": 311,
+  "actual_learner_eligible": 276,
+  "selection_controls": 10,
+  "syntax_check": "node --check PASS",
+  "control_script_SHA256": "ebc9125ccf3a9c0fc65c346b5948d9219ab926a8ac65ea7d3dab8ac9b9ed1c94",
+  "patch_SHA256": "0ef115fd49698ec578aae322909995575df4ecccb4458c6840a59c0720b108b5",
+  "changed_only_existing_network_JS": true,
+  "HTML_CSS_DNS_services_unchanged": true
+}

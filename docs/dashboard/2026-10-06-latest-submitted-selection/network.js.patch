@@ -1,0 +1,25 @@
+--- a/website/network.js
++++ b/website/network.js
+@@ -194,8 +194,9 @@
+   function batchDetails(row) {
+     const lines = [`${epochName(row)} · ${batchPhase(row)}`,`${utc(row.start)} UTC`,batchAvailable(row)?`${number(row.batches)} submitted batches`:'Batch counts pending audit'];
+     if (!batchAvailable(row)) return lines.join('\n');
+-    if (validOutcomes(row)) lines.push(`${number(row.accepted)} accepted · ${number(row.unchecked)} unchecked · ${number(row.rejected)} rejected`);
+-    else lines.push('Verification breakdown unavailable');
++    if (row.learner_input_assurance==='unaudited') lines.push(`${number(row.learner_eligible)} learner-eligible (unaudited) · ${number(row.learner_excluded)} excluded`);
++    if (row.audit_breakdown_available!==false&&validOutcomes(row)) lines.push(`${number(row.accepted)} fully audited and accepted · ${number(row.unchecked)} unchecked · ${number(row.rejected)} rejected`);
++    else lines.push('Independent audit breakdown unavailable');
+     if (Array.isArray(row.grid) && row.grid.length===256 && row.grid.every(count)) {
+       lines.push(`${number(row.grid.filter(value=>value>0).length)} submitting UIDs`);
+     }
+@@ -204,8 +205,8 @@
+     return lines.join('\n');
+   }
+   function defaultRecord(kind, rows) {
+-    const finalized=kind==='batch'?rows.findLastIndex(row=>row.finalized):-1;
+-    return finalized>=0?finalized:rows.length-1;
++    const latestAvailable=kind==='batch'?rows.findLastIndex(row=>batchAvailable(row)&&count(row.batches)):-1;
++    return latestAvailable>=0?latestAvailable:rows.length-1;
+   }
+   function syncEvaluationLegend(rows,row){
+     const legend=$('evaluation-legend');legend.replaceChildren();
