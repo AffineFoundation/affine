@@ -82,6 +82,11 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
             raise ValueError('immutable unaudited learner population')
         from .training_receipts import computation_binding
         if computation_binding(training_manifest)!=computation_binding(manifest):raise ValueError('learner original epoch computation binding')
+        from .training_startup_recovery import declaration,apply,RESTORE_VERSION
+        recovery=declaration(controller,epoch)
+        if recovery is not None:
+            if recovery['payload'].get('version')!=RESTORE_VERSION:raise ValueError('unaudited learner requires explicit pre-update restore recovery')
+            training_manifest,submissions=apply(controller,training_manifest,steps)
         receipts={}
     else:
         training_manifest=manifest

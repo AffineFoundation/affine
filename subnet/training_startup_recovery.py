@@ -1,7 +1,7 @@
-"""Explicit operator-authorized replacement of one proven pre-compute failure.
+"""Explicit operator-authorized replacement of a witnessed zero-update failure.
 
 This is not original-job resume or proof that remote execution happened. The
-operator witnesses terminal process absence and an empty output namespace.
+operator separately witnesses pre-compute or pre-update restore failure.
 """
 import copy,json,math,re,time
 from pathlib import Path
@@ -17,6 +17,8 @@ def original_manifest(manifest,authority):
     value=signed(manifest[FIELD],authority)
     original=signed(value['original_signed_job'],authority)
     old=signed(original['manifest'],authority)
+    if value.get('version')==RESTORE_VERSION:
+        if value.get('original_input_source_sha256')!=old['source_bundle']['sha256']or value.get('replacement_execution_source_sha256')!=manifest['source_bundle']['sha256']or value.get('authorized_input_inventory_sha256')!=sha(input_inventory(original['submissions'])):raise ValueError('explicit restore old-input/new-execution manifest scope')
     normalized=copy.deepcopy(manifest);normalized.pop(FIELD,None);normalized['source_bundle']=old['source_bundle']
     def without_caps(m):
         m=copy.deepcopy(m);m['checkpoint'].pop('read_urls',None);return m
@@ -29,6 +31,7 @@ def input_inventory(rows):
 def validate(job,manifest,authority):
     if FIELD not in manifest:return None
     value=signed(manifest[FIELD],authority)
+    if value.get('version')==RESTORE_VERSION:return validate_restore(job,manifest,authority)
     fields={'version','epoch','original_signed_job','original_job_sha256','original_terminal','startup_witness','replacement_source_bundle','replacement_job_label','created_at','expires_at'}
     if set(value)!=fields or value['version']!=VERSION or value['epoch']!=manifest['epoch']:raise ValueError('exact startup recovery declaration')
     original=signed(value['original_signed_job'],authority);old=original_manifest(manifest,authority)
@@ -90,7 +93,10 @@ def apply(controller,manifest,steps):
     result=copy.deepcopy(old);result['source_bundle']=copy.deepcopy(value['replacement_source_bundle']);result[FIELD]=document
     result['checkpoint']=controller.checkpoint_with_reads(old['checkpoint'])
     rows=copy.deepcopy(original['submissions'])
-    for obj in rows:obj['url']=controller.bucket.presign('private/compact-training-inputs/'+obj['sha256']+'.json')
+    if value.get('version')==RESTORE_VERSION:
+        for obj,location in zip(rows,value['authorized_input_objects']):obj['url']=controller.bucket.presign(location['key'],'get_object',int(value['expires_at']-time.time()))
+    else:
+        for obj in rows:obj['url']=controller.bucket.presign('private/compact-training-inputs/'+obj['sha256']+'.json')
     # Validate the declaration before reserving anything. This unsigned
     # preparation skeleton is never dispatched or presented as runtime evidence.
     candidate=copy.deepcopy(original);candidate.update(job_id=value['replacement_job_label']+'-preparation',created_at=time.time(),expires_at=value['expires_at'],manifest=controller.signed(result),submissions=rows)
@@ -122,5 +128,52 @@ def local_request(state,epoch,authority):
     job=signed(json.loads((state/'roles'/(record['job_id']+'-job.json')).read_bytes()),authority)
     if sha(job)!=record['job_sha256']or job['manifest']['payload'].get(FIELD)!=value['declaration']:raise ValueError('replacement recovery record changed')
     validate(job,job['manifest']['payload'],authority)
-    evidence=dict(version=VERSION,declaration_sha256=value['declaration_sha256'],original_failed_job_id=original['job_id'],original_failed_job_sha256=sha(original),original_failure_sha256=sha(failure),startup_witness_sha256=sha(declaration['startup_witness']),replacement_source_sha256=job['manifest']['payload']['source_bundle']['sha256'],original_epoch_deadline=original['manifest']['payload'].get('deadline'),late_recovery=True)
+    evidence=dict(version=declaration['version'],declaration_sha256=value['declaration_sha256'],original_failed_job_id=original['job_id'],original_failed_job_sha256=sha(original),original_failure_sha256=sha(failure),startup_witness_sha256=sha(declaration['restore_witness']if declaration['version']==RESTORE_VERSION else declaration['startup_witness']),replacement_source_sha256=job['manifest']['payload']['source_bundle']['sha256'],original_epoch_deadline=original['manifest']['payload'].get('deadline'),late_recovery=True)
+    if declaration['version']==RESTORE_VERSION:evidence.update(original_input_source_sha256=declaration['original_input_source_sha256'],replacement_execution_source_sha256=declaration['replacement_execution_source_sha256'],original_failed_stage='parent-state-fetch-before-train_epoch',original_optimizer_updates=0)
     return record,job,evidence
+
+RESTORE_VERSION='terminal-parent-restore-pre-update-recovery-v2'
+RESTORE_WITNESS='operator-parent-restore-pre-update-witness-v1'
+
+def validate_restore(job,manifest,authority):
+    """A distinct pre-update restore failure, never a relaxed startup witness."""
+    value=signed(manifest[FIELD],authority)
+    fields={'version','epoch','original_signed_job','original_job_sha256','original_terminal','restore_witness','replacement_source_bundle','replacement_job_label','created_at','expires_at','original_input_source_sha256','replacement_execution_source_sha256','authorized_input_inventory_sha256','authorized_input_objects'}
+    if set(value)!=fields or value['version']!=RESTORE_VERSION or value['epoch']!=manifest['epoch']:raise ValueError('exact pre-update restore recovery declaration')
+    original=signed(value['original_signed_job'],authority);old=original_manifest(manifest,authority)
+    if original.get('role')!='train' or original.get('training_policy')!='bf16-cpu-fp32-master-task-normalized-persistent-v4' or original.get('training_input_policy')!='committed-unaudited-training-v1' or FIELD in old or old.get('training_execution_amendment')is not None or sha(original)!=value['original_job_sha256']:raise ValueError('restore recovery original signed unaudited request')
+    terminal=value['original_terminal'];w=value['restore_witness']
+    if set(terminal)!={'phase','job_id','exit_code','runner_pid','runner_pid_ticks','child_pid','child_pid_ticks','started_at','finished_at'}or terminal['phase']!='failed'or terminal['job_id']!=original['job_id']or type(terminal['exit_code'])is not int or terminal['exit_code']!=1:raise ValueError('exact original failed restore terminal')
+    for p in ('runner','child'):
+        if type(terminal[p+'_pid'])is not int or terminal[p+'_pid']<=0 or not isinstance(terminal[p+'_pid_ticks'],str)or not terminal[p+'_pid_ticks'].isdigit():raise ValueError('original restore PID/start identity')
+    fields={'version','observed_at','exception','cause','failed_stage','callchain','model_loaded','cuda_allocated','original_processes_absent','physical_gpu_idle','optimizer_step_reached','restore_state_returned','train_epoch_reached','output_checkpoint_absent','original_report_absent','optimizer_state_candidate_absent','update_ledger_absent','public_optimizer_steps','parent_publication_sha256','parent_descriptor_sha256','parent_shard_count','parent_total_bytes','selected_input_count','worker_log_sha256','evidence_sha256','science_source_files'}
+    required_frames=['persistent_training_worker.train','persistent_training_state.restore_state','persistent_training_state.restore_one','persistent_training_worker.fetch','persistent_training_worker.cold','backend_jobs.get_object']
+    if set(w)!=fields or w['version']!=RESTORE_WITNESS or w['exception']!='requests.exceptions.ConnectionError'or w['cause']!='urllib3.exceptions.ReadTimeoutError'or w['failed_stage']!='parent-state-fetch-before-train_epoch'or w['callchain']!=required_frames:raise ValueError('exact actual parent read-timeout callchain')
+    if any(w[k]is not True for k in ('model_loaded','cuda_allocated','original_processes_absent','physical_gpu_idle','output_checkpoint_absent','original_report_absent','optimizer_state_candidate_absent','update_ledger_absent'))or any(w[k]is not False for k in ('optimizer_step_reached','restore_state_returned','train_epoch_reached')):raise ValueError('restore recovery requires definitive zero-update witness')
+    binding=old['trainer_state_binding'];publication=signed(original['persistent_training']['parent_publication'],authority);parent=binding.get('parent')
+    from .persistent_training_protocol import validate_parent
+    descriptor=validate_parent(original['persistent_training']['parent_publication'],binding,authority)
+    if parent is None or type(w['public_optimizer_steps'])is not int or w['public_optimizer_steps']!=binding['global_step_before']or descriptor['optimizer_steps']!=binding['global_step_before']or descriptor['inference_checkpoint']!=old['checkpoint']['id']or sha(descriptor)!=parent['descriptor_sha256']or publication['descriptor_sha256']!=sha(descriptor)or w['parent_publication_sha256']!=sha(original['persistent_training']['parent_publication'])or w['parent_descriptor_sha256']!=sha(descriptor):raise ValueError('restore recovery exact actual committed parent')
+    if type(w['parent_shard_count'])is not int or w['parent_shard_count']!=len(descriptor['shards'])or type(w['parent_total_bytes'])is not int or w['parent_total_bytes']!=sum(s['size']for s in descriptor['shards'])or type(w['selected_input_count'])is not int or not 1<=w['selected_input_count']<=256 or w['selected_input_count']!=len(original['submissions']):raise ValueError('full original parent and frozen input inventory')
+    expected={('subnet/'+m+'.py'):original['source_files'].get('subnet/'+m+'.py')for m in SCIENCE if m!='sampling_contract' or 'subnet/sampling_contract.py'in original['source_files']}
+    if w['science_source_files']!=expected or any(re.fullmatch('[0-9a-f]{64}',h or '')is None for h in expected.values()):raise ValueError('original pre-update callgraph/math source pins')
+    for k in ('worker_log_sha256','evidence_sha256'):
+        if re.fullmatch('[0-9a-f]{64}',w[k]or '')is None:raise ValueError('exact preserved original restore evidence hashes')
+    if value['original_input_source_sha256']!=old['source_bundle']['sha256']or value['replacement_execution_source_sha256']!=manifest['source_bundle']['sha256']or value['authorized_input_inventory_sha256']!=sha(input_inventory(original['submissions'])):raise ValueError('explicit old input/new execution source authorization')
+    authorized=value['authorized_input_objects']
+    if not isinstance(authorized,list)or len(authorized)!=len(original['submissions']):raise ValueError('explicit original frozen object locations')
+    for a,o in zip(authorized,original['submissions']):
+        admission=signed(o['learner_admission'],authority)
+        if set(a)!={'key','sha256','size','learner_admission_sha256'}or a['sha256']!=o['sha256']or a['size']!=o['size']or a['learner_admission_sha256']!=sha(o['learner_admission'])or a['key']!=('public/'+old['epoch']+'/submissions/'+admission['miner_identity']+'/'+admission['commitment_sha256']+'/training/'+str(admission['slot'])+'.json'):raise ValueError('original committed input object key/hash/size')
+    times=[original['created_at'],terminal['started_at'],terminal['finished_at'],w['observed_at'],value['created_at'],job['created_at'],value['expires_at']]
+    if any(type(t)not in(int,float)or not math.isfinite(t)for t in times)or not times[0]<=times[1]<=times[2]<=times[3]<=times[4]<=times[5]<times[6]or not 0<times[6]-times[4]<=86400:raise ValueError('bounded original/new restore authorization chronology')
+    if type(job.get('expires_at'))not in(int,float)or not math.isfinite(job['expires_at'])or not job['created_at']<job['expires_at']<=value['expires_at']:raise ValueError('bounded fresh restore attempt lifetime')
+    label=value['replacement_job_label']
+    if not isinstance(label,str)or re.fullmatch('[A-Za-z0-9_-]{1,100}',label)is None or not job['job_id'].startswith(label+'-')or job['job_id']==original['job_id']:raise ValueError('distinct one controlled restore attempt identity')
+    if job.get('role')!='train'or job.get('training_policy')!=original['training_policy']or job.get('training_input_policy')!=original['training_input_policy']or type(job.get('steps'))is not int or job['steps']!=original['steps']or input_inventory(job['submissions'])!=input_inventory(original['submissions'])or job['runtime_versions']!=original['runtime_versions']:raise ValueError('same original256 inputs/objective/steps/runtime')
+    source=value['replacement_source_bundle']
+    if source!=manifest['source_bundle']or source.get('sha256')==old['source_bundle'].get('sha256')or re.fullmatch('[0-9a-f]{64}',source.get('sha256',''))is None or 'subnet/training_startup_recovery.py'not in job['source_files']:raise ValueError('fresh complete recovery execution source pin')
+    for name,h in expected.items():
+        if job['source_files'].get(name)!=h:raise ValueError('restore recovery scientific implementation changed: '+name)
+    if job.get('persistent_training',{}).get('output_namespace')==original['persistent_training'].get('output_namespace'):raise ValueError('new restore attempt needs separate output namespace')
+    return value

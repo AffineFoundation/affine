@@ -38,6 +38,11 @@ def selected(manifest):
 
 
 def validate_admission(envelope,obj,manifest,authority):
+    from . import training_startup_recovery as recovery
+    if recovery.FIELD in manifest:
+        value=authenticate(manifest[recovery.FIELD],authority)
+        if value.get('version')!=recovery.RESTORE_VERSION:raise ValueError('unaudited inputs require explicit pre-update restore recovery')
+        manifest=recovery.original_manifest(manifest,authority)
     if not selected(manifest):raise ValueError('explicit unaudited learner policy required')
     value=authenticate(envelope,authority)
     fields={'version','epoch','checkpoint','source_sha256','miner_identity','slot',
@@ -144,6 +149,10 @@ def coverage_manifest(manifest,submissions,*,seed,captured_at):
 
 
 def validate_job(job,manifest,authority):
+    from . import training_startup_recovery as recovery
+    if recovery.FIELD in manifest:
+        recovery.validate(job,manifest,authority)
+        manifest=recovery.original_manifest(manifest,authority)
     if (job.get('role')!='train' or not selected(manifest) or job.get('training_input_policy')!=VERSION or
         job.get('training_policy')!='bf16-cpu-fp32-master-task-normalized-persistent-v4' or
         job.get('training_policy')!=manifest.get('training_policy') or
