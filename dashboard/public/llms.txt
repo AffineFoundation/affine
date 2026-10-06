@@ -148,7 +148,12 @@ Penalties apply after smoothing: one confirmed invalid in the recent history
 multiplies score by 0.1, two reduce it to zero, and three trigger the configured
 four-epoch blacklist. A new unaudited epoch does not reset reputation or penalties.
 Scores are normalized across current on-chain registered identities, with fresh
-hotkey/UID ownership checks. No training-completion report is required.
+hotkey/UID ownership checks. The signed current-hotkey-snapshot-v1 policy
+excludes departed hotkeys and remaps retained hotkeys using one coherent current
+chain snapshot, then normalizes the remaining scores. Recycled UIDs do not
+inherit old hotkeys' scores. Registration churn does not reject all recipients;
+identity or snapshot-integrity errors still fail closed.
+No training-completion report is required.
 
 The writer retries chain rate limits each minute but submits at most once per
 UTC hour. Subnet 120 uses commit-reveal: a successful submission commits the

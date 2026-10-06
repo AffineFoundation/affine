@@ -21,13 +21,16 @@ def validate_policy(document, authority, cutover_document, anchor_document):
     p = signed(document, authority)
     fields = {'version','half_life_hours','first_window','netuid','owner_hotkey',
               'audit_config','source_admission_sha256','verifiers','module_hashes',
-              'cutover_sha256','anchor_sha256','execute_enabled','zero_total_policy'}
+              'cutover_sha256','anchor_sha256','execute_enabled','zero_total_policy',
+              'registration_change_policy'}
     if set(p) != fields or p['version'] != VERSION or p['half_life_hours'] != HALF_LIFE_HOURS:
         raise ValueError('exact hourly assessment policy')
     if p['netuid'] != 120 or p['owner_hotkey'] != OWNER or type(p['execute_enabled']) is not bool:
         raise ValueError('owner/netuid/execution policy')
     if p['zero_total_policy'] != 'owner-sink-v1':
         raise ValueError('explicit zero-total policy')
+    if p['registration_change_policy'] != 'current-hotkey-snapshot-v1':
+        raise ValueError('explicit current-registration policy')
     if p['cutover_sha256'] != sha(cutover_document) or p['anchor_sha256'] != sha(anchor_document):
         raise ValueError('single writer cutover binding')
     if type(p['first_window']) is not int or p['first_window'] % 3600:
@@ -105,7 +108,8 @@ def run_once(policy_document, cutover_document, anchor_document, authority, *, e
                             writer_pid=identity['writer_pid'], writer_ticks=identity['writer_start_ticks'])
                 atomic(cursor_path, dict(status='submitting', window_end=cutoff, assessment_sha256=sha(document)))
             result = adapter.submit_hour(points, selected, cutoff, execute=execute,
-                                         zero_total_policy=p['zero_total_policy'])
+                                         zero_total_policy=p['zero_total_policy'],
+                                         registration_change_policy=p['registration_change_policy'])
             # Rate-limited/planned responses are safe to retry the SAME assessment.
             atomic(directory/'last-run.json', dict(at=now, result=result, assessment_sha256=sha(document),
                    positive_identities=len(points), excluded_unregistered=excluded,

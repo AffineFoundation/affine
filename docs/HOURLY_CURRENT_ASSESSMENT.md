@@ -37,7 +37,13 @@ follow that chain schedule. It selects the current hour directly rather than wai
 an old epoch queue. It holds the existing global writer lock, suppresses the
 legacy validator's weight writes, uses an authenticated operator policy and
 rechecks hotkey/public-key/UID ownership against the chain. Unregistered
-identities are excluded; a race during final rechecking refuses that transaction.
+identities are excluded. Under the signed `current-hotkey-snapshot-v1` policy,
+the adapter fetches one fresh, coherent registration snapshot with signed
+activations and both hotkey/UID directions verified at the same block. Departed
+hotkeys are removed, retained hotkeys are mapped to their current UIDs and the
+remaining points are normalized. A recycled UID never inherits its previous
+hotkey's score. Public-identity mismatches and inconsistent snapshots still fail
+closed; registration churn alone does not reject everyone else's update.
 An uncertain transaction outcome requires reconciliation before a retry.
 
 A transport timeout can reuse the last authenticated valid assessment, labeled

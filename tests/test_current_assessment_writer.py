@@ -20,7 +20,8 @@ class WriterControls(unittest.TestCase):
             netuid=120, owner_hotkey=w.OWNER,audit_config='/not-a-training-state',
             source_admission_sha256='a'*64, verifiers=['v'],module_hashes={},
             cutover_sha256=w.sha(self.cutover),anchor_sha256=w.sha(self.anchor),execute_enabled=True,
-            zero_total_policy='owner-sink-v1'),self.key)
+            zero_total_policy='owner-sink-v1',
+            registration_change_policy='current-hotkey-snapshot-v1'),self.key)
         self.calls=[]
         controls=self
         class Adapter:

@@ -110,9 +110,12 @@ class ChainAdapter:
         return registered
 
     def submit_hour(self, points: dict[str, int], registrations: dict[str, dict],
-                    window_end: int, execute: bool = False, *, zero_total_policy: str | None = None) -> dict:
+                    window_end: int, execute: bool = False, *, zero_total_policy: str | None = None,
+                    registration_change_policy: str | None = None) -> dict:
         if zero_total_policy not in (None, 'owner-sink-v1'):
             raise ValueError('explicit zero-total assessment policy')
+        if registration_change_policy not in (None, 'current-hotkey-snapshot-v1'):
+            raise ValueError('explicit current-registration policy')
         if window_end % 3600 or window_end > int(time.time()):
             raise ValueError('only completed integral UTC hour windows may pay out')
         if any(isinstance(p, bool) or not isinstance(p, int) or p < 0 for p in points.values()):
@@ -131,14 +134,37 @@ class ChainAdapter:
                 raise RuntimeError('wallet identity mismatch')
             fresh = self.registrations()
             block = int(self.chain.block)
+            if registration_change_policy and fresh:
+                # registrations() already verifies activation signatures and BOTH
+                # UID directions at one immutable block. Use that coherent fresh
+                # snapshot, rather than mixing its rows with a later block.
+                blocks = {row.get('snapshot_block') for row in fresh.values()}
+                if len(blocks) != 1 or type(next(iter(blocks))) is not int:
+                    raise ValueError('coherent current registration snapshot required')
+                snapshot_block = next(iter(blocks))
+                if snapshot_block < 0 or snapshot_block > block:
+                    raise ValueError('invalid current registration snapshot block')
+                block = snapshot_block
             if self.query('SubnetOwnerHotkey', [self.netuid], block) != self.owner:
                 raise RuntimeError('subnet owner changed during preparation')
             status_block = block
-            recipients, stale = [], []
+            recipients, stale, departed, remapped = [], [], [], []
             for hotkey, count in points.items():
                 if not count:
                     continue
                 before, current = registrations.get(hotkey), fresh.get(hotkey)
+                if registration_change_policy:
+                    if not before:
+                        raise ValueError('points lack authenticated original hotkey identity')
+                    if not current:
+                        departed.append(hotkey)
+                        continue
+                    if current['public_key'] != before['public_key']:
+                        raise ValueError('registered hotkey public identity changed')
+                    if current['uid'] != before['uid']:
+                        remapped.append(dict(hotkey=hotkey, from_uid=before['uid'], to_uid=current['uid']))
+                    recipients.append((current['uid'], hotkey, count))
+                    continue
                 if (not before or not current or current['uid'] != before['uid']
                         or current['public_key'] != before['public_key']
                         or self.query('Keys', [self.netuid, current['uid']], block) != hotkey
@@ -147,6 +173,10 @@ class ChainAdapter:
                     continue
                 recipients.append((current['uid'], hotkey, count))
             status = {'window_end': window_end, 'block': status_block, 'excluded_stale': stale}
+            if registration_change_policy:
+                status.update(registration_change_policy=registration_change_policy,
+                              registration_snapshot_block=block,
+                              excluded_unregistered=sorted(departed), remapped_uids=remapped)
             if not recipients and not stale and zero_total_policy == 'owner-sink-v1':
                 sink_uid = self.query('Uids', [self.netuid, self.owner], block)
                 if type(sink_uid) is not int or self.query('Keys', [self.netuid, sink_uid], block) != self.owner:
