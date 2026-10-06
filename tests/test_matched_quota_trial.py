@@ -52,3 +52,20 @@ class ObjectiveTests(unittest.TestCase):
  def test_task_hash_switch_fails(self):
   x=stream();x[2]['rollout']['task_hash']='b'*64
   with self.assertRaises(ValueError):validate_stream(x,2)
+
+class RetentionTests(unittest.TestCase):
+ def test_real_lifecycle_retention_requires_full_ACK_and_preserves_foreign_inode(self):
+  import tempfile,pathlib,json,hashlib
+  from nacl.signing import SigningKey
+  from subnet.backend_jobs import canonical
+  from subnet.cache_lifecycle import CacheLifecycle
+  from ops.matched_quota_trial import digest
+  from ops.matched_quota_retention import retire_artifacts
+  import base64
+  key=SigningKey(bytes(32));auth=key.verify_key.encode().hex()
+  def sign(v):return dict(payload=v,signer=auth,signature=base64.b64encode(key.sign(canonical(v)).signature).decode())
+  with tempfile.TemporaryDirectory()as tmp:
+   root=pathlib.Path(tmp);s=dict(version='matched-quota-research-v1',production_state_changes=False,workspace=str(root),phases=['generate'],task_indices=[2]);identity=digest(s);directory=root/'jobs'/identity;directory.mkdir(parents=True);p=directory/'submission-0.zip';p.write_bytes(b'original');c=CacheLifecycle(root);c.record_download(p,hashlib.sha256(p.read_bytes()).hexdigest());report=dict(scope_sha256=identity,streams={'2':[dict(index=2,attempt=0,artifact_path=str(p.relative_to(root)))]});raw=canonical(report);(root/'generation-result.json').write_bytes(raw);a=dict(version='matched-quota-full-evidence-durable-ack-v1',scope_sha256=identity,R2_full_GET_verified=True,completed_phases=['generate'],generation_result_sha256=hashlib.sha256(raw).hexdigest())
+   with self.assertRaises(ValueError):retire_artifacts(sign(s),sign(dict(a,R2_full_GET_verified=False)),auth,live_phase=lambda p:False)
+   with self.assertRaises(ValueError):retire_artifacts(sign(s),sign(a),auth,live_phase=lambda p:True)
+   foreign=directory/'replacement';foreign.write_bytes(b'original');foreign.replace(p);self.assertEqual(retire_artifacts(sign(s),sign(a),auth,live_phase=lambda p:False),[]);self.assertTrue(p.exists())
