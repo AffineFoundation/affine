@@ -3,7 +3,7 @@
 Learner progress never waits for this service. It joins the original SQLite
 queue without binding another HTTP listener. No blockchain writes occur here.
 """
-import argparse,hashlib,json,os,secrets,sqlite3,time
+import argparse,hashlib,json,math,os,secrets,sqlite3,time
 from concurrent.futures import ThreadPoolExecutor,as_completed
 from pathlib import Path
 from .continuous_audit_policy import VERSION,policy,population,digest,random_selection,verifier_contract,admit_queue_reports,snapshot,BackendEvidenceNotAdmitted
@@ -13,6 +13,18 @@ from .audit_queue_snapshot import queue_rows
 
 
 class InvalidCommittedArtifact(ValueError):pass
+
+def inflight_status(status,now):
+ """Expired original jobs cannot consume scheduling capacity indefinitely.
+
+ This is a read-only scheduling decision, not a queue status change, retry,
+ scientific verdict, or extension of an original signed deadline.
+ """
+ if not status or status['status']not in('queued','leased'):return False
+ if 'expires'not in status:return True  # Legacy non-SQLite status adapters.
+ expires=status['expires']
+ if type(expires)not in(int,float)or not math.isfinite(expires):raise ValueError('audit original job deadline')
+ return expires>now
 
 def grouping_policy(value):
  if value is None:return 1
@@ -152,13 +164,13 @@ class ContinuousAuditor:
   if size!=artifact['size']or h.hexdigest()!=row['proof_sha256']:raise InvalidCommittedArtifact('copied proof full SHA differs from signed commitment')
   captured=dict(artifact,etag=meta['ETag'],received_at=meta['LastModified'].timestamp(),read_url=self.controller.bucket.presign(frozen));return manifest,receipt,captured
  def queue_statuses(self):
-  if hasattr(self.queue,'path'):return queue_rows(self.queue,self.state['jobs'])
+  if hasattr(self.queue,'path'):return queue_rows(self.queue,self.state['jobs'],include_deadline=True)
   return {j:self.queue.status(j)for j in self.state['jobs']}
  def tick(self,now=None):
   if self.group_size>1:return self.tick_grouped(now)
   now=time.time()if now is None else now;available=self.max_inflight
   for status in self.queue_statuses().values():
-   if status and status['status']in('queued','leased'):available-=1
+   if inflight_status(status,now):available-=1
   if available<=0:return dict(enqueued=0,backpressure=True)
   rows,deferred=self.dispatch_records();runnable=set(digest(r)for r in rows);done=set(self.state['draws']);queued={i for r in self.state['jobs'].values()for i in job_rows(r)};remaining=min(self.budget,available)
   retry=[d['row']for identity,d in self.state['draws'].items()if identity in runnable and identity not in queued and self.state['capture_failures'].get(identity,{}).get('kind')!='confirmed_invalid_artifact'][:remaining]
@@ -205,7 +217,7 @@ class ContinuousAuditor:
  def tick_grouped(self,now=None):
   """Bounded same-opening groups; persisted draws/plans survive owner crashes."""
   now=time.time()if now is None else now
-  available=self.max_inflight-sum(bool(v and v['status']in('queued','leased'))for v in self.queue_statuses().values())
+  available=self.max_inflight-sum(inflight_status(v,now)for v in self.queue_statuses().values())
   if available<=0:return dict(enqueued=0,backpressure=True)
   rows,deferred=self.dispatch_records();lookup={digest(r):r for r in rows};done=set(self.state['draws']);queued={i for job in self.state['jobs'].values()for i in job_rows(job)}
   plans=self.state.setdefault('group_plans',{});pending=[(key,v)for key,v in plans.items()if not v.get('resolved')]

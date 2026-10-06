@@ -22,6 +22,32 @@ class Queue:
  def enqueue(self,e):self.envelopes.append(e)
  def archive(self,*a):pass
 class ServiceControls(unittest.TestCase):
+ def test_expired_sqlite_jobs_release_capacity_without_mutating_originals(self):
+  import sqlite3
+  path=Path(self.directory.name)/'queue.sqlite3'
+  with sqlite3.connect(path)as db:
+   db.execute('CREATE TABLE jobs(id TEXT PRIMARY KEY,status TEXT,expires REAL,envelope TEXT,report TEXT)')
+   db.executemany('INSERT INTO jobs VALUES(?,?,?,?,?)',[
+    ('expired-queued','queued',24,'original-queued',None),
+    ('expired-leased','leased',25,'original-leased',None)])
+  self.service.queue=SimpleNamespace(path=str(path))
+  self.service.state['jobs']={i:dict(row_sha256=digest(self.row))for i in('expired-queued','expired-leased')}
+  self.service.metadata.clear()  # No scientific dispatch; test capacity only.
+  for group_size in(1,2):
+   self.service.group_size=group_size
+   result=self.service.tick(now=25)
+   self.assertFalse(result.get('backpressure'))
+   self.assertEqual(result['enqueued'],0)
+  with sqlite3.connect(path)as db:
+   self.assertEqual(db.execute('SELECT * FROM jobs ORDER BY id').fetchall(),[
+    ('expired-leased','leased',25.,'original-leased',None),
+    ('expired-queued','queued',24.,'original-queued',None)])
+   db.execute("UPDATE jobs SET expires=26 WHERE id='expired-leased'")
+  self.assertTrue(self.service.tick(now=25)['backpressure'])
+ def test_malformed_deadline_is_not_silent_capacity_credit(self):
+  from subnet.continuous_audit_service import inflight_status
+  for value in(True,None,float('nan'),float('inf'),'25'):
+   with self.assertRaises(ValueError):inflight_status(dict(status='leased',expires=value),25)
  def test_signed_closure_and_unsigned_mirror_count_once(self):
   key=SigningKey.generate();root=key.verify_key.encode().hex()
   with tempfile.TemporaryDirectory()as directory:

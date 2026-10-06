@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 
-def queue_rows(queue, identifiers, *, complete=False, timeout_seconds=30.0):
+def queue_rows(queue, identifiers, *, complete=False, include_deadline=False, timeout_seconds=30.0):
     if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 30:
         raise ValueError('audit read snapshot timeout')
     identifiers = list(identifiers)
@@ -30,7 +30,7 @@ def queue_rows(queue, identifiers, *, complete=False, timeout_seconds=30.0):
         if (stat.st_dev, stat.st_ino) != expected:
             raise ValueError('authoritative queue inode changed')
     deadline = time.monotonic() + timeout_seconds
-    columns = '*' if complete else 'id,status'
+    columns = '*' if complete else 'id,status,expires' if include_deadline else 'id,status'
     while True:
         db = None
         try:
