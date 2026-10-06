@@ -19,7 +19,7 @@ class FailedCandidateRetirement(unittest.TestCase):
    receipts.append(self.sign(dict(version='full-object-readback-evidence-v1',original_job_sha256=sha(self.job),key=key,sha256=h,size=st.st_size,bytes_read=st.st_size,complete=True)))
    if i:files[name]=dict(sha256=h,size=st.st_size)
   pending=dict(job_id=self.job['job_id'],job_sha256=sha(self.job),source_sha256=self.job['manifest']['payload']['source_bundle']['sha256'],descriptor_sha256=None,files=files);raw=canonical(pending);(self.cache/'pending.json').write_bytes(raw)
-  self.value=dict(version=VERSION,execute_allowed=True,created_at=1,expires_at=100,original_signed_job=self.sign(self.job),original_job_sha256=sha(self.job),original_terminal=fx.terminal,failure_evidence=dict(original_optimizer_updates=1,candidate_committed=False,original_report_absent=True,complete_candidate_descriptor_absent=True,original_processes_absent=True,no_active_checkpoint_lease=True,preserve_failure_history=True),durable_failure_evidence=self.sign(dict(version='full-object-readback-evidence-v1',original_job_sha256=sha(self.job),key='private/failed-training-evidence/'+self.job['job_id']+'/failure-evidence.private.json',sha256='f'*64,size=1024,bytes_read=1024,complete=True)),transfer_directory=str(self.transfer),candidate_directory=str(self.candidate),pending_sha256=hashlib.sha256(raw).hexdigest(),inventory=rows,full_readbacks=receipts,journal=str(self.owner/'failed-candidate-retirement.json'))
+  self.value=dict(retire_failed_zero=True,version=VERSION,execute_allowed=True,created_at=1,expires_at=100,original_signed_job=self.sign(self.job),original_job_sha256=sha(self.job),original_terminal=fx.terminal,failure_evidence=dict(original_optimizer_updates=1,candidate_committed=False,original_report_absent=True,complete_candidate_descriptor_absent=True,original_processes_absent=True,no_active_checkpoint_lease=True,preserve_failure_history=True),durable_failure_evidence=self.sign(dict(version='full-object-readback-evidence-v1',original_job_sha256=sha(self.job),key='private/failed-training-evidence/'+self.job['job_id']+'/failure-evidence.private.json',sha256='f'*64,size=1024,bytes_read=1024,complete=True)),transfer_directory=str(self.transfer),candidate_directory=str(self.candidate),pending_sha256=hashlib.sha256(raw).hexdigest(),inventory=rows,full_readbacks=receipts,journal=str(self.owner/'failed-candidate-retirement.json'))
  def run_retire(self,value=None,guard=lambda *args:True):return retire(self.sign(value or self.value),self.authority,workspace=self.root,guard=guard,now=10)
  def test_genuine_complete_readbacks_preserve_failed_zero_and_history_before_delete(self):
   result=self.run_retire();self.assertEqual(result['retired_files'],2);self.assertFalse(result['optimizer_candidate_promoted']);self.assertFalse(self.transfer.exists());self.assertFalse(self.candidate.exists());journal=json.loads(Path(self.value['journal']).read_bytes());self.assertEqual(journal['grant'],self.sign(self.value));self.assertEqual(journal['preserved_pending_catalogue']['job_id'],self.job['job_id'])
@@ -48,3 +48,23 @@ class FailedCandidateRetirement(unittest.TestCase):
    with self.subTest(key=key),self.assertRaises(Exception):self.run_retire(d)
   raw=json.loads((self.cache/'pending.json').read_bytes());raw['descriptor_sha256']='a'*64;(self.cache/'pending.json').write_bytes(canonical(raw))
   with self.assertRaises(ValueError):self.run_retire()
+
+ def test_crash_after_first_unlink_resumes_same_grant_and_replay_completed(self):
+  from unittest.mock import patch
+  original=Path.unlink;count=[0]
+  def unlink(path,*args,**kwargs):
+   count[0]+=1
+   if count[0]==2:raise RuntimeError('simulated crash')
+   return original(path,*args,**kwargs)
+  with patch.object(Path,'unlink',unlink),self.assertRaises(RuntimeError):self.run_retire()
+  self.assertTrue(Path(self.value['journal']).exists());result=self.run_retire();self.assertEqual(result['retired_files'],2);self.assertEqual(self.run_retire(),result)
+ def test_resume_changed_grant_or_unowned_new_file_refused(self):
+  from unittest.mock import patch
+  with patch.object(Path,'unlink',side_effect=RuntimeError('crash')),self.assertRaises(RuntimeError):self.run_retire()
+  changed=copy.deepcopy(self.value);changed['expires_at']=101
+  with self.assertRaisesRegex(ValueError,'grant changed'):self.run_retire(changed)
+  (self.candidate/'unowned.txt').write_text('external')
+  with self.assertRaisesRegex(ValueError,'unowned'):self.run_retire()
+ def test_thirteen_only_mode_preserves_failed_zero_locally(self):
+  self.value['retire_failed_zero']=False;self.value['inventory']=self.value['inventory'][1:];self.value['full_readbacks']=self.value['full_readbacks'][1:]
+  result=self.run_retire();self.assertEqual(result['retired_files'],1);self.assertTrue((self.transfer/'state-000000.safetensors').exists());self.assertFalse(self.candidate.exists());self.assertEqual(self.run_retire(),result)
