@@ -34,3 +34,21 @@ class TrialTests(unittest.TestCase):
    def rollout(self,i,a):return stream(i)[a]['rollout'],[]
    def verify(self,r,a):return False
   with self.assertRaises(ValueError):verify_generated(R(),2,0)
+
+class ObjectiveTests(unittest.TestCase):
+ def test_real_task_mean_grouping_keeps_task_weights_equal(self):
+  from subnet.task_normalized_training import task_groups,accumulate_tasks
+  import torch
+  ss={i:stream(i)for i in (2,3)}
+  for rows in ss.values():
+   for x in rows:x['rollout']['env_id']='math'
+  arms,_=select_matched(ss,dict(env_id='math'))
+  for name in arms:
+   pairs,tasks,groups,identities=task_groups(arms[name],1,'b'*64)
+   self.assertEqual(len(tasks),2);self.assertEqual(len(pairs),2 if name=='1P1N' else 4)
+   margins=[torch.tensor(.2,requires_grad=True)for _ in pairs]
+   observations=accumulate_tasks(torch,lambda i:margins[i],[.2]*len(pairs),tasks,groups[0])
+   for task in tasks:self.assertAlmostEqual(sum(x['gradient_weight']for x in observations if x['task_sha256']==task['task_sha256']),.5)
+ def test_task_hash_switch_fails(self):
+  x=stream();x[2]['rollout']['task_hash']='b'*64
+  with self.assertRaises(ValueError):validate_stream(x,2)

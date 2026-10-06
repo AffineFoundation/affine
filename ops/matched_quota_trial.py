@@ -23,20 +23,21 @@ def task_plan(mining_indices,excluded,seed,count=8):
 def validate_stream(rows,index):
     if len(rows)!=16 or [x['attempt']for x in rows]!=list(range(16)):
         raise ValueError('all original prescribed attempts, no cherry picking')
-    seen=set()
+    seen=set();task_hashes=set()
     for x in rows:
         if x['index']!=index or type(x.get('native_verified'))is not bool or type(x.get('sampler_verified'))is not bool:
             raise ValueError('exact native/sampler evidence types')
         if x['status'] not in ('verified','numerical_unknown','native_error'):raise ValueError('outcome framing')
         if x['status']=='verified':
             if not x['native_verified']or not x['sampler_verified']:raise ValueError('claims are not verification')
-            r=x['rollout']; category=r['classification'];reward=r['reward']
+            r=x['rollout']; category=r['classification'];reward=r['reward'];task_hashes.add(r['task_hash'])
             if category not in ('positive','negative') or type(reward)not in(int,float) or not math.isfinite(reward) or reward!=int(category=='positive'):
                 raise ValueError('binary native class')
             if r['seed']!=x['attempt']or r['index']!=index:raise ValueError('attempt/task binding')
             key=digest([dict(prompt=t['prompt'],output=t['output'])for t in r['turns']])
             if key in seen:raise ValueError('duplicate trajectory cannot fill quota')
             seen.add(key)
+    if len(task_hashes)>1:raise ValueError('all prescribed streams must share the native task')
     return rows
 
 def select_matched(streams,definition):
