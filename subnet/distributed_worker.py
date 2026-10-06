@@ -5,6 +5,7 @@ import base64
 import json
 import hashlib
 import logging
+import math
 import re
 import stat
 import os
@@ -16,9 +17,10 @@ import time
 from pathlib import Path
 import requests
 from nacl.signing import SigningKey
+from nacl.exceptions import BadSignatureError
 from .distributed_roles import authenticate, digest
 from .storage import canonical
-from .cache_lifecycle import CacheLifecycle
+from .cache_lifecycle import CacheLifecycle, snapshot
 
 
 class ExpiredCompletedLease(ValueError):
@@ -79,6 +81,7 @@ class Worker:
         self.backend_source=backend_source
         self.source_registry=dict(source_registry or {})
         self._source_inventory_checked=set()
+        self._expired_input_scan_offset=0
         self.workspace.mkdir(parents=True,exist_ok=True); self.workspace.chmod(0o700)
         if not self.url.startswith(('https://','http://127.0.0.1:','http://localhost:')):
             raise ValueError('coordinator requires TLS or local SSH forwarding')
@@ -120,6 +123,73 @@ class Worker:
             self._source_inventory_checked.add(bundle)
         return str(code)
 
+    def retire_expired_inputs(self, attempt):
+        """Dispose verified input copies after an original backend lost its lease.
+
+        Local terminal diagnostics do not grant credit or classify fraud. Only
+        authenticated job capabilities and preexisting hydration receipts name
+        disposable files; inherited checkpoint locks guard any live reuse.
+        """
+        attempt=Path(attempt).absolute()
+        if attempt!=attempt.resolve() or attempt.parent.parent!=self.workspace.absolute():
+            raise ValueError('exact owned attempt path')
+        number=attempt.name.removeprefix('attempt-')
+        if not number.isdecimal() or int(number)<1:raise ValueError('exact attempt number')
+        evidence=attempt/'expired-completed-lease.json';jobpath=attempt/'job.json'
+        for path in (evidence,jobpath):
+            if snapshot(path)['mode']&0o077:raise ValueError('private original diagnostics required')
+        diagnostic=json.loads(evidence.read_bytes())
+        try:job=authenticate(json.loads(jobpath.read_bytes()),self.authority)
+        except BadSignatureError as error:raise ValueError('historical original job authentication')from error
+        if not isinstance(diagnostic,dict):raise ValueError('typed terminal diagnostics')
+        if (job.get('role')!='verify' or job['job_id']!=attempt.parent.name or
+            diagnostic.get('job_id')!=job['job_id'] or diagnostic.get('job_sha256')!=digest(job) or
+            type(diagnostic.get('attempt'))is not int or diagnostic['attempt']!=int(number) or
+            diagnostic.get('backend_terminal')is not True or type(diagnostic.get('backend_exit'))is not int or
+            diagnostic.get('report_acknowledged')is not False or
+            diagnostic.get('stage')not in ('backend_completed','report_acknowledgment')):
+            raise ValueError('original completed lease diagnostic binding')
+        for name in ('lease_until','observed_at'):
+            value=diagnostic.get(name)
+            if type(value)not in (int,float) or not math.isfinite(value):raise ValueError('terminal observation time')
+        if not diagnostic['lease_until']<=diagnostic['observed_at']<=time.time():raise ValueError('actual elapsed original lease')
+        runspace=self.workspace/'backend' if int(number)==1 else attempt/'backend'
+        if not runspace.is_dir() or runspace!=runspace.resolve():raise ValueError('original owned backend workspace')
+        lifecycle=CacheLifecycle(runspace);receipt=lifecycle.meta/('download-'+job['job_id']+'.json')
+        if not receipt.exists():return []
+        if snapshot(receipt)['mode']&0o077:raise ValueError('private hydration ownership receipt')
+        catalog=json.loads(receipt.read_bytes());eligible=[]
+        if not isinstance(catalog,dict):raise ValueError('typed hydration catalog')
+        for i,obj in enumerate(job.get('submissions',[])):
+            relative='jobs/'+job['job_id']+'/submission-'+str(i)+'.zip'
+            record=catalog.get(relative)
+            if record is not None:
+                if not isinstance(record,dict):raise ValueError('typed hydration ownership receipt')
+                if record.get('sha256')==obj['sha256']:eligible.append(relative)
+        checkpoint=job['manifest']['payload']['checkpoint']['id']
+        with ExitStack()as locks:
+            locks.enter_context(CacheLifecycle(self.workspace/'backend').lease_checkpoint(checkpoint,blocking=False))
+            if runspace!=self.workspace/'backend':locks.enter_context(lifecycle.lease_checkpoint(checkpoint,blocking=False))
+            return lifecycle.retire_downloads(job['job_id'],only=eligible)
+
+    def sweep_expired_inputs(self):
+        """Bounded idle recovery of terminal inputs; no adoption or proof rehash."""
+        candidates=[]
+        for evidence in self.workspace.glob('*/attempt-*/expired-completed-lease.json'):
+            attempt=evidence.parent
+            number=attempt.name.removeprefix('attempt-')
+            if not number.isdecimal():continue
+            runspace=self.workspace/'backend' if int(number)==1 else attempt/'backend'
+            if not (runspace/'.cache-lifecycle'/('download-'+attempt.parent.name+'.json')).exists():continue
+            candidates.append(attempt)
+        if not candidates:return
+        candidates.sort();start=self._expired_input_scan_offset%len(candidates)
+        for index in range(min(4,len(candidates))):
+            attempt=candidates[(start+index)%len(candidates)]
+            try:self.retire_expired_inputs(attempt)
+            except (OSError,ValueError):logging.warning('terminal disposable input retirement deferred; retaining diagnostics')
+        self._expired_input_scan_offset=start+min(4,len(candidates))
+
     def once(self):
         claim=self.request('claim',role='verify')['claim']
         if claim is None:
@@ -128,6 +198,8 @@ class Worker:
             # mapped caches and report/log evidence are outside this catalog.
             try:CacheLifecycle(self.workspace/'backend').evict_checkpoints(keep=0)
             except (OSError,ValueError):logging.warning('idle owned checkpoint disposal deferred; retaining evidence')
+            try:self.sweep_expired_inputs()
+            except (OSError,ValueError):logging.warning('terminal input inventory unavailable; retaining diagnostics')
             return False
         job=authenticate(claim['job'],self.authority)
         if digest(job)!=claim['job_sha256'] or job['role']!='verify': raise ValueError('claim job binding')
@@ -148,7 +220,7 @@ class Worker:
                     if time.time()>=claim['lease_until']: lost.set(); return
         thread=threading.Thread(target=renew,daemon=True); thread.start()
         cache_leases=ExitStack()
-        lifecycle=None;runspace=None;acked_owned_checkpoint=None
+        lifecycle=None;runspace=None;acked_owned_checkpoint=None;expired_attempt=None
         try:
             backend_source=self.source_for_job(job)
             environment=dict(os.environ,CUBLAS_WORKSPACE_CONFIG=':4096:8')
@@ -177,6 +249,7 @@ class Worker:
                 (attempt/'worker.log').chmod(0o600)
                 result=subprocess.run(command,stdout=output,stderr=subprocess.STDOUT,env=environment,pass_fds=tuple(lease_fds),cwd=backend_source)
             def expired_completed_lease(stage):
+                nonlocal expired_attempt
                 evidence=attempt/'expired-completed-lease.json'
                 with evidence.open('xb') as stream:
                     stream.write(canonical(dict(job_id=job['job_id'],
@@ -185,6 +258,7 @@ class Worker:
                         lease_until=claim['lease_until'],observed_at=time.time(),
                         report_acknowledged=False)))
                 evidence.chmod(0o600)
+                expired_attempt=attempt
                 return ExpiredCompletedLease('completed backend lost its lease; retained diagnostic only')
             if lost.is_set(): raise expired_completed_lease('backend_completed')
             if result.returncode:
@@ -219,6 +293,9 @@ class Worker:
             return True
         finally:
             cache_leases.close()
+            if expired_attempt is not None:
+                try:self.retire_expired_inputs(expired_attempt)
+                except (OSError,ValueError):logging.warning('terminal disposable input retirement deferred; retaining diagnostics')
             # Only the successfully ACKed, backend-verified owned checkpoint
             # is disposable here. Release this job's inherited flock first;
             # another live lease or changed inode makes eviction refuse safely.
