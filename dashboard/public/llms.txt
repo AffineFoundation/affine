@@ -483,3 +483,9 @@ the sealed backend performs owned full-hash checkpoint hydration. The failed
 original remains recorded; any infrastructure recovery uses a distinct labeled
 request with the same checkpoint, held-out tasks and seeds. No held-out result
 from this recovery is claimed yet.
+
+Prospective main-branch token capture now bounds both downloads and immutable
+publication to four workers, with serial receipt journaling only after successful
+publication. Infrastructure publication failures remain retryable and never
+become miner fraud. This controller optimization is not in the immutable live
+9f source or compact 4109 qualification candidate and has not been activated.

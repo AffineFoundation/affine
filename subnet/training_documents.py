@@ -21,10 +21,13 @@ def validate(data,epoch,checkpoint,miner,entry):
 def capture(gateway,epoch):
  """Complete bounded GET + exact SHA before immutable token publication.
 
+ GET and immutable publication share at most four bounded workers; durable
+ journal updates remain serial and follow successful publication.
  No model/grader verification is claimed. Only previously authenticated tiny
  commitments participate; same captured bytes survive retries and restarts.
  """
  from concurrent.futures import ThreadPoolExecutor
+ from collections import deque
  from .commitment_transport import FreezeMetadataIncomplete
  from .storage import SubmissionPolicyError
  state=gateway.epochs[epoch];need(state.get('commitment_capture_complete')is True,'complete signed commitment capture required')
@@ -43,7 +46,12 @@ def capture(gateway,epoch):
    except (ValueError,KeyError,TypeError,json.JSONDecodeError)as exc:raise SubmissionPolicyError('token document binding')from exc
    if cutoff is not None and time.time()>=cutoff:raise TimeoutError('token capture cutoff')
    frozen=pending[miner]['root']+'/training/'+str(b['slot'])+'.json'
-   return miner,b,data,dict(slot=b['slot'],sha256=sha(data),size=len(data),frozen_key=frozen,captured_at=time.time(),assurance='unaudited'),None
+   receipt=dict(slot=b['slot'],sha256=sha(data),size=len(data),frozen_key=frozen,captured_at=time.time(),assurance='unaudited')
+   try:gateway.bucket.put(frozen,data)
+   except Exception as exc:
+    failure=RuntimeError('token snapshot publication infrastructure failure');failure.__cause__=exc
+    return miner,b,None,None,failure
+   return miner,b,None,receipt,None
   except Exception as exc:
    from botocore.exceptions import ClientError
    if isinstance(exc,ClientError)and str(exc.response.get('Error',{}).get('Code'))in('NoSuchKey','NotFound','404'):exc=SubmissionPolicyError('missing completed token document')
@@ -53,13 +61,20 @@ def capture(gateway,epoch):
   while remaining():
    items=remaining();wave_errors=[]
    with ThreadPoolExecutor(max_workers=4)as pool:
-    for miner,b,data,receipt,error in pool.map(fetch,items):
+    waiting=deque();todo=iter(items)
+    def fill():
+     while len(waiting)<4:
+      try:item=next(todo)
+      except StopIteration:return
+      waiting.append(pool.submit(fetch,item))
+    fill()
+    while waiting:
+     miner,b,data,receipt,error=waiting.popleft().result()
      if isinstance(error,SubmissionPolicyError):state['rejections'][miner]=str(error);gateway.persist()
      elif error is not None:wave_errors.append(error)
      else:
-      try:gateway.bucket.put(receipt['frozen_key'],data)
-      except Exception as exc:wave_errors.append(exc);continue
       journal.setdefault(miner,{})[str(b['slot'])]=receipt;gateway.persist()
+     fill()
    failures.extend(wave_errors)
    if not remaining():break
    if cutoff is None:raise FreezeMetadataIncomplete('bounded signed token capture cutoff required')

@@ -60,4 +60,44 @@ class DocumentTests(unittest.TestCase):
   gateway.bucket.client.get_object=get
   with patch('subnet.training_documents.time.sleep'):capture(gateway,'token-v2')
   self.assertEqual(count[0],2);self.assertEqual(len(puts),1);self.assertFalse(state.get('training_document_deferred'))
+ def test_bounded_parallel_publication_and_serial_durable_journal(self):
+  import threading
+  gateway,state,puts,calls=self.gateway();miner=self.identity.id;documents={};packed=[]
+  for slot in range(9):
+   batch=copy.deepcopy(self.batch);batch['index']+=slot;packed.append((batch,b'proof'+bytes([slot])))
+   documents[slot]=document(batch,self.manifest,miner,slot)
+  env=make(self.identity,self.manifest,packed);pending=state['commitment_pending'][miner]
+  pending.update(document=env,sha256=sha(canonical(env)),size=len(canonical(env)))
+  now=time.time();lock=threading.Lock();active=[0];peak=[0];first_four=threading.Event();threads=[]
+  def get(**kw):
+   slot=int(kw['Key'].rsplit('/',1)[1].split('.')[0]);calls.append(slot)
+   return {'Body':io.BytesIO(documents[slot]),'LastModified':datetime.datetime.fromtimestamp(now,datetime.timezone.utc)}
+  def put(key,body):
+   with lock:
+    active[0]+=1;peak[0]=max(peak[0],active[0])
+    if active[0]==4:first_four.set()
+   try:
+    if not first_four.wait(2):raise AssertionError('publication was serialized')
+    time.sleep(.005);puts[key]=body
+   finally:
+    with lock:active[0]-=1
+  gateway.bucket.client.get_object=get;gateway.bucket.put=put
+  gateway.persist=lambda:threads.append(threading.get_ident())
+  capture(gateway,'token-v2')
+  self.assertEqual(peak[0],4);self.assertEqual(len(puts),9)
+  self.assertEqual(set(threads),{threading.get_ident()})
+  self.assertEqual(len(state['training_document_snapshots'][miner]),9)
+  capture(gateway,'token-v2');self.assertEqual(len(calls),9)
+ def test_failed_publication_does_not_journal_before_retry(self):
+  gateway,state,puts,calls=self.gateway();original=gateway.bucket.put;attempts=[0]
+  def put(key,data):
+   attempts[0]+=1
+   if attempts[0]==1:
+    from subnet.storage import SubmissionPolicyError
+    self.assertFalse(state['training_document_snapshots']);raise SubmissionPolicyError('publication unavailable')
+   return original(key,data)
+  gateway.bucket.put=put
+  with patch('subnet.training_documents.time.sleep'):capture(gateway,'token-v2')
+  self.assertEqual(attempts[0],2);self.assertEqual(len(calls),2)
+  self.assertEqual(len(puts),1);self.assertFalse(state['rejections'])
 if __name__=='__main__':unittest.main()
