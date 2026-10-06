@@ -9,6 +9,7 @@ from pathlib import Path
 from .continuous_audit_policy import VERSION,policy,population,digest,random_selection,verifier_contract,admit_queue_reports,snapshot,BackendEvidenceNotAdmitted
 from .distributed_roles import authenticate
 from .storage import canonical
+from .audit_queue_snapshot import queue_rows
 
 
 class InvalidCommittedArtifact(ValueError):pass
@@ -150,11 +151,13 @@ class ContinuousAuditor:
   finally:body.close()
   if size!=artifact['size']or h.hexdigest()!=row['proof_sha256']:raise InvalidCommittedArtifact('copied proof full SHA differs from signed commitment')
   captured=dict(artifact,etag=meta['ETag'],received_at=meta['LastModified'].timestamp(),read_url=self.controller.bucket.presign(frozen));return manifest,receipt,captured
+ def queue_statuses(self):
+  if hasattr(self.queue,'path'):return queue_rows(self.queue,self.state['jobs'])
+  return {j:self.queue.status(j)for j in self.state['jobs']}
  def tick(self,now=None):
   if self.group_size>1:return self.tick_grouped(now)
   now=time.time()if now is None else now;available=self.max_inflight
-  for jobid in self.state['jobs']:
-   status=self.queue.status(jobid)
+  for status in self.queue_statuses().values():
    if status and status['status']in('queued','leased'):available-=1
   if available<=0:return dict(enqueued=0,backpressure=True)
   rows,deferred=self.dispatch_records();runnable=set(digest(r)for r in rows);done=set(self.state['draws']);queued={i for r in self.state['jobs'].values()for i in job_rows(r)};remaining=min(self.budget,available)
@@ -202,7 +205,7 @@ class ContinuousAuditor:
  def tick_grouped(self,now=None):
   """Bounded same-opening groups; persisted draws/plans survive owner crashes."""
   now=time.time()if now is None else now
-  available=self.max_inflight-sum(bool((v:=self.queue.status(j))and v['status']in('queued','leased'))for j in self.state['jobs'])
+  available=self.max_inflight-sum(bool(v and v['status']in('queued','leased'))for v in self.queue_statuses().values())
   if available<=0:return dict(enqueued=0,backpressure=True)
   rows,deferred=self.dispatch_records();lookup={digest(r):r for r in rows};done=set(self.state['draws']);queued={i for job in self.state['jobs'].values()for i in job_rows(job)}
   plans=self.state.setdefault('group_plans',{});pending=[(key,v)for key,v in plans.items()if not v.get('resolved')]
@@ -306,15 +309,17 @@ class ContinuousAuditor:
   target=self.directory/('snapshot-'+str(cutoff)+'-'+epoch+'.json')
   if target.exists():
    document=json.loads(target.read_text());self.publish_immutable('public/continuous-audit/snapshots/'+str(cutoff)+'-'+epoch+'.json',document);return document
+  # Select the exact original job rows in ONE consistent read view. Release
+  # SQLite before expensive report JSON/signature/evidence processing.
+  identifiers=[j for j,entry in self.state['jobs'].items()if all(self.state['draws'][i]['row']['round']<=round and self.state['draws'][i]['row']['committed_at']<=cutoff for i in job_rows(entry))]
+  originals=queue_rows(self.queue,identifiers,complete=True)
   queued=[]
-  for jobid in self.state['jobs']:
-   row=self.queue.status(jobid)
-   if row and row['status']=='complete' and all(self.state['draws'][i]['row']['round']<=round and self.state['draws'][i]['row']['committed_at']<=cutoff for i in job_rows(self.state['jobs'][jobid])):
-    # status() intentionally exposes no execution report_request. Original row
-    # is read transactionally from this same authenticated queue below.
-    with self.queue.transaction()as db:actual=db.execute('select * from jobs where id=?',(jobid,)).fetchone()
-    report=json.loads(actual['report'])if type(actual['report'])is str else actual['report']
-    if report['completed_at']<=cutoff:queued.append(dict(actual))
+  for jobid in identifiers:
+   actual=originals.get(jobid)
+   if actual is None:raise ValueError('unknown original audit job')
+   if actual['status']!='complete':continue
+   report=json.loads(actual['report'])if type(actual['report'])is str else actual['report']
+   if report['completed_at']<=cutoff:queued.append(actual)
   records=[r for r in self.records() if r['round']<=round and r['committed_at']<=cutoff];admissions,deferred=admit_completed_reports(queued,records,self.controller.authority.id,self.queue.workers,self.sources,execution_evidence_policy=self.execution_evidence_policy if self.execution_evidence_policy is not None and cutoff>=self.execution_evidence_policy['effective_cutoff']else None,cutoff=cutoff,deferral_policy=self.backend_evidence_deferral_policy)
   from .continuous_audit_policy import admit_artifact_failures
   failures=[f['document']for f in self.state['capture_failures'].values()if f['kind']=='confirmed_invalid_artifact' and authenticate(f['document'],self.controller.authority.id)['row']in records];admissions.update(admit_artifact_failures(failures,records,self.controller.authority.id))
