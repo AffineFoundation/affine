@@ -59,7 +59,7 @@ class OwnedShardReceipt:
     """Internal opened-fd handoff from an authenticated, exclusively leased cache."""
     def __init__(self,owner,fd,path,row,before,after,journal):
         self.owner=owner;self.fd=fd;self.path=Path(path);self.row=row
-        self.before=before;self.after=after;self.journal=journal
+        self.before=before;self.after=after;self.journal=journal;self.journal_stat=snapshot(journal)
     def validate(self,path,shard,owner):
         if (owner is not self.owner or owner.fd is None or
             owner.policy['version']!=STAT_VERSION or not owner.current or
@@ -69,6 +69,8 @@ class OwnedShardReceipt:
             raise ValueError('exact authorized owned-cache fd handoff')
         if fd_snapshot(self.fd)!=self.after or snapshot(self.path)!=self.after:
             raise ValueError('owned renamed state identity changed')
+        if snapshot(self.journal)!=self.journal_stat or self.journal_stat['mode']&0o077:
+            raise ValueError('unchanged private owned rename receipt required')
         if json.loads(self.journal.read_bytes())!=dict(
             version='verified-owned-state-rename-v1',job_id=owner.job['job_id'],
             original_cache_job_id=owner.current['job_id'],descriptor_sha256=owner.current['descriptor_sha256'],

@@ -104,3 +104,15 @@ class StatValidationControls(unittest.TestCase):
         f=self.f;descriptor=f.promoted();p=f.root/'.optimizer-state-cache/current.json';v=json.loads(p.read_bytes());v['ROOT_ack']['signature']='AAAA';p.write_bytes(canonical(v))
         with StateCache(f.root,f.job,f.manifest,f.authority)as cache:
             with self.assertRaises(ValueError):cache.prepare_parent(descriptor,'aa'*32)
+
+    def test_rename_journal_symlink_or_hardlink_refused(self):
+        f=self.f;descriptor=f.promoted();shard=descriptor['shards'][0];p=f.root/'restored.safetensors'
+        with StateCache(f.root,f.job,f.manifest,f.authority)as cache:
+            cache.prepare_parent(descriptor,'aa'*32);receipt=cache.fetch(shard['name'],p,lambda *a:self.fail('network'))
+            try:
+                foreign=f.root/'journal-copy';foreign.write_bytes(receipt.journal.read_bytes())
+                receipt.journal.unlink();receipt.journal.symlink_to(foreign)
+                with self.assertRaises(ValueError):receipt.validate(p,shard,cache)
+                receipt.journal.unlink();os.link(foreign,receipt.journal)
+                with self.assertRaises(ValueError):receipt.validate(p,shard,cache)
+            finally:receipt.close()
