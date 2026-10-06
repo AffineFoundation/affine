@@ -14,6 +14,17 @@ class CapacityPublication(unittest.TestCase):
   self.v=dict(version=VERSION,outbox=str(self.fx.root/'outbox'),replicas={k:{}for k in ('1','2','3','4','5','6','8')});self.policy=self.fx.sign(self.v)
   self.cp=dict(id=self.fx.cp,files={'model.safetensors':self.fx.sha});self.staged=dict(checkpoint=self.cp['id'],operator_independent_hashes=True,objects={'model.safetensors':dict(sha256=self.fx.sha,bytes=len(self.fx.bytes))})
  def replicate(self,grant,config):return dict(version='owned-capacity-inventory-install-v1',checkpoint_id=grant['payload']['checkpoint_id'],grant_sha256=sha(grant),installed=True)
+ def test_lifetime_revocation_guard_blocks_before_any_metadata_tick(self):
+  from nacl.signing import SigningKey
+  from subnet.backend_jobs import signed
+  from ops.verifier_capacity_publication import main
+  key=SigningKey.generate();seed=self.fx.root/'test-only-seed';seed.write_text(key.encode().hex());seed.chmod(0o600)
+  policy=self.fx.root/'test-only-policy';policy.write_bytes(canonical(dict(payload=self.v,signer=key.verify_key.encode().hex(),signature=__import__('base64').b64encode(key.sign(canonical(self.v)).signature).decode())))
+  args=SimpleNamespace(policy=str(policy),authority=key.verify_key.encode().hex(),seed_file=str(seed),publication_state='never-read',controller_state='never-read',queue='never-read',once=False)
+  def revoked():raise ValueError('revoked')
+  with patch('argparse.ArgumentParser.parse_args',return_value=args),patch('ops.verifier_capacity_publication.backfill')as fill,patch('ops.verifier_capacity_publication.flush')as ship:
+   with self.assertRaisesRegex(ValueError,'revoked'):main(guard=revoked)
+   fill.assert_not_called();ship.assert_not_called()
  def test_default_off_publication_untouched(self):self.assertIsNone(enqueue(None,None,None,None));self.assertEqual(flush(None,None,replicate=None),[])
  def test_genuine_full_readback_metadata_signed_once_and_all7_replayed(self):
   grant=enqueue(self.c,self.policy,self.cp,self.staged);self.assertEqual(len(flush(self.c,self.policy,replicate=self.replicate)),7);self.assertEqual(flush(self.c,self.policy,replicate=self.replicate),[]);self.assertEqual(enqueue(self.c,self.policy,self.cp,self.staged),grant)
