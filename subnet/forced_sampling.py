@@ -18,13 +18,14 @@ def source_hash():
 
 
 def validate(value):
-    from .fast_prefill_audit import VERSION as FAST,SUPPORT_VERSION as SUPPORT,calibration
-    expected=(FIELDS|{'calibration','support_adjudication'}if isinstance(value,dict)and value.get('version')==SUPPORT else FIELDS|{'calibration'}if isinstance(value,dict)and value.get('version')==FAST else FIELDS)
+    from .fast_prefill_audit import VERSION as FAST,SUPPORT_VERSION as SUPPORT,THREEWAY_VERSION as THREEWAY,calibration
+    expected=(FIELDS|{'calibration','uncertainty_adjudication'}if isinstance(value,dict)and value.get('version')==THREEWAY else FIELDS|{'calibration','support_adjudication'}if isinstance(value,dict)and value.get('version')==SUPPORT else FIELDS|{'calibration'}if isinstance(value,dict)and value.get('version')==FAST else FIELDS)
     if not isinstance(value, dict) or set(value) != expected:
         raise ValueError('forced sampling contract fields')
-    if value['version']in(FAST,SUPPORT):
+    if value['version']in(FAST,SUPPORT,THREEWAY):
         if value['version']==SUPPORT and value['support_adjudication']!='exact-cached-replay-v1':raise ValueError('explicit cached support adjudication')
-        if value['verification']!='prefill-cdf-calibrated' or value['generation']!='cached-eager-inverse-cdf':raise ValueError('fast sampling contract version')
+        if value['version']==THREEWAY and value['uncertainty_adjudication']!='numerical-inconclusive-no-replay-v1':raise ValueError('explicit threeway uncertainty adjudication')
+        if value['verification']!=('prefill-cdf-calibrated-threeway'if value['version']==THREEWAY else 'prefill-cdf-calibrated') or value['generation']!='cached-eager-inverse-cdf':raise ValueError('fast sampling contract version')
         calibration(value['calibration'])
     elif value['version'] != VERSION or value['verification'] != 'exact-token-replay' or value['generation'] != 'uncached-eager-inverse-cdf':
         raise ValueError('forced sampling contract version')
@@ -37,11 +38,11 @@ def validate(value):
 
 
 def new_contract(config):
-    from .fast_prefill_audit import VERSION as FAST,SUPPORT_VERSION as SUPPORT
-    if isinstance(config,dict)and config.get('version')in(FAST,SUPPORT):
-        expected={'version','max_attempts','calibration'}|({'support_adjudication'}if config['version']==SUPPORT else set())
+    from .fast_prefill_audit import VERSION as FAST,SUPPORT_VERSION as SUPPORT,THREEWAY_VERSION as THREEWAY
+    if isinstance(config,dict)and config.get('version')in(FAST,SUPPORT,THREEWAY):
+        expected={'version','max_attempts','calibration'}|({'support_adjudication'}if config['version']==SUPPORT else {'uncertainty_adjudication'}if config['version']==THREEWAY else set())
         if set(config)!=expected:raise ValueError('fast sampling opening configuration')
-        return validate(dict(config,randomness=secrets.token_hex(32),verification='prefill-cdf-calibrated',generation='cached-eager-inverse-cdf'))
+        return validate(dict(config,randomness=secrets.token_hex(32),verification='prefill-cdf-calibrated-threeway'if config['version']==THREEWAY else 'prefill-cdf-calibrated',generation='cached-eager-inverse-cdf'))
     if not isinstance(config, dict) or set(config) != {'version', 'max_attempts'}:
         raise ValueError('forced sampling opening configuration')
     return validate(dict(config, randomness=secrets.token_hex(32),

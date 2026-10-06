@@ -688,7 +688,13 @@ def audit(data, manifest, runtime, *, commitment_miner=None):
                 accepted.append(batch);pairs.extend((definition,p,n) for p,n in zip(pos,neg))
             outcomes.append(dict(batch=number,env_id=definition['env_id'],index=index,structural_valid=True,valid=True if number in selected_indices else None,fully_audited=number in selected_indices))
         except NumericalAmbiguity as error:
-            outcomes.append(dict(batch=number,valid=None,fully_audited=False,failure_kind='numerical_ambiguous',reason=str(error)[:300]))
+            outcome=dict(batch=number,valid=None,fully_audited=False,failure_kind='numerical_ambiguous',reason=str(error)[:300])
+            from .fast_prefill_audit import THREEWAY_VERSION
+            if manifest.get('sampling_contract',{}).get('version')==THREEWAY_VERSION:
+                outcome.update(sampling_verification_complete=False,environment_verification_complete=False)
+                if hasattr(error,'uncertain_positions'):
+                    outcome.update(uncertain_token_positions=error.uncertain_positions,uncertain_token_position_count=error.uncertain_position_count)
+            outcomes.append(outcome)
         except (ValueError,KeyError,TypeError,IndexError) as error:
             outcomes.append(dict(batch=number,valid=False,fully_audited=number in selected_indices,failure_kind='confirmed_invalid' if confirmed_invalid or isinstance(error,InvalidSample) else 'verification_error',reason=type(error).__name__+': '+str(error)[:300]))
     return dict(epoch=manifest['epoch'],submission_sha256=hashlib.sha256(data).hexdigest(),policy=policy,selected_batches=sorted(selected_indices),assurance=assurance(len(records),len(selected_indices)),sampling_assurance=sampling_assurance(manifest),outcomes=outcomes,accepted=accepted,training_eligibility='fully-audited-only'),pairs
