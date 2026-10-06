@@ -83,7 +83,7 @@ class Miner:
             if manifest.get('submission_transport_policy'):
                 if len(self.cap.get('batch_put_urls',[]))!=manifest['max_batches']:raise ValueError('bound per-batch upload slots')
                 for url in self.cap['batch_put_urls']:direct_r2_url(url)
-                if manifest['submission_transport_policy']=='small-commitment-pairs-v2':
+                if manifest['submission_transport_policy']in ('small-commitment-pairs-v2','small-commitment-token-pairs-v3'):
                     if len(self.cap.get('training_put_urls',[]))!=manifest['max_batches']:raise ValueError('bound token upload slots')
                     for url in self.cap['training_put_urls']:direct_r2_url(url)
         entries(manifest)
@@ -198,7 +198,7 @@ class Miner:
         if time.time()>=self.manifest.get('deadline',float('inf')):
             raise EpochClosed('signed epoch upload window closed')
         if self.manifest.get('submission_transport_policy'):
-            from .commitment_transport import VERSION2,VERSIONS,make,canonical,UploadJournal,write_prepared_state
+            from .commitment_transport import VERSION2,VERSION3,VERSIONS,make,canonical,UploadJournal,write_prepared_state
             if self.manifest['submission_transport_policy']not in VERSIONS:raise ValueError('unsupported commitment upload')
             packed=self._prepared()
             if self.state_path:write_prepared_state(self.state_path,self.manifest,packed)
@@ -210,7 +210,7 @@ class Miner:
                 remaining=min(120,self.manifest['deadline']-time.time()-1)
                 if remaining<=0:raise EpochClosed('batch upload deadline')
                 response=requests.put(self.cap['batch_put_urls'][slot],data=body,headers=self.cap.get('headers',{}),timeout=remaining);response.raise_for_status();journal.acknowledge(slot,body)
-            if self.manifest['submission_transport_policy']==VERSION2:
+            if self.manifest['submission_transport_policy']in (VERSION2,VERSION3):
                 from .training_documents import document
                 for slot,(batch,_)in enumerate(packed):
                     body=document(batch,self.manifest,self.identity.id,slot)

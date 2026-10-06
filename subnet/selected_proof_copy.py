@@ -51,7 +51,7 @@ def freeze_metadata(gateway,epoch):
    ap=p['artifact_plans'][str(b['slot'])]
    artifacts.append(dict(b,key='private/'+epoch+'/staging/'+miner+'/'+str(b['slot'])+'.zip',frozen_key=p['root']+'/'+str(b['slot'])+'.zip',**ap))
   receipts[miner]=dict(sha256=p['sha256'],commitment_document=p['document'],commitment_key=p['root']+'/commitment.json',artifacts=artifacts,size=p['size'],received_at=p['received_at'],hash_assurance='declared-payload-hashes-until-selected-verifier',proof_copy_policy=VERSION,artifact_public_availability='only-successfully-copied-selected-proofs')
- if state['commitment_binding'].get('version')=='small-commitment-pairs-v2':
+ if state['commitment_binding'].get('version')in ('small-commitment-pairs-v2','small-commitment-token-pairs-v3'):
   from .training_documents import attach
   attach(state,receipts)
  state['frozen_receipts']=receipts;state.pop('commitment_metadata_incomplete',None);gateway.persist();gateway.bucket.json('public/'+epoch+'/receipts.json',receipts)

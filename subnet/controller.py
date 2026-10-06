@@ -113,8 +113,18 @@ class Controller:
         if existing(legacy_key) is None:self.bucket.json(legacy_key,self.signed(descriptor))
         return checkpoint
 
-    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None,persistent_publication_policy=None,reward_publication_policy=None,optimizer_state_export_policy=None,artifact_compression_policy=None,proof_copy_policy=None,training_input_policy=None,continuous_reward_activation_document=None,continuous_reward_registration_snapshot=None,training_runtime=None,independent_state_readback_budget=None,optimizer_state_local_cache=None,probability_artifact_policy=None,K=1,L=1):
+    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None,persistent_publication_policy=None,reward_publication_policy=None,optimizer_state_export_policy=None,artifact_compression_policy=None,proof_copy_policy=None,training_input_policy=None,continuous_reward_activation_document=None,continuous_reward_registration_snapshot=None,training_runtime=None,independent_state_readback_budget=None,optimizer_state_local_cache=None,probability_artifact_policy=None,token_artifact_policy=None,native_source_validation_policy=None,K=1,L=1):
         K,L=class_quotas(K,L,sampling_policy)
+        if token_artifact_policy is not None:
+            from .token_only_protocol import validate_policy,TRANSPORT
+            from .fast_prefill_audit import THREEWAY_VERSION
+            token_artifact_policy=validate_policy(token_artifact_policy)
+            if probability_artifact_policy is not None or submission_transport_policy!=TRANSPORT or (sampling_policy or {}).get('version')!=THREEWAY_VERSION:
+                raise ValueError('explicit new token transport/v4 sampler opening')
+        elif submission_transport_policy=='small-commitment-token-pairs-v3':raise ValueError('token policy required before opening')
+        if native_source_validation_policy is not None:
+            from .token_only_protocol import NATIVE_POLICY,canonical
+            if token_artifact_policy is None or canonical(native_source_validation_policy)!=canonical(NATIVE_POLICY):raise ValueError('explicit token native source policy')
         if probability_artifact_policy is not None:
             from .probability_artifacts import validate_policy
             probability_artifact_policy=validate_policy(probability_artifact_policy)
@@ -189,7 +199,7 @@ class Controller:
             if submission_transport_policy not in VERSIONS or type(commitment_max_batches)is not int or not 1<=commitment_max_batches<=256:raise ValueError('commitment transport policy/cap')
             commitment_binding=dict(version=submission_transport_policy,checkpoint=checkpoint['id'],source=source_bundle['sha256'],max_batches=commitment_max_batches)
         if training_input_policy is not None:
-            if training_input_policy!='committed-unaudited-training-v1' or submission_transport_policy!='small-commitment-pairs-v2':raise ValueError('explicit v2 unaudited learner policy')
+            if training_input_policy!='committed-unaudited-training-v1' or submission_transport_policy not in ('small-commitment-pairs-v2','small-commitment-token-pairs-v3'):raise ValueError('explicit v2 unaudited learner policy')
             commitment_binding['training_input_policy']=training_input_policy
         if reward_publication_policy is not None:
             from .reward_publication import validate_policy
@@ -224,6 +234,8 @@ class Controller:
         if training_runtime is not None:manifest['training_runtime']=training_runtime
         if artifact_compression_policy is not None:manifest['artifact_compression_policy']=artifact_compression_policy
         if probability_artifact_policy is not None:manifest['probability_artifact_policy']=probability_artifact_policy
+        if token_artifact_policy is not None:manifest['token_artifact_policy']=token_artifact_policy
+        if native_source_validation_policy is not None:manifest['native_source_validation_policy']=dict(native_source_validation_policy)
         if proof_copy_policy is not None:manifest['proof_copy_policy']=proof_copy_policy
         if hourly_execution_policy is not None:manifest['hourly_execution_policy']=hourly_execution_policy
         if reward_publication_policy is not None:manifest['reward_publication_policy']=reward_publication_policy

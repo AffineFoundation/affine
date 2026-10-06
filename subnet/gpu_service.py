@@ -125,6 +125,10 @@ def contract(config,round_number):
     if 'probability_artifact_policy' in config:
         from .probability_artifacts import validate_policy
         result['probability_artifact_policy']=validate_policy(config['probability_artifact_policy'])
+    if 'token_artifact_policy'in config:
+        from .token_only_protocol import validate_policy
+        result['token_artifact_policy']=validate_policy(config['token_artifact_policy'])
+    if 'native_source_validation_policy'in config:result['native_source_validation_policy']=config['native_source_validation_policy']
     if config.get('proof_copy_policy') is not None:
         from .selected_proof_copy import validate_policy
         result['proof_copy_policy']=validate_policy(config['proof_copy_policy'])
@@ -332,8 +336,8 @@ def run(config,once=False):
                             if manifest['submission_transport_policy'] not in VERSIONS:raise ValueError('owned commitment transport')
                             capability['put_url']=bucket.presign('private/'+epoch+'/commitments/'+miner+'.json','put_object',max(1,manifest['deadline']-int(time.time())))
                             capability['batch_put_urls']=[bucket.presign('private/'+epoch+'/staging/'+miner+'/'+str(i)+'.zip','put_object',max(1,manifest['deadline']-int(time.time())))for i in range(manifest['max_batches'])]
-                            from .commitment_transport import VERSION2
-                            if manifest['submission_transport_policy']==VERSION2:
+                            from .commitment_transport import VERSION2,VERSION3
+                            if manifest['submission_transport_policy']in (VERSION2,VERSION3):
                                 capability['training_put_urls']=[bucket.presign('private/'+epoch+'/training/'+miner+'/'+str(i)+'.json','put_object',max(1,manifest['deadline']-int(time.time())))for i in range(manifest['max_batches'])]
                             paths=config.get('owned_miner_identity_files',{})
                             if not isinstance(paths,dict) or miner not in paths:raise ValueError('owned miner scoped identity file required')

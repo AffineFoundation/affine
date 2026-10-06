@@ -167,7 +167,7 @@ def owned_commitment_upload(job,manifest,progress_path=None):
     """Use only the miner's local scoped signing seed; never authority material."""
     from .storage import Identity
     from .batches import unpack,pack
-    from .commitment_transport import make,VERSION,VERSION2,canonical,pair_artifact,UploadJournal
+    from .commitment_transport import make,VERSION,VERSION2,VERSION3,canonical,pair_artifact,UploadJournal
     import stat,requests
     identity=owned_miner_identity(job)
     journal=UploadJournal(manifest,progress_path)
@@ -184,7 +184,7 @@ def owned_commitment_upload(job,manifest,progress_path=None):
         for slot,(url,(_,artifact))in enumerate(zip(job['capability']['batch_put_urls'],packed)):
             if journal.known(slot,artifact):continue
             put(url,artifact);journal.acknowledge(slot,artifact)
-        if manifest.get('submission_transport_policy',VERSION)==VERSION2:
+        if manifest.get('submission_transport_policy',VERSION)in (VERSION2,VERSION3):
             from .training_documents import document
             for slot,(batch,_)in enumerate(packed):
                 body=document(batch,manifest,identity.id,slot)
@@ -194,7 +194,10 @@ def owned_commitment_upload(job,manifest,progress_path=None):
         return commitment
     def upload(data,timeout):
         from .artifact_budget import for_manifest
-        rows=unpack(data,budget=for_manifest(manifest))
+        if 'token_artifact_policy'in manifest:
+            from .token_only_protocol import unpack as token_unpack
+            rows=token_unpack(data,budget=for_manifest(manifest),max_batches=manifest['max_batches'])
+        else:rows=unpack(data,budget=for_manifest(manifest))
         return upload_pairs([(batch,pair_artifact(batch,arrays,manifest))for batch,arrays in rows],timeout)
     upload.prepare_pair=lambda batch,arrays:pair_artifact(batch,arrays,manifest)
     upload.check_prepared=check_prepared
@@ -318,6 +321,9 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',job.get('job_id','')):raise ValueError('job ID')
     if any(type(job.get(k)) not in (int,float) for k in ('created_at','expires_at')) or not job['created_at']<=now<job['expires_at'] or job['expires_at']-job['created_at']>86400:raise ValueError('job expired/time budget')
     manifest=signed(job['manifest'],authority)
+    if resolve_source and ('token_artifact_policy'in manifest or manifest.get('submission_transport_policy')=='small-commitment-token-pairs-v3'):
+        from .token_only_protocol import for_manifest as token_policy
+        token_policy(manifest)
     from .backend_profiles import resolve
     resolve(manifest)
     from .backend_profiles import execution_profile
@@ -379,12 +385,12 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
         r2_url(job['capability']['put_url'],'PUT')
         if job['capability'].get('headers')!={'Content-Type':'application/octet-stream'}:raise ValueError('signed upload headers')
         if manifest.get('submission_transport_policy') is not None:
-            from .commitment_transport import VERSION,VERSIONS,VERSION2
+            from .commitment_transport import VERSION,VERSIONS,VERSION2,VERSION3
             if manifest['submission_transport_policy']not in VERSIONS or not isinstance(job.get('miner_identity_file'),str) or not Path(job['miner_identity_file']).is_absolute():raise ValueError('owned commitment miner identity path')
             urls=job['capability'].get('batch_put_urls')
             if not isinstance(urls,list) or len(urls)!=manifest['max_batches']:raise ValueError('owned commitment capability slots')
             for url in urls:r2_url(url,'PUT')
-            if manifest.get('submission_transport_policy',VERSION)==VERSION2:
+            if manifest.get('submission_transport_policy',VERSION)in (VERSION2,VERSION3):
                 tokens=job['capability'].get('training_put_urls')
                 if type(tokens)is not list or len(tokens)!=manifest['max_batches']:raise ValueError('owned token document capability slots')
                 for url in tokens:r2_url(url,'PUT')
@@ -723,7 +729,17 @@ def audit(data, manifest, runtime, *, commitment_miner=None):
     from .protocol import entries, entry, classification, sample_key,harness_for
     from .artifact_budget import for_manifest
     definitions=entries(manifest);budget=for_manifest(manifest)
-    try:records=submission_records(data,budget=budget,max_batches=manifest.get('max_batches',4))
+    token_only=False
+    if 'token_artifact_policy'in manifest:
+        from .token_only_protocol import for_manifest as token_policy
+        token_only=token_policy(manifest) is not None
+    try:
+        if token_only:
+            from .token_only_protocol import unpack
+            try:records=unpack(data,budget=budget,max_batches=manifest.get('max_batches',4))
+            except (ValueError,KeyError,TypeError,IndexError,AttributeError,EOFError,UnicodeError,__import__('zipfile').BadZipFile) as error:
+                raise SubmissionRejected(str(error)) from error
+        else:records=submission_records(data,budget=budget,max_batches=manifest.get('max_batches',4))
     except SubmissionRejected as error:
         return dict(epoch=manifest['epoch'],submission_sha256=hashlib.sha256(data).hexdigest(),
             submission_rejected=True,rejection_stage='transport',
@@ -763,7 +779,11 @@ def audit(data, manifest, runtime, *, commitment_miner=None):
                 if signature in tokens or rollout['index']!=index or rollout.get('env_id')!=definition['env_id']:raise ValueError('sample binding/duplicate')
                 tokens.add(signature)
                 if number in selected_indices:
-                    try:verified=selected.verify(rollout,probs)
+                    try:
+                        if token_only:
+                            from .token_only_runtime import verify
+                            verified=verify(selected,manifest,rollout,eligible_indices=definition['indices'])['valid']
+                        else:verified=selected.verify(rollout,probs)
                     except NumericalAmbiguity as error:
                         if not threeway:raise
                         uncertain.append((rollout_number,error));continue
@@ -928,6 +948,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         if version(name)!=expected:raise ValueError('runtime package mismatch')
     startup_timings['source_runtime_authentication']=dict(seconds=time.monotonic()-source_started,calls=1)
     if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':raise ValueError('CUDA environment profile')
+    token_files=('subnet/token_only_protocol.py','subnet/token_only_runtime.py','subnet/threeway_prefill_research.py','subnet/native_session_validation.py')if 'token_artifact_policy'in manifest else ()
     publication_files=('subnet/persistent_publication.py',) if manifest.get('persistent_publication_policy') is not None else ()
     recovery_files=('subnet/training_startup_recovery.py',)if manifest.get('training_startup_recovery')is not None else ()
     learner_files=('subnet/committed_training_inputs.py',)if manifest.get('training_input_policy')=='committed-unaudited-training-v1'else ()
@@ -936,15 +957,21 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     if job.get('training_policy')==PERSISTENT_POLICY:
         from .persistent_training_protocol import EXECUTION_FILES,CACHE_EXECUTION_FILES
         cache_files=CACHE_EXECUTION_FILES if manifest.get('optimizer_state_local_cache')is not None else ()
-        install_source_loader(root,(*EXECUTION_FILES,*cache_files,'subnet/training_receipts.py',*compact_files,*learner_files,*publication_files,*recovery_files))
+        install_source_loader(root,(*EXECUTION_FILES,*cache_files,'subnet/training_receipts.py',*compact_files,*learner_files,*publication_files,*recovery_files,*token_files))
     elif job.get('training_policy')==COVERED_POLICY:
-        install_source_loader(root,('subnet/training_receipts.py',*compact_files,*learner_files,*publication_files,*recovery_files))
-    else:install_source_loader(root,(*compact_files,*learner_files,*publication_files,*recovery_files))
+        install_source_loader(root,('subnet/training_receipts.py',*compact_files,*learner_files,*publication_files,*recovery_files,*token_files))
+    else:install_source_loader(root,(*compact_files,*learner_files,*publication_files,*recovery_files,*token_files))
     if job['role']=='mine' and manifest.get('submission_transport_policy') is not None:
         owned_miner_identity(job)
     if publication_files:
         from .persistent_publication import validate_policy
         validate_policy(manifest['persistent_publication_policy'])
+    if 'token_artifact_policy'in manifest or manifest.get('submission_transport_policy')=='small-commitment-token-pairs-v3':
+        from .token_only_protocol import for_manifest as token_policy
+        token_policy(manifest)
+        required={'subnet/token_only_protocol.py','subnet/token_only_runtime.py','subnet/threeway_prefill_research.py'}
+        if manifest.get('native_source_validation_policy')is not None:required.add('subnet/native_session_validation.py')
+        if not required<=set(job['source_files']):raise ValueError('token-only complete source pins')
     global _PARENT_READ_CONTEXT
     _PARENT_READ_CONTEXT=(job,manifest,authority,str(Path(workspace).absolute()))
     from .backend_profiles import resolve
@@ -1001,16 +1028,28 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         if job['role']=='evaluate' and job.get('successor_calibration')is not None:
             from .successor_calibration import preflight_native_spec
             preflight_native_spec(first['spec'])
+        native_validations={}
+        if 'token_artifact_policy'in manifest:
+            from .token_only_protocol import prepare_native_validations
+            native_validations=prepare_native_validations(job,manifest,authority)
+        elif manifest.get('native_source_validation_policy')is not None or job.get('native_source_validation_scopes')is not None:
+            raise ValueError('explicit native validation candidate required')
         if runtime_factory is None:
             runtime=measured_phase(startup_timings,'runtime_model_construction',factory,approved,manifest['checkpoint']['files'],first['spec'],initial_harness,
                 runtime_revision=revision)
         else:
             runtime=measured_phase(startup_timings,'runtime_model_construction',factory,approved,manifest['checkpoint']['files'],first['spec'],initial_harness)
+        if native_validations:
+            runtime.native_source_validations=native_validations
+            runtime.native_source_validation=native_validations.get(runtime.spec.id)
         if job['role'] != 'evaluate':
             from .forced_sampling import bind_runtime
             bind_runtime(runtime,manifest)
             from .probability_artifacts import bind_runtime as bind_artifacts
             bind_artifacts(runtime,manifest)
+            if 'token_artifact_policy'in manifest:
+                from .token_only_protocol import bind_runtime as bind_tokens
+                bind_tokens(runtime,manifest)
         elif manifest.get('sampling_contract') is not None:
             runtime.sampling_context=None
             report['sampling_scope']='heldout-diagnostic-not-mining-evidence'

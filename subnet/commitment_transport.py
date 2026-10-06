@@ -3,7 +3,8 @@ import base64,hashlib,json,re,time
 from nacl.signing import VerifyKey
 VERSION='small-commitment-pairs-v1'
 VERSION2='small-commitment-pairs-v2'
-VERSIONS=(VERSION,VERSION2)
+VERSION3='small-commitment-token-pairs-v3'
+VERSIONS=(VERSION,VERSION2,VERSION3)
 MAX_BYTES=65536
 canonical=lambda v:json.dumps(v,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
 sha=lambda b:hashlib.sha256(b).hexdigest()
@@ -21,9 +22,9 @@ def validate(data,epoch,miner,maximum=256):
  need(type(p['batches'])is list and len(p['batches'])<=maximum,'commitment cap');seen=set();payloads=set()
  for i,b in enumerate(p['batches']):
   fields={'slot','env_id','index','batch_sha256','sha256','size'}
-  if p['version']==VERSION2:fields|={'training_sha256','training_size'}
+  if p['version']in (VERSION2,VERSION3):fields|={'training_sha256','training_size'}
   need(type(b)is dict and set(b)==fields and type(b['slot'])is int and b['slot']==i,'ordered batch slots')
-  if p['version']==VERSION2:need(is_digest(b['training_sha256'])and type(b['training_size'])is int and 0<b['training_size']<=2_000_000,'bounded token artifact')
+  if p['version']in (VERSION2,VERSION3):need(is_digest(b['training_sha256'])and type(b['training_size'])is int and 0<b['training_size']<=2_000_000,'bounded token artifact')
   need(b['sha256']not in payloads,'distinct payload slots');payloads.add(b['sha256'])
   need(is_digest(b['sha256'])and is_digest(b['batch_sha256'])and type(b['size'])is int and 0<b['size']<=2_000_000_000,'artifact size/hash')
   need(type(b['env_id'])is str and 0<len(b['env_id'])<=100 and type(b['index'])is int and 0<=b['index']<2**31 and (b['env_id'],b['index'])not in seen,'unique declared index');seen.add((b['env_id'],b['index']))
@@ -33,7 +34,7 @@ def make(identity,manifest,packed):
  entries=[]
  for i,(batch,data)in enumerate(packed):entries.append(dict(slot=i,env_id=batch['env_id'],index=batch['index'],batch_sha256=sha(canonical(batch)),sha256=sha(data),size=len(data)))
  version=manifest.get('submission_transport_policy',VERSION);need(version in VERSIONS,'explicit transport version')
- if version==VERSION2:
+ if version in (VERSION2,VERSION3):
   from .training_documents import document
   for entry,(batch,_)in zip(entries,packed):
    body=document(batch,manifest,identity.id,entry['slot']);entry.update(training_sha256=sha(body),training_size=len(body))
@@ -151,7 +152,7 @@ def freeze(gateway,epoch):
    state['commitment_metadata_incomplete']=dict(reason='tiny_GET_infrastructure_incomplete',at=time.time(),unresolved=unresolved,error_types=[type(x).__name__ for x in metadata_failures]);gateway.persist()
    raise FreezeMetadataIncomplete('complete tiny commitment admission unavailable')from(metadata_failures[0]if metadata_failures else None)
   state['commitment_capture_complete']=True;state['commitment_capture_completed_at']=time.time();state.pop('commitment_metadata_incomplete',None);gateway.persist()
- if state['commitment_binding'].get('version')==VERSION2:
+ if state['commitment_binding'].get('version')in (VERSION2,VERSION3):
   from .training_documents import capture
   capture(gateway,epoch)
   from .training_documents import freeze_receipts
@@ -214,7 +215,7 @@ def freeze(gateway,epoch):
  if failures and not expired():raise failures[0]
  for miner in pending:
   if miner not in snapshots and miner not in rejections:state.setdefault('commitment_deferred',{})[miner]=dict(reason='freeze_infrastructure_budget_deferred',closed_at=time.time())
- if state['commitment_binding'].get('version')==VERSION2:
+ if state['commitment_binding'].get('version')in (VERSION2,VERSION3):
   from .training_documents import attach
   attach(state,snapshots)
  state['frozen_receipts']=dict(snapshots);gateway.persist();gateway.bucket.json('public/'+epoch+'/receipts.json',state['frozen_receipts']);return state['frozen_receipts']
@@ -239,6 +240,9 @@ def pair_artifact(batch,arrays,manifest):
  """Stable lossless ZIP; absent policy preserves exact historical default bytes."""
  from .batches import pack,compression_for_manifest
  from .artifact_budget import for_manifest
+ if 'token_artifact_policy'in manifest:
+  from .token_only_protocol import for_manifest as token_policy,pack
+  token_policy(manifest)
  return pack([(batch,arrays)],budget=for_manifest(manifest),stable=True,compression_level=compression_for_manifest(manifest))
 
 
@@ -267,6 +271,16 @@ def check_prepared_cumulative(packed,manifest,maximum):
     from .batches import UploadBudgetExceeded
     budget=for_manifest(manifest);raw=0;compressed=0;array_raw=0;array_compressed=0;framing=22;records=[]
     if len(packed)>maximum:raise ValueError('owned commitment slot cap')
+    if 'token_artifact_policy'in manifest:
+        from .token_only_protocol import for_manifest as token_policy,unpack
+        token_policy(manifest)
+        for batch,artifact in packed:
+            rows=unpack(artifact,budget=budget,max_batches=1)
+            if len(rows)!=1 or rows[0][0]!=batch:raise ValueError('prepared token batch metadata')
+            compressed+=len(artifact)
+            with zipfile.ZipFile(io.BytesIO(artifact))as archive:raw+=sum(x.file_size for x in archive.infolist())
+        if raw>budget['raw_bytes']or compressed>budget['compressed_bytes']:raise UploadBudgetExceeded('prepared token pairs exceed cumulative artifact budget')
+        return
     for slot,(batch,artifact) in enumerate(packed):
         compressed+=len(artifact)
         with zipfile.ZipFile(io.BytesIO(artifact))as archive:
