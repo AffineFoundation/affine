@@ -79,9 +79,9 @@ def verify(runtime, manifest, rollout, *, eligible_indices):
                 computed = runtime.model(ids, use_cache=False)
                 logits = computed.logits[0, len(prompt)-1:len(prompt)+len(output)-1].float()
                 logprobs = torch.log_softmax(logits, -1)
-            # This is the ORIGINAL calibrated CDF decision, including exact
-            # cached adjudication ONLY for its existing ambiguity/support cases.
-            # Normal trajectories do not regenerate tokens autoregressively.
+            # Preserve prescribed public draws and calibrated CDF bounds.
+            # Uncertain boundaries stop as inconclusive; this research policy
+            # never invokes cached autoregressive adjudication.
             verify_sampling(runtime, rollout, number, prompt, output, logprobs)
             text = runtime.tokenizer.decode(output, skip_special_tokens=True)
             if turn.get('text') != text:
