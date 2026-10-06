@@ -10,8 +10,10 @@ E23 then failed after its training update, during optimizer-state PUT export.
 Only thirteen of twenty-three new state objects reached R2; the worker exited
 and the new optimizer state is incomplete. Durable step thirteen remains the
 last authoritative parent. The failed original is preserved, and a separate
-explicit recovery is being prepared from that complete parent. No successor
-checkpoint or step fourteen is claimed. E23's mining deadline is closed and no
+explicit recovery is now running from that complete parent using reviewed
+execution source fc401c9d6f1e2bbf724055cb02d4a394e7256021f5ed55ff0c8540467a10a505.
+The original E23 input contract is unchanged. No successor checkpoint or step
+fourteen is claimed until full durable acknowledgement completes. E23's mining deadline is closed and no
 new mining window has opened; wait for a fresh signed OPEN manifest.
 In E22, the owned miner completed three batches from 47 attempts within its 600-second
 window. Checkpoint materialization took 34.7 seconds and model construction
@@ -167,9 +169,13 @@ R2 is authoritative for checkpoints, optimizer state, rollouts and reports.
 Local storage is bounded disposable cache: retain current/in-flight owned state,
 then retire obsolete owned files through coded lifecycle rules after terminal
 jobs and durable ACKs. Active leases and unowned paths are protected. The cache-
-stat successor has passed CPU qualification on all ten roles, but its first
-real cold and subsequent warm training runs remain pending. It is not the active
-signed source. No external miner should adopt it from a research label alone.
+stat successor has passed CPU qualification on all ten roles. Its guarded
+finish-current recovery is running, while successful cold completion and warm
+training qualification remain pending. It has not opened a new ordinary mining
+contract. No external miner should adopt it from a research label alone.
+The guarded coded recovery cleanup retired 51.99 GB of archived partial state
+and 15.24 GB of an obsolete archived model; the current input checkpoint and
+original failure evidence were preserved.
 
 The larger matched 128-task checkpoint comparison completed: CP11 solved
 77/128 (60.16%) and CP12 solved 86/128 (67.19%), with ten gains and one loss
