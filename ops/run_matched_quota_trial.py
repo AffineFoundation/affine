@@ -19,13 +19,15 @@ def validate_scope(envelope,authority,phase,now):
  if s['version']!='matched-quota-research-v1' or s['production_state_changes']is not False or s['execute_allowed']is not True:
   raise ValueError('explicit isolated research capability')
  if any(type(s[k])not in(int,float)for k in ('created_at','expires_at'))or not s['created_at']<=now<s['expires_at']or not 0<s['expires_at']-s['created_at']<=7200:raise ValueError('original research lifetime')
- if set(s['phases'])!={'generate','1P1N','2P2N'}or phase not in s['phases']or any(type(s[k])is not int for k in ('training_steps','attempts','K','L','restore_concurrency','output_limit_bytes'))or s['training_steps']!=1 or s['attempts']!=16 or s['K']!=2 or s['L']!=2 or s['restore_concurrency']not in(4,8)or not 0<s['output_limit_bytes']<=512*1024**2:raise ValueError('declared comparison budget')
+ if set(s['phases'])!=({'generate'}if s['stage']=='pilot32'else{'generate','1P1N','2P2N'})or phase not in s['phases']or any(type(s[k])is not int for k in ('training_steps','attempts','K','L','restore_concurrency','output_limit_bytes'))or s['training_steps']!=1 or s['attempts']!=16 or s['K']!=2 or s['L']!=2 or s['restore_concurrency']not in(4,8)or not 0<s['output_limit_bytes']<=512*1024**2:raise ValueError('declared comparison budget')
  if s['task_indices']!=task_plan(s['mining_indices'],s['heldout128_indices']+s['old32_indices'],s['selection_seed'],s['task_count']):raise ValueError('precommitted no-leak task selection')
  m=s['generation_manifest'];c=m['checkpoint'];
  if m.get('probability_artifact_policy')!={'version':'selected-token-logprobs-v1'}:raise ValueError('required compact TOPLOC/selected probability contract')
  if c['id']!=s['checkpoint']or m['source_bundle']['sha256']!=s['source_sha256']or m['sampling_contract']['max_attempts']!=16 or m['K']!=2 or m['L']!=2:raise ValueError('fresh source/checkpoint/quota/draw contract')
  if s['heldout_cohort_sha256']!='20a077180d7cc088669f53bd551c5bf3c4aa51ded6367463f405094ad054b153':raise ValueError('unchanged matched128 cohort')
- if m['sampling_contract']['version']!='forced-inverse-cdf-prefill-support-v3':raise ValueError('research preserves current sampling policy')
+ if m['sampling_contract']['version']!=s['sampling_version']or s['sampling_version']not in('forced-inverse-cdf-prefill-support-v3','forced-inverse-cdf-prefill-threeway-v4'):raise ValueError('explicit fresh research sampling policy')
+ if s['stage']=='pilot32'and(s['generation_task_limit']!=2 or s['task_count']!=8):raise ValueError('predeclared eight-task plan first two only')
+ if s['stage']not in('pilot32','matched128')or type(s['generation_task_limit'])is not int or not 1<=s['generation_task_limit']<=s['task_count']:raise ValueError('bounded generation stage')
  for name,expected in s['source_files'].items():
   p=Path(s['source_path'])/name
   if p.is_symlink()or hashlib.sha256(p.read_bytes()).hexdigest()!=expected:raise ValueError('qualified scientific module')
@@ -44,7 +46,7 @@ def generate(s):
  from subnet.artifact_budget import for_manifest
  from subnet.storage import canonical
  m=s['generation_manifest'];definition=entry(m,s['env_id']);streams={};R=None;total=0;root=Path(s['workspace'])
- for index in s['task_indices']:
+ for index in s['task_indices'][:s['generation_task_limit']]:
   if time.time()>=s['expires_at']:raise TimeoutError('original generation expired; no fake censored result')
   R=runtime(s['checkpoint_path'],m,definition['spec'],harness_for(definition,index))if R is None else R.for_environment(definition['spec'],harness_for(definition,index))
   streams[index]=[]
@@ -55,10 +57,12 @@ def generate(s):
     batch=dict(schema=2,epoch=m['epoch'],checkpoint=s['checkpoint'],env_id=s['env_id'],environment_version=row['rollout']['environment_version'],index=index,sample_index=index,rollouts=[row['rollout']])
     raw=pack([(batch,[arrays])],budget=for_manifest(m),stable=True);total+=len(raw)
     if total>s['output_limit_bytes']:raise ValueError('bounded original artifacts')
-    name=f'artifacts/task-{index}-attempt-{attempt}.zip';private_write(root/name,raw);row['artifact_sha256']=hashlib.sha256(raw).hexdigest();row['artifact_path']=name
+    name=f'jobs/{digest(s)}/submission-{s["task_indices"].index(index)*16+attempt}.zip';private_write(root/name,raw);row['artifact_sha256']=hashlib.sha256(raw).hexdigest();row['artifact_path']=name
+    from subnet.cache_lifecycle import CacheLifecycle
+    CacheLifecycle(root).record_download(root/name,row['artifact_sha256'])
    streams[index].append(row)
  arms,supply=select_matched(streams,definition)
- result=dict(version=s['version'],scope_sha256=digest(s),streams=streams,supply=supply,artifact_bytes=total,matched_tasks=len(arms['1P1N']),arm_pair_counts={k:len(v)for k,v in arms.items()},native_class_claims_used_without_verification=False,production_state_changes=False)
+ result=dict(version=s['version'],scope_sha256=digest(s),streams=streams,supply=supply,artifact_bytes=total,planned_tasks=s['task_count'],executed_tasks=len(streams),stage=s['stage'],matched_tasks=len(arms['1P1N']),arm_pair_counts={k:len(v)for k,v in arms.items()},native_class_claims_used_without_verification=False,production_state_changes=False)
  private_write(root/'generation-result.json',canonical(result));return result
 
 def train(s,arm):
