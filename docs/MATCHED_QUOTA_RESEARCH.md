@@ -28,6 +28,12 @@ all predeclared tasks, including excluded tasks. Minimum four matched tasks is
 required to run either update; this is a bounded feasibility pilot, not evidence
 sufficient to change ordinary policy.
 
+Independent prescribed draws can honestly repeat the exact same trajectory.
+All sixteen attempts and their verified outcomes stay in the evidence. Quotas
+count only distinct prompt/output trajectories, keeping the earliest verified
+draw; repetitions cannot supply a second positive or negative. Conflicting native
+outcomes for identical trajectories fail the experiment's framing checks.
+
 Each arm constructs a fresh BF16 model from the exact same immutable parent
 weights and restores the SAME authenticated FP32 optimizer descriptor. The real
 `task_normalized_training.train_epoch` computes the BF16 reference before any

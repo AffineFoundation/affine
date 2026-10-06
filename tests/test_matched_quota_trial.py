@@ -29,6 +29,24 @@ class TrialTests(unittest.TestCase):
    with self.assertRaises(ValueError):validate_stream(x,2)
  def test_reserved_cohort_excluded_and_deterministic(self):
   a=task_plan(list(range(40)),list(range(20)),'a'*64);self.assertTrue(set(a).isdisjoint(range(20)));self.assertEqual(a,task_plan(list(reversed(range(40))),list(range(20)),'a'*64))
+ def test_honest_repeated_draws_preserved_but_do_not_fill_second_quota(self):
+  x=stream()
+  for row in x:
+   first=x[1] if row['rollout']['classification']=='positive' else x[0]
+   row['rollout']['turns']=copy.deepcopy(first['rollout']['turns'])
+  validate_stream(x,2)
+  arms,supply=select_matched({2:x},{})
+  self.assertEqual(arms,{'1P1N':[],'2P2N':[]})
+  self.assertEqual(supply[0]['verified_attempts'],16)
+  self.assertEqual(supply[0]['duplicate_verified_attempts'],14)
+  self.assertEqual((supply[0]['positive'],supply[0]['negative']),(1,1))
+  self.assertEqual(len(x),16)
+ def test_duplicate_uses_first_verified_draw_and_later_distinct_pair(self):
+  x=stream();x[2]['rollout']['turns']=copy.deepcopy(x[1]['rollout']['turns'])
+  arms,supply=select_matched({2:x},{})
+  self.assertEqual([pair[1]['seed'] for pair in arms['2P2N']],[1,4])
+  self.assertEqual(supply[0]['first2_prefix8'],5)
+  self.assertEqual(supply[0]['duplicate_verified_attempts'],1)
  def test_official_false_does_not_become_native_pass(self):
   class R:
    def rollout(self,i,a):return stream(i)[a]['rollout'],[]
@@ -71,6 +89,18 @@ class RetentionTests(unittest.TestCase):
    foreign=directory/'replacement';foreign.write_bytes(b'original');foreign.replace(p);self.assertEqual(retire_artifacts(sign(s),sign(a),auth,live_phase=lambda p:False),[]);self.assertTrue(p.exists())
 
 class PolicyVerdictTests(unittest.TestCase):
+ def test_native_replay_infrastructure_error_never_becomes_negative_or_fraud(self):
+  from verifiers.v1.errors import TaskError
+  arrays=[object()]
+  class R:
+   def rollout(self,i,a):return stream(i)[a]['rollout'],arrays
+   def verify(self,r,a):raise TaskError('grader unavailable')
+  row,retained=verify_generated(R(),2,0)
+  self.assertEqual(row['status'],'native_error');self.assertIs(retained,arrays)
+  self.assertFalse(row['native_verified']);self.assertFalse(row['sampler_verified'])
+  x=stream();x[0]=row;arms,supply=select_matched({2:x},{})
+  self.assertEqual(supply[0]['native_errors'],1);self.assertEqual(supply[0]['confirmed_invalid'],0)
+  self.assertEqual(arms['1P1N'][0][2]['seed'],3)
  def test_confirmed_invalid_stream_kept_as_evidence_not_negative(self):
   from subnet.audit_policy import InvalidSample
   class R:

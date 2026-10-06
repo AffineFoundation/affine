@@ -23,7 +23,7 @@ def task_plan(mining_indices,excluded,seed,count=8):
 def validate_stream(rows,index):
     if len(rows)!=16 or [x['attempt']for x in rows]!=list(range(16)):
         raise ValueError('all original prescribed attempts, no cherry picking')
-    seen=set();task_hashes=set()
+    seen={};task_hashes=set()
     for x in rows:
         if x['index']!=index or type(x.get('native_verified'))is not bool or type(x.get('sampler_verified'))is not bool:
             raise ValueError('exact native/sampler evidence types')
@@ -35,8 +35,14 @@ def validate_stream(rows,index):
                 raise ValueError('binary native class')
             if r['seed']!=x['attempt']or r['index']!=index:raise ValueError('attempt/task binding')
             key=digest([dict(prompt=t['prompt'],output=t['output'])for t in r['turns']])
-            if key in seen:raise ValueError('duplicate trajectory cannot fill quota')
-            seen.add(key)
+            # Honest independent draws can produce the same trajectory. Keep
+            # every attempted stream as evidence, but deduplicate quota supply
+            # below. Conflicting native outcomes for identical tokens remain
+            # a framing error, rather than a second usable example.
+            outcome=(category,reward)
+            if key in seen and seen[key]!=outcome:
+                raise ValueError('identical trajectory has conflicting native outcome')
+            seen[key]=outcome
     if len(task_hashes)>1:raise ValueError('all prescribed streams must share the native task')
     return rows
 
@@ -44,13 +50,17 @@ def select_matched(streams,definition):
     arms={'1P1N':[],'2P2N':[]};supply=[]
     for index,rows in streams.items():
         validate_stream(rows,index)
-        positive=[x for x in rows if x['status']=='verified'and x['rollout']['classification']=='positive']
-        negative=[x for x in rows if x['status']=='verified'and x['rollout']['classification']=='negative']
+        verified=[x for x in rows if x['status']=='verified'];unique=[];seen=set()
+        for x in verified:
+            key=digest([dict(prompt=t['prompt'],output=t['output'])for t in x['rollout']['turns']])
+            if key not in seen:unique.append(x);seen.add(key)
+        positive=[x for x in unique if x['rollout']['classification']=='positive']
+        negative=[x for x in unique if x['rollout']['classification']=='negative']
         def completion(k,prefix):
             p=[x for x in positive if x['attempt']<prefix];n=[x for x in negative if x['attempt']<prefix]
             return max(p[k-1]['attempt'],n[k-1]['attempt'])+1 if min(len(p),len(n))>=k else None
         lengths={name:[sum(len(t['output'])for t in x['rollout']['turns'])for x in items]for name,items in [('positive',positive),('negative',negative)]}
-        supply.append(dict(index=index,positive=len(positive),negative=len(negative),unknown=sum(x['status']=='numerical_unknown'for x in rows),native_errors=sum(x['status']=='native_error'for x in rows),confirmed_invalid=sum(x['status']=='confirmed_invalid'for x in rows),first1_prefix8=completion(1,8),first2_prefix8=completion(2,8),first1_prefix16=completion(1,16),first2_prefix16=completion(2,16),matched_included=min(len(positive),len(negative))>=2,class_token_lengths=lengths,class_cap_counts={k:sum(n>=1024 for n in v)for k,v in lengths.items()}))
+        supply.append(dict(index=index,positive=len(positive),negative=len(negative),verified_attempts=len(verified),verified_unique_trajectories=len(unique),duplicate_verified_attempts=len(verified)-len(unique),unknown=sum(x['status']=='numerical_unknown'for x in rows),native_errors=sum(x['status']=='native_error'for x in rows),confirmed_invalid=sum(x['status']=='confirmed_invalid'for x in rows),first1_prefix8=completion(1,8),first2_prefix8=completion(2,8),first1_prefix16=completion(1,16),first2_prefix16=completion(2,16),matched_included=min(len(positive),len(negative))>=2,class_token_lengths=lengths,class_cap_counts={k:sum(n>=1024 for n in v)for k,v in lengths.items()}))
         if min(len(positive),len(negative))<2:continue
         for name,k in [('1P1N',1),('2P2N',2)]:
             arms[name].extend((definition,positive[i]['rollout'],negative[i]['rollout'])for i in range(k))
@@ -70,6 +80,11 @@ def verify_generated(runtime,index,attempt):
         row.update(status='numerical_unknown',native_verified=getattr(e,'environment_verification_complete',False));return row,arrays
     except InvalidSample as e:
         row.update(status='confirmed_invalid',error_type=type(e).__name__);return row,arrays
+    except TaskError as e:
+        # A native grader/runtime failure during replay does not establish a
+        # negative outcome or dishonest sampling. Retain the generated artifact
+        # for diagnosis, but admit it to neither training arm.
+        row.update(status='native_error',error_type=type(e).__name__);return row,arrays
     row.update(status='verified',native_verified=True,sampler_verified=True);return row,arrays
 
 def train_arm(runtime,pairs,output,plan,parent,fetch):
