@@ -55,6 +55,7 @@ def verify(runtime, manifest, rollout, *, eligible_indices):
         if rollout.get('task_hash') != initial['task_hash']:
             raise InvalidSample('task hash')
         messages, tools = initial['messages'], initial.get('tools', [])
+        ambiguities = []
         for number, turn in enumerate(turns):
             if type(turn) is not dict or 'proofs' in turn or 'probabilities' in turn:
                 raise InvalidSample('token-only transport framing')
@@ -82,7 +83,13 @@ def verify(runtime, manifest, rollout, *, eligible_indices):
             # Preserve prescribed public draws and calibrated CDF bounds.
             # Uncertain boundaries stop as inconclusive; this research policy
             # never invokes cached autoregressive adjudication.
-            verify_sampling(runtime, rollout, number, prompt, output, logprobs)
+            from .fast_prefill_audit import NumericalAmbiguity
+            try:
+                verify_sampling(runtime, rollout, number, prompt, output, logprobs)
+            except NumericalAmbiguity as error:
+                # An uncertain draw cannot hide a later definite token,
+                # framing or environment failure in this same trajectory.
+                ambiguities.append(error)
             text = runtime.tokenizer.decode(output, skip_special_tokens=True)
             if turn.get('text') != text:
                 raise InvalidSample('decoded text')
@@ -96,6 +103,8 @@ def verify(runtime, manifest, rollout, *, eligible_indices):
             if result['done'] != (number == len(turns)-1):
                 raise InvalidSample('incomplete or extra trajectory')
             messages = messages + [dict(role='assistant', content=text)] + harness.observations(result['observations'], runtime.harness)
+        if ambiguities:
+            raise ambiguities[0]
         return {'valid': True, 'assurance': 'checkpoint-consistent-prescribed-token-sequence',
                 'historical_execution_proven': False, 'miner_probability_claims_verified': False,
                 'TOPLOC_verified': False, 'sampler_check': 'calibrated-interior-prefill-threeway-no-cached-fallback'}
@@ -111,7 +120,17 @@ def verify_pair(runtime, manifest, rollouts, *, eligible_indices):
     sequences = {tuple(tuple(t['output']) for t in r['turns']) for r in rollouts}
     if len(indices) != 1 or len(sequences) != len(rollouts):
         raise InvalidSample('pair task/duplicate binding')
-    results = [verify(runtime, manifest, r, eligible_indices=eligible_indices) for r in rollouts]
+    from .fast_prefill_audit import NumericalAmbiguity
+    results, ambiguities = [], []
+    for rollout in rollouts:
+        try:
+            results.append(verify(runtime, manifest, rollout, eligible_indices=eligible_indices))
+        except NumericalAmbiguity as error:
+            # Check remaining original trajectories before reporting UNKNOWN.
+            # Confirmed invalid evidence must dominate numerical uncertainty.
+            ambiguities.append(error)
     if sum(r['classification'] == 'positive' for r in rollouts) != manifest['K'] or sum(r['classification'] == 'negative' for r in rollouts) != manifest['L']:
         raise InvalidSample('signed outcome quotas')
+    if ambiguities:
+        raise ambiguities[0]
     return results

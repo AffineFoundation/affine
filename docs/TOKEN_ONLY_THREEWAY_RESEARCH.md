@@ -7,3 +7,14 @@ The first genuine two-H200 control accepted the same four CP11/E21 rollouts unde
 `token_only_threeway_research.py` preserves cheap task/prompt/identity framing, checkpoint/draw/attempt binding, exact tokens/text/stopping checks, and native environment replay for a successful sampling check. It neither reads miner probabilities nor authenticates TOPLOC. Its output means checkpoint-consistent prescribed tokens under the declared calibration; it does not prove historical execution. Existing v3 contracts and code remain unchanged.
 
 Required next qualification: the exact same four original trajectories and the same 80 immutable attack artifacts on a separately signed research scope. Record pass/invalid/inconclusive separately, model forward counts, native costs, honest inconclusive fraction, and attack invalid/unknown fractions. Do not silently replace cached replay with acceptance inside an uncertainty band, widen the admitted calibration, or convert an inconclusive result into a scored audit. Four examples and 80 mutations do not establish a population error rate. Any production adoption needs a new explicit contract and broader calibration/error-rate controls.
+
+The research token-only checker now keeps numerical ambiguity provisional while
+checking the remaining native trajectory framing/outcomes and all other original
+rollouts in the pair. A definite invalid token, false reward or quota violation
+wins over an earlier uncertain draw; an honest unresolved pair remains unknown.
+This prevents a deliberately ambiguous first rollout from masking a clearly
+invalid second rollout. CPU controls exercise the real prescribed-draw checker
+on the second trajectory, a same-trajectory false reward, and honest uncertainty
+without conversion to validity or fraud. The existing two-H200 v4 result bytes
+remain evidence for their original source only. This default-off change is not
+an admission, a rewrite of those results, or activation of a new mining contract.

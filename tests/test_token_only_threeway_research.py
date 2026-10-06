@@ -139,3 +139,44 @@ class TokenOnlyThreewayControls(unittest.TestCase):
             bad=copy.deepcopy(self.document);bad['turns'][0]['output'][0]=(bad['turns'][0]['output'][0]+1)%7
             with self.assertRaises(InvalidSample):tokens.verify(self.runtime,self.manifest,bad,eligible_indices={2})
             close.assert_called_once()
+
+    def mixed_pair(self):
+        pair = {}
+        with patch('subnet.model.create_session', return_value=fixture.Session()):
+            for seed in range(16):
+                rollout, _ = self.runtime.rollout(2, seed)
+                pair.setdefault(rollout['classification'], tokens.document(rollout))
+                if set(pair) == {'positive', 'negative'}: break
+        self.assertEqual(set(pair), {'positive', 'negative'})
+        return [pair['positive'], pair['negative']]
+
+    def test_ambiguous_first_rollout_cannot_hide_second_offpolicy_tokens(self):
+        from subnet import threeway_prefill_research as sampler
+        from subnet.fast_prefill_audit import NumericalAmbiguity
+        pair=self.mixed_pair();first_seed=pair[0]['seed'];original=sampler.verify_sampling
+        bad=pair[1];turn=bad['turns'][0]
+        turn['output'][0]=(turn['output'][0]+1)%7
+        turn['text']=self.runtime.tokenizer.decode(turn['output'])
+        def check(runtime,rollout,*args):
+            if rollout['seed']==first_seed:raise NumericalAmbiguity('first honest boundary')
+            return original(runtime,rollout,*args)
+        with patch('subnet.environments.create_session',side_effect=lambda _:fixture.Session()),patch.object(sampler,'verify_sampling',side_effect=check):
+            with self.assertRaises(InvalidSample):tokens.verify_pair(self.runtime,{**self.manifest,'K':1,'L':1},pair,eligible_indices={2})
+
+    def test_ambiguous_sampler_cannot_hide_same_rollout_false_reward(self):
+        from subnet.fast_prefill_audit import NumericalAmbiguity
+        bad=copy.deepcopy(self.document);bad['turns'][0]['reward']=float('nan')
+        with patch('subnet.threeway_prefill_research.verify_sampling',side_effect=NumericalAmbiguity('honest boundary')):
+            with self.assertRaises(InvalidSample):self.check(bad)
+
+    def test_honest_pair_with_one_ambiguity_stays_unknown_after_all_checks(self):
+        from subnet import threeway_prefill_research as sampler
+        from subnet.fast_prefill_audit import NumericalAmbiguity
+        pair=self.mixed_pair();first_seed=pair[0]['seed'];original=sampler.verify_sampling;calls=[]
+        def check(runtime,rollout,*args):
+            calls.append(rollout['seed'])
+            if rollout['seed']==first_seed:raise NumericalAmbiguity('honest boundary')
+            return original(runtime,rollout,*args)
+        with patch('subnet.environments.create_session',side_effect=lambda _:fixture.Session()),patch.object(sampler,'verify_sampling',side_effect=check):
+            with self.assertRaises(NumericalAmbiguity):tokens.verify_pair(self.runtime,{**self.manifest,'K':1,'L':1},pair,eligible_indices={2})
+        self.assertEqual(calls,[r['seed'] for r in pair])
