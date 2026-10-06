@@ -93,6 +93,20 @@ immutable commitment publication stage remains serial and must also be measured.
 
 Real process-crash controls cover both phases and cutoff recovery. Owned temporary
 benchmarks identify full-state serialization as a material bottleneck, but do not
-establish production R2 throughput. A reviewed new source and prospective signed
-policy are required before activation. Historical receipts, eligibility decisions,
+establish production R2 throughput. A reviewed coordinator runtime and prospective
+signed policy are required before activation. Historical receipts, eligibility decisions,
 optimizer lineage and source admissions remain intact.
+
+A separately signed `operator_overlay` in the durable learner policy can deploy
+these coordinator changes while retaining the exact remote scientific source.
+It binds the complete original inventory, every permitted CPU override, the
+distinct overlay directory and the same capture policy in the configuration.
+Unlisted files, changed scientific modules and ambiguous import paths are refused.
+The runner clears previous coordinator imports and loads the pinned overlay.
+Without this explicit policy it retains the original runtime behavior.
+
+The overlay does not change the model, numerical sampling contract or remote
+miner/verifier/trainer source. Keeping that scientific identity preserves the
+existing optimizer-cache binding. Activate only after the current publication
+continuation is terminal and its model and optimizer authority are committed;
+then check the first new signed opening and measure actual capture throughput.
