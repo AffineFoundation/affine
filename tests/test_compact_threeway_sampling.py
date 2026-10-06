@@ -93,11 +93,11 @@ class CompactThreeway(unittest.TestCase):
   from nacl.signing import SigningKey
   r,m=self.runtime();rollout,arrays=self.make(r);second,second_arrays=self.make(r,1)
   from subnet.harness import source_hash
-  m.update(harness_source_hash=source_hash(),K=1,L=1,max_batches=1,environments=[dict(env_id='tiny',spec={'id':'tiny','version':'v1'},indices=[2],harness=r.harness)])
+  m.update(harness_source_hash=source_hash(),K=2,L=0,max_batches=1,environments=[dict(env_id='tiny',spec={'id':'tiny','version':'v1'},indices=[2],harness=r.harness)])
   batch=dict(schema=2,epoch=m['epoch'],checkpoint=m['checkpoint']['id'],env_id='tiny',environment_version='v1',index=2,sample_index=2,rollouts=[rollout,second]);data=pack([(batch,[arrays,second_arrays])])
   with patch.object(r,'for_environment',return_value=r),patch('subnet.model.create_session',return_value=tiny.Session()),patch.object(fast,'verify_threeway_intervals',side_effect=fast._threeway_unknown('bounded numeric uncertainty',torch.tensor([True]))),patch.object(fast,'verify_cached_reference',side_effect=AssertionError('forbidden replay')):
    report,pairs=audit(data,m,r)
-  self.assertEqual(report['accepted'],[]);self.assertEqual(pairs,[]);o=report['outcomes'][0];self.assertIsNone(o['valid']);self.assertFalse(o['fully_audited']);self.assertEqual(o['failure_kind'],'numerical_ambiguous');self.assertFalse(o['sampling_verification_complete']);self.assertFalse(o['environment_verification_complete']);self.assertEqual(o['uncertain_token_positions'],[0]);self.assertEqual(o['uncertain_token_position_count'],1)
+  self.assertEqual(report['accepted'],[]);self.assertEqual(pairs,[]);o=report['outcomes'][0];self.assertIsNone(o['valid']);self.assertFalse(o['fully_audited']);self.assertEqual(o['failure_kind'],'numerical_ambiguous');self.assertFalse(o['sampling_verification_complete']);self.assertTrue(o['environment_verification_complete']);self.assertEqual(o['uncertain_token_positions'],[0]);self.assertEqual(o['uncertain_token_position_count'],2)
   key=SigningKey.generate();sig=key.sign(canonical(report)).signature;key.verify_key.verify(canonical(report),sig)
   changed=copy.deepcopy(report);changed['outcomes'][0]['valid']=True
   with self.assertRaises(Exception):key.verify_key.verify(canonical(changed),sig)

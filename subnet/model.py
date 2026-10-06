@@ -155,6 +155,9 @@ class Runtime:
     def verify(self, rollout, arrays):
         from .audit_policy import InvalidSample
         calibrated=getattr(self,'fast_sampling_calibration',None)
+        from .fast_prefill_audit import THREEWAY_VERSION,NumericalAmbiguity
+        threeway=(getattr(self,'sampling_context',None)or{}).get('contract',{}).get('version')==THREEWAY_VERSION
+        uncertain=[]
         if getattr(self, 'probability_artifact_policy', None) is not None and getattr(self, 'sampling_context', None) is None:
             raise InvalidSample('compact probability artifacts require authenticated forced sampling')
         if getattr(self, 'sampling_context', None) is not None:
@@ -208,7 +211,11 @@ class Runtime:
                 if getattr(self, 'sampling_context', None) is not None:
                     if calibrated is not None:
                         from .fast_prefill_audit import verify_sampling
-                        verify_sampling(self,rollout,i,prompt,output,probs)
+                        try:verify_sampling(self,rollout,i,prompt,output,probs)
+                        except NumericalAmbiguity as error:
+                            if not threeway:raise
+                            # Numerical uncertainty cannot hide later native or turn invalidity.
+                            uncertain.append((i,error))
                     else:
                         selected = self.sample_output(prompt, rollout['seed'], messages, i, rollout['index'], initial['task_hash'])
                         if selected != output:raise InvalidSample('sampling replay mismatch')
@@ -227,6 +234,12 @@ class Runtime:
                 messages = messages + [dict(role='assistant',content=text)] + policy.observations(observations,self.harness)
             if not done or rollout['reward'] != reward or rollout.get('classification',result['classification']) != result['classification']:
                 raise InvalidSample('incomplete rollout or score')
+            if uncertain:
+                error=uncertain[0][1]
+                error.environment_verification_complete=True
+                error.uncertain_turns=[dict(turn=i,positions=getattr(e,'uncertain_positions',[]),count=getattr(e,'uncertain_position_count',0))for i,e in uncertain]
+                error.uncertain_position_count=sum(row['count']for row in error.uncertain_turns)
+                raise error
             return True
         finally:
             session.close()
