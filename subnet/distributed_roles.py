@@ -26,6 +26,9 @@ def authenticate(envelope, identity):
 
 def validate_frozen_submissions(manifest, submissions):
     """Bind selected child capabilities to authenticated miner commitment slots."""
+    if 'probability_artifact_policy' in manifest:
+        from .probability_artifacts import validate_policy
+        validate_policy(manifest['probability_artifact_policy'])
     frozen = manifest.get('audit_frozen_receipts', {})
     if type(submissions)is not list or not submissions or len(submissions) > 256:
         raise ValueError('frozen submission binding')

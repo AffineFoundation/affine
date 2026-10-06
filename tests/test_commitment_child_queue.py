@@ -23,6 +23,14 @@ class ChildQueueTests(unittest.TestCase):
  def req(self,action,**fields):
   self.nonce+=1;return self.queue.request(sign(self.worker,dict(action=action,at=self.now,nonce=str(self.nonce).zfill(32),**fields)))
  def report(self):return dict(job_id=self.job['job_id'],job_sha256=digest(self.job),operator=self.authority,role='verify',epoch=self.manifest['epoch'],checkpoint=self.manifest['checkpoint']['id'],source_files=self.job['source_files'],runtime_versions=self.job['runtime_versions'],backend_profile=self.manifest['backend_profile'],numerical_policy=self.manifest['numerical_policy'],chain_transactions=False,success=True,completed_at=self.now,audits=[dict(epoch=self.manifest['epoch'],submission_sha256=self.obj['sha256'],accepted=[copy.deepcopy(self.batch)])])
+ def test_compact_probability_policy_preserves_actual_v2_or_legacy_child_ACK(self):
+  self.manifest['probability_artifact_policy']={'version':'selected-token-logprobs-v1'};self.job['manifest']=sign(self.root,self.manifest)
+  self.enqueue();claim=self.req('claim',role='verify')['claim'];self.assertTrue(self.req('report',job_id=self.job['job_id'],token=claim['token'],report=self.report())['accepted'])
+ def test_unknown_null_probability_policy_rejected_before_queue_write(self):
+  for value in (None,{}, {'version':'unknown'}, {'version':'selected-token-logprobs-v1','extra':True}):
+   manifest=copy.deepcopy(self.manifest);manifest['probability_artifact_policy']=value
+   with self.assertRaisesRegex(ValueError,'probability artifact policy'):self.enqueue(dict(self.job,manifest=sign(self.root,manifest)))
+  with self.queue.transaction()as db:self.assertEqual(db.execute('select count(*)from jobs').fetchone()[0],0)
  def test_actual_enqueue_authenticated_claim_worker_report_and_export(self):
   self.enqueue();claim=self.req('claim',role='verify')['claim'];self.assertEqual(claim['job']['payload'],self.job);self.assertTrue(self.req('report',job_id=self.job['job_id'],token=claim['token'],report=self.report())['accepted']);self.assertEqual(self.queue.status(self.job['job_id'])['status'],'complete');
   with self.queue.transaction()as db:stored=json.loads(db.execute('select report_request from jobs where id=?',(self.job['job_id'],)).fetchone()[0])
