@@ -29,6 +29,25 @@ def emit_read(plan):
  code='import json\nPLAN=json.loads('+repr(json.dumps(plan,separators=(',',':')))+')\n'+READ_BODY;compile(code,'exact-group-physical-read','exec');return code
 
 class QualifiedGroupObserver:
+ @classmethod
+ def observation_continuation(cls,scope_envelope,envelopes,authority,continuation,*,now=None):
+  """ROOT-approved CPU workspace correction; original GPU scope is immutable."""
+  scope=signed(scope_envelope,authority);c=signed(continuation,authority);now=time.time()if now is None else now
+  digest=lambda v:hashlib.sha256(canonical(v)).hexdigest()
+  if(c.get('version')!='owned-cached-group-observation-workspace-correction-v1'or
+     c.get('GPU_dispatch_allowed')is not False or c.get('original_requests_changed')is not False or
+     type(c.get('created_at'))not in(int,float)or type(c.get('expires_at'))not in(int,float)or
+     not c['created_at']<=now<c['expires_at']<=scope['expires_at']or
+     c['original_scope_sha256']!=digest(scope_envelope)):
+   raise ValueError('fresh ROOT original-scope observation continuation')
+  endpoint=dict(scope['endpoint']);endpoint['workspace']=scope['workspace']
+  if(endpoint['code']!=scope['source_path']or scope['endpoint']['workspace']==scope['workspace']or
+     c['original_endpoint']!=scope['endpoint']or c['observation_endpoint']!=endpoint):
+   raise ValueError('only original CPU observation workspace may change')
+  observer=cls(dict(scope,endpoint=endpoint),envelopes,authority)
+  # ACK publisher comparison stays against the authentic original scope.
+  observer.scope=scope
+  return observer
  def __init__(self,scope,envelopes,authority):
   self.scope=scope;self.authority=authority;self.originals={signed(v,authority)['job_id']:v for v in envelopes};self.endpoint=scope['endpoint']
   if self.endpoint['workspace']!=scope['workspace']or self.endpoint['code']!=scope['source_path']:raise ValueError('exact ROOT physical group route')

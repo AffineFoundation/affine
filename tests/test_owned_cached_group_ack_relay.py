@@ -1,6 +1,6 @@
 import ast,copy,json,pathlib,unittest
 from test_owned_cached_group_operator import OperatorTests as _Fixture
-from ops.owned_cached_group_ack_relay import emit_read,relay_step
+from ops.owned_cached_group_ack_relay import emit_read,relay_step,QualifiedGroupObserver
 class Observer:
  def __init__(self,test,publisher):self.test=test;self.scope=publisher.scope;self.calls=[];self.installed=set();self.live=False
  def read(self,jid):
@@ -41,6 +41,22 @@ class RelayTests(unittest.TestCase):
   self.assertFalse(o.calls)
  def test_exact_emitted_remote_read_compiles_with_full177map_and_metachar_data(self):
   p=dict(workspace=str(self.root),source_path='/qualified/SOURCE',source_files=self.files,machine_id_sha256='a'*64,gpu_uuid='GPU-safe',job_id='original-group-0',envelope_sha256='b'*64,inert="');raise RuntimeError('injected');#");code=emit_read(p);compile(code,'exact-real-request-script','exec');self.assertIn('Strict',pathlib.Path('ops/owned_cached_group_ack_relay.py').read_text());self.assertIn('st_nlink==1',code)
+ def correction(self):
+  self.scope.update(source_path='/qualified/source',endpoint=dict(workspace='/old/CP13',code='/qualified/source',host='approved',port=22,python='/approved/python',known_hosts='/approved/knownhosts'))
+  envelope=self.sign(self.scope);effective=dict(self.scope['endpoint'],workspace=self.scope['workspace'])
+  c=dict(version='owned-cached-group-observation-workspace-correction-v1',created_at=1,expires_at=1000,GPU_dispatch_allowed=False,original_requests_changed=False,original_scope_sha256=self.digest(envelope),original_endpoint=self.scope['endpoint'],observation_endpoint=effective)
+  return envelope,c
+ def test_ROOT_workspace_observation_only_preserves_original_scope_and_jobs(self):
+  envelope,c=self.correction();old=copy.deepcopy(envelope);jobs=copy.deepcopy(self.jobs)
+  observer=QualifiedGroupObserver.observation_continuation(envelope,self.jobs,self.authority,self.sign(c),now=10)
+  self.assertEqual(observer.endpoint['workspace'],self.scope['workspace']);self.assertEqual(observer.scope,self.scope)
+  self.assertEqual(envelope,old);self.assertEqual(self.jobs,jobs);self.assertEqual(observer.scope,self.publisher().scope)
+ def test_route_correction_refuses_gpu_changed_host_scope_or_expiry(self):
+  envelope,c=self.correction()
+  for change in ({'GPU_dispatch_allowed':True},{'original_requests_changed':True},{'original_scope_sha256':'a'*64},{'expires_at':10}):
+   with self.subTest(change=change),self.assertRaises(ValueError):QualifiedGroupObserver.observation_continuation(envelope,self.jobs,self.authority,self.sign(c|change),now=10)
+  bad=copy.deepcopy(c);bad['observation_endpoint']['host']='other'
+  with self.assertRaises(ValueError):QualifiedGroupObserver.observation_continuation(envelope,self.jobs,self.authority,self.sign(bad),now=10)
  def test_relay_has_no_gpu_launch_or_cache_disposal_paths(self):
   tree=ast.parse(pathlib.Path('ops/owned_cached_group_ack_relay.py').read_text());text=ast.unparse(tree);self.assertNotIn('Popen',text);self.assertNotIn('evict_checkpoints',text);self.assertNotIn('launch_runner',text)
 del _Fixture
