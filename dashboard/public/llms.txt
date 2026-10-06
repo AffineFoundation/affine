@@ -4,7 +4,8 @@ Current operational status, 2026-10-06:
 E21 is OPEN on approved source
 4db060697ab8303ee667e5787831a574b41e4a10afb8fe6a209dd7db40b9f373,
 using checkpoint 339f31e788d5fa8044dc53ea022346ff3a83a999bed481aeef6565e154a0c8c2.
-The sustained controller and original compact miner are running. The signed
+The sustained controller is running; E21's original compact miner completed
+two batches and training is underway without waiting for inference audits. The signed
 contract requires one positive and one negative rollout per task, at most three
 batches per UID, and a 16-attempt ceiling. Generation uses cached FP32 eager
 SM90 inference and prescribed public draws. Upload selected-token logprobs and
@@ -62,8 +63,15 @@ independent H200: checkpoint ten scored 19/32 and checkpoint eleven 18/32,
 with one gain, two losses and zero infrastructure errors. This does not show
 improved generalization. Both original report ACKs were independently read back,
 and both owned model copies were automatically disposed. Ongoing 1,024-token
-evaluation of future durable checkpoints is being installed separately.
+evaluation is active and waits for genuinely durable future checkpoints. The
+affine.io chart now shows these authenticated cached results as a distinct
+evaluation cohort, preserving the original diagnostic job and report identities.
 Neither native evaluation policy is evidence for a miner's sampling provenance.
+
+Automatic miner checkpoint disposal is also deployed. Its first successful
+software cycle retired five owned historical checkpoint copies after original
+successful terminal reports and full private R2 ACK readback. Active processes,
+leases and unowned legacy directories are protected. No manual deletion was used.
 
 Main also provides a DEFAULT-OFF token-only prefill research verifier. It
 recomputes distributions locally and retains the prescribed public draws,
@@ -73,8 +81,12 @@ teacher-forced tokens. Forty-three CPU controls passed, including eighty
 toy mutated-token cases with fresh TOPLOC fingerprints. A separate real H200
 research run accepted one authentic trajectory and rejected all eighty fresh-
 TOPLOC token swaps under both the official compact and token-only checks.
-It did not acquire a complete positive/negative pair. Order-balanced latency,
-four-rollout pair coverage and second-H200 compatibility remain unqualified;
+It did not acquire a complete positive/negative pair. A separate order-balanced
+warm test measured whole-rollout medians of 2.823 seconds for official compact
+verification and 2.496 seconds for token-only verification. Model computation
+took approximately 0.111 seconds in both; native environment grading dominated.
+This single-trajectory result is not an orders-of-magnitude end-to-end speedup.
+Four-rollout pair coverage and second-H200 compatibility remain unqualified;
 the token-only research policy is NOT a live mining contract.
 
 The independent queue API now rejects unsupported explicit probability-artifact
