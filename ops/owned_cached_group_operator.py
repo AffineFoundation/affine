@@ -183,7 +183,7 @@ class LocalOriginalTransport:
   self.scope=scope;self.root=Path(scope['workspace']);self.code=Path(scope['source_path']);self.authority=authority
   if self.code.resolve()!=self.code or {str(p.relative_to(self.code)):hashlib.sha256(p.read_bytes()).hexdigest()for p in(self.code/'subnet').glob('*.py')}!=scope['source_files']:raise ValueError('exact full frozen177 runtime before launch')
   if scope.get('operator_file_sha256')!=hashlib.sha256(Path(__file__).read_bytes()).hexdigest():raise ValueError('explicit ROOT operator pin')
-  cpu=Path(__file__).parents[1];required=('ops/owned_cached_group_operator.py','ops/owned_cached_group_retention.py','ops/owned_cached_larger_cohort.py')
+  cpu=Path(__file__).parents[1];required=('ops/owned_cached_group_operator.py','ops/owned_cached_group_retention.py','ops/owned_cached_larger_cohort.py','ops/owned_cached_group_frozen_cache.py')
   if set(scope['operator_dependency_pins'])!=set(required)or any(hashlib.sha256((cpu/n).read_bytes()).hexdigest()!=scope['operator_dependency_pins'][n]for n in required):raise ValueError('full qualified CPU group dependency closure')
   if hashlib.sha256(Path('/etc/machine-id').read_bytes()).hexdigest()!=scope['machine_id_sha256']:raise ValueError('ROOT-bound physical group host')
   if subprocess.check_output(['nvidia-smi','--query-gpu=uuid','--format=csv,noheader'],text=True,timeout=10).strip()!=scope['gpu_uuid']:raise ValueError('ROOT-bound physical group GPU')

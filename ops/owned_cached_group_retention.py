@@ -5,6 +5,20 @@ from subnet.backend_jobs import canonical,signed,file_map
 from ops.owned_cached_larger_cohort import SOURCE,POLICY
 VERSION='root-owned-cached128-group-retention-v1'
 CACHE_SHA='86bd543f85d39e0b8e42fbed10ff2c814aaedd55fce0bb2427107bf332227dfa'
+def frozen_cache():
+ """Read and execute the byte-identical 4db implementation as a CPU dependency.
+
+ Never resolve subnet.cache_lifecycle from the operator's current checkout.
+ The frozen scientific runtime map remains unchanged.
+ """
+ import types
+ path=Path(__file__).with_name('owned_cached_group_frozen_cache.py')
+ if path.is_symlink()or not path.is_file():raise ValueError('frozen owned-cache dependency path')
+ raw=path.read_bytes()
+ if hashlib.sha256(raw).hexdigest()!=CACHE_SHA:raise ValueError('owned-cache dependency changed before import')
+ module=types.ModuleType('owned_cached_group_frozen_cache');module.__file__=str(path)
+ exec(compile(raw,str(path),'exec'),module.__dict__);return module
+
 def validate_scope(envelope,authority,workspace,source_files,*,now=None):
  scope=signed(envelope,authority);now=time.time()if now is None else now;root=Path(workspace)
  if scope.get('version')!=VERSION or scope.get('execute_allowed')is not True or not scope['created_at']<=now<scope['expires_at']or scope['expires_at']-scope['created_at']>7200:raise ValueError('fresh explicit ROOT group execution scope')
@@ -38,8 +52,7 @@ def retire_group(envelope,acks,authority,workspace,source_files,*,now=None,cache
  below bind exact reports/jobs; an unsigned flag cannot authorize disposal.
  """
  scope=validate_scope(envelope,authority,workspace,source_files,now=now);root=Path(workspace);cp=scope['checkpoint']
- if hashlib.sha256((Path(__file__).parents[1]/'subnet/cache_lifecycle.py').read_bytes()).hexdigest()!=CACHE_SHA:raise ValueError('owned-cache module changed before import')
- from subnet.cache_lifecycle import CacheLifecycle
+ CacheLifecycle=frozen_cache().CacheLifecycle
  from subnet.evaluator_cache_lifecycle import live_original
  live=live_original if live is None else live;cache_factory=CacheLifecycle if cache_factory is None else cache_factory
  if len(acks)!=4:raise ValueError('all four original durable ACKs required')
@@ -69,8 +82,7 @@ def capacity_admission(lease,free_bytes):
  if not isinstance(lease,GroupRetention)or lease.fd is None:raise ValueError('active exclusive namespace retention lease')
  scope=lease.scope;cold=scope['minimum_free_cold_bytes'];margin=scope['minimum_free_warm_margin_bytes']
  if type(free_bytes)is not int or type(cold)is not int or type(margin)is not int or cold<20000000000 or margin<5000000000 or cold<margin:raise ValueError('explicit cold and warm capacity margins')
- if hashlib.sha256((Path(__file__).parents[1]/'subnet/cache_lifecycle.py').read_bytes()).hexdigest()!=CACHE_SHA:raise ValueError('owned-cache module changed before import')
- from subnet.cache_lifecycle import CacheLifecycle,snapshot
+ frozen=frozen_cache();CacheLifecycle=frozen.CacheLifecycle;snapshot=frozen.snapshot
  cache=CacheLifecycle(lease.root);cp=scope['checkpoint'];receipt=cache._receipt(cp['id']);owned_bytes=0
  if receipt.is_file():
   value=json.loads(receipt.read_bytes());directory=cache._path(Path('checkpoints')/cp['id'])

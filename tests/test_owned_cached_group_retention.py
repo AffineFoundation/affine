@@ -53,3 +53,19 @@ class GroupRetentionTests(unittest.TestCase):
    a['original_job']=self.sign(job);acks[0]=self.sign(a)
    with self.assertRaises(ValueError):self.retire(acks)
    self.assertTrue((self.root/'checkpoints'/self.cp['id']).exists())
+ def test_frozen_CPU_cache_loader_does_not_use_current_main_cache(self):
+  from ops.owned_cached_group_retention import frozen_cache,CACHE_SHA
+  import subnet.cache_lifecycle as current
+  from unittest.mock import patch
+  frozen=frozen_cache();self.assertEqual(hashlib.sha256(Path(frozen.__file__).read_bytes()).hexdigest(),CACHE_SHA);self.assertIsNot(frozen.CacheLifecycle,current.CacheLifecycle)
+  with patch.object(current,'CacheLifecycle',side_effect=RuntimeError('current-main is not frozen')):
+   with GroupRetention(self.sign(self.scope),self.authority,self.root,self.files,now=10)as lease:self.assertIn('admitted',capacity_admission(lease,25000000000))
+ def test_changed_frozen_cache_CPU_bytes_reject_before_execution(self):
+  from ops.owned_cached_group_retention import frozen_cache
+  from unittest.mock import patch
+  original=Path.read_bytes
+  def changed(path):
+   raw=original(path)
+   return raw+b'\nraise RuntimeError("untrusted")'if path.name=='owned_cached_group_frozen_cache.py'else raw
+  with patch.object(Path,'read_bytes',changed):
+   with self.assertRaisesRegex(ValueError,'dependency changed'):frozen_cache()
