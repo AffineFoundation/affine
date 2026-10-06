@@ -23,6 +23,10 @@ from .storage import canonical
 from .cache_lifecycle import CacheLifecycle, snapshot
 
 
+class VerifierCapacityDeferred(Exception):
+    """Original lease expired before any backend; infrastructure only."""
+
+
 class ExpiredCompletedLease(ValueError):
     """The original backend has exited, but its lease no longer permits ACK."""
 
@@ -74,10 +78,12 @@ def complete_checkpoint_cache(path,files):
 
 
 class Worker:
-    def __init__(self, url, seed, authority, workspace, python=sys.executable, checkpoint_caches=None, backend_source=None, source_registry=None, checkpoint_retention=None):
+    def __init__(self, url, seed, authority, workspace, python=sys.executable, checkpoint_caches=None, backend_source=None, source_registry=None, checkpoint_retention=None, capacity_policy_path=None):
         self.url=url.rstrip('/'); self.key=SigningKey(seed); self.identity=self.key.verify_key.encode().hex()
         self.authority=authority; self.workspace=Path(workspace); self.python=python
         self.checkpoint_retention=checkpoint_retention
+        self.capacity_policy_path=Path(capacity_policy_path) if capacity_policy_path is not None else None
+        if self.capacity_policy_path is not None and (not self.capacity_policy_path.is_absolute() or self.capacity_policy_path.is_symlink()):raise ValueError("exact operator capacity policy path")
         if checkpoint_retention is not None:
             if (set(checkpoint_retention)!={'ttl_seconds','disk_floor_bytes'} or
                 isinstance(checkpoint_retention['ttl_seconds'],bool) or
@@ -203,6 +209,29 @@ class Worker:
         if self.checkpoint_retention is None:return lifecycle.evict_checkpoints(keep=0)
         return lifecycle.retain_acknowledged_checkpoint(**self.checkpoint_retention)
 
+    def wait_for_capacity(self,job,claim,lost,lifecycle,selected_cache,attempt,credit_lifecycle=None,pause=time.sleep,clock=time.time):
+        if self.capacity_policy_path is None:return
+        from ops.verifier_capacity_admission import admit,budget,CapacityDeferred
+        previous=None
+        while True:
+            if lost.is_set() or clock()>=min(claim['lease_until'],job['expires_at']):raise VerifierCapacityDeferred('original disk admission lease expired; no backend executed')
+            if self.capacity_policy_path.is_symlink():raise ValueError('operator capacity policy symlink')
+            envelope=json.loads(self.capacity_policy_path.read_bytes())
+            try:
+                result=admit(job,envelope,self.authority,lifecycle=lifecycle,selected_cache=selected_cache,credit_lifecycle=credit_lifecycle)
+                policy=budget(job,envelope,self.authority)[0];poll=policy['poll_seconds']
+            except CapacityDeferred as error:
+                result=dict(status='deferred',reason=str(error));poll=5
+            if result!=previous:
+                observation=dict(job_id=job['job_id'],job_sha256=claim['job_sha256'],attempt=claim['attempt'],observed_at=clock(),backend_executed=False,capacity=result)
+                path=attempt/('capacity-'+hashlib.sha256(canonical(observation)).hexdigest()+'.json')
+                with path.open('xb')as stream:stream.write(canonical(observation))
+                path.chmod(0o600);previous=result
+            if result['status']=='admitted':return
+            # Renew thread preserves this exact original lease while capacity is
+            # deferred. No fail/report action, model read, or backend is issued.
+            pause(min(poll,max(0,min(claim['lease_until'],job['expires_at'])-clock())))
+
     def once(self):
         claim=self.request('claim',role='verify')['claim']
         if claim is None:
@@ -241,6 +270,9 @@ class Worker:
             cache=self.workspace/'backend'/'checkpoints'/job['manifest']['payload']['checkpoint']['id']
             command=[self.python,'-B','-m','subnet.backend_jobs',str(jobpath),
                 '--authority',self.authority,'--workspace',str(runspace)]
+            if self.capacity_policy_path is not None:
+                bootstrap=Path(__file__).resolve().parents[1]/'ops'/'capacity_bounded_verifier_backend.py'
+                command=[self.python,'-B',str(bootstrap),str(jobpath),'--authority',self.authority,'--workspace',str(runspace),'--capacity-policy',str(self.capacity_policy_path)]
             approved=job['manifest']['payload']['checkpoint']
             lifecycle=CacheLifecycle(runspace)
             shared_lifecycle=CacheLifecycle(self.workspace/'backend')
@@ -258,6 +290,7 @@ class Worker:
             elif claim['attempt']>1 and checkpoint_cache_candidate(cache,approved['files']):
                 selected_cache=cache
                 command+=['--checkpoint-cache',str(cache)]
+            self.wait_for_capacity(job,claim,lost,lifecycle,selected_cache,attempt,credit_lifecycle=shared_lifecycle if selected_cache==cache else None)
             with (attempt/'worker.log').open('xb') as output:
                 (attempt/'worker.log').chmod(0o600)
                 result=subprocess.run(command,stdout=output,stderr=subprocess.STDOUT,env=environment,pass_fds=tuple(lease_fds),cwd=backend_source)
@@ -341,6 +374,10 @@ def serve(worker, pause=time.sleep):
             logging.warning('verifier transport unavailable (%s); retrying in 5 seconds',type(error).__name__)
             pause(5)
             continue
+        except VerifierCapacityDeferred:
+            logging.warning('verifier disk capacity deferred; no scientific invalidity report')
+            pause(5)
+            continue
         except ExpiredCompletedLease:
             logging.warning('completed verifier attempt lost its lease; retaining diagnostics and polling again')
             pause(5)
@@ -354,6 +391,7 @@ def main():
     parser.add_argument('--source-registry');parser.add_argument('--backend-source');parser.add_argument('--workspace',required=True); parser.add_argument('--once',action='store_true')
     parser.add_argument('--owned-checkpoint-ttl-seconds',type=int)
     parser.add_argument('--owned-checkpoint-disk-floor-bytes',type=int)
+    parser.add_argument('--owned-capacity-policy')
     parser.add_argument('--checkpoint-cache',action='append',default=[],metavar='CHECKPOINT_ID=LOCAL_PATH')
     args=parser.parse_args(); path=Path(args.seed_file)
     if path.stat().st_mode & 0o077: raise ValueError('worker key must be private')
@@ -366,7 +404,7 @@ def main():
         if identifier in caches:raise ValueError('duplicate checkpoint cache mapping')
         caches[identifier]=local
     registry=json.loads(Path(args.source_registry).read_text()) if args.source_registry else {}
-    worker=Worker(args.coordinator,bytes.fromhex(path.read_text().strip()),args.authority,args.workspace,checkpoint_caches=caches,backend_source=args.backend_source,source_registry=registry,checkpoint_retention=retention)
+    worker=Worker(args.coordinator,bytes.fromhex(path.read_text().strip()),args.authority,args.workspace,checkpoint_caches=caches,backend_source=args.backend_source,source_registry=registry,checkpoint_retention=retention,capacity_policy_path=args.owned_capacity_policy)
     if args.once:
         worker.once()
         return

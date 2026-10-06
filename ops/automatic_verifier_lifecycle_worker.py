@@ -16,6 +16,9 @@ def main():
     import subnet
     overlay=Path(__file__).resolve().parents[1]
     for name in ('cache_lifecycle','distributed_worker'):
+        if name=='distributed_worker':
+            spec=importlib.util.spec_from_file_location('ops.verifier_capacity_admission',overlay/'ops'/'verifier_capacity_admission.py')
+            capacity=importlib.util.module_from_spec(spec);sys.modules[spec.name]=capacity;spec.loader.exec_module(capacity)
         qualified='subnet.'+('operator_lifecycle_worker' if name=='distributed_worker' else name)
         spec=importlib.util.spec_from_file_location(qualified,overlay/'subnet'/(name+'.py'))
         module=importlib.util.module_from_spec(spec);sys.modules[qualified]=module;spec.loader.exec_module(module)
