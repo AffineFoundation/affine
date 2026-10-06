@@ -283,10 +283,17 @@ def snapshot_spec(spec, path):
 
 
 class EnvironmentSession:
-    def __init__(self,spec):
+    def __init__(self,spec,*,source_validation=None):
         self.spec=spec
-        if _source_hash(spec)!=spec.source_hash:
-            raise ValueError('trusted environment code or data hash mismatch')
+        self.source_validation=source_validation
+        if source_validation is None:
+            if _source_hash(spec)!=spec.source_hash:
+                raise ValueError('trusted environment code or data hash mismatch')
+        else:
+            from .native_session_validation import JobSourceValidation
+            if type(source_validation) is not JobSourceValidation:
+                raise ValueError('authenticated job source validation only')
+            source_validation.validate(spec)
         if spec.adapter=='prime_v1' and _dependency_versions(spec.id,spec.config.get('tool_error_policy'))!=spec.config.get('dependency_versions'):
             raise ValueError('environment dependency version mismatch')
         self.loop=asyncio.new_event_loop()
@@ -318,10 +325,13 @@ class EnvironmentSession:
         self.taskset=_taskset(self.spec)
         snapshot=self.spec.config.get('task_snapshot')
         if snapshot:
-            rows=json.loads(_snapshot_path(self.spec.config).read_text())
-            if len(rows)!=self.spec.num_samples:
-                raise ValueError('snapshot task count')
-            row=rows[index]
+            if self.source_validation is None:
+                rows=json.loads(_snapshot_path(self.spec.config).read_text())
+                if len(rows)!=self.spec.num_samples:
+                    raise ValueError('snapshot task count')
+                row=rows[index]
+            else:
+                row=self.source_validation.snapshot_row(self.spec,index)
             task_cls=self.taskset.task_type()
             config_cls=task_cls.config_type()
             if task_cls.__name__!=row['task_class']:
@@ -474,8 +484,10 @@ class EnvironmentSession:
         self.loop.close()
 
 
-def create_session(spec):
+def create_session(spec,*,source_validation=None):
     checked=EnvironmentSpec.from_dict(spec) if isinstance(spec,dict) else spec
+    if source_validation is not None and (checked.adapter!='prime_v1' or checked.id!='affine_math'):
+        raise ValueError('job source validation supports native MATH only')
     if checked.config.get('rcore_terminal_revision') is not None and checked.adapter!='prime_v1':raise ValueError('native RCore marker cannot select alternate adapter')
     if checked.adapter in ('resource_prime_v1','resource_prime_v1_controlled'):
         from .resource_session import create_resource_session
@@ -486,4 +498,4 @@ def create_session(spec):
     if checked.config.get('prolog_session_revision') is not None:
         from .native_common_dispatch import prolog_session
         return prolog_session(checked)
-    return EnvironmentSession(checked)
+    return EnvironmentSession(checked,source_validation=source_validation)
