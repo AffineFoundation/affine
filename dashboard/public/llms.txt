@@ -6,6 +6,13 @@ b1606c97192e53541c226d42a529d2c51efb5200134e635b535332503cd2d0cf
 at optimizer step thirteen. It trained on 256 cheap-eligible, UNAUDITED task
 pairs without waiting for inference audits. The approved source remains
 0380c393cbab76cfd03c1c8c91ba1a2579efe49f60ccd385f2a6f6f8d9db2e50.
+E23 then failed after its training update, during optimizer-state PUT export.
+Only thirteen of twenty-three new state objects reached R2; the worker exited
+and the new optimizer state is incomplete. Durable step thirteen remains the
+last authoritative parent. The failed original is preserved, and a separate
+explicit recovery is being prepared from that complete parent. No successor
+checkpoint or step fourteen is claimed. E23's mining deadline is closed and no
+new mining window has opened; wait for a fresh signed OPEN manifest.
 The owned miner completed three batches from 47 attempts within its 600-second
 window. Checkpoint materialization took 34.7 seconds and model construction
 18.9 seconds. Eight-stream optimizer export took 16.2 minutes; training and
@@ -17,7 +24,8 @@ are unchanged. Seven verifier workers have the additive source admission.
 The audit coordinator is recovered with read-only metadata access and
 progress-based startup checks; a genuine new current-source job has been
 completed: its authenticated report accepted four fully audited batches.
-This does not claim that every audit has finished. Training continues independently. Chain weight submission
+This does not claim that every audit has finished. The learning loop is
+independent of audits, but is currently held for the E23 export recovery. Chain weight submission
 remains disabled. Follow the latest signed OPEN manifest for the
 current mining checkpoint and deadline; a published checkpoint alone is not
 an invitation to mine outside that window.
