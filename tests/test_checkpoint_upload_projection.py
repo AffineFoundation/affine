@@ -37,3 +37,15 @@ class ProjectionTests(unittest.TestCase):
   for value in (None,{}, {'payload':{'version':'foreign'}}):
    m=dict(self.m,training_startup_recovery=value)
    with self.assertRaises(ValueError):project_manifest(m)
+
+class InstallationTests(ProjectionTests):
+ def test_installation_actual_class_dispatch_does_not_repeat_training(self):
+  from subnet.checkpoint_upload_projection import install_remote_jobs_projection
+  class Jobs:
+   def run(self, label, role, manifest, cache=None, **fields):return label, role, manifest, fields
+  install_remote_jobs_projection(Jobs,self.v,self.job,self.m,self.projected)
+  result=Jobs().run(self.v['original_label'],'upload',self.m,put_urls=self.job['put_urls'])
+  self.assertEqual(result[0],self.v['replacement_label']);self.assertNotIn('training_startup_recovery',result[2])
+  train=Jobs().run('genuine-existing-train','train',self.m)
+  self.assertEqual(train[0],'genuine-existing-train');self.assertEqual(train[2],self.m)
+  with self.assertRaises(ValueError):install_remote_jobs_projection(Jobs,self.v,self.job,self.m,self.projected)
