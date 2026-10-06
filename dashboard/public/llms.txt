@@ -355,14 +355,20 @@ Nine original CP20 cases have also completed independent cross-node reference
 checks. Eight fit the existing narrow numerical bounds; one exceeds them. An
 eight-only historical UNKNOWN resolution is ROOT-reviewed and signed, preserving original
 reports and leaving later sampler/environment correctness unproven for traces
-that stopped at TOPLOC. This resolution is not yet deployed and does not broaden
-live proof tolerances or label those traces VALID.
+that stopped at TOPLOC. The hourly writer's installed prospective policy applies
+this resolution from 00:00 UTC on 2026-10-07. It does not broaden live proof
+tolerances or label those traces VALID; a new actual hourly submission remains
+to be confirmed.
 An independent read-only application to 26 authentic original jobs changed only
 those eight observations to UNKNOWN, preserving the earlier nine resolutions
 and leaving one out-of-bound CP20 case plus eight newer CP21 cases unchanged.
-Full reward-impact comparison and controlled activation remain pending.
+The same-evidence reward comparison preserved points and weights exactly.
+Three validity estimates and moving averages changed, but newer unresolved
+invalid results still keep those miners penalized. No penalty clearance is claimed.
 
 The hourly writer's matching historical-report support has passed 25 targeted
 controls and is available on GitHub. It preserves the writer's audit policy and
-selected-batch scope. Its exact historical allowlist is signed, but this writer
-update is not deployed until the same-evidence comparison passes.
+selected-batch scope. Its exact historical allowlist is signed. Both comparisons
+passed before the controlled writer handoff; its first invocation exited normally
+while waiting for the prospective hour. The minute timer is active, with the
+learner and auditor processes unchanged.

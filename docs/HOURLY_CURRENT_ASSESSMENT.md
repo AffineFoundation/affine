@@ -63,5 +63,11 @@ verifiers. This permits only individually pinned original job/report digests;
 it does not add retired identities to the active claim roster. Original selected
 batch scope, signatures and execution checks remain required. The writer's
 signed audit policy is preserved independently of the auditor's policy. This
-loader correction has passed 25 targeted controls; deployment and its effect
-on current estimates require a same-evidence comparison before activation.
+loader correction passed 25 targeted controls and both same-evidence comparisons.
+At the original 23:00 cutoff, 50 report refusals disappeared while all estimates
+and weights matched. The combined numerical correction at the prospective 00:00
+cutoff changed three estimates and moving averages but preserved weights: newer
+unresolved invalid evidence still triggers penalties. The isolated writer package
+is installed for 00:00 UTC on 2026-10-07, with the minute timer active. Its first
+invocation exited normally while waiting for that hour. A successful new chain
+submission under this policy remains to be observed.
