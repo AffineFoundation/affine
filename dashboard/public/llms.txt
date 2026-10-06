@@ -475,3 +475,11 @@ being rewritten or treated as completed. Evaluation does not gate training.
 The compact probability candidate 4109ca0123cef05d37c908824b1fa32bb085d24e1e4bad3529a86899798b9aea
 passed complete R2 readback and CPU staging on all ten roles. It has not passed
 production GPU qualification or replaced the current manifest contract.
+
+The first independent E19 evaluation attempt failed before GPU execution because
+a queued trainer-local checkpoint cache was not valid on the evaluator machine.
+Main now routes only explicitly approved evaluator-local cache paths; otherwise
+the sealed backend performs owned full-hash checkpoint hydration. The failed
+original remains recorded; any infrastructure recovery uses a distinct labeled
+request with the same checkpoint, held-out tasks and seeds. No held-out result
+from this recovery is claimed yet.
