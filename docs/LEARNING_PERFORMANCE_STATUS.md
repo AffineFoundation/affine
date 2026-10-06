@@ -141,3 +141,14 @@ and a fresh native grade, while numerical ambiguity remains neutral. Authenticat
 job-scoped native source validation avoids repeating full source hashes. CPU and
 fresh-process source-admission controls pass; current-checkpoint GPU generation,
 end-to-end transport and deployment admission remain required. It is not live.
+
+An isolated H100 transport experiment authenticated the same ten checkpoint-18
+files (15,242,726,226 bytes) in 218.10 seconds serially and 86.01 seconds with
+four concurrent GETs, a measured 2.54x improvement for that ordered experiment.
+Both complete file maps matched. Their durable timing files and failed original
+job were fully archived and read back from R2; automatic retirement removed
+both local model replicas afterward. The later scientific control failed because
+the test harness omitted commitment/frozen-receipt context, so this is transport
+evidence only, not model-verifier qualification or production activation.
+A reusable CPU preflight now tests that exact commitment context before costly
+model downloads, and individual control records are persisted as they complete.
