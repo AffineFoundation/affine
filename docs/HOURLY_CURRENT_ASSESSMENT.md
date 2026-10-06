@@ -57,3 +57,11 @@ Each hour retains the signed assessment, source/evidence hashes, estimates,
 penalties, exclusions, chain result and last successful submission window.
 Deployment uses an immutable local operator runtime and a controlled replacement
 of the existing writer service. It does not restart compute or verifier roles.
+
+The evidence loader also supports exact ROOT-admitted reports from retired
+verifiers. This permits only individually pinned original job/report digests;
+it does not add retired identities to the active claim roster. Original selected
+batch scope, signatures and execution checks remain required. The writer's
+signed audit policy is preserved independently of the auditor's policy. This
+loader correction has passed 25 targeted controls; deployment and its effect
+on current estimates require a same-evidence comparison before activation.
