@@ -94,3 +94,31 @@ class GlobalControls(unittest.TestCase):
   d=self.calc([self.obs('confirmed_invalid',0)],round=8);self.assertEqual(d['validity_probability'],.5);self.assertEqual(d['reward_multiplier'],1)
 
 if __name__=='__main__':unittest.main()
+
+class IncrementalAdmissionControls(unittest.TestCase):
+ def test_all_typed_pairs_match_authoritative_observations(self):
+  fx=policy_fixtures.PolicyControls();fx.setUp()
+  kinds=('verified_valid','confirmed_invalid','numerical_ambiguous','infrastructure_error')
+  for first in kinds:
+   for second in kinds:
+    for adjudicated in (False,True):
+     a=fx.observation(first,job='1'*64);b=fx.observation(second,job='2'*64,at=21)
+     jobs={a['job_sha256']:dict(verifier=fx.worker,observations=[a]),b['job_sha256']:dict(verifier=fx.worker,observations=[b])};ptr=[dict(admitted_queue_job_sha256=k) for k in jobs]
+     resolution=dict(version='continuous-audit-adjudication-v1',evidence_id=digest(fx.row),original_job_sha256=a['job_sha256'],reference_job_sha256=b['job_sha256'],outcome=second)
+     docs=[signed(fx.authority,resolution)] if adjudicated else []
+     kwargs=dict(admitted_jobs=jobs,adjudications=docs,authority=fx.root)
+     try:expected=e.observations(ptr,[fx.row],{fx.worker:['verify']},30,**kwargs)
+     except ValueError:expected=None
+     state={}
+     try:
+      for pointer in ptr:
+       one=e.observations([pointer],[fx.row],{fx.worker:['verify']},30,**kwargs)
+       state.update(e.candidate_updates(state,one,[resolution] if adjudicated else []))
+      actual=list(state.values())
+     except ValueError:actual=None
+     self.assertEqual(actual,expected,(first,second,adjudicated))
+ def test_group_conflict_refuses_without_partial_state_mutation(self):
+  old=dict(evidence_id='a',job_sha256='1',outcome='verified_valid');resolved={'a':old}
+  candidate=[dict(evidence_id='new',job_sha256='2',outcome='verified_valid'),dict(evidence_id='a',job_sha256='2',outcome='confirmed_invalid')]
+  with self.assertRaises(ValueError):e.candidate_updates(resolved,candidate,[])
+  self.assertEqual(resolved,{'a':old})

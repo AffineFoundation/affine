@@ -200,15 +200,18 @@ def load_evidence(audit_config_path, *, authority, cutoff, verifiers,
             admitted_candidates.extend((p['completed_at'], identifier, key, value) for key, value in admitted.items())
         except (ValueError, KeyError, TypeError, AttributeError, BadSignatureError) as error:
             refused.append(_issue('artifact_failure', identifier, error))
-    admissions = {}
+    admissions, resolved = {}, {}
+    resolutions = [authenticate(doc, authority) for doc in adjudications]
     for _, identifier, key, value in sorted(admitted_candidates, key=lambda row: (row[0], row[1], row[2])):
         try:
-            joined = dict(admissions)
-            if key in joined and joined[key] != value: raise ValueError('conflicting original admitted job')
-            joined[key] = value
-            observations([dict(admitted_queue_job_sha256=k) for k in joined], records, observers,
-                cutoff, admitted_jobs=joined, adjudications=adjudications, authority=authority)
-            admissions = joined
+            if key in admissions and admissions[key] != value:
+                raise ValueError('conflicting original admitted job')
+            candidate = observations([dict(admitted_queue_job_sha256=key)], records,
+                observers, cutoff, admitted_jobs={key: value}, authority=authority)
+            updates = candidate_updates(resolved, candidate, resolutions)
+            # Whole grouped original job commits only after all children pass.
+            resolved.update(updates)
+            admissions[key] = value
         except (ValueError, KeyError, TypeError, AttributeError, BadSignatureError) as error:
             refused.append(_issue('observation', identifier, error))
     snapshots, timings = [], []
@@ -285,3 +288,23 @@ def current_estimates(audits, miners, round, audit_policy):
             numerical_ambiguous_recent_weight=unknown, unresolved_is_fraud=False,
             infrastructure_counted_in_coverage=False, current_estimate_round=round)
     return result
+
+
+def candidate_updates(resolved, candidate, resolutions):
+    """Atomic per-original-job conflict admission, matching observations()."""
+    updates = {}
+    for new in candidate:
+        key = new['evidence_id']
+        old = updates.get(key, resolved.get(key))
+        if old is not None:
+            if old['outcome'] == new['outcome'] or new['outcome'] == 'infrastructure_error':
+                continue
+            if old['outcome'] != 'infrastructure_error':
+                expected = dict(version='continuous-audit-adjudication-v1',
+                    evidence_id=key, original_job_sha256=old['job_sha256'],
+                    reference_job_sha256=new['job_sha256'], outcome=new['outcome'])
+                if not (expected in resolutions and old['outcome'] == 'numerical_ambiguous'
+                        and new['outcome'] in ('verified_valid', 'confirmed_invalid')):
+                    raise ValueError('conflicting authenticated audits require explicit reference adjudication')
+        updates[key] = new
+    return updates
