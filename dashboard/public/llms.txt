@@ -1,14 +1,34 @@
 # Affine — MATH mining, verification and training
 
 Current operational status, 2026-10-06:
-E21 collected submissions on approved source
+E22 is open on approved source
+0380c393cbab76cfd03c1c8c91ba1a2579efe49f60ccd385f2a6f6f8d9db2e50,
+with durable checkpoint 6493a901bd009f0800d5eed97d19aee78947cc586afeb27abfb2c72032ad1924
+and optimizer parent twelve. Its authenticated signed mining window runs from
+1791273699 to 1791274299: 600 seconds. The original owned miner is generating
+on GPU using the independently hash-verified CP12 calibration cache through an
+explicit additive software routing journal. A cumulative compact batch has
+been uploaded; final mining counts and startup timings remain pending.
+K=1/L=1, at most three batches per UID, the 16-attempt ceiling, selected-token
+logprobs plus TOPLOC, committed UNAUDITED training inputs, eight-stream state
+transport, and nonpayable operation are unchanged. Fresh actual CP12 calibration
+and final public-draw confirmation passed before opening. Separate audits are
+not a learner barrier; new-source audit jobs require their own admitted API and
+worker source maps. No completed E22 training update is claimed yet.
+
+The matched fixed32, 1,024-token owned cached native evaluation scored CP12
+21/32 versus CP11 18/32, with four gains, one loss and zero infrastructure
+errors. This small fixed cohort does not establish convergence or general
+held-out improvement. Historical reports and cohort identities are preserved.
+
+Latest completed epoch: E21. It collected submissions on approved source
 4db060697ab8303ee667e5787831a574b41e4a10afb8fe6a209dd7db40b9f373,
 using checkpoint 339f31e788d5fa8044dc53ea022346ff3a83a999bed481aeef6565e154a0c8c2.
 E21's original compact miner completed two batches. The whole collection
 captured 392 documents, admitted 335 through cheap checks, and selected 256
 UNAUDITED inputs without an inference-audit barrier. The original training
 attempt then failed with a parent-optimizer download read timeout during restore,
-before train_epoch or any optimizer update. Step eleven remains the durable
+before train_epoch or any optimizer update. Step eleven was the original durable
 parent. The failed original and its evidence are preserved. An explicitly
 authorized fresh pre-update recovery attempt was dispatched using source
 acdb551e24c7db36f405998a7c3b763031bfff0695c1b8ee5812444792089a5a,
@@ -19,10 +39,10 @@ because its 5,073,318-byte signed envelope exceeded the legacy 4,000,000-byte
 launcher limit. Both failed attempts and the original recovery reservation are
 preserved. The narrowly bounded, authenticated recovery-envelope fix passed
 the actual 5,075,451-byte signed request through launcher and protocol validation.
-A separately authorized continuation is now running on execution source
+A separately authorized continuation completed on execution source
 0380c393cbab76cfd03c1c8c91ba1a2579efe49f60ccd385f2a6f6f8d9db2e50,
 with the original 256 admissions and parent eleven. Its original runner and child
-have completed successfully. The original continuation computed optimizer step twelve over 256 unaudited tasks, and its separate reader verified all 23 state objects (91,387,491,264 bytes). The first model-publication request failed before its CPU worker started because it inherited a train-only recovery declaration. A fresh authenticated publication-only projection removed that declaration while preserving every checkpoint file and runtime pin. The new upload completed, all ten model objects passed independent full readback, and optimizer step twelve is now committed with checkpoint 6493a901bd009f0800d5eed97d19aee78947cc586afeb27abfb2c72032ad1924. E21 is closed; controller round 22 has no active epoch. Ordinary restart and held-out evaluation of the new checkpoint are next; no held-out improvement is claimed. Neither completed training nor the reader needs to be rerun. Recovery runs once to finish E21; it does not open a new epoch or
+have completed successfully. The original continuation computed optimizer step twelve over 256 unaudited tasks, and its separate reader verified all 23 state objects (91,387,491,264 bytes). The first model-publication request failed before its CPU worker started because it inherited a train-only recovery declaration. A fresh authenticated publication-only projection removed that declaration while preserving every checkpoint file and runtime pin. The new upload completed, all ten model objects passed independent full readback, and optimizer step twelve is now committed with checkpoint 6493a901bd009f0800d5eed97d19aee78947cc586afeb27abfb2c72032ad1924. E21 is closed. Ordinary E22 has now opened from that genuine step-twelve parent; the fixed32 diagnostic is reported above without a convergence claim. Neither completed training nor the reader needs to be rerun. Recovery runs once to finish E21; it does not open a new epoch or
 rewrite the original 4db mining contract. The signed
 contract requires one positive and one negative rollout per task, at most three
 batches per UID, and a 16-attempt ceiling. Generation uses cached FP32 eager
@@ -34,7 +54,7 @@ The collection window is 600 seconds. Training uses cheap-eligible UNAUDITED
 inputs without an inference-audit barrier. Chain weight submission is disabled.
 The older chronological records below describe historical contracts; the latest
 signed OPEN manifest and this status take precedence.
-Latest completed epoch: E20, 332 captured documents, 294 cheap-eligible batches,
+Earlier completed epoch: E20, 332 captured documents, 294 cheap-eligible batches,
 256 selected UNAUDITED training inputs, and durable optimizer step eleven at
 checkpoint 339f31e788d5fa8044dc53ea022346ff3a83a999bed481aeef6565e154a0c8c2.
 Training does not wait for inference audits. The original physical training job
@@ -58,7 +78,7 @@ A complete integrated source candidate,
 passed full R2 archive/file-hash readback, CPU staging on ten roles and 204
 reviewed CPU tests. Its runtime contains 177 pinned files. Fresh executed
 step-eleven calibration and final public-draw confirmation passed before E21
-opened. This is now the active E21 mining source. It includes compact selected-token probability artifacts,
+opened. This was the E21 mining source; current E22 uses the complete approved 0380 successor with the same scientific contract. It includes compact selected-token probability artifacts,
 parallel immutable input publication and explicit native evaluation policies.
 On the existing idle H200, its original bounded qualification completed in
 214.91 seconds. All five compact-proof honest/tampering controls passed, with
@@ -666,7 +686,7 @@ Sampling consistency is not proof of historical execution.
 
 Operational changes prepared on GitHub main, not silently applied to old jobs:
 The real module-entrypoint retry-context fix passed an actual -m subprocess
-control. The currently running E21 continuation predates that fix, so active
+control. The completed E21 continuation predates that fix, so its original
 transport retries are not asserted for it. A bounded one-owned-checkpoint worker
 retention policy passed 129 tests and 105 subtests together with recovery controls.
 Its seven-worker rollout completed at idle job boundaries: all seven new workers are independently confirmed running with these policy flags, and the same-config continuous auditor restarted. Active GPU jobs were allowed to finish. Actual consecutive-job checkpoint reuse remains under observation. It keeps at most one current owned model for up to 1,800 seconds,
