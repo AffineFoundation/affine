@@ -33,12 +33,22 @@ _cleanup_threads={}
 _cleanup_lock=__import__('threading').Lock()
 
 def retire_completed_cache(controller,job,report,pointer):
-    """Post-ACK housekeeping runs separately and never gates the next epoch."""
+    """Persist optional original ACK intent, then run slow housekeeping separately."""
     from .remote_backend import save
     import threading
     path=controller.state/'roles'/(job['job_id']+'-trainer-cache-cleanup.json')
     if path.exists()and json.loads(path.read_text()).get('status')=='complete':return
     action=getattr(controller.jobs,'retire_training_cache',None)
+    from .backend_jobs import signed
+    manifest=signed(job['manifest'],controller.authority.id)
+    if manifest.get('optimizer_state_local_cache')is not None:
+        # Commit the real original ACK intent before epoch advancement can
+        # schedule another trainer. The background thread may run arbitrarily
+        # late, or this process may exit before it starts. Recovery prepares the
+        # same intent again; no new trainer or promotion handle is invented.
+        prepare=getattr(controller.jobs,'prepare_training_cache_ack',None)
+        if prepare is None or action is None:raise ValueError('cache-enabled completion requires synchronous original ACK intent hook')
+        prepare(job,report,pointer)
     if action is None:return
     def finish():
         try:result=action(job,report,pointer)

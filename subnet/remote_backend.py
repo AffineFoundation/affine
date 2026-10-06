@@ -268,6 +268,57 @@ class RemoteJobs:
             if status['phase']=='not_launched' and time.time()-started>30:raise RuntimeError('remote launcher marker absent; retain job record for authoritative recovery')
             if time.time()-started>1800:raise RemoteObservationTimeout(prior['job_id'],role)
             time.sleep(5)
+    def training_cache_ack(self,job,report,pointer,input_cache=None):
+        manifest=signed(job['manifest'],self.controller.authority.id)
+        return self.controller.signed(dict(version='durable-original-trainer-cache-ACK-v1',
+            job_id=job['job_id'],job_sha256=hashlib.sha256(canonical(job)).hexdigest(),
+            report_sha256=hashlib.sha256(canonical(report)).hexdigest(),input_checkpoint=manifest['checkpoint'],
+            input_cache=input_cache or self.workspace+'/checkpoints/'+manifest['checkpoint']['id'],
+            new_checkpoint=report['new_checkpoint'],trainer_state=pointer,authority_state_committed=True))
+
+    def prepare_training_cache_ack(self,job,report,pointer,input_cache=None):
+        """Synchronously persist one genuine post-commit ACK before dispatch advances."""
+        ack=self.training_cache_ack(job,report,pointer,input_cache)
+        data=dict(ack=ack,authority=self.controller.authority.id,code=self.code,
+            root=self.workspace+'/.optimizer-state-cache')
+        script='DATA='+repr(data)+'\n'+'''import hashlib,json,os,stat,sys
+from pathlib import Path
+sys.path.insert(0,DATA['code'])
+from subnet.backend_jobs import signed,canonical
+confirmed=signed(DATA['ack'],DATA['authority'])
+root=Path(DATA['root']);assert root.is_dir()and root==root.resolve()and root.stat().st_uid==os.geteuid()and not root.stat().st_mode&0o077
+path=root/'promotion.json'
+def ordinary(p):
+ st=p.lstat()
+ if not stat.S_ISREG(st.st_mode)or st.st_uid!=os.geteuid()or st.st_nlink!=1 or st.st_mode&0o077:raise ValueError('owned private original ACK intent')
+if path.exists()or path.is_symlink():
+ ordinary(path);raw=path.read_bytes();prior=json.loads(raw);signed(prior['ack'],DATA['authority'])
+ if prior['ack']==DATA['ack']:
+  if prior.get('phase')not in('pending','complete','failed'):raise ValueError('original ACK intent phase')
+  print(json.dumps(dict(prepared=True,idempotent=True,phase=prior['phase'],job_id=confirmed['job_id'])))
+  raise SystemExit(0)
+ if prior.get('phase')!='complete'or prior.get('child_terminal_confirmed')is not True:raise ValueError('previous original ACK requires terminal recovery')
+ archive=root/('completed-promotion-'+hashlib.sha256(canonical(prior['ack'])).hexdigest()+'.json')
+ if archive.exists():ordinary(archive);assert archive.read_bytes()==raw
+ else:
+  fd=os.open(archive,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+  with os.fdopen(fd,'wb')as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
+tmp=root/'promotion.intent.tmp'
+intent=canonical(dict(phase='pending',ack=DATA['ack'],synchronously_prepared=True))
+if tmp.exists()or tmp.is_symlink():
+ ordinary(tmp)
+ if tmp.read_bytes()!=intent:raise ValueError('different interrupted original ACK intent')
+else:
+ fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+ with os.fdopen(fd,'wb')as stream:stream.write(intent);stream.flush();os.fsync(stream.fileno())
+os.replace(tmp,path)
+fd=os.open(root,os.O_RDONLY)
+try:os.fsync(fd)
+finally:os.close(fd)
+print(json.dumps(dict(prepared=True,idempotent=False,phase='pending',job_id=confirmed['job_id'])))
+'''
+        return json.loads(self.command(shlex.quote(self.python)+' -I -B -c '+shlex.quote(script),timeout=60))
+
     def retire_training_cache(self,job,report,pointer,input_cache=None):
         """Best-effort CPU housekeeping only after the coordinator's durable ACK."""
         overlay=self.config.get('cache_lifecycle_overlay')
@@ -281,11 +332,7 @@ class RemoteJobs:
             code=self.code;files={n:self.metadata['source_files'].get(n)for n in names}
         if any(not value for value in files.values()):return dict(status='not-configured',removed_checkpoints=[])
         manifest=signed(job['manifest'],self.controller.authority.id)
-        ack=self.controller.signed(dict(version='durable-original-trainer-cache-ACK-v1',
-            job_id=job['job_id'],job_sha256=hashlib.sha256(canonical(job)).hexdigest(),
-            report_sha256=hashlib.sha256(canonical(report)).hexdigest(),input_checkpoint=manifest['checkpoint'],
-            input_cache=input_cache or self.workspace+'/checkpoints/'+manifest['checkpoint']['id'],
-            new_checkpoint=report['new_checkpoint'],trainer_state=pointer,authority_state_committed=True))
+        ack=self.training_cache_ack(job,report,pointer,input_cache)
         data=dict(code=code,files=files,workspace=self.workspace,ack=ack,authority=self.controller.authority.id,backend_code=self.code)
         script='DATA='+repr(data)+'\n'+'''import sys,hashlib,json,importlib.util
 from pathlib import Path
@@ -307,12 +354,21 @@ print(json.dumps(module.retire(DATA['ack'],DATA['authority'],DATA['workspace']))
     def wait_training_cache_ack(self,budget=1800):
         """Wait before allocating/signing a new trainer job, not inside compute."""
         guard=self.workspace+'/.optimizer-state-cache/promotion.json'
-        script='DATA='+repr(dict(guard=guard,authority=self.controller.authority.id,code=self.code))+'\n'+'''import sys,json,os
+        script='DATA='+repr(dict(guard=guard,authority=self.controller.authority.id,code=self.code))+'\n'+'''import sys,json,os,hashlib
 from pathlib import Path
 sys.path.insert(0,DATA['code'])
 from subnet.backend_jobs import signed
 p=Path(DATA['guard'])
-if not p.exists():print(json.dumps(dict(ready=True)))
+if not p.exists()and not p.is_symlink():
+ pending=p.parent/'pending.json'
+ if pending.exists()or pending.is_symlink():
+  if pending.is_symlink():raise ValueError('owned original candidate required')
+  from subnet.cache_lifecycle import snapshot,identifier
+  snapshot(pending);candidate=json.loads(pending.read_bytes());identifier(candidate['job_id'])
+  original=signed(json.loads((p.parent.parent/(candidate['job_id']+'.json')).read_bytes()),DATA['authority'])
+  if hashlib.sha256(__import__('subnet.storage',fromlist=['canonical']).canonical(original)).hexdigest()!=candidate['job_sha256']:raise ValueError('original candidate job binding')
+  print(json.dumps(dict(ready=False,job_id=candidate['job_id'])))
+ else:print(json.dumps(dict(ready=True)))
 else:
  if p.is_symlink()or p.stat().st_uid!=os.geteuid()or p.stat().st_nlink!=1:raise ValueError('owned promotion guard')
  value=json.loads(p.read_text());ack=signed(value['ack'],DATA['authority'])

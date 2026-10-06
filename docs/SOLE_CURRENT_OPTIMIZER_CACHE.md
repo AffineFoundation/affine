@@ -70,6 +70,13 @@ consuming or abandoning pending state until promotion completes. Exact confirmed
 `pending.json` removal, and never rehashes shards on a successful ACK retry.
 
 Dispatch checks promotion status before creating the next original trainer job.
+The coordinator synchronously persists the genuine original post-commit ACK
+intent before returning from training completion, then schedules slow cleanup
+and promotion in the background. A lost preparation reply or controller exit
+recovers that same intent; it cannot advance training first. An original pending
+candidate with no promotion guard also blocks dispatch, and a worker never
+abandons a candidate matching its actual approved parent while the ACK is absent.
+This closes the interval before a delayed cleanup thread starts its supervisor.
 If promotion starts during worker startup, the worker releases its cache lease
 while waiting boundedly, allowing the original helper to complete, then continues
 the same training job. Confirmed terminal promotion failure affects only the
