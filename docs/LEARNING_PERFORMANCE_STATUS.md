@@ -240,3 +240,24 @@ components do not exhaust controller wall time. Source-change cache retirement
 was acknowledged automatically. A faster subsequent warm restore must be measured,
 not assumed. This completion clears the publication blocker but does not prove
 continuous hourly operation or held-out convergence.
+
+## Epoch 29 learning-data measurements
+
+The authenticated original training report records 201 task pairs, one full-model
+update and 339 gradient tensors. Reported training-pair margins increased for
+180 of 201 pairs, with a mean increase of approximately 0.017. The initial
+centered preference loss of 0.693147 is expected: this epoch's reference margins
+are computed from its initial current model. It is not evidence of zero gradients.
+Training-pair improvement is not independent held-out improvement.
+
+Length remains a significant confound: 125 of 201 submitted negative trajectories
+reached the 1,024-token cap, versus two positives. Median negative length was
+1,024 tokens; median positive length was 287. These are measurements of eligible
+unaudited inputs, not independent certification of native outcomes or provenance.
+A preference update may learn completion-length differences as well as mathematical
+skill. Increasing quota alone must therefore be tested against distinct class
+supply, truncation and the unchanged held-out cohort. The planned same-parent
+1P1N/2P2N comparison preserves identical tasks, optimizer parent and update settings;
+its first generation-only stage measures 16 prescribed attempts on each of two
+predeclared tasks. No new quota or learning-rate policy is activated by these
+observations.
