@@ -162,15 +162,23 @@ def historical_report_workers(document):
  return reports
 
 def admit_queue_reports(queue_rows,records,authority,verifiers,approved_sources,*,execution_evidence_policy=None,cutoff=None,historical_report_admission=None):
+ """Authenticate all originals, validating the immutable population once."""
+ return _admit_report_batch(queue_rows,records,authority,verifiers,approved_sources,execution_evidence_policy=execution_evidence_policy,cutoff=cutoff,historical_report_admission=historical_report_admission,defer_backend=False)[0]
+
+def admit_queue_reports_with_deferrals(queue_rows,records,authority,verifiers,approved_sources,*,execution_evidence_policy=None,cutoff=None,historical_report_admission=None):
+ """Same authentication; only typed unadmitted backend evidence is neutral."""
+ return _admit_report_batch(queue_rows,records,authority,verifiers,approved_sources,execution_evidence_policy=execution_evidence_policy,cutoff=cutoff,historical_report_admission=historical_report_admission,defer_backend=True)
+
+def _admit_report_batch(queue_rows,records,authority,verifiers,approved_sources,*,execution_evidence_policy,cutoff,historical_report_admission,defer_backend):
  """Authenticate original SQLite terminal report requests before estimating.
 
  approved_sources must come from actual authenticated ROOT source admission;
  its mapping binds complete executed runtime module hashes, not file labels.
  """
  historical=historical_report_workers(historical_report_admission)
- rows=population(records);lookup={(r['epoch'],r['miner'],r['batch_sha256']):r for r in rows};admissions={}
+ rows=population(records);lookup={(r['epoch'],r['miner'],r['batch_sha256']):r for r in rows};admissions={};deferred=[]
  def parsed(value):return json.loads(value)if type(value)is str else value
- for queue in queue_rows:
+ def admit_one(queue):
   need(queue.get('status')=='complete'and queue.get('role')=='verify','actually completed verifier job')
   worker=queue['worker'];need(worker in verifiers or historical.get(worker,{}).get(queue.get('digest'))==queue.get('report_digest') and queue.get('report_digest')is not None,'admitted actual worker')
   job=authenticate(parsed(queue['envelope']),authority);manifest=authenticate(job['manifest'],authority);report=parsed(queue['report']);request=authenticate(parsed(queue['report_request']),worker)
@@ -207,7 +215,12 @@ def admit_queue_reports(queue_rows,records,authority,verifiers,approved_sources,
    native[digest(observation)]=dict(reason=o.get('reason'),failure_kind=o.get('failure_kind'),fully_audited=o.get('fully_audited'),artifact_sha256=obj['sha256'])
   key=digest(job);value=dict(verifier=worker,observations=observed,original_report_request_sha256=digest(parsed(queue['report_request'])),original_report_sha256=digest(report),source_sha256=source,native_observations=native)
   need(key not in admissions or admissions[key]==value,'conflicting original queued job');admissions[key]=value
- return admissions
+ for queue in queue_rows:
+  try:admit_one(queue)
+  except BackendEvidenceNotAdmitted as error:
+   if not defer_backend:raise
+   deferred.append(dict(job_sha256=error.job_sha256,source_sha256=error.source_sha256,outcome='infrastructure_deferred',validity_credit=False,fraud_claim=False))
+ return admissions,deferred
 
 def admit_artifact_failures(documents,records,authority):
  """ROOT storage evidence, not a claim that a GPU evaluated the model."""

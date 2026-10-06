@@ -6,7 +6,7 @@ queue without binding another HTTP listener. No blockchain writes occur here.
 import argparse,hashlib,json,math,os,secrets,sqlite3,time
 from concurrent.futures import ThreadPoolExecutor,as_completed
 from pathlib import Path
-from .continuous_audit_policy import VERSION,policy,population,digest,random_selection,verifier_contract,admit_queue_reports,snapshot,BackendEvidenceNotAdmitted,historical_report_workers
+from .continuous_audit_policy import VERSION,policy,population,digest,random_selection,verifier_contract,admit_queue_reports,admit_queue_reports_with_deferrals,snapshot,BackendEvidenceNotAdmitted,historical_report_workers
 from .distributed_roles import authenticate
 from .storage import canonical
 from .audit_queue_snapshot import queue_rows
@@ -78,13 +78,9 @@ def admitted_service_config(config,authority):
 BACKEND_DEFERRAL_POLICY='authenticated-unadmitted-backend-neutral-v1'
 def admit_completed_reports(queued,records,authority,workers,sources,*,execution_evidence_policy,cutoff,deferral_policy=None,historical_report_admission=None):
  if deferral_policy not in (None,BACKEND_DEFERRAL_POLICY):raise ValueError('explicit signed backend deferral policy')
- admitted={};deferred=[]
- for queue in queued:
-  try:admitted.update(admit_queue_reports([queue],records,authority,workers,sources,execution_evidence_policy=execution_evidence_policy,cutoff=cutoff,historical_report_admission=historical_report_admission))
-  except BackendEvidenceNotAdmitted as error:
-   if deferral_policy is None:raise
-   deferred.append(dict(job_sha256=error.job_sha256,source_sha256=error.source_sha256,outcome='infrastructure_deferred',validity_credit=False,fraud_claim=False))
- return admitted,deferred
+ kwargs=dict(execution_evidence_policy=execution_evidence_policy,cutoff=cutoff,historical_report_admission=historical_report_admission)
+ if deferral_policy is not None:return admit_queue_reports_with_deferrals(queued,records,authority,workers,sources,**kwargs)
+ return admit_queue_reports(queued,records,authority,workers,sources,**kwargs),[]
 
 def atomic(path,value):
  path=Path(path);path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
