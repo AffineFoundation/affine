@@ -44,7 +44,8 @@ class RunningApiValidationTests(unittest.TestCase):
         source_root = self.root/'source'
         source_pin = write(source_root/'runtime.py', b'unchanged science')
         registry = self.root/'registry.json'
-        write(registry, canonical(sign(self.key, dict(approved_sources={'source': {'runtime.py': source_pin}}))))
+        write(registry, canonical(sign(self.key, dict(version='source-specific-sampling-api-admission-v1',
+              sources={'source': dict(runtime_files={'runtime.py': source_pin}, runtime_versions={}, sampling_versions=[None])}))))
         self.queue = self.root/'queue.sqlite3'
         self.queue.write_bytes(b'original queue must never change')
         api = dict(version='independent-queue-source-aware-api173-v1', execute_allowed=True,
