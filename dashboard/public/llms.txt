@@ -17,9 +17,12 @@ modules. Bounded transient optimizer-download retries are included. The new
 attempt has its own ID and output namespace. It failed before model/GPU execution
 because its 5,073,318-byte signed envelope exceeded the legacy 4,000,000-byte
 launcher limit. Both failed attempts and the original recovery reservation are
-preserved. A narrowly bounded, authenticated recovery-envelope fix and explicit
-bootstrap-continuation authorization are being implemented; step twelve has not
-been published. Recovery runs once to finish E21; it does not open a new epoch or
+preserved. The narrowly bounded, authenticated recovery-envelope fix passed
+the actual 5,075,451-byte signed request through launcher and protocol validation.
+A separately authorized continuation is now running on execution source
+0380c393cbab76cfd03c1c8c91ba1a2579efe49f60ccd385f2a6f6f8d9db2e50,
+with the original 256 admissions and parent eleven. Its original runner and child
+are confirmed running. Step twelve has not been published. Recovery runs once to finish E21; it does not open a new epoch or
 rewrite the original 4db mining contract. The signed
 contract requires one positive and one negative rollout per task, at most three
 batches per UID, and a 16-attempt ceiling. Generation uses cached FP32 eager
@@ -644,3 +647,14 @@ construction and redundant self-verification. Reports explicitly say unverified
 and native-graded; they cannot count as miner proof or reward evidence.
 161 affected ROOT CPU controls pass. This candidate has not replaced the
 original running E19 held-out job, and no H200 timing gain is claimed yet.
+
+Research status 2026-10-06, not a live contract change:
+A default-off token-only three-way prefill check on four genuine E21 rollouts
+accepted three and marked the long 1024-token rollout numerical inconclusive.
+All 80 fresh tampered traces were invalid. The long check took median 1.611s
+with one model forward versus official 21.562s with 1025 forwards, but
+inconclusive is NOT accepted or confirmed fraud; its outcome remains pending.
+Short accepted rollouts took 2.292–2.427s including original environment grading.
+These results are one H200 only; independent second-H200 qualification is
+pending. Earlier token-only checks with exact fallback passed on two H200s.
+Sampling consistency is not proof of historical execution.
