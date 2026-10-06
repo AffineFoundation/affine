@@ -8,10 +8,17 @@ relay must be qualified before GPU issuance.
 
 The prepared parent16 draft uses eight deterministic predeclared tasks from the
 6746 mining set, excluding the original128 and old32. Exactly16 prescribed public
-CDF streams are generated on each task under a fresh v3 draw context; the real
+CDF streams are generated on each task under the explicitly signed v3 or newly qualified v4 draw context; the real
 compact selected-token/TOPLOC artifacts remain mandatory. The official verifier
 checks native outcomes and prescribed sampling. Claimed reward/class alone never
 qualifies an example. Numerical unknowns and native errors do not fill quotas.
+
+The first issuance is a generation-only `pilot32`: all16 prescribed attempts
+on the first two of the eight predeclared tasks. Its capability refuses training.
+Measure actual wall-time, class supply, truncation and unknown rates before
+issuing a separate `matched128` capability for all eight tasks and both arms.
+Earlier v3 histories are never retagged as v4; v4 requires its own qualified
+source and sampling contract.
 
 Both arms train only the SAME tasks with at least2 verified positives and2
 verified negatives, selected in attempt order. 1P1N takes the first zipped pair;
@@ -25,7 +32,8 @@ Each arm constructs a fresh BF16 model from the exact same immutable parent
 weights and restores the SAME authenticated FP32 optimizer descriptor. The real
 `task_normalized_training.train_epoch` computes the BF16 reference before any
 update, one task-mean step, unchanged LR1e-5/beta.1. Model weights are never reused
-from the other arm. ParentFP32 bytes are streamed through admitted4 lanes; no
+from the other arm. ParentFP32 bytes are streamed through explicitly scoped4 or8 restore lanes
+under strict resource admission;16 lanes remain unsupported. No
 mutable current trainer cache or network authority state is consulted. The
 research optimizer is intentionally disposable after the branch BF16 export;
 its FP32 update is NOT claimed durably published or usable as a next parent.
@@ -40,8 +48,8 @@ gradient/update metrics and wall-time. One small branch result cannot establish
 convergence or justify a learning-rate retune.
 
 Production services, current model, public weights, R2 history, seven verifier
-workers and ordinary independent evaluation remain untouched. A438 is currently
-occupied by originalCP16evaluation, so it is NOT a free trial slot. ROOT must
+workers and ordinary independent evaluation remain untouched. A438 serves autonomous heldout evaluation; an idle GPU alone does not
+authorize a research slot. ROOT must
 approve a genuinely idle independent device and exclusive slot, verify fresh
 RAM/disk/GPU admission, and stage exact source+snapshot before any research GPU.
 At197GiB RAM a four-lane restore may fit where16 lanes do not; use the actual

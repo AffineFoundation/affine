@@ -78,3 +78,60 @@ class PolicyVerdictTests(unittest.TestCase):
    def verify(self,r,a):raise InvalidSample('outside calibrated prescribed CDF')
   row,_=verify_generated(R(),2,0);self.assertEqual(row['status'],'confirmed_invalid');self.assertFalse(row['sampler_verified']);self.assertFalse(row['native_verified'])
   x=stream();x[0]=row;a,s=select_matched({2:x},{});self.assertEqual(s[0]['confirmed_invalid'],1);self.assertEqual(a['1P1N'][0][2]['seed'],3)
+
+
+class ScopeTests(unittest.TestCase):
+ def setUp(self):
+  import tempfile,pathlib,hashlib
+  from nacl.signing import SigningKey
+  self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+  root=pathlib.Path(self.tmp.name);model=root/'model';model.mkdir();(model/'config.json').write_bytes(b'{}')
+  source=pathlib.Path(__file__).resolve().parent.parent
+  self.key=SigningKey(bytes(32));self.authority=self.key.verify_key.encode().hex()
+  version='forced-inverse-cdf-prefill-threeway-v4'
+  self.scope=dict(version='matched-quota-research-v1',production_state_changes=False,execute_allowed=True,
+   created_at=100,expires_at=200,stage='pilot32',phases=['generate'],training_steps=1,attempts=16,K=2,L=2,
+   restore_concurrency=4,output_limit_bytes=1024,task_count=8,generation_task_limit=2,
+   mining_indices=list(range(20)),heldout128_indices=[0],old32_indices=[1],selection_seed='a'*64,
+   checkpoint='b'*64,source_sha256='c'*64,sampling_version=version,
+   heldout_cohort_sha256='20a077180d7cc088669f53bd551c5bf3c4aa51ded6367463f405094ad054b153',
+   source_path=str(source),source_files={'ops/run_matched_quota_trial.py':hashlib.sha256((source/'ops/run_matched_quota_trial.py').read_bytes()).hexdigest()},
+   workspace=str(root/'owned'),checkpoint_path=str(model))
+  self.scope['task_indices']=task_plan(list(range(20)),[0,1],'a'*64,8)
+  self.scope['generation_manifest']=dict(checkpoint=dict(id='b'*64,files={'config.json':hashlib.sha256(b'{}').hexdigest()}),source_bundle=dict(sha256='c'*64),
+   probability_artifact_policy={'version':'selected-token-logprobs-v1'},sampling_contract=dict(version=version,max_attempts=16),K=2,L=2)
+ def check(self,s=None,phase='generate',now=150):
+  import base64
+  from subnet.storage import canonical
+  from ops.run_matched_quota_trial import validate_scope
+  s=self.scope if s is None else s
+  envelope=dict(payload=s,signer=self.authority,signature=base64.b64encode(self.key.sign(canonical(s)).signature).decode())
+  return validate_scope(envelope,self.authority,phase,now)
+ def test_real_signed_pilot_source_and_model_inventory_cpu_preflight(self):
+  from unittest.mock import patch
+  with patch('subnet.gpu_runtime.GPURuntime',side_effect=AssertionError('GPU construction forbidden')):
+   for lanes in (4,8):
+    for version in ('forced-inverse-cdf-prefill-support-v3','forced-inverse-cdf-prefill-threeway-v4'):
+     s=copy.deepcopy(self.scope);s['restore_concurrency']=lanes;s['sampling_version']=version;s['generation_manifest']['sampling_contract']['version']=version
+     self.assertEqual(self.check(s)['generation_task_limit'],2)
+ def test_pilot_refuses_training_even_if_added_to_capability(self):
+  from unittest.mock import patch
+  with patch('subnet.model.model_files',side_effect=AssertionError('reject before model inventory')):
+   for phase in ('1P1N','2P2N'):
+    for phases in (['generate'],['generate','1P1N','2P2N']):
+     with self.subTest(phase=phase,phases=phases):
+      s=copy.deepcopy(self.scope);s['phases']=phases
+      with self.assertRaises(ValueError):self.check(s,phase)
+ def test_malformed_stage_limits_and_expired_capability_rejected(self):
+  for field,value in [('stage',None),('stage','pilot'),('generation_task_limit',True),('generation_task_limit',0),('generation_task_limit',3),('generation_task_limit',9),('task_count',True),('task_count',7),('restore_concurrency',16)]:
+   with self.subTest(field=field,value=value):
+    s=copy.deepcopy(self.scope);s[field]=value
+    with self.assertRaises(ValueError):self.check(s)
+  for now in (99,200):
+   with self.assertRaises(ValueError):self.check(now=now)
+ def test_unknown_or_mismatched_sampling_policy_rejected(self):
+  for version in ('unknown',None):
+   s=copy.deepcopy(self.scope);s['sampling_version']=version
+   with self.assertRaises(ValueError):self.check(s)
+  s=copy.deepcopy(self.scope);s['generation_manifest']['sampling_contract']['version']='forced-inverse-cdf-prefill-support-v3'
+  with self.assertRaises(ValueError):self.check(s)
