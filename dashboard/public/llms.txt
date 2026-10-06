@@ -185,13 +185,15 @@ reports were archived and authenticated, and the research model replicas were
 automatically retired after durable acknowledgement. Completed scientific
 outputs were not regenerated during metadata recovery.
 
-A separate matched 128-task CP13 evaluation is now running on the retained
-research H200 while E23 recovery proceeds on the trainer. Its four original
-32-task jobs use the same held-out cohort and cached 1,024-token harness.
-No CP13 score or CP14 comparison is claimed until original jobs and durable
-reports complete. Failed-export evidence archival after a genuine replacement
-ACK is available as default-off operator code; its durable retry integration
-is still being prepared and is not part of the running recovery source.
+The separate matched 128-task CP13 evaluation completed: 84/128 (65.625%),
+versus CP12 86/128, with seven gains and nine losses on the exact same tasks
+and seeds. All four original 32-task jobs completed; their reports and archive
+passed full readback, and the group-owned model was automatically retired.
+This latest checkpoint declined by two tasks; sustained convergence is not
+established. No CP14 comparison is claimed. Failed-export evidence archival
+after a genuine replacement ACK and durable retry are available as default-off
+operator code; live adapter installation is pending and they are not part of
+the running recovery source.
 
 ## Public interfaces and documentation
 
