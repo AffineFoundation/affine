@@ -32,6 +32,17 @@ class LearnerAdmissionTests(unittest.TestCase):
             summary,pairs=self.admit()
         self.assertEqual(summary['assurance'],'unaudited');self.assertFalse(summary['trainer_verification_performed']);self.assertEqual(len(pairs),1)
         self.assertNotIn('accepted',summary)
+    def test_unequal_signed_quota_consumes_only_aligned_training_pairs(self):
+        self.manifest['K']=2
+        extra=copy.deepcopy(self.batch['rollouts'][0])
+        extra['turns'][0]['output']=[42,43]
+        self.batch['rollouts'].append(extra);self.build()
+        summary,pairs=self.admit()
+        self.assertEqual(len(summary['claimed_batch']['rollouts']),3)
+        self.assertEqual(len(pairs),1)
+        self.assertIs(pairs[0][1],summary['claimed_batch']['rollouts'][0])
+        self.assertIs(pairs[0][2],summary['claimed_batch']['rollouts'][1])
+
     def test_tampered_bytes_rejected(self):
         self.path.write_bytes(self.data+b' ')
         with self.assertRaises(ValueError):self.admit()
