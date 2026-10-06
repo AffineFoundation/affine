@@ -110,7 +110,9 @@ class ChainAdapter:
         return registered
 
     def submit_hour(self, points: dict[str, int], registrations: dict[str, dict],
-                    window_end: int, execute: bool = False) -> dict:
+                    window_end: int, execute: bool = False, *, zero_total_policy: str | None = None) -> dict:
+        if zero_total_policy not in (None, 'owner-sink-v1'):
+            raise ValueError('explicit zero-total assessment policy')
         if window_end % 3600 or window_end > int(time.time()):
             raise ValueError('only completed integral UTC hour windows may pay out')
         if any(isinstance(p, bool) or not isinstance(p, int) or p < 0 for p in points.values()):
@@ -145,6 +147,12 @@ class ChainAdapter:
                     continue
                 recipients.append((current['uid'], hotkey, count))
             status = {'window_end': window_end, 'block': status_block, 'excluded_stale': stale}
+            if not recipients and not stale and zero_total_policy == 'owner-sink-v1':
+                sink_uid = self.query('Uids', [self.netuid, self.owner], block)
+                if type(sink_uid) is not int or self.query('Keys', [self.netuid, sink_uid], block) != self.owner:
+                    raise RuntimeError('zero-total sink owner identity mismatch')
+                recipients = [(sink_uid, self.owner, 1)]
+                status['zero_total_policy'] = zero_total_policy
             if stale:
                 # Never silently renormalize winners after UID recycling.
                 status['status'] = 'stale_registration_denied'
