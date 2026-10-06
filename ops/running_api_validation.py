@@ -98,7 +98,10 @@ def validate_dependency(policy, authority, now, inspect=inspect_api):
     registry_raw = file_bytes(api['registry_path'])
     registry = authenticate(json.loads(registry_raw), authority)
     required[api['registry_path']] = hashlib.sha256(registry_raw).hexdigest()
-    for source, files in registry['approved_sources'].items():
+    if registry.get('version') != 'source-specific-sampling-api-admission-v1' or set(registry) != {'version', 'sources'}:
+        raise ValueError('exact source-specific API registry')
+    for source, row in registry['sources'].items():
+        files = row['runtime_files']
         root = Path(api['source_trees'][source])
         required.update({str(root/name): pin for name, pin in files.items()})
     if any(policy['files'].get(path) != pin for path, pin in required.items()):
