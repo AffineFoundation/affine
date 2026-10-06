@@ -16,10 +16,22 @@ class RecoveryEnvelopeBudgetControls(unittest.TestCase):
   data=backend.canonical(self.sign(self.job)if v is None else v)
   if size is not None:data+=b' '*(size-len(data))
   self.path.write_bytes(data);return data
- def test_exact_v2_and_v3_root_authenticated_large_recoveries(self):
+ def test_exact_supported_root_authenticated_large_recoveries(self):
   for version in backend.LARGE_RECOVERY_VERSIONS:
    self.declaration['version']=version;self.manifest['training_startup_recovery']=self.sign(self.declaration);self.job['manifest']=self.sign(self.manifest)
    self.write();self.assertEqual(backend.load_job_envelope(self.path,self.authority)['payload'],self.job)
+ def test_postupdate_large_entrypoint_and_upload_rejection(self):
+  self.assertIn('terminal-post-update-uncommitted-recovery-v1',backend.LARGE_RECOVERY_VERSIONS)
+  self.declaration['version']='terminal-post-update-uncommitted-recovery-v1'
+  self.manifest['training_startup_recovery']=self.sign(self.declaration);self.job['manifest']=self.sign(self.manifest)
+  self.write(size=5_100_000)
+  args=['backend',str(self.path),'--authority',self.authority,'--workspace',str(self.tmp.name)]
+  with patch.object(sys,'argv',args),patch.object(backend,'execute',return_value={'job_id':'fresh','role':'train','checkpoint':'22'*32})as execute,patch('builtins.print'):
+   backend.main()
+  self.assertEqual(execute.call_args.args[0]['payload'],self.job)
+  self.job['role']='upload';self.write()
+  with patch.object(sys,'argv',args),patch.object(backend,'execute')as execute,self.assertRaises(ValueError):backend.main()
+  execute.assert_not_called()
  def test_absolute8MB_cap_read_before_parse_and_normal4MB_unchanged(self):
   self.write(size=8_000_000);self.assertEqual(backend.load_job_envelope(self.path,self.authority)['payload'],self.job)
   self.path.write_bytes(b'x'*8_000_001)

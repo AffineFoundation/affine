@@ -1080,7 +1080,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
 
 JOB_ENVELOPE_MAX_BYTES=4_000_000
 RECOVERY_JOB_ENVELOPE_MAX_BYTES=8_000_000
-LARGE_RECOVERY_VERSIONS=frozenset(('terminal-parent-restore-pre-update-recovery-v2','terminal-parent-restore-pre-update-bootstrap-recovery-v3'))
+LARGE_RECOVERY_VERSIONS=frozenset(('terminal-parent-restore-pre-update-recovery-v2','terminal-parent-restore-pre-update-bootstrap-recovery-v3','terminal-post-update-uncommitted-recovery-v1'))
 
 def load_job_envelope(path,authority):
     """Bounded CPU parser; only explicit ROOT-authenticated recovery gets 8 MB.
@@ -1100,7 +1100,7 @@ def load_job_envelope(path,authority):
     if job.get('role')!='train'or job.get('training_policy')!=PERSISTENT_POLICY or job.get('training_input_policy')!='committed-unaudited-training-v1':raise ValueError('job envelope size budget')
     manifest=root_payload(job.get('manifest'))
     declaration=root_payload(manifest.get('training_startup_recovery'))
-    if declaration.get('version')not in LARGE_RECOVERY_VERSIONS or type(manifest.get('epoch'))is not str or not manifest['epoch']or declaration.get('epoch')!=manifest.get('epoch'):raise ValueError('explicit pre-update recovery envelope budget')
+    if declaration.get('version')not in LARGE_RECOVERY_VERSIONS or type(manifest.get('epoch'))is not str or not manifest['epoch']or declaration.get('epoch')!=manifest.get('epoch'):raise ValueError('explicit recovery envelope budget')
     original=root_payload(declaration.get('original_signed_job'));old=root_payload(original.get('manifest'))
     if (original.get('role')!='train'or original.get('training_policy')!=PERSISTENT_POLICY
         or old.get('epoch')!=manifest.get('epoch')or original.get('training_input_policy')!=job['training_input_policy']
