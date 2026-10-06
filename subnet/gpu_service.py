@@ -86,6 +86,8 @@ def owned_dispatch_identities(config,manifest,identities):
     return [miner for miner in identities if miner in paths]
 
 def contract(config,round_number):
+    from .controller import class_quotas
+    K,L=class_quotas(config.get('K',1),config.get('L',1),config.get('sampling_policy'))
     revision,profile,policy=for_config(config)
     rows=definitions(config)
     training_ids={r['spec']['id'] for r in rows if not r.get('evaluation_only',False)}
@@ -111,6 +113,8 @@ def contract(config,round_number):
     result=dict(sample_harness_registry=registry,heldout_indices={r['env_id']:r['indices'] for r in config['heldout']},duration=config.get('duration',300),environments=definitions_all,audit_policy=config.get('audit_policy',{'mode':'full','version':1}),
         training_policy=epoch_policy(config),source_bundle=config['source_bundle'],model_runtime_revision=revision,numerical_policy=policy,
         backend_profile=profile,model_id=config.get('model_id','HuggingFaceTB/SmolLM2-1.7B-Instruct'))
+    # Preserve the historical kwargs when no quota is explicitly configured.
+    if 'K' in config or 'L' in config:result.update(K=K,L=L)
     if config.get('training_input_policy') is not None:
         if config['training_input_policy'] not in ('authenticated-verifier-receipts-v1','authenticated-verifier-compact-inputs-v2','committed-unaudited-training-v1'):
             raise ValueError('unapproved training input policy')
@@ -229,7 +233,7 @@ def initial_manifest(config,checkpoint):
     chosen=contract(config,0)
     revision,profile,policy=for_config(config)
     from .harness import source_hash
-    result=dict(sample_harness_registry=chosen['sample_harness_registry'],epoch=config['epoch_prefix']+'-initial',payable=False,training_policy=chosen['training_policy'],checkpoint=checkpoint,environments=[dict(env_id=r['spec']['id'],**r) for r in chosen['environments']],K=1,L=1,max_batches=config.get('max_batches',3),audit_policy=config.get('audit_policy',{'mode':'full','version':1}),harness_source_hash=source_hash(),model_runtime_revision=revision,numerical_policy=policy,backend_profile=profile,model_id=chosen['model_id'],transport_policy='direct-r2-v1')
+    result=dict(sample_harness_registry=chosen['sample_harness_registry'],epoch=config['epoch_prefix']+'-initial',payable=False,training_policy=chosen['training_policy'],checkpoint=checkpoint,environments=[dict(env_id=r['spec']['id'],**r) for r in chosen['environments']],K=chosen.get('K',1),L=chosen.get('L',1),max_batches=config.get('max_batches',3),audit_policy=config.get('audit_policy',{'mode':'full','version':1}),harness_source_hash=source_hash(),model_runtime_revision=revision,numerical_policy=policy,backend_profile=profile,model_id=chosen['model_id'],transport_policy='direct-r2-v1')
     if 'training_input_policy' in chosen:result['training_input_policy']=chosen['training_input_policy']
     if 'artifact_policy' in chosen:result['artifact_policy']=chosen['artifact_policy']
     if 'probability_artifact_policy' in chosen:result['probability_artifact_policy']=chosen['probability_artifact_policy']
@@ -237,6 +241,8 @@ def initial_manifest(config,checkpoint):
     return result
 
 def run(config,once=False):
+    from .controller import class_quotas
+    class_quotas(config.get('K',1),config.get('L',1),config.get('sampling_policy'))
     for field in ('preparation_only','activation_allowed'):
         if field in config and type(config[field]) is not bool:
             raise ValueError(field+' must be boolean')

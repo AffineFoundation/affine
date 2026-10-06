@@ -15,6 +15,21 @@ from .protocol import classification
 from . import harness as harness_policy
 from .environments import EnvironmentSpec, legacy_spec, legacy_harness
 
+def class_quotas(K=1,L=1,sampling=None):
+    """Validate prospective class quotas; historical manifests are not rewritten.
+
+    Unequal quotas remain supported. Training consumes min(K,L) aligned pairs,
+    so an additional unpaired class member does not create a training pair.
+    """
+    if type(K) is not int or type(L) is not int or K<1 or L<1 or K+L>128:
+        raise ValueError('class quotas require positive integers with K+L <= 128')
+    if sampling is not None:
+        attempts=sampling.get('max_attempts') if isinstance(sampling,dict) else None
+        if type(attempts) is not int or not 2<=attempts<=128 or K+L>attempts:
+            raise ValueError('class quotas exceed authenticated sampling attempt budget')
+    return K,L
+
+
 class CheckpointCapacityError(RuntimeError):
     pass
 
@@ -98,7 +113,8 @@ class Controller:
         if existing(legacy_key) is None:self.bucket.json(legacy_key,self.signed(descriptor))
         return checkpoint
 
-    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None,persistent_publication_policy=None,reward_publication_policy=None,optimizer_state_export_policy=None,artifact_compression_policy=None,proof_copy_policy=None,training_input_policy=None,continuous_reward_activation_document=None,continuous_reward_registration_snapshot=None,training_runtime=None,independent_state_readback_budget=None,optimizer_state_local_cache=None,probability_artifact_policy=None):
+    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None,persistent_publication_policy=None,reward_publication_policy=None,optimizer_state_export_policy=None,artifact_compression_policy=None,proof_copy_policy=None,training_input_policy=None,continuous_reward_activation_document=None,continuous_reward_registration_snapshot=None,training_runtime=None,independent_state_readback_budget=None,optimizer_state_local_cache=None,probability_artifact_policy=None,K=1,L=1):
+        K,L=class_quotas(K,L,sampling_policy)
         if probability_artifact_policy is not None:
             from .probability_artifacts import validate_policy
             probability_artifact_policy=validate_policy(probability_artifact_policy)
@@ -199,7 +215,7 @@ class Controller:
             definitions.append(row)
         manifest=dict(payable=not epoch.startswith(('nonpayable-', 'test-', 'mock-')),epoch=epoch,checkpoint=checkpoint,environment=env,indices=definitions[0]['indices'],environments=definitions,harness_source_hash=harness_policy.source_hash(),
                       tokenizer_binding={name:digest for name,digest in checkpoint['files'].items() if 'token' in name or 'template' in name},
-                      K=1,L=1,max_batches=4,start=self.gateway.epochs[epoch].get('start',int(time.time())),deadline=deadline,capabilities=caps,audit_policy=dict(audit_policy or {'mode':'full','version':1}),
+                      K=K,L=L,max_batches=4,start=self.gateway.epochs[epoch].get('start',int(time.time())),deadline=deadline,capabilities=caps,audit_policy=dict(audit_policy or {'mode':'full','version':1}),
                       numerical_policy='cpu-float32-eager-exact-toploc-logprob-atol1e-5',model_runtime_revision=NUMERICAL_RUNTIME_REVISION,runtime_profile=dict(runtime_profile or {}),
                       environment_revision='trusted-adapter-registry-v1')
         if sample_harness_registry is not None:manifest['sample_harness_registry']=sample_harness_registry
