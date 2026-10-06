@@ -76,3 +76,19 @@ but the run is not a completed end-to-end qualification. A separately labeled
 research post-freeze context is being tested; the live proof contract remains
 selected-token logprobs plus TOPLOC. Two-machine qualification and fresh current
 checkpoint/runtime admission must precede a token-only production cutover.
+
+## Actual verifier recovery and remaining startup cost
+
+After the WAL/FULL queue recovery, the first isolated-bootstrap canary completed
+its original attempt-one lease. The worker-signed report was authenticated and
+its digest matched the stored report. One batch passed the original v3 audit;
+no chain transaction occurred. Its downloaded checkpoint was automatically
+retired after the report acknowledgement, and the worker claimed another job.
+
+Claim to report acknowledgement took 244.07 seconds. Checkpoint materialization
+and authentication took 209.57 seconds for approximately 15.24 GB, and runtime
+model construction took 17.26 seconds. Downloads remain serial across checkpoint
+files in this scientific source. Bounded parallel authenticated downloads are a
+prospective transport improvement, not a measured deployed speedup. Other workers
+are being updated without interrupting active jobs; one canary does not establish
+sustained fleet recovery.
