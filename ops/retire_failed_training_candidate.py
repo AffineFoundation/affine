@@ -28,7 +28,7 @@ def publish_exclusive(path,value):
 def _retire(envelope,authority,*,workspace,guard,now=None):
     value=signed(envelope,authority);now=time.time()if now is None else now
     fields={'version','execute_allowed','created_at','expires_at','original_signed_job','original_job_sha256','original_terminal','failure_evidence','durable_failure_evidence','transfer_directory','candidate_directory','pending_sha256','inventory','full_readbacks','journal','retire_failed_zero'}
-    if set(value)!=fields or value['version']!=VERSION or value['execute_allowed']is not True or not value['created_at']<=now<value['expires_at'] or not 0<value['expires_at']-value['created_at']<=86400:raise ValueError('explicit bounded failed candidate retirement grant')
+    if set(value) not in (fields,fields|{'preserved_transfer_metadata'}) or value['version']!=VERSION or value['execute_allowed']is not True or not value['created_at']<=now<value['expires_at'] or not 0<value['expires_at']-value['created_at']<=86400:raise ValueError('explicit bounded failed candidate retirement grant')
     original=signed(value['original_signed_job'],authority);jobid=original['job_id'];transport=original['persistent_training'];terminal=value['original_terminal'];w=value['failure_evidence']
     if sha(original)!=value['original_job_sha256'] or terminal.get('job_id')!=jobid or terminal.get('phase')!='failed' or terminal.get('exit_code')!=1 or type(terminal.get('exit_code'))is not int:raise ValueError('exact failed original job')
     if w!={'original_optimizer_updates':1,'candidate_committed':False,'original_report_absent':True,'complete_candidate_descriptor_absent':True,'original_processes_absent':True,'no_active_checkpoint_lease':True,'preserve_failure_history':True}:raise ValueError('post-update incomplete failure evidence')
@@ -54,7 +54,26 @@ def _retire(envelope,authority,*,workspace,guard,now=None):
     if not isinstance(rows,list)or not 1<=len(rows)<23 or not isinstance(receipts,list)or len(receipts)!=len(rows):raise ValueError('bounded incomplete shard inventory')
     names=[r['name']for r in rows]
     if len(set(names))!=len(names)or ('state-000000.safetensors'in names)!=value['retire_failed_zero']:raise ValueError('exact failed-zero retirement opt-in')
-    present={p.name for folder in (directory,candidate)if folder.exists()for p in folder.iterdir()}
+    metadata=value.get('preserved_transfer_metadata',[])
+    if not isinstance(metadata,list)or len(metadata)>24:raise ValueError('bounded preservation-only transfer metadata')
+    meta_names=[r.get('name')for r in metadata]
+    if len(set(meta_names))!=len(meta_names):raise ValueError('distinct preserved metadata')
+    def check_metadata():
+        for row in metadata:
+            if set(row)!={'name','size','sha256','device','inode','uid','mtime_ns','ctime_ns'}or not re.fullmatch(r'(?:evidence|failure)-[0-9]{6}\.json',row['name'])or not 0<row['size']<=16384:raise ValueError('exact preservation-only metadata inventory')
+            state_name='state-'+row['name'].split('-')[1].split('.')[0]+'.safetensors'
+            if row['name'].startswith('evidence-')and state_name not in catalog['files']or row['name'].startswith('failure-')and state_name!='state-000000.safetensors':raise ValueError('metadata bound to original successful PUT or failed zero')
+            path=directory/row['name'];fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+            try:
+                st=os.fstat(fd)
+                if not stat.S_ISREG(st.st_mode)or st.st_nlink!=1 or st.st_uid!=os.getuid()or st.st_dev!=row['device']or any(getattr(st,'st_ino'if k=='inode'else'st_'+k)!=row[k]for k in ('size','inode','uid','mtime_ns','ctime_ns')):raise ValueError('owned original metadata inode changed')
+                if hashlib.sha256(os.read(fd,16385)).hexdigest()!=row['sha256']:raise ValueError('original metadata full SHA changed')
+            finally:os.close(fd)
+    check_metadata()
+    transfer_present={p.name for p in directory.iterdir()}if directory.exists()else set()
+    candidate_present={p.name for p in candidate.iterdir()}if candidate.exists()else set()
+    if not set(meta_names)<=transfer_present or set(meta_names)&candidate_present:raise ValueError('metadata preserved only in original transfer directory')
+    present=(transfer_present-set(meta_names))|candidate_present
     allowed=set(names)|({'state-000000.safetensors'}if not value['retire_failed_zero']else set())
     if not present<=allowed or not resumed and not set(names)<=present:raise ValueError('unowned new or missing original partial shard')
     if set(catalog['files'])!=set(names)-{'state-000000.safetensors'}:raise ValueError('exact original pending owned shard catalogue')
@@ -95,7 +114,8 @@ def _retire(envelope,authority,*,workspace,guard,now=None):
         st=path.lstat()
         if not stat.S_ISREG(st.st_mode)or st.st_nlink!=1 or any(getattr(st,'st_ino'if k=='inode'else'st_'+k)!=row[k]for k in ('size','inode','uid','mtime_ns','ctime_ns'))or st.st_dev!=row['device']:raise ValueError('original shard changed before retirement')
         path.unlink();freed+=row['size']
-    if value['retire_failed_zero']and directory.exists():directory.rmdir()
+    check_metadata()
+    if value['retire_failed_zero']and not metadata and directory.exists():directory.rmdir()
     if candidate.exists():candidate.rmdir()
     if pending.exists():
         if pending.read_bytes()!=raw:raise ValueError('pending catalogue changed during retirement')
