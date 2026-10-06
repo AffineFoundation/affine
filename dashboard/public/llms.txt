@@ -348,12 +348,21 @@ including supported fabricated tokens with regenerated model proofs rejected by
 the CDF gate. Its original archive has a ROOT full-readback ACK. Production
 enrollment, cross-node numerical adjudication and a new tolerance profile are
 not established by these controls. The 23:00 UTC writer recorded a submission
-for 202 current UIDs; newer CP20 numerical cases remain unresolved. Learning
+for 202 current UIDs; newer numerical cases remain unresolved in live scoring. Learning
 convergence remains unproven; epoch 31's checkpoint is now confirmed above.
 
 Nine original CP20 cases have also completed independent cross-node reference
 checks. Eight fit the existing narrow numerical bounds; one exceeds them. An
-eight-only historical UNKNOWN resolution is being prepared, preserving original
+eight-only historical UNKNOWN resolution is ROOT-reviewed and signed, preserving original
 reports and leaving later sampler/environment correctness unproven for traces
 that stopped at TOPLOC. This resolution is not yet deployed and does not broaden
 live proof tolerances or label those traces VALID.
+An independent read-only application to 26 authentic original jobs changed only
+those eight observations to UNKNOWN, preserving the earlier nine resolutions
+and leaving one out-of-bound CP20 case plus eight newer CP21 cases unchanged.
+Full reward-impact comparison and controlled activation remain pending.
+
+The hourly writer's matching historical-report support has passed 25 targeted
+controls and is available on GitHub. It preserves the writer's audit policy and
+selected-batch scope. Its exact historical allowlist is signed, but this writer
+update is not deployed until the same-evidence comparison passes.
