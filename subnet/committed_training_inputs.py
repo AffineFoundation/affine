@@ -41,7 +41,7 @@ def validate_admission(envelope,obj,manifest,authority):
     from . import training_startup_recovery as recovery
     if recovery.FIELD in manifest:
         value=authenticate(manifest[recovery.FIELD],authority)
-        if value.get('version')!=recovery.RESTORE_VERSION:raise ValueError('unaudited inputs require explicit pre-update restore recovery')
+        if value.get('version')not in recovery.RESTORE_VERSIONS:raise ValueError('unaudited inputs require explicit pre-update restore recovery')
         manifest=recovery.original_manifest(manifest,authority)
     if not selected(manifest):raise ValueError('explicit unaudited learner policy required')
     value=authenticate(envelope,authority)
