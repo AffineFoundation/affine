@@ -59,3 +59,17 @@ zero. These numbers establish compatibility and small-cohort performance,
 without claiming a 32-task result or convergence. Learning comparisons must use
 the same cached policy, source, model profile, task hashes, seeds and token cap
 for BEFORE and AFTER.
+
+The explicit `owned-cached-fixed32-1024-pair-v2` profile uses the same fixed32
+indices and seeds with `evaluation_token_cap: 1024`, a distinct experiment ID
+ending in `-cap1024-v1`, separate state/workspace and public epoch keys. ROOT
+signs the complete config and source route. `before_optimizer_steps: 10` and
+`after_optimizer_steps: 11` bind the original CP10 manifest to the immutable
+ROOT-signed CP10-to-CP11 completion, exact AFTER checkpoint file map and durable
+optimizer pointer. Later production checkpoints cannot replace that AFTER.
+The route must bind an evaluate job TTL of 1800 seconds; observation timeout
+continues observing the original signed job rather than issuing another job.
+`stop_after_pair: true` exits only after both exact queue requests complete and
+both genuine durable ACK model disposals complete, including lease release.
+This is a separate cached1024 experiment; it does not convert either the
+128-token latency diagnostic or the historical uncached1024 experiment.
