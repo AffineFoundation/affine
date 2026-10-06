@@ -185,8 +185,8 @@ Bounded, default-off confirmation recalibration now passes 42 CPU controls;
 it uses authenticated failed measurements to propose a new bound and requires
 a fresh confirmation, with fixed attempt/deadline limits and existing hard
 maxima. It restored the live opening on October 6 after a genuine fresh calibration and
-independent confirmation. Epoch 29 is collecting submissions from 247 registered
-identities under source `f21373d7ccb167bcd868f5ed03ce9ac7ef567d894e8ecc9e61f5d7f8645b67b8`,
+independent confirmation. Epoch 29 reopened for 247 registered identities and has reached the training
+stage with 201 eligible unaudited pairs (237 committed). It runs under source `f21373d7ccb167bcd868f5ed03ce9ac7ef567d894e8ecc9e61f5d7f8645b67b8`,
 with the original checkpoint and optimizer step 19 preserved. The new bound is
 0.0016632080078125; actual confirmation measured at most 0.00029754638671875.
 Opening is not evidence that epoch 29 training or convergence has completed.
