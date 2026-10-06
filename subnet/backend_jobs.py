@@ -10,6 +10,7 @@ import time
 import sys
 import importlib.abc
 import importlib.util
+import tempfile
 from importlib.metadata import version
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -30,6 +31,22 @@ FIXED_POLICY='bf16-full-adamw-fixed-epoch-reference-v2'
 COVERED_POLICY='bf16-full-adamw-covered-fixed-reference-v3'
 PERSISTENT_POLICY='bf16-cpu-fp32-master-task-normalized-persistent-v4'
 TRAINING_ATTRIBUTION='verified-pair-v1'
+
+def write_private_report(path, report):
+    """Publish canonical metadata atomically with private permissions."""
+    path = Path(path)
+    raw = canonical(report)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='report-')
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
 
 def validate_single_put_sizes(checkpoint, files):
     """Reject unsupported objects before uploading any checkpoint member.
@@ -1059,7 +1076,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                         failures.append(dict(env_id=row['env_id'],index=index,seed=seed,error_type=type(error).__name__,error=str(error)[:300]))
             report['heldout']=values;report['heldout_failures']=failures
     report['success']=True;report['completed_at']=time.time()
-    (out/'report.json').write_bytes(canonical(report));return report
+    write_private_report(out/'report.json',report);return report
 
 JOB_ENVELOPE_MAX_BYTES=4_000_000
 RECOVERY_JOB_ENVELOPE_MAX_BYTES=8_000_000
