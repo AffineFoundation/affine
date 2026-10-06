@@ -171,6 +171,8 @@ class Coordinator:
                 self._check_queue_identity()
                 db.execute('BEGIN IMMEDIATE')
                 self._check_queue_identity()
+                # Short BEGIN polls must not shorten the historical body/commit wait.
+                db.execute('PRAGMA busy_timeout=30000')
                 return db
             except sqlite3.OperationalError as error:
                 db.close()

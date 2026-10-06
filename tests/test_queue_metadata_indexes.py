@@ -53,10 +53,19 @@ class MetadataQueueTests(unittest.TestCase):
    with patch.object(self.queue,'_begin_transaction',wraps=self.queue._begin_transaction)as begin:
     with self.assertRaises(sqlite3.OperationalError):
      with self.queue.transaction()as db:
-      db.execute("INSERT INTO requests VALUES('w','n',1)");reader.execute('BEGIN');reader.execute('SELECT * FROM jobs').fetchall()
+      db.execute('PRAGMA busy_timeout=1');db.execute("INSERT INTO requests VALUES('w','n',1)");reader.execute('BEGIN');reader.execute('SELECT * FROM jobs').fetchall()
     self.assertEqual(begin.call_count,1)
   finally:reader.rollback();reader.close()
   with sqlite3.connect(self.path)as db:self.assertEqual(db.execute('SELECT count(*) FROM requests').fetchone()[0],0)
+ def test_short_BEGIN_retry_preserves_real_commit_wait(self):
+  reader=sqlite3.connect(self.path,check_same_thread=False);release=threading.Event()
+  t=threading.Thread(target=lambda:(release.wait(),time.sleep(.35),reader.rollback()));t.start();body=[]
+  try:
+   with self.queue.transaction()as db:
+    self.assertEqual(db.execute('PRAGMA busy_timeout').fetchone()[0],30000);body.append(1);db.execute("INSERT INTO requests VALUES('w','n',1)");reader.execute('BEGIN');reader.execute('SELECT * FROM jobs').fetchall();release.set()
+  finally:release.set();t.join();reader.close()
+  self.assertEqual(body,[1])
+  with sqlite3.connect(self.path)as db:self.assertEqual(db.execute('SELECT count(*) FROM requests').fetchone()[0],1)
  def test_swapped_inode_refuses_before_BEGIN(self):
   self.path.rename(self.path.with_suffix('.original'));sqlite3.connect(self.path).close()
   with patch('subnet.distributed_roles.sqlite3.connect',side_effect=AssertionError('no connection')):
