@@ -12,11 +12,15 @@ from .cache_lifecycle import snapshot,identifier
 from .storage import canonical
 from .distributed_roles import authenticate
 VERSION='sole-current-fp32-state-cache-v1'
+STAT_VERSION='sole-current-fp32-state-cache-stat-v2'
+STAT_VALIDATION='durable-unchanged-inode-v1'
 
 def policy(manifest):
     value=manifest.get('optimizer_state_local_cache')
     if value is None:return None
-    if (type(value)is not dict or set(value)!={'version','max_checkpoint_bytes'} or value['version']!=VERSION or
+    if (type(value)is not dict or not (
+        (set(value)=={'version','max_checkpoint_bytes'} and value['version']==VERSION) or
+        (set(value)=={'version','max_checkpoint_bytes','validation'} and value['version']==STAT_VERSION and value['validation']==STAT_VALIDATION)) or
         type(value['max_checkpoint_bytes'])is not int or not 1<=value['max_checkpoint_bytes']<=128*1024**3):
         raise ValueError('explicit bounded optimizer cache policy')
     publication=manifest.get('persistent_publication_policy')
@@ -35,6 +39,48 @@ def member(name):
     if not re.fullmatch(r'state-[0-9]{6}\.safetensors',name):raise ValueError('exact optimizer cache shard name')
     return name
 
+
+def fd_snapshot(fd):
+    import stat
+    st=os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink!=1 or st.st_uid!=os.getuid():
+        raise ValueError('owned immutable regular single-link state fd')
+    return dict(dev=st.st_dev,ino=st.st_ino,size=st.st_size,mtime=st.st_mtime_ns,
+                ctime=st.st_ctime_ns,mode=st.st_mode,uid=st.st_uid)
+
+
+def verification_body(value):
+    return dict(version=STAT_VALIDATION,job_id=value['job_id'],job_sha256=value['job_sha256'],
+                source_sha256=value['source_sha256'],descriptor_sha256=value['descriptor_sha256'],
+                ROOT_ack_sha256=sha(value['ROOT_ack']),files=value['files'])
+
+
+class OwnedShardReceipt:
+    """Internal opened-fd handoff from an authenticated, exclusively leased cache."""
+    def __init__(self,owner,fd,path,row,before,after,journal):
+        self.owner=owner;self.fd=fd;self.path=Path(path);self.row=row
+        self.before=before;self.after=after;self.journal=journal
+    def validate(self,path,shard,owner):
+        if (owner is not self.owner or owner.fd is None or
+            owner.policy['version']!=STAT_VERSION or not owner.current or
+            owner.verified_rows.get(shard['name'])!=self.before or
+            self.fd is None or Path(path).absolute()!=self.path or
+            (self.row['sha256'],self.row['size'])!=(shard['sha256'],shard['size'])):
+            raise ValueError('exact authorized owned-cache fd handoff')
+        if fd_snapshot(self.fd)!=self.after or snapshot(self.path)!=self.after:
+            raise ValueError('owned renamed state identity changed')
+        if json.loads(self.journal.read_bytes())!=dict(
+            version='verified-owned-state-rename-v1',job_id=owner.job['job_id'],
+            original_cache_job_id=owner.current['job_id'],descriptor_sha256=owner.current['descriptor_sha256'],
+            ROOT_ack_sha256=sha(owner.current['ROOT_ack']),name=shard['name'],
+            sha256=shard['sha256'],size=shard['size'],before=self.before,after=self.after,
+            destination=str(self.path)):
+            raise ValueError('exact immutable owned rename journal')
+        return '/proc/self/fd/'+str(self.fd)
+    def close(self):
+        if self.fd is not None:os.close(self.fd);self.fd=None
+
+
 class StateCache:
     def __init__(self,workspace,job,manifest,authority):
         self.workspace=Path(workspace).absolute()
@@ -43,7 +89,7 @@ class StateCache:
         if self.policy is None:raise ValueError('optimizer cache default is off')
         self.root=self.workspace/'.optimizer-state-cache';self.root.mkdir(mode=0o700,exist_ok=True)
         if self.root!=self.root.resolve():raise ValueError('optimizer cache root symlink')
-        self.fd=None;self.lock=threading.Lock();self.current=None;self.rows={};self.cache_evidence=[];self.promotion_wait_seconds=1800
+        self.fd=None;self.lock=threading.Lock();self.current=None;self.rows={};self.cache_evidence=[];self.verified_rows={};self.promotion_wait_seconds=1800
     def __enter__(self):
         self.fd=os.open(self.root/'lease',os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
         try:
@@ -146,6 +192,8 @@ class StateCache:
                     raise ValueError('approved parent candidate awaits original durability ACK; refuse cold abandonment')
                 self.discard(abandoned,'different-original-job-abandoned-unpromoted-cache');pending.unlink()
         if not marker.exists():self.cache_evidence.append(dict(outcome='cold',reason='no-promoted-cache'));return 0
+        marker_stat=snapshot(marker)
+        if marker_stat['mode']&0o077:raise ValueError('private owned optimizer catalogue required')
         value=json.loads(marker.read_bytes());ack=authenticate(value['ROOT_ack'],self.authority)
         if ack.get('version')!='durable-original-trainer-cache-ACK-v1'or ack.get('authority_state_committed')is not True or ack['trainer_state']['descriptor_sha256']!=value['descriptor_sha256']or ack['job_id']!=value['job_id']:
             raise ValueError('promoted cache ROOT durability binding')
@@ -165,17 +213,27 @@ class StateCache:
                 raise ValueError('unowned optimizer cache directory member')
             if set(shards)!=set(value['files']):reason='incomplete-cache'
             else:
+                fast=(self.policy['version']==STAT_VERSION and
+                      value.get('promotion_verification_sha256')==sha(verification_body(value)))
                 for name,row in value['files'].items():
                     path=directory/member(name)
                     try:
-                        if snapshot(path)!=row['stat']or hash_file(path)!=(shards[name]['sha256'],shards[name]['size']):reason='missing-or-corrupt-cache';break
+                        actual=snapshot(path)
+                        if (actual!=row['stat'] or actual['mode']&0o077 or
+                            (row['sha256'],row['size'])!=(shards[name]['sha256'],shards[name]['size'])):
+                            reason='missing-or-corrupt-cache';break
+                        if not fast and hash_file(path)!=(shards[name]['sha256'],shards[name]['size']):
+                            reason='missing-or-corrupt-cache';break
+                        if snapshot(path)!=actual:raise ValueError('state changed during cache admission')
+                        self.verified_rows[name]=actual
                     except FileNotFoundError:reason='missing-or-corrupt-cache';break
         if reason:
             self.discard(value,reason);marker.unlink();self.cache_evidence.append(dict(outcome='cold',reason=reason));return 0
         self.current=value;self.rows={r['name']:r for r in descriptor['shards']}
         size=sum(r['size']for r in self.rows.values())
         if size>self.policy['max_checkpoint_bytes']:raise ValueError('cached parent byte cap')
-        self.cache_evidence.append(dict(outcome='full-approved-cache',descriptor_sha256=sha(descriptor),size=size,all_SHA_size_verified=True))
+        self.cache_evidence.append(dict(outcome='full-approved-cache',descriptor_sha256=sha(descriptor),size=size,all_SHA_size_verified=not fast,
+            **(dict(validation=STAT_VALIDATION,previous_promotion_full_SHA_verified=fast,all_owned_stat_guards_verified=True)if self.policy['version']==STAT_VERSION else {})))
         return size
     def admit(self,plan,*,reclaimable_parent_bytes=0,disk_available=None):
         # Existing authenticated parent bytes are already occupied on disk and
@@ -198,7 +256,26 @@ class StateCache:
         # tensor-schema and finite-value checks remain in force before unlink.
         destination=Path(path).absolute()
         if destination!=destination.resolve()or not destination.is_relative_to(self.workspace):raise ValueError('owned restore destination')
-        os.rename(source,destination)
+        if self.policy['version']!=STAT_VERSION:
+            os.rename(source,destination);return None
+        if destination.exists()or destination.is_symlink():raise ValueError('new owned restore destination required')
+        before=snapshot(source)
+        if self.verified_rows.get(name)!=before:raise ValueError('admitted source state changed before rename')
+        fd=os.open(source,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+        try:
+            if fd_snapshot(fd)!=before:raise ValueError('opened state fd identity')
+            os.rename(source,destination);after=snapshot(destination)
+            # Only ctime may change because of this exact owned rename.
+            if any(after[k]!=before[k]for k in before if k!='ctime') or fd_snapshot(fd)!=after:
+                raise ValueError('known owned rename identity continuity')
+            journal=self.root/('rename-'+identifier(self.job['job_id'])+'-'+name+'.json')
+            if journal.exists():raise ValueError('immutable original shard rename journal')
+            self.save(journal,dict(version='verified-owned-state-rename-v1',job_id=self.job['job_id'],
+                original_cache_job_id=self.current['job_id'],descriptor_sha256=self.current['descriptor_sha256'],
+                ROOT_ack_sha256=sha(self.current['ROOT_ack']),name=name,sha256=self.rows[name]['sha256'],size=self.rows[name]['size'],
+                before=before,after=after,destination=str(destination)))
+            return OwnedShardReceipt(self,fd,destination,self.rows[name],before,after,journal)
+        except BaseException:os.close(fd);raise
     def begin_candidate(self):
         registry=self.root/'pending.json'
         if registry.exists():
@@ -247,7 +324,7 @@ def promote(ack,authority,workspace):
                 raise ValueError('idempotent promotion exact confirmed lineage')
             if pending.exists():
                 orphan=json.loads(pending.read_bytes())
-                if {k:v for k,v in already.items()if k!='ROOT_ack'}!=orphan:raise ValueError('promotion pending/current mismatch')
+                if {k:v for k,v in already.items()if k not in ('ROOT_ack','promotion_verification_sha256')}!=orphan:raise ValueError('promotion pending/current mismatch')
                 pending.unlink()
             return dict(promoted=True,idempotent=True,descriptor_sha256=state['descriptor_sha256'],bytes=sum(s['size']for s in state['descriptor']['shards']))
         if not pending.exists():
@@ -267,5 +344,7 @@ def promote(ack,authority,workspace):
             if previous_ack['trainer_state']['optimizer_steps']==value['trainer_state']['optimizer_steps']and previous_ack['trainer_state']['descriptor_sha256']!=value['trainer_state']['descriptor_sha256']:
                 raise ValueError('same optimizer counter different promotion lineage')
             if previous['job_id']!=candidate['job_id']:cache.discard(previous,'superseded-after-durable-ROOT-ACK')
-        candidate['ROOT_ack']=ack;cache.save(marker,candidate);pending.unlink()
+        candidate['ROOT_ack']=ack
+        if cache.policy['version']==STAT_VERSION:candidate['promotion_verification_sha256']=sha(verification_body(candidate))
+        cache.save(marker,candidate);pending.unlink()
         return dict(promoted=True,descriptor_sha256=sha(descriptor),bytes=sum(s['size']for s in shards.values()))

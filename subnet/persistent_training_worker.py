@@ -84,9 +84,11 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
         policy(manifest)
         local_cache=StateCache(Path(out).parent.parent,job,manifest,authority)
     with local_cache if local_cache else nullcontext():
+        cache_prepare_started=time.monotonic()
         cache_bytes=local_cache.prepare_parent(parent,manifest['source_bundle']['sha256'])if local_cache else 0
         cache_budget=local_cache.admit(plan,reclaimable_parent_bytes=cache_bytes)if local_cache else None
         admission=admit_resources(out,plan);restored=None;restore_evidence=[]
+        cache_prepare_seconds=time.monotonic()-cache_prepare_started
         transport=job['persistent_training']
         restore_started=time.monotonic()
         if parent is not None:
@@ -94,10 +96,11 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
             def fetch(name,path):
                 row=shards[name]
                 def cold(name,path):get_object(transport['parent_read_urls'][name],row['sha256'],path,row['size'])
-                if local_cache:local_cache.fetch(name,path,cold)
-                else:cold(name,path)
+                if local_cache:return local_cache.fetch(name,path,cold)
+                return cold(name,path)
             restored,restore_evidence=restore_state(parent,binding['parent']['descriptor_sha256'],
-                binding['input_checkpoint'],inventory,workspace=out,fetch_shard=fetch,resource_admission=admission,concurrency=concurrency)
+                binding['input_checkpoint'],inventory,workspace=out,fetch_shard=fetch,resource_admission=admission,concurrency=concurrency,
+                owned_cache=local_cache if local_cache and local_cache.policy['version']=='sole-current-fp32-state-cache-stat-v2' else None)
         restore_seconds=time.monotonic()-restore_started
         train_started=time.monotonic()
         destination,optimizer,diagnostics=train_epoch(runtime,pairs,out,
@@ -127,6 +130,8 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
             workspace=out,publish_shard=publish,readback_shard=readback,
             commit_descriptor=stage_descriptor,resource_admission=admission,concurrency=concurrency,readback_mode=readback_mode,retain_shard=local_cache.retain if local_cache else None)
         diagnostics['transport_phase_seconds']=dict(parent_state_restore=restore_seconds,
+            parent_cache_validation_and_admission=cache_prepare_seconds,
+            parent_cache_and_restore_total=cache_prepare_seconds+restore_seconds,
             training_and_checkpoint=training_and_checkpoint_seconds,
             **({'state_export_upload_only':time.monotonic()-export_started}if readback_mode!='trainer-full'else {'state_export_and_trainer_full_readback':time.monotonic()-export_started}),
             state_transfer_concurrency=concurrency,parent_restore_performed=parent is not None)

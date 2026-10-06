@@ -235,7 +235,7 @@ def _transfer_directory(workspace):
 
 
 def restore_state(descriptor, approved_sha256, input_checkpoint, inventory, *,
-                  workspace, fetch_shard, resource_admission, concurrency=None):
+                  workspace, fetch_shard, resource_admission, concurrency=None, owned_cache=None):
     """Restore approved disjoint spans; never expose partially materialized rows."""
     import torch
     from safetensors import safe_open
@@ -265,17 +265,27 @@ def restore_state(descriptor, approved_sha256, input_checkpoint, inventory, *,
         started=time.time()
         with counter_lock:
             counters['inflight']+=1;counters['maximum']=max(counters['maximum'],counters['inflight'])
+        owned_receipt=None
         try:
             path = transfer/shard['name']; phase=time.monotonic()
-            fetch_shard(shard['name'], path); fetch_seconds=time.monotonic()-phase
+            fetched=fetch_shard(shard['name'], path); fetch_seconds=time.monotonic()-phase
+            if owned_cache is not None and fetched is not None:
+                from .optimizer_state_cache import OwnedShardReceipt
+                if not isinstance(fetched,OwnedShardReceipt):raise ValueError('typed owned shard receipt required')
+                owned_receipt=fetched
             if not path.is_file() or path.is_symlink():
                 raise ValueError('downloaded state regular file required')
-            phase=time.monotonic(); actual_sha, size = _hash_file(path)
+            phase=time.monotonic()
+            if owned_receipt is not None:
+                read_path=owned_receipt.validate(path,shard,owned_cache)
+                actual_sha,size=shard['sha256'],shard['size']
+            else:
+                read_path=path;actual_sha,size=_hash_file(path)
             hash_seconds=time.monotonic()-phase
             if (actual_sha, size) != (shard['sha256'], shard['size']):
                 raise ValueError('downloaded state shard digest/size')
             phase=time.monotonic()
-            with safe_open(path, framework='pt', device='cpu') as source:
+            with safe_open(read_path, framework='pt', device='cpu') as source:
                 if set(source.keys()) != {r['key'] for r in shard['tensors']}:
                     raise ValueError('state shard tensor allowlist')
                 for metadata in shard['tensors']:
@@ -291,12 +301,15 @@ def restore_state(descriptor, approved_sha256, input_checkpoint, inventory, *,
                     target[start:start + count].copy_(value)
                     del value, target
             materialize_seconds=time.monotonic()-phase
+            if owned_receipt is not None:owned_receipt.validate(path,shard,owned_cache)
             path.unlink()
             receipt=dict(name=shard['name'],sha256=actual_sha,size=size,
                          phase_seconds=dict(fetch=fetch_seconds,SHA256=hash_seconds,
                              tensor_schema_finite_and_copy=materialize_seconds),
                          verified_materialization=True,local_shard_retired=True,
                          started_at=started,completed_at=time.time())
+            if owned_receipt is not None:
+                receipt.update(verification='prior-full-SHA-unchanged-owned-fd',current_hash_performed=False)
             if concurrency>1:
                 path=transfer/('restore-evidence-'+format(number,'06d')+'.json')
                 path.write_text(json.dumps(receipt,sort_keys=True));path.chmod(0o600)
@@ -308,6 +321,7 @@ def restore_state(descriptor, approved_sha256, input_checkpoint, inventory, *,
                     started_at=started,completed_at=time.time()),sort_keys=True));path.chmod(0o600)
             raise
         finally:
+            if owned_receipt is not None:owned_receipt.close()
             with counter_lock:counters['inflight']-=1
     results={}
     if concurrency==1:

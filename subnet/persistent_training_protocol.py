@@ -28,7 +28,9 @@ def optimizer_cache_policy(manifest):
     """Pure pre-authentication admission: never import execution/cache code."""
     value=manifest.get('optimizer_state_local_cache')
     if value is None:return None
-    if (type(value)is not dict or set(value)!={'version','max_checkpoint_bytes'} or value['version']!='sole-current-fp32-state-cache-v1' or
+    if (type(value)is not dict or not (
+        (set(value)=={'version','max_checkpoint_bytes'} and value['version']=='sole-current-fp32-state-cache-v1') or
+        (set(value)=={'version','max_checkpoint_bytes','validation'} and value['version']=='sole-current-fp32-state-cache-stat-v2' and value['validation']=='durable-unchanged-inode-v1')) or
         type(value['max_checkpoint_bytes'])is not int or not 1<=value['max_checkpoint_bytes']<=128*1024**3):
         raise ValueError('explicit bounded optimizer cache policy')
     publication=manifest.get('persistent_publication_policy')
