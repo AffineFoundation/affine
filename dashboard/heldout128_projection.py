@@ -111,7 +111,7 @@ def rows(pointer, production):
             if digest(plans)!=c['cohort_sha256'] or any(v[2]['checkpoint']['id']!=cp for v in originals):raise ValueError('one exact ordered128 cohort checkpoint')
             values=[r for v in originals for r in v[4]];keys=[(v['index'],v['seed'])for v in values]
             if len(set(keys))!=128 or set(v['index']for v in values)&set(c['excluded_indices']):raise ValueError('no overlap or old32 reuse')
-            successes=sum(v['reward'] for v in values);score=g['result']['result'];retirement=score['retirement'];score=score['score']
+            successes=sum(int(v['reward'])for v in values);score=g['result']['result'];retirement=score['retirement'];score=score['score']
             if(score['count']!=128 or score['cohort_sha256']!=c['cohort_sha256'] or score['successes']!=successes or score['mean_reward']!=successes/128 or retirement['status']!='complete'):raise ValueError('actual full128 score and retirement')
             if s.get('version')=='owned-cached-heldout128-checkpoint-actual-v1' and((s['checkpoint']['id']if isinstance(s['checkpoint'],dict)else s['checkpoint'])!=cp or s['successes']!=successes):raise ValueError('single summary score')
             if s.get('version')=='owned-cached-heldout128-paired-actual-v1' and s[label+'_successes']!=successes:raise ValueError('paired summary score')
