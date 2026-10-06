@@ -185,6 +185,14 @@ reports were archived and authenticated, and the research model replicas were
 automatically retired after durable acknowledgement. Completed scientific
 outputs were not regenerated during metadata recovery.
 
+A separate matched 128-task CP13 evaluation is now running on the retained
+research H200 while E23 recovery proceeds on the trainer. Its four original
+32-task jobs use the same held-out cohort and cached 1,024-token harness.
+No CP13 score or CP14 comparison is claimed until original jobs and durable
+reports complete. Failed-export evidence archival after a genuine replacement
+ACK is available as default-off operator code; its durable retry integration
+is still being prepared and is not part of the running recovery source.
+
 ## Public interfaces and documentation
 
 Read https://affine.io/mining.json for authority and current_url. Public
