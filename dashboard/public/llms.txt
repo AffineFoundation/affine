@@ -171,10 +171,13 @@ stat successor has passed CPU qualification on all ten roles, but its first
 real cold and subsequent warm training runs remain pending. It is not the active
 signed source. No external miner should adopt it from a research label alone.
 
-The larger matched 128-task checkpoint comparison is running. Its first CP11
-chunk completed 19/32; this is not the full 128-task result or evidence of a
-checkpoint improvement. The same original jobs resumed after a metadata
-permission bug; completed scientific outputs were not regenerated.
+The larger matched 128-task checkpoint comparison completed: CP11 solved
+77/128 (60.16%) and CP12 solved 86/128 (67.19%), with ten gains and one loss
+on the same held-out tasks. This is a 7.03 percentage-point improvement on one
+cohort, not sustained convergence. All eight original jobs completed, their
+reports were archived and authenticated, and the research model replicas were
+automatically retired after durable acknowledgement. Completed scientific
+outputs were not regenerated during metadata recovery.
 
 ## Public interfaces and documentation
 
