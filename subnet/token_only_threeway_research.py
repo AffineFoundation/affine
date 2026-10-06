@@ -25,9 +25,9 @@ def verify(runtime, manifest, rollout, *, eligible_indices):
     if context is None or context != getattr(runtime, 'sampling_context', None):
         raise InvalidSample('original checkpoint/public draw binding')
     forced_sampling.validate_harness(runtime.harness, context['contract'])
-    from .fast_prefill_audit import bind, SUPPORT_VERSION
+    from .fast_prefill_audit import bind, SUPPORT_VERSION, THREEWAY_VERSION
     from .threeway_prefill_research import verify_sampling
-    if context['contract']['version'] != SUPPORT_VERSION:
+    if context['contract']['version'] not in (SUPPORT_VERSION, THREEWAY_VERSION):
         raise ValueError('explicit calibrated prefill support-adjudication contract required')
     calibration = bind(manifest, runtime.harness)
     if calibration != getattr(runtime, 'fast_sampling_calibration', None):

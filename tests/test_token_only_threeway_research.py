@@ -35,6 +35,25 @@ class TokenOnlyThreewayControls(unittest.TestCase):
             self.check()
         self.assertEqual(self.runtime.model.calls-before,1)
 
+    def test_original_v4_draws_remain_v4_in_token_only_comparison(self):
+        from test_compact_threeway_sampling import CompactThreeway
+        self.runtime, self.manifest = CompactThreeway().runtime()
+        self.manifest['token_only_verification_policy'] = dict(tokens.POLICY)
+        with patch('subnet.model.create_session', return_value=fixture.Session()):
+            rollout, _ = self.runtime.rollout(2, 0)
+        self.document = tokens.document(rollout)
+        before = self.runtime.model.calls
+        with patch('subnet.fast_prefill_audit.verify_cached_reference', side_effect=AssertionError('no fallback')):
+            self.assertTrue(self.check()['valid'])
+        self.assertEqual(self.runtime.model.calls-before, 1)
+        retagged = copy.deepcopy(self.manifest)
+        from subnet.fast_prefill_audit import SUPPORT_VERSION
+        contract = retagged['sampling_contract']
+        contract.update(version=SUPPORT_VERSION, verification='prefill-cdf-calibrated', support_adjudication='exact-cached-replay-v1')
+        contract.pop('uncertainty_adjudication')
+        with self.assertRaises(InvalidSample):
+            self.check(manifest=retagged)
+
     def test_numerical_ambiguity_is_not_converted_to_success_or_fraud(self):
         from subnet.fast_prefill_audit import NumericalAmbiguity
         with patch('subnet.threeway_prefill_research.verify_sampling',side_effect=NumericalAmbiguity('calibrated boundary')):

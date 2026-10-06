@@ -18,3 +18,12 @@ on the second trajectory, a same-trajectory false reward, and honest uncertainty
 without conversion to validity or fraud. The existing two-H200 v4 result bytes
 remain evidence for their original source only. This default-off change is not
 an admission, a rewrite of those results, or activation of a new mining contract.
+
+The research comparison accepts an authenticated original v3 support contract or
+an original v4 three-way contract. Its version and complete public-draw context
+must exactly match the runtime; changing a historical v4 manifest to v3 for a
+comparison is forbidden. A fresh v4 CPU control passes with one prefill and no
+cached fallback, and rejects the same document under a retagged v3 context.
+This permits comparison on the original v4 research artifacts without changing
+their tokens, seeds, receipts, calibration or generation source. It supplies no
+new cross-H200 performance evidence by itself.
