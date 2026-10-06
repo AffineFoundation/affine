@@ -52,11 +52,13 @@ The successor audit service is running. A fresh canary completed its original
 leased job, with an authenticated worker report and one valid fully audited batch.
 It then automatically retired its downloaded checkpoint and claimed another job.
 The canary took 244 seconds, including 210 seconds downloading/authenticating
-15.2 GB of checkpoint files. The remaining worker bootstrap updates are being
-rolled out safely; two roles have finite proof-qualification work. One successful
+15.2 GB of checkpoint files. All five production workers now have the corrected bootstrap; two roles have
+finite proof-qualification work. One successful
 canary does not establish sustained fleet-wide auditing.
 Historical authenticated audits remain evidence for their original contracts.
-The independent learning loop completed epoch 26 and published checkpoint 17.
+The independent learning loop completed epoch 27 in 48.9 minutes, trained on
+227 eligible unaudited task pairs, and published checkpoint 18. Epochs 24 through
+27 each finished below one hour; chain submission remains outside this pilot.
 Chain weight submission
 remains disabled. Follow the latest signed OPEN manifest for the
 current mining checkpoint and deadline; a published checkpoint alone is not
@@ -273,3 +275,9 @@ Implementation and contracts:
 Historical notes, superseded contracts and original measurements are preserved:
 https://github.com/AffineFoundation/affine/blob/main/docs/operations-history-2026-10-06-before-guide-reconciliation.md
 They do not authorize new mining or redefine the current signed manifest.
+
+Token-only research status: one H200 completed the corrected full 182-control
+matrix with a genuine successful exit, signed full archive acknowledgement and
+automatic owned-model retirement. The matching second-host run is pending.
+This is not token-only production admission; the live miner format remains
+selected-token logprobs plus TOPLOC under the signed epoch manifest.

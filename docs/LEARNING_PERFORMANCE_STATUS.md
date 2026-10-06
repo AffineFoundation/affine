@@ -92,3 +92,19 @@ files in this scientific source. Bounded parallel authenticated downloads are a
 prospective transport improvement, not a measured deployed speedup. Other workers
 are being updated without interrupting active jobs; one canary does not establish
 sustained fleet recovery.
+
+Epoch 27 completed in 48.87 minutes, trained on 227 eligible unaudited task pairs,
+advanced optimizer step 17 to 18 and published checkpoint
+`703a7a310e06c9b4ca80fa872c28707d01ad6d64ea7d0a7ecd4bf52566cc2810`.
+Its learner completion was authority-signature verified. Four consecutive
+sub-hour learning iterations do not establish sustained uptime or convergence.
+
+The corrected token-only matrix completed on H200 B: 182 control rows, 192 causal
+forwards, zero cached fallbacks, genuine successful exit, full archive readback
+and automatic owned-model retirement. Each direct mode reproduced three accepts,
+one unknown and 80 CDF-invalid mutations. Backend native false-outcome, same-task
+off-policy and invalid-dominance controls passed. Total wall time was 551.27
+seconds including checkpoint download and loading. Official direct checks took
+158.87 seconds and token-only checks 125.71 seconds in a single ordered run;
+this is not a controlled speedup estimate. The matching H200 A run remains
+pending, and neither historical CP11 research nor one host admits production.
