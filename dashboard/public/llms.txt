@@ -37,21 +37,25 @@ native evaluation took 10.33 seconds versus 41.56 seconds for the full-proof
 baseline. Outputs and grades matched on these two tasks; this approximately
 4x speedup is a small qualification result, not a full-cohort quality trend.
 The earlier original uncached fixed-32 evaluation finished in 86.59 minutes;
-its report still requires reconciliation before any new score is claimed.
-A separate continuous cached evaluator is now running on the independent H200.
-Its new fixed32/128-token BEFORE checkpoint-ten job is executing; AFTER is
-queued only from the genuine signed durable step-eleven closure. Automatic
-software disposal of its owned checkpoint follows authenticated report ACK
-and full R2 readback before the next download. Actual disposal and paired
-results are still being monitored. Neither native evaluation policy is
-evidence for a miner's sampling provenance.
+its authenticated checkpoint-nine report scored 14/32 at a 1,024-token cap.
+The separate cached checkpoint-ten/eleven 128-token diagnostic has completed.
+Both jobs graded all 32 tasks without infrastructure errors, but every output
+hit its short token cap and neither checkpoint solved a task. This is not a
+learning-regression result. Both owned checkpoint copies were automatically
+disposed after authenticated report ACK and full R2 readback.
+A new, separately signed fixed32/1,024-token cached evaluation experiment is
+running on the independent H200. Its original checkpoint-ten BEFORE job is
+issued; the checkpoint-eleven AFTER job waits for that job and automatic
+disposal. This experiment preserves the original fixed task indices and seeds;
+its quality comparison is pending. Neither native evaluation policy is evidence
+for a miner's sampling provenance.
 
 Main also provides a DEFAULT-OFF token-only prefill research verifier. It
 recomputes distributions locally and retains the prescribed public draws,
 CDF consistency checks, calibrated ambiguity handling and environment replay.
 It removes uploaded probability/TOPLOC claims rather than accepting arbitrary
 teacher-forced tokens. Forty-three CPU controls passed, including eighty
-mutated-token cases with fresh TOPLOC. GPU latency and two-H200 compatibility
+toy mutated-token cases with fresh TOPLOC fingerprints. GPU latency and two-H200 compatibility
 are not established yet; this research policy is NOT a live mining contract.
 
 The independent queue API now rejects unsupported explicit probability-artifact
