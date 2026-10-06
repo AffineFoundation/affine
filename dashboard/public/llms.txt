@@ -41,10 +41,11 @@ K=1/L=1, at most three batches per UID, the 16-attempt ceiling, selected-token
 logprobs plus TOPLOC, eight-stream state transport, and nonpayable operation
 are unchanged. Seven verifier workers are enrolled. The newest additive source
 and storage-capacity rollout has completed on all seven workers. The audit
-coordinator is running with indexed queue queries and short read-only reporting
-snapshots. Actual verifier admission is still being checked: historical job
-transport validation can select the wrong source before GPU execution. No new
-successful audit is implied by worker enrollment or an active coordinator.
+coordinator's indexed/read-only successor later stopped on a SQLite enqueue
+commit lock. A guarded WAL concurrency fix is being prepared; auditing is not
+yet stable. Five production workers have restarted with corrected registry-selected
+source-bound capacity validation; two other roles are reserved for finite proof
+qualification. No new successful audit is implied by an active worker alone.
 Historical authenticated audits remain evidence for their original contracts.
 The independent learning loop completed epoch 25 and opened epoch 26.
 Chain weight submission
@@ -232,8 +233,9 @@ Verifier download-capacity admission and automatic per-checkpoint size metadata
 are implemented and tested as operator code. They reserve missing
 model and artifact bytes before backend execution, renew the original lease
 on infrastructure deferral, and protect active checkpoint leases. The combined
-worker rollout completed across seven roles. Source-bound admission validation
-is still being qualified; deployment alone does not prove successful audits. The independently running metadata
+worker rollout completed across seven roles; a subsequent source-bound validation
+fix is installed on five restarted production workers. The remaining two roles
+have finite research reservations. Deployment alone does not prove successful audits. The independently running metadata
 observer follows genuinely published checkpoints and authenticated queued
 historical jobs, and delivers signed byte inventories automatically. It does
 not download models or provide proof-validity credit.
