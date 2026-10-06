@@ -76,3 +76,38 @@ class AdapterTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+class PrelaunchContinuationTests(unittest.TestCase):
+    def test_actual_emitted_missing_parent_probe_and_metadata_install(self):
+        from ops.continuous_owned_heldout128_ssh import PRELAUNCH
+        with tempfile.TemporaryDirectory()as d:
+            root=Path(d)/'groups'/'original';plan=dict(root=str(root),jobs={'exact-original-job':'a'*64})
+            def probe():
+                z=subprocess.run([sys.executable,'-I','-B','-'],input=emit(PRELAUNCH,plan),capture_output=True,text=True,timeout=10)
+                self.assertEqual(z.returncode,0,z.stderr);return json.loads(z.stdout)
+            self.assertEqual(probe()['status'],'unlaunched');self.assertFalse(root.exists())
+            from ops.continuous_owned_heldout128_ssh import INSTALL_INPUTS
+            value=b'exact original';install=dict(root=str(root),objects={'declared-0.json':dict(hex=value.hex(),sha256=hashlib.sha256(value).hexdigest())})
+            z=subprocess.run([sys.executable,'-I','-B','-'],input=emit(INSTALL_INPUTS,install),capture_output=True,text=True,timeout=10)
+            self.assertEqual(z.returncode,0,z.stderr);self.assertEqual((root/'declared-0.json').read_bytes(),value)
+            install['objects']['declared-0.json']['hex']=b'changed original'.hex();install['objects']['declared-0.json']['sha256']=hashlib.sha256(b'changed original').hexdigest()
+            z=subprocess.run([sys.executable,'-I','-B','-'],input=emit(INSTALL_INPUTS,install),capture_output=True,text=True,timeout=10)
+            self.assertNotEqual(z.returncode,0);self.assertEqual((root/'declared-0.json').read_bytes(),value)
+            (root/'supervisor.launch-marker').touch()
+            self.assertEqual(probe()['status'],'observing-original')
+            (root/'supervisor.launch-marker').unlink();(root/'jobs'/'exact-original-job').mkdir(parents=True)
+            self.assertEqual(probe()['status'],'observing-original')
+    def test_reconcile_never_launches_marker_unknown_busy_or_expired(self):
+        import test_owned_cached_group_operator as fixture
+        f=fixture.OperatorTests();f.setUp();self.addCleanup(f.doCleanups)
+        a=Adapter.__new__(Adapter);a.authority=f.authority;launched=[];a.launch=lambda p:launched.append(p);a.idle=lambda:True
+        p=dict(scope=f.sign(f.scope),original_jobs=f.jobs,workspace=str(f.root),expires_at=10**12)
+        a.remote=lambda *x:dict(status='observing-original')
+        self.assertEqual(a.reconcile_launch(p)['status'],'observing-original');self.assertEqual(launched,[])
+        a.remote=lambda *x:(_ for _ in()).throw(TimeoutError('unknown'))
+        with self.assertRaises(TimeoutError):a.reconcile_launch(p)
+        self.assertEqual(launched,[])
+        a.remote=lambda *x:dict(status='unlaunched');a.idle=lambda:False
+        self.assertEqual(a.reconcile_launch(p)['status'],'physical-reservation-deferred');self.assertEqual(launched,[])
+        a.idle=lambda:True;self.assertTrue(a.reconcile_launch(p)['same_original_prelaunch_continued']);self.assertEqual(len(launched),1)
+        p['expires_at']=0;self.assertEqual(a.reconcile_launch(p)['status'],'expired-unissued');self.assertEqual(len(launched),1)

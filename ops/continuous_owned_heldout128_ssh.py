@@ -31,6 +31,28 @@ for p in pathlib.Path('/proc').iterdir():
 print(json.dumps(dict(machine=hashlib.sha256(pathlib.Path('/etc/machine-id').read_bytes()).hexdigest(),gpu=subprocess.check_output(['nvidia-smi','--query-gpu=uuid','--format=csv,noheader'],text=True,timeout=10).strip(),compute=subprocess.check_output(['nvidia-smi','--query-compute-apps=pid','--format=csv,noheader'],text=True,timeout=10).strip(),active=active,free=shutil.disk_usage('/root').free,ram=int(next(x.split()[1]for x in pathlib.Path('/proc/meminfo').read_text().splitlines()if x.startswith('MemAvailable:')))*1024,runtime={k:importlib.metadata.version(k)for k in PLAN['runtime']})))
 '''
 
+PRELAUNCH = """import pathlib
+B=pathlib.Path(PLAN['root']);assert B.resolve()==B
+observed=[]
+if B.exists():
+ assert not B.is_symlink()
+ for name in ('supervisor.launch-marker','supervisor.launch.json','group-supervisor-original.json','group-supervisor-terminal.json'):
+  if (B/name).exists():observed.append(name)
+ for jid in PLAN['jobs']:
+  for p in (B/'runner-status'/(jid+'.json'),B/'jobs'/jid):
+   if p.exists():observed.append('original-job-evidence')
+for p in pathlib.Path('/proc').iterdir():
+ if not p.name.isdigit():continue
+ try:cmd=(p/'cmdline').read_bytes()
+ except OSError:continue
+ if str(B).encode()in cmd or any(j.encode()in cmd for j in PLAN['jobs']):observed.append('original-process')
+print(json.dumps(dict(status='observing-original'if observed else'unlaunched',evidence=sorted(set(observed)))))
+"""
+
+
+INSTALL_INPUTS = "import pathlib,os,hashlib\nB=pathlib.Path(PLAN['root']);B.mkdir(mode=0o700,parents=True,exist_ok=True);assert B.resolve()==B and not B.is_symlink()\nfor name,item in PLAN['objects'].items():\n p=B/name;raw=bytes.fromhex(item['hex']);assert hashlib.sha256(raw).hexdigest()==item['sha256']\n if p.exists():assert not p.is_symlink()and p.read_bytes()==raw\n else:\n  fd=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)\n  with os.fdopen(fd,'wb')as f:f.write(raw);f.flush();os.fsync(f.fileno())\nprint('{}')\n"
+
+
 STAGE = '''import pathlib,hashlib,tarfile,os,sys
 B=pathlib.Path(PLAN['root']);assert B.resolve()==B
 B.mkdir(mode=0o700,exist_ok=True)
@@ -192,16 +214,7 @@ class Adapter:
         # All mutable inputs are exclusive-create and exact on continuation.
         objects={'group.ROOT-SIGNED.json':canonical(packet['scope']),'group_supervisor.py':self.supervisor}
         objects.update({'declared-'+str(i)+'.json':canonical(v)for i,v in enumerate(packet['original_jobs'])})
-        self.remote('''import pathlib,os,hashlib
-B=pathlib.Path(PLAN['root']);B.mkdir(mode=0o700,exist_ok=True);assert not B.is_symlink()
-for name,item in PLAN['objects'].items():
- p=B/name;raw=bytes.fromhex(item['hex']);assert hashlib.sha256(raw).hexdigest()==item['sha256']
- if p.exists():assert not p.is_symlink()and p.read_bytes()==raw
- else:
-  fd=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
-  with os.fdopen(fd,'wb')as f:f.write(raw);f.flush();os.fsync(f.fileno())
-print('{}')
-''',dict(root=root,objects={n:dict(hex=b.hex(),sha256=hashlib.sha256(b).hexdigest())for n,b in objects.items()}))
+        self.remote(INSTALL_INPUTS,dict(root=root,objects={n:dict(hex=b.hex(),sha256=hashlib.sha256(b).hexdigest())for n,b in objects.items()}))
         args=[self.endpoint['python'],'-B',root+'/group_supervisor.py','--scope',root+'/group.ROOT-SIGNED.json',
               '--authority',self.authority,'--cpu-root',str(stage/'cpu-root'),'--jobs']+[root+'/declared-'+str(i)+'.json'for i in range(4)]+['--execute']
         if not self.idle():raise ValueError('physical reservation changed after CPU staging, before original GPU launch')
@@ -211,6 +224,25 @@ with(B/'supervisor.private.log').open('xb')as f:p=subprocess.Popen(PLAN['args'],
 v=dict(pid=p.pid,ticks=pathlib.Path('/proc/'+str(p.pid)+'/stat').read_text().rsplit(')',1)[1].split()[19],at=time.time())
 (B/'supervisor.launch.json').write_text(json.dumps(v));print(json.dumps(v))
 ''',dict(root=root,args=args))
+
+    def reconcile_launch(self,packet):
+        """Continue only an authenticated original with proof no launch occurred.
+
+        Marker is written before Popen. Any marker/runner/job/process evidence
+        means observe only, including unknown lost replies. Missing parents are
+        CPU staging, not authority to replace a request or refresh its lifetime.
+        """
+        scope=signed(packet['scope'],self.authority)
+        if time.time()>=packet['expires_at']:return dict(status='expired-unissued')
+        jobs={signed(j,self.authority)['job_id']:digest(signed(j,self.authority))for j in packet['original_jobs']}
+        if jobs!={j:v['job_sha256']for j,v in scope['original_jobs'].items()}:raise ValueError('exact original continuation identities')
+        proof=self.remote(PRELAUNCH,dict(root=packet['workspace'],jobs=jobs))
+        if proof['status']!='unlaunched':return dict(status='observing-original')
+        if not self.idle():return dict(status='physical-reservation-deferred')
+        # launch repeats only idempotent exact source/CPU/input staging. Its
+        # exclusive marker still prevents two observers issuing one supervisor.
+        self.launch(packet)
+        return dict(status='observing-original',same_original_prelaunch_continued=True)
 
     def observe(self,packet):
         scope=signed(packet['scope'],self.authority)
