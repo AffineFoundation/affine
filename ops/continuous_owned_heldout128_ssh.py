@@ -50,6 +50,18 @@ print(json.dumps(dict(status='observing-original'if observed else'unlaunched',ev
 """
 
 
+CPU_PREFLIGHT = """import sys,pathlib
+sys.dont_write_bytecode=True;sys.path.insert(0,PLAN['cpu_root'])
+from ops.owned_cached_group_operator import LocalOriginalTransport,validate_originals
+from ops.owned_cached_group_retention import validate_scope
+from subnet.backend_jobs import signed
+scope=validate_scope(PLAN['scope'],PLAN['authority'],PLAN['root'],PLAN['source_files'])
+validate_originals(scope,PLAN['jobs'],PLAN['authority'])
+LocalOriginalTransport(scope,PLAN['authority'])
+print(json.dumps(dict(full_original_CPU_preflight=True,original_jobs=4,GPU_job_launched=False)))
+"""
+
+
 INSTALL_INPUTS = "import pathlib,os,hashlib\nB=pathlib.Path(PLAN['root']);B.mkdir(mode=0o700,parents=True,exist_ok=True);assert B.resolve()==B and not B.is_symlink()\nfor name,item in PLAN['objects'].items():\n p=B/name;raw=bytes.fromhex(item['hex']);assert hashlib.sha256(raw).hexdigest()==item['sha256']\n if p.exists():assert not p.is_symlink()and p.read_bytes()==raw\n else:\n  fd=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)\n  with os.fdopen(fd,'wb')as f:f.write(raw);f.flush();os.fsync(f.fileno())\nprint('{}')\n"
 
 
@@ -215,6 +227,8 @@ class Adapter:
         objects={'group.ROOT-SIGNED.json':canonical(packet['scope']),'group_supervisor.py':self.supervisor}
         objects.update({'declared-'+str(i)+'.json':canonical(v)for i,v in enumerate(packet['original_jobs'])})
         self.remote(INSTALL_INPUTS,dict(root=root,objects={n:dict(hex=b.hex(),sha256=hashlib.sha256(b).hexdigest())for n,b in objects.items()}))
+        self.remote(CPU_PREFLIGHT,dict(cpu_root=str(stage/'cpu-root'),scope=packet['scope'],authority=self.authority,
+                                      root=root,source_files=self.p['source_files'],jobs=packet['original_jobs']),90)
         args=[self.endpoint['python'],'-B',root+'/group_supervisor.py','--scope',root+'/group.ROOT-SIGNED.json',
               '--authority',self.authority,'--cpu-root',str(stage/'cpu-root'),'--jobs']+[root+'/declared-'+str(i)+'.json'for i in range(4)]+['--execute']
         if not self.idle():raise ValueError('physical reservation changed after CPU staging, before original GPU launch')

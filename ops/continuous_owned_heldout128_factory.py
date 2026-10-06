@@ -4,6 +4,7 @@ No GPU dispatch, clock extension on retries, task selection, or checkpoint
 mutation occurs here. The caller durably saves the first returned packet.
 """
 import copy
+import hashlib
 from pathlib import Path
 
 from subnet.backend_jobs import signed
@@ -13,7 +14,18 @@ from ops.owned_cached_group_retention import validate_scope
 from ops.owned_cached_larger_cohort import SOURCE
 
 
-def prepare_packet(policy, publication, identity, authority, signer, *, now, refresh_manifest):
+def prepare_packet(policy, publication, identity, authority, signer, *, now, refresh_manifest, cpu_scope_template=None):
+    template_scope=policy['group_scope_template'] if cpu_scope_template is None else cpu_scope_template
+    required=('ops/owned_cached_group_operator.py','ops/owned_cached_group_retention.py',
+              'ops/owned_cached_larger_cohort.py','ops/owned_cached_group_frozen_cache.py')
+    pins=template_scope.get('operator_dependency_pins',{})
+    if set(pins)!=set(required):raise ValueError('exact four ROOT CPU group dependency names before originals')
+    for name in required:
+        row=policy['cpu_dependencies'][name];raw=Path(row['path']).read_bytes()
+        if hashlib.sha256(raw).hexdigest()!=row['sha256'] or pins[name]!=row['sha256']:
+            raise ValueError('actual four-file CPU dependency hashes before originals')
+    if template_scope.get('operator_file_sha256')!=pins[required[0]]:
+        raise ValueError('exact ROOT CPU group operator before originals')
     original=signed(policy['template_original_job'],authority)
     template=signed(original['manifest'],authority)
     if (original.get('role')!='evaluate' or original.get('checkpoint_cache') is not None or
@@ -46,7 +58,7 @@ def prepare_packet(policy, publication, identity, authority, signer, *, now, ref
     if scientific(manifest)!=scientific(before):
         raise ValueError('transport refresh changed scientific template or checkpoint bytes')
     endpoint=copy.deepcopy(policy['endpoint']);endpoint.update(workspace=str(root),code=str(code))
-    scope=copy.deepcopy(policy['group_scope_template'])
+    scope=copy.deepcopy(template_scope)
     scope.update(created_at=now,expires_at=expires,execute_allowed=True,workspace=str(root),source_path=str(code),
                  checkpoint=copy.deepcopy(manifest['checkpoint']),groups=copy.deepcopy(policy['groups']),
                  source_sha256=SOURCE,source_files=policy['source_files'],runtime_versions=policy['runtime_versions'],
