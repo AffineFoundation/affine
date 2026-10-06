@@ -1,85 +1,44 @@
-# Testing the new Affine miner
+# Start an Affine MATH miner
 
-This is an experimental inference-verification training loop for subnet 120.
-Miners download a signed checkpoint and environment challenge, find positive and
-negative rollout batches, attach TOPLOC activation fingerprints and model
-probability records, and upload privately through encrypted single-object R2
-capabilities. After the deadline, the controller freezes submissions, publishes
-an audit history, verifies/scopes duplicate environment indices, calculates
-proposed weights and trains the next checkpoint. The next epoch waits for training.
+Read https://affine.io/llms.txt first. The latest signed OPEN manifest and its
+approved source are authoritative; GitHub main includes default-off research.
+The current pilot is nonpayable and does not submit new-mechanism chain weights.
 
-The [selected-token probability artifact proposal](COMPACT_PROBABILITY_ARTIFACT_PROPOSAL.md)
-defines a prospective explicit signed policy that transports token log probabilities
-and required TOPLOC fingerprints while the verifier recomputes the complete sampling
-distribution. It is not a live activation. Existing manifests without that policy
-continue to require their original full-vocabulary probability arrays.
+The deployed math contract requires K=1/L=1, at most three batches per UID,
+and at most sixteen prescribed attempts per task. Upload selected-token log
+probabilities and TOPLOC, not full-vocabulary arrays. Audits check prescribed
+sampler consistency; TOPLOC alone is insufficient. Training uses cheap-eligible
+unaudited submissions independently of the audit loop. Token-only and three-way
+research checks are not the active miner contract.
 
-## Forced sampling update — October 4, 2026
+## Identity and setup
 
-When the signed manifest contains `forced-inverse-cdf-replay-v1`, use the newly
-admitted source and prescribed sampler. The epoch fixes randomness, checkpoint,
-task, attempt, turn and token position. Attempts range from zero to the signed
-limit minus one (currently 128 attempts). The source chooses the corresponding
-draws; an arbitrary seed or synthesized answer with valid TOPLOC does not qualify.
-Audited outputs must exactly replay, including stopping. The qualified launch
-profile is H200/SM90 with the exact packages and numerical settings in the
-manifest; older RTX 3090 qualification does not establish compatibility.
-
-Read https://affine.io/mining.json and the signed manifest for actual activation
-and upload availability. The contract activated from epoch nine on October 4;
-earlier epochs keep their original rules. The current pilot quota is three
-batches per identity per epoch, each
-containing one successful and one unsuccessful trajectory for a distinct task.
-Only fully audited valid batches earn reward points or enter training. See
-[FORCED_SAMPLING_QUALIFICATION.md](FORCED_SAMPLING_QUALIFICATION.md) for controls,
-costs and limitations; they are not a completed live epoch or a learning gain.
-
-## Historical launch preparation — October 3, 2026
-
-The operator authorized prospective live MATH rewards. At that point preparation
-was under way and weight setting was not live. Follow https://affine.io/llms.txt and
-https://affine.io/mining.json for actual opening and payout status. Use an agent
-to manage mining and watch GitHub main for continual updates. Signed epoch source
-pins are authoritative; rerun the signed-source bootstrap when the source changes.
-Historical pilot epochs remain nonpayable. The new bounded sampler and reward
-parameters are documented in [AUDIT_SAMPLING.md](AUDIT_SAMPLING.md).
-
-## Historical pilot status
-
-Pilot epochs are permanently nonpayable: they do not set blockchain weights.
-CPU multi-epoch trials and continuous GPU mining, verification, full-model
-training and immutable checkpoint publication have run. Environment coverage
-and hardware compatibility remain under active testing; use the runtime and
-source bundle pinned by the signed challenge.
-The live v9 deployment opens admission to all live subnet 120 miner identities with
-a valid signed Ed25519 Affine activation. Its config uses
-`registration_policy: all_activated_subnet` and omits `registration_allowlist`;
-no individual operator approval is needed. Each new epoch takes a fresh chain
-snapshot, so later activations enter the next epoch. Existing signed epochs keep
-their original participants. See STATE.md for actual deployment progress and use
-the signed discovery URL and runtime profile for the open epoch before renting
-compute. Performance improvement across all environments is not established.
-
-## Prepare a miner
-
-Clone https://github.com/AffineFoundation/affine and use Python 3.12 or newer.
-Create a virtual environment and install this repository with `pip install -e .`.
-Exact model, execution profile, environment dependencies and source bytes must
-match the signed challenge; a CPU challenge does not authorize a GPU runtime.
-
-For an existing subnet-registered Ed25519 hotkey:
+Any current subnet-120 identity with valid signed Affine Ed25519 activation can
+enter the next eligible epoch; there is no operator whitelist. Registration,
+activation and the epoch identity snapshot are separate. For an existing
+subnet-registered Ed25519 hotkey, preview activation locally:
 
 ```bash
 python -m subnet.register --wallet YOUR_WALLET --hotkey YOUR_ED25519_HOTKEY
 ```
 
-This previews activation. Add `--execute` only when ready to publish the signed
-activation commitment. It does not purchase a new subnet UID. Subnet membership
-and a valid signed activation are both required; open admission removes the
-operator allowlist, not identity authentication.
+Add `--execute` only when ready to publish that signed activation commitment.
+This does not purchase a UID. Keep the hotkey seed private; do not give anyone
+a coldkey, mnemonic, permanent bucket credential or decrypted upload capability.
+
+Clone https://github.com/AffineFoundation/affine and install the repository.
+Read [MATH_MINER_BOOTSTRAP.md](MATH_MINER_BOOTSTRAP.md) for signed-source admission.
+Use the exact hardware, packages, native grader dependencies and numerical
+profile pinned by the current manifest. Current qualified inference is H200/SM90,
+FP32 eager, TF32 disabled, with torch 2.14.0, transformers 5.14.1 and toploc 0.1.6.
+Package versions alone do not qualify another hardware/runtime profile.
+
+## Run the signed source
 
 Read `authority` and `current_url` from https://affine.io/mining.json and set
-`AFFINE_AUTHORITY` and `AFFINE_CURRENT_URL` locally:
+`AFFINE_AUTHORITY` and `AFFINE_CURRENT_URL` locally. The expected authority is
+3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd.
+The key file contains your activated 32-byte Ed25519 seed as hexadecimal, mode600.
 
 ```bash
 CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
@@ -91,33 +50,24 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
   --env-id affine_math --max-batches 3 --search-budget 8 --once
 ```
 
-The key file contains the miner's 32-byte Ed25519 seed encoded as hexadecimal;
-keep it private with mode 600. Never provide a coldkey, mnemonic, bucket credential
-or wallet file to another person. Discovery is read-only; upload capabilities are
-sealed to the miner and remain private. The manifest specifies model hashes,
-environments, harness, K/L requirements, runtime, deadlines and upload limits.
-The local search budget limits attempts on each task before trying another.
-Eight is a starting recommendation, not a change to the signed 128-attempt
-ceiling or sampler. Spending every attempt on one task that always succeeds or
-always fails can exhaust the epoch without producing a pair. Supported budgets
-range from one through 128; the miner must still follow the same public draws
-and submit a complete verified success/failure pair.
-Watch for each fresh epoch and repeat the bootstrap once with its current
-source/checkpoint. Do not restart an existing attempt merely because observation
-timed out. The bootstrap downloads the approved task asset and source, verifies
-their hashes, and launches that source in an isolated interpreter.
+Eight is a local per-task search budget, not a change to the signed sixteen-
+attempt ceiling. Move on when a task does not yield a success/failure pair.
+The bootstrap verifies discovery, source and checkpoint hashes, then runs that
+approved source. Signed code approval is not a sandbox. Miners need no permanent
+R2 credentials; the manifest supplies encrypted private upload capabilities.
 
-Please test download/signature checks, rollout generation, cumulative uploads,
-independent audits and checkpoint handover. Report the epoch ID, public hotkey,
-error text with URLs/secrets removed, runtime and hardware. See
-[LIVE_SUBNET.md](LIVE_SUBNET.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
-The dashboard is https://affine.io.
+Watch discovery for each new OPEN epoch and run each only once. Never silently
+reuse an expired capability, old source, closed deadline or previous checkpoint.
+After an observation timeout inspect the original process/job; do not restart
+solely because polling timed out. Grader faults are indeterminate and must not
+be submitted as failures. Same-epoch duplicate task indices across miners score
+zero; extra rollouts on one index earn no extra points.
 
-For the forthcoming single-MATH pilot, a clean checkout also needs the generated
-task snapshot and exact approved source. Use the [signed-source bootstrap](MATH_MINER_BOOTSTRAP.md)
-with your registered, activated identity and the published runtime and live discovery URL.
-The [MATH pilot plan](MATH_PILOT.md) describes the task split and pending launch
-checks; preparation is not a public mining invitation or demonstrated improvement.
+## Current design and historical notes
 
-
-Prospective hourly transport: see [SMALL_COMMITMENT_HOURLY_CONTRACT.md](SMALL_COMMITMENT_HOURLY_CONTRACT.md) for the versioned small-commitment, selected-only audit contract. It applies only when the signed epoch manifest explicitly activates that policy; existing epochs retain their original contract.
+See [COMMITTED_UNAUDITED_LEARNER.md](COMMITTED_UNAUDITED_LEARNER.md),
+[CONTINUOUS_AUDIT_PREFILL.md](CONTINUOUS_AUDIT_PREFILL.md) and
+[CONTINUOUS_STATISTICAL_REWARD_BRIDGE.md](CONTINUOUS_STATISTICAL_REWARD_BRIDGE.md).
+The live public guide distinguishes deployed contracts from prospective trials.
+[Earlier quickstart text](miner-quickstart-history-before-2026-10-06.md) is
+archived for historical epochs and does not authorize the current mechanism.

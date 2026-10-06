@@ -16,8 +16,8 @@ logprobs plus TOPLOC, eight-stream state transport, and nonpayable operation
 are unchanged. Seven verifier workers have the additive source admission.
 The audit coordinator is recovered with read-only metadata access and
 progress-based startup checks; a genuine new current-source job has been
-queued and claimed. This is producer progress, not a claim that every audit
-has finished. Training continues independently. Chain weight submission
+completed: its authenticated report accepted four fully audited batches.
+This does not claim that every audit has finished. Training continues independently. Chain weight submission
 remains disabled. Follow the latest signed OPEN manifest for the
 current mining checkpoint and deadline; a published checkpoint alone is not
 an invitation to mine outside that window.
@@ -35,359 +35,10 @@ The matched fixed32, 1,024-token owned cached native evaluation scored CP12
 errors. This small fixed cohort does not establish convergence or general
 held-out improvement. Historical reports and cohort identities are preserved.
 
-Latest completed epoch: E21. It collected submissions on approved source
-4db060697ab8303ee667e5787831a574b41e4a10afb8fe6a209dd7db40b9f373,
-using checkpoint 339f31e788d5fa8044dc53ea022346ff3a83a999bed481aeef6565e154a0c8c2.
-E21's original compact miner completed two batches. The whole collection
-captured 392 documents, admitted 335 through cheap checks, and selected 256
-UNAUDITED inputs without an inference-audit barrier. The original training
-attempt then failed with a parent-optimizer download read timeout during restore,
-before train_epoch or any optimizer update. Step eleven was the original durable
-parent. The failed original and its evidence are preserved. An explicitly
-authorized fresh pre-update recovery attempt was dispatched using source
-acdb551e24c7db36f405998a7c3b763031bfff0695c1b8ee5812444792089a5a,
-with the same 256 original admissions, parent eleven and unchanged scientific
-modules. Bounded transient optimizer-download retries are included. The new
-attempt has its own ID and output namespace. It failed before model/GPU execution
-because its 5,073,318-byte signed envelope exceeded the legacy 4,000,000-byte
-launcher limit. Both failed attempts and the original recovery reservation are
-preserved. The narrowly bounded, authenticated recovery-envelope fix passed
-the actual 5,075,451-byte signed request through launcher and protocol validation.
-A separately authorized continuation completed on execution source
-0380c393cbab76cfd03c1c8c91ba1a2579efe49f60ccd385f2a6f6f8d9db2e50,
-with the original 256 admissions and parent eleven. Its original runner and child
-have completed successfully. The original continuation computed optimizer step twelve over 256 unaudited tasks, and its separate reader verified all 23 state objects (91,387,491,264 bytes). The first model-publication request failed before its CPU worker started because it inherited a train-only recovery declaration. A fresh authenticated publication-only projection removed that declaration while preserving every checkpoint file and runtime pin. The new upload completed, all ten model objects passed independent full readback, and optimizer step twelve is now committed with checkpoint 6493a901bd009f0800d5eed97d19aee78947cc586afeb27abfb2c72032ad1924. E21 is closed. Ordinary E22 has now opened from that genuine step-twelve parent; the fixed32 diagnostic is reported above without a convergence claim. Neither completed training nor the reader needs to be rerun. Recovery runs once to finish E21; it does not open a new epoch or
-rewrite the original 4db mining contract. The signed
-contract requires one positive and one negative rollout per task, at most three
-batches per UID, and a 16-attempt ceiling. Generation uses cached FP32 eager
-SM90 inference and prescribed public draws. Upload selected-token logprobs and
-TOPLOC fingerprints under selected-token-logprobs-v1; full-vocabulary arrays
-are NOT required. Authenticate and execute the signed source bundle rather
-than assuming every research module on GitHub main is a live contract.
-The collection window is 600 seconds. Training uses cheap-eligible UNAUDITED
-inputs without an inference-audit barrier. Chain weight submission is disabled.
-The older chronological records below describe historical contracts; the latest
-signed OPEN manifest and this status take precedence.
-Earlier completed epoch: E20, 332 captured documents, 294 cheap-eligible batches,
-256 selected UNAUDITED training inputs, and durable optimizer step eleven at
-checkpoint 339f31e788d5fa8044dc53ea022346ff3a83a999bed481aeef6565e154a0c8c2.
-Training does not wait for inference audits. The original physical training job
-and mandatory independent readback completed; all 23 optimizer objects,
-91,387,491,264 bytes, were independently verified. The full epoch took 62.8
-minutes, still above the one-hour target. Its genuine warm optimizer restore
-took 58.7 seconds versus E19's 961.5-second cold restore. Export/upload took
-24.5 minutes and remains the principal measured bottleneck.
-Automatic owned-model and expired-input retirement runs on all seven reachable
-verifiers. Latest forty authenticated audit jobs had median claim-to-report time
-264 seconds: checkpoint downloading/authentication accounted for 187 seconds
-and model construction 18 seconds. Bounded audit grouping is now enabled:
-up to four submissions per job, 32 rows per selection tick and 14 jobs in flight.
-All seven workers have the additive approved compact-source mapping. The first
-three authenticated four-pair jobs accepted all twelve pairs, taking 335–396
-seconds per job including one shared cold checkpoint load. This is observed
-throughput, not a controlled speedup benchmark.
-
-A complete integrated source candidate,
-4db060697ab8303ee667e5787831a574b41e4a10afb8fe6a209dd7db40b9f373,
-passed full R2 archive/file-hash readback, CPU staging on ten roles and 204
-reviewed CPU tests. Its runtime contains 177 pinned files. Fresh executed
-step-eleven calibration and final public-draw confirmation passed before E21
-opened. This was the E21 mining source; current E22 uses the complete approved 0380 successor with the same scientific contract. It includes compact selected-token probability artifacts,
-parallel immutable input publication and explicit native evaluation policies.
-On the existing idle H200, its original bounded qualification completed in
-214.91 seconds. All five compact-proof honest/tampering controls passed, with
-zero inconclusive cases. The honest artifact contained 192 generated tokens
-and was 5,709 bytes; verification still independently recomputed the full logits
-and checked every prescribed draw. Artifact compression is not sampling proof
-coverage reduction. For two fixed held-out tasks at a 128-token cap, cached
-native evaluation took 10.33 seconds versus 41.56 seconds for the full-proof
-baseline. Outputs and grades matched on these two tasks; this approximately
-4x speedup is a small qualification result, not a full-cohort quality trend.
-The earlier original uncached fixed-32 evaluation finished in 86.59 minutes;
-its authenticated checkpoint-nine report scored 14/32 at a 1,024-token cap.
-The separate cached checkpoint-ten/eleven 128-token diagnostic has completed.
-Both jobs graded all 32 tasks without infrastructure errors, but every output
-hit its short token cap and neither checkpoint solved a task. This is not a
-learning-regression result. Both owned checkpoint copies were automatically
-disposed after authenticated report ACK and full R2 readback.
-The separately signed fixed32/1,024-token cached evaluation completed on the
-independent H200: checkpoint ten scored 19/32 and checkpoint eleven 18/32,
-with one gain, two losses and zero infrastructure errors. This does not show
-improved generalization. Both original report ACKs were independently read back,
-and both owned model copies were automatically disposed. Ongoing 1,024-token
-evaluation is active and waits for genuinely durable future checkpoints. The
-affine.io chart now shows these authenticated cached results as a distinct
-evaluation cohort, preserving the original diagnostic job and report identities.
-Neither native evaluation policy is evidence for a miner's sampling provenance.
-
-Automatic miner checkpoint disposal is also deployed. Its first successful
-software cycle retired five owned historical checkpoint copies after original
-successful terminal reports and full private R2 ACK readback. Active processes,
-leases and unowned legacy directories are protected. No manual deletion was used.
-
-Main also provides a DEFAULT-OFF token-only prefill research verifier. It
-recomputes distributions locally and retains the prescribed public draws,
-CDF consistency checks, calibrated ambiguity handling and environment replay.
-It removes uploaded probability/TOPLOC claims rather than accepting arbitrary
-teacher-forced tokens. Forty-three CPU controls passed, including eighty
-toy mutated-token cases with fresh TOPLOC fingerprints. A separate real H200
-research run accepted one authentic trajectory and rejected all eighty fresh-
-TOPLOC token swaps under both the official compact and token-only checks.
-It did not acquire a complete positive/negative pair. A separate order-balanced
-warm test measured whole-rollout medians of 2.823 seconds for official compact
-verification and 2.496 seconds for token-only verification. Model computation
-took approximately 0.111 seconds in both; native environment grading dominated.
-This single-trajectory result is not an orders-of-magnitude end-to-end speedup.
-A subsequent qualification used two authentic E21 success/failure pairs: four
-rollouts of 225, 107, 187 and 1,024 output tokens. All four passed both official
-compact and token-only checks on the first H200. Eighty token swaps with fresh
-TOPLOC fingerprints were rejected by both checks; seed/attempt controls also
-failed as expected, with no ambiguous results. The longest rollout took 20.93
-seconds under the official check and 18.52 seconds under token-only verification.
-These are whole-check timings, not generation times or a prefill-only benchmark.
-Second-H200 testing has completed on the identical original artifacts. Both
-H200s accepted all four genuine rollouts and both success/failure pairs; each
-rejected all eighty identical token mutants and forty-five seed/attempt controls,
-with zero ambiguous cases. Original terminal reports and complete result bytes
-were independently read back from private R2. The second node automatically
-retired its owned temporary checkpoint before resuming independent evaluation.
-This bounded qualification is not a statistical exploit-resistance guarantee.
-The token-only research policy is NOT a live mining contract. Sampling
-consistency does not prove historical execution.
-
-The independent queue API now rejects unsupported explicit probability-artifact
-policies; this does not activate the compact source contract by itself. Public
-miners must follow the latest signed OPEN manifest. Chain weight submissions
-remain disabled. The chronological records below retain earlier contracts.
-
-E16 completed and durably published optimizer step seven / checkpoint
-9cd6f6a6d61a4aba1bc30a83afa3792820d6a3630b660041cbd52eaecfdd82b0.
-It received 359 committed documents; 309 passed cheap eligibility checks,
-and 256 were selected for training. The 53 eligible unselected documents
-remain eligible for continuous audits and reward estimates, not invalid.
-Training used UNAUDITED inputs without waiting for inference audits.
-The original physical training job took 47.09 minutes; opening to durable
-closure took 125.29 minutes, including an independent-reader SSH outage.
-A qualified backup CPU reader verified the same original 23 FP32 optimizer
-objects (91,387,491,264 bytes), preserving the original training job and lineage.
-No new optimizer step was fabricated or rerun to recover publication.
-
-The next controller uses immutable source
-fe871019d5e6cba169db32bc8a3b56342d54f7d8193e5a8156c8586fb1c46493,
-with automatic trainer retention and parallel input fetching. E17 opening
-calibration initially failed before model execution because that source archive
-omitted its required native math snapshot. Exact approved dataset hydration and
-native preflight now pass on all ten owned compute roles. The corrected path
-and its truthful environment source hash are explicitly admitted. Fresh
-calibration and confirmation both passed. E17 collected 71 committed batches,
-admitted 65 through cheap checks and selected all 65 for UNAUDITED training.
-Freeze and admission took about 36 seconds after the ten-minute collection
-deadline. Its original training job completed successfully in 50.23 minutes,
-with changed model weights and staged optimizer step eight. The independent
-reader authenticated all 23 optimizer objects in about 202 seconds. Controller
-adoption and full checkpoint publication completed; optimizer step eight is
-durable at checkpoint 02221071b925861631fb1ef738e0e5974fcaf10808cacae342af588fe8d99176.
-The actual training report declares 65 unaudited inputs and
-trainer_verification_performed=false. Restore took 24.84 minutes, training and
-checkpoint save 6.13 minutes, and optimizer export/upload 15.32 minutes. The original failed job remains recorded.
-This owned-fleet bootstrap does not establish external-client compatibility.
-The main branch provides ops/native_task_asset_deployment.py for verified
-CPU-only asset bootstrap (see docs/NATIVE_TASK_ASSET_DEPLOYMENT.md).
-The next complete package includes the approved native dataset automatically.
-Its actual cold CPU bootstrap, full R2 archive readback and staging on ten roles
-passed. The original qualification descriptor remains immutable and
-qualification-only. A separately ROOT-scoped controller now runs complete source
-7f580e4d118e3cf6ce9efc3ff916dce7a54275105c47866923ed36e72355a618
-from actual parent eight. Fresh calibration and confirmation passed for
-epoch 18, which collected 311 committed batches: 276 passed cheap checks
-and 256 entered UNAUDITED training without an inference-audit barrier.
-Its original training job completed successfully and optimizer step nine is durable
-at checkpoint 5e8260ce45d420d75837f7af18b8c7238b766ce9bee69f994c0bb70349e0bbae.
-The physical job took 47.52 minutes: optimizer restoration took 15.75 minutes,
-training and checkpoint saving took 8.79 minutes, and export/upload took 15.25 minutes.
-The report records 256 unaudited inputs and trainer_verification_performed=false.
-This remains above the one-hour end-to-end target; no production warm-cache speedup is claimed.
-Collection capture took about 123 seconds, with parallel decode taking 13 seconds. External end-to-end miner readiness and a sub-hour epoch are not
-yet demonstrated. Follow only the latest
-signed OPEN manifest for mining. Chain weight submissions remain disabled.
-The independent fixed 128-task E16 evaluation declined from 78/128 to 71/128,
-with two improvements and nine regressions. Eight regressed tasks reached the
-successor's 1,024-generation-call cap; this is a diagnostic proxy, not confirmed
-truncation or an explanation of causality. No convergence is claimed. A separate 2,048-token diagnostic completed
-at 80/128 BEFORE and 71/128 AFTER on the exact same fixed cohort and seeds.
-Increasing the diagnostic generation cap did not recover the successor score.
-These are fresh matched controls and do not replace the historical 1,024-token results.
-
-The dashboard now distinguishes committed submitted batches, cheap-eligible
-training inputs and expensive audit results. Its E15 counts are 270 submitted,
-240 eligible and 30 excluded; they are not 240 proof-verified batches. The older
-10-batch display omitted newer decoupled learner populations and was corrected.
-When a full audit breakdown is unavailable, it is labeled unavailable.
-
-E15 took 113.04 minutes from epoch opening to durable closure. Its original
-physical training job took 60.49 minutes: 17.58 restoring FP32 optimizer state,
-8.70 training/checkpointing, 18.48 uploading FP32 state, and 15.72 other overhead.
-This misses the one-hour target. More verifiers alone do not shorten that path.
-An actual eight-stream independent reader checked all 23 optimizer objects,
-91,387,491,264 bytes, in 429.28 seconds. Eight-stream transfer contracts and startup timing instrumentation are included
-in the FE controller source; historical four-stream manifests remain unchanged.
-The qualified backup completed the original E16 production readback in 228.41 seconds.
-
-Two disk-full verifier workers were stopped without treating infrastructure
-errors as miner fraud; the other six continued. Automatic owned-cache lifecycle
-code is implemented and tested: it retires old checkpoint replicas after their
-R2 durability/ownership acknowledgment, excludes active checkpoint leases, and
-removes disposable downloaded submissions after report acknowledgment. It
-preserves source, keys, jobs, reports and queue history. Nodes one and two have completed real audit jobs with automatic post-ACK input
-retirement. Seven reachable workers now run the automatic lifecycle wrapper;
-authenticated legacy adoption has now retired obsolete models and accepted
-historical input downloads across all seven, without pausing healthy workers. The
-trainer has 160.50 GB free after explicit software retirement of old models.
-Automatic trainer hooks are included in the new FE controller source; its first
-training job completed and actual post-ACK automatic retirement was observed:
-the local lifecycle marker names optimizer step eight and disk free is about
-160 GB. Cache capacity must still be rechecked before each new job. E16 retained its historical lifecycle contract.
-A replacement H200 passed fresh honest and forged sampling/TOPLOC controls but
-has not joined the production queue. Runtime/source qualification remains
-mandatory for each participating verifier.
-
-The matched E14 held-out diagnostic was 20/32 before and 20/32 after, with zero
-infrastructure failures. The independent fixed 128-task paired evaluation completed: 83/128 before
-and 82/128 after, with three gains, four losses and zero infrastructure errors. No sustained improvement or convergence is claimed.
-New main-branch code also adds default-off sole-current FP32 optimizer caching
-and prompt-only native MATH eligibility. Those changes are NOT in the sealed
-FE archive and are not enabled in live jobs. They require a new signed source
-contract and qualification before activation; main branch alone is not a contract.
-Prospective optimizer export also checks each serialized FP32 slice once,
-rather than rescanning a whole parameter for every split shard. Real tiny
-serial/parallel export, restoration and invalid-state controls pass; this change
-is not in the active 7f source, and no live speedup is claimed. A new optimized
-complete package, 7846d811955b623f10d31da9b8a16d927f49511979cb5c238d991a22fc3092d9,
-has full R2 readback and CPU qualification on all ten compute roles. It is
-qualification-only and has not activated a GPU job. Its default-off optimizer
-cache must establish its exact durable acknowledgment before a subsequent
-warm job. Main now closes the asynchronous acknowledgment race with a
-synchronously persisted, original signed durability intent before epoch
-advancement. Eight new process-loss, delayed-thread and conflicting-ACK
-controls pass independently. This fix requires another immutable source seal;
-the 7846 qualification archive is unchanged and must not be activated for
-cache-enabled training.
-Its successor qualification-only package is
-9f392dabf41278474c18c686393180833630571e49265a75b98eae88f3a95b88.
-Full R2 archive/member readback and CPU staging on all ten roles passed,
-and all seven worker registries include its exact runtime inventory.
-It includes the synchronous original-ACK fix. A separately ROOT-scoped sustained
-controller now runs from actual durable parent nine, with the exact independent
-queue API and sole-current optimizer-cache opt-in. Fresh new-source calibration and confirmation passed; epoch nineteen
-trained on 256 selected UNAUDITED batches from 351 captured documents and
-295 cheap-eligible batches. Collection and decoding took 158.63 seconds.
-The original E19 training update and independent full-state readback completed;
-optimizer step ten and its next checkpoint are durably published. The measured
-epoch took 4,424.93 seconds (73.7 minutes), exceeding the one-hour target.
-Cold optimizer restoration took 961.46 seconds and export took 884.92 seconds.
-The original independent reader verified 91,387,491,264 bytes in 172.90 seconds.
-The original current-state cache acknowledgment finalizer completed and E20
-opened from optimizer step ten. A warm-cache production speedup is not yet
-demonstrated. The original qualification-only
-descriptor is unchanged.
-The continuous auditor has separately admitted the complete five-source union,
-including9f, while preserving historical jobs, policies and numerical contracts.
-A distinct CPU byte-cache control passed on the full original 23 optimizer
-objects (91,387,491,264 bytes), including corruption detection, invalid-ACK
-rejection and exclusive leases. This does not demonstrate a production cache
-promotion or warm-training speedup.
-Prospective per-shard restore reports separately time fetch, SHA256 and tensor
-schema/finite-value checks plus copying. Parallel timings are observations,
-not additive wall-clock durations. These fields are not retroactively added
-to historical reports.
-The original authenticated queue API now runs as an independent CPU service
-on Arbos.life, preserving the original SQLite queue, worker identities and lease
-policy. It survives learning-controller transitions. A controller-bound API pause
-delayed one completed audit acknowledgment; its expired lease is an infrastructure
-event, not evidence of miner fraud. Original reports and evidence are preserved.
-
-The completed original E16 keeps immutable source
-7459c28cbe11b0999b41644aea2aa672d40eb44faa94ccb261e176d8f71b0d46.
-The next controller names FE source above; closed historical E15 keeps source6a85c310...;
-only the latest signed OPEN manifest authorizes new mining.
-The qualified H200 verifier roster shares the existing queue; active worker
-counts are given in the current operational status above.
-the validator/controller remains on Arbos.life, with separate miner, trainer
-and evaluator roles. No hardware outside its admitted runtime is approved.
-
-The new contract uses small-commitment-pairs-v2 token-document transport and
-committed-unaudited-training-v1. Cheap-admitted immutable checkpoint-bound
-training documents can enter training without waiting for expensive audits.
-This labels training inputs UNAUDITED; it does not claim they all passed proof
-verification. Continuous auditors independently select committed batches,
-verify selected proof artifacts, native environment outcomes and target-model
-computation, and publish authenticated reports. Historical signed epochs keep
-their original strict sampler, training and reward contracts.
-
-Sampling verification is forced-inverse-cdf-prefill-support-v3 with an approved
-FP32 H200 inference profile. TOPLOC fingerprints alone do not prove sampling.
-The verifier recomputes target-model probabilities and checks the forced random
-draw against calibrated CDF intervals; numerical ambiguity or support changes
-require exact cached-reference replay. Unavailable reference computation is
-unknown, not fraud. Calibrated numerical bounds and random audits provide
-empirical/probabilistic assurance, not an exact universal proof of historical
-execution. Trainer BF16 precision is separately admitted. The config retains
-its predecessor calibration seed only to reuse original qualification requests;
-each opened manifest must use the actual checkpoint-specific admitted policy.
-Successor checkpoints require fresh executed qualification before opening.
-
-Continuous-probabilistic-audit-v2 rewards unique eligible task indices adjusted
-by authenticated audit evidence. It uses eight recent cohorts, decay 0.8 and
-Beta(1,1), with confirmed-invalid multiplier 0.1, zero epoch after two confirmed
-invalids, and four-epoch blacklist after three. Infrastructure failures and
-numerical unknowns are not fraud. Eight inflight jobs and eight selections per
-10-second tick bound audit load. Four parallel storage-capture threads preserve
-every committed draw, conditional object copy and complete SHA check; queue and
-authority journals remain serialized. Fresh job TTL starts after capture, while
-original job envelopes and expiries are never extended. Hourly immutable snapshots use original
-completion times and evidence cutoffs. Extra rollouts on one task earn no extra
-points; same-epoch task duplicates earn zero. The signed contracts are the
-source of truth for eligibility and penalties. Lossless DEFLATE level one is
-configured for new proof artifacts; historical artifact bytes are unchanged.
-
-The independently signed operator execution-evidence policy took effect
-at the 2026-10-05 17:00 UTC hourly cutoff. For the exact approved standard backend,
-source inventory, FP32 profile and runtime pins, the immutable verifier report
-must truthfully retain execution_resources_enforced=false: this backend does
-not implement the separate long-context OS resource enforcement. False does
-not mean failed model verification. No report is rewritten to true, and unknown
-sources/profiles or forged flags are rejected. Other backend contracts keep
-their required true enforcement flag. Original report signatures, model/source,
-checkpoint, TOPLOC, sampler and grading checks remain required. The new signed
-snapshots explicitly disclaim OS enforcement and proof of historical execution;
-earlier snapshots and historical signed contracts are unchanged.
-
-Qualification evidence: eight distinct H200s passed sixteen honest cached
-reference controls and rejected sixteen freshly fingerprinted forged controls.
-Fifteen honest prefill controls verified directly and one required numerical
-adjudication. The final ambiguity fallback passed its separate honest/forged
-controls. Two actual CP05de qualification jobs passed and their signed admission
-was verified before deployment. The E15 manifest pins its own CP76bc
-checkpoint-specific calibration. These controls do not establish convergence,
-a one-hour completed epoch, or universal cross-hardware compatibility.
-
-Design: https://github.com/AffineFoundation/affine/blob/main/docs/DECOUPLED_IMPLEMENTATION_PLAN.md
-Transport: https://github.com/AffineFoundation/affine/blob/main/docs/TOKEN_ONLY_COMMITMENT_TRANSPORT.md
-Learner: https://github.com/AffineFoundation/affine/blob/main/docs/COMMITTED_UNAUDITED_LEARNER.md
-Audits: https://github.com/AffineFoundation/affine/blob/main/docs/CONTINUOUS_AUDIT_PREFILL.md
-Statistical rewards and trainer precision: https://github.com/AffineFoundation/affine/blob/main/docs/CONTINUOUS_STATISTICAL_REWARD_BRIDGE.md
-Successor checkpoint qualification: https://github.com/AffineFoundation/affine/blob/main/docs/SUCCESSOR_CALIBRATION.md
-
-
-Historical operational records and superseded contracts are archived at
-https://github.com/AffineFoundation/affine/blob/main/docs/operations-history-2026-10-05.md.
-They do not authorize mining or redefine a current signed manifest.
-
 ## Model and taskset
 
 Qwen/Qwen2.5-Math-7B-Instruct has 7,615,616,512 parameters. Checkpoint files use BF16. The approved generation and audit runtime is cuda-fp32-eager-sm90-v1 (float32, eager attention, TF32 disabled); the signed training override uses BF16 forward/backward with persistent FP32 masters and AdamW moments. The signed manifest and role execution profiles specify the exact runtime. The active original MATH taskset contains 7,496 distinct usable problems: 6,746 mining tasks and 750 reserved held-out tasks. DeepMath and NuminaMath are not yet part of this contract. K=1 and L=1: one genuinely graded success and one genuinely graded failure for the same task on the approved checkpoint.
 
-Held-out evaluation retains the precommitted sampler and fixed task/seed identities, so contract upgrades do not redefine the measurement. Its outputs cannot supply mining evidence. E9's matched 32-task diagnostic changed from 20/32 before to 19/32 after; this does not show improvement. An independently authenticated CP093 baseline solved 141/200 reserved tasks. The precommitted larger comparison waits for three nonempty public persistent-v4 epochs and uses those same 200 tasks. Private optimizer qualification is not public training progress or convergence.
 
 ## How to start mining
 
@@ -447,268 +98,92 @@ process handles after faults and never restart solely because observation timed
 out. Do not share your wallet key, decrypted private upload capability or R2
 credentials. Miners need no permanent bucket credentials.
 
-## Historical strict-audit batch and reward rules (E9–E12)
+## Current proof and learning contract
 
-The following records older signed contracts; it does not govern the live
-decoupled E17 pipeline. Current training admission, transport and probabilistic
-reward rules are specified above and in the latest signed manifest. In E17,
-65 cheap-eligible UNAUDITED batches entered training without waiting for audits.
+The active verifier is forced-inverse-cdf-prefill-support-v3. Public prescribed
+draws bind the epoch, checkpoint, task, attempt, turn and token position. The
+verifier independently recomputes logits, checks the selected tokens against
+calibrated inverse-CDF intervals, checks TOPLOC and replays native outcomes.
+Ambiguous intervals or support changes require exact cached-reference replay.
+An unavailable reference is unknown, not fraud. TOPLOC alone and teacher-forced
+log probabilities alone do not establish sampler consistency. Matching the
+prescribed computation does not prove when or where it historically ran.
 
+Upload selected-token log probabilities and TOPLOC under the explicit signed
+selected-token-logprobs-v1 policy. Full-vocabulary probability arrays are NOT
+required in the current contract. Token-only and prefill-only three-way research
+policies are NOT active; do not omit required live proof fields.
 
-The current signed quota is three batches per UID per epoch, with artifact-size and rollout limits enforced independently. This is a conservative configurable pilot cap, not a protocol maximum. A batch covers one authorized mining task index on one epoch/checkpoint and includes complete input/output token contexts, full conditional log probabilities, TOPLOC fingerprints, native observations/outcomes, immutable task/model/source identities, and, for new-contract rollouts, the sampler receipt. Extra rollouts on the same task add no points. Grader errors and unsuccessful searches are not valid negative samples.
+A batch covers one approved mining task index on one checkpoint and must contain
+one native-graded success and one native-graded failure. Grader faults/timeouts
+are indeterminate, not negative samples. Held-out tasks cannot supply mining
+batches. Complete token contexts, native outcomes, task/source/checkpoint
+identities and sampler receipts remain required. Extra rollouts earn no extra
+points. Same-epoch duplicate task indices across miners earn zero.
 
-The active small-commitment-pairs-v1 transport uploads each proof pair to one private slot, then PUTs the signed cumulative commitment last using encrypted per-identity presigned capabilities. Already acknowledged pairs are reused without recompression. Replacements reuse the same three slots. Only completed in-window objects named by the final valid commitment are frozen. Legacy single-object transport is used only if an older signed manifest explicitly requests it. Upload deadlines are not extended to rescue a worker. Frozen artifacts and authenticated audit history are published for inspection; miners do not need permanent R2 credentials.
+Training consumes committed-unaudited-training-v1 inputs after cheap identity,
+format, task, checkpoint and commitment checks. It does NOT wait for inference
+audits or reverify proofs. These inputs remain labeled unaudited. The trainer
+performs task-normalized full-model BF16 updates with persistent FP32 masters
+and AdamW moments, durably publishes the successor, and preserves optimizer
+lineage. Only a genuinely published and qualified successor opens the next
+mining epoch; follow signed discovery rather than an old checkpoint link.
 
-Cheap bounded structure and quota checks apply to every submission. Expensive audits use the signed random allocation, minimum/maximum per identity, total budget and escalation rules. Reports bind the frozen batch hash, signed original request, approved source, exact checkpoint and winning job lease. Infrastructure faults trigger retries rather than fraud penalties. Only fully audited valid pairs earn points or enter training; observed cross-miner duplicate task keys receive zero for all competing miners. Unchecked duplicate claims remain unresolved and that limitation is recorded.
+## Continuous audits and proposed rewards
 
-The active bounded-random-v1 policy sets invalid_batch_multiplier=0 and zero_epoch_after=1: one confirmed invalid audited batch zeros the miner's epoch score. With no confirmed invalids, its points are its distinct fully verified accepted task indices. Structural failures earn no batch points but do not multiply remaining points (penalize_structural=false). Unselected, deferred and infrastructure-failed batches earn no verified points and are not invalid samples. Historical manifests retain their original penalty rules. Penalties reduce rewards; they do not take wallet funds. Exact adjusted points are summed over finalized epochs in the completed UTC hour and normalized across currently eligible owners. The writer waits for pending audits/final scores before closing their hour and does not treat unresolved work as zero. Every policy change applies prospectively through a signed manifest.
+Seven admitted verifier workers claim jobs through the authenticated coordinator
+API on Arbos.life. SQLite remains on that host; R2 stores immutable artifacts and
+reports. The current operator audit scheduler groups at most four submissions
+per job, selects up to 32 rows per tick, and allows 14 jobs in flight. Audit
+selection and processing continue independently of training. An audit is a
+sampled check, not a statement that all eligible contributions were verified.
 
-## Historical deployment and durable history (E9–E12)
+The current continuous-probabilistic-audit-v2 score is unique eligible task
+count multiplied by a miner validity estimate and confirmed-invalid penalties.
+The current-cohort posterior bounds historical reputation. The operator policy
+uses eight recent epochs, decay 0.8, Beta(1,1), an invalid multiplier of 0.1,
+zero epoch score after two confirmed invalids, and a four-epoch blacklist after
+three. Infrastructure and numerical unknowns do not count as valid or fraudulent.
+Hourly raw points are summed and normalized once. Legacy bounded-random fields
+in older manifests do not replace the continuous statistical contract. Use the
+original signed opening, score policy and reports to inspect provenance.
 
-The role counts and audit-gated training below describe the historical E9–E12
-deployment. The current roster has seven reachable verifier workers (1–6 and 8),
-plus a separate miner, trainer and evaluator; the controller remains on Arbos.life.
-Seven CPU worker parents now include typed terminal lease-expiry recovery and
-no stale static checkpoint-cache flags. Their sealed numerical backends and
-worker identities are preserved. Source and runtime admission still apply.
-All seven now run the immediate post-ACK owned-checkpoint disposal wrapper
-from main commit 53dcd78d. After a successful authenticated report ACK, it
-records the backend-verified owned inventory, releases the job's model lease,
-and deletes that owned checkpoint immediately, even without another job.
-Other active leases, changed inode snapshots and external mapped caches are
-excluded; original reports, logs and R2 records remain. The exact staged
-worker/cleanup pair passed CPU controls. Genuine post-roll accepted-report
-acknowledgments have now retired owned checkpoint files automatically, while
-preserving reports and logs. All seven workers also run authenticated idle-poll
-owned-checkpoint disposal from main commit 1d571c52: it removes an obsolete owned
-checkpoint even if no next job arrives. Active leases, changed inodes and external
-mapped caches remain protected. No manual model deletion is required for this flow.
+The current pilot is NONPAYABLE. No new mechanism chain weights are submitted;
+proposed scores are not a payment promise. Historical nonpayable epochs cannot
+be made payable retroactively. Penalties concern rewards, never wallet funds.
 
+## Durable storage and performance
 
-Arbos.life is the operator host running the validator/controller, authenticated audit queue, single chain writer, discovery monitor and dashboard. The active GPU roles are one owned test miner, four independent verifiers, one trainer and one evaluator on seven existing Lium role endpoints. A qualified optimizer reader runs on a separate retained physical host and does not require GPU numerical qualification. Only the four approved verifier identities may serve E12; unqualified hardware and deleted or retired workers are not silently admitted. Shared R2 stores signed manifests, frozen submissions, reports, scores, checkpoints and history. This dashboard is at affine.io; the Arbos website and DNS are unchanged.
+R2 is authoritative for checkpoints, optimizer state, rollouts and reports.
+Local storage is bounded disposable cache: retain current/in-flight owned state,
+then retire obsolete owned files through coded lifecycle rules after terminal
+jobs and durable ACKs. Active leases and unowned paths are protected. The cache-
+stat successor has passed CPU qualification on all ten roles, but its first
+real cold and subsequent warm training runs remain pending. It is not the active
+signed source. No external miner should adopt it from a research label alone.
 
-Verifier nodes lease jobs and publish authenticated results. Four verifier workers run approved E12 sourcea65d7ed8 in parallel; they retain their existing identities and queue history. E9 completed 183 distinct gradient pairs over three updates, produced CP28, and passed full R2 publication readback. Its historical 20/32 to 19/32 evaluation remains visible. In E10, the coordinator derives canonical accepted batch documents only from original COMPLETE jobs and authenticated worker report requests. The trainer authenticates the nested audit receipts and exact canonical tokens/outcomes, without repeating inference, TOPLOC, sampler or environment verification. Original proof ZIPs remain durable in R2. Reports distinguish training admissions from audits and explicitly record trainer_verification_performed=false. Authenticated audit points and configured penalties determine normalized proposed rewards; new-source authorization preserves historical E9 signatures.
+The larger matched 128-task checkpoint comparison is running. Its first CP11
+chunk completed 19/32; this is not the full 128-task result or evidence of a
+checkpoint improvement. The same original jobs resumed after a metadata
+permission bug; completed scientific outputs were not regenerated.
 
-Historical E9 used an explicit signed training amendment binding its accepted receipts to the original three-update covered-v3 objective. It is complete and is not rewritten as a persistent epoch. Historical E10 used source763 consistently across miner, verifier, trainer, evaluator and coordinator, with a separate signed additive reward-source authorization. This preserves old signed cutover documents and authorizes the four existing verifier identities only for the new source.
+## Public interfaces and documentation
 
-After admission, E11 configures one full-model update over accepted audited pairs against the fixed input-checkpoint reference and publishes one immutable successor checkpoint plus sharded FP32 optimizer state. The next epoch waits for verification, actual training and durable publication. Matched held-out evaluation runs independently on its dedicated machine; it cannot supply training evidence. Persistent-v4 requires the authority-committed latest parent and monotonically increasing optimizer counters, even if a small update leaves the BF16 inference hash unchanged. Missing or corrupted state cannot silently reset the optimizer. Mining can open while completed-download retention runs; actual training must pass its current RAM/disk/GPU admission. A configured step count is not a completed update or learning-gain claim.
+Read https://affine.io/mining.json for authority and current_url. Public
+/llms.txt, /mining.json, /network-data.json and /reward-policy.json support normal
+CLI GET/HEAD. Public dashboard access grants no private upload credentials.
+Dashboard eligible-batch counts are not verified-proof counts. Independent audit
+results are available only where an actual authenticated record exists.
 
-Automatic completed-download retention keeps R2 and original reports intact and removes only authenticated, completed local submission replicas after complete archive hash/size readback. It does not claim automatic retirement of every old model cache. Extra machines retained for independent qualification are outside the five live role nodes; this guide does not expand hardware approval to them.
+Implementation and contracts:
+- https://github.com/AffineFoundation/affine/blob/main/docs/DECOUPLED_IMPLEMENTATION_PLAN.md
+- https://github.com/AffineFoundation/affine/blob/main/docs/TOKEN_ONLY_COMMITMENT_TRANSPORT.md
+- https://github.com/AffineFoundation/affine/blob/main/docs/COMMITTED_UNAUDITED_LEARNER.md
+- https://github.com/AffineFoundation/affine/blob/main/docs/CONTINUOUS_AUDIT_PREFILL.md
+- https://github.com/AffineFoundation/affine/blob/main/docs/CONTINUOUS_STATISTICAL_REWARD_BRIDGE.md
+- https://github.com/AffineFoundation/affine/blob/main/docs/SUCCESSOR_CALIBRATION.md
+- https://github.com/AffineFoundation/affine/blob/main/docs/NATIVE_MATH_GRADER_SECURITY.md
 
-The dashboard has two charts: matched held-out math performance over time and frozen submitted batches per finalized epoch. Submitted counts include rejected and unchecked batches; tooltips distinguish accepted totals. It displays observed results, not promised improvements.
-
-Technical references:
-- https://github.com/AffineFoundation/affine/blob/main/docs/FORCED_SAMPLING_CUTOVER.md
-- https://github.com/AffineFoundation/affine/blob/main/docs/FORCED_SAMPLING_QUALIFICATION.md
-- https://github.com/AffineFoundation/affine/blob/main/docs/COVERED_EPOCH_TRAINING.md
-- https://github.com/AffineFoundation/affine/blob/main/docs/AUDIT_SAMPLING.md
-- https://github.com/AffineFoundation/affine/blob/main/docs/LIVE_REWARDS.md
-- https://github.com/AffineFoundation/affine/blob/main/docs/SUBMISSION_RETENTION.md
-
-When reporting failures, provide the epoch, approved source/checkpoint, public UID and sanitized logs. Keep wallet keys, upload grants and credentials private.
-
-Prospective optimization, not the active contract: `docs/FULL_FORWARD_SAMPLER_QUALIFICATION.md` describes a public robust-CDF gate using independently recomputed causal full-forward conditionals. A short private H200 diagnostic passed a genuine 128-token control and rejected a synthetic trajectory with recomputed valid probabilities/TOPLOC. The B200, L40S and RTX4090 short cross-hardware controls completed but failed the pinned probability comparison and remain unqualified. Production qualification is still pending; miners must continue to follow the signed current epoch contract.
-
-## Compact training transport
-
-E10 activates authenticated-verifier-compact-inputs-v2. The coordinator derives canonical accepted batch documents from original COMPLETE verifier jobs, durably reads them back and signs a compact receipt nesting the unchanged original ZIP admission. The trainer receives those exact documents rather than downloading proof arrays again; original ZIPs and full verification history remain in R2. The objective and sampler verification are unchanged. The measured E9 population would use about 8.3 MB of compact frames instead of 78.7 GB of trainer ZIP downloads; this is a transport-size estimate, not an E10 elapsed-time result. Details: https://github.com/AffineFoundation/affine/blob/main/docs/COMPACT_TRAINING_INPUTS_V2.md
-
-## Native MATH grading
-
-E10 activates native-math-grader-pinned-indeterminate-v1 with environment source hash 1d1446b678abcffd818318a2e6e3d90a74341a628fbde1fdd9da5ce2b91a4947. Historical E9 grading is preserved. The older grader could classify parsing/comparison timeouts as zero. The current grader classifies timeouts, missing references, runtime mismatches, malformed/nonfinite/out-of-domain results and execution faults as indeterminate. These do not qualify as failure samples and do not trigger fraud penalties. Completed native correct and incorrect answers retain scores one and zero.
-
-The signed environment binds approved Python 3.12.3 interpreter/stdlib profiles, exact grader dependency inventories, isolated import rules and helper source. Use its pinned environment and deployment instructions: unqualified interpreter or dependency builds can produce indeterminate grading. All seven roles passed actual native-grader and compact/trainer integration controls before E10 activation. Details: https://github.com/AffineFoundation/affine/blob/main/docs/NATIVE_MATH_GRADER_SECURITY.md
-
-## Prospective miner timing
-
-GitHub main adds a private, bounded epoch-and-identity progress sidecar for the
-next approved source. It records task/attempt timing, outcome counts and completed
-batch counts, without response text, tokens, arrays, proofs, keys or upload URLs.
-Observation write failures do not change mining. E11 source includes bounded
-phase telemetry; miners must keep using the signed source. Progress counters never
-replace an uploaded artifact, authenticated audit or reward evidence.
-
-E11 approved owned-miner implementation:
-bounded-round-robin-v1 searches at most eight active tasks, two attempts per
-sweep, preserving original per-task seeds and signed attempt limits. Canonical
-pair ZIPs are prepared in one pass with byte-identical framing; already
-acknowledged pairs are reused. Both independent-pair sums and hypothetical
-cumulative ZIP raw/compressed sizes must fit the existing signed cumulative
-artifact limits. The commitment remains signed and PUT last. No proof, sampler
-or scoring rule changes. Safe phase telemetry contains counts/timings only.
-See docs/BOUNDED_MINER_SEARCH_AND_ONE_PASS_UPLOAD.md on GitHub. Historical sealed
-sources and their outcomes are unchanged. E11 generation and upload are observed;
-its post-freeze audit and training outcomes must be verified separately.
-
-E11 public Miner transport: small-commitment pairs are compressed once and
-cached immutably; legacy cumulative ZIP state is migrated once. The existing
-local state filename becomes a private prepared-miner-pairs-v1 JSON index with
-adjacent <state-name>.pairs/ SHA-addressed artifacts. Restart verifies full
-artifact hashes and original epoch/checkpoint/source/sampling-contract binding,
-then reuses exact bytes without recompression. Existing acknowledgements skip
-old slot PUTs; signed commitment publication remains last. Legacy transport is
-unchanged. Local state contains epoch rollouts; epoch publication rules are unchanged.
-This transport is admitted in the signed E11 source. Upload acknowledgments
-do not establish an accepted audit or completed training update.
-
-## Prospective optimizer transfer acceleration
-
-The signed bounded-parallel-fp32-state-v1 policy supports one through four
-streams. A separate bounded-eight-fp32-state-v1 policy explicitly requests
-eight streams; it is never inferred from a worker count or enabled by default.
-Both retain full FP32 masters and AdamW moments, exact shard hashes and
-restored-buffer checks. Optimizer-state authority publication still waits for
-complete independent readback. These transport choices do not change the
-sampler, proof checks, training objective or reward eligibility.
-
-The production-sized four-stream CPU control published and read back all
-91,387,491,264 bytes in 1,209 seconds, restored them in 488 seconds, and passed
-exact restored-buffer comparisons. This isolated zero-gradient control is
-transport evidence, not a trained production epoch or convergence result.
-An isolated eight-stream CPU control completed all 23 exact shard comparisons and restored every FP32 buffer. Export plus full readback took 819 seconds and restore took 444 seconds; peak process memory was 138.316 GB. It was not model training. Eight streams remain prospective for the production trainer and require its own resource admission; E11 uses four.
-Resource reservations alone do not prove peak-memory fit. Miners must follow
-the approved source and signed epoch manifest; GitHub preparation does not
-activate a new live contract.
-
-E11 freeze optimization: at most four bounded commitment-document GETs
-run concurrently. Each document remains capped at 65,536 bytes; heavy rollout
-ZIPs are not prefetched. Snapshot journals, conditional copies and final
-receipt publication remain serialized. The original signature, upload-window,
-artifact-hash and conditional-copy checks still apply. This does not establish
-a measured freeze time for a fully populated epoch and does not activate a
-different live submission deadline.
-
-Hourly commitment reads use a separate storage client with a five-second
-connect timeout, ten-second socket-read timeout and one transport attempt.
-Timeouts preserve completed snapshots and remain infrastructure failures, not
-fraud. The cutoff stops new reads; it is not a guarantee that every network
-operation has stopped at that exact instant.
-
-The active E12 upload-only-independent-full-v1 policy removes the trainer's redundant
-full optimizer-shard GET. Trainer receipts explicitly report local SHA checks
-and completed uploads, not verified durable readback. This signed policy is
-valid only with a qualified reader on a different physical machine performing
-full GET and SHA checks for every shard. Checkpoint byte staging overlaps that
-readback; checkpoint and optimizer authority publication wait for its validated
-original request, signed receipt and successful terminal result. Rewards still
-wait for durable training publication. Default historical export behavior is
-unchanged. See docs/UPLOAD_ONLY_INDEPENDENT_STATE_READBACK.md on GitHub; this
-policy is live in E11, but a completed one-hour epoch is not yet demonstrated.
-
-Prospective registration optimization on GitHub main: fixed-block commitment,
-UID and reverse-hotkey maps returned the same 246 activated identities in
-16.5 seconds versus 101.9 seconds for serial lookups. Signature checks and
-snapshot semantics are unchanged. E11's sealed source does not contain this
-optimization; adoption requires a future signed source and epoch boundary.
-See docs/BATCHED_FIXED_BLOCK_REGISTRATION_SNAPSHOT.md.
-
-Public machine-readable endpoints /llms.txt, /mining.json, /network-data.json
-and /reward-policy.json allow normal CLI GET/HEAD requests. The affine.io
-Cloudflare rule skips only Browser Integrity Check on those exact public
-paths; it does not grant storage credentials or upload access. Read the signed
-manifest for miner-specific capabilities and current deadlines.
-
-Dashboard batch counts use authenticated signed commitments and ROOT-signed learner admissions for the current decoupled epochs. Learner-eligible means cheap admission of unaudited inputs, never proof verification. Independent continuous audit totals are unavailable in this chart unless an actual epoch audit record is present. The latest available committed epoch appears before reward finalization.
-
-## Prospective compact probability artifacts — not active
-
-Main provides an explicit selected-token-logprobs-v1 artifact policy, documented
-in docs/COMPACT_PROBABILITY_ARTIFACT_PROPOSAL.md. An epoch must opt in through
-its signed probability_artifact_policy, backed by a newly qualified complete
-source. Historical full-vocabulary artifacts and source9f are unchanged.
-The new format stores one float32 log probability per emitted token, while the
-verifier still independently computes full distributions and checks every
-prescribed random draw, token context and required TOPLOC fingerprint. Submitted
-selected probabilities never determine the reference sampler. Genuine CPU
-controls and tampering controls pass. A qualification-only H200 run passed five
-honest/tampering controls for a 139-token trajectory; activation is pending.
-This reduces artifact size, not the required model computations.
-
-Main also adds bounded automatic retirement of verified local submission downloads
-after a typed completed-backend lease expiry, preserving original signed jobs,
-reports and diagnostics. Original signed submission hashes, private preexisting
-hydration receipts, inode/link checks and active checkpoint locks are required.
-The expired-input extension is now deployed on all seven workers, with
-61 exact minimal-pair CPU controls and 65 affected main-branch controls passing.
-All seven retain immediate-ACK and idle owned-model disposal. The independent
-API package now includes the full hash-pinned original170-module runtime,
-the CPU API service and an explicit probability-policy validation module
-(172 modules total). Only the narrow policy guard changed from the restored
-171-module package; the queue database, identities, leases and historical
-contracts are preserved. This CPU guard does not activate compact mining.
-The package includes lazy frozen-commitment validation dependencies.
-A four-file package initially rejected genuine reports; all seven pending
-reports pass the restored original CPU validator. Expired leases remain
-infrastructure outcomes, without backdated acknowledgments or fraud penalties.
-
-Independent held-out evaluation was reactivated on 2026-10-06 with source-aware
-routing. Existing issued original jobs are observed first; new jobs use the
-approved 9f source with automatic evaluation retention and a signed 32 GiB
-free-disk admission floor. Unissued older sources remain deferred rather than
-being rewritten or treated as completed. Evaluation does not gate training.
-The compact probability candidate 4109ca0123cef05d37c908824b1fa32bb085d24e1e4bad3529a86899798b9aea
-passed complete R2 readback and CPU staging on all ten roles. Its independent
-H200 qualification produced a 4,658-byte honest artifact in a 45.28-second test
-and passed five controls, including fresh-seed and token changes rejected by
-the independently computed sampler. These are test measurements, not a
-production epoch speedup. It has not replaced the current manifest contract.
-
-The first independent E19 evaluation attempt failed before GPU execution because
-a queued trainer-local checkpoint cache was not valid on the evaluator machine.
-Main now routes only explicitly approved evaluator-local cache paths; otherwise
-the sealed backend performs owned full-hash checkpoint hydration. The failed
-original remains recorded; any infrastructure recovery uses a distinct labeled
-request with the same checkpoint, held-out tasks and seeds. No held-out result
-from this recovery is claimed yet.
-
-Prospective main-branch token capture now bounds both downloads and immutable
-publication to four workers, with serial receipt journaling only after successful
-publication. Infrastructure publication failures remain retryable and never
-become miner fraud. This controller optimization is not in the immutable live
-9f source or compact 4109 qualification candidate and has not been activated.
-
-An isolated, default-off terminal-EOS experiment helper is available in
-docs/TERMINAL_EOS_AUXILIARY_EXPERIMENT.md. It requires genuine already-present
-EOS, signed inference-audit evidence and a separate native-correctness receipt.
-Thirty-five CPU controls passed, including unchanged baseline gradients. There
-is no production caller, active objective change or experimental GPU result.
-
-Prospective trusted native evaluation is now implemented on main and default-off
-(see docs/TRUSTED_NATIVE_EVALUATOR_PROPOSAL.md). An explicit operator-owned
-evaluation policy retains the signed generation runtime, model, contexts, seeds
-and native grader, while avoiding probability-artifact construction, TOPLOC
-construction and redundant self-verification. Reports explicitly say unverified
-and native-graded; they cannot count as miner proof or reward evidence.
-161 affected ROOT CPU controls pass. This candidate has not replaced the
-original running E19 held-out job, and no H200 timing gain is claimed yet.
-
-Research status 2026-10-06, not a live contract change:
-A default-off token-only three-way prefill check on four genuine E21 rollouts
-accepted three and marked the long 1024-token rollout numerical inconclusive.
-All 80 fresh tampered traces were invalid. The long check took median 1.611s
-with one model forward versus official 21.562s with 1025 forwards, but
-inconclusive is NOT accepted or confirmed fraud; its outcome remains pending.
-Short accepted rollouts took 2.292–2.427s including original environment grading.
-The independent second H200 produced the identical four-rollout verdicts
-and rejected the same 80 byte-identical tampered artifacts. Its long check took
-1.435s versus official 19.628s, again inconclusive rather than accepted. Both
-original research jobs completed successfully; their evidence passed full R2
-readback. The second machine automatically retired its owned 15.24GB research
-checkpoint and resumed the independent evaluator. This is a tiny two-machine
-qualification, not a population-wide accuracy or speed claim. Earlier token-only checks with exact fallback passed on two H200s.
-Sampling consistency is not proof of historical execution.
-
-Operational changes prepared on GitHub main, not silently applied to old jobs:
-The real module-entrypoint retry-context fix passed an actual -m subprocess
-control. The completed E21 continuation predates that fix, so its original
-transport retries are not asserted for it. A bounded one-owned-checkpoint worker
-retention policy passed 129 tests and 105 subtests together with recovery controls.
-Its seven-worker rollout completed at idle job boundaries: all seven new workers are independently confirmed running with these policy flags, and the same-config continuous auditor restarted. Active GPU jobs were allowed to finish. Actual consecutive-job checkpoint reuse remains under observation. It keeps at most one current owned model for up to 1,800 seconds,
-retires superseded or expired owned state automatically, and has a 2 GiB disk floor.
-No manual removal of checkpoint or rollout state is used for this rollout.
-
-Prospective compact-proof v4 qualification, not an active mining contract:
-The complete 2dc42cbd8b1ca39bbc6f1aed438e0849caec250155439c80e131f7da89065f86 candidate passed full R2 archive readback and CPU controls. It retains selected-token logprobs and TOPLOC while introducing an explicit prefill-only three-way CDF check: accepted, confirmed invalid, or numerically inconclusive. Inconclusive reports cannot become accepted proof receipts or confirmed cheating. Fresh v4 draws and calibration require new GPU qualification; old v3 rollouts and research reports are not relabeled. Authenticate the current signed manifest before changing your miner.
-
-Fresh compact v4 research result, still not an active mining contract:
-The original H200 run generated two fresh success/failure pairs under the new v4 draw domain and passed two calibration measurements within the existing bounds. Three genuine rollouts were accepted; the long 1024-token rollout was numerically inconclusive, not accepted or confirmed fraud. All 80 altered trajectories with freshly rebuilt valid TOPLOC fingerprints were rejected by their CDF checks. Each honest check used one forward and no cached replay. Original request, terminal and artifacts passed full private R2 archive readback. Independent verification of these exact fresh v4 artifacts is still pending. The source-aware API guard on main is default-off; it preserves original per-source contracts and rejects laundering inconclusive reports into accepted credit.
+Historical notes, superseded contracts and original measurements are preserved:
+https://github.com/AffineFoundation/affine/blob/main/docs/operations-history-2026-10-06-before-guide-reconciliation.md
+They do not authorize new mining or redefine the current signed manifest.
