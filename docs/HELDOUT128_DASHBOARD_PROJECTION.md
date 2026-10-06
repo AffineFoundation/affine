@@ -15,3 +15,5 @@ Validation:
 ```
 
 A read-only check on actual authenticated original archives reconstructs CP11=77/128, CP12=86/128, CP13=84/128. CP14 has no result in this scope. The private CP13 full archive was independently fetched from R2 and matched906660 bytes and the ROOT-signed summary digest before preparing the unsigned dashboard scope.
+
+Comparability is mandatory across every32-task chunk and every checkpoint in the signed dashboard scope: common runtime package versions, signed model runtime revision/backend/numerical profiles, native environment revision and harness-source hash, normalized6746-task mining set, complete native specification (snapshot, native source hash, grader dependencies, turn/token/reward settings), and cached1024 harness. Reports must match their original signed manifest execution/generation revisions and profiles. The same index+seed must retain the same native task hash across checkpoints. Epoch/request clocks and model checkpoint identity may differ; they do not enter the comparability digest. Signed-but-different runtime/profile/grader data cannot be combined into a displayed comparable series.
