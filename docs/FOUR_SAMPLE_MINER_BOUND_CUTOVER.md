@@ -1,8 +1,8 @@
 # Four-sample miner-bound cutover
 
-## Four-sample miner-bound cutover — pending activation
+## Four-sample miner-bound cutover — activated in epoch 53
 
-The next contract, `forced-inverse-cdf-prefill-miner-bound-v5`, requires exactly
+The epoch-53 contract, `forced-inverse-cdf-prefill-miner-bound-v5`, requires exactly
 four distinct rollouts for one task: two native-graded successes and two
 native-graded failures (K=2/L=2). Each UID may submit at most three task batches
 per epoch. One qualifying unique task earns one contribution point; extra
@@ -19,10 +19,14 @@ outputs count twice. The verifier independently recomputes the prescribed draws;
 TOPLOC alone is insufficient. Miners may search the allowed attempts and select
 qualifying outcomes. This is not unbiased sampling or proof of physical execution.
 
-Activation is pending. Follow the signed OPEN manifest and approved source from
-https://affine.io/mining.json. Until it advertises v5, K=2/L=2, max_attempts=1000
-and max_batches=3, follow that opening's old rules. Historical signed epochs keep
-their original rules and draw bytes. v5 keeps calibrated prefill support with
+Activated in signed epoch 53 on 2026-10-07 at 20:19 UTC; the public discovery
+endpoint independently advertised the same opening. Its approved source SHA256 is
+`0dcf31a608fe86075b6b8e755486978d62ebf8a2d8518e166ce4fc83e942f360`.
+Follow the latest signed OPEN manifest and approved source from
+https://affine.io/mining.json; it determines current availability and deadlines.
+Epoch 52 was closed after a pre-GPU bootstrap failure and was not relabeled.
+Historical signed epochs retain their original rules and draw bytes. v5 keeps
+calibrated prefill support with
 exact-cached-replay-v1 adjudication; numerical tolerances are unchanged. It does
 not activate token-only transport or a new three-way numerical profile.
 Training still uses cheap-eligible unaudited inputs independently of continuous

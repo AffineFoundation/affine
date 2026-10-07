@@ -1,8 +1,8 @@
 # Affine — MATH mining, verification and training
 
-## Four-sample miner-bound cutover — pending activation
+## Four-sample miner-bound cutover — activated in epoch 53
 
-The next contract, `forced-inverse-cdf-prefill-miner-bound-v5`, requires exactly
+The epoch-53 contract, `forced-inverse-cdf-prefill-miner-bound-v5`, requires exactly
 four distinct rollouts for one task: two native-graded successes and two
 native-graded failures (K=2/L=2). Each UID may submit at most three task batches
 per epoch. One qualifying unique task earns one contribution point; extra
@@ -19,10 +19,14 @@ outputs count twice. The verifier independently recomputes the prescribed draws;
 TOPLOC alone is insufficient. Miners may search the allowed attempts and select
 qualifying outcomes. This is not unbiased sampling or proof of physical execution.
 
-Activation is pending. Follow the signed OPEN manifest and approved source from
-https://affine.io/mining.json. Until it advertises v5, K=2/L=2, max_attempts=1000
-and max_batches=3, follow that opening's old rules. Historical signed epochs keep
-their original rules and draw bytes. v5 keeps calibrated prefill support with
+Activated in signed epoch 53 on 2026-10-07 at 20:19 UTC; the public discovery
+endpoint independently advertised the same opening. Its approved source SHA256 is
+`0dcf31a608fe86075b6b8e755486978d62ebf8a2d8518e166ce4fc83e942f360`.
+Follow the latest signed OPEN manifest and approved source from
+https://affine.io/mining.json; it determines current availability and deadlines.
+Epoch 52 was closed after a pre-GPU bootstrap failure and was not relabeled.
+Historical signed epochs retain their original rules and draw bytes. v5 keeps
+calibrated prefill support with
 exact-cached-replay-v1 adjudication; numerical tolerances are unchanged. It does
 not activate token-only transport or a new three-way numerical profile.
 Training still uses cheap-eligible unaudited inputs independently of continuous
@@ -32,7 +36,7 @@ See https://github.com/AffineFoundation/affine/blob/main/docs/FOUR_SAMPLE_MINER_
 
 ## Historical operational records
 
-The dated records below describe their original contracts, not pending v5.
+The dated records below describe their original contracts; the active v5 contract is described above.
 
 Latest verified operational update, 2026-10-07, 12:09 UTC:
 The original epoch 42 completed on the replacement H200 and advanced persistent
@@ -429,7 +433,7 @@ exact source bundle for generation, not a research candidate.
 
 ## Model and taskset — follow the signed opening
 
-Qwen/Qwen2.5-Math-7B-Instruct has 7,615,616,512 parameters. Checkpoint files use BF16. The approved generation and audit runtime is cuda-fp32-eager-sm90-v1 (float32, eager attention, TF32 disabled); the signed training override uses BF16 forward/backward with persistent FP32 masters and AdamW moments. The signed manifest and role execution profiles specify the exact runtime. The active original MATH taskset contains 7,496 distinct usable problems: 6,746 mining tasks and 750 reserved held-out tasks. DeepMath and NuminaMath are not yet part of this contract. Historical K=1/L=1 openings require one graded success and one graded failure. Pending v5 requires two distinct successes and two distinct failures; activate only through a new signed opening.
+Qwen/Qwen2.5-Math-7B-Instruct has 7,615,616,512 parameters. Checkpoint files use BF16. The approved generation and audit runtime is cuda-fp32-eager-sm90-v1 (float32, eager attention, TF32 disabled); the signed training override uses BF16 forward/backward with persistent FP32 masters and AdamW moments. The signed manifest and role execution profiles specify the exact runtime. The active original MATH taskset contains 7,496 distinct usable problems: 6,746 mining tasks and 750 reserved held-out tasks. DeepMath and NuminaMath are not yet part of this contract. Historical K=1/L=1 openings require one graded success and one graded failure. Epoch 53 activated v5 with two distinct successes and two distinct failures; always follow the current signed opening.
 
 
 ## How to start mining
@@ -493,7 +497,7 @@ credentials. Miners need no permanent bucket credentials.
 
 ## Current proof and learning contract
 
-The historical verifier is forced-inverse-cdf-prefill-support-v3; pending v5
+The historical verifier is forced-inverse-cdf-prefill-support-v3; epoch-53 v5
 adds authenticated miner binding and the four-sample quota. Public prescribed
 draws bind the epoch, checkpoint, task, attempt, turn and token position; v5
 also binds authenticated miner identity. The
