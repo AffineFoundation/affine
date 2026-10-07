@@ -88,6 +88,17 @@ fixed, and report cap/EOS rates, failure-tail diagnostics and paired held-out
 gains/losses. Keep the original full held-out comparison running independently.
 These observations activate no production admission, sampler or quota change.
 
+A subsequent CPU scan authenticated the original proof artifacts and audit
+join for all 89 accepted high-margin E37 negatives. None contains token IDs
+151643 (`endoftext`), 151645 (`im_end`), 151644 (`im_start`) or 151646
+(`object_ref_start`) anywhere in its 1,024-token output. Missing an alternate
+EOS stop therefore does not explain these particular tails. Frozen sampler
+inspection also finds no nonfinite-to-uniform fallback: invalid distributions
+are rejected. Cached generation and uncached teacher-forced probability replay
+are separate paths, so measure full-row entropy, hidden norms and cached versus
+uncached differences around onset before assigning a cause. Selected-token
+log probabilities alone do not establish a uniform full-vocabulary row.
+
 ## Proposed contract and duplicate identities
 
 Start with K2/L2: two distinct successes and two distinct failures for one task,
