@@ -1,15 +1,21 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 06:40 UTC:
+Current operational status, 2026-10-07, 07:08 UTC:
 Epoch 39 completed in 53.770 minutes, training 256 eligible UNAUDITED task pairs
 and advancing persistent optimizer step 29 to 30. Checkpoint 30 was durably published after independent full readback
 of ten model objects and all 23 optimizer shards. The original training job
 completed successfully; training did not repeat sampling verification or wait
-for audits. The original optimizer-cache promotion completed, and the drained
-coordinator exited naturally. The same coordinator service has now started once
-from the committed checkpoint 30 with the reviewed future-epoch CPU selection
-policy. Its next signed opening and actual selection remain to be observed;
-this service start alone does not establish a completed next epoch.
+for audits. The original optimizer-cache promotion completed, and the E39 drained
+coordinator exited naturally. E40 initially stalled before its first manifest
+because its CPU opening interface forwarded unsupported selection arguments.
+The coordinator was intentionally stopped with SIGTERM; this was not a natural
+completion. A narrow reviewed CPU fix now binds selection metadata before the
+first local save and publication. Full signed-policy validation and 15 focused
+CPU opening controls passed against the frozen controller. The same E40 has
+resumed from checkpoint 30 into mining, retaining its original completed
+calibration and optimizer lineage. Its local opening manifest contains the
+selection policy and protected round 40. Actual application to the frozen
+training selection and completion of E40 remain to be observed.
 The latest authenticated matched held-out result is checkpoint 29 at 76/128,
 down from checkpoint 28 at 78/128 (four gains, six losses on identical tasks,
 seeds and prompt hashes), and below checkpoint 23 at 90/128. All four original
@@ -21,11 +27,13 @@ policy excludes confirmed-blacklisted identities from future training selection,
 without removing their committed submissions from audit and reward evidence.
 Actual application to the next frozen training selection remains to be checked.
 The prospective K2/L2 identity, nonoverlapping-pair and current-rollout-format
-adapter and opt-in durable research selection ledger passed forty-three CPU
+adapter and opt-in durable research selection ledger passed fifty-three CPU
 controls, including cumulative revision checks and actual child-process crashes
 around a simulated update. Unresolved execution claims cannot automatically retry;
 completion recovery requires authentication of the same original durable outcome.
-These use synthetic metadata and are not connected to production; authenticated
+The default-off common-attempt collector preserves all prescribed attempts and
+original proof artifacts for a nested K1/L1 versus K2/L2 research comparison.
+These controls use synthetic metadata and are not connected to production; authenticated
 commitment and real optimizer crash-recovery integration remain to be qualified.
 The ledger alone does not make GPU updates and SQLite transactions atomic. See
 docs/PAIRED_QUOTA_CPU_QUALIFICATION.md on GitHub.
