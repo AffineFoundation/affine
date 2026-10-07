@@ -6,10 +6,12 @@ K2L2_QUOTA_QUALIFICATION.md, not its scientific or proof requirements.
 
 ## Establish the baseline first
 
-The learner is currently held during recovery of the trainer runtime and its
-checkpoint cache. Restore the authentic checkpoint and optimizer lineage and
-complete successive ordinary epochs before changing production quotas. Do not
-interpret recovery downtime as instability caused by a two-rollout task batch.
+The replacement trainer completed epoch 42, advancing the authentic optimizer
+lineage from step 32 to 33. Independent readback verified all 23 state objects;
+epoch 43 then opened automatically. The training job took 20.62 minutes, which
+is not the duration of the entire epoch. Confirm successive ordinary epochs
+before changing production quotas. Do not interpret recovery downtime as
+instability caused by a two-rollout task batch.
 
 A submitted task batch currently contains one successful and one unsuccessful
 trajectory. An optimizer update aggregates many task batches; it is not an
