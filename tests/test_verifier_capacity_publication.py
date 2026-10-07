@@ -25,6 +25,23 @@ class CapacityPublication(unittest.TestCase):
   with patch('argparse.ArgumentParser.parse_args',return_value=args),patch('ops.verifier_capacity_publication.backfill')as fill,patch('ops.verifier_capacity_publication.flush')as ship:
    with self.assertRaisesRegex(ValueError,'revoked'):main(guard=revoked)
    fill.assert_not_called();ship.assert_not_called()
+ def test_additive_eighth_route_preserves_original_seven_receipts(self):
+  grant=enqueue(self.c,self.policy,self.cp,self.staged);self.assertEqual(len(flush(self.c,self.policy,replicate=self.replicate)),7)
+  receipts=Path(self.v['outbox'])/self.cp['id'];original={p:p.read_bytes()for p in receipts.glob('*.json')}
+  extended=copy.deepcopy(self.v);extended['replicas']['9']={'new':True};policy=self.fx.sign(extended)
+  self.assertEqual(enqueue(self.c,policy,self.cp,self.staged),grant);self.assertEqual(flush(self.c,policy,replicate=self.replicate),[dict(replica='9',status='complete')]);self.assertEqual(flush(self.c,policy,replicate=self.replicate),[])
+  self.assertTrue(all(p.read_bytes()==raw for p,raw in original.items()));self.assertEqual(set(p.stem for p in receipts.glob('*.json')),{'1','2','3','4','5','6','8','9'})
+ def test_eighth_route_cannot_remove_original_or_reactivate_retired_seven(self):
+  from ops.verifier_capacity_publication import checked_policy
+  for remove,extra in [('4','9'),(None,'7')]:
+   value=copy.deepcopy(self.v)
+   if remove is not None:del value['replicas'][remove]
+   value['replicas'][extra]={}
+   with self.subTest(remove=remove,extra=extra),self.assertRaises(ValueError):checked_policy(self.fx.sign(value),self.fx.authority)
+ def test_eighth_route_requires_authenticated_policy(self):
+  from ops.verifier_capacity_publication import checked_policy
+  envelope=copy.deepcopy(self.policy);envelope['payload']['replicas']['9']={}
+  with self.assertRaises(Exception):checked_policy(envelope,self.fx.authority)
  def test_default_off_publication_untouched(self):self.assertIsNone(enqueue(None,None,None,None));self.assertEqual(flush(None,None,replicate=None),[])
  def test_genuine_full_readback_metadata_signed_once_and_all7_replayed(self):
   grant=enqueue(self.c,self.policy,self.cp,self.staged);self.assertEqual(len(flush(self.c,self.policy,replicate=self.replicate)),7);self.assertEqual(flush(self.c,self.policy,replicate=self.replicate),[]);self.assertEqual(enqueue(self.c,self.policy,self.cp,self.staged),grant)

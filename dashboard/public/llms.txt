@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 02:24 UTC:
+Current operational status, 2026-10-07, 02:26 UTC:
 Checkpoint 25 is the controller's committed model. Epochs 31, 32 and 33 completed normally
 in 48.855, 50.372 and 50.692 minutes. Epoch 33 trained on 256 UNAUDITED task pairs
 and advanced optimizer step 23 to 24. All ten model files (15.24 GB) and 23
@@ -34,7 +34,9 @@ startup policies and automatic restart on failure. The separate hourly weight
 writer submitted the 02:00 UTC assessment for 208 current UIDs at block 9228005.
 The assessment was fresh; 24 no-longer-registered identities were excluded
 using the current registration snapshot. This is submission evidence, not a separately observed reveal.
-Seven verifier workers remain enrolled. A replacement single-H200 machine is
+Eight verifier identities are now enrolled. The eighth worker is running and
+has claimed its first normal audit job; its first accepted signed report remains
+pending. The replacement single-H200 machine is
 rented with explicit retained ownership. Its original CPU-only runtime installation
 completed successfully. Original checkpoint staging also completed and its
 bounded evidence archive passed independent full R2 readback. A twenty-control
@@ -46,8 +48,9 @@ test only. A separate checkpoint-24 qualification subsequently passed four hones
 controls and sixteen tampering controls, with actual successful process exit and
 independent full R2 archive readback. All nine software source versions are now
 installed and independently rehashed on the replacement. The API, auditor and
-hourly writer authorize its eighth identity; seven production workers remain
-active until the new worker starts and produces an accepted normal report.
+hourly writer authorize its eighth identity. Its supervisor and worker are live,
+and the normal queue recorded its first leased job. Seven workers have already
+produced accepted production reports; the eighth report is still pending.
 A systemd override precedence mismatch interrupted the auditor during this
 authorization handoff; the effective auditor and writer overrides are corrected.
 No training restart or manual hourly weight replay was performed.
@@ -55,7 +58,8 @@ The isolated retained H100 has the frozen evaluator source and native grader
 staged for a matched untouched-base versus checkpoint-24 comparison on all
 750 held-out problems. Both exact model restorations have started; actual
 evaluation remains pending. The new verifier supervisor has been launched,
-but its first normal claim and accepted signed report remain unconfirmed. The previous additional H200 passed bounded
+and its first normal queue claim is confirmed; an accepted signed report
+remains pending. The previous additional H200 passed bounded
 research qualification but was deleted through the provider API during a later
 reference test; that interrupted test grants no enrollment or numerical relabel.
 

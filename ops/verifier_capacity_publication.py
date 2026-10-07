@@ -23,7 +23,7 @@ def publish_exclusive(path,value):
 
 def checked_policy(envelope,authority):
     v=authenticate(envelope,authority)
-    if set(v)!={'version','outbox','replicas'}or v['version']!=VERSION or not isinstance(v['replicas'],dict)or set(v['replicas'])!={'1','2','3','4','5','6','8'}:raise ValueError('exact seven-replica size publication policy')
+    if set(v)!={'version','outbox','replicas'}or v['version']!=VERSION or not isinstance(v['replicas'],dict)or set(v['replicas']) not in ({'1','2','3','4','5','6','8'}, {'1','2','3','4','5','6','8','9'}):raise ValueError('exact admitted seven- or eight-replica size publication policy')
     if not Path(v['outbox']).is_absolute():raise ValueError('owned metadata outbox')
     return v
 
