@@ -1,16 +1,17 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 05:32 UTC:
+Current operational status, 2026-10-07, 06:03 UTC:
 Epoch 38 completed in 50.505 minutes, training 256 eligible UNAUDITED task pairs
 selected from 479 eligible documents and advancing persistent optimizer step
 28 to 29. Checkpoint 29 was durably published after independent full readback
 of ten model objects and all 23 optimizer shards. The original training job
 completed successfully; training did not repeat sampling verification or wait
-for audits. Checkpoint 29's matched held-out performance is not yet established.
-The latest authenticated matched held-out result is checkpoint 28 at 78/128,
-up from checkpoint 27 at 74/128 (ten gains, six losses on identical tasks, seeds
-and prompt hashes), but below checkpoint 23 at 90/128. This modest recovery does
-not establish sustained convergence. The public performance chart includes CP28.
+for audits. Epoch 39 is training on that checkpoint under its original job.
+The latest authenticated matched held-out result is checkpoint 29 at 76/128,
+down from checkpoint 28 at 78/128 (four gains, six losses on identical tasks,
+seeds and prompt hashes), and below checkpoint 23 at 90/128. All four original
+jobs, successful process completions and full-readback acknowledgements were
+independently checked. These results do not establish sustained convergence.
 Production still requires one success and one failure per task. The larger
 sample-quota study and training-only blacklist integration are prospective.
 Default-off sampling diagnostics are available on GitHub main for the frozen

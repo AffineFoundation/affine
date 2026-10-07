@@ -30,6 +30,11 @@ K1/L1 versus K2/L2 comparison. If matched held-out regression persists, study
 reference anchoring or explicit drift control in a separate experiment rather
 than changing the reference, quota and learning rate together.
 
+The latest authenticated same-128-task comparison scores checkpoint 29 at
+76/128 versus checkpoint 28 at 78/128: four gains and six losses on matched
+tasks, prompts and seeds. Checkpoint 23 remains higher at 90/128. Successful
+epoch execution therefore does not establish convergence.
+
 The partial untouched-base comparison raises a regression concern. It does not
 establish that sample count caused it. Capped negative trajectories, termination
 behavior, objective/reference behavior and task-selection bias remain candidate
