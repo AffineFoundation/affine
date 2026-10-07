@@ -1,3 +1,30 @@
+Verified continuation, 2026-10-07, 14:40 UTC:
+This entry supersedes older snapshots below. The controller recorded epoch 46
+complete and epoch 47 opening at 14:36 UTC, with eligible unaudited training
+inputs. The 14:00 hourly assessment successfully submitted weights for 223
+current UID/hotkey recipients at registration/submission block 9231618.
+
+The original checkpoint-32 full evaluation completed all 750 held-out tasks.
+Independent reconstruction authenticated all 24 groups, 72 ROOT signatures,
+101 input files and matching task/prompt/seed identities. Scores were base
+548/750, checkpoint 24 482/750, and checkpoint 32 496/750. Checkpoint 32 remains
+6.93 percentage points below base; its paired bootstrap 95% interval is
+[-10.13, -3.60]. Its increase over checkpoint 24 does not establish recovery.
+The metadata closure was published and independently fully read back before
+ROOT signed its final archive ACK. These are native-grader findings, not
+inference-proof assurance or evidence about later checkpoints.
+
+At 14:37 UTC the original same-parent negative-quality comparison had seven
+of eight actual successful child waits; the final treatment group was live.
+Do not interpret partial scores or restart that original job. Separate CPU
+verification of the staged checkpoint-33/model/optimizer research inputs has
+started with streaming full hashes and durable actual-wait receipts; it performs
+no GPU work. The next objective comparison remains undispatched pending study
+interpretation and genuine hardware qualification. Production K1/L1/max3 and
+the public miner contract are unchanged. More per-task samples remain a
+controlled research proposal; larger-quota ledgers are not live. Learning is
+unproven, and cleanup/community messaging remain deferred.
+
 Verified continuation, 2026-10-07, 13:30 UTC:
 This entry supersedes older operational snapshots below. Epoch 44 completed
 naturally and promoted checkpoint fdf5725a65c52b0d4a34625f13de6f8b267a09216d610ee033b9063f3b8e6a1b
