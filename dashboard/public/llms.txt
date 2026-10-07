@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 05:13 UTC:
+Current operational status, 2026-10-07, 05:18 UTC:
 Epoch 37 completed in 52.003 minutes, training 256 eligible UNAUDITED task pairs
 and advancing persistent optimizer step 27 to 28. Checkpoint 28 was durably
 published with independent model and optimizer readback. Epoch 38 has selected
@@ -11,6 +11,12 @@ and prompt hashes), but below checkpoint 23 at 90/128. This modest recovery does
 not establish sustained convergence. The public performance chart includes CP28.
 Production still requires one success and one failure per task. The larger
 sample-quota study and training-only blacklist integration are prospective.
+The isolated same-parent negative-quality training comparison was interrupted:
+Lium records its H100 deleted at 05:12 UTC after an SDK request through the
+account API key. No completed research training result or output-state readback
+was verified. Existing original scopes and evidence remain preserved; no silent
+restart or replacement result is being treated as that original execution.
+The separate original full-750 evaluation machine remains running.
 
 Earlier operational history (the latest update above takes precedence):
 Checkpoint 27 is the controller's committed model. Epochs 31, 32 and 33 completed normally
