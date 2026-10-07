@@ -56,7 +56,7 @@ def validate_current_calibration(attestation,cfg,source,runtime,authority,verify
  if any(x['measured_cdf_abs_error']>expected['cdf_abs_error']or x['measured_logprob_abs_error']>expected['logprob_atol']for x in result['reports']):raise ValueError('actual final confirmation within installed bounds')
  return True
 
-def validate(source,qualification,cfg,source_sha256,authority,verify_row,*,guards,strict_admission,source_root):
+def validate_original(source,qualification,cfg,source_sha256,authority,verify_row,*,guards,strict_admission,source_root):
  # An original04b source approval is evidence only; never a phantom live policy.
  if source.get('version')!=SOURCE or source.get('approved')is not True or source.get('source_sha256')!=source_sha256 or source.get('optimizer_reset')is not False or source.get('historical_relabel')is not False:raise ValueError('explicit new composite source approval')
  extra={'core_source_approval','core_qualification_approval','core_config','calibration_dispatch_delta','current_parent_calibration','core_source_root'}
@@ -86,3 +86,42 @@ def validate(source,qualification,cfg,source_sha256,authority,verify_row,*,guard
  if guards.file_hash(Path(calibration.__file__))!=source['runtime_source_files']['subnet/successor_calibration.py']:raise ValueError('new calibration module exact source')
  validate_current_calibration(parentcal,cfg,source_sha256,source['runtime_source_files'],authority,verify_row,guards,calibration)
  return {'source':source_sha256,'core_source':core['source_sha256'],'current_parent':parentcal['parent_checkpoint'],'old_evidence_relabelled':False,'runtime_count':len(source['runtime_source_files'])}
+
+BOOTSTRAP_SOURCE='k2l2-miner-bound-bootstrap-successor-source-approval-v1'
+BOOTSTRAP_QUALIFICATION='k2l2-miner-bound-bootstrap-successor-training-qualification-v1'
+BOOTSTRAP_POLICY='durable-pinned-k2l2-bootstrap-successor-learner-service-v4'
+BOOTSTRAP_TEST='tests/test_v5_mining_bootstrap.py'
+
+def validate_bootstrap_delta(before,after,declared,old_root,new_root):
+ if set(after)-set(before)!={BOOTSTRAP_TEST} or set(before)-set(after):raise ValueError('only exact mining bootstrap CPU test added')
+ actual={k:{'before':before.get(k),'after':after[k]}for k in after if before.get(k)!=after[k]}
+ if set(actual)!={'subnet/backend_jobs.py',BOOTSTRAP_TEST}or declared!=actual:raise ValueError('bootstrap only backend and CPU test delta')
+ old=(Path(old_root)/'subnet/backend_jobs.py').read_text()
+ new=(Path(new_root)/'subnet/backend_jobs.py').read_text()
+ needle="        from .forced_sampling import MINER_VERSION\n        miner_bound=manifest.get('sampling_contract',{}).get('version')==MINER_VERSION"
+ replacement="        # Admission runs before authenticated fresh runtime imports.\n        miner_bound=manifest.get('sampling_contract',{}).get('version')=='forced-inverse-cdf-prefill-miner-bound-v5'"
+ if old.count(needle)!=1 or old.replace(needle,replacement)!=new:raise ValueError('only exact same version literal before fresh runtime finder')
+ return actual
+
+def validate(source,qualification,cfg,source_sha256,authority,verify_row,*,guards,strict_admission,source_root):
+ if source.get('version')!=BOOTSTRAP_SOURCE:
+  return validate_original(source,qualification,cfg,source_sha256,authority,verify_row,guards=guards,strict_admission=strict_admission,source_root=source_root)
+ extra={'bootstrap_predecessor_source','bootstrap_predecessor_qualification','bootstrap_predecessor_config','bootstrap_predecessor_source_root','mining_bootstrap_delta'}
+ prior=verify_row(source['bootstrap_predecessor_source'],authority)
+ priorq=verify_row(source['bootstrap_predecessor_qualification'],authority)
+ priorcfg=original_metadata(source['bootstrap_predecessor_config'],guards)
+ if set(source)!=set(prior)|extra or source['approved']is not True or source['source_sha256']!=source_sha256 or source['optimizer_reset']is not False or source['historical_relabel']is not False:raise ValueError('exact bootstrap successor source fields')
+ validate_original(prior,priorq,priorcfg,prior['source_sha256'],authority,verify_row,guards=guards,strict_admission=strict_admission,source_root=source['bootstrap_predecessor_source_root'])
+ validate_bootstrap_delta(prior['full_source_files'],source['full_source_files'],source['mining_bootstrap_delta'],source['bootstrap_predecessor_source_root'],source_root)
+ guards.pinned_files(source_root,source['full_source_files'])
+ preserved=set(prior)-{'version','source_sha256','full_source_files','runtime_source_files','runtime_changes','contract_sha256'}
+ if any(source[k]!=prior[k]for k in preserved):raise ValueError('original provenance and calibration remain unchanged, not relabelled')
+ if set(prior['runtime_source_files'])!=set(source['runtime_source_files'])or any(source['full_source_files'].get(k)!=v for k,v in source['runtime_source_files'].items()):raise ValueError('same complete179 runtime inventory')
+ old=verify_row(source['predecessor_source_approval'],authority)
+ changes={k:{'before':old['runtime_source_files'].get(k),'after':v}for k,v in source['runtime_source_files'].items()if old['runtime_source_files'].get(k)!=v}
+ if source['runtime_changes']!=changes or source['contract_sha256']!=guards.digest(strict_admission.contract(cfg))or strict_admission.contract(cfg)!=strict_admission.contract(priorcfg):raise ValueError('same qualified model and sampling computation contract')
+ for k in ('parameters','parameters_sha256','genesis_round','genesis_checkpoint','genesis_sha256'):
+  if cfg['persistent_training_admission'].get(k)!=priorcfg['persistent_training_admission'].get(k):raise ValueError('same optimizer lineage')
+ expected=dict(priorq,version=BOOTSTRAP_QUALIFICATION,candidate_source_sha256=source_sha256,bootstrap_predecessor_qualification_sha256=guards.digest(priorq))
+ if qualification!=expected:raise ValueError('explicit bootstrap qualification preserves original evidence')
+ return {'source':source_sha256,'bootstrap_predecessor':prior['source_sha256'],'current_parent':priorcfg['deployment_gate']['expected_checkpoint'],'old_evidence_relabelled':False,'runtime_count':len(source['runtime_source_files'])}

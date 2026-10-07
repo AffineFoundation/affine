@@ -34,7 +34,7 @@ def validate_cpu_selection_peer(policy,source,cfg,authority):
         raise ValueError('exact default-off CPU selection peer policy')
     grant=guards.verify_document(row['authorization'],authority)
     grant_fields={'version','source_sha256','scientific_source_files','operator_files','minimum_round','epoch_prefix','peer_entry_sha256','peer_runner_sha256','backend_execution_allowed'}
-    if (set(grant)!=grant_fields or grant['version']!=('cpu-selection-peer-miner-bound-authorization-v2' if policy['version'] in ('durable-pinned-k2l2-learner-service-v2','durable-pinned-k2l2-composite-learner-service-v3') else 'cpu-selection-peer-authorization-v1') or
+    if (set(grant)!=grant_fields or grant['version']!=('cpu-selection-peer-miner-bound-authorization-v2' if policy['version'] in ('durable-pinned-k2l2-learner-service-v2','durable-pinned-k2l2-composite-learner-service-v3','durable-pinned-k2l2-bootstrap-successor-learner-service-v4','durable-pinned-k2l2-bootstrap-miner-hydration-learner-service-v5') else 'cpu-selection-peer-authorization-v1') or
         grant['source_sha256']!=policy['source_sha256']or grant['scientific_source_files']!=source['runtime_source_files']or
         set(grant['operator_files'])!=PEER_OVERRIDES or grant['operator_files']!=row['peer_files']or
         type(grant['minimum_round'])is not int or grant['minimum_round']<0 or
@@ -103,10 +103,10 @@ def validate_operator_overlay(overlay, source, policy, cfg):
         not stat.S_ISDIR(root.lstat().st_mode) or root.lstat().st_uid != os.getuid()):
         raise ValueError('distinct canonical owned CPU overlay root')
     changes = overlay['overrides']
-    if type(changes) is not dict or not changes or not set(changes) <= (CPU_OVERRIDES | ({'subnet/late_capture_recovery.py'} if ('capture_recovery' in policy or policy.get('version')=='durable-pinned-k2l2-composite-learner-service-v3') else set()) | ({'subnet/persistent_training_controller.py'} if 'native_training_eligibility' in policy else set()) | (PEER_OVERRIDES if PEER_POLICY_FIELD in policy else set())):
+    if type(changes) is not dict or not changes or not set(changes) <= (CPU_OVERRIDES | ({'subnet/late_capture_recovery.py'} if ('capture_recovery' in policy or policy.get('version') in ('durable-pinned-k2l2-composite-learner-service-v3','durable-pinned-k2l2-bootstrap-successor-learner-service-v4','durable-pinned-k2l2-bootstrap-miner-hydration-learner-service-v5')) else set()) | ({'subnet/persistent_training_controller.py'} if 'native_training_eligibility' in policy else set()) | (PEER_OVERRIDES if PEER_POLICY_FIELD in policy else set())):
         raise ValueError('only explicit coordinator transport modules may differ')
     original = source['full_source_files']
-    if any(k not in original and k not in ({'subnet/capture_journal.py', 'subnet/checkpoint_upload_recovery.py'} | ({'subnet/late_capture_recovery.py'} if ('capture_recovery'in policy or policy.get('version')=='durable-pinned-k2l2-composite-learner-service-v3') else set()) | ({'subnet/learner_blacklist_selection.py','subnet/learner_selection_operator_bridge.py'} if PEER_POLICY_FIELD in policy else set())) for k in changes):
+    if any(k not in original and k not in ({'subnet/capture_journal.py', 'subnet/checkpoint_upload_recovery.py'} | ({'subnet/late_capture_recovery.py'} if ('capture_recovery'in policy or policy.get('version') in ('durable-pinned-k2l2-composite-learner-service-v3','durable-pinned-k2l2-bootstrap-successor-learner-service-v4','durable-pinned-k2l2-bootstrap-miner-hydration-learner-service-v5')) else set()) | ({'subnet/learner_blacklist_selection.py','subnet/learner_selection_operator_bridge.py'} if PEER_POLICY_FIELD in policy else set())) for k in changes):
         raise ValueError('only explicit CPU sidecars may extend original membership')
     expected = dict(original, **changes)
     if overlay['full_source_files'] != expected:
@@ -199,14 +199,15 @@ def validate_policy(document, authority=guards.AUTHORITY):
     if 'operator_overlay' in p:
         fields.add('operator_overlay')
     if 'native_training_eligibility' in p:fields.add('native_training_eligibility')
-    if p.get('version') in ('durable-pinned-k2l2-learner-service-v2','durable-pinned-k2l2-composite-learner-service-v3'):
+    if p.get('version') in ('durable-pinned-k2l2-learner-service-v2','durable-pinned-k2l2-composite-learner-service-v3','durable-pinned-k2l2-bootstrap-successor-learner-service-v4','durable-pinned-k2l2-bootstrap-miner-hydration-learner-service-v5'):
         fields.add('scientific_admission_file_sha256')
-    if p.get('version') == 'durable-pinned-k2l2-composite-learner-service-v3':
+    if p.get('version') in ('durable-pinned-k2l2-composite-learner-service-v3','durable-pinned-k2l2-bootstrap-successor-learner-service-v4','durable-pinned-k2l2-bootstrap-miner-hydration-learner-service-v5'):
         fields.add('core_admission_file_sha256')
     if PEER_POLICY_FIELD in p:fields.add(PEER_POLICY_FIELD)
     if 'stop_after_current_round'in p:fields.add('stop_after_current_round')
     if 'capture_recovery'in p:fields.add('capture_recovery')
-    if set(p) != fields or p['version'] not in (VERSION, 'durable-pinned-k2l2-learner-service-v2','durable-pinned-k2l2-composite-learner-service-v3') or p['execute_allowed'] is not True or p['authority'] != authority:
+    if p.get('version')=='durable-pinned-k2l2-bootstrap-miner-hydration-learner-service-v5':fields.add('miner_checkpoint_materialization')
+    if set(p) != fields or p['version'] not in (VERSION, 'durable-pinned-k2l2-learner-service-v2','durable-pinned-k2l2-composite-learner-service-v3','durable-pinned-k2l2-bootstrap-successor-learner-service-v4','durable-pinned-k2l2-bootstrap-miner-hydration-learner-service-v5') or p['execute_allowed'] is not True or p['authority'] != authority:
         raise ValueError('exact durable learner policy required')
     for path, expected in ((Path(__file__).resolve(), p['runner_file_sha256']),
                            (Path(guards.__file__).resolve(), p['guards_file_sha256'])):
@@ -223,8 +224,8 @@ def validate_policy(document, authority=guards.AUTHORITY):
     source = verify_admission(p['source_approval'], authority)
     qualification = verify_admission(p['qualification_approval'], authority)
     reward = guards.verify_document(p['reward_activation'], authority)
-    scientific_successor = p['version'] in ('durable-pinned-k2l2-learner-service-v2','durable-pinned-k2l2-composite-learner-service-v3')
-    composite = p['version'] == 'durable-pinned-k2l2-composite-learner-service-v3'
+    scientific_successor = p['version'] in ('durable-pinned-k2l2-learner-service-v2','durable-pinned-k2l2-composite-learner-service-v3','durable-pinned-k2l2-bootstrap-successor-learner-service-v4','durable-pinned-k2l2-bootstrap-miner-hydration-learner-service-v5')
+    composite = p['version'] in ('durable-pinned-k2l2-composite-learner-service-v3','durable-pinned-k2l2-bootstrap-successor-learner-service-v4','durable-pinned-k2l2-bootstrap-miner-hydration-learner-service-v5')
     if composite:
         helper_path=Path(__file__).resolve().with_name('k2l2_composite_admission.py')
         core_path=Path(__file__).resolve().with_name('k2l2_scientific_admission.py')
@@ -292,6 +293,7 @@ def validate_policy(document, authority=guards.AUTHORITY):
     if PEER_POLICY_FIELD in p:validate_cpu_selection_peer(p,source,cfg,authority)
     elif 'learner_blacklist_selection_authorization'in cfg or any('learner_selection_cpu_peer'in v for v in cfg.get('remote',{}).get('roles',{}).values()if isinstance(v,dict)):
         raise ValueError('explicit selection requires separately admitted CPU peer policy')
+    if p.get('version')=='durable-pinned-k2l2-bootstrap-miner-hydration-learner-service-v5':validate_miner_materialization(p,source)
     if 'stop_after_current_round'in p:validate_stop_boundary(p,cfg,authority)
     if 'operator_overlay' in p:
         validate_operator_overlay(p['operator_overlay'], source, p, cfg)
@@ -312,9 +314,14 @@ def prepare_runtime(p):
     if 'native_training_eligibility' in p:
         install_native_constructor(gpu_service,p)
     if 'capture_recovery'in p:install_capture_recovery(gpu_service,p)
-    if p.get('version')=='durable-pinned-k2l2-composite-learner-service-v3':
+    if p.get('version') in ('durable-pinned-k2l2-composite-learner-service-v3','durable-pinned-k2l2-bootstrap-successor-learner-service-v4','durable-pinned-k2l2-bootstrap-miner-hydration-learner-service-v5'):
         install_qualified_remote_inventory(p)
         install_calibration_opening_quota()
+    if p.get('version')=='durable-pinned-k2l2-bootstrap-miner-hydration-learner-service-v5':
+        from subnet import remote_backend
+        from ops import miner_checkpoint_materialization as hydration
+        source=verify_admission(p['source_approval'],p['authority'])
+        hydration.install(remote_backend,p['miner_checkpoint_materialization'],p['source_sha256'],source['runtime_source_files'],guards.digest)
     return gpu_service
 
 
@@ -338,7 +345,11 @@ def install_qualified_remote_inventory(policy):
     nonruntime_files={'subnet/source_sampling_admission.py':source['full_source_files']['subnet/source_sampling_admission.py']}
     calibration=verify_admission(source['current_parent_calibration'],policy['authority'])
     job=verify_admission(calibration['original_invocations'][0]['job'],policy['authority'])
-    if job['source_files']!=runtime_files:
+    calibration_runtime=runtime_files
+    if policy.get('version')in ('durable-pinned-k2l2-bootstrap-successor-learner-service-v4','durable-pinned-k2l2-bootstrap-miner-hydration-learner-service-v5'):
+        predecessor=verify_admission(source['bootstrap_predecessor_source'],policy['authority'])
+        calibration_runtime=predecessor['runtime_source_files']
+    if job['source_files']!=calibration_runtime:
         raise ValueError('genuine current-parent calibration runtime closure changed')
     versions=job['runtime_versions']
     original=remote_backend.RemoteJobs
@@ -496,6 +507,15 @@ def main():
             return
         if 'native_training_eligibility'in p:service._native_lifecycle_execute=True
         run_original_boundary(service,p,guards.read(p['config']['path']))
+
+
+def validate_miner_materialization(p,source):
+ row=p['miner_checkpoint_materialization']
+ fields={'version','roles','source_sha256','scientific_runtime_files_sha256','helper_path','helper_file_sha256'}
+ expected=Path(__file__).resolve().with_name('miner_checkpoint_materialization.py')
+ if set(row)!=fields or row['version']!='miner-default-checkpoint-materialization-v1'or row['roles']!=['mine']or row['source_sha256']!=p['source_sha256']or row['scientific_runtime_files_sha256']!=guards.digest(source['runtime_source_files'])or row['helper_path']!=str(expected)or guards.file_hash(expected)!=row['helper_file_sha256']:raise ValueError('exact pinned CPU-only mining hydration helper')
+ from ops import miner_checkpoint_materialization as helper
+ if Path(helper.__file__).resolve()!=expected:raise ValueError('mining hydration helper origin')
 
 
 if __name__ == '__main__':

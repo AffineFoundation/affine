@@ -23,4 +23,26 @@ class Controls(unittest.TestCase):
    b.write_text(a.read_text().replace('request(job)','request(job); context(job)'));m.validate_backend_delta(a,b)
    b.write_text(b.read_text().replace('return True','return False'))
    with self.assertRaises(ValueError):m.validate_backend_delta(a,b)
+
+class BootstrapControls(unittest.TestCase):
+ def fixture(self,root):
+  old=root/'old';new=root/'new';(old/'subnet').mkdir(parents=True);(new/'subnet').mkdir(parents=True)
+  a="def validate(manifest):\n        from .forced_sampling import MINER_VERSION\n        miner_bound=manifest.get('sampling_contract',{}).get('version')==MINER_VERSION\n        return miner_bound\n"
+  b=a.replace("        from .forced_sampling import MINER_VERSION\n        miner_bound=manifest.get('sampling_contract',{}).get('version')==MINER_VERSION","        # Admission runs before authenticated fresh runtime imports.\n        miner_bound=manifest.get('sampling_contract',{}).get('version')=='forced-inverse-cdf-prefill-miner-bound-v5'")
+  (old/'subnet/backend_jobs.py').write_text(a);(new/'subnet/backend_jobs.py').write_text(b)
+  before={'subnet/backend_jobs.py':'a'*64,'subnet/forced_sampling.py':'b'*64};after=dict(before,**{'subnet/backend_jobs.py':'c'*64,m.BOOTSTRAP_TEST:'d'*64});delta={k:dict(before=before.get(k),after=v)for k,v in after.items()if before.get(k)!=v};return old,new,before,after,delta
+ def test_only_literal_bootstrap_delta_admitted(self):
+  with tempfile.TemporaryDirectory()as temp:
+   old,new,before,after,delta=self.fixture(Path(temp));m.validate_bootstrap_delta(before,after,delta,old,new)
+ def test_extra_backend_computation_change_rejected(self):
+  with tempfile.TemporaryDirectory()as temp:
+   old,new,before,after,delta=self.fixture(Path(temp));p=new/'subnet/backend_jobs.py';p.write_text(p.read_text().replace('return miner_bound','return True'))
+   with self.assertRaises(ValueError):m.validate_bootstrap_delta(before,after,delta,old,new)
+ def test_extra_source_change_and_old_file_removal_rejected(self):
+  with tempfile.TemporaryDirectory()as temp:
+   old,new,before,after,delta=self.fixture(Path(temp));after['subnet/forced_sampling.py']='e'*64
+   with self.assertRaises(ValueError):m.validate_bootstrap_delta(before,after,delta,old,new)
+   after.pop('subnet/forced_sampling.py')
+   with self.assertRaises(ValueError):m.validate_bootstrap_delta(before,after,delta,old,new)
+
 if __name__=='__main__':unittest.main()
