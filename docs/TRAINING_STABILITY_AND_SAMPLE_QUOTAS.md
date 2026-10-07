@@ -124,6 +124,24 @@ Signed job/parent/namespace recovery protections are not equivalent to a
 cross-job consumed-input ledger. Integrate and qualify these protections before
 activating a higher-quota contract; do not describe them as already deployed.
 
+Integration order: first extract and test a pinned shared identity module;
+then integrate transactional submission slots and frozen revisions; then bind
+learner selection and trainer applications to those identities; finally thread
+the new signed policy through miner, continuous auditor, scoring and public
+contract documentation. Absence of that policy preserves historical admission
+and original source inventories. Do not activate it midway through an epoch.
+
+Submission ownership follows the authenticated hotkey, while the current
+prescribed random-draw context does not include a hotkey. Keep those bindings
+separate and do not silently change the sampler when adding slot identities.
+The learner still pairs authenticated claimed classes after cheap checks;
+native grading and inference confirmation remain continuous audit work. Neither
+the identity ledger nor a quota change may turn those confirmations into a
+training prerequisite. Cumulative submission updates add immutable completed
+task records; identical redelivery is idempotent. If partial task revisions are
+introduced, their permitted additions and freeze rules need an explicit contract
+rather than assuming an ordinary presigned PUT is a transactional append.
+
 Use stable, authenticated identities and a durable ledger, not filenames or UID
 alone. UIDs can be reassigned. Scope a task to the checkpoint, versioned taskset,
 canonical task index and harness; scope ownership to the registered hotkey.
