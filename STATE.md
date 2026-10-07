@@ -1,3 +1,14 @@
+Verified correction, 2026-10-07, 00:29 UTC:
+Auditor17 startup --check passed but actual constructor failed because the
+pinned durable loader ignored the fourth overlay dependency numerical_resolution.
+No new-policy complete cycle occurred. Root stopped only failed auditor,
+preserved dropin and failure/rollback receipts, restored previous immutable
+population-once policy:PID2665052/invocationc3939c063a2e4fb7b8b18c7978b9cd9a,
+active/NRestarts0. API and learner unchanged; writer17 remains installed.
+Corrected optional dependency loader plus real integrated constructor control
+must pass before a distinct signed handoff. Do not infer deployment success
+from --check or initial active status. Earlier00:28 entry is preserved history.
+
 Verified continuation, 2026-10-07, 00:28 UTC:
 Root deployed exact reviewed auditor17 policy431e5c86587f3b9314f833be6e463f3689d37596e43459de2ec68fb57c1a9f8f.
 Same unit/singleton, new originalPID2650879/ticks418805361/invocationb875fc2f9cab4f948197c3882e5a38b4,
