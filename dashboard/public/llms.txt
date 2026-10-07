@@ -14,9 +14,10 @@ jobs, successful process completions and full-readback acknowledgements were
 independently checked. These results do not establish sustained convergence.
 Production still requires one success and one failure per task. The larger
 sample-quota study and training-only blacklist integration are prospective.
-The prospective K2/L2 identity and nonoverlapping-pair helper passed sixteen
-CPU controls. It is not connected to production; cumulative commitment and
-durable trainer retry integration remain to be qualified. See
+The prospective K2/L2 identity, nonoverlapping-pair and current-rollout-format
+adapter passed twenty-nine CPU controls, including cumulative revision checks.
+These use synthetic metadata and are not connected to production; authenticated
+commitment and durable trainer retry integration remain to be qualified. See
 docs/PAIRED_QUOTA_CPU_QUALIFICATION.md on GitHub.
 Default-off sampling diagnostics are available on GitHub main for the frozen
 f213 verifier. They count actual fast-check decisions and cached-replay
