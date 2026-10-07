@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 03:20 UTC:
+Current operational status, 2026-10-07, 03:24 UTC:
 Checkpoint 26 is the controller's committed model. Epochs 31, 32 and 33 completed normally
 in 48.855, 50.372 and 50.692 minutes. Epoch 33 trained on 256 UNAUDITED task pairs
 and advanced optimizer step 23 to 24. All ten model files (15.24 GB) and 23
@@ -36,7 +36,10 @@ Matched held-out evaluation on the same 128 task indices and seeds scored
 confirmed identical task indices, seeds and task hashes across the 128 problems:
 12 previously wrong answers improved and nine previously correct answers regressed.
 Later matched evaluations scored 78/128 for checkpoint 24 and 80/128 for
-checkpoint 25. Independent full R2 readbacks verified all original reports and
+checkpoint 25, followed by 82/128 for checkpoint 26 on the same cohort.
+The four original checkpoint-26 jobs and authenticated durable acknowledgements
+were independently checked; this remains below checkpoint 23.
+Independent full R2 readbacks verified all original reports and
 terminal records. Relative to checkpoint 23, checkpoint 24 gained three tasks
 and lost fifteen; checkpoint 25 gained five and lost fifteen. These regressions
 mean sustained convergence has not been established. An isolated comparison
@@ -81,9 +84,11 @@ reused. Failure evidence and auxiliary cache files are preserved. A per-original
 namespace and descendant-write-suppression fix passed 29 controls and is on
 GitHub main. CPU staging for a distinct owned namespace then stopped before
 namespace creation or model loading because a nullable arm field was handled
-incorrectly. That original failed attempt is preserved; a narrow corrected
-launcher and regression test are being prepared. No 750-task result or
-repeated scientific draw is claimed. The previous additional H200 passed bounded
+incorrectly. That original failed attempt is preserved. The corrected launcher
+passed a regression using the actual nullable-field scope, then completed
+CPU-only staging on the retained H100. Three metadata objects passed independent
+full R2 readback and ROOT-signed acknowledgement. Model copies and scientific
+execution remain pending; no 750-task result or repeated scientific draw is claimed. The previous additional H200 passed bounded
 research qualification but was deleted through the provider API during a later
 reference test; that interrupted test grants no enrollment or numerical relabel.
 
