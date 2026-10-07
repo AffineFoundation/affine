@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 04:00 UTC:
+Current operational status, 2026-10-07, 04:08 UTC:
 Checkpoint 27 is the controller's committed model. Epochs 31, 32 and 33 completed normally
 in 48.855, 50.372 and 50.692 minutes. Epoch 33 trained on 256 UNAUDITED task pairs
 and advanced optimizer step 23 to 24. All ten model files (15.24 GB) and 23
@@ -36,8 +36,8 @@ were retained. Epoch 36
 completed its first live ROOT-signed native grading: all 256 pairs passed
 in 85.87 seconds, with zero exclusions or indeterminate grades. The derived
 subset preserves the original accepted inventory. These outcomes remain
-UNAUDITED for sampling; no proof credit, rewritten claims or penalties were added. The proposed terminal guard will preserve
-epoch 36 native grading was preserved before the safe epoch-37 handoff.
+UNAUDITED for sampling; no proof credit, rewritten claims or penalties were added.
+Epoch 36 native grading was preserved before the safe epoch-37 handoff.
 Matched held-out evaluation on the same 128 task indices and seeds scored
 87/128 for checkpoint 22 and 90/128 for checkpoint 23. An independent review
 confirmed identical task indices, seeds and task hashes across the 128 problems:
@@ -45,7 +45,10 @@ confirmed identical task indices, seeds and task hashes across the 128 problems:
 Later matched evaluations scored 78/128 for checkpoint 24 and 80/128 for
 checkpoint 25, followed by 82/128 for checkpoint 26 on the same cohort.
 The four original checkpoint-26 jobs and authenticated durable acknowledgements
-were independently checked; this remains below checkpoint 23.
+were independently checked; this remains below checkpoint 23. The continuous
+128-task evaluation service stopped because its valid private outbox grew to
+8.75 MB, beyond its 8 MiB reader limit. A journal-specific bounded reader fix
+is being prepared; the existing reports, jobs and checkpoint history are preserved.
 Independent full R2 readbacks verified all original reports and
 terminal records. Relative to checkpoint 23, checkpoint 24 gained three tasks
 and lost fifteen; checkpoint 25 gained five and lost fifteen. These regressions
@@ -100,13 +103,19 @@ evaluation group completed successfully with 32 native outcomes. A report-only
 compatibility reader now preserves the backend's original report permissions;
 its original group passed durable acknowledgement without redispatch. An
 argument-forwarding error stopped the corrective coordinator before further
-scientific jobs; a prospective fix is being tested. No 750-task result is claimed.
+scientific jobs. Its tested fix was applied to a separate recovery namespace,
+but the resume then rejected a clone-cache receipt that had legitimately changed
+during the completed first group. No additional scientific group was dispatched.
+The successor receipt binding is under investigation; no 750-task result is claimed.
 A separate single-H100 controlled training experiment is being prepared to
 compare capped versus completed negative answers from the same checkpoint and
 optimizer state. Its CPU runtime installation, 20 local controls and full model/
 source staging passed, with independent R2 readback. Scientific validation
 stopped before model loading on an original-reference binding mismatch; the
-unchanged input references are being checked. No controlled learning result or
+unchanged input references exposed an order-dependent bookkeeping bug when
+multiple original documents shared a positive rollout. A deterministic per-document
+reference fix passed actual-packet controls without changing either arm's tokens
+or task weights, and a new scoped execution is being prepared. No controlled learning result or
 production training-objective change is claimed. The previous additional H200 passed bounded
 research qualification but was deleted through the provider API during a later
 reference test; that interrupted test grants no enrollment or numerical relabel.
