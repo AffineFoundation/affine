@@ -4,6 +4,8 @@ import base64
 import hashlib
 import importlib.util
 import json
+import math
+import re
 import os
 from pathlib import Path
 import subprocess
@@ -48,9 +50,25 @@ def rental_intent(document, authority=AUTHORITY, fresh=True):
         raise ValueError('fresh original rental authorization')
     if p['registry_path'] != REGISTRY or p['gpu_count'] != 1 or p['gpu_type'] not in ('H100', 'H200'):
         raise ValueError('exact approved local registry/single GPU')
+    if type(p['price_usd_h']) not in (int, float) or not math.isfinite(p['price_usd_h']) or p['price_usd_h'] <= 0:
+        raise ValueError('finite positive signed rental price')
+    if any(type(p[k]) is not str or re.fullmatch(r'[0-9a-f]{64}', p[k]) is None for k in ('registry_sha256', 'operator_sha256', 'ownership_module_sha256')):
+        raise ValueError('exact lowercase SHA256 source pins')
+    if type(p['gpu_count']) is not int:
+        raise ValueError('exact integer GPU count')
     if p['retention_authorized'] is not True:
         raise ValueError('reviewed retention required')
     return p
+
+
+def validate_provider_hardware(pod, p):
+    # Actual Lium `up --json` receipt fields, observed read-only on the
+    # original H200 rental. Qualification remains a separate scientific gate.
+    if pod.get('gpu_type') != p['gpu_type'] or type(pod.get('gpu_count')) is not int or pod['gpu_count'] != p['gpu_count']:
+        raise ValueError('provider hardware differs from signed original intent')
+    actual = pod.get('price_per_hour')
+    if type(actual) not in (int, float) or not math.isfinite(actual) or actual <= 0 or actual != p['price_usd_h']:
+        raise ValueError('provider price differs from signed original intent')
 
 
 def binding(p, document, pod_id='pending-original-rental'):
@@ -76,6 +94,7 @@ def rent_original(registry, document, provider, directory, authority=AUTHORITY):
             pod = receipt['pod']
             if type(pod['id']) is not str or not pod['id'] or pod['name'] != p['name']:
                 raise ValueError('actual original provider identity')
+            validate_provider_hardware(pod, p)
             return dict(pod_id=pod['id'])
         except BaseException as error:
             exclusive_receipt(directory/'original-provider-error.json', dict(reason=type(error).__name__, at=time.time(), reissue_allowed=False))
@@ -93,6 +112,8 @@ def observe_heartbeat(registry, document, directory, authority=AUTHORITY):
     if original != document: raise ValueError('original operator journal changed')
     actual = json.loads((Path(directory)/'original-owned-binding.json').read_bytes())
     provider = json.loads((Path(directory)/'original-provider-receipt.json').read_bytes())['pod']
+    validate_provider_hardware(provider, p)
+    if provider.get('name') != p['name']: raise ValueError('original provider name drift')
     expected = binding(p, document, provider['id'])
     if actual['binding'] != expected or actual['intent_sha256'] != digest(document):
         raise ValueError('actual provider/intent owner binding drift')
