@@ -1,5 +1,28 @@
 # Affine — MATH mining, verification and training
 
+Latest verified operational update, 2026-10-07, 10:02 UTC:
+Epoch 42 captured 220 commitments and 652 training-document rows in the normal
+collection window; native grading accepted its 256 selected UNAUDITED task pairs.
+No trainer job was allocated: the trainer's SSH port refused connections during
+the capacity probe. The learner retry service is now intentionally stopped.
+One restart of the existing trainer restored strict, provider-authenticated SSH,
+but its mounted local volume no longer exposes the previous source, runtime or
+checkpoint cache. Recovery must restore and qualify the exact scientific source,
+checkpoint 32 and full persistent optimizer state from authenticated R2 records
+before the original epoch can resume. There is no new checkpoint or reset Adam
+state. Continuous audits and hourly reward assessment remain separate services.
+
+The isolated CP24 prefix diagnostic completed and its original archive passed
+independent readback. Seven of eight capped negative controls have high-entropy
+tails in both FP32 cached and uncached computations; completed-EOS controls do
+not. The predefined near-uniform onset criterion did not trigger. These controls
+do not establish a production-wide cause or a held-out learning improvement.
+The original same-parent negative-quality baseline has now been launched in its
+separate research workspace; its result and matched held-out comparisons remain
+pending. Production remains one success and one failure per task, max three
+task batches per miner. No larger-quota contract is activated.
+
+Earlier operational history (superseded where the update above differs):
 Current operational status, 2026-10-07, 09:34 UTC:
 Epoch 39 completed in 53.770 minutes, training 256 eligible UNAUDITED task pairs
 and advancing persistent optimizer step 29 to 30. Checkpoint 30 was durably published after independent full readback

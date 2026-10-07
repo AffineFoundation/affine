@@ -1,3 +1,26 @@
+Verified continuation, 2026-10-07, 10:02 UTC:
+E42 captured 220 commitments / 652 rows inside its original collection window;
+native grading accepted 256 selected unaudited pairs. Its trainer capacity probe
+failed at SSH before training-job allocation. ROOT stopped only the learner retry
+service, preserved controller round42/train/optimizer32, and rebooted only the
+existing trainer pod once. Strict SSH recovered; its new ED25519 fingerprint was
+matched against authenticated provider logs before admission. The mounted /root
+gocryptfs volume lacks the previous source/venv/E41 checkpoint cache. Recovery
+must use exact source/runtime plus authenticated checkpoint32/full Adam32 from
+R2, with fresh cache routing, before the same E42 first dispatch. No trainer job
+reissue, genesis optimizer reset, new rental or production sampler change occurred.
+Eight continuous verifiers remain independent; recent auditor health advances.
+The original CP24 prefix diagnostic genuinely completed and ROOT independently
+verified its full archive/readbacks. Seven of eight capped controls show high
+entropy in both cached/uncached FP32; zero completed-EOS controls do. The strict
+predeclared onset never triggered; learning and causal attribution are unproven.
+ROOT signed a fresh isolated same-parent negative-quality baseline after current
+resource/process fences. Exact two-helper staging finished0, and the original
+baseline is running under tool session16624. Preserve that original handle;
+no timeout/reissue. Treatment awaits baseline completion and full model readback.
+Production K1/L1/max3 unchanged; larger quota remains prospective. Cleanup and
+community messages remain deferred. Earlier entries below are preserved history.
+
 Verified continuation, 2026-10-07, 09:37 UTC:
 This entry supersedes older operational snapshots below. E41's original training
 job completed and the controller committed checkpoint 32 after ten model-object
