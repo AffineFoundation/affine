@@ -1,23 +1,33 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 06:03 UTC:
-Epoch 38 completed in 50.505 minutes, training 256 eligible UNAUDITED task pairs
-selected from 479 eligible documents and advancing persistent optimizer step
-28 to 29. Checkpoint 29 was durably published after independent full readback
+Current operational status, 2026-10-07, 06:40 UTC:
+Epoch 39 completed in 53.770 minutes, training 256 eligible UNAUDITED task pairs
+and advancing persistent optimizer step 29 to 30. Checkpoint 30 was durably published after independent full readback
 of ten model objects and all 23 optimizer shards. The original training job
 completed successfully; training did not repeat sampling verification or wait
-for audits. Epoch 39 is training on that checkpoint under its original job.
+for audits. The original optimizer-cache promotion completed, and the drained
+coordinator exited naturally. The same coordinator service has now started once
+from the committed checkpoint 30 with the reviewed future-epoch CPU selection
+policy. Its next signed opening and actual selection remain to be observed;
+this service start alone does not establish a completed next epoch.
 The latest authenticated matched held-out result is checkpoint 29 at 76/128,
 down from checkpoint 28 at 78/128 (four gains, six losses on identical tasks,
 seeds and prompt hashes), and below checkpoint 23 at 90/128. All four original
 jobs, successful process completions and full-readback acknowledgements were
 independently checked. These results do not establish sustained convergence.
 Production still requires one success and one failure per task. The larger
-sample-quota study and training-only blacklist integration are prospective.
+sample-quota study remains prospective. The coordinator's new CPU selection
+policy excludes confirmed-blacklisted identities from future training selection,
+without removing their committed submissions from audit and reward evidence.
+Actual application to the next frozen training selection remains to be checked.
 The prospective K2/L2 identity, nonoverlapping-pair and current-rollout-format
-adapter passed twenty-nine CPU controls, including cumulative revision checks.
+adapter and opt-in durable research selection ledger passed forty-three CPU
+controls, including cumulative revision checks and actual child-process crashes
+around a simulated update. Unresolved execution claims cannot automatically retry;
+completion recovery requires authentication of the same original durable outcome.
 These use synthetic metadata and are not connected to production; authenticated
-commitment and durable trainer retry integration remain to be qualified. See
+commitment and real optimizer crash-recovery integration remain to be qualified.
+The ledger alone does not make GPU updates and SQLite transactions atomic. See
 docs/PAIRED_QUOTA_CPU_QUALIFICATION.md on GitHub.
 Default-off sampling diagnostics are available on GitHub main for the frozen
 f213 verifier. They count actual fast-check decisions and cached-replay
@@ -30,6 +40,9 @@ Lium records its H100 deleted at 05:12 UTC after an SDK request through the
 account API key. No completed research training result or output-state readback
 was verified. Existing original scopes and evidence remain preserved; no silent
 restart or replacement result is being treated as that original execution.
+A distinctly named replacement H100 research machine has completed its pinned
+runtime installation. Source/native qualification and exact parent-model/state
+readbacks precede any new experiment; no research learning result is claimed.
 The separate original full-750 evaluation machine remains running.
 
 Earlier operational history (the latest update above takes precedence):
