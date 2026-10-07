@@ -113,14 +113,38 @@ def register_population(manifest_document,receipts,round,committed_at,authority,
  return result
 
 
+def load_numerical_resolution(settings,authority):
+ """Default-off immutable operator inputs; never changes original reports."""
+ if settings is None:return None
+ if type(settings)is not dict or set(settings)!={'policy_document','reference_archives'}:raise ValueError('exact ROOT numerical inputs')
+ document=settings['policy_document'];payload=authenticate(document,authority)
+ if set(payload)!={'version','effective_cutoff','entries'}or payload['version']!='reviewed-toploc-numerical-resolution-v1'or type(payload['effective_cutoff'])is not int or payload['effective_cutoff']<0:raise ValueError('exact ROOT numerical policy')
+ if type(settings['reference_archives'])is not list or not 1<=len(settings['reference_archives'])<=100:raise ValueError('bounded ROOT numerical archives')
+ from .numerical_resolution import reference
+ archives=[]
+ for entry in settings['reference_archives']:
+  if type(entry)is not dict or set(entry)!={'ack_path','archive_path'}:raise ValueError('exact numerical archive file inputs')
+  archive=Path(entry['archive_path']);ackpath=Path(entry['ack_path'])
+  if archive.is_symlink()or ackpath.is_symlink()or not archive.is_file()or not ackpath.is_file():raise ValueError('regular original numerical reference')
+  with archive.open('rb')as stream:raw=stream.read(64*1024**2+1)
+  if len(raw)>64*1024**2:raise ValueError('bounded original numerical reference')
+  ack=json.loads(ackpath.read_text());reference(ack,raw,authority);archives.append(dict(ack=ack,archive=raw))
+ return dict(effective_cutoff=payload['effective_cutoff'],numerical_resolution_policy=document,expected_numerical_resolution_policy_sha256=digest(document),numerical_reference_archives=archives)
+
+def numerical_snapshot_arguments(settings,cutoff):
+ if settings is None or cutoff<settings['effective_cutoff']:return {}
+ return {k:settings[k]for k in ('numerical_resolution_policy','expected_numerical_resolution_policy_sha256','numerical_reference_archives')}
+
+
 class ContinuousAuditor:
- def __init__(self,controller,queue,*,directory,approved_sources,job_metadata,audit_policy,max_inflight=8,budget_per_tick=8,job_seconds=900,capture_workers=1,execution_evidence_policy=None,job_grouping_policy=None,backend_evidence_deferral_policy=None,historical_report_admission=None):
+ def __init__(self,controller,queue,*,directory,approved_sources,job_metadata,audit_policy,max_inflight=8,budget_per_tick=8,job_seconds=900,capture_workers=1,execution_evidence_policy=None,job_grouping_policy=None,backend_evidence_deferral_policy=None,historical_report_admission=None,numerical_resolution=None):
   if type(capture_workers)is not int or capture_workers not in (1,4,8):raise ValueError('bounded capture workers')
   self.group_size=grouping_policy(job_grouping_policy)
   self.capture_workers=capture_workers;self.execution_evidence_policy=execution_evidence_policy
   if backend_evidence_deferral_policy not in (None,BACKEND_DEFERRAL_POLICY):raise ValueError('explicit signed backend deferral policy')
   self.historical_report_admission=historical_report_admission;historical_report_workers(historical_report_admission)
   self.backend_evidence_deferral_policy=backend_evidence_deferral_policy
+  self.numerical_resolution=load_numerical_resolution(numerical_resolution,controller.authority.id)
   self.controller=controller;self.queue=queue;self.directory=Path(directory);self.directory.mkdir(parents=True,exist_ok=True,mode=0o700);self.sources=approved_sources;self.metadata=job_metadata;self.policy=policy(audit_policy)
   if type(max_inflight)is not int or not 1<=max_inflight<=128 or type(budget_per_tick)is not int or not 1<=budget_per_tick<=128 or type(job_seconds)is not int or not 60<=job_seconds<=86400:raise ValueError('bounded continuous audit scheduler')
   self.max_inflight=max_inflight;self.budget=budget_per_tick;self.job_seconds=job_seconds
@@ -365,7 +389,7 @@ class ContinuousAuditor:
   from .continuous_audit_policy import admit_artifact_failures
   failures=[f['document']for f in self.state['capture_failures'].values()if f['kind']=='confirmed_invalid_artifact' and authenticate(f['document'],self.controller.authority.id)['row']in records];admissions.update(admit_artifact_failures(failures,records,self.controller.authority.id))
   verifiers={**{w:['verify']for w in historical_report_workers(self.historical_report_admission)},**self.queue.workers,self.controller.authority.id:['operator-artifact-capture']}
-  pointers=[dict(admitted_queue_job_sha256=key)for key in admissions];result=snapshot(records,pointers,verifiers,epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,audit_policy=self.policy,admitted_jobs=admissions,eligible_evidence_ids=authenticate(self.state['populations'][epoch],self.controller.authority.id)['eligible_evidence_ids'],adjudications=[json.loads(path.read_text())for path in sorted(self.directory.glob('*-adjudication.json'))],authority=self.controller.authority.id)
+  pointers=[dict(admitted_queue_job_sha256=key)for key in admissions];result=snapshot(records,pointers,verifiers,epoch=epoch,round=round,checkpoint=checkpoint,cutoff=cutoff,audit_policy=dict(self.policy,version='continuous-probabilistic-audit-v3')if self.numerical_resolution and cutoff>=self.numerical_resolution['effective_cutoff']else self.policy,admitted_jobs=admissions,eligible_evidence_ids=authenticate(self.state['populations'][epoch],self.controller.authority.id)['eligible_evidence_ids'],adjudications=[json.loads(path.read_text())for path in sorted(self.directory.glob('*-adjudication.json'))],authority=self.controller.authority.id,**numerical_snapshot_arguments(self.numerical_resolution,cutoff))
   if self.execution_evidence_policy is not None and cutoff>=self.execution_evidence_policy['effective_cutoff']:
    result['execution_evidence_policy_sha256']=digest(self.execution_evidence_policy);result['execution_evidence_policy_version']=self.execution_evidence_policy['version'];result['os_resource_enforcement_claimed']=False;result['historical_execution_proven']=False
   if self.backend_evidence_deferral_policy is not None:result['backend_evidence_deferrals']=deferred;result['backend_evidence_deferral_policy']=self.backend_evidence_deferral_policy
@@ -398,7 +422,7 @@ def main(argv=None):
  if seed.is_symlink()or not seed.is_file()or seed.stat().st_mode&0o077:raise ValueError('original private authority required; never generate another authority')
  controller=Controller(Bucket(config['bucket']),None,state);c=config['continuous_audit_service'];queue=Coordinator(state/'roles/verifier-queue.sqlite3',controller.authority.id,{e['worker_identity']:['verify']for e in config['remote']['roles']['verify']})
  sources=admitted_service_config(c,controller.authority.id)
- service=ContinuousAuditor(controller,queue,directory=state/'continuous-audit',approved_sources=sources['approved_sources'],job_metadata=sources['job_metadata'],audit_policy=c['policy'],max_inflight=c.get('max_inflight',8),budget_per_tick=c.get('budget_per_tick',8),job_seconds=c.get('job_seconds',900),capture_workers=c.get('capture_workers',1),execution_evidence_policy=sources.get('execution_evidence_policy'),job_grouping_policy=c.get('job_grouping_policy'),backend_evidence_deferral_policy=sources.get('backend_evidence_deferral_policy'),historical_report_admission=sources.get('historical_report_admission'))
+ service=ContinuousAuditor(controller,queue,directory=state/'continuous-audit',approved_sources=sources['approved_sources'],job_metadata=sources['job_metadata'],audit_policy=c['policy'],max_inflight=c.get('max_inflight',8),budget_per_tick=c.get('budget_per_tick',8),job_seconds=c.get('job_seconds',900),capture_workers=c.get('capture_workers',1),execution_evidence_policy=sources.get('execution_evidence_policy'),job_grouping_policy=c.get('job_grouping_policy'),backend_evidence_deferral_policy=sources.get('backend_evidence_deferral_policy'),historical_report_admission=sources.get('historical_report_admission'),numerical_resolution=c.get('numerical_resolution'))
  while True:
   result=service_cycle(service,state,controller.authority.id);atomic(state/'continuous-audit-health.json',result)
   if a.once:return 2 if result.get('retryable')else 0
