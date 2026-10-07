@@ -190,8 +190,6 @@ def filter_authenticated_documents(document_paths, policy_envelope, job_envelope
     in the unchanged trainer; native label eligibility adds no proof claim.
     """
     from subnet.distributed_roles import authenticate
-    from subnet.native_math_prompt import NativeMathPromptSession
-    from transformers import AutoTokenizer
     policy=authenticate(policy_envelope,authority); job=authenticate(job_envelope,authority)
     manifest=authenticate(job['manifest'],authority)
     required={'version','limits','job_sha256','epoch','checkpoint','source_sha256','source_root',
@@ -204,14 +202,22 @@ def filter_authenticated_documents(document_paths, policy_envelope, job_envelope
         policy['source_root']!=str(source_root) or policy['source_files']!=job['source_files'] or
         policy['tokenizer_binding']!=manifest['tokenizer_binding']):
         raise ValueError('native filter original job/source/checkpoint/tokenizer binding')
+    return _filter_bound_documents(document_paths,policy,job,manifest,authority,source_root,tokenizer_root,interpreter)
+
+
+def _filter_bound_documents(document_paths,policy,job,manifest,authority,source_root,tokenizer_root,interpreter):
+    from subnet.native_math_prompt import NativeMathPromptSession
+    from transformers import AutoTokenizer
+    source_root=Path(source_root)
     # No source-root imports from arbitrary supplied paths. Operator startup
     # must already be running the approved source loader, checked here.
     from subnet.committed_training_inputs import admitted_submission
     if len(document_paths)!=len(job['submissions']) or len(document_paths)>256:
         raise ValueError('exact original committed document paths')
-    pairs=[]
+    pairs=[];documents=[]
     for path,obj in zip(document_paths,job['submissions']):
-        _, admitted_pairs=admitted_submission(path,obj,manifest,authority,retire=False)
+        summary, admitted_pairs=admitted_submission(path,obj,manifest,authority,retire=False)
+        documents.append((summary,[digest(list(pair)) for pair in admitted_pairs]))
         pairs.extend(admitted_pairs)
     import subnet.native_math_prompt as native_prompt
     if Path(native_prompt.__file__).resolve()!= (source_root/'subnet/native_math_prompt.py').resolve():
@@ -252,9 +258,59 @@ def filter_authenticated_documents(document_paths, policy_envelope, job_envelope
         grader=PinnedGrader(interpreter,script,policy['grader_sha256'])
         accepted,receipt=_filter_admitted_pairs(pairs,policy['limits'],resolve,
                            lambda tokens:tokenizer.decode(tokens,skip_special_tokens=True),grader)
+        decisions={r['pair_sha256']:r['status'] for r in receipt['rows']}
+        receipt['document_decisions']=[dict(document_sha256=summary['document_sha256'],
+            learner_admission_sha256=summary['learner_admission_sha256'],
+            batch_sha256=summary['batch_sha256'],pair_sha256=identities,
+            accepted=all(decisions[i]=='accepted_native_labels' for i in identities))
+            for summary,identities in documents]
         receipt.update(original_job_sha256=policy['job_sha256'],source_sha256=policy['source_sha256'],
                        checkpoint=policy['checkpoint'],snapshot_sha256=policy['snapshot_sha256'],
                        tokenizer_binding=policy['tokenizer_binding'],grader_sha256=policy['grader_sha256'])
         return accepted,receipt
     finally:
         for session in sessions.values():session.close()
+
+
+CONTEXT_VERSION='native-outcome-eligibility-context-v1'
+AUTHORIZATION_VERSION='native-outcome-preselection-authorization-v1'
+
+def filter_eligibility_context(document_paths,context_envelope,authorization_envelope,authority,
+                               source_root,tokenizer_root,interpreter):
+    """Non-dispatchable, signed preselection context; no train job is created."""
+    from subnet.distributed_roles import authenticate
+    context=authenticate(context_envelope,authority)
+    authorization=authenticate(authorization_envelope,authority)
+    fields={'version','original_signed_manifest','submissions','source_files','authorization_sha256',
+            'original_population_file_sha256','original_selection_file_sha256','parent_binding_sha256'}
+    authfields={'version','limits','source_sha256','source_root','source_files','snapshot_sha256',
+                'tokenizer_binding','grader_sha256','sampling_assurance','no_credit','no_relabel'}
+    if set(context)!=fields or context['version']!=CONTEXT_VERSION:
+        raise ValueError('non-dispatchable eligibility context schema')
+    if (set(authorization)!=authfields or authorization['version']!=AUTHORIZATION_VERSION or
+        authorization['sampling_assurance']!='unaudited' or authorization['no_credit'] is not True or
+        authorization['no_relabel'] is not True or context['authorization_sha256']!=digest(authorization_envelope)):
+        raise ValueError('explicit ROOT native preselection authorization')
+    manifest=authenticate(context['original_signed_manifest'],authority)
+    if (context['source_files']!=authorization['source_files'] or
+        manifest['source_bundle']['sha256']!=authorization['source_sha256'] or
+        str(source_root)!=authorization['source_root'] or
+        manifest['tokenizer_binding']!=authorization['tokenizer_binding'] or
+        digest(manifest['trainer_state_binding'])!=context['parent_binding_sha256']):
+        raise ValueError('native eligibility source/tokenizer/parent binding')
+    for key in ('original_population_file_sha256','original_selection_file_sha256','parent_binding_sha256'):
+        if type(context[key]) is not str or len(context[key])!=64 or any(c not in '0123456789abcdef' for c in context[key]):
+            raise ValueError('native eligibility original digest')
+    # This internal object is never signed, saved or dispatchable. It only
+    # supplies original document/source data to the private admitted builder.
+    inputs={'submissions':context['submissions'],'source_files':context['source_files']}
+    policy=dict(authorization,job_sha256=digest(context_envelope),epoch=manifest['epoch'],
+                checkpoint=manifest['checkpoint']['id'])
+    accepted,receipt=_filter_bound_documents(document_paths,policy,inputs,manifest,authority,
+                                             source_root,tokenizer_root,interpreter)
+    receipt.pop('original_job_sha256')
+    receipt.update(context_sha256=digest(context_envelope),authorization_sha256=digest(authorization_envelope),
+                   original_population_file_sha256=context['original_population_file_sha256'],
+                   original_selection_file_sha256=context['original_selection_file_sha256'],
+                   parent_binding_sha256=context['parent_binding_sha256'])
+    return accepted,receipt
