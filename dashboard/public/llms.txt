@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 03:08 UTC:
+Current operational status, 2026-10-07, 03:20 UTC:
 Checkpoint 26 is the controller's committed model. Epochs 31, 32 and 33 completed normally
 in 48.855, 50.372 and 50.692 minutes. Epoch 33 trained on 256 UNAUDITED task pairs
 and advanced optimizer step 23 to 24. All ten model files (15.24 GB) and 23
@@ -15,9 +15,9 @@ no retraining, manual cache promotion or replacement controller was needed.
 Training does not wait for audits. Through epoch 35, cheap eligibility validated
 identity, task, prompt, tokens and checkpoint binding without independently
 grading claimed success/failure before training. A native-grading filter is implemented
-on GitHub main and the new controller is deployed for epoch 36 onward. The first
-live filtered training
-request is still pending. Its full 256-pair CPU benchmark graded
+on GitHub main and the new controller is deployed for epoch 36 onward. Epoch 36
+is running its original training job after its first live filtered request.
+The prior full 256-pair CPU benchmark graded
 all 512 original outcomes in 102.23 seconds total, with all labels matching and
 about 1.3 GB peak combined memory. It will not establish on-policy sampling
 provenance or grant audit credit. Already-opened epochs retain their original
@@ -46,8 +46,8 @@ completed, with independent full R2 readback and ROOT-signed acknowledgements.
 The all-750 comparison has not produced a result yet.
 The coordinator API, continuous auditor and learner have durable ROOT-pinned
 startup policies and automatic restart on failure. The separate hourly weight
-writer submitted the 02:00 UTC assessment for 208 current UIDs at block 9228005.
-The assessment was fresh; 24 no-longer-registered identities were excluded
+writer submitted the 03:00 UTC assessment for 209 current UIDs at block 9228305.
+The assessment was fresh; 25 no-longer-registered identities were excluded
 using the current registration snapshot. This is submission evidence, not a separately observed reveal.
 Eight verifier workers are now running. The eighth completed its first normal
 audit job on attempt one with four accepted batches on checkpoint 25. ROOT
@@ -79,8 +79,11 @@ qualifications are not an all-750 performance result. The wider run stopped
 before its first scientific subprocess because its bytecode namespace was
 reused. Failure evidence and auxiliary cache files are preserved. A per-original
 namespace and descendant-write-suppression fix passed 29 controls and is on
-GitHub main. A distinct owned evaluation namespace is being prepared; no
-750-task result or repeated scientific draw is claimed. The previous additional H200 passed bounded
+GitHub main. CPU staging for a distinct owned namespace then stopped before
+namespace creation or model loading because a nullable arm field was handled
+incorrectly. That original failed attempt is preserved; a narrow corrected
+launcher and regression test are being prepared. No 750-task result or
+repeated scientific draw is claimed. The previous additional H200 passed bounded
 research qualification but was deleted through the provider API during a later
 reference test; that interrupted test grants no enrollment or numerical relabel.
 
@@ -108,7 +111,7 @@ rejections are still under investigation; current miner proof requirements remai
 unchanged. See docs/HISTORICAL_TOPLOC_NUMERICAL_RESOLUTION.md on GitHub.
 
 K=1/L=1, at most three batches per UID, the 16-attempt ceiling and selected-token
-logprobs plus TOPLOC remain the active miner contract. Seven verifier workers
+logprobs plus TOPLOC remain the active miner contract. Eight verifier workers
 are enrolled. Audit selection and training run independently. Checkpoint and
 rollout caches are bounded and automatically retired after the required durable
 acknowledgements; active jobs and unowned paths remain protected.
