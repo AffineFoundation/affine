@@ -20,6 +20,29 @@ def private_json(path):
  fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
  if any(getattr(after,k)!=getattr(s,k)for k in fields):raise ValueError('group file changed during read')
  return json.loads(data)
+def native_report_json(path,workspace):
+ """Read unchanged backend 0644 output beneath the owned private job directory.
+
+ Scope/request/status/ACK inputs continue to use private_json. No chmod occurs.
+ Directory descriptors prevent symlink substitution; inode metadata must stay
+ unchanged across the bounded read. Only native report.json is admitted.
+ """
+ path=Path(path);root=Path(workspace)
+ if path.parent.parent!=root/'jobs' or path.name!='report.json' or not path.parent.name.replace('-','').replace('_','').isalnum():raise ValueError('exact native report route')
+ fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+ fds=[];snapshots=[]
+ try:
+  for name,private in ((str(root),True),('jobs',False),(path.parent.name,True)):
+   fd=os.open(name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,**({'dir_fd':fds[-1]}if fds else{}));fds.append(fd);s=os.fstat(fd);snapshots.append(s)
+   if not stat.S_ISDIR(s.st_mode)or s.st_uid!=os.geteuid()or s.st_mode&0o022 or(private and s.st_mode&0o077):raise ValueError('owned private native report parents')
+  fd=os.open('report.json',os.O_RDONLY|os.O_NOFOLLOW,dir_fd=fds[-1]);fds.append(fd);s=os.fstat(fd);snapshots.append(s)
+  if not stat.S_ISREG(s.st_mode)or s.st_uid!=os.geteuid()or s.st_nlink!=1 or stat.S_IMODE(s.st_mode)not in(0o600,0o644)or s.st_size>8*1024**2:raise ValueError('owned bounded unchanged native report')
+  with os.fdopen(os.dup(fd),'rb')as stream:data=stream.read(8*1024**2+1)
+  if len(data)!=s.st_size or any(any(getattr(os.fstat(fd),k)!=getattr(before,k)for k in fields)for fd,before in zip(fds,snapshots)):raise ValueError('native report changed during read')
+  return json.loads(data)
+ finally:
+  for fd in reversed(fds):os.close(fd)
+
 def save(path,value):
  path=Path(path)
  if path.exists():private_json(path)
@@ -223,7 +246,7 @@ class LocalOriginalTransport:
  def live(self,status):
   from subnet.evaluator_cache_lifecycle import live_original
   return live_original(status)
- def report(self,jid):return private_json(self.root/'jobs'/jid/'report.json')
+ def report(self,jid):return native_report_json(self.root/'jobs'/jid/'report.json',self.root)
  def ack(self,jid):
   p=self.root/'durable-evaluation-acks'/(jid+'.json');return private_json(p)if p.exists()else None
 

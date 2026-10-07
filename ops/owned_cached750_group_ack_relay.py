@@ -3,11 +3,11 @@
 Never starts GPU jobs, never renews an original expiry, never disposes a model.
 Bucket credentials/authority seed stay on this CPU host. Default-off CLI.
 """
-import argparse,hashlib,json,os,shlex,subprocess,time
+import argparse,hashlib,json,os,shlex,subprocess,time,inspect
 from pathlib import Path
 from subnet.backend_jobs import canonical,signed
-from ops.owned_cached750_group_operator import GroupACKPublisher,private_json,validate_terminal
-READ_BODY='''import pathlib,hashlib,os,stat,subprocess
+from ops.owned_cached750_group_operator import GroupACKPublisher,private_json,validate_terminal,native_report_json
+READ_BODY='from pathlib import Path\nimport json,os,stat\n'+inspect.getsource(native_report_json)+'''\nimport pathlib,hashlib,os,stat,subprocess
 root=pathlib.Path(PLAN['workspace']);code=pathlib.Path(PLAN['source_path']);assert hashlib.sha256(pathlib.Path('/etc/machine-id').read_bytes()).hexdigest()==PLAN['machine_id_sha256'];assert subprocess.check_output(['nvidia-smi','--query-gpu=uuid','--format=csv,noheader'],text=True,timeout=10).strip()==PLAN['gpu_uuid']
 assert {str(p.relative_to(code)):hashlib.sha256(p.read_bytes()).hexdigest()for p in(code/'subnet').glob('*.py')}==PLAN['source_files']
 def read(p):
@@ -22,7 +22,7 @@ else:
   p=pathlib.Path('/proc')/str(pid)/'stat'
   if p.exists():
    parts=p.read_text().rsplit(')',1)[1].split();live=live or(parts[0]!='Z'and parts[19]==str(ticks))
- print(json.dumps({'original_job':envelope,'terminal':status,'report':read(report),'physical_original_absent':not live,'machine_id_sha256':PLAN['machine_id_sha256'],'gpu_uuid':PLAN['gpu_uuid']}))
+ print(json.dumps({'original_job':envelope,'terminal':status,'report':native_report_json(report,root),'physical_original_absent':not live,'machine_id_sha256':PLAN['machine_id_sha256'],'gpu_uuid':PLAN['gpu_uuid']}))
 '''
 
 def emit_read(plan):
