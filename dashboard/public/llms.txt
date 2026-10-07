@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 07:08 UTC:
+Current operational status, 2026-10-07, 07:19 UTC:
 Epoch 39 completed in 53.770 minutes, training 256 eligible UNAUDITED task pairs
 and advancing persistent optimizer step 29 to 30. Checkpoint 30 was durably published after independent full readback
 of ten model objects and all 23 optimizer shards. The original training job
@@ -13,14 +13,19 @@ completion. A narrow reviewed CPU fix now binds selection metadata before the
 first local save and publication. Full signed-policy validation and 15 focused
 CPU opening controls passed against the frozen controller. The same E40 has
 resumed from checkpoint 30 into mining, retaining its original completed
-calibration and optimizer lineage. Its local opening manifest contains the
-selection policy and protected round 40. Actual application to the frozen
-training selection and completion of E40 remain to be observed.
-The latest authenticated matched held-out result is checkpoint 29 at 76/128,
-down from checkpoint 28 at 78/128 (four gains, six losses on identical tasks,
-seeds and prompt hashes), and below checkpoint 23 at 90/128. All four original
-jobs, successful process completions and full-readback acknowledgements were
-independently checked. These results do not establish sustained convergence.
+calibration and optimizer lineage. Its first signed R2 manifest, immutable opening record and signed publication
+attestation authenticate the selection policy and protected round 40. Gateway
+state agrees with those bindings and contains 247 miner upload capabilities;
+that local Gateway state is not itself a signed receipt. Actual application
+to the frozen training selection and completion of E40 remain to be observed.
+The latest independently authenticated matched held-out result is checkpoint
+30 at 78/128, versus checkpoint 29 at 76/128 (seven gains, five losses on the
+same 128 tasks, seeds and prompt hashes). It remains below checkpoint 23 at
+90/128. The original signed scopes, all eight full-readback acknowledgements
+and fresh full R2 reads of both archives and original jobs/reports/terminals
+were checked. Original successful terminal records and PID/tick bindings were
+authenticated; this was not a fresh physical liveness check of retired jobs.
+These results do not establish sustained convergence.
 Production still requires one success and one failure per task. The larger
 sample-quota study remains prospective. The coordinator's new CPU selection
 policy excludes confirmed-blacklisted identities from future training selection,
@@ -49,8 +54,11 @@ account API key. No completed research training result or output-state readback
 was verified. Existing original scopes and evidence remain preserved; no silent
 restart or replacement result is being treated as that original execution.
 A distinctly named replacement H100 research machine has completed its pinned
-runtime installation. Source/native qualification and exact parent-model/state
-readbacks precede any new experiment; no research learning result is claimed.
+runtime installation and CPU source/native qualification. Exact parent model
+and optimizer-state restoration is running under one original process; complete
+readbacks and separate model qualification precede new research training.
+No research learning result is claimed. The negative-quality comparison plan is
+in docs/TRAINING_STABILITY_SAME_PARENT_REVIEW.md on GitHub.
 The separate original full-750 evaluation machine remains running.
 
 Earlier operational history (the latest update above takes precedence):
