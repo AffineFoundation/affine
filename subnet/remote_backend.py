@@ -547,6 +547,24 @@ class RemoteController(Controller):
         else:self.jobs=RemoteJobs(remote,self)
     def open(self,*args,max_batches=3,**kwargs):
         if type(max_batches)is not int or not 1<=max_batches<=256:raise ValueError('per UID batch quota')
+        # Selection is separately admitted CPU metadata, not a new argument to
+        # the sealed scientific Controller.open interface.
+        FIELD='learner_blacklist_selection_policy'
+        selection_present=FIELD in kwargs
+        round_present='learner_blacklist_selection_round' in kwargs
+        selection=kwargs.pop(FIELD,None)
+        selection_round=kwargs.pop('learner_blacklist_selection_round',None)
+        if selection_present or round_present:
+            from .learner_blacklist_selection import admit
+            if not selection_present or not round_present or type(selection_round)is not int:
+                raise ValueError('paired explicit blacklist policy/protected opening round')
+            checkpoint=args[1] if len(args)>1 else kwargs.get('checkpoint')
+            epoch=args[0] if args else kwargs.get('epoch')
+            opening_state=json.loads((self.state/'controller.json').read_bytes())
+            if opening_state.get('round')!=selection_round or not isinstance(opening_state.get('active'),dict) or opening_state['active'].get('epoch')!=epoch or opening_state['active'].get('phase')!='opening':
+                raise ValueError('actual saved original opening round/epoch')
+            admit(selection,dict(checkpoint=checkpoint,source_bundle=kwargs.get('source_bundle')),
+                  self.authority.id,at=time.time(),round_number=selection_round)
         budget=kwargs.get('independent_state_readback_budget')
         if budget is not None:
             from .remote_optimizer_readback import stream_budget
@@ -589,7 +607,28 @@ class RemoteController(Controller):
             def json(self,key,value):self.writes.append((key,value))
         buffered=Buffered();self.bucket=buffered
         if input_policy=='committed-unaudited-training-v1':kwargs['training_input_policy']=input_policy
-        try:manifest=super().open(*args,**kwargs)
+        try:
+            if selection_present:
+                # Base open persists before it signs. Use its exact original
+                # code with only a per-call CPU save callback overridden, so
+                # the first saved/public opening already contains the policy.
+                # No shared-module monkeypatch or scientific byte change.
+                import types
+                base=super().open.__func__
+                original_save=base.__globals__['save_manifest']
+                def save_selected(path,value):
+                    if value.get('epoch')!=epoch:
+                        raise ValueError('original selection opening epoch')
+                    value[FIELD]=selection
+                    value['learner_blacklist_selection_round']=selection_round
+                    value['max_batches']=max_batches
+                    admit(selection,value,self.authority.id,at=value['start'],round_number=selection_round)
+                    original_save(path,value)
+                globals_=dict(base.__globals__,save_manifest=save_selected)
+                opening=types.FunctionType(base.__code__,globals_,base.__name__,base.__defaults__,base.__closure__)
+                opening.__kwdefaults__=base.__kwdefaults__
+                manifest=opening(self,*args,**kwargs)
+            else:manifest=super().open(*args,**kwargs)
         finally:self.bucket=original
         manifest['max_batches']=max_batches
         if exclusion_snapshot is not None:manifest['audit_exclusion_snapshot']=exclusion_snapshot
