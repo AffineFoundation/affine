@@ -34,6 +34,22 @@ checkpoint 32. The small diagnostic subset alone was misleading as a summary
 of learning. Qualify the current checkpoint on the same wider cohort and resolve
 training degradation before treating increased per-task quotas as a remedy.
 
+The original checkpoint-32 evaluation subsequently completed all 24 groups and
+750 tasks, with actual original process waits of zero. Independent reconstruction
+verified the original signed jobs and reports, durable readbacks, and the same
+task identities, prompts, seeds, harness, source and runtime across all three
+models. Results were base 548/750 (73.07%), checkpoint 24 482/750 (64.27%), and
+checkpoint 32 496/750 (66.13%). Checkpoint 32 remains 6.93 percentage points below
+base; its paired bootstrap 95% interval is [-10.13, -3.60] percentage points.
+Its 1.87-point increase over checkpoint 24 has interval [-1.20, +4.80], so this
+comparison does not establish recovery or convergence. These are exploratory,
+unadjusted intervals from one fixed native-evaluation cohort, not TOPLOC proof
+assurance. The independently reviewed comparison receipt SHA256 is
+`0516ffa3b05683af6d98424c6f01c3c5db3a167d73f123fb45c92c4613a08523`.
+This finding strengthens the need to test objective and negative quality before
+changing sample quotas; it does not identify the cause or evaluate later
+checkpoints. Production K1/L1 remains unchanged.
+
 ## Recorded update diagnostics
 
 A local reconstruction of epoch 43's original selected documents matched all
