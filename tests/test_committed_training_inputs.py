@@ -43,6 +43,42 @@ class LearnerAdmissionTests(unittest.TestCase):
         self.assertIs(pairs[0][1],summary['claimed_batch']['rollouts'][0])
         self.assertIs(pairs[0][2],summary['claimed_batch']['rollouts'][1])
 
+    def four_rollout_batch(self):
+        self.manifest.update(K=2,L=2)
+        positive=copy.deepcopy(self.batch['rollouts'][0])
+        negative=copy.deepcopy(self.batch['rollouts'][1])
+        positive['turns'][0]['output']=[42,43]
+        negative['turns'][0]['output']=[44,45]
+        self.batch['rollouts'].extend([positive,negative])
+        self.build()
+
+    def test_four_rollouts_make_two_disjoint_pairs_without_audit_barrier(self):
+        self.four_rollout_batch()
+        with patch('subnet.batches.unpack',side_effect=AssertionError('proof')):
+            summary,pairs=self.admit()
+        self.assertEqual(len(pairs),2)
+        consumed=[id(rollout)for _,positive,negative in pairs for rollout in (positive,negative)]
+        self.assertEqual(len(set(consumed)),4)
+        self.assertEqual(set(consumed),{id(r)for r in summary['claimed_batch']['rollouts']})
+        self.assertFalse(summary['trainer_verification_performed'])
+
+    def test_new_attempt_metadata_cannot_make_identical_tokens_a_new_sample(self):
+        self.four_rollout_batch()
+        original=self.batch['rollouts'][0]
+        extra=self.batch['rollouts'][2]
+        extra['turns']=copy.deepcopy(original['turns'])
+        extra.update(seed=123456,sampling={'attempt':123456},upload_name='new-file')
+        self.build()
+        with self.assertRaisesRegex(ValueError,'duplicate learner trajectory'):
+            self.admit()
+
+    def test_claiming_other_class_cannot_reuse_a_trajectory(self):
+        self.four_rollout_batch()
+        self.batch['rollouts'][3]['turns']=copy.deepcopy(self.batch['rollouts'][0]['turns'])
+        self.build()
+        with self.assertRaisesRegex(ValueError,'duplicate learner trajectory'):
+            self.admit()
+
     def test_tampered_bytes_rejected(self):
         self.path.write_bytes(self.data+b' ')
         with self.assertRaises(ValueError):self.admit()

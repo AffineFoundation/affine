@@ -107,6 +107,23 @@ numerical failure criteria and acceptable throughput tradeoff.
 
 ## Prevent duplicate credit and duplicate training
 
+Implementation readiness, 2026-10-07: the live paths already parameterize K/L,
+reject repeated canonical prompt/output content within a submitted task batch,
+construct disjoint pairs with `zip(positives, negatives)`, and average their
+losses within each task. Targeted CPU admission tests cover four distinct
+rollouts, reused content with changed attempt metadata, and content reused under
+the other claimed class. These tests establish cheap admission behavior only;
+they do not establish inference validity or production K2/L2 readiness.
+
+The stronger cumulative-slot and application-ledger components currently live
+in default-off research modules `ops/paired_quota_batch_adapter.py` and
+`ops/paired_quota_research_ledger.py`. They are not yet integrated into live
+submission/training paths. Existing optimizer pair identity hashes the complete
+rollout, including metadata; it is not a global canonical-content dedup key.
+Signed job/parent/namespace recovery protections are not equivalent to a
+cross-job consumed-input ledger. Integrate and qualify these protections before
+activating a higher-quota contract; do not describe them as already deployed.
+
 Use stable, authenticated identities and a durable ledger, not filenames or UID
 alone. UIDs can be reassigned. Scope a task to the checkpoint, versioned taskset,
 canonical task index and harness; scope ownership to the registered hotkey.
