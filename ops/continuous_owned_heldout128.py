@@ -16,7 +16,8 @@ import time
 from pathlib import Path
 
 from subnet.backend_jobs import canonical, signed, file_map
-from ops.owned_cached_group_operator import private_json, save
+from ops.owned_cached_group_operator import private_json
+from ops.continuous_owned_heldout128_outbox import read_outbox, save_outbox
 from ops.owned_cached_larger_cohort import SOURCE
 
 VERSION = 'continuous-owned-heldout128-policy-v1'
@@ -140,7 +141,7 @@ class Continuous128:
         self.path=self.root/'outbox.json'
         binding=digest(self.policy)
         if self.path.exists():
-            self.state=private_json(self.path)
+            self.state=read_outbox(self.path)
             if self.state.get('version')!=JOURNAL_VERSION or self.state.get('policy_sha256')!=binding:
                 raise ValueError('immutable original service-policy outbox binding')
         else:
@@ -169,18 +170,18 @@ class Continuous128:
                     value.get('cohort_sha256')!=self.policy['cohort_sha256'] or not complete):
                     raise ValueError('complete original predecessor128 only')
                 self.state['checkpoints'][cp]=dict(checkpoint=cp,phase='complete',summary=envelope,bootstrap=True)
-            save(self.path,self.state)
+            save_outbox(self.path,self.state)
         return self
 
     def __exit__(self,*args):
         if self.fd is not None: os.close(self.fd);self.fd=None
 
-    def persist(self): save(self.path,self.state)
+    def persist(self): save_outbox(self.path,self.state)
 
     def step(self):
         if self.fd is None: raise ValueError('exclusive service lease required')
         validate_policy(self.envelope,self.authority,self.clock())
-        if private_json(self.path)!=self.state: raise ValueError('service outbox changed')
+        if read_outbox(self.path)!=self.state: raise ValueError('service outbox changed')
         rows=self.state['checkpoints']
         for row in rows.values():
             if row['phase']=='complete' and row.get('projection_pending'):
