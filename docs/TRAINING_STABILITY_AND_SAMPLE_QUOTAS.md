@@ -95,6 +95,15 @@ preserve the positive coefficient while removing the negative term. It must
 use the same parent model/Adam, tasks, positive trajectories, hyperparameters
 and update count as its baseline. It is research-only, not a deployed change.
 
+Restoring the same Adam parent preserves historical first and second moments;
+the positive-only arm removes the current negative-gradient term, not the
+influence of past negative updates. Weight decay also remains unchanged. Match
+the clipping rule and record pre-clip norms: removing a gradient component can
+change the total norm and therefore the scale applied by clipping. The matched
+positive coefficient describes the loss derivative before clipping and Adam,
+not equality of the final parameter update. These are interpretation limits,
+not reasons to reset the optimizer or silently change the experiment.
+
 ## Controlled comparison
 
 1. Complete the existing same-parent comparison of capped versus completed
