@@ -8,8 +8,10 @@ K2L2_QUOTA_QUALIFICATION.md, not its scientific or proof requirements.
 
 The replacement trainer completed epoch 42, advancing the authentic optimizer
 lineage from step 32 to 33. Independent readback verified all 23 state objects;
-epoch 43 then opened automatically. The training job took 20.62 minutes, which
-is not the duration of the entire epoch. Confirm successive ordinary epochs
+epoch 43 then opened automatically. Epoch 43 subsequently completed naturally
+in 42.41 minutes, advanced optimizer step 33 to 34, and published its checkpoint;
+epoch 44 opened automatically. The epoch 42 training job took 20.62 minutes,
+which is not the duration of the entire epoch. Continue observing ordinary epochs
 before changing production quotas. Do not interpret recovery downtime as
 instability caused by a two-rollout task batch.
 
@@ -89,6 +91,19 @@ Predeclare acceptance criteria before dispatch: improved held-out outcomes over
 multiple updates, no new nonfinite/gradient failures, preserved proof checks,
 acceptable completed-task throughput and epoch duration. If evidence is weak,
 retain K1/L1 and investigate the objective, learning rate and negative quality.
+
+The initial experiment should keep production unchanged. Use a nested attempt
+stream so the K1/L1 arm uses the first qualifying success and failure, while
+K2/L2 adds the next distinct qualifying success and failure. Record collection
+cost and completion probability for every attempted task, including tasks that
+cannot supply two distinct successes. Compare equal-task training first, then
+equal-wall-time supply: these answer different questions. Evaluate on the same
+750-task held-out cohort at baseline and after each update; keep that cohort
+excluded from mining and report paired uncertainty. Run at least three matched
+updates before considering a bounded production pilot. Treat this as an initial
+evidence threshold, not a claim that three updates prove convergence. Before
+dispatch, freeze the experiment's seeds, sampling budget, learning settings,
+numerical failure criteria and acceptable throughput tradeoff.
 
 ## Prevent duplicate credit and duplicate training
 
