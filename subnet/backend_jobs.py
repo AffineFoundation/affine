@@ -383,7 +383,11 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
     if job['role']=='mine':
         mining_window(manifest,now)
         if not re.fullmatch('[0-9a-f]{64}',job.get('miner_id','')):raise ValueError('owned miner identity')
-        if type(job.get('search_budget')) is not int or not 1<=job['search_budget']<=128 or type(job.get('seed_start')) is not int or job['seed_start']<0:raise ValueError('mining search budget')
+        from .forced_sampling import MINER_VERSION
+        miner_bound=manifest.get('sampling_contract',{}).get('version')==MINER_VERSION
+        maximum_search_budget=1000 if miner_bound else 128
+        if type(job.get('search_budget')) is not int or not 1<=job['search_budget']<=maximum_search_budget or type(job.get('seed_start')) is not int or job['seed_start']<0:raise ValueError('mining search budget')
+        if miner_bound and (job['seed_start']>=1000 or job['search_budget']>1000-job['seed_start']):raise ValueError('miner-bound nonce search range')
         r2_url(job['capability']['put_url'],'PUT')
         if job['capability'].get('headers')!={'Content-Type':'application/octet-stream'}:raise ValueError('signed upload headers')
         if manifest.get('submission_transport_policy') is not None:
