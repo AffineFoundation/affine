@@ -20,7 +20,10 @@ finished its original training job after its first live filtered request,
 advanced optimizer state from 26 to 27, and completed normal checkpoint
 publication and signed closure. All 23 state shards and ten model files passed
 independent full readback. The measured controller duration was 57.964 minutes.
-Epoch 37 is collecting submissions on checkpoint 27.
+Epoch 37 collected 463 documents, admitted 420 eligible pairs and selected 256
+for training on checkpoint 27. Collection took 208.19 seconds. Native grading
+completed, and the original controller advanced to its training phase at 04:05 UTC
+without an audit barrier.
 The prior full 256-pair CPU benchmark graded
 all 512 original outcomes in 102.23 seconds total, with all labels matching and
 about 1.3 GB peak combined memory. It will not establish on-policy sampling
@@ -115,7 +118,9 @@ stopped before model loading on an original-reference binding mismatch; the
 unchanged input references exposed an order-dependent bookkeeping bug when
 multiple original documents shared a positive rollout. A deterministic per-document
 reference fix passed actual-packet controls without changing either arm's tokens
-or task weights, and a new scoped execution is being prepared. No controlled learning result or
+or task weights. Full remote contract validation then passed all eight original
+task bindings, runtime and source checks without model loading. The separately
+scoped baseline arm is now running on the dedicated H100; no result is claimed. No controlled learning result or
 production training-objective change is claimed. The previous additional H200 passed bounded
 research qualification but was deleted through the provider API during a later
 reference test; that interrupted test grants no enrollment or numerical relabel.
