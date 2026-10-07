@@ -1,23 +1,23 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-06:
-The learning loop completed epoch 28 in 53.4 minutes, trained on 213 eligible
-UNAUDITED task pairs and published checkpoint
-136c3f788eb20da982bc798ec1fb54cbc1463c6c7e1e6eeb2a4d3d8004ba0280
-at optimizer step nineteen. Epochs 24 through 28 each finished below one hour.
-Epoch 29 reopened after fresh numerical calibration and independent confirmation
-passed, trained on 201 eligible UNAUDITED task pairs, and durably published
-checkpoint 94e8999b75838cddf70d3e767318e7b169a5421c890ea9c7eeef2e2aa6104e6d
-at optimizer step twenty after independent full-state readback. Round 30 trained 79 eligible unaudited task pairs, but its original checkpoint
-upload failed with an SSL EOF during R2 transfer. The staged next model is intact;
-publication-only recovery is in progress. Checkpoint 20 remains the committed
-parent until full durable readbacks and authority commitment succeed. Independent checkpoint-20 evaluation
-completed at 84/128, versus 85/128 for checkpoint 19 and 86/128 for checkpoint 18.
-This does not show sustained improvement. Optimizer lineage is preserved.
-The coordinator API, continuous auditor and learner now have durable ROOT-pinned
-startup policies, boot enablement and automatic restart on failure. Controlled
-CPU service restarts preserved the original epoch-29 remote training job and
-shared queue. These recovery changes do not change the miner proof contract.
+Current operational status, 2026-10-07, 00:01 UTC:
+Checkpoint 22 is the committed model. Epoch 31 completed normally in 48.855
+minutes, trained on 256 eligible UNAUDITED task pairs and advanced optimizer
+step 21 to 22. All ten model files and 23 optimizer shards passed independent
+full readback before authority commitment. The next epoch, 32, has selected
+256 of 419 eligible pairs and its original training job is exporting optimizer
+state; checkpoint 23 is not yet committed. Training does not wait for audits.
+Matched held-out evaluation on the same 128 task indices and seeds scored
+87/128 for both checkpoint 21 and checkpoint 22. This does not show improvement
+between those checkpoints; sustained convergence remains unproven.
+The coordinator API, continuous auditor and learner have durable ROOT-pinned
+startup policies and automatic restart on failure. The separate hourly weight
+writer has an installed repaired evidence policy effective at 00:00 UTC; its
+first new-policy invocation is running, not yet a confirmed chain submission.
+The last confirmed submission covered 202 currently registered UIDs at 23:00 UTC.
+Seven verifier workers remain enrolled. The additional H200 passed bounded
+research qualification but was deleted through the provider API during a later
+reference test; that interrupted test grants no enrollment or numerical relabel.
 
 Weight setting is independently governed by hourly-current-assessment-writer-v1.
 Every UTC hour the validator estimates each currently registered miner's valid
