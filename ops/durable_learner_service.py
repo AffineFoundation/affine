@@ -22,6 +22,74 @@ CPU_OVERRIDES = {'subnet/capture_journal.py', 'subnet/training_documents.py',
                  'subnet/remote_backend.py', 'subnet/checkpoint_upload_recovery.py'}
 
 
+PEER_POLICY_FIELD='learner_selection_cpu_peer_admission'
+PEER_OVERRIDES={'subnet/committed_training_inputs.py','subnet/training_receipts.py',
+                'subnet/learner_blacklist_selection.py','subnet/learner_selection_operator_bridge.py'}
+
+def validate_cpu_selection_peer(policy,source,cfg,authority):
+    row=policy[PEER_POLICY_FIELD]
+    fields={'version','authorization','remote_admission','peer_root','peer_files',
+            'entry','entry_sha256','runner','runner_sha256'}
+    if type(row)is not dict or set(row)!=fields or row['version']!='durable-CPU-selection-peer-v1':
+        raise ValueError('exact default-off CPU selection peer policy')
+    grant=guards.verify_document(row['authorization'],authority)
+    grant_fields={'version','source_sha256','scientific_source_files','operator_files','minimum_round','epoch_prefix','peer_entry_sha256','peer_runner_sha256','backend_execution_allowed'}
+    if (set(grant)!=grant_fields or grant['version']!='cpu-selection-peer-authorization-v1' or
+        grant['source_sha256']!=policy['source_sha256']or grant['scientific_source_files']!=source['runtime_source_files']or
+        set(grant['operator_files'])!=PEER_OVERRIDES or grant['operator_files']!=row['peer_files']or
+        type(grant['minimum_round'])is not int or grant['minimum_round']<0 or
+        type(grant['epoch_prefix'])is not str or not grant['epoch_prefix']or
+        grant['backend_execution_allowed']is not True or
+        grant['peer_entry_sha256']!=row['entry_sha256']or grant['peer_runner_sha256']!=row['runner_sha256']):
+        raise ValueError('exact ROOT peer source177/override/entry/runner execution grant')
+    overlay=policy.get('operator_overlay',{})
+    if any(overlay.get('overrides',{}).get(name)!=h for name,h in row['peer_files'].items()):
+        raise ValueError('coordinator and remote CPU metadata must match')
+    root=Path(row['peer_root'])
+    if not root.is_absolute()or root.resolve()!=root or root.is_symlink()or root.stat().st_uid!=os.getuid():raise ValueError('owned exact peer root')
+    if {str(f.relative_to(root))for f in root.rglob('*')if f.is_file()}!=set(row['peer_files']):raise ValueError('exact peer membership')
+    guards.pinned_files(root,row['peer_files'])
+    for name in ('entry','runner'):
+        path=guards.private_file(row[name])
+        if guards.file_hash(path)!=row[name+'_sha256']:raise ValueError('actual separately admitted peer launcher SHA')
+    role=cfg.get('remote',{}).get('roles',{}).get('train',{})
+    peer=role.get('learner_selection_cpu_peer')
+    if type(peer)is not dict or set(peer)!={'operator_root','entry','runner','bytecode_prefix_root','authorization_document'}or peer['authorization_document']!=guards.read(row['authorization']['path']):
+        raise ValueError('exact train-only remote peer config')
+    auto=guards.signed(cfg.get('learner_blacklist_selection_authorization'),authority)
+    auto_fields={'version','source_sha256','writer_policy_sha256','audit_policy','maximum_age_seconds','assessment_path'}
+    if (set(auto)!=auto_fields or auto['version']!='automatic-confirmed-blacklist-training-selection-v1'or
+        auto['source_sha256']!=policy['source_sha256']or type(auto['maximum_age_seconds'])is not int or not 1<=auto['maximum_age_seconds']<=7200):
+        raise ValueError('exact authenticated automatic opening mechanism')
+    if type(auto['writer_policy_sha256'])is not str or len(auto['writer_policy_sha256'])!=64:
+        raise ValueError('writer policy pin')
+    try:bytes.fromhex(auto['writer_policy_sha256'])
+    except ValueError:raise ValueError('writer policy pin')
+    assessment=Path(auto['assessment_path'])
+    if not assessment.is_absolute()or assessment.resolve()!=assessment or assessment.is_symlink():raise ValueError('ordinary assessment source path')
+    # Execute only the separately pinned scalar parser function, not science v1/v2 policy.
+    import ast,math
+    text=(root/'subnet/learner_blacklist_selection.py').read_bytes();tree=ast.parse(text)
+    functions=[n for n in tree.body if isinstance(n,ast.FunctionDef)and n.name=='validate_audit_policy']
+    if len(functions)!=1:raise ValueError('separately pinned scalar policy parser')
+    scope={'math':math};exec(compile(ast.Module(body=functions,type_ignores=[]),str(root/'subnet/learner_blacklist_selection.py'),'exec'),scope)
+    scope['validate_audit_policy'](auto['audit_policy'])
+    admission=guards.verify_document(row['remote_admission'],authority)
+    expected=dict(version='CPU-selection-remote-peer-admission-v1',source_sha256=policy['source_sha256'],
+        scientific_source_files_sha256=guards.digest(source['runtime_source_files']),authorization_payload_sha256=guards.digest(grant),
+        host=role.get('host'),port=role.get('port'),user=role.get('user','root'),python=role.get('python'),
+        scientific_root=role.get('code'),operator_root=peer['operator_root'],entry=peer['entry'],runner=peer['runner'],
+        bytecode_prefix_root=peer['bytecode_prefix_root'],operator_files=row['peer_files'],
+        entry_sha256=row['entry_sha256'],runner_sha256=row['runner_sha256'],
+        CPU_only=True,model_loaded=False,proof_reverification=False,admitted=True)
+    if admission!=expected:raise ValueError('ROOT-authenticated exact remote CPU peer readiness')
+    for key in ('operator_root','entry','runner','bytecode_prefix_root'):
+        if not Path(peer[key]).is_absolute()or '..'in Path(peer[key]).parts:raise ValueError('explicit remote peer path')
+    if any('learner_selection_cpu_peer'in v for k,v in cfg['remote']['roles'].items()if k!='train'and isinstance(v,dict)):
+        raise ValueError('no mining/evaluation/verifier CPU peer override')
+    return grant
+
+
 def validate_operator_overlay(overlay, source, policy, cfg):
     fields = {'version', 'root', 'full_source_files', 'overrides',
               'baseline_source_sha256', 'baseline_inventory_sha256', 'learner_capture_policy'}
@@ -35,10 +103,10 @@ def validate_operator_overlay(overlay, source, policy, cfg):
         not stat.S_ISDIR(root.lstat().st_mode) or root.lstat().st_uid != os.getuid()):
         raise ValueError('distinct canonical owned CPU overlay root')
     changes = overlay['overrides']
-    if type(changes) is not dict or not changes or not set(changes) <= (CPU_OVERRIDES | ({'subnet/persistent_training_controller.py'} if 'native_training_eligibility' in policy else set())):
+    if type(changes) is not dict or not changes or not set(changes) <= (CPU_OVERRIDES | ({'subnet/persistent_training_controller.py'} if 'native_training_eligibility' in policy else set()) | (PEER_OVERRIDES if PEER_POLICY_FIELD in policy else set())):
         raise ValueError('only explicit coordinator transport modules may differ')
     original = source['full_source_files']
-    if any(k not in original and k not in {'subnet/capture_journal.py', 'subnet/checkpoint_upload_recovery.py'} for k in changes):
+    if any(k not in original and k not in ({'subnet/capture_journal.py', 'subnet/checkpoint_upload_recovery.py'} | ({'subnet/learner_blacklist_selection.py','subnet/learner_selection_operator_bridge.py'} if PEER_POLICY_FIELD in policy else set())) for k in changes):
         raise ValueError('only explicit CPU sidecars may extend original membership')
     expected = dict(original, **changes)
     if overlay['full_source_files'] != expected:
@@ -91,6 +159,37 @@ def verify_admission(row, authority):
     return payload
 
 
+def validate_stop_boundary(p,cfg,authority):
+    row=p.get('stop_after_current_round')
+    if row is None:
+        if 'stop_after_current_round'in p:raise ValueError('explicit null stop boundary')
+        return None
+    fields={'version','round','epoch','original_opening'}
+    if type(row)is not dict or set(row)!=fields or row['version']!='signed-current-round-CPU-stop-v1'or type(row['round'])is not int or row['round']<0 or type(row['epoch'])is not str:
+        raise ValueError('exact current-round CPU boundary')
+    opening=guards.verify_document(row['original_opening'],authority)
+    if opening.get('epoch')!=row['epoch']or opening.get('source_bundle',{}).get('sha256')!=p['source_sha256']:
+        raise ValueError('original published opening context')
+    state=guards.read(guards.private_file(Path(cfg['state'])/'controller.json'))
+    active=state.get('active')
+    if (state.get('round')!=row['round']or not isinstance(active,dict)or active.get('epoch')!=row['epoch']or
+        active.get('phase')in (None,'opening')or state.get('checkpoint',{}).get('id')!=opening.get('checkpoint',{}).get('id')):
+        raise ValueError('resume only SAME published current round; never open another')
+    return row
+
+
+def run_original_boundary(service,p,cfg,authority=guards.AUTHORITY):
+    row=validate_stop_boundary(p,cfg,authority)
+    if row is None:return service.run(cfg)
+    # Exact current epoch resumes through original durable paths; --once stops
+    # naturally after it closes. No GPU signals, new policy, or live hooks.
+    service.run(cfg,once=True)
+    status=guards.read(guards.private_file(Path(cfg['state'])/'controller.json'))
+    if status.get('round')!=row['round']+1 or status.get('active')is not None:
+        raise ValueError('original current round did not reach natural CPU boundary')
+    print(json.dumps(dict(version='original-round-CPU-boundary-terminal-v1',round=status['round'],epoch=row['epoch'],active=None,closure_authentication_still_required=True)))
+
+
 def validate_policy(document, authority=guards.AUTHORITY):
     p = guards.signed(document, authority)
     fields = {'version', 'execute_allowed', 'authority', 'identity', 'config',
@@ -100,6 +199,8 @@ def validate_policy(document, authority=guards.AUTHORITY):
     if 'operator_overlay' in p:
         fields.add('operator_overlay')
     if 'native_training_eligibility' in p:fields.add('native_training_eligibility')
+    if PEER_POLICY_FIELD in p:fields.add(PEER_POLICY_FIELD)
+    if 'stop_after_current_round'in p:fields.add('stop_after_current_round')
     if set(p) != fields or p['version'] != VERSION or p['execute_allowed'] is not True or p['authority'] != authority:
         raise ValueError('exact durable learner policy required')
     for path, expected in ((Path(__file__).resolve(), p['runner_file_sha256']),
@@ -164,6 +265,10 @@ def validate_policy(document, authority=guards.AUTHORITY):
     status = guards.read(guards.private_file(state / 'controller.json'))
     if status.get('initial_published') is not True or status.get('persistent_state_committed') is not True or not status.get('trainer_state'):
         raise ValueError('existing committed persistent learner required')
+    if PEER_POLICY_FIELD in p:validate_cpu_selection_peer(p,source,cfg,authority)
+    elif 'learner_blacklist_selection_authorization'in cfg or any('learner_selection_cpu_peer'in v for v in cfg.get('remote',{}).get('roles',{}).values()if isinstance(v,dict)):
+        raise ValueError('explicit selection requires separately admitted CPU peer policy')
+    if 'stop_after_current_round'in p:validate_stop_boundary(p,cfg,authority)
     if 'operator_overlay' in p:
         validate_operator_overlay(p['operator_overlay'], source, p, cfg)
     if 'native_training_eligibility' in p:validate_native_operator(p,authority,source)
@@ -264,7 +369,7 @@ def main():
                               'existing_state_preserved': True, 'jobs_dispatched': False}))
             return
         if 'native_training_eligibility'in p:service._native_lifecycle_execute=True
-        service.run(guards.read(p['config']['path']))
+        run_original_boundary(service,p,guards.read(p['config']['path']))
 
 
 if __name__ == '__main__':

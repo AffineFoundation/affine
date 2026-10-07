@@ -63,7 +63,7 @@ def validate_admission(envelope,obj,manifest,authority):
     if sha(original)!=value['commitment_sha256']:raise ValueError('original miner commitment digest')
     # v2 producer owns canonical commitment framing; independent consumer binds
     # exactly the signed child, never an unsigned replacement document.
-    if (payload.get('version')!=manifest.get('submission_transport_policy','small-commitment-pairs-v2') or payload.get('epoch')!=value['epoch'] or payload.get('miner')!=value['miner_identity'] or
+    if (payload.get('version')!='small-commitment-pairs-v2' or payload.get('epoch')!=value['epoch'] or payload.get('miner')!=value['miner_identity'] or
         payload.get('checkpoint')!=value['checkpoint'] or payload.get('source')!=value['source_sha256']):
         raise ValueError('original miner commitment context')
     children=payload.get('batches')
@@ -86,13 +86,8 @@ def admitted_submission(path,obj,manifest,authority,*,retire=False):
     if len(data)!=value['document_size'] or hashlib.sha256(data).hexdigest()!=value['document_sha256']:
         raise ValueError('exact learner document SHA/size')
     document=_decode(data)
-    artifact_version=ARTIFACT_VERSION
-    if 'token_artifact_policy'in manifest:
-        from .token_only_protocol import for_manifest
-        from .training_documents import TOKEN_VERSION
-        for_manifest(manifest);artifact_version=TOKEN_VERSION
     if (not isinstance(document,dict) or set(document)!={'version','epoch','checkpoint','miner','slot','batch'} or
-        document['version']!=artifact_version or document['epoch']!=value['epoch'] or
+        document['version']!=ARTIFACT_VERSION or document['epoch']!=value['epoch'] or
         document['checkpoint']!=value['checkpoint'] or document['miner']!=value['miner_identity'] or
         document['slot']!=value['slot']):raise ValueError('canonical learner document context')
     batch=document['batch']

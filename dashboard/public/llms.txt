@@ -300,6 +300,13 @@ unaudited miners remain eligible; UNKNOWN numerical outcomes and infrastructure
 errors are not blacklist evidence. Existing production selection remains
 unchanged. See docs/CONFIRMED_BLACKLIST_TRAINING_SELECTION.md on GitHub.
 
+Prospective CPU-peer admission keeps the original scientific source separate
+from explicitly pinned metadata overrides and preserves the full enriched job
+binding. CPU compatibility controls do not activate training exclusion or
+qualify a new numerical contract. A signed current-round drain can stop only
+after the original published epoch closes; the saved opening is unchanged.
+See docs/CONFIRMED_BLACKLIST_CPU_PEER.md on GitHub.
+
 ## Continuous audits and proposed rewards
 
 Eight admitted verifier workers claim jobs through the authenticated coordinator
