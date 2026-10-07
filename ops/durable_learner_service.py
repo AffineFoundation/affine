@@ -312,8 +312,64 @@ def prepare_runtime(p):
     if 'native_training_eligibility' in p:
         install_native_constructor(gpu_service,p)
     if 'capture_recovery'in p:install_capture_recovery(gpu_service,p)
+    if p.get('version')=='durable-pinned-k2l2-composite-learner-service-v3':
+        install_qualified_remote_inventory(p)
+        install_calibration_opening_quota()
     return gpu_service
 
+
+
+def normalized_remote_metadata(metadata, runtime_files, nonruntime_files, versions):
+    """Authenticate full observed tree before projecting the signed GPU closure."""
+    if (type(metadata) is not dict or set(metadata)!={'source_files','runtime_versions'}
+            or len(runtime_files)!=179 or set(runtime_files)&set(nonruntime_files)
+            or set(nonruntime_files)!={'subnet/source_sampling_admission.py'}):
+        raise ValueError('exact qualified runtime/nonruntime projection')
+    expected=dict(runtime_files,**nonruntime_files)
+    if metadata['source_files']!=expected or metadata['runtime_versions']!=versions:
+        raise ValueError('actual remote fulltree/runtime changed before dispatch')
+    return dict(source_files=dict(runtime_files),runtime_versions=dict(versions))
+
+
+def install_qualified_remote_inventory(policy):
+    from subnet import remote_backend
+    source=verify_admission(policy['source_approval'],policy['authority'])
+    runtime_files=source['runtime_source_files']
+    nonruntime_files={'subnet/source_sampling_admission.py':source['full_source_files']['subnet/source_sampling_admission.py']}
+    calibration=verify_admission(source['current_parent_calibration'],policy['authority'])
+    job=verify_admission(calibration['original_invocations'][0]['job'],policy['authority'])
+    if job['source_files']!=runtime_files:
+        raise ValueError('genuine current-parent calibration runtime closure changed')
+    versions=job['runtime_versions']
+    original=remote_backend.RemoteJobs
+    class QualifiedRemoteJobs(original):
+        def __init__(self,config,controller):
+            super().__init__(config,controller)
+            self.metadata=normalized_remote_metadata(self.metadata,runtime_files,nonruntime_files,versions)
+    remote_backend.RemoteJobs=QualifiedRemoteJobs
+
+
+def calibration_opening_with_quota(original,controller,config,status,opening):
+    """Calibration sees the same signed quota later supplied to controller.open."""
+    if config.get('sampling_policy',{}).get('version')!='forced-inverse-cdf-prefill-miner-bound-v5':
+        return original(controller,config,status,opening)
+    if (config.get('K'),config.get('L'),config.get('max_batches'))!=(2,2,3):
+        raise ValueError('exact signed K2 L2 max3 opening projection')
+    if 'max_batches' in opening and opening['max_batches']!=3:
+        raise ValueError('conflicting opening quota')
+    projected=dict(opening,max_batches=3)
+    result=original(controller,config,status,projected)
+    if 'max_batches' not in opening:
+        result=dict(result);result.pop('max_batches',None)
+    return result
+
+
+def install_calibration_opening_quota():
+    from subnet import successor_calibration
+    original=successor_calibration.before_open
+    def before_open(controller,config,status,opening):
+        return calibration_opening_with_quota(original,controller,config,status,opening)
+    successor_calibration.before_open=before_open
 
 
 def validate_native_operator(p,authority,source):
