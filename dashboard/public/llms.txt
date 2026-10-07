@@ -1,18 +1,22 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 02:38 UTC:
-Checkpoint 25 is the controller's committed model. Epochs 31, 32 and 33 completed normally
+Current operational status, 2026-10-07, 02:50 UTC:
+Checkpoint 26 is the controller's committed model. Epochs 31, 32 and 33 completed normally
 in 48.855, 50.372 and 50.692 minutes. Epoch 33 trained on 256 UNAUDITED task pairs
 and advanced optimizer step 23 to 24. All ten model files (15.24 GB) and 23
 optimizer shards (91.39 GB) passed independent full readback before authority
 commitment. Epoch 34 then completed in 48.954 minutes and advanced the optimizer
-to step 25; epoch 35 is training. The same learner naturally advanced these epochs;
+to step 25. Epoch 35 completed in 57.299 minutes and advanced optimizer step
+25 to 26. Its original training job, full 23-object optimizer readback and ten-file
+checkpoint publication completed successfully; epoch 36 has opened. Exporting
+91.39 GB of optimizer state took 1,278 seconds; training and checkpoint creation
+took 448 seconds. The same learner naturally advanced these epochs;
 no retraining, manual cache promotion or replacement controller was needed.
-Training does not wait for audits. Current cheap eligibility validates identity,
-task, prompt, tokens and checkpoint binding, but does not independently grade
-claimed success/failure before training. A native-grading filter is implemented
-on GitHub main and the new controller is deployed for epoch 36 onward. Epoch 35
-and its original mining job continue unchanged; the first live filtered training
+Training does not wait for audits. Through epoch 35, cheap eligibility validated
+identity, task, prompt, tokens and checkpoint binding without independently
+grading claimed success/failure before training. A native-grading filter is implemented
+on GitHub main and the new controller is deployed for epoch 36 onward. The first
+live filtered training
 request is still pending. Its full 256-pair CPU benchmark graded
 all 512 original outcomes in 102.23 seconds total, with all labels matching and
 about 1.3 GB peak combined memory. It will not establish on-policy sampling
@@ -32,7 +36,9 @@ terminal records. Relative to checkpoint 23, checkpoint 24 gained three tasks
 and lost fifteen; checkpoint 25 gained five and lost fifteen. These regressions
 mean sustained convergence has not been established. An isolated comparison
 of the untouched base and checkpoint 24 on all 750 held-out tasks is being
-prepared; both exact model restores completed, but actual evaluation results are pending.
+prepared. Both exact model restores and separate 14-task native qualifications
+completed, with independent full R2 readback and ROOT-signed acknowledgements.
+The all-750 comparison has not produced a result yet.
 The coordinator API, continuous auditor and learner have durable ROOT-pinned
 startup policies and automatic restart on failure. The separate hourly weight
 writer submitted the 02:00 UTC assessment for 208 current UIDs at block 9228005.
@@ -62,8 +68,9 @@ No training restart or manual hourly weight replay was performed.
 The isolated retained H100 has the frozen evaluator source and native grader
 staged for a matched untouched-base versus checkpoint-24 comparison on all
 750 held-out problems. Both model restorations completed with exact file hashes
-and full original-evidence readback. The first evaluation qualification is
-underway; no all-750 result is available yet. The previous additional H200 passed bounded
+and full original-evidence readback. Both original 14-task qualifications exited
+successfully and passed independent ROOT full R2 archive readback; these small
+qualifications are not an all-750 performance result. The previous additional H200 passed bounded
 research qualification but was deleted through the provider API during a later
 reference test; that interrupted test grants no enrollment or numerical relabel.
 
