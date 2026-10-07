@@ -30,6 +30,18 @@ checkpoint 32. The small diagnostic subset alone was misleading as a summary
 of learning. Qualify the current checkpoint on the same wider cohort and resolve
 training degradation before treating increased per-task quotas as a remedy.
 
+## Recorded update diagnostics
+
+A read-only inspection of the nine ordinary reports advancing optimizer steps
+23 to 32 found 256 tasks and 256 pairs per update. Recorded gradient norms ranged
+from 0.064 to 0.228, below the clipping threshold of 1.0, with no nonfinite norms
+or margins in those reports. Mean training-pair margins increased in each update
+(about 0.053 to 0.141). These diagnostics show the preference objective changing
+as intended on its inputs; they do not establish held-out improvement. They do
+not support explaining the observed regression as an optimizer batch of two or
+as exploding gradients in these nine recorded updates. Compare negative quality,
+objective and generalization before raising sample quotas.
+
 ## Controlled comparison
 
 1. Complete the existing same-parent comparison of capped versus completed
