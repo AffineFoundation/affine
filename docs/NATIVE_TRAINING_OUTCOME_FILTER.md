@@ -264,3 +264,21 @@ requiring its own expiring ROOT authorization/context. The prior 32-pair timing
 is not substituted for that full workload result.
 
 The full 256-document E34 benchmark exposed a token-bound defect before native grading: the tokenizer has 151,665 entries, while the original authenticated model config declares a 152,064-wide vocabulary. Ninety-one of the 512 authentic rollouts contain padded model vocabulary IDs. The corrected proposal binds a small local model config by the original checkpoint's `config.json` SHA and checks its declared integer vocabulary against the signed operator binding. It bounds tokens by that vocabulary and retains original tokenizer decoding, including padded IDs. Tokenizer length is checked for coverage, rather than used as the model's token limit. The failed benchmark and original inputs remain unchanged; corrected prevalidation is not a native-grading qualification or sampling proof.
+
+The prospective CPU policy may opt in with
+`limits.terminal_rule = "max-or-eos-v1"`. This preserves the interpretation of
+older policies without that field. For each original output, the filter uses
+the authenticated tokenizer EOS ID and the original signed environment/harness
+output cap. It excludes a pair if an output stops before the cap without EOS,
+or contains EOS before its final token. Miner-provided `done`, finish reason,
+cap, text, and EOS metadata cannot override this rule. An excluded pair runs no
+native grader, retains its original claims, and receives no cheating penalty.
+The signed receipt records `excluded_terminal_rule`; zero-selection closure
+counts these as known eligibility exclusions, not unavailable-grader retries.
+
+This is terminal framing only. EOS at the end does not establish that EOS was
+selected by the prescribed stream; public CDF, prompt, task, and seed checks
+remain independently audited. A full-length non-EOS negative can remain a valid
+native-negative example without being a useful completed mathematical answer.
+Production requires a distinct ROOT-approved operator/authentication policy and
+future unopened boundary; existing signed jobs and pinned runtimes are unchanged.

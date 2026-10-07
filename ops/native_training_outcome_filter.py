@@ -114,6 +114,10 @@ class PinnedGrader:
 
 def validate_limits(policy):
     fields = {'version','workers','max_pairs','per_grade_seconds','wall_seconds','max_reply_bytes'}
+    if isinstance(policy,dict) and 'terminal_rule' in policy:
+        fields.add('terminal_rule')
+        if policy['terminal_rule'] != 'max-or-eos-v1':
+            raise ValueError('explicit native terminal framing policy')
     if not isinstance(policy, dict) or set(policy) != fields or policy['version'] != VERSION:
         raise ValueError('exact opt-in native filter policy')
     for key, low, high in (('workers',1,4),('max_pairs',1,256),('per_grade_seconds',1,60),
@@ -147,6 +151,10 @@ def _filter_admitted_pairs(pairs, policy, resolve, decode, grader, *, clock=time
             raise ValueError('trusted task answer bounds')
         if type(cap) is not int or not 1 <= cap <= 2048 or type(vocab) is not int or vocab < 1:
             raise ValueError('trusted token profile')
+        terminal_required=policy.get('terminal_rule')=='max-or-eos-v1'
+        if terminal_required and (not isinstance(eos,set) or len(eos)!=1 or
+                any(type(t)is not int or not 0<=t<vocab for t in eos)):
+            raise ValueError('authenticated single tokenizer EOS')
         rollouts = []
         for rollout, claim in ((positive,'positive'), (negative,'negative')):
             turns = rollout.get('turns')
@@ -162,11 +170,20 @@ def _filter_admitted_pairs(pairs, policy, resolve, decode, grader, *, clock=time
                              'decoded_reply_sha256':hashlib.sha256(reply.encode()).hexdigest(),
                              'output_tokens':len(output), 'non_eos_cap':len(output)==cap and output[-1] not in eos,
                              'submitted_text_matches_decoded':turns[0].get('text')==reply}))
+            if terminal_required:
+                rollouts[-1][2]['terminal_framing_valid']=(not any(t in eos for t in output[:-1]) and
+                    (len(output)==cap or output[-1] in eos))
+                rollouts[-1][2]['approved_output_cap']=cap
+        if terminal_required:
+            pair_valid=all(r[2]['terminal_framing_valid'] for r in rollouts)
+            for r in rollouts:r[2]['pair_terminal_framing_valid']=pair_valid
         prepared.append((identity, rollouts))
 
     prepared_at = clock()
     def grade(item):
         gold, reply, receipt = item
+        if receipt.get('pair_terminal_framing_valid') is False:
+            return dict(receipt,native_score=None,reason='terminal_framing_exclusion',label_matches=None)
         remaining = deadline - clock()
         if remaining <= 0:
             return dict(receipt, native_score=None, reason='filter_deadline', label_matches=None)
@@ -186,7 +203,8 @@ def _filter_admitted_pairs(pairs, policy, resolve, decode, grader, *, clock=time
     rows=[];accepted=[]
     for position, ((identity,_), pair) in enumerate(zip(prepared,pairs)):
         result=grades[2*position:2*position+2]
-        status=('excluded_indeterminate' if any(r['label_matches'] is None for r in result)
+        status=('excluded_terminal_rule' if any(r.get('terminal_framing_valid') is False for r in result)
+                else 'excluded_indeterminate' if any(r['label_matches'] is None for r in result)
                 else 'accepted_native_labels' if all(r['label_matches'] for r in result)
                 else 'excluded_label_mismatch')
         rows.append({'pair_sha256':identity,'status':status,'grades':result})
@@ -195,7 +213,8 @@ def _filter_admitted_pairs(pairs, policy, resolve, decode, grader, *, clock=time
                       'grader_child_memory_limit_bytes':1073741824,
                       'grading_parallel_wall_seconds':clock()-prepared_at,
                       'sampling_assurance':'unaudited','proof_verification_performed':False,
-                      'cheating_penalties':False,'claims_rewritten':False,'rows':rows}
+                      'cheating_penalties':False,'claims_rewritten':False,'rows':rows,
+                      **({'terminal_rule':policy['terminal_rule']} if 'terminal_rule' in policy else {})}
 
 
 def filter_authenticated_documents(document_paths, policy_envelope, job_envelope, authority, source_root,
