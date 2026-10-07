@@ -12,6 +12,24 @@ two-trajectory optimizer minibatch. The task-normalized trainer averages pair
 losses within a task, then task losses within the update. Larger per-task groups
 must retain that normalization, rather than silently increase a task's weight.
 
+The authenticated E38 training report advances optimizer step 28 to 29 with
+256 task pairs. Its gradient norm before clipping is 0.1088867 against a 1.0
+limit; all 256 recorded before/after margins and recomputed deltas are finite.
+Margins increase for 233 pairs, with a mean change of 0.14066 nats per token.
+The reconstructed post-update preference loss is 0.68622 versus an initial
+0.69315. These are training diagnostics, not held-out improvement or proof of
+stable learning. Ninety-two initial margins exceed 5 nats; margins alone do not
+establish capped outputs or fraudulent sampling in those E38 inputs.
+
+The deployed objective uses an immutable copy of the current epoch's input
+checkpoint as its reference, then refreshes that reference for the next epoch.
+Consequently an initial loss near log(2) is expected; its repetition is not
+evidence that the optimizer was reset. This also does not supply a persistent
+anchor to the original base model. Keep this reference rule identical in the
+K1/L1 versus K2/L2 comparison. If matched held-out regression persists, study
+reference anchoring or explicit drift control in a separate experiment rather
+than changing the reference, quota and learning rate together.
+
 The partial untouched-base comparison raises a regression concern. It does not
 establish that sample count caused it. Capped negative trajectories, termination
 behavior, objective/reference behavior and task-selection bias remain candidate
