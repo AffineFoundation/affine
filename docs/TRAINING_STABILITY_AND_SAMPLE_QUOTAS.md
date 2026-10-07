@@ -140,6 +140,16 @@ preserve the positive coefficient while removing the negative term. It must
 use the same parent model/Adam, tasks, positive trajectories, hyperparameters
 and update count as its baseline. It is research-only, not a deployed change.
 
+At the 2026-10-07 follow-up, both matched research arms completed one update
+from checkpoint/Adam step 33 to step 34 using the same 256 selected tasks.
+The positive-only arm completed under a separately declared resource-admission
+successor after its original operation failed before model execution. Scientific
+inputs and the objective stayed pinned; the revised RAM accounting is recorded
+as an operational difference. Its model archive and independent readback are
+still being completed. The prospective comparison uses all 750 held-out tasks
+under a common evaluation protocol for parent, baseline and positive-only arms.
+No held-out benefit or production objective change is established yet.
+
 Restoring the same Adam parent preserves historical first and second moments;
 the positive-only arm removes the current negative-gradient term, not the
 influence of past negative updates. Weight decay also remains unchanged. Match
