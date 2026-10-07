@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 07:19 UTC:
+Current operational status, 2026-10-07, 07:42 UTC:
 Epoch 39 completed in 53.770 minutes, training 256 eligible UNAUDITED task pairs
 and advancing persistent optimizer step 29 to 30. Checkpoint 30 was durably published after independent full readback
 of ten model objects and all 23 optimizer shards. The original training job
@@ -34,7 +34,8 @@ Production still requires one success and one failure per task. The larger
 sample-quota study remains prospective. The coordinator's new CPU selection
 policy excludes confirmed-blacklisted identities from future training selection,
 without removing their committed submissions from audit and reward evidence.
-Actual application to the next frozen training selection remains to be checked.
+The E40 frozen selection independently confirms blacklist exclusion before its
+256-task cap; the full audit inventory remains preserved.
 The prospective K2/L2 identity, nonoverlapping-pair and current-rollout-format
 adapter and opt-in durable research selection ledger passed fifty-three CPU
 controls, including cumulative revision checks and actual child-process crashes
@@ -59,8 +60,14 @@ was verified. Existing original scopes and evidence remain preserved; no silent
 restart or replacement result is being treated as that original execution.
 A distinctly named replacement H100 research machine has completed its pinned
 runtime installation and CPU source/native qualification. Exact parent model
-and optimizer-state restoration is running under one original process; complete
-readbacks and separate model qualification precede new research training.
+and optimizer restoration completed: all ten model files and 23 optimizer shards
+(106.63 GB total) passed complete download and local SHA checks, with the original
+child successfully waited and independent metadata readback acknowledged. The
+separate original 4db evaluation-source staging also completed and was independently
+authenticated. A new 14-task GPU qualification stopped before any model load or
+scientific child because its helper misresolved package-relative TOPLOC paths.
+That failed attempt remains preserved; a separate corrected diagnostic is being
+prepared. No research training or GPU qualification is claimed.
 No research learning result is claimed. The negative-quality comparison plan is
 in docs/TRAINING_STABILITY_SAME_PARENT_REVIEW.md on GitHub.
 The separate original full-750 evaluation machine remains running.
