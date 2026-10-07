@@ -512,3 +512,13 @@ H100: 16 predeclared mining tasks, 16 prescribed attempts each, comparing nested
 one-pair and two-pair data supply. Training forks require at least eight common
 qualifying tasks and separately acknowledged generation evidence. No research
 result or production quota/objective change is claimed yet.
+
+Learning-control update, 2026-10-07: the first three original wider-evaluation
+groups completed, with authenticated native reports. The untouched base scored87/96;
+this is a partial frozen-order result, not the complete750-task score. Fifteen
+tasks overlap CP24 SAME128 with identical task hashes, seeds and rendered prompt
+hashes: base15/15, CP24 12/15, zero gains and three losses. The observations used
+different GPU hosts, so this is a provisional regression signal. The original
+same-H100 full750 comparison and a separate same-parent negative-trajectory
+training control remain in progress. Neither has established convergence or a
+cause for the losses. This does not change miner submission or proof contracts.

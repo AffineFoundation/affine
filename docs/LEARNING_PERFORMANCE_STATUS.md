@@ -328,3 +328,23 @@ Whole capture took74.800 seconds including final commitment publication; cheap
 reads/decode22.779 seconds, complete collection/selection98.300 seconds. E30 had
 retained91/549 and trained79. More usable inputs are now reaching training, but
 new checkpoint completion and held-out gains remain to be measured.
+
+## Untouched-base control: partial matched evidence (2026-10-07)
+
+The first three original groups of the wider held-out evaluation completed;
+their authenticated native reports give the untouched base 87/96. These are the first
+96 tasks in the frozen group order, not a complete 750-task result. Fifteen tasks
+overlap the completed CP24 SAME128 experiment with exactly matching native task
+hashes, sampling seeds and rendered prompt hashes. On that overlap the base
+scored 15/15 and CP24 scored 12/15: zero gains, three losses, twelve unchanged.
+The loss indices are 90, 429 and 949. Original source, grader, environment and
+sampling harness bindings match; the two observations used different GPU hosts.
+
+This is a provisional regression signal, not a complete learning comparison or
+proof of its cause. The original same-H100 all750 comparison remains in progress;
+its complete paired result must not be inferred from these early groups. A
+separate same-parent, persistent-Adam controlled experiment examines capped
+versus completed-EOS negative trajectories on eight identical tasks. Its original
+training job is still running and no outcome is claimed. Production learning
+continues independently; published checkpoint counts and in-sample margins do
+not establish held-out convergence.
