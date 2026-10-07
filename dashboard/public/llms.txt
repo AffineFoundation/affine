@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 00:34 UTC:
+Current operational status, 2026-10-07, 00:50 UTC:
 Checkpoint 23 is the committed model. Epochs 31 and 32 completed normally in
 48.855 and 50.372 minutes. Epoch 32 trained on 256 of 419 eligible UNAUDITED
 task pairs and advanced optimizer step 22 to 23. All ten model files and 23
@@ -12,15 +12,18 @@ task, prompt, tokens and checkpoint binding, but does not independently grade
 claimed success/failure before training. A native-grading filter is under review;
 it is not deployed and will not establish on-policy sampling provenance.
 Matched held-out evaluation on the same 128 task indices and seeds scored
-87/128 for both checkpoint 21 and checkpoint 22. This does not show improvement
-between those checkpoints; sustained convergence remains unproven.
+87/128 for checkpoint 22 and 90/128 for checkpoint 23. An independent review
+confirmed identical task indices, seeds and task hashes across the 128 problems:
+12 previously wrong answers improved and nine previously correct answers regressed.
+This is a positive datapoint, not evidence of sustained convergence.
 The coordinator API, continuous auditor and learner have durable ROOT-pinned
 startup policies and automatic restart on failure. The separate hourly weight
 writer submitted the 00:00 UTC assessment for 205 current UIDs at block 9227402
 under the repaired evidence policy, with zero evidence refusals or stale
 registrations. This is submission evidence, not a separately observed reveal.
 Seven verifier workers remain enrolled. A replacement single-H200 machine is
-rented with explicit retained ownership and is awaiting runtime qualification;
+rented with explicit retained ownership. Its original CPU-only runtime installation
+completed successfully; model execution and runtime qualification remain pending;
 it is not enrolled yet. The previous additional H200 passed bounded
 research qualification but was deleted through the provider API during a later
 reference test; that interrupted test grants no enrollment or numerical relabel.
