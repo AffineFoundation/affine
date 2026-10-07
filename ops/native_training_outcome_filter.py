@@ -49,15 +49,22 @@ class PinnedGrader:
     coercion or alternative parser can turn an unavailable grader into a zero.
     """
     def __init__(self, interpreter, script, script_sha256):
-        from subnet.native_math_grader import isolated_argv
+        from subnet.native_math_grader import isolated_argv, runtime_lock
+        self.executable = Path(interpreter).resolve(strict=True)
+        executable_sha = hashlib.sha256(self.executable.read_bytes()).hexdigest()
+        if executable_sha not in {p['python_executable_sha256'] for p in runtime_lock()['profiles']}:
+            raise ValueError('approved native interpreter executable SHA')
+        self.executable_stamp = _read(self.executable, executable_sha, 64*1024**2)[1]
         self.argv = isolated_argv(interpreter, script, [])
         self.script = Path(script)
         self.sha = script_sha256
         self.stamp = _read(self.script, self.sha, 4*1024**2)[1]
 
     def __call__(self, gold, reply, timeout):
-        if _stamp(self.script.lstat()) != self.stamp:
-            raise ValueError('grader source drift')
+        if (Path(self.argv[0]).resolve(strict=True)!=self.executable or
+            _stamp(self.executable.lstat())!=self.executable_stamp or
+            _stamp(self.script.lstat()) != self.stamp):
+            raise ValueError('grader source drift or interpreter identity drift')
         args = ['--json-arguments', json.dumps([gold, reply], ensure_ascii=True)]
         # Linux MAX_ARG_STRLEN is usually 128 KiB. JSON escaping can inflate
         # non-ASCII text sixfold; bound the actual serialized argument, not
@@ -75,8 +82,10 @@ class PinnedGrader:
             return None, 'native_timeout'
         except OSError:
             return None, 'native_spawn_unavailable'
-        if _stamp(self.script.lstat()) != self.stamp:
-            raise ValueError('grader source drift')
+        if (Path(self.argv[0]).resolve(strict=True)!=self.executable or
+            _stamp(self.executable.lstat())!=self.executable_stamp or
+            _stamp(self.script.lstat()) != self.stamp):
+            raise ValueError('grader source drift or interpreter identity drift')
         if result.returncode:
             return None, 'native_exit_' + str(result.returncode)
         if result.stdout.strip() == b'1.0':

@@ -129,7 +129,10 @@ class GraderProcess(unittest.TestCase):
             sha=hashlib.sha256(script.read_bytes()).hexdigest()
             g=PinnedGrader(sys.executable,script,sha)
             self.assertEqual(g('42','reply',.05),(None,'native_timeout'))
-            g=PinnedGrader('/nonexistent/bin/python',script,sha)
-            self.assertEqual(g('42','reply',1),(None,'native_spawn_unavailable'))
+            from unittest.mock import patch
+            with patch('ops.native_training_outcome_filter.subprocess.run',side_effect=OSError('unavailable')):
+                self.assertEqual(g('42','reply',1),(None,'native_spawn_unavailable'))
+            foreign=Path(d)/'bin';foreign.mkdir();binary=foreign/'python';binary.write_text('foreign interpreter')
+            with self.assertRaisesRegex(ValueError,'executable SHA'):PinnedGrader(binary,script,sha)
 
 if __name__=='__main__':unittest.main()
