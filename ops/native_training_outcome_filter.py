@@ -42,6 +42,23 @@ def _read(path, expected, maximum):
     return data, _stamp(before)
 
 
+def _model_token_bounds(policy, manifest, tokenizer_size):
+    """Read authenticated small model metadata; tokenizer length is not logits width."""
+    binding = policy.get('model_config_binding')
+    if (type(binding) is not dict or set(binding) != {'path','sha256','vocab_size'} or
+        type(binding['path']) is not str or not Path(binding['path']).is_absolute() or
+        type(binding['vocab_size']) is not int or not 1 <= binding['vocab_size'] <= 1_000_000 or
+        manifest.get('checkpoint',{}).get('files',{}).get('config.json') != binding['sha256']):
+        raise ValueError('original model config binding')
+    data, _ = _read(binding['path'], binding['sha256'], 1_000_000)
+    config = json.loads(data)
+    vocab = config.get('vocab_size')
+    if (type(vocab) is not int or vocab != binding['vocab_size'] or
+        type(tokenizer_size) is not int or not 1 <= tokenizer_size <= vocab):
+        raise ValueError('authenticated model/tokenizer vocabulary')
+    return vocab
+
+
 class PinnedGrader:
     """Original isolated subprocess. Runtime mismatches remain indeterminate.
 
@@ -193,7 +210,7 @@ def filter_authenticated_documents(document_paths, policy_envelope, job_envelope
     policy=authenticate(policy_envelope,authority); job=authenticate(job_envelope,authority)
     manifest=authenticate(job['manifest'],authority)
     required={'version','limits','job_sha256','epoch','checkpoint','source_sha256','source_root',
-              'source_files','snapshot_sha256','tokenizer_binding','grader_sha256'}
+              'source_files','snapshot_sha256','tokenizer_binding','grader_sha256','model_config_binding'}
     if set(policy)!=required or policy['version']!=VERSION or job['role']!='train':
         raise ValueError('exact ROOT native filter context')
     source_root=Path(source_root)
@@ -239,6 +256,7 @@ def _filter_bound_documents(document_paths,policy,job,manifest,authority,source_
     for name, expected in policy['tokenizer_binding'].items():
         _read(tokenizer_root/name,expected,32*1024**2)
     tokenizer=AutoTokenizer.from_pretrained(tokenizer_root,local_files_only=True,trust_remote_code=False)
+    model_vocab=_model_token_bounds(policy,manifest,len(tokenizer))
     sessions={}
     try:
         for definition,_,_ in pairs:
@@ -257,7 +275,7 @@ def _filter_bound_documents(document_paths,policy,job,manifest,authority,source_
             task=session.reset(p['index'],p['env_seed'])
             return (session.rows[p['index']]['data']['answer'],task['task_hash'],
                     min(definition['spec']['max_output_tokens'],definition['harness']['max_output_tokens']),
-                    {tokenizer.eos_token_id},len(tokenizer))
+                    {tokenizer.eos_token_id},model_vocab)
         script=source_root/'subnet/vendor/legacy/rollouts/envs/affine_math_v1/affine_math_v1/verify.py'
         grader=PinnedGrader(interpreter,script,policy['grader_sha256'])
         accepted,receipt=_filter_admitted_pairs(pairs,policy['limits'],resolve,
@@ -288,8 +306,18 @@ def filter_eligibility_context(document_paths,context_envelope,authorization_env
     fields={'version','original_signed_manifest','submissions','source_files','authorization_sha256',
             'original_population_file_sha256','original_selection_file_sha256','parent_binding_sha256'}
     authfields={'version','limits','source_sha256','source_root','source_files','snapshot_sha256',
-                'tokenizer_binding','grader_sha256','sampling_assurance','no_credit','no_relabel'}
+                'tokenizer_binding','grader_sha256','model_config_binding','sampling_assurance','no_credit','no_relabel'}
     if 'execution_root' in authorization:authfields.add('execution_root')
+    if 'benchmark_scope' in authorization:
+        authfields.add('benchmark_scope')
+        scope=authorization['benchmark_scope']
+        keys={'version','created_at','expires_at','helper_sha256','plan_sha256','filter_sha256','benchmark_root','original_job_file_sha256','max_documents','input_bytes','dispatchable','model_operations','optimizer_operations'}
+        if (type(scope)is not dict or set(scope)!=keys or scope['version']!='bounded-native-outcome-readonly-benchmark-v1' or
+            type(scope['created_at'])is not int or type(scope['expires_at'])is not int or not 0<scope['expires_at']-scope['created_at']<=600 or
+            not scope['created_at']<=time.time()<scope['expires_at'] or scope['max_documents']!=256 or
+            type(scope['input_bytes'])is not int or not 0<scope['input_bytes']<=512_000_000 or
+            any(scope[k]is not False for k in ('dispatchable','model_operations','optimizer_operations'))):
+            raise ValueError('bounded non-dispatchable native benchmark profile')
     if set(context)!=fields or context['version']!=CONTEXT_VERSION:
         raise ValueError('non-dispatchable eligibility context schema')
     if (set(authorization)!=authfields or authorization['version']!=AUTHORIZATION_VERSION or

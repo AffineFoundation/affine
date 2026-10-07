@@ -50,7 +50,7 @@ class SelectorIntegration(unittest.TestCase):
         manifest,subset=self.select();self.assertEqual(subset,self.submissions[:1]);self.assertEqual(manifest['trainer_state_binding'],self.manifest['trainer_state_binding'])
         self.assertNotEqual(manifest['training_coverage']['inventory_sha256'],self.manifest['training_coverage']['inventory_sha256']);self.assert_originals()
     def test_allaccepted_retains_identical_coverage(self):
-        self.statuses=['accepted_native_labels']*2;manifest,subset=self.select();self.assertEqual(manifest,self.manifest);self.assertEqual(subset,self.submissions);self.assert_originals()
+        self.statuses=['accepted_native_labels']*2;manifest,subset=self.select();self.assertEqual({k:v for k,v in manifest.items()if k!='native_training_eligibility_receipt'},self.manifest);self.assertEqual(subset,self.submissions);self.assert_originals();self.assertEqual(manifest['native_training_eligibility_receipt']['sampling_assurance'],'unaudited')
     def test_zeroaccepted_records_no_update_and_never_dispatches(self):
         self.statuses=['excluded_indeterminate','excluded_label_mismatch']
         with self.assertRaises(NativeNoUpdate):self.select()

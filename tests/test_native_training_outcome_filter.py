@@ -135,4 +135,53 @@ class GraderProcess(unittest.TestCase):
             foreign=Path(d)/'bin';foreign.mkdir();binary=foreign/'python';binary.write_text('foreign interpreter')
             with self.assertRaisesRegex(ValueError,'executable SHA'):PinnedGrader(binary,script,sha)
 
+
+class ModelVocabularyBinding(unittest.TestCase):
+    def test_original_model_width_exceeds_tokenizer_and_decodes_exact_tokens(self):
+        from ops.native_training_outcome_filter import _model_token_bounds
+        with tempfile.TemporaryDirectory() as d:
+            config=Path(d)/'config.json';config.write_text('{"vocab_size":152064}')
+            sha=hashlib.sha256(config.read_bytes()).hexdigest()
+            policy={'model_config_binding':dict(path=str(config),sha256=sha,vocab_size=152064)}
+            manifest={'checkpoint':{'files':{'config.json':sha}}}
+            self.assertEqual(_model_token_bounds(policy,manifest,151665),152064)
+            for mutate in ('vocab','manifest','bytes','tokenizer'):
+                row=copy.deepcopy(policy);m=copy.deepcopy(manifest);size=151665
+                if mutate=='vocab':row['model_config_binding']['vocab_size']=151665
+                if mutate=='manifest':m['checkpoint']['files']['config.json']='0'*64
+                if mutate=='bytes':config.write_text('{"vocab_size":152065}')
+                if mutate=='tokenizer':size=152065
+                with self.assertRaises(ValueError):_model_token_bounds(row,m,size)
+                config.write_text('{"vocab_size":152064}')
+    def test_config_size_missing_binding_and_noninteger_vocab_refuse(self):
+        from ops.native_training_outcome_filter import _model_token_bounds
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/'config.json'
+            for raw in (b'{"vocab_size":true}',b'{"vocab_size":152064.0}',b' '*1_000_001):
+                path.write_bytes(raw);sha=hashlib.sha256(raw).hexdigest()
+                with self.assertRaises(ValueError):
+                    _model_token_bounds({'model_config_binding':dict(path=str(path),sha256=sha,vocab_size=152064)},
+                                        {'checkpoint':{'files':{'config.json':sha}}},151665)
+            with self.assertRaisesRegex(ValueError,'config binding'):_model_token_bounds({}, {},151665)
+    def test_padded_model_ids_preserved_and_outside_model_ids_refuse_before_grade(self):
+        fixture=NativeLabels();fixture.setUp();fixture.n['turns'][0]['output']=[152061]
+        calls=[];decoded=[]
+        accepted,receipt=fixture.run_filter(resolve=lambda *a:('42','trusted',3,{151645},152064),
+            decode=lambda tokens:decoded.append(list(tokens)) or ('correct' if tokens==[1] else ''),
+            grader=lambda g,r,t:(calls.append(r) or int(r=='correct'),None))
+        self.assertEqual(accepted,[fixture.pair]);self.assertIn([152061],decoded)
+        self.assertEqual(receipt['rows'][0]['grades'][1]['output_sha256'],
+            __import__('ops.native_training_outcome_filter',fromlist=['digest']).digest([152061]))
+        for token in (151665,152063):
+            fixture.n['turns'][0]['output']=[token];decoded.clear()
+            accepted,_=fixture.run_filter(resolve=lambda *a:('42','trusted',3,{151645},152064),
+                decode=lambda output:decoded.append(list(output)) or ('correct' if output==[1] else ''),
+                grader=lambda g,r,t:(int(r=='correct'),None))
+            self.assertEqual(accepted,[fixture.pair]);self.assertIn([token],decoded)
+        for token in (152064,-1):
+            fixture.n['turns'][0]['output']=[token];calls.clear()
+            with self.assertRaisesRegex(ValueError,'native output token bounds'):
+                fixture.run_filter(resolve=lambda *a:('42','trusted',3,{151645},152064),grader=lambda *a:calls.append(a))
+            self.assertEqual(calls,[])
+
 if __name__=='__main__':unittest.main()
