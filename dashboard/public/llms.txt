@@ -1,5 +1,22 @@
 # Affine — MATH mining, verification and training
 
+Latest verified operational update, 2026-10-07, 12:09 UTC:
+The original epoch 42 completed on the replacement H200 and advanced persistent
+optimizer step 32 to 33. Its original job restored all 23 authenticated parent
+optimizer shards; checkpoint 33 was published after independent full readback of
+ten model objects and all 23 new optimizer shards. The coordinator then opened
+epoch 43 automatically. Epoch 43 captured 652 document rows, retained 528 eligible
+inputs and selected 256 for training; its first original training job is running.
+That is operational progress, not evidence of model convergence or proof that
+subsequent epochs will remain uninterrupted. Eight verifiers are claiming jobs
+from the separate continuous audit queue. The hourly writer successfully submitted
+221 current registered recipients for the completed 11:00 UTC window; departed
+identities were excluded using a fresh authenticated current-registration snapshot.
+Production remains one success and one failure per task, max three task batches
+per miner. No larger-quota or training-objective contract is activated; training
+continues to use eligible unaudited inputs while inference audits run separately.
+
+Earlier operational update (superseded):
 Latest verified operational update, 2026-10-07, 11:13 UTC:
 The original epoch 42 remains in training, with persistent optimizer step 32.
 Its 256 selected eligible UNAUDITED task pairs passed native grading. The old
