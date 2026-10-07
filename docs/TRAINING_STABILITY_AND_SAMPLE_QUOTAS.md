@@ -80,6 +80,26 @@ not support explaining the observed regression as an optimizer batch of two or
 as exploding gradients in these nine recorded updates. Compare negative quality,
 objective and generalization before raising sample quotas.
 
+## Completed-negative comparison
+
+The original same-parent negative-quality experiment completed on 2026-10-07.
+Both arms made one update from checkpoint 24 and Adam step 24, with eight matched
+training tasks and common positive trajectories. The completed-negative arm
+scored 85/128 on the same held-out task/prompt/seed cohort, versus 77/128 for
+the capped-negative arm: eight gains and no losses. The paired difference was
+6.25 percentage points, with a 20,000-draw paired bootstrap 95% interval of
+[2.34375, 10.9375] points and exact two-sided McNemar p=0.0078125.
+
+ROOT independently authenticated all eight original successful process waits,
+the original signed jobs and full report hashes, both branch model archives,
+and the complete 67-member metadata archive after durable full readback. This
+supports the completed-negative package in this one-update comparison. Length,
+termination and negative content changed together, so it does not isolate an
+EOS effect. The diagnostic cohort has been inspected repeatedly; this is native
+grading, not new inference-proof assurance, convergence or a quota qualification.
+Keep production unchanged while testing the objective separately and confirming
+learning on wider prospective held-out evaluations.
+
 ## Objective hypothesis to test separately
 
 The current preference loss is `-logsigmoid(beta * (margin - reference))`.
