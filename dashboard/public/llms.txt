@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 04:08 UTC:
+Current operational status, 2026-10-07, 04:14 UTC:
 Checkpoint 27 is the controller's committed model. Epochs 31, 32 and 33 completed normally
 in 48.855, 50.372 and 50.692 minutes. Epoch 33 trained on 256 UNAUDITED task pairs
 and advanced optimizer step 23 to 24. All ten model files (15.24 GB) and 23
@@ -50,8 +50,13 @@ checkpoint 25, followed by 82/128 for checkpoint 26 on the same cohort.
 The four original checkpoint-26 jobs and authenticated durable acknowledgements
 were independently checked; this remains below checkpoint 23. The continuous
 128-task evaluation service stopped because its valid private outbox grew to
-8.75 MB, beyond its 8 MiB reader limit. A journal-specific bounded reader fix
-is being prepared; the existing reports, jobs and checkpoint history are preserved.
+8.75 MB, beyond its 8 MiB reader limit. A dedicated 64 MiB outbox reader/writer
+passed 35 tests and a separate actual-history control; signed inputs retain
+their 8 MiB limit. The repaired evaluator is running under a persistent user
+service. All 16 completed checkpoint evaluations remain intact, and checkpoint
+27 advanced from prepared to observing. The owned journal directory is now
+private; existing reports and original job identities were preserved. The larger
+outbox limit is bounded headroom, not unlimited historical-journal capacity.
 Independent full R2 readbacks verified all original reports and
 terminal records. Relative to checkpoint 23, checkpoint 24 gained three tasks
 and lost fifteen; checkpoint 25 gained five and lost fifteen. These regressions
