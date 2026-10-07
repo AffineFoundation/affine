@@ -15,6 +15,15 @@ which is not the duration of the entire epoch. Continue observing ordinary epoch
 before changing production quotas. Do not interpret recovery downtime as
 instability caused by a two-rollout task batch.
 
+At the 2026-10-07 operational check, epochs 43 through 47 completed in
+42.41, 45.02, 41.82, 44.37 and 44.69 minutes respectively. Epoch 48 reached
+training with the public optimizer lineage at step 38. This supports recent
+uninterrupted operation within the one-hour target, not a learning claim.
+The separate fixed-32 native cached diagnostic scored 20/32 at step 37 and
+18/32 at step 38. That repeatedly inspected small cohort does not establish
+a trend; the wider held-out regression below remains the stronger reason to
+qualify the objective and sample quality before increasing per-task quotas.
+
 A submitted task batch currently contains one successful and one unsuccessful
 trajectory. An optimizer update aggregates many task batches; it is not an
 optimizer batch size of two. Recent held-out results are mixed. More samples per
