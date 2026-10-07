@@ -2,36 +2,56 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Affine subnet 120. Actual held-out evaluation performance over time and batches per epoch.">
+<meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="Affine subnet 120: measured performance, batch outcomes, and miner contributions.">
 <title>Affine</title>
-<link rel="icon" href="/network-favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preload" href="/network-haffer.ttf" as="font" type="font/ttf" crossorigin>
-<link rel="stylesheet" href="/network.css?v=20261007-four-sample"><script src="/network.js?v=20261007-four-sample" defer></script>
+<link rel="preload" href="/network-mono.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="/network.css?v=20261007-desktop-observatory-291">
+<script src="/network.js?v=20261007-desktop-observatory-291" defer></script>
+<script defer src="/network-desktop.js?v=20261007-desktop-observatory-291"></script>
 </head>
 <body>
-<a class="skip-link" href="#main">Skip to network measurements</a>
+<a class="skip-link" href="#main">Skip to measurements</a>
 <header>
-<a class="wordmark" href="/" aria-label="Affine home"><svg viewBox="0 0 22 23" aria-hidden="true"><path d="M2 20 11 3l9 17"/></svg><span>FFINE</span></a>
-<nav aria-label="Project links"><a href="/llms.txt">llms.txt <span aria-hidden="true">↗</span></a><a href="https://github.com/AffineFoundation/affine">GitHub <span aria-hidden="true">↗</span></a></nav>
+<a class="wordmark" href="/" aria-label="Affine home"><svg viewBox="0 0 500 500" aria-hidden="true" focusable="false"><path d="M250.004 1.66602C387.157 1.66625 498.341 112.851 498.341 250.004C498.341 387.156 387.156 498.341 250.004 498.341C112.851 498.341 1.66629 387.156 1.66602 250.004C1.66602 112.851 112.851 1.66619 250.004 1.66602ZM74.9541 374.866C113.948 429.435 177.821 465.007 250.004 465.007C322.186 465.007 386.06 429.435 425.054 374.866H74.9541ZM338.333 341.533H421.404L338.332 201.217L338.333 341.533ZM78.6113 341.533H160V204.057L78.6113 341.533ZM249.167 211.667C217.411 211.667 191.667 237.411 191.667 269.167C191.667 300.923 217.411 326.667 249.167 326.667C280.923 326.667 306.667 300.923 306.667 269.167C306.667 237.411 280.923 211.667 249.167 211.667ZM220.13 37.0586C115.527 51.5994 35 141.398 35 250.004C35.0001 276.856 39.9238 302.559 48.916 326.259L220.13 37.0586ZM451.094 326.251C460.084 302.553 465.007 276.854 465.007 250.004C465.007 141.4 384.485 51.6033 279.885 37.0596L451.094 326.251ZM174.242 180H325.772L250.007 52.0244L174.242 180Z"/></svg><span>FFINE</span></a>
+<nav aria-label="Project links"><a href="/llms.txt">llms.txt <svg class="link-arrow" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M2 6h8M7 3l3 3-3 3"/></svg></a><a href="https://github.com/AffineFoundation/affine">GitHub <svg class="link-arrow" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M3 9 9 3M3 3h6v6"/></svg></a></nav>
 </header>
-<main id="main">
+<aside class="market-prices" aria-label="Market prices and submitted batches">
+<dl><div class="market-price"><dt>TAO <span class="price-currency">USD</span></dt><dd><span id="tao-price">—</span><span id="tao-price-age" class="price-age sr-only" hidden>Delayed</span></dd></div><div class="market-price"><dt>Alpha <span class="price-subnet">120</span><span class="price-currency">USD</span></dt><dd><span id="alpha-price">—</span><span id="alpha-price-tao" class="price-secondary"></span><span id="alpha-price-age" class="price-age sr-only" hidden>Delayed</span></dd></div><div class="market-price batch-total"><dt>Batches</dt><dd><span id="batches-total" aria-label="Total submitted batches">—</span></dd></div></dl>
+</aside>
+<main id="main" tabindex="-1" data-state="loading" aria-busy="true">
+<section class="miner-section incentive-section" aria-labelledby="incentive-title">
+<div class="section-heading"><h1 id="incentive-title">Incentive</h1><div class="miner-reading"><span class="reading" id="incentive-value" aria-live="polite">—</span><span id="incentive-value-unit" class="reading-unit">α</span></div></div>
+<div class="miner-context"><div class="epoch-control"><label id="incentive-slider-label" for="incentive-slider"><span>—</span><span>—</span></label><div class="history-navigation"><button id="incentive-previous" class="history-step" type="button" aria-label="Previous emission epoch" disabled><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M8 2 3 6l5 4"/></svg></button><input id="incentive-slider" class="history-slider" type="range" min="0" max="1" value="0" step="1" aria-label="Emission chain epoch" disabled><button id="incentive-next" class="history-step" type="button" aria-label="Next emission epoch" disabled><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M4 2l5 4-5 4"/></svg></button></div></div><div class="miner-view-control" role="group" aria-label="Incentive chart view"><button id="incentive-view-grid" type="button" aria-pressed="true" aria-controls="incentive-grid" disabled>Grid</button><button id="incentive-view-bars" type="button" aria-pressed="false" aria-controls="incentive-grid" disabled>Bars</button></div></div>
+<div id="incentive-wrap" class="heatmap-wrap"><svg id="incentive-axes" class="miner-bar-axes" aria-hidden="true" hidden></svg><div id="incentive-grid" class="incentive-grid" role="group" aria-label="Miner emission by UID in the selected chain epoch"></div><p id="incentive-empty" class="empty">Loading chain emissions.</p><output id="incentive-tip" class="chart-tip" aria-live="polite" hidden></output></div>
+<div id="incentive-legend" class="legend heatmap-legend"><div id="incentive-color-legend" class="incentive-color-legend" aria-label="Emission per miner per epoch"></div><span id="incentive-status" class="sr-only">360-block tempo</span><div class="miner-view-control incentive-unit-control" role="group" aria-label="Emission value unit"><button id="incentive-unit-alpha" type="button" aria-pressed="true" aria-controls="incentive-grid">Alpha</button><button id="incentive-unit-tao" type="button" aria-pressed="false" aria-controls="incentive-grid" disabled>TAO</button><button id="incentive-unit-usd" type="button" aria-pressed="false" aria-controls="incentive-grid" disabled>USD</button></div></div>
+</section>
+<section class="miner-section" aria-labelledby="miner-title">
+<div class="section-heading"><div class="miner-title-group"><h2 id="miner-title">Miner contributions</h2></div><div class="miner-reading"><span class="reading" id="miner-value" aria-live="polite">—</span><span class="reading-label">miners</span><span id="miner-change" class="reading-change"></span></div></div>
+<div class="miner-context"><div class="epoch-control"><label id="miner-epoch-label" for="miner-epoch-slider">Epoch —</label><div class="history-navigation"><button id="miner-epoch-previous" class="history-step" type="button" aria-label="Previous contribution epoch" disabled><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M8 2 3 6l5 4"/></svg></button><input id="miner-epoch-slider" class="history-slider" type="range" min="0" max="1" step="1" value="0" aria-label="Contribution epoch" disabled><button id="miner-epoch-next" class="history-step" type="button" aria-label="Next contribution epoch" disabled><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M4 2l5 4-5 4"/></svg></button></div></div><span id="miner-epoch" class="sr-only">Loading epoch records</span><span id="miner-extra" class="miner-extra" hidden></span><div class="miner-view-control" role="group" aria-label="Miner chart view"><button id="miner-view-grid" type="button" disabled aria-pressed="true" aria-controls="miner-grid">Grid</button><button id="miner-view-bars" type="button" disabled aria-pressed="false" aria-controls="miner-grid">Bars</button></div></div>
+<div class="heatmap-wrap"><svg id="miner-bar-axes" class="miner-bar-axes" aria-hidden="true" hidden></svg><div id="miner-grid" class="miner-grid" role="group" aria-label="Submitted batches by miner UID"></div><p id="miner-empty" class="empty" hidden>Miner records unavailable.</p><output id="miner-tip" class="chart-tip" aria-live="polite" hidden></output></div>
+<div class="legend heatmap-legend" id="miner-grid-legend" aria-label="Submitted batches per UID"><span><i class="swatch level-0"></i>0</span><span><i class="swatch level-1"></i>1</span><span><i class="swatch level-2"></i>2</span><span><i class="swatch level-3"></i>3+ batches</span></div>
+<div id="miner-bar-legend" class="legend heatmap-legend" hidden>Batches by miner UID</div>
+</section>
 <section aria-labelledby="evaluation-title">
-<div class="section-label">
-<div class="chart-heading"><span class="section-index" aria-hidden="true">01 / EVALUATION</span><h1 id="evaluation-title">Held-out math performance</h1></div>
-<div class="latest-reading"><span id="evaluation-value">—</span><span id="evaluation-reading">Awaiting a completed evaluation</span></div>
-</div>
-<div class="chart-wrap"><svg id="evaluation-chart" role="group" aria-label="Held-out evaluation performance over time" aria-describedby="evaluation-period evaluation-note"></svg><p id="evaluation-empty" class="empty">Loading held-out measurements.</p><output id="evaluation-tip" class="chart-tip" aria-live="polite" hidden></output></div>
-<div class="chart-caption"><span id="evaluation-period">Completed evaluations · UTC</span><span id="evaluation-note">Actual held-out measurements</span></div>
+<div class="section-heading"><h2 id="evaluation-title">Performance</h2><div class="measurement-reading"><span class="reading" id="evaluation-value" aria-live="polite">—</span><span id="evaluation-change" class="reading-change"></span></div></div>
+<div class="chart-control evaluation-controls"><label id="evaluation-slider-label" for="evaluation-slider">Epoch —</label><div class="history-navigation"><button id="evaluation-previous" class="history-step" type="button" aria-label="Previous evaluation" disabled><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M8 2 3 6l5 4"/></svg></button><input id="evaluation-slider" class="history-slider" type="range" min="0" max="1" step="1" value="0" aria-label="Performance evaluation" disabled><button id="evaluation-next" class="history-step" type="button" aria-label="Next evaluation" disabled><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M4 2l5 4-5 4"/></svg></button></div><div class="miner-view-control evaluation-view-control" role="group" aria-label="Performance chart view"><button id="evaluation-view-trend" type="button" disabled aria-pressed="true" aria-controls="evaluation-chart">Trend</button><button id="evaluation-view-results" type="button" disabled aria-pressed="false" aria-controls="evaluation-chart">Results</button></div></div>
+<div class="chart-wrap" id="evaluation-wrap"><svg id="evaluation-chart" role="group" aria-label="Measured performance over time"></svg><p id="evaluation-empty" class="empty">Loading evaluations.</p><output id="evaluation-tip" class="chart-tip" aria-live="polite" hidden></output></div>
+<div id="evaluation-legend" class="legend chart-legend" hidden></div>
 </section>
 <section aria-labelledby="batch-title">
-<div class="section-label">
-<div class="chart-heading"><span class="section-index" aria-hidden="true">02 / CONTRIBUTIONS</span><h2 id="batch-title">Batches per epoch</h2></div>
-<div class="latest-reading"><span id="batch-value">—</span><span id="batch-reading">Awaiting a finalized epoch</span></div>
-</div>
-<div class="chart-wrap"><svg id="batch-chart" role="group" aria-label="Frozen submitted batches per finalized epoch" aria-describedby="batch-period batch-note"></svg><p id="batch-empty" class="empty">Loading epoch records.</p><output id="batch-tip" class="chart-tip" aria-live="polite" hidden></output></div>
-<div class="chart-caption"><span id="batch-period">Finalized epochs · UTC</span><span id="batch-note">Frozen submissions · four-sample cutover pending; see llms.txt</span></div>
+<div class="section-heading"><h2 id="batch-title">Batches per epoch</h2><div class="measurement-reading"><span class="reading" id="batch-value" aria-live="polite">—</span><span id="batch-change" class="reading-change"></span></div></div>
+
+<div class="chart-control evaluation-controls batch-controls"><label id="batch-slider-label" for="batch-slider">Epoch —</label><div class="history-navigation"><button id="batch-previous" class="history-step" type="button" aria-label="Previous batch epoch" disabled><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M8 2 3 6l5 4"/></svg></button><input id="batch-slider" class="history-slider" type="range" min="0" max="1" step="1" value="0" aria-label="Batch epoch" disabled><button id="batch-next" class="history-step" type="button" aria-label="Next batch epoch" disabled><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M4 2l5 4-5 4"/></svg></button></div><div class="miner-view-control batch-view-control" role="group" aria-label="Batch chart view"><button id="batch-view-bars" type="button" disabled aria-pressed="true" aria-controls="batch-chart">Bars</button><button id="batch-view-trend" type="button" disabled aria-pressed="false" aria-controls="batch-chart">Trend</button></div></div>
+<div class="chart-wrap" id="batch-wrap"><svg id="batch-chart" role="group" aria-label="Batch outcomes by epoch"></svg><p id="batch-empty" class="empty">Loading epoch records.</p><output id="batch-tip" class="chart-tip" aria-live="polite" hidden></output></div>
+<div id="batch-legend" class="legend chart-legend" aria-label="Selected epoch batch outcomes" hidden></div>
 </section>
+
 </main>
-<footer><span>Affine <span class="footer-divider" aria-hidden="true">/</span> Subnet 120</span><span id="connection" role="status">Connecting to network records</span><a href="/llms.txt">Read the mechanism <span aria-hidden="true">↗</span></a></footer>
-<noscript><p class="noscript">Enable JavaScript to view the network measurements. The current mechanism is available in <a href="/llms.txt">llms.txt</a>.</p></noscript>
-</body></html>
+<footer><span class="footer-identity"><span class="footer-brand">Affine</span><span aria-hidden="true">·</span><span>Subnet 120</span></span><div class="footer-actions"><span id="connection" role="status">Connecting</span><button id="copy-view" type="button" aria-label="Copy link to this view">Copy view</button><span id="copy-view-status" class="sr-only" role="status"></span></div></footer>
+<noscript><p class="noscript">Enable JavaScript to view measurements, or read <a href="/llms.txt">llms.txt</a>.</p></noscript>
+</body>
+</html>
