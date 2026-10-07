@@ -198,6 +198,28 @@ def load_module(path):
     spec.loader.exec_module(module)
     return module
 
+def load_optional_numerical_overlay(op):
+    # The frozen legacy retry finder owns exactly its original three modules.
+    # A separately ROOT-pinned optional fourth CPU module is loaded explicitly;
+    # no legacy finder or scientific package is broadened or edited.
+    relative = 'subnet/numerical_resolution.py'
+    if relative not in op['overlay']['files']:
+        return False
+    path = Path(op['overlay']['root']) / relative
+    if file_hash(path) != op['overlay']['files'][relative]:
+        raise ValueError('exact optional numerical overlay pin')
+    name = 'subnet.numerical_resolution'
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return True
+
+
 def prepare_runtime(p):
     # A fresh CPU import graph is required; no scientific loader/source aliases.
     for name in list(sys.modules):
@@ -214,6 +236,9 @@ def prepare_runtime(p):
         from subnet import distributed_roles
         retry.install_status_retry(distributed_roles)
         retry.install_transaction_retry(distributed_roles,p['queue']['inode'])
+        numerical_loaded = load_optional_numerical_overlay(op)
+        if read(p['config']['path'])['continuous_audit_service'].get('numerical_resolution') is not None and not numerical_loaded:
+            raise ValueError('numerical configuration requires its exact pinned CPU module')
         from subnet import continuous_audit_service as service
         service.admitted_service_config(read(p['config']['path'])['continuous_audit_service'],p['authority'])
     if Path(service.__file__).resolve().is_relative_to(Path(op['root']).resolve()) is False and p['kind']=='API':
@@ -224,7 +249,7 @@ def prepare_runtime(p):
         if Path(gate.__file__).resolve()!=Path(op['root'])/'subnet/source_sampling_admission.py':raise ValueError('unexpected admission module origin')
     else:
         if Path(distributed_roles.__file__).resolve()!=Path(op['root'])/'subnet/distributed_roles.py':raise ValueError('unexpected coordinator origin')
-        for name in ('subnet.continuous_audit_policy','subnet.audit_queue_snapshot'):
+        for name in ('subnet.continuous_audit_policy','subnet.audit_queue_snapshot','subnet.numerical_resolution'):
             module=sys.modules.get(name)
             if module is not None and Path(module.__file__).resolve()!=Path(op['overlay']['root'])/(name.replace('.','/')+'.py'):raise ValueError('unexpected frozen overlay origin')
     return service

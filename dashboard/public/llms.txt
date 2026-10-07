@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 00:22 UTC:
+Current operational status, 2026-10-07, 00:34 UTC:
 Checkpoint 23 is the committed model. Epochs 31 and 32 completed normally in
 48.855 and 50.372 minutes. Epoch 32 trained on 256 of 419 eligible UNAUDITED
 task pairs and advanced optimizer step 22 to 23. All ten model files and 23
@@ -36,9 +36,10 @@ The exact policy is documented in docs/HOURLY_CURRENT_ASSESSMENT.md on GitHub.
 From 23:00 UTC on 2026-10-06, an explicitly signed numerical-resolution writer
 policy treats nine independently reviewed historical TOPLOC rows as inconclusive.
 From 00:00 UTC on 2026-10-07, the writer extends that exact signed set to 17
-reviewed rows. The matching continuous-auditor deployment was rolled back
-at 00:29 UTC after a dependency-loading failure. The prior auditor remains
-active; corrected loader integration is under review. The writer is unchanged.
+reviewed rows. After a dependency-loading rollback, the corrected continuous
+auditor was installed at 00:32 UTC and completed live cycles without restarts.
+Its exact optional module is independently pinned. Prior snapshots and reports
+remain historical records; the writer and scientific proof tolerances are unchanged.
 Original reports and earlier submitted assessments remain immutable; these rows
 receive neither valid-audit credit nor a confirmed-invalid penalty. This is an
 exact evidence-bound correction, not a general tolerance change. Newer numerical

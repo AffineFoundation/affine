@@ -1,3 +1,21 @@
+Verified continuation, 2026-10-07, 00:34 UTC:
+Corrected optional numerical loader now passed ACTUAL prepare_runtime→real
+ContinuousAuditor constructor through exact frozen import graph, authenticating
+all3archives/17policy; wrong/missing pin rejected and legacydefaultoff passed.
+Distinct ROOTsigned policy9e84fd6f0f54bfbd60e9bc8b5f35f983917e54968663c8f83c4af5072dcfcc0f.
+Explicit absolute runner5b9c4f38 andmatchingWorkingDirectory/PYTHONPATH installed;
+originalPID2683248/inv820d57963e7940319c129bc01852fad9 staysactive/NRestarts0.
+Root observed completecycles health1791333162 and1791333209; latter selected4,
+enqueued1/no backpressure. Exact original argv/proc/start identity authenticated.
+Earlier -m invocation inheritedoldunitruntime and was corrected; all receipts
+and rollback records retained. API1167935/learner1884735/queueinode unchanged.
+Portable corrected runner and5new import controls added; root20durabletestsPASS.
+Native grading proposal measured32predeclared originalE32pairs/64rollouts:
+alllabels matched, ~11seconds/4CPUworkers. No inferenceverification, penalties,
+newGPUjobs orproductionchange.15core and7real public-boundary controls passed
+on isolated proposal; prospective eligibility policy/controller hook still needed.
+Learning remains unproven; current scientific objective andK1/L1cap3 unchanged.
+
 Verified correction, 2026-10-07, 00:29 UTC:
 Auditor17 startup --check passed but actual constructor failed because the
 pinned durable loader ignored the fourth overlay dependency numerical_resolution.
