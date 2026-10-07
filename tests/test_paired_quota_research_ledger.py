@@ -42,6 +42,8 @@ class DurableResearchLedgerControls(unittest.TestCase):
                  for i in range(4)]
         self.revision = select_pairs(task, 'miner-A', rolls, quota=2)
         self.other_miner_revision = select_pairs(task, 'miner-B', rolls, quota=2)
+        self.task = task
+        self.rolls = rolls
         self.arguments = dict(parent_state_sha256='a' * 64, step_before=29,
                               settings_sha256='b' * 64, revisions=[self.revision])
 
@@ -86,6 +88,45 @@ class DurableResearchLedgerControls(unittest.TestCase):
         with sqlite3.connect(self.path) as database:
             self.assertEqual(database.execute('SELECT COUNT(*) FROM selections').fetchone()[0], 1)
             self.assertEqual(database.execute('SELECT COUNT(*) FROM jobs').fetchone()[0], 1)
+
+    def test_new_epoch_does_not_make_same_checkpoint_execution_new(self):
+        self.reserve()
+        task = ApprovedTask('epoch41', self.task.checkpoint,
+                            self.task.taskset_sha256, self.task.env_id,
+                            self.task.index, self.task.task_sha256,
+                            self.task.harness_sha256,
+                            self.task.sampling_context_sha256,
+                            self.task.approved_attempts)
+        rolls = copy.deepcopy(self.rolls)
+        for row in rolls:
+            row['epoch'] = task.epoch
+        revision = select_pairs(task, 'miner-A', rolls, quota=2)
+        self.assertNotEqual(revision['slot_id'], self.revision['slot_id'])
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.ledger.reserve('job-B', **dict(self.arguments, revisions=[revision]))
+        with self.assertRaisesRegex(ValueError, 'unknown'):
+            self.ledger.inspect('job-B')
+
+    def test_new_checkpoint_identity_does_not_globally_ban_same_answer(self):
+        # Identity admission alone does not prove generation by the new model.
+        # That remains the inference audit's responsibility.
+        self.reserve()
+        task = ApprovedTask('epoch41', 'new-checkpoint',
+                            self.task.taskset_sha256, self.task.env_id,
+                            self.task.index, self.task.task_sha256,
+                            self.task.harness_sha256,
+                            self.task.sampling_context_sha256,
+                            self.task.approved_attempts)
+        rolls = copy.deepcopy(self.rolls)
+        for row in rolls:
+            row.update(epoch=task.epoch, checkpoint=task.checkpoint)
+        revision = select_pairs(task, 'miner-A', rolls, quota=2)
+        result = self.ledger.reserve('job-B', **dict(
+            self.arguments, parent_state_sha256='c' * 64,
+            step_before=30, revisions=[revision]))
+        self.assertEqual(result['status'], 'reserved')
+        with sqlite3.connect(self.path) as database:
+            self.assertEqual(database.execute('SELECT COUNT(*) FROM members').fetchone()[0], 8)
 
     def test_multi_slot_reservation_rolls_back_on_later_conflict(self):
         self.reserve()

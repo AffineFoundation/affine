@@ -211,6 +211,12 @@ canonical task index and harness; scope ownership to the registered hotkey.
   Persist consumed-input evidence with the resulting checkpoint and optimizer
   state before promoting the authoritative pointer.
 
+Research ledger boundary controls also reject moving the same checkpoint-bound
+execution into a new epoch, while allowing identities bound to a genuinely new
+checkpoint to have the same answer text. The latter is cheap identity admission,
+not evidence that the new checkpoint generated those tokens; inference audits
+still establish that separate claim. These controls are not live-ledger activation.
+
 ## Rollout and compatibility
 
 Implement quota fields end to end before activation: signed epoch manifest,
