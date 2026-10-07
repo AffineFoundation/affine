@@ -16,8 +16,12 @@ resumed from checkpoint 30 into mining, retaining its original completed
 calibration and optimizer lineage. Its first signed R2 manifest, immutable opening record and signed publication
 attestation authenticate the selection policy and protected round 40. Gateway
 state agrees with those bindings and contains 247 miner upload capabilities;
-that local Gateway state is not itself a signed receipt. Actual application
-to the frozen training selection and completion of E40 remain to be observed.
+that local Gateway state is not itself a signed receipt. E40 subsequently selected 256 UNAUDITED task pairs without an audit barrier.
+Blacklist partitioning removed two documents before the training cap, leaving
+433 of 435 structurally eligible task documents. The full audit inventory still
+retains all 598 records, including blacklisted submissions. The original round40
+training job and its separately admitted CPU metadata authenticate against the
+unchanged 177 scientific files. Completion of E40 remains to be observed.
 The latest independently authenticated matched held-out result is checkpoint
 30 at 78/128, versus checkpoint 29 at 76/128 (seven gains, five losses on the
 same 128 tasks, seeds and prompt hashes). It remains below checkpoint 23 at
