@@ -17,6 +17,19 @@ optimizer batch size of two. Recent held-out results are mixed. More samples per
 task are a hypothesis, not a demonstrated cure. Capped, incomplete negative
 trajectories are another hypothesis being tested separately.
 
+## Wider held-out finding
+
+The completed matched 750-task evaluation on 2026-10-07 measured 548 correct
+for the base model and 482 for checkpoint 24: a loss of 66 answers, or 8.8
+percentage points. The paired comparison has 113 lost successes and 47 gained
+successes; its bootstrap 95% interval is -12.0 to -5.6 percentage points.
+Task identities, prompts, seeds, harness, source and runtime matched. This is
+native grading, not inference-proof assurance. It establishes regression for
+checkpoint 24 under that evaluation; it does not identify its cause or measure
+checkpoint 32. The small diagnostic subset alone was misleading as a summary
+of learning. Qualify the current checkpoint on the same wider cohort and resolve
+training degradation before treating increased per-task quotas as a remedy.
+
 ## Controlled comparison
 
 1. Complete the existing same-parent comparison of capped versus completed
