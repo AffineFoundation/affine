@@ -11,11 +11,13 @@ no retraining, manual cache promotion or replacement controller was needed.
 Training does not wait for audits. Current cheap eligibility validates identity,
 task, prompt, tokens and checkpoint binding, but does not independently grade
 claimed success/failure before training. A native-grading filter is implemented
-on GitHub main but is not deployed yet. Its full 256-pair CPU benchmark graded
+on GitHub main and the new controller is deployed for epoch 36 onward. Epoch 35
+and its original mining job continue unchanged; the first live filtered training
+request is still pending. Its full 256-pair CPU benchmark graded
 all 512 original outcomes in 102.23 seconds total, with all labels matching and
 about 1.3 GB peak combined memory. It will not establish on-policy sampling
-provenance or grant audit credit. Activation is prospective: already-opened epochs
-retain their original inputs and contracts.
+provenance or grant audit credit. Already-opened epochs retain their original
+inputs and contracts; matching native outcomes remain UNAUDITED for sampling.
 Matched held-out evaluation on the same 128 task indices and seeds scored
 87/128 for checkpoint 22 and 90/128 for checkpoint 23. An independent review
 confirmed identical task indices, seeds and task hashes across the 128 problems:
