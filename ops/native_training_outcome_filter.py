@@ -1,0 +1,251 @@
+"""Default-off operator proposal: native label eligibility, never proof validity.
+
+Call only on previously authenticated committed pairs. No mining code is run;
+answers are decoded from original tokens and graded by the approved MATH script.
+There is intentionally no controller hook or production enablement in this file.
+"""
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import stat
+import subprocess
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+VERSION = 'bounded-native-training-label-filter-v1'
+
+
+def digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+
+
+def _stamp(value):
+    return tuple(getattr(value, name) for name in ('st_dev','st_ino','st_size','st_mode','st_uid','st_nlink','st_mtime_ns','st_ctime_ns'))
+
+
+def _read(path, expected, maximum):
+    path = Path(path)
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or not 0 < before.st_size <= maximum:
+        raise ValueError('bounded regular single-link trusted input')
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, 'rb') as stream:
+        if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+            raise ValueError('trusted input identity changed')
+        data = stream.read(maximum + 1)
+        if _stamp(os.fstat(stream.fileno())) != _stamp(before):
+            raise ValueError('trusted input changed while read')
+    if _stamp(path.lstat()) != _stamp(before) or hashlib.sha256(data).hexdigest() != expected:
+        raise ValueError('trusted input SHA/identity')
+    return data, _stamp(before)
+
+
+class PinnedGrader:
+    """Original isolated subprocess. Runtime mismatches remain indeterminate.
+
+    Every invocation runs the original verify.py runtime-lock check. No float
+    coercion or alternative parser can turn an unavailable grader into a zero.
+    """
+    def __init__(self, interpreter, script, script_sha256):
+        from subnet.native_math_grader import isolated_argv
+        self.argv = isolated_argv(interpreter, script, [])
+        self.script = Path(script)
+        self.sha = script_sha256
+        self.stamp = _read(self.script, self.sha, 4*1024**2)[1]
+
+    def __call__(self, gold, reply, timeout):
+        if _stamp(self.script.lstat()) != self.stamp:
+            raise ValueError('grader source drift')
+        args = ['--json-arguments', json.dumps([gold, reply], ensure_ascii=True)]
+        # Linux MAX_ARG_STRLEN is usually 128 KiB. JSON escaping can inflate
+        # non-ASCII text sixfold; bound the actual serialized argument, not
+        # only reply UTF-8 size. Never reinterpret oversize as a negative.
+        if len(args[1].encode('utf-8')) > 96*1024:
+            return None, 'native_argument_limit'
+        try:
+            argv = list(self.argv)
+            argv[4] = ('import resource;resource.setrlimit(resource.RLIMIT_AS,(1073741824,1073741824));'
+                       'resource.setrlimit(resource.RLIMIT_CPU,(' + str(max(1, math.ceil(timeout))) + ','
+                       + str(max(1, math.ceil(timeout)) + 1) + '));' + argv[4])
+            result = subprocess.run(argv + args, stdin=subprocess.DEVNULL,
+                                    capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return None, 'native_timeout'
+        except OSError:
+            return None, 'native_spawn_unavailable'
+        if _stamp(self.script.lstat()) != self.stamp:
+            raise ValueError('grader source drift')
+        if result.returncode:
+            return None, 'native_exit_' + str(result.returncode)
+        if result.stdout.strip() == b'1.0':
+            return 1, None
+        if result.stdout.strip() == b'0.0':
+            return 0, None
+        return None, 'native_invalid_output'
+
+
+def validate_limits(policy):
+    fields = {'version','workers','max_pairs','per_grade_seconds','wall_seconds','max_reply_bytes'}
+    if not isinstance(policy, dict) or set(policy) != fields or policy['version'] != VERSION:
+        raise ValueError('exact opt-in native filter policy')
+    for key, low, high in (('workers',1,4),('max_pairs',1,256),('per_grade_seconds',1,60),
+                           ('wall_seconds',1,600),('max_reply_bytes',1,262144)):
+        if type(policy[key]) is not int or not low <= policy[key] <= high:
+            raise ValueError('bounded native filter ' + key)
+    return dict(policy)
+
+
+def _filter_admitted_pairs(pairs, policy, resolve, decode, grader, *, clock=time.monotonic):
+    """Private CPU core; resolve/decode/grader are prepared by trusted operator.
+
+    Dependency injection is for CPU tests, not a signed policy bypass. Public
+    production integration must use the authenticated context builder below.
+    """
+    policy = validate_limits(policy)
+    if len(pairs) > policy['max_pairs']:
+        raise ValueError('native filter pair count')
+    started = clock(); deadline = started + policy['wall_seconds']
+    # Prevalidate every original before any grader side effect. Never accept a
+    # miner-provided answer, grader path, task resolver, or rendered reply.
+    prepared = []
+    seen = set()
+    for definition, positive, negative in pairs:
+        identity = digest([definition, positive, negative])
+        if identity in seen:
+            raise ValueError('duplicate original pair')
+        seen.add(identity)
+        gold, task_hash, cap, eos, vocab = resolve(definition, positive, negative)
+        if not isinstance(gold,str) or len(gold.encode()) > policy['max_reply_bytes']:
+            raise ValueError('trusted task answer bounds')
+        if type(cap) is not int or not 1 <= cap <= 2048 or type(vocab) is not int or vocab < 1:
+            raise ValueError('trusted token profile')
+        rollouts = []
+        for rollout, claim in ((positive,'positive'), (negative,'negative')):
+            turns = rollout.get('turns')
+            if rollout.get('classification') != claim or rollout.get('task_hash') != task_hash or not isinstance(turns,list) or len(turns) != 1:
+                raise ValueError('authenticated native task/class/turn binding')
+            output = turns[0].get('output')
+            if not isinstance(output,list) or not 1 <= len(output) <= cap or any(type(t) is not int or not 0 <= t < vocab for t in output):
+                raise ValueError('native output token bounds')
+            reply = decode(output)
+            if not isinstance(reply,str) or len(reply.encode()) > policy['max_reply_bytes']:
+                raise ValueError('decoded native reply bound')
+            rollouts.append((gold, reply, {'claim':claim, 'output_sha256':digest(output),
+                             'decoded_reply_sha256':hashlib.sha256(reply.encode()).hexdigest(),
+                             'output_tokens':len(output), 'non_eos_cap':len(output)==cap and output[-1] not in eos,
+                             'submitted_text_matches_decoded':turns[0].get('text')==reply}))
+        prepared.append((identity, rollouts))
+
+    prepared_at = clock()
+    def grade(item):
+        gold, reply, receipt = item
+        remaining = deadline - clock()
+        if remaining <= 0:
+            return dict(receipt, native_score=None, reason='filter_deadline', label_matches=None)
+        grade_start = clock()
+        score, reason = grader(gold, reply, min(policy['per_grade_seconds'],remaining))
+        receipt = dict(receipt, native_elapsed_seconds=clock()-grade_start)
+        if type(score) is not int or score not in (0,1):
+            if score is not None:
+                raise ValueError('exact native binary outcome')
+            return dict(receipt,native_score=None,reason=reason or 'native_indeterminate',label_matches=None)
+        return dict(receipt,native_score=score,reason=None,label_matches=(score==1)==(receipt['claim']=='positive'))
+
+    # map processes a bounded, finite population. The original per-process
+    # timeout limits each running child; total deadline suppresses pending work.
+    with ThreadPoolExecutor(max_workers=policy['workers']) as pool:
+        grades = list(pool.map(grade, (r for _,rollouts in prepared for r in rollouts)))
+    rows=[];accepted=[]
+    for position, ((identity,_), pair) in enumerate(zip(prepared,pairs)):
+        result=grades[2*position:2*position+2]
+        status=('excluded_indeterminate' if any(r['label_matches'] is None for r in result)
+                else 'accepted_native_labels' if all(r['label_matches'] for r in result)
+                else 'excluded_label_mismatch')
+        rows.append({'pair_sha256':identity,'status':status,'grades':result})
+        if status=='accepted_native_labels':accepted.append(pair)
+    return accepted, {'version':VERSION,'policy_sha256':digest(policy),'elapsed_seconds':clock()-started,'prepare_seconds':prepared_at-started,
+                      'grader_child_memory_limit_bytes':1073741824,
+                      'grading_parallel_wall_seconds':clock()-prepared_at,
+                      'sampling_assurance':'unaudited','proof_verification_performed':False,
+                      'cheating_penalties':False,'claims_rewritten':False,'rows':rows}
+
+
+def filter_authenticated_documents(document_paths, policy_envelope, job_envelope, authority, source_root,
+                               tokenizer_root, interpreter):
+    """Prospective entry: strict ROOT context and local approved source only.
+
+    Authenticate original committed documents inside this boundary. Callers
+    cannot inject prevalidated pairs. Prompt eligibility remains mandatory
+    in the unchanged trainer; native label eligibility adds no proof claim.
+    """
+    from subnet.distributed_roles import authenticate
+    from subnet.native_math_prompt import NativeMathPromptSession
+    from transformers import AutoTokenizer
+    policy=authenticate(policy_envelope,authority); job=authenticate(job_envelope,authority)
+    manifest=authenticate(job['manifest'],authority)
+    required={'version','limits','job_sha256','epoch','checkpoint','source_sha256','source_root',
+              'source_files','snapshot_sha256','tokenizer_binding','grader_sha256'}
+    if set(policy)!=required or policy['version']!=VERSION or job['role']!='train':
+        raise ValueError('exact ROOT native filter context')
+    source_root=Path(source_root)
+    if (policy['job_sha256']!=digest(job_envelope) or policy['epoch']!=manifest['epoch'] or
+        policy['checkpoint']!=manifest['checkpoint']['id'] or policy['source_sha256']!=manifest['source_bundle']['sha256'] or
+        policy['source_root']!=str(source_root) or policy['source_files']!=job['source_files'] or
+        policy['tokenizer_binding']!=manifest['tokenizer_binding']):
+        raise ValueError('native filter original job/source/checkpoint/tokenizer binding')
+    # No source-root imports from arbitrary supplied paths. Operator startup
+    # must already be running the approved source loader, checked here.
+    from subnet.committed_training_inputs import admitted_submission
+    if len(document_paths)!=len(job['submissions']) or len(document_paths)>256:
+        raise ValueError('exact original committed document paths')
+    pairs=[]
+    for path,obj in zip(document_paths,job['submissions']):
+        _, admitted_pairs=admitted_submission(path,obj,manifest,authority,retire=False)
+        pairs.extend(admitted_pairs)
+    import subnet.native_math_prompt as native_prompt
+    if Path(native_prompt.__file__).resolve()!= (source_root/'subnet/native_math_prompt.py').resolve():
+        raise ValueError('native filter approved source loader')
+    for name, expected in job['source_files'].items():
+        relative=Path(name)
+        if relative.is_absolute() or '..' in relative.parts:
+            raise ValueError('native source member path')
+        _read(source_root/relative,expected,16*1024**2)
+    tokenizer_root=Path(tokenizer_root)
+    if set(policy['tokenizer_binding'])!={'tokenizer.json','tokenizer_config.json','chat_template.jinja'}:
+        raise ValueError('native tokenizer asset closure')
+    if {p.name for p in tokenizer_root.iterdir()}!=set(policy['tokenizer_binding']):
+        raise ValueError('no extra tokenizer executable/config inputs')
+    for name, expected in policy['tokenizer_binding'].items():
+        _read(tokenizer_root/name,expected,32*1024**2)
+    tokenizer=AutoTokenizer.from_pretrained(tokenizer_root,local_files_only=True,trust_remote_code=False)
+    sessions={}
+    try:
+        for definition,_,_ in pairs:
+            if definition['env_id'] not in sessions:
+                spec=definition['spec']
+                if definition not in manifest['environments']:
+                    raise ValueError('original manifest environment')
+                session=NativeMathPromptSession(spec)
+                _read(session.path,policy['snapshot_sha256'],128*1024**2)
+                sessions[definition['env_id']]=session
+        def resolve(definition,p,n):
+            session=sessions[definition['env_id']]
+            if (p.get('index')!=n.get('index') or p.get('env_seed')!=n.get('env_seed') or
+                p.get('env_seed')!=int(definition['spec'].get('config',{}).get('seed',0))):
+                raise ValueError('original paired task context')
+            task=session.reset(p['index'],p['env_seed'])
+            return (session.rows[p['index']]['data']['answer'],task['task_hash'],
+                    min(definition['spec']['max_output_tokens'],definition['harness']['max_output_tokens']),
+                    {tokenizer.eos_token_id},len(tokenizer))
+        script=source_root/'subnet/vendor/legacy/rollouts/envs/affine_math_v1/affine_math_v1/verify.py'
+        grader=PinnedGrader(interpreter,script,policy['grader_sha256'])
+        accepted,receipt=_filter_admitted_pairs(pairs,policy['limits'],resolve,
+                           lambda tokens:tokenizer.decode(tokens,skip_special_tokens=True),grader)
+        receipt.update(original_job_sha256=policy['job_sha256'],source_sha256=policy['source_sha256'],
+                       checkpoint=policy['checkpoint'],snapshot_sha256=policy['snapshot_sha256'],
+                       tokenizer_binding=policy['tokenizer_binding'],grader_sha256=policy['grader_sha256'])
+        return accepted,receipt
+    finally:
+        for session in sessions.values():session.close()
