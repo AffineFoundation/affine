@@ -1,5 +1,6 @@
 """Sustained synchronous nonpayable GPU epochs, with real read-only identities."""
 import argparse
+import copy
 import datetime
 import hashlib
 import json
@@ -121,6 +122,10 @@ def contract(config,round_number):
         from .training_receipts import POLICIES
         if epoch_policy(config) not in POLICIES:raise ValueError('receipt input requires covered/persistent objective')
         result['training_input_policy']=config['training_input_policy']
+    if 'learner_blacklist_selection_policy' in config:
+        if config.get('training_input_policy')!='committed-unaudited-training-v1':raise ValueError('training blacklist requires committed learner policy')
+        result['learner_blacklist_selection_policy']=copy.deepcopy(config['learner_blacklist_selection_policy'])
+        result['learner_blacklist_selection_round']=round_number
     if config.get('learner_capture_policy') is not None:
         from .training_documents import capture_policy
         result['learner_capture_policy']=capture_policy(config['learner_capture_policy'])
@@ -301,6 +306,8 @@ def run(config,once=False):
                     gateway.freeze(epoch);save(state/(epoch+'-opening-aborted.json'),dict(epoch=epoch,payable=False,reason='interrupted before published manifest'));status['active']=None;status['round']+=1;save(statuspath,status);continue
                 else:
                     opening_contract=contract(config,status['round'])
+                    from .learner_blacklist_selection import prepare_opening
+                    opening_contract=prepare_opening(controller,config,status,opening_contract)
                     from .successor_calibration import before_open
                     opening_contract=before_open(controller,config,status,opening_contract)
                     from .persistent_cpu_adamw import POLICY as PERSISTENT_POLICY

@@ -26,7 +26,7 @@ COMPUTATION_FIELDS = ('epoch', 'checkpoint', 'source_bundle', 'start', 'deadline
     'indices', 'environments', 'sample_harness_registry', 'heldout_indices',
     'harness', 'harness_source_hash', 'model_id', 'model_runtime_revision', 'backend_profile',
     'numerical_policy', 'tokenizer_binding', 'sampling_contract', 'sampling_source_hash',
-    'task_assets', 'independent_state_readback_budget', 'reward_publication_policy', 'persistent_publication_policy', 'optimizer_state_export_policy', 'optimizer_state_local_cache', 'optimizer_state_transport', 'training_runtime', 'proof_copy_policy', 'submission_transport_policy', 'hourly_execution_policy', 'audit_exclusion_snapshot')
+    'task_assets', 'independent_state_readback_budget', 'reward_publication_policy', 'persistent_publication_policy', 'optimizer_state_export_policy', 'optimizer_state_local_cache', 'optimizer_state_transport', 'training_runtime', 'proof_copy_policy', 'submission_transport_policy', 'hourly_execution_policy', 'audit_exclusion_snapshot', 'learner_blacklist_selection_policy', 'learner_blacklist_selection_round')
 
 
 def sha(value):

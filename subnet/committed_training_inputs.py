@@ -173,6 +173,16 @@ def validate_job(job,manifest,authority):
         seen.add(identity);tasks.add(task)
     coverage=manifest.get('training_coverage',{})
     expected=coverage_manifest(manifest,submissions,seed=coverage.get('seed'),captured_at=coverage.get('captured_at'))['training_coverage']
+    from .learner_blacklist_selection import FIELD,admit,partition
+    if FIELD in manifest:
+        if 'subnet/learner_blacklist_selection.py'not in job.get('source_files',{}):raise ValueError('training blacklist selection source pin')
+        protected_round=manifest.get('learner_blacklist_selection_round')
+        if type(protected_round)is not int:raise ValueError('protected original learner selection round')
+        status=admit(manifest[FIELD],manifest,authority,at=coverage['captured_at'],round_number=protected_round)
+        snapshot=manifest.get('learner_blacklist_selection_snapshot',{})
+        if any(snapshot.get(k)!=v for k,v in status.items()):raise ValueError('signed training blacklist snapshot binding')
+        kept,_=partition(submissions,manifest,authority,at=coverage['captured_at'])
+        if kept!=submissions:raise ValueError('blacklisted learner input forbidden')
     if coverage!=expected or type(coverage['captured_at'])not in(int,float) or not math.isfinite(coverage['captured_at']) or coverage['captured_at']<manifest['deadline']:
         raise ValueError('immutable unaudited population coverage')
 
@@ -229,7 +239,7 @@ def validate_native_prompt(runtime,pairs,manifest,*,prompt_only=False):
 SELECTION_VERSION='bounded-postfreeze-learner-selection-v1'
 TRAINING_DOCUMENT_CAP=256
 
-def select_training_documents(controller,manifest,eligible,receipts):
+def select_training_documents(controller,manifest,eligible,receipts,*,round_number=None):
     """Persist the postfreeze draw once; retain all eligible inputs for audits."""
     import secrets,time,os,tempfile
     from .training_receipts import computation_binding
@@ -237,26 +247,39 @@ def select_training_documents(controller,manifest,eligible,receipts):
     binding=dict(version=SELECTION_VERSION,epoch=manifest['epoch'],
         computation_sha256=sha(computation_binding(manifest)),capture_receipts_sha256=sha(receipts),
         eligible_inventory_sha256=sha(receipt_inventory(eligible)),cap=TRAINING_DOCUMENT_CAP)
+    from .learner_blacklist_selection import FIELD,partition
+    filtered=FIELD in manifest
+    if filtered:binding['blacklist_policy_sha256']=sha(manifest[FIELD])
     if not path.exists():
-        value=dict(binding,seed=secrets.token_hex(32),captured_at=time.time())
+        captured_at=time.time()
+        _,status=partition(eligible,manifest,controller.authority.id,at=captured_at,round_number=round_number)if filtered else (eligible,None)
+        value=dict(binding,seed=secrets.token_hex(32),captured_at=captured_at)
+        if filtered:value['blacklist_selection']=status
         fd,tmp=tempfile.mkstemp(dir=controller.state,prefix='learner-selection-')
         try:
             with os.fdopen(fd,'wb')as stream:stream.write(canonical(value));stream.flush();os.fsync(stream.fileno())
             try:os.link(tmp,path)
             except FileExistsError:pass
+            if filtered:
+                directory=os.open(controller.state,os.O_RDONLY|os.O_DIRECTORY)
+                try:os.fsync(directory)
+                finally:os.close(directory)
         finally:os.unlink(tmp)
     if path.is_symlink():raise ValueError('selection journal symlink')
     value=_decode(path.read_bytes())
-    if set(value)!=set(binding)|{'seed','captured_at'}or any(value[k]!=v for k,v in binding.items()):
+    if set(value)!=set(binding)|{'seed','captured_at'}|({'blacklist_selection'}if filtered else set())or any(value[k]!=v for k,v in binding.items()):
         raise ValueError('immutable original learner training selection context')
     digest(value['seed'])
     if type(value['captured_at'])not in(int,float)or not math.isfinite(value['captured_at'])or value['captured_at']<manifest['deadline']:
         raise ValueError('postfreeze selection time')
-    ranked=sorted(range(len(eligible)),key=lambda i:(sha(dict(seed=value['seed'],input=receipt_inventory([eligible[i]])[0])),i))
+    training_eligible,status=partition(eligible,manifest,controller.authority.id,at=value['captured_at'],round_number=round_number)if filtered else (eligible,None)
+    if filtered and value['blacklist_selection']!=status:raise ValueError('immutable original blacklist selection snapshot')
+    ranked=sorted(range(len(training_eligible)),key=lambda i:(sha(dict(seed=value['seed'],input=receipt_inventory([training_eligible[i]])[0])),i))
     selected=set(ranked[:TRAINING_DOCUMENT_CAP])
-    submissions=[obj for i,obj in enumerate(eligible)if i in selected]
+    submissions=[obj for i,obj in enumerate(training_eligible)if i in selected]
     report=dict(value,eligible_count=len(eligible),training_count=len(submissions),
         selected_inventory_sha256=sha(receipt_inventory(submissions)),unselected_count=len(eligible)-len(submissions))
+    if filtered:report.update(training_eligible_count=len(training_eligible),blacklist_excluded_count=len(eligible)-len(training_eligible),unselected_training_count=len(training_eligible)-len(submissions))
     return submissions,report
 
 CHEAP_READ_CONCURRENCY=4
@@ -306,9 +329,14 @@ def collect(controller,manifest,*,round_number=None):
     if path.exists():
         value=_decode(canonical(__import__('json').loads(path.read_bytes())))
         from .training_receipts import computation_binding
+        if value['manifest'].get('learner_blacklist_selection_policy')!=manifest.get('learner_blacklist_selection_policy'):raise ValueError('saved learner blacklist policy context')
         if value['version']!=VERSION or computation_binding(value['manifest'])!=computation_binding(manifest):raise ValueError('saved learner population original computation context')
         return value['manifest'],value['submissions'],value['population']
     if round_number is not None and (type(round_number)is not int or round_number<0):raise ValueError('actual learner round required')
+    from .learner_blacklist_selection import FIELD,admit
+    if FIELD in manifest:
+        if type(round_number)is not int or manifest.get('learner_blacklist_selection_round')!=round_number:raise ValueError('actual protected blacklist learner round required')
+        admit(manifest[FIELD],manifest,controller.authority.id,at=time.time(),round_number=round_number)
     capture=getattr(controller.gateway,'capture_learner',None)
     if capture is None:raise ValueError('learner requires independent small-document capture API')
     started=time.monotonic();capture_started=started
@@ -356,7 +384,7 @@ def collect(controller,manifest,*,round_number=None):
         if counts[key]>1:exclusions.append(dict(document_sha256=obj['sha256'],reason='duplicate_task'))
     eligible=submissions
     selection_started=time.monotonic()
-    submissions,selection=select_training_documents(controller,manifest,eligible,receipts)
+    submissions,selection=select_training_documents(controller,manifest,eligible,receipts,round_number=round_number)
     timings['selection_seconds']=time.monotonic()-selection_started
     if round_number is not None:
         from .continuous_audit_service import register_population
@@ -372,6 +400,7 @@ def collect(controller,manifest,*,round_number=None):
         eligible_inventory=receipt_inventory(eligible),exclusions=exclusions,capture_receipts_sha256=sha(receipts),
         committed_inventory=[dict(miner=miner,commitment_sha256=sha(row['commitment_document']),commitment_document=row['commitment_document'],training_documents=row.get('training_documents',[]),training_document_deferred_slots=row.get('training_document_deferred_slots',[]))for miner,row in sorted(receipts.items())])
     training_manifest=coverage_manifest(manifest,submissions,seed=selection['seed'],captured_at=selection['captured_at'])
+    if 'blacklist_selection'in selection:training_manifest['learner_blacklist_selection_snapshot']=selection['blacklist_selection']
     value=dict(version=VERSION,manifest=training_manifest,submissions=submissions,population=population)
     publication_started=time.monotonic();save(path,value)
     controller.bucket.json('public/'+manifest['epoch']+'/learner-population.json',controller.signed(population))

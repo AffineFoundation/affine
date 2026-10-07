@@ -1,6 +1,16 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 04:19 UTC:
+Current operational status, 2026-10-07, 05:03 UTC:
+Epoch 37 completed in 52.003 minutes, training 256 eligible UNAUDITED task pairs
+and advancing persistent optimizer step 27 to 28. Checkpoint 28 was durably
+published with independent model and optimizer readback. Epoch 38 has selected
+256 of 479 eligible documents; its original training process is running.
+The latest authenticated matched held-out result is checkpoint 27 at 74/128,
+below checkpoint 23 at 90/128. Sustained convergence is not established.
+Production still requires one success and one failure per task. The larger
+sample-quota study and training-only blacklist integration are prospective.
+
+Earlier operational history (the latest update above takes precedence):
 Checkpoint 27 is the controller's committed model. Epochs 31, 32 and 33 completed normally
 in 48.855, 50.372 and 50.692 minutes. Epoch 33 trained on 256 UNAUDITED task pairs
 and advanced optimizer step 23 to 24. All ten model files (15.24 GB) and 23
@@ -265,9 +275,17 @@ and AdamW moments, durably publishes the successor, and preserves optimizer
 lineage. Only a genuinely published and qualified successor opens the next
 mining epoch; follow signed discovery rather than an old checkpoint link.
 
+A default-off training-only blacklist selection mechanism is implemented on
+GitHub for review and is not deployed. When approved, it freezes authenticated
+active blacklist evidence per opening, excludes those identities from training
+selection, and preserves the original audit/reward population. New and
+unaudited miners remain eligible; UNKNOWN numerical outcomes and infrastructure
+errors are not blacklist evidence. Existing production selection remains
+unchanged. See docs/CONFIRMED_BLACKLIST_TRAINING_SELECTION.md on GitHub.
+
 ## Continuous audits and proposed rewards
 
-Seven admitted verifier workers claim jobs through the authenticated coordinator
+Eight admitted verifier workers claim jobs through the authenticated coordinator
 API on Arbos.life. SQLite remains on that host; R2 stores immutable artifacts and
 reports. The current operator audit scheduler groups at most four submissions
 per job, selects up to 32 rows per tick, and allows 14 jobs in flight. Audit
