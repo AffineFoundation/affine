@@ -238,6 +238,14 @@ captured commitment and manifest; there is no live bridge yet. It does not
 establish grading, inference validity or exactly-once optimizer publication,
 and it does not alter production admission or K1/L1.
 
+The default-off [nested research selector](research_nested_quota_selector.md)
+now selects first-prescribed-attempt K1/L1 and K2/L2 pairs from authenticated
+native grading records, preserving equal task weights and all supply failures.
+Every attempt through a claimed completion prefix must have an authenticated
+observation; missing early records cannot establish a first pair. Duplicate
+executions and token content do not add diversity. This is CPU-qualified research
+selection, not live journal integration, inference assurance or a quota launch.
+
 Submission ownership follows the authenticated hotkey, while the current
 prescribed random-draw context does not include a hotkey. Keep those bindings
 separate and do not silently change the sampler when adding slot identities.
