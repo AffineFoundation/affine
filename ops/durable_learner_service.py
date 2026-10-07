@@ -34,7 +34,7 @@ def validate_cpu_selection_peer(policy,source,cfg,authority):
         raise ValueError('exact default-off CPU selection peer policy')
     grant=guards.verify_document(row['authorization'],authority)
     grant_fields={'version','source_sha256','scientific_source_files','operator_files','minimum_round','epoch_prefix','peer_entry_sha256','peer_runner_sha256','backend_execution_allowed'}
-    if (set(grant)!=grant_fields or grant['version']!='cpu-selection-peer-authorization-v1' or
+    if (set(grant)!=grant_fields or grant['version']!=('cpu-selection-peer-miner-bound-authorization-v2' if policy['version'] in ('durable-pinned-k2l2-learner-service-v2','durable-pinned-k2l2-composite-learner-service-v3') else 'cpu-selection-peer-authorization-v1') or
         grant['source_sha256']!=policy['source_sha256']or grant['scientific_source_files']!=source['runtime_source_files']or
         set(grant['operator_files'])!=PEER_OVERRIDES or grant['operator_files']!=row['peer_files']or
         type(grant['minimum_round'])is not int or grant['minimum_round']<0 or
@@ -199,12 +199,14 @@ def validate_policy(document, authority=guards.AUTHORITY):
     if 'operator_overlay' in p:
         fields.add('operator_overlay')
     if 'native_training_eligibility' in p:fields.add('native_training_eligibility')
-    if p.get('version') == 'durable-pinned-k2l2-learner-service-v2':
+    if p.get('version') in ('durable-pinned-k2l2-learner-service-v2','durable-pinned-k2l2-composite-learner-service-v3'):
         fields.add('scientific_admission_file_sha256')
+    if p.get('version') == 'durable-pinned-k2l2-composite-learner-service-v3':
+        fields.add('core_admission_file_sha256')
     if PEER_POLICY_FIELD in p:fields.add(PEER_POLICY_FIELD)
     if 'stop_after_current_round'in p:fields.add('stop_after_current_round')
     if 'capture_recovery'in p:fields.add('capture_recovery')
-    if set(p) != fields or p['version'] not in (VERSION, 'durable-pinned-k2l2-learner-service-v2') or p['execute_allowed'] is not True or p['authority'] != authority:
+    if set(p) != fields or p['version'] not in (VERSION, 'durable-pinned-k2l2-learner-service-v2','durable-pinned-k2l2-composite-learner-service-v3') or p['execute_allowed'] is not True or p['authority'] != authority:
         raise ValueError('exact durable learner policy required')
     for path, expected in ((Path(__file__).resolve(), p['runner_file_sha256']),
                            (Path(guards.__file__).resolve(), p['guards_file_sha256'])):
@@ -221,8 +223,18 @@ def validate_policy(document, authority=guards.AUTHORITY):
     source = verify_admission(p['source_approval'], authority)
     qualification = verify_admission(p['qualification_approval'], authority)
     reward = guards.verify_document(p['reward_activation'], authority)
-    scientific_successor = p['version'] == 'durable-pinned-k2l2-learner-service-v2'
-    if scientific_successor:
+    scientific_successor = p['version'] in ('durable-pinned-k2l2-learner-service-v2','durable-pinned-k2l2-composite-learner-service-v3')
+    composite = p['version'] == 'durable-pinned-k2l2-composite-learner-service-v3'
+    if composite:
+        helper_path=Path(__file__).resolve().with_name('k2l2_composite_admission.py')
+        core_path=Path(__file__).resolve().with_name('k2l2_scientific_admission.py')
+        if guards.file_hash(helper_path)!=p['scientific_admission_file_sha256'] or guards.file_hash(core_path)!=p['core_admission_file_sha256']:
+            raise ValueError('exact new composite and unchanged strict core admission')
+        from ops import k2l2_composite_admission, k2l2_scientific_admission
+        if Path(k2l2_composite_admission.__file__).resolve()!=helper_path or Path(k2l2_scientific_admission.__file__).resolve()!=core_path:
+            raise ValueError('composite admission module origin')
+        k2l2_composite_admission.validate(source,qualification,cfg,p['source_sha256'],authority,verify_admission,guards=guards,strict_admission=k2l2_scientific_admission,source_root=p['source_root'])
+    elif scientific_successor:
         helper_path = Path(__file__).resolve().with_name('k2l2_scientific_admission.py')
         if guards.file_hash(helper_path) != p['scientific_admission_file_sha256']:
             raise ValueError('new scientific admission helper drift')
