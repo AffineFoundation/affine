@@ -67,3 +67,39 @@ PYTHONDONTWRITEBYTECODE=1 python -B -X pycache_prefix=/tmp/paired-quota-fresh-re
 
 Use a fresh cache prefix for each qualification run. This adds neither a live
 proof exemption nor a deployment authorization.
+
+## Current wire-format research adapter
+
+`ops/paired_quota_batch_adapter.py` adapts the current `schema: 2` batches
+produced in `subnet/backend_jobs.py` and rollouts produced in `subnet/model.py`
+and `subnet/gpu_runtime.py`. It remains research-only with no production call
+sites. It reads epoch/checkpoint from the enclosing batch; rollout `seed` is the
+prescribed attempt, with its receipt independently recomputed through
+`forced_sampling.binding/receipt`. It resolves the authorized per-index harness
+through `protocol.entry/harness_for`, refuses held-out indices and old checkpoint
+wrappers, and checks environment version, task hash and environment seed.
+
+The caller must authenticate the manifest and provide an independently obtained
+native-reset task hash and pinned tokenizer decoder. The adapter derives actions
+from decoded output tokens through the actual harness action parser and checks
+claimed text against that decoder. It keeps every turn's ordered observation
+role/content, including tool observations; nonsemantic proof wrapper fields are
+excluded. This does not verify that prompts or observations are truthful: the
+independent native environment replay still must do that.
+
+`CumulativeTaskSlot` accepts successive cumulative snapshots of one fixed
+miner/task slot. Re-delivery, reordering and proof repacking retain the same
+revision identity. A later snapshot cannot remove or rewrite an existing attempt;
+all checks precede state mutation, so refused updates leave the previous snapshot
+intact. Distinct attempts with repeated content remain quota duplicates. Identical
+prompt/output traces with contradictory observations are refused as inconsistent
+metadata, rather than becoming extra quota. This is not a fraud determination.
+It retains one unit per qualifying task and one pair by default; explicit
+`quota=2` selects four distinct members without reuse.
+
+These additional controls exercise **synthetic current-format fixtures**, not
+original miner executions. They do not load model weights, run TOPLOC/CDF,
+replay native grading, activate K2/L2, or implement persistent job receipts.
+The checker is deliberately in-memory: it does not survive process restart and
+must not be treated as the production optimizer idempotence barrier. Actual
+receipt/transaction integration and restart/recovery tests remain required.
