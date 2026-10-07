@@ -42,6 +42,26 @@ not support explaining the observed regression as an optimizer batch of two or
 as exploding gradients in these nine recorded updates. Compare negative quality,
 objective and generalization before raising sample quotas.
 
+## Objective hypothesis to test separately
+
+The current preference loss is `-logsigmoid(beta * (margin - reference))`.
+The reference margins are recomputed from the input checkpoint of each epoch;
+production currently makes one optimizer update in that epoch. This explains
+why the recorded pre-update loss is approximately log(2) each time: the current
+margin initially equals the newly captured reference. It is not evidence that
+the optimizer failed to update. It also means there is no single fixed reference
+margin carried across epochs in this objective. Whether this repeated local
+contrastive update generalizes is a separate question from samples per task.
+
+After the negative-quality comparison, compare the existing objective against
+one explicitly chosen alternative from the same model and optimizer parent,
+with matched data, task weights, update count and held-out settings. Inspect
+positive and negative log-probabilities separately, not only their difference;
+an improved margin alone does not establish improved solving ability. Keep any
+objective experiment separate from a quota change and declare any changed
+reference or regularization settings before launch. Do not change production
+based solely on the loss value or this code-level hypothesis.
+
 ## Controlled comparison
 
 1. Complete the existing same-parent comparison of capped versus completed
