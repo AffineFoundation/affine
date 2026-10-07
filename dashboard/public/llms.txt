@@ -1,12 +1,14 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 05:03 UTC:
+Current operational status, 2026-10-07, 05:13 UTC:
 Epoch 37 completed in 52.003 minutes, training 256 eligible UNAUDITED task pairs
 and advancing persistent optimizer step 27 to 28. Checkpoint 28 was durably
 published with independent model and optimizer readback. Epoch 38 has selected
 256 of 479 eligible documents; its original training process is running.
-The latest authenticated matched held-out result is checkpoint 27 at 74/128,
-below checkpoint 23 at 90/128. Sustained convergence is not established.
+The latest authenticated matched held-out result is checkpoint 28 at 78/128,
+up from checkpoint 27 at 74/128 (ten gains, six losses on identical tasks, seeds
+and prompt hashes), but below checkpoint 23 at 90/128. This modest recovery does
+not establish sustained convergence. The public performance chart includes CP28.
 Production still requires one success and one failure per task. The larger
 sample-quota study and training-only blacklist integration are prospective.
 
@@ -547,7 +549,10 @@ persistent optimizer27 to28 and publishing checkpoint9260f003. Original signed
 job/completion and independent23-state-shard plus10-model-object publication
 evidence were reviewed; epoch38 opened on that checkpoint. Independent CP27
 SAME128 evaluation completed all four authentic original jobs at74/128, down
-from CP26's82/128. CP28 evaluation is not yet established here. Larger per-task
+from CP26's82/128. CP28 subsequently completed all four original evaluations
+at78/128, with ten gains and six losses versus CP27 on the exact matched cohort.
+Original job/report/terminal and full R2 acknowledgement bindings were independently
+authenticated; the909,108-byte completed evidence archive was checked. Larger per-task
 sample groups remain a proposed controlled experiment, not an active quota;
 see docs/PAIRED_SAMPLE_STABILITY_PLAN.md on GitHub. Neither reliable publication
 nor these results establish held-out convergence.
