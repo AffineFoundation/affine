@@ -46,4 +46,20 @@ class Operator(unittest.TestCase):
  def test_bound_provider_substitution_refuses_heartbeat(self):
   rent_original(self.reg,self.doc,self.provider,self.root/'original',self.authority);p=self.root/'original/original-provider-receipt.json';r=json.loads(p.read_bytes());r['pod']['id']='substituted';p.write_text(json.dumps(r))
   with self.assertRaises(ValueError):observe_heartbeat(self.reg,self.doc,self.root/'original',self.authority)
+ def test_provider_hardware_price_mismatch_retains_evidence_without_reissue(self):
+  for field,value in [('gpu_type','H100'),('gpu_count',2),('gpu_count',True),('price_per_hour',6.0),('price_per_hour',0),('price_per_hour','5.76')]:
+   with self.subTest(field=field,value=value):
+    self.reg.rows={};directory=self.root/('mismatch-'+str(len(list(self.root.iterdir()))));payload=dict(self.payload,output_directory=str(directory));document=self.sign(payload);calls=[]
+    def provider(p):
+     calls.append(1);receipt=dict(pod=dict(id='actual-paid-pod',name=p['name'],gpu_type='H200',gpu_count=1,price_per_hour=5.76));receipt['pod'][field]=value;return receipt
+    with self.assertRaises(ValueError):rent_original(self.reg,document,provider,directory,self.authority)
+    self.assertTrue((directory/'original-provider-receipt.json').exists());self.assertTrue((directory/'original-provider-error.json').exists());self.assertFalse((directory/'original-owned-binding.json').exists())
+    with self.assertRaises(ValueError):rent_original(self.reg,document,provider,directory,self.authority)
+    self.assertEqual(calls,[1]);self.assertEqual(self.reg.rows[payload['name']]['meta']['provider_pod_id'],'pending-original-rental')
+ def test_bad_signed_price_and_source_pins_prevent_provider(self):
+  for field,value in [('price_usd_h',0),('price_usd_h',-1),('price_usd_h',True),('price_usd_h','5.76'),('registry_sha256','z'*64),('operator_sha256','A'*64),('ownership_module_sha256','short'),('gpu_count',True)]:
+   with self.subTest(field=field):
+    document=self.sign(dict(self.payload,**{field:value}));calls=[]
+    with self.assertRaises(ValueError):rent_original(self.reg,document,lambda p:calls.append(1),self.root/'original',self.authority)
+    self.assertFalse(calls)
 if __name__=='__main__':unittest.main()
