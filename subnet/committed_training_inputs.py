@@ -8,6 +8,7 @@ import hashlib
 import math
 from pathlib import Path
 from .storage import canonical
+from .trajectory_identity import token_trace_sha256
 from .training_receipts import authenticate, digest, sha
 import json
 
@@ -122,7 +123,7 @@ def admitted_submission(path,obj,manifest,authority,*,retire=False):
                 tokens=turn.get(field)
                 if not isinstance(tokens,list) or not 1<=len(tokens)<=limit or any(type(t)is not int or not 0<=t<200000 for t in tokens):raise ValueError('learner token schema/budget')
             if len(turn['prompt'])+len(turn['output'])>8192:raise ValueError('learner context budget')
-        signature=sha([dict(prompt=t['prompt'],output=t['output'])for t in turns])
+        signature=token_trace_sha256(turns)
         if signature in seen:raise ValueError('duplicate learner trajectory')
         seen.add(signature)
         if rollout.get('classification')not in ('positive','negative'):raise ValueError('explicit claimed learner class required')

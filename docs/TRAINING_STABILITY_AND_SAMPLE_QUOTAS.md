@@ -210,6 +210,17 @@ the new signed policy through miner, continuous auditor, scoring and public
 contract documentation. Absence of that policy preserves historical admission
 and original source inventories. Do not activate it midway through an epoch.
 
+The first extraction is now implemented as `subnet/trajectory_identity.py`:
+the committed learner and research cumulative checker share the same ordered
+prompt/output digest. Golden-byte and metadata-repacking controls preserve the
+existing digest exactly; ROOT independently reran 98 admission, quota, ledger
+and identity controls successfully. This source change does not replace the
+trainer's full-pair identity, add a durable submission journal, establish
+exactly-once optimizer publication, or activate higher quotas. Frozen deployed
+source and signed historical jobs retain their original bytes. Next, integrate
+durable authenticated cumulative revisions and recomputed execution/content
+identities before considering a higher-quota contract.
+
 Submission ownership follows the authenticated hotkey, while the current
 prescribed random-draw context does not include a hotkey. Keep those bindings
 separate and do not silently change the sampler when adding slot identities.

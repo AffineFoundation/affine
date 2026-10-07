@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from ops.paired_quota_qualification import ApprovedTask, digest, identities, select_pairs
 from subnet import forced_sampling, harness, protocol
+from subnet.trajectory_identity import token_trace_sha256
 
 
 @dataclass(frozen=True)
@@ -135,7 +136,7 @@ class CumulativeTaskSlot:
         token_traces = {}
         for row in rows:
             execution, content = identities(self.adapter.task, row)
-            token_trace = digest([dict(prompt=t['prompt'], output=t['output']) for t in row['turns']])
+            token_trace = token_trace_sha256(row['turns'])
             if token_trace in token_traces and token_traces[token_trace] != content:
                 raise ValueError('conflicting cumulative token trace observations')
             token_traces[token_trace] = content
