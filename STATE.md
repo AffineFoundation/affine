@@ -1,3 +1,31 @@
+Verified continuation, 2026-10-07, 13:30 UTC:
+This entry supersedes older operational snapshots below. Epoch 44 completed
+naturally and promoted checkpoint fdf5725a65c52b0d4a34625f13de6f8b267a09216d610ee033b9063f3b8e6a1b
+with authentic Adam lineage 34->35. Independent signed full readback verified
+all 23 optimizer objects (91,387,491,264 bytes). Signed epoch timestamps put
+the interval from epoch 44 to 45 at 45m20s; do not sum overlapped phase timings.
+The same controller opened epoch 45 and is collecting. Training still uses
+eligible unaudited inputs without an inference-audit barrier. Eight verifier
+workers were physically live in bounded read-only checks at 13:25 UTC;
+continuous audit work advanced with zero capture failures in that observation.
+The 13:00 current assessment submitted for 223 unique registered UID/hotkey
+recipients, using the same registration snapshot and submission block 9231316.
+The assessment was fresh and the hourly writer exited successfully.
+
+Learning remains unproven. The matched completed base/CP24 750-task comparison
+found regression, not convergence. The original CP32 full-750 run and original
+same-parent capped-negative/completed-EOS comparison are still running; at
+13:28 UTC they had 14/24 and 2/8 original group waits respectively. Partial
+scores are not final trends. Observe those original executions; do not reissue
+jobs merely because an observation times out. The next positive-only objective
+comparison has 19 independently passing CPU controls and an immutable reviewed
+research packet, but no GPU dispatch or production objective change. Its actual
+execution still requires the preceding study interpretation and authenticated
+source/runtime/model/Adam staging and hardware admission. Production remains
+K1/L1/max3. Larger-quota identity/application ledgers remain research-only;
+do not mistake passing CPU controls for live integration. Cleanup and community
+messaging remain deferred. Public contracts and optimizer history are preserved.
+
 Verified continuation, 2026-10-07, 10:02 UTC:
 E42 captured 220 commitments / 652 rows inside its original collection window;
 native grading accepted 256 selected unaudited pairs. Its trainer capacity probe
