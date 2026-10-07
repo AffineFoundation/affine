@@ -200,19 +200,19 @@ class LocalOriginalTransport:
  def launch(self,envelope):
   job=signed(envelope,self.authority);jid=job['job_id'];p=self.root/(jid+'.json')
   if p.exists():raise ValueError('existing original remote request; never launch twice')
+  # Reserve a never-before-used prefix for this exact original before writing
+  # its request. Existing requests or prefixes are evidence to preserve.
+  # A shared prefix can contain bytecode written by descendants lacking -B.
+  pycache=self.root/('.scientific-bytecode-unused-'+digest(envelope))
+  if pycache.exists()or pycache.is_symlink():raise ValueError('original scientific bytecode namespace already exists; never reuse')
+  pycache.mkdir(mode=0o700)
+  if any(pycache.rglob('*')):raise ValueError('original scientific bytecode namespace must start empty')
   fd=os.open(p,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
   with os.fdopen(fd,'wb')as f:f.write(canonical(envelope));f.flush();os.fsync(f.fileno())
-  # -B suppresses writes; a private empty prefix also prevents reading stale
-  # scientific .pyc files from the source checkout. Every original reuses an
-  # empty namespace, never a cached execution artifact.
-  pycache=self.root/'.scientific-bytecode-unused'
-  if pycache.is_symlink():raise ValueError('private scientific bytecode namespace')
-  pycache.mkdir(mode=0o700,exist_ok=True)
-  if any(pycache.rglob('*')):raise ValueError('scientific bytecode namespace must remain empty')
   # Per-original remote_runner acquires the normal inherited checkpoint lease.
   log=self.root/(jid+'-runner.log')
   with log.open('xb')as out:
-   os.fchmod(out.fileno(),0o600);child=subprocess.Popen([sys.executable,'-B','-m','subnet.remote_runner',str(p),'--authority',self.authority,'--workspace',str(self.root)],cwd=self.code,stdin=subprocess.DEVNULL,stdout=out,stderr=subprocess.STDOUT,start_new_session=True,close_fds=True,env=dict(os.environ,CUBLAS_WORKSPACE_CONFIG=':4096:8',PYTHONPYCACHEPREFIX=str(pycache)))
+   os.fchmod(out.fileno(),0o600);child=subprocess.Popen([sys.executable,'-B','-X','pycache_prefix='+str(pycache),'-m','subnet.remote_runner',str(p),'--authority',self.authority,'--workspace',str(self.root)],cwd=self.code,stdin=subprocess.DEVNULL,stdout=out,stderr=subprocess.STDOUT,start_new_session=True,close_fds=True,env=dict(os.environ,CUBLAS_WORKSPACE_CONFIG=':4096:8',PYTHONPYCACHEPREFIX=str(pycache),PYTHONDONTWRITEBYTECODE='1'))
   if not hasattr(self,'children'):self.children={}
   self.children[jid]=child
   return child.pid
