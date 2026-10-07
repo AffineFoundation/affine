@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 08:41 UTC:
+Current operational status, 2026-10-07, 09:24 UTC:
 Epoch 39 completed in 53.770 minutes, training 256 eligible UNAUDITED task pairs
 and advancing persistent optimizer step 29 to 30. Checkpoint 30 was durably published after independent full readback
 of ten model objects and all 23 optimizer shards. The original training job
@@ -55,15 +55,19 @@ passed, including expiry/restart, later-epoch isolation and durable journal
 replay. The actual v7 process and command were independently checked. The same E41
 completed capture of 213 authenticated commitments and 634 training-document
 rows, with no capture rejections. These rows are unaudited inputs, not a claim
-that 634 batches passed verification. Post-recovery training and performance
-gains are not yet claimed.
+that 634 batches passed verification. Cheap selection admitted 545 documents
+and selected 256. Native grading accepted all 256 in 85.36 seconds without
+repeating proof verification. The exact original training runner and child were
+confirmed live. Final model shards have been written locally and optimizer
+export/publication is progressing, but no complete durable update or performance
+gain is claimed yet.
 The latest ROOT-signed matched held-out summary reports checkpoint 31 at
 77/128, versus checkpoint 30 at 78/128 on the same fixed 128-task cohort.
 Checkpoint 30 versus checkpoint 29 had seven gains and five losses on matched
 tasks, seeds and prompt hashes. It remains below checkpoint 23 at
-90/128. The original signed scopes, all eight full-readback acknowledgements
-and fresh full R2 reads of both archives and original jobs/reports/terminals
-were checked. Original successful terminal records and PID/tick bindings were
+90/128. For the earlier checkpoint-30 versus checkpoint-29 comparison, the
+original signed scopes, all eight full-readback acknowledgements and fresh
+full R2 reads of both archives and original jobs/reports/terminals were checked. Original successful terminal records and PID/tick bindings were
 authenticated; this was not a fresh physical liveness check of retired jobs.
 These results do not establish sustained convergence.
 Production still requires one success and one failure per task. The larger
@@ -110,9 +114,16 @@ service was stopped and its persistent enforcement setting disabled. A new,
 distinct single H100 research pod has been rented for $2.05/hour; runtime/source qualification completed with genuine original waits, all 2,121
 source and 177 scientific hashes and four native controls. ROOT independently
 authenticated its three R2 metadata objects and signed the CPU-only readiness
-ACK. Its distinct exact-33 parent model/optimizer restoration is now running;
-no restored-state completion or research learning result is claimed. Prior
-scopes and evidence remain unchanged.
+ACK. Its distinct exact-33 restoration completed with original child wait0,
+all ten model and 23 state hashes verified, and ROOT fresh full reads of its
+three R2 metadata objects. A new f213 native14 GPU qualification also completed
+with original wait0 and authenticated report bindings; all 14 tasks were graded
+and nine solved. ROOT independently read its three R2 objects and signed the
+qualification ACK. This is a runtime/native-grader diagnostic, not SAME128/750
+performance, miner proof verification or gradient qualification. The separate
+4db source stage is still required for its eventual matched SAME128 research
+evaluation. Prior scopes and evidence remain unchanged; no new research
+training result is claimed.
 No research learning result is claimed. The negative-quality comparison plan is
 in docs/TRAINING_STABILITY_SAME_PARENT_REVIEW.md on GitHub.
 The separate original BASE full-750 evaluation completed at 548/750
@@ -124,10 +135,13 @@ The assurance is operator-owned native grading, not miner proof verification.
 The corresponding first CP24 full-750 arm has now been dispatched through the
 original reviewed coordinator, with its own signed scope and 24 job windows.
 Its original first group completed 32 tasks with 27 successes. The old frozen
-CPU coordinator then rejected the native 0644 report, so it needs the already
-qualified report-reader compatibility fix and an authenticated cache-lifecycle
-successor before continuing the same remaining jobs. The completed group will
-not be regenerated. No complete CP24 750-task result is claimed. This wider comparison is
+CPU coordinator then rejected the native 0644 report. The reviewed report-reader
+compatibility and authenticated cache-lifecycle successor are now installed.
+ROOT independently read the first group's original job, report and terminal
+from R2. The same remaining signed requests have resumed; the original second
+group runner and child were confirmed live. The completed first group was not
+regenerated, no model payload was redownloaded, and earlier CPU recovery failures
+remain preserved. No complete CP24 750-task result is claimed. This wider comparison is
 not the 128-task diagnostic, and a trained-model improvement is not yet claimed.
 
 Earlier operational history (the latest update above takes precedence):
