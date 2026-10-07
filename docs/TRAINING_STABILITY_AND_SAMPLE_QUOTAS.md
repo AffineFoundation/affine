@@ -221,6 +221,14 @@ source and signed historical jobs retain their original bytes. Next, integrate
 durable authenticated cumulative revisions and recomputed execution/content
 identities before considering a higher-quota contract.
 
+The default-off [research revision journal](research_cumulative_revision_journal.md)
+now persists those cumulative checks across restarts, with immutable original
+documents and authentication evidence, transactional revision extension and
+idempotent historical redelivery. Its caller must authenticate the original
+captured commitment and manifest; there is no live bridge yet. It does not
+establish grading, inference validity or exactly-once optimizer publication,
+and it does not alter production admission or K1/L1.
+
 Submission ownership follows the authenticated hotkey, while the current
 prescribed random-draw context does not include a hotkey. Keep those bindings
 separate and do not silently change the sampler when adding slot identities.
