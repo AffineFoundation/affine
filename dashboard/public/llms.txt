@@ -1,5 +1,36 @@
 # Affine — MATH mining, verification and training
 
+Latest verified operational update, 2026-10-07, 11:13 UTC:
+The original epoch 42 remains in training, with persistent optimizer step 32.
+Its 256 selected eligible UNAUDITED task pairs passed native grading. The old
+trainer's SSH service failed again before any epoch-42 training job was allocated.
+A separate H200 replacement has now passed source/runtime qualification, full
+SHA/size readback of all ten checkpoint-32 model files, and the read-only policy
+handoff check. Only the trainer route/cache ownership was changed. The learner
+service has been resumed and allocated the first original epoch-42 training job
+on that replacement; its first cold restore must verify
+all 23 original optimizer shards before advancing to step 33. This is a recovery
+in progress, not a completed training update or evidence of smooth epochs.
+Continuous auditing and hourly assessment are independent of this learner.
+
+The isolated capped-negative baseline completed one genuine research update
+from checkpoint/optimizer 24. Its ten model files and 27 original metadata
+artifacts were archived and independently read back. The matched completed-EOS
+arm is running from the same original parent, not from the baseline output.
+No held-out advantage is established yet. The original broader CP24 evaluation completed all 750 matched held-out tasks.
+The base model solved 548/750 (73.07%); checkpoint 24 solved 482/750 (64.27%),
+a regression of 8.8 percentage points (paired bootstrap 95% interval: -12.0 to
+-5.6 points). There were 113 lost successes and 47 gained successes. These are
+matched native-grader evaluations, not inference-proof audits or a claim about
+checkpoint 32. The original artifacts remain preserved. Larger sample quotas
+are not a demonstrated solution to this regression.
+Production remains one success and one failure per task, max three task batches
+per miner. A controlled quota/stability plan is in
+/docs/TRAINING_STABILITY_AND_SAMPLE_QUOTAS.md on GitHub; no larger-quota contract
+is activated. Training still consumes eligible unaudited inputs without waiting
+for the expensive inference audit loop.
+
+Earlier operational update (superseded):
 Latest verified operational update, 2026-10-07, 10:02 UTC:
 Epoch 42 captured 220 commitments and 652 training-document rows in the normal
 collection window; native grading accepted its 256 selected UNAUDITED task pairs.
