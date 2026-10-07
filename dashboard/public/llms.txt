@@ -1,12 +1,12 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 01:54 UTC:
+Current operational status, 2026-10-07, 02:15 UTC:
 Checkpoint 25 is the controller's committed model. Epochs 31, 32 and 33 completed normally
 in 48.855, 50.372 and 50.692 minutes. Epoch 33 trained on 256 UNAUDITED task pairs
 and advanced optimizer step 23 to 24. All ten model files (15.24 GB) and 23
 optimizer shards (91.39 GB) passed independent full readback before authority
 commitment. Epoch 34 then completed in 48.954 minutes and advanced the optimizer
-to step 25; epoch 35 is opening. The same learner naturally advanced these epochs;
+to step 25; epoch 35 is training. The same learner naturally advanced these epochs;
 no retraining, manual cache promotion or replacement controller was needed.
 Training does not wait for audits. Current cheap eligibility validates identity,
 task, prompt, tokens and checkpoint binding, but does not independently grade
@@ -25,7 +25,7 @@ confirmed identical task indices, seeds and task hashes across the 128 problems:
 This is a positive datapoint, not evidence of sustained convergence.
 The coordinator API, continuous auditor and learner have durable ROOT-pinned
 startup policies and automatic restart on failure. The separate hourly weight
-writer submitted the 01:00 UTC assessment for 207 current UIDs at block 9227704.
+writer submitted the 02:00 UTC assessment for 208 current UIDs at block 9228005.
 The assessment was fresh; 24 no-longer-registered identities were excluded
 using the current registration snapshot. This is submission evidence, not a separately observed reveal.
 Seven verifier workers remain enrolled. A replacement single-H200 machine is
@@ -38,8 +38,16 @@ The original process exited successfully and its full evidence archive passed
 independent ROOT readback. This qualifies the historical checkpoint-21 research
 test only. A separate checkpoint-24 qualification subsequently passed four honest
 controls and sixteen tampering controls, with actual successful process exit and
-independent full R2 archive readback. Staging the complete nine-source software
-registry and production enrollment remain pending. The previous additional H200 passed bounded
+independent full R2 archive readback. All nine software source versions are now
+installed and independently rehashed on the replacement. The API, auditor and
+hourly writer authorize its eighth identity; seven production workers remain
+active until the new worker starts and produces an accepted normal report.
+A systemd override precedence mismatch interrupted the auditor during this
+authorization handoff; the effective auditor and writer overrides are corrected.
+No training restart or manual hourly weight replay was performed.
+The isolated retained H100 has the frozen evaluator source and native grader
+staged for a matched untouched-base versus checkpoint-24 comparison on all
+750 held-out problems. Model restoration and actual evaluation are pending. The previous additional H200 passed bounded
 research qualification but was deleted through the provider API during a later
 reference test; that interrupted test grants no enrollment or numerical relabel.
 
