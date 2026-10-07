@@ -35,6 +35,14 @@ The latest authenticated same-128-task comparison scores checkpoint 29 at
 tasks, prompts and seeds. Checkpoint 23 remains higher at 90/128. Successful
 epoch execution therefore does not establish convergence.
 
+The later ROOT-signed SAME128 summaries report checkpoint 30 at 78/128 and
+checkpoint 31 at 77/128 on cohort
+`20a077180d7cc088669f53bd551c5bf3c4aa51ded6367463f405094ad054b153`.
+These additional updates do not establish improvement. Keep the larger quota
+as an isolated experiment, not a production response to successful epoch
+execution. The same-parent controls must distinguish sample-count effects
+from negative-trajectory quality and objective effects.
+
 The partial untouched-base comparison raises a regression concern. It does not
 establish that sample count caused it. Capped negative trajectories, termination
 behavior, objective/reference behavior and task-selection bias remain candidate
