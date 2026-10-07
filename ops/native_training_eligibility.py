@@ -126,6 +126,7 @@ class NativeEligibilitySelector:
         self.authority=controller.authority.id
         self.policy=authenticate(authorization_envelope,self.authority)
         if self.policy.get('version')!=AUTHORIZATION_VERSION:raise ValueError('native preselection opt-in')
+        if 'benchmark_scope' in self.policy:raise ValueError('readonly benchmark cannot authorize training selection')
         self.tokenizer_root=tokenizer_root;self.interpreter=interpreter
 
     def select(self,manifest,submissions):

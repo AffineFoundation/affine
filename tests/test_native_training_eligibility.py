@@ -34,6 +34,10 @@ class SelectorIntegration(unittest.TestCase):
         self.auth=self.sign(dict(version=AUTHORIZATION_VERSION,source_root='/approved/f213',source_files={'subnet/test.py':'b'*64}))
         self.selector=NativeEligibilitySelector(self.controller,self.auth,'/approved/tokenizer','/approved/bin/python')
         self.statuses=['accepted_native_labels','excluded_label_mismatch'];self.calls=0
+    def test_root_signed_readonly_benchmark_cannot_construct_training_selector(self):
+        payload=dict(self.auth['payload'],benchmark_scope={'dispatchable':False,'model_operations':False})
+        with self.assertRaisesRegex(ValueError,'benchmark cannot authorize training'):
+            NativeEligibilitySelector(self.controller,self.sign(payload),'/approved/tokenizer','/approved/bin/python')
     def grade(self,paths,context,*args):
         self.calls+=1;decisions=[];rows=[]
         for i,(obj,status) in enumerate(zip(self.submissions,self.statuses)):
