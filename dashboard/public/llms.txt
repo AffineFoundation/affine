@@ -1,13 +1,16 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 00:06 UTC:
-Checkpoint 22 is the committed model. Epoch 31 completed normally in 48.855
-minutes, trained on 256 eligible UNAUDITED task pairs and advanced optimizer
-step 21 to 22. All ten model files and 23 optimizer shards passed independent
-full readback before authority commitment. The next epoch, 32, has selected
-256 of 419 eligible pairs. Its original training job completed successfully,
-advancing optimizer step 22 to 23; normal publication and independent full-state
-readback are running. Checkpoint 23 is not yet committed. Training does not wait for audits.
+Current operational status, 2026-10-07, 00:22 UTC:
+Checkpoint 23 is the committed model. Epochs 31 and 32 completed normally in
+48.855 and 50.372 minutes. Epoch 32 trained on 256 of 419 eligible UNAUDITED
+task pairs and advanced optimizer step 22 to 23. All ten model files and 23
+optimizer shards passed independent full readback before authority commitment.
+The same learner naturally opened epoch 33 from checkpoint 23; no retraining,
+manual cache promotion or replacement controller was needed.
+Training does not wait for audits. Current cheap eligibility validates identity,
+task, prompt, tokens and checkpoint binding, but does not independently grade
+claimed success/failure before training. A native-grading filter is under review;
+it is not deployed and will not establish on-policy sampling provenance.
 Matched held-out evaluation on the same 128 task indices and seeds scored
 87/128 for both checkpoint 21 and checkpoint 22. This does not show improvement
 between those checkpoints; sustained convergence remains unproven.

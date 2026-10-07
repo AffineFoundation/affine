@@ -1,3 +1,22 @@
+Verified continuation, 2026-10-07, 00:22 UTC:
+E32 normal authority closure independently authenticated: SHA429e77442a9408fce68afeb241e4d15684b7acc718dc3e2f18742fa62bd0cf31,
+3022.332439s /50.372207min, optimizer22→23,256 of419 eligible unaudited pairs.
+CP23 efa864a85bb72975ffc17639497b6e08144286f77e11dd9340417517eb77a357;
+full10 model15,242,726,226bytes and full23 optimizer91,387,491,264bytes read back.
+Original publisher exited0; natural cache ACK promotion completed; same learner
+opened E33 fromCP23 without restart/reissue/manual promotion.
+Frozen f213 pretraining admission selects claimed outcome labels, validates
+native prompt but DOES NOT independently grade outcomes. Native-only pinned
+MATH grading is under isolated CPU review; no scientific deployment yet.
+Training stability analysis finds R32 142/256 negative rollouts cap-limited and
+non-EOS. Existing objective is already token-length-normalized and centered
+against its input checkpoint. Norms are below clip1 and weights change;
+matchedCP21/22 evaluation remains87/128, not proven convergence.
+Auditor17 full-population comparison is ongoing; writer17 already deployed.
+Research ownership wrapper reviewed: receipt hardware/price validation requested
+before adoption or any replacement rental. Original same-parent generation
+continues without task/seed replacement; no research training authorized yet.
+
 Verified continuation, 2026-10-07, 00:06 UTC:
 The sole midnight writer naturally submitted the signed assessment7e51e8222ea15cb7552effe4d5d78c90a59970018a21e14f96922157566e3280
 under the installed combined policy e713, at block9227402 for205 currentUIDs.
