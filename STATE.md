@@ -1,3 +1,24 @@
+Verified continuation, 2026-10-07, 00:06 UTC:
+The sole midnight writer naturally submitted the signed assessment7e51e8222ea15cb7552effe4d5d78c90a59970018a21e14f96922157566e3280
+under the installed combined policy e713, at block9227402 for205 currentUIDs.
+ROOT independently authenticated exact signed policy/assessment binding,
+submitted cursor and205UID/hotkey/weight entries; zero refused/deferrals,
+stale=False, no excludedstale/unregistered/remaps. This is actual submission
+and does not claim an independently observed reveal. The minute timer continues.
+E32's original training terminal0 was authenticated:256unauditedpairs,
+optimizer22→23/effectiveweightschanged. Its original publisher and full23reader
+are running; authority stillCP22 until normal full readback succeeds.
+ROOT signed generation-only research scope52152f5d6399c738314adb4a95d5df1e42bb38cbd34d0580eccd83f2023892cc
+following actual full10modelSHA/177runtime/native/RECORD/GPUidle/lock checks.
+One original H100 supervisor9240/ticks280974980 launched256 prescribed draws
+for16predeclared tasks. No research optimizerGET or training was authorized.
+The prior V2 ROOT scope was never dispatched; its TTL rounding was corrected
+in the distinct exact7200s V3 scope. No tasks/seeds/source changed.
+The deleted H200 was released by the existing affine-pod-reaper as an
+unregistered owned-name rental after90min; provider audit and exactreaper logs
+agree. Partial evidence remains archived. The retained H100 is already
+explicitly protected; coded ownership-before-rental protection is in review.
+
 Verified continuation, 2026-10-06, 23:59 UTC:
 Matched SAME128 evaluations for checkpoint21 and checkpoint22 both completed at
 87/128. The exact task indices, seeds, task hashes and cohort are identical;
