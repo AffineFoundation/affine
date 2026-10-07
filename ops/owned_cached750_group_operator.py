@@ -28,6 +28,7 @@ def native_report_json(path,workspace):
  unchanged across the bounded read. Only native report.json is admitted.
  """
  path=Path(path);root=Path(workspace)
+ if root!=root.absolute()or root.resolve()!=root:raise ValueError('canonical native report workspace')
  if path.parent.parent!=root/'jobs' or path.name!='report.json' or not path.parent.name.replace('-','').replace('_','').isalnum():raise ValueError('exact native report route')
  fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
  fds=[];snapshots=[]
