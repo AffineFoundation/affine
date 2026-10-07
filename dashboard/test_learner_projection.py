@@ -6,6 +6,17 @@ from dashboard.learner_projection import canonical,digest,project
 from dashboard.server import Database
 
 class LearnerProjectionTests(unittest.TestCase):
+ def test_structural_rejections_remain_visible_in_captured_counts(self):
+  d,m,u,a=self.fixture(5,3)
+  d['population']['committed_count']=4
+  d['population']['exclusions']=[dict(document_sha256='tokens4',reason='structural_ineligible')]
+  r=project(d,m,u,a)
+  self.assertEqual((r['submitted'],r['learner_eligible'],r['learner_excluded']),(5,3,2))
+  for sha in ('missing','tokens0'):
+   bad=copy.deepcopy(d);bad['population']['exclusions'][0]['document_sha256']=sha
+   self.assertIsNone(project(bad,m,u,a))
+  bad=copy.deepcopy(d);bad['population']['exclusions']*=2
+  self.assertIsNone(project(bad,m,u,a))
  def fixture(self,n,eligible,epoch='test-15'):
   root=SigningKey.generate();miner=SigningKey.generate();identity=miner.verify_key.encode().hex()
   def signed(p,key):return dict(payload=p,signer=key.verify_key.encode().hex(),signature=base64.b64encode(key.sign(canonical(p)).signature).decode())

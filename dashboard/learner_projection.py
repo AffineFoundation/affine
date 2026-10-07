@@ -60,7 +60,16 @@ def project(document,manifest,identity_uids,authority=AUTHORITY):
    item={'learner_admission_sha256':digest(signed),'sha256':row['sha256'],'size':row['size']}
    if full_inventory.get(item['learner_admission_sha256'])!=item:raise ValueError('selected admission is exact eligible subset')
    inventory.append(item);selected.add(key)
-  if population['committed_count']!=len(committed)or population['eligible_count']!=len(eligible)or population.get('training_count',len(eligible))!=len(selected):raise ValueError('actual inventory counts')
+  # Collection counts structurally admissible candidates, while captured
+  # inventory also includes malformed documents. Keep those visible as excluded.
+  structural=set()
+  for exclusion in population.get('exclusions',[]):
+   if exclusion.get('reason')!='structural_ineligible':continue
+   sha=exclusion.get('document_sha256')
+   matches=[key for key,(_,child)in committed.items()if child['training_sha256']==sha]
+   if len(matches)!=1 or matches[0]in structural or matches[0]in eligible:raise ValueError('exact structural exclusion')
+   structural.add(matches[0])
+  if population['committed_count']!=len(committed)-len(structural)or population['eligible_count']!=len(eligible)or population.get('training_count',len(eligible))!=len(selected):raise ValueError('actual inventory counts')
   if 'training_selection'in population:
    selection=population['training_selection']
    if (selection['version']!='bounded-postfreeze-learner-selection-v1'or selection['eligible_count']!=len(eligible)or selection['training_count']!=len(selected)or selection['unselected_count']!=len(eligible)-len(selected)or selection['cap']!=256 or len(selected)>256 or selection['eligible_inventory_sha256']!=digest(population['eligible_inventory'])or selection['selected_inventory_sha256']!=digest(inventory)):raise ValueError('bounded training selection inventory')

@@ -514,7 +514,8 @@
           node.append(svg('circle',{cx:x,cy:base,r:3,fill:themeColor('bg'),stroke:themeColor('muted'),'stroke-width':1.5}));
         }
         if(!available) {
-          node.append(svg('text',{x,y:plot.top+plot.height/2-13,'text-anchor':'middle',class:'epoch-state'},'Pending'));
+          const marker=svg('circle',{cx:x,cy:base,r:3,fill:themeColor('bg'),stroke:themeColor('muted'),'stroke-width':1.5,class:'pending-marker'});
+          marker.append(svg('title',{},`Epoch ${epochNumber(row)}: batch count pending`));node.append(marker);
         }
         if(rows.length<=8||width>650||index%2===0||index===rows.length-1) node.append(svg('text',{x,y:base+28,'text-anchor':'middle',class:'epoch-tick','data-record':recordKey(row)},epochNumber(row)));
       });
