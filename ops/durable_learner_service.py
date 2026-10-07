@@ -35,7 +35,7 @@ def validate_operator_overlay(overlay, source, policy, cfg):
         not stat.S_ISDIR(root.lstat().st_mode) or root.lstat().st_uid != os.getuid()):
         raise ValueError('distinct canonical owned CPU overlay root')
     changes = overlay['overrides']
-    if type(changes) is not dict or not changes or not set(changes) <= CPU_OVERRIDES:
+    if type(changes) is not dict or not changes or not set(changes) <= (CPU_OVERRIDES | ({'subnet/persistent_training_controller.py'} if 'native_training_eligibility' in policy else set())):
         raise ValueError('only explicit coordinator transport modules may differ')
     original = source['full_source_files']
     if any(k not in original and k not in {'subnet/capture_journal.py', 'subnet/checkpoint_upload_recovery.py'} for k in changes):
@@ -99,6 +99,7 @@ def validate_policy(document, authority=guards.AUTHORITY):
               'runner_file_sha256', 'guards_file_sha256'}
     if 'operator_overlay' in p:
         fields.add('operator_overlay')
+    if 'native_training_eligibility' in p:fields.add('native_training_eligibility')
     if set(p) != fields or p['version'] != VERSION or p['execute_allowed'] is not True or p['authority'] != authority:
         raise ValueError('exact durable learner policy required')
     for path, expected in ((Path(__file__).resolve(), p['runner_file_sha256']),
@@ -165,6 +166,7 @@ def validate_policy(document, authority=guards.AUTHORITY):
         raise ValueError('existing committed persistent learner required')
     if 'operator_overlay' in p:
         validate_operator_overlay(p['operator_overlay'], source, p, cfg)
+    if 'native_training_eligibility' in p:validate_native_operator(p,authority,source)
     return p
 
 
@@ -177,8 +179,62 @@ def prepare_runtime(p):
     from subnet import gpu_service
     if Path(gpu_service.__file__).resolve() != Path(root) / 'subnet/gpu_service.py':
         raise ValueError('unexpected pinned learner import')
+    if 'native_training_eligibility' in p:
+        install_native_constructor(gpu_service,p)
     return gpu_service
 
+
+
+def validate_native_operator(p,authority,source):
+    row=p['native_training_eligibility']
+    fields={'version','root','files','authorization','tokenizer_root','interpreter','boundary'}
+    if type(row) is not dict or set(row)!=fields or row['version']!='pinned-native-eligibility-operator-v1':
+        raise ValueError('exact native operator opt-in')
+    root=Path(row['root'])
+    if not root.is_absolute() or root.resolve()!=root or root.is_symlink() or root.stat().st_uid!=os.getuid():
+        raise ValueError('owned native operator root')
+    if set(row['files'])!={'native_training_outcome_filter.py','native_training_eligibility.py'}:
+        raise ValueError('exact native operator import closure')
+    guards.pinned_files(root,row['files'])
+    if {str(f.relative_to(root)) for f in root.rglob('*') if f.is_file()}!=set(row['files']):
+        raise ValueError('native operator complete membership')
+    auth=guards.verify_document(row['authorization'],authority)
+    if (auth.get('source_root')!=p['source_root'] or auth.get('source_sha256')!=p['source_sha256'] or
+        auth.get('source_files')!=source['runtime_source_files'] or
+        auth.get('execution_root')!=p.get('operator_overlay',{}).get('root') or
+        'subnet/persistent_training_controller.py' not in p.get('operator_overlay',{}).get('overrides',{})):
+        raise ValueError('native scientific baseline and explicit CPU controller exception')
+    load_native_operator(row).validate_future_boundary(row['boundary'])
+    return auth
+
+
+def load_native_operator(row):
+    # Private relative-import package: no global ops module can shadow approved bytes.
+    import importlib.util
+    import types
+    root=Path(row['root'])
+    guards.pinned_files(root,row['files'])
+    name='_root_pinned_native_eligibility'
+    package=types.ModuleType(name);package.__path__=[str(root)]
+    sys.modules[name]=package
+    for leaf in ('native_training_outcome_filter','native_training_eligibility'):
+        fullname=name+'.'+leaf
+        spec=importlib.util.spec_from_file_location(fullname,root/(leaf+'.py'))
+        module=importlib.util.module_from_spec(spec);sys.modules[fullname]=module
+        spec.loader.exec_module(module)
+    return sys.modules[name+'.native_training_eligibility']
+
+
+def install_native_constructor(service,p):
+    row=p['native_training_eligibility']
+    selector=load_native_operator(row).FutureNativeEligibilitySelector
+    authorization=guards.read(row['authorization']['path'])
+    original=service.RemoteController
+    class NativeController(original):
+        def __init__(self,*args,**kwargs):
+            super().__init__(*args,**kwargs)
+            self.native_training_eligibility_selector=selector(self,authorization,row['tokenizer_root'],row['interpreter'],row['boundary'])
+    service.RemoteController=NativeController
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

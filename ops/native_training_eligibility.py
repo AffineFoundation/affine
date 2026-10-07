@@ -211,3 +211,44 @@ class NativeEligibilitySelector:
             return derived,accepted
         finally:
             os.close(fd)
+
+
+BOUNDARY_VERSION='future-native-eligibility-boundary-v1'
+
+
+def validate_future_boundary(boundary):
+    fields={'version','epoch_prefix','earliest_round','minimum_parent_step','contract_fields'}
+    if (type(boundary) is not dict or set(boundary)!=fields or boundary['version']!=BOUNDARY_VERSION or
+        type(boundary['earliest_round']) is not int or boundary['earliest_round']<0 or
+        type(boundary['minimum_parent_step']) is not int or boundary['minimum_parent_step']<0 or
+        not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_.-]{1,180}',boundary['epoch_prefix']) or
+        type(boundary['contract_fields']) is not dict or
+        not {'training_input_policy','K','L','training_policy'}<=set(boundary['contract_fields'])):
+        raise ValueError('explicit future native eligibility boundary')
+    return boundary
+
+class FutureNativeEligibilitySelector(NativeEligibilitySelector):
+    """Skip original issued jobs; apply only to explicitly approved future epochs."""
+    def __init__(self,controller,authorization_envelope,tokenizer_root,interpreter,boundary):
+        super().__init__(controller,authorization_envelope,tokenizer_root,interpreter)
+        validate_future_boundary(boundary)
+        self.boundary=boundary
+
+    def applies_to(self,manifest):
+        epoch=manifest.get('epoch','')
+        match=re.fullmatch(re.escape(self.boundary['epoch_prefix'])+r'--([0-9]+)-([0-9]+)',epoch)
+        if match is None:raise ValueError('native eligibility epoch contract prefix')
+        if int(match[2])<self.boundary['earliest_round']:return False
+        state=Path(self.controller.state)
+        if (state/'roles'/(epoch+'-train.json')).exists() and not (state/'native-outcome-eligibility'/epoch/'subset.ROOT-SIGNED.json').exists():
+            return False
+        if (manifest.get('source_bundle',{}).get('sha256')!=self.policy['source_sha256'] or
+            any(manifest.get(k)!=v for k,v in self.boundary['contract_fields'].items()) or
+            type(manifest.get('trainer_state_binding',{}).get('global_step_before')) is not int or
+            manifest['trainer_state_binding']['global_step_before']<self.boundary['minimum_parent_step']):
+            raise ValueError('future native eligibility source/contract/optimizer parent')
+        return True
+
+    def select(self,manifest,submissions):
+        if not self.applies_to(manifest):return manifest,submissions
+        return super().select(manifest,submissions)

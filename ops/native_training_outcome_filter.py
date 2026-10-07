@@ -220,13 +220,17 @@ def _filter_bound_documents(document_paths,policy,job,manifest,authority,source_
         documents.append((summary,[digest(list(pair)) for pair in admitted_pairs]))
         pairs.extend(admitted_pairs)
     import subnet.native_math_prompt as native_prompt
-    if Path(native_prompt.__file__).resolve()!= (source_root/'subnet/native_math_prompt.py').resolve():
+    execution_root=Path(policy.get('execution_root',source_root))
+    if Path(native_prompt.__file__).resolve()!= (execution_root/'subnet/native_math_prompt.py').resolve():
         raise ValueError('native filter approved source loader')
     for name, expected in job['source_files'].items():
         relative=Path(name)
         if relative.is_absolute() or '..' in relative.parts:
             raise ValueError('native source member path')
         _read(source_root/relative,expected,16*1024**2)
+        # The CPU import tree is distinct; scientific bytes remain the original source.
+        if relative.name == 'native_math_prompt.py':
+            _read(execution_root/relative,expected,16*1024**2)
     tokenizer_root=Path(tokenizer_root)
     if set(policy['tokenizer_binding'])!={'tokenizer.json','tokenizer_config.json','chat_template.jinja'}:
         raise ValueError('native tokenizer asset closure')
@@ -285,6 +289,7 @@ def filter_eligibility_context(document_paths,context_envelope,authorization_env
             'original_population_file_sha256','original_selection_file_sha256','parent_binding_sha256'}
     authfields={'version','limits','source_sha256','source_root','source_files','snapshot_sha256',
                 'tokenizer_binding','grader_sha256','sampling_assurance','no_credit','no_relabel'}
+    if 'execution_root' in authorization:authfields.add('execution_root')
     if set(context)!=fields or context['version']!=CONTEXT_VERSION:
         raise ValueError('non-dispatchable eligibility context schema')
     if (set(authorization)!=authfields or authorization['version']!=AUTHORIZATION_VERSION or
