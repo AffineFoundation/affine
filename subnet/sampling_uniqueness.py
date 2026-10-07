@@ -21,7 +21,7 @@ def validate_batch(batch,manifest,miner):
     context=binding(manifest,miner)
     if batch.get('epoch')!=manifest['epoch']or batch.get('checkpoint')!=manifest['checkpoint']['id']:raise ValueError('v5 batch epoch/checkpoint binding')
     rolls=batch.get('rollouts')
-    if type(rolls)is not list or len(rolls)!=4:raise ValueError('v5 requires four rollouts')
+    if type(rolls)is not list or len(rolls)!=manifest['K']+manifest['L']:raise ValueError('v5 requires manifest rollout count')
     content=set();attempts=set();task_hashes=set()
     for roll in rolls:
         if type(roll)is not dict:raise ValueError('rollout object')
@@ -37,4 +37,4 @@ def validate_batch(batch,manifest,miner):
         if digest in content:raise ValueError('duplicate generated trajectory')
         content.add(digest);task_hashes.add(roll.get('task_hash'))
     if len(task_hashes)!=1:raise ValueError('same-task rollout binding required')
-    if sum(r.get('classification')=='positive'for r in rolls)!=2 or sum(r.get('classification')=='negative'for r in rolls)!=2:raise ValueError('v5 requires two positive and two negative rollouts')
+    if sum(r.get('classification')=='positive'for r in rolls)!=manifest['K'] or sum(r.get('classification')=='negative'for r in rolls)!=manifest['L']:raise ValueError('v5 requires manifest positive and negative quotas')

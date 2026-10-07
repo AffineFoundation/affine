@@ -29,7 +29,7 @@ def class_quotas(K=1,L=1,sampling=None):
         maximum=1000 if sampling.get('version')==MINER_VERSION else 128
         if type(attempts) is not int or not 2<=attempts<=maximum or K+L>attempts:
             raise ValueError('class quotas exceed authenticated sampling attempt budget')
-    if sampling is not None and sampling.get('version')==MINER_VERSION and (K,L)!=(2,2):raise ValueError('v5 requires K2 L2')
+    if sampling is not None and sampling.get('version')==MINER_VERSION and (K!=L or K<2):raise ValueError('v5 requires balanced class quotas of at least two each')
     return K,L
 
 

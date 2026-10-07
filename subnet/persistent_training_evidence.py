@@ -37,9 +37,13 @@ def validate_updates(report,job,manifest):
             definition=definitions[batch['env_id']]
             positives=[r for r in batch['rollouts']if r['classification']=='positive']
             negatives=[r for r in batch['rollouts']if r['classification']=='negative']
+            if type(manifest.get('K'))is int and manifest['K']>=2:
+                if (manifest.get('L')!=manifest['K'] or len(positives)!=manifest['K'] or
+                    len(negatives)!=manifest['L'] or len(batch['rollouts'])!=manifest['K']+manifest['L']):
+                    raise ValueError('complete manifest task rollout quotas')
             pairs.extend((definition,p,n)for p,n in zip(positives,negatives))
     pairs,tasks,groups,identities=task_groups(pairs,job['steps'],manifest['training_coverage']['seed'],
-        **({'required_pairs_per_task':2} if manifest.get('K')==manifest.get('L')==2 else {}))
+        **({'required_pairs_per_task':manifest['K']} if type(manifest.get('K'))is int and manifest.get('K')==manifest.get('L') and manifest['K']>=2 else {}))
     if diagnostics.get('task_count')!=len(tasks)or diagnostics.get('pair_count')!=len(pairs):
         raise ValueError('persistent diagnostics distinct task/pair population')
     references=diagnostics.get('training_pair_margin_before');after=diagnostics.get('training_pair_margin_after')

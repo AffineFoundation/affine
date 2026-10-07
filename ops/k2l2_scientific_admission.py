@@ -1,4 +1,4 @@
-"""Default-off scientific admission for a NEW miner-bound K2/L2 source.
+"""Default-off scientific admission for a NEW manifest-bound balanced source.
 
 Authenticates ROOT qualification attestations; does not run a GPU, sign policy,
 change a controller, or reinterpret an ordinary orchestration-only approval.
@@ -11,6 +11,8 @@ SOURCE = 'k2l2-miner-bound-scientific-source-approval-v1'
 QUALIFICATION = 'k2l2-miner-bound-training-qualification-approval-v1'
 GPU_RESULT = 'k2l2-miner-bound-sm90-qualification-result-v1'
 ACK = 'ROOT-k2l2-scientific-qualification-metadata-readback-ACK-v1'
+MULTI_GPU_RESULT = 'multi-rollout-miner-bound-sm90-qualification-result-v1'
+MULTI_SCOPE = 'multi-rollout-miner-bound-v5-realGPU-smoke-v1'
 SAMPLER = 'forced-inverse-cdf-prefill-miner-bound-v5'
 REQUIRED_RUNTIME_ADDITIONS = {'subnet/sampling_uniqueness.py', 'subnet/trajectory_identity.py'}
 CONTROLS = {'honest_four_rollout_batch', 'repacked_duplicate_rejected',
@@ -20,6 +22,7 @@ CONTROLS = {'honest_four_rollout_batch', 'repacked_duplicate_rejected',
             'two_disjoint_pairs_per_task', 'equal_total_task_weight',
             'finite_loss_full_gradient_coverage', 'parent_optimizer_restored',
             'disposable_update_step_advanced'}
+MULTI_CONTROLS = (CONTROLS - {'honest_four_rollout_batch','all_four_native_outcomes','two_disjoint_pairs_per_task'}) | {'honest_manifest_rollout_batch','all_manifest_native_outcomes','manifest_disjoint_pairs_per_task'}
 
 
 def inventory(files):
@@ -35,11 +38,11 @@ def inventory(files):
 
 
 def contract(config):
-    if (type(config.get('K')) is not int or config['K'] != 2 or
-        type(config.get('L')) is not int or config['L'] != 2 or
+    if (type(config.get('K')) is not int or not 2<=config['K']<=64 or
+        type(config.get('L')) is not int or config['L'] != config['K'] or
         type(config.get('commitment_max_batches')) is not int or
         config['commitment_max_batches'] != 3):
-        raise ValueError('explicit K2/L2 and three-task-batch contract')
+        raise ValueError('explicit balanced quota and three-task-batch contract')
     sampling = config.get('sampling_policy')
     if (type(sampling) is not dict or sampling.get('version') != SAMPLER or
         type(sampling.get('max_attempts')) is not int or sampling['max_attempts'] != 1000 or
@@ -106,7 +109,7 @@ def validate(source, qualification, config, source_sha256, authority, verify_row
             raise ValueError('original parameter inventory and optimizer genesis preserved')
     bound_contract = guards.digest(contract(config))
     if source['contract_sha256'] != bound_contract:
-        raise ValueError('new source binds exact K2/L2 sampler contract')
+        raise ValueError('new source binds exact manifest sampler contract')
     qfields = {'version', 'approved', 'candidate_source_sha256', 'translation_path',
                'translation_file_sha256', 'original_gpu_report', 'durable_readback_ack'}
     if (type(qualification) is not dict or set(qualification) != qfields or
@@ -114,6 +117,9 @@ def validate(source, qualification, config, source_sha256, authority, verify_row
         qualification['candidate_source_sha256'] != source_sha256):
         raise ValueError('NEW scientific GPU qualification approval')
     report = verify_row(qualification['original_gpu_report'], authority)
+    multi=config['K']!=2
+    expected_controls=MULTI_CONTROLS if multi else CONTROLS
+    expected_scope=MULTI_SCOPE if multi else 'K2L2-miner-bound-v5-CP33-realGPU-smoke-v2'
     rfields = {'version', 'candidate_source_sha256', 'runtime_inventory_sha256',
                'contract_sha256', 'parent_checkpoint', 'parent_optimizer_sha256',
                'original_terminal_sha256', 'actual_original_wait0', 'controls',
@@ -121,16 +127,16 @@ def validate(source, qualification, config, source_sha256, authority, verify_row
                'runtime_profile', 'model_exported', 'optimizer_exported', 'model_export_destination',
                'model_uploaded', 'model_promoted', 'original_scope',
                'original_result', 'original_terminal'}
-    if (type(report) is not dict or set(report) != rfields or report['version'] != GPU_RESULT or
+    if (type(report) is not dict or set(report) != rfields or report['version'] != (MULTI_GPU_RESULT if multi else GPU_RESULT) or
         report['candidate_source_sha256'] != source_sha256 or
         report['runtime_inventory_sha256'] != guards.digest(runtime) or
         report['contract_sha256'] != bound_contract or report['actual_original_wait0'] is not True or
         report['optimizer_reset'] is not False or report['historical_relabel'] is not False or
-        type(report['controls']) is not dict or set(report['controls']) != CONTROLS or
+        type(report['controls']) is not dict or set(report['controls']) != expected_controls or
         any(value is not True for value in report['controls'].values())):
         raise ValueError('fresh authentic SM90 scientific qualification closure')
     scope = verify_row(report['original_scope'], authority)
-    if (scope.get('version') != 'K2L2-miner-bound-v5-CP33-realGPU-smoke-v2' or
+    if (scope.get('version') != expected_scope or
         scope.get('steps') != 1 or type(scope.get('steps')) is not int or
         scope.get('objective') != 'unchanged-task-normalized-pairwise' or
         scope.get('optimizer_disposition') != 'isolated-smoke-no-continuation-no-promotion' or
@@ -142,6 +148,8 @@ def validate(source, qualification, config, source_sha256, authority, verify_row
         scope.get('parent_descriptor_sha256') != report['parent_optimizer_sha256'] or
         scope.get('production_mutations') is not False or scope.get('network_operations') is not False):
         raise ValueError('authentic original scientific scope and source/parent inventory')
+    if multi and (scope.get('K')!=config['K'] or type(scope.get('K'))is not int or scope.get('L')!=config['L'] or type(scope.get('L'))is not int):
+        raise ValueError('fresh scientific scope binds manifest quotas')
     originals = {}
     for key in ('original_result', 'original_terminal'):
         row = report[key]
@@ -150,7 +158,7 @@ def validate(source, qualification, config, source_sha256, authority, verify_row
             raise ValueError('exact actual original result/terminal bytes')
         originals[key] = guards.read(row['path'])
     raw = originals['original_result']; terminal = originals['original_terminal']
-    if (raw.get('version') != 'K2L2-miner-bound-v5-CP33-realGPU-smoke-v2' or
+    if (raw.get('version') != expected_scope or
         raw.get('scope_sha256') != guards.digest(scope) or
         raw.get('new_source_sha256') != source_sha256 or
         raw.get('parent_checkpoint') != report['parent_checkpoint'] or
@@ -158,8 +166,8 @@ def validate(source, qualification, config, source_sha256, authority, verify_row
         raw.get('parent_step') != scope.get('parent_step') or raw.get('output_step') != scope.get('output_step') or
         type(raw.get('parent_step')) is not int or type(raw.get('output_step')) is not int or
         raw['output_step'] != raw['parent_step'] + 1 or
-        raw.get('actual_native_labels') != ['positive','positive','negative','negative'] or
-        raw.get('full_four_rollout_verification') is not True or
+        raw.get('actual_native_labels') != ['positive']*config['K']+['negative']*config['L'] or
+        raw.get('full_rollout_verification' if multi else 'full_four_rollout_verification') is not True or
         raw.get('probability_artifact_policy') != {'version':'selected-token-logprobs-v1'} or
         raw.get('selected_token_probability_transport_bound') is not True or
         raw.get('model_state_exported') is not True or
@@ -172,7 +180,7 @@ def validate(source, qualification, config, source_sha256, authority, verify_row
         terminal.get('actual_child_wait_completed') is not True or terminal.get('timed_out') is not False or
         terminal.get('scope_sha256') != guards.digest(scope) or terminal.get('production_mutations') is not False or
         report['original_terminal_sha256'] != report['original_terminal']['file_sha256']):
-        raise ValueError('actual disposable four-rollout one-step result and genuine original terminal')
+        raise ValueError('actual disposable quota-bound one-step result and genuine original terminal')
     hardware = report['hardware']
     if (report['qualification_class'] != 'disposable-sm90-one-step-local-model-no-state-promotion-v1' or
         report['runtime_profile'] != 'cuda-fp32-eager-sm90-v1' or

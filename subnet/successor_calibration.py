@@ -52,7 +52,9 @@ def draw_context(manifest,value):
     if value['version']==MINER_CALIBRATION_VERSION:
         from .forced_sampling import validate
         validate(value['draw_contract'])
-        if (type(manifest.get('K'))is not int or type(manifest.get('L'))is not int or type(manifest.get('max_batches'))is not int or (manifest['K'],manifest['L'],manifest['max_batches'])!=(2,2,3)):raise ValueError('miner-bound calibration K2 L2 max3')
+        from .controller import class_quotas
+        class_quotas(manifest.get('K'),manifest.get('L'),value['draw_contract'])
+        if type(manifest.get('max_batches'))is not int or manifest['max_batches']!=3:raise ValueError('miner-bound calibration max3')
         context['miner']=value['miner']
     return context
 

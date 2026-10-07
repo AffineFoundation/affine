@@ -21,6 +21,11 @@ class Controls(unittest.TestCase):
  def test_context_wrong_geometry_rejected(self):
   for m in [dict(self.manifest,K=1),dict(self.manifest,max_batches=4)]:
    with self.assertRaises(ValueError):c.draw_context(m,self.req)
+ def test_eight_rollout_calibration_uses_same_bound_draw_recipe(self):
+  m=dict(self.manifest,K=4,L=4)
+  self.assertEqual(c.draw_context(m,self.req),c.draw_context(self.manifest,self.req))
+  result=self.result(m,self.req)
+  self.assertEqual(c.admitted_policy(result,m,self.req)['checkpoint'],'a'*64)
  def test_result_relabel_miner_checkpoint_or_legacy_rejected(self):
   r=self.result(self.manifest,self.req);self.assertEqual(c.admitted_policy(r,self.manifest,self.req)['checkpoint'],'a'*64)
   for bad in [dict(r,sampling_miner='6'*64),dict(r,checkpoint='b'*64),dict(r,version=c.VERSION),dict(r,sampling_context_sha256='f'*64)]:

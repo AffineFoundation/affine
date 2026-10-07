@@ -1,5 +1,17 @@
 # Four-sample miner-bound cutover
 
+## Manifest-driven quota support (not yet activated)
+
+Updated software supports larger balanced v5 quotas, including K=4/L=4:
+eight distinct rollouts per task batch, four successes and four failures.
+The limit remains three task batches per UID per epoch, with attempt nonces
+0–999 and one contribution point per qualifying unique task. Miners read K/L
+from the signed manifest; eight samples are still one batch, not eight points.
+Existing signed openings and source archives remain unchanged. External miners
+must use the newly approved source when a future opening activates larger quotas;
+old clients with fixed four-sample checks cannot adopt it by manifest alone.
+The current deployed opening remains K=2/L=2 until a qualified boundary cutover.
+
 ## Four-sample miner-bound cutover — activated in epoch 53
 
 The epoch-53 contract, `forced-inverse-cdf-prefill-miner-bound-v5`, requires exactly

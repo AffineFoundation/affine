@@ -15,6 +15,17 @@ class Controls(unittest.TestCase):
   self.miner='d'*64;f.bind_runtime(self.runtime,m,self.miner);self.context=self.runtime.sampling_context
   self.batch=dict(epoch=m['epoch'],checkpoint=m['checkpoint']['id'],env_id='math',index=4,sample_index=4,environment_version='v1',rollouts=[dict(env_id='math',index=4,sample_index=4,environment_version='v1',seed=i,sampling=f.receipt(self.context,i),task_hash='c'*64,classification='positive'if i<2 else 'negative',turns=[dict(prompt=[1,2],output=[i+10,6])])for i in range(4)])
  def test_honest_four_distinct_attempts(self):validate_batch(self.batch,self.manifest,self.miner)
+ def test_eight_distinct_attempts_follow_manifest_and_reject_padding(self):
+  m=copy.deepcopy(self.manifest);m.update(K=4,L=4)
+  c=f.binding(m,self.miner);b=copy.deepcopy(self.batch)
+  b['rollouts']=[]
+  for i in range(8):
+   r=copy.deepcopy(self.batch['rollouts'][0]);r.update(seed=i,sampling=f.receipt(c,i),classification='positive'if i<4 else 'negative');r['turns'][0]['output']=[20+i,6];b['rollouts'].append(r)
+  validate_batch(b,m,self.miner)
+  for mutate in (lambda x:x['rollouts'].pop(),lambda x:x['rollouts'][7]['turns'][0].__setitem__('output',[20,6]),lambda x:x['rollouts'][7].update(seed=0,sampling=f.receipt(c,0)),lambda x:x['rollouts'][7].__setitem__('classification','positive')):
+   bad=copy.deepcopy(b);mutate(bad)
+   with self.assertRaises(ValueError):validate_batch(bad,m,self.miner)
+  self.assertEqual(class_quotas(4,4,m['sampling_contract']),(4,4))
  def test_exact_nonce_boundary(self):
   for i in (0,999):self.assertEqual(f.receipt(self.context,i)['attempt'],i)
   for i in (-1,1000,True,1.0):
@@ -59,7 +70,7 @@ class Controls(unittest.TestCase):
    with self.subTest(field=field),self.assertRaises(ValueError):validate_batch(b,self.manifest,self.miner)
  def test_two_per_class_required(self):
   b=copy.deepcopy(self.batch);b['rollouts'][1]['classification']='negative'
-  with self.assertRaisesRegex(ValueError,'two positive'):validate_batch(b,self.manifest,self.miner)
+  with self.assertRaisesRegex(ValueError,'manifest positive'):validate_batch(b,self.manifest,self.miner)
  def test_old_v3_batch_admission_unchanged(self):
   m=copy.deepcopy(self.manifest);m['sampling_contract']['version']=fast.SUPPORT_VERSION
   validate_batch({},m,None)
@@ -99,6 +110,15 @@ class CheapAdmissionControls(unittest.TestCase):
   with patch('subnet.batches.unpack',side_effect=AssertionError('proof')),patch('subnet.model.Runtime.compute',side_effect=AssertionError('model')):
    summary,pairs=self.case.admit()
   self.assertEqual(len(pairs),2);self.assertEqual(summary['assurance'],'unaudited')
+ def test_eight_unaudited_rows_form_four_disjoint_pairs(self):
+  m=self.case.manifest;m.update(K=4,L=4);c=f.binding(m,self.case.identity)
+  old=copy.deepcopy(self.case.batch['rollouts']);rolls=[]
+  for i in range(8):
+   r=copy.deepcopy(old[0 if i<4 else 2]);r.update(seed=i,sampling=f.receipt(c,i));r['turns'][0]['output']=[70+i,80];rolls.append(r)
+  self.case.batch['rollouts']=rolls;self.case.build()
+  with patch('subnet.batches.unpack',side_effect=AssertionError('proof')),patch('subnet.model.Runtime.compute',side_effect=AssertionError('model')):
+   summary,pairs=self.case.admit()
+  self.assertEqual(len(pairs),4);self.assertEqual(summary['assurance'],'unaudited')
  def test_resigned_duplicate_output_different_prompt_rejected(self):
   b=self.case.batch;b['rollouts'][1]['turns'][0]['output']=b['rollouts'][0]['turns'][0]['output'][:];b['rollouts'][1]['turns'][0]['prompt']=[888];self.case.build()
   with self.assertRaisesRegex(ValueError,'duplicate generated'):self.case.admit()
@@ -148,6 +168,20 @@ class ExecuteTrainingControls(unittest.TestCase):
 
 class OwnedMiningControls(unittest.TestCase):
  setUp=Controls.setUp
+ def test_cumulative_miner_collects_eight_from_manifest(self):
+  from subnet.backend_jobs import mine_cumulative
+  from types import SimpleNamespace
+  m=copy.deepcopy(self.manifest);m.update(K=4,L=4,start=10,deadline=90)
+  context=f.binding(m,self.miner)
+  definition=dict(env_id='math',spec={},harness={},indices=[4])
+  runtime=SimpleNamespace(spec=SimpleNamespace(version='v1'));runtime.for_environment=lambda *args:runtime
+  def rollout(index,seed):
+   return dict(schema=2,index=index,sample_index=index,env_id='math',environment_version='v1',task_hash='c'*64,seed=seed,sampling=f.receipt(context,seed),classification='positive'if seed<4 else 'negative',turns=[dict(prompt=[100],output=[seed+10,6])]),[]
+  runtime.rollout=rollout;seen=[]
+  with patch('subnet.protocol.entries',return_value=[definition]),patch('subnet.batches.pack',side_effect=lambda rows:seen.append(rows)or b'packed'):
+   _,report=mine_cumulative(runtime,m,dict(miner_id=self.miner,seed_start=0,search_budget=8),lambda *args:None,clock=lambda:20)
+  self.assertEqual(report['batches'],1)
+  self.assertEqual(len(seen[0][0][0]['rollouts']),8)
  def test_cumulative_miner_skips_output_duplicates_with_changed_prompts(self):
   from subnet.backend_jobs import mine_cumulative
   from types import SimpleNamespace

@@ -16,6 +16,14 @@ from concurrent.futures import ThreadPoolExecutor
 
 VERSION = 'bounded-native-training-label-filter-v1'
 K2L2_VERSION = 'bounded-native-training-label-filter-k2l2-v2'
+MULTI_VERSION = 'bounded-native-training-label-filter-multi-v3'
+
+def document_pair_quota(manifest):
+    K,L=manifest.get('K'),manifest.get('L')
+    if type(K)is not int or type(L)is not int or K!=L or not 2<=K<=64:
+        raise ValueError('balanced signed multi-rollout quotas required')
+    return K
+
 
 
 def digest(value):
@@ -119,9 +127,9 @@ def validate_limits(policy):
         fields.add('terminal_rule')
         if policy['terminal_rule'] != 'max-or-eos-v1':
             raise ValueError('explicit native terminal framing policy')
-    if not isinstance(policy, dict) or set(policy) != fields or policy['version'] not in (VERSION,K2L2_VERSION):
+    if not isinstance(policy, dict) or set(policy) != fields or policy['version'] not in (VERSION,K2L2_VERSION,MULTI_VERSION):
         raise ValueError('exact opt-in native filter policy')
-    for key, low, high in (('workers',1,4),('max_pairs',1,512 if policy['version']==K2L2_VERSION else 256),('per_grade_seconds',1,60),
+    for key, low, high in (('workers',1,4),('max_pairs',1,16384 if policy['version']==MULTI_VERSION else 512 if policy['version']==K2L2_VERSION else 256),('per_grade_seconds',1,60),
                            ('wall_seconds',1,600),('max_reply_bytes',1,262144)):
         if type(policy[key]) is not int or not low <= policy[key] <= high:
             raise ValueError('bounded native filter ' + key)
@@ -218,14 +226,15 @@ def _filter_admitted_pairs(pairs, policy, resolve, decode, grader, *, clock=time
                       **({'terminal_rule':policy['terminal_rule']} if 'terminal_rule' in policy else {})}
 
 
-def _complete_document_pairs(pairs, decisions):
-    """A K2L2 document is atomic: never train on its surviving half-batch."""
+def _complete_document_pairs(pairs, decisions, required_pairs=2):
+    """A quota-bound document is atomic: never train on a surviving partial batch."""
+    if type(required_pairs)is not int or not 2<=required_pairs<=64:raise ValueError('bounded explicit document pair quota')
     identities={digest(list(pair)):pair for pair in pairs}
     if len(identities)!=len(pairs):raise ValueError('K2L2 duplicate original pair')
     used=set();accepted_ids=set()
     for decision in decisions:
         rows=decision['pair_sha256']
-        if len(rows)!=2 or len(set(rows))!=2 or any(row not in identities or row in used for row in rows):
+        if len(rows)!=required_pairs or len(set(rows))!=required_pairs or any(row not in identities or row in used for row in rows):
             raise ValueError('K2L2 complete disjoint document pair inventory')
         if type(decision['accepted'])is not bool:raise ValueError('K2L2 binary document admission')
         used.update(rows)
@@ -270,7 +279,9 @@ def _filter_bound_documents(document_paths,policy,job,manifest,authority,source_
     limits=validate_limits(policy['limits'])
     if limits['version']==K2L2_VERSION and (type(manifest.get('K'))is not int or type(manifest.get('L'))is not int or manifest['K']!=2 or manifest['L']!=2):
         raise ValueError('K2L2 native filter explicit signed quotas')
-    if limits['version']==VERSION and manifest.get('K')==manifest.get('L')==2:
+    if limits['version']==MULTI_VERSION:
+        document_pair_quota(manifest)
+    if limits['version']==VERSION and (manifest.get('K',1)!=1 or manifest.get('L',1)!=1):
         raise ValueError('K2L2 requires new native filter version')
     pairs=[];documents=[]
     for path,obj in zip(document_paths,job['submissions']):
@@ -327,8 +338,8 @@ def _filter_bound_documents(document_paths,policy,job,manifest,authority,source_
             batch_sha256=summary['batch_sha256'],pair_sha256=identities,
             accepted=all(decisions[i]=='accepted_native_labels' for i in identities))
             for summary,identities in documents]
-        if limits['version']==K2L2_VERSION:
-            accepted=_complete_document_pairs(pairs,receipt['document_decisions'])
+        if limits['version']in(K2L2_VERSION,MULTI_VERSION):
+            accepted=_complete_document_pairs(pairs,receipt['document_decisions'],document_pair_quota(manifest))
         receipt.update(original_job_sha256=policy['job_sha256'],source_sha256=policy['source_sha256'],
                        checkpoint=policy['checkpoint'],snapshot_sha256=policy['snapshot_sha256'],
                        tokenizer_binding=policy['tokenizer_binding'],grader_sha256=policy['grader_sha256'])

@@ -364,8 +364,12 @@ def calibration_opening_with_quota(original,controller,config,status,opening):
     """Calibration sees the same signed quota later supplied to controller.open."""
     if config.get('sampling_policy',{}).get('version')!='forced-inverse-cdf-prefill-miner-bound-v5':
         return original(controller,config,status,opening)
-    if (config.get('K'),config.get('L'),config.get('max_batches'))!=(2,2,3):
-        raise ValueError('exact signed K2 L2 max3 opening projection')
+    from subnet.controller import class_quotas
+    class_quotas(config.get('K'),config.get('L'),config['sampling_policy'])
+    if type(config.get('max_batches'))is not int or config['max_batches']!=3:
+        raise ValueError('exact signed max3 opening projection')
+    if any(name in opening and (type(opening[name])is not int or opening[name]!=config[name])for name in ('K','L')):
+        raise ValueError('conflicting signed opening class quotas')
     if 'max_batches' in opening and opening['max_batches']!=3:
         raise ValueError('conflicting opening quota')
     projected=dict(opening,max_batches=3)

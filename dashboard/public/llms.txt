@@ -1,5 +1,14 @@
 # Affine — MATH mining, verification and training
 
+## Larger quota support — software preparation, not live activation
+
+Updated software supports manifest-driven balanced quotas including K=4/L=4:
+four distinct successes and four distinct failures per task batch. The limit is
+still three task batches per UID per epoch, with nonces 0–999 and one point per
+qualifying unique task. Current signed openings remain K=2/L=2 until a qualified
+boundary cutover. Existing clients with hardcoded four-sample checks need the
+new approved source; changing the manifest alone does not update old software.
+
 ## Four-sample miner-bound cutover — activated in epoch 53
 
 The epoch-53 contract, `forced-inverse-cdf-prefill-miner-bound-v5`, requires exactly

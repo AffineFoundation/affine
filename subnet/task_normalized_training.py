@@ -23,8 +23,8 @@ def task_groups(verified_pairs, steps, seed, *, required_pairs_per_task=None):
             not verified_pairs or len(verified_pairs) > 65536):
         raise ValueError('task-normalized pair/update budget')
     checkpoint_id(seed)
-    if required_pairs_per_task is not None and (type(required_pairs_per_task) is not int or required_pairs_per_task != 2):
-        raise ValueError('explicit two disjoint pairs per task')
+    if required_pairs_per_task is not None and (type(required_pairs_per_task) is not int or not 2 <= required_pairs_per_task <= 64):
+        raise ValueError('bounded explicit disjoint pairs per task')
     pairs = distinct_verified_pairs(verified_pairs)
     if required_pairs_per_task is not None:
         from .trajectory_identity import token_trace_sha256
@@ -52,7 +52,7 @@ def task_groups(verified_pairs, steps, seed, *, required_pairs_per_task=None):
         hashes[key] = task_hash
         by_task.setdefault(key, []).append(i)
     if required_pairs_per_task is not None and any(len(indices) != required_pairs_per_task for indices in by_task.values()):
-        raise ValueError('K2L2 complete two-pair task required')
+        raise ValueError('K2L2 complete two-pair task required' if required_pairs_per_task==2 else 'complete manifest pair quota per task required')
     tasks = []
     for (env_id, index), indices in by_task.items():
         identity = dict(env_id=env_id, index=index, task_hash=hashes[env_id, index])

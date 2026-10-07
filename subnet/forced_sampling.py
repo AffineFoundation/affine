@@ -75,8 +75,10 @@ def binding(manifest, miner=None):
         raise ValueError('sampling epoch/checkpoint binding')
     context={'contract': json.loads(canonical(value)), 'epoch': epoch, 'checkpoint': checkpoint}
     if value['version']==MINER_VERSION:
-        if (type(manifest.get('K')) is not int or type(manifest.get('L')) is not int or type(manifest.get('max_batches')) is not int or (manifest['K'],manifest['L'],manifest['max_batches'])!=(2,2,3)):
-            raise ValueError('v5 requires K2 L2 max3 batch geometry')
+        from .controller import class_quotas
+        class_quotas(manifest.get('K'),manifest.get('L'),value)
+        if type(manifest.get('max_batches'))is not int or manifest['max_batches']!=3:
+            raise ValueError('v5 requires max3 batch geometry')
         if miner is not None:
             if type(miner)is not str or len(miner)!=64 or any(c not in '0123456789abcdef'for c in miner):raise ValueError('authenticated miner public identity required')
             context['miner']=miner

@@ -8,7 +8,12 @@ class ProjectionControls(unittest.TestCase):
         self.extra={'subnet/source_sampling_admission.py':'b'*64}
         self.versions={'torch':'qualified','transformers':'qualified','toploc':'qualified'}
         self.observed=dict(source_files=dict(self.files,**self.extra),runtime_versions=self.versions)
-        self.config={'K':2,'L':2,'max_batches':3,'sampling_policy':{'version':'forced-inverse-cdf-prefill-miner-bound-v5'}}
+        self.config={'K':2,'L':2,'max_batches':3,'sampling_policy':{'version':'forced-inverse-cdf-prefill-miner-bound-v5','max_attempts':1000}}
+    def test_eight_sample_signed_opening(self):
+        config=dict(self.config,K=4,L=4);opening={'K':4,'L':4}
+        result=m.calibration_opening_with_quota(lambda a,b,c,d:d,None,config,None,opening)
+        self.assertEqual(result,opening)
+        with self.assertRaises(ValueError):m.calibration_opening_with_quota(lambda *a:None,None,config,None,dict(opening,K=2))
     def test_projection_authenticates_all_180_before_returning_179(self):
         before=copy.deepcopy(self.observed)
         result=m.normalized_remote_metadata(self.observed,self.files,self.extra,self.versions)
