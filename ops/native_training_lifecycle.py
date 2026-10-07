@@ -104,7 +104,8 @@ def close_no_update(controller,error,manifest,status):
     latest=Path(controller.state)/'latest-trainer-state.json';before=_load(latest)
     if json.loads(before)!=pointer:raise ValueError('native no-update latest optimizer pointer mismatch')
     unknown=sum(row['status']=='excluded_indeterminate' for row in grades['rows'])
-    excluded=sum(row['status']=='excluded_label_mismatch' for row in grades['rows'])
+    terminal_excluded=sum(row['status']=='excluded_terminal_rule' for row in grades['rows'])
+    excluded=sum(row['status']=='excluded_label_mismatch' for row in grades['rows'])+terminal_excluded
     payload=dict(version=NO_UPDATE_VERSION,epoch=manifest['epoch'],status='closed_native_indeterminate_no_update' if unknown else 'closed_native_label_exclusions_no_update',
                  reason='native_grading_indeterminate' if unknown else 'no_matching_native_pairs',
                  retry_policy='new_unopened_epoch_same_parent_only' if unknown else 'none_for_original_epoch',
@@ -114,6 +115,8 @@ def close_no_update(controller,error,manifest,status):
                  optimizer_pointer_sha256=__import__('hashlib').sha256(before).hexdigest(),
                  training_steps_before=status['training_steps'],optimizer_updates=0,training_dispatched=False,
                  sampling_assurance='unaudited',claims_rewritten=False,cheating_penalties=False,payable=False)
+    if 'terminal_rule' in grades:
+        payload.update(terminal_rule=grades['terminal_rule'],terminal_excluded_pairs=terminal_excluded)
     path=root/'no-update.ROOT-SIGNED.json'
     if path.exists():
         from subnet.distributed_roles import authenticate

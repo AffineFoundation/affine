@@ -77,6 +77,9 @@ def bind_subset(context_envelope,grade_receipt,submissions,authority):
     decisions=grade_receipt.get('document_decisions')
     if not isinstance(decisions,list) or len(decisions)!=len(submissions):raise ValueError('complete native document disposition')
     grades=grade_receipt.get('rows');statuses={r['pair_sha256']:r for r in grades}
+    terminal_required='terminal_rule' in grade_receipt
+    if terminal_required and grade_receipt['terminal_rule']!='max-or-eos-v1':
+        raise ValueError('native receipt terminal framing rule')
     if len(statuses)!=len(grades):raise ValueError('unique native pair dispositions')
     accepted=[];used=set()
     for decision,obj in zip(decisions,submissions):
@@ -94,11 +97,17 @@ def bind_subset(context_envelope,grade_receipt,submissions,authority):
             if len(grades)!=2 or [g['claim']for g in grades]!=['positive','negative']:
                 raise ValueError('native pair original class order')
             for grade in grades:
+                if terminal_required and type(grade.get('terminal_framing_valid'))is not bool:
+                    raise ValueError('native receipt terminal framing verdict')
                 score=grade['native_score']
                 if score is not None and (type(score) is not int or score not in (0,1)):raise ValueError('native exact score')
                 expected=None if score is None else (score==1)==(grade['claim']=='positive')
                 if grade['label_matches'] is not expected:raise ValueError('native score/claim disposition')
-            status=('excluded_indeterminate' if any(g['label_matches'] is None for g in grades)
+            terminal_excluded=terminal_required and any(g['terminal_framing_valid']is False for g in grades)
+            if terminal_excluded and any(g['native_score']is not None or g.get('reason')!='terminal_framing_exclusion' for g in grades):
+                raise ValueError('native terminal excluded pair cannot be graded')
+            status=('excluded_terminal_rule' if terminal_excluded
+                else 'excluded_indeterminate' if any(g['label_matches'] is None for g in grades)
                 else 'accepted_native_labels' if all(g['label_matches']for g in grades) else 'excluded_label_mismatch')
             if row['status']!=status:raise ValueError('native derived status')
             matching=matching and status=='accepted_native_labels'
@@ -199,6 +208,8 @@ class NativeEligibilitySelector:
                 _,grades=filter_eligibility_context(paths,envelope,self.authorization,self.authority,
                                self.policy['source_root'],self.tokenizer_root,self.interpreter)
                 _create(grade_path,self.controller.signed(grades))
+            if grades.get('terminal_rule')!=self.policy.get('limits',{}).get('terminal_rule'):
+                raise ValueError('native grades authorized terminal rule')
             accepted,subset=bind_subset(envelope,grades,submissions,self.authority)
             if result_path.exists():
                 old=authenticate(json.loads(_load(result_path)),self.authority)
