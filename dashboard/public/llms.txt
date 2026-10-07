@@ -522,3 +522,14 @@ different GPU hosts, so this is a provisional regression signal. The original
 same-H100 full750 comparison and a separate same-parent negative-trajectory
 training control remain in progress. Neither has established convergence or a
 cause for the losses. This does not change miner submission or proof contracts.
+
+Latest completed learning iteration: epoch37 finished in52.003 minutes on256
+eligible unaudited task pairs, without trainer re-verification, advancing the
+persistent optimizer27 to28 and publishing checkpoint9260f003. Original signed
+job/completion and independent23-state-shard plus10-model-object publication
+evidence were reviewed; epoch38 opened on that checkpoint. Independent CP27
+SAME128 evaluation completed all four authentic original jobs at74/128, down
+from CP26's82/128. CP28 evaluation is not yet established here. Larger per-task
+sample groups remain a proposed controlled experiment, not an active quota;
+see docs/PAIRED_SAMPLE_STABILITY_PLAN.md on GitHub. Neither reliable publication
+nor these results establish held-out convergence.

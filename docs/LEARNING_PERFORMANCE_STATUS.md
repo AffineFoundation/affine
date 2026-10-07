@@ -348,3 +348,20 @@ versus completed-EOS negative trajectories on eight identical tasks. Its origina
 training job is still running and no outcome is claimed. Production learning
 continues independently; published checkpoint counts and in-sample margins do
 not establish held-out convergence.
+
+## Epoch 37 closed; CP27 held-out decline (2026-10-07)
+
+Epoch37 completed in 3120.197 seconds (52.003 minutes), consuming256 eligible
+unaudited task pairs with no trainer re-verification. Its single update advanced
+the persistent optimizer27 to28 and published checkpoint9260f003. ROOT reviewed
+the original signed job, matching successful report, independent reader's
+signed actual23-shard full-readback result (91,387,491,264 bytes), all10 model
+publication hashes, and signed learner completion. This review did not rerun
+training or perform another large-object download. Epoch38 opened on that parent.
+
+Separately, all four original CP27 SAME128 jobs and their full-readback archives
+completed and were authenticated:74/128, with no native grading failures,
+versus82/128 at CP26 on the same cohort. Stable publication is not evidence of
+stable learning. This decline strengthens the priority of matched learning
+controls; the larger-per-task sample plan remains prospective. Do not infer the
+CP28 held-out result from its successful training or from CP27's score.
