@@ -36,7 +36,8 @@ The exact policy is documented in docs/HOURLY_CURRENT_ASSESSMENT.md on GitHub.
 From 23:00 UTC on 2026-10-06, an explicitly signed numerical-resolution writer
 policy treats nine independently reviewed historical TOPLOC rows as inconclusive.
 From 00:00 UTC on 2026-10-07, the writer extends that exact signed set to 17
-reviewed rows. The matching continuous-auditor update is still under review.
+reviewed rows. The matching continuous-auditor update passed startup checks
+and was deployed at 00:27 UTC; its first new-policy cycle is being observed.
 Original reports and earlier submitted assessments remain immutable; these rows
 receive neither valid-audit credit nor a confirmed-invalid penalty. This is an
 exact evidence-bound correction, not a general tolerance change. Newer numerical

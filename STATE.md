@@ -1,3 +1,16 @@
+Verified continuation, 2026-10-07, 00:28 UTC:
+Root deployed exact reviewed auditor17 policy431e5c86587f3b9314f833be6e463f3689d37596e43459de2ec68fb57c1a9f8f.
+Same unit/singleton, new originalPID2650879/ticks418805361/invocationb875fc2f9cab4f948197c3882e5a38b4,
+active/NRestarts0. Existing API1167935, learner1884735 and queueinode unchanged.
+Original before-state/unit bytes preserved; no old snapshots/reports rewritten.
+Pinned durable runner startup --check passed before start. First complete
+new-policy cycle still awaiting observation; do not infer it from old health.
+Root independently authenticated whole2563job/19population comparison hashes,
+admission core/deferrals/points/weights unchanged, exact17historicalUNKNOWN only.
+Portable startup support and protected rental operator adopted with actual
+root22ownership/operator and18startup/fixture controls passing. No replacement
+rental yet; hardware/price/source validation now precedes successful binding.
+
 Verified continuation, 2026-10-07, 00:22 UTC:
 E32 normal authority closure independently authenticated: SHA429e77442a9408fce68afeb241e4d15684b7acc718dc3e2f18742fa62bd0cf31,
 3022.332439s /50.372207min, optimizer22→23,256 of419 eligible unaudited pairs.
