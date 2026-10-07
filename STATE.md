@@ -1,3 +1,26 @@
+Verified continuation, 2026-10-06, 23:59 UTC:
+Matched SAME128 evaluations for checkpoint21 and checkpoint22 both completed at
+87/128. The exact task indices, seeds, task hashes and cohort are identical;
+original four-group terminal reports and full archive acknowledgements were
+verified. This is a plateau across these two checkpoints, not convergence.
+The same-parent H100 study prerequisite completed genuinely: original child8352
+waited293.139s, exit0/no timeout, four honest controls VALID and sixteen mutants
+INVALID. All four fabricated supported-token mutants regenerated target-model
+fingerprints/logprobs with unchanged draw receipts and failed the CDF check.
+ROOT independently authenticated the signed scope, all45 archive members,
+helper hashes and controls, and full-read325,509 archive bytes from R2 before
+signing/uploading/full-reading ACK7d24b5385a3d9ff58329ca4407ce8684c8a5f9956a8bdd10dad7b799eacc5f6b.
+Study generation remains separately gated; no production objective/quota change.
+The additional H200's original eight-case CP21 reference run was interrupted:
+Lium recorded its deletion at23:56:43 after a request through the rental API key.
+Only one case was retrieved; no original terminal completion was observed.
+Partial evidence is preserved and archived. No numerical resolution or new
+worker enrollment follows from this interrupted run. Seven verifiers remain
+configured; ROOT freshly observed the original learner and auditor active with
+zero restarts. Epoch32's original trainer is uploading its optimizer state;
+checkpoint23 is not yet committed. The new hourly writer policy is installed
+prospectively for00UTC; its actual new-policy submission remains pending.
+
 Verified continuation, 2026-10-06, 23:20 UTC:
 E31 normal closure is genuine: ROOT-signed completion at1791328815.2914548,
 2931.291s/48.855min from epoch label. Original train-b174d081 completed with256

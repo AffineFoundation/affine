@@ -372,3 +372,13 @@ selected-batch scope. Its exact historical allowlist is signed. Both comparisons
 passed before the controlled writer handoff; its first invocation exited normally
 while waiting for the prospective hour. The minute timer is active, with the
 learner and auditor processes unchanged.
+
+Latest independently authenticated matched evaluation: checkpoint 21 and
+checkpoint 22 both scored 87/128 on identical task indices, seeds and task hashes.
+This is not evidence of improvement between those checkpoints. A bounded
+independent H100 qualification passed four honest and sixteen adversarial
+controls, including four forged-token cases with regenerated model fingerprints
+rejected by prescribed-draw verification. This does not change the active H200
+miner contract or establish universal forgery resistance. The additional H200's
+subsequent CP21 reference test was interrupted by provider-recorded deletion;
+its partial evidence is preserved, with no completed-test or enrollment claim.
