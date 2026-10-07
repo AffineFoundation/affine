@@ -36,6 +36,17 @@ training degradation before treating increased per-task quotas as a remedy.
 
 ## Recorded update diagnostics
 
+A local reconstruction of epoch 43's original selected documents matched all
+256 document hashes and actual training-pair identities. Of the 256 claimed
+negative trajectories, 109 (42.6%) were exactly 1,024 tokens with no EOS and
+147 ended in EOS. Of the positives, 255 ended in EOS and one was at the cap.
+Mean output lengths were 488.1 tokens for negatives and 120.2 for positives.
+These are authenticated unaudited training inputs, not proof-verified outcomes.
+Reaching the cap without EOS is a cap indicator, not an independently recorded
+stop reason, and every claimed `done` flag being true does not establish EOS.
+This makes negative completion/length quality a concrete hypothesis to test
+before treating larger per-task quotas as the fix; it does not establish cause.
+
 A read-only inspection of the nine ordinary reports advancing optimizer steps
 23 to 32 found 256 tasks and 256 pairs per update. Recorded gradient norms ranged
 from 0.064 to 0.228, below the clipping threshold of 1.0, with no nonfinite norms
