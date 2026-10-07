@@ -8,4 +8,6 @@ Use this guard from every provisioning and launch caller; adding the module alon
 
 The retained H100 already has a static, indefinite retained ownership record. No change to it was required. The deleted H200 and its interrupted original reference execution must not be revived or represented as a completed scientific job.
 
-Validation: eleven CPU tests cover registration before billing/GPU launch, failed registry writes preventing action, timeout without reissue, foreign ownership/provider substitution refusal, heartbeat, and retention after job completion. No rentals, production registration, reaper restart, or live deployment occurred in these tests.
+Validation: thirteen CPU tests cover registration before billing/GPU launch, failed registry writes preventing action, timeout without reissue, foreign ownership/provider substitution refusal, heartbeat, and retention after job completion. No rentals, production registration, reaper restart, or live deployment occurred in these tests.
+
+Rental reservation uses a separate per-name operation flock in the local registry directory, held across precheck, reservation, the single provider callback, binding, and readback. It never nests the registry internal lock. Concurrent callbacks fail closed; the lock file stays in place to prevent an inode replacement race. A timed-out original retains the pending ownership record, and subsequent attempts refuse reentry. The tests exercise two concurrent callers with the first provider callback held open, proving only one original provider call occurs.
