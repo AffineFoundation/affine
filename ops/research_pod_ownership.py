@@ -5,6 +5,12 @@ before every qualification/reference/study launch. Observers heartbeat the same
 binding. Job completion records evidence but never marks the retained pod done.
 """
 import math
+import contextlib
+import fcntl
+import hashlib
+import os
+import pathlib
+import stat
 
 VERSION = 'retained-research-pod-ownership-v1'
 OWNER = 'manual:explicit-retained-research-operator'
@@ -95,22 +101,52 @@ def completed(registry, binding, evidence_sha256):
     return heartbeat(registry, binding)
 
 
-def rent_once(registry, intent_binding, rent):
-    """Register the intended name BEFORE renting; never retry the rental.
+@contextlib.contextmanager
+def rental_operation_lock(registry, name):
+    """A separate per-name lock; never nest the registry's internal flock.
 
-    The supplied rental callback is the reviewed provider command, which must
-    return its original authenticated receipt's pod_id. A callback timeout
-    propagates with the pending owned name intact for read-only reconciliation.
+    Registration has its own short lock. This lock spans the ownership
+    precheck, reservation, one provider callback, binding and final readback.
+    It stays in place after completion so concurrent descriptors cannot lock
+    different inodes for the same intended rental name.
+    """
+    root = pathlib.Path(registry.registry_path()).parent
+    if root.resolve() != root or root.stat().st_uid != os.getuid():
+        raise ValueError('owned registry directory required')
+    name_digest = hashlib.sha256(name.encode()).hexdigest()
+    path = root / ('research-rental-' + name_digest + '.lock')
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        value = os.fstat(fd)
+        if not stat.S_ISREG(value.st_mode) or value.st_uid != os.getuid() or value.st_nlink != 1 or value.st_mode & 0o077:
+            raise ValueError('private regular rental operation lock required')
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def rent_once(registry, intent_binding, rent):
+    """Reserve before one provider call under an independent operation lock.
+
+    A concurrent caller fails closed instead of racing another rental. An
+    observation timeout leaves the pending owned name intact; a later call
+    refuses reentry even after the operation lock has been released.
     """
     pending = dict(intent_binding, pod_id='pending-original-rental')
     validate(pending)
-    prior = registry.load().get(pending['name'])
-    if prior and not prior.get('released_at'):
-        raise ValueError('original rental name already reserved; observe, never reissue')
-    bind(registry, pending)
-    receipt = rent()
-    if type(receipt) is not dict or type(receipt.get('pod_id')) is not str or not receipt['pod_id']:
-        raise ValueError('original authenticated provider pod identity required')
-    bound = dict(pending, pod_id=receipt['pod_id'])
-    bind(registry, bound)
-    return receipt, bound
+    with rental_operation_lock(registry, pending['name']):
+        prior = registry.load().get(pending['name'])
+        if prior and not prior.get('released_at'):
+            raise ValueError('original rental name already reserved; observe, never reissue')
+        bind(registry, pending)
+        receipt = rent()
+        if type(receipt) is not dict or type(receipt.get('pod_id')) is not str or not receipt['pod_id']:
+            raise ValueError('original authenticated provider pod identity required')
+        bound = dict(pending, pod_id=receipt['pod_id'])
+        bind(registry, bound)
+        verify(registry, bound)
+        return receipt, bound

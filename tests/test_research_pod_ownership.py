@@ -1,9 +1,14 @@
 import copy
 import unittest
+import tempfile
+import pathlib
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from ops.research_pod_ownership import bind, before_launch, completed, heartbeat, verify, rent_once, VERSION, OWNER
 
 class Registry:
- def __init__(self):self.rows={};self.calls=[];self.fail=False
+ def __init__(self,path):self.rows={};self.calls=[];self.fail=False;self.path=path
+ def registry_path(self):return self.path
  def load(self):return copy.deepcopy(self.rows)
  def register(self,name,**kwargs):
   self.calls.append(('register',name))
@@ -12,7 +17,7 @@ class Registry:
  def touch(self,name):self.calls.append(('touch',name))
 
 class Ownership(unittest.TestCase):
- def setUp(self):self.r=Registry();self.b=dict(version=VERSION,name='affine-research-node',pod_id='exact-provider-id',purpose='bounded qualification',price_usd_h=5.76,rental_intent_sha256='a'*64,retention_authorized=True)
+ def setUp(self):self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.r=Registry(pathlib.Path(self.temp.name)/"registry.json");self.b=dict(version=VERSION,name='affine-research-node',pod_id='exact-provider-id',purpose='bounded qualification',price_usd_h=5.76,rental_intent_sha256='a'*64,retention_authorized=True)
  def test_register_before_launch_and_keep_retained_after_completion(self):
   order=[]
   def launch():order.append(len(self.r.calls));return 17
@@ -54,4 +59,26 @@ class Ownership(unittest.TestCase):
   with self.assertRaises(TimeoutError):rent_once(self.r,self.b,rent)
   with self.assertRaises(ValueError):rent_once(self.r,self.b,rent)
   self.assertEqual(calls,[1]);self.assertEqual(self.r.rows[self.b['name']]['expected_hours'],0)
+ def test_concurrent_rental_callback_runs_exactly_once(self):
+  entered=threading.Event();release=threading.Event();calls=[]
+  def provider():
+   calls.append(1);entered.set()
+   if not release.wait(timeout=5):raise TimeoutError('test timeout')
+   return {'pod_id':'one-original-provider-id'}
+  with ThreadPoolExecutor(max_workers=2)as pool:
+   original=pool.submit(rent_once,self.r,self.b,provider)
+   self.assertTrue(entered.wait(timeout=5))
+   try:
+    concurrent=pool.submit(rent_once,self.r,self.b,provider)
+    with self.assertRaises(BlockingIOError):concurrent.result(timeout=5)
+   finally:release.set()
+   receipt,bound=original.result(timeout=5)
+  self.assertEqual(calls,[1]);verify(self.r,bound)
+  with self.assertRaises(ValueError):rent_once(self.r,self.b,provider)
+  self.assertEqual(calls,[1])
+ def test_symlink_operation_lock_refuses_provider(self):
+  import hashlib
+  lock=pathlib.Path(self.temp.name)/('research-rental-'+hashlib.sha256(self.b['name'].encode()).hexdigest()+'.lock');target=pathlib.Path(self.temp.name)/'foreign';target.write_text('');lock.symlink_to(target);calls=[]
+  with self.assertRaises(OSError):rent_once(self.r,self.b,lambda:calls.append(1))
+  self.assertFalse(calls)
 if __name__=='__main__':unittest.main()
