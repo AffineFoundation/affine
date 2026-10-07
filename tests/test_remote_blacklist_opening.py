@@ -38,6 +38,11 @@ class Opening(unittest.TestCase):
   self.key.verify_key.verify(canonical(m),base64.b64decode(published[0]['signature']));self.assertEqual(m[FIELD],self.policy)
   self.assertEqual(set(m['capabilities']),{'a'*64});self.assertEqual((m['K'],m['L']),(1,1));return m
  def test_first_local_and_first_public_manifest_complete(self):self.assert_success()
+ def test_signed_opening_remains_admissible_after_collection_cutoff(self):
+  m=self.assert_success();before=canonical(m)
+  first=admit(m[FIELD],m,self.auth,at=m['start'],round_number=40)
+  later=admit(m[FIELD],m,self.auth,at=100000,round_number=40)
+  self.assertEqual(first,later);self.assertEqual(before,canonical(m))
  def test_invalid_policy_refuses_before_gateway_save_and_publication(self):
   for field,value in [('checkpoint','9'*64),('source_sha256','9'*64),('target_round',39)]:
    p=copy.deepcopy(self.policy['payload']);p[field]=value

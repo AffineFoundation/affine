@@ -11,7 +11,7 @@ class BlacklistSelectionTests(unittest.TestCase):
     def setUp(self):
         self.key=SigningKey.generate();self.auth=self.key.verify_key.encode().hex()
         self.bad='a'*64;self.good='b'*64;self.new='c'*64
-        self.manifest=dict(epoch='future',checkpoint={'id':'d'*64},source_bundle={'sha256':'e'*64},deadline=3700)
+        self.manifest=dict(epoch='future',checkpoint={'id':'d'*64},source_bundle={'sha256':'e'*64},start=3650,deadline=3700)
         self.policy=dict(version='continuous-probabilistic-audit-v3',recent_epochs=8,decay=.8,prior_alpha=1,prior_beta=1,invalid_multiplier=.1,zero_epoch_after=2,blacklist_after=3,blacklist_epochs=4)
         self.assessment=dict(version='hourly-current-miner-assessment-v1',cutoff=3600,evidence_cutoff=3600,assessment_stale=False,writer_policy_sha256='f'*64,miner_estimates={self.bad:dict(blacklisted=True,confirmed_invalid_recent=3,latest_bad_round=36,current_estimate_round=36,unresolved_is_fraud=False,infrastructure_counted_in_coverage=False),self.good:dict(blacklisted=False,reward_multiplier=0,numerical_ambiguous_recent_weight=99)})
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
@@ -34,6 +34,35 @@ class BlacklistSelectionTests(unittest.TestCase):
         self.assertEqual(status['eligible_count'],3);self.assertEqual(status['training_eligible_count'],2)
     def test_frozen_retry_not_rechecked_at_later_hour(self):
         first=self.select();second=self.select(at=100000);self.assertEqual(first,second)
+    def test_first_selection_after_cutoff_expiry_uses_signed_opening(self):
+        original=sign(self.key,self.manifest)
+        self.manifest=filtering.authenticate(original,self.auth)
+        selected,status=self.select(at=100000)
+        self.assertEqual(selected,self.rows[1:])
+        self.assertEqual(status['blacklist_selection']['assessment_cutoff'],3600)
+        self.assertEqual(filtering.authenticate(original,self.auth),self.manifest)
+    def test_stale_at_opening_remains_rejected(self):
+        self.manifest.update(start=7201,deadline=7300)
+        with self.assertRaisesRegex(ValueError,'fresh original'):self.select(at=7400)
+    def test_partial_and_malformed_epoch_window_refuse(self):
+        for change in ('missing-start','missing-deadline','empty','too-long','bool','nonfinite'):
+            m=copy.deepcopy(self.manifest)
+            if change=='missing-start':m.pop('start')
+            if change=='missing-deadline':m.pop('deadline')
+            if change=='empty':m['deadline']=m['start']
+            if change=='too-long':m['deadline']=m['start']+7201
+            if change=='bool':m['start']=True
+            if change=='nonfinite':m['deadline']=float('inf')
+            with self.subTest(change=change),self.assertRaisesRegex(ValueError,'opening/deadline'):
+                filtering.admit(m[filtering.FIELD],m,self.auth,at=100000,round_number=37)
+    def test_minimal_preopening_context_keeps_real_time_freshness(self):
+        m=dict(checkpoint=self.manifest['checkpoint'],source_bundle=self.manifest['source_bundle'])
+        filtering.admit(self.manifest[filtering.FIELD],m,self.auth,at=3800,round_number=37)
+        with self.assertRaisesRegex(ValueError,'fresh original'):
+            filtering.admit(self.manifest[filtering.FIELD],m,self.auth,at=7201,round_number=37)
+    def test_tampered_signed_opening_is_not_authenticated(self):
+        document=sign(self.key,self.manifest);document['payload']['start']-=3600
+        with self.assertRaises(ValueError):filtering.authenticate(document,self.auth)
     def test_replaced_policy_cannot_change_retry_inputs(self):
         self.select();self.assessment['miner_estimates'][self.bad]['blacklisted']=False;self.enable()
         with self.assertRaisesRegex(ValueError,'immutable'):self.select()
@@ -71,11 +100,11 @@ class CollectionBlacklistTests(unittest.TestCase):
             for receipt in rows.values():receipt['sha256']=sha(receipt['commitment_document'])
             return rows
         c.gateway.capture_learner=capture
-        base=copy.deepcopy(fx.manifest)
+        base=copy.deepcopy(fx.manifest);base['start']=10
         captured=[]
         def registered(*args,**kw):
             value=register_population(*args,**kw);captured.append(value);return value
-        with patch('subnet.continuous_audit_service.register_population',side_effect=registered),patch('time.time',return_value=21):
+        with patch('subnet.continuous_audit_service.register_population',side_effect=registered),patch('time.time',return_value=3701):
             _,old_inputs,old_pop=learner.collect(c,base,round_number=1)
         # Same authentic original committed documents in a fresh owned controller state.
         c.state=Path(fx.tmp.name)/'filtered';c.state.mkdir()
@@ -83,7 +112,9 @@ class CollectionBlacklistTests(unittest.TestCase):
         audit=dict(version='continuous-probabilistic-audit-v3',recent_epochs=8,decay=.8,prior_alpha=1,prior_beta=1,invalid_multiplier=.1,zero_epoch_after=2,blacklist_after=3,blacklist_epochs=4)
         base[filtering.FIELD]=sign(fx.operator,dict(version=filtering.VERSION,checkpoint=base['checkpoint']['id'],source_sha256=base['source_bundle']['sha256'],target_round=1,maximum_age_seconds=3600,assessment_document=sign(fx.operator,status),writer_policy_sha256='f'*64,audit_policy=audit))
         base['learner_blacklist_selection_round']=1
-        with patch('subnet.continuous_audit_service.register_population',side_effect=registered),patch('time.time',return_value=21):
+        # The FIRST filtered capture happens after the assessment's wall-clock
+        # cutoff expires, while this signed opening was originally fresh.
+        with patch('subnet.continuous_audit_service.register_population',side_effect=registered),patch('time.time',return_value=3701):
             trained,new_inputs,new_pop=learner.collect(c,base,round_number=1)
         self.assertEqual(len(old_inputs),1);self.assertEqual(new_inputs,[])
         self.assertEqual(captured[0]['records'],captured[1]['records'])
@@ -96,7 +127,7 @@ class CollectionBlacklistTests(unittest.TestCase):
     def test_training_job_cannot_reinsert_blacklisted_input_or_unbind_snapshot(self):
         from test_committed_training_inputs import LearnerAdmissionTests
         fx=LearnerAdmissionTests();fx.setUp();self.addCleanup(fx.tmp.cleanup)
-        m=fx.manifest;m['deadline']=20
+        m=fx.manifest;m['start']=10;m['deadline']=20
         audit=dict(version='continuous-probabilistic-audit-v3',recent_epochs=8,decay=.8,prior_alpha=1,prior_beta=1,invalid_multiplier=.1,zero_epoch_after=2,blacklist_after=3,blacklist_epochs=4)
         assessment=dict(version='hourly-current-miner-assessment-v1',cutoff=0,evidence_cutoff=0,assessment_stale=False,writer_policy_sha256='f'*64,miner_estimates={fx.identity:dict(blacklisted=True,confirmed_invalid_recent=3,latest_bad_round=1,current_estimate_round=1,unresolved_is_fraud=False,infrastructure_counted_in_coverage=False)})
         m[filtering.FIELD]=sign(fx.operator,dict(version=filtering.VERSION,checkpoint=m['checkpoint']['id'],source_sha256=m['source_bundle']['sha256'],target_round=1,maximum_age_seconds=3600,assessment_document=sign(fx.operator,assessment),writer_policy_sha256='f'*64,audit_policy=audit))

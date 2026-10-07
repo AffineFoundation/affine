@@ -23,7 +23,7 @@ class PeerTests(unittest.TestCase):
   for f in files:shutil.copyfile(PROFILE/'subnet'/f,self.operator/'subnet'/f)
   package='_peer_'+self.root.name.replace('-','_');mod=types.ModuleType(package);mod.__path__=[str(self.operator/'subnet'),str(BASE/'subnet')];sys.modules[package]=mod
   self.B=importlib.import_module(package+'.learner_selection_operator_bridge');self.C=importlib.import_module(package+'.committed_training_inputs');self.F=importlib.import_module(package+'.learner_blacklist_selection')
-  fx=LearnerAdmissionTests();fx.setUp();self.addCleanup(fx.tmp.cleanup);fx.manifest['source_bundle']['sha256']=SCIENCE;fx.build();self.fx=fx;self.key=fx.operator;self.auth=fx.authority
+  fx=LearnerAdmissionTests();fx.setUp();self.addCleanup(fx.tmp.cleanup);fx.manifest['source_bundle']['sha256']=SCIENCE;fx.manifest['start']=10;fx.build();self.fx=fx;self.key=fx.operator;self.auth=fx.authority
   m=copy.deepcopy(fx.manifest);m['learner_blacklist_selection_round']=39
   policy=dict(version='continuous-probabilistic-audit-v3',recent_epochs=8,decay=.8,prior_alpha=1,prior_beta=1,invalid_multiplier=.1,zero_epoch_after=2,blacklist_after=3,blacklist_epochs=4)
   a=dict(version='hourly-current-miner-assessment-v1',cutoff=0,evidence_cutoff=0,assessment_stale=False,writer_policy_sha256='f'*64,miner_estimates={})
@@ -39,6 +39,15 @@ class PeerTests(unittest.TestCase):
  def test_admission_and_original_job_retry_are_byte_identical(self):
   self.assertEqual(self.peer(),self.peer())
   with self.assertRaisesRegex(ValueError,'reissued'):self.B.make_admission(self.admitted,self.m,self.approval,self.auth,lambda v:sign(self.key,v))
+ def test_expired_at_collection_snapshot_passes_actual_CPU_peer(self):
+  m=self.C.coverage_manifest(copy.deepcopy(self.m),[self.fx.obj],seed='c'*64,captured_at=7201)
+  original=sign(self.key,m);m=self.F.authenticate(original,self.auth)
+  m['learner_blacklist_selection_snapshot']=self.F.admit(m[self.F.FIELD],m,self.auth,at=7201,round_number=39)
+  job=dict(self.job,manifest=sign(self.key,m))
+  admitted=self.B.make_admission(job,m,self.approval,self.auth,lambda v:sign(self.key,v))
+  receipt=self.peer(admitted)
+  self.assertTrue(receipt['scientific_source_unchanged']);self.assertFalse(receipt['scientific_operation_started'])
+  self.assertEqual(admitted['source_files'],MAP);self.assertEqual(self.F.authenticate(original,self.auth)['start'],10)
  def test_missing_admission_and_old_projection_digest_refuse(self):
   with self.assertRaisesRegex(ValueError,'required'):self.peer(self.job)
   j=copy.deepcopy(self.admitted);a=j[self.B.FIELD_ADMISSION]['payload'];a['computation_binding_sha256']='0'*64;j[self.B.FIELD_ADMISSION]=sign(self.key,a)

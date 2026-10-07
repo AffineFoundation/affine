@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 08:16 UTC:
+Current operational status, 2026-10-07, 08:41 UTC:
 Epoch 39 completed in 53.770 minutes, training 256 eligible UNAUDITED task pairs
 and advancing persistent optimizer step 29 to 30. Checkpoint 30 was durably published after independent full readback
 of ten model objects and all 23 optimizer shards. The original training job
@@ -28,6 +28,18 @@ opened round 41, which is collecting submissions. This latest controller-state
 observation does not itself independently authenticate every checkpoint payload.
 No replacement training is claimed. E40 took about 74 minutes including its
 opening outage; it did not meet the one-hour target.
+E40 publication closure is now independently authenticated: ten model-object
+publication receipts, all 23 optimizer shards, original successful terminal
+bindings and four fresh R2 metadata reads match the committed descriptors.
+E41 subsequently stalled because its immutable blacklist assessment, fresh at
+opening, was rechecked against the later collection wall clock. A narrow CPU
+fix now checks snapshot freshness at the authenticated epoch opening; stale
+openings and malformed/tampered contexts remain rejected. Twelve actual/historical
+CPU controls and 131 public focused tests passed. The controller and CPU peer
+were updated in new namespaces, preserving old evidence and all 177 scientific
+files. The initial restart selected an older systemd override; that ordering
+was corrected, and the actual running process command was checked against the
+v6 policy. The same E41 has resumed; a post-fix training result is not yet claimed.
 The latest independently authenticated matched held-out result is checkpoint
 30 at 78/128, versus checkpoint 29 at 76/128 (seven gains, five losses on the
 same 128 tasks, seeds and prompt hashes). It remains below checkpoint 23 at
@@ -77,8 +89,12 @@ silently retried as the same execution.
 The actual legacy affine-pod-reaper report and ledger identify its 90-minute
 unregistered-pod policy as the cause of both research deletions. That PM2
 service was stopped and its persistent enforcement setting disabled. A new,
-distinct single H100 research pod has been rented for $2.05/hour; resource and
-runtime qualification are pending. Prior scopes and evidence remain unchanged.
+distinct single H100 research pod has been rented for $2.05/hour; runtime/source qualification completed with genuine original waits, all 2,121
+source and 177 scientific hashes and four native controls. ROOT independently
+authenticated its three R2 metadata objects and signed the CPU-only readiness
+ACK. Its distinct exact-33 parent model/optimizer restoration is now running;
+no restored-state completion or research learning result is claimed. Prior
+scopes and evidence remain unchanged.
 No research learning result is claimed. The negative-quality comparison plan is
 in docs/TRAINING_STABILITY_SAME_PARENT_REVIEW.md on GitHub.
 The separate original BASE full-750 evaluation completed at 548/750
@@ -89,7 +105,11 @@ physical BASE retirement and full R2 downloads of the archive, stdout and termin
 The assurance is operator-owned native grading, not miner proof verification.
 The corresponding first CP24 full-750 arm has now been dispatched through the
 original reviewed coordinator, with its own signed scope and 24 job windows.
-No CP24 result is claimed yet. This wider comparison is
+Its original first group completed 32 tasks with 27 successes. The old frozen
+CPU coordinator then rejected the native 0644 report, so it needs the already
+qualified report-reader compatibility fix and an authenticated cache-lifecycle
+successor before continuing the same remaining jobs. The completed group will
+not be regenerated. No complete CP24 750-task result is claimed. This wider comparison is
 not the 128-task diagnostic, and a trained-model improvement is not yet claimed.
 
 Earlier operational history (the latest update above takes precedence):

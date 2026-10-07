@@ -10,6 +10,24 @@ FIELD = 'learner_blacklist_selection_policy'
 VERSION = 'confirmed-blacklist-training-selection-v1'
 
 
+def opening_freshness_time(manifest, at):
+    """Use the authenticated epoch opening, without expiring saved snapshots.
+
+    Callers authenticate the complete original manifest. Minimal pre-opening
+    contexts have neither start nor deadline and use the actual check time.
+    Returned admission fields stay compatible with historical signed jobs.
+    """
+    if type(at) not in (int, float) or not math.isfinite(at):
+        raise ValueError('finite original assessment admission time')
+    if 'start' not in manifest and 'deadline' not in manifest:
+        return at
+    start, deadline = manifest.get('start'), manifest.get('deadline')
+    if (any(type(v) not in (int, float) or not math.isfinite(v) for v in (start, deadline)) or
+            not 0 < deadline - start <= 7200 or at < start):
+        raise ValueError('bounded original signed epoch opening/deadline')
+    return start
+
+
 def admit(document, manifest, authority, *, at, round_number=None):
     p = authenticate(document, authority)
     fields = {'version', 'checkpoint', 'source_sha256', 'target_round',
@@ -25,13 +43,14 @@ def admit(document, manifest, authority, *, at, round_number=None):
     from .continuous_audit_policy import policy
     audit = policy(p['audit_policy'])
     a = authenticate(p['assessment_document'], authority)
+    freshness_at = opening_freshness_time(manifest, at)
     if (a.get('version') != 'hourly-current-miner-assessment-v1' or
             a.get('assessment_stale') is not False or
             a.get('writer_policy_sha256') != p['writer_policy_sha256'] or
             type(a.get('cutoff')) is not int or a['cutoff'] % 3600 or
             a.get('evidence_cutoff') != a['cutoff'] or
             type(at) not in (int, float) or not math.isfinite(at) or
-            not 0 <= at - a['cutoff'] <= p['maximum_age_seconds'] or
+            not 0 <= freshness_at - a['cutoff'] <= p['maximum_age_seconds'] or
             type(a.get('miner_estimates')) is not dict):
         raise ValueError('fresh original authenticated blacklist assessment')
     excluded = []
