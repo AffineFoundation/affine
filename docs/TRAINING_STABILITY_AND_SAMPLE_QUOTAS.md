@@ -161,6 +161,25 @@ not reasons to reset the optimizer or silently change the experiment.
 
 ## Controlled comparison
 
+### Fixed rollout groups are a separate experiment
+
+Published math-RL recipes do not generally prescribe equal success/failure
+quotas. [DeepSeekMath section 4.2](https://arxiv.org/html/2402.03300v2#S4.SS2)
+samples 64 responses per question. [DAPO section 4.1](https://arxiv.org/html/2503.14476v2#S4.SS1)
+samples 16 responses for each of 512 prompts, then uses training minibatches of
+512 responses. These are group sizes and total training batches respectively;
+they are not 64 or 16 responses of each outcome class.
+
+Our K1/L1 versus K2/L2 experiment retains the current pairwise objective and
+tests more distinct examples of each class with equal task weighting. A separate
+fixed-group experiment could compare the first 4, 8 and 16 prescribed attempts,
+retaining all their recorded outcomes and measuring groups without both classes.
+It must explicitly choose its objective and treatment of those groups before
+dispatch; a larger quota alone does not reproduce GRPO or DAPO. Do not silently
+replace the balanced-quota study or activate a new miner requirement based on
+these published settings. Record search cost as well as usable training supply:
+two successes and two failures can require substantially more than four attempts.
+
 1. Complete the existing same-parent comparison of capped versus completed
    unsuccessful trajectories. Keep this experiment separate from quota changes.
 2. Measure supply with the same approved model, tasks, harness, sampler and ordered
@@ -273,6 +292,14 @@ training prerequisite. Cumulative submission updates add immutable completed
 task records; identical redelivery is idempotent. If partial task revisions are
 introduced, their permitted additions and freeze rules need an explicit contract
 rather than assuming an ordinary presigned PUT is a transactional append.
+
+The prescribed sampling context already includes the epoch and checkpoint;
+per-token draws additionally bind task, attempt, turn and token position. A
+receipt from an earlier epoch cannot be relabeled as the new epoch's receipt.
+That verifies compatibility with the declared sampling computation, not the
+historical time of physical execution. Identical tokens under a genuinely new
+binding still require that binding's sampling verification; text equality alone
+is neither fresh-execution evidence nor a cheating verdict.
 
 Use stable, authenticated identities and a durable ledger, not filenames or UID
 alone. UIDs can be reassigned. Scope a task to the checkpoint, versioned taskset,
