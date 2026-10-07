@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 01:11 UTC:
+Current operational status, 2026-10-07, 01:20 UTC:
 Checkpoint 24 is the committed model. Epochs 31, 32 and 33 completed normally
 in 48.855, 50.372 and 50.692 minutes. Epoch 33 trained on 256 UNAUDITED task pairs
 and advanced optimizer step 23 to 24. All ten model files (15.24 GB) and 23
@@ -18,14 +18,18 @@ confirmed identical task indices, seeds and task hashes across the 128 problems:
 This is a positive datapoint, not evidence of sustained convergence.
 The coordinator API, continuous auditor and learner have durable ROOT-pinned
 startup policies and automatic restart on failure. The separate hourly weight
-writer submitted the 00:00 UTC assessment for 205 current UIDs at block 9227402
-under the repaired evidence policy, with zero evidence refusals or stale
-registrations. This is submission evidence, not a separately observed reveal.
+writer submitted the 01:00 UTC assessment for 207 current UIDs at block 9227704.
+The assessment was fresh; 24 no-longer-registered identities were excluded
+using the current registration snapshot. This is submission evidence, not a separately observed reveal.
 Seven verifier workers remain enrolled. A replacement single-H200 machine is
 rented with explicit retained ownership. Its original CPU-only runtime installation
 completed successfully. Original checkpoint staging also completed and its
 bounded evidence archive passed independent full R2 readback. A twenty-control
-GPU qualification is running; production qualification and enrollment remain pending. The previous additional H200 passed bounded
+GPU qualification completed with four honest VALID controls and sixteen
+mutants INVALID, including forged tokens with regenerated target-model fingerprints.
+The original process exited successfully and its full evidence archive passed
+independent ROOT readback. This qualifies the historical checkpoint-21 research
+test only; current-checkpoint production qualification and enrollment remain pending. The previous additional H200 passed bounded
 research qualification but was deleted through the provider API during a later
 reference test; that interrupted test grants no enrollment or numerical relabel.
 
