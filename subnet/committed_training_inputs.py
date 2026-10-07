@@ -175,7 +175,9 @@ def validate_job(job,manifest,authority):
     expected=coverage_manifest(manifest,submissions,seed=coverage.get('seed'),captured_at=coverage.get('captured_at'))['training_coverage']
     from .learner_blacklist_selection import FIELD,admit,partition
     if FIELD in manifest:
-        if 'subnet/learner_blacklist_selection.py'not in job.get('source_files',{}):raise ValueError('training blacklist selection source pin')
+        if 'subnet/learner_blacklist_selection.py'not in job.get('source_files',{}):
+            from .learner_selection_operator_bridge import validate_metadata
+            validate_metadata(job,manifest,authority)
         protected_round=manifest.get('learner_blacklist_selection_round')
         if type(protected_round)is not int:raise ValueError('protected original learner selection round')
         status=admit(manifest[FIELD],manifest,authority,at=coverage['captured_at'],round_number=protected_round)

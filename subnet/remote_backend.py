@@ -102,6 +102,22 @@ class RemoteJobs:
         """Detach all inherited SSH descriptors; preserve one launch attempt."""
         arguments=[self.python,'-B','-m','subnet.remote_runner',remotejob,
                    '--authority',self.controller.authority.id,'--workspace',self.workspace]
+        # Future CPU peer executes separately admitted metadata only. The full
+        # original job and 177 scientific file map are never projected.
+        document=json.loads((self.state/(identifier+'-job.json')).read_bytes())
+        if document['payload']['role']=='train' and 'learner_blacklist_selection_policy' in document['payload']['manifest']['payload']:
+            from .learner_selection_operator_bridge import validate_metadata
+            grant,_=validate_metadata(document['payload'],document['payload']['manifest']['payload'],self.controller.authority.id)
+            peer=self.config.get('learner_selection_cpu_peer')
+            if not isinstance(peer,dict)or set(peer)!={'operator_root','entry','runner','bytecode_prefix_root','authorization_document'}or peer['authorization_document']!=document['payload']['learner_selection_operator_admission']['payload']['authorization_document']:
+                raise ValueError('exact separately ROOT-admitted CPU peer configuration')
+            if not grant['backend_execution_allowed']:raise ValueError('peer execution default off')
+            prefix=peer['bytecode_prefix_root']+'/'+identifier
+            arguments=[self.python,'-I','-B','-X','pycache_prefix='+prefix,peer['runner'],
+                       '--job',remotejob,'--authority',self.controller.authority.id,
+                       '--scientific-root',self.code,'--operator-root',peer['operator_root'],
+                       '--entry',peer['entry'],'--workspace',self.workspace,
+                       '--fresh-bytecode-prefix',prefix,'--apply']
         if cache:arguments+=['--checkpoint-cache',cache]
         code=("import json,os,subprocess,time;from pathlib import Path;"
               "root=Path("+repr(self.workspace)+");"
@@ -112,7 +128,7 @@ class RemoteJobs:
               "child=subprocess.Popen("+repr(arguments)+",cwd="+repr(self.code)+","
               "stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,"
               "start_new_session=True,close_fds=True,"
-              "env=dict(os.environ,CUBLAS_WORKSPACE_CONFIG=':4096:8'));"
+              "env=dict(os.environ,CUBLAS_WORKSPACE_CONFIG=':4096:8',PYTHONDONTWRITEBYTECODE='1'));"
               "log.close();print(json.dumps({'job_id':"+repr(identifier)+",'launcher_pid':child.pid}))")
         command=shlex.quote(self.python)+' -I -B -c '+shlex.quote(code)
         try:self.command(command,timeout=30)
@@ -254,7 +270,8 @@ class RemoteJobs:
                 else:
                     from .training_receipts import VERSION,validate_job as validate_receipt_job
                 payload['training_input_policy']=VERSION
-                validate_receipt_job(payload,manifest,self.controller.authority.id)
+                if 'learner_blacklist_selection_policy'not in manifest:
+                    validate_receipt_job(payload,manifest,self.controller.authority.id)
             from .persistent_cpu_adamw import POLICY as PERSISTENT_POLICY
             if role=='train'and fields.get('training_policy')==PERSISTENT_POLICY:
                 if 'persistent_training'in fields:raise ValueError('persistent capabilities are original-job scoped')
@@ -265,6 +282,12 @@ class RemoteJobs:
                     if transport_ttl<=0:raise ValueError('startup recovery authorization expired before capability issue')
                 payload['persistent_training']=prepare_job(self.controller,manifest,identifier,fields['steps'],transport_ttl)
                 validate_job(payload,manifest,self.controller.authority.id)
+            if role=='train'and 'learner_blacklist_selection_policy'in manifest:
+                from .learner_selection_operator_bridge import make_admission
+                peer=self.config.get('learner_selection_cpu_peer')
+                if not isinstance(peer,dict):raise ValueError('enabled selection requires explicitly admitted CPU peer')
+                payload=make_admission(payload,manifest,peer['authorization_document'],self.controller.authority.id,self.controller.signed)
+                validate_receipt_job(payload,manifest,self.controller.authority.id)
             jobpath=self.state/(identifier+'-job.json');save(jobpath,self.controller.signed(payload))
             prior=dict(job_id=identifier,role=role,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],job_sha256=hashlib.sha256(canonical(payload)).hexdigest(),manifest_sha256=hashlib.sha256(canonical(manifest)).hexdigest(),source_files=self.metadata['source_files'],runtime_versions=self.metadata['runtime_versions'])
             if dispatch_only:prior['physical_workspace']=self.workspace
