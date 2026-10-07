@@ -103,3 +103,57 @@ replay native grading, activate K2/L2, or implement persistent job receipts.
 The checker is deliberately in-memory: it does not survive process restart and
 must not be treated as the production optimizer idempotence barrier. Actual
 receipt/transaction integration and restart/recovery tests remain required.
+
+## Opt-in durable research selection ledger
+
+`ops/paired_quota_research_ledger.py` adds an explicitly enabled, privately
+created SQLite research ledger. It remains unconnected to production callers.
+A transaction binds the complete selected revision population to one original
+job ID, settings digest, parent optimizer-state descriptor digest and starting
+step. Task slots, revisions, execution IDs and content IDs have uniqueness
+constraints. Reservation rollback is all-or-nothing, including conflicts late
+in a multi-slot reservation. Repacking/redelivery cannot reserve or count the
+same selected data in another job; copied members across UIDs also conflict.
+
+Before invoking the executor, the ledger durably changes `reserved` to
+`executing`. Only one concurrent claimant can invoke that executor. A completed
+job returns its recorded original receipt on redelivery without invoking it
+again. Exceptions change an unresolved claim to `uncertain`. A hard process
+crash leaves `executing`; neither state has a timeout, reset or automatic retry.
+This deliberately trades liveness for avoiding uncertain double application.
+
+The crash tests actually terminate child processes before or after writing a
+**simulated** optimizer-step marker, reopen the SQLite ledger, and prove no
+second executor invocation. They do not run a GPU optimizer. After-update
+recovery records the same original result only through a caller-supplied outcome
+authenticator; tests use a synthetic authenticator. Real integration must verify
+the original signed job/report, exact selected input population and parent,
+optimizer step lineage, durable model/state objects and independent readback.
+A receipt's self-declared success is insufficient. The ledger neither publishes
+checkpoints nor mints authority signatures.
+
+### What this does not guarantee
+
+A SQLite selection claim cannot atomically commit a GPU optimizer update,
+bucket publication and coordinator state pointer. A crash after the update but
+before receipt persistence is indistinguishable here from a crash before the
+update. Recovery must inspect the **original execution's** authenticated durable
+outcome. If that evidence is missing, leave the job unresolved rather than
+reapply it. Nor does this helper implement global compare-and-swap of the latest
+optimizer parent, worker authorization, remote execution fencing, recovery from
+loss of the ledger disk, or network receipt authentication.
+
+Production already has separate admission/publication semantics:
+`subnet/training_receipts.py` authenticates original completed verifier queue
+records; `subnet/persistent_training_worker.py` stages state with authority commit
+still required; `subnet/persistent_publication.py` gates publication on verified
+original state/checkpoint paths; and `persistent_training_controller.commit_latest`
+requires the expected parent and monotonic optimizer step. These are distinct
+checks. This prospective ledger must bind to those actual original-job and
+publication mechanisms instead of replacing them with a local `complete` flag.
+Unaudited eligibility remains unaudited; this adds no inference exemption.
+
+Still required before production: shared authoritative storage/backup and remote
+fencing, selected-revision binding into signed job inputs, the actual original
+publication/parent-CAS authenticator, and end-to-end trainer crash/recovery tests
+with model/Adam state and durable readbacks. Research K2/L2 remains disabled.
