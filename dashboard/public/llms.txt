@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 04:14 UTC:
+Current operational status, 2026-10-07, 04:19 UTC:
 Checkpoint 27 is the controller's committed model. Epochs 31, 32 and 33 completed normally
 in 48.855, 50.372 and 50.692 minutes. Epoch 33 trained on 256 UNAUDITED task pairs
 and advanced optimizer step 23 to 24. All ten model files (15.24 GB) and 23
@@ -114,7 +114,12 @@ argument-forwarding error stopped the corrective coordinator before further
 scientific jobs. Its tested fix was applied to a separate recovery namespace,
 but the resume then rejected a clone-cache receipt that had legitimately changed
 during the completed first group. No additional scientific group was dispatched.
-The successor receipt binding is under investigation; no 750-task result is claimed.
+A scoped successor binding now authenticates the original clone receipt, the
+precise updated receipt, unchanged hashes and inode records for all eleven model
+files, and the original first-group durable acknowledgement. Nine CPU controls
+passed, including the full original-entry continuation path. The original first
+group was acknowledged without redispatch, and the second original group is
+running. No completed 750-task result is claimed.
 A separate single-H100 controlled training experiment is being prepared to
 compare capped versus completed negative answers from the same checkpoint and
 optimizer state. Its CPU runtime installation, 20 local controls and full model/
