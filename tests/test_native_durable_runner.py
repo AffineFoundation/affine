@@ -76,6 +76,14 @@ class NativeRunner(unittest.TestCase):
         runner.validate_native_operator(self.policy,self.authority,{'runtime_source_files':{'subnet/math.py':'b'*64}})
         self.policy['operator_overlay']['root']=str(self.source)
         with self.assertRaises(ValueError):runner.validate_native_operator(self.policy,self.authority,{'runtime_source_files':{'subnet/math.py':'b'*64}})
+    def test_root_signed_readonly_benchmark_refused_before_operator_import(self):
+        row=self.policy['native_training_eligibility'];payload=json.loads(self.auth.read_bytes())['payload']
+        payload['benchmark_scope']={'dispatchable':False,'model_operations':False}
+        signed=dict(payload=payload,signer=self.authority,signature=base64.b64encode(self.key.sign(runner.guards.canonical(payload)).signature).decode())
+        self.auth.write_text(json.dumps(signed));row['authorization'].update(file_sha256=hashlib.sha256(self.auth.read_bytes()).hexdigest(),payload_sha256=runner.guards.digest(payload))
+        with patch.object(runner,'load_native_operator',side_effect=AssertionError('no operator import')):
+            with self.assertRaisesRegex(ValueError,'benchmark cannot authorize production'):
+                runner.validate_native_operator(self.policy,self.authority,{'runtime_source_files':{'subnet/math.py':'b'*64}})
     def test_default_off_constructor_unchanged(self):
         del self.policy['native_training_eligibility']
         service=runner.prepare_runtime(self.policy)

@@ -199,6 +199,7 @@ def validate_native_operator(p,authority,source):
     if {str(f.relative_to(root)) for f in root.rglob('*') if f.is_file()}!=set(row['files']):
         raise ValueError('native operator complete membership')
     auth=guards.verify_document(row['authorization'],authority)
+    if 'benchmark_scope' in auth:raise ValueError('readonly benchmark cannot authorize production operator')
     if (auth.get('source_root')!=p['source_root'] or auth.get('source_sha256')!=p['source_sha256'] or
         auth.get('source_files')!=source['runtime_source_files'] or
         auth.get('execution_root')!=p.get('operator_overlay',{}).get('root') or
