@@ -187,13 +187,13 @@ def prepare_runtime(p):
 
 def validate_native_operator(p,authority,source):
     row=p['native_training_eligibility']
-    fields={'version','root','files','authorization','tokenizer_root','interpreter','boundary'}
+    fields={'version','root','files','authorization','tokenizer_root','interpreter','boundary','lifecycle_policy'}
     if type(row) is not dict or set(row)!=fields or row['version']!='pinned-native-eligibility-operator-v1':
         raise ValueError('exact native operator opt-in')
     root=Path(row['root'])
     if not root.is_absolute() or root.resolve()!=root or root.is_symlink() or root.stat().st_uid!=os.getuid():
         raise ValueError('owned native operator root')
-    if set(row['files'])!={'native_training_outcome_filter.py','native_training_eligibility.py'}:
+    if set(row['files'])!={'native_training_outcome_filter.py','native_training_eligibility.py','native_training_lifecycle.py'}:
         raise ValueError('exact native operator import closure')
     guards.pinned_files(root,row['files'])
     if {str(f.relative_to(root)) for f in root.rglob('*') if f.is_file()}!=set(row['files']):
@@ -204,7 +204,10 @@ def validate_native_operator(p,authority,source):
         auth.get('execution_root')!=p.get('operator_overlay',{}).get('root') or
         'subnet/persistent_training_controller.py' not in p.get('operator_overlay',{}).get('overrides',{})):
         raise ValueError('native scientific baseline and explicit CPU controller exception')
-    load_native_operator(row).validate_future_boundary(row['boundary'])
+    native=load_native_operator(row)
+    native.validate_future_boundary(row['boundary'])
+    lifecycle=sys.modules[native.__package__+'.native_training_lifecycle']
+    if row['lifecycle_policy']!=lifecycle.LIFECYCLE_POLICY:raise ValueError('exact bounded native lifecycle policy')
     return auth
 
 
@@ -217,7 +220,7 @@ def load_native_operator(row):
     name='_root_pinned_native_eligibility'
     package=types.ModuleType(name);package.__path__=[str(root)]
     sys.modules[name]=package
-    for leaf in ('native_training_outcome_filter','native_training_eligibility'):
+    for leaf in ('native_training_outcome_filter','native_training_eligibility','native_training_lifecycle'):
         fullname=name+'.'+leaf
         spec=importlib.util.spec_from_file_location(fullname,root/(leaf+'.py'))
         module=importlib.util.module_from_spec(spec);sys.modules[fullname]=module
@@ -228,12 +231,19 @@ def load_native_operator(row):
 def install_native_constructor(service,p):
     row=p['native_training_eligibility']
     selector=load_native_operator(row).FutureNativeEligibilitySelector
+    lifecycle=sys.modules[selector.__module__.rsplit('.',1)[0]+'.native_training_lifecycle']
     authorization=guards.read(row['authorization']['path'])
     original=service.RemoteController
     class NativeController(original):
         def __init__(self,*args,**kwargs):
             super().__init__(*args,**kwargs)
             self.native_training_eligibility_selector=selector(self,authorization,row['tokenizer_root'],row['interpreter'],row['boundary'])
+            self.handle_native_no_update=lambda error,manifest,status:lifecycle.close_no_update(self,error,manifest,status)
+            self.native_completion_fields=lambda epoch:lifecycle.completion_fields(self,epoch)
+            self.native_retire_completed=lambda epoch:lifecycle.retire_completed(self,epoch)
+            # --check and prepare_runtime do not create threads or perform GETs.
+            if getattr(service,'_native_lifecycle_execute',False):
+                lifecycle.start_retirement_observer(self)
     service.RemoteController=NativeController
 
 def main():
@@ -252,6 +262,7 @@ def main():
                               'operator_overlay': 'operator_overlay' in p,
                               'existing_state_preserved': True, 'jobs_dispatched': False}))
             return
+        if 'native_training_eligibility'in p:service._native_lifecycle_execute=True
         service.run(guards.read(p['config']['path']))
 
 

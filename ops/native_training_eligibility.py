@@ -175,7 +175,8 @@ class NativeEligibilitySelector:
                         raise ValueError('bounded original native document')
                     if type(obj.get('sha256')) is not str or not re.fullmatch('[0-9a-f]{64}',obj['sha256']):
                         raise ValueError('native original document digest path')
-                    path=directory/('document-'+obj['sha256']+'.json')
+                    from .native_training_lifecycle import document_path,install_document_bundle
+                    path=document_path(directory,obj['sha256'])
                     if not path.exists():
                         try:
                             with urllib.request.urlopen(obj['url'],timeout=30) as response:data=response.read(obj['size']+1)
@@ -183,10 +184,11 @@ class NativeEligibilitySelector:
                             raise ConnectionError('native original document GET '+type(error).__name__)from None
                         if len(data)!=obj['size'] or hashlib.sha256(data).hexdigest()!=obj['sha256']:
                             raise ValueError('native original document GET SHA/size')
-                        # Preserve exact canonical original bytes, not a new JSON encoding.
                         value=json.loads(data)
                         if _canonical(value)!=data:raise ValueError('native canonical original document')
-                        _create(path,value)
+                        install_document_bundle(self.controller,directory,obj['sha256'],data)
+                    from .native_training_lifecycle import verify_owned_document
+                    verify_owned_document(self.controller,directory,obj['sha256'])
                     data=_load(path,2_000_000)
                     if len(data)!=obj['size'] or hashlib.sha256(data).hexdigest()!=obj['sha256']:
                         raise ValueError('native retained original document identity')
@@ -207,6 +209,7 @@ class NativeEligibilitySelector:
             if not accepted:raise NativeNoUpdate('authenticated native eligibility no_update; no optimizer dispatch')
             coverage=manifest['training_coverage']
             derived=coverage_manifest(manifest,accepted,seed=coverage['seed'],captured_at=coverage['captured_at'])
+            derived['native_training_eligibility_receipt']=dict(version=SUBSET_VERSION,context_sha256=digest(envelope),grades_sha256=digest(json.loads(_load(grade_path))),subset_sha256=digest(json.loads(_load(result_path))),authorization_sha256=digest(self.authorization),sampling_assurance='unaudited',proof_verification_performed=False,claims_rewritten=False,cheating_penalties=False)
             if computation_binding(derived)!=computation_binding(manifest):raise ValueError('native subset changed scientific computation')
             return derived,accepted
         finally:

@@ -214,3 +214,53 @@ qualification. The production authority, queue, controller state and jobs are
 not changed. New constructor tests cover private import binding, changed
 operator bytes, source/contract/parent failures, old-issued-job bypass and
 unauthenticated subset-journal refusal.
+
+No-update and owned-copy lifecycle candidate
+
+The prospective boundary is now round **35 or later**, after genuine E34
+closure. E34 and its already-issued training request are untouched. The added
+CPU GPU-service patch handles only the pinned operator's `NativeNoUpdate`
+exception; every other exception propagates normally. It records a signed
+no-update receipt, returns the exact approved checkpoint and optimizer pointer
+with zero steps, and follows the existing after/completion path. Signed
+completion states either `closed_native_label_exclusions_no_update` or
+`closed_native_indeterminate_no_update`. The latter explicitly permits retry
+only through a new unopened epoch using the same parent, without regrading or
+reissuing the original epoch. Neither case claims training or cheating.
+
+Each accepted-input manifest additionally binds the exact signed native
+context, grade and subset receipt hashes before future job signature. These
+metadata leave the original scientific computation projection, remote f213
+177-file map, original capture population and audit/reward scoring unchanged.
+
+Derived document copies now publish as atomic paired bundles: document bytes
+and their ROOT-signed inode ownership become visible together using Linux
+`renameat2(RENAME_NOREPLACE)`. A crash before ownership leaves an unowned
+private staging orphan preserved; a fresh installation can proceed without
+adopting or deleting that orphan. A final bundle never appears without its
+ownership receipt. The CPU controls exercise both this failure and inode
+continuity through the known directory rename.
+
+A single default-off observer, enabled only by the signed native lifecycle
+policy at actual execution, reconciles completed namespaces. It waits for a
+signed epoch completion, the controller's advanced round, and no active
+selector lease. It performs bounded full GET/SHA checks of the original frozen
+R2 document keys, archives/readbacks the immutable signed native receipts and
+completion, and persists a signed full-R2 ACK before any local unlink. Only the
+originally owned derived document inode may retire; captured documents,
+selection/population files, jobs, optimizer pointers and receipt history remain.
+Per-copy signed unlink intents make crashes both before and after unlink
+resumable. Failed GETs, changed inode/hardlink/ownership, changed ACK membership
+and active leases refuse deletion. Preserved unowned staging orphans remain an
+explicit exception, not a claim of retirement.
+
+Focused controls now include the real copied f213 once-loop no-update closure,
+immutable no-update restart, truthful infrastructure status, exact parent
+preservation, full-R2 ACK and idempotent retirement, lease deferral, forged ACK,
+inode replacement, and both unlink crash points. These are CPU controls;
+production remains unchanged. Full 256-document native-grading budget and
+memory qualification is a separate non-dispatchable original-E34 measurement
+requiring its own expiring ROOT authorization/context. The prior 32-pair timing
+is not substituted for that full workload result.
+
+The full 256-document E34 benchmark exposed a token-bound defect before native grading: the tokenizer has 151,665 entries, while the original authenticated model config declares a 152,064-wide vocabulary. Ninety-one of the 512 authentic rollouts contain padded model vocabulary IDs. The corrected proposal binds a small local model config by the original checkpoint's `config.json` SHA and checks its declared integer vocabulary against the signed operator binding. It bounds tokens by that vocabulary and retains original tokenizer decoding, including padded IDs. Tokenizer length is checked for coverage, rather than used as the model's token limit. The failed benchmark and original inputs remain unchanged; corrected prevalidation is not a native-grading qualification or sampling proof.

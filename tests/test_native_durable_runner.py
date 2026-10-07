@@ -12,6 +12,7 @@ from nacl.signing import SigningKey
 from ops import durable_learner_service as runner
 from ops.native_training_eligibility import FutureNativeEligibilitySelector
 from ops.native_training_outcome_filter import AUTHORIZATION_VERSION
+from ops.native_training_lifecycle import LIFECYCLE_POLICY
 
 class NativeRunner(unittest.TestCase):
     def setUp(self):
@@ -29,10 +30,10 @@ class NativeRunner(unittest.TestCase):
         data=json.dumps(auth,sort_keys=True,separators=(',',':')).encode()
         self.auth=self.root/'authorization';self.auth.write_text(json.dumps(dict(payload=auth,signer=self.authority,signature=base64.b64encode(self.key.sign(data).signature).decode())))
         pins={}
-        for leaf in ('native_training_outcome_filter.py','native_training_eligibility.py'):
+        for leaf in ('native_training_outcome_filter.py','native_training_eligibility.py','native_training_lifecycle.py'):
             data=(Path(__file__).resolve().parents[1]/'ops'/leaf).read_bytes();(self.operator/leaf).write_bytes(data);pins[leaf]=hashlib.sha256(data).hexdigest()
         self.boundary=dict(version='future-native-eligibility-boundary-v1',epoch_prefix='production',earliest_round=34,minimum_parent_step=24,contract_fields=dict(K=1,L=1,training_policy='unchanged',training_input_policy='committed-unaudited-training-v1'))
-        self.policy=dict(source_root=str(self.source),source_sha256='a'*64,operator_overlay=dict(root=str(self.overlay),overrides={'subnet/persistent_training_controller.py':'c'*64}),native_training_eligibility=dict(version='pinned-native-eligibility-operator-v1',root=str(self.operator),files=pins,authorization=dict(path=str(self.auth),file_sha256=hashlib.sha256(self.auth.read_bytes()).hexdigest(),payload_sha256=runner.guards.digest(auth)),tokenizer_root='/authenticated/tokenizer',interpreter='/authenticated/python',boundary=self.boundary))
+        self.policy=dict(source_root=str(self.source),source_sha256='a'*64,operator_overlay=dict(root=str(self.overlay),overrides={'subnet/persistent_training_controller.py':'c'*64}),native_training_eligibility=dict(version='pinned-native-eligibility-operator-v1',root=str(self.operator),files=pins,authorization=dict(path=str(self.auth),file_sha256=hashlib.sha256(self.auth.read_bytes()).hexdigest(),payload_sha256=runner.guards.digest(auth)),tokenizer_root='/authenticated/tokenizer',interpreter='/authenticated/python',boundary=self.boundary,lifecycle_policy=LIFECYCLE_POLICY))
         self.saved={k:v for k,v in sys.modules.items() if k=='subnet' or k.startswith('subnet.')}
         self.oldpath=list(sys.path)
         self.addCleanup(self.restore)
