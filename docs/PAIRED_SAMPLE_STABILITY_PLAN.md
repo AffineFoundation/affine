@@ -18,6 +18,45 @@ behavior, objective/reference behavior and task-selection bias remain candidate
 causes. Complete the existing matched evaluations and same-parent negative
 control before attributing a learning change to quota alone.
 
+CPU inspection of the original E37 inputs identifies a distinct failure-tail
+mode. Of 256 native-accepted training pairs, 91 (35.5%) have reference margins
+above 5 nats, averaging 10.91; the other 165 average 0.065. These are positive
+minus negative **mean log probabilities per output token**, not sequence sums.
+All 91 high-margin negatives reach the 1,024-token cap without EOS. They average
+95.8% distinct token IDs and 9.88 bits of empirical token entropy, compared with
+5.09 bits for the low-margin negatives; they are not empty or dominated by
+repeated tokens. Only three low-margin negatives reach the cap.
+
+The exact completed audits accepted 89 of those high-margin batches and rejected
+two for TOPLOC. The native filter and trainer use different pair-digest schemas;
+the comparison instead authenticates original document and batch hashes,
+recomputes both pair identities, and checks the original prompt/output bindings.
+For all 89 accepted high-margin batches, small original probability artifacts
+give a mean FP32 claimed margin of 10.915 versus the trainer's BF16 reference
+mean of 10.902. A BF16-only explanation therefore does not explain this mode.
+The signed audit contexts use the same checkpoint and plain autoregressive
+harness, temperature 0.8, top-p 1 and cap 1,024. Their frozen verifier requires
+selected-logprob comparison against recomputed logits and prescribed CDF checks,
+with exact cached replay for calibrated support/boundary adjudication. Historical
+reports do not retain per-position CDF results or replay counters, so this source
+and receipt review is not an independent replay of those GPU computations.
+
+The original selected-logprob traces usually change after a prefix: the median
+first position below -5 nats is 50, and the median onset of a sustained
+low-probability tail is 53. The final 512 tokens average -11.856 nats per token,
+near the log of the 152,064-entry model vocabulary. In 82 of the 89 accepted
+traces, tokens outside the tokenizer's 151,665-entry mapping occur only after
+that onset. This suggests a post-prefix failure mode to investigate; it does not
+establish its cause or classify a capped failure as fraud. It also does not show
+that simply increasing sample quota will fix training stability.
+
+Complete the existing matched same-parent capped-negative versus completed-EOS
+negative control before changing quota. Keep the original positive trajectories,
+parent model and optimizer, tasks, update count and held-out evaluation settings
+fixed, and report cap/EOS rates, failure-tail diagnostics and paired held-out
+gains/losses. Keep the original full held-out comparison running independently.
+These observations activate no production admission, sampler or quota change.
+
 ## Proposed contract and duplicate identities
 
 Start with K2/L2: two distinct successes and two distinct failures for one task,
