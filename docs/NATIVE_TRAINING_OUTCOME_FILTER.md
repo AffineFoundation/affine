@@ -169,3 +169,48 @@ selector until that distinct recovery context is authorized and graded; recovery
 control demonstrates no apply/dispatch on this combination. An all-accepted
 completed-metrics restart also reaches checked original report reuse without
 new grading or dispatch.
+
+Prospective durable runner integration (not deployed)
+
+The optional `native_training_eligibility` row in a ROOT-signed durable learner
+policy binds exactly two operator files, an independently signed preselection
+authorization, the tokenizer directory/interpreter, and a future boundary. The
+CPU overlay separately declares `subnet/persistent_training_controller.py` as an
+operator exception. The baseline scientific source and all 177 remote runtime
+pins remain unchanged. The authorization binds both the scientific baseline
+`source_root` and the distinct CPU `execution_root`; the imported native prompt
+module must retain the original scientific hash.
+
+`prepare_runtime` imports the approved GPU service from the CPU overlay and
+wraps its actual `RemoteController` constructor. The operator files load under a
+private relative-import package, with file hashes checked before execution.
+Default policies retain the original constructor. The future selector skips
+rounds before the signed floor and every already-issued original training job
+without an existing native subset journal. An issued native-selected job must
+reuse and authenticate its original subset journal. New selection requires the
+approved epoch prefix, source, contract fields and minimum optimizer parent
+step. The prospective template uses earliest round 34 and minimum step 24;
+these are gates, not claims that checkpoint 24 has already closed.
+
+The CPU controller checks applicability before its startup-recovery guard, so
+historical recovery observation remains unchanged. An applicable future
+startup recovery is refused until separately authorized native grading of its
+final inputs exists.
+
+Deployment remains blocked on two explicit operational controls: an empty
+selection must close with a signed **no-update** completion preserving the
+checkpoint and optimizer pointer, with infrastructure indeterminacy distinguished
+from conclusive label exclusions; and owned downloaded documents must retire
+in software after genuine durable completion/ACK. No empty optimizer job,
+optimizer reset, manufactured advancement, or manual file deletion is permitted.
+The activation review must confirm the signed floor is still an unopened epoch;
+current E33 and other issued requests remain immutable.
+
+Qualification includes the actual `prepare_runtime` and real frozen
+`RemoteController` constructor against the complete copied f213 CPU overlay,
+an ephemeral CPU-test authority and isolated state. Only the remote metadata
+query is stubbed. This is an import/constructor test, not a GPU or scientific
+qualification. The production authority, queue, controller state and jobs are
+not changed. New constructor tests cover private import binding, changed
+operator bytes, source/contract/parent failures, old-issued-job bypass and
+unauthenticated subset-journal refusal.

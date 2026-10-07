@@ -85,6 +85,8 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
         from .training_startup_recovery import declaration,apply,INPUT_RECOVERY_VERSIONS
         recovery=declaration(controller,epoch)
         native_selector=getattr(controller,'native_training_eligibility_selector',None)
+        if native_selector is not None and hasattr(native_selector,'applies_to') and not native_selector.applies_to(training_manifest):
+            native_selector=None
         if recovery is not None:
             if native_selector is not None:
                 raise ValueError('startup recovery requires separately authorized native eligibility context')
