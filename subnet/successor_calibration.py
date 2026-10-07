@@ -8,11 +8,14 @@ import hashlib
 digest=lambda v:hashlib.sha256(canonical(v)).hexdigest()
 VERSION='bounded-successor-calibration-v1'
 RECALIBRATION_VERSION='bounded-successor-confirmation-recalibration-v2'
+MINER_CALIBRATION_VERSION='bounded-miner-bound-successor-calibration-v3'
 PROMPTS=('Solve 3x + 7 = 22. Explain each algebraic step.',
          'Find the positive integer n such that n squared equals 144. Explain the result.')
 
 def request(value):
-    if type(value)is not dict or set(value)!={'version','env_id','harness','task_indices','max_tokens','draw_contract'} or value['version']!=VERSION:
+    miner_bound=isinstance(value,dict)and value.get('version')==MINER_CALIBRATION_VERSION
+    fields={'version','env_id','harness','task_indices','max_tokens','draw_contract'}|({'miner'}if miner_bound else set())
+    if type(value)is not dict or set(value)!=fields or value['version']not in(VERSION,MINER_CALIBRATION_VERSION):
         raise ValueError('exact successor calibration request')
     if type(value['env_id'])is not str or not value['env_id']:raise ValueError('calibration environment')
     h=value['harness']
@@ -21,13 +24,35 @@ def request(value):
     if type(value['task_indices'])is not list or len(value['task_indices'])!=2 or any(type(i)is not int or i<0 for i in value['task_indices'])or len(set(value['task_indices']))!=2:raise ValueError('two distinct real calibration tasks')
     if type(value['max_tokens'])is not int or value['max_tokens']!=h['max_output_tokens'] or not 8<=value['max_tokens']<=2048:raise ValueError('production calibration output budget')
     d=value['draw_contract']
-    if type(d)is not dict or d.get('version')not in('forced-inverse-cdf-replay-v1','forced-inverse-cdf-prefill-v2','forced-inverse-cdf-prefill-support-v3','forced-inverse-cdf-prefill-threeway-v4')or type(d.get('max_attempts'))is not int or not 2<=d['max_attempts']<=128:raise ValueError('qualification draw contract')
+    from .forced_sampling import MINER_VERSION
+    if miner_bound:
+        from .forced_sampling import validate
+        validate(d)
+        if d['version']!=MINER_VERSION or d['max_attempts']!=1000:raise ValueError('miner-bound qualification draw contract')
+        miner=value['miner']
+        if type(miner)is not str or len(miner)!=64 or any(x not in '0123456789abcdef'for x in miner):raise ValueError('authenticated calibration miner identity')
+    elif type(d)is not dict or d.get('version')not in('forced-inverse-cdf-replay-v1','forced-inverse-cdf-prefill-v2','forced-inverse-cdf-prefill-support-v3','forced-inverse-cdf-prefill-threeway-v4')or type(d.get('max_attempts'))is not int or not 2<=d['max_attempts']<=128:raise ValueError('qualification draw contract')
     if d['version']=='forced-inverse-cdf-prefill-threeway-v4':
         from .forced_sampling import validate
         validate(d)
     seed=d.get('randomness')
     if type(seed)is not str or len(seed)!=64 or any(x not in '0123456789abcdef'for x in seed):raise ValueError('qualification public draws')
     return dict(value,harness=h)
+
+
+def draw_context(manifest,value):
+    """Signed request owns miner identity; v5 uses the production draw recipe.
+
+    Initial predecessor calibration seeds measurement draws only. It never
+    admits that calibration for the new checkpoint; fresh measured controls and
+    confirmation still gate its prospective opening.
+    """
+    value=request(value)
+    context=dict(epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],contract=value['draw_contract'])
+    if value['version']==MINER_CALIBRATION_VERSION:
+        if (type(manifest.get('K'))is not int or type(manifest.get('L'))is not int or type(manifest.get('max_batches'))is not int or (manifest['K'],manifest['L'],manifest['max_batches'])!=(2,2,3)):raise ValueError('miner-bound calibration K2 L2 max3')
+        context['miner']=value['miner']
+    return context
 
 def preflight_native_spec(spec):
     """Authenticate code/data/dependencies on the worker before model loading."""
@@ -39,7 +64,7 @@ def execute(runtime, manifest, value):
     from . import fast_prefill_audit as fast,forced_sampling as forced
     import torch
     value=request(value)
-    runtime.sampling_context=dict(epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],contract=value['draw_contract'])
+    runtime.sampling_context=draw_context(manifest,value)
     from .environments import create_session
     session=create_session(runtime.spec)
     reports=[];native=[]
@@ -58,12 +83,13 @@ def execute(runtime, manifest, value):
         if not stats or any(v['exp_mismatches'] or v['mant_err_mean'] or v['mant_err_median'] for v in stats):raise ValueError('honest calibration native proof replay')
         native.append(stats)
     session.close()
-    return dict(version=VERSION,checkpoint=manifest['checkpoint']['id'],request_sha256=digest(value),reports=reports,native_controls=native,assurance='executed-measurements-not-policy-admission')
+    return dict(version=value['version'],checkpoint=manifest['checkpoint']['id'],request_sha256=digest(value),reports=reports,native_controls=native,assurance='executed-measurements-not-policy-admission',**(dict(sampling_miner=value['miner'],sampling_context_sha256=digest(runtime.sampling_context))if value['version']==MINER_CALIBRATION_VERSION else {}))
 
 def admitted_policy(result,manifest,value):
     from .fast_prefill_audit import policy_from_executed_controls
     value=request(value)
-    if type(result)is not dict or result.get('version')!=VERSION or result.get('checkpoint')!=manifest['checkpoint']['id'] or result.get('request_sha256')!=digest(value) or result.get('assurance')!='executed-measurements-not-policy-admission':raise ValueError('original calibration report binding')
+    if type(result)is not dict or result.get('version')!=value['version'] or result.get('checkpoint')!=manifest['checkpoint']['id'] or result.get('request_sha256')!=digest(value) or result.get('assurance')!='executed-measurements-not-policy-admission':raise ValueError('original calibration report binding')
+    if value['version']==MINER_CALIBRATION_VERSION and (result.get('sampling_miner')!=value['miner']or result.get('sampling_context_sha256')!=digest(draw_context(manifest,value))):raise ValueError('miner-bound calibration result context')
     controls=result.get('native_controls')
     if type(controls)is not list or len(controls)!=len(value['task_indices']):raise ValueError('complete native calibration controls')
     for rows in controls:
@@ -80,10 +106,10 @@ def before_open(controller,config,status,opening):
     qualification namespace and exact new checkpoint, not a historical epoch.
     """
     from .fast_prefill_audit import VERSION as FAST
-    from .forced_sampling import VERSION as STRICT,new_contract,source_hash
+    from .forced_sampling import VERSION as STRICT,MINER_VERSION,new_contract,source_hash
     from .remote_backend import save
     import json
-    if config.get('sampling_policy',{}).get('version')not in(FAST,'forced-inverse-cdf-prefill-support-v3','forced-inverse-cdf-prefill-threeway-v4'):return opening
+    if config.get('sampling_policy',{}).get('version')not in(FAST,'forced-inverse-cdf-prefill-support-v3','forced-inverse-cdf-prefill-threeway-v4',MINER_VERSION):return opening
     opt=config.get('successor_calibration')
     if type(opt)is not dict:raise ValueError('fast openings require automatic successor calibration')
     bounded=opt.get('version')==RECALIBRATION_VERSION
@@ -98,7 +124,13 @@ def before_open(controller,config,status,opening):
     harness=normalize(harness)
     for i in row['indices'][:2]:
         if normalize(harness_for(row,i))!=harness:raise ValueError('same calibration harness task pair')
-    req=request(dict(version=VERSION,env_id=row['env_id'],harness=harness,task_indices=row['indices'][:2],max_tokens=harness['max_output_tokens'],draw_contract=new_contract(config['sampling_policy'])))
+    miner_bound=config['sampling_policy']['version']==MINER_VERSION
+    request_fields={}
+    if miner_bound:
+        owned=config.get('owned_miner_identity_files')
+        if type(owned)is not dict or not owned or any(type(k)is not str or len(k)!=64 or any(c not in '0123456789abcdef'for c in k)for k in owned):raise ValueError('signed owned miner identity required for v5 calibration')
+        request_fields['miner']=sorted(owned)[0]
+    req=request(dict(version=MINER_CALIBRATION_VERSION if miner_bound else VERSION,env_id=row['env_id'],harness=harness,task_indices=row['indices'][:2],max_tokens=harness['max_output_tokens'],draw_contract=new_contract(config['sampling_policy']),**request_fields))
     manifest=dict(opening,epoch='nonpayable-successor-calibration-'+status['checkpoint']['id'][:16],checkpoint=controller.checkpoint_with_reads(status['checkpoint']),environments=rows,payable=False)
     from .harness import source_hash as harness_hash
     manifest['harness_source_hash']=harness_hash()
