@@ -256,6 +256,13 @@ observation; missing early records cannot establish a first pair. Duplicate
 executions and token content do not add diversity. This is CPU-qualified research
 selection, not live journal integration, inference assurance or a quota launch.
 
+The default-off [captured-revision/native-outcome bridge](research_quota_journal_selector_bridge.md)
+now joins that journal to the selector using explicit frozen revisions and
+reauthenticated original submissions and native evidence. Concurrent retries,
+historical redelivery and interrupted metadata transactions do not create extra
+selection packets. This remains research integration; it neither activates a
+larger live quota nor establishes exactly-once optimizer application.
+
 Submission ownership follows the authenticated hotkey, while the current
 prescribed random-draw context does not include a hotkey. Keep those bindings
 separate and do not silently change the sampler when adding slot identities.

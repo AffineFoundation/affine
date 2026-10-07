@@ -161,3 +161,33 @@ class ResearchRevisionJournal:
             return dict(binding=json.loads(row[0]), head_revision_id=row[1],
                         revision_count=db.execute('SELECT COUNT(*) FROM revisions WHERE slot=?', (slot_id,)).fetchone()[0],
                         original_count=db.execute('SELECT COUNT(*) FROM observations WHERE slot=?', (slot_id,)).fetchone()[0])
+
+    def frozen_original(self, slot_id, revision_id):
+        """Read immutable original bytes/evidence for an EXPLICIT research revision.
+
+        No head lookup or implicit latest selection. Caller reauthenticates these
+        bytes/evidence; a stored boundary receipt is not signature verification.
+        """
+        _sha(slot_id); _sha(revision_id)
+        import hashlib
+        with self._connect() as db:
+            db.execute('BEGIN')
+            slot = db.execute('SELECT binding FROM slots WHERE id=?', (slot_id,)).fetchone()
+            revision = db.execute('SELECT batch FROM revisions WHERE slot=? AND id=?', (slot_id, revision_id)).fetchone()
+            if slot is None or revision is None:
+                raise ValueError('unknown explicit original slot/revision')
+            candidates = db.execute('''SELECT o.sha256,o.bytes,x.boundary,x.evidence FROM observations x
+                JOIN originals o ON o.sha256=x.original WHERE x.slot=? AND x.revision=? ORDER BY x.rowid''',
+                (slot_id, revision_id))
+            for sha, data, boundary, evidence in candidates:
+                if hashlib.sha256(data).hexdigest() != sha:
+                    raise ValueError('immutable original bytes hash changed')
+                document = json.loads(data)
+                if canonical(document) != data:
+                    raise ValueError('immutable original canonical bytes changed')
+                if canonical(document.get('batch')).decode() == revision[0]:
+                    db.commit()
+                    return dict(slot_id=slot_id, revision_id=revision_id, original_sha256=sha,
+                                original_bytes=data, binding=json.loads(slot[0]),
+                                boundary=json.loads(boundary), evidence=json.loads(evidence))
+            raise ValueError('exact original revision document missing')
