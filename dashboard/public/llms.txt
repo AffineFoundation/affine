@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 02:15 UTC:
+Current operational status, 2026-10-07, 02:24 UTC:
 Checkpoint 25 is the controller's committed model. Epochs 31, 32 and 33 completed normally
 in 48.855, 50.372 and 50.692 minutes. Epoch 33 trained on 256 UNAUDITED task pairs
 and advanced optimizer step 23 to 24. All ten model files (15.24 GB) and 23
@@ -22,7 +22,13 @@ Matched held-out evaluation on the same 128 task indices and seeds scored
 87/128 for checkpoint 22 and 90/128 for checkpoint 23. An independent review
 confirmed identical task indices, seeds and task hashes across the 128 problems:
 12 previously wrong answers improved and nine previously correct answers regressed.
-This is a positive datapoint, not evidence of sustained convergence.
+Later matched evaluations scored 78/128 for checkpoint 24 and 80/128 for
+checkpoint 25. Independent full R2 readbacks verified all original reports and
+terminal records. Relative to checkpoint 23, checkpoint 24 gained three tasks
+and lost fifteen; checkpoint 25 gained five and lost fifteen. These regressions
+mean sustained convergence has not been established. An isolated comparison
+of the untouched base and checkpoint 24 on all 750 held-out tasks is being
+prepared; its two exact model restores are running, not completed results.
 The coordinator API, continuous auditor and learner have durable ROOT-pinned
 startup policies and automatic restart on failure. The separate hourly weight
 writer submitted the 02:00 UTC assessment for 208 current UIDs at block 9228005.
@@ -47,7 +53,9 @@ authorization handoff; the effective auditor and writer overrides are corrected.
 No training restart or manual hourly weight replay was performed.
 The isolated retained H100 has the frozen evaluator source and native grader
 staged for a matched untouched-base versus checkpoint-24 comparison on all
-750 held-out problems. Model restoration and actual evaluation are pending. The previous additional H200 passed bounded
+750 held-out problems. Both exact model restorations have started; actual
+evaluation remains pending. The new verifier supervisor has been launched,
+but its first normal claim and accepted signed report remain unconfirmed. The previous additional H200 passed bounded
 research qualification but was deleted through the provider API during a later
 reference test; that interrupted test grants no enrollment or numerical relabel.
 
