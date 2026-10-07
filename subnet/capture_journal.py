@@ -58,7 +58,11 @@ class CaptureJournal:
   parent=self.state['commitment_pending'][miner]
   b=next((v for v in parent['document']['payload']['batches']if v['slot']==receipt['slot']),None)
   need(b is not None and receipt['sha256']==b['training_sha256']and type(receipt['size'])is int and receipt['size']==b['training_size']and receipt['frozen_key']==parent['root']+'/training/'+str(receipt['slot'])+'.json'and receipt['assurance']=='unaudited','journal declared bytes and immutable scope')
-  at=receipt['captured_at'];need(type(at)in(int,float)and self.state['start']<=at<self.state['commitment_binding']['freeze_until'],'journal original capture time')
+  at=receipt['captured_at'];valid=type(at)in(int,float)and self.state['start']<=at<self.state['commitment_binding']['freeze_until']
+  if self.state.get('capture_recovery_authorizations'):
+   from .late_capture_recovery import valid_capture_time
+   valid=valid_capture_time(self.state,self.epoch,at)
+  need(valid,'journal original or ROOT-authorized actual capture time')
   return miner,str(receipt['slot'])
 
  def _accept(self,p):

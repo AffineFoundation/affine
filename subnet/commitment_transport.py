@@ -114,6 +114,9 @@ def freeze(gateway,epoch):
   gateway.bucket.json('public/'+epoch+'/receipts.json',state['frozen_receipts']);return state['frozen_receipts']
  snapshots=state.setdefault('commitment_snapshots',{});pending=state.setdefault('commitment_pending',{});rejections=state.setdefault('rejections',{});failures=[]
  cutoff=state['commitment_binding'].get('freeze_until')
+ if state.get('capture_recovery_authorizations'):
+  from .late_capture_recovery import cutoff as capture_cutoff
+  cutoff=capture_cutoff(state,epoch)
  def expired():return cutoff is not None and time.time()>=cutoff
  def missing(exc):return isinstance(exc,ClientError)and str(exc.response.get('Error',{}).get('Code'))in('NoSuchKey','404','NotFound')
  if not state.get('commitment_capture_complete'):

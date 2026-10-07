@@ -103,10 +103,10 @@ def validate_operator_overlay(overlay, source, policy, cfg):
         not stat.S_ISDIR(root.lstat().st_mode) or root.lstat().st_uid != os.getuid()):
         raise ValueError('distinct canonical owned CPU overlay root')
     changes = overlay['overrides']
-    if type(changes) is not dict or not changes or not set(changes) <= (CPU_OVERRIDES | ({'subnet/persistent_training_controller.py'} if 'native_training_eligibility' in policy else set()) | (PEER_OVERRIDES if PEER_POLICY_FIELD in policy else set())):
+    if type(changes) is not dict or not changes or not set(changes) <= (CPU_OVERRIDES | ({'subnet/late_capture_recovery.py'} if 'capture_recovery' in policy else set()) | ({'subnet/persistent_training_controller.py'} if 'native_training_eligibility' in policy else set()) | (PEER_OVERRIDES if PEER_POLICY_FIELD in policy else set())):
         raise ValueError('only explicit coordinator transport modules may differ')
     original = source['full_source_files']
-    if any(k not in original and k not in ({'subnet/capture_journal.py', 'subnet/checkpoint_upload_recovery.py'} | ({'subnet/learner_blacklist_selection.py','subnet/learner_selection_operator_bridge.py'} if PEER_POLICY_FIELD in policy else set())) for k in changes):
+    if any(k not in original and k not in ({'subnet/capture_journal.py', 'subnet/checkpoint_upload_recovery.py'} | ({'subnet/late_capture_recovery.py'} if 'capture_recovery'in policy else set()) | ({'subnet/learner_blacklist_selection.py','subnet/learner_selection_operator_bridge.py'} if PEER_POLICY_FIELD in policy else set())) for k in changes):
         raise ValueError('only explicit CPU sidecars may extend original membership')
     expected = dict(original, **changes)
     if overlay['full_source_files'] != expected:
@@ -201,6 +201,7 @@ def validate_policy(document, authority=guards.AUTHORITY):
     if 'native_training_eligibility' in p:fields.add('native_training_eligibility')
     if PEER_POLICY_FIELD in p:fields.add(PEER_POLICY_FIELD)
     if 'stop_after_current_round'in p:fields.add('stop_after_current_round')
+    if 'capture_recovery'in p:fields.add('capture_recovery')
     if set(p) != fields or p['version'] != VERSION or p['execute_allowed'] is not True or p['authority'] != authority:
         raise ValueError('exact durable learner policy required')
     for path, expected in ((Path(__file__).resolve(), p['runner_file_sha256']),
@@ -272,6 +273,7 @@ def validate_policy(document, authority=guards.AUTHORITY):
     if 'operator_overlay' in p:
         validate_operator_overlay(p['operator_overlay'], source, p, cfg)
     if 'native_training_eligibility' in p:validate_native_operator(p,authority,source)
+    if 'capture_recovery'in p:validate_capture_recovery(p,cfg,authority)
     return p
 
 
@@ -286,6 +288,7 @@ def prepare_runtime(p):
         raise ValueError('unexpected pinned learner import')
     if 'native_training_eligibility' in p:
         install_native_constructor(gpu_service,p)
+    if 'capture_recovery'in p:install_capture_recovery(gpu_service,p)
     return gpu_service
 
 
@@ -351,6 +354,50 @@ def install_native_constructor(service,p):
             if getattr(service,'_native_lifecycle_execute',False):
                 lifecycle.start_retirement_observer(self)
     service.RemoteController=NativeController
+
+def validate_capture_recovery(p,cfg,authority):
+    row=p['capture_recovery']
+    if type(row)is not dict or set(row)!={'authorization','first_signed_manifest','epoch'}:
+        raise ValueError('explicit signed capture recovery policy')
+    authorization=guards.verify_document(row['authorization'],authority)
+    first=guards.read(row['first_signed_manifest']['path'])
+    if guards.file_hash(row['first_signed_manifest']['path'])!=row['first_signed_manifest']['file_sha256']:
+        raise ValueError('original first signed manifest drift')
+    m=guards.signed(first,authority)
+    if guards.digest(first)!=authorization['first_signed_manifest_sha256']or m['epoch']!=row['epoch']:
+        raise ValueError('exact original recovery manifest')
+    state=guards.read(Path(cfg['state'])/'controller.json')
+    gateway=guards.read(Path(cfg['state'])/'gateway.json')['epochs'][row['epoch']]
+    installed=guards.read(row['authorization']['path']) in gateway.get('capture_recovery_authorizations',[])
+    if not installed and (state.get('active',{}).get('epoch')!=row['epoch']or state.get('active',{}).get('phase')!='collect'):
+        raise ValueError('initial recovery only original collect phase')
+    # Validate a separately pinned pure CPU module without importing model runtimes.
+    # prepare_runtime performs full import; here signature and baseline digests suffice.
+    if (authorization['epoch']!=row['epoch']or authorization['source']!=p['source_sha256']or
+        authorization['checkpoint']!=m['checkpoint']['id']or authorization['start']!=gateway['start']or
+        authorization['deadline']!=gateway['deadline']or authorization['original_freeze_until']!=gateway['commitment_binding']['freeze_until']or
+        authorization['binding_sha256']!=guards.digest(gateway['commitment_binding'])or
+        authorization['miners_sha256']!=guards.digest(sorted(gateway['miners']))):
+        raise ValueError('same original recovery gateway scope')
+    if 'subnet/late_capture_recovery.py'not in p['operator_overlay']['overrides']:
+        raise ValueError('explicit pinned recovery CPU sidecar')
+    return authorization
+
+
+def install_capture_recovery(service,p):
+    row=p['capture_recovery'];original=service.Gateway
+    from subnet.late_capture_recovery import attach
+    from types import SimpleNamespace
+    document=guards.read(row['authorization']['path']);first=guards.read(row['first_signed_manifest']['path'])
+    cfg=guards.read(p['config']['path'])
+    saved=guards.read(Path(cfg['state'])/'gateway.json')
+    attach(SimpleNamespace(epochs=saved['epochs'],persist=lambda:None),row['epoch'],document,first)
+    class RecoveryGateway(original):
+        def __init__(self,*args,**kwargs):
+            super().__init__(*args,**kwargs)
+            attach(self,row['epoch'],document,first)
+    service.Gateway=RecoveryGateway
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

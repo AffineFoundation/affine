@@ -56,6 +56,51 @@ class LearnerRecovery(unittest.TestCase):
         self.status.write_text(json.dumps(s)); self.validate()
         self.assertEqual(g.read(self.status)['trainer_state']['optimizer_steps'], 20)
 
+    def test_capture_recovery_installed_window_expiry_restart_is_read_only(self):
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import test_late_capture_recovery as fixtures
+        from subnet import late_capture_recovery as recovery
+        helper=fixtures.LateRecovery();gateway,key,first,authorization=helper.fixture()
+        with tempfile.TemporaryDirectory()as td,patch.object(recovery,'AUTHORITY',key.id):
+            root=Path(td);state=gateway.epochs['e'];recovery.attach(gateway,'e',authorization,first,at=31)
+            state['miners']=sorted(state['miners'])
+            (root/'gateway.json').write_bytes(g.canonical({'epochs':{'e':state}}))
+            (root/'controller.json').write_bytes(g.canonical({'active':{'epoch':'next','phase':'opening'}}))
+            (root/'config.json').write_bytes(g.canonical({'state':str(root)}))
+            (root/'authorization.json').write_bytes(g.canonical(authorization));(root/'first.json').write_bytes(g.canonical(first))
+            row={'epoch':'e','authorization':{'path':str(root/'authorization.json')},'first_signed_manifest':{'path':str(root/'first.json')}}
+            policy={'capture_recovery':row,'config':{'path':str(root/'config.json')}}
+            writes=[]
+            class FakeGateway:
+                def __init__(self):self.epochs=g.read(root/'gateway.json')['epochs']
+                def persist(self):writes.append(1)
+            service=SimpleNamespace(Gateway=FakeGateway);before=(root/'gateway.json').read_bytes()
+            with patch('time.time',return_value=1000):
+                m.install_capture_recovery(service,policy)
+                actual=service.Gateway()
+            self.assertEqual(writes,[]);self.assertEqual((root/'gateway.json').read_bytes(),before)
+            self.assertEqual(recovery.cutoff(actual.epochs['e'],'e',at=1000),25)
+            self.assertEqual(actual.epochs['e']['commitment_binding']['freeze_until'],25)
+
+    def test_capture_recovery_cpu_check_rejects_typed_window_even_with_valid_signature(self):
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import test_late_capture_recovery as fixtures
+        from subnet import late_capture_recovery as recovery
+        helper=fixtures.LateRecovery();gateway,key,first,authorization=helper.fixture()
+        authorization=helper.sign(key,dict(authorization['payload'],operational_until=99999))
+        with tempfile.TemporaryDirectory()as td,patch.object(recovery,'AUTHORITY',key.id):
+            root=Path(td);state=gateway.epochs['e'];state['miners']=sorted(state['miners'])
+            (root/'gateway.json').write_bytes(g.canonical({'epochs':{'e':state}}));(root/'config.json').write_bytes(g.canonical({'state':str(root)}))
+            (root/'authorization.json').write_bytes(g.canonical(authorization));(root/'first.json').write_bytes(g.canonical(first))
+            policy={'capture_recovery':{'epoch':'e','authorization':{'path':str(root/'authorization.json')},'first_signed_manifest':{'path':str(root/'first.json')}},'config':{'path':str(root/'config.json')}}
+            service=SimpleNamespace(Gateway=lambda:None)
+            with self.assertRaisesRegex(ValueError,'bounded late capture'):
+                m.install_capture_recovery(service,policy)
+
     def test_no_fresh_initialization_or_optimizer_reset(self):
         for key in ('initial_published', 'persistent_state_committed', 'trainer_state'):
             s = g.read(self.status); old = s[key]; s[key] = False

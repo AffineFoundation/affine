@@ -60,6 +60,9 @@ def capture(gateway,epoch):
  from .storage import SubmissionPolicyError
  state=gateway.epochs[epoch];need(state.get('commitment_capture_complete')is True,'complete signed commitment capture required')
  pending=state['commitment_pending'];journal=state.setdefault('training_document_snapshots',{});cutoff=state['commitment_binding'].get('freeze_until')
+ if state.get('capture_recovery_authorizations'):
+  from .late_capture_recovery import cutoff as capture_cutoff
+  cutoff=capture_cutoff(state,epoch)
  policy=state['commitment_binding'].get('learner_capture_policy')
  policy=capture_policy(policy)if policy is not None else None
  workers=policy['workers']if policy is not None else 4

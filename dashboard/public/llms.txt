@@ -39,10 +39,28 @@ CPU controls and 131 public focused tests passed. The controller and CPU peer
 were updated in new namespaces, preserving old evidence and all 177 scientific
 files. The initial restart selected an older systemd override; that ordering
 was corrected, and the actual running process command was checked against the
-v6 policy. The same E41 has resumed; a post-fix training result is not yet claimed.
-The latest independently authenticated matched held-out result is checkpoint
-30 at 78/128, versus checkpoint 29 at 76/128 (seven gains, five losses on the
-same 128 tasks, seeds and prompt hashes). It remains below checkpoint 23 at
+v6 policy. That resumed process reached capture, then stopped progressing because
+its original operational freeze budget had expired during the earlier outage.
+A separate CPU recovery capability passed ROOT review and was deployed:
+it authorizes a signed 600-second late capture window without changing the original miner
+upload start/deadline, checkpoint, source, or signed sampling contract. Eligible
+R2 objects must still have original-window LastModified metadata and match the
+signed commitments; existing discovery, ETags, captured bytes and journals are
+reused. Actual late capture timestamps are retained with the ROOT-signed
+operational authorization, rather than backdated. Network/metadata uncertainty
+remains an infrastructure retry, not evidence of miner fraud. The exact installed
+authorization remains valid evidence on later restarts, but cannot extend the
+window or authorize capture for another epoch. Eighteen focused CPU controls
+passed, including expiry/restart, later-epoch isolation and durable journal
+replay. The actual v7 process and command were independently checked. The same E41
+completed capture of 213 authenticated commitments and 634 training-document
+rows, with no capture rejections. These rows are unaudited inputs, not a claim
+that 634 batches passed verification. Post-recovery training and performance
+gains are not yet claimed.
+The latest ROOT-signed matched held-out summary reports checkpoint 31 at
+77/128, versus checkpoint 30 at 78/128 on the same fixed 128-task cohort.
+Checkpoint 30 versus checkpoint 29 had seven gains and five losses on matched
+tasks, seeds and prompt hashes. It remains below checkpoint 23 at
 90/128. The original signed scopes, all eight full-readback acknowledgements
 and fresh full R2 reads of both archives and original jobs/reports/terminals
 were checked. Original successful terminal records and PID/tick bindings were
