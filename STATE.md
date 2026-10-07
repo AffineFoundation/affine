@@ -1,3 +1,25 @@
+Verified continuation, 2026-10-07, 09:37 UTC:
+This entry supersedes older operational snapshots below. E41's original training
+job completed and the controller committed checkpoint 32 after ten model-object
+publication receipts and the independent signed full readback of all 23 optimizer
+shards. ROOT freshly read and authenticated both R2 authority descriptors and
+confirmed optimizer lineage 31→32. Training used 256 native-eligible UNAUDITED
+task pairs, did not repeat sampling verification, and did not wait for audits.
+Measured restore51.32s, training/checkpoint455.12s, optimizer export/PUT913.97s,
+final overlapped publication332.80s. E41 missed one hour because of its recovery
+outage; no checkpoint32 held-out gain is claimed.
+The same controller naturally opened E42 and entered collect. ROOT authenticated
+its first signed manifest on checkpoint32: start1791365709/deadline1791366309.
+Production still K1/L1, max3; larger per-task quotas remain a controlled proposal.
+Latest ROOT-signed SAME128 score CP31=77/128 versus CP30=78/128 and CP23=90/128;
+learning/convergence remains unproven. The exact same-parent negative-quality
+study precedes quota changes. A bounded prefix diagnostic stopped before model
+loading at its exclusive-GPU fence because its launcher left an extra actor;
+that actual failure is preserved and an isolated launcher correction is being
+prepared without weakening the fence or changing model/sampler source.
+Community messages and local-cache cleanup remain deferred. Durable R2 evidence,
+original jobs, optimizer lineage and current deployed contracts remain preserved.
+
 Verified continuation, 2026-10-07, 00:37 UTC:
 ONE guarded H200 rental genuinely completed:podc3a949f7-8f67-44dc-b5f7-3b5479e05e24,
 affine-verifier8-cp21-owned-v2,$5.76/h. Exact ROOTsigned intent4a772a2d6ddd30d0c36e3da18ecbfa070f955bd25f434640c9551bf2295db82a
