@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 09:24 UTC:
+Current operational status, 2026-10-07, 09:34 UTC:
 Epoch 39 completed in 53.770 minutes, training 256 eligible UNAUDITED task pairs
 and advancing persistent optimizer step 29 to 30. Checkpoint 30 was durably published after independent full readback
 of ten model objects and all 23 optimizer shards. The original training job
@@ -57,10 +57,17 @@ completed capture of 213 authenticated commitments and 634 training-document
 rows, with no capture rejections. These rows are unaudited inputs, not a claim
 that 634 batches passed verification. Cheap selection admitted 545 documents
 and selected 256. Native grading accepted all 256 in 85.36 seconds without
-repeating proof verification. The exact original training runner and child were
-confirmed live. Final model shards have been written locally and optimizer
-export/publication is progressing, but no complete durable update or performance
-gain is claimed yet.
+repeating proof verification. The original training job completed successfully, advanced persistent optimizer
+step 31 to 32 and published checkpoint 32. Original ten-model-object publication
+receipts and the signed independent full readback of all 23 optimizer shards
+match the committed descriptors. Fresh full R2 reads authenticate both
+ROOT-signed model and optimizer publications. The same controller naturally
+began opening epoch 42; this observation is not yet evidence of its completed
+manifest or mining. Training did not repeat proof verification or wait for audits.
+Measured parent restore was 51.32 seconds, training plus checkpoint creation
+455.12 seconds, optimizer export/upload 913.97 seconds, and overlapped final
+publication 332.80 seconds. The recovery outage means epoch 41 did not meet
+the one-hour target. No held-out performance gain is claimed for checkpoint 32.
 The latest ROOT-signed matched held-out summary reports checkpoint 31 at
 77/128, versus checkpoint 30 at 78/128 on the same fixed 128-task cohort.
 Checkpoint 30 versus checkpoint 29 had seven gains and five losses on matched
