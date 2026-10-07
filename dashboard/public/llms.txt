@@ -19,7 +19,9 @@ startup policies and automatic restart on failure. The separate hourly weight
 writer submitted the 00:00 UTC assessment for 205 current UIDs at block 9227402
 under the repaired evidence policy, with zero evidence refusals or stale
 registrations. This is submission evidence, not a separately observed reveal.
-Seven verifier workers remain enrolled. The additional H200 passed bounded
+Seven verifier workers remain enrolled. A replacement single-H200 machine is
+rented with explicit retained ownership and is awaiting runtime qualification;
+it is not enrolled yet. The previous additional H200 passed bounded
 research qualification but was deleted through the provider API during a later
 reference test; that interrupted test grants no enrollment or numerical relabel.
 

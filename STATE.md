@@ -1,3 +1,16 @@
+Verified continuation, 2026-10-07, 00:37 UTC:
+ONE guarded H200 rental genuinely completed:podc3a949f7-8f67-44dc-b5f7-3b5479e05e24,
+affine-verifier8-cp21-owned-v2,$5.76/h. Exact ROOTsigned intent4a772a2d6ddd30d0c36e3da18ecbfa070f955bd25f434640c9551bf2295db82a
+pinned fresh offer/template/operator/registry; manual retained ownership was
+registered BEFORE sole provider callback. Hardware/count/price receipt matched;
+originalprovider/binding/process receipts retained. Readback heartbeat passed
+with0provideractions. node_qualified=False:seven productionverifiers remain.
+Separate CP21/f213/bootstrap qualification is being prepared; no automatic
+scientific enrollment or alias of the interrupted/deleted H200 run.
+Default-off native-label proposal adopted on main with18rootCPUtestsPASS;
+real64grade/7boundarycontrols evidence retained. Its future controllerhook is
+being built; current training admission and issuedjobs are unchanged.
+
 Verified continuation, 2026-10-07, 00:34 UTC:
 Corrected optional numerical loader now passed ACTUAL prepare_runtime→real
 ContinuousAuditor constructor through exact frozen import graph, authenticating
