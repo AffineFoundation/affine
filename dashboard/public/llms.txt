@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 07:51 UTC:
+Current operational status, 2026-10-07, 08:16 UTC:
 Epoch 39 completed in 53.770 minutes, training 256 eligible UNAUDITED task pairs
 and advancing persistent optimizer step 29 to 30. Checkpoint 30 was durably published after independent full readback
 of ten model objects and all 23 optimizer shards. The original training job
@@ -23,8 +23,11 @@ retains all 598 records, including blacklisted submissions. The original round40
 training job and its separately admitted CPU metadata authenticate against the
 unchanged 177 scientific files. The original E40 training job subsequently completed successfully; its original
 runner and child are physically absent and its exact bound report is present.
-Authority still remains checkpoint/optimizer 30 until the controller completes
-independent publication and commit. No replacement training is claimed.
+The controller subsequently committed checkpoint/optimizer 31 and naturally
+opened round 41, which is collecting submissions. This latest controller-state
+observation does not itself independently authenticate every checkpoint payload.
+No replacement training is claimed. E40 took about 74 minutes including its
+opening outage; it did not meet the one-hour target.
 The latest independently authenticated matched held-out result is checkpoint
 30 at 78/128, versus checkpoint 29 at 76/128 (seven gains, five losses on the
 same 128 tasks, seeds and prompt hashes). It remains below checkpoint 23 at
@@ -61,25 +64,32 @@ Lium records its H100 deleted at 05:12 UTC after an SDK request through the
 account API key. No completed research training result or output-state readback
 was verified. Existing original scopes and evidence remain preserved; no silent
 restart or replacement result is being treated as that original execution.
-A distinctly named replacement H100 research machine has completed its pinned
-runtime installation and CPU source/native qualification. Exact parent model
-and optimizer restoration completed: all ten model files and 23 optimizer shards
-(106.63 GB total) passed complete download and local SHA checks, with the original
-child successfully waited and independent metadata readback acknowledged. The
-separate original 4db evaluation-source staging also completed and was independently
-authenticated. A new 14-task GPU qualification stopped before any model load or
-scientific child because its helper misresolved package-relative TOPLOC paths.
-That failed attempt remains preserved; a separate corrected diagnostic is being
-prepared. No research training or GPU qualification is claimed.
+A distinctly named replacement H100 research machine completed pinned runtime,
+source staging and exact parent restoration: ten model files and 23 optimizer
+shards (106.63 GB) passed complete download and local SHA checks. A corrected
+14-task native GPU qualification completed, with genuine child wait0 and ROOT
+independent full R2 reads of its archive, report and terminal. Its earlier
+pre-child TOPLOC-path failure remains preserved. CPU staging of the original
+curated trajectories also completed. However, the subsequent baseline training
+connection was lost, and Lium deleted this replacement pod at 07:56 UTC. Its
+scientific training outcome is UNKNOWN; it is not recorded as successful or
+silently retried as the same execution.
+The actual legacy affine-pod-reaper report and ledger identify its 90-minute
+unregistered-pod policy as the cause of both research deletions. That PM2
+service was stopped and its persistent enforcement setting disabled. A new,
+distinct single H100 research pod has been rented for $2.05/hour; resource and
+runtime qualification are pending. Prior scopes and evidence remain unchanged.
 No research learning result is claimed. The negative-quality comparison plan is
 in docs/TRAINING_STABILITY_SAME_PARENT_REVIEW.md on GitHub.
 The separate original BASE full-750 evaluation completed at 548/750
 (73.07%). All 24 original signed jobs, exact reports, successful terminal records,
 ROOT-signed full-readback acknowledgements, task/seed identities and 177 scientific
-files were independently authenticated. This review authenticated the existing
-original durable acknowledgements; it did not perform new R2 payload downloads.
+files were independently authenticated. ROOT additionally authenticated the complete original metadata archive, fresh
+physical BASE retirement and full R2 downloads of the archive, stdout and terminal.
 The assurance is operator-owned native grading, not miner proof verification.
-The corresponding CP24 full-750 arm has not started. This wider comparison is
+The corresponding first CP24 full-750 arm has now been dispatched through the
+original reviewed coordinator, with its own signed scope and 24 job windows.
+No CP24 result is claimed yet. This wider comparison is
 not the 128-task diagnostic, and a trained-model improvement is not yet claimed.
 
 Earlier operational history (the latest update above takes precedence):
