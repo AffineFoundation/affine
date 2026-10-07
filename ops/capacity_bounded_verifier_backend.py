@@ -2,7 +2,7 @@
 
 The original source, main(), full digest checks, model and sampler run unchanged.
 """
-import base64,hashlib,json,subprocess,sys
+import base64,hashlib,importlib.util,json,subprocess,sys
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -61,12 +61,14 @@ def main():
     envelope=json.loads(path.read_bytes());job=authenticate(envelope,authority)
     if job.get('role')!='verify':raise ValueError('capacity bootstrap verify only')
     authenticate(job['manifest'],authority)
-    if set(job['source_files'])!={str(p.relative_to(source))for p in (source/'subnet').glob('*.py')}:raise ValueError('complete original runtime inventory')
+    helper=Path(__file__).resolve().parent/'verifier_capacity_admission.py'
+    policy=json.loads(policy_path.read_bytes())
+    spec=importlib.util.spec_from_file_location('operator_capacity_runtime_inventory',helper)
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    module.validate_runtime_inventory(job,policy,authority,source)
     for name,expected in job['source_files'].items():
         p=Path(name)
         if p.is_absolute()or '..'in p.parts or not name.startswith('subnet/')or (source/p).is_symlink()or hashlib.sha256((source/p).read_bytes()).hexdigest()!=expected:raise ValueError('original scientific runtime source hash')
-    helper=Path(__file__).resolve().parent/'verifier_capacity_admission.py'
-    policy=json.loads(policy_path.read_bytes())
     admission=isolated_transport_admission(job,policy,authority,source,helper)
     from subnet import backend_jobs
     bind_transport(backend_jobs,job,authority,workspace,policy,admission)

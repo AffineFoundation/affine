@@ -22,7 +22,9 @@ def budget(job,envelope,authority,*,protocol_source=None):
 
     policy=authenticate(envelope,authority)
     expected={'version','disk_floor_bytes','extra_temporary_bytes','max_submissions','poll_seconds'}
-    if set(policy)not in (expected|{'checkpoint_inventories'},expected|{'checkpoint_inventory_directory'})or policy['version']!=VERSION:raise ValueError('explicit signed capacity policy')
+    policy_keys=set(policy)-{'runtime_sidecars'}
+    validate_sidecar_grants(policy.get('runtime_sidecars',{}))
+    if policy_keys not in (expected|{'checkpoint_inventories'},expected|{'checkpoint_inventory_directory'})or policy['version']!=VERSION:raise ValueError('explicit signed capacity policy')
     for key,minimum,maximum in [('disk_floor_bytes',2*1024**3,100*1024**3),('extra_temporary_bytes',0,100*1024**3),('max_submissions',1,256),('poll_seconds',1,60)]:
         if type(policy[key])is not int or not minimum<=policy[key]<=maximum:raise ValueError('bounded capacity '+key)
     inventories=policy.get('checkpoint_inventories')
@@ -69,12 +71,41 @@ except Exception as error:
     print(json.dumps({'error':type(error).__name__},separators=(',',':')))
 """
 
+def validate_sidecar_grants(grants):
+    if not isinstance(grants,dict) or len(grants)>16:raise ValueError('bounded explicit runtime sidecar grants')
+    for bundle,members in grants.items():
+        if not isinstance(bundle,str) or not re.fullmatch('[0-9a-f]{64}',bundle) or not isinstance(members,dict) or set(members)!={'subnet/source_sampling_admission.py'}:
+            raise ValueError('exact source-bound runtime sidecar grant')
+        if any(not isinstance(sha,str) or not re.fullmatch('[0-9a-f]{64}',sha) for sha in members.values()):raise ValueError('exact runtime sidecar digest')
+    return grants
+
+
+def validate_runtime_inventory(job,envelope,authority,source):
+    """Keep runtime exact; a separate ROOT grant may admit one CPU sidecar.
+
+    Sidecars are never supplied by a miner and never added to the scientific
+    inventory. Their name, source archive and bytes must all match ROOT metadata.
+    """
+    policy=authenticate(envelope,authority)
+    grants=validate_sidecar_grants(policy.get('runtime_sidecars',{}))
+    manifest=authenticate(job['manifest'],authority)
+    bundle=manifest.get('source_bundle',{}).get('sha256')
+    approved=grants.get(bundle,{})
+    files=job.get('source_files');source=Path(source)
+    actual={str(p.relative_to(source))for p in (source/'subnet').glob('*.py')}
+    if not isinstance(files,dict) or not 1<=len(files)<=256 or set(files)&set(approved) or set(files)|set(approved)!=actual:
+        raise ValueError('complete capacity protocol runtime inventory')
+    for name,expected in approved.items():
+        path=source/name
+        if path!=path.resolve() or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!=expected:
+            raise ValueError('ROOT-approved runtime sidecar changed')
+
+
 def source_budget(job,envelope,authority,source):
     source=Path(source)
     if not source.is_absolute() or source!=source.resolve(strict=True) or not source.is_dir():raise ValueError('exact registry-selected capacity source')
     files=job.get('source_files')
-    actual={str(p.relative_to(source))for p in (source/'subnet').glob('*.py')}
-    if not isinstance(files,dict)or not 1<=len(files)<=256 or set(files)!=actual:raise ValueError('complete capacity protocol runtime inventory')
+    validate_runtime_inventory(job,envelope,authority,source)
     for name,expected in files.items():
         p=source/name
         if not isinstance(expected,str)or not re.fullmatch('[0-9a-f]{64}',expected)or p!=p.resolve()or not p.is_file()or hashlib.sha256(p.read_bytes()).hexdigest()!=expected:raise ValueError('capacity protocol source changed')
