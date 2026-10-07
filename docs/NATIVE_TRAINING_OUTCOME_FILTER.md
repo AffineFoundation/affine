@@ -101,3 +101,71 @@ qualification before activation. A manifest-level scientific policy instead
 requires a new complete source/admission/qualification, and its optimizer cache
 source transition must be explicitly reviewed; no source alias or old ACK
 relabeling is allowed.
+
+## Implemented preselection/controller candidate
+
+`ops/native_training_eligibility.py` now implements the append-only context,
+grade and accepted-subset journals and the optional controller selector.
+`filter_eligibility_context` accepts a ROOT-signed **non-dispatchable** context
+and a separate ROOT authorization. Neither context has a backend role/job ID,
+training-output capabilities or optimizer mutation command. It binds the
+original population and selection FILE SHAs, original signed computation,
+full source map, immutable original document/admission inventory and actual
+parent binding. A signed receipt is created before the first job signature.
+
+The selector fetches at most four original documents concurrently, verifies
+size/SHA, preserves original bytes, then grades under the original source.
+It checks complete per-document/per-pair dispositions, exact binary scores and
+class/status agreement rather than trusting an `accepted` flag. A whole
+document is retained only if every pair matches. Derived coverage binds the
+accepted original document inventory with the original seed/capture timestamp;
+the original computation, optimizer parent and audit population are unchanged.
+Restart revalidates the signed immutable context/grade/subset and reuses the
+same subset without GET/regrading. An issued original job without a prior
+eligibility receipt is refused: this is never an adoption/subsetting mechanism.
+
+`prospective/native-training-controller-overlay/subnet/persistent_training_controller.py`
+is the exact frozen f213 CPU controller plus one optional selector
+call before capacity and dispatch. The remote 177-file scientific map remains
+f213. A reviewed operator runner must install the selector on the controller
+under a new explicit signed execution policy and pin both operator modules and
+this CPU overlay; the hook defaults off when no selector exists. This candidate
+has not been installed into any active runtime or config.
+
+Fourteen additional controller/journal controls execute subset/all-accepted and
+zero-accepted paths, restart/graded-receipt crash recovery, pre-existing-job
+refusal, changed original/parent/receipt refusal, original-file preservation and
+the actual frozen controller function up to its first intercepted dispatch.
+Three actual non-dispatchable context controls use original E32 tokens under
+an ephemeral CPU-only research signer: honest accepted, reversed labels
+excluded, original runtime unavailable indeterminate. Their private receipt is
+`ACTUAL-nondispatchable-context-CPU-controls.private.json`.
+
+The whole CPU context process high-water RSS was 1,142,476 KiB. Child rusage
+includes inherited pre-exec high-water; it is not a measurement of isolated
+native-grader peak RSS. A future operator deployment must admit parent plus
+four bounded children and qualify whole-node memory/CPU budget.
+
+Zero accepted documents produce a durable signed `no_update` receipt and a
+typed `NativeNoUpdate` **before any train dispatch**. The proposal deliberately
+does not invent a successful training report or optimizer promotion. Ordinary
+loop integration must separately review a no-update epoch disposition/closure
+handler before activation; otherwise this typed condition stops dispatch rather
+than silently admitting claimed labels. Likewise, local owned document copies
+need ACK-based coded retirement under the final operator policy. These are
+remaining activation gates, not deployed behavior or manual cleanup instructions.
+
+The durable selector itself also ran three genuine-token CPU controls, with no
+mocked grading: honest original tokens accepted, reversed original classes
+produced `no_update`, and unavailable pinned native dependencies produced
+indeterminate `no_update`. Each path preserved its original signed research
+document/population/selection bytes and reused the same signed result on restart
+without regrading. Receipt: `ACTUAL-native-selector-genuine-token-CPU-controls.private.json`.
+The test issuer remained ephemeral; no production ROOT key or dispatch was used.
+
+The controller hook explicitly refuses startup recovery combined with the native
+selector until that distinct recovery context is authorized and graded; recovery
+`apply` cannot replace final inputs after selection. A real controller-path
+control demonstrates no apply/dispatch on this combination. An all-accepted
+completed-metrics restart also reaches checked original report reuse without
+new grading or dispatch.
