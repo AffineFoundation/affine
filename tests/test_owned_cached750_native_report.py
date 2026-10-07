@@ -41,4 +41,14 @@ class ReportTests(unittest.TestCase):
   with self.p.open('wb')as f:f.truncate(8*1024**2+1)
   with self.assertRaises(ValueError):native_report_json(self.p,self.root)
   with self.assertRaises(ValueError):native_report_json(self.directory/'scope.json',self.root)
+ def test_actual_file_mutation_during_read_refused(self):
+  duplicate=os.dup
+  def mutate(fd):self.p.write_text('{"success":false}');return duplicate(fd)
+  with patch('ops.owned_cached750_group_operator.os.dup',side_effect=mutate):
+   with self.assertRaises(ValueError):native_report_json(self.p,self.root)
+ def test_actual_parent_permission_mutation_during_read_refused(self):
+  duplicate=os.dup
+  def mutate(fd):self.directory.chmod(0o755);return duplicate(fd)
+  with patch('ops.owned_cached750_group_operator.os.dup',side_effect=mutate):
+   with self.assertRaises(ValueError):native_report_json(self.p,self.root)
 if __name__=='__main__':unittest.main()
