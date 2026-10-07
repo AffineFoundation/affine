@@ -50,6 +50,32 @@ class QuotaOpeningTests(unittest.TestCase):
         self.assertEqual(json.loads((self.controller.state/'nonpayable-quota-manifest.json').read_bytes()),manifest)
         self.assertEqual(manifest['sampling_contract']['max_attempts'],16)
 
+    def test_direct_v5_first_signed_opening_has_three_slots(self):
+        from subnet.controller import Controller
+        from subnet.forced_sampling import MINER_VERSION
+        from subnet.fast_prefill_audit import CALIBRATION
+        c=dict(version=CALIBRATION,checkpoint=self.checkpoint['id'],model_runtime_revision='cpu-test',backend_profile_sha256='a'*64,harness_sha256='b'*64,report_sha256='c'*64,cdf_abs_error=1e-5,logprob_atol=1e-5,toploc_exp_mismatches=0,toploc_mant_err_mean=0,toploc_mant_err_median=0)
+        policy=dict(version=MINER_VERSION,max_attempts=1000,calibration=c,support_adjudication='exact-cached-replay-v1')
+        manifest=Controller.open(self.controller,'nonpayable-v5-direct',self.checkpoint,[self.miner],duration=60,environments=[self.row],K=2,L=2,sampling_policy=policy)
+        first=json.loads(self.bucket.objects['public/nonpayable-v5-direct/manifest.json'])
+        VerifyKey(bytes.fromhex(first['signer'])).verify(canonical(first['payload']),base64.b64decode(first['signature']))
+        self.assertEqual(first['payload']['max_batches'],3);self.assertEqual(first['payload'],manifest)
+        legacy=Controller.open(self.controller,'nonpayable-legacy-direct',self.checkpoint,[self.miner],duration=60,environments=[self.row])
+        self.assertEqual(legacy['max_batches'],4)
+
+    def test_v5_config_reaches_first_gpu_service_opening(self):
+        from subnet.forced_sampling import MINER_VERSION
+        from subnet.fast_prefill_audit import CALIBRATION
+        calibration=dict(version=CALIBRATION,checkpoint=self.checkpoint['id'],model_runtime_revision='cpu-test',backend_profile_sha256='a'*64,harness_sha256='b'*64,report_sha256='c'*64,cdf_abs_error=1e-5,logprob_atol=1e-5,toploc_exp_mismatches=0,toploc_mant_err_mean=0,toploc_mant_err_median=0)
+        config=dict(self.config,K=2,L=2,max_batches=3,sampling_policy=dict(version=MINER_VERSION,max_attempts=1000,calibration=calibration,support_adjudication='exact-cached-replay-v1'))
+        with patch('subnet.gpu_service.definitions',return_value=[self.row]):
+            selected=contract(config,0);initial=initial_manifest(config,self.checkpoint)
+        self.assertEqual((selected['K'],selected['L']),(2,2));self.assertEqual((initial['K'],initial['L'],initial['max_batches']),(2,2,3))
+        selected.pop('duration');selected.pop('heldout_indices');selected.pop('environments')
+        manifest=self.opening(**selected)
+        first=json.loads(self.bucket.objects['public/nonpayable-quota/manifest.json'])['payload']
+        self.assertEqual((first['K'],first['L'],first['max_batches']),(2,2,3));self.assertEqual(first,manifest)
+
     def test_default_manifest_bytes_equal_explicit_one_one(self):
         with patch('subnet.controller.time.time',return_value=1234),patch('subnet.storage.time.time',return_value=1234):
             first=self.opening()

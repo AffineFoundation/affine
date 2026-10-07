@@ -38,6 +38,12 @@ exclusion continue to apply.
 
 ## Actual disposable GPU qualification, before ROOT approval
 
+The admitted signed scope and raw result are exactly
+`K2L2-miner-bound-v5-CP33-realGPU-smoke-v2`, the minimal original-f213 successor.
+It binds selected-token probability transport before generating proofs; the
+raw report must affirm selected-token-logprobs-v1 and that actual binding. The
+earlier v1 candidate remains historical, not a substitute qualification.
+
 Use a disposable SM90 H100/H200 qualification namespace with the exact merged source,
 source bundle, runtime inventory and unchanged scientific numerical profile.
 Pin the authentic current parent checkpoint and original Adam descriptor/shards;

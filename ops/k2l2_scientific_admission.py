@@ -130,7 +130,7 @@ def validate(source, qualification, config, source_sha256, authority, verify_row
         any(value is not True for value in report['controls'].values())):
         raise ValueError('fresh authentic SM90 scientific qualification closure')
     scope = verify_row(report['original_scope'], authority)
-    if (scope.get('version') != 'K2L2-miner-bound-v5-CP33-realGPU-smoke-v1' or
+    if (scope.get('version') != 'K2L2-miner-bound-v5-CP33-realGPU-smoke-v2' or
         scope.get('steps') != 1 or type(scope.get('steps')) is not int or
         scope.get('objective') != 'unchanged-task-normalized-pairwise' or
         scope.get('optimizer_disposition') != 'isolated-smoke-no-continuation-no-promotion' or
@@ -150,7 +150,7 @@ def validate(source, qualification, config, source_sha256, authority, verify_row
             raise ValueError('exact actual original result/terminal bytes')
         originals[key] = guards.read(row['path'])
     raw = originals['original_result']; terminal = originals['original_terminal']
-    if (raw.get('version') != 'K2L2-miner-bound-v5-CP33-realGPU-smoke-v1' or
+    if (raw.get('version') != 'K2L2-miner-bound-v5-CP33-realGPU-smoke-v2' or
         raw.get('scope_sha256') != guards.digest(scope) or
         raw.get('new_source_sha256') != source_sha256 or
         raw.get('parent_checkpoint') != report['parent_checkpoint'] or
@@ -160,6 +160,8 @@ def validate(source, qualification, config, source_sha256, authority, verify_row
         raw['output_step'] != raw['parent_step'] + 1 or
         raw.get('actual_native_labels') != ['positive','positive','negative','negative'] or
         raw.get('full_four_rollout_verification') is not True or
+        raw.get('probability_artifact_policy') != {'version':'selected-token-logprobs-v1'} or
+        raw.get('selected_token_probability_transport_bound') is not True or
         raw.get('model_state_exported') is not True or
         raw.get('model_export_destination') != 'local-isolated-smoke' or
         raw.get('model_state_uploaded') is not False or

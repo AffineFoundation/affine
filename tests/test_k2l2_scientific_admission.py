@@ -50,15 +50,16 @@ class ScientificSuccessor(unittest.TestCase):
             hardware={'name':'NVIDIA H100 PCIe','uuid':'GPU-test-fixture','sm':[9,0]},
             runtime_profile='cuda-fp32-eager-sm90-v1',model_exported=True,optimizer_exported=False,
             model_export_destination='local-isolated-smoke',model_uploaded=False,model_promoted=False)
-        self.scope=dict(version='K2L2-miner-bound-v5-CP33-realGPU-smoke-v1',steps=1,
+        self.scope=dict(version='K2L2-miner-bound-v5-CP33-realGPU-smoke-v2',steps=1,
             objective='unchanged-task-normalized-pairwise',optimizer_disposition='isolated-smoke-no-continuation-no-promotion',source_sha256=self.sha,candidate_source_bundle_sha256=self.sha,
             full_source_files=runtime,full_source_inventory_sha256=g.digest(runtime),checkpoint_id='1'*64,
             parent_descriptor_sha256='2'*64,production_mutations=False,network_operations=False,
             parent_step=33,output_step=34,GPU_inventory=[{'name':'NVIDIA H100 PCIe','uuid':'GPU-test-fixture','memory_total_MiB':80000}])
         self.report['original_scope']=f.document('gpu-original-scope.json',self.scope)
-        self.raw=dict(version='K2L2-miner-bound-v5-CP33-realGPU-smoke-v1',scope_sha256=g.digest(self.scope),new_source_sha256=self.sha,parent_checkpoint='1'*64,
+        self.raw=dict(version='K2L2-miner-bound-v5-CP33-realGPU-smoke-v2',scope_sha256=g.digest(self.scope),new_source_sha256=self.sha,parent_checkpoint='1'*64,
             parent_descriptor_sha256='2'*64,parent_step=33,output_step=34,
             actual_native_labels=['positive','positive','negative','negative'],full_four_rollout_verification=True,
+            probability_artifact_policy={'version':'selected-token-logprobs-v1'},selected_token_probability_transport_bound=True,
             optimizer_state_exported=False,optimizer_state_durable=False,production_pointer_writes=False,
             model_state_exported=True,model_export_destination='local-isolated-smoke',model_state_uploaded=False,
             network_operations=False,heldout_gain_claimed=False,complete=False)
@@ -178,7 +179,8 @@ class ScientificSuccessor(unittest.TestCase):
     def test_actual_original_scope_result_terminal_binding(self):
         original=copy.deepcopy(self.raw)
         for key,value in [('scope_sha256','0'*64),('new_source_sha256','0'*64),
-            ('actual_native_labels',['positive','negative']),('optimizer_state_durable',True),
+            ('actual_native_labels',['positive','negative']),('probability_artifact_policy',None),
+            ('selected_token_probability_transport_bound',False),('version','K2L2-miner-bound-v5-CP33-realGPU-smoke-v1'),('optimizer_state_durable',True),
             ('production_pointer_writes',True),('output_step',35)]:
             self.raw=copy.deepcopy(original);self.raw[key]=value;self.close_originals();self.close_evidence()
             with self.subTest(key=key),self.assertRaises(ValueError):self.validate()

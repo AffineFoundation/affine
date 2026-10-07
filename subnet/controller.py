@@ -236,7 +236,7 @@ class Controller:
             definitions.append(row)
         manifest=dict(payable=not epoch.startswith(('nonpayable-', 'test-', 'mock-')),epoch=epoch,checkpoint=checkpoint,environment=env,indices=definitions[0]['indices'],environments=definitions,harness_source_hash=harness_policy.source_hash(),
                       tokenizer_binding={name:digest for name,digest in checkpoint['files'].items() if 'token' in name or 'template' in name},
-                      K=K,L=L,max_batches=4,start=self.gateway.epochs[epoch].get('start',int(time.time())),deadline=deadline,capabilities=caps,audit_policy=dict(audit_policy or {'mode':'full','version':1}),
+                      K=K,L=L,max_batches=commitment_max_batches if sampling_policy and sampling_policy.get('version')==MINER_VERSION else 4,start=self.gateway.epochs[epoch].get('start',int(time.time())),deadline=deadline,capabilities=caps,audit_policy=dict(audit_policy or {'mode':'full','version':1}),
                       numerical_policy='cpu-float32-eager-exact-toploc-logprob-atol1e-5',model_runtime_revision=NUMERICAL_RUNTIME_REVISION,runtime_profile=dict(runtime_profile or {}),
                       environment_revision='trusted-adapter-registry-v1')
         if sample_harness_registry is not None:manifest['sample_harness_registry']=sample_harness_registry
