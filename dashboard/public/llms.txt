@@ -1,6 +1,6 @@
 # Affine — MATH mining, verification and training
 
-Current operational status, 2026-10-07, 03:24 UTC:
+Current operational status, 2026-10-07, 03:45 UTC:
 Checkpoint 26 is the controller's committed model. Epochs 31, 32 and 33 completed normally
 in 48.855, 50.372 and 50.692 minutes. Epoch 33 trained on 256 UNAUDITED task pairs
 and advanced optimizer step 23 to 24. All ten model files (15.24 GB) and 23
@@ -16,7 +16,10 @@ Training does not wait for audits. Through epoch 35, cheap eligibility validated
 identity, task, prompt, tokens and checkpoint binding without independently
 grading claimed success/failure before training. A native-grading filter is implemented
 on GitHub main and the new controller is deployed for epoch 36 onward. Epoch 36
-is running its original training job after its first live filtered request.
+finished its original training job after its first live filtered request,
+advancing staged optimizer state from 26 to 27. The original independent reader
+checked all 23 state shards successfully. Checkpoint publication and signed
+epoch closure remain pending, so checkpoint 26 remains the committed model.
 The prior full 256-pair CPU benchmark graded
 all 512 original outcomes in 102.23 seconds total, with all labels matching and
 about 1.3 GB peak combined memory. It will not establish on-policy sampling
@@ -87,8 +90,15 @@ namespace creation or model loading because a nullable arm field was handled
 incorrectly. That original failed attempt is preserved. The corrected launcher
 passed a regression using the actual nullable-field scope, then completed
 CPU-only staging on the retained H100. Three metadata objects passed independent
-full R2 readback and ROOT-signed acknowledgement. Model copies and scientific
-execution remain pending; no 750-task result or repeated scientific draw is claimed. The previous additional H200 passed bounded
+full R2 readback and ROOT-signed acknowledgement. Both owned model copies then
+completed with independent full R2 evidence readback. The new base evaluation
+launcher stopped while reading an original group's terminal report; its original
+job and report are being inspected without reissuing the scientific draw. No
+750-task result is claimed. A separate single-H100 controlled training experiment
+is being staged to compare capped versus completed negative answers from the
+same checkpoint and optimizer state. Its CPU runtime installation and 20 local
+controls passed; model staging is in progress. No controlled learning result or
+production training-objective change is claimed. The previous additional H200 passed bounded
 research qualification but was deleted through the provider API during a later
 reference test; that interrupted test grants no enrollment or numerical relabel.
 
