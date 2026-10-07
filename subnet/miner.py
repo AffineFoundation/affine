@@ -1,4 +1,5 @@
 """Miner role: decrypt capability, pin checkpoint, search and upload cumulative batches."""
+from .forced_sampling import MINER_VERSION
 import requests
 import time
 from pathlib import Path
@@ -103,6 +104,10 @@ class Miner:
         self._progress('epoch_start')
         if any(b['epoch'] != manifest['epoch'] or b['checkpoint'] != manifest['checkpoint']['id'] for b,_ in self.batches):
             raise ValueError('stale local miner state')
+        if manifest.get('sampling_contract',{}).get('version')==MINER_VERSION:
+            from .sampling_uniqueness import validate_batch
+            if len(self.batches)>3:raise ValueError('v5 max3 restored batches')
+            for batch,_ in self.batches:validate_batch(batch,manifest,identity.id)
 
     def _prepared(self):
         from .commitment_transport import pair_artifact,check_prepared_cumulative
@@ -138,11 +143,13 @@ class Miner:
         key=(env_id,index,hashlib.sha256(canonical(resolved)).hexdigest())
         if key not in self.runtimes:
             if self.runtime is None:
-                self.runtime=make_runtime(self.checkpoint,self.manifest,definition['spec'],resolved)
+                self.runtime=make_runtime(self.checkpoint,self.manifest,definition['spec'],resolved,**({'miner':self.identity.id}if contract and contract['version']==MINER_VERSION else {}))
                 self.runtimes[key]=self.runtime
             else:self.runtimes[key]=self.runtime.for_environment(definition['spec'],resolved)
         runtime=self.runtimes[key]
         positive, negative, arrays_pos, arrays_neg = [], [], [], []
+        from .sampling_uniqueness import validate_batch, content_digest
+        fingerprints=set()
         for attempt in range(max_attempts):
             if time.time()>=self.manifest.get('deadline',float('inf')):
                 self._progress('task_deadline', env_id=env_id, index=index)
@@ -171,11 +178,15 @@ class Miner:
                 continue
             dst, arr = (positive, arrays_pos) if kind == 'positive' else (negative, arrays_neg)
             required = self.manifest['K'] if kind == 'positive' else self.manifest['L']
-            if len(dst) < required and all(r['turns'] != rollout['turns'] for r in dst):
-                dst.append(rollout); arr.append(arrays)
+            v5=contract and contract['version']==MINER_VERSION
+            signature=content_digest(rollout)if v5 else None
+            distinct=signature not in fingerprints if v5 else all(r['turns']!=rollout['turns']for r in dst)
+            if len(dst) < required and distinct:
+                dst.append(rollout); arr.append(arrays);fingerprints.add(signature)
             if len(positive) == self.manifest['K'] and len(negative) == self.manifest['L']:
                 batch = dict(schema=2,epoch=self.manifest['epoch'], checkpoint=self.manifest['checkpoint']['id'],
                              env_id=env_id, environment_version=runtime.spec.version, sample_index=index, index=index, rollouts=positive+negative)
+                if v5:validate_batch(batch,self.manifest,self.identity.id)
                 candidate = self.batches + [(batch, arrays_pos+arrays_neg)]
                 # A rejected addition must not poison previously uploaded state.
                 if self.manifest.get('submission_transport_policy'):

@@ -1,5 +1,39 @@
 # Affine — MATH mining, verification and training
 
+## Four-sample miner-bound cutover — pending activation
+
+The next contract, `forced-inverse-cdf-prefill-miner-bound-v5`, requires exactly
+four distinct rollouts for one task: two native-graded successes and two
+native-graded failures (K=2/L=2). Each UID may submit at most three task batches
+per epoch. One qualifying unique task earns one contribution point; extra
+rollouts do not earn more points. Larger quotas do not establish better learning.
+
+The signed manifest sets `max_attempts=1000`. The existing `rollout.seed` is the
+attempt nonce, integer 0–999; its sampler receipt uses `attempt`. It is not an
+arbitrary RNG seed. Draws bind epoch randomness, checkpoint, environment/task,
+authenticated miner Ed25519 identity, attempt, turn and token position. Use the
+authenticated `identity.id`, not a caller-supplied rollout label or mutable UID.
+All four rollouts need distinct nonces and distinct generated-token content.
+Proofs, filenames, timestamps, nonces and identity prefixes cannot make copied
+outputs count twice. The verifier independently recomputes the prescribed draws;
+TOPLOC alone is insufficient. Miners may search the allowed attempts and select
+qualifying outcomes. This is not unbiased sampling or proof of physical execution.
+
+Activation is pending. Follow the signed OPEN manifest and approved source from
+https://affine.io/mining.json. Until it advertises v5, K=2/L=2, max_attempts=1000
+and max_batches=3, follow that opening's old rules. Historical signed epochs keep
+their original rules and draw bytes. v5 keeps calibrated prefill support with
+exact-cached-replay-v1 adjudication; numerical tolerances are unchanged. It does
+not activate token-only transport or a new three-way numerical profile.
+Training still uses cheap-eligible unaudited inputs independently of continuous
+audits. Hourly current-assessment weight setting stays independent of training.
+
+See https://github.com/AffineFoundation/affine/blob/main/docs/FOUR_SAMPLE_MINER_BOUND_CUTOVER.md.
+
+## Historical operational records
+
+The dated records below describe their original contracts, not pending v5.
+
 Latest verified operational update, 2026-10-07, 12:09 UTC:
 The original epoch 42 completed on the replacement H200 and advanced persistent
 optimizer step 32 to 33. Its original job restored all 23 authenticated parent
@@ -393,9 +427,9 @@ additional sampling quotas and faster numerical profiles remain prospective
 unless explicitly adopted in a new signed opening. Follow that opening and its
 exact source bundle for generation, not a research candidate.
 
-## Model and taskset
+## Model and taskset — follow the signed opening
 
-Qwen/Qwen2.5-Math-7B-Instruct has 7,615,616,512 parameters. Checkpoint files use BF16. The approved generation and audit runtime is cuda-fp32-eager-sm90-v1 (float32, eager attention, TF32 disabled); the signed training override uses BF16 forward/backward with persistent FP32 masters and AdamW moments. The signed manifest and role execution profiles specify the exact runtime. The active original MATH taskset contains 7,496 distinct usable problems: 6,746 mining tasks and 750 reserved held-out tasks. DeepMath and NuminaMath are not yet part of this contract. K=1 and L=1: one genuinely graded success and one genuinely graded failure for the same task on the approved checkpoint.
+Qwen/Qwen2.5-Math-7B-Instruct has 7,615,616,512 parameters. Checkpoint files use BF16. The approved generation and audit runtime is cuda-fp32-eager-sm90-v1 (float32, eager attention, TF32 disabled); the signed training override uses BF16 forward/backward with persistent FP32 masters and AdamW moments. The signed manifest and role execution profiles specify the exact runtime. The active original MATH taskset contains 7,496 distinct usable problems: 6,746 mining tasks and 750 reserved held-out tasks. DeepMath and NuminaMath are not yet part of this contract. Historical K=1/L=1 openings require one graded success and one graded failure. Pending v5 requires two distinct successes and two distinct failures; activate only through a new signed opening.
 
 
 ## How to start mining
@@ -440,7 +474,8 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
 
 The search budget is a local per-task choice, not the signed attempt ceiling.
 Start with eight attempts per task, then move on if no success/failure pair is
-found. The current signed ceiling is sixteen. A local search budget cannot
+found. Historical openings retain their signed ceiling (previously sixteen); v5 sets
+1,000. A local search budget cannot
 extend it; use at most the ceiling in the current manifest. Spending the entire
 budget on a consistently solved or failed task can consume the epoch without
 completing a batch. Smaller local budgets preserve the original public draw
@@ -458,8 +493,10 @@ credentials. Miners need no permanent bucket credentials.
 
 ## Current proof and learning contract
 
-The active verifier is forced-inverse-cdf-prefill-support-v3. Public prescribed
-draws bind the epoch, checkpoint, task, attempt, turn and token position. The
+The historical verifier is forced-inverse-cdf-prefill-support-v3; pending v5
+adds authenticated miner binding and the four-sample quota. Public prescribed
+draws bind the epoch, checkpoint, task, attempt, turn and token position; v5
+also binds authenticated miner identity. The
 verifier independently recomputes logits, checks the selected tokens against
 calibrated inverse-CDF intervals, checks TOPLOC and replays native outcomes.
 Ambiguous intervals or support changes require exact cached-reference replay.
@@ -473,7 +510,9 @@ required in the current contract. Token-only and prefill-only three-way research
 policies are NOT active; do not omit required live proof fields.
 
 A batch covers one approved mining task index on one checkpoint and must contain
-one native-graded success and one native-graded failure. Grader faults/timeouts
+the signed quota: historical K=1/L=1 requires one native-graded success and one
+native-graded failure; v5 requires two distinct successes and two distinct
+failures with four distinct nonces. Grader faults/timeouts
 are indeterminate, not negative samples. Held-out tasks cannot supply mining
 batches. Complete token contexts, native outcomes, task/source/checkpoint
 identities and sampler receipts remain required. Extra rollouts earn no extra

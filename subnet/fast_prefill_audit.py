@@ -109,7 +109,8 @@ def verify_sampling(runtime,rollout,turn_index,prompt,output,logprobs):
   return verify_threeway_intervals(logprobs,output,draws,config['temperature'],config['top_p'],p['cdf_abs_error'])
  try:return verify_intervals(logprobs,output,draws,config['temperature'],config['top_p'],p['cdf_abs_error'])
  except (SupportMismatch,NumericalAmbiguity) as uncertainty:
-  if context['contract']['version']!=SUPPORT_VERSION:raise
+  from .forced_sampling import MINER_VERSION
+  if context['contract']['version']not in(SUPPORT_VERSION,MINER_VERSION):raise
   try:return verify_cached_reference(runtime,prompt,output,rollout['seed'],turn_index,rollout['index'],rollout['task_hash'])
   except InvalidSample:raise
   except Exception as exc:

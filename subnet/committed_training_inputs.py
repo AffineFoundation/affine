@@ -110,6 +110,8 @@ def admitted_submission(path,obj,manifest,authority,*,retire=False):
     if index in heldout:raise ValueError('heldout task forbidden for learner')
     rollouts=batch.get('rollouts')
     if not isinstance(rollouts,list) or len(rollouts)!=manifest['K']+manifest['L']:raise ValueError('claimed class quota')
+    from .sampling_uniqueness import validate_batch
+    validate_batch(batch,manifest,value['miner_identity'])
     positives=[];negatives=[];seen=set()
     for rollout in rollouts:
         if (not isinstance(rollout,dict) or rollout.get('index')!=index or rollout.get('env_id')!=batch['env_id'] or

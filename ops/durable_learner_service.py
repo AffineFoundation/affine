@@ -199,10 +199,12 @@ def validate_policy(document, authority=guards.AUTHORITY):
     if 'operator_overlay' in p:
         fields.add('operator_overlay')
     if 'native_training_eligibility' in p:fields.add('native_training_eligibility')
+    if p.get('version') == 'durable-pinned-k2l2-learner-service-v2':
+        fields.add('scientific_admission_file_sha256')
     if PEER_POLICY_FIELD in p:fields.add(PEER_POLICY_FIELD)
     if 'stop_after_current_round'in p:fields.add('stop_after_current_round')
     if 'capture_recovery'in p:fields.add('capture_recovery')
-    if set(p) != fields or p['version'] != VERSION or p['execute_allowed'] is not True or p['authority'] != authority:
+    if set(p) != fields or p['version'] not in (VERSION, 'durable-pinned-k2l2-learner-service-v2') or p['execute_allowed'] is not True or p['authority'] != authority:
         raise ValueError('exact durable learner policy required')
     for path, expected in ((Path(__file__).resolve(), p['runner_file_sha256']),
                            (Path(guards.__file__).resolve(), p['guards_file_sha256'])):
@@ -219,7 +221,16 @@ def validate_policy(document, authority=guards.AUTHORITY):
     source = verify_admission(p['source_approval'], authority)
     qualification = verify_admission(p['qualification_approval'], authority)
     reward = guards.verify_document(p['reward_activation'], authority)
-    if source['version'] != 'ordinary-orchestration-only-source-approval-v1' or source['approved'] is not True or source['source_sha256'] != p['source_sha256']:
+    scientific_successor = p['version'] == 'durable-pinned-k2l2-learner-service-v2'
+    if scientific_successor:
+        helper_path = Path(__file__).resolve().with_name('k2l2_scientific_admission.py')
+        if guards.file_hash(helper_path) != p['scientific_admission_file_sha256']:
+            raise ValueError('new scientific admission helper drift')
+        from ops import k2l2_scientific_admission as scientific_admission
+        if Path(scientific_admission.__file__).resolve() != helper_path:
+            raise ValueError('new scientific admission import shadowing')
+        scientific_admission.validate(source, qualification, cfg, p['source_sha256'], authority, verify_admission)
+    elif source['version'] != 'ordinary-orchestration-only-source-approval-v1' or source['approved'] is not True or source['source_sha256'] != p['source_sha256']:
         raise ValueError('approved scientific source required')
     if source['optimizer_reset'] is not False or source['historical_relabel'] is not False:
         raise ValueError('optimizer lineage and historical evidence must remain unchanged')
@@ -228,12 +239,12 @@ def validate_policy(document, authority=guards.AUTHORITY):
     inventory = {str(f.relative_to(root)) for f in root.rglob('*') if f.is_file() and '__pycache__' not in f.parts}
     if inventory != set(source['full_source_files']):
         raise ValueError('complete scientific source inventory required')
-    if len(source['runtime_source_files']) != 177 or any(source['full_source_files'].get(k) != v for k, v in source['runtime_source_files'].items()):
+    if (not scientific_successor and len(source['runtime_source_files']) != 177) or any(source['full_source_files'].get(k) != v for k, v in source['runtime_source_files'].items()):
         raise ValueError('approved 177-file runtime closure required')
     for row in source['evidence'].values():
         if guards.file_hash(row['path']) != row['file_sha256']:
             raise ValueError('source qualification evidence drift')
-    if qualification['version'] != 'ordinary-orchestration-only-training-qualification-approval-v1' or qualification['approved'] is not True or qualification['candidate_source_sha256'] != p['source_sha256']:
+    if (not scientific_successor and qualification['version'] != 'ordinary-orchestration-only-training-qualification-approval-v1') or qualification['approved'] is not True or qualification['candidate_source_sha256'] != p['source_sha256']:
         raise ValueError('approved training qualification required')
     translation = cfg['persistent_training_qualification_translation']
     if (translation['path'] != qualification['translation_path'] or

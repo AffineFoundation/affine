@@ -14,7 +14,7 @@ import stat
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from .native_training_outcome_filter import (AUTHORIZATION_VERSION,CONTEXT_VERSION,
-    VERSION,digest,filter_eligibility_context)
+    VERSION,K2L2_VERSION,digest,filter_eligibility_context)
 
 SUBSET_VERSION='native-outcome-accepted-subset-v1'
 
@@ -74,6 +74,14 @@ def bind_subset(context_envelope,grade_receipt,submissions,authority):
         grade_receipt.get('claims_rewritten') is not False or grade_receipt.get('cheating_penalties') is not False or
         _inventory(context['submissions'])!=_inventory(submissions)):
         raise ValueError('native subset original context/assurance')
+    if 'original_signed_manifest' in context:
+        bound_manifest=authenticate(context['original_signed_manifest'],authority)
+        if bound_manifest.get('K')==bound_manifest.get('L')==2 and grade_receipt.get('version')!=K2L2_VERSION:
+            raise ValueError('K2L2 subset requires new native filter version')
+    if grade_receipt.get('version')==K2L2_VERSION:
+        manifest=authenticate(context['original_signed_manifest'],authority)
+        if type(manifest.get('K'))is not int or type(manifest.get('L'))is not int or manifest['K']!=2 or manifest['L']!=2:
+            raise ValueError('K2L2 native subset signed quota')
     decisions=grade_receipt.get('document_decisions')
     if not isinstance(decisions,list) or len(decisions)!=len(submissions):raise ValueError('complete native document disposition')
     grades=grade_receipt.get('rows');statuses={r['pair_sha256']:r for r in grades}
@@ -88,6 +96,8 @@ def bind_subset(context_envelope,grade_receipt,submissions,authority):
             type(decision.get('accepted')) is not bool or not decision.get('pair_sha256')):
             raise ValueError('native original document decision binding')
         identifiers=decision['pair_sha256']
+        if grade_receipt.get('version')==K2L2_VERSION and len(identifiers)!=2:
+            raise ValueError('K2L2 native complete document requires two pairs')
         if len(set(identifiers))!=len(identifiers) or any(i not in statuses or i in used for i in identifiers):
             raise ValueError('native complete unique pair/document binding')
         used.update(identifiers)

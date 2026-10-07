@@ -6,6 +6,7 @@ import secrets
 from pathlib import Path
 
 VERSION = 'forced-inverse-cdf-replay-v1'
+MINER_VERSION = 'forced-inverse-cdf-prefill-miner-bound-v5'
 FIELDS = {'version', 'randomness', 'max_attempts', 'verification', 'generation'}
 
 
@@ -19,11 +20,11 @@ def source_hash():
 
 def validate(value):
     from .fast_prefill_audit import VERSION as FAST,SUPPORT_VERSION as SUPPORT,THREEWAY_VERSION as THREEWAY,calibration
-    expected=(FIELDS|{'calibration','uncertainty_adjudication'}if isinstance(value,dict)and value.get('version')==THREEWAY else FIELDS|{'calibration','support_adjudication'}if isinstance(value,dict)and value.get('version')==SUPPORT else FIELDS|{'calibration'}if isinstance(value,dict)and value.get('version')==FAST else FIELDS)
+    expected=(FIELDS|{'calibration','uncertainty_adjudication'}if isinstance(value,dict)and value.get('version')==THREEWAY else FIELDS|{'calibration','support_adjudication'}if isinstance(value,dict)and value.get('version')in(SUPPORT,MINER_VERSION) else FIELDS|{'calibration'}if isinstance(value,dict)and value.get('version')==FAST else FIELDS)
     if not isinstance(value, dict) or set(value) != expected:
         raise ValueError('forced sampling contract fields')
-    if value['version']in(FAST,SUPPORT,THREEWAY):
-        if value['version']==SUPPORT and value['support_adjudication']!='exact-cached-replay-v1':raise ValueError('explicit cached support adjudication')
+    if value['version']in(FAST,SUPPORT,THREEWAY,MINER_VERSION):
+        if value['version']in(SUPPORT,MINER_VERSION) and value['support_adjudication']!='exact-cached-replay-v1':raise ValueError('explicit cached support adjudication')
         if value['version']==THREEWAY and value['uncertainty_adjudication']!='numerical-inconclusive-no-replay-v1':raise ValueError('explicit threeway uncertainty adjudication')
         if value['verification']!=('prefill-cdf-calibrated-threeway'if value['version']==THREEWAY else 'prefill-cdf-calibrated') or value['generation']!='cached-eager-inverse-cdf':raise ValueError('fast sampling contract version')
         calibration(value['calibration'])
@@ -32,15 +33,15 @@ def validate(value):
     random = value['randomness']
     if not isinstance(random, str) or len(random) != 64 or any(c not in '0123456789abcdef' for c in random):
         raise ValueError('forced sampling public randomness')
-    if type(value['max_attempts']) is not int or not 2 <= value['max_attempts'] <= 128:
+    if type(value['max_attempts']) is not int or (value['max_attempts'] != 1000 if value['version']==MINER_VERSION else not 2 <= value['max_attempts'] <= 128):
         raise ValueError('forced sampling attempt budget')
     return dict(value)
 
 
 def new_contract(config):
     from .fast_prefill_audit import VERSION as FAST,SUPPORT_VERSION as SUPPORT,THREEWAY_VERSION as THREEWAY
-    if isinstance(config,dict)and config.get('version')in(FAST,SUPPORT,THREEWAY):
-        expected={'version','max_attempts','calibration'}|({'support_adjudication'}if config['version']==SUPPORT else {'uncertainty_adjudication'}if config['version']==THREEWAY else set())
+    if isinstance(config,dict)and config.get('version')in(FAST,SUPPORT,THREEWAY,MINER_VERSION):
+        expected={'version','max_attempts','calibration'}|({'support_adjudication'}if config['version']in(SUPPORT,MINER_VERSION) else {'uncertainty_adjudication'}if config['version']==THREEWAY else set())
         if set(config)!=expected:raise ValueError('fast sampling opening configuration')
         return validate(dict(config,randomness=secrets.token_hex(32),verification='prefill-cdf-calibrated-threeway'if config['version']==THREEWAY else 'prefill-cdf-calibrated',generation='cached-eager-inverse-cdf'))
     if not isinstance(config, dict) or set(config) != {'version', 'max_attempts'}:
@@ -60,7 +61,7 @@ def validate_harness(config,contract=None):
     return c
 
 
-def binding(manifest):
+def binding(manifest, miner=None):
     value = manifest.get('sampling_contract')
     if value is None:
         if 'sampling_source_hash' in manifest:
@@ -72,11 +73,19 @@ def binding(manifest):
     epoch, checkpoint = manifest.get('epoch'), manifest.get('checkpoint', {}).get('id')
     if not isinstance(epoch, str) or not epoch or not isinstance(checkpoint, str) or len(checkpoint) != 64:
         raise ValueError('sampling epoch/checkpoint binding')
-    return {'contract': json.loads(canonical(value)), 'epoch': epoch, 'checkpoint': checkpoint}
+    context={'contract': json.loads(canonical(value)), 'epoch': epoch, 'checkpoint': checkpoint}
+    if value['version']==MINER_VERSION:
+        if (type(manifest.get('K')) is not int or type(manifest.get('L')) is not int or type(manifest.get('max_batches')) is not int or (manifest['K'],manifest['L'],manifest['max_batches'])!=(2,2,3)):
+            raise ValueError('v5 requires K2 L2 max3 batch geometry')
+        if miner is not None:
+            if type(miner)is not str or len(miner)!=64 or any(c not in '0123456789abcdef'for c in miner):raise ValueError('authenticated miner public identity required')
+            context['miner']=miner
+    return context
 
 
-def bind_runtime(runtime, manifest):
-    context = binding(manifest)
+def bind_runtime(runtime, manifest, miner=None):
+    context = binding(manifest,miner)
+    if context is not None and context['contract']['version']==MINER_VERSION and 'miner'not in context:raise ValueError('v5 runtime needs authenticated miner identity')
     if context is not None:
         validate_harness(runtime.harness)
     if context is not None and context['contract']['version']!=VERSION:
@@ -94,6 +103,7 @@ def receipt(context, attempt):
 
 
 def validate_attempt(context, attempt):
+    if context['contract']['version']==MINER_VERSION and 'miner'not in context:raise ValueError('v5 attempt requires authenticated miner identity')
     if type(attempt) is not int or not 0 <= attempt < context['contract']['max_attempts']:
         raise ValueError('forced sampling attempt out of range')
 
@@ -173,12 +183,16 @@ def require_report(manifest, report):
     This checks the authenticated worker's assertion, not a second inference
     proof. Legacy epochs retain their original signed audit contract.
     """
-    context = binding(manifest)
+    context = binding(manifest,report.get('sampling_miner'))
     if context is None:
         return
+    if context['contract']['version']==MINER_VERSION and 'miner'not in context and report.get('accepted'):raise ValueError('v5 accepted report requires authenticated miner identity')
     if report.get('sampling_assurance') != assurance(manifest):
         raise ValueError('audit sampling assurance missing or mismatched')
     for batch in report.get('accepted', []):
+        if context['contract']['version']==MINER_VERSION:
+            from .sampling_uniqueness import validate_batch
+            validate_batch(batch,manifest,context['miner'])
         for rollout in batch.get('rollouts', []):
             attempt = rollout.get('seed')
             if rollout.get('sampling') != receipt(context, attempt):

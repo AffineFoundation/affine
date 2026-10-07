@@ -18,12 +18,27 @@ from .persistent_cpu_adamw import POLICY, HYPERPARAMETERS, PersistentCPUAdamW, c
 from .storage import canonical
 
 
-def task_groups(verified_pairs, steps, seed):
+def task_groups(verified_pairs, steps, seed, *, required_pairs_per_task=None):
     if (type(steps) is not int or not 1 <= steps <= 32 or
             not verified_pairs or len(verified_pairs) > 65536):
         raise ValueError('task-normalized pair/update budget')
     checkpoint_id(seed)
+    if required_pairs_per_task is not None and (type(required_pairs_per_task) is not int or required_pairs_per_task != 2):
+        raise ValueError('explicit two disjoint pairs per task')
     pairs = distinct_verified_pairs(verified_pairs)
+    if required_pairs_per_task is not None:
+        from .trajectory_identity import token_trace_sha256
+        if len(pairs) != len(verified_pairs):
+            raise ValueError('K2L2 duplicate pair forbidden')
+        traces = {}
+        for definition, positive, negative in pairs:
+            key = definition['env_id'], positive['index']
+            seen = traces.setdefault(key, set())
+            for rollout in (positive, negative):
+                identity = token_trace_sha256(rollout['turns'])
+                if identity in seen:
+                    raise ValueError('K2L2 shared rollout across disjoint pairs')
+                seen.add(identity)
     identities = [pair_identity(p) for p in pairs]
     by_task = {}; hashes = {}
     for i, (definition, positive, negative) in enumerate(pairs):
@@ -36,6 +51,8 @@ def task_groups(verified_pairs, steps, seed):
             raise ValueError('one task hash per environment/index')
         hashes[key] = task_hash
         by_task.setdefault(key, []).append(i)
+    if required_pairs_per_task is not None and any(len(indices) != required_pairs_per_task for indices in by_task.values()):
+        raise ValueError('K2L2 complete two-pair task required')
     tasks = []
     for (env_id, index), indices in by_task.items():
         identity = dict(env_id=env_id, index=index, task_hash=hashes[env_id, index])
@@ -78,7 +95,7 @@ def accumulate_tasks(torch, margin, references, tasks, indices, beta=.1):
 def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
                 epoch, seed, steps=3, approved_genesis=None,
                 approved_genesis_sha256=None, restored_state=None,
-                resource_admission):
+                resource_admission, required_pairs_per_task=None):
     """Return BF16 export plus uncommitted persistent optimizer for publication.
 
     The backend must hash the BF16 export and export_state() with descriptor-last
@@ -91,7 +108,7 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
     checkpoint_id(input_checkpoint)
     if not isinstance(epoch, str) or not epoch or len(epoch) > 200:
         raise ValueError('exact epoch binding before training')
-    pairs, tasks, groups, identities = task_groups(verified_pairs, steps, seed)
+    pairs, tasks, groups, identities = task_groups(verified_pairs, steps, seed, required_pairs_per_task=required_pairs_per_task)
     model = runtime.model
     parameters = list(model.parameters())
     if (not parameters or any(not p.is_cuda or p.dtype != torch.bfloat16 for p in parameters) or

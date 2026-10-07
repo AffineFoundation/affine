@@ -19,7 +19,7 @@ PUBLICATION_VERSION = 'authority-persistent-trainer-state-v1'
 EXECUTION_FILES = tuple('subnet/' + name + '.py' for name in (
     'persistent_training_protocol', 'persistent_training_worker', 'persistent_cpu_adamw',
     'persistent_training_state', 'persistent_training_evidence','task_normalized_training', 'training_policy',
-    'covered_epoch_optimizer', 'epoch_optimizer', 'training_receipts'))
+    'covered_epoch_optimizer', 'epoch_optimizer', 'training_receipts', 'trajectory_identity'))
 
 
 CACHE_EXECUTION_FILES = ('subnet/optimizer_state_cache.py', 'subnet/cache_lifecycle.py')

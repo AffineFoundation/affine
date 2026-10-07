@@ -22,16 +22,16 @@ def validate_backend(manifest):
  return revision
 
 
-def runtime(checkpoint,manifest,environment,harness=None):
+def runtime(checkpoint,manifest,environment,harness=None,*,miner=None):
  from .forced_sampling import bind_runtime
  from .probability_artifacts import bind_runtime as bind_artifacts
  revision=validate_backend(manifest)
  if revision==CPU_REVISION:
   from .model import Runtime
-  selected=bind_artifacts(bind_runtime(Runtime(checkpoint,manifest['checkpoint']['files'],environment=environment,harness=harness),manifest),manifest)
+  selected=bind_artifacts(bind_runtime(Runtime(checkpoint,manifest['checkpoint']['files'],environment=environment,harness=harness),manifest,miner),manifest)
  else:
   from .gpu_runtime import GPURuntime
-  selected=bind_artifacts(bind_runtime(GPURuntime(checkpoint,manifest['checkpoint']['files'],environment,harness,runtime_revision=revision),manifest),manifest)
+  selected=bind_artifacts(bind_runtime(GPURuntime(checkpoint,manifest['checkpoint']['files'],environment,harness,runtime_revision=revision),manifest,miner),manifest)
  if 'token_artifact_policy'in manifest:
   from .token_only_protocol import bind_runtime as bind_tokens
   bind_tokens(selected,manifest)

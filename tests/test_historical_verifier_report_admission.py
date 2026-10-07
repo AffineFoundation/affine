@@ -38,6 +38,6 @@ class HistoricalReportControls(unittest.TestCase):
   with tempfile.TemporaryDirectory()as root:
    service=ContinuousAuditor.__new__(ContinuousAuditor);service.directory=Path(root);service.queue=SimpleNamespace(workers={});service.controller=SimpleNamespace(authority=SimpleNamespace(id=self.f.root),signed=lambda x:signed(self.f.authority,x));row=self.f.row;identity=digest(row)
    service.state={'jobs':{'job-1':{'row_sha256':identity}},'draws':{identity:{'row':row}},'capture_failures':{},'populations':{'e1':signed(self.f.authority,{'eligible_evidence_ids':[identity]})}}
-   service.records=lambda:[row];service.sources=self.pins;service.policy=self.f.p;service.execution_evidence_policy=None;service.backend_evidence_deferral_policy=None;service.historical_report_admission=self.policy;service.publish_immutable=lambda *a:None
+   service.records=lambda:[row];service.sources=self.pins;service.policy=self.f.p;service.execution_evidence_policy=None;service.backend_evidence_deferral_policy=None;service.historical_report_admission=self.policy;service.numerical_resolution=None;service.publish_immutable=lambda *a:None
    with patch('subnet.continuous_audit_service.queue_rows',return_value={'job-1':self.q}):result=service.hourly_snapshot('e1',1,'a'*64,30)
    self.assertGreater(result['payload']['points']['b'*64],.5);self.assertEqual(service.queue.workers,{})

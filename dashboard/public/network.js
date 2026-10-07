@@ -81,7 +81,7 @@
     $('evaluation-note').title='Only the current run and latest comparable task/runtime/sampling cohort. Small diagnostic cohorts do not establish broad improvement.';
     $('batch-value').textContent=lastEpoch?number(lastEpoch.batches):'—';
     $('batch-reading').textContent=lastEpoch?`${epochName(lastEpoch)} · committed submissions`:'Awaiting a committed epoch';
-    $('batch-note').textContent=lastEpoch?.learner_input_assurance==='unaudited'?`${number(lastEpoch.learner_eligible)} learner-eligible · unaudited inputs · independent audits`:lastEpoch&&count(lastEpoch.accepted)&&count(lastEpoch.unchecked)?`${number(lastEpoch.accepted)} fully audited and accepted · ${number(lastEpoch.unchecked)} unchecked`:'Frozen submissions · inspect a point for audit results';
+    $('batch-note').textContent=lastEpoch?.learner_input_assurance==='unaudited'?`${number(lastEpoch.learner_eligible)} learner-eligible · unaudited inputs · independent audits · four-sample cutover pending`:lastEpoch&&count(lastEpoch.accepted)&&count(lastEpoch.unchecked)?`${number(lastEpoch.accepted)} fully audited and accepted · ${number(lastEpoch.unchecked)} unchecked`:'Frozen submissions · four-sample cutover pending; see llms.txt';
     draw('evaluation',comparable.map(e=>({...e,time:e.timestamp,value:e.mean_reward})));
     draw('batch',finalized.map(e=>({...e,time:e.start,value:e.batches})));
     const updated=data.summary?.updated_at,stale=finite(updated)&&Date.now()/1000-updated>120;

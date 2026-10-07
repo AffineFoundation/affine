@@ -25,8 +25,11 @@ def class_quotas(K=1,L=1,sampling=None):
         raise ValueError('class quotas require positive integers with K+L <= 128')
     if sampling is not None:
         attempts=sampling.get('max_attempts') if isinstance(sampling,dict) else None
-        if type(attempts) is not int or not 2<=attempts<=128 or K+L>attempts:
+        from .forced_sampling import MINER_VERSION
+        maximum=1000 if sampling.get('version')==MINER_VERSION else 128
+        if type(attempts) is not int or not 2<=attempts<=maximum or K+L>attempts:
             raise ValueError('class quotas exceed authenticated sampling attempt budget')
+    if sampling is not None and sampling.get('version')==MINER_VERSION and (K,L)!=(2,2):raise ValueError('v5 requires K2 L2')
     return K,L
 
 
@@ -120,6 +123,8 @@ class Controller:
             if training_input_policy!='committed-unaudited-training-v1' or submission_transport_policy not in ('small-commitment-pairs-v2','small-commitment-token-pairs-v3') or hourly_execution_policy is None:
                 raise ValueError('bounded learner capture requires hourly unaudited commitments')
         K,L=class_quotas(K,L,sampling_policy)
+        from .forced_sampling import MINER_VERSION
+        if sampling_policy and sampling_policy.get('version')==MINER_VERSION and (type(commitment_max_batches)is not int or commitment_max_batches!=3):raise ValueError('v5 requires max3 batch slots')
         if token_artifact_policy is not None:
             from .token_only_protocol import validate_policy,TRANSPORT
             from .fast_prefill_audit import THREEWAY_VERSION

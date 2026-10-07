@@ -4,7 +4,16 @@ The public miner must discover the approved model's successful and unsuccessful
 rollouts. Model probabilities and TOPLOC alone verify computation on supplied
 tokens; they do not establish that a sampler selected those tokens.
 
-## Contract
+## New miner-bound four-sample contract (pending)
+
+See [FOUR_SAMPLE_MINER_BOUND_CUTOVER.md](FOUR_SAMPLE_MINER_BOUND_CUTOVER.md).
+v5 binds authenticated miner identity, requires K=2/L=2, max_batches=3,
+max_attempts=1000 and distinct output content and attempt nonces. It preserves
+calibrated prefill support and exact-cached-replay-v1 adjudication unchanged.
+The exclusion of identity below applies only to the original v1 contract.
+GitHub code availability does not activate a new signed opening.
+
+## Original contract
 
 `forced-inverse-cdf-replay-v1` activated from signed epoch nine on October 4,
 2026. Changes remain prospective: old epochs retain their original rules. The

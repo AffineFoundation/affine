@@ -27,8 +27,9 @@ class SamplingAdmission:
    prefix='_api_sampling_'+source[:16]+'_'+secrets.token_hex(8);package=types.ModuleType(prefix);package.__path__=[str(tree/'subnet')];sys.modules[prefix]=package
    sampler=importlib.import_module(prefix+'.forced_sampling')
    fast=importlib.import_module(prefix+'.fast_prefill_audit')if 'subnet/fast_prefill_audit.py'in files else None
-   supported=[sampler.VERSION,None]+([getattr(fast,n)for n in ('VERSION','SUPPORT_VERSION','THREEWAY_VERSION')if hasattr(fast,n)]if fast else [])
+   supported=[sampler.VERSION,None]+([sampler.MINER_VERSION]if hasattr(sampler,'MINER_VERSION')else [])+([getattr(fast,n)for n in ('VERSION','SUPPORT_VERSION','THREEWAY_VERSION')if hasattr(fast,n)]if fast else [])
    if any(x not in supported for x in versions):raise ValueError('sampler version unsupported by exact source')
+   if hasattr(sampler,'MINER_VERSION')and sampler.MINER_VERSION in versions and 'subnet/sampling_uniqueness.py'not in files:raise ValueError('v5 complete uniqueness admission source required')
    if fast and hasattr(fast,'THREEWAY_VERSION')and fast.THREEWAY_VERSION in versions and len(files)!=177:raise ValueError('v4 exact177 admitted runtime map')
    self.rows[source]=(row,tree,sampler,fast)
  def check(self,job):
@@ -36,7 +37,7 @@ class SamplingAdmission:
   if source not in self.rows:raise ValueError('unadmitted execution source sampler')
   row,tree,sampler,fast=self.rows[source]
   if job.get('source_files')!=row['runtime_files']or job.get('runtime_versions')!=row['runtime_versions']:raise ValueError('exact source runtime metadata')
-  for name in ('forced_sampling','fast_prefill_audit','harness','audit_policy'):
+  for name in ('forced_sampling','fast_prefill_audit','harness','audit_policy','sampling_uniqueness'):
    n='subnet/'+name+'.py'
    if n not in row['runtime_files']:continue
    if filehash(tree/n)!=row['runtime_files'][n]:raise ValueError('admitted sampler closure changed')
@@ -55,6 +56,9 @@ class SamplingAdmission:
  def report(self,job,report):
   m,sampler,fast=self.check(job)
   for audit in report.get('audits',[]):
+   if hasattr(sampler,'MINER_VERSION')and m.get('sampling_contract',{}).get('version')==sampler.MINER_VERSION:
+    children=[obj for obj in job.get('submissions',[])if obj.get('sha256')==audit.get('submission_sha256')]
+    if len(children)!=1 or audit.get('sampling_miner')!=children[0].get('commitment_miner'):raise ValueError('v5 report authenticated frozen miner mismatch')
    sampler.require_report(m,audit)
    if fast and hasattr(fast,'THREEWAY_VERSION')and m.get('sampling_contract',{}).get('version')==fast.THREEWAY_VERSION:
     for outcome in audit.get('outcomes',[]):

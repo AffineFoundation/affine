@@ -91,8 +91,10 @@ Miners may choose a bounded search on particular authorized tasks by adding
 `--env-id affine_math --indices 1553 --search-budget 32 --max-batches 1`.
 The CLI checks that selected indices are unique members of the signed epoch's
 training pool before downloading a checkpoint or creating a model. An index
-reserved for evaluation is rejected. The search budget must be 1–128 attempts
-per task; the default remains 50. Omitting task selectors searches the full
+reserved for evaluation is rejected. The search budget is bounded by the signed contract: old versions allow
+1–128 as a CLI bound and may impose a smaller manifest ceiling. The pending
+v5 contract permits up to 1,000 attempts per task. Follow the source of the
+current OPEN manifest. See [the cutover](FOUR_SAMPLE_MINER_BOUND_CUTOVER.md). Omitting task selectors searches the full
 authorized pool. These local preferences do not change the public challenge or
 its scoring rules.
 

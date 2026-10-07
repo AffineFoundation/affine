@@ -15,6 +15,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 VERSION = 'bounded-native-training-label-filter-v1'
+K2L2_VERSION = 'bounded-native-training-label-filter-k2l2-v2'
 
 
 def digest(value):
@@ -118,9 +119,9 @@ def validate_limits(policy):
         fields.add('terminal_rule')
         if policy['terminal_rule'] != 'max-or-eos-v1':
             raise ValueError('explicit native terminal framing policy')
-    if not isinstance(policy, dict) or set(policy) != fields or policy['version'] != VERSION:
+    if not isinstance(policy, dict) or set(policy) != fields or policy['version'] not in (VERSION,K2L2_VERSION):
         raise ValueError('exact opt-in native filter policy')
-    for key, low, high in (('workers',1,4),('max_pairs',1,256),('per_grade_seconds',1,60),
+    for key, low, high in (('workers',1,4),('max_pairs',1,512 if policy['version']==K2L2_VERSION else 256),('per_grade_seconds',1,60),
                            ('wall_seconds',1,600),('max_reply_bytes',1,262144)):
         if type(policy[key]) is not int or not low <= policy[key] <= high:
             raise ValueError('bounded native filter ' + key)
@@ -209,12 +210,28 @@ def _filter_admitted_pairs(pairs, policy, resolve, decode, grader, *, clock=time
                 else 'excluded_label_mismatch')
         rows.append({'pair_sha256':identity,'status':status,'grades':result})
         if status=='accepted_native_labels':accepted.append(pair)
-    return accepted, {'version':VERSION,'policy_sha256':digest(policy),'elapsed_seconds':clock()-started,'prepare_seconds':prepared_at-started,
+    return accepted, {'version':policy['version'],'policy_sha256':digest(policy),'elapsed_seconds':clock()-started,'prepare_seconds':prepared_at-started,
                       'grader_child_memory_limit_bytes':1073741824,
                       'grading_parallel_wall_seconds':clock()-prepared_at,
                       'sampling_assurance':'unaudited','proof_verification_performed':False,
                       'cheating_penalties':False,'claims_rewritten':False,'rows':rows,
                       **({'terminal_rule':policy['terminal_rule']} if 'terminal_rule' in policy else {})}
+
+
+def _complete_document_pairs(pairs, decisions):
+    """A K2L2 document is atomic: never train on its surviving half-batch."""
+    identities={digest(list(pair)):pair for pair in pairs}
+    if len(identities)!=len(pairs):raise ValueError('K2L2 duplicate original pair')
+    used=set();accepted_ids=set()
+    for decision in decisions:
+        rows=decision['pair_sha256']
+        if len(rows)!=2 or len(set(rows))!=2 or any(row not in identities or row in used for row in rows):
+            raise ValueError('K2L2 complete disjoint document pair inventory')
+        if type(decision['accepted'])is not bool:raise ValueError('K2L2 binary document admission')
+        used.update(rows)
+        if decision['accepted']:accepted_ids.update(rows)
+    if used!=set(identities):raise ValueError('K2L2 full document pair coverage')
+    return [pair for pair in pairs if digest(list(pair)) in accepted_ids]
 
 
 def filter_authenticated_documents(document_paths, policy_envelope, job_envelope, authority, source_root,
@@ -250,6 +267,11 @@ def _filter_bound_documents(document_paths,policy,job,manifest,authority,source_
     from subnet.committed_training_inputs import admitted_submission
     if len(document_paths)!=len(job['submissions']) or len(document_paths)>256:
         raise ValueError('exact original committed document paths')
+    limits=validate_limits(policy['limits'])
+    if limits['version']==K2L2_VERSION and (type(manifest.get('K'))is not int or type(manifest.get('L'))is not int or manifest['K']!=2 or manifest['L']!=2):
+        raise ValueError('K2L2 native filter explicit signed quotas')
+    if limits['version']==VERSION and manifest.get('K')==manifest.get('L')==2:
+        raise ValueError('K2L2 requires new native filter version')
     pairs=[];documents=[]
     for path,obj in zip(document_paths,job['submissions']):
         summary, admitted_pairs=admitted_submission(path,obj,manifest,authority,retire=False)
@@ -305,6 +327,8 @@ def _filter_bound_documents(document_paths,policy,job,manifest,authority,source_
             batch_sha256=summary['batch_sha256'],pair_sha256=identities,
             accepted=all(decisions[i]=='accepted_native_labels' for i in identities))
             for summary,identities in documents]
+        if limits['version']==K2L2_VERSION:
+            accepted=_complete_document_pairs(pairs,receipt['document_decisions'])
         receipt.update(original_job_sha256=policy['job_sha256'],source_sha256=policy['source_sha256'],
                        checkpoint=policy['checkpoint'],snapshot_sha256=policy['snapshot_sha256'],
                        tokenizer_binding=policy['tokenizer_binding'],grader_sha256=policy['grader_sha256'])

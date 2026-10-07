@@ -23,7 +23,7 @@ BACKEND_PROFILE = dict(device='cuda', dtype='bfloat16', attention='eager', sm=[8
     tf32=False, deterministic_algorithms=True, cublas_workspace_config=':4096:8',
     native_toploc_threads=2, torch_threads=2)
 SOURCE_FILES = tuple('subnet/'+n+'.py' for n in
-    ('trusted_native_evaluation','owned_cached_evaluation','cached_sampling','successor_calibration','training_documents','probability_artifacts','fast_prefill_audit','continuous_audit_policy','selected_proof_copy','commitment_transport','hourly_policy','audit_exclusion','audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling'))
+    ('trusted_native_evaluation','owned_cached_evaluation','cached_sampling','successor_calibration','training_documents','probability_artifacts','fast_prefill_audit','continuous_audit_policy','selected_proof_copy','commitment_transport','hourly_policy','audit_exclusion','audit_policy','auditing','backend_jobs','backend_profiles','artifact_budget','task_assets','math_corpus_provider','math_corpus_assets','math_corpus','source_bootstrap','gpu_runtime','model','harness','environments','proofs','batches','protocol','forced_sampling','sampling_uniqueness'))
 ROLES = {'mine','verify','train','evaluate','upload'}
 HEAD_POLICY='frozen-feature-head-adamw-v1'
 FULL_POLICY='bf16-full-adamw-checkpointed-v1'
@@ -278,6 +278,8 @@ def mine_cumulative(runtime,manifest,job,upload,clock=None,allow_empty=False,pro
                 if not available():stopped=True;break
                 found=classes['positive']+classes['negative']
                 batch=dict(schema=2,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],env_id=definition['env_id'],environment_version=selected.spec.version,index=index,sample_index=index,rollouts=[r for r,a in found])
+                from .sampling_uniqueness import validate_batch
+                validate_batch(batch,manifest,job.get('miner_id'))
                 candidate=batches+[(batch,[a for r,a in found])]
                 from .artifact_budget import for_manifest
                 structured=callable(getattr(upload,'prepare_pair',None))
@@ -722,6 +724,17 @@ def checkpoint(manifest, workspace, cache=None):
     return target
 
 def audit(data, manifest, runtime, *, commitment_miner=None):
+    report,pairs=_audit(data,manifest,runtime,commitment_miner=commitment_miner)
+    from .forced_sampling import MINER_VERSION
+    if manifest.get('sampling_contract',{}).get('version')==MINER_VERSION:
+        report['sampling_miner']=commitment_miner
+    return report,pairs
+
+def _audit(data, manifest, runtime, *, commitment_miner=None):
+    from .sampling_uniqueness import validate_batch
+    from .forced_sampling import MINER_VERSION, bind_runtime
+    if manifest.get('sampling_contract',{}).get('version')==MINER_VERSION:
+        bind_runtime(runtime,manifest,commitment_miner)
     from .forced_sampling import assurance as sampling_assurance
     from .fast_prefill_audit import NumericalAmbiguity,THREEWAY_VERSION
     threeway=manifest.get('sampling_contract',{}).get('version')==THREEWAY_VERSION
@@ -772,6 +785,10 @@ def audit(data, manifest, runtime, *, commitment_miner=None):
         confirmed_invalid=False;uncertain=[]
         try:
             if batch.get('environment_version')!=selected.spec.version:raise ValueError('environment version')
+            try:validate_batch(batch,manifest,commitment_miner)
+            except (ValueError,KeyError,TypeError)as error:
+                if manifest.get('sampling_contract',{}).get('version')==MINER_VERSION:raise InvalidSample('v5 structural attempt/content quota invalid')from error
+                raise
             seen.add(key);rolls=batch['rollouts'];tokens=set()
             if len(rolls)!=manifest['K']+manifest['L'] or len(arrays)!=len(rolls):raise ValueError('sample count')
             for rollout_number,(rollout,probs) in enumerate(zip(rolls,arrays)):
@@ -818,7 +835,7 @@ def audit(data, manifest, runtime, *, commitment_miner=None):
             outcomes.append(outcome)
         except (ValueError,KeyError,TypeError,IndexError) as error:
             outcomes.append(dict(batch=number,valid=False,fully_audited=number in selected_indices,failure_kind='confirmed_invalid' if confirmed_invalid or isinstance(error,InvalidSample) else 'verification_error',reason=type(error).__name__+': '+str(error)[:300]))
-    return dict(epoch=manifest['epoch'],submission_sha256=hashlib.sha256(data).hexdigest(),policy=policy,selected_batches=sorted(selected_indices),assurance=assurance(len(records),len(selected_indices)),sampling_assurance=sampling_assurance(manifest),outcomes=outcomes,accepted=accepted,training_eligibility='fully-audited-only'),pairs
+    return dict(epoch=manifest['epoch'],submission_sha256=hashlib.sha256(data).hexdigest(),policy=policy,selected_batches=sorted(selected_indices),assurance=assurance(len(records),len(selected_indices)),sampling_assurance=sampling_assurance(manifest),outcomes=outcomes,accepted=accepted,training_eligibility='fully-audited-only',**({'sampling_miner':commitment_miner}if manifest.get('sampling_contract',{}).get('version')==MINER_VERSION else {})),pairs
 
 def full_parameter_train(runtime, pairs, destination, steps=1):
     """Measured, separately selected full BF16 AdamW; not the head-only control."""
@@ -1042,9 +1059,16 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         if native_validations:
             runtime.native_source_validations=native_validations
             runtime.native_source_validation=native_validations.get(runtime.spec.id)
-        if job['role'] != 'evaluate':
-            from .forced_sampling import bind_runtime
-            bind_runtime(runtime,manifest)
+        from .forced_sampling import MINER_VERSION
+        if job['role']=='train' and manifest.get('sampling_contract',{}).get('version')==MINER_VERSION and manifest.get('training_input_policy')=='committed-unaudited-training-v1' and job.get('training_policy')in(COVERED_POLICY,PERSISTENT_POLICY):
+            # Trainer uses signed cheap-admission documents from multiple miners;
+            # it never generates or verifies their prescribed sampling attempts.
+            runtime.sampling_context=None
+            runtime.fast_sampling_calibration=None
+            runtime.probability_artifact_policy=None
+        elif job['role'] != 'evaluate':
+            from .forced_sampling import bind_runtime, MINER_VERSION
+            bind_runtime(runtime,manifest,job.get('miner_id') if job['role']=='mine' else (job.get('submissions')or[{}])[0].get('commitment_miner'))
             from .probability_artifacts import bind_runtime as bind_artifacts
             bind_artifacts(runtime,manifest)
             if 'token_artifact_policy'in manifest:
@@ -1089,7 +1113,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
                     except ArtifactRejected:
                         if job['role']!='verify'or not manifest.get('submission_transport_policy'):raise
                         from .forced_sampling import assurance
-                        reports.append(dict(epoch=manifest['epoch'],submission_sha256=obj['sha256'],accepted=[],outcomes=[dict(batch=0,valid=False,fully_audited=False,failure_kind='structural_invalid')],sampling_assurance=assurance(manifest),training_eligibility='fully-audited-only'));continue
+                        reports.append(dict(epoch=manifest['epoch'],submission_sha256=obj['sha256'],accepted=[],outcomes=[dict(batch=0,valid=False,fully_audited=False,failure_kind='structural_invalid')],sampling_assurance=assurance(manifest),training_eligibility='fully-audited-only',**({'sampling_miner':obj.get('commitment_miner')}if manifest.get('sampling_contract',{}).get('version')==MINER_VERSION else {})));continue
                     if job['role']=='train' and job.get('training_policy') in (COVERED_POLICY,PERSISTENT_POLICY):
                         if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
                             from .committed_training_inputs import admitted_submission

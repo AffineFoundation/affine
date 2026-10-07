@@ -2,9 +2,12 @@
 
 Read https://affine.io/llms.txt first. The latest signed OPEN manifest and its
 approved source are authoritative; GitHub main includes default-off research.
-The current pilot is nonpayable and does not submit new-mechanism chain weights.
+Hourly current-assessment weight setting runs independently of compute epochs.
+Historical nonpayable flags remain historical; follow the current signed policies.
 
-The deployed math contract requires K=1/L=1, at most three batches per UID,
+The [four-sample cutover](FOUR_SAMPLE_MINER_BOUND_CUTOVER.md) is pending activation:
+v5 requires K=2/L=2, three task batches per UID per epoch and nonces 0–999.
+Follow the signed OPEN manifest. An old opening still requires K=1/L=1, at most three batches per UID,
 and at most sixteen prescribed attempts per task. Upload selected-token log
 probabilities and TOPLOC, not full-vocabulary arrays. Audits check prescribed
 sampler consistency; TOPLOC alone is insufficient. Training uses cheap-eligible
@@ -50,8 +53,9 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
   --env-id affine_math --max-batches 3 --search-budget 8 --once
 ```
 
-Eight is a local per-task search budget, not a change to the signed sixteen-
-attempt ceiling. Move on when a task does not yield a success/failure pair.
+Eight is a local search budget, not the signed attempt ceiling. v5 allows
+1,000 attempts per task; old openings keep their original ceiling. For v5, collect
+two distinct successes and two distinct failures with four distinct nonces.
 The bootstrap verifies discovery, source and checkpoint hashes, then runs that
 approved source. Signed code approval is not a sandbox. Miners need no permanent
 R2 credentials; the manifest supplies encrypted private upload capabilities.

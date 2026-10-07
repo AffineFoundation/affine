@@ -133,7 +133,8 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
             input_checkpoint=binding['input_checkpoint'],epoch=manifest['epoch'],
             seed=manifest['training_coverage']['seed'],steps=job['steps'],
             approved_genesis=binding['genesis'],approved_genesis_sha256=binding['genesis_sha256']if parent is None else None,
-            restored_state=restored,resource_admission=admission)
+            restored_state=restored,resource_admission=admission,
+            **({'required_pairs_per_task':2} if manifest.get('K')==manifest.get('L')==2 else {}))
         training_and_checkpoint_seconds=time.monotonic()-train_started
         files=model_files(destination);checkpoint=file_map(files)
         def publish(name,path):put_file(transport['output_shards'][name]['put_url'],path)
