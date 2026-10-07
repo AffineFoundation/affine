@@ -14,6 +14,34 @@ from .audit_queue_snapshot import queue_rows
 
 class InvalidCommittedArtifact(ValueError):pass
 
+def fair_pending_groups(pending, draws, available):
+ """Schedule already-random committed selections fairly; never redraw/drop work.
+
+ Reserve half the available dispatch slots for the newest pending epoch round,
+ and fill the remaining slots from the oldest historical selected groups.
+ Unused capacity from either lane spills to the other. Epoch identity and all
+ original member hashes are unchanged; this only orders pending group plans.
+ """
+ if type(available)is not int or available<0:raise ValueError('bounded audit group capacity')
+ if not pending or available==0:return []
+ ranked=[]
+ for key,plan in pending:
+  members=plan['row_sha256s']
+  if not members or any(i not in draws for i in members):raise ValueError('original pending audit selections')
+  rows=[draws[i]for i in members]
+  rounds={d['row']['round']for d in rows}
+  if len(rounds)!=1 or any(d['row']['epoch']!=plan['epoch']for d in rows):raise ValueError('one original pending opening round')
+  round=next(iter(rounds));times=[d['selected_at']for d in rows]
+  if type(round)is not int or round<0 or any(type(t)not in(int,float)or not math.isfinite(t)or t<0 for t in times):raise ValueError('finite original audit selection age')
+  ranked.append((round,min(times),key,plan))
+ newest=max(row[0]for row in ranked)
+ current=sorted((x for x in ranked if x[0]==newest),key=lambda x:(x[1],x[2]))
+ historical=sorted((x for x in ranked if x[0]!=newest),key=lambda x:(x[1],x[2]))
+ reserve=(available+1)//2 if historical else available
+ selected=current[:reserve];selected+=historical[:available-len(selected)]
+ if len(selected)<available:selected+=current[reserve:reserve+available-len(selected)]
+ return [(key,plan)for _,_,key,plan in selected]
+
 def inflight_status(status,now):
  """Expired original jobs cannot consume scheduling capacity indefinitely.
 
@@ -288,7 +316,7 @@ class ContinuousAuditor:
     if key in plans and plans[key]!=plan and not plans[key].get('resolved'):raise ValueError('immutable audit group plan')
     if key not in plans or plans[key].get('resolved'):plans[key]=plan
   self.persist();pending=[(key,v)for key,v in plans.items()if not v.get('resolved')];enqueued=0
-  for key,plan in pending[:available]:
+  for key,plan in fair_pending_groups(pending,self.state['draws'],available):
    members=plan['row_sha256s']
    if not 1<=len(members)<=self.group_size or members!=sorted(set(members))or key!=digest(dict(version='bounded-checkpoint-audit-groups-v1',members=members))or any(i not in self.state['draws']or self.state['draws'][i]['row']['epoch']!=plan['epoch']for i in members):raise ValueError('exact bounded original audit group plan')
    source=authenticate(authenticate(self.state['populations'][plan['epoch']],self.controller.authority.id)['manifest_document'],self.controller.authority.id)['source_bundle']['sha256']
