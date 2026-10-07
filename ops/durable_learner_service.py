@@ -103,10 +103,10 @@ def validate_operator_overlay(overlay, source, policy, cfg):
         not stat.S_ISDIR(root.lstat().st_mode) or root.lstat().st_uid != os.getuid()):
         raise ValueError('distinct canonical owned CPU overlay root')
     changes = overlay['overrides']
-    if type(changes) is not dict or not changes or not set(changes) <= (CPU_OVERRIDES | ({'subnet/late_capture_recovery.py'} if 'capture_recovery' in policy else set()) | ({'subnet/persistent_training_controller.py'} if 'native_training_eligibility' in policy else set()) | (PEER_OVERRIDES if PEER_POLICY_FIELD in policy else set())):
+    if type(changes) is not dict or not changes or not set(changes) <= (CPU_OVERRIDES | ({'subnet/late_capture_recovery.py'} if ('capture_recovery' in policy or policy.get('version')=='durable-pinned-k2l2-composite-learner-service-v3') else set()) | ({'subnet/persistent_training_controller.py'} if 'native_training_eligibility' in policy else set()) | (PEER_OVERRIDES if PEER_POLICY_FIELD in policy else set())):
         raise ValueError('only explicit coordinator transport modules may differ')
     original = source['full_source_files']
-    if any(k not in original and k not in ({'subnet/capture_journal.py', 'subnet/checkpoint_upload_recovery.py'} | ({'subnet/late_capture_recovery.py'} if 'capture_recovery'in policy else set()) | ({'subnet/learner_blacklist_selection.py','subnet/learner_selection_operator_bridge.py'} if PEER_POLICY_FIELD in policy else set())) for k in changes):
+    if any(k not in original and k not in ({'subnet/capture_journal.py', 'subnet/checkpoint_upload_recovery.py'} | ({'subnet/late_capture_recovery.py'} if ('capture_recovery'in policy or policy.get('version')=='durable-pinned-k2l2-composite-learner-service-v3') else set()) | ({'subnet/learner_blacklist_selection.py','subnet/learner_selection_operator_bridge.py'} if PEER_POLICY_FIELD in policy else set())) for k in changes):
         raise ValueError('only explicit CPU sidecars may extend original membership')
     expected = dict(original, **changes)
     if overlay['full_source_files'] != expected:
