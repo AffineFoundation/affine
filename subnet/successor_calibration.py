@@ -24,11 +24,11 @@ def request(value):
     if type(value['task_indices'])is not list or len(value['task_indices'])!=2 or any(type(i)is not int or i<0 for i in value['task_indices'])or len(set(value['task_indices']))!=2:raise ValueError('two distinct real calibration tasks')
     if type(value['max_tokens'])is not int or value['max_tokens']!=h['max_output_tokens'] or not 8<=value['max_tokens']<=2048:raise ValueError('production calibration output budget')
     d=value['draw_contract']
-    from .forced_sampling import MINER_VERSION
     if miner_bound:
-        from .forced_sampling import validate
-        validate(d)
-        if d['version']!=MINER_VERSION or d['max_attempts']!=1000:raise ValueError('miner-bound qualification draw contract')
+        # Bootstrap admission must remain pure before the worker installs its
+        # authenticated source finder. Full sampler validation is draw_context.
+        fields={'version','randomness','max_attempts','verification','generation','calibration','support_adjudication'}
+        if type(d)is not dict or set(d)!=fields or d['version']!='forced-inverse-cdf-prefill-miner-bound-v5' or type(d['max_attempts'])is not int or d['max_attempts']!=1000 or d['verification']!='prefill-cdf-calibrated' or d['generation']!='cached-eager-inverse-cdf' or d['support_adjudication']!='exact-cached-replay-v1' or type(d['calibration'])is not dict:raise ValueError('miner-bound qualification draw contract')
         miner=value['miner']
         if type(miner)is not str or len(miner)!=64 or any(x not in '0123456789abcdef'for x in miner):raise ValueError('authenticated calibration miner identity')
     elif type(d)is not dict or d.get('version')not in('forced-inverse-cdf-replay-v1','forced-inverse-cdf-prefill-v2','forced-inverse-cdf-prefill-support-v3','forced-inverse-cdf-prefill-threeway-v4')or type(d.get('max_attempts'))is not int or not 2<=d['max_attempts']<=128:raise ValueError('qualification draw contract')
@@ -50,6 +50,8 @@ def draw_context(manifest,value):
     value=request(value)
     context=dict(epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],contract=value['draw_contract'])
     if value['version']==MINER_CALIBRATION_VERSION:
+        from .forced_sampling import validate
+        validate(value['draw_contract'])
         if (type(manifest.get('K'))is not int or type(manifest.get('L'))is not int or type(manifest.get('max_batches'))is not int or (manifest['K'],manifest['L'],manifest['max_batches'])!=(2,2,3)):raise ValueError('miner-bound calibration K2 L2 max3')
         context['miner']=value['miner']
     return context
