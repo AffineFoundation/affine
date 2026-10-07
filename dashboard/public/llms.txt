@@ -13,6 +13,12 @@ and prompt hashes), but below checkpoint 23 at 90/128. This modest recovery does
 not establish sustained convergence. The public performance chart includes CP28.
 Production still requires one success and one failure per task. The larger
 sample-quota study and training-only blacklist integration are prospective.
+Default-off sampling diagnostics are available on GitHub main for the frozen
+f213 verifier. They count actual fast-check decisions and cached-replay
+fallbacks, including failed or unavailable replay, using bounded scalar
+records. Fourteen CPU controls passed against the actual frozen source. This
+is not an activated verifier change or a GPU qualification; existing sampler
+predicates, tolerances and miner contracts remain in force.
 The isolated same-parent negative-quality training comparison was interrupted:
 Lium records its H100 deleted at 05:12 UTC after an SDK request through the
 account API key. No completed research training result or output-state readback
