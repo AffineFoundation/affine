@@ -78,9 +78,15 @@ def complete_checkpoint_cache(path,files):
 
 
 class Worker:
-    def __init__(self, url, seed, authority, workspace, python=sys.executable, checkpoint_caches=None, backend_source=None, source_registry=None, checkpoint_retention=None, capacity_policy_path=None):
+    def __init__(self, url, seed, authority, workspace, python=sys.executable, checkpoint_caches=None, backend_source=None, source_registry=None, checkpoint_retention=None, capacity_policy_path=None, resident_backend_path=None, resident_idle_seconds=900):
         self.url=url.rstrip('/'); self.key=SigningKey(seed); self.identity=self.key.verify_key.encode().hex()
         self.authority=authority; self.workspace=Path(workspace); self.python=python
+        self.resident=None
+        if resident_backend_path is not None:
+            from ops.resident_verifier_backend import ResidentClient
+            self.resident=ResidentClient(resident_backend_path,resident_idle_seconds)
+            if checkpoint_retention is None:
+                checkpoint_retention=dict(ttl_seconds=resident_idle_seconds,disk_floor_bytes=0)
         self.checkpoint_retention=checkpoint_retention
         self.capacity_policy_path=Path(capacity_policy_path) if capacity_policy_path is not None else None
         if self.capacity_policy_path is not None and (not self.capacity_policy_path.is_absolute() or self.capacity_policy_path.is_symlink()):raise ValueError("exact operator capacity policy path")
@@ -235,6 +241,7 @@ class Worker:
     def once(self):
         claim=self.request('claim',role='verify')['claim']
         if claim is None:
+            if self.resident is not None:self.resident.idle()
             # No new work is required to retire already verified owned models.
             # Lease/inode guards retain every active or changed cache; external
             # mapped caches and report/log evidence are outside this catalog.
@@ -265,6 +272,9 @@ class Worker:
         lifecycle=None;runspace=None;acked_owned_checkpoint=None;expired_attempt=None
         try:
             backend_source=self.source_for_job(job)
+            if self.resident is not None:
+                if backend_source is None:raise ValueError('resident requires pinned source registry')
+                self.resident.prepare(job,backend_source)
             environment=dict(os.environ,CUBLAS_WORKSPACE_CONFIG=':4096:8')
             runspace=self.workspace/'backend' if claim['attempt']==1 else attempt/'backend'
             cache=self.workspace/'backend'/'checkpoints'/job['manifest']['payload']['checkpoint']['id']
@@ -278,22 +288,24 @@ class Worker:
             shared_lifecycle=CacheLifecycle(self.workspace/'backend')
             shared_lifecycle.evict_checkpoints(exclude=[approved['id']],keep=0)
             lifecycle.evict_checkpoints(exclude=[approved['id']],keep=0)
-            lease_fds=[cache_leases.enter_context(shared_lifecycle.lease_checkpoint(approved['id']))]
+            lease=self.resident.lease_checkpoint if self.resident is not None else lambda lifecycle,cp:lifecycle.lease_checkpoint(cp)
+            lease_fds=[cache_leases.enter_context(lease(shared_lifecycle,approved['id']))]
             if runspace!=self.workspace/'backend':
-                lease_fds.append(cache_leases.enter_context(lifecycle.lease_checkpoint(approved['id'])))
+                lease_fds.append(cache_leases.enter_context(lease(lifecycle,approved['id'])))
             environment['AFFINE_CACHE_LIFECYCLE_ROOT']=str(runspace)
             selected_cache=None
             approved_cache=self.checkpoint_caches.get(approved['id'])
             if approved_cache and checkpoint_cache_candidate(approved_cache,approved['files']):
                 selected_cache=Path(approved_cache)
                 command+=['--checkpoint-cache',str(approved_cache)]
-            elif claim['attempt']>1 and checkpoint_cache_candidate(cache,approved['files']):
+            elif (claim['attempt']>1 or self.resident is not None) and checkpoint_cache_candidate(cache,approved['files']):
                 selected_cache=cache
                 command+=['--checkpoint-cache',str(cache)]
             self.wait_for_capacity(job,claim,lost,lifecycle,selected_cache,attempt,credit_lifecycle=shared_lifecycle if selected_cache==cache else None,protocol_source=backend_source)
             with (attempt/'worker.log').open('xb') as output:
                 (attempt/'worker.log').chmod(0o600)
-                result=subprocess.run(command,stdout=output,stderr=subprocess.STDOUT,env=environment,pass_fds=tuple(lease_fds),cwd=backend_source)
+                execute=self.resident.run if self.resident is not None else subprocess.run
+                result=execute(command,stdout=output,stderr=subprocess.STDOUT,env=environment,pass_fds=tuple(lease_fds),cwd=backend_source)
             def expired_completed_lease(stage):
                 nonlocal expired_attempt
                 evidence=attempt/'expired-completed-lease.json'
@@ -392,6 +404,8 @@ def main():
     parser.add_argument('--owned-checkpoint-ttl-seconds',type=int)
     parser.add_argument('--owned-checkpoint-disk-floor-bytes',type=int)
     parser.add_argument('--owned-capacity-policy')
+    parser.add_argument('--resident-backend',help='ROOT-admitted resident operator helper; opt-in')
+    parser.add_argument('--resident-idle-seconds',type=int,default=900)
     parser.add_argument('--checkpoint-cache',action='append',default=[],metavar='CHECKPOINT_ID=LOCAL_PATH')
     args=parser.parse_args(); path=Path(args.seed_file)
     if path.stat().st_mode & 0o077: raise ValueError('worker key must be private')
@@ -404,10 +418,13 @@ def main():
         if identifier in caches:raise ValueError('duplicate checkpoint cache mapping')
         caches[identifier]=local
     registry=json.loads(Path(args.source_registry).read_text()) if args.source_registry else {}
-    worker=Worker(args.coordinator,bytes.fromhex(path.read_text().strip()),args.authority,args.workspace,checkpoint_caches=caches,backend_source=args.backend_source,source_registry=registry,checkpoint_retention=retention,capacity_policy_path=args.owned_capacity_policy)
-    if args.once:
-        worker.once()
-        return
-    serve(worker)
+    worker=Worker(args.coordinator,bytes.fromhex(path.read_text().strip()),args.authority,args.workspace,checkpoint_caches=caches,backend_source=args.backend_source,source_registry=registry,checkpoint_retention=retention,capacity_policy_path=args.owned_capacity_policy,resident_backend_path=args.resident_backend,resident_idle_seconds=args.resident_idle_seconds)
+    try:
+        if args.once:
+            worker.once()
+            return
+        serve(worker)
+    finally:
+        if worker.resident is not None:worker.resident.close()
 
 if __name__=='__main__': main()

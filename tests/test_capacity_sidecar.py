@@ -26,6 +26,11 @@ class SidecarGrant(unittest.TestCase):
  def test_unknown_sidecar_name_rejected(self):self.policy={'runtime_sidecars':{self.bundle:{'subnet/evil.py':'b'*64}}};self.assertRaises(ValueError,self.call)
  def test_runtime_cannot_be_disguised_as_sidecar(self):self.sidecar();self.job['source_files']['subnet/source_sampling_admission.py']='c'*64;self.assertRaises(ValueError,self.call)
  def backend(self):
+  # The real isolated CPU guard imports its pinned protocol dependencies.
+  # Supply those files in this fixture rather than relying on parent imports.
+  for name in ('distributed_roles.py','cache_lifecycle.py','artifact_budget.py','storage.py'):
+   data=(P/'subnet'/name).read_bytes();(self.root/'subnet'/name).write_bytes(data)
+   self.files['subnet/'+name]=hashlib.sha256(data).hexdigest()
   spec=importlib.util.spec_from_file_location('candidate_backend',P/'ops/capacity_bounded_verifier_backend.py');b=importlib.util.module_from_spec(spec);spec.loader.exec_module(b)
   from types import SimpleNamespace
   envelope=self.sign(dict(self.job,role='verify'))
@@ -38,6 +43,6 @@ class SidecarGrant(unittest.TestCase):
  def test_capacity_backend_honors_signed_sidecar_without_model(self):self.sidecar();self.assertEqual(self.backend(),['backend'])
  def test_capacity_backend_rejects_changed_sidecar_before_backend(self):self.sidecar().write_text('evil');self.assertRaises(ValueError,self.backend)
  def test_capacity_backend_uses_same_guard(self):
-  import ast
-  t=ast.parse((P/'ops/capacity_bounded_verifier_backend.py').read_text());self.assertEqual(sum(isinstance(n,ast.Call)and isinstance(n.func,ast.Attribute)and n.func.attr=='validate_runtime_inventory'for n in ast.walk(t)),1)
+  self.sidecar();(self.root/'subnet/unapproved.py').write_text('x=2')
+  self.assertRaises(ValueError,self.backend)
 if __name__=='__main__':unittest.main()

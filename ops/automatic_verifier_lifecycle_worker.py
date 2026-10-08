@@ -15,6 +15,13 @@ def main():
     sys.path.insert(0,str(source))
     import subnet
     overlay=Path(__file__).resolve().parents[1]
+    if '--resident-backend' in sys.argv:
+        helper=Path(sys.argv[sys.argv.index('--resident-backend')+1])
+        if helper != overlay/'ops'/'resident_verifier_backend.py':
+            raise ValueError('resident helper must be the operator overlay member')
+        spec=importlib.util.spec_from_file_location('ops.resident_verifier_backend',helper)
+        resident=importlib.util.module_from_spec(spec);sys.modules[spec.name]=resident
+        spec.loader.exec_module(resident)
     for name in ('cache_lifecycle','distributed_worker'):
         if name=='distributed_worker':
             spec=importlib.util.spec_from_file_location('ops.verifier_capacity_admission',overlay/'ops'/'verifier_capacity_admission.py')
