@@ -81,7 +81,9 @@ against the parent does not establish a significant one-update regression;
 The positive-only branch scored 85/128; against the pairwise branch it gained four
 answers and lost twelve (−6.25 percentage points, paired bootstrap 95% interval
 [−12.5, 0.0]). This screen does not support dropping negatives. Lower-rate and
-FP32-gradient treatment comparisons are still running. Every candidate must be
+FP32-gradient accumulation scored 95/128: two more than the existing update,
+but one fewer than the parent. This is not a demonstrated learning gain.
+The lower-rate comparisons are still running. Every candidate must be
 compared with the incoming parent, as well as the existing update: merely losing
 less than another update does not demonstrate learning. The inference exports for the archived one-update
 baseline and positive-only branches change about 6.90% and 6.64% of BF16 weights,

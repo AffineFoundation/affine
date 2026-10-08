@@ -76,6 +76,18 @@ def main():
     with guards.singleton(old['singleton_lock']):
         guards.no_predecessors(old)
         service=baseline.prepare_runtime(changed)
+        if 'native_authorization_history' in p:
+            import importlib.util
+            helper=Path(__file__).with_name('frozen_native_authorization.py')
+            if file_hash(helper)!=p['native_authorization_history_helper_sha256']:
+                raise ValueError('pinned frozen native authorization helper')
+            spec=importlib.util.spec_from_file_location('_root_frozen_native_authorization',helper)
+            adapter=importlib.util.module_from_spec(spec);spec.loader.exec_module(adapter)
+            # prepare_runtime already captured this class in NativeController.
+            # Reloading creates a different class and leaves the live selector
+            # unpatched, despite a successful helper installation.
+            native=sys.modules['_root_pinned_native_eligibility.native_training_eligibility']
+            adapter.install(native,p['native_authorization_history'],old['authority'])
         from subnet import remote_backend
         qualified=remote_backend.RemoteJobs;base=qualified.__bases__[0]
         expected=p['trainer_runtime_files']
