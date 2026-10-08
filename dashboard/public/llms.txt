@@ -2,6 +2,14 @@
 
 ## Larger quota support — software preparation, not live activation
 
+For future openings, use one controller setting: `"samples_per_batch": 8`.
+The publisher derives K=L=4; setting 16 derives K=L=8. Omit separate K/L values
+or provide exactly matching ones. Balanced totals must be even integers from 4
+through 128. Native filter v3 supports `"max_pairs": "manifest"`, deriving the
+bounded grading budget from the signed quota and 256-task training ceiling.
+No code change is needed within these supported bounds, but each change still
+requires a newly approved signed opening and adequate runtime/artifact capacity.
+
 Updated software supports manifest-driven balanced quotas including K=4/L=4:
 four distinct successes and four distinct failures per task batch. The limit is
 still three task batches per UID per epoch, with nonces 0–999 and one point per

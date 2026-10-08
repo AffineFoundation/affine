@@ -75,6 +75,8 @@ def binding(manifest, miner=None):
         raise ValueError('sampling epoch/checkpoint binding')
     context={'contract': json.loads(canonical(value)), 'epoch': epoch, 'checkpoint': checkpoint}
     if value['version']==MINER_VERSION:
+        from .batch_quotas import configured_quotas
+        configured_quotas(manifest)
         from .controller import class_quotas
         class_quotas(manifest.get('K'),manifest.get('L'),value)
         if type(manifest.get('max_batches'))is not int or manifest['max_batches']!=3:

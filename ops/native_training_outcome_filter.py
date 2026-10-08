@@ -19,6 +19,8 @@ K2L2_VERSION = 'bounded-native-training-label-filter-k2l2-v2'
 MULTI_VERSION = 'bounded-native-training-label-filter-multi-v3'
 
 def document_pair_quota(manifest):
+    from subnet.batch_quotas import configured_quotas
+    configured_quotas(manifest)
     K,L=manifest.get('K'),manifest.get('L')
     if type(K)is not int or type(L)is not int or K!=L or not 2<=K<=64:
         raise ValueError('balanced signed multi-rollout quotas required')
@@ -121,7 +123,7 @@ class PinnedGrader:
         return None, 'native_invalid_output'
 
 
-def validate_limits(policy):
+def validate_limits(policy, *, manifest=None):
     fields = {'version','workers','max_pairs','per_grade_seconds','wall_seconds','max_reply_bytes'}
     if isinstance(policy,dict) and 'terminal_rule' in policy:
         fields.add('terminal_rule')
@@ -129,6 +131,11 @@ def validate_limits(policy):
             raise ValueError('explicit native terminal framing policy')
     if not isinstance(policy, dict) or set(policy) != fields or policy['version'] not in (VERSION,K2L2_VERSION,MULTI_VERSION):
         raise ValueError('exact opt-in native filter policy')
+    policy=dict(policy)
+    if policy['max_pairs']=='manifest':
+        if policy['version']!=MULTI_VERSION or manifest is None:
+            raise ValueError('manifest pair budget requires signed multi-rollout context')
+        policy['max_pairs']=256*document_pair_quota(manifest)
     for key, low, high in (('workers',1,4),('max_pairs',1,16384 if policy['version']==MULTI_VERSION else 512 if policy['version']==K2L2_VERSION else 256),('per_grade_seconds',1,60),
                            ('wall_seconds',1,600),('max_reply_bytes',1,262144)):
         if type(policy[key]) is not int or not low <= policy[key] <= high:
@@ -276,7 +283,7 @@ def _filter_bound_documents(document_paths,policy,job,manifest,authority,source_
     from subnet.committed_training_inputs import admitted_submission
     if len(document_paths)!=len(job['submissions']) or len(document_paths)>256:
         raise ValueError('exact original committed document paths')
-    limits=validate_limits(policy['limits'])
+    limits=validate_limits(policy['limits'],manifest=manifest)
     if limits['version']==K2L2_VERSION and (type(manifest.get('K'))is not int or type(manifest.get('L'))is not int or manifest['K']!=2 or manifest['L']!=2):
         raise ValueError('K2L2 native filter explicit signed quotas')
     if limits['version']==MULTI_VERSION:
@@ -330,7 +337,7 @@ def _filter_bound_documents(document_paths,policy,job,manifest,authority,source_
                     {tokenizer.eos_token_id},model_vocab)
         script=source_root/'subnet/vendor/legacy/rollouts/envs/affine_math_v1/affine_math_v1/verify.py'
         grader=PinnedGrader(interpreter,script,policy['grader_sha256'])
-        accepted,receipt=_filter_admitted_pairs(pairs,policy['limits'],resolve,
+        accepted,receipt=_filter_admitted_pairs(pairs,limits,resolve,
                            lambda tokens:tokenizer.decode(tokens,skip_special_tokens=True),grader)
         decisions={r['pair_sha256']:r['status'] for r in receipt['rows']}
         receipt['document_decisions']=[dict(document_sha256=summary['document_sha256'],

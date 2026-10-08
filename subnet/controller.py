@@ -239,6 +239,8 @@ class Controller:
                       K=K,L=L,max_batches=commitment_max_batches if sampling_policy and sampling_policy.get('version')==MINER_VERSION else 4,start=self.gateway.epochs[epoch].get('start',int(time.time())),deadline=deadline,capabilities=caps,audit_policy=dict(audit_policy or {'mode':'full','version':1}),
                       numerical_policy='cpu-float32-eager-exact-toploc-logprob-atol1e-5',model_runtime_revision=NUMERICAL_RUNTIME_REVISION,runtime_profile=dict(runtime_profile or {}),
                       environment_revision='trusted-adapter-registry-v1')
+        if sampling_policy and sampling_policy.get('version')==MINER_VERSION:
+            manifest['samples_per_batch']=K+L
         if sample_harness_registry is not None:manifest['sample_harness_registry']=sample_harness_registry
         if submission_transport_policy is not None:manifest['submission_transport_policy']=submission_transport_policy
         if training_input_policy is not None:manifest['training_input_policy']=training_input_policy

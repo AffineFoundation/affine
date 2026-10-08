@@ -38,6 +38,8 @@ def inventory(files):
 
 
 def contract(config):
+    from subnet.batch_quotas import normalize_config
+    config=normalize_config(config)
     if (type(config.get('K')) is not int or not 2<=config['K']<=64 or
         type(config.get('L')) is not int or config['L'] != config['K'] or
         type(config.get('commitment_max_batches')) is not int or
@@ -65,6 +67,8 @@ def validate(source, qualification, config, source_sha256, authority, verify_row
     Called only by the NEW policy branch, alongside existing file-membership,
     execution identity, reward activation, translation and optimizer-state guards.
     """
+    from subnet.batch_quotas import normalize_config
+    config=normalize_config(config)
     base = {'version', 'approved', 'source_sha256', 'optimizer_reset',
             'historical_relabel', 'full_source_files', 'runtime_source_files', 'evidence'}
     fields = base | {'predecessor_source_approval', 'runtime_execution_files',

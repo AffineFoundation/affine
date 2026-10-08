@@ -362,6 +362,8 @@ def install_qualified_remote_inventory(policy):
 
 def calibration_opening_with_quota(original,controller,config,status,opening):
     """Calibration sees the same signed quota later supplied to controller.open."""
+    from subnet.batch_quotas import normalize_config
+    config=normalize_config(config)
     if config.get('sampling_policy',{}).get('version')!='forced-inverse-cdf-prefill-miner-bound-v5':
         return original(controller,config,status,opening)
     from subnet.controller import class_quotas

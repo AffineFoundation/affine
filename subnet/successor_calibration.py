@@ -50,6 +50,8 @@ def draw_context(manifest,value):
     value=request(value)
     context=dict(epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],contract=value['draw_contract'])
     if value['version']==MINER_CALIBRATION_VERSION:
+        from .batch_quotas import configured_quotas
+        configured_quotas(manifest)
         from .forced_sampling import validate
         validate(value['draw_contract'])
         from .controller import class_quotas

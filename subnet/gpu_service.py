@@ -87,6 +87,8 @@ def owned_dispatch_identities(config,manifest,identities):
     return [miner for miner in identities if miner in paths]
 
 def contract(config,round_number):
+    from .batch_quotas import normalize_config
+    config=normalize_config(config)
     from .controller import class_quotas
     K,L=class_quotas(config.get('K',1),config.get('L',1),config.get('sampling_policy'))
     revision,profile,policy=for_config(config)
@@ -255,6 +257,8 @@ def initial_manifest(config,checkpoint):
     return result
 
 def run(config,once=False):
+    from .batch_quotas import normalize_config
+    config=normalize_config(config)
     from .controller import class_quotas
     class_quotas(config.get('K',1),config.get('L',1),config.get('sampling_policy'))
     for field in ('preparation_only','activation_allowed'):
