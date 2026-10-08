@@ -1,10 +1,12 @@
 # Completed-answer MATH cutover and base restart
 
-Status, 2026-10-08: the base-model and optimizer reset has been applied at
-global epoch 78. The API, learner and seven reachable verifier workers have the
-completed-answer source admitted. The first new manifest remains behind the
-normal checkpoint calibration/opening checks; no completed new training epoch
-is claimed by this record. An independent, fresh fixed-32 evaluation is running.
+Status, 2026-10-08: active in global epoch 78. ROOT authenticated the first
+public manifest on original base checkpoint 6493a901 and fresh optimizer zero.
+The API, learner, trainer and seven reachable verifier workers admit the new
+source. Real checkpoint calibration and confirmation passed before opening.
+The owned miner's original job is running; a new training update is still
+pending. The fresh fixed-32 baseline completed at 21/32 correct, with full
+R2 report readback and automatic owned-cache disposal acknowledged.
 
 ## Outcome contract
 

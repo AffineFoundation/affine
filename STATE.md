@@ -1,3 +1,15 @@
+Verified first fresh opening, 2026-10-08, 21:40 UTC:
+Global epoch78 is now collecting with its original signed public manifest.
+ROOT fully read back and authenticated source74f132, base checkpoint6493a901,
+K4/L4/max3 and prime-v1-2-completed-math from R2. Genuine calibration and fresh
+confirmation completed before this opening. The owned miner's original job
+is running. The new diagnostic baseline completed21/32 with durable R2 report
+readback and automatic owned-cache disposal complete; affine.io now shows
+only this run's first epoch and baseline. No new optimizer update or learning
+gain is yet claimed. Seven reachable verifier handovers are acknowledged.
+The independent hourly writer's earlier uncertain chain outcome remains a
+separate known issue; its cursor is preserved, not bypassed by this reset.
+
 Verified completed-answer reset, 2026-10-08, 21:34 UTC:
 This entry supersedes operational snapshots below. ROOT applied the explicit
 restart from original Qwen2.5-Math-7B-Instruct checkpoint 6493a901 at global
