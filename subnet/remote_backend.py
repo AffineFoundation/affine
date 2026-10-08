@@ -26,6 +26,18 @@ def publication_request(manifest, authority, policy=None):
         raise ValueError('explicit publication projection policy')
     if 'training_startup_recovery' not in manifest:return label,manifest
     declaration=signed(manifest['training_startup_recovery'],authority)
+    if declaration.get('version')=='terminal-unaudited-precompute-recovery-v2':
+        original=signed(declaration['original_signed_job'],authority)
+        old=signed(original['manifest'],authority)
+        if (declaration.get('epoch')!=manifest['epoch'] or old['epoch']!=manifest['epoch'] or
+                declaration.get('replacement_source_bundle')!=manifest['source_bundle'] or
+                hashlib.sha256(canonical(original)).hexdigest()!=declaration.get('original_job_sha256')):
+            raise ValueError('authenticated precompute train-only publication scope')
+        projected=dict(manifest);del projected['training_startup_recovery']
+        # The trainer projection binds its original input checkpoint. Upload
+        # grants instead bind the newly produced inference checkpoint directly.
+        projected.pop('trainer_local_state_original_manifest',None)
+        return label+'-publication-v1',projected
     if (declaration.get('version') not in ('terminal-parent-restore-pre-update-recovery-v2','terminal-parent-restore-pre-update-bootstrap-recovery-v3','terminal-post-update-uncommitted-recovery-v1')
             or declaration.get('epoch')!=manifest['epoch']
             or declaration.get('replacement_execution_source_sha256')!=manifest['source_bundle']['sha256']):

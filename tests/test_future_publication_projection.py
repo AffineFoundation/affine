@@ -35,3 +35,14 @@ class FutureProjectionTests(unittest.TestCase):
     with self.assertRaises(Exception):publication_request(m,self.authority,self.policy)
  def test_unknown_policy_refused(self):
   with self.assertRaises(ValueError):publication_request(self.m,self.authority,{'version':'foreign'})
+
+ def test_precompute_recovery_upload_is_bound_to_original_job_and_new_model(self):
+  import hashlib
+  original={'job_id':'failed-original','manifest':self.sign(dict(self.m))}
+  declaration=dict(version='terminal-unaudited-precompute-recovery-v2',epoch=self.m['epoch'],replacement_source_bundle=self.m['source_bundle'],original_signed_job=self.sign(original),original_job_sha256=hashlib.sha256(canonical(original)).hexdigest())
+  m=dict(self.m,training_startup_recovery=self.sign(declaration),trainer_local_state_original_manifest=self.sign(self.m));before=copy.deepcopy(m)
+  label,result=publication_request(m,self.authority,self.policy)
+  self.assertEqual(m,before);self.assertEqual(result,self.m);self.assertTrue(label.endswith('-publication-v1'))
+  for field,value in [('epoch','other'),('original_job_sha256','f'*64),('replacement_source_bundle',{'sha256':'f'*64})]:
+   bad=copy.deepcopy(declaration);bad[field]=value
+   with self.subTest(field=field),self.assertRaises(ValueError):publication_request(dict(m,training_startup_recovery=self.sign(bad)),self.authority,self.policy)

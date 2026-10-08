@@ -47,6 +47,11 @@ def main():
     normalized=json.loads(json.dumps(cfg))
     normalized['remote']['roles']['train']=original_cfg['remote']['roles']['train']
     normalized['remote'].pop('training_startup_recovery_files',None)
+    if cfg['remote'].get('publication_manifest_projection')!={'version':'train-recovery-publication-projection-v1'}:
+        raise ValueError('explicit model-only recovery publication scope')
+    if 'publication_manifest_projection' in original_cfg['remote']:
+        normalized['remote']['publication_manifest_projection']=original_cfg['remote']['publication_manifest_projection']
+    else:normalized['remote'].pop('publication_manifest_projection',None)
     original_normalized=json.loads(json.dumps(original_cfg));original_normalized['remote'].pop('training_startup_recovery_files',None)
     if normalized!=original_normalized:raise ValueError('trainer-only configuration scope')
     train=cfg['remote']['roles']['train']
