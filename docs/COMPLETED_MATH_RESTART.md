@@ -1,7 +1,10 @@
 # Completed-answer MATH cutover and base restart
 
-Status: implementation under qualification. The contract described here is
-prospective; its presence in the repository does not activate it in production.
+Status, 2026-10-08: the base-model and optimizer reset has been applied at
+global epoch 78. The API, learner and six reachable verifier workers have the
+completed-answer source admitted. The first new manifest remains behind the
+normal checkpoint calibration/opening checks; no completed new training epoch
+is claimed by this record. An independent, fresh fixed-32 evaluation is running.
 
 ## Outcome contract
 
@@ -53,3 +56,24 @@ requires the old optimizer lineage must not be used to silently initialize
 the fresh run. Confirm the first published manifest, accepted completed-answer
 batches, fresh optimizer lineage, training completion, and held-out evaluation
 before reporting the restart as live.
+
+## Run display and operations
+
+affine.io retains its existing layout. An authenticated run boundary filters
+the learning charts to this run and displays its first global epoch (78) as
+epoch 1. Historical database rows and incentive records remain intact. Fresh
+base-model evaluation records cannot attach to the ancient first use of the
+same checkpoint; their state is explicitly scoped to this restart.
+
+Training blacklist eligibility is refreshed by a read-only assessment process
+that authenticates the same original audit evidence and writer policy. It
+never submits a chain transaction or changes the writer cursor. This separates
+the learning-loop opening from an unresolved historical payout transaction.
+The hourly weight writer still needs actual-chain reconciliation of that
+transaction; the reset does not claim to have resolved it.
+
+The independent evaluation preserves the original 32-task cohort, seeds,
+1024-token diagnostic budget and native grader. A new baseline starts at
+optimizer zero and subsequent genuinely committed checkpoints are evaluated
+without requiring ten updates first. This diagnostic is smaller than the
+750-task held-out population and does not establish convergence alone.

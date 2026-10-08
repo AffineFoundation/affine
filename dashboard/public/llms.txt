@@ -1,3 +1,33 @@
+# Current run: completed-answer MATH restart (2026-10-08)
+
+The active run restarts Qwen/Qwen2.5-Math-7B-Instruct at its original pinned
+base weights with optimizer step zero. Prior checkpoints, audits and rewards
+remain historical records. The affine.io learning charts show only this new
+run, with display epoch 1 corresponding to global epoch 78.
+
+The new manifest uses math_outcome_policy=completed-boxed-math-outcome-v1 and
+environment version prime-v1-2-completed-math. A response needs a nonempty,
+balanced final \boxed{...} answer before native mathematical grading.
+Missing, empty or unfinished final answers are unresolved: they do not count
+as successes or failures, fill no batch quota, and cannot enter training.
+Hitting the token cap alone is not a wrong answer. A complete boxed answer is
+still graded normally; the native grader decides whether it is correct.
+Miners must keep searching after unresolved attempts. No historical batch is
+regraded and this cutover introduces no retroactive cheating penalties.
+
+Each batch still contains four distinct successes and four distinct failures
+for one task. At most three task batches per UID per epoch. Attempt nonces
+remain integers 0 through 999, bound to miner, task, epoch and checkpoint;
+content deduplication and sampling verification remain required. Output budget
+remains 2048 tokens. Training eligibility remains independent of full audits.
+
+Use the current signed manifest and its source bundle, not a previous run's
+checkpoint, environment hash or proof. Update the miner to the current code.
+The updated source archive SHA256 is
+74f132382afb89236d3fc2300fa6917761e5a4c0e24c8e20ea24a0410ddaebe3.
+
+---
+
 # Affine — MATH mining, verification and training
 
 ## Trainer-local optimizer state — October 8, 2026

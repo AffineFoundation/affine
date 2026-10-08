@@ -24,7 +24,8 @@ def approval(document,authority,manifest):
     fields={'version','source_sha256','scientific_source_files','operator_files','minimum_round','epoch_prefix','peer_entry_sha256','peer_runner_sha256','backend_execution_allowed'}
     miner_bound=manifest.get('sampling_contract',{}).get('version')=='forced-inverse-cdf-prefill-miner-bound-v5'
     expected_version=K2L2_AUTH_VERSION if miner_bound else AUTH_VERSION
-    local_trainer=p.get('version')=='cpu-selection-peer-local-trainer-authorization-v3'
+    completed=p.get('version')=='cpu-selection-peer-completed-math-local-trainer-authorization-v4'
+    local_trainer=p.get('version')=='cpu-selection-peer-local-trainer-authorization-v3' or completed
     expected_members=179 if miner_bound else 177
     if miner_bound:
         if 'subnet/batch_quotas.py' in p.get('scientific_source_files',{}):
@@ -41,6 +42,13 @@ def approval(document,authority,manifest):
             'subnet/trainer_local_state.py'not in p.get('scientific_source_files',{})):
             raise ValueError('local trainer peer requires explicit local state and source')
         expected_version='cpu-selection-peer-local-trainer-authorization-v3';expected_members=181
+        if completed:
+            from .math_completion import FIELD, VERSION, enabled
+            rows=manifest.get('environments',[])
+            if len(rows)!=1 or rows[0]['spec']['config'].get(FIELD)!=VERSION:raise ValueError('explicit completed-math task contract')
+            if not enabled(rows[0]['spec']):raise ValueError('completed-math marker required')
+            if 'subnet/math_completion.py'not in p['scientific_source_files']:raise ValueError('completed-math helper closure')
+            expected_version='cpu-selection-peer-completed-math-local-trainer-authorization-v4';expected_members=182
     if (set(p)!=fields or p['version']!=expected_version or p['source_sha256']!=manifest['source_bundle']['sha256']or
         type(p['scientific_source_files'])is not dict or len(p['scientific_source_files'])!=expected_members or
         set(p['operator_files'])!=FILES or type(p['minimum_round'])is not int or p['minimum_round']<0 or

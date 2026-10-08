@@ -25,7 +25,10 @@
   const percent = value => `${Number((100 * value).toFixed(1))}%`;
   const day = time => new Date(time * 1000).toLocaleDateString('en-GB',{day:'numeric',month:'short',timeZone:'UTC'});
   const utc = time => new Date(time * 1000).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',timeZone:'UTC',hour12:false});
-  const epochNumber = row => String(row.id).match(/-(\d+)$/)?.[1] || String(row.id);
+  const epochNumber = row => {
+    const epoch = row.display_epoch != null ? row : data?.epochs?.find(e => e.id === (row.epoch_id || row.id));
+    return epoch?.display_epoch != null ? String(epoch.display_epoch) : String(row.epoch_id || row.id).match(/-(\d+)$/)?.[1] || String(row.id);
+  };
   const epochName = row => `Epoch ${epochNumber(row)}`;
   // Checkpoints change, but tasks, runtime and sampling must stay comparable.
   const cohortKey = e => JSON.stringify([e.dataset_id,e.taskset_hash,e.fixed_task_ids,e.seed,e.count,e.requested_count,e.harness,e.environment_version,e.model,e.model_runtime_revision,e.output_token_budget,e.policy_kind,e.sampling_policy,e.experiment_id]);
@@ -1143,7 +1146,11 @@
       if(!response.ok)throw Error('Snapshot unavailable');
       const next=await response.json();
       if(!next||!Array.isArray(next.epochs)||!Array.isArray(next.evaluations)||[...next.epochs,...next.evaluations].some(row=>!row||typeof row!=='object'||Array.isArray(row)))throw Error('Invalid snapshot');
-      const nextFingerprint=JSON.stringify([next.epochs,next.evaluations,next.incentive,next.incentive_history,next.incentive_prices]);
+      const nextFingerprint=JSON.stringify([next.training_run,next.epochs,next.evaluations,next.incentive,next.incentive_history,next.incentive_prices]);
+      if(data?.training_run?.run_id !== next.training_run?.run_id){
+        chartStates.delete('evaluation');chartStates.delete('batch');selectedMinerEpoch=null;minerInitialized=false;
+        for(const key of ['epoch','miner_epoch','performance_epoch','batch_epoch','performance_run'])requestedView.delete(key);
+      }
       data=next;unavailable=false;
       $('main').dataset.state='ready';$('main').setAttribute('aria-busy','false');
       if(nextFingerprint!==fingerprint){fingerprint=nextFingerprint;render();}else{drawIncentive();status();}

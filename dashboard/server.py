@@ -273,17 +273,21 @@ class Database:
             epochs = [json.loads(r[0]) for r in db.execute('SELECT data FROM epochs')]
             evaluations = [json.loads(r[0]) for r in db.execute('SELECT data FROM evaluations')]
         summary=json.loads(summary[0]) if summary else {}
+        training_run = None
         if current_only:
+            from dashboard.run_projection import read_boundary, project
+            training_run = read_boundary(self.source/'dashboard/current-run.ROOT-SIGNED.json')
             epochs=[row for row in epochs if row['source']=='live-reward-math']
             epoch_ids={row['id'] for row in epochs}
             evaluations=[row for row in evaluations if row.get('epoch_id') in epoch_ids]
+            epochs, evaluations = project(epochs, evaluations, training_run)
             summary=dict(updated_at=summary.get('updated_at'),network='Finney',netuid=120,
                 current_source='live-reward-math',epochs=len(epochs),
                 accepted=sum(row['accepted'] for row in epochs),
                 rejected=sum(row['rejected'] for row in epochs),
                 unchecked=sum(row['unchecked'] for row in epochs),
                 training_steps=sum((row.get('training') or {}).get('steps',0) or 0 for row in epochs))
-        return dict(summary=summary, epochs=sorted(epochs, key=lambda x:x['start'], reverse=True),
+        return dict(summary=summary, training_run=training_run, epochs=sorted(epochs, key=lambda x:x['start'], reverse=True),
                     evaluations=sorted(evaluations,key=lambda x:x['timestamp']))
 
 

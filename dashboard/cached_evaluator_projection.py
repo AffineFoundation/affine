@@ -1,11 +1,11 @@
 """Read authenticated native diagnostic results; never dispatch or rewrite jobs."""
-import hashlib,json
+import hashlib,json,re
 from pathlib import Path
 from dashboard.learner_projection import authenticated,canonical,AUTHORITY
 POLICY={'version':'owned-cached-native-evaluation-v1','trust_scope':'operator-owned-process-native-grader','proof_reverification':False}
 def rows(pointer, production):
     config=authenticated(pointer,AUTHORITY)
-    if config.get('version')!='cached1024-dashboard-sources-v1':raise ValueError('dashboard source scope')
+    if config.get('version')not in ('cached1024-dashboard-sources-v1','cached1024-dashboard-sources-run-boundary-v2'):raise ValueError('dashboard source scope')
     epochs={}
     for path in Path(production).glob('*-first-signed-manifest.json'):
         m=authenticated(json.loads(path.read_bytes()),AUTHORITY);epochs.setdefault(m['checkpoint']['id'],[]).append((m['start'],m['epoch']))
@@ -35,5 +35,20 @@ def rows(pointer, production):
                 if record['epoch_id']!=manifest['epoch']or record['checkpoint']!=manifest['checkpoint']['id']or record['remote_job_id']!=jid or record['count']!=32 or record['successes']!=sum(v['reward']==1 for v in values)or record['mean_reward']!=sum(v['reward']for v in values)/32 or record['harness_config']!=plan['harness']or record['harness_config']['max_output_tokens']!=1024 or record['seed']!=20261002 or record['experiment_id']!='owned-cached-native-fixed32-cap1024-v1' or record['sampling_policy']!=POLICY['version']or record.get('owned_evaluation_policy')!=POLICY or record['fixed_task_ids']!=[v['task_hash']for v in values]:raise ValueError('original diagnostic score binding')
                 matches=epochs.get(record['checkpoint'],[])
                 if not matches:continue
-                public=dict(record,original_epoch_id=record['epoch_id'],epoch_id=min(matches)[1],display_epoch_association='signed-production-checkpoint',original_report_sha256=ack['report_sha256']);result.append(public);seen.add(record['run_id'])
+                boundary=config.get('run_boundaries',{}).get(name)
+                epoch_id=checkpoint_epoch(matches,record['timestamp'],boundary)
+                if epoch_id is None:continue
+                public=dict(record,original_epoch_id=record['epoch_id'],epoch_id=epoch_id,display_epoch_association='signed-production-checkpoint',original_report_sha256=ack['report_sha256']);result.append(public);seen.add(record['run_id'])
     return result
+
+
+def checkpoint_epoch(matches,timestamp,boundary=None):
+    """New records for a reset checkpoint must not attach to an ancient run."""
+    if boundary is None:return min(matches)[1] if matches else None
+    if boundary.get('version')!='dashboard-training-run-boundary-v1' or type(boundary.get('first_round'))is not int:raise ValueError('explicit evaluation run boundary')
+    if timestamp < boundary['started_at']:return None
+    eligible=[]
+    for start,epoch in matches:
+        m=re.fullmatch(r'nonpayable-live-reward-math-v1--[0-9]+-([0-9]+)',epoch)
+        if m and int(m[1])>=boundary['first_round'] and start>=boundary['started_at']:eligible.append((start,epoch))
+    return min(eligible)[1] if eligible else None

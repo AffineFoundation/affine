@@ -29,40 +29,50 @@ FIXED32_INDICES=(6903,3689,47,3166,5601,4899,2214,7211,4292,437,2893,6498,5356,2
 
 def config_admission(config):
     from subnet.owned_cached_evaluation import POLICY,validate_policy
-    if config.get('version')not in ('continuous-owned-cached-checkpoints-v1','owned-cached-fixed32-1024-pair-v2','continuous-owned-cached-checkpoints-1024-v3') or config.get('dispatch_allowed')is not True:raise ValueError('ROOT scoped cached evaluator dispatch')
+    if config.get('version')not in ('continuous-owned-cached-checkpoints-v1','owned-cached-fixed32-1024-pair-v2','continuous-owned-cached-checkpoints-1024-v3','continuous-owned-cached-base-restart-1024-v4') or config.get('dispatch_allowed')is not True:raise ValueError('ROOT scoped cached evaluator dispatch')
     validate_policy(config.get('owned_evaluation_policy'))
     if 'trusted_evaluation_policy'in config:raise ValueError('mutually exclusive evaluation policies')
     if config.get('state')==config.get('production_state'):raise ValueError('separate original queue')
     if config.get('source_sha256')!='4db060697ab8303ee667e5787831a574b41e4a10afb8fe6a209dd7db40b9f373':raise ValueError('qualified GPU source4db')
     if config.get('source_bundle',{}).get('sha256')!=config['source_sha256']:raise ValueError('source descriptor')
     if len(config['heldout'])!=1 or len(config['heldout'][0]['indices'])!=32:raise ValueError('fixed32 diagnostic population')
-    v2=config['version']in('owned-cached-fixed32-1024-pair-v2','continuous-owned-cached-checkpoints-1024-v3')
-    continuous=config['version']=='continuous-owned-cached-checkpoints-1024-v3'
+    restart=config['version']=='continuous-owned-cached-base-restart-1024-v4'
+    v2=restart or config['version']in('owned-cached-fixed32-1024-pair-v2','continuous-owned-cached-checkpoints-1024-v3')
+    continuous=restart or config['version']=='continuous-owned-cached-checkpoints-1024-v3'
     if v2:
         if type(config.get('evaluation_token_cap'))is not int or config['evaluation_token_cap']!=1024 or config.get('stop_after_pair')is not (False if continuous else True):raise ValueError('explicit bounded1024 pair')
         if config['heldout'][0]['indices']!=list(FIXED32_INDICES) or config['heldout'][0].get('seed')!=20261002:raise ValueError('same original fixed32 indices and seeds')
         if type(config.get('evaluation_job_ttl_seconds'))is not int or config['evaluation_job_ttl_seconds']!=1800:raise ValueError('bounded1800 original job timeout')
-        if config.get('before_optimizer_steps')!=10 or (not continuous and config.get('after_optimizer_steps')!=11):raise ValueError('exact CP10 CP11 pair')
-        if continuous and (type(config.get('completed_history'))is not dict or config['completed_history'].get('state')in (config.get('state'),config.get('production_state'))):raise ValueError('explicit separate completed original history')
+        if config.get('before_optimizer_steps')!=(0 if restart else 10) or (not continuous and config.get('after_optimizer_steps')!=11):raise ValueError('explicit baseline optimizer steps')
+        if continuous and not restart and (type(config.get('completed_history'))is not dict or config['completed_history'].get('state')in (config.get('state'),config.get('production_state'))):raise ValueError('explicit separate completed original history')
         if not config.get('evaluation_experiment_id','').endswith('-cap1024-v1'):raise ValueError('separate1024 experiment identity')
     elif 'evaluation_token_cap'in config or 'stop_after_pair'in config:raise ValueError('legacy128 profile cannot be relabeled')
     h=config['heldout'][0]['harness']
     if h!=dict(version='text-tools-long-kv-v3',policy='autoregressive',max_output_tokens=1024 if v2 else 128,temperature=.7,top_p=1.):raise ValueError('explicit cached token-cap contract')
     if config.get('evaluation_mode')!='independent-checkpoints-v1':raise ValueError('independent evaluator mode')
     if config.get('legacy_evaluator_scheduler_must_remain_stopped')is not True:raise ValueError('exclusive independent evaluator scheduler')
+    if restart:
+        if config.get('completed_history')is not None or config.get('run_id')!='completed-math-base7b-restart-20261008-v1':raise ValueError('isolated fresh evaluation run')
+        cp=config.get('base_checkpoint_descriptor',{})
+        if cp.get('id')!=config['before_checkpoint'] or cp.get('id')!='6493a901bd009f0800d5eed97d19aee78947cc586afeb27abfb2c72032ad1924':raise ValueError('explicit original 7B base checkpoint')
     return POLICY
 
 def queue_original(controller,config,manifest,steps,phase):
     from subnet.checkpoint_evaluator import enqueue
     # New signed diagnostic manifest; the production manifest remains immutable.
     m=copy.deepcopy(manifest);m['source_bundle']=copy.deepcopy(config['source_bundle']);m['payable']=False;m['capabilities']={}
-    prefix='nonpayable-owned-cached-fixed32-cap1024-'if config.get('version')in('owned-cached-fixed32-1024-pair-v2','continuous-owned-cached-checkpoints-1024-v3')else 'nonpayable-owned-cached-fixed32-'
+    prefix='nonpayable-owned-cached-fixed32-cap1024-'if config.get('version')in('owned-cached-fixed32-1024-pair-v2','continuous-owned-cached-checkpoints-1024-v3','continuous-owned-cached-base-restart-1024-v4')else 'nonpayable-owned-cached-fixed32-'
+    if config.get('version')=='continuous-owned-cached-base-restart-1024-v4':prefix='nonpayable-fixed32-restart-20261008-'
     m['epoch']=prefix+m['checkpoint']['id'][:24]
     return enqueue(controller,m,None,phase,steps,config,public_optimizer_steps=steps)
 
 def observe(controller,config):
     base=authenticated_manifest(config['before_original_signed_job'],controller.authority.id)
     if base['checkpoint']['id']!=config['before_checkpoint'] or hashlib.sha256(Path(config['before_original_signed_job']).read_bytes()).hexdigest()!=config['before_original_signed_job_sha256']:raise ValueError('original BEFORE checkpoint scope')
+    if config.get('version')=='continuous-owned-cached-base-restart-1024-v4':
+        cp=config['base_checkpoint_descriptor']
+        if cp['files']!=base['checkpoint']['files']:raise ValueError('original base model file binding')
+        base['checkpoint']=copy.deepcopy(cp)
     queued=[queue_original(controller,config,base,config['before_optimizer_steps'],'before')]
     if config.get('version')=='owned-cached-fixed32-1024-pair-v2':
         from subnet.backend_jobs import signed,file_map
@@ -108,7 +118,7 @@ def run(config,once=False):
         jobs=QualifiedEvaluationJobs(controller,config['evaluation_source_routes'])
         if set(jobs.rows)!={config['source_sha256']} or not jobs.rows[config['source_sha256']]['new_dispatch_approved']:raise ValueError('ROOT exact one-source diagnostic route')
         probe=jobs.instance(config['source_sha256'])
-        if config.get('version')in('owned-cached-fixed32-1024-pair-v2','continuous-owned-cached-checkpoints-1024-v3'):
+        if config.get('version')in('owned-cached-fixed32-1024-pair-v2','continuous-owned-cached-checkpoints-1024-v3','continuous-owned-cached-base-restart-1024-v4'):
             from subnet.remote_backend import role_time_budget
             if role_time_budget(probe.config,'evaluate')!=config['evaluation_job_ttl_seconds']:raise ValueError('signed source route job timeout binding')
         guard="import json;from pathlib import Path;root=Path("+repr(config['original_evaluator_workspace'])+");marker=json.loads((root/'runner-status'/"+repr(config['original_evaluator_job_id']+'.json')+").read_bytes());assert marker['phase']=='complete' and marker['exit_code']==0 and marker['runner_pid']==129037 and marker['runner_pid_ticks']=='220584019' and marker['child_pid']==129052 and marker['child_pid_ticks']=='220584046';assert not Path('/proc/129037').exists() and not Path('/proc/129052').exists();print('original terminal preserved')"
