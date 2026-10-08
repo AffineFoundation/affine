@@ -1,5 +1,27 @@
 # Affine — MATH mining, verification and training
 
+## Trainer-local optimizer state — October 8, 2026
+
+The trainer retains Adam's FP32 master weights, moments and step counter on its
+own machine across epochs. It publishes only the updated inference model and
+small authenticated reports/lineage metadata to R2. Optimizer tensors are no
+longer uploaded or independently downloaded each epoch. This is a trainer-only
+storage change: miners, sampling proofs, audits, task quotas and reward rules
+retain their signed epoch contracts. Existing historical state publications
+remain unchanged.
+
+The trainer must have the matching local optimizer state before starting an
+update. Missing or corrupt state stops training; it does not silently reset Adam.
+Local state is promoted after the new model is published and acknowledged, and
+the previous local state is then retired automatically. Losing the trainer disk
+loses the latest optimizer state; R2 still retains the published model.
+
+The backend validates full training receipts after installing its authenticated
+fresh-source loader, before accessing training artifacts or loading the model.
+This also repairs the precompute startup failure seen in epoch 59; its frozen
+inputs are retried under a distinct, authority-approved recovery job rather than
+overwriting the failed original request.
+
 ## Eight-sample miner-bound cutover — activated in epoch 59
 
 The signed opening requires exactly eight distinct rollouts for one task:

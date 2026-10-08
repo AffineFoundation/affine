@@ -29,6 +29,9 @@ def opening_freshness_time(manifest, at):
 
 
 def admit(document, manifest, authority, *, at, round_number=None):
+    if 'training_startup_recovery'in manifest:
+        from .training_startup_recovery import original_manifest
+        manifest=original_manifest(manifest,authority)
     p = authenticate(document, authority)
     fields = {'version', 'checkpoint', 'source_sha256', 'target_round',
               'maximum_age_seconds', 'assessment_document', 'writer_policy_sha256', 'audit_policy'}
@@ -40,8 +43,7 @@ def admit(document, manifest, authority, *, at, round_number=None):
             type(p['maximum_age_seconds']) is not int or not 1 <= p['maximum_age_seconds'] <= 7200):
         raise ValueError('ROOT training blacklist policy context/bounds')
     digest(p['writer_policy_sha256'])
-    from .continuous_audit_policy import policy
-    audit = policy(p['audit_policy'])
+    audit = validate_audit_policy(p['audit_policy'])
     a = authenticate(p['assessment_document'], authority)
     freshness_at = opening_freshness_time(manifest, at)
     if (a.get('version') != 'hourly-current-miner-assessment-v1' or
@@ -149,3 +151,19 @@ def prepare_opening(controller, config, status, contract):
     admit(envelope, dict(checkpoint=status['checkpoint'], source_bundle=config['source_bundle']),
           controller.authority.id, at=time.time(), round_number=status['round'])
     return dict(contract, **{FIELD: envelope, 'learner_blacklist_selection_round': status['round']})
+
+def validate_audit_policy(value):
+    """CPU-only scalar schema, including deployed writer v3; no audit execution.
+
+    Frozen scientific continuous_audit_policy stays unchanged. This separate
+    parser must be explicitly pinned in the ROOT selection operator admission.
+    """
+    fields={'version','recent_epochs','decay','prior_alpha','prior_beta','invalid_multiplier','zero_epoch_after','blacklist_after','blacklist_epochs'}
+    if type(value)is not dict or set(value)!=fields or value['version']not in ('continuous-probabilistic-audit-v1','continuous-probabilistic-audit-v2','continuous-probabilistic-audit-v3'):raise ValueError('exact continuous audit policy')
+    result=dict(value)
+    for k,low,high in [('recent_epochs',1,128),('zero_epoch_after',0,10000),('blacklist_after',0,10000),('blacklist_epochs',0,128)]:
+        if type(value[k])is not int or not low<=value[k]<=high:raise ValueError('bounded audit integer')
+    for k,low,high in [('decay',.01,1),('prior_alpha',.01,100),('prior_beta',.01,100),('invalid_multiplier',0,1)]:
+        if type(value[k])not in(int,float)or not math.isfinite(value[k])or not low<=value[k]<=high:raise ValueError('bounded audit number')
+        result[k]=float(value[k])
+    return result

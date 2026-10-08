@@ -95,6 +95,9 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
     from .model import model_files
     from .task_normalized_training import train_epoch
     binding,parent=validate_job(job,manifest,authority)
+    from .persistent_publication import export_policy,LOCAL_POLICY
+    readback_mode=export_policy(manifest)
+    local_only=readback_mode==LOCAL_POLICY
     _,inventory=parameter_inventory(runtime.model.named_parameters())
     if inventory!=binding['parameters']:raise ValueError('actual model approved parameter inventory')
     export_bytes=max(sum(p.stat().st_size for p in Path(approved_checkpoint).iterdir()if p.is_file())
@@ -112,6 +115,8 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
     with local_cache if local_cache else nullcontext():
         cache_prepare_started=time.monotonic()
         cache_bytes=local_cache.prepare_parent(parent,manifest['source_bundle']['sha256'])if local_cache else 0
+        if local_only and parent is not None and (not local_cache or local_cache.current is None):
+            raise ValueError('local optimizer parent missing; no silent reset or network fallback')
         cache_budget=local_cache.admit(plan,reclaimable_parent_bytes=cache_bytes)if local_cache else None
         admission=admit_resources(out,plan);restored=None;restore_evidence=[]
         cache_prepare_seconds=time.monotonic()-cache_prepare_started
@@ -121,7 +126,9 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
             shards={s['name']:s for s in parent['shards']}
             def fetch(name,path):
                 row=shards[name]
-                def cold(name,path):get_object(transport['parent_read_urls'][name],row['sha256'],path,row['size'])
+                def cold(name,path):
+                    if local_only:raise ValueError('local optimizer cannot download parent state')
+                    get_object(transport['parent_read_urls'][name],row['sha256'],path,row['size'])
                 if local_cache:return local_cache.fetch(name,path,cold)
                 return cold(name,path)
             restored,restore_evidence=restore_state(parent,binding['parent']['descriptor_sha256'],
@@ -141,6 +148,9 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
         def readback(name):return read_chunks(transport['output_shards'][name]['get_url'],limit=MAX_SHARD_BYTES)
         def stage_descriptor(document):
             validate_output(document,job,manifest)
+            if local_only:
+                return dict(descriptor_sha256=sha(document),local_sha_verified=True,
+                    durable_readback_verified=False,authority_committed=False)
             data=canonical(document)
             if len(data)>4_000_000:raise ValueError('bounded staged state descriptor')
             path=Path(out)/'staged-state.json';path.write_bytes(data);path.chmod(0o600)
@@ -149,8 +159,6 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
             if data!=canonical(document):raise ValueError('durable staged descriptor readback')
             path.unlink()
             return dict(descriptor_sha256=sha(document),durable_readback_verified=True,authority_committed=False)
-        from .persistent_publication import export_policy
-        readback_mode=export_policy(manifest)
         if local_cache:local_cache.begin_candidate()
         export_started=time.monotonic()
         descriptor,evidence=export_state(optimizer,epoch=manifest['epoch'],inference_checkpoint=checkpoint,
@@ -160,7 +168,7 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
             parent_cache_validation_and_admission=cache_prepare_seconds,
             parent_cache_and_restore_total=cache_prepare_seconds+restore_seconds,
             training_and_checkpoint=training_and_checkpoint_seconds,
-            **({'state_export_upload_only':time.monotonic()-export_started}if readback_mode!='trainer-full'else {'state_export_and_trainer_full_readback':time.monotonic()-export_started}),
+            **({('local_state_save' if local_only else 'state_export_upload_only'):time.monotonic()-export_started}if readback_mode!='trainer-full'else {'state_export_and_trainer_full_readback':time.monotonic()-export_started}),
             state_transfer_concurrency=concurrency,parent_restore_performed=parent is not None)
         diagnostics.update(state_staged=True,authority_commit_required=True,complete=False)
         state=dict(namespace=transport['output_namespace'],descriptor_sha256=sha(descriptor),descriptor=descriptor,

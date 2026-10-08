@@ -10,14 +10,17 @@ from .backend_jobs import signed
 from .training_receipts import sha
 
 VERSION='terminal-training-startup-recovery-v1'
+ADMISSION_VERSION='terminal-unaudited-precompute-recovery-v2'
 FIELD='training_startup_recovery'
 SCIENCE=('model','gpu_runtime','proofs','forced_sampling','sampling_contract','epoch_optimizer','covered_epoch_optimizer','task_normalized_training','persistent_cpu_adamw','persistent_training_state','persistent_training_worker')
 
 def original_manifest(manifest,authority):
+    from .trainer_local_state import original_manifest as local_original
+    manifest=local_original(manifest,authority)
     value=signed(manifest[FIELD],authority)
     original=signed(value['original_signed_job'],authority)
     old=signed(original['manifest'],authority)
-    if value.get('version')in INPUT_RECOVERY_VERSIONS:
+    if value.get('version')in RESTORE_VERSIONS+(POST_UPDATE_VERSION,):
         if value.get('original_input_source_sha256')!=old['source_bundle']['sha256']or value.get('replacement_execution_source_sha256')!=manifest['source_bundle']['sha256']or value.get('authorized_input_inventory_sha256')!=sha(input_inventory(original['submissions'])):raise ValueError('explicit restore old-input/new-execution manifest scope')
     normalized=copy.deepcopy(manifest);normalized.pop(FIELD,None);normalized['source_bundle']=old['source_bundle']
     def without_caps(m):
@@ -34,9 +37,10 @@ def validate(job,manifest,authority):
     if value.get('version')==POST_UPDATE_VERSION:return validate_post_update(job,manifest,authority)
     if value.get('version')in RESTORE_VERSIONS:return validate_restore(job,manifest,authority)
     fields={'version','epoch','original_signed_job','original_job_sha256','original_terminal','startup_witness','replacement_source_bundle','replacement_job_label','created_at','expires_at'}
-    if set(value)!=fields or value['version']!=VERSION or value['epoch']!=manifest['epoch']:raise ValueError('exact startup recovery declaration')
+    if value.get('version')==ADMISSION_VERSION:fields|={'execution_source_files','authorized_input_objects'}
+    if set(value)!=fields or value['version']not in (VERSION,ADMISSION_VERSION) or value['epoch']!=manifest['epoch']:raise ValueError('exact startup recovery declaration')
     original=signed(value['original_signed_job'],authority);old=original_manifest(manifest,authority)
-    if (original.get('role')!='train' or original.get('training_policy')!='bf16-cpu-fp32-master-task-normalized-persistent-v4' or original.get('training_input_policy')!='authenticated-verifier-compact-inputs-v2'
+    if (original.get('role')!='train' or original.get('training_policy')!='bf16-cpu-fp32-master-task-normalized-persistent-v4' or original.get('training_input_policy')!=('committed-unaudited-training-v1' if value['version']==ADMISSION_VERSION else 'authenticated-verifier-compact-inputs-v2')
         or FIELD in old or old.get('training_execution_amendment')is not None or sha(original)!=value['original_job_sha256']):raise ValueError('startup recovery original signed request')
     terminal=value['original_terminal'];witness=value['startup_witness']
     if (set(terminal)!={'phase','job_id','exit_code','runner_pid','runner_pid_ticks','child_pid','child_pid_ticks','started_at','finished_at'} or terminal['phase']!='failed' or terminal['job_id']!=original['job_id'] or type(terminal['exit_code'])is not int or terminal['exit_code']==0):raise ValueError('startup recovery original terminal failure')
@@ -52,7 +56,20 @@ def validate(job,manifest,authority):
     if (job.get('role')!='train' or job.get('training_policy')!=original['training_policy'] or job.get('training_input_policy')!=original['training_input_policy'] or job.get('steps')!=original['steps'] or input_inventory(job['submissions'])!=input_inventory(original['submissions']) or job['runtime_versions']!=original['runtime_versions']):raise ValueError('startup recovery exact original training inputs/objective/runtime')
     source=value['replacement_source_bundle']
     if source!=manifest['source_bundle']or source.get('sha256')==old['source_bundle'].get('sha256')or re.fullmatch('[0-9a-f]{64}',source.get('sha256',''))is None or 'subnet/training_startup_recovery.py'not in job['source_files']:raise ValueError('startup recovery replacement source pin')
-    for module in SCIENCE:
+    if value['version']==ADMISSION_VERSION:
+        if job['source_files']!=value['execution_source_files']:raise ValueError('exact approved precompute recovery execution source')
+        locations=value['authorized_input_objects']
+        if len(locations)!=len(original['submissions']):raise ValueError('same original input object count')
+        from urllib.parse import urlsplit,unquote
+        for obj,oldobj,row in zip(job['submissions'],original['submissions'],locations):
+            if set(row)!={'key','sha256','size'} or row['sha256']!=oldobj['sha256'] or row['size']!=oldobj['size']:
+                raise ValueError('same original input object SHA and size')
+            if not isinstance(row['key'],str) or not row['key'].startswith(('private/','public/'+value['epoch']+'/submissions/')) or '..'in row['key'].split('/'):
+                raise ValueError('bounded original input namespace')
+            if not all(unquote(urlsplit(x['url']).path).endswith('/'+row['key'])for x in (obj,oldobj)):
+                raise ValueError('original recovery input key binding')
+    transport_only={'persistent_training_state','persistent_training_worker'} if value['version']==ADMISSION_VERSION else set()
+    for module in set(SCIENCE)-transport_only:
         name='subnet/'+module+'.py'
         if name in original['source_files']and job['source_files'].get(name)!=original['source_files'][name]:raise ValueError('startup recovery scientific implementation changed: '+name)
     if job.get('persistent_training',{}).get('output_namespace')==original.get('persistent_training',{}).get('output_namespace'):raise ValueError('startup recovery requires separate output namespace')
@@ -103,6 +120,7 @@ def apply(controller,manifest,steps):
     # preparation skeleton is never dispatched or presented as runtime evidence.
     candidate=copy.deepcopy(original);candidate.update(job_id=value['replacement_job_label']+'-preparation',created_at=time.time(),expires_at=value['expires_at'],manifest=controller.signed(result),submissions=rows)
     candidate['source_files']=dict(original['source_files'],**{'subnet/training_startup_recovery.py':'0'*64})
+    if value.get('version')==ADMISSION_VERSION:candidate['source_files']=copy.deepcopy(value['execution_source_files'])
     if value.get('version')==POST_UPDATE_VERSION:candidate['source_files']=copy.deepcopy(value['execution_runtime_source_files'])
     candidate['persistent_training']=dict(original['persistent_training'],output_namespace='private/startup-recovery-preparation-only')
     validate(candidate,result,controller.authority.id)
@@ -148,7 +166,7 @@ BOOTSTRAP_VERSION='terminal-parent-restore-pre-update-bootstrap-recovery-v3'
 RESTORE_VERSIONS=(RESTORE_VERSION,BOOTSTRAP_VERSION)
 POST_UPDATE_VERSION='terminal-post-update-uncommitted-recovery-v1'
 POST_UPDATE_WITNESS='operator-post-update-uncommitted-failure-witness-v1'
-INPUT_RECOVERY_VERSIONS=RESTORE_VERSIONS+(POST_UPDATE_VERSION,)
+INPUT_RECOVERY_VERSIONS=RESTORE_VERSIONS+(POST_UPDATE_VERSION,ADMISSION_VERSION)
 POST_UPDATE_OPERATIONAL_MODULES=('subnet/persistent_training_worker.py','subnet/persistent_training_state.py')
 
 def validate_restore(job,manifest,authority):

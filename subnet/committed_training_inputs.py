@@ -80,6 +80,8 @@ def validate_admission(envelope,obj,manifest,authority):
 
 
 def admitted_submission(path,obj,manifest,authority,*,retire=False):
+    from .training_receipts import original_computation_manifest
+    manifest=original_computation_manifest(manifest,authority)
     value,row=validate_admission(obj.get('learner_admission'),obj,manifest,authority)
     path=Path(path)
     if path.is_symlink() or not path.is_file():raise ValueError('regular learner document required')
@@ -157,6 +159,7 @@ def coverage_manifest(manifest,submissions,*,seed,captured_at):
 
 
 def validate_job(job,manifest,authority):
+    execution_manifest=manifest
     from . import training_startup_recovery as recovery
     if recovery.FIELD in manifest:
         recovery.validate(job,manifest,authority)
@@ -180,7 +183,7 @@ def validate_job(job,manifest,authority):
     if FIELD in manifest:
         if 'subnet/learner_blacklist_selection.py'not in job.get('source_files',{}):
             from .learner_selection_operator_bridge import validate_metadata
-            validate_metadata(job,manifest,authority)
+            validate_metadata(job,execution_manifest,authority)
         protected_round=manifest.get('learner_blacklist_selection_round')
         if type(protected_round)is not int:raise ValueError('protected original learner selection round')
         status=admit(manifest[FIELD],manifest,authority,at=coverage['captured_at'],round_number=protected_round)

@@ -388,7 +388,9 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
     """
     import torch
     from safetensors.torch import save_file
-    if readback_mode not in ('trainer-full','upload-only-independent-full-v1'):raise ValueError('explicit export readback mode')
+    if readback_mode not in ('trainer-full','upload-only-independent-full-v1','trainer-local-only-v1'):raise ValueError('explicit export readback mode')
+    local=readback_mode=='trainer-local-only-v1'
+    if local and retain_shard is None:raise ValueError('local optimizer requires owned retention')
     checkpoint_id(inference_checkpoint)
     if not isinstance(epoch, str) or not epoch or len(epoch) > 200:
         raise ValueError('completed epoch binding required before shard export')
@@ -454,7 +456,7 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
             counters['transport_inflight']+=1
             counters['transport_maximum']=max(counters['transport_maximum'],counters['transport_inflight'])
         try:
-            publish_shard(name, path)
+            if not local:publish_shard(name, path)
             if readback_mode=='trainer-full':
                 h = hashlib.sha256(); actual_size = 0
                 for part in readback_shard(name):
@@ -508,13 +510,16 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
         parent_state_sha256=optimizer.parent_state_sha256, genesis_sha256=optimizer.genesis_sha256,
         optimizer_steps=optimizer.global_step,
         parameter_steps={name: row['step'] for name, row in optimizer.rows.items()}, shards=shards)
-    if readback_mode!='trainer-full':
+    if local:
+        for receipt in evidence:receipt.update(export_verification='retained-local-sha-only',local_sha_verified=True,
+            upload_completed=False,independent_full_readback_required=False)
+    elif readback_mode!='trainer-full':
         for receipt in evidence:receipt.update(export_verification='uploaded-local-sha-only',local_sha_verified=True,upload_completed=True,independent_full_readback_required=True)
     digest = sha(descriptor)
     validate_descriptor(descriptor, digest, inference_checkpoint, optimizer.inventory)
     acknowledgement = commit_descriptor(descriptor)
     if (not isinstance(acknowledgement, dict) or acknowledgement.get('descriptor_sha256') != digest or
-            acknowledgement.get('durable_readback_verified') is not True):
+            acknowledgement.get('local_sha_verified' if local else 'durable_readback_verified') is not True):
         raise ValueError('authenticated descriptor-last publication/readback acknowledgement')
     if readback_mode!='trainer-full' and acknowledgement.get('authority_committed')is not False:
         raise ValueError('upload-only descriptor cannot claim authority commit')
@@ -526,7 +531,8 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
         authority_commit_required=acknowledgement.get('authority_committed')is not True,
         no_full_state_disk_hydration=retain_shard is None,transport_concurrency=concurrency,
         actual_maximum_inflight_shards=counters['maximum'],actual_maximum_inflight_transfers=counters['transport_maximum'],
-        transport_timing_measured=True,**(dict(optimizer_state_export_policy=readback_mode,trainer_full_readback_performed=False,independent_full_readback_required=True)if readback_mode!='trainer-full'else {}))
+        transport_timing_measured=True,**(dict(optimizer_state_export_policy=readback_mode,trainer_full_readback_performed=False,
+            independent_full_readback_required=not local,**(dict(optimizer_state_uploaded=False)if local else {}))if readback_mode!='trainer-full'else {}))
 
 
 def export_state(optimizer, *, epoch, inference_checkpoint, workspace,

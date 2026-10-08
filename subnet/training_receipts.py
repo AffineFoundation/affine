@@ -56,12 +56,18 @@ def require_execution_amendment(controller,manifest):
 
 
 def computation_binding(manifest):
+    if 'trainer_local_state_original_manifest' in manifest:
+        from .trainer_local_state import original_manifest
+        manifest=original_manifest(manifest)
     result = {key:copy.deepcopy(manifest[key]) for key in COMPUTATION_FIELDS if key in manifest}
     result['checkpoint'].pop('read_urls', None)
     return result
 
 
 def original_computation_manifest(manifest, authority):
+    if 'trainer_local_state_original_manifest' in manifest:
+        from .trainer_local_state import original_manifest as local_original
+        manifest=local_original(manifest,authority)
     if manifest.get('training_startup_recovery')is not None:
         if manifest.get('training_execution_amendment')is not None:raise ValueError('startup recovery cannot combine v1 amendment')
         from .training_startup_recovery import original_manifest

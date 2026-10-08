@@ -109,6 +109,8 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
         else:
             submissions=prepare_submissions(controller,training_manifest,reports,receipts)
             training_manifest=amend_manifest(controller,training_manifest,submissions,steps)
+    from .trainer_local_state import selected,project
+    if selected(controller):training_manifest=project(training_manifest,controller.signed)
     cached=controller.state/(epoch+'-training-metrics.json')
     if cached.exists():
         metrics=json.loads(cached.read_text());record,job=original_request(controller,epoch)

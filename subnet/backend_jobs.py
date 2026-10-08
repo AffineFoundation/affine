@@ -424,7 +424,7 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
             coverage_inputs=original_submissions(coverage_inputs,manifest,authority)
         if manifest.get('training_input_policy')!='committed-unaudited-training-v1':validate_coverage(manifest,coverage_inputs)
         validate_job(job,manifest,authority)
-    if job['role']=='train' and job.get('training_policy') in (COVERED_POLICY,PERSISTENT_POLICY):
+    if resolve_source and job['role']=='train' and job.get('training_policy') in (COVERED_POLICY,PERSISTENT_POLICY):
         if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
             from .committed_training_inputs import validate_job as validate_training_receipts
         elif (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2'):
@@ -923,6 +923,8 @@ def install_source_loader(root,additional_files=()):
         # just like the other bootstrap admission helpers; never retain its
         # pre-validation implementation for training or publication.
         sys.modules.pop('subnet.persistent_publication',None)
+    if 'subnet/trainer_local_state.py' in additional_files:
+        sys.modules.pop('subnet.trainer_local_state',None)
     for name in set(SOURCE_FILES)|set(additional_files):
         module_name=name[:-3].replace('/','.')
         if module_name in sys.modules and module_name!='subnet.backend_jobs':
@@ -973,6 +975,8 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':raise ValueError('CUDA environment profile')
     token_files=('subnet/token_only_protocol.py','subnet/token_only_runtime.py','subnet/threeway_prefill_research.py','subnet/native_session_validation.py')if 'token_artifact_policy'in manifest else ()
     publication_files=('subnet/persistent_publication.py',) if manifest.get('persistent_publication_policy') is not None else ()
+    if manifest.get('optimizer_state_export_policy')=='trainer-local-only-v1':
+        publication_files+=('subnet/trainer_local_state.py',)
     recovery_files=('subnet/training_startup_recovery.py',)if manifest.get('training_startup_recovery')is not None else ()
     learner_files=('subnet/committed_training_inputs.py',)if manifest.get('training_input_policy')=='committed-unaudited-training-v1'else ()
     if learner_files and job['role']=='train'and native_math_prompt_enabled(job,manifest):learner_files+=('subnet/native_math_prompt.py',)
@@ -984,6 +988,17 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     elif job.get('training_policy')==COVERED_POLICY:
         install_source_loader(root,('subnet/training_receipts.py',*compact_files,*learner_files,*publication_files,*recovery_files,*token_files))
     else:install_source_loader(root,(*compact_files,*learner_files,*publication_files,*recovery_files,*token_files))
+    # Receipt admission can import protocol/model definitions. Run it only
+    # after the authenticated fresh-source loader, still before any artifacts,
+    # model construction or optimizer mutation. Public validate remains strict.
+    if job['role']=='train' and job.get('training_policy') in (COVERED_POLICY,PERSISTENT_POLICY):
+        if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
+            from .committed_training_inputs import validate_job as validate_training_receipts
+        elif manifest.get('training_input_policy')=='authenticated-verifier-compact-inputs-v2':
+            from .compact_training_inputs import validate_job as validate_training_receipts
+        else:
+            from .training_receipts import validate_job as validate_training_receipts
+        measured_phase(startup_timings,'authenticated_training_input_admission',validate_training_receipts,job,manifest,authority)
     if job['role']=='mine' and manifest.get('submission_transport_policy') is not None:
         owned_miner_identity(job)
     if publication_files:

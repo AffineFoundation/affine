@@ -4,10 +4,19 @@ from concurrent.futures import ThreadPoolExecutor
 
 VERSION='parallel-persistent-publication-v1'
 EXPORT_POLICY='upload-only-independent-full-v1'
+LOCAL_POLICY='trainer-local-only-v1'
+
+def local_state(manifest):
+    return manifest.get('optimizer_state_export_policy') == LOCAL_POLICY
 
 def export_policy(manifest):
     value=manifest.get('optimizer_state_export_policy')
     if value is None:return 'trainer-full'
+    if value==LOCAL_POLICY:
+        policy=validate_policy(manifest.get('persistent_publication_policy'))
+        if policy['state_readback']!='trainer-local':raise ValueError('local optimizer requires explicit local publication policy')
+        if manifest.get('optimizer_state_local_cache') is None:raise ValueError('local optimizer requires retained trainer state')
+        return value
     if value!=EXPORT_POLICY:raise ValueError('signed optimizer state export policy')
     policy=validate_policy(manifest.get('persistent_publication_policy'))
     if policy['state_readback']!='qualified-remote-full':raise ValueError('upload-only export requires qualified independent full readback')
@@ -17,7 +26,7 @@ def validate_policy(value):
     if (not isinstance(value,dict) or set(value)!=
             {'version','state_readback','checkpoint_readback_workers'} or
             value['version']!=VERSION or
-            value['state_readback'] not in ('local-full','qualified-remote-full') or
+            value['state_readback'] not in ('local-full','qualified-remote-full','trainer-local') or
             type(value['checkpoint_readback_workers']) is not int or
             not 1<=value['checkpoint_readback_workers']<=4):
         raise ValueError('signed bounded persistent publication policy')
@@ -42,6 +51,17 @@ def complete(controller,report,job,manifest,checkpoint_path):
         return checkpoint,independently_commit(controller,report,job,manifest),None
     policy=validate_policy(raw)
     validate_report(report,job,manifest)
+    if mode==LOCAL_POLICY:
+        # The trusted trainer owns optimizer bytes. Only the inference model
+        # and small authenticated lineage metadata are published to storage.
+        from .persistent_training_protocol import _publish_verified_descriptor
+        start=time.monotonic()
+        checkpoint=controller.publish_remote_checkpoint(checkpoint_manifest,checkpoint_path)
+        pointer=_publish_verified_descriptor(controller,report['persistent_training_state']['descriptor'],job,
+            job['persistent_training']['output_namespace'],local_only=True)
+        return checkpoint,pointer,dict(overlapped_publication_seconds=time.monotonic()-start,
+            optimizer_state_export_policy=mode,optimizer_state_uploaded=False,
+            optimizer_state_location='trainer-local',trainer_verification_performed=False)
     remote_reader=getattr(controller,'independent_state_reader',None)
     if policy['state_readback']=='qualified-remote-full' and remote_reader is None:
         raise ValueError('qualified independent reader required; no silent fallback')

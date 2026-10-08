@@ -16,6 +16,7 @@ from .storage import canonical
 
 VERSION = 'persistent-trainer-lineage-v1'
 PUBLICATION_VERSION = 'authority-persistent-trainer-state-v1'
+LOCAL_PUBLICATION_VERSION = 'authority-local-trainer-state-v1'
 EXECUTION_FILES = tuple('subnet/' + name + '.py' for name in (
     'persistent_training_protocol', 'persistent_training_worker', 'persistent_cpu_adamw',
     'persistent_training_state', 'persistent_training_evidence','task_normalized_training', 'training_policy',
@@ -34,7 +35,8 @@ def optimizer_cache_policy(manifest):
         type(value['max_checkpoint_bytes'])is not int or not 1<=value['max_checkpoint_bytes']<=128*1024**3):
         raise ValueError('explicit bounded optimizer cache policy')
     publication=manifest.get('persistent_publication_policy')
-    if not isinstance(publication,dict)or publication.get('state_readback')!='qualified-remote-full':
+    from .persistent_publication import local_state
+    if not isinstance(publication,dict)or publication.get('state_readback')!=('trainer-local' if local_state(manifest) else 'qualified-remote-full'):
         raise ValueError('optimizer cache requires full independent durable state readback')
     return dict(value)
 
@@ -171,7 +173,7 @@ def validate_parent(envelope, binding, authority):
         return None
     publication=signed(envelope,authority)
     if (set(publication)!={'version','namespace','job_id','job_sha256','descriptor_sha256','descriptor'} or
-            publication['version']!=PUBLICATION_VERSION or state_pointer(publication)!=parent or
+            publication['version'] not in (PUBLICATION_VERSION,LOCAL_PUBLICATION_VERSION) or state_pointer(publication)!=parent or
             publication['descriptor_sha256']!=parent['descriptor_sha256']):
         raise ValueError('authority signed exact parent publication')
     checkpoint_id(publication['job_sha256'])
@@ -188,20 +190,24 @@ def validate_parent(envelope, binding, authority):
 def prepare_job(controller, manifest, identifier, steps, ttl):
     """Only called when creating a new original signed training request."""
     binding=validate_binding(manifest['trainer_state_binding'],manifest)
+    from .persistent_publication import local_state
+    local=local_state(manifest)
     envelope=None;reads={}
     if binding['parent'] is not None:
         envelope=read_json(controller.bucket,binding['parent']['descriptor_key'])
         descriptor=validate_parent(envelope,binding,controller.authority.id)
-        reads={row['name']:controller.bucket.presign(binding['parent']['namespace']+'/'+row['name'],expires=ttl) for row in descriptor['shards']}
+        if not local:
+            if envelope['payload']['version']==LOCAL_PUBLICATION_VERSION:raise ValueError('local optimizer has no durable shard fallback')
+            reads={row['name']:controller.bucket.presign(binding['parent']['namespace']+'/'+row['name'],expires=ttl) for row in descriptor['shards']}
     namespace=safe_namespace('private/trainer-state/'+manifest['epoch']+'/'+identifier)
     names=['state-'+format(i,'06d')+'.safetensors' for i,_ in enumerate(_plans(binding['parameters'],MAX_SHARD_BYTES))]
     if not 1<=len(names)<=64:raise ValueError('signed persistent state transport object budget')
     return dict(version=VERSION,binding_sha256=sha(binding),global_step_after=binding['global_step_before']+steps,
         parent_publication=envelope,parent_read_urls=reads,output_namespace=namespace,
-        output_shards={name:dict(put_url=controller.bucket.presign(namespace+'/'+name,'put_object',ttl),
-            get_url=controller.bucket.presign(namespace+'/'+name,expires=ttl)) for name in names},
-        descriptor_put_url=controller.bucket.presign(namespace+'/staged-state.json','put_object',ttl),
-        descriptor_read_url=controller.bucket.presign(namespace+'/staged-state.json',expires=ttl))
+        output_shards={name:({} if local else dict(put_url=controller.bucket.presign(namespace+'/'+name,'put_object',ttl),
+            get_url=controller.bucket.presign(namespace+'/'+name,expires=ttl))) for name in names},
+        descriptor_put_url=None if local else controller.bucket.presign(namespace+'/staged-state.json','put_object',ttl),
+        descriptor_read_url=None if local else controller.bucket.presign(namespace+'/staged-state.json',expires=ttl))
 
 
 def validate_job(job,manifest,authority):
@@ -231,7 +237,20 @@ def validate_job(job,manifest,authority):
         raise ValueError('signed job state namespace/counter/lineage')
     safe_namespace(transport['output_namespace'])
     descriptor=validate_parent(transport['parent_publication'],binding,authority)
-    if set(transport['parent_read_urls'])!=({s['name']for s in descriptor['shards']}if descriptor else set()):
+    from .persistent_publication import local_state
+    if local_state(manifest):
+        from .trainer_local_state import FIELD,original_manifest
+        if 'subnet/trainer_local_state.py' not in job['source_files']:raise ValueError('local trainer projection source pin required')
+        if FIELD in manifest:original_manifest(manifest,authority)
+        names={'state-'+format(i,'06d')+'.safetensors' for i,_ in enumerate(_plans(binding['parameters'],MAX_SHARD_BYTES))}
+        if (transport['parent_read_urls']!={} or transport['output_shards']!={name:{}for name in names} or
+            transport['descriptor_put_url'] is not None or transport['descriptor_read_url'] is not None):
+            raise ValueError('local optimizer must not issue storage capabilities')
+        # Continue common submission validation below; no state URL checks.
+        descriptor_for_urls=None
+    else:
+        descriptor_for_urls=descriptor
+    if set(transport['parent_read_urls'])!=({s['name']for s in descriptor_for_urls['shards']}if descriptor_for_urls else set()):
         raise ValueError('parent shard capability allowlist')
     def capability(url,operation,key):
         r2_url(url,operation)
@@ -240,11 +259,13 @@ def validate_job(job,manifest,authority):
     names={'state-'+format(i,'06d')+'.safetensors' for i,_ in enumerate(_plans(binding['parameters'],MAX_SHARD_BYTES))}
     if set(transport['output_shards'])!=names or not 1<=len(names)<=64:raise ValueError('output state shard capability allowlist')
     for name,row in transport['output_shards'].items():
+        if local_state(manifest):continue
         if set(row)!= {'put_url','get_url'}:raise ValueError('state transport capability fields')
         capability(row['put_url'],'PUT',transport['output_namespace']+'/'+name)
         capability(row['get_url'],'GET',transport['output_namespace']+'/'+name)
-    capability(transport['descriptor_put_url'],'PUT',transport['output_namespace']+'/staged-state.json')
-    capability(transport['descriptor_read_url'],'GET',transport['output_namespace']+'/staged-state.json')
+    if not local_state(manifest):
+        capability(transport['descriptor_put_url'],'PUT',transport['output_namespace']+'/staged-state.json')
+        capability(transport['descriptor_read_url'],'GET',transport['output_namespace']+'/staged-state.json')
     for submission in job['submissions']:
         hashes=([submission.get('learner_admission',{}).get('payload',{}).get('batch_sha256')]
                 if manifest.get('training_input_policy')=='committed-unaudited-training-v1'else submission.get('accepted_batch_sha256'))
@@ -274,7 +295,22 @@ def validate_report(report,job,manifest):
             training.get('global_step_after')!=transport['global_step_after'] or
             training.get('state_updated')is not True or
             state.get('namespace')!=transport['output_namespace']):raise ValueError('persistent training report lineage')
-    from .persistent_publication import export_policy,EXPORT_POLICY
+    from .persistent_publication import export_policy,EXPORT_POLICY,LOCAL_POLICY
+    if export_policy(manifest)==LOCAL_POLICY:
+        evidence=state.get('publication_evidence',{})
+        candidate=state.get('local_optimizer_cache_candidate',{})
+        if (state.get('authority_committed') is not False or
+            evidence.get('optimizer_state_export_policy')!=LOCAL_POLICY or
+            evidence.get('optimizer_state_uploaded') is not False or
+            evidence.get('independent_full_readback_required') is not False or
+            candidate.get('descriptor_sha256')!=state.get('descriptor_sha256')):
+            raise ValueError('local optimizer report cannot claim bucket durability')
+        shards=state.get('descriptor',{}).get('shards',[]);rows=evidence.get('shards',[])
+        if not shards or len(rows)!=len(shards):raise ValueError('complete retained local optimizer required')
+        for row,shard in zip(rows,shards):
+            if (any(row.get(k)!=shard[k]for k in ('name','size','sha256')) or
+                row.get('upload_completed') is not False or row.get('local_sha_verified') is not True or
+                row.get('local_shard_retired') is not False):raise ValueError('all optimizer bytes must remain local')
     if export_policy(manifest)==EXPORT_POLICY:
         if 'subnet/persistent_publication.py'not in job['source_files']:raise ValueError('upload-only export policy module source pin required')
         evidence=state.get('publication_evidence',{})
@@ -361,9 +397,9 @@ def independently_commit(controller,report,job,manifest,read_chunks=None,*,readb
         read_chunks,readback_workers=readback_workers)
     return _publish_verified_descriptor(controller,descriptor,job,namespace)
 
-def _publish_verified_descriptor(controller,descriptor,job,namespace):
+def _publish_verified_descriptor(controller,descriptor,job,namespace,*,local_only=False):
     """Publish only after the calling independent-readback path fully succeeds."""
-    publication=dict(version=PUBLICATION_VERSION,namespace=namespace,job_id=job['job_id'],
+    publication=dict(version=LOCAL_PUBLICATION_VERSION if local_only else PUBLICATION_VERSION,namespace=namespace,job_id=job['job_id'],
         job_sha256=sha(job),descriptor_sha256=sha(descriptor),descriptor=descriptor)
     key=namespace+'/authority-state.json'
     from botocore.exceptions import ClientError

@@ -24,7 +24,8 @@ def policy(manifest):
         type(value['max_checkpoint_bytes'])is not int or not 1<=value['max_checkpoint_bytes']<=128*1024**3):
         raise ValueError('explicit bounded optimizer cache policy')
     publication=manifest.get('persistent_publication_policy')
-    if not isinstance(publication,dict)or publication.get('state_readback')!='qualified-remote-full':
+    from .persistent_publication import local_state
+    if not isinstance(publication,dict)or publication.get('state_readback')!=('trainer-local' if local_state(manifest) else 'qualified-remote-full'):
         raise ValueError('optimizer cache requires full independent durable state readback')
     return dict(value)
 
@@ -208,7 +209,11 @@ class StateCache:
         if ack['trainer_state']['optimizer_steps']>incoming_step:
             raise ValueError('approved optimizer cache cannot roll lineage backward')
         directory=self.directory(value['job_id']);reason=None
-        if descriptor is None or sha(descriptor)!=value['descriptor_sha256']or value['source_sha256']!=source:reason='wrong-approved-parent-or-source'
+        from .persistent_publication import local_state
+        local=local_state(self.manifest)
+        # A signed source upgrade may consume the exact authenticated parent.
+        # State identity, original job and ACK still have to match; never reset.
+        if descriptor is None or sha(descriptor)!=value['descriptor_sha256']or (value['source_sha256']!=source and not local):reason='wrong-approved-parent-or-source'
         else:
             shards={r['name']:r for r in descriptor['shards']}
             if directory.exists()and set(p.name for p in directory.iterdir())-set(value['files']):
@@ -230,6 +235,7 @@ class StateCache:
                         self.verified_rows[name]=actual
                     except FileNotFoundError:reason='missing-or-corrupt-cache';break
         if reason:
+            if local:raise ValueError('required local optimizer parent unavailable: '+reason)
             self.discard(value,reason);marker.unlink();self.cache_evidence.append(dict(outcome='cold',reason=reason));return 0
         self.current=value;self.rows={r['name']:r for r in descriptor['shards']}
         size=sum(r['size']for r in self.rows.values())
@@ -302,7 +308,9 @@ class StateCache:
         if set(shards)!=set(self.candidate['files'])or any((self.candidate['files'][n]['sha256'],self.candidate['files'][n]['size'])!=(r['sha256'],r['size'])for n,r in shards.items()):
             raise ValueError('complete candidate descriptor binding')
         self.candidate['descriptor_sha256']=sha(descriptor);self.save(self.root/'pending.json',self.candidate)
-        return dict(version=VERSION,descriptor_sha256=sha(descriptor),bytes=sum(r['size']for r in shards.values()),promoted=False,ROOT_durability_ACK_required=True,parent_cache=self.cache_evidence)
+        from .persistent_publication import local_state
+        return dict(version=VERSION,descriptor_sha256=sha(descriptor),bytes=sum(r['size']for r in shards.values()),promoted=False,
+            ROOT_durability_ACK_required=not local_state(self.manifest),ROOT_lineage_ACK_required=True,parent_cache=self.cache_evidence)
 
 
 def promote(ack,authority,workspace):
@@ -337,7 +345,10 @@ def promote(ack,authority,workspace):
             raise ValueError('original candidate/job/source/descriptor binding')
         for name,row in candidate['files'].items():
             path=cache.directory(job['job_id'])/member(name)
-            if snapshot(path)!=row['stat']or hash_file(path)!=(shards[name]['sha256'],shards[name]['size']):raise ValueError('candidate cache bytes changed after publication')
+            from .persistent_publication import local_state
+            if (snapshot(path)!=row['stat']or
+                (row['sha256'],row['size'])!=(shards[name]['sha256'],shards[name]['size'])or
+                (not local_state(manifest)and hash_file(path)!=(shards[name]['sha256'],shards[name]['size']))):raise ValueError('candidate cache bytes changed after publication')
         marker=cache.root/'current.json'
         if marker.exists():
             previous=json.loads(marker.read_bytes())

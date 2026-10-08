@@ -161,3 +161,24 @@ class RecoveryDispatchLifetimeTests(unittest.TestCase):
   self.assertTrue(lifetimes);self.assertTrue(all(v<=7199 for v in lifetimes))
   self.assertEqual(job['manifest']['payload']['training_startup_recovery'],f.sign(value))
   self.assertEqual(job['submissions'],original['submissions'])
+
+class UnauditedPrecomputeRecovery(StartupRecovery):
+ def setUp(self):
+  super().setUp()
+  self.old['training_input_policy']='committed-unaudited-training-v1'
+  row=self.original['submissions'][0];row.update(url='https://example.invalid/bucket/public/same-epoch/submissions/frozen.json',size=123)
+  self.original.update(manifest=self.sign(self.old),training_input_policy=self.old['training_input_policy'])
+  self.job.update(training_input_policy=self.old['training_input_policy'],submissions=copy.deepcopy(self.original['submissions']))
+  self.value.update(version=r.ADMISSION_VERSION,original_signed_job=self.sign(self.original),original_job_sha256=sha(self.original),execution_source_files=self.job['source_files'],authorized_input_objects=[dict(key='public/same-epoch/submissions/frozen.json',sha256=row['sha256'],size=row['size'])])
+  self.manifest=dict(self.old,source_bundle=self.value['replacement_source_bundle'],training_startup_recovery=self.sign(self.value));self.job['manifest']=self.sign(self.manifest)
+ def test_original_science_receipts_parent_and_failure_remain_immutable(self):
+  self.job['submissions'][0]['url']='https://new.invalid/bucket/public/same-epoch/submissions/frozen.json?fresh=1'
+  self.assertEqual(r.validate(self.job,self.manifest,self.authority),self.value)
+  self.assertEqual(original_computation_manifest(self.manifest,self.authority),self.old)
+ def test_same_hash_different_key_or_size_cannot_redirect_inputs(self):
+  for field,value in [('url','https://example.invalid/bucket/public/another/submissions/frozen.json'),('size',124)]:
+   job=copy.deepcopy(self.job);job['submissions'][0][field]=value
+   with self.subTest(field=field),self.assertRaises(ValueError):r.validate(job,self.manifest,self.authority)
+ def test_signed_execution_inventory_is_exact(self):
+  job=copy.deepcopy(self.job);job['source_files']['subnet/extra.py']='1'*64
+  with self.assertRaisesRegex(ValueError,'exact approved'):r.validate(job,self.manifest,self.authority)

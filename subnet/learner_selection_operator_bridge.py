@@ -24,6 +24,7 @@ def approval(document,authority,manifest):
     fields={'version','source_sha256','scientific_source_files','operator_files','minimum_round','epoch_prefix','peer_entry_sha256','peer_runner_sha256','backend_execution_allowed'}
     miner_bound=manifest.get('sampling_contract',{}).get('version')=='forced-inverse-cdf-prefill-miner-bound-v5'
     expected_version=K2L2_AUTH_VERSION if miner_bound else AUTH_VERSION
+    local_trainer=p.get('version')=='cpu-selection-peer-local-trainer-authorization-v3'
     expected_members=179 if miner_bound else 177
     if miner_bound:
         if 'subnet/batch_quotas.py' in p.get('scientific_source_files',{}):
@@ -35,6 +36,11 @@ def approval(document,authority,manifest):
             if type(manifest.get('max_batches'))is not int or manifest['max_batches']!=3:raise ValueError('miner-bound peer max3')
         elif (type(manifest.get('K'))is not int or type(manifest.get('L'))is not int or manifest['K']!=2 or manifest['L']!=2 or type(manifest.get('max_batches'))is not int or manifest['max_batches']!=3):raise ValueError('historical miner-bound peer K2 L2 max3')
         if not {'subnet/sampling_uniqueness.py','subnet/trajectory_identity.py'}<=set(p.get('scientific_source_files',{})):raise ValueError('miner-bound peer runtime additions')
+    if local_trainer:
+        if (not miner_bound or manifest.get('optimizer_state_export_policy')!='trainer-local-only-v1' or
+            'subnet/trainer_local_state.py'not in p.get('scientific_source_files',{})):
+            raise ValueError('local trainer peer requires explicit local state and source')
+        expected_version='cpu-selection-peer-local-trainer-authorization-v3';expected_members=181
     if (set(p)!=fields or p['version']!=expected_version or p['source_sha256']!=manifest['source_bundle']['sha256']or
         type(p['scientific_source_files'])is not dict or len(p['scientific_source_files'])!=expected_members or
         set(p['operator_files'])!=FILES or type(p['minimum_round'])is not int or p['minimum_round']<0 or
