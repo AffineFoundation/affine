@@ -1,7 +1,7 @@
 # Completed-answer MATH cutover and base restart
 
 Status, 2026-10-08: the base-model and optimizer reset has been applied at
-global epoch 78. The API, learner and six reachable verifier workers have the
+global epoch 78. The API, learner and seven reachable verifier workers have the
 completed-answer source admitted. The first new manifest remains behind the
 normal checkpoint calibration/opening checks; no completed new training epoch
 is claimed by this record. An independent, fresh fixed-32 evaluation is running.

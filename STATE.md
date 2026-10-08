@@ -1,3 +1,28 @@
+Verified completed-answer reset, 2026-10-08, 21:34 UTC:
+This entry supersedes operational snapshots below. ROOT applied the explicit
+restart from original Qwen2.5-Math-7B-Instruct checkpoint 6493a901 at global
+round 78, with fresh optimizer zero. Historical epochs, audit evidence and
+reward history remain intact. Completed boxed answers retain native grading;
+missing, empty or unfinished latest boxes are unresolved and excluded from
+sample quotas and training. K4/L4, max3 batches/UID, nonces0-999 and output2048
+remain unchanged. Source74f132 is independently staged and admitted by the
+API, learner, trainer and seven reachable verifier workers; the eighth roster
+endpoint remains unreachable. No first fresh training completion is claimed.
+The authenticated read-only assessment completed with 283 miner estimates
+and zero refusals. Same-hour original assessment reuse avoids rebuilding it
+on each calibration observation. The learner is opening, observing the same
+original successor-calibration job. The independent fresh fixed32/cap1024
+baseline is running from optimizer zero in a separate state; old original
+requests and completed evaluation archives are preserved. affine.io serves
+the signed new-run boundary and resets only learning charts, preserving the
+layout, historical database rows and incentive history. The first public
+fresh manifest is still pending normal calibration. Updated miner source,
+protocol documentation and run projection are pushed to Affine main.
+The hourly weight writer's unresolved earlier chain outcome still requires
+actual-chain reconciliation; the learning reset does not erase its cursor or
+claim that payout blocker resolved. Activation observations are archived with
+full R2 readback, without publishing credentials.
+
 Verified continuation, 2026-10-07, 14:40 UTC:
 This entry supersedes older snapshots below. The controller recorded epoch 46
 complete and epoch 47 opening at 14:36 UTC, with eligible unaudited training
