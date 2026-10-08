@@ -197,6 +197,11 @@ def validate_job(job,manifest,authority):
 
 def validate_report(report,job,manifest,authority):
     validate_job(job,manifest,authority)
+    # Authenticate the full trainer/recovery projection once for this report.
+    # Each row still verifies its own authority and miner signatures; repeatedly
+    # reconstructing the identical signed job adds no assurance.
+    from .training_receipts import original_computation_manifest
+    manifest=original_computation_manifest(manifest,authority)
     rows=report.get('training_admissions');training=report.get('training',{})
     if (not isinstance(rows,list) or len(rows)!=len(job['submissions']) or report.get('audits') or
         training.get('training_input_policy')!=VERSION or training.get('trainer_verification_performed')is not False or
