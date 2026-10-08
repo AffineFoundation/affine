@@ -197,3 +197,17 @@ class OwnedMiningControls(unittest.TestCase):
    data,report=mine_cumulative(runtime,m,dict(miner_id=self.miner,seed_start=0,search_budget=6),lambda *args:None,clock=lambda:20)
   self.assertEqual(report['batches'],1)
   self.assertEqual([r['seed']for r in seen[0][0][0]['rollouts']],[0,2,3,5])
+ def test_completed_math_unresolved_attempt_is_skipped(self):
+  from subnet.backend_jobs import mine_cumulative
+  from types import SimpleNamespace
+  m=copy.deepcopy(self.manifest);m.update(K=2,L=2,start=10,deadline=90)
+  definition=dict(env_id='math',spec={},harness={},indices=[4])
+  runtime=SimpleNamespace(spec=SimpleNamespace(version='v1'));runtime.for_environment=lambda *args:runtime
+  def rollout(index,seed):
+   label='neutral' if seed==0 else ('positive' if seed in (1,2) else 'negative')
+   return dict(schema=2,index=index,sample_index=index,env_id='math',environment_version='v1',task_hash='c'*64,seed=seed,sampling=f.receipt(self.context,seed),classification=label,turns=[dict(prompt=[100],output=[seed+10,6])]),[]
+  runtime.rollout=rollout;seen=[]
+  with patch('subnet.protocol.entries',return_value=[definition]),patch('subnet.batches.pack',side_effect=lambda rows:seen.append(rows)or b'packed'),patch('subnet.math_completion.enabled',return_value=True):
+   _,report=mine_cumulative(runtime,m,dict(miner_id=self.miner,seed_start=0,search_budget=5),lambda *args:None,clock=lambda:20)
+  self.assertEqual(report['batches'],1)
+  self.assertEqual([r['seed'] for r in seen[0][0][0]['rollouts']],[1,2,3,4])

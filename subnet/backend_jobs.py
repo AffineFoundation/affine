@@ -263,7 +263,17 @@ def mine_cumulative(runtime,manifest,job,upload,clock=None,allow_empty=False,pro
                 emit(state,'attempt_started',seed=seed)
                 started=clock();rollout,arrays=selected.rollout(index,seed);state['attempts']+=1
                 label=rollout['classification']
-                if label not in classes:raise ValueError('rollout classification')
+                if label not in classes:
+                    # Under the completed-answer math contract, an exhausted
+                    # or otherwise incomplete response is unresolved. It is
+                    # an ordinary search miss: it must not fill either quota,
+                    # enter a batch, or abort the miner job.
+                    from .math_completion import enabled as completed_math
+                    if label in ('neutral', 'unresolved') and completed_math(definition['spec']):
+                        emit(state, 'attempt_unresolved', seed=seed,
+                             elapsed_seconds=clock()-started)
+                        continue
+                    raise ValueError('rollout classification')
                 observed[label]+=1
                 signature=tuple(tuple(t['output']) for t in rollout['turns'])
                 quota=manifest['K'] if label=='positive' else manifest['L']
