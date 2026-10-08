@@ -10,7 +10,9 @@ Miners must read `environments[*].harness.max_output_tokens` from each signed
 manifest. Do not hard-code either budget. The existing `text-tools-long-v2`
 harness, verifier, and calibration request validator support 2,048 tokens. The
 model backend separately limits prompt plus generated output to 8,192 tokens or
-the model's smaller configured context limit.
+the model's smaller configured context limit. The active
+Qwen2.5-Math-7B-Instruct checkpoint's authenticated config has a 4,096-token total
+context, so a 4,096-token output allowance would leave no room for the prompt.
 
 The four-success/four-failure quota, three batches per UID, allowed nonces
 0–999, sampling checks, penalties, and optimizer remain unchanged. Held-out
