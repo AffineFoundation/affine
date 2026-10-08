@@ -145,7 +145,9 @@ def local_request(state,epoch,authority):
     value=json.loads(reservation.read_bytes())
     if set(value)!={'declaration_sha256','declaration','label','original_job_sha256'}or sha(value['declaration'])!=value['declaration_sha256']:raise ValueError('immutable local startup recovery reservation')
     declaration=signed(value['declaration'],authority)
-    if reservation in (reservation_path(state,epoch,v)for v in POST_UPDATE_VERSIONS)and declaration.get('version')not in POST_UPDATE_VERSIONS:raise ValueError('only explicit post-update declaration may occupy post-update reservation')
+    for version in POST_UPDATE_VERSIONS:
+        if reservation==reservation_path(state,epoch,version) and declaration.get('version')!=version:
+            raise ValueError('exact post-update declaration must match its reservation version')
     if reservation==reservation_path(state,epoch,BOOTSTRAP_VERSION)and declaration.get('version')!=BOOTSTRAP_VERSION:raise ValueError('only explicit v3 continuation may occupy v3 reservation')
     if declaration['version']==BOOTSTRAP_VERSION:validate_predecessor_local(state,declaration,authority)
     if declaration['version']==POST_UPDATE_CONTINUATION_VERSION:validate_post_update_predecessor_local(state,declaration,authority)
@@ -332,7 +334,7 @@ def validate_post_update_predecessor(value,job):
         if re.fullmatch('[0-9a-f]{64}',predecessor[name]or '')is None:raise ValueError('preserved predecessor digest')
     terminal=predecessor['terminal'];witness=predecessor['witness']
     if (set(terminal)!={'phase','job_id','exit_code','runner_pid','runner_pid_ticks','child_pid','child_pid_ticks','started_at','finished_at'} or
-            terminal['phase']!='failed' or terminal['job_id']!=predecessor['job_id'] or terminal['exit_code']!=1 or
+            terminal['phase']!='failed' or terminal['job_id']!=predecessor['job_id'] or type(terminal['exit_code'])is not int or terminal['exit_code']!=1 or
             terminal['job_id']==job['job_id']):raise ValueError('distinct failed precompute attempt')
     for name in ('runner','child'):
         if type(terminal[name+'_pid'])is not int or terminal[name+'_pid']<=0 or not isinstance(terminal[name+'_pid_ticks'],str) or not terminal[name+'_pid_ticks'].isdigit():

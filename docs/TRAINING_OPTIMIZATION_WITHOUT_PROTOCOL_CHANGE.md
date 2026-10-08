@@ -76,8 +76,17 @@ of the negative population is capped. This is a concrete reason to investigate
 trainer weighting of unfinished negatives while retaining the miner protocol.
 It is not evidence that every capped trajectory would eventually succeed.
 
-The new matched BF16 screening parent solved 96/128 held-out tasks. Treatment
-comparisons are still running. The inference exports for the archived one-update
+The new matched BF16 screening parent solved 96/128 held-out tasks. The existing one-update pairwise branch scored 93/128. The paired difference
+against the parent does not establish a significant one-update regression;
+other treatment comparisons are still running. The inference exports for the archived one-update
 baseline and positive-only branches change about 6.90% and 6.64% of BF16 weights,
 respectively; their relative L2 changes are about 0.000474 and 0.000465. Changing
 weights, finite gradients and improving training margins do not prove learning.
+
+
+A further isolated batch-size arm partitions those same 256 archived tasks into
+four 64-task updates at learning rate 1e-6 with FP32 gradient accumulation. Its
+actual Adam counter advances from 33 to 37. This changes the trainer's effective
+optimizer batch and update frequency, not the miner's eight-rollout batch,
+scoring, or sampling contract. It is queued after the original six matched
+screens and requires the same native held-out controls.
