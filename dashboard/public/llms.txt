@@ -853,3 +853,25 @@ authenticated; the909,108-byte completed evidence archive was checked. Larger pe
 sample groups remain a proposed controlled experiment, not an active quota;
 see docs/PAIRED_SAMPLE_STABILITY_PLAN.md on GitHub. Neither reliable publication
 nor these results establish held-out convergence.
+
+Verifier checkpoint working lifetime (2026-10-08)
+-----------------------------------------------
+The operator resident verifier keeps one authenticated checkpoint and one GPU
+model across sequential audit jobs with the same checkpoint, approved source
+inventory, runtime versions, runtime revision and backend profile. Every job
+still authenticates its signed inputs and performs the existing sampling,
+TOPLOC and environment checks. Miner submission and sampling contracts are
+unchanged. A new binding retires the previous backend before loading another.
+An active inherited checkpoint lease prevents automatic disposal; job ACK only
+retires disposable rollout downloads. The resident backend retires after 900
+seconds without work, releasing its lease so owned-cache cleanup can run.
+Reports remain durable in R2. Unknown backend termination is not replayed by the
+resident process. This optimization does not grant credit without an audit.
+
+Two actual H200 eight-rollout qualification jobs passed with the same process
+and GPU model, one checkpoint authentication and one model load. With a checkpoint
+already on disk, the first job took 80.06 seconds and the warm job 21.12 seconds.
+These are two-job qualification timings, not fleet-wide throughput estimates.
+Operators enable --resident-backend with their admitted absolute operator helper
+and can set --resident-idle-seconds (1..3600). Live worker changes happen only
+between jobs, preserving issued job identities, source pins and queue leases.
