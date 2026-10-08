@@ -1048,9 +1048,10 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         validate_single_put_sizes(approved,manifest['checkpoint']['files'])
         def upload(row):
             name,url=row
-            with (approved/name).open('rb') as body:
-                response=requests.put(url,data=body,headers={'Content-Type':'application/octet-stream'},timeout=600,allow_redirects=False)
-            if response.status_code not in (200,201,204):raise ValueError('R2 PUT status '+str(response.status_code))
+            from .persistent_training_worker import put_file
+            # Bound stalled socket operations, not total streaming duration.
+            # Transient retries rewind the same inode and immutable bytes.
+            put_file(url,approved/name,timeout=(15,90))
         workers=1
         if manifest.get('persistent_publication_policy') is not None:
             from .persistent_publication import validate_policy

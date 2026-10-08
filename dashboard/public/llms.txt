@@ -13,8 +13,18 @@ remain unchanged.
 The trainer must have the matching local optimizer state before starting an
 update. Missing or corrupt state stops training; it does not silently reset Adam.
 Local state is promoted after the new model is published and acknowledged, and
-the previous local state is then retired automatically. Losing the trainer disk
-loses the latest optimizer state; R2 still retains the published model.
+the previous local state is then retired automatically. Restore reads retain
+the acknowledged parent until the successor model has been published and ACKed,
+so a worker failure can retry without consuming the only local Adam copy.
+
+On the qualified high-memory trainer, an automatically managed local shared-memory
+volume alternates optimizer snapshots with local disk; only one snapshot lives
+in shared memory, leaving RAM for the working optimizer. The volume is reused
+across process restarts, with capacity checks and automatic retirement after ACK;
+optimizer shards never travel through R2. Model files stay on disk and are still
+fully authenticated during publication. Losing or rebooting the trainer loses
+the latest optimizer state; R2 retains the published model. Missing state stops
+training rather than silently creating a new Adam optimizer.
 
 The backend validates full training receipts after installing its authenticated
 fresh-source loader, before accessing training artifacts or loading the model.

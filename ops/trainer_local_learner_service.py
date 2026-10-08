@@ -6,6 +6,7 @@ their contracts. A separately pinned trainer execution tree owns Adam state.
 import argparse
 import hashlib
 import json
+import shlex
 from pathlib import Path
 import sys
 
@@ -85,6 +86,12 @@ def main():
                 full={n:h for n,h in p['trainer_source']['files'].items()if n.startswith('subnet/')and n.endswith('.py')and '/'not in n[len('subnet/'): ]}
                 if self.metadata['source_files']!=full:raise ValueError('actual separately pinned trainer source inventory')
                 self.metadata=dict(self.metadata,source_files=expected)
+                if config.get('optimizer_cache_volume')=='trainer-local-memory-v1':
+                    helper='ops/trainer_local_cache_volume.py'
+                    code='import hashlib,pathlib,runpy,sys; p=pathlib.Path('+repr(self.code+'/'+helper)+'); assert hashlib.sha256(p.read_bytes()).hexdigest()=='+repr(p['trainer_source']['files'][helper])+'; sys.argv=[str(p),"--workspace",'+repr(self.workspace)+',"--authority",'+repr(old['authority'])+']; sys.path.insert(0,'+repr(self.code)+'); runpy.run_path(str(p),run_name="__main__")'
+                    result=json.loads(self.command(shlex.quote(self.python)+' -I -B -c '+shlex.quote(code),timeout=900))
+                    if result.get('ready')is not True or result.get('optimizer_bytes_uploaded')!=0:
+                        raise ValueError('acknowledged local-only trainer working volume')
             def run(self,label,role,manifest,*args,**kwargs):
                 if role=='train' and self.config.get('optimizer_state_lifecycle')=='trainer-local-only-v1':
                     peer=peers.get(manifest['source_bundle']['sha256'])

@@ -1,5 +1,39 @@
 # Training job disk admission
 
+## Active trainer-local Adam lifecycle (October 8, 2026)
+
+Only inference checkpoints and authenticated reports are published to R2.
+The trainer retains FP32 master weights, Adam moments and counters locally;
+there are no optimizer tensor upload or download capabilities in this mode.
+The matching local parent is mandatory. Missing state stops training without
+resetting Adam or fetching a stale historical state.
+
+The local parent is read in place through authenticated, unchanged owned file
+descriptors. It survives worker failure and stays until the successor model is
+published, verified and acknowledged. The cache then promotes the candidate
+and automatically removes the superseded parent. Current/candidate byte caps,
+exclusive leases and disk/RAM admission remain enforced.
+
+The high-memory deployment enables `optimizer_cache_volume:
+trainer-local-memory-v1` on the trainer endpoint. The launcher authenticates and
+prepares an owned local shared-memory volume automatically. Current and candidate
+snapshots alternate between disk and shared memory: only one optimizer snapshot
+occupies shared memory, leaving room for live CPU Adam within the container RAM
+limit. Candidate exports use the chosen volume directly, avoiding extra copies.
+Promotion retires only the authenticated superseded files and unmounts the empty
+owned memory candidate. Setup refuses live jobs, pending candidates, changed
+files or insufficient container memory. Per-job admission accounts for both the
+model disk and the optimizer volume, including shared-memory usage.
+Later process restarts reuse the same working volume. Rebooting or losing this
+trainer loses Adam; only the inference model is durable in R2.
+
+Epoch 59 provides a measured end-to-end control: 194 tasks / 776 pairs advanced
+Adam 48 to 49, with zero optimizer tensor uploads. Local state save took 139.6
+seconds, compared with 575.5 seconds for epoch 58 export/upload. This is a stage
+comparison, not an assertion that all epoch costs fell by that amount. Model
+publication/readback took 129.4 seconds. Training arithmetic, sampler and miner
+contracts were unchanged.
+
 The prospective controller computes download space from the frozen receipts of
 every miner whose audited batches enter its training request. Receipt sizes must
 be positive bounded integers and match the audited submission hash; at most 256

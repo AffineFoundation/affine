@@ -273,7 +273,8 @@ def restore_state(descriptor, approved_sha256, input_checkpoint, inventory, *,
                 from .optimizer_state_cache import OwnedShardReceipt
                 if not isinstance(fetched,OwnedShardReceipt):raise ValueError('typed owned shard receipt required')
                 owned_receipt=fetched
-            if not path.is_file() or path.is_symlink():
+            retained_parent=owned_receipt is not None and getattr(owned_receipt,'preserves_parent',False)
+            if not retained_parent and (not path.is_file() or path.is_symlink()):
                 raise ValueError('downloaded state regular file required')
             phase=time.monotonic()
             if owned_receipt is not None:
@@ -302,11 +303,11 @@ def restore_state(descriptor, approved_sha256, input_checkpoint, inventory, *,
                     del value, target
             materialize_seconds=time.monotonic()-phase
             if owned_receipt is not None:owned_receipt.validate(path,shard,owned_cache)
-            path.unlink()
+            if not retained_parent:path.unlink()
             receipt=dict(name=shard['name'],sha256=actual_sha,size=size,
                          phase_seconds=dict(fetch=fetch_seconds,SHA256=hash_seconds,
                              tensor_schema_finite_and_copy=materialize_seconds),
-                         verified_materialization=True,local_shard_retired=True,
+                         verified_materialization=True,local_shard_retired=not retained_parent,
                          started_at=started,completed_at=time.time())
             if owned_receipt is not None:
                 receipt.update(verification='prior-full-SHA-unchanged-owned-fd',current_hash_performed=False)

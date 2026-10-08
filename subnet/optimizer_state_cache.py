@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import threading
 import time
 from .cache_lifecycle import snapshot,identifier
@@ -14,6 +15,22 @@ from .distributed_roles import authenticate
 VERSION='sole-current-fp32-state-cache-v1'
 STAT_VERSION='sole-current-fp32-state-cache-stat-v2'
 STAT_VALIDATION='durable-unchanged-inode-v1'
+VOLUME_VERSION='alternating-local-optimizer-volume-v1'
+
+
+def volume_policy(workspace,root):
+    marker=Path(root)/'local-volume.json'
+    if not marker.exists():return None
+    if snapshot(marker)['mode']&0o077:raise ValueError('private local volume policy')
+    value=json.loads(marker.read_bytes())
+    volume=Path('/dev/shm')/('affine-optimizer-'+hashlib.sha256(str(workspace).encode()).hexdigest()[:20])
+    if value!=dict(version=VOLUME_VERSION,workspace=str(workspace),memory_root=str(volume)):
+        raise ValueError('exact owned trainer memory volume')
+    st=volume.lstat()
+    import stat
+    if volume!=volume.resolve() or not stat.S_ISDIR(st.st_mode) or st.st_uid!=os.getuid() or st.st_mode&0o077:
+        raise ValueError('private owned trainer memory directory')
+    return volume
 
 def policy(manifest):
     value=manifest.get('optimizer_state_local_cache')
@@ -84,6 +101,24 @@ class OwnedShardReceipt:
         if self.fd is not None:os.close(self.fd);self.fd=None
 
 
+class RetainedShardReceipt(OwnedShardReceipt):
+    """Read the sole local parent through an owned fd without consuming it."""
+    preserves_parent=True
+    def __init__(self,owner,fd,source,requested,row,before):
+        self.owner=owner;self.fd=fd;self.path=source;self.requested=requested
+        self.row=row;self.before=before
+    def validate(self,path,shard,owner):
+        from .persistent_publication import local_state
+        if (owner is not self.owner or owner.fd is None or not local_state(owner.manifest) or
+                owner.policy['version']!=STAT_VERSION or not owner.current or self.fd is None or
+                Path(path).absolute()!=self.requested or owner.verified_rows.get(shard['name'])!=self.before or
+                self.path!=owner.directory(owner.current['job_id'])/member(shard['name']) or
+                (self.row['sha256'],self.row['size'])!=(shard['sha256'],shard['size']) or
+                fd_snapshot(self.fd)!=self.before or snapshot(self.path)!=self.before):
+            raise ValueError('unchanged retained local parent fd binding')
+        return '/proc/self/fd/'+str(self.fd)
+
+
 class StateCache:
     def __init__(self,workspace,job,manifest,authority):
         self.workspace=Path(workspace).absolute()
@@ -121,6 +156,13 @@ class StateCache:
             # inode still exists. Replaced/external files are never adopted.
             if any(actual[k]!=original[k]for k in ('dev','ino','uid','mode')):raise ValueError('optimizer cache ownership changed')
             path.unlink();removed.append(name)
+        volume=volume_policy(self.workspace,self.root)
+        if volume is not None and directory.exists() and directory.stat().st_dev==volume.stat().st_dev:
+            owned=volume/directory.name
+            if (directory.stat().st_dev,directory.stat().st_ino)!=(owned.stat().st_dev,owned.stat().st_ino) or list(directory.iterdir()):
+                raise ValueError('only empty exact owned candidate mount retires')
+            subprocess.run(['umount',str(directory)],check=True,capture_output=True)
+            directory.rmdir();owned.rmdir()
         self.save(self.root/('retired-'+value['job_id']+'.json'),dict(job_id=value['job_id'],descriptor_sha256=value.get('descriptor_sha256'),reason=reason,removed=removed))
         return removed
     def prepare_parent(self,descriptor,source):
@@ -253,9 +295,31 @@ class StateCache:
         desired=plan['cpu_state_bytes']+max(1,len(self.job['persistent_training']['output_shards']))*1024**2
         if desired>self.policy['max_checkpoint_bytes']:raise ValueError('prospective optimizer cache byte cap')
         free=shutil.disk_usage(self.workspace).free if disk_available is None else disk_available
-        if free+reclaimable_parent_bytes<plan['additional_disk_required_bytes']+desired:
+        from .persistent_publication import local_state
+        credit=0 if local_state(self.manifest) else reclaimable_parent_bytes
+        volume=self.next_volume() if local_state(self.manifest) else None
+        if volume is not None:
+            from .persistent_training_state import available_ram_bytes
+            required=desired+plan['bounded_inflight_transfer_bytes']+plan['disk_reserve_bytes']
+            ram_required=desired+plan['cpu_additional_ram_required_bytes']
+            cache_free=shutil.disk_usage(volume).free
+            if free<plan['additional_disk_required_bytes'] or cache_free<required or available_ram_bytes()<ram_required:
+                raise ValueError('alternating optimizer memory and model disk budget')
+            return dict(retained_state_required_bytes=desired,ordinary_disk_required_bytes=plan['additional_disk_required_bytes'],
+                        reclaimable_verified_parent_bytes=0,observed_free_disk_bytes=free,
+                        optimizer_volume_required_bytes=required,observed_free_optimizer_volume_bytes=cache_free,
+                        optimizer_volume='memory',additional_ram_required_bytes=ram_required)
+        if local_state(self.manifest) and self.root.stat().st_dev!=self.workspace.stat().st_dev:
+            cache_free=shutil.disk_usage(self.root).free
+            cache_required=desired+plan['bounded_inflight_transfer_bytes']+plan['disk_reserve_bytes']
+            if free<plan['additional_disk_required_bytes'] or cache_free<cache_required:
+                raise ValueError('separate local optimizer volume and model disk budget')
+            return dict(retained_state_required_bytes=desired,ordinary_disk_required_bytes=plan['additional_disk_required_bytes'],
+                        reclaimable_verified_parent_bytes=0,observed_free_disk_bytes=free,
+                        optimizer_volume_required_bytes=cache_required,observed_free_optimizer_volume_bytes=cache_free)
+        if free+credit<plan['additional_disk_required_bytes']+desired:
             raise ValueError('retained optimizer cache plus transfer/BF16/reserve disk budget')
-        return dict(retained_state_required_bytes=desired,ordinary_disk_required_bytes=plan['additional_disk_required_bytes'],reclaimable_verified_parent_bytes=reclaimable_parent_bytes,observed_free_disk_bytes=free)
+        return dict(retained_state_required_bytes=desired,ordinary_disk_required_bytes=plan['additional_disk_required_bytes'],reclaimable_verified_parent_bytes=credit,observed_free_disk_bytes=free)
     def fetch(self,name,path,fallback):
         if self.current is None:return fallback(name,path)
         name=member(name);source=self.directory(self.current['job_id'])/name
@@ -264,6 +328,18 @@ class StateCache:
         # tensor-schema and finite-value checks remain in force before unlink.
         destination=Path(path).absolute()
         if destination!=destination.resolve()or not destination.is_relative_to(self.workspace):raise ValueError('owned restore destination')
+        from .persistent_publication import local_state
+        if local_state(self.manifest):
+            if destination.exists()or destination.is_symlink():raise ValueError('new retained parent restore destination')
+            if self.policy['version']!=STAT_VERSION:
+                shutil.copyfile(source,destination);destination.chmod(0o600);return None
+            before=snapshot(source)
+            if self.verified_rows.get(name)!=before:raise ValueError('retained parent changed before read')
+            fd=os.open(source,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+            try:
+                if fd_snapshot(fd)!=before:raise ValueError('retained parent fd changed')
+                return RetainedShardReceipt(self,fd,source,destination,self.rows[name],before)
+            except BaseException:os.close(fd);raise
         if self.policy['version']!=STAT_VERSION:
             os.rename(source,destination);return None
         if destination.exists()or destination.is_symlink():raise ValueError('new owned restore destination required')
@@ -289,8 +365,23 @@ class StateCache:
         if registry.exists():
             previous=json.loads(registry.read_bytes());self.discard(previous,'abandoned-unpromoted-candidate');registry.unlink()
         directory=self.directory(self.job['job_id']);directory.mkdir(mode=0o700,exist_ok=False)
+        from .persistent_publication import local_state
+        volume=self.next_volume()if local_state(self.manifest)else None
+        if volume is not None:
+            owned=volume/directory.name;owned.mkdir(mode=0o700,exist_ok=False)
+            subprocess.run(['mount','--bind',str(owned),str(directory)],check=True,capture_output=True)
+            if (directory.stat().st_dev,directory.stat().st_ino)!=(owned.stat().st_dev,owned.stat().st_ino):
+                raise ValueError('exact owned candidate volume mount')
         self.candidate=dict(version=VERSION,job_id=self.job['job_id'],job_sha256=sha(self.job),source_sha256=self.manifest['source_bundle']['sha256'],files={},descriptor_sha256=None)
         self.save(registry,self.candidate)
+    def next_volume(self):
+        volume=volume_policy(self.workspace,self.root)
+        if volume is None:return None
+        if self.current is None:return volume
+        device=self.directory(self.current['job_id']).stat().st_dev
+        if device==volume.stat().st_dev:return None
+        if device!=self.workspace.stat().st_dev:raise ValueError('original current optimizer volume')
+        return volume
     def retain(self,name,path,digest,size):
         name=member(name);path=Path(path).absolute();snapshot(path)
         if path!=path.resolve()or not path.is_relative_to(self.workspace):raise ValueError('owned uploaded shard required')

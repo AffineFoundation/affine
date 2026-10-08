@@ -88,4 +88,58 @@ class LocalStateControls(unittest.TestCase):
         controller.publish_remote_checkpoint.assert_called_once();controller.independent_state_reader.assert_not_called()
 
 
+class LocalOwnedParentControls(unittest.TestCase):
+    sign=LocalStateControls.sign
+    local_manifest=LocalStateControls.local_manifest
+    candidate=LocalStateControls.candidate
+    def setUp(self):
+        StateCacheControls.setUp(self)
+        from subnet.optimizer_state_cache import STAT_VERSION,STAT_VALIDATION
+        self.manifest['optimizer_state_local_cache'].update(version=STAT_VERSION,validation=STAT_VALIDATION)
+    def test_separate_volume_checks_model_disk_and_optimizer_capacity_independently(self):
+        descriptor,_=self.candidate();promote(self.ack,self.authority,self.root)
+        with StateCache(self.root,self.job,self.manifest,self.authority)as cache:
+            parent=cache.prepare_parent(descriptor,'bb'*32)
+            model_disk=self.plan['additional_disk_required_bytes']
+            desired=self.plan['cpu_state_bytes']+1024**2
+            needed=desired+self.plan['bounded_inflight_transfer_bytes']+self.plan['disk_reserve_bytes']
+            def stat_device(path,*args,**kwargs):return SimpleNamespace(st_dev=2 if path==cache.root else 1)
+            with patch.object(cache,'next_volume',return_value=None),patch('pathlib.Path.stat',stat_device),patch('subnet.optimizer_state_cache.shutil.disk_usage',return_value=SimpleNamespace(free=needed)):
+                result=cache.admit(self.plan,reclaimable_parent_bytes=parent,disk_available=model_disk)
+                self.assertEqual(result['reclaimable_verified_parent_bytes'],0)
+                with self.assertRaisesRegex(ValueError,'separate local optimizer'):
+                    cache.admit(self.plan,reclaimable_parent_bytes=parent,disk_available=model_disk-1)
+            with patch.object(cache,'next_volume',return_value=None),patch('pathlib.Path.stat',stat_device),patch('subnet.optimizer_state_cache.shutil.disk_usage',return_value=SimpleNamespace(free=needed-1)):
+                with self.assertRaisesRegex(ValueError,'separate local optimizer'):
+                    cache.admit(self.plan,reclaimable_parent_bytes=parent,disk_available=model_disk)
+
+    def test_owned_restore_preserves_parent_for_retry_without_hash_copy_or_network(self):
+        descriptor,_=self.candidate();promote(self.ack,self.authority,self.root)
+        parent=self.root/'.optimizer-state-cache/candidate-original'
+        original={p.name:p.read_bytes()for p in parent.glob('*.safetensors')}
+        for attempt in range(2):
+            out=self.root/('retry-'+str(attempt));out.mkdir();admission=admit_resources(out,self.plan)
+            with StateCache(self.root,self.job,self.manifest,self.authority)as cache:
+                cache.prepare_parent(descriptor,'bb'*32)
+                no_network=Mock(side_effect=AssertionError('no parent network'))
+                with patch('subnet.persistent_training_state._hash_file',side_effect=AssertionError('no repeated parent hash')):
+                    state,evidence=restore_state(descriptor,sha(descriptor),'22'*32,self.inventory,
+                        workspace=out,fetch_shard=lambda n,p:cache.fetch(n,p,no_network),
+                        resource_admission=admission,owned_cache=cache)
+                no_network.assert_not_called()
+            self.assertTrue(all(r['local_shard_retired']is False for r in evidence))
+            self.assertEqual({p.name:p.read_bytes()for p in parent.glob('*.safetensors')},original)
+            import torch
+            self.assertTrue(torch.equal(state[1]['w']['master'],self.optimizer.rows['w']['master']))
+    def test_retained_parent_bytes_are_not_credited_as_free_disk(self):
+        descriptor,_=self.candidate();promote(self.ack,self.authority,self.root)
+        with StateCache(self.root,self.job,self.manifest,self.authority)as cache:
+            parent_bytes=cache.prepare_parent(descriptor,'bb'*32)
+            required=self.plan['cpu_state_bytes']+1024**2+self.plan['additional_disk_required_bytes']
+            with self.assertRaisesRegex(ValueError,'disk budget'):
+                cache.admit(self.plan,reclaimable_parent_bytes=parent_bytes,disk_available=required-1)
+            result=cache.admit(self.plan,reclaimable_parent_bytes=parent_bytes,disk_available=required)
+            self.assertEqual(result['reclaimable_verified_parent_bytes'],0)
+
+
 if __name__=='__main__':unittest.main()

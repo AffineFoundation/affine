@@ -12,15 +12,19 @@ class PersistentPutRetry(unittest.TestCase):
     def response(self,status):
         from types import SimpleNamespace
         return SimpleNamespace(status_code=status,close=lambda:self.closed.append(status))
-    def run_attempts(self,items):
+    def run_attempts(self,items,timeout=1800):
         items=iter(items)
         def put(url,*,data,**kwargs):
+            self.assertEqual(kwargs['timeout'],timeout)
             self.assertFalse(kwargs['allow_redirects']);self.seen.append((data.fileno(),data.read()))
             item=next(items)
             if isinstance(item,Exception):raise item
             return self.response(item)
         with patch('subnet.backend_jobs.r2_url',return_value='https://private.invalid/signed-secret'),patch('requests.put',side_effect=put),patch('subnet.persistent_training_worker.time.sleep'):
-            return put_file('private grant',self.path)
+            return put_file('private grant',self.path,timeout=timeout)
+    def test_model_publication_stall_deadline_preserves_exact_retry_bytes(self):
+        self.run_attempts([requests.Timeout('private stalled endpoint'),200],timeout=(15,90))
+        self.assertEqual(self.seen[0][1],self.seen[1][1])
     def test_transient_status_rewinds_same_descriptor_exact_bytes(self):
         self.run_attempts([503,429,204]);self.assertEqual(len(set(fd for fd,_ in self.seen)),1)
         self.assertEqual([raw for _,raw in self.seen],[self.path.read_bytes()]*3)

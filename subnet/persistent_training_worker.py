@@ -53,7 +53,7 @@ def read_chunks(url, *, limit):
             yield part
 
 
-def put_file(url,path):
+def put_file(url,path,*,timeout=1800):
     """Retry only transient failures, rewinding the same owned immutable file.
 
     PUT is idempotent for these exact signed object bytes. Never refresh a grant,
@@ -75,7 +75,7 @@ def put_file(url,path):
             unchanged();body.seek(0);response=None
             try:
                 response=requests.put(target,data=body,headers={'Content-Type':'application/octet-stream'},
-                    timeout=1800,allow_redirects=False)
+                    timeout=timeout,allow_redirects=False)
                 unchanged();status=response.status_code
                 if status in (200,201,204):return
                 if status not in (408,429,500,502,503,504) or attempt==3:
@@ -162,7 +162,7 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
         if local_cache:local_cache.begin_candidate()
         export_started=time.monotonic()
         descriptor,evidence=export_state(optimizer,epoch=manifest['epoch'],inference_checkpoint=checkpoint,
-            workspace=out,publish_shard=publish,readback_shard=readback,
+            workspace=local_cache.directory(job['job_id']) if local_only else out,publish_shard=publish,readback_shard=readback,
             commit_descriptor=stage_descriptor,resource_admission=admission,concurrency=concurrency,readback_mode=readback_mode,retain_shard=local_cache.retain if local_cache else None)
         diagnostics['transport_phase_seconds']=dict(parent_state_restore=restore_seconds,
             parent_cache_validation_and_admission=cache_prepare_seconds,
