@@ -38,6 +38,11 @@ FP32 accumulation of microbatch gradients. None alters miner sampling or quotas.
 Research optimizer moments are discarded and cannot be returned as a resumable
 production optimizer.
 
+The [SimPO implementation guidance](https://github.com/princeton-nlp/SimPO#hyperparameter-tuning)
+specifically warns that 1e-5 can degrade preference-optimization performance and
+suggests trying smaller rates, including 5e-7 for math. This motivates the
+learning-rate sweep; it does not establish the best rate for Affine.
+
 The initial screen uses the same 128 held-out tasks, seeds, prompts, native
 grader, BF16 runtime and fixed evaluation batch size for every arm, with repeated
 native controls. This new evaluation cohort is not numerically paired with the
