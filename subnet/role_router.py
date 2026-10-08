@@ -3,6 +3,7 @@ import hashlib
 import json
 import secrets
 import shlex
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -22,7 +23,16 @@ class RoutedJobs:
         for role in ('mine','train','evaluate'):
             self.roles[role]=RemoteJobs({'job_ttl_seconds_by_role':config.get('job_ttl_seconds_by_role',{}),**endpoints[role]},controller)
             hosts.append((endpoints[role]['host'],endpoints[role]['port']))
-        self.verifiers=[RemoteJobs(endpoint,controller) for endpoint in endpoints['verify']]
+        self.verifiers=[];self.unavailable_verifiers=[]
+        for endpoint in endpoints['verify']:
+            try:self.verifiers.append(RemoteJobs(endpoint,controller))
+            except subprocess.CalledProcessError as error:
+                # SSH transport loss is node availability, not a reason to stop
+                # the independent learning loop. Never bypass a source/runtime
+                # qualification failure or admit another identity in its place.
+                if error.returncode!=255:raise
+                self.unavailable_verifiers.append(endpoint['worker_identity'])
+        if not self.verifiers:raise RuntimeError('no reachable qualified verifier metadata')
         hosts.extend((endpoint['host'],endpoint['port']) for endpoint in endpoints['verify'])
         if len(set(hosts)) != len(hosts): raise ValueError('separate role endpoints required')
         self.metadata=self.verifiers[0].metadata
