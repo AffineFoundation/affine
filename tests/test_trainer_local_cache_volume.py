@@ -117,3 +117,16 @@ class LocalVolumeControls(unittest.TestCase):
         for slot in ('master','exp_avg','exp_avg_sq'):
             self.assertTrue(torch.equal(state[1]['w'][slot],self.fixture.optimizer.rows['w'][slot]))
         no_network.assert_not_called()
+
+    def test_low_headroom_advises_only_sealed_parent_then_remeasures(self):
+        self.enable_volume();descriptor=self.fixture.report['persistent_training_state']['descriptor']
+        with StateCache(self.fixture.root,self.fixture.job,self.fixture.manifest,self.fixture.authority)as cache:
+            parent=cache.prepare_parent(descriptor,'bb'*32)
+            required=self.fixture.plan['cpu_state_bytes']+1024**2+self.fixture.plan['cpu_additional_ram_required_bytes']
+            with patch('subnet.persistent_training_state.available_ram_bytes',side_effect=[required-1,required]),patch('subnet.optimizer_state_cache.os.posix_fadvise')as advise:
+                result=cache.admit(self.fixture.plan,reclaimable_parent_bytes=parent,disk_available=self.fixture.plan['additional_disk_required_bytes'])
+                self.assertEqual(advise.call_count,len(cache.current['files']))
+                self.assertEqual(result['optimizer_volume'],'memory')
+            from subnet.cache_lifecycle import snapshot
+            for name,row in cache.current['files'].items():
+                self.assertEqual(snapshot(cache.directory(cache.current['job_id'])/name),row['stat'])

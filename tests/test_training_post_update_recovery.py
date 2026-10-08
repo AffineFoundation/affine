@@ -91,3 +91,20 @@ class PostUpdateRecovery(ParentRestoreRecovery):
      m=o['manifest']['payload'];m['native_training_eligibility_receipt']['grades_sha256']='a'*64;o['manifest']=self.sign(m)
     bad['original_signed_job']=self.sign(o)
     with self.subTest(change=change),self.assertRaises(ValueError):r.validate_frozen_native_inputs(controller,bad)
+
+ def test_one_precompute_continuation_requires_zero_updates_and_preserved_journal(self):
+  import hashlib
+  c=self.controller()
+  with patch('subnet.training_startup_recovery.time.time',return_value=80):r.apply(c,self.old,1)
+  path=r.reservation_path(c.state,self.old['epoch'],r.POST_UPDATE_VERSION)
+  witness=dict(observed_at=86,exception='ValueError: alternating optimizer memory and model disk budget',failed_stage='optimizer_state_cache.admit-before-parent-restore',optimizer_updates=0,train_epoch_reached=False,original_processes_absent=True,physical_gpu_idle=True,report_absent=True,output_checkpoint_absent=True,candidate_absent=True,worker_log_sha256='a'*64,evidence_sha256='b'*64)
+  terminal=dict(self.terminal,job_id=self.job['job_id'],started_at=80,finished_at=85)
+  (c.state/'roles'/(self.value['replacement_job_label']+'.json')).write_bytes(canonical(dict(job_id=self.job['job_id'],job_sha256=sha(self.job))))
+  (c.state/'roles'/(self.job['job_id']+'-job.json')).write_bytes(canonical(self.sign(self.job)))
+  (c.state/'roles'/(self.job['job_id']+'-failure.json')).write_bytes(canonical(terminal))
+  d=copy.deepcopy(self.value);d.update(version=r.POST_UPDATE_CONTINUATION_VERSION,created_at=90,replacement_job_label='resource-precompute-continuation',precompute_predecessor=dict(version='terminal-local-cache-admission-precompute-v1',job_id=self.job['job_id'],job_sha256=sha(self.job),declaration_sha256=sha(self.sign(self.value)),reservation_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),terminal=terminal,witness=witness))
+  next_job=copy.deepcopy(self.job);next_job.update(job_id=d['replacement_job_label']+'-fresh',created_at=95)
+  j,m=self.changed(d,next_job);self.assertEqual(r.validate(j,m,self.authority),d)
+  self.assertEqual(r.validate_post_update_predecessor_local(c.state,d,self.authority),self.job)
+  d['precompute_predecessor']['witness']['optimizer_updates']=1;j,m=self.changed(d,next_job)
+  with self.assertRaisesRegex(ValueError,'zero-update'):r.validate(j,m,self.authority)

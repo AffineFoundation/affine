@@ -38,11 +38,12 @@ def publication_request(manifest, authority, policy=None):
         # grants instead bind the newly produced inference checkpoint directly.
         projected.pop('trainer_local_state_original_manifest',None)
         return label+'-publication-v1',projected
-    if (declaration.get('version') not in ('terminal-parent-restore-pre-update-recovery-v2','terminal-parent-restore-pre-update-bootstrap-recovery-v3','terminal-post-update-uncommitted-recovery-v1')
+    if (declaration.get('version') not in ('terminal-parent-restore-pre-update-recovery-v2','terminal-parent-restore-pre-update-bootstrap-recovery-v3','terminal-post-update-uncommitted-recovery-v1','terminal-post-update-precompute-continuation-v2')
             or declaration.get('epoch')!=manifest['epoch']
             or declaration.get('replacement_execution_source_sha256')!=manifest['source_bundle']['sha256']):
         raise ValueError('authenticated original train-only recovery projection')
     projected=dict(manifest);del projected['training_startup_recovery']
+    projected.pop('trainer_local_state_original_manifest',None)
     return label+'-publication-v1',projected
 
 

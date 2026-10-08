@@ -20,7 +20,7 @@ def original_manifest(manifest,authority):
     value=signed(manifest[FIELD],authority)
     original=signed(value['original_signed_job'],authority)
     old=local_original(signed(original['manifest'],authority),authority)
-    if value.get('version')in RESTORE_VERSIONS+(POST_UPDATE_VERSION,):
+    if value.get('version')in RESTORE_VERSIONS+POST_UPDATE_VERSIONS:
         if value.get('original_input_source_sha256')!=old['source_bundle']['sha256']or value.get('replacement_execution_source_sha256')!=manifest['source_bundle']['sha256']or value.get('authorized_input_inventory_sha256')!=sha(input_inventory(original['submissions'])):raise ValueError('explicit restore old-input/new-execution manifest scope')
     normalized=copy.deepcopy(manifest);normalized.pop(FIELD,None);normalized['source_bundle']=old['source_bundle']
     def without_caps(m):
@@ -34,7 +34,7 @@ def input_inventory(rows):
 def validate(job,manifest,authority):
     if FIELD not in manifest:return None
     value=signed(manifest[FIELD],authority)
-    if value.get('version')==POST_UPDATE_VERSION:return validate_post_update(job,manifest,authority)
+    if value.get('version')in POST_UPDATE_VERSIONS:return validate_post_update(job,manifest,authority)
     if value.get('version')in RESTORE_VERSIONS:return validate_restore(job,manifest,authority)
     fields={'version','epoch','original_signed_job','original_job_sha256','original_terminal','startup_witness','replacement_source_bundle','replacement_job_label','created_at','expires_at'}
     if value.get('version')==ADMISSION_VERSION:fields|={'execution_source_files','authorized_input_objects'}
@@ -98,6 +98,7 @@ def apply(controller,manifest,steps):
     if (controller.state/'roles'/(original['job_id']+'-report.json')).exists():raise ValueError('startup recovery forbidden after original completion')
     if manifest['trainer_state_binding']!=old['trainer_state_binding']or steps!=original['steps']:raise ValueError('startup recovery current parent/steps changed')
     if value.get('version')==BOOTSTRAP_VERSION:validate_predecessor_local(controller.state,value,controller.authority.id)
+    if value.get('version')==POST_UPDATE_CONTINUATION_VERSION:validate_post_update_predecessor_local(controller.state,value,controller.authority.id)
     reservation=reservation_path(controller.state,manifest['epoch'],value.get('version'))
     binding=dict(declaration_sha256=sha(document),declaration=document,label=value['replacement_job_label'],original_job_sha256=value['original_job_sha256'])
     if reservation.exists()and json.loads(reservation.read_bytes())!=binding:raise ValueError('one immutable startup recovery declaration per epoch')
@@ -122,7 +123,7 @@ def apply(controller,manifest,steps):
     candidate=copy.deepcopy(original);candidate.update(job_id=value['replacement_job_label']+'-preparation',created_at=time.time(),expires_at=value['expires_at'],manifest=controller.signed(result),submissions=rows)
     candidate['source_files']=dict(original['source_files'],**{'subnet/training_startup_recovery.py':'0'*64})
     if value.get('version')==ADMISSION_VERSION:candidate['source_files']=copy.deepcopy(value['execution_source_files'])
-    if value.get('version')==POST_UPDATE_VERSION:candidate['source_files']=copy.deepcopy(value['execution_runtime_source_files'])
+    if value.get('version')in POST_UPDATE_VERSIONS:candidate['source_files']=copy.deepcopy(value['execution_runtime_source_files'])
     candidate['persistent_training']=dict(original['persistent_training'],output_namespace='private/startup-recovery-preparation-only')
     validate(candidate,result,controller.authority.id)
     if not reservation.exists():
@@ -133,7 +134,8 @@ def apply(controller,manifest,steps):
 
 def local_request(state,epoch,authority):
     """Select a replacement only through its immutable signed reservation."""
-    state=Path(state);reservation=reservation_path(state,epoch,POST_UPDATE_VERSION)
+    state=Path(state);reservation=reservation_path(state,epoch,POST_UPDATE_CONTINUATION_VERSION)
+    if not reservation.exists():reservation=reservation_path(state,epoch,POST_UPDATE_VERSION)
     if not reservation.exists():reservation=reservation_path(state,epoch,BOOTSTRAP_VERSION)
     if not reservation.exists():reservation=reservation_path(state,epoch,RESTORE_VERSION)
     original_record=json.loads((state/'roles'/(epoch+'-train.json')).read_bytes())
@@ -143,9 +145,10 @@ def local_request(state,epoch,authority):
     value=json.loads(reservation.read_bytes())
     if set(value)!={'declaration_sha256','declaration','label','original_job_sha256'}or sha(value['declaration'])!=value['declaration_sha256']:raise ValueError('immutable local startup recovery reservation')
     declaration=signed(value['declaration'],authority)
-    if reservation==reservation_path(state,epoch,POST_UPDATE_VERSION)and declaration.get('version')!=POST_UPDATE_VERSION:raise ValueError('only explicit post-update declaration may occupy post-update reservation')
+    if reservation in (reservation_path(state,epoch,v)for v in POST_UPDATE_VERSIONS)and declaration.get('version')not in POST_UPDATE_VERSIONS:raise ValueError('only explicit post-update declaration may occupy post-update reservation')
     if reservation==reservation_path(state,epoch,BOOTSTRAP_VERSION)and declaration.get('version')!=BOOTSTRAP_VERSION:raise ValueError('only explicit v3 continuation may occupy v3 reservation')
     if declaration['version']==BOOTSTRAP_VERSION:validate_predecessor_local(state,declaration,authority)
+    if declaration['version']==POST_UPDATE_CONTINUATION_VERSION:validate_post_update_predecessor_local(state,declaration,authority)
     if value['label']!=declaration['replacement_job_label']or value['original_job_sha256']!=declaration['original_job_sha256']or original_record['job_sha256']!=value['original_job_sha256']:raise ValueError('local original startup recovery identity')
     original=signed(declaration['original_signed_job'],authority)
     if original_record['job_id']!=original['job_id']:raise ValueError('original recovery job record changed')
@@ -155,10 +158,10 @@ def local_request(state,epoch,authority):
     job=signed(json.loads((state/'roles'/(record['job_id']+'-job.json')).read_bytes()),authority)
     if sha(job)!=record['job_sha256']or job['manifest']['payload'].get(FIELD)!=value['declaration']:raise ValueError('replacement recovery record changed')
     validate(job,job['manifest']['payload'],authority)
-    evidence=dict(version=declaration['version'],declaration_sha256=value['declaration_sha256'],original_failed_job_id=original['job_id'],original_failed_job_sha256=sha(original),original_failure_sha256=sha(failure),startup_witness_sha256=sha(declaration['post_update_witness']if declaration['version']==POST_UPDATE_VERSION else declaration['restore_witness']if declaration['version']in RESTORE_VERSIONS else declaration['startup_witness']),replacement_source_sha256=job['manifest']['payload']['source_bundle']['sha256'],original_epoch_deadline=original['manifest']['payload'].get('deadline'),late_recovery=True)
+    evidence=dict(version=declaration['version'],declaration_sha256=value['declaration_sha256'],original_failed_job_id=original['job_id'],original_failed_job_sha256=sha(original),original_failure_sha256=sha(failure),startup_witness_sha256=sha(declaration['post_update_witness']if declaration['version']in POST_UPDATE_VERSIONS else declaration['restore_witness']if declaration['version']in RESTORE_VERSIONS else declaration['startup_witness']),replacement_source_sha256=job['manifest']['payload']['source_bundle']['sha256'],original_epoch_deadline=original['manifest']['payload'].get('deadline'),late_recovery=True)
     if declaration['version']==BOOTSTRAP_VERSION:evidence['bootstrap_predecessor']=declaration['predecessor']
     if declaration['version']in RESTORE_VERSIONS:evidence.update(original_input_source_sha256=declaration['original_input_source_sha256'],replacement_execution_source_sha256=declaration['replacement_execution_source_sha256'],original_failed_stage='parent-state-fetch-before-train_epoch',original_optimizer_updates=0)
-    if declaration['version']==POST_UPDATE_VERSION:evidence.update(original_input_source_sha256=declaration['original_input_source_sha256'],replacement_execution_source_sha256=declaration['replacement_execution_source_sha256'],original_failed_stage=declaration['post_update_witness']['failed_stage'],original_optimizer_updates=1,original_update_uncommitted=True,restarted_from_durable_parent=True)
+    if declaration['version']in POST_UPDATE_VERSIONS:evidence.update(original_input_source_sha256=declaration['original_input_source_sha256'],replacement_execution_source_sha256=declaration['replacement_execution_source_sha256'],original_failed_stage=declaration['post_update_witness']['failed_stage'],original_optimizer_updates=1,original_update_uncommitted=True,restarted_from_durable_parent=True)
     return record,job,evidence
 
 RESTORE_VERSION='terminal-parent-restore-pre-update-recovery-v2'
@@ -166,8 +169,10 @@ RESTORE_WITNESS='operator-parent-restore-pre-update-witness-v1'
 BOOTSTRAP_VERSION='terminal-parent-restore-pre-update-bootstrap-recovery-v3'
 RESTORE_VERSIONS=(RESTORE_VERSION,BOOTSTRAP_VERSION)
 POST_UPDATE_VERSION='terminal-post-update-uncommitted-recovery-v1'
+POST_UPDATE_CONTINUATION_VERSION='terminal-post-update-precompute-continuation-v2'
+POST_UPDATE_VERSIONS=(POST_UPDATE_VERSION,POST_UPDATE_CONTINUATION_VERSION)
 POST_UPDATE_WITNESS='operator-post-update-uncommitted-failure-witness-v1'
-INPUT_RECOVERY_VERSIONS=RESTORE_VERSIONS+(POST_UPDATE_VERSION,ADMISSION_VERSION)
+INPUT_RECOVERY_VERSIONS=RESTORE_VERSIONS+POST_UPDATE_VERSIONS+(ADMISSION_VERSION,)
 POST_UPDATE_OPERATIONAL_MODULES=('subnet/persistent_training_worker.py','subnet/persistent_training_state.py')
 
 def validate_restore(job,manifest,authority):
@@ -217,7 +222,7 @@ def _validate_parent_inputs_and_fresh_attempt(value,original,old,terminal,w,job,
     if set(approved)!=set(expected)or any(re.fullmatch('[0-9a-f]{64}',h or '')is None for h in approved.values()):raise ValueError('exact approved execution science pins')
     for name,h in expected.items():
         if job['source_files'].get(name)!=approved[name]:raise ValueError('recovery unapproved execution implementation: '+name)
-        if approved[name]!=h and (value['version']!=POST_UPDATE_VERSION or name not in POST_UPDATE_OPERATIONAL_MODULES):raise ValueError('recovery mathematical implementation changed: '+name)
+        if approved[name]!=h and (value['version']not in POST_UPDATE_VERSIONS or name not in POST_UPDATE_OPERATIONAL_MODULES):raise ValueError('recovery mathematical implementation changed: '+name)
     if job.get('persistent_training',{}).get('output_namespace')==original['persistent_training'].get('output_namespace'):raise ValueError('new restore attempt needs separate output namespace')
     return value
 
@@ -225,8 +230,10 @@ def validate_post_update(job,manifest,authority):
     """Authorize a fresh update from durable parent; never salvage partial state."""
     value=signed(manifest[FIELD],authority)
     fields={'version','epoch','original_signed_job','original_job_sha256','original_terminal','post_update_witness','replacement_source_bundle','replacement_job_label','created_at','expires_at','original_input_source_sha256','replacement_execution_source_sha256','authorized_input_inventory_sha256','authorized_input_objects','execution_science_source_files','execution_runtime_source_files','approval'}
-    if set(value)!=fields or value['version']!=POST_UPDATE_VERSION or value['epoch']!=manifest['epoch']:raise ValueError('exact post-update-uncommitted declaration')
+    if value.get('version')==POST_UPDATE_CONTINUATION_VERSION:fields|={'precompute_predecessor'}
+    if set(value)!=fields or value['version']not in POST_UPDATE_VERSIONS or value['epoch']!=manifest['epoch']:raise ValueError('exact post-update-uncommitted declaration')
     if type(value['approval'])is not dict or type(value['approval'].get('maximum_fresh_attempts'))is not int or any(value['approval'].get(k)is not True for k in ('fresh_attempt_from_last_durable_parent','original_update_occurred','incomplete_candidate_is_not_parent','preserve_original_failure')) or value['approval']!={'fresh_attempt_from_last_durable_parent':True,'original_update_occurred':True,'incomplete_candidate_is_not_parent':True,'preserve_original_failure':True,'maximum_fresh_attempts':1}:raise ValueError('explicit ROOT post-update fresh attempt approval')
+    if value['version']==POST_UPDATE_CONTINUATION_VERSION:validate_post_update_predecessor(value,job)
     original=signed(value['original_signed_job'],authority);old=original_manifest(manifest,authority)
     pins=value['execution_runtime_source_files']
     if type(pins)is not dict or not set(original['source_files'])<=set(pins) or any(re.fullmatch('[0-9a-f]{64}',h or '')is None for h in pins.values()) or job['source_files']!=pins or any(pins.get(n)!=h for n,h in value['execution_science_source_files'].items()):raise ValueError('exact ROOT approved full execution runtime map including orchestration')
@@ -251,7 +258,7 @@ def validate_post_update(job,manifest,authority):
     return _validate_parent_inputs_and_fresh_attempt(value,original,old,terminal,w,job,manifest,authority)
 
 def reservation_path(state,epoch,version):
-    suffix='-post-update-uncommitted-recovery-reservation.json'if version==POST_UPDATE_VERSION else '-parent-restore-bootstrap-continuation-reservation.json'if version==BOOTSTRAP_VERSION else '-startup-recovery-reservation.json'
+    suffix='-post-update-precompute-continuation-reservation.json'if version==POST_UPDATE_CONTINUATION_VERSION else '-post-update-uncommitted-recovery-reservation.json'if version==POST_UPDATE_VERSION else '-parent-restore-bootstrap-continuation-reservation.json'if version==BOOTSTRAP_VERSION else '-startup-recovery-reservation.json'
     return Path(state)/(epoch+suffix)
 
 def validate_bootstrap_predecessor(value,job):
@@ -313,3 +320,52 @@ def validate_frozen_native_inputs(controller,value):
             input_inventory(subset.get('accepted_submissions',[]))!=input_inventory(original['submissions'])):
         raise ValueError('exact original native-selected training inputs')
     return True
+
+
+def validate_post_update_predecessor(value,job):
+    """One failed resource preflight is not a second optimizer update."""
+    predecessor=value['precompute_predecessor']
+    fields={'version','job_id','job_sha256','declaration_sha256','reservation_sha256','terminal','witness'}
+    if set(predecessor)!=fields or predecessor['version']!='terminal-local-cache-admission-precompute-v1':
+        raise ValueError('exact failed local-cache precompute predecessor')
+    for name in ('job_sha256','declaration_sha256','reservation_sha256'):
+        if re.fullmatch('[0-9a-f]{64}',predecessor[name]or '')is None:raise ValueError('preserved predecessor digest')
+    terminal=predecessor['terminal'];witness=predecessor['witness']
+    if (set(terminal)!={'phase','job_id','exit_code','runner_pid','runner_pid_ticks','child_pid','child_pid_ticks','started_at','finished_at'} or
+            terminal['phase']!='failed' or terminal['job_id']!=predecessor['job_id'] or terminal['exit_code']!=1 or
+            terminal['job_id']==job['job_id']):raise ValueError('distinct failed precompute attempt')
+    for name in ('runner','child'):
+        if type(terminal[name+'_pid'])is not int or terminal[name+'_pid']<=0 or not isinstance(terminal[name+'_pid_ticks'],str) or not terminal[name+'_pid_ticks'].isdigit():
+            raise ValueError('precompute predecessor physical identity')
+    fields={'observed_at','exception','failed_stage','optimizer_updates','train_epoch_reached','original_processes_absent','physical_gpu_idle','report_absent','output_checkpoint_absent','candidate_absent','worker_log_sha256','evidence_sha256'}
+    if (set(witness)!=fields or witness['exception']!='ValueError: alternating optimizer memory and model disk budget' or
+            witness['failed_stage']!='optimizer_state_cache.admit-before-parent-restore' or
+            type(witness['optimizer_updates'])is not int or witness['optimizer_updates']!=0 or
+            witness['train_epoch_reached']is not False or any(witness[k]is not True for k in
+            ('original_processes_absent','physical_gpu_idle','report_absent','output_checkpoint_absent','candidate_absent'))):
+        raise ValueError('definitive zero-update local-cache resource predecessor')
+    for name in ('worker_log_sha256','evidence_sha256'):
+        if re.fullmatch('[0-9a-f]{64}',witness[name]or '')is None:raise ValueError('preserved precompute evidence')
+    times=[value['post_update_witness']['observed_at'],terminal['started_at'],terminal['finished_at'],witness['observed_at'],value['created_at']]
+    if any(type(t)not in(int,float)or not math.isfinite(t)for t in times)or times!=sorted(times):
+        raise ValueError('actual precompute continuation chronology')
+
+
+def validate_post_update_predecessor_local(state,value,authority):
+    """Check the preserved reservation, signed request and failed runner record."""
+    state=Path(state);predecessor=value['precompute_predecessor']
+    path=reservation_path(state,value['epoch'],POST_UPDATE_VERSION);raw=path.read_bytes();reservation=json.loads(raw)
+    if hashlib.sha256(raw).hexdigest()!=predecessor['reservation_sha256'] or sha(reservation['declaration'])!=predecessor['declaration_sha256']:
+        raise ValueError('immutable post-update predecessor reservation')
+    original=signed(reservation['declaration'],authority)
+    if (original['version']!=POST_UPDATE_VERSION or original['original_signed_job']!=value['original_signed_job'] or
+            original['original_terminal']!=value['original_terminal'] or original['post_update_witness']!=value['post_update_witness']):
+        raise ValueError('same failed original and same last acknowledged parent')
+    record=json.loads((state/'roles'/(reservation['label']+'.json')).read_bytes())
+    job=signed(json.loads((state/'roles'/(record['job_id']+'-job.json')).read_bytes()),authority)
+    if record['job_id']!=predecessor['job_id'] or sha(job)!=predecessor['job_sha256'] or record['job_sha256']!=sha(job) or job['manifest']['payload'].get(FIELD)!=reservation['declaration']:
+        raise ValueError('exact original post-update predecessor job')
+    failure=json.loads((state/'roles'/(record['job_id']+'-failure.json')).read_bytes())
+    if any(failure.get(k)!=v for k,v in predecessor['terminal'].items()) or (state/'roles'/(record['job_id']+'-report.json')).exists():
+        raise ValueError('actual failed precompute predecessor and no completion')
+    return job

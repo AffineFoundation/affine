@@ -322,7 +322,23 @@ class StateCache:
             required=desired+plan['bounded_inflight_transfer_bytes']+plan['disk_reserve_bytes']
             ram_required=desired+plan['cpu_additional_ram_required_bytes']
             cache_free=shutil.disk_usage(volume).free
-            if free<plan['additional_disk_required_bytes'] or cache_free<required or available_ram_bytes()<ram_required:
+            observed_ram=available_ram_bytes()
+            if observed_ram<ram_required and self.current is not None:
+                # Only this authenticated parent's sealed disk files are eligible.
+                # Advise the kernel to reclaim their clean pages; retain all bytes,
+                # descriptor bindings and the last acknowledged optimizer state.
+                parent=self.directory(self.current['job_id'])
+                if parent.stat().st_dev==self.workspace.stat().st_dev:
+                    for name,row in self.current['files'].items():
+                        path=parent/member(name);fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+                        try:
+                            if fd_snapshot(fd)!=row['stat'] or snapshot(path)!=row['stat']:
+                                raise ValueError('unchanged owned parent before page-cache advice')
+                            os.posix_fadvise(fd,0,0,os.POSIX_FADV_DONTNEED)
+                            if fd_snapshot(fd)!=row['stat']:raise ValueError('parent changed during page-cache advice')
+                        finally:os.close(fd)
+                    observed_ram=available_ram_bytes()
+            if free<plan['additional_disk_required_bytes'] or cache_free<required or observed_ram<ram_required:
                 raise ValueError('alternating optimizer memory and model disk budget')
             return dict(retained_state_required_bytes=desired,ordinary_disk_required_bytes=plan['additional_disk_required_bytes'],
                         reclaimable_verified_parent_bytes=0,observed_free_disk_bytes=free,

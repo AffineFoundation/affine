@@ -46,3 +46,10 @@ class FutureProjectionTests(unittest.TestCase):
   for field,value in [('epoch','other'),('original_job_sha256','f'*64),('replacement_source_bundle',{'sha256':'f'*64})]:
    bad=copy.deepcopy(declaration);bad[field]=value
    with self.subTest(field=field),self.assertRaises(ValueError):publication_request(dict(m,training_startup_recovery=self.sign(bad)),self.authority,self.policy)
+
+ def test_postupdate_continuation_drops_train_only_storage_projection(self):
+  declaration=dict(version='terminal-post-update-precompute-continuation-v2',epoch=self.m['epoch'],replacement_execution_source_sha256='a'*64)
+  m=dict(self.m,training_startup_recovery=self.sign(declaration),trainer_local_state_original_manifest=self.sign(self.m))
+  label,result=publication_request(m,self.authority,self.policy)
+  self.assertEqual(result,self.m);self.assertTrue(label.endswith('-publication-v1'))
+  self.assertIn('trainer_local_state_original_manifest',m)

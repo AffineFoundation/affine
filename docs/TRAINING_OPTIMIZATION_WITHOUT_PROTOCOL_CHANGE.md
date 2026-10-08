@@ -65,3 +65,19 @@ arithmetic while isolating that precision difference.
 Adoption should be based on matched held-out outcomes, numerical controls and
 recorded training lineage. Do not increase miner quotas as a substitute for
 repairing the optimizer or training objective.
+
+
+## Current eight-rollout data diagnostic
+
+Epoch 61's native-selected population contains 224 tasks, 896 positive and 896
+negative rollouts. Positive trajectories average 115.5 output tokens. Negative
+trajectories average 614.7 tokens; 509 of 896 reach the 1,024-token cap. Thus 56.8%
+of the negative population is capped. This is a concrete reason to investigate
+trainer weighting of unfinished negatives while retaining the miner protocol.
+It is not evidence that every capped trajectory would eventually succeed.
+
+The new matched BF16 screening parent solved 96/128 held-out tasks. Treatment
+comparisons are still running. The inference exports for the archived one-update
+baseline and positive-only branches change about 6.90% and 6.64% of BF16 weights,
+respectively; their relative L2 changes are about 0.000474 and 0.000465. Changing
+weights, finite gradients and improving training margins do not prove learning.
