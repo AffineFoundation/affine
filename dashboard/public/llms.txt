@@ -1,6 +1,24 @@
 # Affine — MATH mining, verification and training
 
-## Larger quota support — software preparation, not live activation
+## Eight-sample miner-bound cutover — activated in epoch 59
+
+The signed opening requires exactly eight distinct rollouts for one task:
+four native-graded successes and four native-graded failures (K=4/L=4).
+Each UID may submit at most three task batches per epoch. One qualifying unique
+task earns one contribution point; additional rollouts earn no extra points.
+All eight rollouts require distinct attempt nonces and distinct generated-token
+content. Valid nonces remain integers 0–999; the authenticated miner identity,
+epoch randomness, checkpoint, task, attempt, turn and token position bind draws.
+Verification retains the approved miner-bound v5 draw recipe, selected-token
+logprobs and TOPLOC. Token-only/three-way research profiles are not activated.
+The newly approved source SHA256 is
+`87da587e5d5e38e31ee0e1a6ca822e4d3e68543eabff62c3a252111207c48f7c`.
+The independent discovery/OPEN readback was confirmed at 2026-10-08 02:35:44 UTC.
+Update old hardcoded four-sample clients to the approved source advertised by
+https://affine.io/mining.json. Historical signed epochs keep their original
+quotas, sources, sampler bytes and evidence; this cutover does not relabel them.
+
+## Manifest-driven sample quota configuration
 
 For future openings, use one controller setting: `"samples_per_batch": 8`.
 The publisher derives K=L=4; setting 16 derives K=L=8. Omit separate K/L values
@@ -13,8 +31,8 @@ requires a newly approved signed opening and adequate runtime/artifact capacity.
 Updated software supports manifest-driven balanced quotas including K=4/L=4:
 four distinct successes and four distinct failures per task batch. The limit is
 still three task batches per UID per epoch, with nonces 0–999 and one point per
-qualifying unique task. Current signed openings remain K=2/L=2 until a qualified
-boundary cutover. Existing clients with hardcoded four-sample checks need the
+qualifying unique task. Follow the quota in the latest signed OPEN.
+Existing clients with hardcoded four-sample checks need the
 new approved source; changing the manifest alone does not update old software.
 
 ## Four-sample miner-bound cutover — activated in epoch 53
@@ -30,7 +48,7 @@ attempt nonce, integer 0–999; its sampler receipt uses `attempt`. It is not an
 arbitrary RNG seed. Draws bind epoch randomness, checkpoint, environment/task,
 authenticated miner Ed25519 identity, attempt, turn and token position. Use the
 authenticated `identity.id`, not a caller-supplied rollout label or mutable UID.
-All four rollouts need distinct nonces and distinct generated-token content.
+All four rollouts in that historical contract need distinct nonces and distinct generated-token content.
 Proofs, filenames, timestamps, nonces and identity prefixes cannot make copied
 outputs count twice. The verifier independently recomputes the prescribed draws;
 TOPLOC alone is insufficient. Miners may search the allowed attempts and select
@@ -515,7 +533,8 @@ credentials. Miners need no permanent bucket credentials.
 ## Current proof and learning contract
 
 The historical verifier is forced-inverse-cdf-prefill-support-v3; epoch-53 v5
-adds authenticated miner binding and the four-sample quota. Public prescribed
+adds authenticated miner binding; epoch 59 keeps these draws and
+requires four successes plus four failures. Public prescribed
 draws bind the epoch, checkpoint, task, attempt, turn and token position; v5
 also binds authenticated miner identity. The
 verifier independently recomputes logits, checks the selected tokens against
@@ -532,8 +551,9 @@ policies are NOT active; do not omit required live proof fields.
 
 A batch covers one approved mining task index on one checkpoint and must contain
 the signed quota: historical K=1/L=1 requires one native-graded success and one
-native-graded failure; v5 requires two distinct successes and two distinct
-failures with four distinct nonces. Grader faults/timeouts
+native-graded failure; historical epoch-53 openings require two distinct successes
+and two distinct failures. Epoch 59 requires four distinct
+successes and four distinct failures, with eight distinct nonces and outputs. Grader faults/timeouts
 are indeterminate, not negative samples. Held-out tasks cannot supply mining
 batches. Complete token contexts, native outcomes, task/source/checkpoint
 identities and sampler receipts remain required. Extra rollouts earn no extra

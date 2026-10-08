@@ -1,10 +1,12 @@
-# Four-sample miner-bound cutover
+# Balanced multi-rollout miner-bound cutover
 
-## Manifest-driven quota support (not yet activated)
+## Manifest-driven quota configuration
 
 Set only `samples_per_batch` in prospective controller configuration, for
 example `"samples_per_batch": 8`. Omit separately configured K/L; the publisher
-derives K=L=4 and includes both counts and the total in the signed manifest.
+derives K=L=4 and publishes these K/L counts in the signed manifest.
+Clients follow these signed counts; the controller knob is not a required
+manifest field.
 Changing that value to 16 derives K=L=8 without code changes. Valid totals are
 even integers from 4 through 128; contradictory explicit counts are rejected.
 The native multi-rollout v3 policy can use `"max_pairs": "manifest"` to derive
@@ -21,7 +23,9 @@ from the signed manifest; eight samples are still one batch, not eight points.
 Existing signed openings and source archives remain unchanged. External miners
 must use the newly approved source when a future opening activates larger quotas;
 old clients with fixed four-sample checks cannot adopt it by manifest alone.
-The current deployed opening remains K=2/L=2 until a qualified boundary cutover.
+Epoch 59 activates K=4/L=4 with approved source
+`87da587e5d5e38e31ee0e1a6ca822e4d3e68543eabff62c3a252111207c48f7c`
+at 2026-10-08 02:35:44 UTC. Historical epoch-53 rules below remain unchanged.
 
 ## Four-sample miner-bound cutover — activated in epoch 53
 

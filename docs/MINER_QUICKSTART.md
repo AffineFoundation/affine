@@ -5,10 +5,11 @@ approved source are authoritative; GitHub main includes default-off research.
 Hourly current-assessment weight setting runs independently of compute epochs.
 Historical nonpayable flags remain historical; follow the current signed policies.
 
-The [four-sample cutover](FOUR_SAMPLE_MINER_BOUND_CUTOVER.md) is pending activation:
-v5 requires K=2/L=2, three task batches per UID per epoch and nonces 0–999.
-Follow the signed OPEN manifest. An old opening still requires K=1/L=1, at most three batches per UID,
-and at most sixteen prescribed attempts per task. Upload selected-token log
+Epoch 59 activates eight distinct rollouts per task batch:
+four native-graded successes and four failures, at most three batches per UID
+per epoch, and attempt nonces 0–999. Follow the signed OPEN manifest; historical
+openings retain their original quotas and attempt ceilings.
+Upload selected-token log
 probabilities and TOPLOC, not full-vocabulary arrays. Audits check prescribed
 sampler consistency; TOPLOC alone is insufficient. Training uses cheap-eligible
 unaudited submissions independently of the audit loop. Token-only and three-way
@@ -50,12 +51,14 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
   --source-cache /private/affine-approved-source \
   --key /private/miner.seed \
   --state /private/affine-miner-cache \
-  --env-id affine_math --max-batches 3 --search-budget 8 --once
+  --env-id affine_math --max-batches 3 --search-budget 64 --once
 ```
 
-Eight is a local search budget, not the signed attempt ceiling. v5 allows
-1,000 attempts per task; old openings keep their original ceiling. For v5, collect
-two distinct successes and two distinct failures with four distinct nonces.
+Sixty-four is a local search budget, not the signed attempt ceiling. It may
+need increasing for tasks where one outcome is rare; stop at the signed deadline.
+v5 allows
+1,000 attempts per task; old openings keep their original ceiling. For epoch 59, collect
+four distinct successes and four distinct failures with eight distinct nonces.
 The bootstrap verifies discovery, source and checkpoint hashes, then runs that
 approved source. Signed code approval is not a sandbox. Miners need no permanent
 R2 credentials; the manifest supplies encrypted private upload capabilities.
