@@ -12,6 +12,7 @@ from .learner_blacklist_selection import FIELD, admit, partition
 FIELD_ADMISSION='learner_selection_operator_admission'
 VERSION='cpu-selection-peer-admission-v1'
 AUTH_VERSION='cpu-selection-peer-authorization-v1'
+K2L2_AUTH_VERSION='cpu-selection-peer-miner-bound-authorization-v2'
 FILES={'subnet/learner_selection_operator_bridge.py','subnet/learner_blacklist_selection.py',
        'subnet/committed_training_inputs.py','subnet/training_receipts.py'}
 
@@ -21,8 +22,21 @@ def core(job):
 def approval(document,authority,manifest):
     p=authenticate(document,authority)
     fields={'version','source_sha256','scientific_source_files','operator_files','minimum_round','epoch_prefix','peer_entry_sha256','peer_runner_sha256','backend_execution_allowed'}
-    if (set(p)!=fields or p['version']!=AUTH_VERSION or p['source_sha256']!=manifest['source_bundle']['sha256']or
-        type(p['scientific_source_files'])is not dict or len(p['scientific_source_files'])!=177 or
+    miner_bound=manifest.get('sampling_contract',{}).get('version')=='forced-inverse-cdf-prefill-miner-bound-v5'
+    expected_version=K2L2_AUTH_VERSION if miner_bound else AUTH_VERSION
+    expected_members=179 if miner_bound else 177
+    if miner_bound:
+        if 'subnet/batch_quotas.py' in p.get('scientific_source_files',{}):
+            from .batch_quotas import configured_quotas
+            configured_quotas(manifest)
+            from .controller import class_quotas
+            class_quotas(manifest.get('K'),manifest.get('L'),manifest.get('sampling_contract'))
+            expected_members=180
+            if type(manifest.get('max_batches'))is not int or manifest['max_batches']!=3:raise ValueError('miner-bound peer max3')
+        elif (type(manifest.get('K'))is not int or type(manifest.get('L'))is not int or manifest['K']!=2 or manifest['L']!=2 or type(manifest.get('max_batches'))is not int or manifest['max_batches']!=3):raise ValueError('historical miner-bound peer K2 L2 max3')
+        if not {'subnet/sampling_uniqueness.py','subnet/trajectory_identity.py'}<=set(p.get('scientific_source_files',{})):raise ValueError('miner-bound peer runtime additions')
+    if (set(p)!=fields or p['version']!=expected_version or p['source_sha256']!=manifest['source_bundle']['sha256']or
+        type(p['scientific_source_files'])is not dict or len(p['scientific_source_files'])!=expected_members or
         set(p['operator_files'])!=FILES or type(p['minimum_round'])is not int or p['minimum_round']<0 or
         type(p['epoch_prefix'])is not str or not p['epoch_prefix']or not manifest['epoch'].startswith(p['epoch_prefix'])):
         raise ValueError('exact ROOT CPU peer authorization/scientific source')
