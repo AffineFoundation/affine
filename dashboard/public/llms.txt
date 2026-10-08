@@ -599,6 +599,16 @@ and AdamW moments, durably publishes the successor, and preserves optimizer
 lineage. Only a genuinely published and qualified successor opens the next
 mining epoch; follow signed discovery rather than an old checkpoint link.
 
+Output-budget update (2026-10-08): the controller is configured to move math
+mining from 1,024 to 2,048 generated tokens at the next eligible epoch boundary,
+after fresh checkpoint/runtime/harness calibration. The signed epoch manifest
+is authoritative; already-open epochs retain their original budget. Read
+environments[*].harness.max_output_tokens each epoch instead of hard-coding it.
+The quota remains four distinct successes and four distinct failures per task,
+up to three batches per UID, with attempt nonces 0–999. Existing held-out evals
+retain their original length budget for comparability. See
+docs/HARNESS_OUTPUT_BUDGET.md on GitHub for rollout and context limits.
+
 A default-off training-only blacklist selection mechanism is implemented on
 GitHub for review and is not deployed. When approved, it freezes authenticated
 active blacklist evidence per opening, excludes those identities from training
