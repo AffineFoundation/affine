@@ -131,6 +131,9 @@ def admitted_submission(path,obj,manifest,authority,*,retire=False):
         if signature in seen:raise ValueError('duplicate learner trajectory')
         seen.add(signature)
         if rollout.get('classification')not in ('positive','negative'):raise ValueError('explicit claimed learner class required')
+        from .math_completion import unresolved as incomplete_math
+        if incomplete_math(definition['spec'], turns[-1].get('text')):
+            raise ValueError('unresolved mathematical answer cannot fill a learner class quota')
         category=classification(rollout)
         if category=='positive':positives.append(rollout)
         elif category=='negative':negatives.append(rollout)

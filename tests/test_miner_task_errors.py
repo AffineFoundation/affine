@@ -34,5 +34,12 @@ class TaskErrors(unittest.TestCase):
         actor,run=self.search([ValueError('model assertion')])
         with self.assertRaisesRegex(ValueError,'model assertion'):run()
         self.assertEqual(actor.batches,[])
+    def test_unresolved_attempt_does_not_fill_failure_quota(self):
+        actor,run=self.search(['positive','neutral'])
+        with self.assertRaisesRegex(RuntimeError,'search budget exhausted'):run()
+        self.assertEqual(actor.batches,[])
+    def test_search_continues_past_unresolved_to_completed_failure(self):
+        actor,run=self.search(['positive','neutral','negative']);run()
+        self.assertEqual([r['classification'] for r in actor.batches[0][0]['rollouts']],['positive','negative'])
 
 if __name__=='__main__':unittest.main()

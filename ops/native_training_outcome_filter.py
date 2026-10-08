@@ -182,10 +182,15 @@ def _filter_admitted_pairs(pairs, policy, resolve, decode, grader, *, clock=time
             reply = decode(output)
             if not isinstance(reply,str) or len(reply.encode()) > policy['max_reply_bytes']:
                 raise ValueError('decoded native reply bound')
+            from subnet.math_completion import enabled as completed_math, final_box
+            complete_required = completed_math(definition.get('spec', {}))
             rollouts.append((gold, reply, {'claim':claim, 'output_sha256':digest(output),
                              'decoded_reply_sha256':hashlib.sha256(reply.encode()).hexdigest(),
                              'output_tokens':len(output), 'non_eos_cap':len(output)==cap and output[-1] not in eos,
                              'submitted_text_matches_decoded':turns[0].get('text')==reply}))
+            if complete_required:
+                rollouts[-1][2]['complete_answer'] = final_box(reply) is not None
+                rollouts[-1][2]['outcome_policy'] = definition['spec']['config']['math_outcome_policy']
             if terminal_required:
                 rollouts[-1][2]['terminal_framing_valid']=(not any(t in eos for t in output[:-1]) and
                     (len(output)==cap or output[-1] in eos))
@@ -200,6 +205,8 @@ def _filter_admitted_pairs(pairs, policy, resolve, decode, grader, *, clock=time
         gold, reply, receipt = item
         if receipt.get('pair_terminal_framing_valid') is False:
             return dict(receipt,native_score=None,reason='terminal_framing_exclusion',label_matches=None)
+        if receipt.get('complete_answer') is False:
+            return dict(receipt, native_score=None, reason='unresolved_math_answer', label_matches=None)
         remaining = deadline - clock()
         if remaining <= 0:
             return dict(receipt, native_score=None, reason='filter_deadline', label_matches=None)

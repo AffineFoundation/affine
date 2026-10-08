@@ -21,7 +21,7 @@ class LearnerAdmissionTests(unittest.TestCase):
     def build(self):
         doc=dict(version=learner.ARTIFACT_VERSION,epoch=self.manifest['epoch'],checkpoint=self.manifest['checkpoint']['id'],miner=self.identity,slot=0,batch=self.batch)
         self.data=canonical(doc);self.path=self.root/'document.json';self.path.write_bytes(self.data)
-        child=dict(slot=0,env_id='math',index=0,batch_sha256=sha(self.batch),sha256='a'*64,size=999,
+        child=dict(slot=0,env_id=self.batch['env_id'],index=0,batch_sha256=sha(self.batch),sha256='a'*64,size=999,
             training_sha256=hashlib.sha256(self.data).hexdigest(),training_size=len(self.data))
         original=sign(self.miner,dict(version='small-commitment-pairs-v2',epoch=self.manifest['epoch'],miner=self.identity,checkpoint=self.manifest['checkpoint']['id'],source=self.manifest['source_bundle']['sha256'],batches=[child]))
         admission=dict(version=learner.VERSION,epoch=self.manifest['epoch'],checkpoint=self.manifest['checkpoint']['id'],source_sha256=self.manifest['source_bundle']['sha256'],miner_identity=self.identity,slot=0,original_commitment=original,commitment_sha256=sha(original),proof_sha256='a'*64,batch_sha256=sha(self.batch),document_sha256=child['training_sha256'],document_size=len(self.data),captured_at=21,assurance='unaudited')
@@ -92,6 +92,41 @@ class LearnerAdmissionTests(unittest.TestCase):
     def test_claimed_positive_negative_required(self):
         self.batch['rollouts'][1]['classification']='positive';self.build()
         with self.assertRaisesRegex(ValueError,'quota'):self.admit()
+
+    def completed_math_contract(self):
+        from subnet.math_completion import FIELD,VERSION,ENVIRONMENT_VERSION
+        spec=self.manifest['environments'][0]['spec']
+        spec.update(id='affine_math',adapter='prime_v1',max_turns=1,
+                    version=ENVIRONMENT_VERSION,config={FIELD:VERSION})
+        self.manifest['environments'][0]['env_id']='affine_math'
+        self.batch['env_id']='affine_math'
+        self.batch['environment_version']=ENVIRONMENT_VERSION
+        for rollout in self.batch['rollouts']:
+            rollout['env_id']='affine_math'
+            rollout['environment_version']=ENVIRONMENT_VERSION
+            rollout['turns'][-1]['text']=r'\boxed{1}'
+
+    def test_unresolved_answer_cannot_claim_negative_quota(self):
+        self.completed_math_contract()
+        self.batch['rollouts'][1]['turns'][-1]['text']='unfinished reasoning'
+        self.build()
+        with self.assertRaisesRegex(ValueError,'unresolved mathematical answer'):
+            self.admit()
+
+    def test_completed_answer_keeps_unaudited_training_admission(self):
+        self.completed_math_contract();self.build()
+        with patch('subnet.batches.unpack',side_effect=AssertionError('proof')):
+            summary,pairs=self.admit()
+        self.assertEqual(len(pairs),1)
+        self.assertEqual(summary['assurance'],'unaudited')
+        self.assertFalse(summary['trainer_verification_performed'])
+
+    def test_unfinished_answer_cannot_claim_positive_quota_either(self):
+        self.completed_math_contract()
+        self.batch['rollouts'][0]['turns'][-1]['text']=r'\boxed{'
+        self.build()
+        with self.assertRaisesRegex(ValueError,'unresolved mathematical answer'):
+            self.admit()
     def test_noninteger_token_rejected_even_signed(self):
         self.batch['rollouts'][0]['turns'][0]['output']=[True];self.build()
         with self.assertRaisesRegex(ValueError,'token'):self.admit()

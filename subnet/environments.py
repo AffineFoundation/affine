@@ -154,6 +154,8 @@ class EnvironmentSpec:
             raise ValueError('environment budget')
         if not math.isfinite(result.success_reward) or not result.source_hash:
             raise ValueError('unversioned environment or invalid threshold')
+        from .math_completion import enabled as completed_math
+        completed_math(result)
         if result.adapter in ('resource_prime_v1','resource_prime_v1_controlled'):
             from .resource_session import validate_outer_spec
             validate_outer_spec(result.to_dict())
@@ -191,6 +193,9 @@ def _source_hash(spec):
     files.append(('adapter',_hash(__file__)))
     if spec.id == 'affine_math':
         files.append(('native_math_grader',_hash(PACKAGE_ROOT/'native_math_grader.py')))
+        from .math_completion import enabled as completed_math, source_hash as completion_hash
+        if completed_math(spec):
+            files.append(('math_completion', completion_hash()))
     if is_corpus_id(spec.id):
         files.extend((name,_hash(PACKAGE_ROOT/name)) for name in ('math_corpus_provider.py','math_corpus_assets.py','math_corpus.py'))
     if spec.config.get('prolog_session_revision') is not None:
@@ -221,6 +226,9 @@ def build_spec(source_id, config=None, legacy_root=LEGACY_ROOT, research_root=No
     if research_root:
         config['research_root'] = str(research_root)
     environment_version='prime-v1-2-native-mcp-errors' if config.get('tool_error_policy')=='native-mcp-toolerror-observation-v1' else 'prime-v1-1'
+    from .math_completion import FIELD as completion_field, ENVIRONMENT_VERSION as completion_version
+    if config.get(completion_field) is not None:
+        environment_version = completion_version
     from .math_corpus_provider import is_corpus_id,VERSION as corpus_version
     if is_corpus_id(source_id):environment_version=corpus_version
     spec = EnvironmentSpec(source_id, version=environment_version, config=config, num_samples=num_samples,
@@ -461,7 +469,9 @@ class EnvironmentSession:
             if inspect.isawaitable(result):result=await result
             if result:self.done=True
         reward=0.0
-        if self.done:
+        from .math_completion import unresolved as incomplete_math
+        unresolved = self.done and incomplete_math(self.spec, message['content'])
+        if self.done and not unresolved:
             await invoke(self.task.finalize,dict(trace=self.trace,runtime=self.runtime))
             await self.task.score(self.trace,self.runtime)
             if any(v is None for v in self.trace.rewards.values()):raise RuntimeError('unscored task reward')
@@ -469,7 +479,7 @@ class EnvironmentSession:
             if not math.isfinite(reward):raise ValueError('nonfinite task reward')
         self.messages.extend([message,*observations])
         return dict(observations=observations,done=self.done,reward=reward,
-                    classification='positive' if self.done and reward>=self.spec.success_reward else 'negative' if self.done else 'neutral')
+                    classification='neutral' if unresolved else 'positive' if self.done and reward>=self.spec.success_reward else 'negative' if self.done else 'neutral')
 
     def close_runtime(self):
         for tools in self.toolsets:
