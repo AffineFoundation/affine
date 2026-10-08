@@ -113,7 +113,7 @@ class RoutedJobs:
                 owner=self.owners.get(source_path,self.initial_role)
                 measured=self.roles[owner].publication_capacity(source_path)
                 checkpoint_bytes=measured['checkpoint_bytes']
-            return capacity_requirement(manifest,probe,checkpoint_bytes=checkpoint_bytes,missing_input=cache is None)
+            return capacity_requirement(manifest,probe,checkpoint_bytes=checkpoint_bytes,missing_input=cache is None,submission_bytes=submission_bytes)
         if cache:
             measured=trainer.capacity(cache);checkpoint_bytes=measured['checkpoint_bytes'];free=measured['free_bytes']
         else:

@@ -183,7 +183,7 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
 
 def capacity_probe(workspace,cache=None):
     """Actual Linux/cgroup RAM and existing filesystem bytes, no GPU claim."""
-    import shutil
+    import shutil,os,stat
     from .persistent_training_state import available_ram_bytes
     path=Path(workspace)
     if not path.is_dir()or path.is_symlink():raise ValueError('actual existing trainer workspace')
@@ -194,10 +194,31 @@ def capacity_probe(workspace,cache=None):
         if not target.is_dir()or target.is_symlink()or any(p.is_symlink()for p in target.iterdir()):
             raise ValueError('actual regular checkpoint cache inventory')
         result.update(checkpoint_bytes=sum(p.stat().st_size for p in target.iterdir()if p.is_file()),input_cache=True)
+        if target.absolute()==target.resolve() and target.is_relative_to(path.resolve()):
+            # Before model loading, retain its disk bytes but release this owned
+            # checkpoint's clean page cache. Never delete weights or evict an
+            # optimizer's shared-memory state. Re-observe RAM after kernel advice.
+            advised=0
+            for member in target.iterdir():
+                if not member.is_file():continue
+                fd=os.open(member,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+                try:
+                    before=os.fstat(fd)
+                    if not stat.S_ISREG(before.st_mode) or before.st_uid!=os.geteuid():
+                        raise ValueError('owned regular checkpoint capacity probe')
+                    os.posix_fadvise(fd,0,0,os.POSIX_FADV_DONTNEED)
+                    after=os.fstat(fd)
+                    fields=('st_dev','st_ino','st_mode','st_uid','st_nlink','st_size','st_mtime_ns','st_ctime_ns')
+                    if any(getattr(before,k)!=getattr(after,k)for k in fields):
+                        raise ValueError('checkpoint changed during memory admission advice')
+                    advised+=before.st_size
+                finally:os.close(fd)
+            result.update(owned_checkpoint_page_cache_advised_bytes=advised,
+                checkpoint_bytes_deleted=0,available_ram_bytes=available_ram_bytes())
     return result
 
 
-def capacity_requirement(manifest,probe,*,checkpoint_bytes,missing_input):
+def capacity_requirement(manifest,probe,*,checkpoint_bytes,missing_input,submission_bytes=None):
     """Bounded streaming disk, all pairs retained, actual resource observations."""
     from .artifact_budget import for_manifest
     binding=manifest['trainer_state_binding'];budget=for_manifest(manifest)
@@ -212,7 +233,14 @@ def capacity_requirement(manifest,probe,*,checkpoint_bytes,missing_input):
     # Model is not loaded yet during the coordinator probe. Reserve one BF16
     # input load separately; worker repeats admission after loading the model.
     working_ram=DECODE_WORKING_BYTES if (manifest.get('training_input_policy')in ('authenticated-verifier-compact-inputs-v2','committed-unaudited-training-v1')) else budget['raw_bytes']
-    if manifest.get('training_input_policy')=='committed-unaudited-training-v1':working_ram*=256
+    if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
+        if submission_bytes is None:working_ram*=256
+        else:
+            if type(submission_bytes)is not int or not 0<submission_bytes<=256*MAX_BYTES:
+                raise ValueError('bounded authenticated selected document bytes')
+            # Same 64x JSON/container expansion allowance, applied to the exact
+            # authenticated canonical input sizes rather than 256 maximum files.
+            working_ram=(DECODE_WORKING_BYTES//MAX_BYTES)*submission_bytes
     ram=plan['cpu_additional_ram_required_bytes']+checkpoint_bytes+working_ram
     if probe['free_bytes']<disk:raise ValueError('persistent trainer bounded stream/input/export/artifact disk reserve')
     if probe['available_ram_bytes']<ram:raise ValueError('persistent trainer actual CPU/cgroup memory reserve')
@@ -220,4 +248,5 @@ def capacity_requirement(manifest,probe,*,checkpoint_bytes,missing_input):
         checkpoint_bytes=checkpoint_bytes,input_cache=not missing_input,
         retained_step_checkpoints=0,final_exports=1,temporary_export_copies=0,
         download_reserve_bytes=budget['compressed_bytes'],raw_working_reserve_bytes=budget['raw_bytes'],
+        decoded_document_ram_reserve_bytes=working_ram,
         state_streaming=True,full_state_disk_hydration=False,gpu_forward_backward_capacity_qualified=False)

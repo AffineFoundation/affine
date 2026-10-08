@@ -21,7 +21,7 @@ from subnet.persistent_cpu_adamw import POLICY,HYPERPARAMETERS,PersistentCPUAdam
 from subnet.persistent_training_state import resource_plan,admit_resources,export_state,cgroup_headroom
 from subnet.persistent_training_protocol import (EXECUTION_FILES,opening_binding,prepare_job,
     validate_job,validate_output,validate_report,independently_commit,state_pointer,validate_parent)
-from subnet.persistent_training_worker import admitted_submission,capacity_requirement,report_updates
+from subnet.persistent_training_worker import admitted_submission,capacity_requirement,capacity_probe,report_updates
 from training_receipt_fixtures import transport_fixture
 from subnet.training_receipts import VERSION as INPUT_POLICY, receipt_inventory
 from subnet.distributed_roles import Coordinator
@@ -231,14 +231,48 @@ class PersistentIntegrationTests(unittest.TestCase):
                    file_mapped=6,unevictable=7,shmem=8)
         observed=cgroup_headroom(248,219,stats)
         self.assertEqual(observed['hard_headroom_bytes'],29)
-        self.assertEqual(observed['conservative_clean_inactive_file_bytes'],79)
-        self.assertEqual(observed['usable_bytes'],108)
+        self.assertEqual(observed['conservative_clean_inactive_file_bytes'],87)
+        self.assertEqual(observed['usable_bytes'],116)
         self.assertFalse(observed['active_file_cache_counted']);self.assertFalse(observed['drop_caches_requested'])
-        self.assertEqual(cgroup_headroom(248,219,dict(stats,active_file=10_000))['usable_bytes'],108)
+        self.assertEqual(cgroup_headroom(248,219,dict(stats,active_file=10_000))['usable_bytes'],116)
         self.assertEqual(cgroup_headroom(248,219,dict(stats,file_dirty=109))['usable_bytes'],29)
         self.assertEqual(cgroup_headroom(248,219,{})['usable_bytes'],29)
         for change in ({'file_dirty':-1},{'inactive_file':True}):
             with self.assertRaises(ValueError):cgroup_headroom(248,219,dict(stats,**change))
+
+    def test_large_retained_shmem_does_not_cancel_separate_inactive_files(self):
+        GiB=1024**3
+        result=cgroup_headroom(249*GiB,168*GiB,dict(file=166*GiB,shmem=85*GiB,
+            inactive_file=66*GiB,active_file=15*GiB,file_mapped=GiB))
+        self.assertEqual(result['usable_bytes'],146*GiB)
+        self.assertEqual(result['conservative_clean_inactive_file_bytes'],65*GiB)
+        self.assertFalse(result['active_file_cache_counted'])
+        # An inconsistent inactive counter cannot turn the shared-memory bytes
+        # themselves into reclaimable cache.
+        result=cgroup_headroom(100,95,dict(file=90,shmem=80,inactive_file=90))
+        self.assertEqual(result['usable_bytes'],15)
+
+    def test_selected_canonical_sizes_bound_unaudited_decode_ram(self):
+        manifest=dict(self.manifest,training_input_policy='committed-unaudited-training-v1')
+        probe=dict(free_bytes=100*1024**3,available_ram_bytes=100*1024**3)
+        a=capacity_requirement(manifest,probe,checkpoint_bytes=100,missing_input=True,submission_bytes=4_000_000)
+        self.assertEqual(a['decoded_document_ram_reserve_bytes'],256_000_000)
+        fallback=capacity_requirement(manifest,probe,checkpoint_bytes=100,missing_input=True)
+        self.assertEqual(fallback['decoded_document_ram_reserve_bytes'],256*128_000_000)
+        for size in (0,True,-1,256*2_000_000+1):
+            with self.assertRaises(ValueError):capacity_requirement(manifest,probe,checkpoint_bytes=100,missing_input=True,submission_bytes=size)
+
+    def test_capacity_probe_advises_only_owned_checkpoint_and_keeps_bytes(self):
+        checkpoint=self.root/'checkpoint';checkpoint.mkdir();weights=checkpoint/'model.safetensors';weights.write_bytes(b'unchanged weights')
+        with patch('subnet.persistent_training_state.available_ram_bytes',side_effect=[100,200]),patch('os.posix_fadvise')as advise:
+            observed=capacity_probe(self.root,checkpoint)
+        self.assertEqual(observed['available_ram_bytes'],200)
+        self.assertEqual(observed['owned_checkpoint_page_cache_advised_bytes'],len(b'unchanged weights'))
+        self.assertEqual(observed['checkpoint_bytes_deleted'],0)
+        self.assertEqual(weights.read_bytes(),b'unchanged weights');advise.assert_called_once()
+        with tempfile.TemporaryDirectory()as outside,patch('os.posix_fadvise')as advise:
+            capacity_probe(self.root,Path(outside))
+        advise.assert_not_called()
 
     def test_completed_original_training_resume_never_relaunches_or_steps(self):
         report,job=self.report();record=dict(job_id=job['job_id'],role='train',job_sha256=sha(job),

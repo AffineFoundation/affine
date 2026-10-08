@@ -97,3 +97,27 @@ advances its actual Adam counter from 33 to 37; the one-update control advances 
 optimizer batch and update frequency, not the miner's eight-rollout batch,
 scoring, or sampling contract. It is queued after the original six matched
 screens and requires the same native held-out controls.
+
+## Independent confirmation and the live memory preflight
+
+The remaining 622 tasks of the predeclared 750-task held-out plan are separate
+from the 128-task screen. An idle retained H200 is running the parent comparison
+under a separately pinned BF16 runtime and repeated native grading controls.
+Candidate selection must precede inspection of its confirmation results. Its
+scores cannot be numerically paired with the H100 screening scores; parent and
+treatment must be compared within the same H200 confirmation cohort.
+
+Epoch 62 exposed a memory-admission error before training dispatch. Shared-memory
+optimizer pages were subtracted from `inactive_file` even though they belong to
+the anon LRU. The correction excludes shmem from the type-based `file` envelope
+while counting only clean, unmapped inactive file cache. Active file pages remain
+excluded. This follows the [Linux cgroup memory accounting definitions](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html).
+
+The coordinator now applies the existing 64-fold canonical JSON decode allowance
+to the exact authenticated selected input sizes, instead of reserving 256 maximum
+size documents for every run. Its owned checkpoint preflight automatically advises
+the kernel to release clean file-cache pages and then measures availability again.
+This does not delete checkpoint bytes, release shared-memory optimizer state,
+reduce the expansion allowance or change any miner requirement. On the actual
+trainer, the updated probe reported about 174 GB available and zero deleted model
+bytes. Native input verification and worker-side admission still run separately.
