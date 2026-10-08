@@ -78,7 +78,12 @@ It is not evidence that every capped trajectory would eventually succeed.
 
 The new matched BF16 screening parent solved 96/128 held-out tasks. The existing one-update pairwise branch scored 93/128. The paired difference
 against the parent does not establish a significant one-update regression;
-other treatment comparisons are still running. The inference exports for the archived one-update
+The positive-only branch scored 85/128; against the pairwise branch it gained four
+answers and lost twelve (−6.25 percentage points, paired bootstrap 95% interval
+[−12.5, 0.0]). This screen does not support dropping negatives. Lower-rate and
+FP32-gradient treatment comparisons are still running. Every candidate must be
+compared with the incoming parent, as well as the existing update: merely losing
+less than another update does not demonstrate learning. The inference exports for the archived one-update
 baseline and positive-only branches change about 6.90% and 6.64% of BF16 weights,
 respectively; their relative L2 changes are about 0.000474 and 0.000465. Changing
 weights, finite gradients and improving training margins do not prove learning.
