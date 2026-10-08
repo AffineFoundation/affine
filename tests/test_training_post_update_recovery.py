@@ -49,3 +49,45 @@ class PostUpdateRecovery(ParentRestoreRecovery):
  test_every_ambiguous_or_post_update_witness_rejected=None
  test_v1_still_rejects_loaded_model_and_unaudited_recovery=None
  test_actual_ten_scientific_files_required_no_invented_sampling_module=None
+
+ def test_local_candidate_mount_failure_requires_exact_zero_export_witness(self):
+  d=copy.deepcopy(self.value);w=d['post_update_witness']
+  w.update(exception='CalledProcessError: local optimizer bind mount exit 32',failed_stage='post-update-local-candidate-begin',callchain=['persistent_training_worker.train','optimizer_state_cache.begin_candidate','subprocess.run'],uploaded_shard_count=0,local_shard_count=0)
+  j,m=self.changed(d);self.assertEqual(r.validate(j,m,self.authority),d)
+  for field,bad in [('local_shard_count',1),('uploaded_shard_count',1),('callchain',['arbitrary']),('exception','any error')]:
+   wrong=copy.deepcopy(d);wrong['post_update_witness'][field]=bad;j,m=self.changed(wrong)
+   with self.subTest(field=field),self.assertRaises(ValueError):r.validate(j,m,self.authority)
+
+ def test_recovery_preserves_local_storage_projection_without_nesting(self):
+  from subnet.trainer_local_state import project
+  d=copy.deepcopy(self.value);original=copy.deepcopy(self.original)
+  old=copy.deepcopy(self.old);old['optimizer_state_local_cache']=dict(version='sole-current-fp32-state-cache-v1',max_checkpoint_bytes=1024)
+  original['manifest']=self.sign(project(old,self.sign));d['original_signed_job']=self.sign(original);d['original_job_sha256']=sha(original)
+  base=copy.deepcopy(old);base['source_bundle']=d['replacement_source_bundle'];base[r.FIELD]=self.sign(d)
+  m=project(base,self.sign);j=copy.deepcopy(self.job);j['manifest']=self.sign(m)
+  self.assertEqual(r.validate(j,m,self.authority),d)
+  self.assertEqual(r.original_manifest(m,self.authority),old)
+
+ def test_frozen_native_input_recovery_rejects_added_or_changed_inputs(self):
+  import tempfile,json
+  from pathlib import Path
+  from types import SimpleNamespace
+  from subnet.trainer_local_state import project
+  with tempfile.TemporaryDirectory()as temporary:
+   state=Path(temporary);epoch=self.value['epoch'];root=state/'native-outcome-eligibility'/epoch;root.mkdir(parents=True)
+   originals=copy.deepcopy(self.original);old=copy.deepcopy(self.old)
+   context=self.sign(dict(epoch=epoch));grades=self.sign(dict(epoch=epoch));subset=self.sign(dict(context_sha256=sha(context),sampling_assurance='unaudited',claims_rewritten=False,accepted_submissions=originals['submissions']))
+   for name,document in [('context',context),('grades',grades),('subset',subset)]:
+    (root/(name+'.ROOT-SIGNED.json')).write_bytes(canonical(document))
+   old['native_training_eligibility_receipt']=dict(context_sha256=sha(context),grades_sha256=sha(grades),subset_sha256=sha(subset),sampling_assurance='unaudited',claims_rewritten=False)
+   originals['manifest']=self.sign(old);value=copy.deepcopy(self.value);value['original_signed_job']=self.sign(originals)
+   controller=SimpleNamespace(state=state,authority=SimpleNamespace(id=self.authority))
+   self.assertTrue(r.validate_frozen_native_inputs(controller,value))
+   for change in ('added','changed','receipt'):
+    bad=copy.deepcopy(value);o=bad['original_signed_job']['payload']
+    if change=='added':o['submissions'].append(copy.deepcopy(o['submissions'][0]))
+    elif change=='changed':o['submissions'][0]['sha256']='a'*64
+    else:
+     m=o['manifest']['payload'];m['native_training_eligibility_receipt']['grades_sha256']='a'*64;o['manifest']=self.sign(m)
+    bad['original_signed_job']=self.sign(o)
+    with self.subTest(change=change),self.assertRaises(ValueError):r.validate_frozen_native_inputs(controller,bad)

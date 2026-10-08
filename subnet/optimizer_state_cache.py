@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import threading
 import time
@@ -31,6 +32,23 @@ def volume_policy(workspace,root):
     if volume!=volume.resolve() or not stat.S_ISDIR(st.st_mode) or st.st_uid!=os.getuid() or st.st_mode&0o077:
         raise ValueError('private owned trainer memory directory')
     return volume
+
+def candidate_directory(workspace,root,job_id):
+    directory=root/('candidate-'+identifier(job_id))
+    if directory!=directory.resolve():raise ValueError('optimizer candidate path symlink')
+    volume=volume_policy(workspace,root)
+    if volume is not None:
+        owned=volume/directory.name
+        if owned.exists() or owned.is_symlink():
+            st=owned.lstat()
+            if owned!=owned.resolve() or not stat.S_ISDIR(st.st_mode) or st.st_uid!=os.getuid() or st.st_mode&0o077:
+                raise ValueError('private owned optimizer memory candidate')
+            if directory.exists():
+                if (directory.stat().st_dev,directory.stat().st_ino)!=(st.st_dev,st.st_ino):
+                    raise ValueError('ambiguous optimizer memory and disk candidate')
+                return directory  # Previously acknowledged legacy bind mount.
+            return owned
+    return directory
 
 def policy(manifest):
     value=manifest.get('optimizer_state_local_cache')
@@ -143,9 +161,7 @@ class StateCache:
         with os.fdopen(fd,'wb')as stream:stream.write(data);stream.flush();os.fsync(stream.fileno())
         os.replace(tmp,path)
     def directory(self,job_id):
-        directory=self.root/('candidate-'+identifier(job_id))
-        if directory!=directory.resolve():raise ValueError('optimizer candidate path symlink')
-        return directory
+        return candidate_directory(self.workspace,self.root,job_id)
     def discard(self,value,reason):
         directory=self.directory(value['job_id']);removed=[]
         for name,row in value.get('files',{}).items():
@@ -161,8 +177,11 @@ class StateCache:
             owned=volume/directory.name
             if (directory.stat().st_dev,directory.stat().st_ino)!=(owned.stat().st_dev,owned.stat().st_ino) or list(directory.iterdir()):
                 raise ValueError('only empty exact owned candidate mount retires')
-            subprocess.run(['umount',str(directory)],check=True,capture_output=True)
-            directory.rmdir();owned.rmdir()
+            if directory==owned:
+                owned.rmdir()
+            else:
+                subprocess.run(['umount',str(directory)],check=True,capture_output=True)
+                directory.rmdir();owned.rmdir()
         self.save(self.root/('retired-'+value['job_id']+'.json'),dict(job_id=value['job_id'],descriptor_sha256=value.get('descriptor_sha256'),reason=reason,removed=removed))
         return removed
     def prepare_parent(self,descriptor,source):
@@ -364,14 +383,15 @@ class StateCache:
         registry=self.root/'pending.json'
         if registry.exists():
             previous=json.loads(registry.read_bytes());self.discard(previous,'abandoned-unpromoted-candidate');registry.unlink()
-        directory=self.directory(self.job['job_id']);directory.mkdir(mode=0o700,exist_ok=False)
         from .persistent_publication import local_state
         volume=self.next_volume()if local_state(self.manifest)else None
+        directory=self.directory(self.job['job_id'])
         if volume is not None:
+            if directory.exists():raise ValueError('new optimizer memory candidate required')
             owned=volume/directory.name;owned.mkdir(mode=0o700,exist_ok=False)
-            subprocess.run(['mount','--bind',str(owned),str(directory)],check=True,capture_output=True)
-            if (directory.stat().st_dev,directory.stat().st_ino)!=(owned.stat().st_dev,owned.stat().st_ino):
-                raise ValueError('exact owned candidate volume mount')
+            if self.directory(self.job['job_id'])!=owned:raise ValueError('exact owned memory candidate path')
+        else:
+            directory.mkdir(mode=0o700,exist_ok=False)
         self.candidate=dict(version=VERSION,job_id=self.job['job_id'],job_sha256=sha(self.job),source_sha256=self.manifest['source_bundle']['sha256'],files={},descriptor_sha256=None)
         self.save(registry,self.candidate)
     def next_volume(self):
@@ -384,7 +404,10 @@ class StateCache:
         return volume
     def retain(self,name,path,digest,size):
         name=member(name);path=Path(path).absolute();snapshot(path)
-        if path!=path.resolve()or not path.is_relative_to(self.workspace):raise ValueError('owned uploaded shard required')
+        from .persistent_publication import local_state
+        owned_candidate=local_state(self.manifest) and path.is_relative_to(self.directory(self.job['job_id']))
+        if path!=path.resolve()or not (path.is_relative_to(self.workspace) or owned_candidate):
+            raise ValueError('owned uploaded shard required')
         with self.lock:
             if name in self.candidate['files']or sum(r['size']for r in self.candidate['files'].values())+size>self.policy['max_checkpoint_bytes']:
                 raise ValueError('single bounded optimizer candidate')

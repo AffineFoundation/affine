@@ -19,7 +19,7 @@ def original_manifest(manifest,authority):
     manifest=local_original(manifest,authority)
     value=signed(manifest[FIELD],authority)
     original=signed(value['original_signed_job'],authority)
-    old=signed(original['manifest'],authority)
+    old=local_original(signed(original['manifest'],authority),authority)
     if value.get('version')in RESTORE_VERSIONS+(POST_UPDATE_VERSION,):
         if value.get('original_input_source_sha256')!=old['source_bundle']['sha256']or value.get('replacement_execution_source_sha256')!=manifest['source_bundle']['sha256']or value.get('authorized_input_inventory_sha256')!=sha(input_inventory(original['submissions'])):raise ValueError('explicit restore old-input/new-execution manifest scope')
     normalized=copy.deepcopy(manifest);normalized.pop(FIELD,None);normalized['source_bundle']=old['source_bundle']
@@ -89,7 +89,8 @@ def label(controller,epoch):
 def apply(controller,manifest,steps):
     """Use original durable inputs; never manufacture fresh verifier receipts."""
     document=declaration(controller,manifest['epoch']);value=document['payload'];original=signed(value['original_signed_job'],controller.authority.id)
-    old=signed(original['manifest'],controller.authority.id)
+    from .trainer_local_state import original_manifest as local_original
+    old=local_original(signed(original['manifest'],controller.authority.id),controller.authority.id)
     record=json.loads((controller.state/'roles'/(manifest['epoch']+'-train.json')).read_bytes())
     if record['job_id']!=original['job_id']or record['job_sha256']!=sha(original):raise ValueError('startup recovery immutable original record')
     failure=json.loads((controller.state/'roles'/(original['job_id']+'-failure.json')).read_bytes())
@@ -157,7 +158,7 @@ def local_request(state,epoch,authority):
     evidence=dict(version=declaration['version'],declaration_sha256=value['declaration_sha256'],original_failed_job_id=original['job_id'],original_failed_job_sha256=sha(original),original_failure_sha256=sha(failure),startup_witness_sha256=sha(declaration['post_update_witness']if declaration['version']==POST_UPDATE_VERSION else declaration['restore_witness']if declaration['version']in RESTORE_VERSIONS else declaration['startup_witness']),replacement_source_sha256=job['manifest']['payload']['source_bundle']['sha256'],original_epoch_deadline=original['manifest']['payload'].get('deadline'),late_recovery=True)
     if declaration['version']==BOOTSTRAP_VERSION:evidence['bootstrap_predecessor']=declaration['predecessor']
     if declaration['version']in RESTORE_VERSIONS:evidence.update(original_input_source_sha256=declaration['original_input_source_sha256'],replacement_execution_source_sha256=declaration['replacement_execution_source_sha256'],original_failed_stage='parent-state-fetch-before-train_epoch',original_optimizer_updates=0)
-    if declaration['version']==POST_UPDATE_VERSION:evidence.update(original_input_source_sha256=declaration['original_input_source_sha256'],replacement_execution_source_sha256=declaration['replacement_execution_source_sha256'],original_failed_stage='post-update-persistent-state-export',original_optimizer_updates=1,original_update_uncommitted=True,restarted_from_durable_parent=True)
+    if declaration['version']==POST_UPDATE_VERSION:evidence.update(original_input_source_sha256=declaration['original_input_source_sha256'],replacement_execution_source_sha256=declaration['replacement_execution_source_sha256'],original_failed_stage=declaration['post_update_witness']['failed_stage'],original_optimizer_updates=1,original_update_uncommitted=True,restarted_from_durable_parent=True)
     return record,job,evidence
 
 RESTORE_VERSION='terminal-parent-restore-pre-update-recovery-v2'
@@ -236,7 +237,13 @@ def validate_post_update(job,manifest,authority):
         if type(terminal[prefix+'_pid'])is not int or terminal[prefix+'_pid']<=0 or not isinstance(terminal[prefix+'_pid_ticks'],str)or not terminal[prefix+'_pid_ticks'].isdigit():raise ValueError('original post-update physical identity')
     fields={'version','observed_at','exception','failed_stage','callchain','original_processes_absent','physical_gpu_idle','optimizer_step_reached','optimizer_updates','train_epoch_returned','original_report_absent','complete_candidate_descriptor_absent','candidate_publication_absent','public_optimizer_steps','parent_publication_sha256','parent_descriptor_sha256','parent_shard_count','parent_total_bytes','selected_input_count','worker_log_sha256','evidence_sha256','science_source_files','failed_output_namespace','partial_inventory_sha256','uploaded_shard_count','local_shard_count','planned_shard_count'}
     frames=['persistent_training_worker.train','persistent_training_state.export_state','persistent_training_state._export_state','persistent_training_state.transfer_one','persistent_training_state.materialize','persistent_training_worker.publish','persistent_training_worker.put_file']
-    if set(w)!=fields or w['version']!=POST_UPDATE_WITNESS or w['exception']!='ValueError: persistent state PUT status' or w['failed_stage']!='post-update-persistent-state-export' or w['callchain']!=frames:raise ValueError('exact post-update export failure callchain')
+    export_failure=(w.get('exception')=='ValueError: persistent state PUT status' and w.get('failed_stage')=='post-update-persistent-state-export' and w.get('callchain')==frames)
+    local_mount_failure=(w.get('exception')=='CalledProcessError: local optimizer bind mount exit 32' and
+        w.get('failed_stage')=='post-update-local-candidate-begin' and
+        w.get('callchain')==['persistent_training_worker.train','optimizer_state_cache.begin_candidate','subprocess.run'] and
+        w.get('uploaded_shard_count')==0 and w.get('local_shard_count')==0)
+    if set(w)!=fields or w['version']!=POST_UPDATE_WITNESS or not (export_failure or local_mount_failure):
+        raise ValueError('exact post-update export failure callchain')
     if any(w[k]is not True for k in ('original_processes_absent','physical_gpu_idle','optimizer_step_reached','train_epoch_returned','original_report_absent','complete_candidate_descriptor_absent','candidate_publication_absent')) or type(w['optimizer_updates'])is not int or w['optimizer_updates']!=1:raise ValueError('explicit one actual uncommitted original update')
     if w['failed_output_namespace']!=original['persistent_training']['output_namespace']:raise ValueError('exact original failed output namespace')
     if type(w['planned_shard_count'])is not int or w['planned_shard_count']!=23 or any(type(w[k])is not int or not 0<=w[k]<23 for k in ('uploaded_shard_count','local_shard_count')) or w['uploaded_shard_count']>w['local_shard_count']:raise ValueError('incomplete candidate cannot be full optimizer')
@@ -276,3 +283,33 @@ def validate_predecessor_local(state,value,authority):
     failure=json.loads((state/'roles'/(job['job_id']+'-failure.json')).read_bytes())
     if any(failure.get(k)!=v for k,v in p['terminal'].items())or (state/'roles'/(job['job_id']+'-report.json')).exists():raise ValueError('actual failed v2 predecessor and no completed report')
     return job
+
+
+def validate_frozen_native_inputs(controller,value):
+    """Reuse the original signed native subset, never regrade or enlarge it."""
+    import os
+    from .trainer_local_state import original_manifest as local_original
+    authority=controller.authority.id
+    original=signed(value['original_signed_job'],authority)
+    old=local_original(signed(original['manifest'],authority),authority)
+    receipt=old.get('native_training_eligibility_receipt')
+    if type(receipt)is not dict or receipt.get('sampling_assurance')!='unaudited' or receipt.get('claims_rewritten')is not False:
+        raise ValueError('original frozen native eligibility receipt required')
+    epoch=value['epoch']
+    if not isinstance(epoch,str) or re.fullmatch('[A-Za-z0-9][A-Za-z0-9_.-]{1,220}',epoch)is None:
+        raise ValueError('exact frozen native epoch namespace')
+    root=Path(controller.state)/'native-outcome-eligibility'/epoch
+    if any(p.is_symlink()for p in (root,*root.parents)) or root.stat().st_uid!=os.getuid():
+        raise ValueError('owned frozen native eligibility namespace')
+    documents={}
+    for name in ('context','grades','subset'):
+        path=root/(name+'.ROOT-SIGNED.json')
+        if path.is_symlink()or path.stat().st_uid!=os.getuid():raise ValueError('owned native receipt file')
+        document=json.loads(path.read_bytes());documents[name]=signed(document,authority)
+        if receipt.get(name+'_sha256')!=sha(document):raise ValueError('original frozen native receipt hash')
+    subset=documents['subset']
+    if (subset.get('sampling_assurance')!='unaudited' or subset.get('claims_rewritten')is not False or
+            subset.get('context_sha256')!=receipt['context_sha256'] or
+            input_inventory(subset.get('accepted_submissions',[]))!=input_inventory(original['submissions'])):
+        raise ValueError('exact original native-selected training inputs')
+    return True

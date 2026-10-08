@@ -37,7 +37,7 @@ def memory_available():
 def authenticated_current(workspace,root,authority):
     from subnet.backend_jobs import signed
     from subnet.storage import canonical
-    from subnet.optimizer_state_cache import sha,verification_body,STAT_VERSION
+    from subnet.optimizer_state_cache import sha,verification_body,STAT_VERSION,candidate_directory
     from subnet.cache_lifecycle import snapshot
     ordinary(root/'current.json')
     current=json.loads((root/'current.json').read_bytes())
@@ -61,7 +61,7 @@ def authenticated_current(workspace,root,authority):
         raise ValueError('acknowledged optimizer descriptor')
     shards={row['name']:row for row in descriptor['shards']}
     if set(current['files'])!=set(shards):raise ValueError('complete current local state')
-    candidate=root/('candidate-'+job_id);ordinary(candidate,directory=True)
+    candidate=candidate_directory(workspace,root,job_id);ordinary(candidate,directory=True)
     for name,row in current['files'].items():
         if Path(name).name!=name or name in ('.','..'):raise ValueError('one original shard member')
         path=candidate/name

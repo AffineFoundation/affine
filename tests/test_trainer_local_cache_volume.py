@@ -58,3 +58,62 @@ class LocalVolumeControls(unittest.TestCase):
             parent_dir=cache.directory(cache.current['job_id']);original=Path.stat
             def device(path,*a,**kw):return SimpleNamespace(st_dev=volume.stat().st_dev)if path==parent_dir else original(path,*a,**kw)
             with patch('pathlib.Path.stat',device):self.assertIsNone(cache.next_volume())
+
+    def test_direct_memory_candidate_exports_and_retires_without_mount(self):
+        from subnet.persistent_training_state import export_state
+        from subnet.persistent_publication import LOCAL_POLICY
+        from unittest.mock import Mock
+        volume=self.enable_volume()
+        job=copy.deepcopy(self.fixture.job);job['job_id']='memory-next'
+        descriptor=self.fixture.report['persistent_training_state']['descriptor']
+        no_network=Mock(side_effect=AssertionError('optimizer transport forbidden'))
+        with StateCache(self.fixture.root,job,self.fixture.manifest,self.fixture.authority)as cache:
+            cache.prepare_parent(descriptor,'bb'*32)
+            with patch('subnet.optimizer_state_cache.subprocess.run',side_effect=AssertionError('mount forbidden')):
+                cache.begin_candidate()
+                destination=cache.directory(job['job_id'])
+                self.assertEqual(destination,volume/'candidate-memory-next')
+                result,evidence=export_state(self.fixture.optimizer,epoch='control',inference_checkpoint='22'*32,
+                    workspace=destination,publish_shard=no_network,readback_shard=no_network,
+                    commit_descriptor=lambda d:dict(descriptor_sha256=sha(d),local_sha_verified=True,
+                        durable_readback_verified=False,authority_committed=False),resource_admission=self.fixture.admission,
+                    shard_bytes=self.fixture.cap,retain_shard=cache.retain,readback_mode=LOCAL_POLICY)
+                cache.finish(result)
+                candidate=cache.candidate
+                self.assertTrue(candidate['files'])
+                cache.discard(candidate,'test-owned-retirement')
+                self.assertFalse(destination.exists())
+            no_network.assert_not_called()
+            self.assertTrue(cache.directory(cache.current['job_id']).exists())
+
+    def test_memory_candidate_rejects_ambiguous_disk_directory(self):
+        from subnet.optimizer_state_cache import candidate_directory
+        volume=self.enable_volume();memory=volume/'candidate-ambiguous';memory.mkdir(mode=0o700)
+        self.addCleanup(memory.rmdir)
+        disk=self.root/'candidate-ambiguous';disk.mkdir(mode=0o700)
+        with self.assertRaisesRegex(ValueError,'ambiguous'):
+            candidate_directory(self.fixture.root,self.root,'ambiguous')
+
+    def test_current_direct_memory_parent_authenticates_and_restores_real_adam(self):
+        import shutil,torch
+        from subnet.cache_lifecycle import snapshot
+        from subnet.optimizer_state_cache import verification_body
+        from subnet.persistent_training_state import restore_state,admit_resources
+        from unittest.mock import Mock
+        volume=self.enable_volume();marker=self.root/'current.json';current=json.loads(marker.read_bytes())
+        disk=self.root/('candidate-'+current['job_id']);memory=volume/disk.name
+        shutil.copytree(disk,memory);shutil.rmtree(disk)
+        self.addCleanup(shutil.rmtree,memory)
+        for name,row in current['files'].items():row['stat']=snapshot(memory/name)
+        current['promotion_verification_sha256']=sha(verification_body(current));marker.write_bytes(canonical(current))
+        _,descriptor=authenticated_current(self.fixture.root,self.root,self.fixture.authority)
+        out=self.fixture.root/'restore-from-memory';out.mkdir()
+        no_network=Mock(side_effect=AssertionError('optimizer transport forbidden'))
+        with StateCache(self.fixture.root,self.fixture.job,self.fixture.manifest,self.fixture.authority)as cache:
+            cache.prepare_parent(descriptor,'bb'*32);self.assertIsNone(cache.next_volume())
+            state,_=restore_state(descriptor,sha(descriptor),'22'*32,self.fixture.inventory,
+                workspace=out,fetch_shard=lambda n,p:cache.fetch(n,p,no_network),
+                resource_admission=admit_resources(out,self.fixture.plan),owned_cache=cache)
+        for slot in ('master','exp_avg','exp_avg_sq'):
+            self.assertTrue(torch.equal(state[1]['w'][slot],self.fixture.optimizer.rows['w'][slot]))
+        no_network.assert_not_called()

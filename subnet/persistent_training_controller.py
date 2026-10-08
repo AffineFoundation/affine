@@ -84,9 +84,21 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
         if computation_binding(training_manifest)!=computation_binding(manifest):raise ValueError('learner original epoch computation binding')
         from .training_startup_recovery import declaration,apply,INPUT_RECOVERY_VERSIONS
         recovery=declaration(controller,epoch)
+        native_selector=getattr(controller,'native_training_eligibility_selector',None)
+        if native_selector is not None and hasattr(native_selector,'applies_to') and not native_selector.applies_to(training_manifest):
+            native_selector=None
         if recovery is not None:
+            from .training_startup_recovery import ADMISSION_VERSION,POST_UPDATE_VERSION,validate_frozen_native_inputs
+            if native_selector is not None:
+                if recovery['payload'].get('version')==POST_UPDATE_VERSION:
+                    validate_frozen_native_inputs(controller,recovery['payload'])
+                elif recovery['payload'].get('version')!=ADMISSION_VERSION:
+                    raise ValueError('startup recovery requires separately authorized native eligibility context')
+            native_selector=None  # Original signed job already froze the native-selected inputs.
             if recovery['payload'].get('version')not in INPUT_RECOVERY_VERSIONS:raise ValueError('unaudited learner requires explicit authenticated failure recovery')
             training_manifest,submissions=apply(controller,training_manifest,steps)
+        if native_selector is not None:
+            training_manifest,submissions=native_selector.select(training_manifest,submissions)
         receipts={}
     else:
         training_manifest=manifest
