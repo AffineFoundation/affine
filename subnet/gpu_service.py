@@ -396,7 +396,7 @@ def run(config,once=False):
             if active['phase']=='before':
                 if independent_evaluation:
                     from .checkpoint_evaluator import enqueue
-                    enqueue(controller,manifest,status['checkpoint_path'],'before',status['training_steps'],config,public_optimizer_steps=status.get('trainer_state',{}).get('optimizer_steps',manifest.get('trainer_state_binding',{}).get('global_step_before')))
+                    enqueue(controller,manifest,status['checkpoint_path'],'before',status['training_steps'],config,public_optimizer_steps=(status.get('trainer_state') or {}).get('optimizer_steps',manifest.get('trainer_state_binding',{}).get('global_step_before')))
                 else:
                     evaluate(controller,manifest,status['checkpoint_path'],'before',status['training_steps'],config)
                 transition_phase(active,'train');save(statuspath,status)
