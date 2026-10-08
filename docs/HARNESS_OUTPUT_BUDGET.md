@@ -22,6 +22,12 @@ first eligible round, and the exact old/new budgets. Its validator rejects any
 unrelated configuration change. A boundary wrapper retains the prior contract
 for a current epoch and supplies the longer contract only to later openings.
 
+The recovery launcher can additionally admit an existing signed, bounded
+same-epoch capture-recovery document when coordinator downtime exhausts the
+original capture window. It authenticates the original public manifest and
+leaves miner upload eligibility unchanged. It does not skip submission discovery,
+manufacture audit evidence, or discard the current epoch to accelerate cutover.
+
 This change permits longer reasoning but is not evidence of better learning.
 The inspected garbled tails can begin before the old cutoff. Measure solve rate,
 truncation, malformed responses, and runtime before attributing gains to length.
