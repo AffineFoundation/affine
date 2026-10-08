@@ -90,8 +90,10 @@ weights, finite gradients and improving training margins do not prove learning.
 
 
 A further isolated batch-size arm partitions those same 256 archived tasks into
-four 64-task updates at learning rate 1e-6 with FP32 gradient accumulation. Its
-actual Adam counter advances from 33 to 37. This changes the trainer's effective
+four 64-task updates at learning rate 1e-6 with FP32 gradient accumulation. A matched one-update
+control uses the same learning rate and FP32 accumulation, so the batch study
+does not confound precision or learning rate with update frequency. The four-update arm
+advances its actual Adam counter from 33 to 37; the one-update control advances it to 34. This changes the trainer's effective
 optimizer batch and update frequency, not the miner's eight-rollout batch,
 scoring, or sampling contract. It is queued after the original six matched
 screens and requires the same native held-out controls.
