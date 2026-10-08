@@ -32,7 +32,9 @@ isolated causal result or a demonstrated production improvement.
 ## Controlled work
 
 Research arms restore the same CP33 checkpoint and Adam33 state and use the same
-256 tasks and task order. The existing baseline and positive-only arms are
+256 archived tasks and task order. This archived population has one positive and
+one negative per task, so improvements require confirmation on fresh eight-rollout
+production batches. The existing baseline and positive-only arms are
 retained. Additional trainer-only arms test learning rates 1e-6 and 5e-7 and
 FP32 accumulation of microbatch gradients. None alters miner sampling or quotas.
 Research optimizer moments are discarded and cannot be returned as a resumable
