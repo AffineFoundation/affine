@@ -6,6 +6,23 @@ from dashboard.learner_projection import canonical,digest,project
 from dashboard.server import Database
 
 class LearnerProjectionTests(unittest.TestCase):
+ def test_live_missing_capture_is_pending_but_genuine_empty_and_captured_counts_remain(self):
+  with tempfile.TemporaryDirectory()as tmp:
+   source=Path(tmp)/'state';folder=source/'live-math-launch-preparation-v1/distributed-preparation/live-controller-v1/controller-state';folder.mkdir(parents=True)
+   authorities={}
+   for eid,n,eligible,present in [('test-open',0,0,False),('test-empty87',0,0,True),('test-captured86',3,2,True),('test-captured88',8,6,True)]:
+    d,m,u,a=self.fixture(n,eligible,eid);m['training_input_policy']='committed-unaudited-training-v1'
+    if eid=='test-open':m.update(start=10**10,deadline=10**10+1200)
+    (folder/(eid+'-manifest.json')).write_text(json.dumps(m));authorities[eid]=a
+    (folder/(eid+'-registrations.json')).write_text(json.dumps({'hotkey':dict(public_key=next(iter(u)),uid=85)}))
+    if present:(folder/(eid+'-learner-population.json')).write_text(json.dumps(d))
+   from dashboard import server
+   with patch.object(server,'project_learner',side_effect=lambda d,m,u:project(d,m,u,authorities[m['epoch']])):
+    db=Database(Path(tmp)/'db',source);db.refresh();rows={r['id']:r for r in db.snapshot()['epochs']}
+   pending=rows['test-open'];self.assertFalse(pending['batches_available']);self.assertIsNone(pending['grid']);self.assertEqual(pending['batch_count_status'],'awaiting_capture')
+   empty=rows['test-empty87'];self.assertTrue(empty['batches_available']);self.assertEqual(empty['batches'],0);self.assertEqual(sum(empty['grid']),0)
+   for eid,n in [('test-captured86',3),('test-captured88',8)]:
+    self.assertTrue(rows[eid]['batches_available']);self.assertEqual(rows[eid]['batches'],n);self.assertEqual(sum(rows[eid]['grid']),n)
  def test_structural_rejections_remain_visible_in_captured_counts(self):
   d,m,u,a=self.fixture(5,3)
   d['population']['committed_count']=4

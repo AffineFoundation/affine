@@ -141,6 +141,15 @@ class Database:
                     active = read(folder/'controller.json', {}).get('active')
                     if isinstance(active, dict) and active.get('epoch') == eid:
                         row['phase'] = active.get('phase', row['phase'])
+                elif (not reports and source_name == 'live-reward-math'
+                      and doc.get('training_input_policy') == 'committed-unaudited-training-v1'):
+                    # Before immutable capture, missing evidence is not zero
+                    # submissions. The existing UI already renders unavailable
+                    # counts as pending and skips unavailable miner grids.
+                    row.update(batches_available=False, audit_breakdown_available=False,
+                               batch_count_status='awaiting_capture',
+                               batch_count_source='unavailable-before-authenticated-capture',
+                               grid=None, grid_outcomes=None)
                 epochs[eid] = row
                 metrics = read(folder/f'{eid}-training-metrics.json', {})
                 if metrics:
