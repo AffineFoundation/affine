@@ -75,10 +75,9 @@ loader correction passed 25 targeted controls and both same-evidence comparisons
 At the original 23:00 cutoff, 50 report refusals disappeared while all estimates
 and weights matched. The combined numerical correction at the prospective 00:00
 cutoff changed three estimates and moving averages but preserved weights: newer
-unresolved invalid evidence still triggers penalties. The isolated writer package
-is installed for 00:00 UTC on 2026-10-07, with the minute timer active. Its first
-invocation exited normally while waiting for that hour. A successful new chain
-submission under this policy remains to be observed.
+unresolved invalid evidence still triggers penalties. The current never-burn
+writer is active; successful submissions and their commit/reveal status are
+recorded in its assessment and chain receipts.
 
 The evidence refresh has a 180-second budget, reserving time for transaction
 finality. An optional ROOT-authenticated current-hour assessment cache can avoid
