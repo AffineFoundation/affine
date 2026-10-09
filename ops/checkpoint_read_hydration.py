@@ -61,7 +61,7 @@ def complete(path,files,objects):
 def save(path,body):
  temp=path.with_suffix('.tmp');temp.write_bytes(canonical(body));temp.chmod(0o600);temp.replace(path)
 
-def download(session,url,partial,expected_bytes,expected_sha,deadline,clock=time.time):
+def download(session,url,partial,expected_bytes,expected_sha,deadline,clock=time.time,*,chunk_bytes=64*1024**2,max_retries=3):
  partial=Path(partial)
  if partial.is_symlink() or (partial.exists() and not partial.is_file()):raise ValueError('regular preserved partial')
  offset=partial.stat().st_size if partial.exists() else 0
@@ -69,26 +69,38 @@ def download(session,url,partial,expected_bytes,expected_sha,deadline,clock=time
  if offset==expected_bytes:
   if sha(partial)!=expected_sha:raise ValueError('preserve mismatching complete partial')
   return {'resumed_bytes':offset,'downloaded_bytes':0}
- if clock()>=deadline:raise ValueError('read plan expired; preserve partial')
- headers={'Accept-Encoding':'identity'}
- if offset:headers['Range']='bytes='+str(offset)+'-'
- with session.get(url,headers=headers,stream=True,timeout=(30,180),allow_redirects=False) as response:
-  expected_status=206 if offset else 200
-  if response.status_code!=expected_status or response.headers.get('Content-Encoding','identity')!='identity':raise ValueError('exact GET/range status/encoding')
-  if offset and response.headers.get('Content-Range')!='bytes '+str(offset)+'-'+str(expected_bytes-1)+'/'+str(expected_bytes):raise ValueError('exact resumed object range')
-  length=response.headers.get('Content-Length')
-  if length is not None and (not length.isdecimal() or int(length)!=expected_bytes-offset):raise ValueError('exact remaining length')
-  # Append only to retained same-object partial; never truncate/overwrite any existing bytes.
-  with partial.open('ab' if offset else 'xb') as stream:
-   partial.chmod(0o600);written=offset
-   for part in response.iter_content(1024**2):
-    if clock()>=deadline:raise ValueError('read plan expired during transfer')
-    if not part:continue
-    if written+len(part)>expected_bytes:raise ValueError('object size bound')
-    stream.write(part);written+=len(part)
-   stream.flush();os.fsync(stream.fileno())
+ if type(chunk_bytes)is not int or not 1<=chunk_bytes<=64*1024**2 or type(max_retries)is not int or not 0<=max_retries<=10:raise ValueError('bounded transfer settings')
+ start=offset;failures=0
+ while offset<expected_bytes:
+  if clock()>=deadline:raise ValueError('read plan expired; preserve partial')
+  end=min(expected_bytes-1,offset+chunk_bytes-1)
+  # A fresh connection also bounds transport intermediaries that truncate a
+  # long-lived connection after cumulative bytes across otherwise valid ranges.
+  headers={'Accept-Encoding':'identity','Connection':'close','Range':'bytes='+str(offset)+'-'+str(end)}
+  try:
+   with session.get(url,headers=headers,stream=True,timeout=(30,180),allow_redirects=False) as response:
+    if response.status_code>=500:response.raise_for_status()
+    if response.status_code!=206 or response.headers.get('Content-Encoding','identity')!='identity':raise ValueError('exact GET/range status/encoding')
+    if response.headers.get('Content-Range')!='bytes '+str(offset)+'-'+str(end)+'/'+str(expected_bytes):raise ValueError('exact resumed object range')
+    length=response.headers.get('Content-Length')
+    if length is not None and (not length.isdecimal() or int(length)!=end-offset+1):raise ValueError('exact remaining length')
+    # Append only to retained same-object partial; each response is bounded.
+    with partial.open('ab' if partial.exists() else 'xb') as stream:
+     partial.chmod(0o600);written=offset
+     for part in response.iter_content(1024**2):
+      if clock()>=deadline:raise ValueError('read plan expired during transfer')
+      if not part:continue
+      if written+len(part)>end+1:raise ValueError('object range size bound')
+      stream.write(part);written+=len(part)
+     stream.flush();os.fsync(stream.fileno())
+    if written!=end+1:raise requests.exceptions.ChunkedEncodingError('short bounded checkpoint range')
+   offset=partial.stat().st_size
+  except requests.RequestException:
+   failures+=1
+   if failures>max_retries:raise
+   offset=partial.stat().st_size if partial.exists()else 0
  if partial.stat().st_size!=expected_bytes or sha(partial)!=expected_sha:raise ValueError('complete downloaded size/SHA mismatch; preserve')
- return {'resumed_bytes':offset,'downloaded_bytes':expected_bytes-offset}
+ return {'resumed_bytes':start,'downloaded_bytes':expected_bytes-start,'range_bytes':chunk_bytes,'transfer_retries':failures}
 
 def acquire_lock(parent,checkpoint):
  parent=Path(parent);parent.mkdir(mode=0o700,parents=True,exist_ok=True)

@@ -39,23 +39,30 @@ Package versions alone do not qualify another hardware/runtime profile.
 
 ## Run the signed source
 
-Read `authority` and `current_url` from https://affine.io/mining.json and set
-`AFFINE_AUTHORITY` and `AFFINE_CURRENT_URL` locally. The expected authority is
-3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd.
-The key file contains your activated 32-byte Ed25519 seed as hexadecimal, mode600.
+Update main with `git pull --ff-only`. The continuous transport supervisor reads
+https://affine.io/mining.json and authenticates the signed opening. The key file
+contains your activated 32-byte Ed25519 seed as hexadecimal, mode 0600. Stop any
+old miner using this state before starting:
 
 ```bash
-CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
-  --authority "$AFFINE_AUTHORITY" \
-  --current-url "$AFFINE_CURRENT_URL" \
+CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.miner_supervisor \
+  --discovery-url https://affine.io/mining.json \
+  --authority 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd \
   --source-cache /private/affine-approved-source \
   --key /private/miner.seed \
   --state /private/affine-miner-cache \
-  --env-id affine_math --max-batches 3 --search-budget 32 --once
+  --env-id affine_math --max-batches 3 --search-budget 32
 ```
 
+The supervisor continuously follows epochs and authenticated source upgrades,
+resumes bounded checkpoint transfers and verifies full file hashes before
+launching the untouched approved miner. It removes only its own obsolete model
+caches after admitting the successor. Reserve space for active and incoming
+checkpoints. A per-state lock prevents overlapping children after restarts.
+
 Thirty-two is a local search budget, not the signed attempt ceiling. It may
-need increasing for tasks where one outcome is rare; stop at the signed deadline.
+be increased up to the approved CLI limit of 128 when an outcome is rare; stop
+at the signed deadline. The signed nonce range and CLI budget are separate.
 v5 allows
 1,000 attempts per task; old openings keep their original ceiling. For the current contract, collect
 four distinct successes and four distinct failures with eight distinct nonces.
@@ -63,7 +70,7 @@ The bootstrap verifies discovery, source and checkpoint hashes, then runs that
 approved source. Signed code approval is not a sandbox. Miners need no permanent
 R2 credentials; the manifest supplies encrypted private upload capabilities.
 
-Watch discovery for each new OPEN epoch and run each only once. Never silently
+Keep the supervisor running; it launches each OPEN epoch only once. Never silently
 reuse an expired capability, old source, closed deadline or previous checkpoint.
 After an observation timeout inspect the original process/job; do not restart
 solely because polling timed out. Grader faults are indeterminate and must not

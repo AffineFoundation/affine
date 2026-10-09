@@ -3,6 +3,7 @@ import copy
 import hashlib
 import tempfile
 import unittest
+from unittest.mock import Mock
 from pathlib import Path
 
 from nacl.signing import SigningKey
@@ -116,6 +117,61 @@ class CheckpointReadHydrationTests(unittest.TestCase):
             finally:
                 lock.close()
             hydration.acquire_lock(temp, self.plan['checkpoint']).close()
+
+    def transfer(self,body,*,partial=b'',failure_at=None,mutate=None,chunk=4,retries=3):
+        temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
+        p=Path(temp.name)/'checkpoint.partial'
+        if partial:p.write_bytes(partial)
+        calls=[]
+        def get(url,**kw):
+            self.assertEqual(kw['headers']['Connection'],'close')
+            start,end=map(int,kw['headers']['Range'][6:].split('-'));calls.append((start,end))
+            response=Mock(status_code=206,headers={'Content-Range':f'bytes {start}-{end}/{len(body)}','Content-Length':str(end-start+1)})
+            response.__enter__=Mock(return_value=response);response.__exit__=Mock(return_value=False)
+            def content(_):
+                for i in range(start,end+1):
+                    if len(calls)==1 and i==failure_at:raise hydration.requests.exceptions.ChunkedEncodingError('cut')
+                    yield body[i:i+1]
+            response.iter_content=content
+            if mutate:mutate(response)
+            return response
+        session=Mock(get=get)
+        return p,calls,lambda:hydration.download(session,'url',p,len(body),hashlib.sha256(body).hexdigest(),100,clock=lambda:20,chunk_bytes=chunk,max_retries=retries)
+
+    def test_bounded_ranges_assemble_original_bytes_and_hash(self):
+        p,calls,run=self.transfer(b'abcdefghij')
+        result=run();self.assertEqual(calls,[(0,3),(4,7),(8,9)])
+        self.assertEqual(p.read_bytes(),b'abcdefghij');self.assertEqual(result['downloaded_bytes'],10)
+
+    def test_interrupted_range_resumes_from_written_bytes(self):
+        p,calls,run=self.transfer(b'abcdefghij',failure_at=2)
+        result=run();self.assertEqual(calls,[(0,3),(2,5),(6,9)])
+        self.assertEqual(result['transfer_retries'],1);self.assertEqual(p.read_bytes(),b'abcdefghij')
+
+    def test_existing_partial_is_retained_and_completed(self):
+        p,calls,run=self.transfer(b'abcdefghij',partial=b'abc')
+        result=run();self.assertEqual(calls,[(3,6),(7,9)])
+        self.assertEqual(result['resumed_bytes'],3);self.assertEqual(p.read_bytes(),b'abcdefghij')
+
+    def test_empty_interrupted_range_can_retry(self):
+        p,calls,run=self.transfer(b'abc',failure_at=0)
+        self.assertEqual(run()['transfer_retries'],1);self.assertEqual(p.read_bytes(),b'abc')
+
+    def test_wrong_range_or_ignored_range_preserves_partial(self):
+        for mutate in [lambda r:setattr(r,'status_code',200),lambda r:r.headers.update({'Content-Range':'bytes 0-3/10'})]:
+            p,calls,run=self.transfer(b'abcdefghij',partial=b'ab',mutate=mutate)
+            with self.assertRaises(ValueError):run()
+            self.assertEqual(p.read_bytes(),b'ab');self.assertEqual(len(calls),1)
+
+    def test_exhausted_retry_keeps_partial_and_no_fake_completion(self):
+        p,calls,run=self.transfer(b'abcdefghij',failure_at=2,retries=0)
+        with self.assertRaises(hydration.requests.RequestException):run()
+        self.assertEqual(p.read_bytes(),b'ab')
+
+    def test_corrupt_retained_prefix_never_passes_full_sha(self):
+        p,calls,run=self.transfer(b'abcdefghij',partial=b'bad')
+        with self.assertRaisesRegex(ValueError,'SHA mismatch'):run()
+        self.assertEqual(p.read_bytes(),b'baddefghij')
 
 
 if __name__ == '__main__':

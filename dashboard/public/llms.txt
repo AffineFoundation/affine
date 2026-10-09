@@ -7,21 +7,21 @@ Dashboard: https://affine.io/
 
 ## Current availability
 
-The restored completed-answer MATH learner published epoch 86 on October 9,
-2026 at 04:10:25 UTC. Public discovery, the signed pointer/manifest and the complete
-approved source archive were independently read back successfully. The opening
-includes 253 activated identities and the compact eight-rollout contract below.
-This establishes public miner access; submission, training and learning results
-are reported separately as they occur.
+Epoch 86 completed a real update from 200 accepted task batches after receiving
+commitments from 152 external registered identities. The next checkpoint is
+published. Epoch 87 received no commitments while cold checkpoint downloads
+were being investigated; an interrupted multi-gigabyte model transfer was
+reproduced. The continuous launcher below adds resumable, hash-checked transfers.
+Epoch 88 is being prepared with a 20-minute collection window. Always use the
+signed manifest's actual start and deadline, rather than a fixed duration here.
 
 Mining is available only when mining.json reports `accepting_submissions: true`
 and its authenticated opening has not expired. Between updates it may report
 `between_epochs`; a binding fault reports `discovery_binding_error`. Always read
-current discovery rather than treating epoch 86 or this guide as a live window.
+current discovery rather than treating this guide as a live window.
 
-Epoch 85's legacy full-vocabulary opening is closed. Its submissions are archived.
-The earlier statement that it enforced v5 sampling was incorrect: its signed
-manifest lacked that contract. Do not submit further work to epoch 85.
+The protocol-regression openings 79–85 are retired and archived. They do not
+count as completed training updates, and their retirement is not miner fraud.
 Chain weight submission and payouts are disabled during this qualification.
 
 The authoritative inputs are the signed current pointer, signed epoch manifest,
@@ -116,15 +116,15 @@ source descriptors using either `read_url` or `url`; both must match if present.
 Older bootstrap clients fail on the completed-answer `read_url` descriptor.
 The fix retains signature, HTTPS, archive size, SHA256 and membership checks.
 
-Read `authority` and `current_url` from https://affine.io/mining.json only when
-it reports an open window. The expected authority public key is:
-`3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd`.
-Set these as `AFFINE_AUTHORITY` and `AFFINE_CURRENT_URL`, then run:
+Use the expected authority public key below; the launcher reads public discovery
+and authenticates the signed opening itself. No storage account credentials are
+needed. Stop an older miner process before using its private state with this
+launcher. Run one launcher for an identity/state directory:
 
 ```sh
-CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
-  --authority "$AFFINE_AUTHORITY" \
-  --current-url "$AFFINE_CURRENT_URL" \
+CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.miner_supervisor \
+  --discovery-url https://affine.io/mining.json \
+  --authority 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd \
   --source-cache /absolute/private/affine-approved-source \
   --key /absolute/private/miner.seed \
   --state /absolute/private/affine-miner-state \
@@ -139,19 +139,25 @@ that full range. Tune the CLI budget within its 128-attempt limit for task
 success rates and remaining epoch time. Move on when one outcome is too rare.
 A longer search cannot extend the signed upload deadline.
 
-The bootstrap verifies the pointer, manifest and complete source archive, admits
-the task snapshot, and executes only that approved source in an isolated fresh
-Python process. The client authenticates checkpoint files before inference.
-Signed source execution is not a security sandbox.
+The continuous supervisor authenticates the pointer, manifest, task snapshot and
+approved source. It downloads the exact checkpoint with bounded 64 MiB HTTP
+ranges, retains interrupted partial transfers, and checks each complete file's
+SHA256 before inference. It launches the untouched approved source once for that
+epoch, then follows future epochs and source upgrades automatically. An internal
+one-shot child does not make the outer command a single-epoch command.
 
-The command above follows checkpoint changes continuously under the same approved
-source. Add `--once` only for a single-epoch smoke test. If the approved source
-changes, the client stops and needs a fresh bootstrap.
-Alternatively, supervise one-shot runs: poll discovery, start each new epoch once,
-inspect its original process after timeouts, and stop using the old checkpoint
-when the opening changes. `--once` does not itself watch forever. Do not run
-multiple processes sharing the same identity/epoch state or reset the upload
-journal to claim duplicate batches. A source upgrade requires a fresh bootstrap.
+A single-state process lock survives a supervisor crash in its active child,
+preventing overlapping workers. Expired known children are terminated using
+their recorded process identity. Only model caches created by this supervisor
+are removed automatically, after a successor checkpoint has been fully verified
+and the previous child has exited. Unknown pre-existing state is preserved;
+allow disk space for the active and incoming checkpoints. Source and runtime
+changes are authenticated independently; signed source is not a security sandbox.
+
+For manual single-epoch diagnostics, `subnet.source_bootstrap ... --once` remains
+available. It does not provide the outer launcher's resumable checkpoint transfer
+or continuous source-upgrade handling. Do not run multiple processes sharing the
+same identity/epoch state or reset the upload journal to claim duplicate batches.
 
 ## Learning, auditing and monitoring
 
