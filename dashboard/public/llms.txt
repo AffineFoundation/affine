@@ -12,8 +12,9 @@ commitments from 152 external registered identities. The next checkpoint is
 published. Epoch 87 received no commitments while cold checkpoint downloads
 were being investigated; an interrupted multi-gigabyte model transfer was
 reproduced. The continuous launcher below adds resumable, hash-checked transfers.
-Epoch 88 is being prepared with a 20-minute collection window. Always use the
-signed manifest's actual start and deadline, rather than a fixed duration here.
+Epoch 88 opened October 9 at 05:47:08 UTC with a 20-minute collection window
+ending 06:07:08 UTC. Always use the signed manifest's actual start and deadline,
+rather than treating this recorded opening as current availability.
 
 Mining is available only when mining.json reports `accepting_submissions: true`
 and its authenticated opening has not expired. Between updates it may report
