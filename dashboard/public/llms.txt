@@ -1,3 +1,29 @@
+# Live mining availability and recovery — October 9, 2026
+
+Check https://affine.io/mining.json before starting work. Mining is open only
+when `accepting_submissions` is true and the signed manifest is still within
+its upload window. A recovery is restoring the completed-answer MATH learner;
+this document does not itself announce an open epoch. The discovery publisher
+now binds its claims to the live learner's signed policy and opening, and closes
+availability if that binding fails.
+
+The restored contract uses four distinct completed correct responses and four
+distinct completed incorrect responses per task batch, at most three task
+batches per UID, nonces 0–999, and a 2048-token output budget. Missing or unfinished
+boxed answers are unresolved and cannot fill either quota. It uses compact
+selected-token logprobs and TOPLOC with miner-bound v5 sampling verification,
+`small-commitment-pairs-v2` submission transport, and training on eligible
+unaudited inputs while continuous audits run independently. Follow the exact
+signed source and checkpoint in the opening; neither old epoch artifacts nor
+this page override the opening.
+
+Epoch 85's legacy full-vocabulary opening is closed and is not the restored
+contract. Its archived submissions are retained. The prior claim that this
+legacy opening enforced v5 sampling was incorrect: its signed manifest did not
+contain that contract. Do not generate or upload further work for epoch 85.
+
+---
+
 # Current run: completed-answer MATH restart (2026-10-08)
 
 The active run restarts Qwen/Qwen2.5-Math-7B-Instruct at its original pinned

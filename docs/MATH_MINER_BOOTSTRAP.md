@@ -70,22 +70,24 @@ Pinned model/runtime packages still need installing and qualifying on the miner
 hardware. This bootstrap does not install dependencies, claim GPU compatibility,
 prove inference, submit chain weights or create/read a wallet.
 
-The historical initial GPU profile requires CUDA compute capability 8.6, BF16, eager
-attention and deterministic CUBLAS with `CUBLAS_WORKSPACE_CONFIG=:4096:8` set
-before inference. The retained RTX 3090 has that architecture. The pilot's actually qualified
-runtime reports torch 2.14.0, transformers 5.14.1 and toploc 0.1.6. These are
-observed operator-runtime versions, not a promise that a clean installation or
-another GPU will reproduce them. Validate installed runtime admission before
-mining; compatibility with other hardware is not established by the bootstrap.
+The current completed-answer MATH profile is H200/SM90 with CUDA FP32 eager
+inference, TF32 disabled and `CUBLAS_WORKSPACE_CONFIG=:4096:8`. Core observed
+package pins are torch 2.14.0, transformers 5.14.1 and toploc 0.1.6; package
+versions alone do not establish equivalent results on another runtime/GPU.
+Follow the exact signed manifest's runtime profile and numerical policy.
 
-For the prospective forced-sampling release, the qualified profile is H200/SM90
-using the signed uncached eager `text-tools-long-v2` sampler, temperature 0.8,
-top-p 1 and at most 1,024 output tokens. The same observed core package versions
-do not imply numerical portability between GPUs. Follow the active signed
-manifest rather than the historical 3090 profile. The source binds prescribed
-epoch/task/attempt draws, and full audited trajectories must exactly replay;
-TOPLOC and probability checks alone cannot qualify an arbitrary chosen answer.
-See [FORCED_SAMPLING_CUTOVER.md](FORCED_SAMPLING_CUTOVER.md).
+The restored contract uses `text-tools-long-v2`, temperature 0.8, top-p 1 and
+2048 output tokens. The `forced-inverse-cdf-prefill-miner-bound-v5` contract
+selects cached eager generation with prescribed public draws and calibrated
+prefill verification, with exact cached replay for ambiguous checks. Each batch
+contains four distinct completed successes and four distinct completed failures
+for one task. Attempt nonces are 0–999 and bind miner identity, epoch, checkpoint,
+task, turn and token position. Missing/unfinished boxed answers are unresolved,
+not negative training samples. Selected-token logprobs and TOPLOC are uploaded;
+the verifier recomputes full distributions. `small-commitment-pairs-v2` names the
+compact batch transport; `direct-r2-v1` on the outer discovery pointer describes
+the storage access path and does not replace the batch transport contract.
+Historical epochs retain their original source, budgets and proof rules.
 
 Miners may choose a bounded search on particular authorized tasks by adding
 `--env-id affine_math --indices 1553 --search-budget 32 --max-batches 1`.
