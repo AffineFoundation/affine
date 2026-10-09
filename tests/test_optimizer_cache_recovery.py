@@ -23,7 +23,7 @@ class CacheACKRecovery(StateCacheControls):
     def test_current_ack_wrong_lineage_rejects_retry(self):
         self.promoted();marker=self.root/'.optimizer-state-cache/current.json';current=json.loads(marker.read_bytes())
         current['ROOT_ack']['payload']['trainer_state']['namespace']='different';current['ROOT_ack']=self.sign(current['ROOT_ack']['payload']);marker.write_bytes(canonical(current))
-        with self.assertRaisesRegex(ValueError,'confirmed lineage'):promote(self.ack,self.authority,self.root)
+        with self.assertRaisesRegex(ValueError,'confirmed lineage|authenticated original optimizer cache lineage'):promote(self.ack,self.authority,self.root)
     def test_pending_promotion_guard_prevents_next_original_from_discarding(self):
         descriptor=self.candidate();guard=self.root/'.optimizer-state-cache/promotion.json';guard.write_bytes(canonical(dict(phase='pending',ack=self.ack)))
         newer=copy.deepcopy(self.job);newer['job_id']='next'

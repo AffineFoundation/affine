@@ -71,6 +71,45 @@ def hash_file(path):
         for chunk in iter(lambda:stream.read(8*1024**2),b''):h.update(chunk);size+=len(chunk)
     return h.hexdigest(),size
 
+def committed_cache_descriptor(value,authority,workspace):
+    """Resolve a cache marker's lineage from authenticated original evidence.
+
+    The mutable cache marker does not independently assert a genesis or step.
+    Its ROOT ACK binds the exact original job and publication report, whose
+    descriptor supplies both. No optimizer shard reads or mutations occur here.
+    """
+    ack=authenticate(value['ROOT_ack'],authority)
+    jobid=identifier(value['job_id']);root=Path(workspace)
+    job=authenticate(json.loads((root/(jobid+'.json')).read_bytes()),authority)
+    report=json.loads((root/'jobs'/jobid/'report.json').read_bytes())
+    state=report['persistent_training_state'];descriptor=state['descriptor']
+    genesis=descriptor.get('genesis_sha256');step=descriptor.get('optimizer_steps')
+    if (ack.get('version')!='durable-original-trainer-cache-ACK-v1' or
+        ack.get('authority_state_committed')is not True or job.get('role')!='train' or
+        ack['job_id']!=jobid or sha(job)!=ack['job_sha256'] or
+        value['job_sha256']!=ack['job_sha256'] or sha(report)!=ack['report_sha256'] or
+        report.get('success')is not True or report.get('new_checkpoint')!=ack['new_checkpoint'] or
+        sha(descriptor)!=state['descriptor_sha256'] or
+        value['descriptor_sha256']!=state['descriptor_sha256'] or
+        ack['trainer_state']['descriptor_sha256']!=state['descriptor_sha256'] or
+        ack['trainer_state']['namespace']!=state['namespace'] or
+        type(step)is not int or step<0 or step!=ack['trainer_state']['optimizer_steps'] or
+        descriptor.get('inference_checkpoint')!=ack['new_checkpoint']['id'] or
+        not isinstance(genesis,str) or re.fullmatch('[0-9a-f]{64}',genesis)is None):
+        raise ValueError('authenticated original optimizer cache lineage')
+    return descriptor
+
+def same_cache_lineage(previous,incoming):
+    """A different run requires explicit operator recovery, never a cold miss."""
+    if incoming is None or previous['genesis_sha256']!=incoming.get('genesis_sha256'):
+        raise ValueError('optimizer cache cross-genesis transition requires explicit ROOT recovery')
+    step=incoming.get('optimizer_steps')
+    if type(step)is not int or step<0:raise ValueError('approved optimizer cache parent counter')
+    if previous['optimizer_steps']>step:
+        raise ValueError('approved optimizer cache cannot roll lineage backward')
+    if previous['optimizer_steps']==step and sha(previous)!=sha(incoming):
+        raise ValueError('same optimizer counter different promotion lineage')
+
 def member(name):
     if not re.fullmatch(r'state-[0-9]{6}\.safetensors',name):raise ValueError('exact optimizer cache shard name')
     return name
@@ -185,6 +224,14 @@ class StateCache:
         self.save(self.root/('retired-'+value['job_id']+'.json'),dict(job_id=value['job_id'],descriptor_sha256=value.get('descriptor_sha256'),reason=reason,removed=removed))
         return removed
     def prepare_parent(self,descriptor,source):
+        # Guard before *any* recovery/discard path, including a stale failed
+        # promotion or abandoned pending candidate. Cross-run counters are not
+        # comparable, and a foreign request cannot erase the sole current state.
+        current_marker=self.root/'current.json'
+        if current_marker.exists():
+            if snapshot(current_marker)['mode']&0o077:raise ValueError('private owned optimizer catalogue required')
+            current=json.loads(current_marker.read_bytes())
+            same_cache_lineage(committed_cache_descriptor(current,self.authority,self.workspace),descriptor)
         promotion=self.root/'promotion.json'
         if promotion.exists():
             snapshot(promotion)
@@ -457,6 +504,11 @@ def promote(ack,authority,workspace):
         pending=cache.root/'pending.json'
         marker=cache.root/'current.json'
         already=json.loads(marker.read_bytes())if marker.exists()else None
+        if already is not None:
+            # A delayed ACK from an older run must fail even if its numerical
+            # step is larger than the new run's step. Preserve both candidates.
+            if snapshot(marker)['mode']&0o077:raise ValueError('private owned optimizer catalogue required')
+            same_cache_lineage(committed_cache_descriptor(already,authority,workspace),state['descriptor'])
         if already is not None and already['job_id']==job['job_id']:
             if (already.get('descriptor_sha256')!=state['descriptor_sha256'] or already.get('job_sha256')!=sha(job) or
                 already.get('source_sha256')!=manifest['source_bundle']['sha256'] or

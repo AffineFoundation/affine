@@ -21,13 +21,14 @@ class StateCacheControls(unittest.TestCase):
     def publish(self,name,path):self.objects[name]=path.read_bytes()
     def readback(self,name):yield self.objects[name]
     def candidate(self):
+        jobid=self.job['job_id'];self.out=self.root/'jobs'/jobid;self.out.mkdir(parents=True,exist_ok=True)
         with StateCache(self.root,self.job,self.manifest,self.authority)as cache:
             cache.begin_candidate()
             descriptor,evidence=export_state(self.optimizer,epoch='control',inference_checkpoint='22'*32,workspace=self.out,publish_shard=self.publish,readback_shard=self.readback,commit_descriptor=lambda d:dict(descriptor_sha256=sha(d),durable_readback_verified=True,authority_committed=False),resource_admission=self.admission,shard_bytes=self.cap,retain_shard=cache.retain,readback_mode='upload-only-independent-full-v1')
             self.assertFalse(evidence['shards'][0]['local_shard_retired']);cache.finish(descriptor)
         state=dict(descriptor=descriptor,descriptor_sha256=sha(descriptor),namespace='private/state/control')
-        report=dict(success=True,new_checkpoint=dict(id='22'*32),persistent_training_state=state);(self.out/'report.json').write_bytes(canonical(report));(self.root/'original.json').write_bytes(canonical(self.sign(self.job)))
-        ack=dict(version='durable-original-trainer-cache-ACK-v1',job_id='original',job_sha256=sha(self.job),report_sha256=sha(report),new_checkpoint=report['new_checkpoint'],authority_state_committed=True,trainer_state=dict(descriptor_sha256=sha(descriptor),optimizer_steps=descriptor['optimizer_steps'],namespace=state['namespace']))
+        report=dict(success=True,new_checkpoint=dict(id='22'*32),persistent_training_state=state);(self.out/'report.json').write_bytes(canonical(report));(self.root/(jobid+'.json')).write_bytes(canonical(self.sign(self.job)))
+        ack=dict(version='durable-original-trainer-cache-ACK-v1',job_id=jobid,job_sha256=sha(self.job),report_sha256=sha(report),new_checkpoint=report['new_checkpoint'],authority_state_committed=True,trainer_state=dict(descriptor_sha256=sha(descriptor),optimizer_steps=descriptor['optimizer_steps'],namespace=state['namespace']))
         self.descriptor=descriptor;self.ack=self.sign(ack);return descriptor
     def promoted(self):
         descriptor=self.candidate()
@@ -120,4 +121,47 @@ class StateCacheControls(unittest.TestCase):
         with StateCache(self.root,self.job,self.manifest,self.authority)as cache:
             with self.assertRaisesRegex(ValueError,'lineage backward'):cache.prepare_parent(old,'aa'*32)
         self.assertTrue(list((self.root/'.optimizer-state-cache/candidate-original').glob('*.safetensors')))
+    def test_foreign_genesis_parent_preserves_current_and_pending_before_recovery(self):
+        descriptor=self.promoted();root=self.root/'.optimizer-state-cache';marker=root/'current.json'
+        before=marker.read_bytes();shards={p:p.read_bytes()for p in (root/'candidate-original').glob('*.safetensors')}
+        # A foreign request must fail before even interpreting an unrelated
+        # pending candidate, rather than deleting either run's state.
+        with StateCache(self.root,self.job,self.manifest,self.authority)as cache:
+            cache.save(root/'pending.json',dict(job_id='unrelated-pending'))
+            pending=(root/'pending.json').read_bytes()
+            for step in (0,descriptor['optimizer_steps'],descriptor['optimizer_steps']+50):
+                foreign=copy.deepcopy(descriptor);foreign.update(genesis_sha256='33'*32,optimizer_steps=step)
+                with self.subTest(step=step),self.assertRaisesRegex(ValueError,'cross-genesis'):
+                    cache.prepare_parent(foreign,'aa'*32)
+            with self.assertRaisesRegex(ValueError,'cross-genesis'):cache.prepare_parent(None,'aa'*32)
+        self.assertEqual(marker.read_bytes(),before);self.assertEqual((root/'pending.json').read_bytes(),pending)
+        for p,data in shards.items():self.assertEqual(p.read_bytes(),data)
+    def test_delayed_foreign_genesis_ACK_with_higher_counter_cannot_replace_current(self):
+        self.promoted();root=self.root/'.optimizer-state-cache';before=(root/'current.json').read_bytes()
+        old_shards={p:p.read_bytes()for p in (root/'candidate-original').glob('*.safetensors')}
+        self.job=dict(self.job,job_id='foreign-original')
+        initial=genesis(self.inventory,'33'*32)
+        self.optimizer=PersistentCPUAdamW(self.params,'33'*32,approved_genesis=initial,approved_genesis_sha256=sha(initial),resource_admission=self.admission)
+        for _ in range(3):
+            self.params[0][1].grad=torch.ones_like(self.params[0][1]);self.optimizer.step()
+        self.candidate();pending=(root/'pending.json').read_bytes()
+        with self.assertRaisesRegex(ValueError,'cross-genesis'):promote(self.ack,self.authority,self.root)
+        self.assertEqual((root/'current.json').read_bytes(),before);self.assertEqual((root/'pending.json').read_bytes(),pending)
+        for p,data in old_shards.items():self.assertEqual(p.read_bytes(),data)
+        self.assertTrue(list((root/'candidate-foreign-original').glob('*.safetensors')))
+    def test_same_genesis_forward_promotion_still_works(self):
+        self.promoted();self.job=dict(self.job,job_id='next-original')
+        self.params[0][1].grad=torch.ones_like(self.params[0][1]);self.optimizer.step()
+        descriptor=self.candidate();result=promote(self.ack,self.authority,self.root)
+        self.assertTrue(result['promoted']);self.assertEqual(descriptor['optimizer_steps'],2)
+        with StateCache(self.root,self.job,self.manifest,self.authority)as cache:
+            self.assertGreater(cache.prepare_parent(descriptor,'aa'*32),0)
+    def test_cache_genesis_must_come_from_ROOT_bound_report(self):
+        descriptor=self.promoted();path=self.out/'report.json';report=json.loads(path.read_bytes())
+        report['persistent_training_state']['descriptor']['genesis_sha256']='33'*32;path.write_bytes(canonical(report))
+        before=(self.root/'.optimizer-state-cache/current.json').read_bytes()
+        with StateCache(self.root,self.job,self.manifest,self.authority)as cache:
+            with self.assertRaisesRegex(ValueError,'authenticated original optimizer cache lineage'):
+                cache.prepare_parent(descriptor,'aa'*32)
+        self.assertEqual((self.root/'.optimizer-state-cache/current.json').read_bytes(),before)
 if __name__=='__main__':unittest.main()
