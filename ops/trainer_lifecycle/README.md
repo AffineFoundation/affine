@@ -30,3 +30,9 @@ saved “complete” status alone is insufficient.
 deferred action has actually terminated and the workspace is idle. Retry handles
 preserve the original result and payload. Unknown, failed or live actions never
 trigger a new retirement process.
+
+`authorized_lr_evidence.py` interprets the update’s hyperparameters from the
+original ROOT-signed job and learning-rate grant, after validating the exact
+output descriptor and diagnostics. It runs the unchanged attribution validator
+with a private per-call expected-hyperparameter namespace. Legacy jobs retain the
+original rate; global constants, reports and scientific execution stay unchanged.
