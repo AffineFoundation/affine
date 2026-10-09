@@ -7,11 +7,17 @@ Dashboard: https://affine.io/
 
 ## Current availability
 
-The completed-answer MATH learner is being restored after a legacy controller
-was accidentally started. Mining is available only when mining.json reports
-`accepting_submissions: true` and its authenticated opening has not expired.
-During recovery it may report `between_epochs` or `discovery_binding_error`.
-Wait for an open epoch; a document or service being online is not an open window.
+The restored completed-answer MATH learner published epoch 86 on October 9,
+2026 at 04:10:25 UTC. Public discovery, the signed pointer/manifest and the complete
+approved source archive were independently read back successfully. The opening
+includes 253 activated identities and the compact eight-rollout contract below.
+This establishes public miner access; submission, training and learning results
+are reported separately as they occur.
+
+Mining is available only when mining.json reports `accepting_submissions: true`
+and its authenticated opening has not expired. Between updates it may report
+`between_epochs`; a binding fault reports `discovery_binding_error`. Always read
+current discovery rather than treating epoch 86 or this guide as a live window.
 
 Epoch 85's legacy full-vocabulary opening is closed. Its submissions are archived.
 The earlier statement that it enforced v5 sampling was incorrect: its signed
