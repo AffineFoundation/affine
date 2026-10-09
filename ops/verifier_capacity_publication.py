@@ -1,5 +1,6 @@
 """Default-off durable delivery of genuine full-readback model size metadata."""
 import base64,fcntl,hashlib,json,logging,os,re,secrets,sqlite3,stat,subprocess,tempfile,time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from subnet.distributed_roles import authenticate
@@ -23,7 +24,7 @@ def publish_exclusive(path,value):
 
 def checked_policy(envelope,authority):
     v=authenticate(envelope,authority)
-    if set(v)!={'version','outbox','replicas'}or v['version']!=VERSION or not isinstance(v['replicas'],dict)or set(v['replicas']) not in ({'1','2','3','4','5','6','8'}, {'1','2','3','4','5','6','8','9'}):raise ValueError('exact admitted seven- or eight-replica size publication policy')
+    if set(v)!={'version','outbox','replicas'}or v['version']!=VERSION or not isinstance(v['replicas'],dict)or set(v['replicas']) not in ({'1','2','3','4','5','6','8'}, {'1','2','3','4','5','6','8','9'}, {'1','2','4','5','6','8','9'}):raise ValueError('exact admitted verifier replica size publication policy')
     if not Path(v['outbox']).is_absolute():raise ValueError('owned metadata outbox')
     return v
 
@@ -47,8 +48,9 @@ def enqueue(controller,policy,checkpoint,staged):
     else:publish_exclusive(path,grant)
     return grant
 
-def flush(controller,policy,*,replicate):
+def flush(controller,policy,*,replicate,preferred_checkpoint_ids=()):
     if policy is None:return []
+    if type(preferred_checkpoint_ids)not in(tuple,list)or any(type(cp)is not str or not re.fullmatch('[0-9a-f]{64}',cp)for cp in preferred_checkpoint_ids)or len(set(preferred_checkpoint_ids))!=len(preferred_checkpoint_ids):raise ValueError('exact preferred checkpoint identities')
     v=checked_policy(policy,controller.authority.id);root=Path(v['outbox']);root.mkdir(parents=True,exist_ok=True,mode=0o700)
     if root.resolve()!=root or root.is_symlink()or root.stat().st_uid!=os.getuid():raise ValueError('owned outbox')
     fd=os.open(root/'lease',os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW,0o600)
@@ -57,7 +59,7 @@ def flush(controller,policy,*,replicate):
         if not stat.S_ISREG(st.st_mode)or st.st_nlink!=1 or st.st_uid!=os.getuid():raise ValueError('owned observer lease')
         try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:return []
-        results=[];dispatched=0
+        results=[];pending=[]
         paths=sorted(root.glob('*.json'));cursor=root/'.observer-cursor'
         if cursor.is_symlink():raise ValueError('owned observer cursor')
         offset=json.loads(cursor.read_bytes())['next']if cursor.exists()else 0
@@ -72,7 +74,9 @@ def flush(controller,policy,*,replicate):
                 if os.path.exists(name):os.unlink(name)
             return results
         offset=offset%len(paths)if paths else 0
-        for path in paths[offset:]+paths[:offset]:
+        priority={cp:i for i,cp in enumerate(preferred_checkpoint_ids)}
+        ordered=sorted(paths[offset:]+paths[:offset],key=lambda path:priority.get(path.stem,len(priority)))
+        for path in ordered:
             if path.is_symlink():raise ValueError('owned inventory grant')
             grant=json.loads(path.read_bytes());row=authenticate(grant,controller.authority.id)
             if row.get('version')!=INVENTORY_VERSION or row.get('checkpoint_id')!=path.stem:raise ValueError('exact outbox grant')
@@ -84,13 +88,23 @@ def flush(controller,policy,*,replicate):
                 if destination.exists():
                     if json.loads(destination.read_bytes())!=expected:raise ValueError('immutable install receipt')
                     continue
-                if dispatched>=8:return finish()
-                dispatched+=1
-                try:
-                    result=replicate(grant,config)
-                    if result!=expected:raise ValueError('full immutable metadata install required')
-                    publish_exclusive(destination,result);results.append(dict(replica=replica,status='complete'))
-                except Exception as error:results.append(dict(replica=replica,status='deferred',error_type=type(error).__name__))
+                pending.append((replica,config,grant,expected,destination))
+                if len(pending)>=8:break
+            if len(pending)>=8:break
+        # One stalled route must not serialize other independent installations.
+        # Keep the original outbox lock and immutable per-replica receipts.
+        def deliver(item):
+            replica,config,grant,expected,destination=item
+            try:
+                result=replicate(grant,config)
+                if result!=expected:raise ValueError('full immutable metadata install required')
+                publish_exclusive(destination,result)
+                return dict(replica=replica,status='complete')
+            except Exception as error:
+                return dict(replica=replica,status='deferred',error_type=type(error).__name__)
+        if pending:
+            with ThreadPoolExecutor(max_workers=min(8,len(pending)))as pool:
+                results.extend(pool.map(deliver,pending))
         return finish()
     finally:os.close(fd)
 
@@ -191,7 +205,7 @@ def main(*,guard=None):
     while True:
         if guard is not None:guard()
         try:
-            policy=json.loads(Path(args.policy).read_bytes());backfill(controller,policy,publication_state=args.publication_state,controller_state=args.controller_state,queue_path=args.queue);result=flush(controller,policy,replicate=ssh_replicate)
+            policy=json.loads(Path(args.policy).read_bytes());grants=backfill(controller,policy,publication_state=args.publication_state,controller_state=args.controller_state,queue_path=args.queue);preferred=list(dict.fromkeys(authenticate(grant,args.authority)['checkpoint_id']for grant in grants));result=flush(controller,policy,replicate=ssh_replicate,preferred_checkpoint_ids=preferred)
             print(json.dumps(dict(metadata_only=True,installed=sum(x['status']=='complete'for x in result),deferred=sum(x['status']=='deferred'for x in result))),flush=True)
         except Exception as error:logging.warning('capacity metadata observer deferred (%s)',type(error).__name__)
         if args.once:return

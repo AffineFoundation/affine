@@ -120,3 +120,52 @@ class CapacityPublication(unittest.TestCase):
    db.execute('insert into jobs values(?,?,?,?)',('verify','queued',expiry,canonical(self.fx.sign(job)).decode()))
   db.commit();db.close();original=queue.read_bytes();rows=list(current_published_models(publication_state=publications,controller_state=state,authority=self.fx.authority,queue_path=queue,now=10))
   self.assertEqual([cp['id']for cp,_ in rows],[self.cp['id'],old['id']]);self.assertEqual(queue.read_bytes(),original)
+
+ def test_current_pending_checkpoint_precedes_large_offline_history(self):
+  old_ids=[format(i,'064x')for i in range(20)];current='f'*64
+  for cp in old_ids+[current]:enqueue(self.c,self.policy,dict(self.cp,id=cp),dict(self.staged,checkpoint=cp))
+  seen=[]
+  def network(grant,config):
+   cp=grant['payload']['checkpoint_id'];seen.append(cp)
+   if cp!=current:raise TimeoutError('old offline route')
+   return self.replicate(grant,config)
+  result=flush(self.c,self.policy,replicate=network,preferred_checkpoint_ids=[current])
+  self.assertEqual(seen.count(current),7);self.assertEqual(len(seen),8)
+  self.assertEqual(sum(r['status']=='complete'for r in result),7)
+  self.assertEqual(len(list((Path(self.v['outbox'])/current).glob('*.json'))),7)
+
+ def test_independent_routes_make_progress_while_one_route_is_blocked(self):
+  import threading
+  policy=copy.deepcopy(self.v)
+  for replica,config in policy['replicas'].items():config['replica']=replica
+  signed=self.fx.sign(policy);enqueue(self.c,signed,self.cp,self.staged)
+  started=threading.Event();other=threading.Event()
+  def network(grant,config):
+   if config['replica']=='1':
+    started.set()
+    if not other.wait(2):raise TimeoutError('serialized replication')
+   else:
+    if not started.wait(2):raise TimeoutError('blocked route never began')
+    other.set()
+   return self.replicate(grant,config)
+  result=flush(self.c,signed,replicate=network)
+  self.assertEqual(sum(r['status']=='complete'for r in result),7)
+
+ def test_retired_route_removed_only_by_exact_authenticated_current_fleet(self):
+  from ops.verifier_capacity_publication import checked_policy
+  old_grant=enqueue(self.c,self.policy,self.cp,self.staged);flush(self.c,self.policy,replicate=self.replicate)
+  retired_receipt=Path(self.v['outbox'])/self.cp['id']/'3.json';original=retired_receipt.read_bytes()
+  value=copy.deepcopy(self.v);del value['replicas']['3'];value['replicas']['9']={};new=self.fx.sign(value)
+  self.assertEqual(set(checked_policy(new,self.fx.authority)['replicas']),{'1','2','4','5','6','8','9'})
+  self.assertEqual(enqueue(self.c,new,self.cp,self.staged),old_grant)
+  self.assertEqual(flush(self.c,new,replicate=self.replicate),[dict(replica='9',status='complete')])
+  self.assertEqual(retired_receipt.read_bytes(),original)
+  invalid=copy.deepcopy(value);del invalid['replicas']['2']
+  with self.assertRaises(ValueError):checked_policy(self.fx.sign(invalid),self.fx.authority)
+
+ def test_priority_and_existing_receipt_mutations_fail_closed(self):
+  enqueue(self.c,self.policy,self.cp,self.staged);flush(self.c,self.policy,replicate=self.replicate)
+  for priorities in [['a'*64,'a'*64],['A'*64],['../bad'],{'a'*64}]:
+   with self.assertRaises(ValueError):flush(self.c,self.policy,replicate=self.replicate,preferred_checkpoint_ids=priorities)
+  receipt=Path(self.v['outbox'])/self.cp['id']/'1.json';record=json.loads(receipt.read_bytes());record['grant_sha256']='0'*64;receipt.write_bytes(canonical(record))
+  with self.assertRaisesRegex(ValueError,'immutable install receipt'):flush(self.c,self.policy,replicate=self.replicate)
