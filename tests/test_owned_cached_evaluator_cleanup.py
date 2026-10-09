@@ -59,5 +59,6 @@ class OwnedTerminalDisposalControls(unittest.TestCase):
   state=self.root/'local-state';(state/'checkpoint-evaluations').mkdir(parents=True);(state/'roles').mkdir();label='newlabel';(state/'checkpoint-evaluations'/'request.json').write_text(json.dumps(dict(status='complete',request={'label':label})));(state/'roles'/(self.job['job_id']+'-job.json')).write_bytes(canonical(self.f.sign(self.job)));(state/'roles'/(self.job['job_id']+'-report.json')).write_bytes(canonical(self.report))
   remote=SimpleNamespace(workspace=str(self.root),code='source',python='python',config={'checkpoint_caches':{}},checked=Mock(return_value=self.report),command=Mock());jobs=SimpleNamespace(instance=Mock(return_value=remote),original=Mock(return_value=({'job_sha256':self.report['job_sha256']},self.job,self.f.m)));controller=SimpleNamespace(state=state,authority=SimpleNamespace(id=self.f.authority),signed=self.f.sign,bucket=SimpleNamespace(get=Mock(return_value=b'corrupt'),put=Mock()))
   with self.assertRaisesRegex(ValueError,'ACK readback'):retire_completed(controller,jobs,{'source_sha256':'qualified'})
+  jobs.instance.assert_called_once_with('qualified',original=self.job)
   remote.command.assert_not_called();self.assertTrue(self.directory.exists())
 if __name__=='__main__':unittest.main()

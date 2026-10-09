@@ -26,6 +26,12 @@ CONFIG_FIELDS=('heldout','environment','environments','evaluation_experiment_id'
 
 SOURCE_ROUTES_VERSION='independent-evaluator-source-routes-v1'
 
+class EvaluationCapacityDeferred(OSError):
+    """No job was issued; bounded storage admission can be retried indefinitely."""
+    def __init__(self,free,minimum):
+        super().__init__('independent evaluator disk admission deferred')
+        self.free=free;self.minimum=minimum
+
 def detached_historical_run(module):
     """Replace only the reviewed historical SSH launch, preserving its ABI."""
     source=textwrap.dedent(inspect.getsource(module.RemoteJobs.run))
@@ -82,6 +88,16 @@ class QualifiedEvaluationJobs:
                     or type(row['new_dispatch_approved'])is not bool):
                 raise ValueError('independent evaluator exact source route')
             endpoint=row['endpoint'];root=Path(row['local_source_path'])
+            historical=endpoint.get('original_job_workspaces',{})
+            if not isinstance(historical,dict):raise ValueError('signed original evaluator workspaces')
+            for job_id,binding in historical.items():
+                if (not isinstance(job_id,str) or not job_id or Path(job_id).name!=job_id
+                        or not isinstance(binding,dict) or set(binding)!={'workspace','job_sha256'}
+                        or not isinstance(binding['workspace'],str) or not Path(binding['workspace']).is_absolute()
+                        or '..'in Path(binding['workspace']).parts
+                        or not isinstance(binding['job_sha256'],str) or len(binding['job_sha256'])!=64
+                        or any(c not in '0123456789abcdef'for c in binding['job_sha256'])):
+                    raise ValueError('exact original evaluator workspace binding')
             if not root.is_absolute() or root.is_symlink() or not root.is_dir() or (root/'subnet').is_symlink():
                 raise ValueError('qualified local evaluator source tree')
             files=row['source_files']
@@ -99,14 +115,23 @@ class QualifiedEvaluationJobs:
             elif host!=physical:raise ValueError('source routes must preserve one physical evaluator and workspace')
             endpoint['retain_original_jobs']=True
         self.state=controller.state/'roles'
-    def instance(self,sha):
+    def instance(self,sha,*,original=None):
         if sha not in self.rows:raise ValueError('unapproved original evaluation source')
-        if sha not in self.instances:
-            row=self.rows[sha];remote=self.factory(row,self.controller)
+        row=self.rows[sha];workspace=row['endpoint']['workspace']
+        if original is not None:
+            binding=row['endpoint'].get('original_job_workspaces',{}).get(original['job_id'])
+            if binding is not None:
+                if original.get('role')!='evaluate' or hashlib.sha256(canonical(original)).hexdigest()!=binding['job_sha256']:
+                    raise ValueError('original evaluator workspace job digest')
+                workspace=binding['workspace']
+        key=(sha,workspace)
+        if key not in self.instances:
+            row=copy.deepcopy(row);row['endpoint']['workspace']=workspace
+            remote=self.factory(row,self.controller)
             if remote.metadata!={'source_files':row['source_files'],'runtime_versions':row['runtime_versions']}:
                 raise ValueError('qualified evaluator actual metadata mismatch')
-            self.instances[sha]=remote
-        return self.instances[sha]
+            self.instances[key]=remote
+        return self.instances[key]
     def original(self,path):
         from .backend_jobs import signed
         prior=json.loads(path.read_bytes())
@@ -123,10 +148,12 @@ class QualifiedEvaluationJobs:
             try:prior=json.loads(path.read_bytes())
             except ValueError:continue
             if prior.get('role')!='evaluate' or 'job_id'not in prior or 'job_sha256'not in prior:continue
-            self.original(path)
+            _,job,manifest=self.original(path)
             if prior['job_id']in seen:continue
             seen.add(prior['job_id'])
-            phase=probe.remote_status(prior['job_id'],timeout=30,physical=True)['phase']
+            sha=manifest.get('source_bundle',{}).get('sha256')
+            original_probe=self.instance(sha,original=job)if sha in self.rows else probe
+            phase=original_probe.remote_status(prior['job_id'],timeout=30,physical=True)['phase']
             if phase=='running':return True
             if phase not in ('complete','failed','not_launched'):raise ValueError('unknown original evaluator physical liveness')
         return False
@@ -143,7 +170,7 @@ class QualifiedEvaluationJobs:
         if role!='evaluate':raise ValueError('source router only dispatches evaluation')
         sha=manifest.get('source_bundle',{}).get('sha256')
         if sha not in self.rows:raise ValueError('unapproved original evaluation source')
-        row=self.rows[sha];record=self.state/(label+'.json')
+        row=self.rows[sha];record=self.state/(label+'.json');job=None
         if record.exists():
             _,job,original=self.original(record)
             if original!=manifest or job['source_files']!=row['source_files'] or job['runtime_versions']!=row['runtime_versions']:
@@ -154,7 +181,7 @@ class QualifiedEvaluationJobs:
             raise ValueError('evaluation source not approved for new GPU dispatch')
         elif self.busy():
             raise RemoteObservationTimeout(label,role)
-        remote=self.instance(sha)
+        remote=self.instance(sha,original=job)
         if not record.exists() and 'evaluation_min_free_disk_bytes'in row['endpoint']:
             import shlex
             minimum=row['endpoint']['evaluation_min_free_disk_bytes']
@@ -162,7 +189,7 @@ class QualifiedEvaluationJobs:
             script='import json,shutil;print(json.dumps({"free":shutil.disk_usage('+repr(row['endpoint']['workspace'])+').free}))'
             capacity=json.loads(remote.command(shlex.quote(remote.python)+' -I -B -c '+shlex.quote(script),timeout=30))
             if type(capacity.get('free'))is not int or capacity['free']<minimum:
-                raise OSError('independent evaluator disk admission deferred')
+                raise EvaluationCapacityDeferred(capacity.get('free'),minimum)
         cache=row['endpoint'].get('checkpoint_caches',{}).get(manifest['checkpoint']['id'])
         # Queue cache hints may name a trainer filesystem; only this evaluator's
         # explicitly approved map can cross the physical-role boundary. With
@@ -329,10 +356,12 @@ def pending_pass(controller,now=None,*,dispatch_order=None):
             try:busy=controller.jobs.busy()
             except Exception:busy=None
             attempts=(json.loads(fault.read_text()).get('attempts',0) if fault.exists() else 0)+1
+            capacity=isinstance(error,EvaluationCapacityDeferred)
             terminal=isinstance(error,(ValueError,KeyError,TypeError,AttributeError)) or getattr(error,'terminal_job',False)
-            status='failed' if terminal and busy is False else ('unresolved' if attempts>=8 and busy is False else 'retry_original_request')
+            status='retry_original_request'if capacity else ('failed' if terminal and busy is False else ('unresolved' if attempts>=8 and busy is False else 'retry_original_request'))
             evidence=dict(status=status,error_type=type(error).__name__,attempts=attempts,
                           original_request=path.name,gpu_busy=busy,time=now,retry_after=now+min(300,10*2**min(attempts,5)))
+            if capacity:evidence.update(reason='disk-capacity',remote_job_started=False,free_bytes=error.free,required_free_bytes=error.minimum)
             save(fault,evidence)
             if busy is not False:return evidence
             if status=='retry_original_request':

@@ -177,6 +177,23 @@ class IndependentEvaluator(unittest.TestCase):
         self.controller.jobs.run.side_effect=RemoteJobTerminalError('original failed but liveness unknown')
         result=pending_pass(self.controller)
         self.assertEqual(result['status'],'retry_original_request');self.assertEqual(self.controller.jobs.run.call_count,1)
+    def test_capacity_deferral_never_exhausts_original_unissued_request(self):
+        from subnet.checkpoint_evaluator import EvaluationCapacityDeferred
+        path=self.queued();original=json.loads(path.read_text())['request']
+        self.controller.jobs.busy=Mock(return_value=False)
+        self.controller.jobs.run.side_effect=EvaluationCapacityDeferred(10,20)
+        for attempt in range(12):pending_pass(self.controller,now=10**12+attempt*1000)
+        result=json.loads(path.read_text());fault=json.loads((self.state/'checkpoint-evaluation-faults'/path.name).read_text())
+        self.assertEqual(result['status'],'queued');self.assertEqual(result['request'],original)
+        self.assertEqual(fault['status'],'retry_original_request');self.assertEqual(fault['attempts'],12)
+        self.assertFalse(fault['remote_job_started']);self.assertEqual(fault['required_free_bytes'],20)
+        self.controller.jobs.run.side_effect=None
+        self.assertEqual(pending_pass(self.controller,now=10**12+13000)['status'],'complete')
+    def test_noncapacity_oserror_still_becomes_unresolved(self):
+        path=self.queued();self.controller.jobs.busy=Mock(return_value=False);self.controller.jobs.run.side_effect=OSError('unexpected')
+        for attempt in range(8):pending_pass(self.controller,now=10**12+attempt*1000)
+        fault=json.loads((self.state/'checkpoint-evaluation-faults'/path.name).read_text())
+        self.assertEqual(fault['status'],'unresolved');self.assertNotIn('remote_job_started',fault)
     def test_tampered_queue_or_wrong_cohort_fails_before_dispatch(self):
         path=self.queued();record=json.loads(path.read_text());record['request']['heldout_plan'][0]['seeds'][0]+=1
         path.write_text(json.dumps(record))

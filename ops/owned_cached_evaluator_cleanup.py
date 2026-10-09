@@ -36,11 +36,12 @@ def retire_completed(controller,jobs,config):
     from subnet.remote_backend import save
     from botocore.exceptions import ClientError
     import inspect,shlex
-    remote=jobs.instance(config['source_sha256']);state=controller.state
+    state=controller.state
     for path in (state/'checkpoint-evaluations').glob('*.json'):
         record=json.loads(path.read_bytes())
         if record.get('status')!='complete':continue
         label=record['request']['label'];prior,job,manifest=jobs.original(state/'roles'/(label+'.json'))
+        remote=jobs.instance(config['source_sha256'],original=job)
         report=remote.checked(json.loads((state/'roles'/(job['job_id']+'-report.json')).read_bytes()),prior,manifest)
         if job.get('checkpoint_cache')is not None or remote.config.get('checkpoint_caches',{}).get(manifest['checkpoint']['id']):raise ValueError('external mapped caches cannot be retired')
         payload=dict(version=VERSION,workspace=remote.workspace,original_job=json.loads((state/'roles'/(job['job_id']+'-job.json')).read_bytes()),original_report=report,job_sha256=prior['job_sha256'],report_sha256=hashlib.sha256(canonical(report)).hexdigest(),checkpoint=manifest['checkpoint'],durable_report_full_readback=True)

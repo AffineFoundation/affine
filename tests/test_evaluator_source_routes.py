@@ -50,6 +50,39 @@ class SourceRouting(unittest.TestCase):
         with self.assertRaisesRegex(OSError,'disk admission'):r.run('original','evaluate',self.manifest(sha))
         remote.run.assert_not_called();self.existing(sha);r.run('original','evaluate',self.manifest(sha),heldout=[{'seeds':[100]}]);remote.run.assert_called_once()
         self.assertEqual(remote.command.call_count,1)
+    def test_signed_workspace_move_keeps_original_jobs_on_their_original_workspace(self):
+        sha='b'*64;m=self.existing(sha)
+        original=json.loads((self.state/'roles/original-job-job.json').read_text())['payload']
+        self.rows[sha]['endpoint']['original_job_workspaces']={'original-job':dict(workspace='/old/evaluator',job_sha256=hashlib.sha256(canonical(original)).hexdigest())}
+        routed=[]
+        def factory(row,controller):
+            routed.append(row['endpoint']['workspace']);return self.factory(row,controller)
+        r=QualifiedEvaluationJobs(self.controller,self.document(),factory)
+        r.run('original','evaluate',m,heldout=[{'seeds':[100]}])
+        self.assertIn('/old/evaluator',routed)
+        self.assertTrue(r.instance(sha,original=original)is r.instance(sha,original=original))
+        r.run('future','evaluate',m)
+        self.assertIn('/original/evaluator',routed)
+        self.assertEqual(r.rows[sha]['endpoint']['workspace'],'/original/evaluator')
+    def test_original_workspace_binding_rejects_changed_original_bytes(self):
+        sha='b'*64;m=self.existing(sha)
+        self.rows[sha]['endpoint']['original_job_workspaces']={'original-job':dict(workspace='/old/evaluator',job_sha256='0'*64)}
+        with self.assertRaisesRegex(ValueError,'workspace job digest'):
+            self.router().run('original','evaluate',m,heldout=[{'seeds':[100]}])
+        self.remotes[sha].run.assert_not_called()
+    def test_workspace_move_liveness_probes_old_original_namespace(self):
+        sha='a'*64;self.existing(sha);job=json.loads((self.state/'roles/original-job-job.json').read_text())['payload']
+        self.rows[sha]['endpoint']['original_job_workspaces']={'original-job':dict(workspace='/old/evaluator',job_sha256=hashlib.sha256(canonical(job)).hexdigest())}
+        def factory(row,controller):
+            remote=copy.copy(self.remotes[sha]);remote.remote_status=Mock(return_value={'phase':'running'if row['endpoint']['workspace']=='/old/evaluator'else'complete'});return remote
+        r=QualifiedEvaluationJobs(self.controller,self.document(),factory)
+        self.assertTrue(r.busy())
+        with self.assertRaises(RemoteObservationTimeout):r.run('new','evaluate',self.manifest(sha))
+    def test_workspace_map_rejects_unbounded_or_incomplete_bindings(self):
+        for value in [{'original-job':{'workspace':'../other','job_sha256':'a'*64}}, {'original-job':{'workspace':'/old'}},[]]:
+            with self.subTest(value=value):
+                self.rows['b'*64]['endpoint']['original_job_workspaces']=value
+                with self.assertRaisesRegex(ValueError,'workspace'):self.router()
     def test_trainer_cache_hint_never_crosses_physical_evaluator_boundary(self):
         sha='b'*64;r=self.router();r.run('new','evaluate',self.manifest(sha),'/trainer/private/checkpoint')
         self.assertIsNone(self.remotes[sha].run.call_args.args[3])
