@@ -6,11 +6,34 @@ import fcntl
 import hashlib
 import json
 import math
+import os
+import stat
+from contextlib import contextmanager
 import subprocess
 import time
 from pathlib import Path
 
 OWNER = '5HmYnmUYT6qe3yFMg1Ad8WLLqDvnwtjYakXBpDvoRW1Qqzb8'
+
+
+@contextmanager
+def weights_lock(path):
+    """Keep the original inode; safely upgrade an owned legacy0664 lock."""
+    path = Path(path)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            raise ValueError('weight lock must be an owned regular file')
+        os.fchmod(fd, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        current = os.stat(path, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino):
+            raise ValueError('weight lock inode changed')
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
 
 def activation_message(hotkey: str, netuid: int = 120) -> bytes:
@@ -111,7 +134,7 @@ class ChainAdapter:
 
     def submit_hour(self, points: dict[str, int], registrations: dict[str, dict],
                     window_end: int, execute: bool = False, *, zero_total_policy: str | None = None,
-                    registration_change_policy: str | None = None) -> dict:
+                    registration_change_policy: str | None = None, submission_journal=None) -> dict:
         if zero_total_policy not in (None, 'no-owner-retain-v1'):
             raise ValueError('explicit zero-total assessment policy')
         if registration_change_policy not in (None, 'current-hotkey-snapshot-v1'):
@@ -122,8 +145,7 @@ class ChainAdapter:
             raise ValueError('invalid point count')
         if points.get(OWNER, 0) or points.get(self.owner, 0):
             raise ValueError('owner is never a reward recipient')
-        with (self.state_dir / 'weights.lock').open('a') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with weights_lock(self.state_dir / 'weights.lock'):
             status_path = self.state_dir / 'weights.json'
             previous = json.loads(status_path.read_text()) if status_path.exists() else {}
             if previous.get('last_submitted_window', -1) >= window_end:
@@ -204,7 +226,11 @@ class ChainAdapter:
                 if remaining:
                     status['status'] = 'deferred_rate_limit'
                 else:
-                    intent = self.bt.SetWeights(netuid=self.netuid, uids=status['uids'], weights=weights,
+                    intent_factory = self.bt.SetWeights
+                    if submission_journal is not None:
+                        from subnet.weight_submission_transaction import make_recorded_intent
+                        intent_factory = lambda **kwargs: make_recorded_intent(self.bt, **kwargs)
+                    intent = intent_factory(netuid=self.netuid, uids=status['uids'], weights=weights,
                         version_key=int(self.query('WeightsVersionKey', [self.netuid], block) or 0))
                     plan = self.chain.plan(intent, wallet)
                     if not plan.ok:
@@ -221,13 +247,34 @@ class ChainAdapter:
                                                      capture_output=True, text=True)
                                 if old.stdout.strip() in ('active', 'activating', 'reloading'):
                                     raise RuntimeError('another payout writer is still enabled')
-                        result = self.chain.execute(intent, wallet, wait_for_inclusion=True,
-                                                    wait_for_finalization=True, retries=0)
+                        if submission_journal is None:
+                            result = self.chain.execute(intent, wallet, wait_for_inclusion=True,
+                                                        wait_for_finalization=True, retries=0)
+                        else:
+                            from subnet.weight_submission_transaction import prepare_exact_plan, submit_prepared
+                            # Every RPC/read/guard/prepare/sign failure above this
+                            # boundary is provably pre-broadcast. No cursor fence.
+                            if intent.journal_owner_uid != int(uid):
+                                raise RuntimeError('owner UID changed during actual plan')
+                            if int(time.time()) // 3600 * 3600 != window_end:
+                                raise RuntimeError('hour advanced before broadcast; recompute current assessment')
+                            start_block = int(self.chain.block)
+                            signed_tx, nonce = prepare_exact_plan(self.chain, plan, intent, wallet)
+                            if int(time.time()) // 3600 * 3600 != window_end:
+                                raise RuntimeError('hour advanced during preparation; recompute current assessment')
+                            submission_journal.begin(owner=self.owner, owner_uid=int(uid), netuid=self.netuid,
+                                window_end=window_end, vector=intent.journal_vector, registrations=fresh,
+                                attempt_start_block=start_block, signed=signed_tx, nonce=nonce, era=intent.journal_era)
+                            result = submit_prepared(self.chain, signed_tx, wallet)
                         result.raise_for_failure()
                         status.update(status='submitted', block_hash=str(result.block_hash))
                         previous['last_submitted_window'] = window_end
             previous['latest'] = status
-            temporary = status_path.with_suffix('.tmp')
-            temporary.write_text(json.dumps(previous, indent=2)+'\n')
-            temporary.replace(status_path)
+            if submission_journal is not None:
+                from subnet.weight_submission_transaction import durable_atomic
+                durable_atomic(status_path, previous)
+            else:
+                temporary = status_path.with_suffix('.tmp')
+                temporary.write_text(json.dumps(previous, indent=2)+'\n')
+                temporary.replace(status_path)
             return status

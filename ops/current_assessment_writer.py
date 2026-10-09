@@ -8,7 +8,8 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from nacl.signing import SigningKey
-from subnet.chain import ChainAdapter, OWNER
+from subnet.chain import ChainAdapter, OWNER, weights_lock
+from subnet.weight_submission_transaction import SubmissionJournal, sdk_seam_paths
 from subnet.current_assessment import calculate, fallback, recipients, HALF_LIFE_HOURS, HISTORY_HOURS, VERSION as ASSESSMENT_VERSION, number
 from subnet.live_reward_bridge import signed, sha, writer_gate
 from ops.live_reward_writer import (authenticate_cutover, global_lock, guard_files,
@@ -18,7 +19,7 @@ from ops.live_reward_exporter import atomic, sign
 VERSION = 'hourly-current-assessment-writer-v1'
 NUMERICAL_RESOLUTION_VERSION = 'hourly-current-assessment-writer-reviewed-numerical-v2'
 NEVER_BURN_VERSION = 'hourly-current-assessment-writer-never-burn-v3'
-EVIDENCE_TIMEOUT_SECONDS = 180
+EVIDENCE_TIMEOUT_SECONDS = 360
 ASSESSMENT_DIRECTORY = 'current-assessment-never-burn-v1'
 
 
@@ -35,7 +36,8 @@ def validate_policy(document, authority, cutover_document, anchor_document):
     import importlib.util
     from subnet.continuous_audit_policy import valid_digest
     if not valid_digest(p['numerical_resolution_policy_sha256']): raise ValueError('explicit ROOT numerical resolution digest')
-    required = {str(Path(__file__).resolve())} | {str(Path(importlib.util.find_spec(name).origin).resolve()) for name in ('subnet.numerical_resolution', 'subnet.continuous_audit_policy', 'ops.current_assessment_evidence', 'subnet.current_assessment', 'subnet.chain', 'ops.live_reward_writer')}
+    required = {str(Path(__file__).resolve())} | {str(Path(importlib.util.find_spec(name).origin).resolve()) for name in ('subnet.numerical_resolution', 'subnet.continuous_audit_policy', 'ops.current_assessment_evidence', 'subnet.current_assessment', 'subnet.chain', 'ops.live_reward_writer', 'subnet.weight_submission_transaction', 'subnet.weight_submission_reconciliation')}
+    required |= sdk_seam_paths()
     if not required <= {str(Path(path).resolve()) for path in p['module_hashes']}:
         raise ValueError('present ROOT pins for never-burn execution modules')
     if not isinstance(p['fallback_assessments'], list): raise ValueError('explicit fallback assessment pins')
@@ -181,7 +183,27 @@ def run_once(policy_document, cutover_document, anchor_document, authority, *, e
         cursor_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         cursor = read(cursor_path) if cursor_path.exists() else {}
         if cursor.get('status') == 'submitting':
-            raise RuntimeError('uncertain chain outcome requires actual-chain reconciliation')
+            if not execute or not cursor.get('attempt_directory'):
+                raise RuntimeError('uncertain chain outcome requires actual-chain reconciliation')
+            adapter = adapter_factory(c['chain_state'], netuid=120, expected_owner=OWNER)
+            try:
+                # Same order as submission: global writer lock, then weights.lock.
+                with weights_lock(Path(c['chain_state']) / 'weights.lock'):
+                    recovery = SubmissionJournal(cursor_path, c['chain_state']).recover(adapter.chain)
+                if recovery.get('preserve_fence', True):
+                    return dict(status='reconciliation_pending', window_end=cutoff,
+                                reason=recovery.get('reason'), retained_onchain_weights=True,
+                                chain_executed=False)
+            finally:
+                chain = getattr(adapter, 'chain', None)
+                if chain is not None and hasattr(chain, 'close'): chain.close()
+            cutoff = int(time.time()) // 3600 * 3600
+            # Only the observed committed hour is advanced. Skip old windows;
+            # if the current hour is still due, compute its own latest assessment.
+            chain_status = read(Path(c['chain_state'])/'weights.json') if (Path(c['chain_state'])/'weights.json').exists() else {}
+            if chain_status.get('last_submitted_window', -1) >= cutoff:
+                return dict(status='already_submitted', window_end=cutoff, chain_executed=False,
+                            recovered=True)
         target = directory/('assessment-'+str(cutoff)+'.json')
         if target.exists():
             document = read(target); assessment = signed(document, authority)
@@ -249,10 +271,12 @@ def run_once(policy_document, cutover_document, anchor_document, authority, *, e
             if execute:
                 writer_gate(receipt, authority, now=now, boot_id=identity['boot_id'],
                             writer_pid=identity['writer_pid'], writer_ticks=identity['writer_start_ticks'])
-                atomic(cursor_path, dict(status='submitting', window_end=cutoff, assessment_sha256=sha(document)))
+            journal = SubmissionJournal(cursor_path, c['chain_state'],
+                assessment_sha256=sha(document), policy_sha256=sha(policy_document)) if execute else None
             result = adapter.submit_hour(points, selected, cutoff, execute=execute,
                                          zero_total_policy=p['zero_total_policy'],
-                                         registration_change_policy=p['registration_change_policy'])
+                                         registration_change_policy=p['registration_change_policy'],
+                                         submission_journal=journal)
             # Rate-limited/planned responses are safe to retry the SAME assessment.
             atomic(directory/'last-run.json', dict(at=now, result=result, assessment_sha256=sha(document),
                    positive_identities=len(points), excluded_unregistered=excluded,

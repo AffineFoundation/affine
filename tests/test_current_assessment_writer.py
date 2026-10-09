@@ -16,9 +16,9 @@ class WriterControls(unittest.TestCase):
         self.c = dict(global_lock_path=str(self.path/'lock'), reward_state=str(self.path),
                       chain_state=str(self.path), authority_seed_file=str(seed))
         self.cutover = sign({'original':True},self.key); self.anchor=sign({'original':True},self.key)
-        modules = ('ops.current_assessment_writer','subnet.numerical_resolution','subnet.continuous_audit_policy','ops.current_assessment_evidence','subnet.current_assessment','subnet.chain','ops.live_reward_writer')
+        modules = ('ops.current_assessment_writer','subnet.numerical_resolution','subnet.continuous_audit_policy','ops.current_assessment_evidence','subnet.current_assessment','subnet.chain','ops.live_reward_writer','subnet.weight_submission_transaction','subnet.weight_submission_reconciliation')
         pins = {str(Path(importlib.util.find_spec(m).origin).resolve()): None for m in modules}
-        pins = {p:w.file_hash(p) for p in pins}
+        pins = {p:w.file_hash(p) for p in set(pins) | w.sdk_seam_paths()}
         self.policy = sign(dict(version=w.NEVER_BURN_VERSION, half_life_hours=6, first_window=3600,
             netuid=120, owner_hotkey=w.OWNER,audit_config='/not-a-training-state',
             source_admission_sha256='a'*64, verifiers=['v'],module_hashes=pins,numerical_resolution_policy_sha256='b'*64,fallback_assessments=[],
@@ -81,5 +81,41 @@ class WriterControls(unittest.TestCase):
         body=dict(self.policy['payload'],half_life_hours=6,execute_enabled=False)
         self.policy=sign(body,self.key)
         with self.assertRaises(ValueError):self.invoke(execute=True)
+
+
+
+
+class WriterRecoveryIntegration(unittest.TestCase):
+    setUp = WriterControls.setUp
+    invoke = WriterControls.invoke
+    def test_preflight_exception_no_longer_sets_submitting(self):
+        self.adapter.submit_hour=lambda *a,**k:(_ for _ in ()).throw(TimeoutError('preflight'))
+        with self.assertRaises(TimeoutError):self.invoke(execute=True)
+        self.assertFalse((self.path/'current-assessment-v1'/'submission.json').exists())
+    def _pending(self,window):
+        d=self.path/'current-assessment-v1';d.mkdir()
+        (d/'submission.json').write_text(json.dumps(dict(status='submitting',window_end=window,attempt_directory='/fixture')))
+        self.adapter.chain=type('Chain',(),{'close':lambda _:None})()
+    def test_pending_recovery_never_calls_submit(self):
+        self._pending(3600)
+        with patch.object(w.SubmissionJournal,'recover',return_value=dict(preserve_fence=True,reason='incomplete_read')):
+            result=self.invoke(execute=True)
+        self.assertEqual(result['status'],'reconciliation_pending');self.assertEqual(self.calls,[])
+    def test_resolved_old_window_only_submits_current_hour(self):
+        self._pending(3600)
+        def resolved(*args,**kw):
+            (self.path/'weights.json').write_text(json.dumps({'last_submitted_window':3600}))
+            return dict(preserve_fence=False,status='submitted_finalized')
+        with patch.object(w.SubmissionJournal,'recover',side_effect=resolved):
+            self.invoke(execute=True)
+        self.assertEqual([call[2] for call in self.calls],[7200])
+    def test_resolved_current_hour_returns_without_submit(self):
+        self._pending(7200)
+        def resolved(*args,**kw):
+            (self.path/'weights.json').write_text(json.dumps({'last_submitted_window':7200}))
+            return dict(preserve_fence=False,status='submitted_finalized')
+        with patch.object(w.SubmissionJournal,'recover',side_effect=resolved):
+            result=self.invoke(execute=True)
+        self.assertEqual(result['status'],'already_submitted');self.assertTrue(result['recovered']);self.assertEqual(self.calls,[])
 
 if __name__=='__main__':unittest.main()

@@ -185,7 +185,11 @@ The validator submits the best available authenticated assessment each hour,
 independently of training. Signed current-hour assessments can be reused without
 recomputing the same audit history. A failed or empty evidence refresh falls back
 to valid prior contributions, preserving confirmed penalties. No owner burn or
-fabricated recipients are allowed. See docs/HOURLY_CURRENT_ASSESSMENT.md on GitHub.
+fabricated recipients are allowed. The writer records each transaction before
+sending and reconciles lost responses against finalized chain evidence. Failed
+or proven-expired attempts can be retried using the current hour's assessment;
+uncertain transactions are never blindly replayed. See
+docs/HOURLY_CURRENT_ASSESSMENT.md on GitHub.
 
 A completed optimizer update is not proof of learning. Independent held-out
 scores track model performance; assess matched checkpoints on the same cohort.

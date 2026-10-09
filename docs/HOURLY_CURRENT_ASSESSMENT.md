@@ -79,9 +79,26 @@ unresolved invalid evidence still triggers penalties. The current never-burn
 writer is active; successful submissions and their commit/reveal status are
 recorded in its assessment and chain receipts.
 
-The evidence refresh has a 180-second budget, reserving time for transaction
+The evidence refresh has a 360-second budget, reserving time for transaction
 finality. An optional ROOT-authenticated current-hour assessment cache can avoid
 recomputing the same history; absence or rejection of that cache does not block
 the writer. The cache must match its approved producer, evidence policies,
-cutoff, and EMA semantics. Original transaction uncertainty remains fenced until
-actual-chain evidence resolves it; old hourly windows are never blindly replayed.
+cutoff, and EMA semantics. Each transaction is prepared once. Its final normalized miner weights, signed
+transaction hash, nonce and mortal validity interval are durably recorded before
+broadcast. Planning or signing failures do not create a submission fence.
+
+When a response is lost, the writer checks canonical finalized chain evidence.
+An exact successful commitment advances only its original hourly cursor, even
+if reveal is pending. An exact failed transaction clears the attempt without
+marking the hour submitted. A transaction that never landed can be retired only
+after all 64 finalized blocks in its signed validity interval have been checked,
+with the matching era anchor and the exact transaction hash absent. Partial or
+unavailable evidence keeps the attempt fenced. Recovery never rebroadcasts an old
+transaction; it proceeds to the current hour's assessment when the outcome is
+resolved. A clock rollover before transmission likewise defers to a new current
+assessment. Legacy uncertain records without a signed transaction identity need
+independent chain reconciliation.
+
+The original writer and weight-state locks are preserved across upgrades. The
+latest authenticated assessment is explicitly carried into the new signed policy,
+so a software deployment cannot silently discard the fallback scores.
