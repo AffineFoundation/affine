@@ -70,7 +70,7 @@ class MinerProgress:
             pass
 
 class Miner:
-    def __init__(self, identity, manifest, checkpoint, capability=None, state_path=None, progress_path=None):
+    def __init__(self, identity, manifest, checkpoint, capability=None, state_path=None, progress_path=None, search_state_path=None, retire_previous_search=False):
         from .batches import compression_for_manifest
         compression_for_manifest(manifest)
         check_runtime_profile(manifest)
@@ -108,6 +108,16 @@ class Miner:
             from .sampling_uniqueness import validate_batch
             if len(self.batches)>3:raise ValueError('v5 max3 restored batches')
             for batch,_ in self.batches:validate_batch(batch,manifest,identity.id)
+        self.search_state = None
+        if manifest.get('sampling_contract', {}).get('version') == MINER_VERSION:
+            from .miner_search_state import SearchState
+            search_path = search_state_path or (self.state_path.with_suffix('.search.sqlite3') if self.state_path else None)
+            self.search_state = SearchState(search_path, manifest, identity.id, retire_previous=retire_previous_search)
+            try:
+                self._retire_completed_searches()
+            except BaseException:
+                self.close()
+                raise
 
     def _prepared(self):
         from .commitment_transport import pair_artifact,check_prepared_cumulative
@@ -125,7 +135,113 @@ class Miner:
         observer = getattr(self, "progress", None)
         if observer is not None: observer.record(event, batches=len(self.batches), **fields)
 
+    def close(self):
+        journal = getattr(self, 'search_state', None)
+        if journal is not None:
+            journal.close()
+            self.search_state = None
+        self._closed = True
+
     def search(self, index, seed=0, max_attempts=100, env_id=None):
+        if getattr(self, '_closed', False):
+            raise ValueError('miner is closed')
+        journal = getattr(self, 'search_state', None)
+        if journal is None:
+            return self._legacy_search(index, seed=seed, max_attempts=max_attempts, env_id=env_id)
+        with journal.locked():
+            return self._resumable_search(index, seed, max_attempts, env_id)
+
+    def _resumable_search(self, index, seed, max_attempts, env_id):
+        from .miner_search_state import NoncesExhausted
+        from .sampling_uniqueness import validate_batch
+        journal = self.search_state
+        if type(seed) is not int or not 0 <= seed < journal.maximum:
+            raise ValueError('forced sampling search attempt start')
+        if type(max_attempts) is not int or max_attempts < 1:
+            raise ValueError('forced sampling search budget')
+        if time.time() >= self.manifest['deadline']:
+            raise EpochClosed('signed epoch window closed')
+        definition = entry(self.manifest, env_id)
+        env_id = definition['env_id']
+        for batch, _ in self.batches:
+            if batch['env_id'] == env_id and batch['index'] == index:
+                return batch
+        _, completed, rolls, arrays = journal.load(env_id, index)
+        if completed:
+            raise ValueError('completed search journal missing durable batch state')
+        self._progress('task_start', env_id=env_id, index=index)
+        runtime = None
+        # A fully collected local group survives a crash before upload. Rebuild
+        # its complete artifact without consuming another nonce or GPU forward.
+        for work in range(max_attempts + 1):
+            positives = [(r, a) for r, a in zip(rolls, arrays) if r['classification'] == 'positive']
+            negatives = [(r, a) for r, a in zip(rolls, arrays) if r['classification'] == 'negative']
+            if len(positives) == self.manifest['K'] and len(negatives) == self.manifest['L']:
+                ordered = positives + negatives
+                batch = dict(schema=2, epoch=self.manifest['epoch'], checkpoint=self.manifest['checkpoint']['id'],
+                             env_id=env_id, environment_version=definition['spec']['version'],
+                             sample_index=index, index=index, rollouts=[r for r, _ in ordered])
+                validate_batch(batch, self.manifest, self.identity.id)
+                candidate = self.batches + [(batch, [a for _, a in ordered])]
+                if self.manifest.get('submission_transport_policy'):
+                    from .commitment_transport import pair_artifact, check_prepared_cumulative
+                    prepared = self._prepared() + [(batch, pair_artifact(batch, candidate[-1][1], self.manifest))]
+                    check_prepared_cumulative(prepared, self.manifest, len(self.cap['batch_put_urls']))
+                else:
+                    pack(candidate, budget=for_manifest(self.manifest))
+                if time.time() >= self.manifest['deadline']:
+                    raise EpochClosed('batch construction completed after signed deadline')
+                if self.manifest.get('submission_transport_policy'):
+                    self._prepared_pairs = prepared
+                    self.batches = [(b, None) for b, a in candidate]
+                else:
+                    self.batches = candidate
+                self._progress('batch_complete', env_id=env_id, index=index)
+                return batch
+            if work == max_attempts:
+                break
+            if time.time() >= self.manifest['deadline']:
+                raise EpochClosed('signed epoch window closed')
+            # Reserve durably before generation; retries cannot silently repeat
+            # an interrupted draw. Explicit seed is a lower bound, never rewind.
+            attempt = journal.reserve(env_id, index, seed)
+            if runtime is None:
+                resolved = harness_for(definition, index)
+                key = (env_id, index, hashlib.sha256(canonical(resolved)).hexdigest())
+                if key not in self.runtimes:
+                    if self.runtime is None:
+                        self.runtime = make_runtime(self.checkpoint, self.manifest, definition['spec'], resolved, miner=self.identity.id)
+                        self.runtimes[key] = self.runtime
+                    else:
+                        self.runtimes[key] = self.runtime.for_environment(definition['spec'], resolved)
+                runtime = self.runtimes[key]
+            self._progress('attempt_start', env_id=env_id, index=index, attempt=attempt)
+            started = time.monotonic()
+            try:
+                rollout, proof_arrays = runtime.rollout(index, attempt)
+            except TaskError as error:
+                self._progress('attempt_end', env_id=env_id, index=index, attempt=attempt, outcome='indeterminate', elapsed=time.monotonic()-started, error_type=type(error).__name__)
+                self.last_generation_error = dict(kind='unscorable_native_task_error', env_id=env_id, index=index, seed=attempt, error_type=type(error).__name__)
+                continue
+            except Exception as error:
+                self._progress('attempt_end', env_id=env_id, index=index, attempt=attempt, outcome='error', elapsed=time.monotonic()-started, error_type=type(error).__name__)
+                raise
+            if time.time() >= self.manifest['deadline']:
+                raise EpochClosed('rollout completed after signed deadline')
+            kind = classification(rollout)
+            self._progress('attempt_end', env_id=env_id, index=index, attempt=attempt, outcome=kind, elapsed=time.monotonic()-started)
+            if kind != 'neutral':
+                rolls, arrays = journal.accept(env_id, index, rollout, proof_arrays, attempt)
+        self._progress('task_exhausted', env_id=env_id, index=index)
+        raise RuntimeError('search budget exhausted; partial progress retained')
+
+    def _retire_completed_searches(self):
+        journal = getattr(self, 'search_state', None)
+        if journal is not None and self.state_path:
+            with journal.locked():
+                journal.completed(self.batches)
+
+    def _legacy_search(self, index, seed=0, max_attempts=100, env_id=None):
         contract=self.manifest.get('sampling_contract')
         if contract is not None:
             if type(seed)is not int or not 0<=seed<contract['max_attempts']:
@@ -212,7 +328,9 @@ class Miner:
             from .commitment_transport import VERSION2,VERSION3,VERSIONS,make,canonical,UploadJournal,write_prepared_state
             if self.manifest['submission_transport_policy']not in VERSIONS:raise ValueError('unsupported commitment upload')
             packed=self._prepared()
-            if self.state_path:write_prepared_state(self.state_path,self.manifest,packed)
+            if self.state_path:
+                write_prepared_state(self.state_path,self.manifest,packed)
+                self._retire_completed_searches()
             journal=getattr(self,'_commitment_upload_journal',None)
             if journal is None:
                 journal=UploadJournal(self.manifest,self.state_path.with_suffix('.commitment-upload.json')if self.state_path else None);self._commitment_upload_journal=journal
@@ -236,6 +354,7 @@ class Miner:
             if self.state_path:
                 self.state_path.parent.mkdir(parents=True,exist_ok=True)
                 temporary=self.state_path.with_suffix('.tmp');temporary.write_bytes(data);temporary.chmod(0o600);temporary.replace(self.state_path)
+                self._retire_completed_searches()
         now=time.time()
         if now>=self.manifest.get('deadline',float('inf')):raise EpochClosed('upload preparation completed after signed deadline')
         timeout=min(120,max(.001,self.manifest['deadline']-now-1))if self.manifest.get('submission_transport_policy')else 120

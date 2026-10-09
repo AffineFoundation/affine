@@ -45,6 +45,18 @@ def delegated_capability(manifest,delegated):
             raise ValueError('delegated upload object binding')
     return capability
 
+def validate_search_budget(value, manifest=None):
+    """Local work limit; v5 can use its full signed nonce range, never beyond it."""
+    if type(value) is not int or value < 1:
+        raise ValueError('search budget must be a positive integer')
+    if manifest is not None:
+        from .forced_sampling import MINER_VERSION
+        contract = manifest.get('sampling_contract') or {}
+        maximum = contract['max_attempts'] if contract.get('version') == MINER_VERSION else 128
+        if value > maximum:
+            raise ValueError('search budget exceeds authorized limit')
+    return value
+
 def main():
     p=argparse.ArgumentParser();p.add_argument('--gateway',required=True);p.add_argument('--authority',required=True)
     p.add_argument('--source-bundle-sha256');p.add_argument('--manifest-url');p.add_argument('--current-url');p.add_argument('--key');p.add_argument('--cap-file');p.add_argument('--state',default='state/miner');p.add_argument('--once',action='store_true');p.add_argument('--max-batches',type=int)
@@ -60,8 +72,16 @@ def main():
             time.sleep(10)
 
 def run(a):
+    resources = {}
+    try:
+        return _run(a, resources)
+    finally:
+        if resources.get('miner') is not None:
+            resources['miner'].close()
+
+def _run(a, resources):
     budget=getattr(a,'search_budget',50)
-    if type(budget)is not int or not 1<=budget<=128:raise ValueError('search budget must be between 1 and 128')
+    validate_search_budget(budget)
     delegated=json.loads(Path(a.cap_file).read_text()) if a.cap_file else None
     if not a.key and not delegated: raise ValueError('--key or --cap-file is required')
     key=SimpleNamespace(id=delegated['identity']) if delegated else identity(a.key)
@@ -87,12 +107,15 @@ def run(a):
             level=compression_for_manifest(manifest)
             requested=getattr(a,'compression_level',None)
             if requested is not None and (type(requested)is not int or requested!=level):raise ValueError('CLI compression level must match signed manifest')
+            validate_search_budget(budget,manifest)
             plan=selected_tasks(manifest,getattr(a,'env_id',None),getattr(a,'indices',None))
             check_runtime_profile(manifest)
             if key.id not in manifest['capabilities']:raise ValueError('identity not registered for epoch')
             capability=delegated_capability(manifest,delegated) if delegated else None
             checkpoint=checkpoint_download(manifest,Path(a.state)/manifest['checkpoint']['id'])
-            miner=Miner(key,manifest,checkpoint,capability=capability,state_path=Path(a.state)/f"{manifest['epoch']}-{key.id}.zip", progress_path=Path(a.state)/f"{manifest['epoch']}-{key.id}.progress.json")
+            if miner is not None:miner.close()
+            miner=Miner(key,manifest,checkpoint,capability=capability,state_path=Path(a.state)/f"{manifest['epoch']}-{key.id}.zip", progress_path=Path(a.state)/f"{manifest['epoch']}-{key.id}.progress.json", search_state_path=Path(a.state)/f"{key.id}.search.sqlite3", retire_previous_search=True)
+            resources['miner']=miner
             if miner.batches and time.time()<manifest['deadline']:
                 try:miner.upload()
                 except EpochClosed:logging.info('signed epoch closed before local batches could be uploaded')

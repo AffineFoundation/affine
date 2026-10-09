@@ -139,13 +139,28 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.miner_supervisor \
   --env-id affine_math --max-batches 3 --search-budget 32
 ```
 
-32 is a recommended local per-task search budget, not the allowed nonce ceiling.
-It gives an eight-rollout quota more room than the old eight-attempt example.
-The current approved CLI accepts search budgets from 1 through 128. The protocol
-separately permits nonce values 0 through 999; compatible custom miners may use
-that full range. Tune the CLI budget within its 128-attempt limit for task
-success rates and remaining epoch time. Move on when one outcome is too rare.
-A longer search cannot extend the signed upload deadline.
+Client update status (2026-10-09): the source bundle currently signed by the live
+manifest is `74f132382afb89236d3fc2300fa6917761e5a4c0e24c8e20ea24a0410ddaebe3`.
+That client still caps `--search-budget` at 128 and does not persist unfinished
+search groups. The restart-safe client below is released in this GitHub code
+but is pending activation in a successor signed source bundle. A GitHub update
+alone does not change the client launched by the recommended supervisor.
+
+Once a successor manifest activates this client:
+32 remains the supervisor's default per-call search budget (standalone CLI: 50).
+The updated v5 CLI accepts an explicit budget from 1 through the signed
+max_attempts, currently 1000. The total allowed nonce range remains 0–999 per
+miner/task/epoch. Repeated calls and explicit same-state restarts use fresh
+remaining nonces and retain partial K/L groups; only complete groups upload.
+Old signed source bundles retain their original client behavior and limits.
+The private journal binds the exact manifest and miner, reserves nonces before
+generation, and refuses stale/corrupt restores. A local lock excludes overlapping
+searches; it is not a cross-machine uniqueness service. Up to 256 partial groups
+and 64 MiB of compressed partial proofs are cached (SQLite database capped at
+96 MiB, plus its bounded rollback journal). Evicted partial examples are lost,
+but their nonce cursors never rewind. Epoch handover retires partials and reclaims
+pages; exiting closes the database and lock. Existing one-launch-per-epoch
+supervision and task ordering are unchanged.
 
 The continuous supervisor authenticates the pointer, manifest, task snapshot and
 approved source. It downloads the exact checkpoint with bounded 64 MiB HTTP

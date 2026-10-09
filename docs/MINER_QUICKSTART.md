@@ -54,18 +54,41 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.miner_supervisor \
   --env-id affine_math --max-batches 3 --search-budget 32
 ```
 
+Client update status (2026-10-09): the source bundle currently signed by the live
+manifest is `74f132382afb89236d3fc2300fa6917761e5a4c0e24c8e20ea24a0410ddaebe3`.
+That client still caps `--search-budget` at 128 and does not persist unfinished
+search groups. The restart-safe client below is released in this GitHub code
+but is pending activation in a successor signed source bundle. A GitHub update
+alone does not change the client launched by the recommended supervisor.
+
 The supervisor continuously follows epochs and authenticated source upgrades,
 resumes bounded checkpoint transfers and verifies full file hashes before
 launching the untouched approved miner. It removes only its own obsolete model
 caches after admitting the successor. Reserve space for active and incoming
 checkpoints. A per-state lock prevents overlapping children after restarts.
 
-Thirty-two is a local search budget, not the signed attempt ceiling. It may
-be increased up to the approved CLI limit of 128 when an outcome is rare; stop
-at the signed deadline. The signed nonce range and CLI budget are separate.
-v5 allows
-1,000 attempts per task; old openings keep their original ceiling. For the current contract, collect
-four distinct successes and four distinct failures with eight distinct nonces.
+Once a successor manifest activates the updated miner, its behavior is:
+Thirty-two is the supervisor's default per-call search budget. For that updated
+v5 miner, `--search-budget` accepts 1 through the signed `max_attempts` (currently
+1,000); the standalone CLI default remains 50. A later search call or explicit
+restart using the same private state continues with unused nonces and retains
+partial successes/failures for that task. It never starts another 1,000 attempts:
+0–999 is the total nonce range per miner/task/epoch. Stop at the signed deadline.
+Historical approved clients retain their original behavior and limits.
+For the current contract, collect four distinct successes and four distinct
+failures with eight distinct nonces. Only a complete group is uploaded.
+
+Search progress is private local cache, bound to the exact signed manifest and
+miner. Keep the same `--state` directory to resume; stop the previous process
+first. A local lock prevents concurrent use of that search cache. This is not
+cross-machine nonce coordination. At most 256 partial task groups and 64 MiB of
+compressed partial proof data are retained; eviction discards old partial
+examples but preserves consumed nonce cursors. The journal is capped at 96 MiB
+plus a bounded SQLite rollback journal. Authenticated next-epoch handover retires
+partial proofs and reclaims their local pages automatically. Completed upload
+artifacts continue using the existing durable-resume path. The supervisor's
+one-launch-per-epoch policy and task ordering are unchanged; this update does
+not automatically relaunch an already-issued epoch.
 The bootstrap verifies discovery, source and checkpoint hashes, then runs that
 approved source. Signed code approval is not a sandbox. Miners need no permanent
 R2 credentials; the manifest supplies encrypted private upload capabilities.
