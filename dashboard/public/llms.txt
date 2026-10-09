@@ -176,6 +176,11 @@ gate the training update. Unaudited inputs remain explicitly labelled unaudited.
 The trainer preserves its local optimizer state and uploads the successor model
 and reports; miners then follow the new checkpoint. Checkpoint publication does
 not wait for full vocabulary arrays or a complete network audit.
+Epoch openings may reuse the exact fresh, authenticated hourly blacklist
+assessment instead of reconstructing the same history. They retain its original
+evidence bindings and use the existing refresh on a cache miss; chain inclusion
+and reveal are not prerequisites. This operator optimization changes no miner
+quota, sampling rule or training-admission requirement.
 
 Independent verifiers sample current and historical immutable commitments and
 publish authenticated findings. Reward estimates combine eligible unique task

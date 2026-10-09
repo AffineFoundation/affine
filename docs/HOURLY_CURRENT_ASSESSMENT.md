@@ -102,3 +102,12 @@ independent chain reconciliation.
 The original writer and weight-state locks are preserved across upgrades. The
 latest authenticated assessment is explicitly carried into the new signed policy,
 so a software deployment cannot silently discard the fallback scores.
+
+Learner openings can also reuse the exact signed, fresh current-hour writer
+assessment for their blacklist snapshot. The operator checks the approved
+producer, evidence cutoff, audit configuration, source and numerical policies,
+and preserves the original envelope unchanged. Missing or incompatible evidence
+falls back to the existing learner refresh. A stale payout fallback is not a
+fresh training-status snapshot. This removes duplicate history reconstruction
+when the writer has already completed it; it does not wait for chain inclusion
+or reveal, change blacklist rules, or require audits of every training input.
