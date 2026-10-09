@@ -14,7 +14,7 @@ def capture_policy(value):
  if durable:keys|={'journal_version','state_checkpoint_documents'}
  need(type(value)is dict and set(value)==keys,'exact prospective token capture policy')
  if durable:
-  need(value['journal_version']=='fsynced-per-epoch-capture-v1'and type(value['state_checkpoint_documents'])is int and 1<=value['state_checkpoint_documents']<=16,'bounded fsynced capture checkpoint')
+  need(value['journal_version']=='fsynced-per-epoch-capture-v1'and type(value['state_checkpoint_documents'])is int and 1<=value['state_checkpoint_documents']<=128,'bounded fsynced capture checkpoint')
  need(value['version']in(CAPTURE_VERSION,DURABLE_CAPTURE_VERSION) and type(value['workers'])is int and value['workers']in(4,8,16),'bounded token capture workers')
  need(type(value['max_document_bytes'])is int and value['max_document_bytes']==MAX_BYTES,'unchanged token document bound')
  need(type(value['max_inflight_bytes'])is int and value['max_inflight_bytes']==value['workers']*MAX_BYTES,'exact capture byte budget')
@@ -44,7 +44,7 @@ def validate(data,epoch,checkpoint,miner,entry,*,transport=TRANSPORT):
   framing(b,[[]for _ in b['rollouts']])
  return value
 
-def capture(gateway,epoch):
+def capture(gateway,epoch,*,ordering=None):
  """Complete bounded GET + exact SHA before immutable token publication.
 
  Legacy capture uses four FIFO workers; an explicit signed policy opts into
@@ -67,7 +67,17 @@ def capture(gateway,epoch):
  policy=capture_policy(policy)if policy is not None else None
  workers=policy['workers']if policy is not None else 4
  stats=dict(version=policy['version']if policy is not None else CAPTURE_VERSION,policy=policy,started_at=time.time(),GET_attempts=0,published_documents=0,transient_failures=0,structural_failures=0,maximum_inflight=0,raw_document_byte_limit=workers*MAX_BYTES,oversize_sentinel_byte_limit=workers,replayed_documents=0,reconciled_publications=0,global_state_checkpoints=0)if policy is not None else None
- def remaining():return [(miner,b)for miner,p in sorted(pending.items())if miner not in state['rejections']for b in p['document']['payload']['batches']if str(b['slot'])not in journal.get(miner,{})]
+ def remaining():
+  rows=[(miner,b)for miner,p in sorted(pending.items())if miner not in state['rejections']for b in p['document']['payload']['batches']if str(b['slot'])not in journal.get(miner,{})]
+  if ordering is not None:rows.sort(key=lambda item:sha(canonical(dict(domain='postcommit-token-capture-order-v1',seed=ordering['seed'],epoch=epoch,miner=item[0],commitment_sha256=pending[item[0]]['sha256'],slot=item[1]['slot']))))
+  return rows
+ if ordering is not None:
+  need(type(ordering)is dict and set(ordering)=={'version','epoch','seed','commitments_sha256'}and ordering['version']=='postcommit-token-capture-order-v1'and ordering['epoch']==epoch and is_digest(ordering['seed']),'exact postcommit token capture order')
+  need(time.time()>=state['deadline'],'postcommit token capture order after submissions close')
+  committed=sha(canonical([[miner,p['sha256']]for miner,p in sorted(pending.items())]))
+  need(ordering['commitments_sha256']==committed,'postcommit token capture population binding')
+  need(policy is not None and policy['version']==DURABLE_CAPTURE_VERSION,'fair capture requires durable bounded policy')
+  stats['ordering']=dict(ordering)
  client=(gateway.bucket.commitment_read_client(parallel_workers=workers)if policy is not None else gateway.bucket.commitment_read_client())if hasattr(gateway.bucket,'commitment_read_client')else gateway.bucket.client
  wal=None;checkpoint_rows=0
  if policy is not None and policy['version']==DURABLE_CAPTURE_VERSION:
@@ -205,14 +215,21 @@ def attach(state,receipts):
  return receipts
 
 
-def freeze_receipts(gateway,epoch):
+def freeze_receipts(gateway,epoch,*,publication_workers=1):
  """Declared proof population + actual captured token bytes; no proof I/O."""
  state=gateway.epochs[epoch];need(state.get('training_document_capture_complete')is True,'complete token capture')
- receipts={}
+ need(type(publication_workers)is int and publication_workers in(1,4,8,16),'bounded immutable parent publication')
+ receipts={};publications=[]
  for miner,p in sorted(state['commitment_pending'].items()):
   if miner in state['rejections']:continue
   data=canonical(p['document']);need(sha(data)==p['sha256'],'signed canonical parent digest')
-  gateway.bucket.put(p['root']+'/commitment.json',data)
+  publications.append((p['root']+'/commitment.json',data))
   children=[dict(b,key='private/'+epoch+'/staging/'+miner+'/'+str(b['slot'])+'.zip',frozen_key=p['root']+'/'+str(b['slot'])+'.zip',proof_capture_status='declared-not-captured')for b in p['document']['payload']['batches']]
   receipts[miner]=dict(sha256=p['sha256'],commitment_document=p['document'],commitment_key=p['root']+'/commitment.json',artifacts=children,size=p['size'],received_at=p['received_at'],hash_assurance='declared-proof-hashes-until-selected-verifier',artifact_public_availability='only-successfully-copied-selected-proofs')
+ def publish(item):gateway.bucket.put(*item)
+ if publication_workers==1:
+  for item in publications:publish(item)
+ else:
+  from concurrent.futures import ThreadPoolExecutor
+  with ThreadPoolExecutor(max_workers=publication_workers)as pool:list(pool.map(publish,publications))
  attach(state,receipts);state['frozen_receipts']=receipts;gateway.persist();gateway.bucket.json('public/'+epoch+'/receipts.json',receipts);return receipts

@@ -151,8 +151,8 @@ class JournalTests(unittest.TestCase):
   from unittest.mock import patch
   with patch('test_bounded_token_capture.POLICY',V2):
    fixtures.CaptureOpeningTests('test_first_signed_manifest_and_durable_gateway_bind_policy_copy').test_first_signed_manifest_and_durable_gateway_bind_policy_copy()
- def test_policy_batch_bool_or_over16_refuses(self):
-  for n in (True,0,17):
+ def test_policy_batch_bool_or_over128_refuses(self):
+  for n in (True,0,129):
    with self.assertRaises(ValueError):capture_policy(dict(V2,state_checkpoint_documents=n))
 
 class CommitmentJournalTests(unittest.TestCase):

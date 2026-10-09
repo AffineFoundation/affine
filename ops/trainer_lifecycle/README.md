@@ -36,3 +36,7 @@ original ROOT-signed job and learning-rate grant, after validating the exact
 output descriptor and diagnostics. It runs the unchanged attribution validator
 with a private per-call expected-hyperparameter namespace. Legacy jobs retain the
 original rate; global constants, reports and scientific execution stay unchanged.
+
+`opening_assessment_ordering.py` delays acquisition of a new training blacklist snapshot until the existing successor calibration and optimizer ACK checks finish. It is installed only by an explicit future-round operator policy; issued openings retain their original snapshot and all signature, writer policy and freshness checks remain unchanged.
+
+`fair_token_capture.py` installs a signed future-round capture policy:16 bounded I/O workers,128-document global checkpoints while retaining fsynced per-document recovery, postcommit random ordering, and parallel immutable parent copies. The implementation is in `subnet.training_documents`; its default legacy call paths remain unchanged until explicitly configured. The coordinator persists the seed only after the complete immutable commitment set closes and reuses it on retries. This changes capture throughput and fairness, not miner deadlines, submission validity, sample selection, grading or rewards.
