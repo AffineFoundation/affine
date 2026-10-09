@@ -57,3 +57,32 @@ class Readback(Controls):
   self.confirm['successor_calibration']['reports'][0]['measured_cdf_abs_error']=2e-5
   self.record['confirmation_sha256']=c.digest(self.confirm)
   with self.assertRaisesRegex(ValueError,'never confirmed'):self.invoke()
+
+class OriginalBinding(unittest.TestCase):
+ def setUp(self):
+  import base64
+  from nacl.signing import SigningKey
+  from subnet.storage import canonical
+  self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.state=Path(self.tmp.name)
+  self.key=SigningKey.generate();authority=self.key.verify_key.encode().hex()
+  def sign(payload):return dict(payload=payload,signer=authority,signature=base64.b64encode(self.key.sign(canonical(payload)).signature).decode())
+  self.manifest=dict(checkpoint={'id':'a'*64},source_bundle={'sha256':'b'*64},harness={'max_output_tokens':2048})
+  self.request={'version':'sample-request'}
+  job=dict(job_id='original',role='evaluate',manifest=sign(self.manifest),successor_calibration=self.request)
+  self.envelope=sign(job);self.prior=dict(job_id='original',job_sha256=c.digest(job))
+  for name,value in [('label.json',self.prior),('original-job.json',self.envelope),('original-report.json',{'success':True})]:
+   (self.state/name).write_text(json.dumps(value))
+  self.jobs=SimpleNamespace(state=self.state,controller=SimpleNamespace(authority=SimpleNamespace(id=authority)),checked=Mock(return_value={'success':True}),run=Mock(side_effect=AssertionError('must never dispatch')))
+ def test_original_evidence_readback_only(self):
+  repair.read_original(self.jobs,'label',self.manifest,self.request);self.jobs.checked.assert_called_once();self.jobs.run.assert_not_called()
+ def test_changed_checkpoint_source_or_harness_rejected(self):
+  for key,value in [('checkpoint',{'id':'c'*64}),('source_bundle',{'sha256':'d'*64}),('harness',{'max_output_tokens':1024})]:
+   with self.assertRaisesRegex(ValueError,'original request binding'):
+    repair.read_original(self.jobs,'label',dict(self.manifest,**{key:value}),self.request)
+  self.jobs.checked.assert_not_called();self.jobs.run.assert_not_called()
+ def test_changed_request_rejected(self):
+  with self.assertRaisesRegex(ValueError,'original request binding'):repair.read_original(self.jobs,'label',self.manifest,{'version':'forged'})
+ def test_tampered_original_signature_rejected(self):
+  self.envelope['payload']['successor_calibration']={'version':'tampered'};(self.state/'original-job.json').write_text(json.dumps(self.envelope))
+  with self.assertRaises(Exception):repair.read_original(self.jobs,'label',self.manifest,self.request)
+  self.jobs.checked.assert_not_called()
