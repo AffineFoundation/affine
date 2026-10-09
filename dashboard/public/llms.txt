@@ -128,7 +128,7 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
   --source-cache /absolute/private/affine-approved-source \
   --key /absolute/private/miner.seed \
   --state /absolute/private/affine-miner-state \
-  --env-id affine_math --max-batches 3 --search-budget 32 --once
+  --env-id affine_math --max-batches 3 --search-budget 32
 ```
 
 32 is a recommended local per-task search budget, not the allowed nonce ceiling.
@@ -144,8 +144,9 @@ the task snapshot, and executes only that approved source in an isolated fresh
 Python process. The client authenticates checkpoint files before inference.
 Signed source execution is not a security sandbox.
 
-To follow checkpoint changes under the same approved source, omit `--once`.
-If the approved source changes, the client stops and needs a fresh bootstrap.
+The command above follows checkpoint changes continuously under the same approved
+source. Add `--once` only for a single-epoch smoke test. If the approved source
+changes, the client stops and needs a fresh bootstrap.
 Alternatively, supervise one-shot runs: poll discovery, start each new epoch once,
 inspect its original process after timeouts, and stop using the old checkpoint
 when the opening changes. `--once` does not itself watch forever. Do not run
