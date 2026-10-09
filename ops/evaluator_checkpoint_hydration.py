@@ -173,14 +173,21 @@ def prefetch(controller,remote,manifest,policy):
     digest,(path,envelope,plan)=ordered[-1]
     directory=location(digest);helper=directory+'/helper.py';planpath=directory+'/plan.json';receipt=directory+'/receipt.json'
     inventory={helper:policy['helper_sha256'],planpath:digest}
+    copies=[(policy['helper_path'],helper),(path,planpath)]
+    if len(ordered)>1:
+        history=canonical([row[1]for _,row in ordered]);history_sha=hashlib.sha256(history).hexdigest()
+        history_local=folder/(cp['id']+'-'+digest+'-history.private.json');history_remote=directory+'/history.json'
+        if history_local.exists()and history_local.read_bytes()!=history:raise ValueError('original renewal history changed')
+        if not history_local.exists():save(history_local,[row[1]for _,row in ordered]);history_local.chmod(0o600)
+        inventory[history_remote]=history_sha;copies.append((history_local,history_remote))
     script="from pathlib import Path;import json,hashlib;p=Path("+repr(directory)+");assert p.absolute()==p.resolve();p.mkdir(parents=True,exist_ok=True,mode=0o700);files="+repr(inventory)+";out={}\nfor name,digest in files.items():\n p=Path(name);assert not p.is_symlink();out[name]=hashlib.sha256(p.read_bytes()).hexdigest()if p.exists()else None\nprint(json.dumps(out))"
     observed=json.loads(command(script))
-    for source,target in [(policy['helper_path'],helper),(path,planpath)]:
+    for source,target in copies:
         if observed[target]is None:remote.copy_to(source,target)
         elif observed[target]!=inventory[target]:raise ValueError('original remote hydration helper/plan changed')
     if len(ordered)>1:
         code=inspect.getsource(adopt_partials)
-        script="import importlib.util,hashlib,json;from pathlib import Path;p="+repr(helper)+";assert hashlib.sha256(Path(p).read_bytes()).hexdigest()=="+repr(policy['helper_sha256'])+";s=importlib.util.spec_from_file_location('hydration_helper',p);h=importlib.util.module_from_spec(s);s.loader.exec_module(h)\n"+code+"\nprint(json.dumps(adopt_partials(h,"+repr([row[1]for _,row in ordered])+","+repr(controller.authority.id)+")))"
+        script="import importlib.util,hashlib,json;from pathlib import Path;p="+repr(helper)+";assert hashlib.sha256(Path(p).read_bytes()).hexdigest()=="+repr(policy['helper_sha256'])+";hp=Path("+repr(history_remote)+");assert not hp.is_symlink();hr=hp.read_bytes();assert hashlib.sha256(hr).hexdigest()=="+repr(history_sha)+";history=json.loads(hr);s=importlib.util.spec_from_file_location('hydration_helper',p);h=importlib.util.module_from_spec(s);s.loader.exec_module(h)\n"+code+"\nprint(json.dumps(adopt_partials(h,history,"+repr(controller.authority.id)+")))"
         command(script)
     args=[remote.python,'-B',helper,'--plan',planpath,'--plan-sha256',digest,'--operator',controller.authority.id,
         '--role','evaluate','--retained-UUID',policy['retained_UUID'],'--destination',plan['destination'],'--output',receipt]

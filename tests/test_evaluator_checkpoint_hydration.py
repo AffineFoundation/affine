@@ -51,8 +51,9 @@ class EvaluationHydrationRenewal(EvaluatorHydration):
         self.controller.state=self.root/'state';self.controller.state.mkdir()
         self.remote.workspace=str(self.root/'evaluator');self.remote.python=sys.executable
         self.controller.bucket.client.generate_presigned_url.side_effect=lambda action,Params,ExpiresIn:'https://account.r2.cloudflarestorage.com/bucket/'+Params['Key']+'?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature='+'a'*64
-        self.main_calls=0;self.adopted_sizes=[]
+        self.main_calls=0;self.adopted_sizes=[];self.command_args=[]
         def command(cmd,timeout=None):
+            self.command_args.append(cmd)
             argv=shlex.split(cmd)
             if '--plan' in argv:
                 self.main_calls+=1
@@ -88,6 +89,7 @@ class EvaluationHydrationRenewal(EvaluatorHydration):
         (stage/'objects').mkdir();(stage/'objects'/'model.safetensors.partial').write_bytes(b'p'*23)
         result=prefetch(self.controller,self.remote,dict(checkpoint=self.cp),self.policy)
         self.assertEqual(self.adopted_sizes,[23]);self.assertEqual(self.main_calls,1)
+        self.assertFalse(any("X-Amz-"in c for c in self.command_args))
         self.assertEqual(path.read_bytes(),before);self.assertTrue((stage/'binding.json').exists())
         self.assertNotEqual(result['read_plan_sha256'],digest);self.assertEqual(len(list((folder/(self.cp['id']+'-plans')).glob('*.json'))),1)
     def test_expired_completed_receipt_does_not_refresh_or_rerun(self):
