@@ -13,6 +13,7 @@ class Response:
     def __enter__(self):return self
     def __exit__(self,*args):pass
     def iter_content(self,n):yield self.body
+    def close(self):pass
 
 
 class Session:
@@ -159,6 +160,28 @@ class SupervisorTests(unittest.TestCase):
         response=Response(b' '*(s.bootstrap.JSON_LIMIT+1),status=200)
         with self.assertRaisesRegex(ValueError,'size bound'):
             s.opening(self.args.discovery_url,self.args.authority,get=lambda *a,**k:response)
+
+    def test_incomplete_or_proxy_discovery_is_retryable_but_authority_is_not(self):
+        self.fixture()
+        import requests
+        for body in (b'{"accepting',b'<html>proxy</html>',b'[]',b'\xff'):
+            with self.assertRaises(requests.HTTPError):
+                s.opening(self.args.discovery_url,self.args.authority,get=lambda *a,**k:Response(body,status=200))
+        body=json.dumps({'accepting_submissions':True,'authority':'b'*64}).encode()
+        with self.assertRaisesRegex(ValueError,'authority'):
+            s.opening(self.args.discovery_url,self.args.authority,get=lambda *a,**k:Response(body,status=200))
+
+    def test_checkpoint_throttling_retries_without_admitting_wrong_bytes(self):
+        m=self.fixture();normal=Session(self.data);count=[0]
+        class Throttled:
+            def get(inner,url,headers=None,**kwargs):
+                if headers['Range']!='bytes=0-0' and count[0]==0:
+                    count[0]+=1;return Response(b'',status=429)
+                return normal.get(url,headers=headers,**kwargs)
+            def close(inner):pass
+        dest=s.prefetch_checkpoint(m,self.args.state,session=Throttled())
+        self.assertEqual(count[0],1)
+        self.assertEqual((dest/'model.safetensors').read_bytes(),self.data['model.safetensors'])
 
     def test_signatures_required_and_expired_discovery_never_opens(self):
         self.fixture();key=SigningKey.generate();authority=key.verify_key.encode().hex()

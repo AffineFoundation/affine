@@ -28,6 +28,18 @@ def save(path, value):
     os.replace(temporary, path)
 
 
+class CheckpointSession:
+    """Classify transient HTTP failures without changing qualified transfer math."""
+    def __init__(self, session): self.session=session
+    def get(self, *args, **kwargs):
+        response=self.session.get(*args, **kwargs)
+        if response.status_code in (408, 429) or response.status_code >= 500:
+            response.close()
+            raise requests.HTTPError('transient checkpoint transfer response')
+        return response
+    def close(self): self.session.close()
+
+
 def opening(discovery_url, authority, *, now=None, get=requests.get, fetch=bootstrap.download):
     """Discovery is a hint; the fixed authority authenticates all contract data."""
     parsed = urlparse(discovery_url)
@@ -43,7 +55,11 @@ def opening(discovery_url, authority, *, now=None, get=requests.get, fetch=boots
             size+=len(chunk)
             if size>bootstrap.JSON_LIMIT: raise ValueError('discovery size bound')
             chunks.append(chunk)
-        hint = json.loads(b''.join(chunks))
+        try: hint = json.loads(b''.join(chunks))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise requests.HTTPError('incomplete public discovery response') from None
+        if not isinstance(hint, dict):
+            raise requests.HTTPError('invalid public discovery response')
     if hint.get('accepting_submissions') is not True: return None
     if hint.get('authority') != authority: raise ValueError('discovery authority differs')
     pointer = bootstrap.signed(fetch(bootstrap.r2_url(hint['current_url']), bootstrap.JSON_LIMIT), authority)
@@ -96,7 +112,7 @@ def prefetch_checkpoint(manifest, state, *, session=None, clock=time.time, downl
         save(owner, dict(checkpoint=identifier, files=checkpoint['files']))
     destination.mkdir(parents=True, exist_ok=True, mode=0o700)
     stage.mkdir(parents=True, exist_ok=True, mode=0o700)
-    session = session or requests.Session()
+    session = CheckpointSession(session or requests.Session())
     try:
         sizes = {name:object_size(session, checkpoint['read_urls'][name]) for name in checkpoint['files']}
         if sum(sizes.values()) > hydration.MAX_TOTAL: raise ValueError('total model size bound')
