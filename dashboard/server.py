@@ -275,12 +275,13 @@ class Database:
         summary=json.loads(summary[0]) if summary else {}
         training_run = None
         if current_only:
-            from dashboard.run_projection import read_boundary, project
+            from dashboard.run_projection import read_boundary, read_retirements, project
             training_run = read_boundary(self.source/'dashboard/current-run.ROOT-SIGNED.json')
             epochs=[row for row in epochs if row['source']=='live-reward-math']
             epoch_ids={row['id'] for row in epochs}
             evaluations=[row for row in evaluations if row.get('epoch_id') in epoch_ids]
-            epochs, evaluations = project(epochs, evaluations, training_run)
+            retired = read_retirements(self.source/'dashboard/retirements', training_run)
+            epochs, evaluations = project(epochs, evaluations, training_run, retired)
             summary=dict(updated_at=summary.get('updated_at'),network='Finney',netuid=120,
                 current_source='live-reward-math',epochs=len(epochs),
                 accepted=sum(row['accepted'] for row in epochs),

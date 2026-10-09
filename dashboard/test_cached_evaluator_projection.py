@@ -16,7 +16,7 @@ class ProjectionTests(unittest.TestCase):
   raw=canonical(self.sign(ack));(self.state/'durable-evaluation-acks/jid.json').write_bytes(raw)
   (self.state/'cache-disposal/jid.json').write_text(json.dumps(dict(result={'status':'complete'},durable_ack_sha256=hashlib.sha256(raw).hexdigest())))
   (self.state/'roles/label.json').write_text('{"job_id":"jid"}')
-  self.record=dict(seed=20261002,experiment_id='owned-cached-native-fixed32-cap1024-v1',run_id='run',epoch_id='diagnostic-cp10',checkpoint='cp10',remote_job_id='jid',count=32,successes=19,mean_reward=19/32,harness_config={'max_output_tokens':1024},sampling_policy=POLICY['version'],owned_evaluation_policy=POLICY,fixed_task_ids=[str(i)for i in range(32)])
+  self.record=dict(timestamp=2,seed=20261002,experiment_id='owned-cached-native-fixed32-cap1024-v1',run_id='run',epoch_id='diagnostic-cp10',checkpoint='cp10',remote_job_id='jid',count=32,successes=19,mean_reward=19/32,harness_config={'max_output_tokens':1024},sampling_policy=POLICY['version'],owned_evaluation_policy=POLICY,fixed_task_ids=[str(i)for i in range(32)])
   self.queue=dict(status='complete',request={'label':'label'},records=[self.record]);self.qpath=self.state/'checkpoint-evaluations/q.json';self.save()
   (self.prod/'epoch-first-signed-manifest.json').write_bytes(canonical(self.sign(dict(checkpoint={'id':'cp10'},start=1,epoch='production-20'))))
   self.pointer=self.sign(dict(version='cached1024-dashboard-sources-v1',states=[str(self.state)],indices=list(range(32)),source_sha256='source'))
