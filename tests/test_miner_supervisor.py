@@ -149,6 +149,17 @@ class SupervisorTests(unittest.TestCase):
         for name in ('download','read_url','sha'):
             self.assertEqual(inspect.getsource(getattr(s.hydration,name)),inspect.getsource(getattr(original,name)))
 
+    def test_compressed_discovery_is_decoded_and_bounded(self):
+        self.fixture()
+        import gzip
+        body=json.dumps({'accepting_submissions':False}).encode()
+        response=Response(body,headers={'Content-Encoding':'gzip'},status=200)
+        response.raw=io.BytesIO(gzip.compress(body))
+        self.assertIsNone(s.opening(self.args.discovery_url,self.args.authority,get=lambda *a,**k:response))
+        response=Response(b' '*(s.bootstrap.JSON_LIMIT+1),status=200)
+        with self.assertRaisesRegex(ValueError,'size bound'):
+            s.opening(self.args.discovery_url,self.args.authority,get=lambda *a,**k:response)
+
     def test_signatures_required_and_expired_discovery_never_opens(self):
         self.fixture();key=SigningKey.generate();authority=key.verify_key.encode().hex()
         def sign(body):return s.bootstrap.canonical(dict(payload=body,signer=authority,signature=base64.b64encode(key.sign(s.bootstrap.canonical(body)).signature).decode()))

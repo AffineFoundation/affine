@@ -33,13 +33,17 @@ def opening(discovery_url, authority, *, now=None, get=requests.get, fetch=boots
     parsed = urlparse(discovery_url)
     if parsed.scheme != 'https' or parsed.username or parsed.password or parsed.fragment:
         raise ValueError('HTTPS public discovery required')
-    with get(discovery_url, timeout=30, stream=True, allow_redirects=False) as response:
+    with get(discovery_url, timeout=30, stream=True, allow_redirects=False,
+             headers={'Accept-Encoding':'identity'}) as response:
         if response.status_code in (408, 429) or response.status_code >= 500:
             raise requests.HTTPError('transient public discovery response')
         if response.status_code != 200: raise ValueError('public discovery response')
-        raw = response.raw.read(bootstrap.JSON_LIMIT + 1)
-        if len(raw) > bootstrap.JSON_LIMIT: raise ValueError('discovery size bound')
-        hint = json.loads(raw)
+        chunks=[];size=0
+        for chunk in response.iter_content(64*1024):
+            size+=len(chunk)
+            if size>bootstrap.JSON_LIMIT: raise ValueError('discovery size bound')
+            chunks.append(chunk)
+        hint = json.loads(b''.join(chunks))
     if hint.get('accepting_submissions') is not True: return None
     if hint.get('authority') != authority: raise ValueError('discovery authority differs')
     pointer = bootstrap.signed(fetch(bootstrap.r2_url(hint['current_url']), bootstrap.JSON_LIMIT), authority)
