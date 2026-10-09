@@ -104,6 +104,31 @@ def _promoted_guard(root,authority,lineage):
         bound['optimizer_steps']==lineage['optimizer_steps']and bound['descriptor_sha256']!=lineage['descriptor_sha256']):
         raise ValueError('trainer cleanup behind promoted optimizer lineage')
 
+def migrate_promoted_run_marker(ack,authority,workspace):
+    """Reconcile only retention metadata to an already-promoted authorized run.
+
+    No promotion, checkpoint eviction or download retirement occurs. A later
+    job may be using this exact promoted parent while its old cleanup cursor
+    is repaired; only the retention metadata lease is acquired here.
+    """
+    root=Path(workspace).absolute();_,_,_,lineage=original_ack(ack,authority,root)
+    current=json.loads((root/'.optimizer-state-cache'/'current.json').read_bytes())
+    if current.get('ROOT_ack')!=ack:raise ValueError('run migration requires exact already-promoted ROOT ACK')
+    _promoted_guard(root,authority,lineage)
+    lifecycle=CacheLifecycle(root)
+    with lifecycle.lease_checkpoint('trainer-state-retention',blocking=False):
+        marker=lifecycle.meta/'trainer-current-state.json';previous=json.loads(marker.read_bytes())
+        before,retired,previous_ack=_previous(previous,ack,authority,root,lineage)
+        if before==lineage and previous.get('version')==MARKER_VERSION:
+            return dict(migrated=True,idempotent=True,genesis_sha256=lineage['genesis_sha256'])
+        retired=_transition(previous,previous_ack,ack,authority,root,before,lineage,retired)
+        # Re-read the authenticated head immediately before the metadata write.
+        # The optimizer remains untouched, including any in-flight candidate.
+        if json.loads((root/'.optimizer-state-cache'/'current.json').read_bytes())!=current:
+            raise ValueError('promoted optimizer head changed during run migration')
+        lifecycle._save(marker,dict(version=MARKER_VERSION,**lineage,ROOT_ack=ack,retired_geneses=retired))
+        return dict(migrated=True,idempotent=False,genesis_sha256=lineage['genesis_sha256'])
+
 def live_original(status):
     for field in ('runner_pid','child_pid'):
         pid=status.get(field);ticks=status.get(field+'_ticks')

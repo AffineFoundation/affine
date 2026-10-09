@@ -3,7 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock,patch
 from subnet.storage import Identity,canonical
-from subnet.trainer_cache_lifecycle import retire,VERSION,MARKER_VERSION,TRANSITION_VERSION,digest,migrate_legacy_marker
+from subnet.trainer_cache_lifecycle import retire,VERSION,MARKER_VERSION,TRANSITION_VERSION,digest,migrate_legacy_marker,migrate_promoted_run_marker
 from nacl.exceptions import BadSignatureError
 from subnet.cache_lifecycle import CacheLifecycle
 from subnet.persistent_training_controller import retire_completed_cache
@@ -205,6 +205,33 @@ class TrainerRetention(unittest.TestCase):
             cleanup.assert_not_called()
         self.assertEqual(marker.read_bytes(),before)
         self.assertEqual(retire(newack,self.authority.id,self.root)['status'],'complete')
+
+    def test_promoted_run_metadata_migration_preserves_live_parent_and_candidate(self):
+        oldack=self.authority.sign(self.value)
+        marker=self.root/'.cache-lifecycle/trainer-current-state.json';marker.parent.mkdir()
+        previous={k:self.pointer[k]for k in ('optimizer_steps','descriptor_sha256')};marker.write_text(json.dumps(previous))
+        newack=self.other_ack('new-run-step-one','f'*64,1);self.transition(previous,oldack,newack)
+        cache=self.root/'.optimizer-state-cache';cache.mkdir();value=newack['payload']
+        current=canonical(dict(ROOT_ack=newack,descriptor_sha256=value['trainer_state']['descriptor_sha256'],job_id=value['job_id'],job_sha256=value['job_sha256']))
+        (cache/'current.json').write_bytes(current);(cache/'pending.json').write_bytes(b'new live candidate retained')
+        # An actual other live process would make retire() defer; metadata-only
+        # reconciliation never invokes cleanup or touches its candidate.
+        ticks=Path('/proc',str(os.getpid()),'stat').read_text().rsplit(')',1)[1].split()[19]
+        (self.root/'runner-status/live-next.json').write_text(json.dumps(dict(child_pid=os.getpid(),child_pid_ticks=ticks)))
+        with patch('subnet.trainer_cache_lifecycle._retire_owned')as cleanup,patch('subnet.optimizer_state_cache.promote')as promote:
+            result=migrate_promoted_run_marker(newack,self.authority.id,self.root)
+            cleanup.assert_not_called();promote.assert_not_called()
+        self.assertFalse(result['idempotent']);self.assertTrue(self.oldpath.exists());self.assertTrue(self.newpath.exists())
+        self.assertEqual((cache/'current.json').read_bytes(),current)
+        self.assertEqual((cache/'pending.json').read_bytes(),b'new live candidate retained')
+        saved=json.loads(marker.read_text());self.assertEqual(saved['genesis_sha256'],'f'*64);self.assertEqual(saved['retired_geneses'],[self.genesis])
+        self.assertTrue(migrate_promoted_run_marker(newack,self.authority.id,self.root)['idempotent'])
+        with self.assertRaisesRegex(ValueError,'already-promoted'):migrate_promoted_run_marker(oldack,self.authority.id,self.root)
+
+    def test_metadata_migration_requires_exact_promoted_ack_and_transition(self):
+        newack=self.other_ack('new-run-step-one','f'*64,1)
+        cache=self.root/'.optimizer-state-cache';cache.mkdir();(cache/'current.json').write_bytes(canonical({'ROOT_ack':self.authority.sign(self.value)}))
+        with self.assertRaisesRegex(ValueError,'already-promoted'):migrate_promoted_run_marker(newack,self.authority.id,self.root)
     def test_receipted_downloads_removed_unreceipted_diagnostics_retained(self):
         downloaded=self.root/'jobs'/self.jobid/'submission-0.json';downloaded.write_bytes(b'input')
         diagnostics=self.root/'jobs'/self.jobid/'other.json';diagnostics.write_text('retain')

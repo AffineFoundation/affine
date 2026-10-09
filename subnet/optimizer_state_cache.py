@@ -252,6 +252,13 @@ class StateCache:
                     confirmed['new_checkpoint']!=report['new_checkpoint']or
                     confirmed['trainer_state']['optimizer_steps']!=descriptor['optimizer_steps']):
                     raise ValueError('failed promotion cold fallback exact durable original lineage')
+                from .persistent_publication import local_state
+                original_manifest=authenticate(original['manifest'],self.authority)
+                if local_state(self.manifest) or local_state(original_manifest):
+                    # This is the only optimizer copy, not a disposable cache.
+                    # A failed acknowledgement/promotion must be reconciled
+                    # against its original evidence without deleting the state.
+                    raise ValueError('local optimizer promotion failed; preserve sole parent for original ACK recovery')
                 # Only the optional byte cache failed. Keep original signed job,
                 # ACK, publication report and candidate inventory as evidence.
                 for name in ('pending.json','current.json'):

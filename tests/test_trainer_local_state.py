@@ -69,6 +69,26 @@ class LocalStateControls(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'required local optimizer'):cache.prepare_parent(descriptor,'aa'*32)
         self.assertTrue(p.exists());self.assertTrue((self.root/'.optimizer-state-cache/current.json').exists())
 
+    def test_terminal_failed_local_promotion_preserves_only_state_and_evidence(self):
+        descriptor,_=self.candidate()
+        directory=self.root/'.optimizer-state-cache/candidate-original'
+        original={p.name:p.read_bytes() for p in directory.glob('*.safetensors')}
+        guard=self.root/'.optimizer-state-cache/promotion.json'
+        intent=canonical(dict(phase='failed',ack=self.ack,child_pid=99999999,
+            child_ticks='1',child_terminal_confirmed=True))
+        guard.write_bytes(intent)
+        newer=copy.deepcopy(self.job);newer['job_id']='next'
+        for promoted in (False,True):
+            with self.subTest(promoted=promoted):
+                if promoted:promote(self.ack,self.authority,self.root)
+                markers={p.name:p.read_bytes() for p in directory.parent.glob('*.json')}
+                with StateCache(self.root,newer,self.manifest,self.authority) as cache:
+                    with self.assertRaisesRegex(ValueError,'preserve sole parent'):
+                        cache.prepare_parent(descriptor,'aa'*32)
+                self.assertEqual({p.name:p.read_bytes() for p in directory.glob('*.safetensors')},original)
+                self.assertEqual({p.name:p.read_bytes() for p in directory.parent.glob('*.json')},markers)
+                self.assertEqual(guard.read_bytes(),intent)
+
     def test_local_state_requires_retention_and_explicit_policy(self):
         self.local_manifest();self.assertEqual(export_policy(self.manifest),LOCAL_POLICY)
         for change in ({'optimizer_state_local_cache':None},
