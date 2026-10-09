@@ -8,7 +8,9 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from nacl.exceptions import BadSignatureError
 from dashboard.learner_projection import project as project_learner
+from dashboard.continuous_audit_projection import Projection as ContinuousAuditProjection
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = Path(__file__).parent / 'public'
@@ -24,6 +26,7 @@ def read(path, default=None):
 class Database:
     def __init__(self, path, source=ROOT/'state'):
         self.path, self.source = Path(path), Path(source)
+        self.continuous_audits = ContinuousAuditProjection()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.executescript('''
@@ -38,6 +41,16 @@ class Database:
 
     def refresh(self):
         epochs = {}
+        from dashboard.run_projection import read_boundary
+        boundary = read_boundary(self.source/'dashboard/current-run.ROOT-SIGNED.json')
+        continuous_ready = False
+        source_admission = read(self.source/'dashboard/continuous-audit-sources.ROOT-SIGNED.json')
+        if source_admission is not None:
+            try:
+                self.continuous_audits.configure_source_admission(source_admission)
+                continuous_ready = True
+            except (BadSignatureError, ValueError, KeyError, TypeError):
+                pass  # Bad audit provenance must not stop capture/evaluation updates.
         folders=[(folder,folder.name) for folder in self.source.iterdir()
             if folder.name in ('live', 'e2e-final', 'registered-test', 'registered-test-compatible', 'multi-environment', 'service-conformance', 'gpu-continuous', 'gpu-wide', 'native-agent-common', 'native-sql-common', 'native-eog-common', 'native-math-common')]
         folders.append((self.source/'prospective-separated-hopper-math-v1/controller-state','separated-hopper-math'))
@@ -124,7 +137,8 @@ class Database:
                            miners=[dict(identity=identity, points=value, weight=scores.get('weights', {}).get(identity, 0))
                                    for identity, value in points.items()], training=None,
                            audit_policy=doc.get('audit_policy', ''), source=source_name)
-                learner = project_learner(read(folder/f'{eid}-learner-population.json', {}), doc, identity_uids)
+                learner_document = read(folder/f'{eid}-learner-population.json', {})
+                learner = project_learner(learner_document, doc, identity_uids)
                 if learner is not None and accepted_batches + (batches-accepted_batches-unchecked_batches) <= learner['submitted']:
                     row.update(batches=learner['submitted'], batches_available=True,
                                grid=learner['submitted_grid'], unassigned_batches=learner['unassigned'],
@@ -138,6 +152,19 @@ class Database:
                     row['grid_outcomes'] = None
                     if audited <= learner['submitted']:
                         row['unchecked'] = learner['submitted']-audited
+                    if source_name == 'live-reward-math' and (boundary is None or doc.get('start', 0) >= boundary['started_at']):
+                        try:
+                            continuous = (self.continuous_audits.project(folder/'roles/verifier-queue.sqlite3', learner_document, doc)
+                                          if continuous_ready else None)
+                        except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
+                            continuous = None  # Missing evidence never means accepted or rejected.
+                        if continuous is None:
+                            row.update(audit_projection_pending=True, audit_projection_status='unavailable')
+                        if continuous is not None and continuous['captured'] == learner['submitted'] and (continuous['conclusive'] or continuous['conflicts']):
+                            row.update(accepted=continuous['accepted'], rejected=continuous['rejected'],
+                                       unchecked=continuous['unchecked'], audit_breakdown_available=True,
+                                       audit_count_source=continuous['source'], audit_conflicts=continuous['conflicts'],
+                                       audit_projection_pending=continuous['backlog'])
                     active = read(folder/'controller.json', {}).get('active')
                     if isinstance(active, dict) and active.get('epoch') == eid:
                         row['phase'] = active.get('phase', row['phase'])
