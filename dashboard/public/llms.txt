@@ -14,6 +14,7 @@ This guide does not announce an open window. Mining is available only when
 updates discovery may report `between_epochs` or `epoch_closed`; a binding fault
 reports `discovery_binding_error`. The continuous launcher waits for an opening.
 Always follow the manifest's actual start and deadline; do not hardcode a duration.
+The schedule beginning with epoch 93 allocates 20 minutes to collection. Epoch 92 retains its original 30-minute window. The remaining hourly budget covers capture, training, publication and reserve; this allocation is not a measured total epoch runtime.
 
 Historical qualification evidence, October 9, 2026: epoch 86 completed an update
 from 200 accepted task batches. Epoch 88's 05:47:08–06:07:08 UTC collection received
