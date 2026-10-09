@@ -3,6 +3,8 @@ import hashlib,json,re
 from pathlib import Path
 from dashboard.learner_projection import authenticated,canonical,AUTHORITY
 POLICY={'version':'owned-cached-native-evaluation-v1','trust_scope':'operator-owned-process-native-grader','proof_reverification':False}
+CAP2048_EXPERIMENT='owned-cached-native-fixed32-cap2048-v1'
+CAP2048_PREFIX='nonpayable-fixed32-cap2048-20261009-'
 def rows(pointer, production):
     config=authenticated(pointer,AUTHORITY)
     if config.get('version')not in ('cached1024-dashboard-sources-v1','cached1024-dashboard-sources-run-boundary-v2'):raise ValueError('dashboard source scope')
@@ -30,6 +32,21 @@ def rows(pointer, production):
             values=report['heldout'];plan=job['heldout'][0]
             if len(job['heldout'])!=1 or plan['indices']!=config['indices']or len(set(plan['indices']))!=32 or plan['seeds']!=[20261002+i*1000 for i in config['indices']]or [v['seed']for v in values]!=plan['seeds']:raise ValueError('fixed signed cohort seed binding')
             if len(values)!=32 or any(v.get('native_graded')is not True or v.get('proof_verification_performed')is not False or v['reward']not in(0,1)for v in values):raise ValueError('complete native cohort')
+            # A separately ROOT-authorized matched-cohort study shares this
+            # physical evaluator queue. Its signed namespace, checkpoint,
+            # source, seeds and cap bind the exclusion; unsigned display fields
+            # alone can never hide a malformed ordinary 1024 result.
+            checkpoint=manifest['checkpoint']['id']
+            if (re.fullmatch('[0-9a-f]{64}',checkpoint or '')
+                    and manifest['epoch']==CAP2048_PREFIX+checkpoint[:24]
+                    and plan['harness'].get('max_output_tokens')==2048):
+                if (not q['records'] or any(record.get('experiment_id')!=CAP2048_EXPERIMENT
+                        or record.get('epoch_id')!=manifest['epoch']
+                        or record.get('checkpoint')!=checkpoint
+                        or record.get('remote_job_id')!=jid
+                        or record.get('harness_config')!=plan['harness'] for record in q['records'])):
+                    raise ValueError('authenticated separate cap2048 study scope')
+                continue
             for record in q['records']:
                 if record['run_id']in seen:continue
                 if record['epoch_id']!=manifest['epoch']or record['checkpoint']!=manifest['checkpoint']['id']or record['remote_job_id']!=jid or record['count']!=32 or record['successes']!=sum(v['reward']==1 for v in values)or record['mean_reward']!=sum(v['reward']for v in values)/32 or record['harness_config']!=plan['harness']or record['harness_config']['max_output_tokens']!=1024 or record['seed']!=20261002 or record['experiment_id']!='owned-cached-native-fixed32-cap1024-v1' or record['sampling_policy']!=POLICY['version']or record.get('owned_evaluation_policy')!=POLICY or record['fixed_task_ids']!=[v['task_hash']for v in values]:raise ValueError('original diagnostic score binding')

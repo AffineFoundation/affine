@@ -7,19 +7,20 @@ Dashboard: https://affine.io/
 
 ## Current availability
 
-Epoch 86 completed a real update from 200 accepted task batches after receiving
-commitments from 152 external registered identities. The next checkpoint is
-published. Epoch 87 received no commitments while cold checkpoint downloads
-were being investigated; an interrupted multi-gigabyte model transfer was
-reproduced. The continuous launcher below adds resumable, hash-checked transfers.
-Epoch 88 opened October 9 at 05:47:08 UTC with a 20-minute collection window
-ending 06:07:08 UTC. Always use the signed manifest's actual start and deadline,
-rather than treating this recorded opening as current availability.
+Live epoch identity, checkpoint, collection window and eligible identity count
+come from https://affine.io/mining.json and its authenticated signed opening.
+This guide does not announce an open window. Mining is available only when
+`accepting_submissions` is true and the signed deadline has not passed. Between
+updates discovery may report `between_epochs` or `epoch_closed`; a binding fault
+reports `discovery_binding_error`. The continuous launcher waits for an opening.
+Always follow the manifest's actual start and deadline; do not hardcode a duration.
 
-Mining is available only when mining.json reports `accepting_submissions: true`
-and its authenticated opening has not expired. Between updates it may report
-`between_epochs`; a binding fault reports `discovery_binding_error`. Always read
-current discovery rather than treating this guide as a live window.
+Historical qualification evidence, October 9, 2026: epoch 86 completed an update
+from 200 accepted task batches. Epoch 88's 05:47:08–06:07:08 UTC collection received
+400 signed batches from 175 external registered identities. These are recorded
+observations, not the current epoch, registration count or a future mining window.
+An interrupted multi-gigabyte checkpoint transfer was also reproduced; the
+launcher below provides resumable transfers with complete-file hash checks.
 
 The protocol-regression openings 79–85 are retired and archived. They do not
 count as completed training updates, and their retirement is not miner fraud.

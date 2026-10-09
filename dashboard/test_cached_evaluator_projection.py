@@ -1,4 +1,4 @@
-import base64,hashlib,json,tempfile,unittest
+import base64,copy,hashlib,json,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
 from nacl.signing import SigningKey
@@ -38,3 +38,22 @@ class ProjectionTests(unittest.TestCase):
  def test_tampered_durable_ack_and_unauthenticated_pointer_fail(self):
   self.pointer['payload']['source_sha256']='wrong'
   with self.assertRaises(Exception):self.project()
+ def add_cap2048_study(self,namespace=True):
+  from dashboard.cached_evaluator_projection import CAP2048_PREFIX,CAP2048_EXPERIMENT
+  checkpoint='a'*64;epoch=CAP2048_PREFIX+checkpoint[:24]if namespace else'other-unapproved-study'
+  old=json.loads((self.state/'durable-evaluation-acks/jid.json').read_bytes())['payload'];ack=copy.deepcopy(old)
+  job=ack['original_job']['payload'];manifest=job['manifest']['payload'];manifest.update(epoch=epoch,checkpoint={'id':checkpoint})
+  job['manifest']=self.sign(manifest);job['heldout'][0]['harness']['max_output_tokens']=2048;ack['original_job']=self.sign(job)
+  raw=canonical(self.sign(ack));(self.state/'durable-evaluation-acks/studyjob.json').write_bytes(raw)
+  (self.state/'cache-disposal/studyjob.json').write_text(json.dumps(dict(result={'status':'complete'},durable_ack_sha256=hashlib.sha256(raw).hexdigest())))
+  (self.state/'roles/studylabel.json').write_text('{"job_id":"studyjob"}')
+  record=dict(self.record,run_id='study',epoch_id=epoch,checkpoint=checkpoint,remote_job_id='studyjob',harness_config={'max_output_tokens':2048},experiment_id=CAP2048_EXPERIMENT)
+  (self.state/'checkpoint-evaluations/study.json').write_bytes(canonical(dict(status='complete',request={'label':'studylabel'},records=[record])))
+ def test_authorized_separate2048_study_does_not_blank_or_join1024_series(self):
+  self.add_cap2048_study();r=self.project();self.assertEqual(len(r),1);self.assertEqual(r[0]['run_id'],'run');self.assertEqual(r[0]['harness_config']['max_output_tokens'],1024)
+ def test_unapproved2048_namespace_remains_fail_closed(self):
+  self.add_cap2048_study(namespace=False)
+  with self.assertRaises(ValueError):self.project()
+ def test_ordinary_wrong1024_record_cannot_claim_study_exclusion(self):
+  self.record['experiment_id']='owned-cached-native-fixed32-cap2048-v1';self.record['harness_config']['max_output_tokens']=2048;self.save()
+  with self.assertRaises(ValueError):self.project()
