@@ -1,5 +1,10 @@
 # Live mining availability and recovery — October 9, 2026
 
+Update the public checkout (`git pull --ff-only`) before bootstrapping. The
+bootstrap now accepts signed source descriptors using `read_url` as well as
+`url`, refusing conflicting aliases. Older bootstrap clients fail on the
+completed-answer source descriptor before downloading it.
+
 Check https://affine.io/mining.json before starting work. Mining is open only
 when `accepting_submissions` is true and the signed manifest is still within
 its upload window. A recovery is restoring the completed-answer MATH learner;

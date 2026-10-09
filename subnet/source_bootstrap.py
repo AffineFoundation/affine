@@ -42,6 +42,18 @@ def r2_url(url):
         raise ValueError('invalid direct R2 URL')
     return url
 
+def source_download_url(descriptor):
+    """Read either signed descriptor spelling, rejecting ambiguous aliases.
+
+    Source size, SHA256, membership and signature checks remain mandatory.
+    Some approved openings use read_url, while historical openings use url.
+    """
+    if not isinstance(descriptor, dict): raise ValueError('signed source bundle required')
+    present = [descriptor[key] for key in ('url', 'read_url') if key in descriptor]
+    if not present or any(value != present[0] for value in present):
+        raise ValueError('missing or conflicting signed source URL aliases')
+    return r2_url(present[0])
+
 def download(url, limit):
     r2_url(url)
     with requests.get(url, timeout=180, stream=True, allow_redirects=False,
@@ -192,7 +204,7 @@ def main(argv=None):
     # Forward only its path; never read, create or modify the key/capability.
     value=manifest(a.current_url,a.authority);descriptor=value.get('source_bundle')
     if not isinstance(descriptor,dict):raise ValueError('signed source bundle required')
-    body=download(r2_url(descriptor.get('url')),COMPRESSED_LIMIT)
+    body=download(source_download_url(descriptor),COMPRESSED_LIMIT)
     source=install(body,descriptor,cache)
     hydrate_task_assets(source,value,cache)
     arguments=['--authority',a.authority,'--current-url',a.current_url,'--gateway',a.gateway,credential_flag,str(credential_path),'--state',str(state),'--source-bundle-sha256',descriptor['sha256']]

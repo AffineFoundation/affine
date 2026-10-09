@@ -30,6 +30,26 @@ def envelope(value,key):
     return b.canonical(dict(payload=value,signer=key.verify_key.encode().hex(),signature=base64.b64encode(key.sign(b.canonical(value)).signature).decode()))
 
 class BootstrapTests(unittest.TestCase):
+    def test_signed_source_url_aliases_are_unambiguous_and_https_only(self):
+        for descriptor in ({'url':URL}, {'read_url':URL}, {'url':URL,'read_url':URL}):
+            self.assertEqual(b.source_download_url(descriptor),URL)
+        for descriptor in ({}, {'url':None,'read_url':URL}, {'url':URL,'read_url':URL+'&other=1'},
+                           {'read_url':'http://test.r2.cloudflarestorage.com/source'},
+                           {'read_url':'https://example.com/source'}):
+            with self.assertRaises(ValueError):b.source_download_url(descriptor)
+
+    def test_read_url_only_opening_reaches_admitted_source_without_reading_key(self):
+        body,descriptor=archive();descriptor['read_url']=descriptor.pop('url')
+        with tempfile.TemporaryDirectory() as tmp:
+            key=Path(tmp)/'fixture-key';key.write_text('opaque fixture')
+            argv=['--authority','a'*64,'--current-url',URL,'--source-cache',str(Path(tmp)/'cache'),
+                  '--key',str(key),'--state',str(Path(tmp)/'miner'),'--once']
+            with patch.object(b,'manifest',return_value={'source_bundle':descriptor}),patch.object(b,'download',return_value=body) as fetch,patch.object(b,'execute') as execute:
+                b.main(argv)
+            fetch.assert_called_once_with(URL,b.COMPRESSED_LIMIT)
+            execute.assert_called_once()
+            b.verify_cache(execute.call_args.args[0],b.admitted_files(body,descriptor))
+
     def test_explicit_search_preferences_reach_admitted_cli(self):
         body,descriptor=archive()
         with tempfile.TemporaryDirectory() as tmp:
