@@ -25,7 +25,12 @@ launcher below provides resumable transfers with complete-file hash checks.
 
 The protocol-regression openings 79–85 are retired and archived. They do not
 count as completed training updates, and their retirement is not miner fraud.
-Chain weight submission and payouts are disabled during this qualification.
+The hourly miner weight writer is enabled. It uses the latest authenticated miner
+assessment, with a six-hour contribution half-life and current hotkey-to-UID
+mapping. Training failures and unfinished epochs do not gate weight setting.
+Owner-only weights and burn fallbacks are prohibited. If new evidence is
+unavailable, the last valid assessment is retained with its original cutoff and
+current known penalties. Commit-reveal can delay visibility of a submitted update.
 
 The authoritative inputs are the signed current pointer, signed epoch manifest,
 and exact approved source archive. This guide describes the restored contract;
@@ -176,7 +181,11 @@ Independent verifiers sample current and historical immutable commitments and
 publish authenticated findings. Reward estimates combine eligible unique task
 contributions, accumulated audit evidence and configured penalties. Numerical
 ambiguity or infrastructure failure must not be labelled confirmed fraud.
-Qualification currently produces evidence/assessments with chain payout disabled.
+The validator submits the best available authenticated assessment each hour,
+independently of training. Signed current-hour assessments can be reused without
+recomputing the same audit history. A failed or empty evidence refresh falls back
+to valid prior contributions, preserving confirmed penalties. No owner burn or
+fabricated recipients are allowed. See docs/HOURLY_CURRENT_ASSESSMENT.md on GitHub.
 
 A completed optimizer update is not proof of learning. Independent held-out
 scores track model performance; assess matched checkpoints on the same cohort.

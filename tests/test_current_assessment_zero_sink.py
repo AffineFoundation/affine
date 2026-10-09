@@ -19,30 +19,23 @@ class ZeroSinkControls(unittest.TestCase):
         with tempfile.TemporaryDirectory()as d:
             result=self.adapter(d).submit_hour({}, {}, int(time.time())//3600*3600)
             self.assertEqual(result['status'],'zero_points_no_submission')
-    def test_explicit_zero_routes_to_actual_owner(self):
+    def test_explicit_zero_retains_chain_without_owner(self):
         with tempfile.TemporaryDirectory()as d:
-            result=self.adapter(d).submit_hour({}, {}, int(time.time())//3600*3600,
-                                               zero_total_policy='owner-sink-v1')
-            self.assertEqual(result['status'],'planned');self.assertEqual(result['uids'],[0])
-            self.assertEqual(result['weights'],[1.]);self.assertEqual(result['zero_total_policy'],'owner-sink-v1')
-    def test_bad_reverse_mapping_refuses(self):
+            result=self.adapter(d).submit_hour({}, {}, int(time.time())//3600*3600,zero_total_policy='no-owner-retain-v1')
+            self.assertEqual(result['status'],'zero_points_no_submission');self.assertNotIn('uids',result)
+            self.assertTrue(result['retained_onchain_weights'])
+    def test_old_sink_policy_rejected(self):
         with tempfile.TemporaryDirectory()as d:
-            a=self.adapter(d);old=a.query;a.query=lambda n,p,b:'wrong'if n=='Keys'else old(n,p,b)
-            with self.assertRaisesRegex(RuntimeError,'sink owner'):a.submit_hour({}, {}, int(time.time())//3600*3600,
-                                                                                zero_total_policy='owner-sink-v1')
+            with self.assertRaises(ValueError):self.adapter(d).submit_hour({}, {}, 0,zero_total_policy='owner-sink-v1')
+    def test_owner_recipient_refused(self):
+        with tempfile.TemporaryDirectory()as d:
+            with self.assertRaisesRegex(ValueError,'owner'):self.adapter(d).submit_hour({'owner':1}, {'owner':{'uid':0}}, int(time.time())//3600*3600)
     def test_unknown_zero_policy_rejected(self):
         with tempfile.TemporaryDirectory()as d:
             with self.assertRaises(ValueError):self.adapter(d).submit_hour({}, {}, 0,zero_total_policy='invented')
-    def test_stale_nonzero_recipient_cannot_trigger_sink(self):
+    def test_stale_recipient_cannot_trigger_sink(self):
         with tempfile.TemporaryDirectory()as d:
-            result=self.adapter(d).submit_hour({'departed':1}, {'departed':{'uid':85}},
-                int(time.time())//3600*3600,zero_total_policy='owner-sink-v1')
-            self.assertEqual(result['status'],'stale_registration_denied')
-            self.assertNotIn('zero_total_policy',result)
-    def test_rate_limited_sink_is_deferred(self):
-        with tempfile.TemporaryDirectory()as d:
-            a=self.adapter(d);old=a.query;a.query=lambda n,p,b:200 if n=='WeightsSetRateLimit'else old(n,p,b)
-            result=a.submit_hour({}, {}, int(time.time())//3600*3600,zero_total_policy='owner-sink-v1')
-            self.assertEqual(result['status'],'deferred_rate_limit');self.assertEqual(result['remaining_blocks'],100)
+            result=self.adapter(d).submit_hour({'departed':1}, {'departed':{'uid':85}},int(time.time())//3600*3600,zero_total_policy='no-owner-retain-v1')
+            self.assertEqual(result['status'],'stale_registration_denied');self.assertNotIn('uids',result)
 
 if __name__=='__main__':unittest.main()

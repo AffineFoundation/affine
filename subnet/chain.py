@@ -112,7 +112,7 @@ class ChainAdapter:
     def submit_hour(self, points: dict[str, int], registrations: dict[str, dict],
                     window_end: int, execute: bool = False, *, zero_total_policy: str | None = None,
                     registration_change_policy: str | None = None) -> dict:
-        if zero_total_policy not in (None, 'owner-sink-v1'):
+        if zero_total_policy not in (None, 'no-owner-retain-v1'):
             raise ValueError('explicit zero-total assessment policy')
         if registration_change_policy not in (None, 'current-hotkey-snapshot-v1'):
             raise ValueError('explicit current-registration policy')
@@ -120,6 +120,8 @@ class ChainAdapter:
             raise ValueError('only completed integral UTC hour windows may pay out')
         if any(isinstance(p, bool) or not isinstance(p, int) or p < 0 for p in points.values()):
             raise ValueError('invalid point count')
+        if points.get(OWNER, 0) or points.get(self.owner, 0):
+            raise ValueError('owner is never a reward recipient')
         with (self.state_dir / 'weights.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             status_path = self.state_dir / 'weights.json'
@@ -177,17 +179,15 @@ class ChainAdapter:
                 status.update(registration_change_policy=registration_change_policy,
                               registration_snapshot_block=block,
                               excluded_unregistered=sorted(departed), remapped_uids=remapped)
-            if not recipients and not stale and zero_total_policy == 'owner-sink-v1':
-                sink_uid = self.query('Uids', [self.netuid, self.owner], block)
-                if type(sink_uid) is not int or self.query('Keys', [self.netuid, sink_uid], block) != self.owner:
-                    raise RuntimeError('zero-total sink owner identity mismatch')
-                recipients = [(sink_uid, self.owner, 1)]
-                status['zero_total_policy'] = zero_total_policy
+            if any(h in (OWNER, self.owner) for _, h, _ in recipients):
+                raise ValueError('owner is never a reward recipient')
+            status['zero_total_policy'] = zero_total_policy
             if stale:
                 # Never silently renormalize winners after UID recycling.
                 status['status'] = 'stale_registration_denied'
             elif not recipients:
-                status['status'] = 'zero_points_no_submission'
+                status.update(status='zero_points_no_submission', retained_onchain_weights=True,
+                              health_alert='no_valid_registered_recipients')
             else:
                 recipients.sort()
                 total = sum(p for _, _, p in recipients)

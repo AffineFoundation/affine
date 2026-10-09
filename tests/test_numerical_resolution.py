@@ -168,7 +168,7 @@ class ReviewedUnknownControls(unittest.TestCase):
         self.prepare_archive()
         with self.assertRaises(ValueError):self.resolved()
 
-    def test_current_writer_new_policy_requires_actual_module_pins_old_v1_unchanged(self):
+    def test_current_writer_never_burn_policy_requires_actual_module_pins(self):
         import importlib.util
         from pathlib import Path
         from ops import current_assessment_writer as writer
@@ -178,14 +178,14 @@ class ReviewedUnknownControls(unittest.TestCase):
             verifiers=[self.verifier],module_hashes={},cutover_sha256=writer.sha(cutover),
             anchor_sha256=writer.sha(anchor),execute_enabled=False,zero_total_policy='owner-sink-v1',
             registration_change_policy='current-hotkey-snapshot-v1')
-        self.assertEqual(writer.validate_policy(signed(self.root,payload),self.authority,cutover,anchor)['version'],writer.VERSION)
+        with self.assertRaises(ValueError):writer.validate_policy(signed(self.root,payload),self.authority,cutover,anchor)
         payload['numerical_resolution_policy_sha256']=digest(self.document)
         with self.assertRaises(ValueError):writer.validate_policy(signed(self.root,payload),self.authority,cutover,anchor)
-        payload['version']=writer.NUMERICAL_RESOLUTION_VERSION
+        payload.update(version=writer.NEVER_BURN_VERSION,zero_total_policy='no-owner-retain-v1',fallback_assessments=[])
         with self.assertRaisesRegex(ValueError,'execution modules'):writer.validate_policy(signed(self.root,payload),self.authority,cutover,anchor)
-        paths=[Path(writer.__file__).resolve()]+[Path(importlib.util.find_spec(n).origin).resolve()for n in ('subnet.numerical_resolution','subnet.continuous_audit_policy','ops.current_assessment_evidence')]
+        paths=[Path(writer.__file__).resolve()]+[Path(importlib.util.find_spec(n).origin).resolve()for n in ('subnet.numerical_resolution','subnet.continuous_audit_policy','ops.current_assessment_evidence','subnet.current_assessment','subnet.chain','ops.live_reward_writer')]
         payload['module_hashes']={str(p):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths}
-        self.assertEqual(writer.validate_policy(signed(self.root,payload),self.authority,cutover,anchor)['version'],writer.NUMERICAL_RESOLUTION_VERSION)
+        self.assertEqual(writer.validate_policy(signed(self.root,payload),self.authority,cutover,anchor)['version'],writer.NEVER_BURN_VERSION)
 
 
 if __name__=='__main__':unittest.main()

@@ -8,6 +8,8 @@ opening state. It does not construct a Coordinator (which initializes SQLite).
 """
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 from nacl.exceptions import BadSignatureError
@@ -24,14 +26,34 @@ from subnet.distributed_roles import authenticate
 from subnet.storage import canonical
 
 
-def _read(path, maximum=256 * 1024**2):
+# The shared append-only audit registry grows across epochs. Its separately
+# bounded budget must not inherit the smaller per-document/configuration cap.
+# At deployment the registry is 271 MB; 2 GiB allows growth without permitting
+# arbitrary allocation. All population/job/report authentication stays below.
+AUDIT_STATE_MAX_BYTES = 2 * 1024**3
+DEFAULT_INPUT_MAX_BYTES = 256 * 1024**2
+
+
+def _read(path, maximum=DEFAULT_INPUT_MAX_BYTES):
+    if type(maximum) is not int or maximum < 1:
+        raise ValueError('positive assessment input budget')
     path = Path(path)
-    if path.is_symlink():
-        raise ValueError('assessment input must be an original regular file')
-    with path.open('rb') as stream:
-        raw = stream.read(maximum + 1)
-    if len(raw) > maximum:
-        raise ValueError('bounded assessment input exceeded')
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError('assessment input must be an original regular file')
+        if before.st_size > maximum:
+            raise ValueError('bounded assessment input exceeded')
+        with os.fdopen(fd, 'rb', closefd=False) as stream:
+            raw = stream.read(before.st_size + 1)
+        after = os.fstat(fd)
+        if (len(raw) != before.st_size or
+                (before.st_size, before.st_mtime_ns) !=
+                (after.st_size, after.st_mtime_ns)):
+            raise ValueError('assessment input changed during read')
+    finally:
+        os.close(fd)
     return json.loads(raw), hashlib.sha256(raw).hexdigest()
 
 
@@ -128,7 +150,7 @@ def _load_evidence_uncached(audit_config_path, *, authority, cutoff, verifiers,
         raise ValueError('assessment policy exact source admission changed')
     state_root = Path(config['state'])
     directory = state_root / 'continuous-audit'
-    state, state_sha = _read(directory / 'audit-state.json')
+    state, state_sha = _read(directory / 'audit-state.json', maximum=AUDIT_STATE_MAX_BYTES)
     if any(type(state.get(key)) is not dict for key in ('populations', 'jobs', 'draws')):
         raise ValueError('original audit state registry shape')
     workers = {worker: ['verify'] for worker in verifiers}

@@ -1,4 +1,4 @@
-import json, tempfile, unittest
+import importlib.util, json, tempfile, unittest
 from pathlib import Path
 from unittest.mock import patch
 from contextlib import nullcontext
@@ -16,11 +16,14 @@ class WriterControls(unittest.TestCase):
         self.c = dict(global_lock_path=str(self.path/'lock'), reward_state=str(self.path),
                       chain_state=str(self.path), authority_seed_file=str(seed))
         self.cutover = sign({'original':True},self.key); self.anchor=sign({'original':True},self.key)
-        self.policy = sign(dict(version=w.VERSION, half_life_hours=6, first_window=3600,
+        modules = ('ops.current_assessment_writer','subnet.numerical_resolution','subnet.continuous_audit_policy','ops.current_assessment_evidence','subnet.current_assessment','subnet.chain','ops.live_reward_writer')
+        pins = {str(Path(importlib.util.find_spec(m).origin).resolve()): None for m in modules}
+        pins = {p:w.file_hash(p) for p in pins}
+        self.policy = sign(dict(version=w.NEVER_BURN_VERSION, half_life_hours=6, first_window=3600,
             netuid=120, owner_hotkey=w.OWNER,audit_config='/not-a-training-state',
-            source_admission_sha256='a'*64, verifiers=['v'],module_hashes={},
+            source_admission_sha256='a'*64, verifiers=['v'],module_hashes=pins,numerical_resolution_policy_sha256='b'*64,fallback_assessments=[],
             cutover_sha256=w.sha(self.cutover),anchor_sha256=w.sha(self.anchor),execute_enabled=True,
-            zero_total_policy='owner-sink-v1',
+            zero_total_policy='no-owner-retain-v1',
             registration_change_policy='current-hotkey-snapshot-v1'),self.key)
         self.calls=[]
         controls=self
@@ -33,7 +36,7 @@ class WriterControls(unittest.TestCase):
         self.adapter=Adapter;self.status='planned'
         self.evidence=dict(snapshots=[dict(epoch='failed-original-training',round=13,cutoff=7200,
             miners={'miner':dict(unique_eligible_batches=3,validity_probability=.5,reward_multiplier=1.)})],
-            committed_at_by_epoch={'failed-original-training':7000},evidence_hashes=['e'])
+            committed_at_by_epoch={'failed-original-training':7000},evidence_hashes={'source_admission_sha256':'a'*64,'numerical_resolution_policy_sha256':'b'*64})
     def invoke(self,result=None,*,execute=False,now=7300):
         def load(*a,**k):
             if isinstance(result,Exception):raise result
@@ -54,15 +57,16 @@ class WriterControls(unittest.TestCase):
     def test_outage_next_hour_uses_last_valid(self):
         self.invoke();self.invoke(TimeoutError(),now=11000)
         self.assertEqual(self.calls[0][0],self.calls[1][0])
-        health=json.loads((self.path/'current-assessment-v1'/'last-run.json').read_text())
+        health=json.loads((self.path/w.ASSESSMENT_DIRECTORY/'last-run.json').read_text())
         self.assertTrue(health['assessment_stale'])
     def test_no_initial_evidence_fails_without_transaction(self):
-        with self.assertRaises(TimeoutError):self.invoke(TimeoutError())
+        self.assertEqual(self.invoke(TimeoutError())['status'],'no_valid_assessment')
         self.assertEqual(self.calls,[])
-    def test_integrity_error_is_not_an_outage_fallback(self):
+    def test_invalid_fresh_evidence_uses_only_authenticated_history(self):
         self.invoke()
-        with self.assertRaises(ValueError):self.invoke(ValueError('invalid signature'),now=11000)
-        self.assertEqual(len(self.calls),1)
+        self.invoke(ValueError('invalid signature'),now=11000)
+        self.assertEqual(len(self.calls),2)
+        self.assertEqual(self.calls[0][0],self.calls[1][0])
     def test_successful_hour_is_not_resubmitted(self):
         (self.path/'weights.json').write_text(json.dumps({'last_submitted_window':7200}))
         self.assertEqual(self.invoke()['status'],'already_submitted');self.assertEqual(self.calls,[])

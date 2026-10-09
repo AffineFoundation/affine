@@ -38,7 +38,7 @@ def observe_units(run=subprocess.run):
   r=run(['systemctl','--user','show',unit,'--property=LoadState,ActiveState,UnitFileState','--no-pager'],capture_output=True,text=True,timeout=15)
   need(r.returncode==0,'old writer status query failed')
   fields=dict(line.split('=',1) for line in r.stdout.splitlines() if '=' in line)
-  need(fields.get('LoadState')=='loaded' and fields.get('ActiveState')=='inactive' and fields.get('UnitFileState') in (('disabled','masked','static') if unit.endswith('.service') else ('disabled','masked')),'old writer must be disabled and inactive')
+  need((fields.get('LoadState')=='loaded' or (fields.get('LoadState')=='masked' and fields.get('UnitFileState')=='masked')) and fields.get('ActiveState')=='inactive' and fields.get('UnitFileState') in (('disabled','masked','static') if unit.endswith('.service') else ('disabled','masked')),'old writer must be disabled and inactive')
   result.append(dict(unit=unit,running=False,enabled=False,status_query_succeeded=True))
  return result
 

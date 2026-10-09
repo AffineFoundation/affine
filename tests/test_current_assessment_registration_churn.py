@@ -43,7 +43,7 @@ class RegistrationChurnControls(unittest.TestCase):
                     {'a':{'uid':1,'public_key':'wrong','snapshot_block':99}})
     def test_all_departed_uses_explicit_zero_policy(self):
         with tempfile.TemporaryDirectory() as d:
-            r=self.submit(self.adapter(d),{'gone':1},{'gone':{'uid':85,'public_key':'gone'}},{},zero_total_policy='owner-sink-v1')
-            self.assertEqual(r['uids'],[0]);self.assertEqual(r['excluded_unregistered'],['gone'])
+            r=self.submit(self.adapter(d),{'gone':1},{'gone':{'uid':85,'public_key':'gone'}},{},zero_total_policy='no-owner-retain-v1')
+            self.assertEqual(r['status'],'zero_points_no_submission');self.assertNotIn('uids',r);self.assertEqual(r['excluded_unregistered'],['gone'])
 
 if __name__=='__main__':unittest.main()

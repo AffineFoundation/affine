@@ -1,6 +1,6 @@
 # Hourly current miner assessment
 
-The `hourly-current-assessment-writer-v1` replaces the historical finalized-epoch
+The `hourly-current-assessment-writer-never-burn-v3` replaces the historical finalized-epoch
 payout queue. At each UTC hour it calculates the validator's current estimate
 from authenticated eligible task-pair commitments and admitted audit evidence.
 Training success, training reports, checkpoint publication and an unfinished
@@ -46,12 +46,20 @@ hotkey's score. Public-identity mismatches and inconsistent snapshots still fail
 closed; registration churn alone does not reject everyone else's update.
 An uncertain transaction outcome requires reconciliation before a retry.
 
-A transport timeout can reuse the last authenticated valid assessment, labeled
-stale with its original evidence cutoff. Signature, integrity and computation
-errors fail closed. Genuine inactivity decays contribution scores. An explicitly
-signed `owner-sink-v1` policy handles a genuine zero-total assessment by assigning
-the owner sink, rather than leaving previously penalized miners rewarded. The
-default behavior of other ChainAdapter callers remains unchanged.
+Weight setting is independent of training qualification. If new evidence cannot
+be obtained or authenticated, the writer uses the last authenticated positive
+miner assessment, preserves its original evidence cutoff, and reports degraded
+freshness. It never uses failed or unauthenticated input as evidence. An empty
+new history does not erase valid prior contributions. Current authenticated
+penalties and exclusions remain effective when historical contributions are
+reused; fallback must not resurrect a miner whose reward was explicitly removed.
+
+Owner-only weights and burn fallbacks are prohibited, including when all scores
+are zero. The retired burn command refuses to run, and its service and timer are
+masked. The final submission vector excludes the subnet owner. If no positively
+scored, currently registered miner remains, the writer reports that condition
+and retains the existing chain state rather than inventing recipients. Chain
+availability and rate limits can delay submission; such delays are explicit.
 
 Each hour retains the signed assessment, source/evidence hashes, estimates,
 penalties, exclusions, chain result and last successful submission window.
@@ -71,3 +79,10 @@ unresolved invalid evidence still triggers penalties. The isolated writer packag
 is installed for 00:00 UTC on 2026-10-07, with the minute timer active. Its first
 invocation exited normally while waiting for that hour. A successful new chain
 submission under this policy remains to be observed.
+
+The evidence refresh has a 180-second budget, reserving time for transaction
+finality. An optional ROOT-authenticated current-hour assessment cache can avoid
+recomputing the same history; absence or rejection of that cache does not block
+the writer. The cache must match its approved producer, evidence policies,
+cutoff, and EMA semantics. Original transaction uncertainty remains fenced until
+actual-chain evidence resolves it; old hourly windows are never blindly replayed.

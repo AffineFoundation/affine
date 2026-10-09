@@ -65,12 +65,36 @@ def calculate(snapshots, committed_at, cutoff):
                 unaudited_samples_claimed_verified=False, chain_executed=False)
 
 
-def fallback(previous, cutoff, reason):
+def fallback(previous, cutoff, reason, *, constraints=()):
     """An evidence outage preserves last assessment; inactivity is different."""
     if previous.get('version') != VERSION or previous['cutoff'] > cutoff:
         raise ValueError('last authenticated current assessment')
     result = dict(previous, cutoff=cutoff, evidence_cutoff=previous.get('evidence_cutoff', previous['cutoff']),
                   assessment_stale=True, evidence_error=reason, chain_executed=False)
+    # Reusing historical contribution must not restore a later confirmed zero,
+    # blacklist, or stronger penalty. Missing observations cannot erase evidence.
+    scores = {m: number(v) for m, v in previous['points'].items()}
+    estimates = {m: dict(v) for m, v in previous['miner_estimates'].items()}
+    for current in sorted(constraints, key=lambda a: a['cutoff']):
+        if current['cutoff'] < previous['cutoff']:
+            continue
+        for miner in scores:
+            old = estimates[miner]
+            new = current['miner_estimates'].get(miner)
+            if new is None:
+                continue
+            for field in ('validity_probability', 'resolution_coverage_factor', 'reward_multiplier'):
+                before = number(old.get(field, 1.))
+                after = min(before, number(new.get(field, 1.)))
+                if after > 1: raise ValueError('assessment factor above one')
+                scores[miner] = scores[miner] * (after / before) if before else 0.
+                old[field] = after
+            old['blacklisted'] = bool(old.get('blacklisted') or new.get('blacklisted'))
+            if old['blacklisted']: scores[miner] = 0.
+    total = math.fsum(scores.values())
+    result.update(points=scores, miner_estimates=estimates,
+                  weights={m: v / total if total else 0. for m,v in scores.items()},
+                  fallback_constraint_cutoffs=sorted({a['cutoff'] for a in constraints}))
     return result
 
 
@@ -82,17 +106,22 @@ def recipients(assessment, registrations):
         if key in by_public:
             raise ValueError('ambiguous registered public identity')
         by_public[key] = (hotkey, row)
-    points, selected, excluded = {}, {}, []
+    from subnet.chain import OWNER
+    eligible, selected, excluded = {}, {}, []
     for miner, score in assessment['points'].items():
-        number(score)
-        if score <= 0:
-            continue
+        score = number(score)
+        if score <= 0: continue
         if miner not in by_public:
-            excluded.append(miner)
-            continue
+            excluded.append(miner); continue
         hotkey, row = by_public[miner]
-        units = int(score * UNITS_PER_POINT)
-        if units:
-            points[hotkey] = units
-            selected[hotkey] = row
+        if hotkey == OWNER:
+            excluded.append(miner); continue
+        eligible[hotkey] = score
+        selected[hotkey] = row
+    # Relative positive shares, not absolute decayed EMA units. A tiny but valid
+    # assessment must not disappear through integer underflow.
+    largest = max(eligible.values(), default=1.)
+    scaled = {h: score / largest for h,score in eligible.items()}
+    total = math.fsum(scaled.values())
+    points = {h: max(1, int(v / total * UNITS_PER_POINT)) for h,v in scaled.items()}
     return points, selected, sorted(excluded)
