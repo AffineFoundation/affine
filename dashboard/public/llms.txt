@@ -133,8 +133,10 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.source_bootstrap \
 
 32 is a recommended local per-task search budget, not the allowed nonce ceiling.
 It gives an eight-rollout quota more room than the old eight-attempt example.
-Tune it for observed task success rates and remaining epoch time, at or below
-the signed 1,000-attempt limit. Move on from tasks where one outcome is too rare.
+The current approved CLI accepts search budgets from 1 through 128. The protocol
+separately permits nonce values 0 through 999; compatible custom miners may use
+that full range. Tune the CLI budget within its 128-attempt limit for task
+success rates and remaining epoch time. Move on when one outcome is too rare.
 A longer search cannot extend the signed upload deadline.
 
 The bootstrap verifies the pointer, manifest and complete source archive, admits
@@ -142,7 +144,9 @@ the task snapshot, and executes only that approved source in an isolated fresh
 Python process. The client authenticates checkpoint files before inference.
 Signed source execution is not a security sandbox.
 
-Supervise the command across epochs: poll discovery, start each new epoch once,
+To follow checkpoint changes under the same approved source, omit `--once`.
+If the approved source changes, the client stops and needs a fresh bootstrap.
+Alternatively, supervise one-shot runs: poll discovery, start each new epoch once,
 inspect its original process after timeouts, and stop using the old checkpoint
 when the opening changes. `--once` does not itself watch forever. Do not run
 multiple processes sharing the same identity/epoch state or reset the upload
