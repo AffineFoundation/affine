@@ -1,3 +1,5 @@
+from subnet.backend_jobs import canonical
+import hashlib
 import copy,json,tempfile,unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -162,6 +164,8 @@ class IndependentEvaluator(unittest.TestCase):
         self.assertEqual(result['status'],'complete');self.assertEqual(result['request']['manifest']['checkpoint']['id'],'new')
         failure=json.loads((self.state/'checkpoint-evaluation-faults'/old.name).read_text())
         self.assertEqual(failure['status'],'failed');self.assertNotIn('records',failure)
+        saved=json.loads(old.read_text());self.assertEqual(saved['status'],'failed');self.assertNotIn('records',saved)
+        self.assertEqual(saved['terminal_fault_sha256'],hashlib.sha256(canonical(failure)).hexdigest())
         pending_pass(self.controller);self.assertEqual(self.controller.jobs.run.call_count,2)
     def test_corrupt_request_is_retained_and_new_checkpoint_runs_when_idle(self):
         old=self.queued();old.write_text('{broken')
@@ -187,6 +191,18 @@ class IndependentEvaluator(unittest.TestCase):
         self.assertEqual(result['status'],'queued');self.assertEqual(result['request'],original)
         self.assertEqual(fault['status'],'retry_original_request');self.assertEqual(fault['attempts'],12)
         self.assertFalse(fault['remote_job_started']);self.assertEqual(fault['required_free_bytes'],20)
+        self.controller.jobs.run.side_effect=None
+        self.assertEqual(pending_pass(self.controller,now=10**12+13000)['status'],'complete')
+    def test_hydration_transfer_deferral_recovers_beyond_eight_attempts(self):
+        from subnet.checkpoint_evaluator import EvaluationHydrationDeferred
+        path=self.queued();original=json.loads(path.read_text())['request']
+        self.controller.jobs.busy=Mock(return_value=False)
+        self.controller.jobs.run.side_effect=EvaluationHydrationDeferred('ReadTimeout','a'*64)
+        for attempt in range(12):pending_pass(self.controller,now=10**12+attempt*1000)
+        result=json.loads(path.read_text());fault=json.loads((self.state/'checkpoint-evaluation-faults'/path.name).read_text())
+        self.assertEqual(result['request'],original);self.assertEqual(result['status'],'queued')
+        self.assertEqual(fault['status'],'retry_original_request');self.assertEqual(fault['attempts'],12)
+        self.assertEqual(fault['transfer_reason'],'ReadTimeout');self.assertFalse(fault['remote_job_started'])
         self.controller.jobs.run.side_effect=None
         self.assertEqual(pending_pass(self.controller,now=10**12+13000)['status'],'complete')
     def test_noncapacity_oserror_still_becomes_unresolved(self):

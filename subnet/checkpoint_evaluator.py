@@ -32,6 +32,12 @@ class EvaluationCapacityDeferred(OSError):
         super().__init__('independent evaluator disk admission deferred')
         self.free=free;self.minimum=minimum
 
+class EvaluationHydrationDeferred(OSError):
+    """Known transfer failure before any scientific evaluator job is issued."""
+    def __init__(self,reason,plan_sha256):
+        super().__init__('independent evaluator checkpoint transfer deferred')
+        self.reason=reason;self.plan_sha256=plan_sha256
+
 def detached_historical_run(module):
     """Replace only the reviewed historical SSH launch, preserving its ABI."""
     source=textwrap.dedent(inspect.getsource(module.RemoteJobs.run))
@@ -179,6 +185,8 @@ class QualifiedEvaluationJobs:
                 raise ValueError('original evaluation source route changed')
         elif not row['new_dispatch_approved']:
             raise ValueError('evaluation source not approved for new GPU dispatch')
+        elif not isinstance(label,str) or len(label)+9>100:
+            raise ValueError('evaluation infrastructure label exceeds original job ID limit')
         elif self.busy():
             raise RemoteObservationTimeout(label,role)
         remote=self.instance(sha,original=job)
@@ -190,6 +198,9 @@ class QualifiedEvaluationJobs:
             capacity=json.loads(remote.command(shlex.quote(remote.python)+' -I -B -c '+shlex.quote(script),timeout=30))
             if type(capacity.get('free'))is not int or capacity['free']<minimum:
                 raise EvaluationCapacityDeferred(capacity.get('free'),minimum)
+        if not record.exists() and row['endpoint'].get('evaluation_checkpoint_hydration'):
+            from ops.evaluator_checkpoint_hydration import prefetch
+            prefetch(self.controller,remote,manifest,row['endpoint']['evaluation_checkpoint_hydration'])
         cache=row['endpoint'].get('checkpoint_caches',{}).get(manifest['checkpoint']['id'])
         # Queue cache hints may name a trainer filesystem; only this evaluator's
         # explicitly approved map can cross the physical-role boundary. With
@@ -320,6 +331,16 @@ def evaluate_one(controller,path):
     save(path,record)
     return record
 
+def terminal_queue_record(path,evidence):
+    """Reflect an existing terminal scheduler fault without changing its request."""
+    if evidence.get('status')not in ('failed','unresolved'):return
+    record=json.loads(Path(path).read_text())
+    if record.get('status')=='complete':return
+    if hashlib.sha256(canonical(record['request'])).hexdigest()!=record['request_sha256']:
+        return # Keep malformed original bytes intact; fault still excludes them.
+    update=dict(status=evidence['status'],terminal_fault_sha256=hashlib.sha256(canonical(evidence)).hexdigest())
+    if any(record.get(k)!=v for k,v in update.items()):record.update(update);save(path,record)
+
 def pending_pass(controller,now=None,*,dispatch_order=None):
     """Advance terminal bad requests; never run another job while GPU liveness is unknown."""
     now=time.time() if now is None else now
@@ -334,7 +355,10 @@ def pending_pass(controller,now=None,*,dispatch_order=None):
         except (ValueError,OSError,AttributeError,KeyError):return (-1,0)
     for path in sorted(files,key=order):
         fault=controller.state/'checkpoint-evaluation-faults'/path.name
-        if fault.exists() and json.loads(fault.read_text()).get('status') in ('failed','unresolved'):continue
+        if fault.exists() and json.loads(fault.read_text()).get('status') in ('failed','unresolved'):
+            try:terminal_queue_record(path,json.loads(fault.read_text()))
+            except (ValueError,OSError,KeyError):pass
+            continue
         try:
             record=json.loads(path.read_text())
             if record.get('status') in ('complete','failed','unresolved') or record.get('retry_after',0)>now:continue
@@ -357,12 +381,17 @@ def pending_pass(controller,now=None,*,dispatch_order=None):
             except Exception:busy=None
             attempts=(json.loads(fault.read_text()).get('attempts',0) if fault.exists() else 0)+1
             capacity=isinstance(error,EvaluationCapacityDeferred)
+            hydration=isinstance(error,EvaluationHydrationDeferred)
             terminal=isinstance(error,(ValueError,KeyError,TypeError,AttributeError)) or getattr(error,'terminal_job',False)
-            status='retry_original_request'if capacity else ('failed' if terminal and busy is False else ('unresolved' if attempts>=8 and busy is False else 'retry_original_request'))
+            status='retry_original_request'if capacity or hydration else ('failed' if terminal and busy is False else ('unresolved' if attempts>=8 and busy is False else 'retry_original_request'))
             evidence=dict(status=status,error_type=type(error).__name__,attempts=attempts,
                           original_request=path.name,gpu_busy=busy,time=now,retry_after=now+min(300,10*2**min(attempts,5)))
             if capacity:evidence.update(reason='disk-capacity',remote_job_started=False,free_bytes=error.free,required_free_bytes=error.minimum)
+            if hydration:evidence.update(reason='checkpoint-transfer',transfer_reason=error.reason,read_plan_sha256=error.plan_sha256,remote_job_started=False)
             save(fault,evidence)
+            if status in ('failed','unresolved'):
+                try:terminal_queue_record(path,evidence)
+                except (ValueError,OSError,KeyError):pass
             if busy is not False:return evidence
             if status=='retry_original_request':
                 # Retry same request later without monopolizing a known-idle GPU.

@@ -86,6 +86,18 @@ class SourceRouting(unittest.TestCase):
     def test_trainer_cache_hint_never_crosses_physical_evaluator_boundary(self):
         sha='b'*64;r=self.router();r.run('new','evaluate',self.manifest(sha),'/trainer/private/checkpoint')
         self.assertIsNone(self.remotes[sha].run.call_args.args[3])
+    def test_operator_prefetch_runs_only_before_new_original_dispatch(self):
+        sha='b'*64;self.rows[sha]['endpoint']['evaluation_checkpoint_hydration']={'signed':'policy'}
+        r=self.router()
+        with patch('ops.evaluator_checkpoint_hydration.prefetch')as hydrate:
+            r.run('new','evaluate',self.manifest(sha));hydrate.assert_called_once()
+            self.existing(sha);r.run('original','evaluate',self.manifest(sha),heldout=[{'seeds':[100]}])
+            self.assertEqual(hydrate.call_count,1)
+    def test_prefetch_authentication_failure_does_not_issue_gpu_job(self):
+        sha='b'*64;self.rows[sha]['endpoint']['evaluation_checkpoint_hydration']={'signed':'policy'}
+        with patch('ops.evaluator_checkpoint_hydration.prefetch',side_effect=ValueError('bad signature')):
+            with self.assertRaises(ValueError):self.router().run('new','evaluate',self.manifest(sha))
+        self.remotes[sha].run.assert_not_called()
     def test_only_explicit_evaluator_checkpoint_cache_is_used(self):
         sha='b'*64;self.rows[sha]['endpoint']['checkpoint_caches']={'actual-parent':'/evaluator/approved/cache'}
         r=self.router();r.run('new','evaluate',self.manifest(sha),'/trainer/wrong/cache')
