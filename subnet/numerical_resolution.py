@@ -159,7 +159,7 @@ def reference(document, raw, authority):
 
 
 def apply(observations, records, admitted_jobs, *, authority, cutoff,
-          policy_document=None, expected_policy_sha256=None, reference_archives=()):
+          policy_document=None, expected_policy_sha256=None, reference_archives=(), unavailable_execution_deferrals=None):
     """Only explicit signed policy pins can change the effective scoring category."""
     if policy_document is None and expected_policy_sha256 is None and not reference_archives:
         return observations
@@ -202,6 +202,17 @@ def apply(observations, records, admitted_jobs, *, authority, cutoff,
         need(row['epoch'] == entry['epoch'] and row['checkpoint'] == entry['checkpoint']
              and row['proof_sha256'] == entry['artifact_sha256'], 'resolution exact original population')
         admission = admitted_jobs.get(entry['original_job_sha256'])
+        if admission is None and unavailable_execution_deferrals is not None:
+            # A missing/declined original job cannot resolve anything. Keep its
+            # data UNKNOWN while allowing independently admitted jobs to count.
+            # An observation without its admission would instead be corruption.
+            need(key not in by_key, 'resolution observation lacks original admission')
+            issue = dict(kind='numerical_resolution', identifier=entry['evidence_id'],
+                         original_job_sha256=entry['original_job_sha256'],
+                         status='unresolved', reason='original execution unavailable at evidence cutoff')
+            if issue not in unavailable_execution_deferrals:
+                unavailable_execution_deferrals.append(issue)
+            continue
         need(admission is not None, 'resolution original admitted execution')
         original = [o for o in admission['observations'] if digest(o) == entry['original_observation_sha256']]
         need(len(original) == 1 and original[0]['outcome'] == 'confirmed_invalid'

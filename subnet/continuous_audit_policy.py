@@ -42,7 +42,7 @@ def random_selection(records,seed,count,already=()):
  ordered=sorted((row for row in rows if digest(row)not in excluded),key=lambda row:digest(dict(domain=VERSION,seed=seed,row=row)))
  return ordered[:count]
 
-def observations(envelopes,records,verifiers,cutoff,*,admitted_jobs=None,adjudications=(),authority=None,numerical_resolution_policy=None,expected_numerical_resolution_policy_sha256=None,numerical_reference_archives=()):
+def observations(envelopes,records,verifiers,cutoff,*,admitted_jobs=None,adjudications=(),authority=None,numerical_resolution_policy=None,expected_numerical_resolution_policy_sha256=None,numerical_reference_archives=(),numerical_unavailable_execution_deferrals=None):
  """Reject substitution/conflicts; repeats never increase confidence or penalties."""
  rows=population(records);lookup={(r['epoch'],r['miner'],r['batch_sha256']):r for r in rows};result={}
  finite(cutoff,0,2**53,'immutable hourly cutoff');need(type(envelopes)is list and len(envelopes)<=1000000,'bounded audit evidence')
@@ -80,9 +80,9 @@ def observations(envelopes,records,verifiers,cutoff,*,admitted_jobs=None,adjudic
    need(expected in resolutions and old['outcome']=='numerical_ambiguous'and p['outcome']in('verified_valid','confirmed_invalid'),'conflicting authenticated audits require explicit reference adjudication')
   result[key]=dict(p,round=row['round'],evidence_id=key,verifier=signer)
  from .numerical_resolution import apply
- return apply(list(result.values()),rows,admitted_jobs or {},authority=authority,cutoff=cutoff,policy_document=numerical_resolution_policy,expected_policy_sha256=expected_numerical_resolution_policy_sha256,reference_archives=numerical_reference_archives)
+ return apply(list(result.values()),rows,admitted_jobs or {},authority=authority,cutoff=cutoff,policy_document=numerical_resolution_policy,expected_policy_sha256=expected_numerical_resolution_policy_sha256,reference_archives=numerical_reference_archives,unavailable_execution_deferrals=numerical_unavailable_execution_deferrals)
 
-def snapshot(records,envelopes,verifiers,*,epoch,round,checkpoint,cutoff,audit_policy,admitted_jobs=None,adjudications=(),authority=None,eligible_evidence_ids=None,numerical_resolution_policy=None,expected_numerical_resolution_policy_sha256=None,numerical_reference_archives=()):
+def snapshot(records,envelopes,verifiers,*,epoch,round,checkpoint,cutoff,audit_policy,admitted_jobs=None,adjudications=(),authority=None,eligible_evidence_ids=None,numerical_resolution_policy=None,expected_numerical_resolution_policy_sha256=None,numerical_reference_archives=(),numerical_unavailable_execution_deferrals=None):
  """Validity estimate can decrease; current cohort bounds historical reputation.
 
  The caller authenticates immutable opening/policy and signs this exact result.
@@ -92,7 +92,7 @@ def snapshot(records,envelopes,verifiers,*,epoch,round,checkpoint,cutoff,audit_p
  if expected_numerical_resolution_policy_sha256 is not None:need(p['version']==RESOLUTION_VERSION,'numerical resolution requires explicit UNKNOWN coverage policy')
  need(all(r['round']<=round and r['committed_at']<=cutoff for r in rows),'future or postcutoff committed population')
  current=[r for r in rows if r['epoch']==epoch];need(all(r['round']==round and r['checkpoint']==checkpoint for r in current),'current epoch/checkpoint binding')
- audits=observations(envelopes,rows,verifiers,cutoff,admitted_jobs=admitted_jobs,adjudications=adjudications,authority=authority,numerical_resolution_policy=numerical_resolution_policy,expected_numerical_resolution_policy_sha256=expected_numerical_resolution_policy_sha256,numerical_reference_archives=numerical_reference_archives);miners=sorted({r['miner']for r in current});points={};details={}
+ audits=observations(envelopes,rows,verifiers,cutoff,admitted_jobs=admitted_jobs,adjudications=adjudications,authority=authority,numerical_resolution_policy=numerical_resolution_policy,expected_numerical_resolution_policy_sha256=expected_numerical_resolution_policy_sha256,numerical_reference_archives=numerical_reference_archives,numerical_unavailable_execution_deferrals=numerical_unavailable_execution_deferrals);miners=sorted({r['miner']for r in current});points={};details={}
  eligible_set=None if eligible_evidence_ids is None else set(eligible_evidence_ids)
  if eligible_set is not None:need(all(valid_digest(v)for v in eligible_set)and eligible_set<=set(digest(r)for r in current),'actual admitted eligible population subset')
  score_rows=[r for r in current if eligible_set is None or digest(r)in eligible_set]

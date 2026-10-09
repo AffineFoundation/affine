@@ -139,6 +139,8 @@ def load_evidence(audit_config_path, *, authority, cutoff, verifiers,
     observers = dict(workers, **{worker: ['verify'] for worker in retired},
                      **{authority: ['operator-artifact-capture']})
     excluded, refused, deferred, populations = [], [], [], {}
+    if numerical:
+        numerical['numerical_unavailable_execution_deferrals'] = deferred
     hashes = dict(audit_config_file_sha256=config_sha, audit_state_file_sha256=state_sha,
                   source_admission_sha256=source_sha, population_documents={},
                   original_queue_view_sha256=None, adjudication_files={}, artifact_failures={})
