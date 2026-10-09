@@ -333,6 +333,8 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',job.get('job_id','')):raise ValueError('job ID')
     if any(type(job.get(k)) not in (int,float) for k in ('created_at','expires_at')) or not job['created_at']<=now<job['expires_at'] or job['expires_at']-job['created_at']>86400:raise ValueError('job expired/time budget')
     manifest=signed(job['manifest'],authority)
+    from .unaudited_training_execution import admission as execution_admission
+    execution_admission(envelope,authority,now=now)
     if resolve_source and ('token_artifact_policy'in manifest or manifest.get('submission_transport_policy')=='small-commitment-token-pairs-v3'):
         from .token_only_protocol import for_manifest as token_policy
         token_policy(manifest)
@@ -916,6 +918,10 @@ def install_source_loader(root,additional_files=()):
     for module_name in ('subnet.successor_calibration','subnet.backend_profiles','subnet.artifact_budget','subnet.audit_policy','subnet.auditing','subnet.training_policy','subnet.commitment_transport',
             'subnet.persistent_cpu_adamw','subnet.persistent_training_state','subnet.persistent_training_protocol','subnet.training_receipts'):
         sys.modules.pop(module_name,None)
+    if 'subnet/unaudited_training_execution.py'in additional_files:
+        sys.modules.pop('subnet.unaudited_training_execution',None)
+    if 'subnet/learning_rate_transition.py'in additional_files:
+        sys.modules.pop('subnet.learning_rate_transition',None)
     if 'subnet/optimizer_state_cache.py'in additional_files:
         sys.modules.pop('subnet.optimizer_state_cache',None)
         sys.modules.pop('subnet.cache_lifecycle',None)
@@ -977,12 +983,15 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     job,manifest=measured_phase(startup_timings,'job_validation',_validate,envelope,authority,resolve_source=False)
     source_started=time.monotonic()
     root=Path(__file__).resolve().parent.parent
+    if job.get('role')=='train' and job.get('training_policy')==PERSISTENT_POLICY and (root/'subnet/fp32_gradient_accumulation.py').exists() and 'unaudited_training_execution'not in job:
+        raise ValueError('FP32 worker source requires explicit qualified execution declaration')
     for name,expected in job['source_files'].items():
         if (root/name).is_symlink() or digest(root/name)!=expected:raise ValueError('worker source mismatch')
     for name,expected in job['runtime_versions'].items():
         if version(name)!=expected:raise ValueError('runtime package mismatch')
     startup_timings['source_runtime_authentication']=dict(seconds=time.monotonic()-source_started,calls=1)
     if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':raise ValueError('CUDA environment profile')
+    execution_files=('subnet/unaudited_training_execution.py','subnet/fp32_gradient_accumulation.py','subnet/learning_rate_transition.py') if 'unaudited_training_execution'in job else ()
     token_files=('subnet/token_only_protocol.py','subnet/token_only_runtime.py','subnet/threeway_prefill_research.py','subnet/native_session_validation.py')if 'token_artifact_policy'in manifest else ()
     publication_files=('subnet/persistent_publication.py',) if manifest.get('persistent_publication_policy') is not None else ()
     if manifest.get('optimizer_state_export_policy')=='trainer-local-only-v1':
@@ -994,7 +1003,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     if job.get('training_policy')==PERSISTENT_POLICY:
         from .persistent_training_protocol import EXECUTION_FILES,CACHE_EXECUTION_FILES
         cache_files=CACHE_EXECUTION_FILES if manifest.get('optimizer_state_local_cache')is not None else ()
-        install_source_loader(root,(*EXECUTION_FILES,*cache_files,'subnet/training_receipts.py',*compact_files,*learner_files,*publication_files,*recovery_files,*token_files))
+        install_source_loader(root,(*EXECUTION_FILES,*cache_files,'subnet/training_receipts.py',*compact_files,*learner_files,*publication_files,*recovery_files,*token_files,*execution_files))
     elif job.get('training_policy')==COVERED_POLICY:
         install_source_loader(root,('subnet/training_receipts.py',*compact_files,*learner_files,*publication_files,*recovery_files,*token_files))
     else:install_source_loader(root,(*compact_files,*learner_files,*publication_files,*recovery_files,*token_files))
@@ -1049,6 +1058,9 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         chain_transactions=False,full_model_finetune=False,execution_resources_enforced=False,
         startup_timings=dict(version="original-role-phase-timings-v1",clock="monotonic",
             GPU_synchronized=False,phases=startup_timings))
+    if 'unaudited_training_execution'in job:
+        from .unaudited_training_execution import provenance
+        report['unaudited_training_execution']=provenance(envelope,authority)
     if manifest.get('training_runtime')is not None:
         report['execution_runtime_revision']=revision
         report['generation_runtime_revision']=manifest['model_runtime_revision']
@@ -1278,6 +1290,10 @@ def load_job_envelope(path,authority):
     job=root_payload(envelope)
     if job.get('role')!='train'or job.get('training_policy')!=PERSISTENT_POLICY or job.get('training_input_policy')!='committed-unaudited-training-v1':raise ValueError('job envelope size budget')
     manifest=root_payload(job.get('manifest'))
+    if 'unaudited_training_execution'in job:
+        from .unaudited_training_execution import validate as validate_execution
+        validate_execution(envelope,authority)
+        return envelope
     declaration=root_payload(manifest.get('training_startup_recovery'))
     if declaration.get('version')not in LARGE_RECOVERY_VERSIONS or type(manifest.get('epoch'))is not str or not manifest['epoch']or declaration.get('epoch')!=manifest.get('epoch'):raise ValueError('explicit recovery envelope budget')
     original=root_payload(declaration.get('original_signed_job'));old=root_payload(original.get('manifest'))

@@ -136,11 +136,15 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
                 owned_cache=local_cache if local_cache and local_cache.policy['version']=='sole-current-fp32-state-cache-stat-v2' else None)
         restore_seconds=time.monotonic()-restore_started
         train_started=time.monotonic()
+        from .training_receipts import authenticate
+        declaration=authenticate(job['unaudited_training_execution'],authority)
+        learning_rate_authorization=declaration['learning_rate_authorization']
         destination,optimizer,diagnostics=train_epoch(runtime,pairs,out,
             input_checkpoint=binding['input_checkpoint'],epoch=manifest['epoch'],
             seed=manifest['training_coverage']['seed'],steps=job['steps'],
             approved_genesis=binding['genesis'],approved_genesis_sha256=binding['genesis_sha256']if parent is None else None,
             restored_state=restored,resource_admission=admission,
+            learning_rate_authorization=learning_rate_authorization,learning_rate_authority=authority,job_id=job['job_id'],
             **({'required_pairs_per_task':manifest['K']} if type(manifest.get('K'))is int and manifest.get('K')==manifest.get('L') and manifest['K']>=2 else {}))
         training_and_checkpoint_seconds=time.monotonic()-train_started
         files=model_files(destination);checkpoint=file_map(files)

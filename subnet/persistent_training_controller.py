@@ -63,6 +63,11 @@ def retire_completed_cache(controller,job,report,pointer):
         _cleanup_threads[key]=thread;thread.start();return thread
 
 
+def execution_report(controller,report,job):
+    from .unaudited_training_execution import required_report
+    path=controller.state/'roles'/(job['job_id']+'-job.json')
+    return required_report(report,json.loads(path.read_bytes()),controller.authority.id)
+
 def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
     from .backend_jobs import signed,file_map
     from .remote_backend import save,training_submission_bytes
@@ -133,6 +138,8 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
                 metrics.get('learner_admission_inventory'if learner else 'verifier_receipt_inventory')!=receipt_inventory(submissions)):
             raise ValueError('cached persistent original request changed')
         validate_report(report,job,training_manifest)
+        execution_evidence=execution_report(controller,report,job)
+        if metrics.get('unaudited_training_execution')!=execution_evidence:raise ValueError('cached execution provenance changed')
         pointer=validate_pointer(metrics.get('trainer_state'))
         publication=read_json(controller.bucket,pointer['descriptor_key'])
         # Authenticate the current output as a parent commitment for recovery,
@@ -178,6 +185,7 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
     if signed(job['manifest'],controller.authority.id)!=training_manifest or job['steps']!=steps:
         raise ValueError('persistent original request exact manifest/steps')
     validate_report(remote,job,training_manifest)
+    execution_evidence=execution_report(controller,remote,job)
     new=dict(remote['new_checkpoint']);path=new.pop('path')
     # BF16 values may still be identical while masters/moments advance. Publish
     # the actual immutable file map and keep weights_changed honest.
@@ -194,6 +202,7 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
         trainer_verification_performed=False,all_pairs_authenticated_verifier_receipts=not learner,
         verifier_receipt_inventory=receipt_inventory(submissions),
         state_authority_committed=True,heldout_gain_claimed=False)
+    if execution_evidence is not None:metrics['unaudited_training_execution']=execution_evidence
     if learner:
         metrics.update(input_assurance='unaudited',learner_admission_inventory=receipt_inventory(submissions))
         metrics.pop('verifier_receipt_inventory',None)

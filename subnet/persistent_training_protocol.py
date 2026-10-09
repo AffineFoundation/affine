@@ -99,9 +99,10 @@ def opening_binding(config, status, epoch):
     operator controlled; the result is covered by the opening signature.
     """
     admission = config.get('persistent_training_admission')
-    if not isinstance(admission, dict) or set(admission) != {
+    admission_fields = {
             'parameters','parameters_sha256','source_sha256','gpu_qualification_sha256','genesis_round',
-            'genesis_checkpoint','genesis_sha256'}:
+            'genesis_checkpoint','genesis_sha256'}
+    if not isinstance(admission, dict) or set(admission) not in (admission_fields, admission_fields | {'genesis_document'}):
         raise ValueError('explicit prospective persistent training admission')
     inventory = admission['parameters']; _inventory_valid(inventory)
     if sha(inventory) != admission['parameters_sha256']:
@@ -121,7 +122,11 @@ def opening_binding(config, status, epoch):
     if parent is None:
         if status.get('persistent_state_committed') or status['round'] != admission['genesis_round'] or cp != admission['genesis_checkpoint']:
             raise ValueError('missing latest parent; automatic optimizer genesis/reset forbidden')
-        document = genesis(inventory,cp)
+        if 'genesis_document' in admission:
+            from .learning_rate_transition import validate_genesis_document
+            document = validate_genesis_document(admission['genesis_document'],sha(inventory),cp)
+        else:
+            document = genesis(inventory,cp)
         if sha(document) != admission['genesis_sha256']:raise ValueError('authorized genesis document hash')
         result['genesis'] = document
     else:
@@ -154,7 +159,12 @@ def validate_binding(binding, manifest):
     if type(before)is not int or not 0<=before<2**31:raise ValueError('signed parent optimizer counter')
     if (binding['genesis'] is None)==(binding['parent'] is None):raise ValueError('exactly one explicit genesis or parent')
     if binding['genesis'] is not None:
-        if before!=0 or canonical(binding['genesis'])!=canonical(genesis(binding['parameters'],binding['input_checkpoint'])) or sha(binding['genesis'])!=binding['genesis_sha256']:
+        from .learning_rate_transition import GENESIS_DOCUMENT_VERSION, validate_genesis_document
+        if binding['genesis'].get('version') == GENESIS_DOCUMENT_VERSION:
+            expected_genesis = validate_genesis_document(binding['genesis'],binding['parameters_sha256'],binding['input_checkpoint'])
+        else:
+            expected_genesis = genesis(binding['parameters'],binding['input_checkpoint'])
+        if before!=0 or canonical(binding['genesis'])!=canonical(expected_genesis) or sha(binding['genesis'])!=binding['genesis_sha256']:
             raise ValueError('signed optimizer genesis hash/counter')
     else:
         parent=validate_pointer(binding['parent'])
@@ -283,6 +293,36 @@ def validate_output(descriptor,job,manifest):
             descriptor['optimizer_steps']!=transport['global_step_after'] or
             {s['name']for s in descriptor['shards']}!=set(transport['output_shards'])):
         raise ValueError('updated persistent state exact original job lineage')
+    from .learning_rate_transition import STATE_VERSION, validate_authorization
+    amendment=job.get('unaudited_training_execution')
+    effective_lr=descriptor['version']==STATE_VERSION
+    if effective_lr or amendment is not None:
+        # The enclosing original job/manifest has already been authenticated by
+        # the caller. The output must use that same ROOT, not an arbitrary
+        # authority supplied inside a worker-created descriptor.
+        from .training_receipts import authenticate
+        authority=job.get('manifest',{}).get('signer')
+        value=authenticate(amendment,authority)
+        lr_execution=value.get('version') in ('unaudited-training-execution-amendment-v2-effective-lr',
+            'unaudited-training-execution-amendment-v3-effective-lr-genesis')
+        if effective_lr!=lr_execution:
+            raise ValueError('explicit LR execution requires truthful V2 output state')
+        if effective_lr:
+            genesis_execution=value.get('version')=='unaudited-training-execution-amendment-v3-effective-lr-genesis'
+            if genesis_execution != (expected_parent is None):
+                raise ValueError('distinct explicit genesis versus existing-parent LR execution')
+            authorization=value.get('learning_rate_authorization')
+            if (descriptor['learning_rate_authority']!=authority or
+                    sha(descriptor['learning_rate_authorization'])!=sha(authorization)):
+                raise ValueError('output LR authorization must equal the original ROOT job grant')
+            checked=validate_authorization(authorization,authority,
+                epoch=manifest['epoch'],job_id=job['job_id'],
+                input_checkpoint=binding['input_checkpoint'],
+                parent_descriptor_sha256=expected_parent,genesis_sha256=binding['genesis_sha256'],
+                optimizer_step_before=binding['global_step_before'],steps=job['steps'],
+                parameters_sha256=binding['parameters_sha256'],historical=True)
+            if checked['execution_release_sha256']!=value.get('execution_release_sha256'):
+                raise ValueError('output LR release must equal the original execution release')
     return descriptor
 
 

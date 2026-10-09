@@ -16,6 +16,7 @@ from .covered_epoch_optimizer import distinct_verified_pairs, pair_identity
 from .epoch_optimizer import preference_loss
 from .persistent_cpu_adamw import POLICY, HYPERPARAMETERS, PersistentCPUAdamW, checkpoint_id
 from .storage import canonical
+from .fp32_gradient_accumulation import METHOD, FP32GradientAccumulator, admit_capacity
 
 
 def task_groups(verified_pairs, steps, seed, *, required_pairs_per_task=None):
@@ -70,7 +71,7 @@ def task_groups(verified_pairs, steps, seed, *, required_pairs_per_task=None):
     return pairs, tasks, groups, identities
 
 
-def accumulate_tasks(torch, margin, references, tasks, indices, beta=.1):
+def accumulate_tasks(torch, margin, references, tasks, indices, beta=.1, *, after_backward=None):
     """Mean pair loss within task, then mean task loss within update group."""
     if not indices or len(set(indices)) != len(indices):
         raise ValueError('distinct nonempty task accumulation group')
@@ -88,6 +89,8 @@ def accumulate_tasks(torch, margin, references, tasks, indices, beta=.1):
                 reference_margin=references[i], margin_before=float(value.detach()),
                 loss=float(loss.detach())))
             (loss*weight).backward()
+            if after_backward is not None:
+                after_backward()
             del value, loss
     return observations
 
@@ -95,7 +98,9 @@ def accumulate_tasks(torch, margin, references, tasks, indices, beta=.1):
 def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
                 epoch, seed, steps=3, approved_genesis=None,
                 approved_genesis_sha256=None, restored_state=None,
-                resource_admission, required_pairs_per_task=None):
+                resource_admission, required_pairs_per_task=None,
+                learning_rate_authorization=None, learning_rate_authority=None,
+                job_id=None):
     """Return BF16 export plus uncommitted persistent optimizer for publication.
 
     The backend must hash the BF16 export and export_state() with descriptor-last
@@ -120,7 +125,10 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
     phase_seconds={};phase_started=time.monotonic()
     optimizer = PersistentCPUAdamW(model.named_parameters(), input_checkpoint,
         approved_genesis=approved_genesis, approved_genesis_sha256=approved_genesis_sha256,
-        restored=restored_state, resource_admission=resource_admission)
+        restored=restored_state, resource_admission=resource_admission,
+        learning_rate_authorization=learning_rate_authorization,
+        learning_rate_authority=learning_rate_authority, epoch=epoch,
+        job_id=job_id, steps=steps)
     phase_seconds['optimizer_initialization']=time.monotonic()-phase_started
     start_step = optimizer.global_step
 
@@ -148,22 +156,24 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
     if not all(math.isfinite(v) for v in references):
         raise ValueError('nonfinite immutable BF16 input reference')
     for parameter in parameters: parameter.requires_grad_(True)
+    capacity = admit_capacity(torch, model.named_parameters())
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant': False})
     model.train(); updates = []; seen = set(); torch.cuda.reset_peak_memory_stats()
-    gradient_seconds=[];optimizer_seconds=[]
+    gradient_seconds=[];optimizer_seconds=[];accumulator=None
     try:
         for step, indices in enumerate(groups):
             optimizer.zero_grad()
+            accumulator = FP32GradientAccumulator(model.named_parameters())
             torch.cuda.synchronize();phase_started=time.monotonic()
             observations = accumulate_tasks(torch, margin, references, tasks, indices,
-                                            HYPERPARAMETERS['preference_beta'])
-            if any(p.grad is None for p in parameters):
-                raise ValueError('full-model task-normalized gradient coverage')
-            norm = torch.nn.utils.clip_grad_norm_(parameters,
-                HYPERPARAMETERS['max_grad_norm'], error_if_nonfinite=True)
+                HYPERPARAMETERS['preference_beta'], after_backward=accumulator.capture)
+            if accumulator.microsteps != len(observations):
+                raise ValueError('complete per-pair FP32 gradient capture required')
+            norm = accumulator.clip(HYPERPARAMETERS['max_grad_norm'])
             torch.cuda.synchronize();gradient_seconds.append(time.monotonic()-phase_started)
             phase_started=time.monotonic()
-            precision = optimizer.step(); seen.update(indices)
+            precision = optimizer.step(gradients=accumulator.gradients()); seen.update(indices)
+            accumulator = None
             torch.cuda.synchronize();optimizer_seconds.append(time.monotonic()-phase_started)
             updates.append(dict(training_policy=POLICY, steps=1,
                 epoch_optimizer_step=step+1, global_optimizer_step=optimizer.global_step,
@@ -174,8 +184,10 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
                 loss=sum(r['loss']*r['gradient_weight'] for r in observations),
                 pairs=[dict(r, pair_sha256=identities[r['pair_index']]) for r in observations],
                 gradient_norm_before_clip=float(norm),
+                gradient_accumulation=METHOD, gradient_accumulation_dtype='torch.float32',
+                gradient_capacity=capacity,
                 full_model_finetune=True, gradient_tensors=len(parameters),
-                hyperparameters=copy.deepcopy(HYPERPARAMETERS), precision=precision,
+                hyperparameters=copy.deepcopy(optimizer.hyperparameters), precision=precision,
                 task_weight_rule='mean-pair-within-task-then-mean-task-within-group',
                 optimizer_lifecycle='persistent-across-epochs',
                 gpu_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
@@ -204,8 +216,12 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
             training_pair_margin_before=references, training_pair_margin_after=after_margins,
             training_pair_margin_delta=[after-before for before, after in zip(references, after_margins)],
             heldout_gain_claimed=False, state_publication_required=True,
-            complete=False, epoch=epoch, input_checkpoint=input_checkpoint)
+            complete=False, epoch=epoch, input_checkpoint=input_checkpoint,
+            effective_hyperparameters=copy.deepcopy(optimizer.hyperparameters),
+            learning_rate_authorization_sha256=(hashlib.sha256(canonical(learning_rate_authorization)).hexdigest()
+                if learning_rate_authorization is not None else None))
         return destination, optimizer, diagnostics
     finally:
+        accumulator = None
         optimizer.zero_grad(); model.eval(); model.gradient_checkpointing_disable()
         gc.collect(); torch.cuda.empty_cache()

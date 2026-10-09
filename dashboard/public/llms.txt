@@ -203,3 +203,5 @@ Sampling: https://github.com/AffineFoundation/affine/blob/main/docs/FOUR_SAMPLE_
 Learner: https://github.com/AffineFoundation/affine/blob/main/docs/COMMITTED_UNAUDITED_LEARNER.md
 Historical guide (not current instructions):
 https://github.com/AffineFoundation/affine/blob/main/docs/history/llms-before-recovery-consolidation-2026-10-09.md
+
+Training update (2026-10-09): the fresh run uses the original 7B base. The corrective trainer has qualified FP32 gradient accumulation and an explicitly signed effective learning rate of 5e-7; production activation requires the composed release checks and is reported in signed training records. Mining/sampling source and the 4-correct/4-wrong, three-batch, 0–999 nonce, 2,048-token contract remain unchanged. See https://github.com/AffineFoundation/affine/blob/main/docs/CONSERVATIVE_FP32_TRAINING.md for state lineage, qualification scope and activation semantics.

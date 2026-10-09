@@ -68,7 +68,9 @@ def finite(torch, tensor, *, nonnegative=False):
 class PersistentCPUAdamW:
     def __init__(self, named_parameters, input_checkpoint, *,
                  approved_genesis=None, approved_genesis_sha256=None,
-                 restored=None, resource_admission=None):
+                 restored=None, resource_admission=None,
+                 learning_rate_authorization=None, learning_rate_authority=None,
+                 epoch=None, job_id=None, steps=None):
         import torch
         self.parameters, self.inventory = parameter_inventory(named_parameters)
         if any(parameter.dtype != torch.bfloat16 for _, parameter in self.parameters):
@@ -78,6 +80,9 @@ class PersistentCPUAdamW:
         self.rows = {}; self.global_step = 0
         self._state_lock = threading.RLock(); self._publishing = False
         self.parent_state_sha256 = None; self.genesis_sha256 = None
+        self.learning_rate_authorization = None
+        self.learning_rate_authority = None
+        self._learning_rate_scope = None
         if (restored is None) == (approved_genesis is None):
             raise ValueError('one authenticated parent state or explicit genesis required')
         if restored is not None:
@@ -91,8 +96,25 @@ class PersistentCPUAdamW:
             self.rows = rows
             if set(rows) != {r['name'] for r in self.inventory}:
                 raise ValueError('restored parameter state names')
+            from .learning_rate_transition import STATE_VERSION
+            if descriptor['version'] == STATE_VERSION and learning_rate_authorization is None:
+                raise ValueError('LR-aware parent needs fresh signed continuation; no implicit rate reset')
         else:
-            expected = genesis(self.inventory, self.input_checkpoint)
+            from .learning_rate_transition import (GENESIS_DOCUMENT_VERSION,
+                validate_genesis_document, validate_authorization)
+            if approved_genesis.get('version') == GENESIS_DOCUMENT_VERSION:
+                expected = validate_genesis_document(approved_genesis, sha(self.inventory), self.input_checkpoint)
+                if learning_rate_authorization is None or learning_rate_authority is None:
+                    raise ValueError('fresh unique genesis requires explicit signed initial learning rate')
+                # Authenticate before allocating new masters/zero moments.
+                validate_authorization(learning_rate_authorization, learning_rate_authority,
+                    epoch=epoch, job_id=job_id, input_checkpoint=self.input_checkpoint,
+                    parent_descriptor_sha256=None, genesis_sha256=approved_genesis_sha256,
+                    optimizer_step_before=0, steps=steps, parameters_sha256=sha(self.inventory))
+            else:
+                if learning_rate_authorization is not None or learning_rate_authority is not None:
+                    raise ValueError('learning-rate transition cannot create or reset legacy optimizer genesis')
+                expected = genesis(self.inventory, self.input_checkpoint)
             if (canonical(approved_genesis) != canonical(expected) or
                     sha(approved_genesis) != approved_genesis_sha256):
                 raise ValueError('signed explicit genesis binding')
@@ -114,6 +136,21 @@ class PersistentCPUAdamW:
                     exp_avg=torch.zeros_like(parameter, device='cpu', dtype=torch.float32),
                     exp_avg_sq=torch.zeros_like(parameter, device='cpu', dtype=torch.float32),
                     step=0)
+        if learning_rate_authorization is not None:
+            from .learning_rate_transition import validate_authorization, effective_hyperparameters
+            self._learning_rate_scope = validate_authorization(
+                learning_rate_authorization, learning_rate_authority,
+                epoch=epoch, job_id=job_id, input_checkpoint=self.input_checkpoint,
+                parent_descriptor_sha256=self.parent_state_sha256,
+                genesis_sha256=self.genesis_sha256,
+                optimizer_step_before=self.global_step, steps=steps,
+                parameters_sha256=sha(self.inventory))
+            self.learning_rate_authorization = copy.deepcopy(learning_rate_authorization)
+            self.learning_rate_authority = learning_rate_authority
+            self.hyperparameters = effective_hyperparameters(self._learning_rate_scope)
+        elif learning_rate_authority is not None:
+            raise ValueError('learning-rate authority without signed authorization')
+        self._approved_hyperparameters = copy.deepcopy(self.hyperparameters)
         for name, parameter in self.parameters:
             if parameter.dtype != torch.bfloat16:
                 raise ValueError('exact BF16 inference parameter profile')
@@ -146,32 +183,47 @@ class PersistentCPUAdamW:
             finally:
                 self._publishing = False
 
-    def step(self):
+    def step(self, *, gradients=None):
         with self._state_lock:
             if self._publishing:
                 raise ValueError('refuse optimizer update during state publication')
-            return self._step_impl()
+            return self._step_impl(gradients=gradients)
 
-    def _step_impl(self):
+    def _step_impl(self, *, gradients=None):
         """All gradients must already be clipped by the signed trainer rule."""
         import torch
-        if canonical(self.hyperparameters) != canonical(HYPERPARAMETERS):
+        if canonical(self.hyperparameters) != canonical(self._approved_hyperparameters):
             raise ValueError('immutable optimizer hyperparameters')
+        if self._learning_rate_scope is not None:
+            scope = self._learning_rate_scope
+            if self.global_step >= scope['optimizer_step_before'] + scope['steps']:
+                raise ValueError('signed effective learning-rate update range exhausted')
         if self.global_step >= 2**31 - 1:
             raise ValueError('optimizer counter limit')
-        for _, parameter in self.parameters:
-            if parameter.grad is None or parameter.grad.is_sparse:
+        if gradients is not None and (not isinstance(gradients, dict) or
+                set(gradients) != {name for name, _ in self.parameters}):
+            raise ValueError('exact complete FP32 gradient inventory required')
+        for name, parameter in self.parameters:
+            gradient = parameter.grad if gradients is None else gradients[name]
+            if gradients is not None and (
+                    parameter.grad is not None or not isinstance(gradient, torch.Tensor) or
+                    gradient.dtype != torch.float32 or gradient.shape != parameter.shape or
+                    gradient.device != parameter.device or gradient.requires_grad or
+                    gradient.layout != torch.strided):
+                raise ValueError('clipped detached FP32 gradient without parameter.grad roundtrip')
+            if gradient is None or gradient.is_sparse:
                 raise ValueError('every full-model parameter requires a dense gradient')
-            finite(torch, parameter.grad)
+            finite(torch, gradient)
         step = self.global_step + 1
         h = self.hyperparameters; beta1, beta2 = h['betas']
         diagnostics = []
         with torch.no_grad():
             for name, parameter in self.parameters:
                 row = self.rows[name]
-                # One parameter's gradient and denominator at a time. No full
-                # FP32 model gradient replica is retained on the CPU or GPU.
-                gradient = parameter.grad.detach().to('cpu', torch.float32)
+                # Transfer one parameter at a time. The optional GPU FP32
+                # accumulation buffers never roundtrip through BF16 .grad.
+                source = parameter.grad if gradients is None else gradients[name]
+                gradient = source.detach().to('cpu', torch.float32)
                 before_master = row['master'].clone()
                 before_bf16 = parameter.detach().cpu().clone()
                 row['exp_avg'].lerp_(gradient, 1 - beta1)
@@ -199,5 +251,8 @@ class PersistentCPUAdamW:
             master_changed_elements=sum(r['master_changed_elements'] for r in diagnostics),
             bf16_changed_elements=sum(r['bf16_changed_elements'] for r in diagnostics),
             optimizer_state_dtype='torch.float32', master_dtype='torch.float32',
-            inference_dtype='torch.bfloat16')
+            inference_dtype='torch.bfloat16',
+            effective_hyperparameters=copy.deepcopy(self.hyperparameters),
+            learning_rate_authorization_sha256=(sha(self.learning_rate_authorization)
+                if self.learning_rate_authorization is not None else None))
         return self.last_update

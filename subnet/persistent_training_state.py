@@ -165,12 +165,18 @@ def validate_descriptor(descriptor, approved_sha256, input_checkpoint, inventory
     fields = {'version', 'policy', 'hyperparameters', 'parameters', 'parameters_sha256',
               'input_checkpoint', 'inference_checkpoint', 'epoch', 'parent_state_sha256',
               'genesis_sha256', 'optimizer_steps', 'parameter_steps', 'shards'}
+    from .learning_rate_transition import STATE_VERSION, validate_state_transition
+    lr_aware = descriptor.get('version') == STATE_VERSION
+    if lr_aware:
+        fields |= {'learning_rate_authorization', 'learning_rate_authority'}
     if set(descriptor) != fields:
         raise ValueError('state descriptor fields')
+    if lr_aware:
+        validate_state_transition(descriptor)
     _inventory_valid(inventory)
     _inventory_valid(descriptor['parameters'])
-    if (descriptor['version'] != VERSION or descriptor['policy'] != POLICY or
-            sha(descriptor['hyperparameters']) != sha(HYPERPARAMETERS) or
+    if (descriptor['version'] not in (VERSION, STATE_VERSION) or descriptor['policy'] != POLICY or
+            (not lr_aware and sha(descriptor['hyperparameters']) != sha(HYPERPARAMETERS)) or
             sha(descriptor['parameters']) != sha(inventory) or
             descriptor['parameters_sha256'] != sha(inventory) or
             descriptor['inference_checkpoint'] != input_checkpoint):
@@ -400,6 +406,19 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
     if (type(optimizer.global_step) is not int or optimizer.global_step < 1 or
             any(row['step'] != optimizer.global_step for row in optimizer.rows.values())):
         raise ValueError('only completed full-parameter updates may publish state')
+    if getattr(optimizer, 'learning_rate_authorization', None) is not None:
+        from .learning_rate_transition import validate_authorization, effective_hyperparameters
+        scope = optimizer._learning_rate_scope
+        checked = validate_authorization(optimizer.learning_rate_authorization,
+            optimizer.learning_rate_authority, epoch=epoch, job_id=scope['job_id'],
+            input_checkpoint=optimizer.input_checkpoint,
+            parent_descriptor_sha256=optimizer.parent_state_sha256,
+            genesis_sha256=optimizer.genesis_sha256,
+            optimizer_step_before=scope['optimizer_step_before'], steps=scope['steps'],
+            parameters_sha256=sha(optimizer.inventory), historical=True)
+        if (optimizer.global_step != checked['optimizer_step_before'] + checked['steps'] or
+                sha(optimizer.hyperparameters) != sha(effective_hyperparameters(checked))):
+            raise ValueError('LR state publication requires exactly the authorized completed update range')
     if (type(concurrency) is not int or concurrency not in SUPPORTED_CONCURRENCY or
             resource_admission.get('state_transfer_concurrency',1)!=concurrency or
             resource_admission.get('admitted') is not True or
@@ -506,8 +525,10 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
                 raise
     for number in range(len(plans)):
         shard,receipt=results[number];shards.append(shard);evidence.append(receipt)
-    descriptor = dict(version=VERSION, policy=POLICY,
-        hyperparameters=copy.deepcopy(HYPERPARAMETERS), parameters=copy.deepcopy(optimizer.inventory),
+    from .learning_rate_transition import STATE_VERSION
+    lr_authorization = getattr(optimizer, 'learning_rate_authorization', None)
+    descriptor = dict(version=STATE_VERSION if lr_authorization is not None else VERSION, policy=POLICY,
+        hyperparameters=copy.deepcopy(optimizer.hyperparameters), parameters=copy.deepcopy(optimizer.inventory),
         parameters_sha256=sha(optimizer.inventory), input_checkpoint=optimizer.input_checkpoint,
         inference_checkpoint=inference_checkpoint, epoch=epoch,
         parent_state_sha256=optimizer.parent_state_sha256, genesis_sha256=optimizer.genesis_sha256,
@@ -518,6 +539,9 @@ def _export_state(optimizer, *, epoch, inference_checkpoint, workspace,
             upload_completed=False,independent_full_readback_required=False)
     elif readback_mode!='trainer-full':
         for receipt in evidence:receipt.update(export_verification='uploaded-local-sha-only',local_sha_verified=True,upload_completed=True,independent_full_readback_required=True)
+    if lr_authorization is not None:
+        descriptor.update(learning_rate_authorization=copy.deepcopy(lr_authorization),
+                          learning_rate_authority=optimizer.learning_rate_authority)
     digest = sha(descriptor)
     validate_descriptor(descriptor, digest, inference_checkpoint, optimizer.inventory)
     acknowledgement = commit_descriptor(descriptor)

@@ -270,6 +270,18 @@ class RemoteJobs:
             if role=='train'and manifest.get('optimizer_state_local_cache')is not None:self.wait_training_cache_ack()
             identifier=label+'-'+secrets.token_hex(4);now=time.time()
             payload=dict(schema=1,job_id=identifier,role=role,created_at=now,expires_at=now+role_time_budget(self.config,role),manifest=self.controller.signed(manifest),**self.metadata,**fields)
+            execution_release=self.config.get('unaudited_training_execution_release')if role=='train'else None
+            execution_authorization=self.config.get('unaudited_training_execution')if role=='train'else None
+            if execution_release is not None and execution_authorization is not None:raise ValueError('choose one explicit execution release')
+            if execution_release is not None:
+                from .unaudited_training_execution import release
+                release_value=release(execution_release,self.controller.authority.id,now=now)
+                payload['expires_at']=min(payload['expires_at'],release_value['expires_at'])
+            if 'unaudited_training_execution'in fields:raise ValueError('execution grant must come from explicit ROOT preparation')
+            if execution_authorization is not None:
+                from .unaudited_training_execution import preparation
+                prepared=preparation(execution_authorization,self.controller.authority.id,now=now)
+                payload['expires_at']=min(payload['expires_at'],prepared['expires_at'])
             if role=='train' and manifest.get('training_startup_recovery') is not None:
                 recovery=signed(manifest['training_startup_recovery'],self.controller.authority.id)
                 payload['expires_at']=min(payload['expires_at'],recovery['expires_at'])
@@ -295,6 +307,15 @@ class RemoteJobs:
                     if transport_ttl<=0:raise ValueError('startup recovery authorization expired before capability issue')
                 payload['persistent_training']=prepare_job(self.controller,manifest,identifier,fields['steps'],transport_ttl)
                 validate_job(payload,manifest,self.controller.authority.id)
+            if execution_release is not None:
+                from .unaudited_training_execution import automatic_preparation
+                execution_authorization=automatic_preparation(self.controller,payload,execution_release)
+                payload['expires_at']=min(payload['expires_at'],execution_authorization['payload']['expires_at'])
+            if execution_authorization is not None:
+                from .unaudited_training_execution import attach
+                payload=attach(payload,execution_authorization,self.controller.authority.id,self.controller.signed)
+            from .unaudited_training_execution import admission as execution_admission
+            execution_admission(self.controller.signed(payload),self.controller.authority.id,now=now)
             if role=='train'and 'learner_blacklist_selection_policy'in manifest:
                 from .learner_selection_operator_bridge import make_admission
                 peer=self.config.get('learner_selection_cpu_peer')
@@ -520,6 +541,9 @@ else:
         job=signed(json.loads((self.state/(prior['job_id']+'-job.json')).read_text()),self.controller.authority.id)
         if hashlib.sha256(canonical(job)).hexdigest()!=prior['job_sha256']:
             raise ValueError('remote role original signed job binding')
+        from .unaudited_training_execution import required_report
+        original_envelope=json.loads((self.state/(prior['job_id']+'-job.json')).read_text())
+        required_report(report,original_envelope,self.controller.authority.id)
         if job.get('role')=='train' and job.get('training_policy') in RECEIPT_TRAINING_POLICIES:
             if manifest.get('training_input_policy')=='committed-unaudited-training-v1':
                 from .committed_training_inputs import validate_report as validate_receipt_report
