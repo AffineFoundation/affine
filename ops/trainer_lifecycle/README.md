@@ -20,3 +20,13 @@ worker's imports. A source namespace reload requires reinstalling the hook.
 original failed first-step job only when its authenticated traceback proves the
 failure preceded optimizer construction. It preserves the original job, manifest,
 inputs, source and reset record and binds a separate immutable retry grant.
+
+`training_ack_ordering.py` waits for the exact published state’s authenticated
+promotion and completed retirement before calibration can use that same trainer.
+It joins an existing ACK action and confirms the real promoted head; a locally
+saved “complete” status alone is insufficient.
+
+`terminal_ack_retry.py` can retry only the same signed ACK after an explicitly
+deferred action has actually terminated and the workspace is idle. Retry handles
+preserve the original result and payload. Unknown, failed or live actions never
+trigger a new retirement process.
