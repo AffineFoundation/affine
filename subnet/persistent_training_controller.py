@@ -88,9 +88,9 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
         if native_selector is not None and hasattr(native_selector,'applies_to') and not native_selector.applies_to(training_manifest):
             native_selector=None
         if recovery is not None:
-            from .training_startup_recovery import ADMISSION_VERSION,POST_UPDATE_VERSIONS,validate_frozen_native_inputs
+            from .training_startup_recovery import ADMISSION_VERSION,POST_UPDATE_VERSIONS,CACHE_ACK_VERSION,validate_frozen_native_inputs
             if native_selector is not None:
-                if recovery['payload'].get('version')in POST_UPDATE_VERSIONS:
+                if recovery['payload'].get('version')in POST_UPDATE_VERSIONS+(CACHE_ACK_VERSION,):
                     validate_frozen_native_inputs(controller,recovery['payload'])
                 elif recovery['payload'].get('version')!=ADMISSION_VERSION:
                     raise ValueError('startup recovery requires separately authorized native eligibility context')

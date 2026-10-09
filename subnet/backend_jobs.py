@@ -1259,7 +1259,7 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
 
 JOB_ENVELOPE_MAX_BYTES=4_000_000
 RECOVERY_JOB_ENVELOPE_MAX_BYTES=8_000_000
-LARGE_RECOVERY_VERSIONS=frozenset(('terminal-parent-restore-pre-update-recovery-v2','terminal-parent-restore-pre-update-bootstrap-recovery-v3','terminal-post-update-uncommitted-recovery-v1'))
+LARGE_RECOVERY_VERSIONS=frozenset(('terminal-parent-cache-ACK-pre-update-recovery-v1','terminal-parent-restore-pre-update-recovery-v2','terminal-parent-restore-pre-update-bootstrap-recovery-v3','terminal-post-update-uncommitted-recovery-v1'))
 
 def load_job_envelope(path,authority):
     """Bounded CPU parser; only explicit ROOT-authenticated recovery gets 8 MB.

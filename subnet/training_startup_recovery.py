@@ -123,7 +123,7 @@ def apply(controller,manifest,steps):
     candidate=copy.deepcopy(original);candidate.update(job_id=value['replacement_job_label']+'-preparation',created_at=time.time(),expires_at=value['expires_at'],manifest=controller.signed(result),submissions=rows)
     candidate['source_files']=dict(original['source_files'],**{'subnet/training_startup_recovery.py':'0'*64})
     if value.get('version')==ADMISSION_VERSION:candidate['source_files']=copy.deepcopy(value['execution_source_files'])
-    if value.get('version')in POST_UPDATE_VERSIONS:candidate['source_files']=copy.deepcopy(value['execution_runtime_source_files'])
+    if value.get('version')in POST_UPDATE_VERSIONS+(CACHE_ACK_VERSION,):candidate['source_files']=copy.deepcopy(value['execution_runtime_source_files'])
     candidate['persistent_training']=dict(original['persistent_training'],output_namespace='private/startup-recovery-preparation-only')
     validate(candidate,result,controller.authority.id)
     if not reservation.exists():
@@ -134,7 +134,8 @@ def apply(controller,manifest,steps):
 
 def local_request(state,epoch,authority):
     """Select a replacement only through its immutable signed reservation."""
-    state=Path(state);reservation=reservation_path(state,epoch,POST_UPDATE_CONTINUATION_VERSION)
+    state=Path(state);reservation=reservation_path(state,epoch,CACHE_ACK_VERSION)
+    if not reservation.exists():reservation=reservation_path(state,epoch,POST_UPDATE_CONTINUATION_VERSION)
     if not reservation.exists():reservation=reservation_path(state,epoch,POST_UPDATE_VERSION)
     if not reservation.exists():reservation=reservation_path(state,epoch,BOOTSTRAP_VERSION)
     if not reservation.exists():reservation=reservation_path(state,epoch,RESTORE_VERSION)
@@ -148,6 +149,7 @@ def local_request(state,epoch,authority):
     for version in POST_UPDATE_VERSIONS:
         if reservation==reservation_path(state,epoch,version) and declaration.get('version')!=version:
             raise ValueError('exact post-update declaration must match its reservation version')
+    if reservation==reservation_path(state,epoch,CACHE_ACK_VERSION)and declaration.get('version')!=CACHE_ACK_VERSION:raise ValueError('exact cache ACK recovery reservation version')
     if reservation==reservation_path(state,epoch,BOOTSTRAP_VERSION)and declaration.get('version')!=BOOTSTRAP_VERSION:raise ValueError('only explicit v3 continuation may occupy v3 reservation')
     if declaration['version']==BOOTSTRAP_VERSION:validate_predecessor_local(state,declaration,authority)
     if declaration['version']==POST_UPDATE_CONTINUATION_VERSION:validate_post_update_predecessor_local(state,declaration,authority)
@@ -162,14 +164,16 @@ def local_request(state,epoch,authority):
     validate(job,job['manifest']['payload'],authority)
     evidence=dict(version=declaration['version'],declaration_sha256=value['declaration_sha256'],original_failed_job_id=original['job_id'],original_failed_job_sha256=sha(original),original_failure_sha256=sha(failure),startup_witness_sha256=sha(declaration['post_update_witness']if declaration['version']in POST_UPDATE_VERSIONS else declaration['restore_witness']if declaration['version']in RESTORE_VERSIONS else declaration['startup_witness']),replacement_source_sha256=job['manifest']['payload']['source_bundle']['sha256'],original_epoch_deadline=original['manifest']['payload'].get('deadline'),late_recovery=True)
     if declaration['version']==BOOTSTRAP_VERSION:evidence['bootstrap_predecessor']=declaration['predecessor']
-    if declaration['version']in RESTORE_VERSIONS:evidence.update(original_input_source_sha256=declaration['original_input_source_sha256'],replacement_execution_source_sha256=declaration['replacement_execution_source_sha256'],original_failed_stage='parent-state-fetch-before-train_epoch',original_optimizer_updates=0)
+    if declaration['version']in RESTORE_VERSIONS:evidence.update(original_input_source_sha256=declaration['original_input_source_sha256'],replacement_execution_source_sha256=declaration['replacement_execution_source_sha256'],original_failed_stage=declaration['restore_witness']['failed_stage'],original_optimizer_updates=0)
     if declaration['version']in POST_UPDATE_VERSIONS:evidence.update(original_input_source_sha256=declaration['original_input_source_sha256'],replacement_execution_source_sha256=declaration['replacement_execution_source_sha256'],original_failed_stage=declaration['post_update_witness']['failed_stage'],original_optimizer_updates=1,original_update_uncommitted=True,restarted_from_durable_parent=True)
     return record,job,evidence
 
 RESTORE_VERSION='terminal-parent-restore-pre-update-recovery-v2'
 RESTORE_WITNESS='operator-parent-restore-pre-update-witness-v1'
 BOOTSTRAP_VERSION='terminal-parent-restore-pre-update-bootstrap-recovery-v3'
-RESTORE_VERSIONS=(RESTORE_VERSION,BOOTSTRAP_VERSION)
+CACHE_ACK_VERSION='terminal-parent-cache-ACK-pre-update-recovery-v1'
+CACHE_ACK_WITNESS='operator-parent-cache-ACK-pre-update-witness-v1'
+RESTORE_VERSIONS=(RESTORE_VERSION,BOOTSTRAP_VERSION,CACHE_ACK_VERSION)
 POST_UPDATE_VERSION='terminal-post-update-uncommitted-recovery-v1'
 POST_UPDATE_CONTINUATION_VERSION='terminal-post-update-precompute-continuation-v2'
 POST_UPDATE_VERSIONS=(POST_UPDATE_VERSION,POST_UPDATE_CONTINUATION_VERSION)
@@ -182,6 +186,7 @@ def validate_restore(job,manifest,authority):
     value=signed(manifest[FIELD],authority)
     fields={'version','epoch','original_signed_job','original_job_sha256','original_terminal','restore_witness','replacement_source_bundle','replacement_job_label','created_at','expires_at','original_input_source_sha256','replacement_execution_source_sha256','authorized_input_inventory_sha256','authorized_input_objects'}
     if value.get('version')==BOOTSTRAP_VERSION:fields=fields|{'predecessor'}
+    if value.get('version')==CACHE_ACK_VERSION:fields=fields|{'execution_runtime_source_files'}
     if set(value)!=fields or value['version']not in RESTORE_VERSIONS or value['epoch']!=manifest['epoch']:raise ValueError('exact pre-update restore recovery declaration')
     if value['version']==BOOTSTRAP_VERSION:validate_bootstrap_predecessor(value,job)
     original=signed(value['original_signed_job'],authority);old=original_manifest(manifest,authority)
@@ -192,7 +197,18 @@ def validate_restore(job,manifest,authority):
         if type(terminal[p+'_pid'])is not int or terminal[p+'_pid']<=0 or not isinstance(terminal[p+'_pid_ticks'],str)or not terminal[p+'_pid_ticks'].isdigit():raise ValueError('original restore PID/start identity')
     fields={'version','observed_at','exception','cause','failed_stage','callchain','model_loaded','cuda_allocated','original_processes_absent','physical_gpu_idle','optimizer_step_reached','restore_state_returned','train_epoch_reached','output_checkpoint_absent','original_report_absent','optimizer_state_candidate_absent','update_ledger_absent','public_optimizer_steps','parent_publication_sha256','parent_descriptor_sha256','parent_shard_count','parent_total_bytes','selected_input_count','worker_log_sha256','evidence_sha256','science_source_files'}
     required_frames=['persistent_training_worker.train','persistent_training_state.restore_state','persistent_training_state.restore_one','persistent_training_worker.fetch','persistent_training_worker.cold','backend_jobs.get_object']
-    if set(w)!=fields or w['version']!=RESTORE_WITNESS or w['exception']!='requests.exceptions.ConnectionError'or w['cause']!='urllib3.exceptions.ReadTimeoutError'or w['failed_stage']!='parent-state-fetch-before-train_epoch'or w['callchain']!=required_frames:raise ValueError('exact actual parent read-timeout callchain')
+    if value['version']==CACHE_ACK_VERSION:
+        if (set(w)!=fields or w['version']!=CACHE_ACK_WITNESS or w['exception']!='ValueError' or
+                w['cause']!='approved parent candidate awaits original durability ACK; refuse cold abandonment' or
+                w['failed_stage']!='parent-cache-ACK-before-restore_state' or
+                w['callchain']!=['persistent_training_worker.train','optimizer_state_cache.prepare_parent']):
+            raise ValueError('exact original pending-parent ACK pre-update failure')
+        pins=value['execution_runtime_source_files']
+        if job['source_files']!=pins:raise ValueError('exact cache recovery execution runtime pins')
+        allowed={'subnet/training_startup_recovery.py','subnet/persistent_training_controller.py','subnet/remote_backend.py','subnet/backend_jobs.py','subnet/trainer_cache_lifecycle.py'}
+        if set(pins)!=set(original['source_files']) or any(pins[n]!=h for n,h in original['source_files'].items() if n not in allowed):
+            raise ValueError('cache recovery preserves every scientific implementation')
+    elif set(w)!=fields or w['version']!=RESTORE_WITNESS or w['exception']!='requests.exceptions.ConnectionError'or w['cause']!='urllib3.exceptions.ReadTimeoutError'or w['failed_stage']!='parent-state-fetch-before-train_epoch'or w['callchain']!=required_frames:raise ValueError('exact actual parent read-timeout callchain')
     if any(w[k]is not True for k in ('model_loaded','cuda_allocated','original_processes_absent','physical_gpu_idle','output_checkpoint_absent','original_report_absent','optimizer_state_candidate_absent','update_ledger_absent'))or any(w[k]is not False for k in ('optimizer_step_reached','restore_state_returned','train_epoch_reached')):raise ValueError('restore recovery requires definitive zero-update witness')
     return _validate_parent_inputs_and_fresh_attempt(value,original,old,terminal,w,job,manifest,authority)
 
@@ -260,7 +276,7 @@ def validate_post_update(job,manifest,authority):
     return _validate_parent_inputs_and_fresh_attempt(value,original,old,terminal,w,job,manifest,authority)
 
 def reservation_path(state,epoch,version):
-    suffix='-post-update-precompute-continuation-reservation.json'if version==POST_UPDATE_CONTINUATION_VERSION else '-post-update-uncommitted-recovery-reservation.json'if version==POST_UPDATE_VERSION else '-parent-restore-bootstrap-continuation-reservation.json'if version==BOOTSTRAP_VERSION else '-startup-recovery-reservation.json'
+    suffix='-cache-parent-ACK-recovery-reservation.json'if version==CACHE_ACK_VERSION else '-post-update-precompute-continuation-reservation.json'if version==POST_UPDATE_CONTINUATION_VERSION else '-post-update-uncommitted-recovery-reservation.json'if version==POST_UPDATE_VERSION else '-parent-restore-bootstrap-continuation-reservation.json'if version==BOOTSTRAP_VERSION else '-startup-recovery-reservation.json'
     return Path(state)/(epoch+suffix)
 
 def validate_bootstrap_predecessor(value,job):
