@@ -44,7 +44,7 @@ def prepare_order(gateway,epoch):
     return dict(result)
 
 
-def install(module,path,expected_sha256,earliest_round,*,controller_class=None,previous_policy=None):
+def install(module,path,expected_sha256,earliest_round,*,contract_module=None,previous_policy=None):
     """Called only by a ROOT-pinned CPU entry; scientific worker files stay sealed."""
     path=Path(path)
     if type(earliest_round)is not int or earliest_round<1 or path.is_symlink() or sha(path.read_bytes())!=expected_sha256:
@@ -54,18 +54,21 @@ def install(module,path,expected_sha256,earliest_round,*,controller_class=None,p
     original=module.capture
     original_freeze=module.freeze_receipts if hasattr(module,'freeze_receipts')else None
     prospective=None
-    if controller_class is not None:
+    if contract_module is not None:
         before=dict(previous_policy or {})
         prospective=dict(before,workers=16,max_inflight_bytes=32000000,state_checkpoint_documents=128)
         validate_config({'learner_capture_policy':before},{'learner_capture_policy':prospective})
-        original_open=controller_class.open
-        def opening(self,epoch,*args,**kwargs):
-            if int(epoch.rsplit('-',1)[-1])>=earliest_round:
-                if kwargs.get('learner_capture_policy')!=before:
+        original_contract=contract_module.contract
+        def contract(config,round_number):
+            result=original_contract(config,round_number)
+            if round_number>=earliest_round:
+                if result.get('learner_capture_policy')!=before:
                     raise ValueError('prospective capture original opening policy')
-                kwargs=dict(kwargs,learner_capture_policy=dict(prospective))
-            return original_open(self,epoch,*args,**kwargs)
-        controller_class.open=opening
+                result=dict(result,learner_capture_policy=dict(prospective))
+            return result
+        # Preserve Controller.open's exact code/globals. RemoteController uses
+        # a per-call save_manifest projection for its first signed opening.
+        contract_module.contract=contract
     def capture(gateway,epoch):
         if int(epoch.rsplit('-',1)[-1])<earliest_round:return original(gateway,epoch)
         if prospective is not None and gateway.epochs[epoch]['commitment_binding'].get('learner_capture_policy')!=prospective:

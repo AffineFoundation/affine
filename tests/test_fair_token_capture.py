@@ -114,15 +114,14 @@ class FairCapture(unittest.TestCase):
    after=restored.epochs['bounded-test'];self.assertGreaterEqual(sum(map(len,after['training_document_snapshots'].values())),77)
    self.assertTrue(all(key.startswith('public/')for key in calls));self.assertFalse(puts);self.assertFalse(after['rejections'])
  def test_prospective_opening_changes_only_capture_policy_and_preserves_historical_open(self):
-  class Controller:
-   def open(self,epoch,**kwargs):return dict(epoch=epoch,**kwargs)
   path=W/'subnet/training_documents.py';module=SimpleNamespace(capture=lambda g,e:None);before=copy.deepcopy(fixtures.V2)
-  fair.install(module,path,hashlib.sha256(path.read_bytes()).hexdigest(),92,controller_class=Controller,previous_policy=before)
+  service=SimpleNamespace(contract=lambda config,n:copy.deepcopy(config))
+  fair.install(module,path,hashlib.sha256(path.read_bytes()).hexdigest(),92,contract_module=service,previous_policy=before)
   kwargs=dict(learner_capture_policy=before,deadline=60,source='unchanged')
-  self.assertEqual(Controller().open('epoch-91',**kwargs),dict(epoch='epoch-91',**kwargs))
-  after=Controller().open('epoch-92',**kwargs);self.assertEqual(after['deadline'],60);self.assertEqual(after['source'],'unchanged');self.assertEqual(before,fixtures.V2)
+  self.assertEqual(service.contract(kwargs,91),kwargs)
+  after=service.contract(kwargs,92);self.assertEqual(after['deadline'],60);self.assertEqual(after['source'],'unchanged');self.assertEqual(before,fixtures.V2)
   self.assertEqual(after['learner_capture_policy'],dict(before,workers=16,max_inflight_bytes=32000000,state_checkpoint_documents=128))
-  with self.assertRaises(ValueError):Controller().open('epoch-92',learner_capture_policy=dict(before,workers=4))
+  with self.assertRaises(ValueError):service.contract(dict(learner_capture_policy=dict(before,workers=4)),92)
  def test_parallel_parent_PUTs_finish_before_final_receipt_publication(self):
   with tempfile.TemporaryDirectory()as d:
    g,s,*_=self.gateway(d,20);m.capture(g,'bounded-test',ordering=fair.prepare_order(g,'bounded-test'));original=g.bucket.put;release=threading.Event();progress=threading.Event();calls=[];published=[];errors=[]
