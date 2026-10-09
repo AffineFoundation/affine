@@ -3,7 +3,7 @@
 No inference, blockchain calls, or unaudited-sample validity claim. Caller must
 admit the immutable commitment population and verifier execution/source pins.
 """
-import hashlib,json,math
+import hashlib,json,math,re
 from .distributed_roles import authenticate
 LEGACY_VERSION='continuous-probabilistic-audit-v1'
 VERSION='continuous-probabilistic-audit-v2'
@@ -14,7 +14,8 @@ def need(v,message):
  if not v:raise ValueError(message)
 def integer(v,minimum,maximum,name):need(type(v)is int and minimum<=v<=maximum,name);return v
 def finite(v,low,high,name):need(type(v)in(int,float)and math.isfinite(v)and low<=v<=high,name);return float(v)
-def valid_digest(v):return type(v)is str and len(v)==64 and all(c in '0123456789abcdef'for c in v)
+_DIGEST_PATTERN=re.compile(r'[0-9a-f]{64}')
+def valid_digest(v):return type(v)is str and _DIGEST_PATTERN.fullmatch(v)is not None
 def policy(value):
  fields={'version','recent_epochs','decay','prior_alpha','prior_beta','invalid_multiplier','zero_epoch_after','blacklist_after','blacklist_epochs'}
  need(type(value)is dict and set(value)==fields and value['version']in(VERSION,LEGACY_VERSION,RESOLUTION_VERSION),'exact continuous audit policy')

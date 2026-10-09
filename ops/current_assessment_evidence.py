@@ -82,7 +82,7 @@ def _population(document, epoch, authority, sources):
     return p, manifest
 
 
-def load_evidence(audit_config_path, *, authority, cutoff, verifiers,
+def _load_evidence_uncached(audit_config_path, *, authority, cutoff, verifiers,
                   expected_source_admission_sha256=None, expected_numerical_resolution_policy_sha256=None):
     """Return unsigned snapshots plus original population times and diagnostics.
 
@@ -351,3 +351,13 @@ def candidate_updates(resolved, candidate, resolutions):
                     raise ValueError('conflicting authenticated audits require explicit reference adjudication')
         updates[key] = new
     return updates
+
+
+def load_evidence(audit_config_path, *, authority, cutoff, verifiers,
+                  expected_source_admission_sha256=None, expected_numerical_resolution_policy_sha256=None):
+    from subnet.numerical_resolution import authenticated_reference_cache
+    with authenticated_reference_cache():
+        return _load_evidence_uncached(audit_config_path, authority=authority,
+            cutoff=cutoff, verifiers=verifiers,
+            expected_source_admission_sha256=expected_source_admission_sha256,
+            expected_numerical_resolution_policy_sha256=expected_numerical_resolution_policy_sha256)

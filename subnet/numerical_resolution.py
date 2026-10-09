@@ -112,7 +112,7 @@ def nine_reference(ack, archive, members, read, authority):
     return ack, scope, results
 
 
-def reference(document, raw, authority):
+def _reference_uncached(document, raw, authority):
     """Recheck the archived original result, rather than trusting a summary label."""
     ack = authenticate(document, authority)
     need(ack.get('version') == 'research-original-archive-full-readback-ack-v1'
@@ -267,3 +267,34 @@ def apply(observations, records, admitted_jobs, *, authority, cutoff,
                 numerical_resolution_policy_sha256=expected_policy_sha256,
                 numerical_resolution_review_sha256=digest(entry), sampler_and_grader_completion_claimed=False)
     return [replacements.get((o['evidence_id'], o['job_sha256']), o) for o in observations]
+
+
+# One assessment invocation owns this cache. Keys are exact immutable inputs,
+# not filenames, mtimes or an unsigned interpretation of prior evidence.
+from contextlib import contextmanager
+from contextvars import ContextVar
+import copy
+_REFERENCE_CACHE = ContextVar('assessment_authenticated_reference_cache', default=None)
+
+@contextmanager
+def authenticated_reference_cache():
+    token = _REFERENCE_CACHE.set({})
+    try:
+        yield
+    finally:
+        _REFERENCE_CACHE.reset(token)
+
+def reference(document, raw, authority):
+    cache = _REFERENCE_CACHE.get()
+    if cache is None or type(raw) is not bytes or type(authority) is not str:
+        return _reference_uncached(document, raw, authority)
+    # Canonical ACK includes its actual signer/signature. Archive bytes are
+    # immutable; dict equality still compares every byte on any hash collision.
+    key = (authority, canonical(document), raw)
+    if key not in cache:
+        verified = _reference_uncached(document, raw, authority)
+        if len(cache) < 100:
+            cache[key] = copy.deepcopy(verified)
+        return copy.deepcopy(verified)
+    # A caller cannot modify a value later re-used by another cohort snapshot.
+    return copy.deepcopy(cache[key])
