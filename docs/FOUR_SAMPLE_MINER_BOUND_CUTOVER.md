@@ -10,14 +10,16 @@ manifest field.
 Changing that value to 16 derives K=L=8 without code changes. Valid totals are
 even integers from 4 through 128; contradictory explicit counts are rejected.
 The native multi-rollout v3 policy can use `"max_pairs": "manifest"` to derive
-its bounded pair budget from the same signed quotas and the 256-task training
-ceiling. Existing explicit native budgets and historical manifests are preserved.
+its bounded pair budget from the same signed quotas and the training task
+ceiling. Historical manifests without `training_task_capacity` retain 256; the
+prospective explicit `signed-training-task-capacity-v1` declaration permits 512
+only with its separately admitted source and workload qualification. Existing explicit native budgets and historical manifests are preserved.
 This is configuration support, not a claim that larger groups fit every machine
 or improve learning. Changes take effect only in a newly approved signed opening.
 
 Updated software supports larger balanced v5 quotas, including K=4/L=4:
 eight distinct rollouts per task batch, four successes and four failures.
-The limit remains three task batches per UID per epoch, with attempt nonces
+The signed `max_batches` sets the task-batch limit per UID per epoch, with attempt nonces
 0–999 and one contribution point per qualifying unique task. Miners read K/L
 from the signed manifest; eight samples are still one batch, not eight points.
 Existing signed openings and source archives remain unchanged. External miners

@@ -6,6 +6,26 @@ import base64,hashlib,importlib.util,json,subprocess,sys
 from types import SimpleNamespace
 from pathlib import Path
 
+
+def verify_envelope_limit(job,authority):
+    """Byte allowance only; source, capacity and proof checks remain mandatory."""
+    import base64
+    from nacl.signing import VerifyKey
+    envelope=job['manifest']
+    if envelope.get('signer')!=authority:raise ValueError('original manifest authority')
+    raw=json.dumps(envelope['payload'],sort_keys=True,separators=(',',':'),allow_nan=False).encode()
+    VerifyKey(bytes.fromhex(authority)).verify(raw,base64.b64decode(envelope['signature'],validate=True))
+    manifest=envelope['payload'];cap=manifest.get('training_task_capacity')
+    if (job.get('role')=='verify' and type(cap)is dict and set(cap)=={'version','max_tasks'}
+            and cap['version']=='signed-training-task-capacity-v1' and type(cap['max_tasks'])is int and cap['max_tasks']==512
+            and type(manifest.get('max_batches'))is int and manifest['max_batches']==9
+            and type(manifest.get('K'))is int and manifest['K']==4 and type(manifest.get('L'))is int and manifest['L']==4
+            and manifest.get('training_policy')=='bf16-cpu-fp32-master-task-normalized-persistent-v4'
+            and manifest.get('training_input_policy')=='committed-unaudited-training-v1'
+            and ('samples_per_batch'not in manifest or type(manifest['samples_per_batch'])is int and manifest['samples_per_batch']==8)
+            and 'training_startup_recovery'not in manifest):return 32_000_000
+    return 4_000_000
+
 def bind_transport(backend,job,authority,workspace,policy,admission):
     _,cp,sizes,_,_=admission.budget(job,policy,authority)
     manifest=job['manifest']['payload'];limits=admission.input_limits(job,manifest)
@@ -40,7 +60,7 @@ print(json.dumps({'sizes':result[2],'limits':limits},separators=(',',':'),allow_
 
 def isolated_transport_admission(job,policy,authority,source,helper,*,validate_runtime=False):
     raw=json.dumps(dict(job=job,policy=policy,authority=authority,validate_runtime=validate_runtime),separators=(',',':'),allow_nan=False).encode()
-    if len(raw)>4_000_000:raise ValueError('bounded ordinary capacity input')
+    if len(raw)>verify_envelope_limit(job,authority):raise ValueError('bounded signed capacity input')
     result=subprocess.run([sys.executable,'-I','-B','-c',_TRANSPORT_ADMISSION_CODE,str(source),str(helper)],input=raw,capture_output=True,timeout=30,check=False,cwd=source)
     if result.returncode or len(result.stdout)>1_000_000:raise ValueError('isolated transport capacity validation refused')
     value=json.loads(result.stdout);cp=job['manifest']['payload']['checkpoint']
@@ -58,7 +78,7 @@ if any(n=='torch'or n.startswith('torch.')for n in sys.modules):raise ValueError
 print('checked')
 """
     raw=json.dumps(dict(job=job,policy=policy,authority=authority),separators=(',',':'),allow_nan=False).encode()
-    if len(raw)>4_000_000:raise ValueError('bounded ordinary capacity input')
+    if len(raw)>verify_envelope_limit(job,authority):raise ValueError('bounded signed capacity input')
     result=subprocess.run([sys.executable,'-I','-B','-c',code,str(source),str(helper)],input=raw,capture_output=True,timeout=30,cwd=source)
     if result.returncode or result.stdout!=b'checked\n':raise ValueError('isolated runtime inventory refused')
 
@@ -74,8 +94,10 @@ def main():
         VerifyKey(bytes.fromhex(signer)).verify(raw,base64.b64decode(document['signature'],validate=True))
         return document['payload']
     path=Path(argv[1])
-    if path.stat().st_size>4_000_000:raise ValueError('ordinary verify envelope size')
-    envelope=json.loads(path.read_bytes());job=authenticate(envelope,authority)
+    with path.open('rb')as stream:raw=stream.read(32_000_001)
+    if len(raw)>32_000_000:raise ValueError('absolute verify envelope size')
+    envelope=json.loads(raw);job=authenticate(envelope,authority)
+    if len(raw)>verify_envelope_limit(job,authority):raise ValueError('signed verify envelope size')
     if job.get('role')!='verify':raise ValueError('capacity bootstrap verify only')
     authenticate(job['manifest'],authority)
     helper=Path(__file__).resolve().parent/'verifier_capacity_admission.py'

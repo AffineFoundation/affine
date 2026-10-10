@@ -1,6 +1,6 @@
 # Conservative FP32 training
 
-The 2026-10-09 fresh run starts from the original Qwen2.5-Math-7B-Instruct checkpoint. The previous run and its reports remain historical evidence. Mining still follows the signed epoch manifest: four distinct completed correct answers and four distinct completed wrong answers per task batch, at most three batches per UID, attempt nonces 0–999, and a 2,048-token output budget. The original published mining/sampling source remains pinned separately from the training execution source.
+The 2026-10-09 fresh run starts from the original Qwen2.5-Math-7B-Instruct checkpoint. The previous run and its reports remain historical evidence. Mining still follows the signed epoch manifest: four distinct completed correct answers and four distinct completed wrong answers per task batch, up to the signed `max_batches` task batches per UID, attempt nonces 0–999, and a 2,048-token output budget. The original published mining/sampling source remains pinned separately from the training execution source.
 
 The corrective trainer accumulates each backward pass into FP32 gradient buffers, computes the global norm and clipping in FP32, and passes those buffers directly to the persistent CPU AdamW optimizer. This avoids repeatedly adding small gradients into BF16 `.grad` buffers. The task-normalized preference objective, clipping limit, Adam coefficients and weight decay retain their declared settings.
 

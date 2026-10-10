@@ -57,9 +57,11 @@ sys.settrace(trace)
   self.assertEqual(q.returncode,0,q.stderr);v=json.loads(result.read_text());self.assertTrue(v['CPU_stub']);self.assertTrue(v['canonical_is_main']);self.assertFalse(v['torch_imported'])
   result.unlink();self.job['role']='upload';self.write();q=subprocess.run(args,env=env,capture_output=True,text=True,timeout=30)
   self.assertNotEqual(q.returncode,0);self.assertFalse(result.exists());self.assertIn('job envelope size budget',q.stderr)
- def test_absolute8MB_cap_read_before_parse_and_normal4MB_unchanged(self):
+ def test_absolute32MB_cap_read_before_parse_and_historical_limits_unchanged(self):
   self.write(size=8_000_000);self.assertEqual(backend.load_job_envelope(self.path,self.authority)['payload'],self.job)
-  self.path.write_bytes(b'x'*8_000_001)
+  self.write(size=8_000_001)
+  with self.assertRaises(ValueError):backend.load_job_envelope(self.path,self.authority)
+  self.path.write_bytes(b'x'*32_000_001)
   with patch.object(backend.json,'loads')as parse,self.assertRaisesRegex(ValueError,'absolute size'):backend.load_job_envelope(self.path,self.authority)
   parse.assert_not_called()
   small={'historical':'unchanged'};self.write(small,size=4_000_000);self.assertEqual(backend.load_job_envelope(self.path,self.authority),small)

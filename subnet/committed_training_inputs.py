@@ -173,7 +173,7 @@ def validate_job(job,manifest,authority):
         'subnet/committed_training_inputs.py'not in job.get('source_files',{}) or
         manifest.get('training_execution_amendment')is not None):raise ValueError('prospective unaudited learner job/source required')
     submissions=job.get('submissions')
-    if not isinstance(submissions,list) or not 1<=len(submissions)<=256:raise ValueError('bounded learner population')
+    if not isinstance(submissions,list) or not 1<=len(submissions)<=training_document_cap(manifest):raise ValueError('bounded learner population')
     seen=set();tasks=set()
     for obj in submissions:
         value,row=validate_admission(obj.get('learner_admission'),obj,manifest,authority)
@@ -254,6 +254,52 @@ def validate_native_prompt(runtime,pairs,manifest,*,prompt_only=False):
 
 SELECTION_VERSION='bounded-postfreeze-learner-selection-v1'
 TRAINING_DOCUMENT_CAP=256
+CAPACITY_FIELD='training_task_capacity'
+CAPACITY_VERSION='signed-training-task-capacity-v1'
+
+def training_document_cap(manifest):
+    """Historical openings retain256; only an explicit signed512 opening opts in.
+
+    Callers authenticate the containing original manifest. This changes input
+    admission/selection limits only, never optimizer arithmetic or task weights.
+    """
+    if CAPACITY_FIELD not in manifest:return TRAINING_DOCUMENT_CAP
+    value=manifest[CAPACITY_FIELD]
+    if (type(value)is not dict or set(value)!={'version','max_tasks'}
+        or value['version']!=CAPACITY_VERSION or type(value['max_tasks'])is not int
+        or value['max_tasks']!=512 or manifest.get('training_input_policy')!=VERSION
+        or manifest.get('training_policy')!='bf16-cpu-fp32-master-task-normalized-persistent-v4'):
+        raise ValueError('explicit signed512 unaudited training capacity')
+    from .batch_quotas import configured_quotas
+    if configured_quotas(manifest)!=(4,4):raise ValueError('training512 retains K4 L4')
+    return value['max_tasks']
+
+PROSPECTIVE_ENVELOPE_MAX_BYTES=32_000_000
+
+def prospective_envelope_limit(manifest,historical_limit):
+    """Caller authenticates the manifest; only exact9/512 changes transport."""
+    if CAPACITY_FIELD not in manifest:return historical_limit
+    if (training_document_cap(manifest)==512 and type(manifest.get('max_batches'))is int
+            and manifest['max_batches']==9 and 'training_startup_recovery'not in manifest):
+        return PROSPECTIVE_ENVELOPE_MAX_BYTES
+    return historical_limit
+
+def enforce_prospective_envelope(envelope,authority):
+    """Check final signed bytes before recording/dispatching a prospective job.
+
+    Historical checks remain with their existing parser. No metadata is removed
+    to fit a bound; failures report actual bytes and leave evidence unchanged.
+    """
+    # An untrusted absence can only retain the historical path, never enlarge it.
+    candidate=envelope.get('payload',{}).get('manifest',{}).get('payload',{})
+    if CAPACITY_FIELD not in candidate:return None
+    job=authenticate(envelope,authority);manifest=authenticate(job['manifest'],authority)
+    maximum=prospective_envelope_limit(manifest,None)
+    if maximum is None:return None
+    size=len(canonical(envelope))
+    if size>maximum:raise ValueError(f'prospective job envelope bytes {size} exceed limit {maximum}')
+    return dict(envelope_bytes=size,envelope_limit_bytes=maximum)
+
 
 def select_training_documents(controller,manifest,eligible,receipts,*,round_number=None):
     """Persist the postfreeze draw once; retain all eligible inputs for audits."""
@@ -262,7 +308,7 @@ def select_training_documents(controller,manifest,eligible,receipts,*,round_numb
     path=controller.state/(manifest['epoch']+'-learner-training-selection.json')
     binding=dict(version=SELECTION_VERSION,epoch=manifest['epoch'],
         computation_sha256=sha(computation_binding(manifest)),capture_receipts_sha256=sha(receipts),
-        eligible_inventory_sha256=sha(receipt_inventory(eligible)),cap=TRAINING_DOCUMENT_CAP)
+        eligible_inventory_sha256=sha(receipt_inventory(eligible)),cap=training_document_cap(manifest))
     from .learner_blacklist_selection import FIELD,partition
     filtered=FIELD in manifest
     if filtered:binding['blacklist_policy_sha256']=sha(manifest[FIELD])
@@ -291,7 +337,7 @@ def select_training_documents(controller,manifest,eligible,receipts,*,round_numb
     training_eligible,status=partition(eligible,manifest,controller.authority.id,at=value['captured_at'],round_number=round_number)if filtered else (eligible,None)
     if filtered and value['blacklist_selection']!=status:raise ValueError('immutable original blacklist selection snapshot')
     ranked=sorted(range(len(training_eligible)),key=lambda i:(sha(dict(seed=value['seed'],input=receipt_inventory([training_eligible[i]])[0])),i))
-    selected=set(ranked[:TRAINING_DOCUMENT_CAP])
+    selected=set(ranked[:binding['cap']])
     submissions=[obj for i,obj in enumerate(training_eligible)if i in selected]
     report=dict(value,eligible_count=len(eligible),training_count=len(submissions),
         selected_inventory_sha256=sha(receipt_inventory(submissions)),unselected_count=len(eligible)-len(submissions))

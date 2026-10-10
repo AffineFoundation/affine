@@ -254,7 +254,7 @@ def main(argv=None):
     parser.add_argument('--discovery-url',default='https://affine.io/mining.json')
     parser.add_argument('--authority',required=True);parser.add_argument('--key',required=True)
     parser.add_argument('--state',required=True);parser.add_argument('--source-cache',required=True)
-    parser.add_argument('--env-id',default='affine_math');parser.add_argument('--max-batches',type=int,default=3)
+    parser.add_argument('--env-id',default='affine_math');parser.add_argument('--max-batches',type=int,default=None)
     parser.add_argument('--search-budget',type=int,default=32);parser.add_argument('--poll-seconds',type=int,default=10)
     args=parser.parse_args(argv)
     if not re.fullmatch('[0-9a-f]{64}',args.authority) or not 1<=args.poll_seconds<=300:

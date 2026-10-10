@@ -56,7 +56,7 @@ def draw_context(manifest,value):
         validate(value['draw_contract'])
         from .controller import class_quotas
         class_quotas(manifest.get('K'),manifest.get('L'),value['draw_contract'])
-        if type(manifest.get('max_batches'))is not int or manifest['max_batches']!=3:raise ValueError('miner-bound calibration max3')
+        if type(manifest.get('max_batches'))is not int or not 1<=manifest['max_batches']<=256:raise ValueError('miner-bound calibration signed batch cap')
         context['miner']=value['miner']
     return context
 

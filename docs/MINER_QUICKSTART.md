@@ -2,12 +2,13 @@
 
 Read https://affine.io/llms.txt first. The latest signed OPEN manifest and its
 approved source are authoritative; GitHub main includes default-off research.
-Current qualification has chain weight submission disabled. Assessments and
-audits remain independent of training; follow the current signed policies.
+Hourly weights use the best current authenticated miner assessment, retaining
+the last valid assessment during evidence outages. Assessments and audits remain
+independent of training; follow the current signed policies.
 
 The current completed-answer contract requires eight distinct rollouts per task batch:
-four native-graded successes and four failures, at most three batches per UID
-per epoch, and attempt nonces 0–999. Follow the signed OPEN manifest; historical
+four native-graded successes and four failures, up to the signed `max_batches`
+task batches per UID per epoch, and attempt nonces 0–999. Follow the signed OPEN manifest; historical
 openings retain their original quotas and attempt ceilings.
 Upload selected-token log
 probabilities and TOPLOC, not full-vocabulary arrays. Audits check prescribed
@@ -51,8 +52,16 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.miner_supervisor \
   --source-cache /private/affine-approved-source \
   --key /private/miner.seed \
   --state /private/affine-miner-cache \
-  --env-id affine_math --max-batches 3 --search-budget 32
+  --env-id affine_math --search-budget 32
 ```
+
+Batch-cap update (prospective): nine task batches per UID and up to 512 distinct training tasks per epoch are being prepared
+with the same four-correct/four-wrong contents. The current signed opening still
+controls capacity; this is not a live nine-batch activation notice. Update and
+restart the transport supervisor once, omitting `--max-batches` to follow each
+signed cap. An explicit `--max-batches 3` remains valid and limits that client to
+three batches even after a larger cap is signed. Extra capacity is optional and
+does not extend the upload deadline or earn duplicate-task contribution points.
 
 Client update status (2026-10-09): the source bundle currently signed by the live
 manifest is `74f132382afb89236d3fc2300fa6917761e5a4c0e24c8e20ea24a0410ddaebe3`.

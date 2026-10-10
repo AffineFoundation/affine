@@ -322,7 +322,10 @@ class RemoteJobs:
                 if not isinstance(peer,dict):raise ValueError('enabled selection requires explicitly admitted CPU peer')
                 payload=make_admission(payload,manifest,peer['authorization_document'],self.controller.authority.id,self.controller.signed)
                 validate_receipt_job(payload,manifest,self.controller.authority.id)
-            jobpath=self.state/(identifier+'-job.json');save(jobpath,self.controller.signed(payload))
+            envelope=self.controller.signed(payload)
+            from .committed_training_inputs import enforce_prospective_envelope
+            enforce_prospective_envelope(envelope,self.controller.authority.id)
+            jobpath=self.state/(identifier+'-job.json');save(jobpath,envelope)
             prior=dict(job_id=identifier,role=role,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],job_sha256=hashlib.sha256(canonical(payload)).hexdigest(),manifest_sha256=hashlib.sha256(canonical(manifest)).hexdigest(),source_files=self.metadata['source_files'],runtime_versions=self.metadata['runtime_versions'])
             if dispatch_only:prior['physical_workspace']=self.workspace
             save(record,prior);remotejob=self.workspace+'/'+identifier+'.json'

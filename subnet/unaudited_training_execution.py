@@ -7,7 +7,7 @@ bundle. This module does not regrade, reverify proofs, or alter inputs/Adam.
 import copy
 import math
 from subnet.training_receipts import authenticate, computation_binding, digest, sha
-from subnet.committed_training_inputs import VERSION as INPUT_POLICY, receipt_inventory
+from subnet.committed_training_inputs import VERSION as INPUT_POLICY, receipt_inventory, training_document_cap
 from subnet.persistent_cpu_adamw import POLICY
 from subnet.persistent_training_protocol import validate_binding
 
@@ -171,7 +171,7 @@ def validate(job_envelope,authority,*,now=None):
         raise ValueError('original native subset remains unaudited and unmodified')
     for key in ('context_sha256','grades_sha256','subset_sha256','authorization_sha256'):digest(native.get(key))
     submissions=job.get('submissions')
-    if not isinstance(submissions,list) or not 1<=len(submissions)<=256:
+    if not isinstance(submissions,list) or not 1<=len(submissions)<=training_document_cap(manifest):
         raise ValueError('bounded original native-selected inputs')
     if value['input_inventory_sha256']!=sha(receipt_inventory(submissions)):
         raise ValueError('exact frozen native-selected input inventory')
@@ -247,6 +247,12 @@ def validate_provenance(report,job_envelope,authority):
 PREPARATION_VERSION = 'unaudited-training-execution-preparation-v2-effective-lr'
 DECLARATION_MAX_BYTES = 256_000
 JOB_MAX_BYTES = 8_000_000
+CAPACITY_JOB_MAX_BYTES = 32_000_000
+
+def job_envelope_limit(manifest):
+    """Only explicit signed9/512 ordinary execution gets the larger envelope."""
+    from .committed_training_inputs import prospective_envelope_limit
+    return prospective_envelope_limit(manifest,JOB_MAX_BYTES)
 
 def preparation(authorization,authority,*,now=None):
     """Authenticate a compact, exact-epoch, exact-input ROOT preparation grant."""
@@ -279,7 +285,7 @@ def attach(payload,authorization,authority,sign):
     value['learning_rate_authorization']=sign(_grant_payload(value,authenticate(payload['manifest'],authority)))
     result=copy.deepcopy(payload);result[FIELD]=sign(value)
     envelope=sign(result);validate(envelope,authority,now=payload['created_at'])
-    if len(__import__('json').dumps(envelope,sort_keys=True,separators=(',',':')).encode())>JOB_MAX_BYTES:
+    if len(__import__('json').dumps(envelope,sort_keys=True,separators=(',',':')).encode())>job_envelope_limit(authenticate(payload['manifest'],authority)):
         raise ValueError('ordinary amended job envelope exceeds bounded budget')
     return result
 
@@ -393,10 +399,13 @@ def automatic_preparation(controller,job,release_envelope):
     if not isinstance(epoch,str)or Path(epoch).name!=epoch or epoch in('.','..'):
         raise ValueError('canonical original epoch namespace')
     state=Path(controller.state).resolve();native=state/'native-outcome-eligibility'/epoch
+    maximum=job_envelope_limit(manifest)
     def read(path):
-        if path.is_symlink()or path.resolve()!=path or not path.is_file()or path.stat().st_size>8_000_000:
+        if path.is_symlink()or path.resolve()!=path or not path.is_file()or path.stat().st_size>maximum:
             raise ValueError('bounded original signed eligibility file')
-        return json.loads(path.read_bytes())
+        with path.open('rb')as stream:data=stream.read(maximum+1)
+        if len(data)>maximum:raise ValueError('bounded original signed eligibility file')
+        return json.loads(data)
     public=read(state/(epoch+'-first-signed-manifest.json'))
     documents={name:read(native/(name+'.ROOT-SIGNED.json'))for name in('context','grades','subset')}
     directory=state/'roles'/'execution-preparations';directory.mkdir(parents=True,exist_ok=True,mode=0o700)

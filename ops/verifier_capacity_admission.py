@@ -13,6 +13,26 @@ VERSION='owned-verifier-download-capacity-v1'
 class CapacityDeferred(Exception):
     """Infrastructure admission only; never an invalid scientific report."""
 
+
+def verify_envelope_limit(job,authority):
+    """Byte allowance only; source, capacity and proof checks remain mandatory."""
+    import base64
+    from nacl.signing import VerifyKey
+    envelope=job['manifest']
+    if envelope.get('signer')!=authority:raise ValueError('original manifest authority')
+    raw=json.dumps(envelope['payload'],sort_keys=True,separators=(',',':'),allow_nan=False).encode()
+    VerifyKey(bytes.fromhex(authority)).verify(raw,base64.b64decode(envelope['signature'],validate=True))
+    manifest=envelope['payload'];cap=manifest.get('training_task_capacity')
+    if (job.get('role')=='verify' and type(cap)is dict and set(cap)=={'version','max_tasks'}
+            and cap['version']=='signed-training-task-capacity-v1' and type(cap['max_tasks'])is int and cap['max_tasks']==512
+            and type(manifest.get('max_batches'))is int and manifest['max_batches']==9
+            and type(manifest.get('K'))is int and manifest['K']==4 and type(manifest.get('L'))is int and manifest['L']==4
+            and manifest.get('training_policy')=='bf16-cpu-fp32-master-task-normalized-persistent-v4'
+            and manifest.get('training_input_policy')=='committed-unaudited-training-v1'
+            and ('samples_per_batch'not in manifest or type(manifest['samples_per_batch'])is int and manifest['samples_per_batch']==8)
+            and 'training_startup_recovery'not in manifest):return 32_000_000
+    return 4_000_000
+
 def budget(job,envelope,authority,*,protocol_source=None):
     # The worker's initial protocol package can be historical. Validate input
     # transport with the exact registry-selected job source, without replacing
@@ -110,7 +130,7 @@ def source_budget(job,envelope,authority,source):
         p=source/name
         if not isinstance(expected,str)or not re.fullmatch('[0-9a-f]{64}',expected)or p!=p.resolve()or not p.is_file()or hashlib.sha256(p.read_bytes()).hexdigest()!=expected:raise ValueError('capacity protocol source changed')
     raw=json.dumps(dict(job=job,policy=envelope,authority=authority),separators=(',',':'),allow_nan=False).encode()
-    if len(raw)>4_000_000:raise ValueError('bounded ordinary capacity input')
+    if len(raw)>verify_envelope_limit(job,authority):raise ValueError('bounded signed capacity input')
     try:
         result=subprocess.run([sys.executable,'-I','-B','-c',_SOURCE_BUDGET_CODE,str(source),str(Path(__file__).resolve())],input=raw,capture_output=True,timeout=30,check=False,cwd=source)
     except subprocess.TimeoutExpired as error:raise CapacityDeferred('source-bound CPU capacity validation timed out')from error

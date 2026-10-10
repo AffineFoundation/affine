@@ -34,7 +34,8 @@ def probe(workspace,identifier,physical=False):
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('job');p.add_argument('--authority',required=True);p.add_argument('--workspace',required=True);p.add_argument('--checkpoint-cache');a=p.parse_args()
-    envelope=json.loads(Path(a.job).read_text());identifier=envelope['payload']['job_id']
+    from .backend_jobs import load_job_envelope
+    envelope=load_job_envelope(a.job,a.authority);identifier=envelope['payload']['job_id']
     from .backend_jobs import validate,signed
     validate(envelope,a.authority)
     manifest=signed(envelope['payload']['manifest'],a.authority)

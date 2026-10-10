@@ -188,6 +188,8 @@ class RoutedJobs:
             payload=dict(schema=1,job_id=identifier,role=role,created_at=now,
                          expires_at=now+role_time_budget(self.config,role),manifest=self.controller.signed(manifest),**self.metadata,**fields)
             envelope=self.controller.signed(payload)
+            from .committed_training_inputs import enforce_prospective_envelope
+            enforce_prospective_envelope(envelope,self.controller.authority.id)
             prior=dict(job_id=identifier,role=role,epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],
                        job_sha256=hashlib.sha256(canonical(payload)).hexdigest(),manifest_sha256=hashlib.sha256(canonical(manifest)).hexdigest(),**self.metadata)
             save(self.state/(identifier+'-job.json'),envelope); save(record,prior)

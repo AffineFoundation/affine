@@ -32,7 +32,7 @@ def approval(document,authority,manifest):
             from .controller import class_quotas
             class_quotas(manifest.get('K'),manifest.get('L'),manifest.get('sampling_contract'))
             expected_members=180
-            if type(manifest.get('max_batches'))is not int or manifest['max_batches']!=3:raise ValueError('miner-bound peer max3')
+            if type(manifest.get('max_batches'))is not int or not 1<=manifest['max_batches']<=256:raise ValueError('miner-bound peer signed batch cap')
         elif (type(manifest.get('K'))is not int or type(manifest.get('L'))is not int or manifest['K']!=2 or manifest['L']!=2 or type(manifest.get('max_batches'))is not int or manifest['max_batches']!=3):raise ValueError('historical miner-bound peer K2 L2 max3')
         if not {'subnet/sampling_uniqueness.py','subnet/trajectory_identity.py'}<=set(p.get('scientific_source_files',{})):raise ValueError('miner-bound peer runtime additions')
     if (set(p)!=fields or p['version']!=expected_version or p['source_sha256']!=manifest['source_bundle']['sha256']or

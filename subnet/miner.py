@@ -106,7 +106,7 @@ class Miner:
             raise ValueError('stale local miner state')
         if manifest.get('sampling_contract',{}).get('version')==MINER_VERSION:
             from .sampling_uniqueness import validate_batch
-            if len(self.batches)>3:raise ValueError('v5 max3 restored batches')
+            if len(self.batches)>manifest['max_batches']:raise ValueError('restored batches exceed signed per-UID limit')
             for batch,_ in self.batches:validate_batch(batch,manifest,identity.id)
         self.search_state = None
         if manifest.get('sampling_contract', {}).get('version') == MINER_VERSION:

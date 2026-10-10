@@ -213,11 +213,12 @@ def validate_restore(job,manifest,authority):
     return _validate_parent_inputs_and_fresh_attempt(value,original,old,terminal,w,job,manifest,authority)
 
 def _validate_parent_inputs_and_fresh_attempt(value,original,old,terminal,w,job,manifest,authority):
+    from .committed_training_inputs import training_document_cap
     binding=old['trainer_state_binding'];publication=signed(original['persistent_training']['parent_publication'],authority);parent=binding.get('parent')
     from .persistent_training_protocol import validate_parent
     descriptor=validate_parent(original['persistent_training']['parent_publication'],binding,authority)
     if parent is None or type(w['public_optimizer_steps'])is not int or w['public_optimizer_steps']!=binding['global_step_before']or descriptor['optimizer_steps']!=binding['global_step_before']or descriptor['inference_checkpoint']!=old['checkpoint']['id']or sha(descriptor)!=parent['descriptor_sha256']or publication['descriptor_sha256']!=sha(descriptor)or w['parent_publication_sha256']!=sha(original['persistent_training']['parent_publication'])or w['parent_descriptor_sha256']!=sha(descriptor):raise ValueError('restore recovery exact actual committed parent')
-    if type(w['parent_shard_count'])is not int or w['parent_shard_count']!=len(descriptor['shards'])or type(w['parent_total_bytes'])is not int or w['parent_total_bytes']!=sum(s['size']for s in descriptor['shards'])or type(w['selected_input_count'])is not int or not 1<=w['selected_input_count']<=256 or w['selected_input_count']!=len(original['submissions']):raise ValueError('full original parent and frozen input inventory')
+    if type(w['parent_shard_count'])is not int or w['parent_shard_count']!=len(descriptor['shards'])or type(w['parent_total_bytes'])is not int or w['parent_total_bytes']!=sum(s['size']for s in descriptor['shards'])or type(w['selected_input_count'])is not int or not 1<=w['selected_input_count']<=training_document_cap(old) or w['selected_input_count']!=len(original['submissions']):raise ValueError('full original parent and frozen input inventory')
     expected={('subnet/'+m+'.py'):original['source_files'].get('subnet/'+m+'.py')for m in SCIENCE if m!='sampling_contract' or 'subnet/sampling_contract.py'in original['source_files']}
     if w['science_source_files']!=expected or any(re.fullmatch('[0-9a-f]{64}',h or '')is None for h in expected.values()):raise ValueError('original pre-update callgraph/math source pins')
     for k in ('worker_log_sha256','evidence_sha256'):

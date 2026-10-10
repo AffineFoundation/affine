@@ -381,7 +381,9 @@ def _validate(envelope, authority, now=None, *, resolve_source, required_source_
     for obj in job.get('submissions',[]):
         r2_url(obj['url'],'GET')
         if not re.fullmatch('[0-9a-f]{64}',obj['sha256']):raise ValueError('submission digest')
-    if len(job.get('submissions',[]))>256:raise ValueError('submission job budget')
+    from .committed_training_inputs import training_document_cap
+    submission_cap=training_document_cap(manifest)if job['role']=='train'else 256
+    if len(job.get('submissions',[]))>submission_cap:raise ValueError('submission job budget')
     if job['role'] in ('mine','verify','train'):
         if type(manifest.get('max_batches',4)) is not int or not 1<=manifest.get('max_batches',4)<=256:raise ValueError('signed per UID batch quota')
         if job['role']!='mine' and not job.get('submissions'):raise ValueError('no submissions')
@@ -1273,23 +1275,41 @@ JOB_ENVELOPE_MAX_BYTES=4_000_000
 RECOVERY_JOB_ENVELOPE_MAX_BYTES=8_000_000
 LARGE_RECOVERY_VERSIONS=frozenset(('terminal-parent-cache-ACK-pre-update-recovery-v1','terminal-parent-restore-pre-update-recovery-v2','terminal-parent-restore-pre-update-bootstrap-recovery-v3','terminal-post-update-uncommitted-recovery-v1'))
 
-def load_job_envelope(path,authority):
-    """Bounded CPU parser; only explicit ROOT-authenticated recovery gets 8 MB.
+def prospective_transport_scope(manifest):
+    """Pure byte allowance; full scientific/source validation still follows."""
+    cap=manifest.get('training_task_capacity')
+    return (type(cap)is dict and set(cap)=={'version','max_tasks'}
+        and cap['version']=='signed-training-task-capacity-v1' and type(cap['max_tasks'])is int and cap['max_tasks']==512
+        and type(manifest.get('max_batches'))is int and manifest['max_batches']==9
+        and type(manifest.get('K'))is int and manifest['K']==4 and type(manifest.get('L'))is int and manifest['L']==4
+        and manifest.get('training_policy')=='bf16-cpu-fp32-master-task-normalized-persistent-v4'
+        and manifest.get('training_input_policy')=='committed-unaudited-training-v1'
+        and ('samples_per_batch'not in manifest or type(manifest['samples_per_batch'])is int and manifest['samples_per_batch']==8)
+        and 'training_startup_recovery'not in manifest)
 
-    Full source/protocol admission remains mandatory in execute before model
-    construction. Ordinary jobs retain their original four-million-byte cap.
+def load_job_envelope(path,authority):
+    """Bounded CPU parser; signed9/512 roles alone may exceed historical limits.
+
+    Full source/protocol admission remains mandatory before model construction.
+    Historical ordinary4MB and authenticated recovery/execution8MB rules remain.
     """
-    with Path(path).open('rb')as stream:data=stream.read(RECOVERY_JOB_ENVELOPE_MAX_BYTES+1)
-    if len(data)>RECOVERY_JOB_ENVELOPE_MAX_BYTES:raise ValueError('job envelope absolute size budget')
+    CAPACITY_JOB_MAX_BYTES=32_000_000
+    with Path(path).open('rb')as stream:data=stream.read(CAPACITY_JOB_MAX_BYTES+1)
+    if len(data)>CAPACITY_JOB_MAX_BYTES:raise ValueError('job envelope absolute size budget')
     envelope=json.loads(data)
     if type(envelope)is not dict or ('payload'in envelope and type(envelope['payload'])is not dict):raise ValueError('job envelope object')
     if len(data)<=JOB_ENVELOPE_MAX_BYTES:return envelope
     def root_payload(document):
         if type(document)is not dict or set(document)!={'payload','signer','signature'}or type(document.get('payload'))is not dict:raise ValueError('authenticated recovery envelope object')
         return signed(document,authority)
-    job=root_payload(envelope)
+    job=root_payload(envelope);manifest=root_payload(job.get('manifest'))
+    if job.get('role')in ROLES and prospective_transport_scope(manifest):
+        if job['role']=='train':
+            from .unaudited_training_execution import validate as validate_execution
+            validate_execution(envelope,authority)
+        return envelope
+    if len(data)>RECOVERY_JOB_ENVELOPE_MAX_BYTES:raise ValueError('signed prospective9/512 job envelope budget')
     if job.get('role')!='train'or job.get('training_policy')!=PERSISTENT_POLICY or job.get('training_input_policy')!='committed-unaudited-training-v1':raise ValueError('job envelope size budget')
-    manifest=root_payload(job.get('manifest'))
     if 'unaudited_training_execution'in job:
         from .unaudited_training_execution import validate as validate_execution
         validate_execution(envelope,authority)

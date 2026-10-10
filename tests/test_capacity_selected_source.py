@@ -44,7 +44,9 @@ class CapacitySelectedSource(unittest.TestCase):
   self.assertFalse((self.fx.root/'checkpoints').exists())
  def test_wrong_manifest_signature_refused(self):
   self.fx.job['manifest']['payload']['checkpoint']['id']='f'*64
-  with self.assertRaisesRegex(ValueError,'protocol refused'):self.call()
+  from nacl.exceptions import BadSignatureError
+  with patch('subprocess.run',side_effect=AssertionError('bad signature must reject before child')):
+   with self.assertRaises((ValueError,BadSignatureError)):self.call()
  def test_wait_uses_registry_selected_source_instead_of_parent_protocol(self):
   import threading
   from types import SimpleNamespace

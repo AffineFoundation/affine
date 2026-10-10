@@ -79,8 +79,8 @@ def binding(manifest, miner=None):
         configured_quotas(manifest)
         from .controller import class_quotas
         class_quotas(manifest.get('K'),manifest.get('L'),value)
-        if type(manifest.get('max_batches'))is not int or manifest['max_batches']!=3:
-            raise ValueError('v5 requires max3 batch geometry')
+        if type(manifest.get('max_batches'))is not int or not 1<=manifest['max_batches']<=256:
+            raise ValueError('v5 requires a bounded signed per-UID batch limit')
         if miner is not None:
             if type(miner)is not str or len(miner)!=64 or any(c not in '0123456789abcdef'for c in miner):raise ValueError('authenticated miner public identity required')
             context['miner']=miner

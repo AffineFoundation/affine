@@ -49,7 +49,8 @@ contain research code that the signed source has not activated.
 - Each batch covers one task under one epoch/checkpoint and contains exactly
   eight distinct rollouts: four completed correct answers and four completed
   incorrect answers (K=4, L=4).
-- Maximum: three task batches per registered UID per epoch. Extra rollouts on
+- Maximum: the signed manifest's `max_batches` task batches per registered UID
+  per epoch. Extra rollouts on
   the same task do not earn more points. Duplicate task indices across miners
   in the same epoch receive zero contribution points under the uniqueness rule.
 - Output budget: 2048 tokens. The signed harness sets the actual limit.
@@ -136,8 +137,16 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.miner_supervisor \
   --source-cache /absolute/private/affine-approved-source \
   --key /absolute/private/miner.seed \
   --state /absolute/private/affine-miner-state \
-  --env-id affine_math --max-batches 3 --search-budget 32
+  --env-id affine_math --search-budget 32
 ```
+
+Batch-cap update (prospective): nine task batches per UID and up to 512 distinct training tasks per epoch are being prepared
+with the same four-correct/four-wrong contents. The current signed opening still
+controls capacity; this is not a live nine-batch activation notice. Update and
+restart the transport supervisor once, omitting `--max-batches` to follow each
+signed cap. An explicit `--max-batches 3` remains valid and limits that client to
+three batches even after a larger cap is signed. Extra capacity is optional and
+does not extend the upload deadline or earn duplicate-task contribution points.
 
 Client update status (2026-10-09): the source bundle currently signed by the live
 manifest is `74f132382afb89236d3fc2300fa6917761e5a4c0e24c8e20ea24a0410ddaebe3`.
@@ -238,4 +247,4 @@ Learner: https://github.com/AffineFoundation/affine/blob/main/docs/COMMITTED_UNA
 Historical guide (not current instructions):
 https://github.com/AffineFoundation/affine/blob/main/docs/history/llms-before-recovery-consolidation-2026-10-09.md
 
-Training update (2026-10-09): the fresh run uses the original 7B base. The coordinator activated the qualified FP32-gradient training release with an explicitly signed effective learning rate of 5e-7 on October 9. Completed updates are reported separately in signed training records; release activation alone is not a completed update or a learning claim. Mining/sampling source and the 4-correct/4-wrong, three-batch, 0–999 nonce, 2,048-token contract remain unchanged. See https://github.com/AffineFoundation/affine/blob/main/docs/CONSERVATIVE_FP32_TRAINING.md for state lineage, qualification scope and activation semantics.
+Training update (2026-10-09): the fresh run uses the original 7B base. The coordinator activated the qualified FP32-gradient training release with an explicitly signed effective learning rate of 5e-7 on October 9. Completed updates are reported separately in signed training records; release activation alone is not a completed update or a learning claim. Mining/sampling source and the 4-correct/4-wrong, signed per-UID batch cap, 0–999 nonce, 2,048-token contract remains authoritative. See https://github.com/AffineFoundation/affine/blob/main/docs/CONSERVATIVE_FP32_TRAINING.md for state lineage, qualification scope and activation semantics.
