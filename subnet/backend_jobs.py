@@ -931,6 +931,10 @@ def install_source_loader(root,additional_files=()):
         sys.modules.pop('subnet.training_startup_recovery',None)
     if 'subnet/committed_training_inputs.py'in additional_files:
         sys.modules.pop('subnet.committed_training_inputs',None)
+    if 'subnet/training_task_representatives.py'in additional_files:
+        # Execution admission reads the representative policy before source
+        # authentication. Reload this metadata helper through the pinned finder.
+        sys.modules.pop('subnet.training_task_representatives',None)
     if 'subnet/native_math_prompt.py'in additional_files:
         sys.modules.pop('subnet.native_math_prompt',None)
     if 'subnet/compact_training_inputs.py' in additional_files:
