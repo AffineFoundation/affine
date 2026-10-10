@@ -182,10 +182,10 @@ def _admit_report_batch(queue_rows,records,authority,verifiers,approved_sources,
  def admit_one(queue):
   need(queue.get('status')=='complete'and queue.get('role')=='verify','actually completed verifier job')
   worker=queue['worker'];need(worker in verifiers or historical.get(worker,{}).get(queue.get('digest'))==queue.get('report_digest') and queue.get('report_digest')is not None,'admitted actual worker')
-  job=authenticate(parsed(queue['envelope']),authority);manifest=authenticate(job['manifest'],authority);report=parsed(queue['report']);request=authenticate(parsed(queue['report_request']),worker)
-  need(job['role']=='verify'and job['job_id']==queue['id']and digest(job)==queue['digest'],'original queue request digest')
-  need(digest(report)==queue['report_digest']and request.get('action')=='report'and request.get('job_id')==job['job_id']and request.get('token')==queue['token']and request.get('report')==report,'original worker terminal report request')
-  need(report.get('success')is True and report.get('role')=='verify'and report.get('job_id')==job['job_id']and report.get('job_sha256')==digest(job)and report.get('operator')==authority and report.get('epoch')==manifest['epoch']and report.get('checkpoint')==manifest['checkpoint']['id'],'executed audit identity/checkpoint')
+  job=authenticate(parsed(queue['envelope']),authority);manifest=authenticate(job['manifest'],authority);report=parsed(queue['report']);request_document=parsed(queue['report_request']);request=authenticate(request_document,worker)
+  need(job['role']=='verify'and job['job_id']==queue['id']and (job_sha:=digest(job))==queue['digest'],'original queue request digest')
+  need((report_sha:=digest(report))==queue['report_digest']and request.get('action')=='report'and request.get('job_id')==job['job_id']and request.get('token')==queue['token']and request.get('report')==report,'original worker terminal report request')
+  need(report.get('success')is True and report.get('role')=='verify'and report.get('job_id')==job['job_id']and report.get('job_sha256')==job_sha and report.get('operator')==authority and report.get('epoch')==manifest['epoch']and report.get('checkpoint')==manifest['checkpoint']['id'],'executed audit identity/checkpoint')
   source=manifest['source_bundle']['sha256'];pins=approved_sources.get(source);need(type(pins)is dict and job.get('source_files')and all(pins.get(k)==v for k,v in job['source_files'].items()),'admitted executed source pins')
   expected_enforced=True
   if execution_evidence_policy is not None:
@@ -212,9 +212,9 @@ def _admit_report_batch(queue_rows,records,authority,verifiers,approved_sources,
    elif o.get('valid')is False and (o.get('fully_audited')is True and o.get('failure_kind')=='confirmed_invalid' or o.get('failure_kind')=='structural_invalid'):outcome='confirmed_invalid'
    elif o.get('valid')is None and o.get('failure_kind')=='numerical_ambiguous':outcome='numerical_ambiguous'
    else:outcome='infrastructure_error'
-   observation=dict(version='continuous-audit-observation-v1',epoch=row['epoch'],checkpoint=row['checkpoint'],miner=row['miner'],batch_sha256=row['batch_sha256'],commitment_sha256=row['commitment_sha256'],verifier_contract_sha256=contract,outcome=outcome,completed_at=completed,job_sha256=digest(job));observed.append(observation)
+   observation=dict(version='continuous-audit-observation-v1',epoch=row['epoch'],checkpoint=row['checkpoint'],miner=row['miner'],batch_sha256=row['batch_sha256'],commitment_sha256=row['commitment_sha256'],verifier_contract_sha256=contract,outcome=outcome,completed_at=completed,job_sha256=job_sha);observed.append(observation)
    native[digest(observation)]=dict(reason=o.get('reason'),failure_kind=o.get('failure_kind'),fully_audited=o.get('fully_audited'),artifact_sha256=obj['sha256'])
-  key=digest(job);value=dict(verifier=worker,observations=observed,original_report_request_sha256=digest(parsed(queue['report_request'])),original_report_sha256=digest(report),source_sha256=source,native_observations=native)
+  key=job_sha;value=dict(verifier=worker,observations=observed,original_report_request_sha256=digest(request_document),original_report_sha256=report_sha,source_sha256=source,native_observations=native)
   need(key not in admissions or admissions[key]==value,'conflicting original queued job');admissions[key]=value
  for queue in queue_rows:
   try:admit_one(queue)
