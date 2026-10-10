@@ -30,8 +30,10 @@ external miner identities: 2,048 correct/wrong pairs, or 4,096 rollouts. Its two
 selection interval, from the signed draw to finalization, was 150.735 seconds;
 the preceding epoch's 16-worker interval was 288.861 seconds. These are observed
 stage timings on different submitted populations, not a controlled workload
-comparison or proof of a completed subhour epoch. Epoch 119's training and
-publication were still in progress at this measurement.
+comparison. Epoch 119 subsequently completed training and publication in a
+58-minute 42-second controller cycle. Epoch 120's native preparation took
+146.386 seconds for 512 tasks from 185 external identities, while its full
+cycle took 61 minutes 5 seconds. Sustained sub-hour operation remains unproven.
 
 The current completed-MATH contract also requires an explicit, complete boxed
 answer in the decoded original output before native binary grading. A missing,

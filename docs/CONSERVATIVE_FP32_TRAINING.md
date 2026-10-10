@@ -24,7 +24,7 @@ The horizon is defined by successful optimizer counters, not elapsed epochs: the
 
 Mining continues with the same approved sampler and source, four completed correct and four completed wrong rollouts per task batch, up to nine batches per UID and up to 512 distinct training tasks per epoch. Representative intake selects at most one native-valid batch per task; duplicate-task rewards and independent proof audits retain their existing rules. Miners need no extra action for this trainer-only release and continue following the signed checkpoint and limits. Hourly weights remain independent of training.
 
-The evaluation plan compares the fixed baseline at counter 26 with the exact endpoint at counter 42 on the same two already-exposed 128-task monitoring cohorts. These cohorts are development measurements, not independent confirmation. Historical review found 49 questions from the former 512-task reservation in earlier MATH-500 benchmarks, so that reservation cannot support an independent confirmation claim. A replacement was selected blindly from question identities after excluding training questions, historical MATH-500, the former reservation and known private/development cohorts. It remains inactive pending complete scoped historical review, native input qualification and a separately qualified original-base-versus-fixed-endpoint evaluation. No model results were used to select the replacement. Changes in the submitted task population also limit attribution to the added loss term. Signed training reports, publication acknowledgments and the fixed endpoint evaluations provide results when available; activation alone does not demonstrate improved performance.
+The evaluation plan compares the fixed baseline at counter 26 with the exact endpoint at counter 42 on the same two already-exposed 128-task monitoring cohorts. These cohorts are development measurements, not independent confirmation. Historical review found 49 questions from the former 512-task reservation in earlier MATH-500 benchmarks. A subsequent candidate selected blindly from question identities also overlaps the conservative historical exclusion set on 33 questions, including MMLU-Pro and miniF2F source material. Both candidates are ineligible for independent confirmation and neither has been used for a confirmation model evaluation. No model results were used to select the candidate. Historical coverage and a qualified independent confirmation cohort remain unfinished; exact question matching alone does not establish absence of semantic overlap. Changes in the submitted task population also limit attribution to the added loss term. Signed training reports, publication acknowledgments and the fixed endpoint evaluations provide results when available; activation alone does not demonstrate improved performance.
 
 ### Measured progress, October 10, 2026 at 12:53 UTC
 
@@ -88,3 +88,37 @@ sub-hour cycles have not yet been demonstrated. Epoch 120 opened publicly at
 14:16:33 UTC. The interval between public starts was 3,655 seconds (60 minutes
 55 seconds), so sustained hourly mining cadence is still outstanding even
 though epoch 119's controller cycle finished within the hour.
+
+### Fourth completed update, October 10 at 15:11 UTC
+
+Epoch 120 advanced retained optimizer 29 to 30 and published checkpoint
+`ef28e3483e24bedfc84f6d108a50c658583c3cee41662037843ee454bc32ddf8`.
+There were 1,507 committed batches from 213 external identities, covering
+834 task IDs. Structural admission left 1,348 batches covering 798 tasks.
+The trainer used its full capacity of 512 distinct tasks from 185 identities:
+4,096 rollouts, including one selected representative for each of 257 tasks
+with competing submissions. Duplicate-task reward rules remain unchanged.
+
+Native preparation took 146.386 seconds and the original training job took
+1,455.138 seconds (24 minutes 15.138 seconds). The complete controller cycle
+took 3,665.151 seconds (61 minutes 5.151 seconds), missing the hourly target by
+65.151 seconds. The interval after training through publication, acknowledgment
+and controller completion was 327.758 seconds; it is not a pure upload timer.
+All ten model files were published and read back. The acknowledged optimizer
+stays local; obsolete model and optimizer copies were retired automatically.
+
+This completes four of the 16 planned updates. The study remains fixed at
+counter 42; no learning improvement or sustained sub-hour cadence is claimed.
+There is additional eligible data beyond the 512-task limit, but increasing
+intake again would consume more training time. Further intake changes require
+measured headroom and a prospective learning comparison.
+
+At 15:20 UTC, during epoch 121's existing collection window, the coordinator
+activated an operator-only preparation change. Future trainer-side calibration
+jobs can omit one redundant full checkpoint hashing pass while retaining
+complete file authentication and the independent GPU-loader hash. The activation
+preserves already-issued jobs, the signed collection deadline and all training
+settings. It also adds local collection-stage timing records without additional
+downloads or grading. The optional calibration authorization is time-bounded;
+new jobs outside its scope use the original launcher. No production timing gain
+has yet been measured for this change, and miners need no client update.

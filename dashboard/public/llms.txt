@@ -225,12 +225,15 @@ update. The sampler, 4-correct/4-wrong quota, nine-batch UID cap and 512-task
 training cap remain unchanged; miners continue following the signed opening.
 The fixed evaluation compares counters 26 and 42 on two already-exposed 128-task
 monitoring cohorts. Historical review found 49 questions from the former 512-task
-reservation in earlier MATH-500 benchmarks; that reservation is excluded from
-independent confirmation. A replacement was selected from question identities
-without using model results, excluding training questions and known exposed
-cohorts. Historical coverage, native input and original-base-versus-fixed-endpoint
-evaluation qualification remain pending, so it is not yet active or evidence of
-independent improvement. See the training guide below for the exact horizon and
+reservation in earlier MATH-500 benchmarks. A later candidate chosen from
+question identities without model results also has 33 matches in the conservative
+historical exclusion set. Both are ineligible for independent confirmation.
+Historical coverage and qualification of an independent confirmation cohort
+remain unfinished; neither candidate has been evaluated as confirmation.
+Epoch 120 completed the fourth of the 16 updates, training on 512 distinct tasks
+and 4,096 rollouts from 185 external identities. Its full controller cycle took
+61 minutes 5 seconds, so sustained sub-hour operation and a held-out learning
+gain remain unproven. See the training guide below for the exact horizon and
 evaluation limitations.
 
 Epoch openings may reuse the exact fresh, authenticated hourly blacklist
@@ -238,6 +241,13 @@ assessment instead of reconstructing the same history. They retain its original
 evidence bindings and use the existing refresh on a cache miss; chain inclusion
 and reveal are not prerequisites. This operator optimization changes no miner
 quota, sampling rule or training-admission requirement.
+
+An operator-only change activated during epoch 121 allows future trainer-side
+calibration jobs to omit one redundant checkpoint hash pass, retaining full file
+authentication and the independent GPU-loader hash. Existing jobs and training
+settings are preserved. Its time-bounded optimization falls back to the original
+launcher for new jobs outside the authorized interval. This requires no miner
+update, and a production timing gain has not yet been measured.
 
 Independent verifiers sample current and historical immutable commitments and
 publish authenticated findings. Reward estimates combine eligible unique task
