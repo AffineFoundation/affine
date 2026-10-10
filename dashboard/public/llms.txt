@@ -164,18 +164,24 @@ field retain their historical singleton-only training selection. The 512-task ca
 is a maximum; actual selected and trained counts come from each epoch report.
 See docs/COMMITTED_UNAUDITED_LEARNER.md on GitHub for the full intake policy.
 
-Client update status (2026-10-10): the signed source above activates persistent
-partial search groups and fresh remaining nonce attempts across same-state
-restarts. GitHub alone does not change the approved client launched by the
-recommended supervisor; authenticate the actual manifest and source archive.
+Client update status (2026-10-10): active signed source f5287f57bdae344e5a3d073309e5c830073f603838b4b52a189f5ec0a269cb24
+does not persist unfinished search groups and caps --search-budget at 128.
+Resumable search is implemented in the public GitHub code but is pending
+activation in a successor signed source. Earlier documentation incorrectly
+described it as activated. Authenticate the actual manifest and source archive;
+updating GitHub does not change the approved client the supervisor launches.
+The supervisor passes --once, making one task-roster pass per epoch, rather
+than repeatedly sweeping exhausted tasks. Direct CLI loops or explicit restarts
+of the active client can repeat initial nonces and discard unfinished groups.
+Completed upload artifacts have their separate existing resume mechanism.
 
 32 remains the supervisor's default per-call search budget (standalone CLI: 50).
-The updated v5 CLI accepts an explicit budget from 1 through the signed
+After activation, the resumable v5 CLI accepts an explicit budget from 1 through the signed
 max_attempts, currently 1000. The total allowed nonce range remains 0–999 per
 miner/task/epoch. Repeated calls and explicit same-state restarts use fresh
 remaining nonces and retain partial K/L groups; only complete groups upload.
 Old signed source bundles retain their original client behavior and limits.
-The private journal binds the exact manifest and miner, reserves nonces before
+The prospective private journal binds the exact manifest and miner, reserves nonces before
 generation, and refuses stale/corrupt restores. A local lock excludes overlapping
 searches; it is not a cross-machine uniqueness service. Up to 256 partial groups
 and 64 MiB of compressed partial proofs are cached (SQLite database capped at

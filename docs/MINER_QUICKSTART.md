@@ -73,10 +73,16 @@ sampling, proof and upload contract stays unchanged. Miners following the signed
 source need no special action. Earlier openings retain their original selection
 rules; see [the learner design](COMMITTED_UNAUDITED_LEARNER.md).
 
-Client update status (2026-10-10): the active signed source supports persistent
-partial search groups and fresh remaining nonce attempts across same-state
-restarts. Authenticate the actual source archive in the opening; a GitHub update
-alone does not change the approved client launched by the transport supervisor.
+Client update status (2026-10-10): the active signed source is
+`f5287f57bdae344e5a3d073309e5c830073f603838b4b52a189f5ec0a269cb24`.
+It does not persist unfinished search groups and caps `--search-budget` at 128.
+The resumable search implementation in this GitHub checkout is available code,
+pending activation in a successor signed source. A GitHub update alone does not
+change the approved client launched by the transport supervisor.
+The supervisor passes `--once`, making one pass through the task roster per
+epoch; it does not repeatedly sweep exhausted tasks. Direct CLI loops or explicit
+restarts of the active client can revisit the same initial nonces and discard
+unfinished groups. Completed upload state has a separate resume mechanism.
 
 The supervisor continuously follows epochs and authenticated source upgrades,
 resumes bounded checkpoint transfers and verifies full file hashes before
@@ -84,8 +90,9 @@ launching the untouched approved miner. It removes only its own obsolete model
 caches after admitting the successor. Reserve space for active and incoming
 checkpoints. A per-state lock prevents overlapping children after restarts.
 
-Thirty-two is the supervisor's default per-call search budget. For the active
-v5 miner, `--search-budget` accepts 1 through the signed `max_attempts` (currently
+Thirty-two is the supervisor's default per-call search budget. Once a successor
+signed source activates the resumable v5 miner, `--search-budget` accepts 1
+through the signed `max_attempts` (currently
 1,000); the standalone CLI default remains 50. A later search call or explicit
 restart using the same private state continues with unused nonces and retains
 partial successes/failures for that task. It never starts another 1,000 attempts:
