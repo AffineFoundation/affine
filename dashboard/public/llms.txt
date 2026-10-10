@@ -149,7 +149,8 @@ that client to three batches. Extra capacity is optional and does not extend
 the upload deadline or earn duplicate-task contribution points. The training
 cap is a maximum, not a guarantee that every submitted batch will be selected.
 
-Prospective learner-only update: an opening may add
+Learner-only update activated by signed epoch `nonpayable-live-reward-math-v1--1791622696-116`
+(starting 2026-10-10 at 09:02:08 UTC): the opening includes
 `training_representative_policy` with version
 `first-native-valid-distinct-task-v2-bounded-waves`. This selects at most one
 fully native-valid batch per distinct task, including tasks submitted by multiple
@@ -158,8 +159,9 @@ Duplicate-task reward points remain zero for every colliding submission. The
 eligible committed proof population, including collisions, remains available for
 continuous audit. The added field does not
 change the public miner source, sampling draws, upload format or 4+4 quota;
-compatible clients need no extra action. Until an actual signed opening contains
-this field, historical singleton-only training selection remains in force.
+compatible clients need no extra action. Earlier signed openings without this
+field retain their historical singleton-only training selection. The 512-task cap
+is a maximum; actual selected and trained counts come from each epoch report.
 See docs/COMMITTED_UNAUDITED_LEARNER.md on GitHub for the full intake policy.
 
 Client update status (2026-10-10): the signed source above activates persistent

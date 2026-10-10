@@ -26,15 +26,16 @@ snapshot, tokenizer and template.
 
 The currently activated capacity is up to nine batches per UID and 512 distinct
 training tasks per epoch. Earlier signed manifests retain their old limits. The
-pre-representative policy selects training inputs from singleton task indices;
-multiple miners submitting the same task removes it from that training inventory
-and gives those submissions zero contribution points.
+pre-representative policy, including epoch 115, selected training inputs from
+singleton task indices; multiple miners submitting the same task removed it from
+that training inventory and gave those submissions zero contribution points.
+Those historical rules remain unchanged.
 
-## Prospective distinct-task representatives
+## Distinct-task representatives
 
-The optional signed `training_representative_policy` enables
-`first-native-valid-distinct-task-v2-bounded-waves`. It is prospective until an
-actual signed opening includes it. Miners continue using the same submission
+Signed epoch `nonpayable-live-reward-math-v1--1791622696-116`, starting
+2026-10-10 at 09:02:08 UTC, activated `training_representative_policy` with version
+`first-native-valid-distinct-task-v2-bounded-waves`. Miners continue using the same submission
 format, sampler, nonce range, four-correct/four-incorrect quotas and public source.
 The added field governs the learner only.
 
@@ -47,10 +48,12 @@ If a candidate fails native eligibility, the next candidate for the same task ca
 be tried. Training still contains each task at most once, even when many miners
 submitted it.
 
-The proposed bounded policy admits at most 2,304 candidate documents and
+The initial activated policy admits at most 2,304 candidate documents and
 4,608,000,000 input bytes, grades at most 256 documents per wave and spends at most
 600 seconds on native selection. The separate signed training-task capacity caps
-the result at 512 tasks. At the deadline, only completed native-valid batches
+the result at 512 tasks. That is a capacity limit, not a claim that 512 tasks
+were selected or trained; the original epoch reports supply the actual counts.
+At the deadline, only completed native-valid batches
 enter training. Unchecked candidates are neither accepted nor declared invalid.
 A retry preserves the same draw, authenticated input bytes and completed waves;
 it cannot reroll selection. An empty accepted result closes without an update and

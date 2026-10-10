@@ -64,12 +64,14 @@ valid and limits that client to three batches. Extra capacity is optional and
 does not extend the upload deadline or earn duplicate-task contribution points.
 The training cap is a maximum, not a guarantee that every batch is selected.
 
-A prospective `training_representative_policy` may let the learner select one
-native-valid batch for a task shared by several miners. This changes training
-intake only: duplicate-task reward points remain zero, and the public sampling,
-proof and upload contract stays unchanged. Miners following the signed source
-need no special action. The field must appear in an actual signed opening before
-this policy applies; see [the learner design](COMMITTED_UNAUDITED_LEARNER.md).
+Signed epoch `nonpayable-live-reward-math-v1--1791622696-116`, starting
+2026-10-10 at 09:02:08 UTC, activated `training_representative_policy`: the learner
+can select one native-valid batch for a task shared by several miners, up to 512
+distinct tasks per epoch. This changes training intake only: every colliding
+submission still receives zero duplicate-task reward points, and the public
+sampling, proof and upload contract stays unchanged. Miners following the signed
+source need no special action. Earlier openings retain their original selection
+rules; see [the learner design](COMMITTED_UNAUDITED_LEARNER.md).
 
 Client update status (2026-10-10): the active signed source supports persistent
 partial search groups and fresh remaining nonce attempts across same-state
