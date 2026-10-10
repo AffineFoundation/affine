@@ -1,10 +1,15 @@
 """Synthetic active-v2 transport controls: no real identity, network or model."""
 import fcntl
+import copy
+import hashlib
+import io
+import json
 import os
 import stat
 import tempfile
 import time
 import unittest
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -269,6 +274,83 @@ class TokenTransportCompatibility(unittest.TestCase):
         self.cap['training_put_urls'] = []
         with self.assertRaisesRegex(ValueError, 'bound token upload slots'):
             self.miner()
+        self.put.assert_not_called()
+
+    def save_v3(self):
+        miner = self.miner(); miner.batches = [(self.batch, [[], []])]; miner.upload(); miner.close()
+        self.uploads.clear(); self.put.reset_mock()
+
+    def replace_artifact(self, data, batch=None):
+        from subnet.commitment_transport import canonical
+        value = json.loads(self.state.read_bytes()); row = value['pairs'][0]
+        row.update(sha256=hashlib.sha256(data).hexdigest(), size=len(data))
+        if batch is not None: row['batch_sha256'] = hashlib.sha256(canonical(batch)).hexdigest()
+        (self.state.with_name(self.state.name+'.pairs')/(row['sha256']+'.zip')).write_bytes(data)
+        self.state.write_bytes(canonical(value))
+
+    def test_v3_restart_reuses_exact_token_artifact_and_only_sends_commitment(self):
+        from subnet.token_only_protocol import TRANSPORT
+        self.save_v3()
+        with patch('subnet.commitment_transport.pair_artifact', side_effect=AssertionError('no recompression')):
+            restored = self.miner(); restored.upload()
+        self.assertEqual([url for url, _ in self.uploads], [self.cap['put_url']])
+        payload = validate_commitment(self.uploads[0][1], self.manifest['epoch'], self.identity.id, 1)['payload']
+        self.assertEqual(payload['version'], TRANSPORT)
+        self.assertEqual(restored.batches, [(self.batch, None)])
+
+    def test_v3_restore_rejects_corrupt_bytes_before_decode_or_upload(self):
+        self.save_v3(); value = json.loads(self.state.read_bytes())
+        path = self.state.with_name(self.state.name+'.pairs')/(value['pairs'][0]['sha256']+'.zip')
+        path.write_bytes(b'x'*path.stat().st_size)
+        with patch('subnet.token_only_protocol.unpack', side_effect=AssertionError('must hash first')):
+            with self.assertRaisesRegex(ValueError, 'full SHA256'): self.miner()
+        self.put.assert_not_called()
+
+    def test_v3_restore_uses_strict_token_archive_validator(self):
+        self.save_v3(); value = json.loads(self.state.read_bytes())
+        path = self.state.with_name(self.state.name+'.pairs')/(value['pairs'][0]['sha256']+'.zip')
+        with zipfile.ZipFile(path) as source: raw = source.read('tokens.json')
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr('tokens.json', raw); archive.writestr('extra', b'not-authorized')
+        self.replace_artifact(stream.getvalue())
+        with self.assertRaisesRegex(ValueError, 'token archive framing'): self.miner()
+        self.put.assert_not_called()
+
+    def test_v3_restore_binds_authorized_task_rollouts_and_sampling(self):
+        from subnet.commitment_transport import pair_artifact
+        self.save_v3()
+        cases = [
+            ('environment', lambda b: b.update(env_id='unauthorized'), 'environment not authorized'),
+            ('index', lambda b: b.update(index=10000, sample_index=10000), 'token task binding'),
+            ('sample_index', lambda b: b.update(sample_index=True), 'token task binding'),
+            ('environment_version', lambda b: b.update(environment_version='wrong'), 'token task binding'),
+            ('rollout_index', lambda b: b['rollouts'][0].update(index=10000), 'rollout task binding'),
+            ('rollout_integer', lambda b: b['rollouts'][0].update(index=True), 'rollout task binding'),
+            ('receipt', lambda b: b['rollouts'][0].update(sampling={}), 'token sampling binding'),
+            ('epoch', lambda b: b.update(epoch='other'), 'local batch binding'),
+            ('checkpoint', lambda b: b.update(checkpoint='0'*64), 'local batch binding'),
+        ]
+        for label, mutate, message in cases:
+            with self.subTest(label=label):
+                batch = copy.deepcopy(self.batch); mutate(batch)
+                self.replace_artifact(pair_artifact(batch, [[], []], self.manifest), batch)
+                with self.assertRaisesRegex(ValueError, message): self.miner()
+                self.put.assert_not_called()
+
+    def test_v3_restore_preserves_source_contract_and_policy_binding(self):
+        self.save_v3()
+        changed_contract = dict(self.manifest['sampling_contract'])
+        changed_contract['max_attempts'] += 1
+        for change, message in [({'source_bundle': {'sha256': '0'*64}}, 'stale local prepared'),
+                                ({'sampling_contract': changed_contract}, 'stale local prepared'),
+                                ({'token_artifact_policy': {}}, 'exact prospective token'),
+                                ({'sampling_contract': {}}, 'token-only requires')]:
+            with self.subTest(change=change), patch.dict(self.manifest, change):
+                # Call the state reader directly to test its own admission,
+                # independently of the Miner's earlier manifest validation.
+                from subnet.commitment_transport import read_prepared_state
+                with self.assertRaisesRegex(ValueError, message): read_prepared_state(self.state, self.manifest)
         self.put.assert_not_called()
 
 

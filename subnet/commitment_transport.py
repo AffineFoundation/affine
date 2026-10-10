@@ -370,6 +370,8 @@ def read_prepared_state(path,manifest):
  from pathlib import Path
  from .batches import unpack
  from .artifact_budget import for_manifest
+ from .token_only_protocol import for_manifest as token_policy
+ token_only=token_policy(manifest) is not None
  path=Path(path);need(not path.is_symlink()and path.stat().st_size<=65536,'private prepared state path');value=json.loads(path.read_bytes())
  need(type(value)is dict and set(value)=={'version','epoch','checkpoint','source','sampling_contract_sha256','pairs'}and value['version']==PREPARED_STATE,'prepared state version')
  need(value['epoch']==manifest['epoch']and value['checkpoint']==manifest['checkpoint']['id']and value['source']==manifest['source_bundle']['sha256']and value['sampling_contract_sha256']==sha(canonical(manifest.get('sampling_contract'))),'stale local prepared miner state')
@@ -380,11 +382,24 @@ def read_prepared_state(path,manifest):
   need(type(row)is dict and set(row)=={'sha256','size','batch_sha256'}and is_digest(row['sha256'])and is_digest(row['batch_sha256'])and type(row['size'])is int and 0<row['size']<=for_manifest(manifest)['compressed_bytes'],'prepared state integrity fields')
   target=directory/(row['sha256']+'.zip');need(not target.is_symlink()and target.stat().st_size==row['size'],'prepared local artifact size/path')
   data=target.read_bytes();need(sha(data)==row['sha256'],'prepared local artifact full SHA256')
-  with zipfile.ZipFile(io.BytesIO(data))as archive:
-   need(archive.getinfo('manifest.json').file_size<=2_000_000,'prepared archive metadata budget');preview=json.loads(archive.read('manifest.json'))
-  need(type(preview)is list and len(preview)==1,'prepared pair single batch');batch=preview[0]['batch']
-  check_prepared_cumulative(packed+[(batch,data)],manifest,manifest['max_batches'])
-  records=unpack(data,budget=for_manifest(manifest));need(len(records)==1,'prepared pair single batch')
+  if token_only:
+   from .token_only_protocol import unpack as unpack_tokens
+   from .protocol import entry
+   from .forced_sampling import binding,receipt
+   records=unpack_tokens(data,budget=for_manifest(manifest),max_batches=1)
+   batch=records[0][0];definition=entry(manifest,batch.get('env_id'));index=batch.get('index')
+   need(batch.get('env_id')==definition['env_id']and type(index)is int and index in definition['indices']and type(batch.get('sample_index'))is int and batch['sample_index']==index and batch.get('environment_version')==definition['spec']['version'],'prepared token task binding')
+   context=binding(manifest)
+   for rollout in batch['rollouts']:
+    need(type(rollout.get('index'))is int and type(rollout.get('sample_index'))is int and all(rollout.get(key)==batch.get(key)for key in ('env_id','environment_version','index','sample_index')),'prepared token rollout task binding')
+    need(rollout.get('sampling')==receipt(context,rollout.get('seed')),'prepared token sampling binding')
+  else:
+   with zipfile.ZipFile(io.BytesIO(data))as archive:
+    need(archive.getinfo('manifest.json').file_size<=2_000_000,'prepared archive metadata budget');preview=json.loads(archive.read('manifest.json'))
+   need(type(preview)is list and len(preview)==1,'prepared pair single batch');batch=preview[0]['batch']
+   check_prepared_cumulative(packed+[(batch,data)],manifest,manifest['max_batches'])
+   records=unpack(data,budget=for_manifest(manifest))
+  need(len(records)==1,'prepared pair single batch')
   batch,arrays=records[0];need(sha(canonical(batch))==row['batch_sha256']and batch['epoch']==manifest['epoch']and batch['checkpoint']==manifest['checkpoint']['id'],'prepared local batch binding')
   packed.append((batch,data));del arrays,records
  check_prepared_cumulative(packed,manifest,manifest['max_batches'])
