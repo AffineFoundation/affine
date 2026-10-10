@@ -213,6 +213,21 @@ gate the training update. Unaudited inputs remain explicitly labelled unaudited.
 The trainer preserves its local optimizer state and uploads the successor model
 and reports; miners then follow the new checkpoint. Checkpoint publication does
 not wait for full vocabulary arrays or a complete network audit.
+
+A bounded trainer-only experiment was activated on October 10 at 11:17:52 UTC,
+prospectively for epoch 117. It retains the acknowledged model and Adam state at
+successful optimizer counter 26 and learning rate 5e-7. For 16 successful updates,
+the existing task-normalized preference loss gains a coefficient-1 positive-answer
+NLL term: the negative mean generated-token log probability of a correct rollout.
+It applies at input counters 26–41; at counter 42 onward the coefficient returns
+to zero, preserving the model and optimizer. Failed attempts do not consume an
+update. The sampler, 4-correct/4-wrong quota, nine-batch UID cap and 512-task
+training cap remain unchanged; miners continue following the signed opening.
+The fixed evaluation compares counters 26 and 42 on two already-exposed 128-task
+monitoring cohorts. The reserved final 512-task set remains unread. Activation
+is not a completed update or evidence of improved performance. See the training
+guide below for the exact horizon and evaluation limitations.
+
 Epoch openings may reuse the exact fresh, authenticated hourly blacklist
 assessment instead of reconstructing the same history. They retain its original
 evidence bindings and use the existing refresh on a cache miss; chain inclusion
@@ -260,7 +275,6 @@ Bootstrap: https://github.com/AffineFoundation/affine/blob/main/docs/MATH_MINER_
 Completed answers: https://github.com/AffineFoundation/affine/blob/main/docs/COMPLETED_MATH_RESTART.md
 Sampling: https://github.com/AffineFoundation/affine/blob/main/docs/FOUR_SAMPLE_MINER_BOUND_CUTOVER.md
 Learner: https://github.com/AffineFoundation/affine/blob/main/docs/COMMITTED_UNAUDITED_LEARNER.md
+Training: https://github.com/AffineFoundation/affine/blob/main/docs/CONSERVATIVE_FP32_TRAINING.md
 Historical guide (not current instructions):
 https://github.com/AffineFoundation/affine/blob/main/docs/history/llms-before-recovery-consolidation-2026-10-09.md
-
-Training update (2026-10-09): the fresh run uses the original 7B base. The coordinator activated the qualified FP32-gradient training release with an explicitly signed effective learning rate of 5e-7 on October 9. Completed updates are reported separately in signed training records; release activation alone is not a completed update or a learning claim. Mining/sampling source and the 4-correct/4-wrong, signed per-UID batch cap, 0–999 nonce, 2,048-token contract remains authoritative. See https://github.com/AffineFoundation/affine/blob/main/docs/CONSERVATIVE_FP32_TRAINING.md for state lineage, qualification scope and activation semantics.
