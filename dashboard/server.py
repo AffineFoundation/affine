@@ -137,8 +137,13 @@ class Database:
                            miners=[dict(identity=identity, points=value, weight=scores.get('weights', {}).get(identity, 0))
                                    for identity, value in points.items()], training=None,
                            audit_policy=doc.get('audit_policy', ''), source=source_name)
-                learner_document = read(folder/f'{eid}-learner-population.json', {})
-                learner = project_learner(learner_document, doc, identity_uids)
+                learner_path = folder/f'{eid}-learner-population.json'
+                learner_document = read(learner_path, {})
+                if 'training_task_capacity' in doc:
+                    learner = project_learner(learner_document, doc, identity_uids,
+                        manifest_envelope=read(folder/f'{eid}-first-signed-manifest.json', {}))
+                else:
+                    learner = project_learner(learner_document, doc, identity_uids)
                 if learner is not None and accepted_batches + (batches-accepted_batches-unchecked_batches) <= learner['submitted']:
                     row.update(batches=learner['submitted'], batches_available=True,
                                grid=learner['submitted_grid'], unassigned_batches=learner['unassigned'],
@@ -170,12 +175,12 @@ class Database:
                         row['phase'] = active.get('phase', row['phase'])
                 elif (not reports and source_name == 'live-reward-math'
                       and doc.get('training_input_policy') == 'committed-unaudited-training-v1'):
-                    # Before immutable capture, missing evidence is not zero
-                    # submissions. The existing UI already renders unavailable
-                    # counts as pending and skips unavailable miner grids.
+                    # Distinguish a missing capture from an existing capture
+                    # whose authenticated projection failed validation.
+                    capture_present = learner_path.exists()
                     row.update(batches_available=False, audit_breakdown_available=False,
-                               batch_count_status='awaiting_capture',
-                               batch_count_source='unavailable-before-authenticated-capture',
+                               batch_count_status=('invalid_capture_projection' if capture_present else 'awaiting_capture'),
+                               batch_count_source=('unavailable-invalid-capture-projection' if capture_present else 'unavailable-before-authenticated-capture'),
                                grid=None, grid_outcomes=None)
                 epochs[eid] = row
                 metrics = read(folder/f'{eid}-training-metrics.json', {})

@@ -7,9 +7,23 @@ def digest(value):return hashlib.sha256(canonical(value)).hexdigest()
 def authenticated(document,signer):
  if not isinstance(document,dict)or set(document)!={'payload','signature','signer'}or document['signer']!=signer:raise ValueError('expected signed document')
  VerifyKey(bytes.fromhex(signer)).verify(canonical(document['payload']),base64.b64decode(document['signature'],validate=True));return document['payload']
-def project(document,manifest,identity_uids,authority=AUTHORITY):
+def training_capacity(manifest,manifest_envelope,authority):
+ if 'training_task_capacity'not in manifest:return 256
+ signed=authenticated(manifest_envelope,authority)
+ fields=('epoch','checkpoint','source_bundle','training_task_capacity','training_input_policy','training_policy','K','L')
+ if (any(k not in signed or k not in manifest for k in fields)
+     or canonical({k:signed[k]for k in fields})!=canonical({k:manifest[k]for k in fields})):
+  raise ValueError('signed training capacity manifest scope')
+ capacity=signed['training_task_capacity']
+ if (type(capacity)is not dict or set(capacity)!={'version','max_tasks'}
+     or capacity['version']!='signed-training-task-capacity-v1' or type(capacity['max_tasks'])is not int
+     or capacity['max_tasks']<=0 or signed.get('training_input_policy')!='committed-unaudited-training-v1'):
+  raise ValueError('explicit signed unaudited training capacity')
+ return capacity['max_tasks']
+def project(document,manifest,identity_uids,authority=AUTHORITY,*,manifest_envelope=None):
  try:
   if document.get('version')!='committed-unaudited-training-v1':raise ValueError('learner population version')
+  cap=training_capacity(manifest,manifest_envelope,authority)
   population=document['population'];epoch=manifest['epoch'];checkpoint=manifest['checkpoint']['id'];source=manifest['source_bundle']['sha256']
   if population['assurance']!='unaudited'or population['epoch']!=epoch or population['checkpoint']!=checkpoint:raise ValueError('learner scope')
   committed={};grid=[0]*256;eligible_grid=[0]*256;outside=0
@@ -72,7 +86,7 @@ def project(document,manifest,identity_uids,authority=AUTHORITY):
   if population['committed_count']!=len(committed)-len(structural)or population['eligible_count']!=len(eligible)or population.get('training_count',len(eligible))!=len(selected):raise ValueError('actual inventory counts')
   if 'training_selection'in population:
    selection=population['training_selection']
-   if (selection['version']!='bounded-postfreeze-learner-selection-v1'or selection['eligible_count']!=len(eligible)or selection['training_count']!=len(selected)or selection['unselected_count']!=len(eligible)-len(selected)or selection['cap']!=256 or len(selected)>256 or selection['eligible_inventory_sha256']!=digest(population['eligible_inventory'])or selection['selected_inventory_sha256']!=digest(inventory)):raise ValueError('bounded training selection inventory')
+   if (selection['version']!='bounded-postfreeze-learner-selection-v1'or selection['eligible_count']!=len(eligible)or selection['training_count']!=len(selected)or selection['unselected_count']!=len(eligible)-len(selected)or type(selection['cap'])is not int or selection['cap']!=cap or len(selected)>cap or selection['eligible_inventory_sha256']!=digest(population['eligible_inventory'])or selection['selected_inventory_sha256']!=digest(inventory)):raise ValueError('bounded training selection inventory')
   elif len(selected)!=len(eligible):raise ValueError('historical unbounded projection requires complete admitted inventory')
   return dict(submitted=len(committed),learner_training_selected=len(selected),learner_eligible=len(eligible),learner_excluded=len(committed)-len(eligible),submitted_grid=grid,eligible_grid=eligible_grid,unassigned=outside,submitting_identities=len({key[0]for key in committed}),eligible_identities=len({key[0]for key in eligible}),input_assurance='unaudited',proof_verification_claimed=False,source='authenticated-committed-learner-population',provenance_sha256=digest(document))
  except Exception:
