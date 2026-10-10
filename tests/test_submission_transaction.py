@@ -149,7 +149,7 @@ class PreparationControls(unittest.TestCase):
             setattr(self.unsigned,field,original)
         self.assertEqual(self.events,[])
     def test_sdk_seams_are_concrete_regular_local_files(self):
-        self.assertEqual(len(t.sdk_seam_paths()),7)
+        self.assertEqual(len(t.sdk_seam_paths()),9)
         self.assertTrue(all(Path(p).is_file() for p in t.sdk_seam_paths()))
 
 
@@ -160,13 +160,13 @@ class ExactVectorControls(unittest.IsolatedAsyncioTestCase):
         built=NS(call=NS(data=b'timelock encrypted normalized values'))
         preflight=NS(uid=0,commit_reveal=True,min_allowed_weights=2,max_weight_limit=32767)
         with patch.object(w,'_preflight',new=AsyncMock(return_value=preflight)), \
-             patch.object(w,'_build_timelocked',new=AsyncMock(return_value=built)) as compile_call:
+             patch.object(t,'_build_epoch_timelocked',new=AsyncMock(return_value=(built,{}))) as compile_call:
             intent=t.make_recorded_intent(bt,netuid=120,uids=[85,86],weights=[.99,.01],version_key=0)
             intent.hotkey_address=lambda wallet:'owner';intent.hotkey_public_key=lambda wallet:b'public'
             result=await intent.build(None,None)
             self.assertIs(result,built)
             self.assertEqual(intent.journal_vector,[[85,65535],[86,65535]])
-            self.assertEqual(compile_call.await_args.args[4:6],([85,86],[65535,65535]))
+            self.assertEqual(compile_call.await_args.args[5:7],([85,86],[65535,65535]))
     async def test_owner_or_plaintext_branch_is_never_built(self):
         import bittensor as bt
         import bittensor.intents.weights as w
@@ -201,7 +201,7 @@ class AdapterBoundaryControls(unittest.TestCase):
         self.a.registrations=lambda:self.regs
         self.a.query=lambda name,params,block:{'SubnetOwnerHotkey':'owner','Uids':0,'Keys':'miner',
             'LastUpdate':[0],'WeightsSetRateLimit':0,'WeightsVersionKey':0}[name]
-        self.intent=NS(journal_vector=[[85,65535]],journal_owner_uid=0,journal_era={'period':64,'birth':100,'death':164,'block_hash':'0x'+format(100,'064x')})
+        self.intent=NS(journal_reveal_guard=None,journal_vector=[[85,65535]],journal_owner_uid=0,journal_era={'period':64,'birth':100,'death':164,'block_hash':'0x'+format(100,'064x')})
         self.signed=NS(data=b'transaction',extrinsic_hash='0x'+hashlib.blake2b(b'transaction',digest_size=32).hexdigest())
         self.error=None
     def invoke(self,prepare_error=None,submit_error=None,begin_error=None,clock=None):

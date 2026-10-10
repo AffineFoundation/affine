@@ -1,0 +1,18 @@
+{
+  "block": 9250556,
+  "block_hash": "0x2c2033ced319224bf42b855a9868c1aefdb030c055665d31de343d5d78a1cd98",
+  "chain_mutation": false,
+  "pulses": {
+    "32935279": {
+      "randomness": "0x4c5f7e2be9284708db2a2d1ccde49c8046142fe23aa4b3c107d490aeab980168",
+      "round": 32935279,
+      "signature": "0xa48250e31a8f9d2e9b70df75a33c031dde4eed9650dfa3e59cbe7d4b0eec2891adbd334265aa914a722e570dbf8da314"
+    },
+    "32935282": {
+      "randomness": "0xfc57fb5ca122e2708ecb90bfb3ec6c02a5c2d7efd5c3cd7bc9abf45dc334e29b",
+      "round": 32935282,
+      "signature": "0x9966e5859a90ec37fc20d845e611989bcd3e1c473710ede43dd72173cf7c3fdc172eda9245c492aeda775b76a2321481"
+    }
+  },
+  "secret_reads": false
+}

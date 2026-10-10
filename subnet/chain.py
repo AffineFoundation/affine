@@ -264,7 +264,7 @@ class ChainAdapter:
                                 raise RuntimeError('hour advanced during preparation; recompute current assessment')
                             submission_journal.begin(owner=self.owner, owner_uid=int(uid), netuid=self.netuid,
                                 window_end=window_end, vector=intent.journal_vector, registrations=fresh,
-                                attempt_start_block=start_block, signed=signed_tx, nonce=nonce, era=intent.journal_era)
+                                attempt_start_block=start_block, signed=signed_tx, nonce=nonce, era=intent.journal_era, reveal_guard=intent.journal_reveal_guard)
                             result = submit_prepared(self.chain, signed_tx, wallet)
                         result.raise_for_failure()
                         status.update(status='submitted', block_hash=str(result.block_hash))

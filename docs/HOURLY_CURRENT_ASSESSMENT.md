@@ -46,6 +46,23 @@ hotkey's score. Public-identity mismatches and inconsistent snapshots still fail
 closed; registration churn alone does not reject everyone else's update.
 An uncertain transaction outcome requires reconciliation before a retry.
 
+The transaction planner also prevents two commitments from the same validator
+and commit epoch from unlocking in reverse order. When that epoch already has
+pending commitments, a new commitment uses their exact encryption round. The
+payload is encrypted for that round; changing the outer round field alone would
+not work. Using merely increasing round numbers is insufficient because pulses
+can arrive out of order. With one shared round, the chain can process the valid
+commitments together in their original queue order, leaving the newest last.
+
+Before signing, the planner rechecks the pending queue, epoch schedule, block
+ancestry and transaction validity window. It defers ambiguous queues, an epoch
+boundary inside that window, or a round whose pulse is already available or too
+near. The minute timer retries with a fresh plan. Existing commitments from an
+older epoch retain the normal SDK scheduling path. This is a client guard under
+the checked chain schedule; it cannot prevent later runtime or governance
+changes. The guard does not change miner scores, the six-hour half-life,
+registration filtering, or the single-submission journal.
+
 Weight setting is independent of training qualification. If new evidence cannot
 be obtained or authenticated, the writer uses the last authenticated positive
 miner assessment, preserves its original evidence cutoff, and reports degraded
