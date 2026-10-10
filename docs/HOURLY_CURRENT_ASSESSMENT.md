@@ -63,6 +63,11 @@ the checked chain schedule; it cannot prevent later runtime or governance
 changes. The guard does not change miner scores, the six-hour half-life,
 registration filtering, or the single-submission journal.
 
+The SDK anchors a mortal transaction at the finalized block, which can precede
+the latest planning block. The writer accepts that older birth only while the
+64-block interval is live and its birth hash and planning heads remain canonical.
+It does not require the finalized head to be newer than the planning head.
+
 Weight setting is independent of training qualification. If new evidence cannot
 be obtained or authenticated, the writer uses the last authenticated positive
 miner assessment, preserves its original evidence cutoff, and reports degraded
@@ -119,6 +124,10 @@ independent chain reconciliation.
 The original writer and weight-state locks are preserved across upgrades. The
 latest authenticated assessment is explicitly carried into the new signed policy,
 so a software deployment cannot silently discard the fallback scores.
+An existing current-hour assessment from the previous writer policy is reused
+only when the new signed policy pins that exact signed document and its original
+policy. The stored bytes, cutoff, evidence policies and scoring semantics must
+match; the handoff neither rewrites the assessment nor resubmits completed hours.
 
 Learner openings can also reuse the exact signed, fresh current-hour writer
 assessment for their blacklist snapshot. The operator checks the approved

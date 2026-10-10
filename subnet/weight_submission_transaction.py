@@ -219,8 +219,16 @@ async def _check_epoch_before_sign(substrate, guard, era):
     stable=('Tempo','RevealPeriodEpochs','LastEpochBlock','PendingEpochAt','SubnetEpochIndex')
     if fresh['pending']!=guard['pending'] or any(fresh['schedule'][k]!=guard['schedule'][k] for k in stable):
         raise ValueError('own pending queue or epoch schedule changed before signing')
-    if not guard['block']<=era['birth']<=fresh['block']<era['death']:
+    # The pinned SDK anchors period-only mortal eras at the finalized head,
+    # which may precede the planning best head. Require canonical ancestry and
+    # a still-live exact64 era instead of incorrectly requiring a newer birth.
+    era=validate_era(era)
+    if not (0<=era['birth']<=fresh['block']<era['death'] and guard['block']<=fresh['block']):
         raise ValueError('actual era is not anchored to fresh planning state')
+    if await substrate.block_hash(era['birth']) != era['block_hash']:
+        raise ValueError('actual era birth block is not canonical before signing')
+    if await substrate.block_hash(fresh['block']) != fresh['block_hash']:
+        raise ValueError('fresh planning block changed before signing')
     chosen,reason=_epoch_round(fresh,guard['SDK_computed_round'],era_death=era['death'],now=time.time())
     if chosen!=guard['chosen_encryption_round'] or reason!=guard['selection_reason']:
         raise ValueError('encryption epoch/round changed before signing')

@@ -156,6 +156,27 @@ def best_fallback(history, cutoff, reason, current=None):
     return fallback(prior, cutoff, reason, constraints=constraints)
 
 
+
+def existing_hourly_assessment(target, p, policy_document, authority, cutoff):
+    """Adopt only exact ROOT-pinned same-window bytes across a policy handoff."""
+    if target.is_symlink() or not target.is_file():
+        raise ValueError('regular immutable hourly assessment')
+    raw=target.read_bytes();document=json.loads(raw);assessment=signed(document,authority)
+    if assessment['cutoff'] != cutoff:
+        raise ValueError('immutable hourly assessment binding')
+    if assessment['writer_policy_sha256'] != sha(policy_document):
+        matches=[row for row in p['fallback_assessments']
+                 if row['writer_policy_sha256']==assessment['writer_policy_sha256']
+                 and row['sha256']==hashlib.sha256(raw).hexdigest()]
+        if len(matches)!=1:
+            raise ValueError('explicit exact same-window assessment adoption required')
+        snapshot=Path(matches[0]['path'])
+        if snapshot.is_symlink() or not snapshot.is_file() or snapshot.read_bytes()!=raw:
+            raise ValueError('same-window assessment snapshot bytes binding')
+        validate_assessment(assessment,p,cutoff)
+    return document,assessment
+
+
 def run_once(policy_document, cutover_document, anchor_document, authority, *, execute=False,
              adapter_factory=ChainAdapter, evidence_loader=None):
     p = validate_policy(policy_document, authority, cutover_document, anchor_document)
@@ -206,9 +227,7 @@ def run_once(policy_document, cutover_document, anchor_document, authority, *, e
                             recovered=True)
         target = directory/('assessment-'+str(cutoff)+'.json')
         if target.exists():
-            document = read(target); assessment = signed(document, authority)
-            if assessment['cutoff'] != cutoff or assessment['writer_policy_sha256'] != sha(policy_document):
-                raise ValueError('immutable hourly assessment binding')
+            document, assessment = existing_hourly_assessment(target,p,policy_document,authority,cutoff)
         else:
             history, history_refusals = historical_assessments(directory, p, policy_document, authority, cutoff)
             cached, cache_refusals = authenticated_assessment_sources(p, authority, cutoff)
