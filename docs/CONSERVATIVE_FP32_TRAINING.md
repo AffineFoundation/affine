@@ -84,4 +84,7 @@ against their full readback hashes. The authentic acknowledgment promoted
 optimizer 29; automatic retention removed the obsolete local model export and
 optimizer shards. The optimizer remains local and was not uploaded. This is
 three of the 16 planned updates; held-out improvement and three consecutive
-sub-hour cycles have not yet been demonstrated.
+sub-hour cycles have not yet been demonstrated. Epoch 120 opened publicly at
+14:16:33 UTC. The interval between public starts was 3,655 seconds (60 minutes
+55 seconds), so sustained hourly mining cadence is still outstanding even
+though epoch 119's controller cycle finished within the hour.
