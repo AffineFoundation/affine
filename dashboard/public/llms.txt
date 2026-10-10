@@ -224,9 +224,12 @@ to zero, preserving the model and optimizer. Failed attempts do not consume an
 update. The sampler, 4-correct/4-wrong quota, nine-batch UID cap and 512-task
 training cap remain unchanged; miners continue following the signed opening.
 The fixed evaluation compares counters 26 and 42 on two already-exposed 128-task
-monitoring cohorts. The reserved final 512-task set remains unread. Activation
-is not a completed update or evidence of improved performance. See the training
-guide below for the exact horizon and evaluation limitations.
+monitoring cohorts. A separate reserved 512-task cohort has been privately
+materialized and reference-grader checked. Its historical exposure review and
+original-base-versus-trained-checkpoint evaluation qualification remain pending;
+it does not yet establish independent confirmation. Activation is not a completed
+update or evidence of improved performance. See the training guide below for
+the exact horizon and evaluation limitations.
 
 Epoch openings may reuse the exact fresh, authenticated hourly blacklist
 assessment instead of reconstructing the same history. They retain its original

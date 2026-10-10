@@ -24,7 +24,7 @@ The horizon is defined by successful optimizer counters, not elapsed epochs: the
 
 Mining continues with the same approved sampler and source, four completed correct and four completed wrong rollouts per task batch, up to nine batches per UID and up to 512 distinct training tasks per epoch. Representative intake selects at most one native-valid batch per task; duplicate-task rewards and independent proof audits retain their existing rules. Miners need no extra action for this trainer-only release and continue following the signed checkpoint and limits. Hourly weights remain independent of training.
 
-The evaluation plan compares the fixed baseline at counter 26 with the exact endpoint at counter 42 on the same two already-exposed 128-task monitoring cohorts. These cohorts are development measurements, not independent confirmation; the reserved final 512-task set remains unread. Changes in the submitted task population also limit attribution to the added loss term. Activation does not establish a completed NLL update or improved held-out performance. Signed training reports, publication acknowledgments and the fixed endpoint evaluations provide those results when available.
+The evaluation plan compares the fixed baseline at counter 26 with the exact endpoint at counter 42 on the same two already-exposed 128-task monitoring cohorts. These cohorts are development measurements, not independent confirmation. A separate reserved 512-task cohort has been privately materialized and its reference grading checked. Historical exposure review and qualification of an original-base-versus-trained-checkpoint evaluation remain prerequisites to using it for an independent confirmation claim. Changes in the submitted task population also limit attribution to the added loss term. Activation does not establish a completed NLL update or improved held-out performance. Signed training reports, publication acknowledgments and the fixed endpoint evaluations provide those results when available.
 
 ### Measured progress, October 10, 2026 at 12:53 UTC
 
@@ -48,8 +48,10 @@ Both fixed baseline evaluations at optimizer counter 26 have completed:
 All 128 tasks remain in each denominator, including unresolved responses. The
 cohorts remain separate. Endpoint 42 has not been evaluated, so these baseline
 scores and the completed update do not establish a learning gain. The reserved
-final 512-task set remains unread; the experiment still uses its fixed endpoint
-and does not select an intermediate checkpoint based on monitoring results.
+final 512-task cohort is separate from these monitoring evaluations; its
+confirmation prerequisites are described above. The experiment still uses its
+fixed endpoint and does not select an intermediate checkpoint based on
+monitoring results.
 
 ### Second completed update and preparation speedup
 
