@@ -21,6 +21,9 @@ GENESIS_QUALIFICATION = 'fp32-task-gradient-effective-lr-genesis-qualification-v
 GENESIS_PREPARATION = 'unaudited-training-execution-preparation-v3-effective-lr-genesis'
 GENESIS_RELEASE = 'unaudited-training-execution-release-v3-effective-lr-genesis'
 INTAKE_EQUIVALENCE = 'native-task-intake-source-equivalence-qualification-v1'
+OBJECTIVE_INTAKE_EQUIVALENCE = 'retained-nll-native-intake-source-equivalence-qualification-v1'
+OBJECTIVE_INTAKE_BASE_BUNDLE = '55206bde28d115cee9dabe1c21cfd0910b739296f0117e3b0e81f43e35e188a9'
+OBJECTIVE_INTAKE_BASE_MAP = '8204f8526e6a653e0f697c60a36fa81eadb8de5fffde7c5d63b224ea3fbf6e45'
 INTAKE_BASE_BUNDLE = '395bd10b007adc1332c524571505b57b72fb1eea4905c255e85d64dcd5841e1c'
 INTAKE_FILES = frozenset(('subnet/backend_jobs.py', 'subnet/committed_training_inputs.py',
     'subnet/training_receipts.py', 'subnet/training_task_representatives.py',
@@ -129,8 +132,6 @@ def _sources(value):
     extra={'subnet/persistent_training_evidence.py','subnet/training_policy.py'} if objective is not None else set()
     representative = 'subnet/training_task_representatives.py' in after
     additions = REPRESENTATIVE_CHANGES if representative else frozenset()
-    if representative and objective is not None:
-        raise ValueError('representative intake and objective releases require separate reviewed composition')
     if representative and not REPRESENTATIVE_CHANGES <= set(changed):
         raise ValueError('complete explicit representative collection/preparation source delta')
     if (changed!=value['changed_source_files'] or not SCIENTIFIC_CHANGES<=set(changed)
@@ -145,6 +146,8 @@ def _sources(value):
 def _qualification(value,authority):
     _learning_rate(value)
     q=authenticate(value['execution_qualification'],authority)
+    if q.get('version') == OBJECTIVE_INTAKE_EQUIVALENCE:
+        return _objective_intake_equivalence(value,q,authority)
     if q.get('version') == INTAKE_EQUIVALENCE:
         return _intake_equivalence(value,q,authority)
     fields={'version','method','execution_source_bundle_sha256','execution_source_files_sha256',
@@ -256,6 +259,69 @@ def _intake_equivalence(value,q,authority):
         row=evidence[name]
         if type(row) is not dict or set(row)!={'sha256','passed'} or row['passed'] is not True:
             raise ValueError('passed exact installed/parity/selection evidence required')
+        digest(row['sha256'])
+
+def _objective_intake_equivalence(value,q,authority):
+    """Keep private GPU mechanics and new intake-only CPU evidence distinct.
+
+    The exact552 predecessor qualification is immutable. No synthetic production
+    release or claim that the new186 bundle executed on a GPU is introduced.
+    Relative to552, all model/gradient/Adam/state/publication modules are exact;
+    only the five declared metadata/input modules may differ. The original
+    objective validator still governs LR and the actual live16-update horizon.
+    """
+    fields={'version','method','execution_source_bundle_sha256','execution_source_files_sha256',
+        'runtime_versions','training_runtime_sha256','actual_GPU_execution','passed',
+        'optimizer_reset','objective_changed','hyperparameters_changed','effective_learning_rate',
+        'base_hyperparameters_sha256','state_version','qualified_predecessor_qualification',
+        'qualified_predecessor_source_files','equivalence_evidence'}
+    if (set(q)!=fields or q['method']!=OBJECTIVE_METHOD or value['method']!=OBJECTIVE_METHOD
+            or configured_objective(value) is None
+            or q['actual_GPU_execution'] is not False or q['passed'] is not True
+            or any(q[k] is not False for k in ('optimizer_reset','objective_changed','hyperparameters_changed'))
+            or q['execution_source_bundle_sha256']!=value['training_source_bundle']['sha256']
+            or q['execution_source_files_sha256']!=sha(value['execution_source_files'])
+            or q['runtime_versions']!=value['runtime_versions']
+            or q['training_runtime_sha256']!=value['training_runtime_sha256']
+            or q['effective_learning_rate']!=value['effective_learning_rate']
+            or q['base_hyperparameters_sha256']!=_base_hyperparameters_sha256()
+            or q['state_version']!='persistent-fp32-trainer-state-v2-effective-lr'):
+        raise ValueError('honest retained-NLL intake-equivalence qualification required')
+    before=q['qualified_predecessor_source_files'];after=value['execution_source_files']
+    oldq=authenticate(q['qualified_predecessor_qualification'],authority)
+    if (oldq.get('version')!=OBJECTIVE_QUALIFICATION
+            or oldq.get('execution_source_bundle_sha256')!=OBJECTIVE_INTAKE_BASE_BUNDLE
+            or oldq.get('execution_source_files_sha256')!=OBJECTIVE_INTAKE_BASE_MAP
+            or not isinstance(before,dict) or sha(before)!=OBJECTIVE_INTAKE_BASE_MAP):
+        raise ValueError('exact552 private actual-GPU qualification and185 map required')
+    predecessor=copy.deepcopy(value)
+    predecessor['execution_qualification']=q['qualified_predecessor_qualification']
+    predecessor['training_source_bundle']={'sha256':OBJECTIVE_INTAKE_BASE_BUNDLE}
+    predecessor['execution_source_files']=before
+    # This reuses every actual retained-Adam GPU qualification predicate. Its
+    # private step1 is never substituted for the separately bound live horizon g.
+    _qualification(predecessor,authority)
+    changed={name:h for name,h in after.items() if before.get(name)!=h}
+    if (len(before)!=185 or len(after)!=186
+            or set(after)!=set(before)|{'subnet/training_task_representatives.py'}
+            or set(changed)!=INTAKE_FILES):
+        raise ValueError('only five explicit intake files may differ from qualified552')
+    evidence=authenticate(q['equivalence_evidence'],authority)
+    fields={'version','qualified_predecessor_qualification_sha256','previous_source_files_sha256',
+        'source_files_sha256','changed_files','all_other_scientific_files_byte_identical',
+        'actual_GPU_execution','installed_native_child','identical_input_emission',
+        'representative_integration_review'}
+    if (set(evidence)!=fields or evidence['version']!='retained-nll-native-intake-source-equivalence-evidence-v1'
+            or evidence['qualified_predecessor_qualification_sha256']!=sha(q['qualified_predecessor_qualification'])
+            or evidence['previous_source_files_sha256']!=sha(before)
+            or evidence['source_files_sha256']!=sha(after) or evidence['changed_files']!=changed
+            or evidence['all_other_scientific_files_byte_identical'] is not True
+            or evidence['actual_GPU_execution'] is not False):
+        raise ValueError('exact separately authenticated552-to186 intake evidence required')
+    for name in ('installed_native_child','identical_input_emission','representative_integration_review'):
+        row=evidence[name]
+        if type(row) is not dict or set(row)!={'sha256','passed'} or row['passed'] is not True:
+            raise ValueError('passed installed/parity/selection CPU evidence required')
         digest(row['sha256'])
 
 def validate(job_envelope,authority,*,now=None):
