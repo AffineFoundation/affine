@@ -103,8 +103,15 @@ failures with eight distinct nonces. Only a complete group is uploaded.
 
 Search progress is private local cache, bound to the exact signed manifest and
 miner. Keep the same `--state` directory to resume; stop the previous process
-first. A local lock prevents concurrent use of that search cache. This is not
-cross-machine nonce coordination. At most 256 partial task groups and 64 MiB of
+first. The published resumable client holds the same local lock through search
+and the complete cumulative upload. A client with an older in-memory state
+refuses to replace newer saved batches; close and reopen it with the same state
+directory to recover retained progress. Complete artifacts and their containing
+directories are synchronized to disk before partial proofs are retired; a failed
+durability barrier keeps those proofs for recovery. These protections are pending
+activation in a successor signed source; current `f5287f57…` remains unchanged.
+The lock coordinates clients sharing the same local cache, not different
+machines. At most 256 partial task groups and 64 MiB of
 compressed partial proof data are retained; eviction discards old partial
 examples but preserves consumed nonce cursors. The journal is capped at 96 MiB
 plus a bounded SQLite rollback journal. Authenticated next-epoch handover retires

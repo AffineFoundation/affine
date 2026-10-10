@@ -182,8 +182,15 @@ miner/task/epoch. Repeated calls and explicit same-state restarts use fresh
 remaining nonces and retain partial K/L groups; only complete groups upload.
 Old signed source bundles retain their original client behavior and limits.
 The prospective private journal binds the exact manifest and miner, reserves nonces before
-generation, and refuses stale/corrupt restores. A local lock excludes overlapping
-searches; it is not a cross-machine uniqueness service. Up to 256 partial groups
+generation, and refuses stale/corrupt restores. The published resumable client
+holds the same local lock through search and the complete cumulative upload.
+A stale in-memory client refuses to overwrite newer saved batches; close and
+reopen it with the same state directory to recover retained progress. Complete
+artifacts and their containing directories are synchronized to disk before
+partial proofs are retired; a failed durability barrier keeps proofs for recovery.
+These protections are pending signed-source activation; active f5287f57 remains
+unchanged. The lock coordinates the same local cache, not different machines.
+Up to 256 partial groups
 and 64 MiB of compressed partial proofs are cached (SQLite database capped at
 96 MiB, plus its bounded rollback journal). Evicted partial examples are lost,
 but their nonce cursors never rewind. Epoch handover retires partials and reclaims

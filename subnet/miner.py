@@ -90,6 +90,7 @@ class Miner:
         entries(manifest)
         self.checkpoint=checkpoint;self.runtime=None;self.runtimes={}
         self.state_path = Path(state_path) if state_path else None
+        self._state_sha256 = self._state_fingerprint()
         self._prepared_pairs=[];state_bytes=None
         if self.state_path and self.state_path.exists():
             if self.state_path.is_symlink():raise ValueError('private local miner state path')
@@ -100,6 +101,7 @@ class Miner:
                 self.batches=[(batch,None)for batch,data in self._prepared_pairs]
             else:self.batches=unpack(self.state_path.read_bytes(),budget=for_manifest(manifest))
         else:self.batches=[]
+        self._check_state_version()
         self.progress = MinerProgress(progress_path, manifest) if progress_path else None
         self._progress('epoch_start')
         if any(b['epoch'] != manifest['epoch'] or b['checkpoint'] != manifest['checkpoint']['id'] for b,_ in self.batches):
@@ -131,6 +133,45 @@ class Miner:
         self._prepared_pairs=prepared
         return prepared
 
+    def _state_fingerprint(self):
+        if self.state_path is None:
+            return None
+        if self.state_path.is_symlink():
+            raise ValueError('private local miner state path')
+        try:
+            with self.state_path.open('rb') as stream:
+                result = hashlib.sha256()
+                for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                    result.update(chunk)
+                return result.hexdigest()
+        except FileNotFoundError:
+            return None
+
+    def _check_state_version(self):
+        # A per-operation lock alone cannot refresh another instance's older
+        # in-memory cumulative list. Refuse replacement and require reopening.
+        if self._state_fingerprint() != self._state_sha256:
+            raise ValueError('local cumulative miner state changed; reopen miner')
+
+    def _sync_complete_state(self):
+        """Fence complete bytes and rename entries before deleting partials."""
+        import os
+        if self.state_path is None or self._state_sha256 is None:
+            return
+        with self.state_path.open('rb') as stream:
+            header = stream.read(2)
+            os.fsync(stream.fileno())
+        directories = []
+        if self.manifest.get('submission_transport_policy') and header != b'PK':
+            directories.append(self.state_path.with_name(self.state_path.name + '.pairs'))
+        directories.append(self.state_path.parent)
+        for directory in directories:
+            descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+
     def _progress(self, event, **fields):
         observer = getattr(self, "progress", None)
         if observer is not None: observer.record(event, batches=len(self.batches), **fields)
@@ -149,6 +190,7 @@ class Miner:
         if journal is None:
             return self._legacy_search(index, seed=seed, max_attempts=max_attempts, env_id=env_id)
         with journal.locked():
+            self._check_state_version()
             return self._resumable_search(index, seed, max_attempts, env_id)
 
     def _resumable_search(self, index, seed, max_attempts, env_id):
@@ -235,11 +277,18 @@ class Miner:
         self._progress('task_exhausted', env_id=env_id, index=index)
         raise RuntimeError('search budget exhausted; partial progress retained')
 
-    def _retire_completed_searches(self):
+    def _retire_completed_searches(self, *, locked=False):
         journal = getattr(self, 'search_state', None)
         if journal is not None and self.state_path:
-            with journal.locked():
+            def retire():
+                self._check_state_version()
+                self._sync_complete_state()
                 journal.completed(self.batches)
+            if locked:
+                retire()
+            else:
+                with journal.locked():
+                    retire()
 
     def _legacy_search(self, index, seed=0, max_attempts=100, env_id=None):
         contract=self.manifest.get('sampling_contract')
@@ -322,6 +371,19 @@ class Miner:
         raise RuntimeError('search budget exhausted')
 
     def upload(self):
+        if getattr(self, '_closed', False):
+            raise ValueError('miner is closed')
+        journal = getattr(self, 'search_state', None)
+        if journal is None:
+            return self._upload()
+        # Include remote PUTs: an older cumulative commitment must not finish
+        # after a newer client's commit. Never nest this flock on the same FD.
+        with journal.locked():
+            journal._check_scope()
+            self._check_state_version()
+            return self._upload(search_locked=True)
+
+    def _upload(self, *, search_locked=False):
         if time.time()>=self.manifest.get('deadline',float('inf')):
             raise EpochClosed('signed epoch upload window closed')
         if self.manifest.get('submission_transport_policy'):
@@ -330,7 +392,8 @@ class Miner:
             packed=self._prepared()
             if self.state_path:
                 write_prepared_state(self.state_path,self.manifest,packed)
-                self._retire_completed_searches()
+                self._state_sha256 = self._state_fingerprint()
+                self._retire_completed_searches(locked=search_locked)
             journal=getattr(self,'_commitment_upload_journal',None)
             if journal is None:
                 journal=UploadJournal(self.manifest,self.state_path.with_suffix('.commitment-upload.json')if self.state_path else None);self._commitment_upload_journal=journal
@@ -354,7 +417,8 @@ class Miner:
             if self.state_path:
                 self.state_path.parent.mkdir(parents=True,exist_ok=True)
                 temporary=self.state_path.with_suffix('.tmp');temporary.write_bytes(data);temporary.chmod(0o600);temporary.replace(self.state_path)
-                self._retire_completed_searches()
+                self._state_sha256 = self._state_fingerprint()
+                self._retire_completed_searches(locked=search_locked)
         now=time.time()
         if now>=self.manifest.get('deadline',float('inf')):raise EpochClosed('upload preparation completed after signed deadline')
         timeout=min(120,max(.001,self.manifest['deadline']-now-1))if self.manifest.get('submission_transport_policy')else 120
