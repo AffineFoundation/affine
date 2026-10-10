@@ -71,8 +71,74 @@ def task_groups(verified_pairs, steps, seed, *, required_pairs_per_task=None):
     return pairs, tasks, groups, identities
 
 
-def accumulate_tasks(torch, margin, references, tasks, indices, beta=.1, *, after_backward=None):
+def validate_positive_nll_weight(value):
+    """The caller authenticates objective scope/range; this is only its scalar."""
+    if type(value) not in (int, float) or not math.isfinite(value) or value not in (0, 1):
+        raise ValueError('explicit zero or unit positive NLL coefficient')
+    return value
+
+
+def positive_nll_loss(torch, positive, negative, reference, beta=.1):
+    """Unit positive NLL anchor, sharing the original two sequence forwards."""
+    if type(beta) not in (int, float) or not math.isfinite(beta) or beta != .1:
+        raise ValueError('unit positive NLL requires original preference beta')
+    value = positive-negative
+    preference = preference_loss(torch, value, reference, beta)
+    nll = -positive
+    loss = preference+nll
+    if not all(bool(torch.isfinite(v)) for v in (positive, negative, value, preference, nll, loss)):
+        raise ValueError('nonfinite positive NLL components')
+    return loss, preference, nll, value
+
+
+def capture_components(torch, components, pair_count, *, references=None, beta=.1):
+    """Replace one existing reference/post pass; never add another model pass."""
+    if type(pair_count) is not int or pair_count < 1 or (references is not None and len(references) != pair_count):
+        raise ValueError('complete component reference population')
+    rows = []
+    with torch.no_grad():
+        for i in range(pair_count):
+            positive, negative, stated_margin = components(i)
+            reference = float(stated_margin) if references is None else references[i]
+            loss, preference, nll, value = positive_nll_loss(torch, positive, negative, reference, beta)
+            if not torch.equal(value, stated_margin):
+                raise ValueError('component/margin identity')
+            rows.append(dict(pair_index=i, positive_mean_logprob=float(positive),
+                negative_mean_logprob=float(negative), margin=float(value),
+                preference_loss=float(preference), positive_nll=float(nll), loss=float(loss)))
+    return rows
+
+
+def weighted_component_summary(rows, tasks):
+    """Mean pair within task, then mean task; no sequence-length reweighting."""
+    if not tasks or [row['pair_index'] for row in rows] != list(range(len(rows))):
+        raise ValueError('ordered complete component population')
+    fields = ('positive_mean_logprob', 'negative_mean_logprob', 'margin',
+              'preference_loss', 'positive_nll', 'loss')
+    sums = {name: 0. for name in fields}; seen = []
+    for task in tasks:
+        indices = task['pair_indices']
+        if not indices: raise ValueError('nonempty component task')
+        for i in indices:
+            if type(i) is not int or not 0 <= i < len(rows):
+                raise ValueError('component pair index')
+            seen.append(i); weight = 1/(len(tasks)*len(indices))
+            for name in fields:
+                value = rows[i][name]
+                if type(value) not in (int, float) or not math.isfinite(value):
+                    raise ValueError('finite component summary')
+                sums[name] += weight*value
+    if sorted(seen) != list(range(len(rows))):
+        raise ValueError('component task partition')
+    return sums
+
+
+def accumulate_tasks(torch, margin, references, tasks, indices, beta=.1, *, after_backward=None,
+                     positive_nll_weight=0, components=None):
     """Mean pair loss within task, then mean task loss within update group."""
+    validate_positive_nll_weight(positive_nll_weight)
+    if positive_nll_weight and not callable(components):
+        raise ValueError('unit positive NLL requires shared component forwards')
     if not indices or len(set(indices)) != len(indices):
         raise ValueError('distinct nonempty task accumulation group')
     observations = []
@@ -81,17 +147,30 @@ def accumulate_tasks(torch, margin, references, tasks, indices, beta=.1, *, afte
         if not pairs or len(set(pairs)) != len(pairs):
             raise ValueError('distinct nonempty per-task pair population')
         for i in pairs:
-            value = margin(i); loss = preference_loss(torch, value, references[i], beta)
+            if positive_nll_weight:
+                positive, negative, stated_margin = components(i)
+                loss, preference, nll, value = positive_nll_loss(torch, positive, negative, references[i], beta)
+                if not torch.equal(value.detach(), stated_margin.detach()):
+                    raise ValueError('component/margin identity')
+            else:
+                value = margin(i); loss = preference_loss(torch, value, references[i], beta)
             if not torch.isfinite(loss): raise ValueError('nonfinite task preference loss')
             weight = 1/(len(indices)*len(pairs))
-            observations.append(dict(pair_index=i, task_index=task_index,
+            observation = dict(pair_index=i, task_index=task_index,
                 task_sha256=task['task_sha256'], gradient_weight=weight,
                 reference_margin=references[i], margin_before=float(value.detach()),
-                loss=float(loss.detach())))
+                loss=float(loss.detach()))
+            if positive_nll_weight:
+                observation.update(positive_mean_logprob=float(positive.detach()),
+                    negative_mean_logprob=float(negative.detach()), preference_loss=float(preference.detach()),
+                    positive_nll=float(nll.detach()), positive_nll_weight=1., beta=beta)
+            observations.append(observation)
             (loss*weight).backward()
             if after_backward is not None:
                 after_backward()
             del value, loss
+            if positive_nll_weight:
+                del positive, negative, stated_margin, preference, nll
     return observations
 
 
@@ -100,13 +179,14 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
                 approved_genesis_sha256=None, restored_state=None,
                 resource_admission, required_pairs_per_task=None,
                 learning_rate_authorization=None, learning_rate_authority=None,
-                job_id=None):
+                job_id=None, positive_nll_weight=0):
     """Return BF16 export plus uncommitted persistent optimizer for publication.
 
     The backend must hash the BF16 export and export_state() with descriptor-last
     storage callbacks before it admits any next epoch. An unchanged BF16 export
     is allowed when FP32 state advances; this is not a learning-gain claim.
     """
+    validate_positive_nll_weight(positive_nll_weight)
     import gc
     import torch
     from .protocol import harness_for
@@ -131,6 +211,9 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
         job_id=job_id, steps=steps)
     phase_seconds['optimizer_initialization']=time.monotonic()-phase_started
     start_step = optimizer.global_step
+    if positive_nll_weight and (optimizer.hyperparameters['lr'] != 5e-7 or
+                               optimizer.hyperparameters['preference_beta'] != .1):
+        raise ValueError('unit positive NLL keeps approved learning rate and beta')
 
     def sequence(rollout):
         total, tokens = 0, 0
@@ -149,9 +232,20 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
         runtime.configure(definition['spec'], harness_for(definition, positive['index']))
         return sequence(positive) - sequence(negative)
 
+    def components(i):
+        definition, positive, negative = pairs[i]
+        runtime.configure(definition['spec'], harness_for(definition, positive['index']))
+        positive_lp = sequence(positive)
+        negative_lp = sequence(negative)
+        return positive_lp, negative_lp, positive_lp-negative_lp
+
     model.eval()
     torch.cuda.synchronize();phase_started=time.monotonic()
-    with torch.no_grad(): references = [float(margin(i)) for i in range(len(pairs))]
+    if positive_nll_weight:
+        components_before = capture_components(torch, components, len(pairs))
+        references = [row['margin'] for row in components_before]
+    else:
+        with torch.no_grad(): references = [float(margin(i)) for i in range(len(pairs))]
     torch.cuda.synchronize();phase_seconds['reference_forward']=time.monotonic()-phase_started
     if not all(math.isfinite(v) for v in references):
         raise ValueError('nonfinite immutable BF16 input reference')
@@ -166,7 +260,8 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
             accumulator = FP32GradientAccumulator(model.named_parameters())
             torch.cuda.synchronize();phase_started=time.monotonic()
             observations = accumulate_tasks(torch, margin, references, tasks, indices,
-                HYPERPARAMETERS['preference_beta'], after_backward=accumulator.capture)
+                HYPERPARAMETERS['preference_beta'], after_backward=accumulator.capture,
+                positive_nll_weight=positive_nll_weight, components=components if positive_nll_weight else None)
             if accumulator.microsteps != len(observations):
                 raise ValueError('complete per-pair FP32 gradient capture required')
             norm = accumulator.clip(HYPERPARAMETERS['max_grad_norm'])
@@ -192,10 +287,20 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
                 optimizer_lifecycle='persistent-across-epochs',
                 gpu_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
                 gpu_peak_reserved_bytes=torch.cuda.max_memory_reserved()))
+            if positive_nll_weight:
+                updates[-1].update(positive_nll_weight=1.,
+                    preference_loss=sum(r['preference_loss']*r['gradient_weight'] for r in observations),
+                    positive_nll=sum(r['positive_nll']*r['gradient_weight'] for r in observations),
+                    positive_mean_logprob=sum(r['positive_mean_logprob']*r['gradient_weight'] for r in observations),
+                    negative_mean_logprob=sum(r['negative_mean_logprob']*r['gradient_weight'] for r in observations))
         if seen != set(range(len(tasks))): raise ValueError('incomplete task gradient coverage')
         model.eval()
         torch.cuda.synchronize();phase_started=time.monotonic()
-        with torch.no_grad(): after_margins = [float(margin(i)) for i in range(len(pairs))]
+        if positive_nll_weight:
+            components_after = capture_components(torch, components, len(pairs), references=references)
+            after_margins = [row['margin'] for row in components_after]
+        else:
+            with torch.no_grad(): after_margins = [float(margin(i)) for i in range(len(pairs))]
         torch.cuda.synchronize();phase_seconds['post_update_forward']=time.monotonic()-phase_started
         if not all(math.isfinite(v) for v in after_margins):
             raise ValueError('nonfinite post-update training margin')
@@ -220,6 +325,15 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
             effective_hyperparameters=copy.deepcopy(optimizer.hyperparameters),
             learning_rate_authorization_sha256=(hashlib.sha256(canonical(learning_rate_authorization)).hexdigest()
                 if learning_rate_authorization is not None else None))
+        if positive_nll_weight:
+            diagnostics['positive_nll_components'] = dict(
+                version='unit-positive-nll-shared-forward-components-v1',
+                positive_nll_weight=1., beta=.1, learning_rate=optimizer.hyperparameters['lr'],
+                reference_scope='immutable-BF16-epoch-input',
+                before=components_before, after=components_after,
+                weighted_before=weighted_component_summary(components_before, tasks),
+                weighted_after=weighted_component_summary(components_after, tasks),
+                extra_model_forward_passes=0, tail_mask_applied=False)
         return destination, optimizer, diagnostics
     finally:
         accumulator = None

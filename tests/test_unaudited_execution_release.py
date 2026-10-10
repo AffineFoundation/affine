@@ -3,7 +3,8 @@ import copy,json,sys,tempfile,unittest
 from pathlib import Path
 from types import SimpleNamespace
 from nacl.signing import SigningKey
-sys.path[:0]=[str(Path(__file__).parent),'/tmp/affine-effective-learning-rate-transition-20261009-v1/source','/tmp/affine-completed-math-answer-restart-20261008/tests']
+REPO=Path(__file__).resolve().parents[1]
+sys.path[:0]=[str(REPO),str(REPO/'tests')]
 from test_unaudited_execution_contract import AmendmentTests
 from training_receipt_fixtures import sign
 from subnet import unaudited_training_execution as a

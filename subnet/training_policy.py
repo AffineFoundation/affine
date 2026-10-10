@@ -55,3 +55,45 @@ def validate_coverage(manifest, submissions):
     if (not submissions or any(r.get('sha256') not in hashes for r in submissions)):
         raise ValueError('training submissions outside frozen coverage population')
     return context
+
+
+OBJECTIVE_VERSION = 'sequence-mean-preference-positive-nll-v1'
+
+
+def objective_config(value=None):
+    if value is None:
+        return dict(version=OBJECTIVE_VERSION, positive_nll_weight=0.0)
+    if (not isinstance(value,dict) or set(value)!={'version','positive_nll_weight'}
+            or value['version']!=OBJECTIVE_VERSION
+            or type(value['positive_nll_weight'])not in(int,float)
+            or not math.isfinite(value['positive_nll_weight'])
+            or value['positive_nll_weight'] not in (0,1)):
+        raise ValueError('explicit zero-or-unit positive-NLL objective')
+    return dict(value)
+
+
+
+HORIZON_VERSION = 'retained-adam-unit-positive-nll-16-v1'
+
+
+def objective_horizon(value):
+    """Fixed successful-update dose; no wall-clock or outcome-dependent selection."""
+    from .training_receipts import digest
+    keys={'version','first_optimizer_step','updates','initial_checkpoint',
+          'initial_parent_descriptor_sha256','coefficient_during','coefficient_after'}
+    if (not isinstance(value,dict) or set(value)!=keys or value['version']!=HORIZON_VERSION
+            or type(value['first_optimizer_step']) is not int or value['first_optimizer_step']<1
+            or type(value['updates']) is not int or value['updates']!=16
+            or type(value['coefficient_during']) not in (int,float) or value['coefficient_during']!=1
+            or type(value['coefficient_after']) not in (int,float) or value['coefficient_after']!=0):
+        raise ValueError('exact retained-Adam sixteen-update objective horizon')
+    digest(value['initial_checkpoint']);digest(value['initial_parent_descriptor_sha256'])
+    return dict(value)
+
+
+def objective_at_step(horizon,optimizer_step_before):
+    h=objective_horizon(horizon)
+    if type(optimizer_step_before) is not int or optimizer_step_before<h['first_optimizer_step']:
+        raise ValueError('objective cannot precede its retained parent')
+    return objective_config(dict(version=OBJECTIVE_VERSION,positive_nll_weight=(
+        1.0 if optimizer_step_before<h['first_optimizer_step']+h['updates'] else 0.0)))

@@ -6,6 +6,7 @@ next checkpoint. Blockchain-free mock and live chain adapters share the same cor
 
 - [Miner pilot instructions](docs/MINER_QUICKSTART.md)
 - [Architecture and runtime](docs/ARCHITECTURE.md)
+- [Experimental retained-Adam NLL objective (inactive)](docs/EXPERIMENTAL_RETAINED_NLL.md)
 - [Live registration, payouts and rollback](docs/LIVE_SUBNET.md)
 - [Implementation plan](IMPLEMENTATION_PLAN.md)
 - [Operational state and evidence](STATE.md)

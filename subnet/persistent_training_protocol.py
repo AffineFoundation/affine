@@ -304,7 +304,8 @@ def validate_output(descriptor,job,manifest):
         authority=job.get('manifest',{}).get('signer')
         value=authenticate(amendment,authority)
         lr_execution=value.get('version') in ('unaudited-training-execution-amendment-v2-effective-lr',
-            'unaudited-training-execution-amendment-v3-effective-lr-genesis')
+            'unaudited-training-execution-amendment-v3-effective-lr-genesis',
+            'unaudited-training-execution-amendment-v5-objective-horizon')
         if effective_lr!=lr_execution:
             raise ValueError('explicit LR execution requires truthful V2 output state')
         if effective_lr:

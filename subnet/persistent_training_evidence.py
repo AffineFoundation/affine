@@ -15,6 +15,102 @@ def _finite(value):
     return type(value)in (int,float)and math.isfinite(value)
 
 
+def validate_objective_evidence(report,job,*,tasks):
+    """Check components only for the authenticated unit objective, without inference.
+
+    ``validate_updates`` first reconstructs complete task/pair identities and
+    exact gradient weights. Legacy and explicit-zero reports keep their shape.
+    This is arithmetic bookkeeping, not independent proof of physical forwards.
+    """
+    from .unaudited_training_execution import configured_objective
+    from .training_receipts import authenticate
+    envelope=job.get('unaudited_training_execution')
+    declaration=authenticate(envelope,job['manifest']['signer']) if envelope is not None else {}
+    objective=configured_objective(declaration)
+    if objective is not None and (not isinstance(objective,dict)or
+            set(objective)!={'version','positive_nll_weight'}or
+            objective['version']!='sequence-mean-preference-positive-nll-v1'or
+            not _finite(objective['positive_nll_weight'])or objective['positive_nll_weight']not in (0,1)):
+        raise ValueError('exact authenticated configured objective')
+    diagnostics=report['training']['persistent_diagnostics'];updates=report['training']['updates']
+    fields=('positive_mean_logprob','negative_mean_logprob','margin',
+        'preference_loss','positive_nll','loss')
+    legacy_claims={'training_objective','training_pair_positive_mean_logprob_before',
+        'training_pair_negative_mean_logprob_before','training_pair_positive_mean_logprob_after',
+        'training_pair_negative_mean_logprob_after'}
+    locations=[diagnostics,*updates,*(row for update in updates for row in update['pairs'])]
+    if any(legacy_claims.intersection(row)for row in locations):
+        raise ValueError('unexpected alternate objective telemetry')
+    if objective is None or objective['positive_nll_weight']==0:
+        claims={'positive_nll_components','positive_nll_weight','beta',*fields}-{'margin','loss'}
+        if any(claims.intersection(row)for row in locations):
+            raise ValueError('zero objective keeps historical report shape')
+        return objective
+
+    def equal(a,b):
+        return _finite(a)and _finite(b)and math.isclose(a,b,rel_tol=1e-6,abs_tol=1e-6)
+
+    def components(row,margin,reference):
+        if not all(_finite(row.get(k))for k in fields if k!='margin')or not _finite(margin)or not _finite(reference):
+            raise ValueError('finite complete unit objective components')
+        p,n=row['positive_mean_logprob'],row['negative_mean_logprob']
+        z=.1*(margin-reference);preference=max(-z,0)+math.log1p(math.exp(-abs(z)))
+        if (p>0 or n>0 or not equal(p-n,margin)or not equal(-p,row['positive_nll'])or
+                not equal(preference,row['preference_loss'])or
+                not equal(preference-p,row['loss'])):
+            raise ValueError('unit objective component/margin/loss arithmetic')
+
+    value=diagnostics.get('positive_nll_components')
+    expected={'version','positive_nll_weight','beta','learning_rate','reference_scope',
+        'before','after','weighted_before','weighted_after','extra_model_forward_passes','tail_mask_applied'}
+    if (not isinstance(value,dict)or set(value)!=expected or
+            value['version']!='unit-positive-nll-shared-forward-components-v1'or
+            not _finite(value['positive_nll_weight'])or value['positive_nll_weight']!=1 or
+            not _finite(value['beta'])or value['beta']!=.1 or
+            not _finite(value['learning_rate'])or value['learning_rate']!=5e-7 or
+            value['reference_scope']!='immutable-BF16-epoch-input'or
+            type(value['extra_model_forward_passes'])is not int or value['extra_model_forward_passes']!=0 or
+            value['tail_mask_applied']is not False):
+        raise ValueError('exact shared-forward unit objective diagnostics')
+    references=diagnostics['training_pair_margin_before']
+    for when in ('before','after'):
+        rows=value[when];margins=diagnostics['training_pair_margin_'+when]
+        if not isinstance(rows,list)or len(rows)!=len(references):
+            raise ValueError('complete objective snapshot pair population')
+        for i,row in enumerate(rows):
+            if (not isinstance(row,dict)or set(row)!={'pair_index',*fields}or
+                    type(row['pair_index'])is not int or row['pair_index']!=i or
+                    not equal(row['margin'],margins[i])):
+                raise ValueError('ordered objective snapshot matches original pair margins')
+            components(row,row['margin'],references[i])
+        summary=value['weighted_'+when]
+        if not isinstance(summary,dict)or set(summary)!=set(fields):
+            raise ValueError('exact weighted objective summary')
+        totals={name:0. for name in fields};seen=[]
+        for task in tasks:
+            indices=task['pair_indices']
+            if not indices:raise ValueError('nonempty objective task')
+            for i in indices:
+                if type(i)is not int or not 0<=i<len(rows):raise ValueError('objective task pair index')
+                seen.append(i);weight=1/(len(tasks)*len(indices))
+                for name in fields:totals[name]+=weight*rows[i][name]
+        if sorted(seen)!=list(range(len(rows)))or any(not equal(summary[name],totals[name])for name in fields):
+            raise ValueError('complete equal-task weighted objective summary')
+    for update in updates:
+        if not _finite(update.get('positive_nll_weight'))or update['positive_nll_weight']!=1:
+            raise ValueError('update exact unit objective coefficient')
+        totals={name:0. for name in fields if name!='margin'}
+        for row in update['pairs']:
+            if (not _finite(row.get('positive_nll_weight'))or row['positive_nll_weight']!=1 or
+                    not _finite(row.get('beta'))or row['beta']!=.1):
+                raise ValueError('pair exact unit objective coefficient/beta')
+            components(row,row['margin_before'],row['reference_margin'])
+            for name in totals:totals[name]+=row[name]*row['gradient_weight']
+        if any(not equal(update.get(name),total)for name,total in totals.items()):
+            raise ValueError('equal-task weighted update objective components')
+    return objective
+
+
 def validate_updates(report,job,manifest):
     training=report['training'];updates=training['updates'];diagnostics=training['persistent_diagnostics']
     binding=manifest['trainer_state_binding'];before=binding['global_step_before']
@@ -104,6 +200,7 @@ def validate_updates(report,job,manifest):
     if (seen!=set(range(len(tasks)))or diagnostics.get('master_state_updated')is not master_changed or
             diagnostics.get('inference_tensors_changed_during_updates')is not bf16_changed):
         raise ValueError('persistent complete task coverage/precision summary')
+    validate_objective_evidence(report,job,tasks=tasks)
     return dict(update_count=len(updates),distinct_tasks=len(tasks),distinct_pairs=len(pairs),
         global_step_before=before,global_step_after=before+len(updates),
         master_state_updated=master_changed,heldout_gain_claimed=False,

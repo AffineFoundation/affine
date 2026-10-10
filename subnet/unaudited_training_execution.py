@@ -21,6 +21,44 @@ GENESIS_QUALIFICATION = 'fp32-task-gradient-effective-lr-genesis-qualification-v
 GENESIS_PREPARATION = 'unaudited-training-execution-preparation-v3-effective-lr-genesis'
 GENESIS_RELEASE = 'unaudited-training-execution-release-v3-effective-lr-genesis'
 
+OBJECTIVE_VERSION = 'unaudited-training-execution-amendment-v5-objective-horizon'
+OBJECTIVE_METHOD = 'fp32-task-gradient-effective-lr-objective-horizon-v1'
+OBJECTIVE_QUALIFICATION = 'configured-objective-horizon-retained-adam-qualification-v1'
+OBJECTIVE_PREPARATION = 'unaudited-training-execution-preparation-v5-objective-horizon'
+OBJECTIVE_RELEASE = 'unaudited-training-execution-release-v5-objective-horizon'
+OBJECTIVE_VERSIONS = (OBJECTIVE_VERSION,OBJECTIVE_PREPARATION,OBJECTIVE_RELEASE)
+
+
+def configured_objective(value):
+    from .training_policy import objective_config, objective_horizon, objective_at_step
+    if value.get('version') not in OBJECTIVE_VERSIONS:
+        if 'training_objective' in value or 'training_horizon' in value:
+            raise ValueError('historical execution cannot add an objective')
+        return None
+    if type(value.get('training_objective')) is not dict:
+        raise ValueError('new objective execution requires explicit configuration')
+    actual=objective_config(value['training_objective'])
+    horizon=objective_horizon(value.get('training_horizon'))
+    if type(value.get('steps')) is not int or value.get('steps')!=1 or value.get('effective_learning_rate')!=5e-7:
+        raise ValueError('objective horizon keeps one update and exact qualified LR')
+    if value['version']==OBJECTIVE_RELEASE:
+        if value.get('minimum_optimizer_step')!=horizon['first_optimizer_step']:
+            raise ValueError('release starts at the exact retained-Adam horizon parent')
+        expected=objective_at_step(horizon,horizon['first_optimizer_step'])
+    else:
+        expected=objective_at_step(horizon,value.get('optimizer_step_before'))
+        if (value['optimizer_step_before']==horizon['first_optimizer_step']
+                and value.get('parent_descriptor_sha256')!=horizon['initial_parent_descriptor_sha256']):
+            raise ValueError('first objective update requires the original retained descriptor')
+    if actual!=expected:
+        raise ValueError('coefficient must follow the fixed successful-update horizon')
+    return actual
+
+
+def _fields(value):
+    return FIELDS | {'training_objective','training_horizon'} if value.get('version') in OBJECTIVE_VERSIONS else FIELDS
+
+
 SCIENTIFIC_CHANGES = frozenset(('subnet/fp32_gradient_accumulation.py',
     'subnet/task_normalized_training.py', 'subnet/persistent_cpu_adamw.py',
     'subnet/learning_rate_transition.py','subnet/persistent_training_state.py',
@@ -80,8 +118,11 @@ def _sources(value):
             raise ValueError('exact execution source member')
         digest(hashed)
     changed={name:hashed for name,hashed in after.items()if before.get(name)!=hashed}
+    objective=configured_objective(value)
+    extra={'subnet/persistent_training_evidence.py','subnet/training_policy.py'} if objective is not None else set()
     if (changed!=value['changed_source_files'] or not SCIENTIFIC_CHANGES<=set(changed)
-            or set(changed)-SCIENTIFIC_CHANGES-OPERATIONAL_CHANGES):
+            or objective is not None and not extra<=set(changed)
+            or set(changed)-SCIENTIFIC_CHANGES-OPERATIONAL_CHANGES-extra):
         raise ValueError('only approved FP32 accumulation and explicit routing source delta')
     bundle=value['training_source_bundle']
     if (not isinstance(bundle,dict) or bundle.get('sha256')==value['original_source_bundle_sha256']):
@@ -95,6 +136,33 @@ def _qualification(value,authority):
         'runtime_versions','training_runtime_sha256','actual_GPU_execution','passed',
         'report_sha256','optimizer_reset','objective_changed','hyperparameters_changed',
         'effective_learning_rate','base_hyperparameters_sha256','state_version'}
+    objective=configured_objective(value)
+    if objective is not None:
+        from .training_policy import objective_config
+        expected_fields=fields | {'training_objective','tested_positive_nll_weights','retained_parent_descriptor_sha256','retained_optimizer_step','retained_input_checkpoint','qualification_scope','live_optimizer_distribution_equivalence_claimed','initial_execution_source_bundle_sha256'}
+        if (set(q)!=expected_fields or q['version']!=OBJECTIVE_QUALIFICATION
+                or q['method']!=OBJECTIVE_METHOD or value['method']!=OBJECTIVE_METHOD
+                or objective_config(q['training_objective'])!={'version':'sequence-mean-preference-positive-nll-v1','positive_nll_weight':1.0}
+                or q['tested_positive_nll_weights']!=[0.0,1.0]
+                or any(type(x) not in (int,float) for x in q['tested_positive_nll_weights'])
+                or type(q['retained_optimizer_step']) is not int or q['retained_optimizer_step']<1
+                or q['qualification_scope']!='private-nonzero-adam-mechanical-continuation-v1'
+                or q['live_optimizer_distribution_equivalence_claimed'] is not False
+                or q['execution_source_bundle_sha256']!=value['training_source_bundle']['sha256']
+                or q['execution_source_files_sha256']!=sha(value['execution_source_files'])
+                or q['runtime_versions']!=value['runtime_versions']
+                or q['training_runtime_sha256']!=value['training_runtime_sha256']
+                or q['actual_GPU_execution']is not True or q['passed']is not True
+                or q['optimizer_reset']is not False
+                or q['objective_changed']is not True
+                or q['hyperparameters_changed']is not True
+                or q['effective_learning_rate']!=value['effective_learning_rate']
+                or q['base_hyperparameters_sha256']!=_base_hyperparameters_sha256()
+                or q['state_version']!='persistent-fp32-trainer-state-v2-effective-lr'):
+            raise ValueError('configured objective needs exact retained-Adam GPU qualification')
+        for field in ('report_sha256','retained_parent_descriptor_sha256','retained_input_checkpoint','initial_execution_source_bundle_sha256'):
+            digest(q[field])
+        return
     genesis_qualified = q.get('version') == GENESIS_QUALIFICATION
     if genesis_qualified:
         fields = fields | {'tested_methods'}
@@ -122,7 +190,7 @@ def validate(job_envelope,authority,*,now=None):
     manifest=authenticate(job['manifest'],authority)
     _unchanged_manifest(manifest)
     value=authenticate(job.get(FIELD),authority)
-    if set(value)!=FIELDS or (value['version'],value['method'])not in ((VERSION,METHOD),(GENESIS_VERSION,GENESIS_METHOD)):
+    if set(value)!=_fields(value) or (value['version'],value['method'])not in ((VERSION,METHOD),(GENESIS_VERSION,GENESIS_METHOD),(OBJECTIVE_VERSION,OBJECTIVE_METHOD)):
         raise ValueError('exact prospective unaudited execution declaration')
     if (job.get('role')!='train' or value['epoch']!=manifest['epoch']
             or value['job_id']!=job.get('job_id')
@@ -156,6 +224,10 @@ def validate(job_envelope,authority,*,now=None):
             or value['genesis_sha256']!=binding['genesis_sha256']
             or value['optimizer_step_before']!=binding['global_step_before']):
         raise ValueError('exact retained parent descriptor/genesis/step; no optimizer reset')
+    if (value['version']==OBJECTIVE_VERSION
+            and binding['global_step_before']==value['training_horizon']['first_optimizer_step']
+            and binding['input_checkpoint']!=value['training_horizon']['initial_checkpoint']):
+        raise ValueError('first objective update requires exact qualified checkpoint')
     from .learning_rate_transition import validate_authorization
     expected_grant=_grant_payload(value,manifest)
     actual_grant=authenticate(value['learning_rate_authorization'],authority)
@@ -236,7 +308,8 @@ def provenance(job_envelope,authority):
         effective_learning_rate=value['effective_learning_rate'],
         learning_rate_authorization_sha256=sha(value['learning_rate_authorization']),
         base_hyperparameters_sha256=_base_hyperparameters_sha256(),
-        state_version='persistent-fp32-trainer-state-v2-effective-lr')
+        state_version='persistent-fp32-trainer-state-v2-effective-lr',
+        **({'training_objective':configured_objective(value),'training_horizon':copy.deepcopy(value['training_horizon'])} if value['version']==OBJECTIVE_VERSION else {}))
 
 def validate_provenance(report,job_envelope,authority):
     job=authenticate(job_envelope,authority)
@@ -257,8 +330,8 @@ def job_envelope_limit(manifest):
 def preparation(authorization,authority,*,now=None):
     """Authenticate a compact, exact-epoch, exact-input ROOT preparation grant."""
     value=authenticate(authorization,authority)
-    if (set(value)!=FIELDS-{'job_id','learning_rate_authorization'} or
-            (value.get('version'),value.get('method')) not in ((PREPARATION_VERSION,METHOD),(GENESIS_PREPARATION,GENESIS_METHOD))):
+    if (set(value)!=_fields(value)-{'job_id','learning_rate_authorization'} or
+            (value.get('version'),value.get('method')) not in ((PREPARATION_VERSION,METHOD),(GENESIS_PREPARATION,GENESIS_METHOD),(OBJECTIVE_PREPARATION,OBJECTIVE_METHOD))):
         raise ValueError('exact training execution preparation authorization')
     if (value.get('training_policy')!=POLICY
             or value.get('training_input_policy')!=INPUT_POLICY):
@@ -281,7 +354,7 @@ def attach(payload,authorization,authority,sign):
     """
     if FIELD in payload:raise ValueError('execution declaration already attached')
     value=copy.deepcopy(preparation(authorization,authority,now=payload.get('created_at')))
-    value['version']=GENESIS_VERSION if value['method']==GENESIS_METHOD else VERSION;value['job_id']=payload['job_id']
+    value['version']=(OBJECTIVE_VERSION if value['method']==OBJECTIVE_METHOD else GENESIS_VERSION if value['method']==GENESIS_METHOD else VERSION);value['job_id']=payload['job_id']
     value['learning_rate_authorization']=sign(_grant_payload(value,authenticate(payload['manifest'],authority)))
     result=copy.deepcopy(payload);result[FIELD]=sign(value)
     envelope=sign(result);validate(envelope,authority,now=payload['created_at'])
@@ -317,9 +390,12 @@ RELEASE_FIELDS = frozenset(('version','method','original_source_bundle_sha256',
 def release(authorization,authority,*,now=None):
     value=authenticate(authorization,authority)
     initial_capable = value.get('version') == GENESIS_RELEASE
-    if (set(value)!=(RELEASE_FIELDS | {'genesis_document'} if initial_capable else RELEASE_FIELDS)
-            or value['version']!=(GENESIS_RELEASE if initial_capable else RELEASE_VERSION)
-            or value['method']!=(GENESIS_METHOD if initial_capable else METHOD) or value['training_policy']!=POLICY
+    objective_release = value.get('version') == OBJECTIVE_RELEASE
+    expected_fields=(RELEASE_FIELDS | {'genesis_document'} if initial_capable else
+                     RELEASE_FIELDS | {'training_objective','training_horizon'} if objective_release else RELEASE_FIELDS)
+    if (set(value)!=expected_fields
+            or value['version']!=(GENESIS_RELEASE if initial_capable else OBJECTIVE_RELEASE if objective_release else RELEASE_VERSION)
+            or value['method']!=(GENESIS_METHOD if initial_capable else OBJECTIVE_METHOD if objective_release else METHOD) or value['training_policy']!=POLICY
             or value['training_input_policy']!=INPUT_POLICY):
         raise ValueError('exact approved training execution release')
     _sources(value);_qualification(value,authority)
@@ -380,14 +456,22 @@ def derive_preparation(release_envelope,job,public_envelope,native_documents,aut
         raise ValueError('release requires current authenticated retained parent and unchanged genesis/hyperparameters')
     scope=preparation_scope(public_envelope,job['manifest'],job['submissions'],native_documents,authority)
     # All static source/qualification values remain those approved in the release.
-    value={key:copy.deepcopy(r[key])for key in FIELDS if key in r}
-    value.update(version=GENESIS_PREPARATION if initial else PREPARATION_VERSION,
-        method=GENESIS_METHOD if initial else METHOD,epoch=m['epoch'],**scope,
+    value={key:copy.deepcopy(r[key])for key in _fields(r) if key in r}
+    objective_release=r['version']==OBJECTIVE_RELEASE
+    value.update(version=GENESIS_PREPARATION if initial else OBJECTIVE_PREPARATION if objective_release else PREPARATION_VERSION,
+        method=GENESIS_METHOD if initial else OBJECTIVE_METHOD if objective_release else METHOD,epoch=m['epoch'],**scope,
         execution_release_sha256=sha(release_envelope),trainer_binding_sha256=sha(binding),
         parent_descriptor_sha256=None if initial else binding['parent']['descriptor_sha256'],
         optimizer_step_before=binding['global_step_before'],created_at=created_at,
         expires_at=min(r['expires_at'],created_at+86400))
-    if set(value)!=FIELDS-{'job_id','learning_rate_authorization'}:raise ValueError('complete derived epoch execution scope')
+    if objective_release:
+        from .training_policy import objective_at_step
+        value['training_objective']=objective_at_step(value['training_horizon'],binding['global_step_before'])
+        configured_objective(value)
+        if (binding['global_step_before']==value['training_horizon']['first_optimizer_step']
+                and binding['input_checkpoint']!=value['training_horizon']['initial_checkpoint']):
+            raise ValueError('objective release requires the exact qualified initial checkpoint')
+    if set(value)!=_fields(value)-{'job_id','learning_rate_authorization'}:raise ValueError('complete derived epoch execution scope')
     return value
 
 def automatic_preparation(controller,job,release_envelope):
