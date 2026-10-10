@@ -34,6 +34,35 @@ AUDIT_STATE_MAX_BYTES = 2 * 1024**3
 DEFAULT_INPUT_MAX_BYTES = 256 * 1024**2
 
 
+def canonical_fragments(value):
+    """Yield the same canonical UTF-8 bytes as the current CPython 3.12 encoder.
+
+The queue contains built-in JSON values, not custom Python object encoders.
+Do not expose partial output as an authenticated result: serialization must
+finish successfully before the caller uses a digest.
+"""
+    encoder = json.JSONEncoder(
+        sort_keys=True,
+        separators=(',', ':'),
+        allow_nan=False,
+        ensure_ascii=True,
+        check_circular=True,
+        skipkeys=False,
+    )
+    for fragment in encoder.iterencode(value):
+        yield fragment.encode('utf-8')
+
+
+def queue_view_digest(actuals, *, enabled=False):
+    """Opt-in only; otherwise delegate to the unchanged approved digest."""
+    if not enabled:
+        from subnet.continuous_audit_policy import digest
+        return digest(actuals)
+    result = hashlib.sha256()
+    for fragment in canonical_fragments(actuals):
+        result.update(fragment)
+    return result.hexdigest()
+
 def _read(path, maximum=DEFAULT_INPUT_MAX_BYTES):
     if type(maximum) is not int or maximum < 1:
         raise ValueError('positive assessment input budget')
@@ -195,7 +224,7 @@ def _load_evidence_uncached(audit_config_path, *, authority, cutoff, verifiers,
             refused.append(_issue('job', identifier, error))
     queue_path = state_root / 'roles' / 'verifier-queue.sqlite3'
     actuals = queue_rows(SimpleNamespace(path=queue_path), identifiers, complete=True)
-    hashes['original_queue_view_sha256'] = digest(actuals)
+    hashes['original_queue_view_sha256'] = queue_view_digest(actuals, enabled=True)
     if queue_path.exists():
         stat = queue_path.stat(); hashes['queue_identity'] = dict(dev=stat.st_dev, ino=stat.st_ino)
     candidates = []

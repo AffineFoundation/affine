@@ -109,6 +109,18 @@ cutoff, and EMA semantics. Each transaction is prepared once. Its final normaliz
 transaction hash, nonce and mortal validity interval are durably recorded before
 broadcast. Planning or signing failures do not create a submission fence.
 
+The evidence reader hashes the complete original queue view incrementally using
+the same sorted canonical JSON bytes. This avoids creating a second whole-view
+JSON string and UTF-8 byte buffer. Every row and column still contributes to the
+hash, including fields unused by admission; serialization must finish before an
+evidence result is returned. The complete queue mapping remains in memory, and
+an individual escaped string can still require a large allocation. Signed
+evidence, cutoff rules, penalties and the 360-second budget are unchanged.
+CPU fixtures verify digest and full evidence-result equality, but no full-writer
+runtime or peak-memory improvement has been measured. A deployment needs an
+explicitly pinned writer policy, retained historical assessments and learner
+approval of the new writer before its first assessment can be used at an opening.
+
 When a response is lost, the writer checks canonical finalized chain evidence.
 An exact successful commitment advances only its original hourly cursor, even
 if reveal is pending. An exact failed transaction clears the attempt without
