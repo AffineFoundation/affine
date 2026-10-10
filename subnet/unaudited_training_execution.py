@@ -20,6 +20,11 @@ GENESIS_METHOD = 'fp32-task-gradient-effective-lr-genesis-v1'
 GENESIS_QUALIFICATION = 'fp32-task-gradient-effective-lr-genesis-qualification-v1'
 GENESIS_PREPARATION = 'unaudited-training-execution-preparation-v3-effective-lr-genesis'
 GENESIS_RELEASE = 'unaudited-training-execution-release-v3-effective-lr-genesis'
+INTAKE_EQUIVALENCE = 'native-task-intake-source-equivalence-qualification-v1'
+INTAKE_BASE_BUNDLE = '395bd10b007adc1332c524571505b57b72fb1eea4905c255e85d64dcd5841e1c'
+INTAKE_FILES = frozenset(('subnet/backend_jobs.py', 'subnet/committed_training_inputs.py',
+    'subnet/training_receipts.py', 'subnet/training_task_representatives.py',
+    'subnet/unaudited_training_execution.py'))
 
 OBJECTIVE_VERSION = 'unaudited-training-execution-amendment-v5-objective-horizon'
 OBJECTIVE_METHOD = 'fp32-task-gradient-effective-lr-objective-horizon-v1'
@@ -66,6 +71,8 @@ SCIENTIFIC_CHANGES = frozenset(('subnet/fp32_gradient_accumulation.py',
 OPERATIONAL_CHANGES = frozenset(('subnet/unaudited_training_execution.py',
     'subnet/backend_jobs.py', 'subnet/remote_backend.py',
     'subnet/persistent_training_controller.py'))
+REPRESENTATIVE_CHANGES = frozenset(('subnet/training_task_representatives.py',
+    'subnet/committed_training_inputs.py','subnet/training_receipts.py'))
 FIELDS = frozenset(('version','method','epoch','job_id','original_signed_manifest_sha256',
     'original_public_manifest_sha256','original_source_bundle_sha256',
     'training_source_bundle','original_source_files','execution_source_files',
@@ -120,9 +127,15 @@ def _sources(value):
     changed={name:hashed for name,hashed in after.items()if before.get(name)!=hashed}
     objective=configured_objective(value)
     extra={'subnet/persistent_training_evidence.py','subnet/training_policy.py'} if objective is not None else set()
+    representative = 'subnet/training_task_representatives.py' in after
+    additions = REPRESENTATIVE_CHANGES if representative else frozenset()
+    if representative and objective is not None:
+        raise ValueError('representative intake and objective releases require separate reviewed composition')
+    if representative and not REPRESENTATIVE_CHANGES <= set(changed):
+        raise ValueError('complete explicit representative collection/preparation source delta')
     if (changed!=value['changed_source_files'] or not SCIENTIFIC_CHANGES<=set(changed)
             or objective is not None and not extra<=set(changed)
-            or set(changed)-SCIENTIFIC_CHANGES-OPERATIONAL_CHANGES-extra):
+            or set(changed)-SCIENTIFIC_CHANGES-OPERATIONAL_CHANGES-extra-additions):
         raise ValueError('only approved FP32 accumulation and explicit routing source delta')
     bundle=value['training_source_bundle']
     if (not isinstance(bundle,dict) or bundle.get('sha256')==value['original_source_bundle_sha256']):
@@ -132,6 +145,8 @@ def _sources(value):
 def _qualification(value,authority):
     _learning_rate(value)
     q=authenticate(value['execution_qualification'],authority)
+    if q.get('version') == INTAKE_EQUIVALENCE:
+        return _intake_equivalence(value,q,authority)
     fields={'version','method','execution_source_bundle_sha256','execution_source_files_sha256',
         'runtime_versions','training_runtime_sha256','actual_GPU_execution','passed',
         'report_sha256','optimizer_reset','objective_changed','hyperparameters_changed',
@@ -184,6 +199,65 @@ def _qualification(value,authority):
         raise ValueError('new execution requires its own authenticated GPU qualification')
     digest(q['report_sha256'])
 
+def _intake_equivalence(value,q,authority):
+    """Reuse real GPU mechanics evidence only for an explicit intake-only delta.
+
+    This is not GPU qualification of the new bundle. A separate ROOT attestation
+    binds exact source-equivalence and installed CPU controls; original actual GPU
+    evidence remains unchanged and independently authenticated. New optimizer,
+    model, gradient, state, objective or publication code cannot use this route.
+    """
+    fields={'version','method','execution_source_bundle_sha256','execution_source_files_sha256',
+        'runtime_versions','training_runtime_sha256','actual_GPU_execution','passed',
+        'optimizer_reset','objective_changed','hyperparameters_changed','effective_learning_rate',
+        'base_hyperparameters_sha256','state_version','qualified_predecessor_release','equivalence_evidence'}
+    if (set(q)!=fields or q['method']!=METHOD or value['method']!=METHOD
+            or q['actual_GPU_execution'] is not False or q['passed'] is not True
+            or any(q[k] is not False for k in ('optimizer_reset','objective_changed','hyperparameters_changed'))
+            or q['execution_source_bundle_sha256']!=value['training_source_bundle']['sha256']
+            or q['execution_source_files_sha256']!=sha(value['execution_source_files'])
+            or q['runtime_versions']!=value['runtime_versions']
+            or q['training_runtime_sha256']!=value['training_runtime_sha256']
+            or q['effective_learning_rate']!=value['effective_learning_rate']
+            or q['base_hyperparameters_sha256']!=_base_hyperparameters_sha256()
+            or q['state_version']!='persistent-fp32-trainer-state-v2-effective-lr'):
+        raise ValueError('explicit honest retained-state intake-equivalence qualification')
+    previous=authenticate(q['qualified_predecessor_release'],authority)
+    # Calling the existing release validator preserves all original actual GPU
+    # checks. Nested equivalence or NLL qualifications are explicitly forbidden.
+    oldq=authenticate(previous.get('execution_qualification'),authority)
+    if (oldq.get('version') not in (QUALIFICATION,GENESIS_QUALIFICATION)
+            or previous.get('training_source_bundle',{}).get('sha256')!=INTAKE_BASE_BUNDLE):
+        raise ValueError('original actual GPU-qualified 395bd predecessor required')
+    release(q['qualified_predecessor_release'],authority)
+    for field in ('method','runtime_versions','training_runtime_sha256','training_policy',
+                  'training_input_policy','effective_learning_rate','original_source_files',
+                  'original_source_bundle_sha256'):
+        if value.get(field)!=previous.get(field):
+            raise ValueError('intake equivalence cannot change original model/runtime/training contract')
+    before=previous['execution_source_files'];after=value['execution_source_files']
+    changed={name:h for name,h in after.items() if before.get(name)!=h}
+    if (len(before)!=185 or len(after)!=186
+            or set(after)!=set(before)|{'subnet/training_task_representatives.py'}
+            or set(changed)!=INTAKE_FILES):
+        raise ValueError('only exact five-file metadata/native-intake delta; all math/state/publication files identical')
+    evidence=authenticate(q['equivalence_evidence'],authority)
+    expected={'version','previous_release_sha256','previous_source_files_sha256','source_files_sha256',
+        'changed_files','all_other_scientific_files_byte_identical','actual_GPU_execution',
+        'installed_native_child','identical_input_emission','original_integration_review'}
+    if (set(evidence)!=expected or evidence['version']!='native-task-intake-source-equivalence-evidence-v1'
+            or evidence['previous_release_sha256']!=sha(q['qualified_predecessor_release'])
+            or evidence['previous_source_files_sha256']!=sha(before)
+            or evidence['source_files_sha256']!=sha(after) or evidence['changed_files']!=changed
+            or evidence['all_other_scientific_files_byte_identical'] is not True
+            or evidence['actual_GPU_execution'] is not False):
+        raise ValueError('exact separately authenticated intake-equivalence evidence')
+    for name in ('installed_native_child','identical_input_emission','original_integration_review'):
+        row=evidence[name]
+        if type(row) is not dict or set(row)!={'sha256','passed'} or row['passed'] is not True:
+            raise ValueError('passed exact installed/parity/selection evidence required')
+        digest(row['sha256'])
+
 def validate(job_envelope,authority,*,now=None):
     """Authenticate before using the execution bundle, even for source staging."""
     job=authenticate(job_envelope,authority)
@@ -207,6 +281,8 @@ def validate(job_envelope,authority,*,now=None):
     if len(__import__('json').dumps(job[FIELD],sort_keys=True,separators=(',',':')).encode())>DECLARATION_MAX_BYTES:
         raise ValueError('compact execution declaration budget')
     _sources(value);_qualification(value,authority)
+    if ('subnet/training_task_representatives.py' in value['execution_source_files']) != ('training_representative_policy' in manifest):
+        raise ValueError('representative execution source requires explicit original signed policy')
     binding=validate_binding(manifest.get('trainer_state_binding'),manifest)
     parent=binding['parent']
     initial = value['version'] == GENESIS_VERSION
@@ -241,7 +317,11 @@ def validate(job_envelope,authority,*,now=None):
             or native.get('sampling_assurance')!='unaudited'
             or any(native.get(k)is not False for k in ('proof_verification_performed','claims_rewritten','cheating_penalties'))):
         raise ValueError('original native subset remains unaudited and unmodified')
-    for key in ('context_sha256','grades_sha256','subset_sha256','authorization_sha256'):digest(native.get(key))
+    if 'training_representative_policy' in manifest:
+        from .training_task_representatives import validate_receipt
+        validate_receipt(native)
+    else:
+        for key in ('context_sha256','grades_sha256','subset_sha256','authorization_sha256'):digest(native.get(key))
     submissions=job.get('submissions')
     if not isinstance(submissions,list) or not 1<=len(submissions)<=training_document_cap(manifest):
         raise ValueError('bounded original native-selected inputs')
@@ -259,6 +339,9 @@ def validate(job_envelope,authority,*,now=None):
 
 def preparation_scope(public_envelope,native_envelope,submissions,native_documents,authority):
     """Coordinator-only gate before signing a prospective execution declaration."""
+    if 'training_representative_policy' in authenticate(native_envelope,authority):
+        from .training_task_representatives import preparation_scope as representative_scope
+        return representative_scope(public_envelope,native_envelope,submissions,native_documents,authority)
     public=authenticate(public_envelope,authority);native=authenticate(native_envelope,authority)
     _unchanged_manifest(native)
     if (computation_binding(public)!=computation_binding(native)
@@ -491,7 +574,11 @@ def automatic_preparation(controller,job,release_envelope):
         if len(data)>maximum:raise ValueError('bounded original signed eligibility file')
         return json.loads(data)
     public=read(state/(epoch+'-first-signed-manifest.json'))
-    documents={name:read(native/(name+'.ROOT-SIGNED.json'))for name in('context','grades','subset')}
+    if 'training_representative_policy' in manifest:
+        from ops.native_task_representative_selection import read_documents
+        documents=read_documents(native)
+    else:
+        documents={name:read(native/(name+'.ROOT-SIGNED.json'))for name in('context','grades','subset')}
     directory=state/'roles'/'execution-preparations';directory.mkdir(parents=True,exist_ok=True,mode=0o700)
     if directory.is_symlink()or directory.resolve()!=directory:raise ValueError('canonical private preparation journal')
     path=directory/(epoch+'.ROOT-SIGNED.json')

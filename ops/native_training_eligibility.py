@@ -153,6 +153,9 @@ class NativeEligibilitySelector:
         self.tokenizer_root=tokenizer_root;self.interpreter=interpreter
 
     def select(self,manifest,submissions):
+        if 'training_representative_policy' in manifest:
+            from .native_task_representative_selection import select
+            return select(self,manifest,submissions)
         from subnet.distributed_roles import authenticate
         from subnet.committed_training_inputs import coverage_manifest
         from subnet.training_receipts import computation_binding
@@ -269,7 +272,8 @@ class FutureNativeEligibilitySelector(NativeEligibilitySelector):
         if match is None:raise ValueError('native eligibility epoch contract prefix')
         if int(match[2])<self.boundary['earliest_round']:return False
         state=Path(self.controller.state)
-        if (state/'roles'/(epoch+'-train.json')).exists() and not (state/'native-outcome-eligibility'/epoch/'subset.ROOT-SIGNED.json').exists():
+        result_name='result.ROOT-SIGNED.json' if 'training_representative_policy' in manifest else 'subset.ROOT-SIGNED.json'
+        if (state/'roles'/(epoch+'-train.json')).exists() and not (state/'native-outcome-eligibility'/epoch/result_name).exists():
             return False
         if (manifest.get('source_bundle',{}).get('sha256')!=self.policy['source_sha256'] or
             any(manifest.get(k)!=v for k,v in self.boundary['contract_fields'].items()) or

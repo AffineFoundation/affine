@@ -163,6 +163,10 @@ def coverage_manifest(manifest,submissions,*,seed,captured_at):
 
 def validate_job(job,manifest,authority):
     execution_manifest=manifest
+    if 'training_representative_policy' in manifest:
+        from .training_task_representatives import _policy, validate_receipt
+        _policy(manifest)
+        validate_receipt(manifest.get('native_training_eligibility_receipt'))
     from . import training_startup_recovery as recovery
     if recovery.FIELD in manifest:
         recovery.validate(job,manifest,authority)
@@ -387,8 +391,15 @@ def collect(controller,manifest,*,round_number=None):
     import secrets,time
     from .remote_backend import save
     if not selected(manifest):raise ValueError('explicit learner collection policy')
+    representatives = manifest.get('training_representative_policy') is not None
+    if representatives:
+        from .training_task_representatives import _policy, resume_collection
+        _policy(manifest)
+        restored = resume_collection(controller, manifest)
+        if restored is not None:return restored
     path=controller.state/(manifest['epoch']+'-learner-population.json')
     if path.exists():
+        if representatives:raise ValueError('representative population lacks atomic structural-pool transaction')
         value=_decode(canonical(__import__('json').loads(path.read_bytes())))
         from .training_receipts import computation_binding
         if value['manifest'].get('learner_blacklist_selection_policy')!=manifest.get('learner_blacklist_selection_policy'):raise ValueError('saved learner blacklist policy context')
@@ -425,6 +436,11 @@ def collect(controller,manifest,*,round_number=None):
             validate_admission(obj['learner_admission'],obj,manifest,controller.authority.id)
             entries.append((miner,child,obj,row))
     timings['metadata_seconds']=time.monotonic()-metadata_started;reads_started=time.monotonic()
+    if representatives:
+        limits=manifest['training_representative_policy']
+        if (len(entries)>limits['max_candidate_documents'] or
+                sum(obj['size'] for _,_,obj,_ in entries)>limits['max_total_input_bytes']):
+            raise ValueError('representative captured raw input budget before downloads')
     for (_,child,obj,row),data,elapsed in bounded_document_reads(controller.bucket,entries):
         timings['read_seconds_sum']+=elapsed;decode_started=time.monotonic()
         import tempfile
@@ -464,7 +480,11 @@ def collect(controller,manifest,*,round_number=None):
     training_manifest=coverage_manifest(manifest,submissions,seed=selection['seed'],captured_at=selection['captured_at'])
     if 'blacklist_selection'in selection:training_manifest['learner_blacklist_selection_snapshot']=selection['blacklist_selection']
     value=dict(version=VERSION,manifest=training_manifest,submissions=submissions,population=population)
-    publication_started=time.monotonic();save(path,value)
+    publication_started=time.monotonic()
+    if representatives:
+        from .training_task_representatives import save_collection
+        return save_collection(controller,manifest,[obj for _,obj,_ in candidates],receipts,value)
+    save(path,value)
     controller.bucket.json('public/'+manifest['epoch']+'/learner-population.json',controller.signed(population))
     timings.update(publication_seconds=time.monotonic()-publication_started,total_seconds=time.monotonic()-started,
         document_count=len(entries),eligible_count=len(eligible),training_count=len(submissions))

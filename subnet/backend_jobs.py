@@ -1000,6 +1000,9 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
         publication_files+=('subnet/trainer_local_state.py',)
     recovery_files=('subnet/training_startup_recovery.py',)if manifest.get('training_startup_recovery')is not None else ()
     learner_files=('subnet/committed_training_inputs.py',)if manifest.get('training_input_policy')=='committed-unaudited-training-v1'else ()
+    if 'training_representative_policy' in manifest:
+        if 'subnet/training_task_representatives.py' not in job['source_files']:raise ValueError('representative helper exact source pin required')
+        learner_files+=('subnet/training_task_representatives.py',)
     if learner_files and job['role']=='train'and native_math_prompt_enabled(job,manifest):learner_files+=('subnet/native_math_prompt.py',)
     compact_files=('subnet/compact_training_inputs.py',) if (manifest.get('training_input_policy') == 'authenticated-verifier-compact-inputs-v2') else ()
     if job.get('training_policy')==PERSISTENT_POLICY:

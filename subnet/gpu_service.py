@@ -124,6 +124,10 @@ def contract(config,round_number):
         from .training_receipts import POLICIES
         if epoch_policy(config) not in POLICIES:raise ValueError('receipt input requires covered/persistent objective')
         result['training_input_policy']=config['training_input_policy']
+    if 'training_representative_policy' in config:
+        from .training_task_representatives import _policy
+        if config.get('training_input_policy')!='committed-unaudited-training-v1':raise ValueError('representative selection requires committed training')
+        result['training_representative_policy']=copy.deepcopy(_policy(config))
     if 'learner_blacklist_selection_policy' in config:
         if config.get('training_input_policy')!='committed-unaudited-training-v1':raise ValueError('training blacklist requires committed learner policy')
         result['learner_blacklist_selection_policy']=copy.deepcopy(config['learner_blacklist_selection_policy'])
@@ -401,7 +405,7 @@ def run(config,once=False):
                     evaluate(controller,manifest,status['checkpoint_path'],'before',status['training_steps'],config)
                 transition_phase(active,'train');save(statuspath,status)
             if active['phase']=='train':
-                if (bool(learner['submissions']) if unaudited else any(r['accepted'] for r in reports.values())):
+                if ((bool(learner['submissions']) or 'training_representative_policy' in manifest) if unaudited else any(r['accepted'] for r in reports.values())):
                     replay=None;steps=config.get('training_steps',1)
                     if unaudited and config.get('balanced_replay'):raise ValueError('unaudited historical replay requires separate admission')
                     if config.get('balanced_replay'):

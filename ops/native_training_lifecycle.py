@@ -89,6 +89,9 @@ def original_receipts(controller,epoch):
 
 def close_no_update(controller,error,manifest,status):
     """Return unchanged parent to the existing after/completion path, never train."""
+    if 'training_representative_policy' in manifest:
+        from .native_task_representative_lifecycle import close_no_update as close
+        return close(controller,error,manifest,status)
     if not isinstance(error,NativeNoUpdate):raise error
     root,envelopes,context,grades,subset,accepted=original_receipts(controller,manifest['epoch'])
     if accepted or subset['disposition']!='no_update':raise ValueError('native no-update requires exact empty authenticated subset')
@@ -162,6 +165,9 @@ def _immutable_archive(controller,key,data):
 
 def retire_completed(controller,epoch,*,max_documents=32):
     """Resumable bounded full-readback ACK, then guarded derived-copy unlink."""
+    if (directory(controller,epoch)/'pool.ROOT-SIGNED.json').exists():
+        from .native_task_representative_lifecycle import retire_completed as retire
+        return retire(controller,epoch,max_documents=max_documents)
     from subnet.distributed_roles import authenticate
     import fcntl
     if type(max_documents)is not int or not 1<=max_documents<=32:raise ValueError('bounded native retirement GET work')

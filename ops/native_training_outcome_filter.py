@@ -135,8 +135,9 @@ def validate_limits(policy, *, manifest=None):
     if policy['max_pairs']=='manifest':
         if policy['version']!=MULTI_VERSION or manifest is None:
             raise ValueError('manifest pair budget requires signed multi-rollout context')
-        policy['max_pairs']=256*document_pair_quota(manifest)
-    for key, low, high in (('workers',1,4),('max_pairs',1,16384 if policy['version']==MULTI_VERSION else 512 if policy['version']==K2L2_VERSION else 256),('per_grade_seconds',1,60),
+        from subnet.committed_training_inputs import training_document_cap
+        policy['max_pairs']=training_document_cap(manifest)*document_pair_quota(manifest)
+    for key, low, high in (('workers',1,16),('max_pairs',1,16384 if policy['version']==MULTI_VERSION else 512 if policy['version']==K2L2_VERSION else 256),('per_grade_seconds',1,60),
                            ('wall_seconds',1,600),('max_reply_bytes',1,262144)):
         if type(policy[key]) is not int or not low <= policy[key] <= high:
             raise ValueError('bounded native filter ' + key)
@@ -287,8 +288,8 @@ def _filter_bound_documents(document_paths,policy,job,manifest,authority,source_
     source_root=Path(source_root)
     # No source-root imports from arbitrary supplied paths. Operator startup
     # must already be running the approved source loader, checked here.
-    from subnet.committed_training_inputs import admitted_submission
-    if len(document_paths)!=len(job['submissions']) or len(document_paths)>256:
+    from subnet.committed_training_inputs import admitted_submission, training_document_cap
+    if len(document_paths)!=len(job['submissions']) or len(document_paths)>training_document_cap(manifest):
         raise ValueError('exact original committed document paths')
     limits=validate_limits(policy['limits'],manifest=manifest)
     if limits['version']==K2L2_VERSION and (type(manifest.get('K'))is not int or type(manifest.get('L'))is not int or manifest['K']!=2 or manifest['L']!=2):

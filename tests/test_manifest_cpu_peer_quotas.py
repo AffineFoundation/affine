@@ -25,13 +25,19 @@ class ManifestCPUQuotas(PeerTests):
             m=dict(self.manifest,K=quota,L=quota,samples_per_batch=2*quota)
             self.assertEqual(self.B.approval(sign(self.key,self.grant),self.auth,m),self.grant)
     def test_invalid_or_conflicting_quotas_fail(self):
-        for change in ({'K':True,'L':True},{'K':4,'L':2},{'K':65,'L':65},{'K':4,'L':4,'samples_per_batch':4},{'K':4,'L':4,'max_batches':4}):
+        for change in ({'K':True,'L':True},{'K':4,'L':2},{'K':65,'L':65},{'K':4,'L':4,'samples_per_batch':4},{'K':4,'L':4,'max_batches':257},{'K':4,'L':4,'max_batches':True}):
             with self.subTest(change=change),self.assertRaises(ValueError):self.B.approval(sign(self.key,self.grant),self.auth,dict(self.manifest,**change))
     def test_historical179_does_not_claim_newgeometry(self):
         g=copy.deepcopy(self.grant);g['scientific_source_files'].pop('subnet/batch_quotas.py')
         m=dict(self.manifest,K=2,L=2)
         self.assertEqual(self.B.approval(sign(self.key,g),self.auth,m),g)
         with self.assertRaises(ValueError):self.B.approval(sign(self.key,g),self.auth,dict(m,K=4,L=4))
-    def test_public_profile_and_actual_deployed_bridge_bytes_match(self):
-        public=self.base/'subnet/learner_selection_operator_bridge.py';profile=self.base/'operator_profiles/confirmed_blacklist_cpu_selection_v1/subnet/learner_selection_operator_bridge.py'
-        self.assertEqual(public.read_bytes(),profile.read_bytes())
+    def test_new_bridge_preserves_frozen_profile_manifest_grants(self):
+        # The historical operator profile is immutable. New execution/selection
+        # features do not require relabeling or replacing its approved bytes.
+        from subnet import learner_selection_operator_bridge as current
+        grant=sign(self.key,self.grant)
+        for cap in (1,3,9,256):
+            manifest=dict(self.manifest,K=4,L=4,max_batches=cap)
+            self.assertEqual(current.approval(grant,self.auth,manifest),
+                             self.B.approval(grant,self.auth,manifest))

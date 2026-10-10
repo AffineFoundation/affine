@@ -60,6 +60,10 @@ def computation_binding(manifest):
         from .trainer_local_state import original_manifest
         manifest=original_manifest(manifest)
     result = {key:copy.deepcopy(manifest[key]) for key in COMPUTATION_FIELDS if key in manifest}
+    if 'training_representative_policy' in manifest:
+        from .training_task_representatives import _policy
+        _policy(manifest)
+        result['training_representative_policy']=copy.deepcopy(manifest['training_representative_policy'])
     result['checkpoint'].pop('read_urls', None)
     return result
 

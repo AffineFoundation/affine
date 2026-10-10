@@ -4,7 +4,7 @@ Only ROOT-approved operator bytes may interpret enriched selection bindings.
 No forward, sampler, grader, optimizer, job dispatch, storage mutation or signing
 key reads. Signing is an injected existing-coordinator operation.
 """
-import copy, hashlib, json, os, stat
+import copy, hashlib, json, os, stat, math
 from pathlib import Path
 from .training_receipts import authenticate, sha
 from .learner_blacklist_selection import FIELD, admit, partition
@@ -13,6 +13,9 @@ FIELD_ADMISSION='learner_selection_operator_admission'
 VERSION='cpu-selection-peer-admission-v1'
 AUTH_VERSION='cpu-selection-peer-authorization-v1'
 K2L2_AUTH_VERSION='cpu-selection-peer-miner-bound-authorization-v2'
+FP32_AUTH_VERSION='cpu-selection-peer-fp32-training-execution-authorization-v5'
+LR_AUTH_VERSION='cpu-selection-peer-effective-lr-training-execution-authorization-v6'
+GENESIS_LR_AUTH_VERSION='cpu-selection-peer-effective-lr-genesis-training-execution-authorization-v7'
 FILES={'subnet/learner_selection_operator_bridge.py','subnet/learner_blacklist_selection.py',
        'subnet/committed_training_inputs.py','subnet/training_receipts.py'}
 
@@ -24,7 +27,9 @@ def approval(document,authority,manifest):
     fields={'version','source_sha256','scientific_source_files','operator_files','minimum_round','epoch_prefix','peer_entry_sha256','peer_runner_sha256','backend_execution_allowed'}
     miner_bound=manifest.get('sampling_contract',{}).get('version')=='forced-inverse-cdf-prefill-miner-bound-v5'
     expected_version=K2L2_AUTH_VERSION if miner_bound else AUTH_VERSION
-    completed=p.get('version')=='cpu-selection-peer-completed-math-local-trainer-authorization-v4'
+    fp32=p.get('version') in (FP32_AUTH_VERSION, LR_AUTH_VERSION, GENESIS_LR_AUTH_VERSION)
+    effective_lr=p.get('version') in (LR_AUTH_VERSION, GENESIS_LR_AUTH_VERSION)
+    completed=p.get('version')=='cpu-selection-peer-completed-math-local-trainer-authorization-v4' or fp32
     local_trainer=p.get('version')=='cpu-selection-peer-local-trainer-authorization-v3' or completed
     expected_members=179 if miner_bound else 177
     if miner_bound:
@@ -49,9 +54,26 @@ def approval(document,authority,manifest):
             if not enabled(rows[0]['spec']):raise ValueError('completed-math marker required')
             if 'subnet/math_completion.py'not in p['scientific_source_files']:raise ValueError('completed-math helper closure')
             expected_version='cpu-selection-peer-completed-math-local-trainer-authorization-v4';expected_members=182
+            if fp32:
+                if not {'subnet/fp32_gradient_accumulation.py','subnet/unaudited_training_execution.py'}<=set(p['scientific_source_files']):raise ValueError('explicit FP32 execution dependency closure')
+                expected_version=FP32_AUTH_VERSION;expected_members=184
+                if effective_lr:
+                    if 'subnet/learning_rate_transition.py'not in p['scientific_source_files']:
+                        raise ValueError('explicit effective-LR state dependency closure')
+                    expected_version=GENESIS_LR_AUTH_VERSION if p.get('version')==GENESIS_LR_AUTH_VERSION else LR_AUTH_VERSION;expected_members=185
+    expected_operator_files=FILES
+    if 'subnet/training_task_representatives.py' in p.get('scientific_source_files',{}):
+        from .training_task_representatives import _policy
+        if not effective_lr or _policy(manifest) is None:raise ValueError('explicit representative peer policy/source')
+        expected_members+=1
+        expected_operator_files=FILES|{'subnet/training_task_representatives.py'}
+        if p.get('operator_files',{}).get('subnet/training_task_representatives.py')!=p['scientific_source_files']['subnet/training_task_representatives.py']:
+            raise ValueError('same authenticated representative parser before scientific namespace')
+    elif 'training_representative_policy' in manifest:
+        raise ValueError('representative manifest requires qualified representative source')
     if (set(p)!=fields or p['version']!=expected_version or p['source_sha256']!=manifest['source_bundle']['sha256']or
         type(p['scientific_source_files'])is not dict or len(p['scientific_source_files'])!=expected_members or
-        set(p['operator_files'])!=FILES or type(p['minimum_round'])is not int or p['minimum_round']<0 or
+        set(p['operator_files'])!=expected_operator_files or type(p['minimum_round'])is not int or p['minimum_round']<0 or
         type(p['epoch_prefix'])is not str or not p['epoch_prefix']or not manifest['epoch'].startswith(p['epoch_prefix'])):
         raise ValueError('exact ROOT CPU peer authorization/scientific source')
     from .training_receipts import digest
@@ -82,12 +104,84 @@ def make_admission(job,manifest,authorization_document,authority,sign):
         scientific_source_files_sha256=sha(job['source_files']),operator_files_sha256=sha(p['operator_files']))
     return dict(job,**{FIELD_ADMISSION:sign(payload)})
 
+def validate_execution_scope(job,manifest,p,authority):
+    """Alias-namespace gate only; candidate backend validates full qualification.
+
+    Avoid importing execution helpers before the peer installs the fresh subnet
+    namespace. The independently signed declaration must nevertheless bind the
+    exact original input manifest, selected records, parent, and execution map.
+    """
+    if p['version']not in (FP32_AUTH_VERSION, LR_AUTH_VERSION, GENESIS_LR_AUTH_VERSION):
+        if 'unaudited_training_execution' in job:raise ValueError('execution amendment requires explicit FP32 peer')
+        return None
+    value=authenticate(job.get('unaudited_training_execution'),authority)
+    from .committed_training_inputs import receipt_inventory
+    binding=manifest.get('trainer_state_binding',{});parent=binding.get('parent')or{}
+    effective_lr=p['version'] in (LR_AUTH_VERSION, GENESIS_LR_AUTH_VERSION)
+    initial=p['version']==GENESIS_LR_AUTH_VERSION and binding.get('genesis') is not None
+    version=('unaudited-training-execution-amendment-v3-effective-lr-genesis' if initial else
+        'unaudited-training-execution-amendment-v2-effective-lr' if effective_lr else 'unaudited-training-execution-amendment-v1')
+    method=('fp32-task-gradient-effective-lr-genesis-v1' if initial else
+        'fp32-task-gradient-effective-lr-v1' if effective_lr else 'fp32-task-gradient-accumulation-v1')
+    expected=dict(version=version,method=method,job_id=job.get('job_id'),epoch=manifest['epoch'],
+        original_signed_manifest_sha256=sha(job['manifest']),
+        original_source_bundle_sha256=manifest['source_bundle']['sha256'],
+        execution_source_files=p['scientific_source_files'],runtime_versions=job.get('runtime_versions'),
+        training_policy=job.get('training_policy'),training_input_policy=job.get('training_input_policy'),
+        steps=job.get('steps'),input_inventory_sha256=sha(receipt_inventory(job['submissions'])),
+        native_eligibility_receipt=manifest.get('native_training_eligibility_receipt'),
+        trainer_binding_sha256=sha(binding),parent_descriptor_sha256=parent.get('descriptor_sha256'),
+        genesis_sha256=binding.get('genesis_sha256'),optimizer_step_before=binding.get('global_step_before'))
+    if any(value.get(k)!=v for k,v in expected.items()):
+        raise ValueError('signed FP32 peer exact input/execution/parent scope')
+    if initial:
+        if parent or type(binding.get('global_step_before'))is not int or binding['global_step_before']!=0:
+            raise ValueError('explicit initial LR peer requires no parent and counter zero')
+    elif not parent or binding.get('genesis')is not None:
+        raise ValueError('signed FP32 peer exact existing parent scope')
+    if effective_lr:
+        grant=authenticate(value.get('learning_rate_authorization'),authority)
+        fields={'version','epoch','job_id','input_checkpoint','parent_descriptor_sha256',
+            'genesis_sha256','optimizer_step_before','steps','parameters_sha256',
+            'base_hyperparameters_sha256','effective_learning_rate','created_at','expires_at',
+            'execution_release_sha256'}
+        if initial:fields.add('run_id')
+        expected_lr=dict(version='persistent-adamw-effective-learning-rate-genesis-v1' if initial else 'persistent-adamw-effective-learning-rate-v1',
+            epoch=manifest['epoch'],job_id=job.get('job_id'),input_checkpoint=manifest['checkpoint']['id'],
+            parent_descriptor_sha256=parent.get('descriptor_sha256'),genesis_sha256=binding.get('genesis_sha256'),
+            optimizer_step_before=binding.get('global_step_before'),steps=job.get('steps'),
+            parameters_sha256=binding.get('parameters_sha256'),base_hyperparameters_sha256=sha(binding.get('hyperparameters')),
+            execution_release_sha256=value.get('execution_release_sha256'))
+        if set(grant)!=fields or any(grant.get(k)!=v for k,v in expected_lr.items()):
+            raise ValueError('signed effective-LR peer job/parent/release scope')
+        if type(grant['optimizer_step_before'])is not int or type(grant['steps'])is not int:
+            raise ValueError('signed effective-LR peer counters must be integers')
+        rate=grant['effective_learning_rate'];created=grant['created_at'];expires=grant['expires_at']
+        if (type(rate)not in(int,float)or not math.isfinite(rate)or not 0<rate<=binding['hyperparameters']['lr']or
+            any(type(x)not in(int,float)or not math.isfinite(x)for x in(created,expires))or not 0<=created<expires):
+            raise ValueError('finite bounded effective-LR peer authorization')
+        from .training_receipts import digest
+        digest(grant['execution_release_sha256'])
+        if initial:
+            digest(grant['run_id'])
+            document=dict(version='explicit-fp32-master-genesis-v2-effective-lr',policy=binding['policy'],
+                hyperparameters=binding['hyperparameters'],parameters_sha256=binding['parameters_sha256'],
+                input_checkpoint=manifest['checkpoint']['id'],explicit_optimizer_genesis=True,
+                run_id=grant['run_id'],initial_effective_learning_rate=rate)
+            if binding['genesis']!=document or sha(document)!=binding['genesis_sha256']:
+                raise ValueError('explicit LR peer unique run/rate/genesis identity')
+        elif p['version']==GENESIS_LR_AUTH_VERSION and grant['optimizer_step_before']<1:
+            raise ValueError('LR peer continuation must preserve an existing state')
+    return value
+
+
 def _context(job,manifest,p,authority):
     if (job.get('role')!='train'or job.get('source_files')!=p['scientific_source_files']or
         authenticate(job['manifest'],authority)!=manifest or
         type(manifest.get('learner_blacklist_selection_round'))is not int or
         manifest['learner_blacklist_selection_round']<p['minimum_round']):
         raise ValueError('original signed manifest/round/remote177 job binding')
+    validate_execution_scope(job,manifest,p,authority)
     # Explicit CPU interpretation uses enriched fields, never the old projection.
     from .committed_training_inputs import receipt_inventory
     coverage=manifest.get('training_coverage',{})
@@ -161,5 +255,5 @@ def admit_peer(job_document,authority,*,operator_root,scientific_root):
         original_manifest_sha256=sha(manifest),admission_sha256=sha(job[FIELD_ADMISSION]),
         enriched_computation_binding_sha256=a['computation_binding_sha256'],
         operator_files=p['operator_files'],scientific_source_files_sha256=sha(job['source_files']),
-        scientific_source_unchanged=True,model_loaded=False,proof_reverification=False,
+        scientific_source_unchanged=p['version']not in(FP32_AUTH_VERSION,LR_AUTH_VERSION,GENESIS_LR_AUTH_VERSION),model_loaded=False,proof_reverification=False,
         scientific_operation_started=False)

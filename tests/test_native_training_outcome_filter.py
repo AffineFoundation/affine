@@ -87,9 +87,10 @@ class NativeLabels(unittest.TestCase):
         self.run_filter(pairs,grader=grade);self.assertGreater(maximum,1);self.assertLessEqual(maximum,4)
     def test_limits_explicit_default_off_strict_types(self):
         with self.assertRaises(ValueError):validate_limits(None)
-        for k,v in [('workers',5),('max_pairs',257),('wall_seconds',601),('per_grade_seconds',True),('version','other')]:
+        for k,v in [('workers',17),('max_pairs',257),('wall_seconds',601),('per_grade_seconds',True),('version','other')]:
             policy=dict(self.policy);policy[k]=v
             with self.assertRaises(ValueError):validate_limits(policy)
+        self.assertEqual(validate_limits(dict(self.policy,workers=16))['workers'],16)
     def test_trusted_file_sha_symlink_hardlink_refusal(self):
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/'trusted';path.write_bytes(b'x');sha=hashlib.sha256(b'x').hexdigest()

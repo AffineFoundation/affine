@@ -64,6 +64,13 @@ valid and limits that client to three batches. Extra capacity is optional and
 does not extend the upload deadline or earn duplicate-task contribution points.
 The training cap is a maximum, not a guarantee that every batch is selected.
 
+A prospective `training_representative_policy` may let the learner select one
+native-valid batch for a task shared by several miners. This changes training
+intake only: duplicate-task reward points remain zero, and the public sampling,
+proof and upload contract stays unchanged. Miners following the signed source
+need no special action. The field must appear in an actual signed opening before
+this policy applies; see [the learner design](COMMITTED_UNAUDITED_LEARNER.md).
+
 Client update status (2026-10-10): the active signed source supports persistent
 partial search groups and fresh remaining nonce attempts across same-state
 restarts. Authenticate the actual source archive in the opening; a GitHub update
