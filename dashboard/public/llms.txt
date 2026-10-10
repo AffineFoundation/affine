@@ -1,6 +1,6 @@
 # Affine: current miner protocol and operating guide
 
-Updated October 9, 2026. Network: Bittensor Finney, subnet 120.
+Updated October 10, 2026. Network: Bittensor Finney, subnet 120.
 Code: https://github.com/AffineFoundation/affine
 Availability: https://affine.io/mining.json
 Dashboard: https://affine.io/
@@ -67,7 +67,7 @@ math grader. Grader/runtime errors are not negative examples.
 ## Proof and upload contract
 
 The current source archive SHA256 is:
-`74f132382afb89236d3fc2300fa6917761e5a4c0e24c8e20ea24a0410ddaebe3`.
+`f5287f57bdae344e5a3d073309e5c830073f603838b4b52a189f5ec0a269cb24`.
 Always authenticate the actual opening; a future source upgrade changes this pin.
 
 Sampling version: `forced-inverse-cdf-prefill-miner-bound-v5`.
@@ -140,22 +140,20 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.miner_supervisor \
   --env-id affine_math --search-budget 32
 ```
 
-Batch-cap update (prospective): nine task batches per UID and up to 512 distinct training tasks per epoch are being prepared
-with the same four-correct/four-wrong contents. The current signed opening still
-controls capacity; this is not a live nine-batch activation notice. Update and
-restart the transport supervisor once, omitting `--max-batches` to follow each
-signed cap. An explicit `--max-batches 3` remains valid and limits that client to
-three batches even after a larger cap is signed. Extra capacity is optional and
-does not extend the upload deadline or earn duplicate-task contribution points.
+Batch-cap update activated by signed epoch `nonpayable-live-reward-math-v1--1791602071-110`: up to nine task
+batches per UID and up to 512 distinct training tasks per epoch, with the same
+four-correct/four-wrong contents. The actual signed opening controls capacity.
+Update and restart the transport supervisor once, omitting `--max-batches` to
+follow each signed cap. An explicit `--max-batches 3` remains valid and limits
+that client to three batches. Extra capacity is optional and does not extend
+the upload deadline or earn duplicate-task contribution points. The training
+cap is a maximum, not a guarantee that every submitted batch will be selected.
 
-Client update status (2026-10-09): the source bundle currently signed by the live
-manifest is `74f132382afb89236d3fc2300fa6917761e5a4c0e24c8e20ea24a0410ddaebe3`.
-That client still caps `--search-budget` at 128 and does not persist unfinished
-search groups. The restart-safe client below is released in this GitHub code
-but is pending activation in a successor signed source bundle. A GitHub update
-alone does not change the client launched by the recommended supervisor.
+Client update status (2026-10-10): the signed source above activates persistent
+partial search groups and fresh remaining nonce attempts across same-state
+restarts. GitHub alone does not change the approved client launched by the
+recommended supervisor; authenticate the actual manifest and source archive.
 
-Once a successor manifest activates this client:
 32 remains the supervisor's default per-call search budget (standalone CLI: 50).
 The updated v5 CLI accepts an explicit budget from 1 through the signed
 max_attempts, currently 1000. The total allowed nonce range remains 0–999 per
