@@ -24,7 +24,7 @@ The horizon is defined by successful optimizer counters, not elapsed epochs: the
 
 Mining continues with the same approved sampler and source, four completed correct and four completed wrong rollouts per task batch, up to nine batches per UID and up to 512 distinct training tasks per epoch. Representative intake selects at most one native-valid batch per task; duplicate-task rewards and independent proof audits retain their existing rules. Miners need no extra action for this trainer-only release and continue following the signed checkpoint and limits. Hourly weights remain independent of training.
 
-The evaluation plan compares the fixed baseline at counter 26 with the exact endpoint at counter 42 on the same two already-exposed 128-task monitoring cohorts. These cohorts are development measurements, not independent confirmation. A separate reserved 512-task cohort has been privately materialized and its reference grading checked. Historical exposure review and qualification of an original-base-versus-trained-checkpoint evaluation remain prerequisites to using it for an independent confirmation claim. Changes in the submitted task population also limit attribution to the added loss term. Activation does not establish a completed NLL update or improved held-out performance. Signed training reports, publication acknowledgments and the fixed endpoint evaluations provide those results when available.
+The evaluation plan compares the fixed baseline at counter 26 with the exact endpoint at counter 42 on the same two already-exposed 128-task monitoring cohorts. These cohorts are development measurements, not independent confirmation. Historical review found 49 questions from the former 512-task reservation in earlier MATH-500 benchmarks, so that reservation cannot support an independent confirmation claim. A replacement was selected blindly from question identities after excluding training questions, historical MATH-500, the former reservation and known private/development cohorts. It remains inactive pending complete scoped historical review, native input qualification and a separately qualified original-base-versus-fixed-endpoint evaluation. No model results were used to select the replacement. Changes in the submitted task population also limit attribution to the added loss term. Signed training reports, publication acknowledgments and the fixed endpoint evaluations provide results when available; activation alone does not demonstrate improved performance.
 
 ### Measured progress, October 10, 2026 at 12:53 UTC
 
@@ -47,8 +47,8 @@ Both fixed baseline evaluations at optimizer counter 26 have completed:
 
 All 128 tasks remain in each denominator, including unresolved responses. The
 cohorts remain separate. Endpoint 42 has not been evaluated, so these baseline
-scores and the completed update do not establish a learning gain. The reserved
-final 512-task cohort is separate from these monitoring evaluations; its
+scores and the completed update do not establish a learning gain. The prospective
+replacement 512-task cohort is separate from these monitoring evaluations; its
 confirmation prerequisites are described above. The experiment still uses its
 fixed endpoint and does not select an intermediate checkpoint based on
 monitoring results.
@@ -69,10 +69,19 @@ The coordinator now supports four concurrent document downloads and 32 native
 grading workers for new preparations, preserving the original grader and all
 training settings. Historical jobs keep their original preparation authority.
 
-At 13:41 UTC, epoch 119's original training job was running with 512 distinct
-tasks from 178 external miner identities and the same 4,096-rollout intake.
-Native selection finished in 150.735 seconds, compared with 288.861 seconds in
-epoch 118; the two current grading waves account for 96.242 seconds of that
-interval. This measures preparation on the actual submitted populations, not
-a completed training update or a full-epoch speedup. The fixed 16-update study
-still has two acknowledged updates until this job's publication and ACK finish.
+Epoch 119 completed at 14:10:27 UTC, advancing retained optimizer 28 to 29 and
+publishing checkpoint
+`258bc722147fa43997f998ab8c2ef7322eac1d28c9c8bceba79773938fddc136`.
+It trained on 512 distinct tasks from 178 external miner identities, again
+4,096 rollouts. Native selection took 150.735 seconds, compared with 288.861
+seconds in epoch 118; actual training took 1,394.616 seconds. The complete
+controller cycle took 3,521.839 seconds (58 minutes 41.839 seconds), the first
+completed sub-hour cycle in this series. Different submitted populations mean
+these timings are operational measurements, not a controlled speed benchmark.
+
+All ten model files, totaling 15,242,726,226 bytes, were published and checked
+against their full readback hashes. The authentic acknowledgment promoted
+optimizer 29; automatic retention removed the obsolete local model export and
+optimizer shards. The optimizer remains local and was not uploaded. This is
+three of the 16 planned updates; held-out improvement and three consecutive
+sub-hour cycles have not yet been demonstrated.
