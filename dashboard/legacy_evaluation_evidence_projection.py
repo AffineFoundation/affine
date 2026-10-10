@@ -162,7 +162,7 @@ def collect_legacy_evaluation_evidence(source_root,finalized):
                     for failure in failures:
                         job_id=failure.name.removesuffix('-failure.json')
                         collected.append(project_failure(read(state/'roles'/(job_id+'-job.json')),read(failure)))
-                    if not failures:issues.append(dict(epoch_id=epoch,phase=phase,status='no_retained_authenticated_result'))
+                    if not failures:issues.append(dict(epoch_id=epoch,phase=phase,status='no_original_result_for_epoch_phase'))
             except (ValueError,KeyError,TypeError,OSError):
                 issues.append(dict(epoch_id=epoch,phase=phase,status='unavailable_or_failed_authentication'))
     for epoch,final in selected.items():
