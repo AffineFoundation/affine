@@ -265,13 +265,210 @@ def inputs_projection(job, report, authority):
             'full_vocabulary_probabilities_included': False, 'batches': selected}
 
 
-def exclusion_projection(state, epoch_id, admitted_manifest, authority, population_envelope=None):
+def inventory_projection(rows):
+    """Authenticated compact identities only; never carry URLs or envelopes."""
+    if type(rows) is not list or len(rows) > 1_000_000:
+        raise ValueError('bounded_selection_inventory')
+    output, seen = [], set()
+    for row in rows:
+        if (type(row) is not dict or type(row.get('sha256')) is not str
+                or not HASH.fullmatch(row['sha256'])
+                or type(row.get('size')) is not int or row['size'] < 0
+                or type(row.get('learner_admission_sha256')) is not str
+                or not HASH.fullmatch(row['learner_admission_sha256'])
+                or row['sha256'] in seen):
+            raise ValueError('unique_selection_inventory_identity')
+        seen.add(row['sha256'])
+        output.append({name: row[name] for name in ('sha256', 'size', 'learner_admission_sha256')})
+    return output
+
+
+def submission_inventory(rows, epoch, checkpoint, authority):
+    if type(rows) is not list or len(rows) > 1_000_000:
+        raise ValueError('bounded_submission_inventory')
+    output = []
+    for row in rows:
+        admission = authenticated(row['learner_admission'], authority)
+        if (admission['epoch'] != epoch or admission['checkpoint'] != checkpoint
+                or admission['document_sha256'] != row['sha256']
+                or admission['document_size'] != row['size']):
+            raise ValueError('selection_submission_admission_binding')
+        output.append(dict(sha256=row['sha256'], size=row['size'],
+                           learner_admission_sha256=digest(row['learner_admission'])))
+    return inventory_projection(output)
+
+
+def native_task_identities(submissions, epoch, checkpoint, authority):
+    """Join task labels through ROOT admissions and original miner commitments."""
+    output = {}
+    for row in submissions:
+        admission = authenticated(row['learner_admission'], authority)
+        if 'original_commitment' not in admission:
+            continue  # Historical absence is not evidence of a task or a skip reason.
+        commitment = authenticated(admission['original_commitment'], admission['miner_identity'])
+        if (commitment.get('epoch') != epoch or commitment.get('checkpoint') != checkpoint
+                or commitment.get('miner') != admission['miner_identity']):
+            raise ValueError('native_task_commitment_context')
+        candidates = [r for r in commitment['batches'] if r.get('slot') == admission['slot']]
+        if len(candidates) != 1:
+            raise ValueError('native_task_commitment_slot')
+        batch = candidates[0]
+        if (batch.get('training_sha256') != row['sha256'] or batch.get('training_size') != row['size']
+                or batch.get('batch_sha256') != admission['batch_sha256']
+                or type(batch.get('env_id')) is not str
+                or not re.fullmatch('[a-zA-Z0-9_-]{1,128}', batch['env_id'])
+                or type(batch.get('index')) is not int or batch['index'] < 0):
+            raise ValueError('native_task_commitment_batch_identity')
+        output[row['sha256']] = (batch['env_id'], batch['index'])
+    return output
+
+
+def training_selection_projection(population, manifest, authority, *, submissions=None,
+        trained_documents=None, native_pool=None, native_result=None, native_draw=None,
+        grade_documents=()):
+    """Separate retained selection context from gradient consumption and rewards."""
+    legacy = population.get('training_selection')
+    legacy_context = fields(legacy, numeric=('cap', 'eligible_count', 'training_count',
+        'unselected_count', 'training_eligible_count', 'unselected_training_count',
+        'blacklist_excluded_count'), text=('version',)) if type(legacy) is dict else None
+    result = {'legacy_selection': available(legacy_context, {'basis': 'authenticated_population'})
+              if legacy_context is not None else unavailable('selection_record_not_retained'),
+              'legacy_selection_is_not_native_final_selection': native_result is not None}
+    if native_result is not None:
+        context = fields(native_result, numeric=('accepted_count', 'checked_count'), boolean=('complete',),
+                         text=('completion_reason', 'disposition'))
+        context.update(fields(native_draw or {}, numeric=('cap',)))
+        context['draw_status'] = 'recorded' if native_draw is not None else 'not_retained'
+        result['native_selection'] = available(context, {'basis': 'signed_native_result_and_retained_draw'})
+    eligible_rows = native_pool if native_pool is not None else population.get('eligible_inventory')
+    if (eligible_rows is None or submissions is None or trained_documents is None
+            or (native_result is not None and native_pool is None)):
+        result['decisions'] = unavailable('eligible_inventory_or_actual_training_job_not_retained')
+        return result
+    epoch, checkpoint = manifest['epoch'], manifest['checkpoint']['id']
+    eligible = (submission_inventory(eligible_rows, epoch, checkpoint, authority)
+                if native_pool is not None else inventory_projection(eligible_rows))
+    selected = submission_inventory(submissions, epoch, checkpoint, authority)
+    if native_result is not None and 'accepted_submissions' in native_result:
+        accepted = submission_inventory(native_result['accepted_submissions'], epoch, checkpoint, authority)
+        if accepted != selected:
+            raise ValueError('native_result_actual_training_selection_binding')
+    eligible_by_id = {r['sha256']: r for r in eligible}
+    selected_by_id = {r['sha256']: r for r in selected}
+    if (not set(selected_by_id) <= set(eligible_by_id)
+            or any(row != eligible_by_id[key] for key, row in selected_by_id.items())
+            or not set(trained_documents) <= set(selected_by_id)):
+        raise ValueError('selected_and_trained_inventory_binding')
+    cap_supported = bool(native_pool is None and legacy_context is not None
+        and legacy.get('eligible_inventory_sha256') == digest(eligible)
+        and legacy.get('selected_inventory_sha256') == digest(selected)
+        and legacy.get('training_count') == len(selected) == legacy.get('cap')
+        and legacy.get('eligible_count') == len(eligible)
+        and legacy.get('unselected_count') == len(eligible)-len(selected)
+        and legacy.get('blacklist_excluded_count', 0) == 0)
+    rejected, checked = {}, set()
+    for grade in grade_documents:
+        pairs = {r.get('pair_sha256'): r for r in grade.get('rows', [])}
+        for decision in grade.get('document_decisions', []):
+            if decision.get('document_sha256') in eligible_by_id:
+                key = decision['document_sha256']
+                if 'learner_admission_sha256' in decision:
+                    if decision['learner_admission_sha256'] != eligible_by_id[key]['learner_admission_sha256']:
+                        raise ValueError('native_checked_inventory_binding')
+                    checked.add(key)
+            if decision.get('accepted') is not False:
+                continue
+            key = decision.get('document_sha256')
+            if key not in eligible_by_id:
+                continue  # Older receipts may retain only batch or pair hashes.
+            if decision.get('learner_admission_sha256') != eligible_by_id[key]['learner_admission_sha256']:
+                raise ValueError('native_rejection_inventory_binding')
+            reasons = set()
+            for pair in decision.get('pair_sha256', []):
+                for item in pairs.get(pair, {}).get('grades', []):
+                    reason = item.get('reason')
+                    if type(reason) is str and re.fullmatch('[a-z_]{1,100}', reason):
+                        reasons.add(reason)
+            rejected[key] = sorted(reasons)
+    if set(rejected) & set(selected_by_id):
+        raise ValueError('native_rejected_document_cannot_be_selected')
+    tasks = native_task_identities(native_pool, epoch, checkpoint, authority) if native_pool is not None else {}
+    selected_tasks = {tasks[key] for key in selected_by_id if key in tasks}
+    blacklist = (native_draw or {}).get('blacklist_selection')
+    no_blacklist = native_draw is not None and (blacklist is None or
+        (type(blacklist) is dict and blacklist.get('exclusions') == [] and blacklist.get('excluded_miners') == []))
+    checked_bound = (native_result is not None and native_result.get('checked_count') == len(checked)
+                     and set(selected_by_id) <= checked)
+    native_cap_supported = bool(checked_bound and no_blacklist and len(tasks) == len(eligible)
+        and len(selected_tasks) == len(selected) and native_result.get('complete') is True
+        and native_result.get('completion_reason') == 'selection_complete'
+        and native_result.get('accepted_count') == len(selected) == native_draw.get('cap'))
+    rows = []
+    for identity in eligible:
+        key = identity['sha256']
+        if key in trained_documents:
+            status, reason = 'actually_trained', None
+        elif key in selected_by_id:
+            status, reason = 'selected_but_not_used_by_gradient', 'not_retained'
+        elif key in rejected:
+            status, reason = 'native_rejected', 'recorded_native_grades'
+        else:
+            status = 'eligible_but_not_selected'
+            reason = 'bounded_selection_cap' if cap_supported else 'not_retained'
+            if checked_bound and no_blacklist and key not in checked and key in tasks:
+                if tasks[key] in selected_tasks:
+                    reason = 'another_task_representative_selected'
+                elif native_cap_supported:
+                    reason = 'native_task_cap_reached'
+        rows.append(dict(document_sha256=key, document_size=identity['size'],
+            learner_admission_sha256=identity['learner_admission_sha256'], status=status,
+            reason=reason, native_reasons=rejected.get(key, []),
+            reason_basis=('reconstructed_from_signed_selection_and_task_commitments'
+                if reason in ('another_task_representative_selected','native_task_cap_reached')
+                else 'authenticated_selection_counts_and_inventory_hashes' if reason == 'bounded_selection_cap'
+                else 'recorded_native_grades' if reason == 'recorded_native_grades' else 'not_applicable_or_not_retained')))
+        if key in tasks:
+            rows[-1]['task'] = dict(env_id=tasks[key][0], index=tasks[key][1])
+    result['decisions'] = available(dict(inventory_scope='native_structural_pool' if native_pool is not None
+        else 'legacy_eligible_inventory', eligible_count=len(eligible), selected_count=len(selected),
+        actually_trained_count=len(trained_documents), rows=rows,
+        cap_reason_basis=('authenticated_selection_counts_and_inventory_hashes' if cap_supported
+            else 'signed_native_draw_result_checked_admissions_and_task_commitments' if native_cap_supported else 'not_established')),
+        {'basis': 'authenticated_inventories_and_actual_training_job_and_gradient_pairs'})
+    captured = population.get('committed_inventory')
+    if type(captured) is list:
+        outside, seen = [], set()
+        reasons = {r['document_sha256']: r.get('reason') for r in population.get('exclusions', [])
+                   if type(r) is dict and type(r.get('document_sha256')) is str}
+        known = {'duplicate_task', 'structural_ineligible', 'temporary_exclusion', 'blacklisted', 'not_registered', 'over_limit'}
+        for commitment in captured:
+            for row in commitment.get('training_documents', []):
+                key, size = row.get('sha256'), row.get('size')
+                if type(key) is not str or not HASH.fullmatch(key) or type(size) is not int or size < 0:
+                    raise ValueError('captured_document_identity')
+                if key not in eligible_by_id and key not in seen:
+                    outside.append(dict(document_sha256=key, document_size=size,
+                        status='not_in_selection_inventory',
+                        recorded_population_reason=reasons.get(key) if reasons.get(key) in known else 'not_retained',
+                        training_rejection_reason='not_retained'))
+                seen.add(key)
+        result['captured_outside_selection_inventory'] = available(dict(rows=outside,
+            captured_unique_document_count=len(seen), reason_scope='population_decisions_not_native_grading'),
+            {'basis': 'authenticated_committed_inventory'})
+    else:
+        result['captured_outside_selection_inventory'] = unavailable('committed_inventory_not_retained')
+    return result
+
+
+def exclusion_projection(state, epoch_id, admitted_manifest, authority, population_envelope=None,
+                         *, submissions=None, trained_documents=None):
     receipt = admitted_manifest.get('native_training_eligibility_receipt', {})
     directory = state/'native-outcome-eligibility'/epoch_id
     grade_documents = []
     provenance = {}
     counts = {}
     population_hash = None
+    native_pool = native_result = native_draw = None
     if receipt.get('pool_sha256'):
         pool_document = read_json(directory/'pool.ROOT-SIGNED.json')
         pool = authenticated(pool_document, authority)
@@ -280,6 +477,19 @@ def exclusion_projection(state, epoch_id, admitted_manifest, authority, populati
         if digest(pool_document) != receipt['pool_sha256'] or digest(result_document) != receipt['result_sha256']:
             raise ValueError('native_pool_result_binding')
         population_hash = pool['original_population_file_sha256']
+        native_pool, native_result = pool.get('submissions'), result
+        if receipt.get('draw_sha256'):
+            try:
+                draw_document = read_json(directory/'draw.ROOT-SIGNED.json')
+            except FileNotFoundError:
+                draw_document = None
+            if draw_document is not None:
+                native_draw = authenticated(draw_document, authority)
+                if digest(draw_document) != receipt['draw_sha256']:
+                    raise ValueError('native_selection_draw_binding')
+                if result.get('draw_sha256') is not None and result['draw_sha256'] != digest(native_draw):
+                    raise ValueError('native_result_draw_payload_binding')
+                provenance['draw_sha256'] = digest(draw_document)
         provenance.update(pool_sha256=digest(pool_document), result_sha256=digest(result_document))
         counts.update(native_checked_count=result['checked_count'], native_accepted_count=result['accepted_count'])
         for index, wave in enumerate(result.get('native_waves', [])):
@@ -353,6 +563,9 @@ def exclusion_projection(state, epoch_id, admitted_manifest, authority, populati
         native_rejected_documents=native, native_rejected_pairs=rejected_pairs,
         native_grading_evidence_available=bool(grade_documents), sampling_assurance='unaudited',
         proof_verification_performed=False, **counts)
+    payload['training_selection'] = training_selection_projection(population, admitted_manifest, authority,
+        submissions=submissions, trained_documents=trained_documents, native_pool=native_pool,
+        native_result=native_result, native_draw=native_draw, grade_documents=grade_documents)
     return available(payload, provenance)
 
 
@@ -596,7 +809,8 @@ def project_epoch(state, epoch_id, *, finalized_record, authority=AUTHORITY, inp
         hashlib.sha256((state/'roles'/(job['job_id']+'-job.json')).read_bytes()).hexdigest())
     try:
         output['exclusions'] = exclusion_projection(state, epoch_id, admitted_manifest, authority,
-            finalized_record.get('population_envelope'))
+            finalized_record.get('population_envelope'), submissions=job['submissions'],
+            trained_documents={row['document_sha256'] for row in output['training_inputs']['payload']['batches']})
     except FileNotFoundError:
         output['exclusions'] = unavailable('signed_collection_artifacts_not_retained_locally')
     return output

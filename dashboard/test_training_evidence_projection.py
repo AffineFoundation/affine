@@ -397,6 +397,152 @@ class TrainingEvidenceTests(unittest.TestCase):
         population_path.write_text('{}')
         with self.assertRaises(ValueError): self.project()
 
+    def selection_fixture(self):
+        extra = copy.deepcopy(self.job['submissions'][0])
+        body = dict(self.admission, document_sha256='aa'*32)
+        extra.update(sha256=body['document_sha256'], learner_admission=self.signed(body))
+        selected = p.submission_inventory(self.job['submissions'], self.epoch, self.input_cp, self.authority)
+        eligible = p.submission_inventory(self.job['submissions']+[extra], self.epoch, self.input_cp, self.authority)
+        population = dict(eligible_inventory=eligible, training_selection=dict(version='bounded-postfreeze-learner-selection-v1',
+            cap=1, eligible_count=2, training_count=1, unselected_count=1,
+            eligible_inventory_sha256=p.digest(eligible), selected_inventory_sha256=p.digest(selected)),
+            committed_inventory=[dict(training_documents=[dict(sha256=r['sha256'],size=r['size']) for r in eligible]
+                +[dict(sha256='bb'*32,size=100)])],
+            exclusions=[dict(document_sha256='bb'*32,reason='duplicate_task')])
+        return population, extra
+
+    def test_retained_legacy_cap_enumerates_unselected_and_actual_training(self):
+        population, _ = self.selection_fixture()
+        population.update(epoch=self.epoch, checkpoint=self.input_cp)
+        self.record['population_envelope'] = self.signed(population)
+        result = self.project()['exclusions']['payload']['training_selection']
+        rows = result['decisions']['payload']['rows']
+        self.assertEqual([r['status'] for r in rows], ['actually_trained','eligible_but_not_selected'])
+        self.assertEqual(rows[1]['reason'], 'bounded_selection_cap')
+        self.assertEqual(result['legacy_selection']['payload']['unselected_count'], 1)
+        outside = result['captured_outside_selection_inventory']['payload']['rows'][0]
+        self.assertEqual(outside['recorded_population_reason'], 'duplicate_task')
+        self.assertEqual(outside['training_rejection_reason'], 'not_retained')
+        self.assertNotIn('PRIVATE',json.dumps(result))
+
+    def test_selection_does_not_invent_cap_reason_without_inventory_binding(self):
+        population, _ = self.selection_fixture()
+        population['training_selection']['selected_inventory_sha256'] = 'cc'*32
+        result = p.training_selection_projection(population,self.manifest,self.authority,
+            submissions=self.job['submissions'],trained_documents={'55'*32})
+        self.assertEqual(result['decisions']['payload']['rows'][1]['reason'],'not_retained')
+
+    def test_selected_unused_is_separate_from_actually_trained(self):
+        population, _ = self.selection_fixture()
+        result = p.training_selection_projection(population,self.manifest,self.authority,
+            submissions=self.job['submissions'],trained_documents=set())
+        self.assertEqual(result['decisions']['payload']['rows'][0]['status'],'selected_but_not_used_by_gradient')
+        self.assertEqual(result['decisions']['payload']['actually_trained_count'],0)
+
+    def test_native_full_pool_ignores_legacy_reward_selection_count(self):
+        population, extra = self.selection_fixture()
+        population['eligible_inventory'] = []
+        population['training_selection']['training_count'] = 0
+        result = p.training_selection_projection(population,self.manifest,self.authority,
+            submissions=self.job['submissions'],trained_documents={'55'*32},
+            native_pool=self.job['submissions']+[extra],native_draw={'cap':1},
+            native_result={'complete':True,'completion_reason':'selection_complete',
+                           'accepted_count':1,'checked_count':1,'accepted_submissions':self.job['submissions']})
+        self.assertTrue(result['legacy_selection_is_not_native_final_selection'])
+        self.assertEqual(result['decisions']['payload']['eligible_count'],2)
+        self.assertEqual(result['decisions']['payload']['selected_count'],1)
+        self.assertEqual(result['native_selection']['payload']['cap'],1)
+        self.assertEqual(result['decisions']['payload']['rows'][1]['reason'],'not_retained')
+
+    def test_native_rejection_reason_joins_by_original_pair_and_admission(self):
+        population, extra = self.selection_fixture()
+        grade={'document_decisions':[{'accepted':False,'document_sha256':extra['sha256'],
+            'learner_admission_sha256':p.digest(extra['learner_admission']),'pair_sha256':['ee'*32]}],
+            'rows':[{'pair_sha256':'ee'*32,'grades':[{'reason':'incomplete_answer'}]}]}
+        result=p.training_selection_projection(population,self.manifest,self.authority,
+            submissions=self.job['submissions'],trained_documents={'55'*32},native_pool=self.job['submissions']+[extra],
+            native_result={'accepted_submissions':self.job['submissions']},grade_documents=[grade])
+        row=result['decisions']['payload']['rows'][1]
+        self.assertEqual(row['status'],'native_rejected');self.assertEqual(row['native_reasons'],['incomplete_answer'])
+        grade['document_decisions'][0]['learner_admission_sha256']='cc'*32
+        with self.assertRaisesRegex(ValueError,'checked_inventory_binding'):
+            p.training_selection_projection(population,self.manifest,self.authority,
+                submissions=self.job['submissions'],trained_documents={'55'*32},native_pool=self.job['submissions']+[extra],
+                native_result={},grade_documents=[grade])
+
+    def test_changed_native_accepted_set_refuses(self):
+        population, extra = self.selection_fixture()
+        with self.assertRaisesRegex(ValueError,'actual_training_selection_binding'):
+            p.training_selection_projection(population,self.manifest,self.authority,
+                submissions=self.job['submissions'],trained_documents={'55'*32},native_pool=self.job['submissions']+[extra],
+                native_result={'accepted_submissions':[extra]})
+
+    def test_absent_old_native_pool_keeps_context_and_marks_decisions_missing(self):
+        population,_=self.selection_fixture()
+        result=p.training_selection_projection(population,self.manifest,self.authority,
+            submissions=self.job['submissions'],trained_documents={'55'*32},native_result={'accepted_count':1})
+        self.assertEqual(result['decisions']['status'],'unavailable')
+        self.assertEqual(result['native_selection']['payload']['draw_status'],'not_retained')
+
+    def test_selection_hash_types_and_duplicate_identities_refuse(self):
+        population,_=self.selection_fixture()
+        row=population['eligible_inventory'][0]
+        for field in ('sha256','learner_admission_sha256'):
+            with self.assertRaises(ValueError):p.inventory_projection([dict(row,**{field:[]})])
+        with self.assertRaises(ValueError):p.inventory_projection([row,row])
+
+    def native_selection_fixture(self):
+        objects=[]
+        for identity,task in [('55'*32,7),('aa'*32,7),('bb'*32,8)]:
+            admission=dict(self.admission,document_sha256=identity,miner_identity=self.authority)
+            commitment=dict(epoch=self.epoch,checkpoint=self.input_cp,miner=self.authority,
+                batches=[dict(slot=0,training_sha256=identity,training_size=100,
+                              batch_sha256=admission['batch_sha256'],env_id='affine_math',index=task)])
+            admission['original_commitment']=self.signed(commitment)
+            objects.append(dict(sha256=identity,size=100,learner_admission=self.signed(admission),url='PRIVATE'))
+        return dict(submissions=objects[:1],trained_documents={'55'*32},native_pool=objects,
+            native_result=dict(complete=True,completion_reason='selection_complete',accepted_count=1,
+                checked_count=1,accepted_submissions=objects[:1]),
+            native_draw=dict(cap=1,blacklist_selection=dict(exclusions=[],excluded_miners=[])),
+            grade_documents=[dict(document_decisions=[dict(accepted=True,document_sha256='55'*32,
+                learner_admission_sha256=p.digest(objects[0]['learner_admission']))])])
+
+    def test_native_unchecked_reasons_reconstructed_from_committed_tasks(self):
+        kwargs=self.native_selection_fixture()
+        result=p.training_selection_projection({},self.manifest,self.authority,**kwargs)
+        rows=result['decisions']['payload']['rows']
+        self.assertEqual([r['reason'] for r in rows],[None,'another_task_representative_selected','native_task_cap_reached'])
+        self.assertEqual(rows[1]['task'],dict(env_id='affine_math',index=7))
+        self.assertEqual(rows[2]['reason_basis'],'reconstructed_from_signed_selection_and_task_commitments')
+        self.assertEqual(rows[2]['status'],'eligible_but_not_selected')
+        self.assertNotIn('PRIVATE',json.dumps(result))
+
+    def test_native_skip_reasons_require_draw_counts_and_no_blacklist(self):
+        for change in ('missing_draw','unbound_checked_count','blacklist'):
+            kwargs=self.native_selection_fixture()
+            if change=='missing_draw':kwargs['native_draw']=None
+            elif change=='unbound_checked_count':kwargs['native_result']['checked_count']=2
+            else:kwargs['native_draw']['blacklist_selection']['excluded_miners']=[self.authority]
+            result=p.training_selection_projection({},self.manifest,self.authority,**kwargs)
+            self.assertEqual([r['reason'] for r in result['decisions']['payload']['rows'][1:]],['not_retained','not_retained'])
+        kwargs=self.native_selection_fixture();kwargs['native_result'].update(complete=False,completion_reason='native_budget_exhausted')
+        result=p.training_selection_projection({},self.manifest,self.authority,**kwargs)
+        self.assertEqual(result['decisions']['payload']['rows'][2]['reason'],'not_retained')
+
+    def test_native_task_commitment_cannot_relabel_a_submission(self):
+        kwargs=self.native_selection_fixture();obj=kwargs['native_pool'][1]
+        admission=copy.deepcopy(obj['learner_admission']['payload']);commitment=copy.deepcopy(admission['original_commitment']['payload'])
+        commitment['batches'][0]['training_sha256']='cc'*32
+        admission['original_commitment']=self.signed(commitment);obj['learner_admission']=self.signed(admission)
+        with self.assertRaisesRegex(ValueError,'native_task_commitment_batch_identity'):
+            p.training_selection_projection({},self.manifest,self.authority,**kwargs)
+
+    def test_accepted_native_decision_requires_matching_admission(self):
+        kwargs=self.native_selection_fixture()
+        kwargs['grade_documents'][0]['document_decisions'][0]['learner_admission_sha256']='ff'*32
+        with self.assertRaisesRegex(ValueError,'native_checked_inventory_binding'):
+            p.training_selection_projection({},self.manifest,self.authority,**kwargs)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -52,6 +52,31 @@ successful training record, rather than a superseded failed job. A closure
 without an authenticated training update does not acquire invented losses or
 rollouts.
 
+`exclusions.payload.training_selection` separates the historical reward-eligible
+selection from the final native training pool. Its `decisions` enumerate batch
+document hashes and admission hashes as actually trained, selected but not used
+by a gradient, native rejected, or eligible but not selected. Native rejection
+reasons join the original document decision to its recorded pair grades.
+`captured_outside_selection_inventory` lists retained submitted documents outside
+that pool, with population reasons kept separate from training rejection reasons.
+Neither a reward collision nor an unselected batch is automatically a bad rollout.
+
+Selection caps and counts are published from retained authenticated records.
+A per-document `bounded_selection_cap` reason is derived only when the original
+eligible and selected inventory hashes and cap/counts match the actual training
+job. Native unchecked candidates can receive reconstructed reasons when signed
+admissions and original miner commitments establish their task: another
+representative of that task was selected, or the signed task cap was filled
+before that task was reached. These reasons require matching checked/accepted
+inventories and no blacklist exclusions; they are labeled reconstructed and
+never treated as failed grading. The native completion reason and cap are also
+published separately. Where the retained record does not establish a reason,
+it is `not_retained`. Missing
+historical inventories make that decision listing explicitly unavailable; they
+do not remove other retained exclusions or grades. In later native epochs,
+`population_counts.training_count` describes the legacy selection and can differ
+from the actual gradient task count in `training_inputs`.
+
 Evaluation association is by checkpoint: `input_checkpoint` and `post_update`
 do not claim that the evaluation ran during that epoch. Cohorts and token
 budgets can differ; compare only matching evaluation protocols. Historical
