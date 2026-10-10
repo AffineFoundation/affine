@@ -2,7 +2,8 @@
 
 This objective requires a qualified signed operator release. The live release
 was activated on October 10, 2026 for epoch 117, covering successful optimizer
-counters 26–42. Its first update completed and published checkpoint 27. See
+counters 26–42. Its first two updates completed and published checkpoints 27
+and 28. See
 [the live training guide](CONSERVATIVE_FP32_TRAINING.md) for the activation,
 measured results and fixed evaluation plan. Learning improvement remains unproven.
 

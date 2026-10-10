@@ -21,9 +21,16 @@ Verification and installation remain ordered. Pending reads are drained before
 the selector releases ownership; later adaptive waves are not prefetched.
 The original socket timeout remains, so this is not a hard total download-time
 guarantee. Neither optimization changes task quotas, sampling, reward rules,
-scientific model code or optimizer lineage. These options require a qualified
-prospective operator deployment; publishing them does not activate them in the
-running service. Historical preparations must retain their original authority.
+scientific model code or optimizer lineage. On October 10 at 13:18 UTC, the live
+operator was updated to use both options for new preparations from epoch 119.
+Historical preparations retain their original authority and worker count.
+The first production 32-worker wave is still pending; the service being live
+does not yet establish an epoch speed improvement.
+
+A synthetic comparison using the unchanged native grader completed 128 pairs
+in 11.289 seconds with 16 workers and 6.077 seconds with 32 workers (1.86×).
+Ordered grade receipts matched exactly. This is one local synthetic comparison,
+not a production throughput or learning result.
 
 Portable controls can be run with unittest discovery for
 `test_native_current_wave_prefetch.py`, `test_native_workers32.py` and

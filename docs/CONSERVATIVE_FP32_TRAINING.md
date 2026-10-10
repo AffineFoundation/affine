@@ -50,3 +50,20 @@ cohorts remain separate. Endpoint 42 has not been evaluated, so these baseline
 scores and the completed update do not establish a learning gain. The reserved
 final 512-task set remains unread; the experiment still uses its fixed endpoint
 and does not select an intermediate checkpoint based on monitoring results.
+
+### Second completed update and preparation speedup
+
+Epoch 118 completed the second planned update, advancing optimizer 27 to 28
+and publishing checkpoint
+`02e346a2afa42bcb71076a85e1291a50da6f366fccfd06eb74c972eedc31faca`.
+Its actual training population was 512 distinct tasks from 179 external miner
+identities, again 4,096 rollouts. Training took 1,467.984 seconds; the complete
+controller cycle took 3,672.797 seconds (61 minutes 12.797 seconds). Publication,
+acknowledgment and automatic local retention completed. This is two of the
+16 planned updates; no endpoint learning improvement is claimed yet.
+
+Epoch 119 opened with this checkpoint and the same 20-minute mining window.
+The coordinator now supports four concurrent document downloads and 32 native
+grading workers for new preparations, preserving the original grader and all
+training settings. The first production wave and its end-to-end speedup remain
+to be measured. Historical jobs keep their original preparation authority.
