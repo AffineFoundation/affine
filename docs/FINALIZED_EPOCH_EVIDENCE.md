@@ -11,6 +11,17 @@ Verify the signature over UTF-8 JSON of `payload`, with sorted keys, compact
 separators, and no nonfinite numbers, using the same canonical representation
 as `subnet.storage.canonical`.
 
+For example, retrieve the index with:
+
+```sh
+curl -fsS https://affine.io/history.json -o history.json
+```
+
+Python `requests` also works. If using `urllib.request`, set an explicit
+`User-Agent`, such as `AffineEvidenceReader/1.0`: the public edge currently
+rejects the default `Python-urllib` agent with HTTP 403. This does not require
+credentials or a change to the signed-artifact verification steps below.
+
 The additive `payload.finalized_epoch_evidence.catalog` descriptor gives a
 GET-only presigned URL, SHA-256, byte size, and expiry for the catalog. Existing
 legacy history fields remain intact. The export also maintains an independent
