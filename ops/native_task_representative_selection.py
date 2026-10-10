@@ -45,20 +45,66 @@ def read_documents(root):
 
 
 def prepare_documents(selector, root, objects, expires):
-    paths=[]
-    # Serial bounded reads keep decoded input residency out of the parent.
-    for obj in objects:
-        if time.time()>=expires:raise TimeoutError('representative fixed native deadline')
+    """Fetch only this frozen wave with four bounded slots; install in rank order.
+
+    Workers hold raw bytes only. JSON decoding, ownership signing, installation,
+    and all verification stay on the selecting thread. A slot is refilled only
+    after its raw bytes and future are released. No later wave is prefetched.
+    """
+    from collections import deque
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    root=Path(root);paths=[];pending=deque();stopped=threading.Event()
+    def fetch(obj,slot):
+        if stopped.is_set() or time.time()>=expires:
+            raise TimeoutError('representative fixed native deadline')
+        # The signed structural admission already imposes this artifact bound.
+        # Check it again before concurrent raw buffers can exist.
+        if type(obj['size']) is not int or not 0<obj['size']<=2_000_000:
+            raise ValueError('bounded original native document')
         path=document_path(root,obj['sha256'])
-        if not path.exists():
-            with urllib.request.urlopen(obj['url'],timeout=max(.1,min(30,expires-time.time()))) as response:
-                raw=response.read(obj['size']+1)
-            if len(raw)!=obj['size'] or hashlib.sha256(raw).hexdigest()!=obj['sha256']:
-                raise ValueError('original representative GET size/hash')
-            install_document_bundle(selector.controller,root,obj['sha256'],raw)
-        verify_owned_document(selector.controller,root,obj['sha256'])
-        paths.append(path)
-    return paths
+        if path.exists():
+            slot['raw']=None
+            return
+        with urllib.request.urlopen(obj['url'],timeout=max(.1,min(30,expires-time.time()))) as response:
+            raw=response.read(obj['size']+1)
+        if len(raw)!=obj['size'] or hashlib.sha256(raw).hexdigest()!=obj['sha256']:
+            del raw
+            raise ValueError('original representative GET size/hash')
+        slot['raw']=raw
+
+    objects=iter(objects)
+    pool=ThreadPoolExecutor(max_workers=4,thread_name_prefix='native-wave-fetch')
+    def submit_one():
+        try:obj=next(objects)
+        except StopIteration:return
+        slot={}
+        pending.append((obj,slot,pool.submit(fetch,obj,slot)))
+    try:
+        for _ in range(4):submit_one()
+        while pending:
+            # Keep the original per-document admission deadline and order.
+            if time.time()>=expires:raise TimeoutError('representative fixed native deadline')
+            obj,slot,future=pending.popleft()
+            future.result()
+            raw=slot.pop('raw')
+            path=document_path(root,obj['sha256'])
+            if raw is not None:install_document_bundle(selector.controller,root,obj['sha256'],raw)
+            verify_owned_document(selector.controller,root,obj['sha256'])
+            paths.append(path)
+            # Futures return None; consumed slots are empty. Even an executor
+            # retaining a completed work item cannot retain its admitted bytes.
+            del raw,future,slot,obj
+            submit_one()
+        return paths
+    finally:
+        stopped.set()
+        for _,_,future in pending:future.cancel()
+        # Never release the selector lease while an owned GET remains live.
+        # urllib retains the original remaining-budget/socket timeout behavior.
+        pool.shutdown(wait=True,cancel_futures=True)
+        pending.clear()
 
 
 def group_members(pgid):

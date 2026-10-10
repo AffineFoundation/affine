@@ -137,7 +137,7 @@ def validate_limits(policy, *, manifest=None):
             raise ValueError('manifest pair budget requires signed multi-rollout context')
         from subnet.committed_training_inputs import training_document_cap
         policy['max_pairs']=training_document_cap(manifest)*document_pair_quota(manifest)
-    for key, low, high in (('workers',1,16),('max_pairs',1,16384 if policy['version']==MULTI_VERSION else 512 if policy['version']==K2L2_VERSION else 256),('per_grade_seconds',1,60),
+    for key, low, high in (('workers',1,32),('max_pairs',1,16384 if policy['version']==MULTI_VERSION else 512 if policy['version']==K2L2_VERSION else 256),('per_grade_seconds',1,60),
                            ('wall_seconds',1,600),('max_reply_bytes',1,262144)):
         if type(policy[key]) is not int or not low <= policy[key] <= high:
             raise ValueError('bounded native filter ' + key)

@@ -1,5 +1,37 @@
 # Prospective native outcome eligibility for unaudited training
 
+## Current implementation and historical scope
+
+The sections below retain the original October 7 qualification history. For the
+live training contract and activation status, use
+[the current training guide](CONSERVATIVE_FP32_TRAINING.md) and the signed epoch
+manifest. The early four-worker and 256-pair figures below are historical bounds.
+
+The repository now supports up to 32 isolated native grading children, selected
+by signed operator authorization. Each child retains the original 1 GiB address
+limit and finite CPU/wall limits. The wave checks available memory for the
+authorized children plus its document decode allowance before grading. A memory
+refusal or grader failure is an infrastructure/indeterminate result, not a wrong
+answer or fraud finding. Raising the implementation bound does not change an
+existing signed 16-worker authorization.
+
+Representative document preparation now fetches up to four documents from the
+current frozen wave concurrently, with at most 8,000,004 raw bytes buffered.
+Verification and installation remain ordered. Pending reads are drained before
+the selector releases ownership; later adaptive waves are not prefetched.
+The original socket timeout remains, so this is not a hard total download-time
+guarantee. Neither optimization changes task quotas, sampling, reward rules,
+scientific model code or optimizer lineage. These options require a qualified
+prospective operator deployment; publishing them does not activate them in the
+running service. Historical preparations must retain their original authority.
+
+Portable controls can be run with unittest discovery for
+`test_native_current_wave_prefetch.py`, `test_native_workers32.py` and
+`test_native_training_outcome_filter.py`. Their synthetic parity checks preserve
+ordered outcomes and document admission; production speed remains to be measured.
+
+## Original qualification proposal
+
 This default-off CPU proposal adds no controller hook or production admission.
 The frozen f213 learner authenticates committed tokens, task/prompt context and
 claimed positive/negative quotas; `validate_native_prompt` does not grade answers.
