@@ -4,6 +4,17 @@ Updated October 10, 2026. Network: Bittensor Finney, subnet 120.
 Code: https://github.com/AffineFoundation/affine
 Availability: https://affine.io/mining.json
 Dashboard: https://affine.io/
+Finalized learning evidence: https://affine.io/history.json
+Evidence format: https://github.com/AffineFoundation/affine/blob/main/docs/FINALIZED_EPOCH_EVIDENCE.md
+
+The signed history's `finalized_epoch_evidence` extension links compact actual
+training inputs, update metrics, retained exclusion decisions, and per-task
+fixed32/heldout128 evaluation records for finalized epochs from 14 onward.
+Verify the ROOT signature and each artifact's SHA-256 before use. Gzip artifact
+hashes cover compressed bytes. Availability and provenance are explicit;
+missing historical fields are not zero measurements. GET-only links expire
+and are refreshed. Open-epoch submissions and credentials are never included.
+This evidence export does not change the miner contract or training behavior.
 
 ## Current availability
 
