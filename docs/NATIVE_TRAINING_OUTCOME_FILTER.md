@@ -24,8 +24,24 @@ guarantee. Neither optimization changes task quotas, sampling, reward rules,
 scientific model code or optimizer lineage. On October 10 at 13:18 UTC, the live
 operator was updated to use both options for new preparations from epoch 119.
 Historical preparations retain their original authority and worker count.
-The first production 32-worker wave is still pending; the service being live
-does not yet establish an epoch speed improvement.
+Epoch 119 has now completed native preparation for 512 distinct tasks from 178
+external miner identities: 2,048 correct/wrong pairs, or 4,096 rollouts. Its two
+32-worker grading waves took 48.203 and 48.039 seconds. The full native
+selection interval, from the signed draw to finalization, was 150.735 seconds;
+the preceding epoch's 16-worker interval was 288.861 seconds. These are observed
+stage timings on different submitted populations, not a controlled workload
+comparison or proof of a completed subhour epoch. Epoch 119's training and
+publication were still in progress at this measurement.
+
+The current completed-MATH contract also requires an explicit, complete boxed
+answer in the decoded original output before native binary grading. A missing,
+empty or unfinished final box is unresolved and cannot fill a negative quota.
+The separate `max-or-eos-v1` rule checks stopping-token framing; reaching the
+output cap alone never establishes a wrong answer. In epoch 119, all 4,096
+selected outputs passed the complete-answer, terminal-framing and native-label
+checks. Eleven reached the cap without EOS but contained a complete answer.
+These checks establish answer eligibility and labels, not sampling provenance;
+the continuous proof audits remain separate.
 
 A synthetic comparison using the unchanged native grader completed 128 pairs
 in 11.289 seconds with 16 workers and 6.077 seconds with 32 workers (1.86×).
@@ -35,7 +51,8 @@ not a production throughput or learning result.
 Portable controls can be run with unittest discovery for
 `test_native_current_wave_prefetch.py`, `test_native_workers32.py` and
 `test_native_training_outcome_filter.py`. Their synthetic parity checks preserve
-ordered outcomes and document admission; production speed remains to be measured.
+ordered outcomes and document admission; complete-epoch performance remains to
+be measured.
 
 ## Original qualification proposal
 

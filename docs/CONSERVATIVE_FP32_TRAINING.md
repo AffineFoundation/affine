@@ -65,5 +65,12 @@ acknowledgment and automatic local retention completed. This is two of the
 Epoch 119 opened with this checkpoint and the same 20-minute mining window.
 The coordinator now supports four concurrent document downloads and 32 native
 grading workers for new preparations, preserving the original grader and all
-training settings. The first production wave and its end-to-end speedup remain
-to be measured. Historical jobs keep their original preparation authority.
+training settings. Historical jobs keep their original preparation authority.
+
+At 13:41 UTC, epoch 119's original training job was running with 512 distinct
+tasks from 178 external miner identities and the same 4,096-rollout intake.
+Native selection finished in 150.735 seconds, compared with 288.861 seconds in
+epoch 118; the two current grading waves account for 96.242 seconds of that
+interval. This measures preparation on the actual submitted populations, not
+a completed training update or a full-epoch speedup. The fixed 16-update study
+still has two acknowledged updates until this job's publication and ACK finish.
