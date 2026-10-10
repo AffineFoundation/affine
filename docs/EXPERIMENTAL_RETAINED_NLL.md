@@ -1,8 +1,10 @@
 # Experimental retained-Adam positive NLL objective
 
-This code is experimental and inactive until an operator issues a qualified live
-release. Publishing the implementation or passing CPU tests does not activate it,
-prove full-model GPU execution, or establish held-out improvement.
+This objective requires a qualified signed operator release. The live release
+was activated on October 10, 2026 for epoch 117, covering successful optimizer
+counters 26–42. Its first update completed and published checkpoint 27. See
+[the live training guide](CONSERVATIVE_FP32_TRAINING.md) for the activation,
+measured results and fixed evaluation plan. Learning improvement remains unproven.
 
 ## Objective and state
 

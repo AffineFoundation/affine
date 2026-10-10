@@ -25,3 +25,28 @@ The horizon is defined by successful optimizer counters, not elapsed epochs: the
 Mining continues with the same approved sampler and source, four completed correct and four completed wrong rollouts per task batch, up to nine batches per UID and up to 512 distinct training tasks per epoch. Representative intake selects at most one native-valid batch per task; duplicate-task rewards and independent proof audits retain their existing rules. Miners need no extra action for this trainer-only release and continue following the signed checkpoint and limits. Hourly weights remain independent of training.
 
 The evaluation plan compares the fixed baseline at counter 26 with the exact endpoint at counter 42 on the same two already-exposed 128-task monitoring cohorts. These cohorts are development measurements, not independent confirmation; the reserved final 512-task set remains unread. Changes in the submitted task population also limit attribution to the added loss term. Activation does not establish a completed NLL update or improved held-out performance. Signed training reports, publication acknowledgments and the fixed endpoint evaluations provide those results when available.
+
+### Measured progress, October 10, 2026 at 12:53 UTC
+
+Epoch 117 completed the first of the 16 planned updates, advancing the retained
+optimizer from 26 to 27 and publishing checkpoint
+`3900e029e0f27e3e6204b10877294555ac033343f1972d986e65101b34a09b3b`.
+It trained on 512 distinct tasks from 192 external miner identities: 2,048
+disjoint correct/wrong pairs, or 4,096 rollouts. This is the actual training
+population; submitted batches, reward-eligible tasks and audited batches are
+different counts. The full controller cycle took 3,681.798 seconds (61 minutes
+21.798 seconds), so it did not meet the one-hour target. Model publication and
+automatic local retention completed without manual recovery or optimizer upload.
+
+Both fixed baseline evaluations at optimizer counter 26 have completed:
+
+| Monitoring cohort | Correct | Completed wrong | Unresolved | Infrastructure errors |
+| --- | ---: | ---: | ---: | ---: |
+| Original 128 tasks | 78 | 11 | 39 | 0 |
+| Separate exposed 128 tasks | 91 | 6 | 31 | 0 |
+
+All 128 tasks remain in each denominator, including unresolved responses. The
+cohorts remain separate. Endpoint 42 has not been evaluated, so these baseline
+scores and the completed update do not establish a learning gain. The reserved
+final 512-task set remains unread; the experiment still uses its fixed endpoint
+and does not select an intermediate checkpoint based on monitoring results.
