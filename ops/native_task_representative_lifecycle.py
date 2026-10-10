@@ -43,18 +43,32 @@ def close_no_update(controller,error,manifest,status):
         native_no_update=dict(payload,no_update_receipt_sha256=sha(envelope)))
 
 
+def _read_metadata(bucket,key,size):
+    """Read exact bounded metadata without widening the small-token GET API."""
+    if type(size) is not int or not 0<size<=64*1024**2:
+        raise ValueError('representative durable metadata bound')
+    response=bucket.client.get_object(Bucket=bucket.name,Key=key)
+    body=response['Body']
+    try:
+        if type(response.get('ContentLength')) is not int or response['ContentLength']!=size:
+            raise ValueError('representative metadata ContentLength')
+        data=body.read(size+1)
+        if len(data)!=size:raise ValueError('representative metadata complete byte count')
+        return data
+    finally:body.close()
+
+
 def _archive(controller,key,data):
     """Bounded metadata PUT with full byte readback, never an optimizer export."""
-    if len(data)>64*1024**2:raise ValueError('representative durable metadata bound')
-    try:previous=controller.bucket.get_bounded(key,limit=len(data))
-    except KeyError:previous=None
+    if type(data) is not bytes or not 0<len(data)<=64*1024**2:raise ValueError('representative durable metadata bound')
+    try:previous=_read_metadata(controller.bucket,key,len(data))
     except Exception as error:
         from botocore.exceptions import ClientError
         if not isinstance(error,ClientError) or str(error.response.get('Error',{}).get('Code')) not in ('NoSuchKey','404','NotFound'):raise
         previous=None
     if previous is not None and previous!=data:raise ValueError('immutable representative durable metadata collision')
     if previous is None:controller.bucket.put(key,data)
-    actual=controller.bucket.get_bounded(key,limit=len(data))
+    actual=_read_metadata(controller.bucket,key,len(data))
     if actual!=data:raise ValueError('representative full metadata readback')
     return dict(key=key,size=len(data),sha256=hashlib.sha256(data).hexdigest(),full_get_verified=True)
 

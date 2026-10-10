@@ -3,7 +3,7 @@
 The native grading boundary is deliberately patched for deterministic failure
 and replay controls. These are not GPU or real MATH-label qualification claims.
 """
-import base64,copy,hashlib,importlib.util,json,sys,tempfile,time,unittest
+import base64,copy,hashlib,importlib.util,io,json,sys,tempfile,time,unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -21,11 +21,20 @@ KEY=SigningKey(hashlib.sha256(b'representative-integration-test').digest());AUTH
 def signed(v,key=KEY):return dict(payload=copy.deepcopy(v),signer=key.verify_key.encode().hex(),signature=base64.b64encode(key.sign(canonical(v)).signature).decode())
 
 class Bucket:
-    def __init__(self):self.objects={}
+    def __init__(self):self.objects={};self.client=self;self.name='test-only'
     def put(self,k,v):self.objects[k]=v
     def json(self,k,v):self.put(k,canonical(v))
     def get(self,k):return self.objects[k]
-    def get_bounded(self,k,limit):return self.objects[k][:limit+1]
+    def get_bounded(self,k,limit):
+        if type(limit)is not int or not 0<limit<=2_000_000:raise ValueError('bounded document GET size')
+        raw=self.objects[k]
+        if len(raw)!=limit:raise ValueError('immutable learner capture byte size')
+        return raw
+    def get_object(self,**kwargs):
+        from botocore.exceptions import ClientError
+        try:raw=self.objects[kwargs['Key']]
+        except KeyError:raise ClientError({'Error':{'Code':'NoSuchKey'}},'GetObject')from None
+        return dict(Body=io.BytesIO(raw),ContentLength=len(raw))
     def presign(self,k,*args):return 'memory:'+k
 
 def fixture(root,tasks=(1,1,2),bad=(),representatives=True):
