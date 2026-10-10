@@ -55,20 +55,19 @@ CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.miner_supervisor \
   --env-id affine_math --search-budget 32
 ```
 
-Batch-cap update (prospective): nine task batches per UID and up to 512 distinct training tasks per epoch are being prepared
-with the same four-correct/four-wrong contents. The current signed opening still
-controls capacity; this is not a live nine-batch activation notice. Update and
-restart the transport supervisor once, omitting `--max-batches` to follow each
-signed cap. An explicit `--max-batches 3` remains valid and limits that client to
-three batches even after a larger cap is signed. Extra capacity is optional and
+Batch-cap update activated by signed epoch `nonpayable-live-reward-math-v1--1791602071-110`:
+up to nine task batches per UID and up to 512 distinct training tasks per epoch,
+with the same four-correct/four-wrong contents. The actual signed opening controls
+capacity. Update and restart the transport supervisor once, omitting
+`--max-batches` to follow each signed cap. An explicit `--max-batches 3` remains
+valid and limits that client to three batches. Extra capacity is optional and
 does not extend the upload deadline or earn duplicate-task contribution points.
+The training cap is a maximum, not a guarantee that every batch is selected.
 
-Client update status (2026-10-09): the source bundle currently signed by the live
-manifest is `74f132382afb89236d3fc2300fa6917761e5a4c0e24c8e20ea24a0410ddaebe3`.
-That client still caps `--search-budget` at 128 and does not persist unfinished
-search groups. The restart-safe client below is released in this GitHub code
-but is pending activation in a successor signed source bundle. A GitHub update
-alone does not change the client launched by the recommended supervisor.
+Client update status (2026-10-10): the active signed source supports persistent
+partial search groups and fresh remaining nonce attempts across same-state
+restarts. Authenticate the actual source archive in the opening; a GitHub update
+alone does not change the approved client launched by the transport supervisor.
 
 The supervisor continuously follows epochs and authenticated source upgrades,
 resumes bounded checkpoint transfers and verifies full file hashes before
@@ -76,8 +75,7 @@ launching the untouched approved miner. It removes only its own obsolete model
 caches after admitting the successor. Reserve space for active and incoming
 checkpoints. A per-state lock prevents overlapping children after restarts.
 
-Once a successor manifest activates the updated miner, its behavior is:
-Thirty-two is the supervisor's default per-call search budget. For that updated
+Thirty-two is the supervisor's default per-call search budget. For the active
 v5 miner, `--search-budget` accepts 1 through the signed `max_attempts` (currently
 1,000); the standalone CLI default remains 50. A later search call or explicit
 restart using the same private state continues with unused nonces and retains
