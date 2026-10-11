@@ -54,7 +54,9 @@ def config_admission(config):
     if restart:
         if config.get('completed_history')is not None or config.get('run_id')!='completed-math-base7b-restart-20261008-v1':raise ValueError('isolated fresh evaluation run')
         cp=config.get('base_checkpoint_descriptor',{})
-        if cp.get('id')!=config['before_checkpoint'] or cp.get('id')!='6493a901bd009f0800d5eed97d19aee78947cc586afeb27abfb2c72032ad1924':raise ValueError('explicit original 7B base checkpoint')
+        # Preserve the historical restart's exact trained checkpoint. Its fresh
+        # optimizer did not make these model weights pristine upstream weights.
+        if cp.get('id')!=config['before_checkpoint'] or cp.get('id')!='6493a901bd009f0800d5eed97d19aee78947cc586afeb27abfb2c72032ad1924':raise ValueError('explicit historical 7B restart checkpoint')
     return POLICY
 
 def queue_original(controller,config,manifest,steps,phase):
@@ -71,7 +73,7 @@ def observe(controller,config):
     if base['checkpoint']['id']!=config['before_checkpoint'] or hashlib.sha256(Path(config['before_original_signed_job']).read_bytes()).hexdigest()!=config['before_original_signed_job_sha256']:raise ValueError('original BEFORE checkpoint scope')
     if config.get('version')=='continuous-owned-cached-base-restart-1024-v4':
         cp=config['base_checkpoint_descriptor']
-        if cp['files']!=base['checkpoint']['files']:raise ValueError('original base model file binding')
+        if cp['files']!=base['checkpoint']['files']:raise ValueError('historical restart checkpoint file binding')
         base['checkpoint']=copy.deepcopy(cp)
     queued=[queue_original(controller,config,base,config['before_optimizer_steps'],'before')]
     if config.get('version')=='owned-cached-fixed32-1024-pair-v2':

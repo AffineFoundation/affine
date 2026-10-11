@@ -1,12 +1,21 @@
-# Completed-answer MATH cutover and base restart
+# Completed-answer MATH cutover and optimizer restart
 
 Status, 2026-10-08: active in global epoch 78. ROOT authenticated the first
-public manifest on original base checkpoint 6493a901 and fresh optimizer zero.
+public manifest on checkpoint 6493a901 and fresh optimizer zero.
 The API, learner, trainer and seven reachable verifier workers admit the new
 source. Real checkpoint calibration and confirmation passed before opening.
 The owned miner's original job is running; a new training update is still
 pending. The fresh fixed-32 baseline completed at 21/32 correct, with full
 R2 report readback and automatic owned-cache disposal acknowledged.
+
+Provenance correction, 2026-10-11: checkpoint 6493a901 already contained
+training. The signed old epoch 21 record shows input 339f31e7 → output
+6493a901, optimizer step 11 → 12, and 256 trained task pairs. The epoch 78
+restart and subsequent epoch 91 restart reused those model weights with a
+fresh optimizer. Neither reset returned to untouched upstream weights. This
+correction changes the description, not the running checkpoint or experiment.
+The step counter belongs to that optimizer lineage; it is not the model's
+total lifetime training count, since earlier model updates preceded it.
 
 ## Outcome contract
 
@@ -34,10 +43,17 @@ The new environment hash includes the completion helper and adapter bytes.
 
 ## Requested restart
 
-Use the original `Qwen/Qwen2.5-Math-7B-Instruct` model at revision
-`ef9926d75ab1d54532f6a30dd5e760355eb9aa4d`, not a learned checkpoint from the
-current run. The original published checkpoint ID is
+The requested untouched model was `Qwen/Qwen2.5-Math-7B-Instruct` at revision
+`ef9926d75ab1d54532f6a30dd5e760355eb9aa4d`. Its pinned upstream checkpoint ID is
+`2173b3e0119380ab813c9588bedff6b3edd5d3dcb01565490fa33ac67b2debf6`.
+The actual restart instead selected the previously trained checkpoint
 `6493a901bd009f0800d5eed97d19aee78947cc586afeb27abfb2c72032ad1924`.
+The original wording incorrectly described that checkpoint as pristine.
+
+A future reset advertised as untouched upstream must authenticate the exact
+upstream revision and file hashes, and require the checkpoint descriptor to
+match them. A source-model name, revision string, approved checkpoint ID, or
+fresh optimizer alone does not establish that the model weights are untrained.
 
 The cutover must preserve old checkpoints, epoch history, audit reports, and
 scores. It starts a separately authorized optimizer genesis with zero prior
@@ -64,7 +80,7 @@ before reporting the restart as live.
 affine.io retains its existing layout. An authenticated run boundary filters
 the learning charts to this run and displays its first global epoch (78) as
 epoch 1. Historical database rows and incentive records remain intact. Fresh
-base-model evaluation records cannot attach to the ancient first use of the
+restart-baseline evaluation records cannot attach to the ancient first use of the
 same checkpoint; their state is explicitly scoped to this restart.
 
 Training blacklist eligibility is refreshed by a read-only assessment process

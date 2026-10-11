@@ -53,8 +53,13 @@ contain research code that the signed source has not activated.
 - Environment: `affine_math`, `prime-v1-2-completed-math`.
 - Taskset: 7,496 usable MATH problems; 6,746 available for mining and 750 held out.
   Use only task indices advertised for mining in the signed opening.
-- Base: `Qwen/Qwen2.5-Math-7B-Instruct`, original pinned revision
+- Source model: `Qwen/Qwen2.5-Math-7B-Instruct`, pinned upstream revision
   `ef9926d75ab1d54532f6a30dd5e760355eb9aa4d`.
+  Its untouched checkpoint is `2173b3e0119380ab813c9588bedff6b3edd5d3dcb01565490fa33ac67b2debf6`.
+  The current restart began from previously trained checkpoint
+  `6493a901bd009f0800d5eed97d19aee78947cc586afeb27abfb2c72032ad1924`
+  (old run optimizer step 12), with a fresh optimizer; it was not an untouched
+  upstream model reset. See `docs/COMPLETED_MATH_RESTART.md` for provenance.
   After each update, download the checkpoint in the new manifest, not the base
   again and not a previous epoch's learned checkpoint.
 - Each batch covers one task under one epoch/checkpoint and contains exactly
