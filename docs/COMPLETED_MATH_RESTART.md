@@ -55,6 +55,28 @@ upstream revision and file hashes, and require the checkpoint descriptor to
 match them. A source-model name, revision string, approved checkpoint ID, or
 fresh optimizer alone does not establish that the model weights are untrained.
 
+`ops.pristine_base_admission` now supplies that prospective read-only check:
+
+```sh
+python -m ops.pristine_base_admission \
+  --config proposed-restart.json \
+  --descriptor upstream-checkpoint.signed.json \
+  --authority 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd \
+  --checkpoint /absolute/pristine-cache
+```
+
+The config must bind that exact `initial_checkpoint` filemap and
+`initial_checkpoint_path`. The helper authenticates the descriptor against the
+explicit trusted authority, checks all 11 files against the independently pinned
+upstream hashes, and, with `--checkpoint`, reads the local bytes. Omitting that
+option checks the descriptor only; it does not verify a loaded model or cache.
+Its result is unsigned and grants no execution permission.
+
+This helper is available for a future restart admission. It is **not wired into
+the running services**, and the historical v1 restart runner remains unchanged.
+A successor restart must invoke the check and bind its result before authorizing
+the new run; this addition does not reset the live model or optimizer.
+
 The cutover must preserve old checkpoints, epoch history, audit reports, and
 scores. It starts a separately authorized optimizer genesis with zero prior
 steps, plus a fresh evaluation baseline on the unchanged held-out split.
