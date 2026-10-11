@@ -113,8 +113,22 @@ This experiment also changed optimizer initialization and update dose relative
 to production; it does not prove that negative gradients alone caused earlier
 regression. Final-answer correctness does not establish correct reasoning, and
 quota-selected K4/L4 responses are not an unbiased eight-draw policy sample.
-The approach is related to [ReST-EM](https://arxiv.org/abs/2312.06585) and
-[positive-only RAFT](https://arxiv.org/abs/2504.11343).
+The approach is related to [ReST-EM](https://arxiv.org/abs/2312.06585v4) and
+[positive-only RAFT](https://arxiv.org/abs/2504.11343v2), with two distinctions
+that matter for sustained learning. ReST-EM's experiments fine-tune the original
+base model in each iteration using newly generated solutions; continuing from
+retained optimizer state is a different recipe. The RAFT study reports fast
+early gains but declining policy entropy and eventual loss of exploration.
+Requiring miners to collect negatives does not itself preserve policy entropy
+when those negatives contribute no training gradient.
+
+Next comparisons should measure held-out accuracy, response diversity, task
+coverage and stopping behavior alongside training loss. Base-anchored replay
+and bounded regularization are possible follow-ups if continued SFT drifts or
+plateaus. A group-relative or leave-one-out policy-gradient comparison needs
+unselected sampled groups and behavior probabilities; the current forced K4/L4
+submissions cannot simply be treated as that data. These are research options,
+not changes to the active mining contract.
 
 Portable candidate checks:
 
