@@ -19,7 +19,7 @@ from ops.live_reward_exporter import atomic, sign
 VERSION = 'hourly-current-assessment-writer-v1'
 NUMERICAL_RESOLUTION_VERSION = 'hourly-current-assessment-writer-reviewed-numerical-v2'
 NEVER_BURN_VERSION = 'hourly-current-assessment-writer-never-burn-v3'
-EVIDENCE_TIMEOUT_SECONDS = 360
+EVIDENCE_TIMEOUT_SECONDS = 480
 ASSESSMENT_DIRECTORY = 'current-assessment-never-burn-v1'
 
 
@@ -31,13 +31,25 @@ def validate_policy(document, authority, cutover_document, anchor_document):
               'registration_change_policy'}
     expected_fields = fields | {'numerical_resolution_policy_sha256', 'fallback_assessments'}
     if 'authenticated_assessment_sources' in p: expected_fields.add('authenticated_assessment_sources')
+    if 'authenticated_admission_cache' in p: expected_fields.add('authenticated_admission_cache')
+    if 'compact_queue_evidence' in p: expected_fields.add('compact_queue_evidence')
     if set(p) != expected_fields or p['version'] != NEVER_BURN_VERSION or p['half_life_hours'] != HALF_LIFE_HOURS:
         raise ValueError('exact never-burn hourly assessment policy')
     import importlib.util
     from subnet.continuous_audit_policy import valid_digest
     if not valid_digest(p['numerical_resolution_policy_sha256']): raise ValueError('explicit ROOT numerical resolution digest')
     required = {str(Path(__file__).resolve())} | {str(Path(importlib.util.find_spec(name).origin).resolve()) for name in ('subnet.numerical_resolution', 'subnet.continuous_audit_policy', 'ops.current_assessment_evidence', 'subnet.current_assessment', 'subnet.chain', 'ops.live_reward_writer', 'subnet.weight_submission_transaction', 'subnet.weight_submission_reconciliation')}
+    if 'authenticated_admission_cache' in p:
+        from ops.current_assessment_cache import validate_scope
+        validate_scope(p['authenticated_admission_cache'])
+        required |= {str(Path(importlib.util.find_spec(name).origin).resolve()) for name in
+                     ('ops.current_assessment_cache', 'ops.current_assessment_admission_cache')}
     required |= sdk_seam_paths()
+    if 'compact_queue_evidence' in p:
+        from ops.current_assessment_compact_queue import POLICY as COMPACT_QUEUE_POLICY
+        if p['compact_queue_evidence'] != COMPACT_QUEUE_POLICY:
+            raise ValueError('explicit bounded actual-byte compact queue policy')
+        required.add(str(Path(importlib.util.find_spec('ops.current_assessment_compact_queue').origin).resolve()))
     if not required <= {str(Path(path).resolve()) for path in p['module_hashes']}:
         raise ValueError('present ROOT pins for never-burn execution modules')
     if not isinstance(p['fallback_assessments'], list): raise ValueError('explicit fallback assessment pins')
@@ -240,9 +252,15 @@ def run_once(policy_document, cutover_document, anchor_document, authority, *, e
                     fresh = current_cache[-1]
                 else:
                     with evidence_budget():
+                        cache_kwargs = {}
+                        if 'authenticated_admission_cache' in p:
+                            from ops.current_assessment_cache import factory
+                            cache_kwargs['admission_cache_factory'] = factory(p['authenticated_admission_cache'], authority)
+                        if 'compact_queue_evidence' in p:
+                            cache_kwargs['compact_queue_evidence'] = p['compact_queue_evidence']
                         evidence = evidence_loader(p['audit_config'], authority=authority, cutoff=cutoff,
                             verifiers=p['verifiers'], expected_source_admission_sha256=p['source_admission_sha256'],
-                            expected_numerical_resolution_policy_sha256=p['numerical_resolution_policy_sha256'])
+                            expected_numerical_resolution_policy_sha256=p['numerical_resolution_policy_sha256'], **cache_kwargs)
                         fresh = calculate(evidence['snapshots'], evidence['committed_at_by_epoch'], cutoff)
                         fresh.update(evidence_cutoff=cutoff, assessment_stale=False,
                             evidence_hashes=evidence['evidence_hashes'], evidence_refusals=evidence.get('refused', []),

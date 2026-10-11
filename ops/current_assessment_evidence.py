@@ -7,6 +7,7 @@ This module neither signs nor publishes snapshots and never reads learner or
 opening state. It does not construct a Coordinator (which initializes SQLite).
 """
 import hashlib
+from contextlib import nullcontext
 import json
 import os
 import stat
@@ -134,7 +135,8 @@ def _population(document, epoch, authority, sources):
 
 
 def _load_evidence_uncached(audit_config_path, *, authority, cutoff, verifiers,
-                  expected_source_admission_sha256=None, expected_numerical_resolution_policy_sha256=None):
+                  expected_source_admission_sha256=None, expected_numerical_resolution_policy_sha256=None, admission_cache_factory=None,
+                  compact_queue_evidence=None):
     """Return unsigned snapshots plus original population times and diagnostics.
 
     ``verifiers`` and the optional canonical envelope digest come from the
@@ -223,8 +225,18 @@ def _load_evidence_uncached(audit_config_path, *, authority, cutoff, verifiers,
         except (ValueError, KeyError, TypeError, AttributeError, BadSignatureError) as error:
             refused.append(_issue('job', identifier, error))
     queue_path = state_root / 'roles' / 'verifier-queue.sqlite3'
-    actuals = queue_rows(SimpleNamespace(path=queue_path), identifiers, complete=True)
-    hashes['original_queue_view_sha256'] = queue_view_digest(actuals, enabled=True)
+    bound_queue = None
+    if compact_queue_evidence is None:
+        actuals = queue_rows(SimpleNamespace(path=queue_path), identifiers, complete=True)
+        hashes['original_queue_view_sha256'] = queue_view_digest(actuals, enabled=True)
+    else:
+        from ops.current_assessment_compact_queue import scan
+        bound_queue = scan(SimpleNamespace(path=queue_path), identifiers, policy=compact_queue_evidence)
+        actuals = bound_queue.bindings
+        # A compact fingerprint digest is not the historical full JSON-view
+        # digest. Record its distinct schema explicitly; never relabel it.
+        hashes['original_queue_byte_binding_version'] = compact_queue_evidence['version']
+        hashes['original_queue_byte_binding_sha256'] = bound_queue.view_sha256
     if queue_path.exists():
         stat = queue_path.stat(); hashes['queue_identity'] = dict(dev=stat.st_dev, ino=stat.st_ino)
     candidates = []
@@ -236,8 +248,13 @@ def _load_evidence_uncached(audit_config_path, *, authority, cutoff, verifiers,
             if actual['status'] != 'complete':
                 excluded.append(dict(kind='job', identifier=identifier, reason='original queue job not completed'))
                 continue
-            report = json.loads(actual['report']) if type(actual['report']) is str else actual['report']
-            completed = finite(report['completed_at'], 0, 2**53, 'original report completion')
+            if bound_queue is None:
+                report = json.loads(actual['report']) if type(actual['report']) is str else actual['report']
+                completed = finite(report['completed_at'], 0, 2**53, 'original report completion')
+            else:
+                if actual['completion_type'] not in ('integer', 'real'):
+                    raise ValueError('finite actual report completion field')
+                completed = finite(actual['completed_at'], 0, 2**53, 'original report completion')
             if completed > cutoff:
                 excluded.append(dict(kind='job', identifier=identifier, reason='original report completed after cutoff'))
                 continue
@@ -259,22 +276,38 @@ def _load_evidence_uncached(audit_config_path, *, authority, cutoff, verifiers,
     ep = sources.get('execution_evidence_policy')
     execution = ep if ep is not None and cutoff >= ep['effective_cutoff'] else None
     admitted_candidates = []
-    for completed, identifier, actual in sorted(candidates):
-        try:
-            entry = state['jobs'][identifier]
-            selected_ids = entry['row_sha256s'] if 'row_sha256s' in entry else [entry['row_sha256']]
-            selected_records = [record_by_id[i] for i in selected_ids]
-            admitted, delayed = admit_completed_reports([actual], selected_records, authority, workers,
-                sources['approved_sources'], execution_evidence_policy=execution, cutoff=cutoff,
-                deferral_policy=sources.get('backend_evidence_deferral_policy'),
-                historical_report_admission=historical)
-            deferred.extend(delayed)
-            for key, value in admitted.items():
-                candidates_entry = (completed, identifier, key, value)
-                # Separate list preserves temporal ordering across GPU and ROOT artifact observations.
-                admitted_candidates.append(candidates_entry)
-        except (ValueError, KeyError, TypeError, AttributeError, BadSignatureError) as error:
-            refused.append(_issue('job', identifier, error))
+    cache_manager = nullcontext(None)
+    if admission_cache_factory is not None:
+        cache_manager = admission_cache_factory(authority=authority, context=dict(
+            workers=workers, approved_sources=sources['approved_sources'],
+            execution_evidence_policy=execution,
+            deferral_policy=sources.get('backend_evidence_deferral_policy'),
+            historical_report_admission=historical))
+    with cache_manager as admission_cache:
+        for completed, identifier, actual in sorted(candidates):
+            try:
+                entry = state['jobs'][identifier]
+                selected_ids = entry['row_sha256s'] if 'row_sha256s' in entry else [entry['row_sha256']]
+                selected_records = [record_by_id[i] for i in selected_ids]
+                if admission_cache is None:
+                    original = actual if bound_queue is None else bound_queue.fetch(identifier)
+                    admitted, delayed = admit_completed_reports([original], selected_records, authority, workers,
+                        sources['approved_sources'], execution_evidence_policy=execution, cutoff=cutoff,
+                        deferral_policy=sources.get('backend_evidence_deferral_policy'),
+                        historical_report_admission=historical)
+                elif bound_queue is not None:
+                    from ops.current_assessment_compact_queue import admit_bound
+                    admitted, delayed = admit_bound(admission_cache, actual, selected_records,
+                        cutoff=cutoff, full_row=lambda: bound_queue.fetch(identifier))
+                else:
+                    admitted, delayed = admission_cache.admit(actual, selected_records, cutoff=cutoff)
+                deferred.extend(delayed)
+                for key, value in admitted.items():
+                    candidates_entry = (completed, identifier, key, value)
+                    # Separate list preserves temporal ordering across GPU and ROOT artifact observations.
+                    admitted_candidates.append(candidates_entry)
+            except (ValueError, KeyError, TypeError, AttributeError, BadSignatureError) as error:
+                refused.append(_issue('job', identifier, error))
     for identifier, failure in sorted(state.get('capture_failures', {}).items()):
         try:
             if failure.get('kind') != 'confirmed_invalid_artifact': continue
@@ -405,10 +438,12 @@ def candidate_updates(resolved, candidate, resolutions):
 
 
 def load_evidence(audit_config_path, *, authority, cutoff, verifiers,
-                  expected_source_admission_sha256=None, expected_numerical_resolution_policy_sha256=None):
+                  expected_source_admission_sha256=None, expected_numerical_resolution_policy_sha256=None, admission_cache_factory=None,
+                  compact_queue_evidence=None):
     from subnet.numerical_resolution import authenticated_reference_cache
     with authenticated_reference_cache():
         return _load_evidence_uncached(audit_config_path, authority=authority,
             cutoff=cutoff, verifiers=verifiers,
             expected_source_admission_sha256=expected_source_admission_sha256,
-            expected_numerical_resolution_policy_sha256=expected_numerical_resolution_policy_sha256)
+            expected_numerical_resolution_policy_sha256=expected_numerical_resolution_policy_sha256,
+            admission_cache_factory=admission_cache_factory, compact_queue_evidence=compact_queue_evidence)

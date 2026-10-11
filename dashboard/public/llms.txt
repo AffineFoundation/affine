@@ -346,3 +346,5 @@ Learner: https://github.com/AffineFoundation/affine/blob/main/docs/COMMITTED_UNA
 Training: https://github.com/AffineFoundation/affine/blob/main/docs/CONSERVATIVE_FP32_TRAINING.md
 Historical guide (not current instructions):
 https://github.com/AffineFoundation/affine/blob/main/docs/history/llms-before-recovery-consolidation-2026-10-09.md
+Operator weight evidence (no miner protocol change):
+https://github.com/AffineFoundation/affine/blob/main/docs/BOUNDED_WEIGHT_EVIDENCE.md
