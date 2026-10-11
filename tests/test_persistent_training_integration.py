@@ -348,7 +348,12 @@ class PersistentIntegrationTests(unittest.TestCase):
         diagnostics=dict(original['training']['persistent_diagnostics'],updates=original['training']['updates'])
         model_path=self.root/'checkpoint-final'
         def download(url,digest,path,limit):path.write_bytes(b'synthetic frozen transport')
+        # This fixture models a historical v4 report, before execution releases.
+        # Keep its mocked source tree historical too; current FP32 source must
+        # continue rejecting jobs without a qualified execution declaration.
+        historical_backend=self.root/'historical-source/subnet/backend_jobs.py'
         with patch('subnet.backend_jobs._validate',return_value=(job,self.manifest)), \
+                patch('subnet.backend_jobs.__file__',str(historical_backend)), \
                 patch('subnet.backend_jobs.digest',return_value='b'*64), \
                 patch('subnet.backend_jobs.version',return_value='approved'), \
                 patch.dict('os.environ',{'CUBLAS_WORKSPACE_CONFIG':':4096:8'}), \

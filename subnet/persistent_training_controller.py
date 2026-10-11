@@ -128,6 +128,15 @@ def train(controller,manifest,reports,checkpoint_path,*,steps,replay=None):
             training_manifest=amend_manifest(controller,training_manifest,submissions,steps)
     from .trainer_local_state import selected,project
     if selected(controller):training_manifest=project(training_manifest,controller.signed)
+    # Prospective operator hook: actual admitted current-epoch positives choose
+    # a separately released exact update count before any request/capability.
+    sft_route=getattr(controller,'positive_sft_dispatch_route',None)
+    if sft_route is not None:
+        if not learner or recovery is not None:
+            raise ValueError('variable SFT route only for ordinary current-epoch learner inputs')
+        routed=sft_route(training_manifest,submissions,steps)
+        if routed['no_update'] is not None:return routed['no_update']
+        steps=routed['steps']
     cached=controller.state/(epoch+'-training-metrics.json')
     if cached.exists():
         metrics=json.loads(cached.read_text());record,job=original_request(controller,epoch)

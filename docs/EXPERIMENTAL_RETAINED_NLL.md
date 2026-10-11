@@ -149,7 +149,36 @@ this is not recovery of optimizer state from the earlier experiment. Optimizer
 state was not uploaded. Training positive NLL again moved from 0.27255 to
 0.24771, which measures fit to the training responses, not held-out improvement.
 
-This replication qualifies the executed numerical recipe, not the live API,
-coordinator or full deployment. The new variable-coverage dispatch integration,
-independent confirmation and sustained online learning are still pending. Neither
-CPU fixtures nor arithmetic-consistent reports establish those outcomes.
+This replication qualifies the executed numerical recipe, not the live API or
+full deployment. Independent confirmation and sustained online learning are
+still pending. Neither CPU fixtures nor arithmetic-consistent reports establish
+those outcomes.
+
+### Prospective variable-coverage dispatch
+
+The operator integration in `ops/positive_sft_variable_dose_lifecycle.py` selects
+an explicitly released update count from the current epoch's admitted inputs.
+Its present capacity is at most 512 tasks and eight updates, targeting at most
+64 tasks per update. Smaller populations form balanced groups without repeating
+tasks or borrowing old submissions: 65 tasks produce two updates on 33 and 32
+tasks. This is a variable dose, not an assertion that every epoch reproduces the
+fixed 512-task research experiment.
+
+The integration checks the complete native-admission record and the original
+checkpoint, source, optimizer parent and input inventory before issuing work.
+Each possible update count has a separately signed release and a job-bound
+learning-rate authorization. With no completed positive responses, it publishes
+and reads back an explicit no-update receipt, preserves the existing checkpoint
+and optimizer counter, and issues no training job. Infrastructure failures do
+not become empty data. An already issued job, or a fully committed no-update
+receipt, can finish its original recovery path after release expiry; a newly
+prepared job still requires current admission.
+
+A tiny installed H200 exercise passed the 65-task/two-update path, local Adam
+export and exact restoration, followed by an idempotent no-update case. It used
+259 completed positive responses and performed no negative-response forwards.
+The native grading and transport interfaces in that exercise were synthetic
+fixtures; it does not qualify production API/R2 admission. A subsequent
+admission-only expiry-recovery change has CPU controls, without a claim of a new
+GPU execution. Existing native grading, sampling audits and the hourly weight
+writer remain separate from this trainer dispatch.

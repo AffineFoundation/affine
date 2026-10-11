@@ -421,7 +421,14 @@ def run(config,once=False):
                         _,selection=admitted(manifest,replay,controller.authority.id)
                         families={r['environment_id'] for r in selection['selected']}|{b['env_id'] for r in reports.values() for b in r['accepted']}
                         steps=len(families)
-                    cp,metrics=controller.train(learner['manifest'] if unaudited else manifest,reports,status['checkpoint_path'],steps=steps,replay=replay)
+                    try:
+                        cp,metrics=controller.train(learner['manifest'] if unaudited else manifest,reports,status['checkpoint_path'],steps=steps,replay=replay)
+                    except Exception as error:
+                        handler=getattr(controller,'handle_native_no_update',None)
+                        if handler is None:raise
+                        cp,metrics=handler(error,manifest,status)
+                    if metrics.get('native_no_update') is not None:
+                        active['native_no_update']=metrics['native_no_update']
                     if replay is not None:
                         from .replay_commit import commit
                         commit(state/'replay-reuse-ledger.json',epoch,metrics)
@@ -446,7 +453,7 @@ def run(config,once=False):
                     save(state/(epoch+'-proposed-weights.json'),dict(epoch_id=epoch,payable=False,weights=json.loads((state/(epoch+'-scores.json')).read_text())['weights'],chain_transactions=False))
                     publish_history(controller,prefix,json.loads(ledgerpath.read_text()),config['source_bundle'])
                 else:
-                    bucket.json('public/'+epoch+'/learning-status.json',controller.signed(dict(epoch=epoch,input_assurance='unaudited',checkpoint=active['next_checkpoint']['id'],training_steps=active['next_steps'],audit_reward_snapshot_pending=True)))
+                    bucket.json('public/'+epoch+'/learning-status.json',controller.signed(dict(epoch=epoch,input_assurance='unaudited',checkpoint=active['next_checkpoint']['id'],training_steps=active['next_steps'],audit_reward_snapshot_pending=True,**({'native_no_update':active['native_no_update'],'status':active['native_no_update']['status'],'optimizer_updates':0} if 'native_no_update'in active else {}))))
                 # A failed history publication must remain in the after phase:
                 # resume reuses the completed evaluation and never retrains.
                 if active.get('next_trainer_state')is not None:
@@ -464,6 +471,11 @@ def run(config,once=False):
                 save(state/(epoch+'-controller-timing.json'),timing)
                 if unaudited:
                     status['last_completed_epoch']=dict(epoch=epoch,round=status['round'],checkpoint=manifest['checkpoint']['id'],next_checkpoint=active['next_checkpoint']['id'],completed_at=timing['controller_completed_at'],input_assurance='unaudited')
+                    completion_hook=getattr(controller,'training_completion_fields',None)
+                    if completion_hook is not None:
+                        status['last_completed_epoch'].update(completion_hook(epoch))
+                    elif 'native_no_update' in active:
+                        status['last_completed_epoch'].update(controller.native_completion_fields(epoch))
                     save(state/(epoch+'-learner-completion.json'),status['last_completed_epoch'])
                     if manifest.get('continuous_reward_contract')is not None:
                         completion=controller.signed(status['last_completed_epoch'])
