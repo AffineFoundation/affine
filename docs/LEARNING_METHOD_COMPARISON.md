@@ -62,9 +62,28 @@ comparison, not proof that outcome selection caused the historical decline.
 
 The prototype passes 38 CPU tests, including tiny-model generation, actual
 gradient-checkpointed scoring, gradient-estimator controls, and once-only update
-accounting. A separate H200 canary is being prepared to measure numerical drift,
-memory, and throughput. Neither those CPU tests nor a future throughput result
+accounting. A separate H200 canary is now collecting eight attempts for each of
+eight training tasks to measure numerical drift, memory, and throughput, with
+zero optimizer updates. Neither those CPU tests nor a throughput result
 would establish a learning gain. No production RLOO change is active.
+
+## Further methods under review
+
+[Dynamic Fine-Tuning (DFT)](https://arxiv.org/html/2508.05629v3) weights each
+positive token's cross-entropy by its detached model probability. It reduces the
+relative influence of unlikely target tokens and needs no negative examples or
+additional reward model. It is a candidate if positive SFT fits the submitted
+text without improving held-out accuracy. Its published gains use different
+data and training settings, and its confidence weighting is not a test of
+reasoning correctness. We have not tested DFT on Affine.
+
+[SED-SFT](https://arxiv.org/html/2602.07464v1) selectively regularizes token
+confidence to preserve response diversity. Its study includes
+Qwen2.5-Math-7B-Instruct, but the reported advantage is principally after a
+subsequent RL stage; its SFT-only results do not establish a universal accuracy
+improvement. We would prioritize this only if our own measurements show lost
+exploration, rather than assuming every disappointing SFT result is entropy
+collapse. Neither method changes the running experiment or the live contract.
 
 ## How a change earns promotion
 
