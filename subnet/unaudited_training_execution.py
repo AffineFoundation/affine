@@ -36,9 +36,36 @@ OBJECTIVE_PREPARATION = 'unaudited-training-execution-preparation-v5-objective-h
 OBJECTIVE_RELEASE = 'unaudited-training-execution-release-v5-objective-horizon'
 OBJECTIVE_VERSIONS = (OBJECTIVE_VERSION,OBJECTIVE_PREPARATION,OBJECTIVE_RELEASE)
 
+# A prospective SFT route is deliberately separate from historical preference
+# and retained-NLL releases. Parsing these fields is not GPU qualification.
+SFT_VERSION = 'unaudited-training-execution-amendment-v6-positive-sft'
+SFT_GENESIS_VERSION = SFT_VERSION + '-genesis'
+SFT_METHOD = 'fp32-task-balanced-positive-sft-v1'
+SFT_GENESIS_METHOD = SFT_METHOD + '-genesis'
+SFT_PREPARATION = 'unaudited-training-execution-preparation-v6-positive-sft'
+SFT_GENESIS_PREPARATION = SFT_PREPARATION + '-genesis'
+SFT_RELEASE = 'unaudited-training-execution-release-v6-positive-sft'
+SFT_GENESIS_RELEASE = SFT_RELEASE + '-genesis'
+SFT_QUALIFICATION = 'task-balanced-positive-sft-integration-qualification-v1'
+SFT_VERSIONS = (SFT_VERSION, SFT_GENESIS_VERSION, SFT_PREPARATION,
+    SFT_GENESIS_PREPARATION, SFT_RELEASE, SFT_GENESIS_RELEASE)
+SFT_SOURCE_FILES = frozenset(('subnet/positive_only_objective.py',
+    'subnet/positive_only_training.py', 'subnet/positive_only_training_evidence.py'))
+
 
 def configured_objective(value):
     from .training_policy import objective_config, objective_horizon, objective_at_step
+    if value.get('version') in SFT_VERSIONS:
+        from .positive_only_objective import configuration
+        actual = configuration(value.get('training_objective'))
+        if ('training_horizon' in value or type(value.get('steps')) is not int
+                or not 1 <= value['steps'] <= 32
+                or type(value.get('effective_learning_rate')) not in (int, float)
+                or value['effective_learning_rate'] != 1e-6
+                or type(value.get('tokenizer_eos_token_id')) is not int
+                or value['tokenizer_eos_token_id'] < 0):
+            raise ValueError('SFT requires explicit EOS, one to32 updates and qualified LR1e-6')
+        return actual
     if value.get('version') not in OBJECTIVE_VERSIONS:
         if 'training_objective' in value or 'training_horizon' in value:
             raise ValueError('historical execution cannot add an objective')
@@ -64,6 +91,8 @@ def configured_objective(value):
 
 
 def _fields(value):
+    if value.get('version') in SFT_VERSIONS:
+        return FIELDS | {'training_objective', 'tokenizer_eos_token_id'}
     return FIELDS | {'training_objective','training_horizon'} if value.get('version') in OBJECTIVE_VERSIONS else FIELDS
 
 
@@ -105,7 +134,7 @@ def _grant_payload(value,manifest):
         base_hyperparameters_sha256=_base_hyperparameters_sha256(),
         effective_learning_rate=_learning_rate(value),created_at=value['created_at'],
         expires_at=value['expires_at'],execution_release_sha256=value['execution_release_sha256'])
-    if value['method'] == GENESIS_METHOD:
+    if value['method'] in (GENESIS_METHOD, SFT_GENESIS_METHOD):
         if binding['genesis'] is None:raise ValueError('explicit genesis binding required')
         result.update(version=GENESIS_AUTH_VERSION,run_id=binding['genesis']['run_id'])
     return result
@@ -130,6 +159,8 @@ def _sources(value):
     changed={name:hashed for name,hashed in after.items()if before.get(name)!=hashed}
     objective=configured_objective(value)
     extra={'subnet/persistent_training_evidence.py','subnet/training_policy.py'} if objective is not None else set()
+    if value.get('version') in SFT_VERSIONS:
+        extra = extra | SFT_SOURCE_FILES
     representative = 'subnet/training_task_representatives.py' in after
     additions = REPRESENTATIVE_CHANGES if representative else frozenset()
     if representative and not REPRESENTATIVE_CHANGES <= set(changed):
@@ -146,6 +177,8 @@ def _sources(value):
 def _qualification(value,authority):
     _learning_rate(value)
     q=authenticate(value['execution_qualification'],authority)
+    if value.get('version') in SFT_VERSIONS:
+        return _sft_qualification(value, q)
     if q.get('version') == OBJECTIVE_INTAKE_EQUIVALENCE:
         return _objective_intake_equivalence(value,q,authority)
     if q.get('version') == INTAKE_EQUIVALENCE:
@@ -201,6 +234,48 @@ def _qualification(value,authority):
             or q['state_version']!='persistent-fp32-trainer-state-v2-effective-lr'):
         raise ValueError('new execution requires its own authenticated GPU qualification')
     digest(q['report_sha256'])
+
+
+def _sft_qualification(value, q):
+    """Require actual new integration evidence, not relabeled research evidence.
+
+    ROOT must separately attest the original model experiment, source-equivalence
+    review, and actual new-bundle genesis/continuation GPU execution. A CPU-only
+    parser or equivalence review cannot authorize this route by itself.
+    """
+    objective = configured_objective(value)
+    fields = {'version', 'method', 'execution_source_bundle_sha256',
+        'execution_source_files_sha256', 'runtime_versions',
+        'training_runtime_sha256', 'actual_GPU_execution', 'passed',
+        'training_objective', 'tokenizer_eos_token_id', 'effective_learning_rate',
+        'base_hyperparameters_sha256', 'state_version', 'tested_methods',
+        'research_kernel_evidence_sha256', 'source_equivalence_evidence_sha256',
+        'integration_evidence_sha256', 'qualification_scope',
+        'research_kernel_GPU_execution', 'fresh_genesis_tested',
+        'continuation_tested', 'negative_gradients', 'EOS_included'}
+    if (set(q) != fields or q['version'] != SFT_QUALIFICATION
+            or q['method'] != SFT_METHOD
+            or value['method'] not in (SFT_METHOD, SFT_GENESIS_METHOD)
+            or q['training_objective'] != objective
+            or type(q['tokenizer_eos_token_id']) is not int
+            or q['tokenizer_eos_token_id'] != value['tokenizer_eos_token_id']
+            or q['execution_source_bundle_sha256'] != value['training_source_bundle']['sha256']
+            or q['execution_source_files_sha256'] != sha(value['execution_source_files'])
+            or q['runtime_versions'] != value['runtime_versions']
+            or q['training_runtime_sha256'] != value['training_runtime_sha256']
+            or q['effective_learning_rate'] != value['effective_learning_rate']
+            or q['base_hyperparameters_sha256'] != _base_hyperparameters_sha256()
+            or q['state_version'] != 'persistent-fp32-trainer-state-v2-effective-lr'
+            or q['tested_methods'] != [SFT_GENESIS_METHOD, SFT_METHOD]
+            or q['qualification_scope'] != 'positive-sft-fresh-genesis-and-continuation-integration-v1'
+            or any(q[k] is not True for k in ('actual_GPU_execution', 'passed',
+                'research_kernel_GPU_execution', 'fresh_genesis_tested',
+                'continuation_tested', 'EOS_included'))
+            or type(q['negative_gradients']) is not int or q['negative_gradients'] != 0):
+        raise ValueError('SFT requires distinct actual new-bundle GPU integration qualification')
+    for field in ('research_kernel_evidence_sha256', 'source_equivalence_evidence_sha256',
+            'integration_evidence_sha256'):
+        digest(q[field])
 
 def _intake_equivalence(value,q,authority):
     """Reuse real GPU mechanics evidence only for an explicit intake-only delta.
@@ -330,7 +405,7 @@ def validate(job_envelope,authority,*,now=None):
     manifest=authenticate(job['manifest'],authority)
     _unchanged_manifest(manifest)
     value=authenticate(job.get(FIELD),authority)
-    if set(value)!=_fields(value) or (value['version'],value['method'])not in ((VERSION,METHOD),(GENESIS_VERSION,GENESIS_METHOD),(OBJECTIVE_VERSION,OBJECTIVE_METHOD)):
+    if set(value)!=_fields(value) or (value['version'],value['method'])not in ((VERSION,METHOD),(GENESIS_VERSION,GENESIS_METHOD),(OBJECTIVE_VERSION,OBJECTIVE_METHOD),(SFT_VERSION,SFT_METHOD),(SFT_GENESIS_VERSION,SFT_GENESIS_METHOD)):
         raise ValueError('exact prospective unaudited execution declaration')
     if (job.get('role')!='train' or value['epoch']!=manifest['epoch']
             or value['job_id']!=job.get('job_id')
@@ -351,7 +426,7 @@ def validate(job_envelope,authority,*,now=None):
         raise ValueError('representative execution source requires explicit original signed policy')
     binding=validate_binding(manifest.get('trainer_state_binding'),manifest)
     parent=binding['parent']
-    initial = value['version'] == GENESIS_VERSION
+    initial = value['version'] in (GENESIS_VERSION, SFT_GENESIS_VERSION)
     if initial:
         from .learning_rate_transition import GENESIS_DOCUMENT_VERSION
         if (parent is not None or binding['global_step_before'] != 0
@@ -453,12 +528,13 @@ def provenance(job_envelope,authority):
         parent_descriptor_sha256=value['parent_descriptor_sha256'],
         genesis_sha256=value['genesis_sha256'],optimizer_step_before=value['optimizer_step_before'],
         optimizer_step_after=value['optimizer_step_before']+value['steps'],
-        input_assurance='unaudited',proof_verification_performed=False,optimizer_reset=value['version']==GENESIS_VERSION,
+        input_assurance='unaudited',proof_verification_performed=False,optimizer_reset=value['version'] in (GENESIS_VERSION,SFT_GENESIS_VERSION),
         effective_learning_rate=value['effective_learning_rate'],
         learning_rate_authorization_sha256=sha(value['learning_rate_authorization']),
         base_hyperparameters_sha256=_base_hyperparameters_sha256(),
         state_version='persistent-fp32-trainer-state-v2-effective-lr',
-        **({'training_objective':configured_objective(value),'training_horizon':copy.deepcopy(value['training_horizon'])} if value['version']==OBJECTIVE_VERSION else {}))
+        **({'training_objective':configured_objective(value),'training_horizon':copy.deepcopy(value['training_horizon'])} if value['version']==OBJECTIVE_VERSION else {}),
+        **({'training_objective':configured_objective(value),'tokenizer_eos_token_id':value['tokenizer_eos_token_id']} if value['version'] in SFT_VERSIONS else {}))
 
 def validate_provenance(report,job_envelope,authority):
     job=authenticate(job_envelope,authority)
@@ -480,7 +556,7 @@ def preparation(authorization,authority,*,now=None):
     """Authenticate a compact, exact-epoch, exact-input ROOT preparation grant."""
     value=authenticate(authorization,authority)
     if (set(value)!=_fields(value)-{'job_id','learning_rate_authorization'} or
-            (value.get('version'),value.get('method')) not in ((PREPARATION_VERSION,METHOD),(GENESIS_PREPARATION,GENESIS_METHOD),(OBJECTIVE_PREPARATION,OBJECTIVE_METHOD))):
+            (value.get('version'),value.get('method')) not in ((PREPARATION_VERSION,METHOD),(GENESIS_PREPARATION,GENESIS_METHOD),(OBJECTIVE_PREPARATION,OBJECTIVE_METHOD),(SFT_PREPARATION,SFT_METHOD),(SFT_GENESIS_PREPARATION,SFT_GENESIS_METHOD))):
         raise ValueError('exact training execution preparation authorization')
     if (value.get('training_policy')!=POLICY
             or value.get('training_input_policy')!=INPUT_POLICY):
@@ -503,7 +579,7 @@ def attach(payload,authorization,authority,sign):
     """
     if FIELD in payload:raise ValueError('execution declaration already attached')
     value=copy.deepcopy(preparation(authorization,authority,now=payload.get('created_at')))
-    value['version']=(OBJECTIVE_VERSION if value['method']==OBJECTIVE_METHOD else GENESIS_VERSION if value['method']==GENESIS_METHOD else VERSION);value['job_id']=payload['job_id']
+    value['version']=(SFT_GENESIS_VERSION if value['method']==SFT_GENESIS_METHOD else SFT_VERSION if value['method']==SFT_METHOD else OBJECTIVE_VERSION if value['method']==OBJECTIVE_METHOD else GENESIS_VERSION if value['method']==GENESIS_METHOD else VERSION);value['job_id']=payload['job_id']
     value['learning_rate_authorization']=sign(_grant_payload(value,authenticate(payload['manifest'],authority)))
     result=copy.deepcopy(payload);result[FIELD]=sign(value)
     envelope=sign(result);validate(envelope,authority,now=payload['created_at'])
@@ -538,13 +614,19 @@ RELEASE_FIELDS = frozenset(('version','method','original_source_bundle_sha256',
 
 def release(authorization,authority,*,now=None):
     value=authenticate(authorization,authority)
-    initial_capable = value.get('version') == GENESIS_RELEASE
+    initial_capable = value.get('version') in (GENESIS_RELEASE, SFT_GENESIS_RELEASE)
     objective_release = value.get('version') == OBJECTIVE_RELEASE
-    expected_fields=(RELEASE_FIELDS | {'genesis_document'} if initial_capable else
-                     RELEASE_FIELDS | {'training_objective','training_horizon'} if objective_release else RELEASE_FIELDS)
+    sft_release = value.get('version') in (SFT_RELEASE, SFT_GENESIS_RELEASE)
+    expected_fields = RELEASE_FIELDS | ({'genesis_document'} if initial_capable else set())
+    if sft_release:
+        expected_fields |= {'training_objective', 'tokenizer_eos_token_id'}
+    elif objective_release:
+        expected_fields |= {'training_objective', 'training_horizon'}
     if (set(value)!=expected_fields
-            or value['version']!=(GENESIS_RELEASE if initial_capable else OBJECTIVE_RELEASE if objective_release else RELEASE_VERSION)
-            or value['method']!=(GENESIS_METHOD if initial_capable else OBJECTIVE_METHOD if objective_release else METHOD) or value['training_policy']!=POLICY
+            or (value['version'], value['method']) not in ((GENESIS_RELEASE,GENESIS_METHOD),
+                (OBJECTIVE_RELEASE,OBJECTIVE_METHOD),(RELEASE_VERSION,METHOD),
+                (SFT_RELEASE,SFT_METHOD),(SFT_GENESIS_RELEASE,SFT_GENESIS_METHOD))
+            or value['training_policy']!=POLICY
             or value['training_input_policy']!=INPUT_POLICY):
         raise ValueError('exact approved training execution release')
     _sources(value);_qualification(value,authority)
@@ -594,7 +676,7 @@ def derive_preparation(release_envelope,job,public_envelope,native_documents,aut
     binding=validate_binding(m.get('trainer_state_binding'),m)
     initial=binding['parent'] is None
     if initial:
-        if (r['version']!=GENESIS_RELEASE or binding['genesis']!=r['genesis_document']
+        if (r['version'] not in (GENESIS_RELEASE,SFT_GENESIS_RELEASE) or binding['genesis']!=r['genesis_document']
                 or binding['global_step_before']!=0):
             raise ValueError('new optimizer requires explicitly released exact unique genesis')
     elif binding['genesis'] is not None or binding['global_step_before'] < 1:
@@ -607,8 +689,9 @@ def derive_preparation(release_envelope,job,public_envelope,native_documents,aut
     # All static source/qualification values remain those approved in the release.
     value={key:copy.deepcopy(r[key])for key in _fields(r) if key in r}
     objective_release=r['version']==OBJECTIVE_RELEASE
-    value.update(version=GENESIS_PREPARATION if initial else OBJECTIVE_PREPARATION if objective_release else PREPARATION_VERSION,
-        method=GENESIS_METHOD if initial else OBJECTIVE_METHOD if objective_release else METHOD,epoch=m['epoch'],**scope,
+    sft_release=r['version'] in (SFT_RELEASE,SFT_GENESIS_RELEASE)
+    value.update(version=(SFT_GENESIS_PREPARATION if initial else SFT_PREPARATION) if sft_release else GENESIS_PREPARATION if initial else OBJECTIVE_PREPARATION if objective_release else PREPARATION_VERSION,
+        method=(SFT_GENESIS_METHOD if initial else SFT_METHOD) if sft_release else GENESIS_METHOD if initial else OBJECTIVE_METHOD if objective_release else METHOD,epoch=m['epoch'],**scope,
         execution_release_sha256=sha(release_envelope),trainer_binding_sha256=sha(binding),
         parent_descriptor_sha256=None if initial else binding['parent']['descriptor_sha256'],
         optimizer_step_before=binding['global_step_before'],created_at=created_at,
@@ -620,6 +703,8 @@ def derive_preparation(release_envelope,job,public_envelope,native_documents,aut
         if (binding['global_step_before']==value['training_horizon']['first_optimizer_step']
                 and binding['input_checkpoint']!=value['training_horizon']['initial_checkpoint']):
             raise ValueError('objective release requires the exact qualified initial checkpoint')
+    if sft_release:
+        configured_objective(value)
     if set(value)!=_fields(value)-{'job_id','learning_rate_authorization'}:raise ValueError('complete derived epoch execution scope')
     return value
 

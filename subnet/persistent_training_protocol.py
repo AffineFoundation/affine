@@ -305,11 +305,22 @@ def validate_output(descriptor,job,manifest):
         value=authenticate(amendment,authority)
         lr_execution=value.get('version') in ('unaudited-training-execution-amendment-v2-effective-lr',
             'unaudited-training-execution-amendment-v3-effective-lr-genesis',
-            'unaudited-training-execution-amendment-v5-objective-horizon')
+            'unaudited-training-execution-amendment-v5-objective-horizon',
+            'unaudited-training-execution-amendment-v6-positive-sft',
+            'unaudited-training-execution-amendment-v6-positive-sft-genesis')
+        if value.get('version') in ('unaudited-training-execution-amendment-v6-positive-sft',
+                'unaudited-training-execution-amendment-v6-positive-sft-genesis'):
+            from .unaudited_training_execution import configured_objective
+            configured_objective(value)
+            wanted_method='fp32-task-balanced-positive-sft-v1'+(
+                '-genesis' if value['version'].endswith('-genesis') else '')
+            if value.get('method')!=wanted_method:
+                raise ValueError('exact positive SFT state execution method')
         if effective_lr!=lr_execution:
             raise ValueError('explicit LR execution requires truthful V2 output state')
         if effective_lr:
-            genesis_execution=value.get('version')=='unaudited-training-execution-amendment-v3-effective-lr-genesis'
+            genesis_execution=value.get('version') in ('unaudited-training-execution-amendment-v3-effective-lr-genesis',
+                'unaudited-training-execution-amendment-v6-positive-sft-genesis')
             if genesis_execution != (expected_parent is None):
                 raise ValueError('distinct explicit genesis versus existing-parent LR execution')
             authorization=value.get('learning_rate_authorization')

@@ -114,6 +114,11 @@ def validate_objective_evidence(report,job,*,tasks):
 def validate_updates(report,job,manifest):
     training=report['training'];updates=training['updates'];diagnostics=training['persistent_diagnostics']
     binding=manifest['trainer_state_binding'];before=binding['global_step_before']
+    from .training_receipts import authenticate
+    from .unaudited_training_execution import configured_objective
+    envelope=job.get('unaudited_training_execution')
+    declaration=authenticate(envelope,job['manifest']['signer']) if envelope is not None else {}
+    objective=configured_objective(declaration)
     if (not isinstance(updates,list)or len(updates)!=job['steps']or
             not isinstance(diagnostics,dict)or 'updates'in diagnostics or
             diagnostics.get('training_policy')!=POLICY or diagnostics.get('optimizer_steps')!=job['steps']or
@@ -138,6 +143,33 @@ def validate_updates(report,job,manifest):
                     len(negatives)!=manifest['L'] or len(batch['rollouts'])!=manifest['K']+manifest['L']):
                     raise ValueError('complete manifest task rollout quotas')
             pairs.extend((definition,p,n)for p,n in zip(positives,negatives))
+    if (objective or {}).get('version')=='task-balanced-positive-sft-v1':
+        # The report cannot choose EOS, optimizer rate or the admitted source
+        # population. All expectations below are independently signed inputs.
+        from .learning_rate_transition import validate_authorization, effective_hyperparameters
+        from .positive_only_training_evidence import validate_diagnostics
+        authority=job['manifest']['signer']
+        if sha(authenticate(job['manifest'],authority))!=sha(manifest):
+            raise ValueError('positive SFT exact authenticated report manifest')
+        if (declaration.get('epoch')!=manifest['epoch'] or declaration.get('job_id')!=job['job_id'] or
+                type(declaration.get('tokenizer_eos_token_id'))is not int or
+                declaration['tokenizer_eos_token_id']<0):
+            raise ValueError('positive SFT authenticated job/EOS binding')
+        grant=declaration['learning_rate_authorization']
+        authorization=validate_authorization(grant,authority,epoch=manifest['epoch'],
+            job_id=job['job_id'],input_checkpoint=binding['input_checkpoint'],
+            parent_descriptor_sha256=(binding['parent']['descriptor_sha256'] if binding['parent'] else None),
+            genesis_sha256=binding['genesis_sha256'],optimizer_step_before=before,
+            steps=job['steps'],parameters_sha256=binding['parameters_sha256'],historical=True)
+        if authorization['effective_learning_rate']!=declaration['effective_learning_rate']:
+            raise ValueError('positive SFT declaration and actual signed rate disagree')
+        return validate_diagnostics(diagnostics,updates,pairs,objective=objective,
+            input_checkpoint=binding['input_checkpoint'],epoch=manifest['epoch'],
+            steps=job['steps'],seed=manifest['training_coverage']['seed'],
+            global_step_before=before,parameters=binding['parameters'],
+            eos_token_id=declaration['tokenizer_eos_token_id'],required_pairs_per_task=manifest['K'],
+            effective_hyperparameters=effective_hyperparameters(authorization),
+            learning_rate_authorization_sha256=sha(grant))
     pairs,tasks,groups,identities=task_groups(pairs,job['steps'],manifest['training_coverage']['seed'],
         **({'required_pairs_per_task':manifest['K']} if type(manifest.get('K'))is int and manifest.get('K')==manifest.get('L') and manifest['K']>=2 else {}))
     if diagnostics.get('task_count')!=len(tasks)or diagnostics.get('pair_count')!=len(pairs):

@@ -924,6 +924,9 @@ def install_source_loader(root,additional_files=()):
         sys.modules.pop('subnet.unaudited_training_execution',None)
     if 'subnet/learning_rate_transition.py'in additional_files:
         sys.modules.pop('subnet.learning_rate_transition',None)
+    for name in ('positive_only_objective','positive_only_training','positive_only_training_evidence'):
+        if 'subnet/'+name+'.py' in additional_files:
+            sys.modules.pop('subnet.'+name,None)
     if 'subnet/optimizer_state_cache.py'in additional_files:
         sys.modules.pop('subnet.optimizer_state_cache',None)
         sys.modules.pop('subnet.cache_lifecycle',None)
@@ -998,6 +1001,16 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     startup_timings['source_runtime_authentication']=dict(seconds=time.monotonic()-source_started,calls=1)
     if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':raise ValueError('CUDA environment profile')
     execution_files=('subnet/unaudited_training_execution.py','subnet/fp32_gradient_accumulation.py','subnet/learning_rate_transition.py') if 'unaudited_training_execution'in job else ()
+    if 'unaudited_training_execution' in job:
+        from .training_receipts import authenticate
+        from .unaudited_training_execution import configured_objective
+        execution_objective=configured_objective(authenticate(job['unaudited_training_execution'],authority))
+        if (execution_objective or {}).get('version')=='task-balanced-positive-sft-v1':
+            positive_files=tuple('subnet/'+n+'.py' for n in (
+                'positive_only_objective','positive_only_training','positive_only_training_evidence'))
+            if not set(positive_files)<=set(job['source_files']):
+                raise ValueError('positive SFT requires its complete authenticated execution source')
+            execution_files+=positive_files
     token_files=('subnet/token_only_protocol.py','subnet/token_only_runtime.py','subnet/threeway_prefill_research.py','subnet/native_session_validation.py')if 'token_artifact_policy'in manifest else ()
     publication_files=('subnet/persistent_publication.py',) if manifest.get('persistent_publication_policy') is not None else ()
     if manifest.get('optimizer_state_export_policy')=='trainer-local-only-v1':

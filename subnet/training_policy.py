@@ -63,6 +63,9 @@ OBJECTIVE_VERSION = 'sequence-mean-preference-positive-nll-v1'
 def objective_config(value=None):
     if value is None:
         return dict(version=OBJECTIVE_VERSION, positive_nll_weight=0.0)
+    if isinstance(value, dict) and value.get('version') == 'task-balanced-positive-sft-v1':
+        from .positive_only_objective import configuration
+        return configuration(value)
     if (not isinstance(value,dict) or set(value)!={'version','positive_nll_weight'}
             or value['version']!=OBJECTIVE_VERSION
             or type(value['positive_nll_weight'])not in(int,float)

@@ -13,6 +13,34 @@ from .persistent_training_state import (MAX_SHARD_BYTES, resource_plan,
 from .storage import canonical
 
 
+def objective_trainer(objective):
+    """Choose an explicit kernel only after the caller authenticates execution.
+
+Legacy zero/unit-NLL remains preference training. It must never be silently
+reinterpreted as positive-only SFT, and unknown objectives must fail closed.
+"""
+    from .training_policy import objective_config
+    configured = objective_config(objective)
+    if configured['version'] == 'task-balanced-positive-sft-v1':
+        from .positive_only_training import train_epoch
+        return train_epoch, dict(objective=configured)
+    from .task_normalized_training import train_epoch
+    return train_epoch, dict(positive_nll_weight=configured['positive_nll_weight'])
+
+
+def validate_objective_runtime(objective, declaration, runtime):
+    """Compare actual checkpoint tokenizer to the independent signed EOS pin."""
+    if objective is None or objective.get('version') != 'task-balanced-positive-sft-v1':
+        return
+    from .positive_only_objective import configuration
+    configuration(objective)
+    pinned = declaration.get('tokenizer_eos_token_id')
+    if (type(pinned) is not int or pinned < 0 or
+            type(runtime.tokenizer.eos_token_id) is not int or
+            runtime.tokenizer.eos_token_id != pinned):
+        raise ValueError('actual checkpoint tokenizer must match signed positive-SFT EOS')
+
+
 def report_updates(diagnostics,job,manifest):
     """Keep the common report update list separate from v4 state diagnostics."""
     updates=diagnostics.get('updates')
@@ -93,8 +121,13 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
     """Stage durable state before returning; operator authority commits later."""
     from .backend_jobs import get_object, file_map
     from .model import model_files
-    from .task_normalized_training import train_epoch
     binding,parent=validate_job(job,manifest,authority)
+    from .training_receipts import authenticate
+    from .unaudited_training_execution import configured_objective
+    declaration=authenticate(job['unaudited_training_execution'],authority)
+    objective=configured_objective(declaration)
+    validate_objective_runtime(objective,declaration,runtime)
+    learning_rate_authorization=declaration['learning_rate_authorization']
     from .persistent_publication import export_policy,LOCAL_POLICY
     readback_mode=export_policy(manifest)
     local_only=readback_mode==LOCAL_POLICY
@@ -136,18 +169,14 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
                 owned_cache=local_cache if local_cache and local_cache.policy['version']=='sole-current-fp32-state-cache-stat-v2' else None)
         restore_seconds=time.monotonic()-restore_started
         train_started=time.monotonic()
-        from .training_receipts import authenticate
-        declaration=authenticate(job['unaudited_training_execution'],authority)
-        learning_rate_authorization=declaration['learning_rate_authorization']
-        from .unaudited_training_execution import configured_objective
-        objective=configured_objective(declaration)
+        train_epoch,objective_arguments=objective_trainer(objective)
         destination,optimizer,diagnostics=train_epoch(runtime,pairs,out,
             input_checkpoint=binding['input_checkpoint'],epoch=manifest['epoch'],
             seed=manifest['training_coverage']['seed'],steps=job['steps'],
             approved_genesis=binding['genesis'],approved_genesis_sha256=binding['genesis_sha256']if parent is None else None,
             restored_state=restored,resource_admission=admission,
             learning_rate_authorization=learning_rate_authorization,learning_rate_authority=authority,job_id=job['job_id'],
-            positive_nll_weight=(objective or {}).get('positive_nll_weight',0),
+            **objective_arguments,
             **({'required_pairs_per_task':manifest['K']} if type(manifest.get('K'))is int and manifest.get('K')==manifest.get('L') and manifest['K']>=2 else {}))
         training_and_checkpoint_seconds=time.monotonic()-train_started
         files=model_files(destination);checkpoint=file_map(files)

@@ -64,3 +64,57 @@ The controls cover closed-form loss derivatives, equal task weighting, default
 zero behavior, shared component passes, continuation of real tiny Adam state,
 signed release bounds, the exact 16-update horizon, retry idempotence, and report
 provenance. They need no private source trees, credentials, network, or GPU.
+
+## Positive-only SFT research
+
+The separate `task-balanced-positive-sft-v1` candidate is **not active in the
+live network**. It implements the proposal to retain the miner's positive and
+negative sample quotas while learning only from correct responses. It requires
+a new, explicitly qualified v6 execution release. Installing this source or
+changing an unsigned configuration does not activate it.
+
+The trainer first checks the complete admitted task groups and their content
+identities. It selects positive trajectories with an actual terminal EOS and
+no interior EOS. A cap-ended positive may remain valid under the original
+mining contract but is excluded from this experimental objective. Exclusions
+are recorded; no EOS is appended, and no historical miner penalty is inferred.
+Negative trajectories receive no forward pass or gradient in this objective.
+Native grading and sampling audits retain their separate roles.
+
+For each response, the loss is mean generated-token cross-entropy, including
+the actual EOS and excluding prompt tokens. It is then averaged over retained
+positive responses within a task, and over tasks in the update group. Each task
+is used once across the fixed groups. The implementation retains FP32 gradient
+accumulation, FP32 Adam master weights and moments, and BF16 model export.
+The release binds the tokenizer EOS, objective, source, runtime, learning rate,
+input inventory and optimizer lineage. Its reports record positive selection,
+losses and actual update coverage instead of inventing preference margins.
+
+The initial isolated experiment used the original 7B upstream checkpoint, fresh
+Adam, 2,046 completed correct miner responses from 512 finalized training tasks,
+eight 64-task updates and learning rate `1e-6`. Development accuracy rose from
+94/128 to 98/128: four gains and zero losses. The conservative paired 95% effect
+interval was -2.67 to +8.56 percentage points, so this is encouraging but does
+not establish independent improvement. A separate official TRAIN-answer control
+stayed at 94/128. Its response count, style and length differ, so it does not
+isolate rationale quality. Independent 512-problem confirmation is in progress.
+
+This experiment also changed optimizer initialization and update dose relative
+to production; it does not prove that negative gradients alone caused earlier
+regression. Final-answer correctness does not establish correct reasoning, and
+quota-selected K4/L4 responses are not an unbiased eight-draw policy sample.
+The approach is related to [ReST-EM](https://arxiv.org/abs/2312.06585) and
+[positive-only RAFT](https://arxiv.org/abs/2504.11343).
+
+Portable candidate checks:
+
+```sh
+python -m unittest discover -s tests -p 'test_positive_only*.py' -v
+python -m unittest discover -s tests -p 'test_positive_sft*.py' -v
+```
+
+These are CPU contracts using throwaway signing keys and explicitly identified
+fixtures. A separate tiny H200 test has exercised real fresh-state training,
+local state export/restore and continuation. Full-size candidate qualification,
+independent confirmation and sustained learning are still pending. Neither CPU
+fixtures nor arithmetic-consistent reports establish those outcomes.

@@ -48,6 +48,14 @@ and exact approved source archive. This guide describes the restored contract;
 it cannot extend a deadline or override a signed opening. GitHub main can also
 contain research code that the signed source has not activated.
 
+Positive-only SFT is currently research, not an activated live objective.
+The candidate preserves the miner's positive/negative quotas while training
+only on eligible terminal-EOS positive responses. It needs a separately
+qualified signed execution release; installing research code does not change
+the current opening, sampling proof, grading rules or rewards. See
+docs/EXPERIMENTAL_RETAINED_NLL.md#positive-only-sft-research in the research
+branch for its objective, preliminary results and qualification limits.
+
 ## Task, model and batch rules
 
 - Environment: `affine_math`, `prime-v1-2-completed-math`.
