@@ -1,6 +1,6 @@
 # Measured learning and transport status
 
-## Current assessment — 2026-10-11, 01:05 UTC
+## Current assessment — 2026-10-11, 03:55 UTC
 
 Learning improvement over the genuine upstream base is still unproven. The
 current miner contract is four distinct correct and four distinct completed
@@ -8,16 +8,18 @@ incorrect rollouts per task batch, with up to nine batches per UID per epoch.
 Valid unaudited submissions can reach training without waiting for inference
 audits. The signed epoch manifest remains the authority for these parameters.
 
-Epoch 129 completed in 57m43s, the fifth consecutive complete epoch under one
-hour (125–129). Its update consumed 512 tasks / 2,048 pairs / 4,096 rollouts
-from 193 external identities and advanced the persistent optimizer to step 39.
-Epoch 130's original training job is in progress. This is operational progress,
-not evidence that the model is improving.
+Epochs 125–131 completed consecutively within one hour. Epoch 132 then took
+60m20s, missing the target by 20 seconds. Its update consumed 512 tasks /
+2,048 pairs / 4,096 rollouts from 190 external identities and advanced the
+persistent optimizer from step 41 to 42. Epoch 133's original training job is
+running. These are operational measurements, not evidence of learning gain.
 
 The predeclared positive-NLL experiment still covers exactly steps 26→42 and
-has completed 13 of its 16 updates. It continues unchanged; neither the running
-checkpoint nor its Adam state has been reset. Its fixed endpoint and subsequent
-preference-only update must retain their original interpretation. See
+has completed all 16 updates, publishing the fixed endpoint `563b7ad3`.
+Its original endpoint evaluation is still running. Neither the running
+checkpoint nor its Adam state has been reset. The scheduled next update is
+preference-only, with the same 5e-7 learning rate and retained optimizer.
+The fixed endpoint and subsequent update retain their original interpretation. See
 [the objective](EXPERIMENTAL_RETAINED_NLL.md).
 
 ### Historical learning result and baseline correction
@@ -67,13 +69,23 @@ monotonic deterioration or identify one harmful update.
   coefficient ratio is not a measured gradient-norm ratio. Actual accumulated
   gradients, persistent Adam moments and BF16 publication can change the update
   direction; those effects are being measured separately.
+- Across the 14 completed study updates from epochs 117–130, retained diagnostics
+  show that mean token log probabilities rose for both correct and incorrect
+  answers. Their relative separation decreased in 11 of those updates and
+  increased in three. This is an in-sample observation, not held-out evidence
+  or a causal attribution to the objective. A faithful optimizer replay is
+  being prepared to distinguish the accumulated gradient, retained Adam state,
+  and BF16 parameter update.
 - Garbled or unrenderable output tokens alone do not establish miner forgery.
   They also occurred in controlled model-generated diagnostics, including one
   capped genuine-upstream math response. No retrospective cheating conclusion
   follows from appearance alone.
 
-The independent confirmation remains reserved until the exact predeclared
-endpoint and complete training-exposure record are available. No successful
+The independent confirmation remains reserved until runtime qualification and
+the complete training-exposure record are available. Its 512 tasks are drawn
+from DeepMath, so it measures transfer to that population rather than the MATH
+test distribution. The comparator is the genuine upstream base and the candidate
+is the fixed step-42 endpoint, without selecting a favorable checkpoint. No successful
 learning or convergence claim is being made from fixed32 scores, training loss,
 checkpoint counts, or a favorable intermediate result.
 

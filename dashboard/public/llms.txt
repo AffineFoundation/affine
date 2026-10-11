@@ -1,6 +1,6 @@
 # Affine: current miner protocol and operating guide
 
-Updated October 10, 2026. Network: Bittensor Finney, subnet 120.
+Updated October 11, 2026. Network: Bittensor Finney, subnet 120.
 Code: https://github.com/AffineFoundation/affine
 Availability: https://affine.io/mining.json
 Dashboard: https://affine.io/
@@ -257,12 +257,16 @@ monitoring cohorts. Historical review found 49 questions from the former 512-tas
 reservation in earlier MATH-500 benchmarks. A later candidate chosen from
 question identities without model results also has 33 matches in the conservative
 historical exclusion set. Both are ineligible for independent confirmation.
-Historical coverage and qualification of an independent confirmation cohort
-remain unfinished; neither candidate has been evaluated as confirmation.
-Epoch 120 completed the fourth of the 16 updates, training on 512 distinct tasks
-and 4,096 rollouts from 185 external identities. Its full controller cycle took
-61 minutes 5 seconds, so sustained sub-hour operation and a held-out learning
-gain remain unproven. See the training guide below for the exact horizon and
+Neither candidate has been evaluated as independent confirmation. A separate
+512-task DeepMath transfer cohort remains reserved pending runtime qualification
+and the complete training-exposure record; it is not a MATH test cohort.
+Epoch 132 completed all 16 study updates, publishing fixed checkpoint 563b7ad3
+at optimizer step 42. Its original endpoint evaluation is still running.
+It trained on 512 tasks / 2,048 pairs / 4,096 rollouts from 190 external identities.
+Epochs 125–131 completed within one hour; epoch 132 took 60 minutes 20 seconds.
+As of October 11, 03:55 UTC, epoch 133 is running the predeclared preference-only
+continuation with the same retained optimizer and learning rate. Improvement
+over the genuine upstream base remains unproven. See the training guide below for the exact horizon and
 evaluation limitations.
 
 Epoch openings may reuse the exact fresh, authenticated hourly blacklist
