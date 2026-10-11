@@ -115,7 +115,7 @@ class ServiceControls(unittest.TestCase):
   import hashlib
   self.row=dict(epoch='e1',round=1,checkpoint='a'*64,miner='b'*64,env_id='math',index=0,batch_sha256='c'*64,proof_sha256=hashlib.sha256(b'proof').hexdigest(),commitment_sha256='e'*64,verifier_contract_sha256='f'*64,committed_at=20)
   artifact=dict(slot=0,batch_sha256='c'*64,sha256=self.row['proof_sha256'],size=5,key='original',frozen_key='immutable')
-  self.p=dict(manifest_document=signed(self.key,dict(epoch='e1',start=10,deadline=20,source_bundle={'sha256':'9'*64})),receipts={'b'*64:{'artifacts':[artifact]}},records=[self.row])
+  self.p=dict(round=1,manifest_document=signed(self.key,dict(epoch='e1',start=10,deadline=20,source_bundle={'sha256':'9'*64})),receipts={'b'*64:{'artifacts':[artifact]}},records=[self.row])
   self.service.state['populations']['e1']=signed(self.key,self.p);self.service.sources['9'*64]={};self.service.metadata['9'*64]={}
  def test_hour_boundary_includes_all_new_completed_epochs_once(self):
   self.service.state['populations']['e2']=self.service.state['populations']['e1'];calls=[]

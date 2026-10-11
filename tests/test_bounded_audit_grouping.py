@@ -35,7 +35,7 @@ class BoundedGrouping(ParallelCapture):
   for child in env['payload']['batches']:
    frozen='public/'+m['epoch']+'/submissions/'+self.fixture.identity.id+'/'+digest(env)+'/'+str(child['slot'])+'.zip';artifacts.append(dict(child,key='private/'+str(child['slot']),frozen_key=frozen,read_url='https://example.r2.cloudflarestorage.com/bucket/'+frozen,etag='original',received_at=15))
    rows.append(dict(self.rows[0],miner=self.fixture.identity.id,index=child['index'],batch_sha256=child['batch_sha256'],proof_sha256=child['sha256'],commitment_sha256=digest(env),verifier_contract_sha256=verifier_contract(m)))
-  receipt=dict(sha256=digest(env),commitment_document=env,artifacts=artifacts);self.service.state['populations'][m['epoch']]=sign(self.root,{'manifest_document':sign(self.root,m)});self.service.dispatch_records=lambda:(rows,0);self.service._capture=lambda row,p:(m,receipt,next(a for a in artifacts if a['index']==row['index']))
+  receipt=dict(sha256=digest(env),commitment_document=env,artifacts=artifacts);self.service.state['populations'][m['epoch']]=sign(self.root,{'round':1,'records':rows,'manifest_document':sign(self.root,m)});self.service.dispatch_records=lambda:(rows,0);self.service._capture=lambda row,p:(m,receipt,next(a for a in artifacts if a['index']==row['index']))
   self.service.tick();j=self.jobs()[0];manifest=authenticate(j['manifest'],self.authority);self.assertEqual(len(manifest['audit_frozen_receipts']),1);self.assertEqual(len(j['submissions']),2);validate_frozen_submissions(manifest,j['submissions'])
   worker=self.fixture.worker;wid=worker.verify_key.encode().hex();self.queue.workers[wid]=['verify'];nonce=0
   def request(action,**kw):
@@ -68,7 +68,7 @@ class BoundedGrouping(ParallelCapture):
   self.service.tick();plan=next(iter(self.service.state['group_plans'].values()));plan['resolved']=False;plan['row_sha256s'].append(plan['row_sha256s'][0])
   with self.assertRaisesRegex(ValueError,'bounded original audit group plan'):self.service.tick()
  def test_no_group_spans_different_immutable_openings(self):
-  row=self.rows[-1];old=self.capture_data[digest(row)];m,receipt,a=old;m=copy.deepcopy(m);m['epoch']='another-opening';new=dict(row,epoch=m['epoch']);self.rows[-1]=new;self.capture_data[digest(new)]=(m,receipt,a);self.service.state['populations'][m['epoch']]=sign(self.root,{'manifest_document':sign(self.root,m)})
+  row=self.rows[-1];old=self.capture_data[digest(row)];m,receipt,a=old;m=copy.deepcopy(m);m['epoch']='another-opening';new=dict(row,epoch=m['epoch']);self.rows[-1]=new;self.capture_data[digest(new)]=(m,receipt,a);self.service.state['populations'][m['epoch']]=sign(self.root,{'round':1,'records':[new],'manifest_document':sign(self.root,m)})
   # Metadata test bypasses queue receipt admission for the changed fixture, but
   # authentic group plans must still segregate openings before any capture.
   self.service._capture=lambda *a:(_ for _ in ()).throw(TimeoutError());self.service.tick()

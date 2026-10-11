@@ -14,6 +14,16 @@ At each UTC hour cutoff H, completed epochs in `H-3600 < completed_at <= H` rece
 
 The service joins the existing authenticated verifier SQLite queue and does not create another listener. It bounds outstanding jobs and selections per tick, persists selections before proof access, and recovers an already-written original signed job without changing its selection, source or URLs. A terminal expired job without authenticated scientific evidence remains unknown; automatic capability renewal and a separately authenticated reference execution still require explicit integration.
 
+Audit dispatch prioritizes the same `recent_epochs` window used by the signed
+confidence and penalty policy, measured from the newest authenticated population
+round. This applies to new random selections, capture retries, and pending group
+plans. Within that window, half the available group slots favor the newest pending
+round and the rest favor the oldest selected work; unused slots spill between those
+lanes. Historical forensic work resumes when recent selectable and pending work is
+exhausted. Existing selections, seeds, group members, jobs, leases, reports, and
+historical verdicts are retained. This changes dispatch priority, not the sampling
+proof, grading rules, or penalty thresholds.
+
 Continuous-auditor activation binds the penalty and confidence policy inside the
 operator-signed source admission. The private runtime configuration must match
 that signed policy exactly. Historical cohorts whose source lacks an approved

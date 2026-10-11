@@ -14,13 +14,37 @@ from .audit_queue_snapshot import queue_rows
 
 class InvalidCommittedArtifact(ValueError):pass
 
-def fair_pending_groups(pending, draws, available):
+def in_recent_audit_window(round,current_round,recent_epochs):
+ """Use the signed assessment's round window, never wall-clock guesses."""
+ if type(current_round)is not int or not 0<=current_round<2**31 or type(recent_epochs)is not int or not 1<=recent_epochs<=128:raise ValueError('bounded current audit window')
+ if type(round)is not int or not 0<=round<=current_round:raise ValueError('original audit round within current population')
+ return current_round-round<recent_epochs
+
+def audit_work_population(rows,draws,retry,pending,*,current_round,recent_epochs):
+ """Prefer live-window work without changing any previously committed draw.
+
+ Old retries must not consume the draw budget while recent undrawn rows or
+ selected plans exist. Historical forensic work resumes once this recent work
+ is exhausted. Returned lists contain the original row objects unchanged.
+ """
+ in_recent_audit_window(current_round,current_round,recent_epochs)
+ recent=[r for r in rows if in_recent_audit_window(r['round'],current_round,recent_epochs)]
+ recent_retry=[r for r in retry if in_recent_audit_window(r['round'],current_round,recent_epochs)]
+ recent_pending=False
+ for _,plan in pending:
+  for identity in plan['row_sha256s']:
+   if identity not in draws:raise ValueError('original pending audit selection')
+   recent_pending=in_recent_audit_window(draws[identity]['row']['round'],current_round,recent_epochs)or recent_pending
+ if recent_retry or recent_pending or any(digest(r)not in draws for r in recent):return recent,recent_retry
+ return rows,retry
+
+def fair_pending_groups(pending, draws, available,*,current_round=None,recent_epochs=None):
  """Schedule already-random committed selections fairly; never redraw/drop work.
 
- Reserve half the available dispatch slots for the newest pending epoch round,
- and fill the remaining slots from the oldest historical selected groups.
- Unused capacity from either lane spills to the other. Epoch identity and all
- original member hashes are unchanged; this only orders pending group plans.
+ With an explicit signed window, prioritize recent pending rounds over older
+ work, then reserve half for the newest round and fill from the oldest in that
+ lane. Without a window the same fairness applies across all pending rounds.
+ Epoch identity and original member hashes are unchanged; only order changes.
  """
  if type(available)is not int or available<0:raise ValueError('bounded audit group capacity')
  if not pending or available==0:return []
@@ -34,6 +58,12 @@ def fair_pending_groups(pending, draws, available):
   round=next(iter(rounds));times=[d['selected_at']for d in rows]
   if type(round)is not int or round<0 or any(type(t)not in(int,float)or not math.isfinite(t)or t<0 for t in times):raise ValueError('finite original audit selection age')
   ranked.append((round,min(times),key,plan))
+ if current_round is not None or recent_epochs is not None:
+  in_recent_audit_window(current_round,current_round,recent_epochs)
+  current=[x for x in ranked if in_recent_audit_window(x[0],current_round,recent_epochs)]
+  # Preserve newest/oldest fairness *within* the recent window. This prevents
+  # a large early-window backlog from starving the newest cohort.
+  if current:ranked=current
  newest=max(row[0]for row in ranked)
  current=sorted((x for x in ranked if x[0]==newest),key=lambda x:(x[1],x[2]))
  historical=sorted((x for x in ranked if x[0]!=newest),key=lambda x:(x[1],x[2]))
@@ -197,6 +227,15 @@ class ContinuousAuditor:
    if source not in self.sources or source not in self.metadata:deferred+=len(p['records']);continue
    rows.extend(p['records'])
   return rows,deferred
+ def current_audit_round(self):
+  # dispatch_records has already authenticated every population. Include all
+  # populations, even empty or temporarily deferred ones, for the window.
+  rounds=[]
+  for d in self.state['populations'].values():
+   p=d['payload'];r=p['round']
+   if type(r)is not int or not 0<=r<2**31 or any(type(row['round'])is not int or row['round']!=r for row in p['records']):raise ValueError('original committed audit rounds')
+   rounds.append(r)
+  return max(rounds,default=0)
  def _capture(self,row,p):
   manifest=authenticate(p['manifest_document'],self.controller.authority.id);receipt=p['receipts'][row['miner']];selected=[b for b in receipt['artifacts']if b['batch_sha256']==row['batch_sha256']and b['sha256']==row['proof_sha256']]
   if len(selected)!=1:raise ValueError('exact selected declared child')
@@ -250,7 +289,8 @@ class ContinuousAuditor:
    if inflight_status(status,now):available-=1
   if available<=0:return dict(enqueued=0,backpressure=True)
   rows,deferred=self.dispatch_records();runnable=set(digest(r)for r in rows);done=set(self.state['draws']);queued={i for r in self.state['jobs'].values()for i in job_rows(r)}|self.expired_rows();remaining=min(self.budget,available)
-  retry=[d['row']for identity,d in self.state['draws'].items()if identity in runnable and identity not in queued and self.state['capture_failures'].get(identity,{}).get('kind')!='confirmed_invalid_artifact'][:remaining]
+  retry=[d['row']for identity,d in self.state['draws'].items()if identity in runnable and identity not in queued and self.state['capture_failures'].get(identity,{}).get('kind')!='confirmed_invalid_artifact']
+  rows,retry=audit_work_population(rows,self.state['draws'],retry,[],current_round=self.current_audit_round(),recent_epochs=self.policy['recent_epochs']);retry=retry[:remaining]
   seed=secrets.token_hex(32);selected=random_selection(rows,seed,remaining-len(retry),done);enqueued=0
   # Persist selection before any mutable proof HEAD. Retries use the SAME draw.
   for row in selected:self.state['draws'][digest(row)]=dict(row=row,seed=seed,selected_at=now)
@@ -302,7 +342,10 @@ class ContinuousAuditor:
   plans=self.state.setdefault('group_plans',{});pending=[(key,v)for key,v in plans.items()if not v.get('resolved')]
   reserved={i for _,v in pending for i in v['row_sha256s']}
   remaining=min(self.budget,available*self.group_size)
-  retry=[d['row']for i,d in self.state['draws'].items()if i in lookup and i not in queued|reserved and self.state['capture_failures'].get(i,{}).get('kind')!='confirmed_invalid_artifact'][:remaining]
+  retry=[d['row']for i,d in self.state['draws'].items()if i in lookup and i not in queued|reserved and self.state['capture_failures'].get(i,{}).get('kind')!='confirmed_invalid_artifact']
+  current_round=self.current_audit_round()
+  runnable_pending=[(k,v)for k,v in pending if all(i in lookup for i in v['row_sha256s'])]
+  rows,retry=audit_work_population(rows,self.state['draws'],retry,runnable_pending,current_round=current_round,recent_epochs=self.policy['recent_epochs']);retry=retry[:remaining]
   seed=secrets.token_hex(32);selected=random_selection(rows,seed,remaining-len(retry),done)
   for row in selected:self.state['draws'][digest(row)]=dict(row=row,seed=seed,selected_at=now)
   # Epoch identity is stricter than source/checkpoint: original signed opening,
@@ -315,8 +358,8 @@ class ContinuousAuditor:
     plan=dict(row_sha256s=members,epoch=epoch,resolved=False)
     if key in plans and plans[key]!=plan and not plans[key].get('resolved'):raise ValueError('immutable audit group plan')
     if key not in plans or plans[key].get('resolved'):plans[key]=plan
-  self.persist();pending=[(key,v)for key,v in plans.items()if not v.get('resolved')];enqueued=0
-  for key,plan in fair_pending_groups(pending,self.state['draws'],available):
+  self.persist();pending=[(key,v)for key,v in plans.items()if not v.get('resolved')and all(i in lookup for i in v['row_sha256s'])];enqueued=0
+  for key,plan in fair_pending_groups(pending,self.state['draws'],available,current_round=current_round,recent_epochs=self.policy['recent_epochs']):
    members=plan['row_sha256s']
    if not 1<=len(members)<=self.group_size or members!=sorted(set(members))or key!=digest(dict(version='bounded-checkpoint-audit-groups-v1',members=members))or any(i not in self.state['draws']or self.state['draws'][i]['row']['epoch']!=plan['epoch']for i in members):raise ValueError('exact bounded original audit group plan')
    source=authenticate(authenticate(self.state['populations'][plan['epoch']],self.controller.authority.id)['manifest_document'],self.controller.authority.id)['source_bundle']['sha256']
