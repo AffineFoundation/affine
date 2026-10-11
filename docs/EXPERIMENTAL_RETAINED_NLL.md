@@ -102,6 +102,13 @@ not establish independent improvement. A separate official TRAIN-answer control
 stayed at 94/128. Its response count, style and length differ, so it does not
 isolate rationale quality. Independent 512-problem confirmation is in progress.
 
+Those inputs came from finalized epoch 133 under a later network checkpoint;
+replaying them against the original upstream weights is historical supervised
+learning. It is not a claim that the upstream model sampled those responses.
+Fresh mining against the SFT checkpoint and sustained online continuation are
+separate next experiments. The original epoch and checkpoint bindings remain
+part of each input's provenance.
+
 This experiment also changed optimizer initialization and update dose relative
 to production; it does not prove that negative gradients alone caused earlier
 regression. Final-answer correctness does not establish correct reasoning, and
