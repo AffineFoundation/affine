@@ -1,4 +1,91 @@
-# Measured learning and transport status — 2026-10-06
+# Measured learning and transport status
+
+## Current assessment — 2026-10-11, 01:05 UTC
+
+Learning improvement over the genuine upstream base is still unproven. The
+current miner contract is four distinct correct and four distinct completed
+incorrect rollouts per task batch, with up to nine batches per UID per epoch.
+Valid unaudited submissions can reach training without waiting for inference
+audits. The signed epoch manifest remains the authority for these parameters.
+
+Epoch 129 completed in 57m43s, the fifth consecutive complete epoch under one
+hour (125–129). Its update consumed 512 tasks / 2,048 pairs / 4,096 rollouts
+from 193 external identities and advanced the persistent optimizer to step 39.
+Epoch 130's original training job is in progress. This is operational progress,
+not evidence that the model is improving.
+
+The predeclared positive-NLL experiment still covers exactly steps 26→42 and
+has completed 13 of its 16 updates. It continues unchanged; neither the running
+checkpoint nor its Adam state has been reset. Its fixed endpoint and subsequent
+preference-only update must retain their original interpretation. See
+[the objective](EXPERIMENTAL_RETAINED_NLL.md).
+
+### Historical learning result and baseline correction
+
+The original 750-task comparison from October 7 is complete. Independent
+readback authenticated all 48 original job/report/manifest/terminal receipt sets
+(24 groups per model). On the same tasks, prompts, seeds, grader, source and
+recorded runtime:
+
+| Model | Correct / 750 |
+| --- | ---: |
+| Genuine upstream `2173b3e0` | 548 (73.07%) |
+| Old-run checkpoint 24, `7369a0b3` | 482 (64.27%) |
+
+There were 435 tasks both solved, 113 only the base solved, 47 only checkpoint
+24 solved, and 155 neither solved. The difference is −8.8 percentage points;
+a descriptive paired-task bootstrap gives a 95% interval of −12.0 to −5.6
+points (200,000 resamples, seed 2026101101). This already exposed development
+cohort is not the independent prospective confirmation of the current run.
+The comparison establishes a historical regression, not its cause or the result
+of the current NLL experiment. The earlier 87/96 partial-base result below was
+correct for its first three groups; it was not the complete denominator.
+
+The resets at epochs 78 and 91 used previously trained `6493a901`, rather than
+the genuine upstream weights. Its ancestry contains 20 successful training jobs
+and 30 optimizer updates across multiple optimizer lineages. See the
+[restart provenance correction](COMPLETED_MATH_RESTART.md). A fresh replay of
+the existing fixed32 tasks on genuine upstream scored 24/32 and reproduced all
+32 original upstream output-token hashes. The old restart baseline scored
+21/32. These are diagnostic comparisons, not new independent hold-out evidence.
+The final update into `6493a901` itself improved its retained 128-task score from
+77 to 86 and cached fixed32 from 18 to 21; this ancestry does not establish
+monotonic deterioration or identify one harmful update.
+
+### What the mechanism investigation has established
+
+- Early historical training used only 1–3 selected pairs per job. The first nine
+  jobs accepted 546 pairs but performed only 15 gradient pair-updates. Later
+  covered training broadened coverage; that early selection does not describe today's
+  2,048-pair updates.
+- The current input-to-loss audit checked all 26,624 pairs from epochs 117–129.
+  Pairing, labels, prompt masks, reference bindings and task normalization match
+  the declared source. That eliminates those specific bookkeeping hypotheses;
+  it does not establish that the objective is effective.
+- With the current reference and unit positive NLL, the initial nominal gradient
+  coefficients are 1.05 for positive NLL and −0.05 for negative NLL. This 21:1
+  coefficient ratio is not a measured gradient-norm ratio. Actual accumulated
+  gradients, persistent Adam moments and BF16 publication can change the update
+  direction; those effects are being measured separately.
+- Garbled or unrenderable output tokens alone do not establish miner forgery.
+  They also occurred in controlled model-generated diagnostics, including one
+  capped genuine-upstream math response. No retrospective cheating conclusion
+  follows from appearance alone.
+
+The independent confirmation remains reserved until the exact predeclared
+endpoint and complete training-exposure record are available. No successful
+learning or convergence claim is being made from fixed32 scores, training loss,
+checkpoint counts, or a favorable intermediate result.
+
+Retained finalized training inputs, exclusions, metrics and evaluations are
+available through [signed history](https://affine.io/history.json); see
+[the evidence format and retention limits](FINALIZED_EPOCH_EVIDENCE.md).
+This status update does not change the mining contract or deployed software.
+
+## Historical record — 2026-10-06 through 2026-10-07
+
+The following entries describe their original observation times. Their quotas,
+checkpoint handling and in-progress experiment states are not current settings.
 
 The live pilot trains on cheap-eligible, committed, unaudited task pairs. It does
 not wait for inference audits or repeat inference verification in the trainer.
