@@ -276,11 +276,16 @@ continuation, the same retained optimizer and learning rate, and 512 tasks /
 over the genuine upstream base remains unproven. See the training guide below for the exact horizon and
 evaluation limitations.
 
-Epoch openings may reuse the exact fresh, authenticated hourly blacklist
-assessment instead of reconstructing the same history. They retain its original
-evidence bindings and use the existing refresh on a cache miss; chain inclusion
-and reveal are not prerequisites. This operator optimization changes no miner
-quota, sampling rule or training-admission requirement.
+From epoch 136, opening a mining epoch does not wait for a fresh hourly reward
+assessment. Training uses the existing basic authenticated, structural eligibility
+checks and can consume unaudited submissions. The optional reward-derived
+training blacklist snapshot is no longer required for these new openings.
+Continuous audits and reward penalties remain independent; historical signed
+manifests retain their original rules. The hourly writer retains the last valid
+assessment if fresh evidence processing fails and maps rewards to current
+registrations. There is no burn or owner-only fallback. This operator change
+requires no miner update and changes no quota, sampler, objective or optimizer.
+Epoch 136 retains its original opening time, including the delay before this fix.
 
 An operator-only change activated during epoch 121 allows future trainer-side
 calibration jobs to omit one redundant checkpoint hash pass, retaining full file
