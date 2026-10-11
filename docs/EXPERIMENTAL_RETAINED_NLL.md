@@ -241,3 +241,18 @@ normal local-state lifecycle. It never fabricates a historical production job,
 resets Adam, uploads optimizer state, or grants space by deleting research
 artifacts. This path remains prospective; the independent SFT result above did
 not meet the criterion for production adoption.
+
+The helper distinguishes the original eight-update replica from the matched
+1,024-task, 32-update network study. The latter requires its original signed
+scope and completed numerical receipt, full checkpoint inventory, and the
+locally retained Adam32 descriptor. A reference-control endpoint without local
+optimizer state cannot be adopted through this path. Neither format establishes
+held-out improvement or authorizes deployment by itself: the operator must
+separately qualify and release the successor. The original Adam8 checks and
+ordinary first-job ownership, local restore and ACK rules remain in place.
+
+The adoption tests exercise a real tiny Adam32 restore and step to 33, plus
+rejection of changed counters, study bindings, source receipts, checkpoint
+files, missing retained state and a second successor job. These are CPU state
+and protocol tests, not a claim that the new full-model production handover has
+run. The currently running research jobs use their original frozen source.

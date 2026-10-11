@@ -17,6 +17,76 @@ from .persistent_cpu_adamw import checkpoint_id, sha
 VERSION = 'authority-local-research-parent-v1'
 USE_VERSION = 'local-research-parent-first-use-v1'
 MODULE = 'subnet/research_parent_adoption.py'
+REPLICA_SCOPE = 'ROOT-original-recipe-full7B-positive-SFT-replication-v1'
+MATCHED32_SCOPE = 'fresh-base-matched1024-positive-SFT32-v1'
+
+
+def _retained_name(scope):
+    if scope.get('version') == REPLICA_SCOPE:
+        return 'retained-Adam8'
+    if scope.get('version') == MATCHED32_SCOPE:
+        return 'retained-Adam32'
+    raise ValueError('unsupported original research execution scope')
+
+
+def _matched32_execution(scope, execution, descriptor, raw):
+    """Admit a captured original NETWORK32 endpoint, never a reference control.
+
+    This authenticates local optimizer provenance only. A separate scientific
+    decision and prospective execution release are still required to deploy.
+    No old replica receipt is relabeled as a newer numerical experiment.
+    """
+    checkpoint = execution.get('checkpoint')
+    retained = execution.get('retained_state')
+    expected_directory = str(_absolute(scope['workspace']) / 'retained-Adam32')
+    for document, counts in ((scope, {'steps': 32, 'passes': 2}),
+                             (execution, {'optimizer_updates': 32, 'passes': 2,
+                                          'tasks': 1024, 'negative_gradients': 0})):
+        if any(type(document.get(key)) is not int or document[key] != value
+               for key, value in counts.items()):
+            raise ValueError('matched32 exact integer execution counts')
+    if (execution.get('version') != 'ROOT-matched1024-positive-SFT32-numerical-adoption-v1'
+            or scope.get('arm') != 'NETWORK32' or execution.get('arm') != 'NETWORK32'
+            or scope.get('retain_optimizer_locally') is not True
+            or scope.get('production_changes') is not False
+            or execution.get('production_changes') is not False
+            or descriptor['optimizer_steps'] != 32 or execution.get('positive_only') is not True
+            or execution.get('fresh_optimizer') is not True
+            or execution.get('EOS_included') is not True
+            or type(scope.get('positive_responses')) is not int or scope['positive_responses'] < 1024
+            or type(execution.get('positives')) is not int
+            or execution['positives'] != scope['positive_responses']
+            or execution.get('original_scope_sha256') != hashlib.sha256(raw.encode()).hexdigest()
+            or execution.get('full_checkpoint_hashes_verified') is not True
+            or execution.get('original_processes_terminal') is not True
+            or execution.get('GPU_released') is not True
+            or not isinstance(checkpoint, dict) or set(checkpoint) != {'id', 'files'}
+            or checkpoint['id'] != descriptor['inference_checkpoint']
+            or not isinstance(checkpoint['files'], dict) or not checkpoint['files']
+            or sha(checkpoint['files']) != checkpoint['id']
+            or not isinstance(retained, dict)
+            or set(retained) != {'descriptor_sha256', 'path', 'all_shards_readback_verified', 'optimizer_uploaded'}
+            or retained['descriptor_sha256'] != sha(descriptor)
+            or retained['path'] != expected_directory
+            or retained['all_shards_readback_verified'] is not True
+            or retained['optimizer_uploaded'] is not False
+            or execution.get('endpoint_path') != str(_absolute(scope['workspace']) / 'endpoint')
+            or execution.get('input_checkpoint') != scope.get('checkpoint', {}).get('id')
+            or execution.get('input_checkpoint') != descriptor['input_checkpoint']
+            or scope.get('genesis', {}).get('input_checkpoint') != descriptor['input_checkpoint']
+            or descriptor['parent_state_sha256'] is not None):
+        raise ValueError('authenticated original matched32 research execution and retained state')
+    for name, digest in checkpoint['files'].items():
+        if not isinstance(name, str) or Path(name).name != name or name in ('.', '..'):
+            raise ValueError('matched32 inference checkpoint member')
+        checkpoint_id(digest)
+    for key in ('preregistration_sha256', 'confirmation_reservation_sha256'):
+        checkpoint_id(scope.get(key))
+        if scope[key] != execution.get(key):
+            raise ValueError('matched32 original study binding')
+    checkpoint_id(execution.get('capture_index_sha256'))
+    for key in ('worker_sha256', 'kernel_sha256', 'launcher_sha256', 'optimizer_threading_sha256', 'inputs_sha256'):
+        checkpoint_id(scope.get(key))
 
 
 def is_publication(envelope):
@@ -68,7 +138,9 @@ def _validate_body(publication, binding, authority):
         if not isinstance(name, str) or Path(name).is_absolute() or '..' in Path(name).parts:
             raise ValueError('original research source member')
         checkpoint_id(digest)
-    if (scope.get('version') != 'ROOT-original-recipe-full7B-positive-SFT-replication-v1' or
+    if scope.get('version') == MATCHED32_SCOPE:
+        _matched32_execution(scope, execution, descriptor, raw)
+    elif (scope.get('version') != REPLICA_SCOPE or
             execution.get('version') != 'ROOT-original-full7B-SFT-replication-execution-v1' or
             execution.get('scope_sha256') != hashlib.sha256(raw.encode()).hexdigest() or
             execution.get('state_descriptor_sha256') != sha(descriptor) or
@@ -83,6 +155,9 @@ def _validate_body(publication, binding, authority):
             scope.get('epoch') != descriptor['epoch'] or
             scope.get('parameters') != binding['parameters'] or
             sha(scope.get('genesis')) != descriptor['genesis_sha256']):
+        raise ValueError('authenticated original research execution and lineage')
+    if (scope.get('epoch') != descriptor['epoch'] or scope.get('parameters') != binding['parameters']
+            or sha(scope.get('genesis')) != descriptor['genesis_sha256']):
         raise ValueError('authenticated original research execution and lineage')
     successor = publication['successor']
     if not isinstance(successor, dict) or set(successor) != {
@@ -104,7 +179,7 @@ def _validate_body(publication, binding, authority):
         checkpoint_id(digest)
     _absolute(successor['trainer_workspace'])
     retained = _absolute(publication['retained_directory'])
-    if retained != _absolute(scope['workspace']) / 'retained-Adam8':
+    if retained != _absolute(scope['workspace']) / _retained_name(scope):
         raise ValueError('exact original research retained-state directory')
     return publication
 
@@ -245,7 +320,7 @@ def prospective_publication(*, adoption_id, namespace, research_scope_json, rese
         descriptor_sha256=sha(descriptor), descriptor=descriptor,
         research_scope_json=research_scope_json, research_execution=research_execution,
         research_source_files_sha256=sha(scope['source_files']), successor=successor,
-        retained_directory=str(_absolute(scope['workspace']) / 'retained-Adam8'))
+        retained_directory=str(_absolute(scope['workspace']) / _retained_name(scope)))
     binding = dict(parent=state_pointer(body), input_checkpoint=successor['checkpoint'],
         parameters=descriptor['parameters'], global_step_before=successor['optimizer_step_before'],
         genesis_sha256=descriptor['genesis_sha256'], epoch=successor['epoch'],
