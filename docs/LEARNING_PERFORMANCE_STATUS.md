@@ -1,6 +1,30 @@
 # Measured learning and transport status
 
-## Current assessment — 2026-10-11, 04:42 UTC
+## Current assessment — 2026-10-11, 19:47 UTC
+
+The live network completed four consecutive epochs within one hour (144–147).
+Epoch 147 took 59m03s and trained on 512 tasks / 2,048 pairs from 214 external
+miners, advancing the optimizer to step 57. The 19:00 hourly weight assessment
+submitted for 251 currently registered UIDs, excluding the owner. These are
+operational results; they do not establish model improvement.
+
+The first isolated positive-only SFT study did not confirm an independent
+held-out gain: the original upstream model solved 404/512 problems and the
+eight-update candidate solved 405/512, with ten gains and nine losses. The
+conservative paired 95% interval is −2.72 to +3.10 percentage points. The
+candidate has not been promoted on the strength of its favorable development
+score.
+
+A longer 1,024-task comparison is running with 32 updates, comparing finalized
+network positives against official training solutions and a fresh base-model
+evaluation. Both fixed endpoints receive the same new 512-problem evaluation;
+there is no intermediate checkpoint selection. See the
+[recipe, results, and limitations](EXPERIMENTAL_RETAINED_NLL.md#positive-only-sft-research).
+The current mining quotas and production objective remain unchanged. Continued
+online improvement and a qualified deployment of a successful research method
+remain outstanding.
+
+## Earlier assessment — 2026-10-11, 04:42 UTC
 
 Learning improvement over the genuine upstream base is still unproven. The
 current miner contract is four distinct correct and four distinct completed
