@@ -1,6 +1,6 @@
 # Measured learning and transport status
 
-## Current assessment — 2026-10-11, 03:55 UTC
+## Current assessment — 2026-10-11, 04:42 UTC
 
 Learning improvement over the genuine upstream base is still unproven. The
 current miner contract is four distinct correct and four distinct completed
@@ -11,16 +11,43 @@ audits. The signed epoch manifest remains the authority for these parameters.
 Epochs 125–131 completed consecutively within one hour. Epoch 132 then took
 60m20s, missing the target by 20 seconds. Its update consumed 512 tasks /
 2,048 pairs / 4,096 rollouts from 190 external identities and advanced the
-persistent optimizer from step 41 to 42. Epoch 133's original training job is
-running. These are operational measurements, not evidence of learning gain.
+persistent optimizer from step 41 to 42. Epoch 133 then completed in 56m10.5s,
+training on 512 tasks / 2,048 pairs and retaining optimizer step 42→43.
+These are operational measurements, not evidence of learning gain.
 
 The predeclared positive-NLL experiment still covers exactly steps 26→42 and
 has completed all 16 updates, publishing the fixed endpoint `563b7ad3`.
-Its original endpoint evaluation is still running. Neither the running
-checkpoint nor its Adam state has been reset. The scheduled next update is
-preference-only, with the same 5e-7 learning rate and retained optimizer.
+Its original endpoint evaluation completed on October 11 at 04:24:54 UTC.
+Neither the running checkpoint nor its Adam state was reset. The subsequent
+update was preference-only, with the same 5e-7 learning rate and retained optimizer.
 The fixed endpoint and subsequent update retain their original interpretation. See
 [the objective](EXPERIMENTAL_RETAINED_NLL.md).
+
+### Completed 16-update diagnostic comparison
+
+All four original evaluation archives were authenticated, including their
+task-level outputs and protocol bindings. The comparison is between the
+predeclared step-26 checkpoint `81950ed5` and step-42 checkpoint `563b7ad3`.
+The step-26 checkpoint is not the genuine upstream base.
+
+| Already-exposed cohort | Correct before → after | Paired gains / losses | Change, percentage points | Conservative paired 95% interval | Exact one-sided p |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| original128 | 78 → 84 / 128 | 12 / 6 | +4.69 | −6.28 to +15.30 | 0.119 |
+| exposed_test128 | 91 → 92 / 128 | 7 / 6 | +0.78 | −8.82 to +10.32 | 0.500 |
+
+The intervals use the predeclared Bonferroni difference of exact 97.5%
+Clopper–Pearson bounds for paired gain and loss proportions. Both include zero;
+the cohorts are reported separately, without pooling or checkpoint selection.
+Unresolved answers decreased from 39 to 27 and from 31 to 20, respectively,
+while completed wrong answers increased from 11 to 17 and from 6 to 16.
+All 128 tasks remain in each denominator. There were no infrastructure errors.
+
+This is a small, uncertain diagnostic improvement with better completion,
+not independent evidence of convergence or improvement over the original base.
+The original comparison has SHA-256
+`e892d79fd58ff588df7d96af2ffbce817893e476437efba060aadea424b43642`;
+its authenticated archive has SHA-256
+`9c090c9dd36997f0ded9594f74246b020538b46d8b1e3e6db5d8968ef54dc89e`.
 
 ### Historical learning result and baseline correction
 

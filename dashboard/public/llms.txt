@@ -261,11 +261,18 @@ Neither candidate has been evaluated as independent confirmation. A separate
 512-task DeepMath transfer cohort remains reserved pending runtime qualification
 and the complete training-exposure record; it is not a MATH test cohort.
 Epoch 132 completed all 16 study updates, publishing fixed checkpoint 563b7ad3
-at optimizer step 42. Its original endpoint evaluation is still running.
+at optimizer step 42. Its original endpoint evaluation completed at October 11,
+04:24:54 UTC. The original128 diagnostic changed from 78 to 84 correct out of
+128 (12 gains, 6 losses; +4.69 percentage points, conservative paired 95% interval
+−6.28 to +15.30). The separately reported exposed_test128 changed from 91 to 92
+correct (7 gains, 6 losses; +0.78 points, interval −8.82 to +10.32).
+Both intervals include zero. These compare the step-26 checkpoint to step 42,
+not the genuine upstream base, and both cohorts have already been exposed.
 It trained on 512 tasks / 2,048 pairs / 4,096 rollouts from 190 external identities.
 Epochs 125–131 completed within one hour; epoch 132 took 60 minutes 20 seconds.
-As of October 11, 03:55 UTC, epoch 133 is running the predeclared preference-only
-continuation with the same retained optimizer and learning rate. Improvement
+Epoch 133 completed in 56 minutes 10.5 seconds with the predeclared preference-only
+continuation, the same retained optimizer and learning rate, and 512 tasks /
+2,048 pairs. As of October 11, 04:42 UTC, improvement
 over the genuine upstream base remains unproven. See the training guide below for the exact horizon and
 evaluation limitations.
 
