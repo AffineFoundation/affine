@@ -140,6 +140,16 @@ python -m unittest discover -s tests -p 'test_fp32_gradient_accumulation.py' -v
 
 These are CPU contracts using throwaway signing keys and explicitly identified
 fixtures. A separate tiny H200 test has exercised real fresh-state training,
-local state export/restore and continuation. Full-size candidate qualification,
-independent confirmation and sustained learning are still pending. Neither CPU
-fixtures nor arithmetic-consistent reports establish those outcomes.
+local state export/restore and continuation. A subsequent full 7B replication
+completed the original eight-update recipe and reproduced all ten exported model
+files and every BF16 parameter exactly, with checkpoint
+`80870311989c83b4f12c97e8a59b596c11c4a54198b1c9263da7f665963b3e56`.
+It retained a newly computed Adam state at step eight on the research machine;
+this is not recovery of optimizer state from the earlier experiment. Optimizer
+state was not uploaded. Training positive NLL again moved from 0.27255 to
+0.24771, which measures fit to the training responses, not held-out improvement.
+
+This replication qualifies the executed numerical recipe, not the live API,
+coordinator or full deployment. The new variable-coverage dispatch integration,
+independent confirmation and sustained online learning are still pending. Neither
+CPU fixtures nor arithmetic-consistent reports establish those outcomes.
