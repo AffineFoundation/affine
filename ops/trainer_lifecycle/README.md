@@ -44,3 +44,9 @@ original rate; global constants, reports and scientific execution stay unchanged
 `prospective_collection_timing.py` changes only new opening metadata at an explicit signed round boundary. It preserves the original fresh-run configuration, refuses to rewrite already-issued windows, accepts the exact prospective profile on restart, and keeps job lifetimes and scientific execution unchanged.
 
 Issued collection windows retain their original deadlines. A one-second gap between the controller deadline clock and gateway start clock is admitted only when the original authority signature, entire issued payload, epoch, and durable gateway timestamps agree exactly. Longer or unsigned discrepancies remain rejected.
+
+`capture_capacity.py` is a prospective v3 successor for 64 bounded token-document
+workers, preserving the postcommit order and historical v1/v2 paths. It requires
+an explicit future signed opening; importing it does not activate a change. See
+[coordinator capture capacity](../../docs/CAPTURE_CAPACITY.md) for bounds, metrics,
+reentry requirements and miner compatibility.

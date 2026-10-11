@@ -7,15 +7,17 @@ MAX_BYTES=2_000_000
 TRANSPORT='small-commitment-pairs-v2'
 CAPTURE_VERSION='bounded-parallel-token-capture-v1'
 DURABLE_CAPTURE_VERSION='bounded-parallel-token-capture-v2'
+CAPACITY_CAPTURE_VERSION='bounded-parallel-token-capture-v3'
 
 def capture_policy(value):
  keys={'version','workers','max_document_bytes','max_inflight_bytes','completion_order'}
- durable=type(value)is dict and value.get('version')==DURABLE_CAPTURE_VERSION
+ durable=type(value)is dict and value.get('version')in(DURABLE_CAPTURE_VERSION,CAPACITY_CAPTURE_VERSION)
  if durable:keys|={'journal_version','state_checkpoint_documents'}
  need(type(value)is dict and set(value)==keys,'exact prospective token capture policy')
  if durable:
   need(value['journal_version']=='fsynced-per-epoch-capture-v1'and type(value['state_checkpoint_documents'])is int and 1<=value['state_checkpoint_documents']<=128,'bounded fsynced capture checkpoint')
- need(value['version']in(CAPTURE_VERSION,DURABLE_CAPTURE_VERSION) and type(value['workers'])is int and value['workers']in(4,8,16),'bounded token capture workers')
+ allowed_workers=(64,)if value.get('version')==CAPACITY_CAPTURE_VERSION else(4,8,16)
+ need(value['version']in(CAPTURE_VERSION,DURABLE_CAPTURE_VERSION,CAPACITY_CAPTURE_VERSION) and type(value['workers'])is int and value['workers']in allowed_workers,'bounded token capture workers')
  need(type(value['max_document_bytes'])is int and value['max_document_bytes']==MAX_BYTES,'unchanged token document bound')
  need(type(value['max_inflight_bytes'])is int and value['max_inflight_bytes']==value['workers']*MAX_BYTES,'exact capture byte budget')
  need(value['completion_order']=='first-completed','bounded prospective completion policy')
@@ -56,6 +58,8 @@ def capture(gateway,epoch,*,ordering=None):
  """
  from concurrent.futures import ThreadPoolExecutor,wait,FIRST_COMPLETED
  from collections import deque
+ from contextlib import contextmanager
+ import threading
  from .commitment_transport import FreezeMetadataIncomplete
  from .storage import SubmissionPolicyError
  state=gateway.epochs[epoch];need(state.get('commitment_capture_complete')is True,'complete signed commitment capture required')
@@ -66,7 +70,21 @@ def capture(gateway,epoch,*,ordering=None):
  policy=state['commitment_binding'].get('learner_capture_policy')
  policy=capture_policy(policy)if policy is not None else None
  workers=policy['workers']if policy is not None else 4
+ capacity=policy is not None and policy['version']==CAPACITY_CAPTURE_VERSION
  stats=dict(version=policy['version']if policy is not None else CAPTURE_VERSION,policy=policy,started_at=time.time(),GET_attempts=0,published_documents=0,transient_failures=0,structural_failures=0,maximum_inflight=0,raw_document_byte_limit=workers*MAX_BYTES,oversize_sentinel_byte_limit=workers,replayed_documents=0,reconciled_publications=0,global_state_checkpoints=0)if policy is not None else None
+ timing_lock=threading.Lock()
+ if capacity:stats['stage_timing_seconds']={name:dict(calls=0,sum=0.0,max=0.0)for name in('GET_and_body','validation','WAL_intent','immutable_PUT','WAL_commit','global_checkpoint')}
+ @contextmanager
+ def measured(name):
+  if not capacity:
+   yield
+   return
+  started=time.monotonic()
+  try:yield
+  finally:
+   elapsed=time.monotonic()-started
+   with timing_lock:
+    row=stats['stage_timing_seconds'][name];row['calls']+=1;row['sum']+=elapsed;row['max']=max(row['max'],elapsed)
  def remaining():
   rows=[(miner,b)for miner,p in sorted(pending.items())if miner not in state['rejections']for b in p['document']['payload']['batches']if str(b['slot'])not in journal.get(miner,{})]
   if ordering is not None:rows.sort(key=lambda item:sha(canonical(dict(domain='postcommit-token-capture-order-v1',seed=ordering['seed'],epoch=epoch,miner=item[0],commitment_sha256=pending[item[0]]['sha256'],slot=item[1]['slot']))))
@@ -76,11 +94,12 @@ def capture(gateway,epoch,*,ordering=None):
   need(time.time()>=state['deadline'],'postcommit token capture order after submissions close')
   committed=sha(canonical([[miner,p['sha256']]for miner,p in sorted(pending.items())]))
   need(ordering['commitments_sha256']==committed,'postcommit token capture population binding')
-  need(policy is not None and policy['version']==DURABLE_CAPTURE_VERSION,'fair capture requires durable bounded policy')
+  need(policy is not None and policy['version']in(DURABLE_CAPTURE_VERSION,CAPACITY_CAPTURE_VERSION),'fair capture requires durable bounded policy')
   stats['ordering']=dict(ordering)
- client=(gateway.bucket.commitment_read_client(parallel_workers=workers)if policy is not None else gateway.bucket.commitment_read_client())if hasattr(gateway.bucket,'commitment_read_client')else gateway.bucket.client
+ if capacity:client=gateway.bucket.capture_io_client(parallel_workers=workers)
+ else:client=(gateway.bucket.commitment_read_client(parallel_workers=workers)if policy is not None else gateway.bucket.commitment_read_client())if hasattr(gateway.bucket,'commitment_read_client')else gateway.bucket.client
  wal=None;checkpoint_rows=0
- if policy is not None and policy['version']==DURABLE_CAPTURE_VERSION:
+ if policy is not None and policy['version']in(DURABLE_CAPTURE_VERSION,CAPACITY_CAPTURE_VERSION):
   from .capture_journal import CaptureJournal,JournalDurabilityError
   try:
    before_replay=sum(len(v)for v in journal.values())
@@ -91,12 +110,14 @@ def capture(gateway,epoch,*,ordering=None):
    if client is not gateway.bucket.client:client.close()
    raise
  def durable_checkpoint():
-  if wal is None:gateway.persist()
-  else:
-   stats['global_state_checkpoints']+=1;wal.checkpoint(gateway)
+  with measured('global_checkpoint'):
+   if wal is None:gateway.persist()
+   else:
+    stats['global_state_checkpoints']+=1;wal.checkpoint(gateway)
  def published(miner,receipt):
   nonlocal checkpoint_rows
-  if wal is not None:wal.commit(miner,receipt)
+  if wal is not None:
+   with measured('WAL_commit'):wal.commit(miner,receipt)
   journal.setdefault(miner,{})[str(receipt['slot'])]=receipt
   state.get('training_document_deferred',{}).get(miner,{}).pop(str(receipt['slot']),None)
   checkpoint_rows+=1
@@ -107,20 +128,25 @@ def capture(gateway,epoch,*,ordering=None):
   miner,b=item;key='private/'+epoch+'/training/'+miner+'/'+str(b['slot'])+'.json'
   try:
    if cutoff is not None and time.time()>=cutoff:raise TimeoutError('token capture cutoff')
-   response=client.get_object(Bucket=gateway.bucket.name,Key=key);body=response['Body']
-   try:data=body.read(MAX_BYTES+1)
-   finally:body.close()
-   if not state['start']<=response['LastModified'].timestamp()<state['deadline']:raise SubmissionPolicyError('token document upload time')
-   try:validate(data,epoch,state['commitment_binding']['checkpoint'],miner,b,transport=state['commitment_binding'].get('version',TRANSPORT))
-   except (ValueError,KeyError,TypeError,json.JSONDecodeError)as exc:raise SubmissionPolicyError('token document binding')from exc
+   with measured('GET_and_body'):
+    response=client.get_object(Bucket=gateway.bucket.name,Key=key);body=response['Body']
+    try:data=body.read(MAX_BYTES+1)
+    finally:body.close()
+   with measured('validation'):
+    if not state['start']<=response['LastModified'].timestamp()<state['deadline']:raise SubmissionPolicyError('token document upload time')
+    try:validate(data,epoch,state['commitment_binding']['checkpoint'],miner,b,transport=state['commitment_binding'].get('version',TRANSPORT))
+    except (ValueError,KeyError,TypeError,json.JSONDecodeError)as exc:raise SubmissionPolicyError('token document binding')from exc
    if cutoff is not None and time.time()>=cutoff:raise TimeoutError('token capture cutoff')
    frozen=pending[miner]['root']+'/training/'+str(b['slot'])+'.json'
    captured_at=time.time()
    if cutoff is not None and captured_at>=cutoff:raise TimeoutError('token capture cutoff')
    receipt=dict(slot=b['slot'],sha256=sha(data),size=len(data),frozen_key=frozen,captured_at=captured_at,assurance='unaudited')
    try:
-    if wal is not None:wal.intent(miner,receipt)
-    gateway.bucket.put(frozen,data)
+    if wal is not None:
+     with measured('WAL_intent'):wal.intent(miner,receipt)
+    with measured('immutable_PUT'):
+     if capacity:client.put_object(Bucket=gateway.bucket.name,Key=frozen,Body=data,ContentType='application/octet-stream')
+     else:gateway.bucket.put(frozen,data)
    except Exception as exc:
     if wal is not None and isinstance(exc,JournalDurabilityError):raise
     failure=RuntimeError('token snapshot publication infrastructure failure');failure.__cause__=exc

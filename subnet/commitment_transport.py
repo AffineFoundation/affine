@@ -136,7 +136,7 @@ def freeze(gateway,epoch):
   if policy is not None:
    from .training_documents import capture_policy,DURABLE_CAPTURE_VERSION
    policy=capture_policy(policy)
-   if policy['version']==DURABLE_CAPTURE_VERSION:
+   if policy['version']in(DURABLE_CAPTURE_VERSION,'bounded-parallel-token-capture-v3'):
     from .capture_journal import CommitmentJournal,JournalDurabilityError,checkpoint_state
     # Persist+fsync complete discovery before creating its bound WAL header.
     checkpoint_state(gateway)

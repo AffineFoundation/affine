@@ -53,6 +53,22 @@ class Bucket:
             aws_access_key_id=values['R2_ACCESS_KEY_ID'], aws_secret_access_key=values['R2_SECRET_ACCESS_KEY'])
         self.client = boto3.client('s3', **self._client_options)
 
+    def capture_io_client(self, *, parallel_workers):
+        """Prospective v3 bounded GET and immutable PUT connection reuse.
+
+        The scheduler, not botocore's pool, limits simultaneous requests. One
+        shared pool has room for every worker's sequential GET/PUT operation.
+        Historical commitment readers and the general writer stay unchanged.
+        """
+        from botocore.config import Config
+        if type(parallel_workers)is not int or parallel_workers!=64:
+            raise ValueError('exact prospective capture I/O worker bound')
+        bounded = self.client.meta.config.merge(Config(connect_timeout=5, read_timeout=10,
+            retries={'mode': 'standard', 'total_max_attempts': 1},
+            max_pool_connections=parallel_workers))
+        return boto3.client('s3', **self._client_options, config=bounded)
+
+
     def commitment_read_client(self, *, parallel_workers=None):
         """Hourly small-GET transport; shared client and storage trust unchanged."""
         from botocore.config import Config
