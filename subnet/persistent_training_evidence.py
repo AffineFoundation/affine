@@ -169,7 +169,8 @@ def validate_updates(report,job,manifest):
             global_step_before=before,parameters=binding['parameters'],
             eos_token_id=declaration['tokenizer_eos_token_id'],required_pairs_per_task=manifest['K'],
             effective_hyperparameters=effective_hyperparameters(authorization),
-            learning_rate_authorization_sha256=sha(grant))
+            learning_rate_authorization_sha256=sha(grant),
+            optimizer_threading=declaration.get('optimizer_threading'))
     pairs,tasks,groups,identities=task_groups(pairs,job['steps'],manifest['training_coverage']['seed'],
         **({'required_pairs_per_task':manifest['K']} if type(manifest.get('K'))is int and manifest.get('K')==manifest.get('L') and manifest['K']>=2 else {}))
     if diagnostics.get('task_count')!=len(tasks)or diagnostics.get('pair_count')!=len(pairs):

@@ -67,7 +67,7 @@ def _precision(value, inventory, step, effective_hyperparameters, grant_sha256):
 def validate_diagnostics(diagnostics, updates, admitted_pairs, *, objective,
         input_checkpoint, epoch, steps, seed, global_step_before, parameters,
         eos_token_id, required_pairs_per_task, effective_hyperparameters,
-        learning_rate_authorization_sha256):
+        learning_rate_authorization_sha256, optimizer_threading=None):
     """Reconstruct exact selection, exclusions, task weights and update coverage.
 
 Every keyword denotes independently authenticated expectations, especially EOS,
@@ -80,6 +80,17 @@ these arguments from the report being checked.
             type(global_step_before) is not int or global_step_before < 0 or
             not isinstance(parameters, list) or not parameters):
         raise ValueError('positive SFT diagnostic/update structure')
+    if optimizer_threading is not None:
+        from .optimizer_threading import configuration as threading_configuration, expected_evidence
+        optimizer_threading = threading_configuration(optimizer_threading)
+        _exact(diagnostics.get('optimizer_threading'), optimizer_threading,
+               'independently authenticated SFT optimizer thread policy')
+        expected_threading = expected_evidence(optimizer_threading)
+        for update in updates:
+            _exact(update.get('optimizer_threading'), expected_threading,
+                   'optimizer thread observations and restored runtime')
+    elif any('optimizer_threading' in row for row in [diagnostics, *updates]):
+        raise ValueError('historical SFT cannot report an unauthenticated thread override')
     positives, tasks, groups, selection = select_positive_tasks(
         admitted_pairs, steps, seed, eos_token_id, required_pairs_per_task)
     expected = dict(training_policy=POLICY, training_objective=objective,

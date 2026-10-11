@@ -927,6 +927,10 @@ def install_source_loader(root,additional_files=()):
     for name in ('positive_only_objective','positive_only_training','positive_only_training_evidence'):
         if 'subnet/'+name+'.py' in additional_files:
             sys.modules.pop('subnet.'+name,None)
+    if 'subnet/optimizer_threading.py' in additional_files:
+        sys.modules.pop('subnet.optimizer_threading',None)
+    if 'subnet/research_parent_adoption.py' in additional_files:
+        sys.modules.pop('subnet.research_parent_adoption',None)
     if 'subnet/optimizer_state_cache.py'in additional_files:
         sys.modules.pop('subnet.optimizer_state_cache',None)
         sys.modules.pop('subnet.cache_lifecycle',None)
@@ -1004,13 +1008,23 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     if 'unaudited_training_execution' in job:
         from .training_receipts import authenticate
         from .unaudited_training_execution import configured_objective
-        execution_objective=configured_objective(authenticate(job['unaudited_training_execution'],authority))
+        execution_declaration=authenticate(job['unaudited_training_execution'],authority)
+        execution_objective=configured_objective(execution_declaration)
         if (execution_objective or {}).get('version')=='task-balanced-positive-sft-v1':
             positive_files=tuple('subnet/'+n+'.py' for n in (
                 'positive_only_objective','positive_only_training','positive_only_training_evidence'))
             if not set(positive_files)<=set(job['source_files']):
                 raise ValueError('positive SFT requires its complete authenticated execution source')
             execution_files+=positive_files
+            if ((job.get('persistent_training', {}).get('parent_publication') or {}).get('payload', {}).get('version')
+                    == 'authority-local-research-parent-v1'):
+                if 'subnet/research_parent_adoption.py' not in job['source_files']:
+                    raise ValueError('research parent adoption requires authenticated source')
+                execution_files+=('subnet/research_parent_adoption.py',)
+            if 'optimizer_threading' in execution_declaration:
+                if 'subnet/optimizer_threading.py' not in job['source_files']:
+                    raise ValueError('optimizer threading requires authenticated source')
+                execution_files+=('subnet/optimizer_threading.py',)
     token_files=('subnet/token_only_protocol.py','subnet/token_only_runtime.py','subnet/threeway_prefill_research.py','subnet/native_session_validation.py')if 'token_artifact_policy'in manifest else ()
     publication_files=('subnet/persistent_publication.py',) if manifest.get('persistent_publication_policy') is not None else ()
     if manifest.get('optimizer_state_export_policy')=='trainer-local-only-v1':

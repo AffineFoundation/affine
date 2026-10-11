@@ -200,6 +200,9 @@ class StateCache:
         with os.fdopen(fd,'wb')as stream:stream.write(data);stream.flush();os.fsync(stream.fileno())
         os.replace(tmp,path)
     def directory(self,job_id):
+        if (getattr(self,'research_parent_directory',None) is not None and
+                self.current is not None and self.current['job_id']==job_id):
+            return self.research_parent_directory
         return candidate_directory(self.workspace,self.root,job_id)
     def discard(self,value,reason):
         directory=self.directory(value['job_id']);removed=[]
@@ -224,6 +227,10 @@ class StateCache:
         self.save(self.root/('retired-'+value['job_id']+'.json'),dict(job_id=value['job_id'],descriptor_sha256=value.get('descriptor_sha256'),reason=reason,removed=removed))
         return removed
     def prepare_parent(self,descriptor,source):
+        publication=self.job.get('persistent_training',{}).get('parent_publication')
+        if (publication or {}).get('payload',{}).get('version') == 'authority-local-research-parent-v1':
+            from .research_parent_adoption import prepare_cache
+            return prepare_cache(self,descriptor,source)
         # Guard before *any* recovery/discard path, including a stale failed
         # promotion or abandoned pending candidate. Cross-run counters are not
         # comparable, and a foreign request cannot erase the sole current state.

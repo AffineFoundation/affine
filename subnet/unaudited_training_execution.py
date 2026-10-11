@@ -55,6 +55,11 @@ SFT_SOURCE_FILES = frozenset(('subnet/positive_only_objective.py',
 
 def configured_objective(value):
     from .training_policy import objective_config, objective_horizon, objective_at_step
+    if 'optimizer_threading' in value:
+        if value.get('version') not in SFT_VERSIONS:
+            raise ValueError('optimizer threading is qualified only for prospective SFT')
+        from .optimizer_threading import configuration as thread_configuration
+        thread_configuration(value['optimizer_threading'])
     if value.get('version') in SFT_VERSIONS:
         from .positive_only_objective import configuration
         actual = configuration(value.get('training_objective'))
@@ -92,7 +97,8 @@ def configured_objective(value):
 
 def _fields(value):
     if value.get('version') in SFT_VERSIONS:
-        return FIELDS | {'training_objective', 'tokenizer_eos_token_id'}
+        return FIELDS | {'training_objective', 'tokenizer_eos_token_id'} | (
+            {'optimizer_threading'} if 'optimizer_threading' in value else set())
     return FIELDS | {'training_objective','training_horizon'} if value.get('version') in OBJECTIVE_VERSIONS else FIELDS
 
 
@@ -161,6 +167,15 @@ def _sources(value):
     extra={'subnet/persistent_training_evidence.py','subnet/training_policy.py'} if objective is not None else set()
     if value.get('version') in SFT_VERSIONS:
         extra = extra | SFT_SOURCE_FILES
+        if 'optimizer_threading' in value:
+            extra = extra | {'subnet/optimizer_threading.py'}
+    # Optional new-source adoption; historical releases retain their source map.
+    adoption_files = {'subnet/research_parent_adoption.py', 'subnet/optimizer_state_cache.py'}
+    adoption_changes = set(changed) & adoption_files
+    if adoption_changes:
+        if value.get('version') not in SFT_VERSIONS or not adoption_files <= set(after):
+            raise ValueError('research parent adoption requires prospective SFT source pins')
+        extra = extra | adoption_changes
     representative = 'subnet/training_task_representatives.py' in after
     additions = REPRESENTATIVE_CHANGES if representative else frozenset()
     if representative and not REPRESENTATIVE_CHANGES <= set(changed):
@@ -253,6 +268,11 @@ def _sft_qualification(value, q):
         'integration_evidence_sha256', 'qualification_scope',
         'research_kernel_GPU_execution', 'fresh_genesis_tested',
         'continuation_tested', 'negative_gradients', 'EOS_included'}
+    if 'optimizer_threading' in value:
+        fields |= {'optimizer_threading', 'optimizer_threading_equivalence_evidence_sha256'}
+        if sha(q.get('optimizer_threading')) != sha(value['optimizer_threading']):
+            raise ValueError('source-bound qualification must attest the optimizer thread policy')
+        digest(q.get('optimizer_threading_equivalence_evidence_sha256'))
     if (set(q) != fields or q['version'] != SFT_QUALIFICATION
             or q['method'] != SFT_METHOD
             or value['method'] not in (SFT_METHOD, SFT_GENESIS_METHOD)
@@ -534,7 +554,8 @@ def provenance(job_envelope,authority):
         base_hyperparameters_sha256=_base_hyperparameters_sha256(),
         state_version='persistent-fp32-trainer-state-v2-effective-lr',
         **({'training_objective':configured_objective(value),'training_horizon':copy.deepcopy(value['training_horizon'])} if value['version']==OBJECTIVE_VERSION else {}),
-        **({'training_objective':configured_objective(value),'tokenizer_eos_token_id':value['tokenizer_eos_token_id']} if value['version'] in SFT_VERSIONS else {}))
+        **({'training_objective':configured_objective(value),'tokenizer_eos_token_id':value['tokenizer_eos_token_id'],
+            **({'optimizer_threading':copy.deepcopy(value['optimizer_threading'])} if 'optimizer_threading' in value else {})} if value['version'] in SFT_VERSIONS else {}))
 
 def validate_provenance(report,job_envelope,authority):
     job=authenticate(job_envelope,authority)
@@ -620,6 +641,8 @@ def release(authorization,authority,*,now=None):
     expected_fields = RELEASE_FIELDS | ({'genesis_document'} if initial_capable else set())
     if sft_release:
         expected_fields |= {'training_objective', 'tokenizer_eos_token_id'}
+        if 'optimizer_threading' in value:
+            expected_fields |= {'optimizer_threading'}
     elif objective_release:
         expected_fields |= {'training_objective', 'training_horizon'}
     if (set(value)!=expected_fields

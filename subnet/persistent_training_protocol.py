@@ -181,6 +181,9 @@ def validate_parent(envelope, binding, authority):
     if parent is None:
         if envelope is not None:raise ValueError('genesis cannot include parent publication')
         return None
+    if envelope.get('payload',{}).get('version') == 'authority-local-research-parent-v1':
+        from .research_parent_adoption import validate_publication
+        return validate_publication(envelope,binding,authority)['descriptor']
     publication=signed(envelope,authority)
     if (set(publication)!={'version','namespace','job_id','job_sha256','descriptor_sha256','descriptor'} or
             publication['version'] not in (PUBLICATION_VERSION,LOCAL_PUBLICATION_VERSION) or state_pointer(publication)!=parent or
@@ -207,7 +210,7 @@ def prepare_job(controller, manifest, identifier, steps, ttl):
         envelope=read_json(controller.bucket,binding['parent']['descriptor_key'])
         descriptor=validate_parent(envelope,binding,controller.authority.id)
         if not local:
-            if envelope['payload']['version']==LOCAL_PUBLICATION_VERSION:raise ValueError('local optimizer has no durable shard fallback')
+            if envelope['payload']['version'] in (LOCAL_PUBLICATION_VERSION,'authority-local-research-parent-v1'):raise ValueError('local optimizer has no durable shard fallback')
             reads={row['name']:controller.bucket.presign(binding['parent']['namespace']+'/'+row['name'],expires=ttl) for row in descriptor['shards']}
     namespace=safe_namespace('private/trainer-state/'+manifest['epoch']+'/'+identifier)
     names=['state-'+format(i,'06d')+'.safetensors' for i,_ in enumerate(_plans(binding['parameters'],MAX_SHARD_BYTES))]
@@ -247,6 +250,9 @@ def validate_job(job,manifest,authority):
         raise ValueError('signed job state namespace/counter/lineage')
     safe_namespace(transport['output_namespace'])
     descriptor=validate_parent(transport['parent_publication'],binding,authority)
+    if (transport['parent_publication'] or {}).get('payload',{}).get('version') == 'authority-local-research-parent-v1':
+        from .research_parent_adoption import validate_successor
+        validate_successor(transport['parent_publication'],job,manifest,authority,preparation=True)
     from .persistent_publication import local_state
     if local_state(manifest):
         from .trainer_local_state import FIELD,original_manifest

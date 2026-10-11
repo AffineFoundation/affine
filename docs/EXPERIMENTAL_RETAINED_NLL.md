@@ -100,7 +100,14 @@ eight 64-task updates and learning rate `1e-6`. Development accuracy rose from
 interval was -2.67 to +8.56 percentage points, so this is encouraging but does
 not establish independent improvement. A separate official TRAIN-answer control
 stayed at 94/128. Its response count, style and length differ, so it does not
-isolate rationale quality. Independent 512-problem confirmation is in progress.
+isolate rationale quality.
+
+The original independent 512-problem comparison is now complete: upstream
+404/512 versus SFT 405/512, with 10 gains, nine losses, and no infrastructure
+errors. The paired 95% effect interval is -2.72 to +3.10 percentage points;
+one-sided exact p = 0.5. This does **not** confirm improvement. Both original
+executions were captured, and prompt-token and decoding parity passed. This
+candidate is not being promoted based on the development result.
 
 Those inputs came from finalized epoch 133 under a later network checkpoint;
 replaying them against the original upstream weights is historical supervised
@@ -182,3 +189,28 @@ fixtures; it does not qualify production API/R2 admission. A subsequent
 admission-only expiry-recovery change has CPU controls, without a claim of a new
 GPU execution. Existing native grading, sampling audits and the hourly weight
 writer remain separate from this trainer dispatch.
+
+
+## Prospective optimizer-only threading
+
+An optional signed SFT execution policy, `optimizer-only-cpu-threads-v1`, uses
+16 CPU threads only during `PersistentCPUAdamW.step`. Forward passes, backward
+passes, gradient accumulation and clipping retain the admitted two-thread
+profile, and interop threads remain two. The worker restores the steady profile
+even after an optimizer error. Reports record the actual before/during/after
+settings; an old release cannot silently acquire the override. The exact new
+source and policy require their own GPU integration qualification.
+
+The isolated full-7B Adam8 comparison reused identical frozen gradients and
+found all 339 parameter tensors, FP32 masters, both moments, BF16 projections and
+step counters exactly equal. The optimizer step took 172.13 seconds with two
+threads and 54.18 seconds with 16. This measures the optimizer step only, not a
+3.18x whole-epoch speedup. It does not activate a production change.
+
+The optional research-parent adoption helper preserves original research
+receipts and local optimizer shards. A new signed publication binds one exact
+successor request; an ordinary successful successor and ACK then enter the
+normal local-state lifecycle. It never fabricates a historical production job,
+resets Adam, uploads optimizer state, or grants space by deleting research
+artifacts. This path remains prospective; the independent SFT result above did
+not meet the criterion for production adoption.

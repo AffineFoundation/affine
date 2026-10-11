@@ -170,6 +170,9 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
         restore_seconds=time.monotonic()-restore_started
         train_started=time.monotonic()
         train_epoch,objective_arguments=objective_trainer(objective)
+        if 'optimizer_threading' in declaration:
+            # configured_objective has authenticated the SFT-only extension.
+            objective_arguments['optimizer_threading'] = declaration['optimizer_threading']
         destination,optimizer,diagnostics=train_epoch(runtime,pairs,out,
             input_checkpoint=binding['input_checkpoint'],epoch=manifest['epoch'],
             seed=manifest['training_coverage']['seed'],steps=job['steps'],

@@ -217,7 +217,7 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
                 approved_genesis_sha256=None, restored_state=None,
                 resource_admission, required_pairs_per_task=None,
                 learning_rate_authorization=None, learning_rate_authority=None,
-                job_id=None, objective):
+                job_id=None, objective, optimizer_threading=None):
     """Export one BF16 checkpoint; retain explicitly admitted optimizer lineage.
 
     As in the existing persistent trainer, publication/commit is the caller's
@@ -227,6 +227,11 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
     import torch
     from .protocol import harness_for
     objective = objective_config(objective)
+    if optimizer_threading is not None:
+        from .optimizer_threading import configuration, snapshot, expected_evidence
+        optimizer_threading = configuration(optimizer_threading)
+        if snapshot(torch) != expected_evidence(optimizer_threading)['before']:
+            raise ValueError('SFT entry requires its admitted steady runtime')
     checkpoint_id(input_checkpoint)
     if not isinstance(epoch, str) or not epoch or len(epoch) > 200:
         raise ValueError('exact epoch binding before training')
@@ -273,7 +278,14 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
             norm = accumulator.clip(optimizer.hyperparameters['max_grad_norm'])
             torch.cuda.synchronize(); gradient_seconds.append(time.monotonic()-phase_started)
             phase_started = time.monotonic()
-            precision = optimizer.step(gradients=accumulator.gradients()); seen.update(indices)
+            thread_evidence = None
+            if optimizer_threading is None:
+                precision = optimizer.step(gradients=accumulator.gradients())
+            else:
+                from .optimizer_threading import step as threaded_step
+                precision, thread_evidence = threaded_step(
+                    torch, optimizer, accumulator.gradients(), optimizer_threading)
+            seen.update(indices)
             accumulator = None
             torch.cuda.synchronize(); optimizer_seconds.append(time.monotonic()-phase_started)
             attributed = []
@@ -296,6 +308,8 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
                 task_weight_rule=TASK_WEIGHT_RULE, optimizer_lifecycle='persistent-across-epochs',
                 gpu_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
                 gpu_peak_reserved_bytes=torch.cuda.max_memory_reserved()))
+            if thread_evidence is not None:
+                updates[-1]['optimizer_threading'] = thread_evidence
         if seen != set(range(len(tasks))) or optimizer.global_step != start_step+steps:
             raise ValueError('complete once-through task coverage and optimizer steps required')
         model.eval(); torch.cuda.synchronize(); phase_started = time.monotonic()
@@ -329,6 +343,8 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
             effective_hyperparameters=copy.deepcopy(optimizer.hyperparameters),
             learning_rate_authorization_sha256=(hashlib.sha256(canonical(learning_rate_authorization)).hexdigest()
                 if learning_rate_authorization is not None else None))
+        if optimizer_threading is not None:
+            diagnostics['optimizer_threading'] = copy.deepcopy(optimizer_threading)
         return destination, optimizer, diagnostics
     finally:
         accumulator = None
