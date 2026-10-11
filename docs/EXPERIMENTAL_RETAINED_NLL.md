@@ -157,9 +157,36 @@ state was not uploaded. Training positive NLL again moved from 0.27255 to
 0.24771, which measures fit to the training responses, not held-out improvement.
 
 This replication qualifies the executed numerical recipe, not the live API or
-full deployment. Independent confirmation and sustained online learning are
-still pending. Neither CPU fixtures nor arithmetic-consistent reports establish
-those outcomes.
+full deployment. The completed independent comparison scored 405/512 versus
+404/512 for the base model, leaving held-out improvement unestablished.
+Sustained online continuation remains untested. Neither CPU fixtures nor
+arithmetic-consistent reports establish those outcomes.
+
+### Matched 1,024-task follow-up
+
+A separate, prospective study started on October 11 after the eight-update
+candidate failed to establish independent improvement. Both arms start from
+the original upstream 7B model with fresh Adam, learning rate `1e-6`, and 32
+updates: two identical passes through sixteen groups of 64 tasks. The network
+arm uses all 9,994 distinct, EOS-complete, native-correct positive responses
+from a frozen cohort of finalized submissions. The reference arm uses one
+official TRAIN solution for each of the same 1,024 problems. Prompts, task
+order, optimizer settings and update count match. Task weighting remains equal.
+
+The network and reference arms contain 2,524,097 and 267,549 output tokens per
+pass respectively. Consequently, the comparison tests the two data recipes;
+it does not isolate reasoning quality from response count, wording or exposure.
+The full selected input cohort passed native grading. This checks answer
+verdicts separately from sampling provenance and does not establish that every
+intermediate reasoning step is correct. Negative miner quotas are unchanged.
+
+Both terminal checkpoints will be evaluated against the original base on a
+new, fixed set of 512 problems, disjoint from the training cohort and previous
+evaluations. There is no additional development-set selection or intermediate
+checkpoint selection. The sole primary comparison is the network-positive
+arm against base; both base comparisons and stopping behavior will be reported.
+The original 512-problem result remains preserved. This study is private
+research in progress and has not changed production training or the contract.
 
 ### Prospective variable-coverage dispatch
 
