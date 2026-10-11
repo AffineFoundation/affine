@@ -24,8 +24,9 @@ def read(path, default=None):
 
 
 class Database:
-    def __init__(self, path, source=ROOT/'state'):
+    def __init__(self, path, source=ROOT/'state', training_receipts=None):
         self.path, self.source = Path(path), Path(source)
+        self.training_receipts = Path(training_receipts) if training_receipts is not None else None
         self.continuous_audits = ContinuousAuditProjection()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
@@ -201,9 +202,35 @@ class Database:
                             and type(abort.get('steps')) is int and abort['steps'] == 0):
                         row['phase'] = ('training admission rejected' if abort['status']=='aborted_training_admission'
                                         else 'aborted evaluation')
+            # Modern decoupled epochs finalize through a signed learner closure,
+            # independently of legacy reward-score files. Only signed closed
+            # receipts can populate the current nested training metrics.
+            from dashboard.training_projection import project as project_training
+            for eid, row in epochs.items():
+                if row['source'] != source_name:
+                    continue
+                completion = read(folder/f'{eid}-signed-learner-completion.json')
+                if completion is None:
+                    continue
+                try:
+                    manifest_document = read(folder/f'{eid}-first-signed-manifest.json')
+                    if not isinstance(manifest_document, dict) or manifest_document.get('payload', {}).get('epoch') != eid:
+                        raise ValueError('signed finalization row identity')
+                    closed = project_training(manifest_document, completion)
+                    row.update(closed)
+                    if self.training_receipts is not None:
+                        receipt_path = self.training_receipts/f'{eid}.signed.json'
+                        receipt = read(receipt_path) if not receipt_path.is_symlink() else None
+                        if receipt is not None:
+                            try:
+                                row.update(project_training(manifest_document, completion, receipt))
+                            except (BadSignatureError, ValueError, KeyError, TypeError):
+                                row['training_evidence_status'] = 'unavailable'
+                except (BadSignatureError, ValueError, KeyError, TypeError):
+                    pass  # No invalid/open epoch is finalized by projection.
             report = read(folder/'report.json', {})
             eid = report.get('epoch')
-            if eid in epochs and report.get('training'):
+            if eid in epochs and report.get('training') and epochs[eid].get('training_evidence_source') != 'authenticated-finalized-training-receipt':
                 training = report['training']
                 epochs[eid]['training'] = {key: training.get(key) for key in ('steps', 'losses', 'weights_changed', 'checkpoint', 'objective', 'input_pairs')}
                 epochs[eid]['phase'] = 'trained' if training.get('weights_changed') else epochs[eid]['phase']
@@ -392,9 +419,10 @@ def main():
     p.add_argument('--host', default='127.0.0.1')
     p.add_argument('--port', type=int, default=8794)
     p.add_argument('--snapshot', action='store_true')
+    p.add_argument('--training-receipts', help='Read-only cache of original ROOT-signed finalized training receipts')
     p.add_argument('--export', help='Atomically publish the public SQLite snapshot as JSON')
     args=p.parse_args()
-    db=Database(args.db,args.source)
+    db=Database(args.db,args.source,args.training_receipts)
     db.refresh()
     def export():
         if args.export:
