@@ -1,6 +1,10 @@
 import copy
+import contextlib
+import io
+import json
 import types
 import unittest
+from unittest.mock import Mock
 
 import torch
 
@@ -11,6 +15,18 @@ import test_persistent_training_policy as fixtures
 
 
 class FP32GradientIntegrationTests(unittest.TestCase):
+    def capacity_framework(self, free_gib=100):
+        cuda = types.SimpleNamespace(
+            device=lambda device: contextlib.nullcontext(),
+            synchronize=Mock(), empty_cache=Mock(),
+            mem_get_info=Mock(return_value=(free_gib*1024**3, 140*1024**3)),
+            memory_stats=lambda device: {'inactive_split_bytes.all.current': 0},
+            memory_allocated=lambda device: 16*1024**3,
+            memory_reserved=lambda device: 40*1024**3,
+            max_memory_allocated=lambda device: 20*1024**3,
+            max_memory_reserved=lambda device: 40*1024**3)
+        return types.SimpleNamespace(cuda=cuda)
+
     def setUp(self):
         self.fixture = fixtures.PersistentTrainingPolicyTests()
         self.fixture.setUp()
@@ -92,8 +108,7 @@ class FP32GradientIntegrationTests(unittest.TestCase):
         size = 8_000_000_000
         parameter = types.SimpleNamespace(device='cuda:0', is_cuda=True,
             numel=lambda: size, element_size=lambda: 2)
-        framework = types.SimpleNamespace(cuda=types.SimpleNamespace(
-            mem_get_info=lambda device: (100*1024**3, 140*1024**3)))
+        framework = self.capacity_framework()
         result = admit_capacity(framework, [('p', parameter)])
         self.assertEqual(result['extra_buffer_bytes'], size * 4)
         self.assertTrue(result['admitted'])
@@ -102,6 +117,39 @@ class FP32GradientIntegrationTests(unittest.TestCase):
             admit_capacity(framework, [('p', parameter)])
         with self.assertRaisesRegex(ValueError, 'qualified CUDA'):
             admit_capacity(framework, self.fixture.parameters)
+
+    def test_reclaimable_cache_can_satisfy_original_memory_floor(self):
+        parameter = types.SimpleNamespace(device='cuda:0', is_cuda=True,
+            numel=lambda: 8_000_000_000, element_size=lambda: 2)
+        framework = self.capacity_framework()
+        framework.cuda.mem_get_info.side_effect = [
+            (20*1024**3, 140*1024**3), (100*1024**3, 140*1024**3)]
+        logs = io.StringIO()
+        with contextlib.redirect_stderr(logs):
+            result = admit_capacity(framework, [('p', parameter)])
+        self.assertEqual(framework.cuda.synchronize.call_count, 2)
+        framework.cuda.empty_cache.assert_called_once_with()
+        self.assertTrue(result['admitted'])
+        self.assertEqual(result['free_bytes'], 100*1024**3)
+        self.assertEqual(result['extra_buffer_bytes'], 32_000_000_000)
+        self.assertEqual(result['backward_reserve_bytes'], 32*1024**3)
+        rows = [json.loads(line) for line in logs.getvalue().splitlines()]
+        self.assertEqual([r['stage'] for r in rows],
+            ['before-unused-cache-release', 'after-unused-cache-release'])
+        self.assertEqual([r['free_bytes'] for r in rows], [20*1024**3, 100*1024**3])
+        self.assertEqual(result['cache_admission']['before'], rows[0])
+        self.assertEqual(result['cache_admission']['after'], rows[1])
+
+    def test_insufficient_memory_after_release_is_not_admitted(self):
+        parameter = types.SimpleNamespace(device='cuda:0', is_cuda=True,
+            numel=lambda: 8_000_000_000, element_size=lambda: 2)
+        framework = self.capacity_framework(free_gib=40)
+        logs = io.StringIO()
+        with contextlib.redirect_stderr(logs):
+            with self.assertRaisesRegex(ValueError, 'insufficient GPU capacity'):
+                admit_capacity(framework, [('p', parameter)])
+        framework.cuda.empty_cache.assert_called_once_with()
+        self.assertEqual(len(logs.getvalue().splitlines()), 2)
 
 
 if __name__ == '__main__':

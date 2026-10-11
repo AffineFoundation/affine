@@ -89,6 +89,9 @@ accumulation, FP32 Adam master weights and moments, and BF16 model export.
 The release binds the tokenizer EOS, objective, source, runtime, learning rate,
 input inventory and optimizer lineage. Its reports record positive selection,
 losses and actual update coverage instead of inventing preference margins.
+GPU capacity admission releases unused allocator cache after the diagnostic
+forward passes, then checks the original memory reserve. It retains live model
+tensors and rejects genuinely insufficient memory.
 
 The initial isolated experiment used the original 7B upstream checkpoint, fresh
 Adam, 2,046 completed correct miner responses from 512 finalized training tasks,
@@ -111,6 +114,7 @@ Portable candidate checks:
 ```sh
 python -m unittest discover -s tests -p 'test_positive_only*.py' -v
 python -m unittest discover -s tests -p 'test_positive_sft*.py' -v
+python -m unittest discover -s tests -p 'test_fp32_gradient_accumulation.py' -v
 ```
 
 These are CPU contracts using throwaway signing keys and explicitly identified
