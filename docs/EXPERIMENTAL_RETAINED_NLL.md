@@ -180,13 +180,14 @@ The full selected input cohort passed native grading. This checks answer
 verdicts separately from sampling provenance and does not establish that every
 intermediate reasoning step is correct. Negative miner quotas are unchanged.
 
-Both terminal checkpoints will be evaluated against the original base on a
-new, fixed set of 512 problems, disjoint from the training cohort and previous
-evaluations. There is no additional development-set selection or intermediate
-checkpoint selection. The sole primary comparison is the network-positive
-arm against base; both base comparisons and stopping behavior will be reported.
-The original 512-problem result remains preserved. This study is private
-research in progress and has not changed production training or the contract.
+Both fixed endpoints completed the same new 512-problem evaluation, disjoint
+from the training cohort and previous evaluations. Base solved 405, network
+positives 268, and official references 389. The primary network-versus-base
+comparison regressed by 26.76 percentage points (paired 95% interval −33.33 to
+−19.77). All original outputs were retained; no infrastructure errors occurred.
+Neither endpoint was promoted. The [aggregate result, uncertainty and stopping
+analysis](POSITIVE_SFT32_RESULTS.md) distinguish strong training fit from this
+failed transfer result. Production training and the mining contract are unchanged.
 
 ### Prospective variable-coverage dispatch
 

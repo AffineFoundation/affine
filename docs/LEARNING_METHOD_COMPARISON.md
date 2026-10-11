@@ -34,9 +34,13 @@ A larger study fixes 1,024 training tasks and 32 updates before evaluating eithe
 endpoint. One arm uses successful finalized network responses; another uses
 official training solutions for the same tasks. Both start from the genuine
 upstream checkpoint with fresh optimizer state and are compared with an upstream
-baseline on the same fresh 512-task evaluation. Results remain pending. The
-network arm contains more responses and substantially more tokens, so this is a
-comparison of training recipes, not an isolated causal test of reasoning quality.
+baseline on the same fresh 512-task evaluation. This study is now complete:
+base 405/512, network 268/512 and reference 389/512. Network-positive SFT regressed
+by 26.76 percentage points, with a paired 95% interval of −33.33 to −19.77 points.
+It has not been promoted. See the [complete results and stopping analysis](POSITIVE_SFT32_RESULTS.md).
+The network arm contains more responses and substantially more tokens, so this
+is a comparison of training recipes, not an isolated causal test of reasoning
+quality.
 
 ## The next distinct hypothesis: fresh-group policy gradients
 

@@ -1,6 +1,19 @@
 # Measured learning and transport status
 
-## Current assessment — 2026-10-11, 19:47 UTC
+## Current assessment — 2026-10-11, 22:24 UTC
+
+The isolated 32-update positive-only SFT comparison is complete and failed its
+primary learning gate. Base solved 405/512 independent problems; training on
+network positives solved 268/512, and the official-reference control solved
+389/512. The network arm regressed by 26.76 percentage points (paired 95%
+interval −33.33 to −19.77), despite sharply lower training NLL. Its median output
+fell from 503.5 to 51 tokens, and most lost answers were completed but wrong.
+All original results are preserved, no infrastructure errors occurred, and
+neither endpoint has been promoted. See the [full aggregate result and
+limitations](POSITIVE_SFT32_RESULTS.md). These research results do not change
+the current miner contract or the hourly validator weight writer.
+
+## Earlier assessment — 2026-10-11, 19:47 UTC
 
 The live network completed four consecutive epochs within one hour (144–147).
 Epoch 147 took 59m03s and trained on 512 tasks / 2,048 pairs from 214 external
