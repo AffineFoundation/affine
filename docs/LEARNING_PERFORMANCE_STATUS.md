@@ -24,6 +24,10 @@ The current mining quotas and production objective remain unchanged. Continued
 online improvement and a qualified deployment of a successful research method
 remain outstanding.
 
+The [learning-method investigation](LEARNING_METHOD_COMPARISON.md) explains
+positive-only SFT, why failures can remain a mining requirement, the pending
+network-versus-reference comparison, and the separate fresh-group RL prototype.
+
 ## Earlier assessment — 2026-10-11, 04:42 UTC
 
 Learning improvement over the genuine upstream base is still unproven. The
