@@ -105,6 +105,13 @@ logs, separately labeled from the signed training diagnostics. Known progress
 lines become numeric observations; blank and unrecognized line counts remain
 visible. Raw private log text is not published.
 
+Completed evaluations from the existing serial monitor are also included as
+`suite: "serial-heldout128"`, with all retained per-task output tokens, text,
+lengths, stopping flags and verdicts. The exporter authenticates the original
+signed plans and archives and attaches them only to finalized checkpoints.
+These repeated diagnostics use the already trained `6493` baseline; they are
+distinct from both pristine upstream weights and the separate g26 study.
+
 The existing retained-Adam endpoint study's original128 and exposed_test128
 records are labeled separately from ordinary diagnostics. Publication neither
 asserts their historical independence nor claims an improvement before the

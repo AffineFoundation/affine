@@ -285,6 +285,8 @@ def collect_evaluation_evidence(source_root, finalized):
     endpoint_rows, endpoint_issues = collect_endpoint_evidence(root, finalized)
     from dashboard.legacy_evaluation_evidence_projection import collect_legacy_evaluation_evidence
     legacy_rows, legacy_issues = collect_legacy_evaluation_evidence(root, finalized)
+    from dashboard.serial128_evaluation_evidence_projection import collect_serial128_evidence
+    serial_rows, serial_issues = collect_serial128_evidence(root, finalized)
     result = {}
     for epoch, final in finalized.items():
         checkpoints = {final["input_checkpoint"], final["output_checkpoint"]}
@@ -298,12 +300,14 @@ def collect_evaluation_evidence(source_root, finalized):
             matched.append(dict(row, checkpoint_association=stage))
         matched.extend(endpoint_rows.get(epoch, []))
         matched.extend(legacy_rows.get(epoch, []))
+        matched.extend(serial_rows.get(epoch, []))
         result[epoch] = {"version": "finalized-epoch-evaluation-evidence-v1", "epoch_id": epoch,
                          "status": "available" if matched else "unavailable",
                          "evaluations": matched, "availability": "available" if matched else "not_retained_or_not_evaluated",
                          "collection_issues": issues,
                          "endpoint_availability": endpoint_issues,
                          "legacy_availability": legacy_issues,
+                         "serial128_availability": serial_issues,
                          "limits": ["Historical reports can retain counts and hashes without output token IDs or text.",
                                     "At the output cap, EOS and budget exhaustion are indistinguishable without the final token.",
                                     "Checkpoint association does not imply this evaluation used the training harness or output budget."]}
