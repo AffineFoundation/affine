@@ -128,3 +128,47 @@ evidence of improved held-out performance or a causal effect of cooling. Epochs
 
 First completed trial analysis SHA256:
 `b4b48acc00cfca85d9830a45d8dfdf12b0aa7f673baea1ca5a4023cc3a94ea4b`.
+
+
+## Coverage across the complete current run
+
+The authenticated records for all 64 finalized updates, epochs 91–154, contain
+26,913 task-update exposures but only **2,923 distinct tasks out of 6,746**
+(43.3%). That leaves 3,823 tasks unused by training in this run. Model and
+optimizer lineage is continuous across all 64 records; there are no missing
+epochs in this census. This is training coverage, not a count of every task
+miners attempted or proof that the remaining tasks are solvable under the quota.
+
+“Absent from the previous twelve epochs” also includes tasks trained earlier.
+The distinction matters:
+
+| Metric | Epoch 152 | Epoch 153 | Epoch 154 |
+| --- | ---: | ---: | ---: |
+| Captured tasks absent from previous 12 training epochs | 145 | 147 | 182 |
+| Captured tasks never previously trained in this run | 86 | 81 | 81 |
+| Actually trained tasks new to this run | 37 | 33 | 34 |
+| Captured, never-trained tasks not examined for native grading | 49 | 48 | 47 |
+
+The first cooling epoch mostly brought back older tasks rather than increasing
+the count of entirely new captured tasks. It also supplied 47 never-trained
+tasks that the current training selection did not examine. Their eligibility
+remains unknown; they cannot be counted as 47 ready-to-train examples.
+
+A separate, inactive candidate prioritizes captured tasks absent from the
+preceding twelve training epochs before repeated tasks, retaining native grading,
+the same 512-task limit and the same time budget. All 182 such candidates in
+epoch 154 fit below that limit, so this would put the 47 never-trained candidates
+in the first selection tier without needing another priority rule or miner
+upgrade. Invalid and unresolved examples would still be excluded. Historical
+outputs remain unchanged, and the fixed 154–156 cooling trial remains in place
+before any decision on a later activation.
+
+This finding supports addressing trainer selection alongside miner incentives.
+It does not establish that repetition caused the held-out regression or that
+broader coverage will fix the training objective. The controlled learning-method
+studies continue separately.
+
+Additional evidence SHA256:
+
+- All-run coverage: `1546c3f5fdc63100bfb307896117e80b5f1f1a2cce682e49ac65424803daca74`
+- Recent versus all-run novelty: `7b22f54e2804ce975ddb0ab24f80fe74b855fbf1ead8545c0956a1620a9fbbb6`
