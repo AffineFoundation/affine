@@ -106,8 +106,8 @@ contain research code that the signed source has not activated.
   Its untouched checkpoint is `2173b3e0119380ab813c9588bedff6b3edd5d3dcb01565490fa33ac67b2debf6`.
   The current restart began from previously trained checkpoint
   `6493a901bd009f0800d5eed97d19aee78947cc586afeb27abfb2c72032ad1924`
-  (old run optimizer step 12), with a fresh optimizer; it was not an untouched
-  upstream model reset. See `docs/COMPLETED_MATH_RESTART.md` for provenance.
+  (old run epoch 21 output, optimizer step 12), with a fresh optimizer; it was not
+  an untouched upstream model reset. See `docs/COMPLETED_MATH_RESTART.md` for provenance.
   After each update, download the checkpoint in the new manifest, not the base
   again and not a previous epoch's learned checkpoint.
 - Each batch covers one task under one epoch/checkpoint and contains exactly
@@ -290,6 +290,20 @@ gate the training update. Unaudited inputs remain explicitly labelled unaudited.
 The trainer preserves its local optimizer state and uploads the successor model
 and reports; miners then follow the new checkpoint. Checkpoint publication does
 not wait for full vocabulary arrays or a complete network audit.
+
+As deployed on October 12, training uses pairwise preference learning on the
+mean generated-token log probability of each correct and incorrect rollout.
+Pair losses are averaged within each task, then across tasks. Reference scores
+come from that epoch's input checkpoint, before its one accumulated optimizer
+update; the reference resets each epoch. Preference scale beta=0.1 is not a KL
+coefficient. This is not GRPO: it has no group-relative advantages, clipped
+policy-ratio objective or explicit fixed-base KL penalty. The positive-NLL study
+below has completed its horizon, so that term's current coefficient is zero.
+Matching initial policy and reference scores give a pre-update preference loss
+near ln(2) each epoch. That initial value alone does not measure learning; compare
+post-update fit and fresh task accuracy, keeping training diagnostics separate
+from held-out performance. This describes the deployed objective without changing
+the mining contract or training behavior.
 
 A bounded trainer-only experiment was activated on October 10 at 11:17:52 UTC,
 prospectively for epoch 117. It retains the acknowledged model and Adam state at

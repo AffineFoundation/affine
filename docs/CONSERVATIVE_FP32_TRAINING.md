@@ -1,8 +1,32 @@
 # Conservative FP32 training
 
-The 2026-10-09 fresh run starts from the original Qwen2.5-Math-7B-Instruct checkpoint. The previous run and its reports remain historical evidence. Mining still follows the signed epoch manifest: four distinct completed correct answers and four distinct completed wrong answers per task batch, up to the signed `max_batches` task batches per UID, attempt nonces 0–999, and a 2,048-token output budget. The original published mining/sampling source remains pinned separately from the training execution source.
+The 2026-10-09 conservative FP32 run reset the optimizer but reused previously
+trained checkpoint `6493a901bd009f0800d5eed97d19aee78947cc586afeb27abfb2c72032ad1924`.
+Authenticated lineage identifies it as the old run's epoch 21 output at optimizer
+step 12. It is distinct from the untouched Qwen2.5-Math-7B-Instruct checkpoint
+`2173b3e0119380ab813c9588bedff6b3edd5d3dcb01565490fa33ac67b2debf6`.
+Compare progress within this run against its actual `6493a901...` starting weights;
+label comparisons with the upstream checkpoint separately. The previous run and
+its reports remain historical evidence. Mining still follows the signed epoch
+manifest: four distinct completed correct answers and four distinct completed
+wrong answers per task batch, up to the signed `max_batches` task batches per UID,
+attempt nonces 0–999, and a 2,048-token output budget. The original published
+mining/sampling source remains pinned separately from the training execution source.
 
 The corrective trainer accumulates each backward pass into FP32 gradient buffers, computes the global norm and clipping in FP32, and passes those buffers directly to the persistent CPU AdamW optimizer. This avoids repeatedly adding small gradients into BF16 `.grad` buffers. The task-normalized preference objective, clipping limit, Adam coefficients and weight decay retain their declared settings.
+
+As deployed on October 12, the objective is pairwise preference learning on the
+**mean generated-token log probability** of each correct and incorrect rollout.
+Pair losses are averaged within each task, then across tasks. The reference
+scores are computed from the epoch's input checkpoint before its one accumulated
+optimizer update; the reference resets at the next epoch. Preference scale
+`beta=0.1` is not a KL coefficient. This is not GRPO: it has no group-relative
+advantages, clipped policy-ratio objective or explicit fixed-base KL penalty.
+The positive-NLL study below has finished its 16-update horizon; its coefficient
+is now zero. With matching initial policy and reference scores, the pre-update
+preference loss is approximately `ln(2)` each epoch. That initial value alone
+does not measure learning; compare post-update fit and fresh task accuracy,
+keeping training-set diagnostics separate from held-out performance.
 
 An explicit ROOT-signed training release selects an effective learning rate of `5e-7`. It binds the actual execution source, its GPU qualification, the original public input contract and a unique fresh genesis. Initial training starts with fresh optimizer state. Each later update preserves that run's FP32 masters, moments and counters. The coordinator automatically derives an exact job-specific grant after authenticating the native-accepted input subset; no manual signature is required for each epoch. Reports and V2 state descriptors record the effective rate and the original grant.
 
