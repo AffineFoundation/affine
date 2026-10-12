@@ -48,7 +48,12 @@ comparison; it does not rename the production genesis.
 Each checkpoint retains all 128 original cases, including wrong answers,
 unresolved answers and infrastructure errors. The fixed profile uses one draw
 per task, paired seeds, FP32 cached generation, temperature 0.7, top-p 1, and a
-2,048-token output cap. Comparisons check actual prompt token IDs, task identity,
+2,048-token output cap. The API `context_token_budget` field records the signed
+profile ceiling of 8,192 tokens. The evaluator applies the smaller of that ceiling
+and the checkpoint’s supported context: both initial checkpoints support 4,096,
+so their actual limit is 4,096. Each prompt plus the full output budget must fit;
+no prompt is truncated to satisfy this check.
+Comparisons check actual prompt token IDs, task identity,
 seeds, source and runtime profile. Caps, EOS and exposure groups are reported
 separately. The already-trained subset can help measure fit; neither it nor the
 overall TRAIN-pool score establishes unseen-task generalization.
