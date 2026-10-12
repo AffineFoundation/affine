@@ -44,6 +44,16 @@ def validate(envelope, files, authority):
     return plan, result, rows, aggregate
 
 
+def baseline_raw_files(baseline, envelope, authority):
+    plan = signed(envelope, authority)
+    names = {'task-' + str(t['index']) + '.json' for t in plan['training_cohort']['payload']['tasks']}
+    captured = baseline / 'captured'
+    observed = {p.name for p in captured.glob('task-*.json')}
+    need(names <= observed and observed - names <= {'task-exposure-metadata.json'},
+         'exact baseline raw task identities; only declared exposure metadata may share prefix')
+    return {name: (captured / name).read_bytes() for name in names | {'result.json'}}
+
+
 def capture_and_archive(monitor, job):
     code = 'DATA=' + repr(dict(root=monitor.remote, directory=monitor.remote + '/jobs/' + job)) + '\n' + '''from pathlib import Path
 import base64,fcntl,json,os,stat
@@ -65,8 +75,7 @@ print(json.dumps(dict(files=files)));os.close(fd)
         state = json.loads((monitor.root / 'state.json').read_bytes())
         baseline = monitor.root / 'jobs' / state['baseline_job']
         before_envelope = json.loads((baseline / 'plan.json').read_bytes())
-        before_files = {p.name: p.read_bytes() for p in (baseline / 'captured').glob('task-*.json')}
-        before_files['result.json'] = (baseline / 'captured/result.json').read_bytes()
+        before_files = baseline_raw_files(baseline, before_envelope, monitor.authority)
         before_plan, _, before_rows, _ = validate(before_envelope, before_files, monitor.authority)
         comparison = paired_comparability(before_plan, before_rows, plan, rows)
     aggregate.update(generated_at=result['completed_at'], comparability_passed=comparison['comparable'])

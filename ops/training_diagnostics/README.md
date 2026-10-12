@@ -9,7 +9,13 @@ evaluation GPU. Production training does not wait for it.
 The first reference attempt on October 12, 2026 stopped before model execution
 because a local Python import shadowed an earlier runtime-version lookup. Its
 failure evidence was retained. This revision fixes that import placement and
-tests the actual entry path; first measurements remain pending.
+tests the actual entry path. The original upstream reference was subsequently
+archived and published. The first completed current-checkpoint capture then
+exposed an archive-reader collision: `task-exposure-metadata.json` shared the
+raw task prefix. The reader now selects the exact signed 128 task filenames,
+permits only that declared metadata companion, and still rejects missing,
+changed or unexpected raw task records. Original generations are retained;
+this correction does not rerun evaluation.
 
 These are training-split diagnostics, not held-out confirmation, miner proof
 verification, or a promotion rule. The cohort was selected without outcomes
@@ -123,12 +129,14 @@ From this directory, with PyNaCl installed:
 ```sh
 python -B -m unittest -v \
   test_training_eval test_training_lifecycle test_training_exposure \
-  test_preflight_import
+  test_preflight_import test_completed_archive
 ```
 
-The 27 CPU controls cover complete denominators, prompt and seed mismatch,
+The 30 CPU controls cover complete denominators, prompt and seed mismatch,
 native unresolved classification, exposure uncertainty, four-update coalescing,
 single-flight dispatch, crash intent, lease refusal, full-GET-before-publication,
-protected reference retention and failure holds. The actual evaluator entry
-test reaches the runtime-version check without importing a model. Tests make no
+protected reference retention and failure holds. The completed-pair controls
+exercise latest-checkpoint publication after a baseline archive containing
+exposure metadata, and reject missing or unexpected numbered raw records.
+The actual evaluator entry test reaches the runtime-version check without importing a model. Tests make no
 model or network calls. The signing key in the fixtures is explicitly synthetic.
