@@ -91,5 +91,40 @@ Evidence SHA256:
 - Coverage and selection analysis: `211e4f215fc14ebcabaa91b13552cdcdb016f4eefb280044024a88557210e9ef`
 - Task registry: `77a4524abc279d0e6e95ec87d0e5604f501c8e409ac5ab656ecabf060ab50fe3`
 
-The first cooled epoch was training when this report was prepared. No coverage
-benefit or held-out improvement from cooling is claimed yet.
+## First completed trial epoch: 154
+
+Epoch 154 closed normally after 61 minutes 1 second, exceeding the one-hour
+target by about one minute. Its original training job succeeded and published
+checkpoint `9e374468d205803b6719de1f379cdac6b7b6d01a55e2a15b070b817eac5fb9ad`.
+The next epoch opened automatically. No manual recovery was used.
+
+| Metric | Epoch 152 | Epoch 153 | Epoch 154, cooling active |
+| --- | ---: | ---: | ---: |
+| External submitting identities | 212 | 238 | 251 |
+| Committed batches | 1,817 | 1,889 | 2,138 |
+| Distinct committed tasks | 1,455 | 1,514 | 1,640 |
+| Distinct captured tasks | 1,304 | 1,209 | 1,227 |
+| Distinct trained tasks | 512 | 512 | 512 |
+| Trained tasks absent from preceding 12 training epochs | 62 | 61 | 70 |
+| That novelty share | 12.1% | 11.9% | 13.7% |
+| Training share on the fixed reference's top 256 tasks | 21.7% | 22.3% | 0.8% |
+
+The first observation shows miners moving away from the most repeatedly trained
+tasks without an observed shortage of eligible training data. The increase in
+training novelty is modest, and most selected tasks still appeared in the recent
+window. Among captured tasks, 182 were new to that window; 112 of them were not
+selected for native grading or training. Their native eligibility is unknown.
+Giving such candidates priority is a separate trainer-side option that would
+not require a miner update; it is not active in this trial.
+
+The fraction of committed batches sharing a task with another external identity
+rose from 36.9% to 43.5% between epochs 153 and 154, while submissions also grew.
+This is task overlap, not identical rollout content or the authenticated reward
+collision rate. It remains part of the tradeoff to monitor.
+
+These are descriptive results from one of the three prespecified epochs, not
+evidence of improved held-out performance or a causal effect of cooling. Epochs
+155 and 156 remain in the fixed trial. The analysis reads finalized records only.
+
+First completed trial analysis SHA256:
+`b4b48acc00cfca85d9830a45d8dfdf12b0aa7f673baea1ca5a4023cc3a94ea4b`.
