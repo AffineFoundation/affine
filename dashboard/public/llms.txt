@@ -305,6 +305,18 @@ post-update fit and fresh task accuracy, keeping training diagnostics separate
 from held-out performance. This describes the deployed objective without changing
 the mining contract or training behavior.
 
+A logging-only source successor adds per-pair positive and negative mean/total
+output log probabilities before and after training, with token counts and the
+original task/pair identities. These detached scalars use existing forwards;
+they do not change the objective or require a miner update. A larger preference
+margin alone does not establish improved positive likelihood or held-out accuracy.
+The authenticated logging-only handover is active for training jobs from epoch
+166, retaining the current model and Adam state at step 75. Its first completed
+component-bearing report had not yet been observed at activation. Original
+finalized reports retain these fields through the existing history publication;
+open-epoch submissions remain private. Details:
+https://github.com/AffineFoundation/affine/blob/main/docs/SEQUENCE_COMPONENT_DIAGNOSTICS.md
+
 A bounded trainer-only experiment was activated on October 10 at 11:17:52 UTC,
 prospectively for epoch 117. It retains the acknowledged model and Adam state at
 successful optimizer counter 26 and learning rate 5e-7. For 16 successful updates,

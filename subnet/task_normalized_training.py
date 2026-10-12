@@ -219,6 +219,9 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
                                optimizer.hyperparameters['preference_beta'] != .1):
         raise ValueError('unit positive NLL keeps approved learning rate and beta')
 
+    from .sequence_component_diagnostics import SequenceComponentDiagnostics
+    sequence_diagnostics = SequenceComponentDiagnostics(pairs, tasks, identities)
+
     def sequence(rollout):
         total, tokens = 0, 0
         for turn in rollout['turns']:
@@ -229,14 +232,18 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
                 1, torch.tensor(output, device='cuda')[:, None]).sum()
             tokens += len(output)
         if not tokens: raise ValueError('empty verified training output')
-        return total/tokens
+        mean = total/tokens
+        sequence_diagnostics.observe(total, mean, tokens)
+        return mean
 
     def margin(i):
+        sequence_diagnostics.begin_pair(i)
         definition, positive, negative = pairs[i]
         runtime.configure(definition['spec'], harness_for(definition, positive['index']))
         return sequence(positive) - sequence(negative)
 
     def components(i):
+        sequence_diagnostics.begin_pair(i)
         definition, positive, negative = pairs[i]
         runtime.configure(definition['spec'], harness_for(definition, positive['index']))
         positive_lp = sequence(positive)
@@ -245,11 +252,13 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
 
     model.eval()
     torch.cuda.synchronize();phase_started=time.monotonic()
+    sequence_diagnostics.start('before')
     if positive_nll_weight:
         components_before = capture_components(torch, components, len(pairs))
         references = [row['margin'] for row in components_before]
     else:
         with torch.no_grad(): references = [float(margin(i)) for i in range(len(pairs))]
+    sequence_diagnostics.stop()
     torch.cuda.synchronize();phase_seconds['reference_forward']=time.monotonic()-phase_started
     if not all(math.isfinite(v) for v in references):
         raise ValueError('nonfinite immutable BF16 input reference')
@@ -307,11 +316,13 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
         if seen != set(range(len(tasks))): raise ValueError('incomplete task gradient coverage')
         model.eval()
         torch.cuda.synchronize();phase_started=time.monotonic()
+        sequence_diagnostics.start('after')
         if positive_nll_weight:
             components_after = capture_components(torch, components, len(pairs), references=references)
             after_margins = [row['margin'] for row in components_after]
         else:
             with torch.no_grad(): after_margins = [float(margin(i)) for i in range(len(pairs))]
+        sequence_diagnostics.stop()
         torch.cuda.synchronize();phase_seconds['post_update_forward']=time.monotonic()-phase_started
         if not all(math.isfinite(v) for v in after_margins):
             raise ValueError('nonfinite post-update training margin')
@@ -345,6 +356,9 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
                 weighted_before=weighted_component_summary(components_before, tasks),
                 weighted_after=weighted_component_summary(components_after, tasks),
                 extra_model_forward_passes=0, tail_mask_applied=False)
+        diagnostics['sequence_components'] = sequence_diagnostics.report(
+            references, after_margins, updates, input_checkpoint=input_checkpoint,
+            global_step_before=start_step, global_step_after=optimizer.global_step)
         return destination, optimizer, diagnostics
     finally:
         accumulator = None

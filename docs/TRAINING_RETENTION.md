@@ -22,6 +22,14 @@ Jobs, reports, runner records, archive objects and protected current checkpoints
 remain intact. Infrastructure failures leave evidence for inspection; callers
 must inspect actual completion before trying another operation.
 
+Logging-enabled training reports also contain detached per-pair positive and
+negative sequence scores, token counts and before/after deltas. Preserve the
+original report and hash with the same finalized evidence; a model export alone
+does not retain these diagnostics. Publish them through finalized history only,
+without rewriting old reports or exposing open submissions. See
+[sequence component diagnostics](SEQUENCE_COMPONENT_DIAGNOSTICS.md) for the schema
+and its distinction from held-out accuracy.
+
 Eight controls cover complete versus still-running jobs, original signatures and
 byte bindings, substituted paths/hashes/positions, archive requirements, live
 process identities, open and hardlinked files, GPU occupancy, intermediate export

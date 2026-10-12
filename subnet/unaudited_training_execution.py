@@ -48,6 +48,90 @@ THREAD_FILES = frozenset(('subnet/optimizer_threading.py',
     'subnet/persistent_training_protocol.py'))
 QUALIFIED_ADAM_SHA256 = '5b7ce92b4f9edf30a17677b3d5ab61b3880277b05dc68348118e2a5e83c1977e'
 
+LOGGING_QUALIFICATION = 'detached-sequence-component-logging-source-equivalence-v1'
+LOGGING_BASE_MAP = '8bd590a8a6c8d4c267016c42473834190044beef19f23ba15f2fb2b6a9314172'
+LOGGING_QUALIFIED_MAP = '4847cb120e5b0b262d970363c6a617c4c3f1d6480e805a22afe0479c9c3e693c'
+LOGGING_TRAINER_SHA = '85e1013987f63a0977c8975749458fa562b382aa3f08a4dcff637ff954d1d635'
+LOGGING_HELPER_SHA = '0ce65f69affed0a134a80260310539f84850cad375b6f3fc42adab31145bdd38'
+LOGGING_ORIGINAL_PARSER_SHA = '22e24678a6674a35aae7ef3e7b469c4498202101f4ef2329cc4515f96f51cbdf'
+LOGGING_H200_REVIEW_SHA = 'acb002e45e0aa39c4839fd705d468e594e69eb5be97539e324b4a1e4cc452677'
+LOGGING_FILES = frozenset(('subnet/task_normalized_training.py',
+    'subnet/sequence_component_diagnostics.py', 'subnet/unaudited_training_execution.py'))
+
+
+def _detached_logging_equivalence(value, q, authority):
+    """Admit only reviewed detached logging plus this parser; preserve v6 science.
+
+    The original H200 experiment ran the two-file diagnostic candidate. This
+    successor adds only its admission parser; it does not claim that parser ran
+    on the GPU. Existing complete v6 qualification and Adam history remain.
+    """
+    fields = {'version','qualified_predecessor_release','execution_source_bundle_sha256',
+        'execution_source_files_sha256','runtime_versions','training_runtime_sha256',
+        'qualification_evidence'}
+    if (set(q) != fields or q['version'] != LOGGING_QUALIFICATION
+            or value['version'] not in THREAD_VERSIONS
+            or q['execution_source_bundle_sha256'] != value['training_source_bundle']['sha256']
+            or q['execution_source_files_sha256'] != sha(value['execution_source_files'])
+            or q['runtime_versions'] != value['runtime_versions']
+            or q['training_runtime_sha256'] != value['training_runtime_sha256']):
+        raise ValueError('exact separately authenticated detached logging qualification')
+    raw_previous=authenticate(q['qualified_predecessor_release'],authority)
+    # Reject cycles/nesting before recursion into the original v6 validator.
+    if (raw_previous.get('version') != THREAD_RELEASE
+            or authenticate(raw_previous.get('execution_qualification'),authority).get('version') != THREAD_QUALIFICATION):
+        raise ValueError('original non-logging qualified CPU16 predecessor required')
+    previous=release(q['qualified_predecessor_release'],authority)
+    for field in ('method','runtime_versions','training_runtime_sha256','training_policy',
+                  'training_input_policy','effective_learning_rate','original_source_files',
+                  'original_source_bundle_sha256','training_horizon','steps','optimizer_threading'):
+        if value.get(field) != previous.get(field):
+            raise ValueError('detached logging preserves model/runtime/Adam/objective/horizon/steps')
+    # Retained lineage is already checked by release/validate; the original
+    # horizon may advance naturally, but genesis and base hyperparameters cannot.
+    for field in ('genesis_sha256','hyperparameters_sha256'):
+        if field in value and value[field] != previous[field]:
+            raise ValueError('detached logging retains exact original optimizer lineage')
+    before=previous['execution_source_files'];after=value['execution_source_files']
+    changed={name:h for name,h in after.items() if before.get(name)!=h}
+    from pathlib import Path
+    import hashlib
+    parser_sha=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    if (sha(before) != LOGGING_BASE_MAP or len(before) != 187 or len(after) != 188
+            or set(after) != set(before) | {'subnet/sequence_component_diagnostics.py'}
+            or set(changed) != LOGGING_FILES
+            or after['subnet/task_normalized_training.py'] != LOGGING_TRAINER_SHA
+            or after['subnet/sequence_component_diagnostics.py'] != LOGGING_HELPER_SHA
+            or after['subnet/unaudited_training_execution.py'] != parser_sha
+            or before['subnet/unaudited_training_execution.py'] != LOGGING_ORIGINAL_PARSER_SHA):
+        raise ValueError('only exact qualified two-file logging plus running admission parser')
+    qualified=dict(after);qualified['subnet/unaudited_training_execution.py']=LOGGING_ORIGINAL_PARSER_SHA
+    if sha(qualified) != LOGGING_QUALIFIED_MAP:
+        raise ValueError('exact source inventory of original H200 experiment')
+    e=authenticate(q['qualification_evidence'],authority)
+    fields={'version','predecessor_release_sha256','baseline_files_sha256','qualified_files_sha256',
+        'execution_files_sha256','changed_files','H200_review_sha256','original_result_sha256',
+        'durable_capture_sha256','cpu_controls_sha256','runtime_versions','training_runtime_sha256',
+        'actual_private_H200_execution','all_gradients_master_moments_BF16_equal',
+        'same_forward_counts','scalar_diagnostics_passed','overhead_reviewed',
+        'original_capture_complete','passed','optimizer_reset','objective_changed',
+        'hyperparameters_changed','new_production_state_qualification_claimed'}
+    if (set(e)!=fields or e['version']!='detached-sequence-component-logging-evidence-v1'
+            or e['predecessor_release_sha256']!=sha(q['qualified_predecessor_release'])
+            or e['baseline_files_sha256']!=LOGGING_BASE_MAP
+            or e['qualified_files_sha256']!=LOGGING_QUALIFIED_MAP
+            or e['execution_files_sha256']!=sha(after) or e['changed_files']!=changed
+            or e['H200_review_sha256']!=LOGGING_H200_REVIEW_SHA
+            or e['runtime_versions']!=value['runtime_versions']
+            or e['training_runtime_sha256']!=value['training_runtime_sha256']
+            or any(e[k] is not True for k in ('actual_private_H200_execution',
+                'all_gradients_master_moments_BF16_equal','same_forward_counts',
+                'scalar_diagnostics_passed','overhead_reviewed','original_capture_complete','passed'))
+            or any(e[k] is not False for k in ('optimizer_reset','objective_changed',
+                'hyperparameters_changed','new_production_state_qualification_claimed'))):
+        raise ValueError('original fully captured H200 equivalence and explicit CPU-only parser delta')
+    for k in ('original_result_sha256','durable_capture_sha256','cpu_controls_sha256'):digest(e[k])
+
 
 def configured_optimizer_threading(value):
     if value.get('version') not in THREAD_VERSIONS:
@@ -154,6 +238,8 @@ def _sources(value):
     extra={'subnet/persistent_training_evidence.py','subnet/training_policy.py'} if objective is not None else set()
     threading = configured_optimizer_threading(value)
     if threading is not None: extra = extra | {'subnet/optimizer_threading.py'}
+    if value.get('execution_qualification',{}).get('payload',{}).get('version') == LOGGING_QUALIFICATION:
+        extra = extra | {'subnet/sequence_component_diagnostics.py'}
     representative = 'subnet/training_task_representatives.py' in after
     additions = REPRESENTATIVE_CHANGES if representative else frozenset()
     if representative and not REPRESENTATIVE_CHANGES <= set(changed):
@@ -170,6 +256,8 @@ def _sources(value):
 def _qualification(value,authority):
     _learning_rate(value)
     q=authenticate(value['execution_qualification'],authority)
+    if q.get('version') == LOGGING_QUALIFICATION:
+        return _detached_logging_equivalence(value,q,authority)
     if configured_optimizer_threading(value) is not None:
         return _optimizer_threading_equivalence(value, q, authority)
     if q.get('version') == THREAD_QUALIFICATION:
