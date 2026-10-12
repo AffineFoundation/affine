@@ -66,10 +66,25 @@ comparison, not proof that outcome selection caused the historical decline.
 
 The prototype passes 38 CPU tests, including tiny-model generation, actual
 gradient-checkpointed scoring, gradient-estimator controls, and once-only update
-accounting. A separate H200 canary is now collecting eight attempts for each of
-eight training tasks to measure numerical drift, memory, and throughput, with
-zero optimizer updates. Neither those CPU tests nor a throughput result
-would establish a learning gain. No production RLOO change is active.
+accounting. The subsequent isolated H200 study is now running a frozen schedule
+of 16 updates on 256 training tasks, collecting eight attempts per task. It
+starts from the original base with fresh optimizer state. Its original process
+and fixed endpoint are preserved; partial progress is not a learning result.
+No production RLOO change is active.
+
+In parallel, a separate 32-update SFT study tests per-task token-weighted
+normalization on the same frozen 1,024-task network corpus as the failed SFT32
+arm. The data, task grouping, training horizon and learning rate remain fixed;
+only the within-task response weighting changes. This directly tests one
+plausible contributor to the short-answer collapse. Original endpoints will be
+compared under a fixed evaluation profile, with independent confirmation still
+required before promotion. The live network is not using this experimental
+objective.
+
+Original signed study-scope SHA256 values:
+
+- Fresh-group RLOO16: `e82c7587425d03ea9410258ad52a5172c6e2d350c414c03018bbc6a00f5b05d9`
+- Pooled-token SFT32: `ed283a6c6e91638998e6c37e58367dc8159461440b7a82b60cff7134bfec39ce`
 
 ## Further methods under review
 
