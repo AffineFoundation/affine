@@ -1,0 +1,124 @@
+# Periodic fresh TRAIN diagnostics
+
+This operator worker generates new answers on one fixed cohort of 128 approved
+MATH TRAIN tasks. It evaluates the original upstream reference, then promptly
+evaluates the latest durable production checkpoint. Subsequent checkpoints need
+at least four additional finalized optimizer updates. It coalesces a backlog to
+the latest checkpoint and runs one checkpoint at a time on a dedicated
+evaluation GPU. Production training does not wait for it.
+At publication on October 12, 2026, the original reference job had started;
+its first measurement and the first production-checkpoint measurement were pending.
+
+These are training-split diagnostics, not held-out confirmation, miner proof
+verification, or a promotion rule. The cohort was selected without outcomes
+from approved mining membership, excluding known evaluation identities. Fresh
+generation does not imply that a task was absent from training.
+
+## Interpretation
+
+The initial authenticated exposure record through production step 67 contains
+55 of the 128 tasks with at least one attributed update, with 73 not yet trained
+in this run. Overall128 is TRAIN-split performance, not performance exclusively
+on already-trained tasks. The fixed initial55 subset stays identical for the
+reference and later checkpoints; changing exposure groups are descriptive.
+Later checkpoints use their own closed training history. Missing or incompatible
+attribution produces `unknown` exposure, never an assertion that a task was
+untrained. Attribution
+uses signed closure and job bindings plus local trainer report bytes; it is not
+proof that physical execution occurred. Upstream pretraining is unknown.
+
+The original upstream comparison checkpoint begins `2173b3e0`. It is distinct
+from the current production run's actual genesis, which begins `6493a901`.
+The reference's zero-update coordinate means zero updates in this diagnostic
+comparison; it does not rename the production genesis.
+
+Each checkpoint retains all 128 original cases, including wrong answers,
+unresolved answers and infrastructure errors. The fixed profile uses one draw
+per task, paired seeds, FP32 cached generation, temperature 0.7, top-p 1, and a
+2,048-token output cap. Comparisons check actual prompt token IDs, task identity,
+seeds, source and runtime profile. Caps, EOS and exposure groups are reported
+separately. The already-trained subset can help measure fit; neither it nor the
+overall TRAIN curve establishes unseen-task generalization.
+
+## Operator entry point
+
+Use Python 3.12 or later in the admitted operator environment:
+
+```sh
+python -B ops/training_diagnostics/monitor.py \
+  --config /absolute/path/to/signed-monitor-config.json \
+  --authority PUBLIC_ED25519_KEY_HEX
+```
+
+`--once` performs one monitor tick. The long-running form polls every 30 seconds.
+Only one monitor may own the local queue lease. Run it under an operator-owned
+supervisor with explicit resource and lifetime limits.
+
+This directory publishes the exact reviewed operational source. It is not a
+self-provisioning deployment. The operator supplies an independently reviewed,
+signed configuration and base plan containing:
+
+- Local queue and aggregate paths, read-only production state and run identity.
+- The signed cohort, approved mining manifest, checkpoint inventories and fixed
+  numerical profile, including exact source and runtime hashes.
+- An authenticated dedicated host, SSH command, interpreter and lease expiry.
+- Pinned hydration and closed-history attribution helpers, and the storage
+  implementation and configuration used for full object readback.
+- A separately protected signing key matching the admitted authority.
+
+The monitor and CPU tests use PyNaCl; storage uses the configured
+`subnet.storage.Bucket` implementation. Numerical execution requires the exact
+signed PyTorch, Transformers, native grader and Affine source environment.
+`evaluate.py` pins the public Affine authority: changing the CLI authority alone
+does not turn this source into another authority's admitted evaluator.
+
+Private deployment builders, configurations, capabilities, keys, host records,
+task contents and evaluation outputs are deliberately absent. Supply those
+through the operator environment, never through this repository. Copying these
+files does not activate a service or authorize model execution.
+
+## Original execution and preservation
+
+`monitor.py` prepares signed assignments from genuine durable training closures.
+`serial_worker.py` persists dispatch intent before starting the original process
+and holds a serial lease across hydration and evaluation. An ambiguous original
+dispatch is not reissued. The admitted configuration requires one attempt.
+
+Plans expire within two hours, and the monitor refuses a new job with less than
+two hours left on the dedicated host lease. Hydration and evaluation have
+bounded subprocess waits. Operators must allow time for setup, capture and
+storage readback within the actual rental lifetime.
+
+`train_archive.py` validates the full 128-case inventory, downloads and checks
+every uploaded original artifact in full, then publishes the signed aggregate.
+Owned checkpoint-cache retirement requires its corresponding durable evidence.
+The successful reference cache is retained in the normal completion path;
+failed-original cleanup may retire its complete local cache after preserving
+failure evidence. Original durable models and evidence remain preserved.
+Repeating an archive readback does not repeat numerical evaluation.
+
+Any failed or abandoned original, infrastructure error, or comparability failure
+holds the entire queue. Held queues report `healthy=false` with a fixed reason
+code; a lease-blocked queue also reports unhealthy. Successful jobs continue the
+four-update cadence automatically. There is no automatic numerical retry.
+
+The subprocess wrapper does **not** guarantee termination of all native grader
+descendants after a timeout. A failure hold prevents the next automatic model
+dispatch; an operator must reconcile the original processes and perform reviewed
+cleanup before reusing that host. The hold must not be cleared merely to advance
+the queue.
+
+## CPU controls
+
+From this directory, with PyNaCl installed:
+
+```sh
+python -B -m unittest -v \
+  test_training_eval test_training_lifecycle test_training_exposure
+```
+
+The 26 synthetic controls cover complete denominators, prompt and seed mismatch,
+native unresolved classification, exposure uncertainty, four-update coalescing,
+single-flight dispatch, crash intent, lease refusal, full-GET-before-publication,
+protected reference retention and failure holds. They make no model or network
+calls. The signing key in the fixtures is explicitly synthetic.
