@@ -81,3 +81,8 @@ duplicate rates; and full epoch duration. Compare held-out learning independentl
 Do not count repeated task IDs as independent tasks or equate a structurally
 captured batch with an audited-valid one. Reduce or disable cooling prospectively
 if search yield or epoch continuity deteriorates.
+
+A separate [prospective native-priority policy](NATIVE_TASK_PRIORITY.md) can prefer
+submitted tasks missing from recent training during native admission. Cooling
+controls availability; native priority controls the order of actual submissions.
+Neither changes the miner proof format or reward rules.

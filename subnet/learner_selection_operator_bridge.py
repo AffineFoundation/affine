@@ -4,7 +4,7 @@ Only ROOT-approved operator bytes may interpret enriched selection bindings.
 No forward, sampler, grader, optimizer, job dispatch, storage mutation or signing
 key reads. Signing is an injected existing-coordinator operation.
 """
-import copy, hashlib, json, os, stat, math
+import copy, hashlib, json, os, stat, math, re
 from pathlib import Path
 from .training_receipts import authenticate, sha
 from .learner_blacklist_selection import FIELD, admit, partition
@@ -16,6 +16,12 @@ K2L2_AUTH_VERSION='cpu-selection-peer-miner-bound-authorization-v2'
 FP32_AUTH_VERSION='cpu-selection-peer-fp32-training-execution-authorization-v5'
 LR_AUTH_VERSION='cpu-selection-peer-effective-lr-training-execution-authorization-v6'
 GENESIS_LR_AUTH_VERSION='cpu-selection-peer-effective-lr-genesis-training-execution-authorization-v7'
+OBJECTIVE_AUTH_VERSION='cpu-selection-peer-objective-horizon-training-execution-authorization-v9'
+BASIC_AUTH_VERSION='cpu-selection-peer-basic-eligibility-objective-horizon-authorization-v10'
+BASIC_THREAD_AUTH_VERSION='cpu-selection-peer-basic-eligibility-optimizer-cpu16-authorization-v11'
+BASIC_VERSIONS=(BASIC_AUTH_VERSION,BASIC_THREAD_AUTH_VERSION)
+BASIC_VERSION='cpu-basic-eligibility-peer-admission-v2'
+BASIC_ASSERTIONS=dict(eligibility='basic-committed-inputs-v1',assurance='unaudited',reward_assessment_required=False)
 FILES={'subnet/learner_selection_operator_bridge.py','subnet/learner_blacklist_selection.py',
        'subnet/committed_training_inputs.py','subnet/training_receipts.py'}
 
@@ -27,8 +33,8 @@ def approval(document,authority,manifest):
     fields={'version','source_sha256','scientific_source_files','operator_files','minimum_round','epoch_prefix','peer_entry_sha256','peer_runner_sha256','backend_execution_allowed'}
     miner_bound=manifest.get('sampling_contract',{}).get('version')=='forced-inverse-cdf-prefill-miner-bound-v5'
     expected_version=K2L2_AUTH_VERSION if miner_bound else AUTH_VERSION
-    fp32=p.get('version') in (FP32_AUTH_VERSION, LR_AUTH_VERSION, GENESIS_LR_AUTH_VERSION)
-    effective_lr=p.get('version') in (LR_AUTH_VERSION, GENESIS_LR_AUTH_VERSION)
+    fp32=p.get('version') in (FP32_AUTH_VERSION, LR_AUTH_VERSION, GENESIS_LR_AUTH_VERSION, OBJECTIVE_AUTH_VERSION, BASIC_AUTH_VERSION, BASIC_THREAD_AUTH_VERSION)
+    effective_lr=p.get('version') in (LR_AUTH_VERSION, GENESIS_LR_AUTH_VERSION, OBJECTIVE_AUTH_VERSION, BASIC_AUTH_VERSION, BASIC_THREAD_AUTH_VERSION)
     completed=p.get('version')=='cpu-selection-peer-completed-math-local-trainer-authorization-v4' or fp32
     local_trainer=p.get('version')=='cpu-selection-peer-local-trainer-authorization-v3' or completed
     expected_members=179 if miner_bound else 177
@@ -60,7 +66,14 @@ def approval(document,authority,manifest):
                 if effective_lr:
                     if 'subnet/learning_rate_transition.py'not in p['scientific_source_files']:
                         raise ValueError('explicit effective-LR state dependency closure')
-                    expected_version=GENESIS_LR_AUTH_VERSION if p.get('version')==GENESIS_LR_AUTH_VERSION else LR_AUTH_VERSION;expected_members=185
+                    expected_version=(p['version'] if p.get('version') in BASIC_VERSIONS else OBJECTIVE_AUTH_VERSION if p.get('version')==OBJECTIVE_AUTH_VERSION else GENESIS_LR_AUTH_VERSION if p.get('version')==GENESIS_LR_AUTH_VERSION else LR_AUTH_VERSION);expected_members=185
+    threaded=p.get('version')==BASIC_THREAD_AUTH_VERSION
+    if threaded:
+        if 'subnet/optimizer_threading.py' not in p.get('scientific_source_files',{}):
+            raise ValueError('explicit optimizer-only threading dependency closure')
+        expected_members+=1
+    elif 'subnet/optimizer_threading.py' in p.get('scientific_source_files',{}):
+        raise ValueError('historical CPU peer cannot opt into optimizer threading')
     expected_operator_files=FILES
     if 'subnet/training_task_representatives.py' in p.get('scientific_source_files',{}):
         from .training_task_representatives import _policy
@@ -76,6 +89,10 @@ def approval(document,authority,manifest):
         set(p['operator_files'])!=expected_operator_files or type(p['minimum_round'])is not int or p['minimum_round']<0 or
         type(p['epoch_prefix'])is not str or not p['epoch_prefix']or not manifest['epoch'].startswith(p['epoch_prefix'])):
         raise ValueError('exact ROOT CPU peer authorization/scientific source')
+    if p['version'] in BASIC_VERSIONS:
+        if p['minimum_round']<136 or expected_members!=(187 if threaded else 186):
+            raise ValueError('independent basic eligibility requires round136 and exact representative/threading source')
+        _basic_round(manifest,p)
     from .training_receipts import digest
     digest(p['peer_entry_sha256']);digest(p['peer_runner_sha256'])
     if type(p['backend_execution_allowed'])is not bool:raise ValueError('explicit backend execution boolean')
@@ -85,23 +102,44 @@ def approval(document,authority,manifest):
             digest(h)
     return p
 
+def _basic_round(manifest,p):
+    if FIELD in manifest or 'learner_blacklist_selection_snapshot' in manifest:
+        raise ValueError('independent basic eligibility requires no selection assessment policy/snapshot')
+    epoch=manifest.get('epoch')
+    match=re.fullmatch(re.escape(p['epoch_prefix'])+r'([1-9][0-9]*)-(0|[1-9][0-9]*)',epoch) if isinstance(epoch,str) else None
+    if match is None:raise ValueError('exact independent epoch timestamp-round suffix')
+    value=int(match.group(2))
+    if value<p['minimum_round']:raise ValueError('independent basic eligibility minimum round')
+    if 'learner_blacklist_selection_round' in manifest and (
+            type(manifest['learner_blacklist_selection_round']) is not int or
+            manifest['learner_blacklist_selection_round']!=value):
+        raise ValueError('independent explicit round must match exact epoch suffix')
+    return value
+
+
+def _admission_fields(job,manifest,p):
+    from .training_receipts import computation_binding
+    from .committed_training_inputs import receipt_inventory
+    expected=dict(job_core_sha256=sha(core(job)),manifest_sha256=sha(manifest),
+        computation_binding_sha256=sha(computation_binding(manifest)),
+        selected_inventory_sha256=sha(receipt_inventory(job['submissions'])),
+        scientific_source_files_sha256=sha(job['source_files']),operator_files_sha256=sha(p['operator_files']))
+    if p['version'] in BASIC_VERSIONS:
+        expected.update(BASIC_ASSERTIONS,round=_basic_round(manifest,p))
+    else:
+        expected.update(selection_snapshot_sha256=sha(manifest['learner_blacklist_selection_snapshot']),
+            round=manifest['learner_blacklist_selection_round'])
+    return expected
+
+
 def make_admission(job,manifest,authorization_document,authority,sign):
     """Pure prepare; caller persists SAME signed job before its first dispatch."""
-    if FIELD not in manifest:
-        if authorization_document is not None:raise ValueError('CPU admission without enabled selection')
-        return job
+    if FIELD not in manifest and authorization_document is None:return job
     if FIELD_ADMISSION in job:raise ValueError('original CPU admission must not be reissued')
     p=approval(authorization_document,authority,manifest)
     _context(job,manifest,p,authority)
-    from .training_receipts import computation_binding
-    from .committed_training_inputs import receipt_inventory
-    payload=dict(version=VERSION,authorization_document=authorization_document,
-        job_core_sha256=sha(core(job)),manifest_sha256=sha(manifest),
-        computation_binding_sha256=sha(computation_binding(manifest)),
-        selection_snapshot_sha256=sha(manifest['learner_blacklist_selection_snapshot']),
-        selected_inventory_sha256=sha(receipt_inventory(job['submissions'])),
-        round=manifest['learner_blacklist_selection_round'],
-        scientific_source_files_sha256=sha(job['source_files']),operator_files_sha256=sha(p['operator_files']))
+    payload=dict(version=BASIC_VERSION if p['version'] in BASIC_VERSIONS else VERSION,
+        authorization_document=authorization_document,**_admission_fields(job,manifest,p))
     return dict(job,**{FIELD_ADMISSION:sign(payload)})
 
 def validate_execution_scope(job,manifest,p,authority):
@@ -111,17 +149,19 @@ def validate_execution_scope(job,manifest,p,authority):
     namespace. The independently signed declaration must nevertheless bind the
     exact original input manifest, selected records, parent, and execution map.
     """
-    if p['version']not in (FP32_AUTH_VERSION, LR_AUTH_VERSION, GENESIS_LR_AUTH_VERSION):
+    if p['version']not in (FP32_AUTH_VERSION, LR_AUTH_VERSION, GENESIS_LR_AUTH_VERSION, OBJECTIVE_AUTH_VERSION, BASIC_AUTH_VERSION, BASIC_THREAD_AUTH_VERSION):
         if 'unaudited_training_execution' in job:raise ValueError('execution amendment requires explicit FP32 peer')
         return None
     value=authenticate(job.get('unaudited_training_execution'),authority)
     from .committed_training_inputs import receipt_inventory
     binding=manifest.get('trainer_state_binding',{});parent=binding.get('parent')or{}
-    effective_lr=p['version'] in (LR_AUTH_VERSION, GENESIS_LR_AUTH_VERSION)
+    effective_lr=p['version'] in (LR_AUTH_VERSION, GENESIS_LR_AUTH_VERSION, OBJECTIVE_AUTH_VERSION, BASIC_AUTH_VERSION, BASIC_THREAD_AUTH_VERSION)
     initial=p['version']==GENESIS_LR_AUTH_VERSION and binding.get('genesis') is not None
-    version=('unaudited-training-execution-amendment-v3-effective-lr-genesis' if initial else
+    objective=p['version'] in (OBJECTIVE_AUTH_VERSION,BASIC_AUTH_VERSION,BASIC_THREAD_AUTH_VERSION)
+    threaded=p['version']==BASIC_THREAD_AUTH_VERSION
+    version=('unaudited-training-execution-amendment-v6-optimizer-cpu16' if threaded else 'unaudited-training-execution-amendment-v5-objective-horizon' if objective else 'unaudited-training-execution-amendment-v3-effective-lr-genesis' if initial else
         'unaudited-training-execution-amendment-v2-effective-lr' if effective_lr else 'unaudited-training-execution-amendment-v1')
-    method=('fp32-task-gradient-effective-lr-genesis-v1' if initial else
+    method=('fp32-task-gradient-effective-lr-objective-horizon-v1' if objective else 'fp32-task-gradient-effective-lr-genesis-v1' if initial else
         'fp32-task-gradient-effective-lr-v1' if effective_lr else 'fp32-task-gradient-accumulation-v1')
     expected=dict(version=version,method=method,job_id=job.get('job_id'),epoch=manifest['epoch'],
         original_signed_manifest_sha256=sha(job['manifest']),
@@ -134,6 +174,43 @@ def validate_execution_scope(job,manifest,p,authority):
         genesis_sha256=binding.get('genesis_sha256'),optimizer_step_before=binding.get('global_step_before'))
     if any(value.get(k)!=v for k,v in expected.items()):
         raise ValueError('signed FP32 peer exact input/execution/parent scope')
+    if threaded:
+        policy=dict(version='optimizer-only-cpu-threads-v1',steady_intraop=2,optimizer_intraop=16,interop=2)
+        actual=value.get('optimizer_threading')
+        if (not isinstance(actual,dict) or set(actual)!=set(policy)
+                or any(actual[k]!=v or type(actual[k])is not type(v)for k,v in policy.items())):
+            raise ValueError('exact explicitly signed optimizer-only CPU16 policy')
+    elif 'optimizer_threading' in value:
+        raise ValueError('historical CPU peer cannot request optimizer threading')
+    if objective:
+        config=value.get('training_objective')
+        # This peer namespace must not import unadmitted scientific code.
+        if (not isinstance(config,dict) or set(config)!={'version','positive_nll_weight'}
+                or config['version']!='sequence-mean-preference-positive-nll-v1'
+                or type(config['positive_nll_weight'])not in(int,float)
+                or not math.isfinite(config['positive_nll_weight']) or config['positive_nll_weight'] not in (0,1)):
+            raise ValueError('explicit objective peer configuration')
+        horizon=value.get('training_horizon')
+        fields={'version','first_optimizer_step','updates','initial_checkpoint',
+                'initial_parent_descriptor_sha256','coefficient_during','coefficient_after'}
+        step=binding.get('global_step_before')
+        if (not isinstance(horizon,dict) or set(horizon)!=fields
+                or horizon['version']!='retained-adam-unit-positive-nll-16-v1'
+                or type(horizon['first_optimizer_step']) is not int or horizon['first_optimizer_step']<1
+                or type(horizon['updates']) is not int or horizon['updates']!=16
+                or type(horizon['coefficient_during']) not in (int,float) or horizon['coefficient_during']!=1
+                or type(horizon['coefficient_after']) not in (int,float) or horizon['coefficient_after']!=0
+                or type(step) is not int or step<horizon['first_optimizer_step']
+                or type(value.get('steps')) is not int or value['steps']!=1
+                or value.get('effective_learning_rate')!=5e-7
+                or config['positive_nll_weight']!=(1 if step<horizon['first_optimizer_step']+16 else 0)):
+            raise ValueError('exact peer sixteen-update objective horizon')
+        from .training_receipts import digest
+        digest(horizon['initial_checkpoint']);digest(horizon['initial_parent_descriptor_sha256'])
+        if step==horizon['first_optimizer_step'] and (
+                parent.get('descriptor_sha256')!=horizon['initial_parent_descriptor_sha256']
+                or binding.get('input_checkpoint')!=horizon['initial_checkpoint']):
+            raise ValueError('objective peer exact original retained checkpoint and descriptor')
     if initial:
         if parent or type(binding.get('global_step_before'))is not int or binding['global_step_before']!=0:
             raise ValueError('explicit initial LR peer requires no parent and counter zero')
@@ -176,12 +253,16 @@ def validate_execution_scope(job,manifest,p,authority):
 
 
 def _context(job,manifest,p,authority):
+    round_number=(_basic_round(manifest,p) if p['version'] in BASIC_VERSIONS else manifest.get('learner_blacklist_selection_round'))
     if (job.get('role')!='train'or job.get('source_files')!=p['scientific_source_files']or
         authenticate(job['manifest'],authority)!=manifest or
-        type(manifest.get('learner_blacklist_selection_round'))is not int or
-        manifest['learner_blacklist_selection_round']<p['minimum_round']):
+        type(round_number)is not int or round_number<p['minimum_round']):
         raise ValueError('original signed manifest/round/remote177 job binding')
     validate_execution_scope(job,manifest,p,authority)
+    if p['version'] in BASIC_VERSIONS:
+        from .committed_training_inputs import validate_job
+        validate_job(job,manifest,authority)
+        return
     # Explicit CPU interpretation uses enriched fields, never the old projection.
     from .committed_training_inputs import receipt_inventory
     coverage=manifest.get('training_coverage',{})
@@ -199,21 +280,14 @@ def validate_metadata(job,manifest,authority):
     envelope=job.get(FIELD_ADMISSION)
     if envelope is None:raise ValueError('explicit CPU peer admission required')
     a=authenticate(envelope,authority)
-    fields={'version','authorization_document','job_core_sha256','manifest_sha256',
-        'computation_binding_sha256','selection_snapshot_sha256','selected_inventory_sha256',
-        'round','scientific_source_files_sha256','operator_files_sha256'}
-    if set(a)!=fields or a['version']!=VERSION:raise ValueError('exact CPU peer admission')
-    p=approval(a['authorization_document'],authority,manifest)
+    p=approval(a.get('authorization_document'),authority,manifest)
     _context(job,manifest,p,authority)
-    from .training_receipts import computation_binding
-    from .committed_training_inputs import receipt_inventory
-    expected=dict(job_core_sha256=sha(core(job)),manifest_sha256=sha(manifest),
-        computation_binding_sha256=sha(computation_binding(manifest)),
-        selection_snapshot_sha256=sha(manifest['learner_blacklist_selection_snapshot']),
-        selected_inventory_sha256=sha(receipt_inventory(job['submissions'])),
-        round=manifest['learner_blacklist_selection_round'],scientific_source_files_sha256=sha(job['source_files']),
-        operator_files_sha256=sha(p['operator_files']))
-    if any(a[k]!=v for k,v in expected.items()):raise ValueError('enriched original CPU/job admission binding')
+    expected=_admission_fields(job,manifest,p)
+    version=BASIC_VERSION if p['version'] in BASIC_VERSIONS else VERSION
+    if set(a)!=set(expected)|{'version','authorization_document'} or a['version']!=version:
+        raise ValueError('exact CPU peer admission')
+    if any(a[k]!=v or type(a[k]) is not type(v) for k,v in expected.items()):
+        raise ValueError('enriched original CPU/job admission binding')
     return p,a
 
 
@@ -235,9 +309,6 @@ def _inventory(root,files,*,exact=False):
 def admit_peer(job_document,authority,*,operator_root,scientific_root):
     """CPU-only original-job gate, before invoking frozen science in another namespace."""
     job=authenticate(job_document,authority);manifest=authenticate(job['manifest'],authority)
-    if FIELD not in manifest:
-        if FIELD_ADMISSION in job:raise ValueError('unexpected historical CPU admission')
-        return None
     p,a=validate_metadata(job,manifest,authority)
     _inventory(operator_root,p['operator_files'],exact=True)
     _inventory(scientific_root,p['scientific_source_files'])
@@ -255,5 +326,5 @@ def admit_peer(job_document,authority,*,operator_root,scientific_root):
         original_manifest_sha256=sha(manifest),admission_sha256=sha(job[FIELD_ADMISSION]),
         enriched_computation_binding_sha256=a['computation_binding_sha256'],
         operator_files=p['operator_files'],scientific_source_files_sha256=sha(job['source_files']),
-        scientific_source_unchanged=p['version']not in(FP32_AUTH_VERSION,LR_AUTH_VERSION,GENESIS_LR_AUTH_VERSION),model_loaded=False,proof_reverification=False,
+        scientific_source_unchanged=p['version']not in(FP32_AUTH_VERSION,LR_AUTH_VERSION,GENESIS_LR_AUTH_VERSION,OBJECTIVE_AUTH_VERSION,BASIC_AUTH_VERSION,BASIC_THREAD_AUTH_VERSION),model_loaded=False,proof_reverification=False,
         scientific_operation_started=False)

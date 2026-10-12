@@ -179,7 +179,7 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
                 approved_genesis_sha256=None, restored_state=None,
                 resource_admission, required_pairs_per_task=None,
                 learning_rate_authorization=None, learning_rate_authority=None,
-                job_id=None, positive_nll_weight=0):
+                job_id=None, positive_nll_weight=0, optimizer_threading=None):
     """Return BF16 export plus uncommitted persistent optimizer for publication.
 
     The backend must hash the BF16 export and export_state() with descriptor-last
@@ -190,6 +190,10 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
     import gc
     import torch
     from .protocol import harness_for
+    if optimizer_threading is not None:
+        from .optimizer_threading import configuration, require_steady, step as threaded_step
+        optimizer_threading = configuration(optimizer_threading)
+        require_steady(torch, optimizer_threading)
     checkpoint_id(input_checkpoint)
     if not isinstance(epoch, str) or not epoch or len(epoch) > 200:
         raise ValueError('exact epoch binding before training')
@@ -267,7 +271,12 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
             norm = accumulator.clip(HYPERPARAMETERS['max_grad_norm'])
             torch.cuda.synchronize();gradient_seconds.append(time.monotonic()-phase_started)
             phase_started=time.monotonic()
-            precision = optimizer.step(gradients=accumulator.gradients()); seen.update(indices)
+            if optimizer_threading is None:
+                precision = optimizer.step(gradients=accumulator.gradients())
+            else:
+                precision, thread_evidence = threaded_step(
+                    torch, optimizer, accumulator.gradients(), optimizer_threading)
+            seen.update(indices)
             accumulator = None
             torch.cuda.synchronize();optimizer_seconds.append(time.monotonic()-phase_started)
             updates.append(dict(training_policy=POLICY, steps=1,
@@ -287,6 +296,8 @@ def train_epoch(runtime, verified_pairs, destination_root, *, input_checkpoint,
                 optimizer_lifecycle='persistent-across-epochs',
                 gpu_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
                 gpu_peak_reserved_bytes=torch.cuda.max_memory_reserved()))
+            if optimizer_threading is not None:
+                updates[-1]['optimizer_threading'] = thread_evidence
             if positive_nll_weight:
                 updates[-1].update(positive_nll_weight=1.,
                     preference_loss=sum(r['preference_loss']*r['gradient_weight'] for r in observations),

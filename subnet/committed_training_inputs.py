@@ -166,7 +166,7 @@ def validate_job(job,manifest,authority):
     if 'training_representative_policy' in manifest:
         from .training_task_representatives import _policy, validate_receipt
         _policy(manifest)
-        validate_receipt(manifest.get('native_training_eligibility_receipt'))
+        validate_receipt(manifest.get('native_training_eligibility_receipt'), manifest)
     from . import training_startup_recovery as recovery
     if recovery.FIELD in manifest:
         recovery.validate(job,manifest,authority)

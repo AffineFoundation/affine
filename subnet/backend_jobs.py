@@ -922,6 +922,8 @@ def install_source_loader(root,additional_files=()):
         sys.modules.pop(module_name,None)
     if 'subnet/unaudited_training_execution.py'in additional_files:
         sys.modules.pop('subnet.unaudited_training_execution',None)
+    if 'subnet/optimizer_threading.py'in additional_files:
+        sys.modules.pop('subnet.optimizer_threading',None)
     if 'subnet/learning_rate_transition.py'in additional_files:
         sys.modules.pop('subnet.learning_rate_transition',None)
     if 'subnet/optimizer_state_cache.py'in additional_files:
@@ -998,6 +1000,8 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
     startup_timings['source_runtime_authentication']=dict(seconds=time.monotonic()-source_started,calls=1)
     if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':raise ValueError('CUDA environment profile')
     execution_files=('subnet/unaudited_training_execution.py','subnet/fp32_gradient_accumulation.py','subnet/learning_rate_transition.py') if 'unaudited_training_execution'in job else ()
+    if execution_files and 'subnet/optimizer_threading.py' in job['source_files']:
+        execution_files+=('subnet/optimizer_threading.py',)
     token_files=('subnet/token_only_protocol.py','subnet/token_only_runtime.py','subnet/threeway_prefill_research.py','subnet/native_session_validation.py')if 'token_artifact_policy'in manifest else ()
     publication_files=('subnet/persistent_publication.py',) if manifest.get('persistent_publication_policy') is not None else ()
     if manifest.get('optimizer_state_export_policy')=='trainer-local-only-v1':

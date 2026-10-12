@@ -207,7 +207,11 @@ def select(selector, manifest, submissions):
             raise ValueError('representatives cannot change any original issued job')
         _create(root/'pool.ROOT-SIGNED.json',pool)
         _create(root/'authorization.ROOT-SIGNED.json',selector.authorization)
-        draw=rep.freeze_draw(pool,authority,root/'draw.json',now=time.time())
+        history = None
+        if policy['version'] == rep.PRIORITY_VERSION:
+            from .native_task_priority_history import freeze as freeze_priority_history
+            history = freeze_priority_history(selector,original,root,now=time.time())
+        draw=rep.freeze_draw(pool,authority,root/'draw.json',now=time.time(),history_snapshot=history)
         _create(root/'draw.ROOT-SIGNED.json',controller.signed(draw))
         (root/'waves').mkdir(mode=0o700,exist_ok=True)
         waves=[]

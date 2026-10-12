@@ -139,6 +139,8 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
         from .training_receipts import authenticate
         declaration=authenticate(job['unaudited_training_execution'],authority)
         learning_rate_authorization=declaration['learning_rate_authorization']
+        from .optimizer_threading import declared_policy
+        threading_policy=declared_policy(declaration)
         from .unaudited_training_execution import configured_objective
         objective=configured_objective(declaration)
         destination,optimizer,diagnostics=train_epoch(runtime,pairs,out,
@@ -148,6 +150,7 @@ def train(runtime,pairs,out,manifest,job,authority,*,approved_checkpoint=None):
             restored_state=restored,resource_admission=admission,
             learning_rate_authorization=learning_rate_authorization,learning_rate_authority=authority,job_id=job['job_id'],
             positive_nll_weight=(objective or {}).get('positive_nll_weight',0),
+            optimizer_threading=threading_policy,
             **({'required_pairs_per_task':manifest['K']} if type(manifest.get('K'))is int and manifest.get('K')==manifest.get('L') and manifest['K']>=2 else {}))
         training_and_checkpoint_seconds=time.monotonic()-train_started
         files=model_files(destination);checkpoint=file_map(files)

@@ -38,6 +38,29 @@ nonce range 0–999, proofs and reward rules are unchanged. This tests broader t
 coverage; it is not evidence of cheating or proven learning improvement.
 Details: https://github.com/AffineFoundation/affine/blob/main/docs/TASK_COVERAGE.md
 
+## Prepared changes: native task priority and optimizer CPU threads
+
+Two server-side changes are prospective, not active merely because this code is
+published. A new signed manifest and execution release must opt in. Miners keep
+the same client, checkpoint discovery, sampling/proof contract, K4/L4 quota,
+nine-batch limit and nonce range 0–999.
+
+Native admission can prioritize submitted task indices absent from the preceding
+12 finalized training epochs, then process recently trained tasks. Original
+within-task candidate order, native grading and limits remain. History is frozen
+before current grading; missing history records an original-order fallback.
+This changes training admission priority, not miner scoring or rewards.
+
+The trainer can separately use 16 CPU intra-op threads only for its existing
+optimizer step, restoring two immediately afterward. Forward/backward, objective,
+learning rate and optimizer math are unchanged. Historical jobs keep their
+original behavior. The execution release and per-update report must explicitly
+bind this policy; miner metadata cannot enable it.
+
+Neither change establishes learning improvement or cheating. Current authenticated
+manifests remain authoritative. Technical details and qualification limits:
+https://github.com/AffineFoundation/affine/blob/main/docs/NATIVE_TASK_PRIORITY.md
+
 ## Current availability
 
 Live epoch identity, checkpoint, collection window and eligible identity count

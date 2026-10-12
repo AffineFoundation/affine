@@ -17,6 +17,10 @@ VERSION = 'first-native-valid-distinct-task-v2-bounded-waves'
 POOL_VERSION = 'structurally-admitted-training-task-pool-v1'
 DRAW_VERSION = 'immutable-training-task-draw-v1'
 RESULT_VERSION = 'native-valid-task-representatives-v1'
+PRIORITY_VERSION = 'first-native-valid-distinct-task-v3-prior12'
+PRIORITY_DRAW_VERSION = 'immutable-prior12-training-task-draw-v2'
+HISTORY_VERSION = 'finalized-prior12-training-task-snapshot-v1'
+PRIORITY_RECEIPT_VERSION = 'native-prior12-task-representative-derivation-v2'
 
 
 def _deps():
@@ -33,7 +37,12 @@ def _policy(manifest):
     p = manifest[FIELD]
     fields = {'version', 'max_candidate_documents', 'max_total_input_bytes',
               'max_native_documents_per_wave', 'max_native_wall_seconds', 'exhausted_task_rule'}
-    if (type(p) is not dict or set(p) != fields or p['version'] != VERSION
+    priority = type(p) is dict and p.get('version') == PRIORITY_VERSION
+    if priority:
+        fields |= {'history_epochs', 'task_priority'}
+        if p.get('history_epochs') != 12 or type(p.get('history_epochs')) is not int or p.get('task_priority') != 'untrained-in-prior12-first-stable-rank':
+            raise ValueError('fixed prospective prior12 task priority')
+    if (type(p) is not dict or set(p) != fields or p['version'] not in (VERSION, PRIORITY_VERSION)
             or p['exhausted_task_rule'] != 'advance-fixed-task-order'
             or any(type(p[k]) is not int for k in ('max_candidate_documents',
                 'max_total_input_bytes', 'max_native_documents_per_wave', 'max_native_wall_seconds'))
@@ -43,6 +52,94 @@ def _policy(manifest):
             or not 1 <= p['max_native_wall_seconds'] <= 600):
         raise ValueError('explicit bounded training-only representative policy')
     return p
+
+
+
+def history_binding(manifest):
+    """Only the issued original contract determines the retrospective window."""
+    from .training_receipts import sha, digest
+    p = _policy(manifest)
+    if p is None or p['version'] != PRIORITY_VERSION:
+        raise ValueError('priority snapshot requires prospective v3 contract')
+    epoch = manifest['epoch']
+    try: number = int(epoch.rsplit('-', 1)[1])
+    except (ValueError, IndexError): raise ValueError('priority epoch round')
+    environments = manifest.get('environments')
+    if (number < 12 or type(environments) is not list or len(environments) != 1
+            or not isinstance(environments[0].get('env_id'), str)):
+        raise ValueError('single environment prior12 contract')
+    digest(manifest['checkpoint']['id']); digest(manifest['source_bundle']['sha256'])
+    return dict(version=HISTORY_VERSION, epoch=epoch, round=number,
+        input_checkpoint=manifest['checkpoint']['id'], source_sha256=manifest['source_bundle']['sha256'],
+        original_manifest_payload_sha256=sha(manifest), policy_sha256=sha(p),
+        env_id=environments[0]['env_id'], history_epochs=12,
+        assurance='root-attested-signed-closure-and-job-linked-unsigned-trainer-report')
+
+
+def validate_history_snapshot(envelope, manifest, authority, *, at):
+    """Verify operator attribution and every closure; report-derived indices are
+    explicitly ROOT-attested, not independently signed trainer execution proof.
+    An explicit empty-history fallback retains the original hash order.
+    """
+    from .training_receipts import authenticate, digest
+    from .storage import canonical
+    import re
+    binding = history_binding(manifest)
+    value = authenticate(envelope, authority)
+    if (type(value) is not dict or set(value) != set(binding) | {'created_at','outcome','reason_code','records'}
+            or any(value[k] != v for k,v in binding.items())
+            or type(at) not in (int,float) or not math.isfinite(at)
+            or type(value['created_at']) not in (int,float) or not math.isfinite(value['created_at'])
+            or not manifest['deadline'] <= value['created_at'] <= at
+            or len(canonical(envelope)) > 8*1024**2):
+        raise ValueError('immutable priority history original binding')
+    records = value['records']
+    if value['outcome'] == 'original_order_fallback':
+        if records != [] or not isinstance(value['reason_code'],str) or re.fullmatch('[a-z0-9_]{1,96}',value['reason_code']) is None:
+            raise ValueError('explicit bounded priority history fallback')
+        return value
+    if value['outcome'] != 'priority' or value['reason_code'] is not None or type(records) is not list or len(records) != 12:
+        raise ValueError('exact twelve finalized priority records')
+    prefix = manifest['epoch'].rsplit('-',2)[0]
+    previous = None; last_step = None
+    for number, row in zip(range(value['round']-12,value['round']), records):
+        if type(row) is not dict or set(row) != {'round','epoch','input_checkpoint','output_checkpoint','updates','provenance','signed_closure'}:
+            raise ValueError('exact priority exposure record')
+        closure = authenticate(row['signed_closure'],authority)
+        epoch = row['epoch']
+        if (type(row['round']) is not int or row['round'] != number or not isinstance(epoch,str)
+                or epoch.rsplit('-',2)[0] != prefix or not epoch.endswith('-'+str(number))
+                or closure.get('round') != number or closure.get('epoch') != epoch
+                or closure.get('checkpoint') != row['input_checkpoint'] or closure.get('next_checkpoint') != row['output_checkpoint']
+                or type(closure.get('completed_at')) not in (int,float) or not math.isfinite(closure['completed_at'])
+                or not 0 <= closure['completed_at'] <= manifest['start']
+                or previous is not None and previous != row['input_checkpoint']):
+            raise ValueError('priority history closed before original opening in exact lineage')
+        digest(row['input_checkpoint']); digest(row['output_checkpoint'])
+        provenance = row['provenance']
+        if type(provenance) is not dict or set(provenance) != {'closure','job','report'}:
+            raise ValueError('priority history original provenance')
+        for ref in provenance.values():
+            if type(ref) is not dict or set(ref) != {'path','sha256'} or not isinstance(ref['path'],str) or not 1 <= len(ref['path']) <= 4096:
+                raise ValueError('bounded priority history provenance')
+            digest(ref['sha256'])
+        updates = row['updates']
+        if type(updates) is not list or not 1 <= len(updates) <= 64:
+            raise ValueError('bounded priority update inventory')
+        for update in updates:
+            if type(update) is not dict or set(update) != {'global_optimizer_step','indices'}:
+                raise ValueError('exact priority update')
+            step = update['global_optimizer_step']; indices = update['indices']
+            if (type(step) is not int or step < 1 or last_step is not None and step != last_step+1
+                    or type(indices) is not list or not 1 <= len(indices) <= 4096
+                    or any(type(i) is not int or not 0 <= i <= 1_000_000 for i in indices)
+                    or indices != sorted(set(indices))):
+                raise ValueError('priority history update counters and unique indices')
+            last_step = step
+        previous = row['output_checkpoint']
+    if previous != manifest['checkpoint']['id'] or last_step != manifest['trainer_state_binding']['global_step_before']:
+        raise ValueError('priority history ends at original input checkpoint and optimizer step')
+    return value
 
 
 def admit_pool(pool_envelope, authority):
@@ -98,7 +195,7 @@ def admit_pool(pool_envelope, authority):
     return manifest, policy, objects, rows, reward
 
 
-def freeze_draw(pool_envelope, authority, journal_path, *, now):
+def freeze_draw(pool_envelope, authority, journal_path, *, now, history_snapshot=None):
     """Persist one unpredictable seed after full inventory authentication/freeze.
 
     Operator randomness is an explicit assumption, not a public randomness beacon.
@@ -111,11 +208,17 @@ def freeze_draw(pool_envelope, authority, journal_path, *, now):
     from ops.native_training_eligibility import _create, _load
     import json
     p = Path(journal_path)
-    binding = dict(version=DRAW_VERSION, pool_envelope_sha256=sha(pool_envelope),
+    priority = policy['version'] == PRIORITY_VERSION
+    binding = dict(version=PRIORITY_DRAW_VERSION if priority else DRAW_VERSION, pool_envelope_sha256=sha(pool_envelope),
         policy_sha256=sha(policy), original_manifest_sha256=sha(pool_envelope['payload']['original_signed_manifest']),
         structural_inventory_sha256=sha(inventory(objects)),
         reward_eligible_inventory_sha256=sha(inventory(reward)), cap=cap(manifest))
     if not p.exists():
+        if priority:
+            validate_history_snapshot(history_snapshot, manifest, authority, at=now)
+            binding['history_snapshot'] = copy.deepcopy(history_snapshot)
+        elif history_snapshot is not None:
+            raise ValueError('historical draw cannot carry priority history')
         _, blacklist = partition(objects, manifest, authority, at=now,
             round_number=manifest.get('learner_blacklist_selection_round'))
         value = dict(binding, seed=secrets.token_hex(32), captured_at=now,
@@ -123,6 +226,8 @@ def freeze_draw(pool_envelope, authority, journal_path, *, now):
         _create(p, value)
     draw = json.loads(_load(p))
     validate_draw(pool_envelope, authority, draw)
+    if history_snapshot is not None and draw.get('history_snapshot') != history_snapshot:
+        raise ValueError('original priority history cannot be replaced')
     return draw
 
 
@@ -133,7 +238,9 @@ def validate_draw(pool_envelope, authority, draw):
     fields = {'version', 'pool_envelope_sha256', 'policy_sha256',
         'original_manifest_sha256', 'structural_inventory_sha256',
         'reward_eligible_inventory_sha256', 'cap', 'seed', 'captured_at', 'blacklist_selection'}
-    if (set(draw) != fields or draw['version'] != DRAW_VERSION
+    priority = policy['version'] == PRIORITY_VERSION
+    if priority: fields.add('history_snapshot')
+    if (set(draw) != fields or draw['version'] != (PRIORITY_DRAW_VERSION if priority else DRAW_VERSION)
             or draw['pool_envelope_sha256'] != sha(pool_envelope)
             or draw['policy_sha256'] != sha(policy)
             or draw['original_manifest_sha256'] != sha(pool_envelope['payload']['original_signed_manifest'])
@@ -161,6 +268,11 @@ def validate_draw(pool_envelope, authority, draw):
         groups[task].sort(key=lambda r: (
             sha(dict(common, domain='task-miner-representative-v1', task=task, miner=r['miner'])),
             r['miner'], r['slot'], r['document_sha256']))
+    if priority:
+        history = validate_history_snapshot(draw['history_snapshot'], manifest, authority, at=draw['captured_at'])
+        if history['outcome'] == 'priority':
+            prior = {(history['env_id'], i) for row in history['records'] for update in row['updates'] for i in update['indices']}
+            order = [t for t in order if t not in prior] + [t for t in order if t in prior]
     return manifest, policy, objects, reward, order, groups
 
 
@@ -333,23 +445,32 @@ def derivation_receipt(documents, authority):
     result = authenticate(documents['result'], authority)
     if finalize(progress, draw, policy, result.get('finalized_at')) != result:
         raise ValueError('original full representative replay differs')
-    return dict(version=RECEIPT_VERSION, pool_sha256=sha(documents['pool']),
+    receipt = dict(version=RECEIPT_VERSION, pool_sha256=sha(documents['pool']),
         draw_sha256=sha(documents['draw']), authorization_sha256=sha(documents['authorization']),
         waves_sha256=sha(documents['waves']), result_sha256=sha(documents['result']),
         sampling_assurance='unaudited', proof_verification_performed=False,
         claims_rewritten=False, cheating_penalties=False)
+    if policy['version'] == PRIORITY_VERSION:
+        receipt.update(version=PRIORITY_RECEIPT_VERSION, history_snapshot_sha256=sha(draw['history_snapshot']))
+    return receipt
 
 
-def validate_receipt(receipt):
+def validate_receipt(receipt, manifest=None):
     from .training_receipts import digest
-    if (type(receipt) is not dict or set(receipt) != {'version','pool_sha256','draw_sha256',
-            'authorization_sha256','waves_sha256','result_sha256','sampling_assurance',
-            'proof_verification_performed','claims_rewritten','cheating_penalties'}
-            or receipt['version'] != RECEIPT_VERSION or receipt['sampling_assurance'] != 'unaudited'
+    priority = type(receipt) is dict and receipt.get('version') == PRIORITY_RECEIPT_VERSION
+    fields = {'version','pool_sha256','draw_sha256','authorization_sha256','waves_sha256','result_sha256','sampling_assurance','proof_verification_performed','claims_rewritten','cheating_penalties'}
+    if priority: fields.add('history_snapshot_sha256')
+    if (type(receipt) is not dict or set(receipt) != fields
+            or receipt['version'] not in (RECEIPT_VERSION, PRIORITY_RECEIPT_VERSION) or receipt['sampling_assurance'] != 'unaudited'
             or any(receipt[k] is not False for k in ('proof_verification_performed','claims_rewritten','cheating_penalties'))):
         raise ValueError('exact truthful task representative receipt')
+    if manifest is not None:
+        policy = _policy(manifest)
+        if policy is None or priority != (policy['version'] == PRIORITY_VERSION):
+            raise ValueError('receipt version must match original representative policy')
     for name in ('pool_sha256','draw_sha256','authorization_sha256','waves_sha256','result_sha256'):
         digest(receipt[name])
+    if priority: digest(receipt['history_snapshot_sha256'])
 
 
 def preparation_scope(public_envelope, native_envelope, submissions, documents, authority):
