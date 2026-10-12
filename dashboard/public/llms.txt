@@ -158,6 +158,25 @@ not mean full-vocabulary batch transport.
 
 Token-only and three-way research verification profiles are not activated.
 
+## Prospective verifier-only rollout check
+
+This change is prepared for epoch 170 or a later unopened epoch. It is **not active** merely because this document or candidate code exists. The ROOT-signed epoch manifest is authoritative.
+
+For an epoch carrying `sampling_verification_policy.version = symmetric-prefill-source-preserving-v1`, validators execute the separately authorized verifier runtime. The public generation source remains `f5287f57bdae344e5a3d073309e5c830073f603838b4b52a189f5ec0a269cb24`; the candidate verifier archive is `149e540f5eb7ec40d98331ce8e82956b87b2fd057cc2011164d25524081be4ef`. The manifest keeps the generation source in `source_bundle`; the separate signed verifier route binds the complete verifier execution inventory and policy fingerprint.
+
+Existing miners using that admitted generation source do **not** need a bootstrap refresh for this verifier-only change. Keep following the manifest's checkpoint, task, sampler, nonce, token-budget and outcome quotas. The generation algorithm, per-miner random draw recipe, upload format, task grading, trainer source and optimizer do not change. The extra field selects the audit method; it is not permission to choose a different sampler or construct arbitrary answer tokens.
+
+The new verifier performs the qualified symmetric prefill check and uses the prescribed reference adjudication when required. Numeric ambiguity and infrastructure failures remain distinct from confirmed invalid samples. Full verification event evidence is required in the authenticated worker report. This is evidence of computation and sampling consistency, not proof of a unique historical execution, original authorship, or correct intermediate reasoning.
+
+An epoch without this field continues under its original verifier contract. Existing signed manifests, jobs, reports and reward cohorts are never relabeled. Future audit populations include the verifier policy in their cohort fingerprint. The hourly weight writer retains its current UID mapping, moving assessment, last-best fallback, and never-burn behavior.
+
+The exact qualified verifier archive, separate from the miner generation bundle:
+https://affine.io/sources/149e540f5eb7ec40d98331ce8e82956b87b2fd057cc2011164d25524081be4ef/source.tar.gz
+SHA256: `149e540f5eb7ec40d98331ce8e82956b87b2fd057cc2011164d25524081be4ef`; 7,242,107 bytes.
+Authenticate the full download before using it. GitHub main includes later
+compatible changes and is not claimed to hash to this immutable archive.
+Details: https://github.com/AffineFoundation/affine/blob/main/docs/VERIFIER_ONLY_POLICY.md
+
 ## Registration and runtime
 
 There is no operator whitelist. A miner needs a current subnet-120 UID, an

@@ -803,6 +803,7 @@ def _audit(data, manifest, runtime, *, commitment_miner=None):
         selected=runtime.for_environment(definition['spec'],harness_for(definition,index))
         from .audit_policy import InvalidSample
         confirmed_invalid=False;uncertain=[]
+        if "sampling_verification_policy" in manifest:selected.sampling_verification_events=[]
         try:
             if batch.get('environment_version')!=selected.spec.version:raise ValueError('environment version')
             try:validate_batch(batch,manifest,commitment_miner)
@@ -855,7 +856,13 @@ def _audit(data, manifest, runtime, *, commitment_miner=None):
             outcomes.append(outcome)
         except (ValueError,KeyError,TypeError,IndexError) as error:
             outcomes.append(dict(batch=number,valid=False,fully_audited=number in selected_indices,failure_kind='confirmed_invalid' if confirmed_invalid or isinstance(error,InvalidSample) else 'verification_error',reason=type(error).__name__+': '+str(error)[:300]))
-    return dict(epoch=manifest['epoch'],submission_sha256=hashlib.sha256(data).hexdigest(),policy=policy,selected_batches=sorted(selected_indices),assurance=assurance(len(records),len(selected_indices)),sampling_assurance=sampling_assurance(manifest),outcomes=outcomes,accepted=accepted,training_eligibility='fully-audited-only',**({'sampling_miner':commitment_miner}if manifest.get('sampling_contract',{}).get('version')==MINER_VERSION else {})),pairs
+        if 'sampling_verification_policy' in manifest:
+            outcomes[-1]['sampling_verification_events']=selected.sampling_verification_events
+    result=dict(epoch=manifest['epoch'],submission_sha256=hashlib.sha256(data).hexdigest(),policy=policy,selected_batches=sorted(selected_indices),assurance=assurance(len(records),len(selected_indices)),sampling_assurance=sampling_assurance(manifest),outcomes=outcomes,accepted=accepted,training_eligibility='fully-audited-only',**({'sampling_miner':commitment_miner}if manifest.get('sampling_contract',{}).get('version')==MINER_VERSION else {}))
+    if 'sampling_verification_policy' in manifest:
+        from .symmetric_verifier_policy import for_manifest
+        result['sampling_verification_policy']=for_manifest(manifest)
+    return result,pairs
 
 def full_parameter_train(runtime, pairs, destination, steps=1):
     """Measured, separately selected full BF16 AdamW; not the head-only control."""

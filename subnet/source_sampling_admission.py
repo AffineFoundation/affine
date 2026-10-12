@@ -43,6 +43,9 @@ class SamplingAdmission:
    if filehash(tree/n)!=row['runtime_files'][n]:raise ValueError('admitted sampler closure changed')
   contract=m.get('sampling_contract');version=contract.get('version')if isinstance(contract,dict)else None
   if version not in row['sampling_versions']:raise ValueError('sampling contract version not admitted for original source')
+  if 'sampling_verification_policy' in m:
+   helper_file='subnet/symmetric_verifier_policy.py'
+   if helper_file not in row['runtime_files'] or filehash(tree/helper_file)!=row['runtime_files'][helper_file]:raise ValueError('symmetric verifier policy source missing')
   context=sampler.binding(m)
   if context and version!=sampler.VERSION:
    if fast is None or not m.get('environments'):raise ValueError('complete fast sampler environment/calibration closure')
@@ -60,6 +63,9 @@ class SamplingAdmission:
     children=[obj for obj in job.get('submissions',[])if obj.get('sha256')==audit.get('submission_sha256')]
     if len(children)!=1 or audit.get('sampling_miner')!=children[0].get('commitment_miner'):raise ValueError('v5 report authenticated frozen miner mismatch')
    sampler.require_report(m,audit)
+   if 'sampling_verification_policy' in m:
+    helper=importlib.import_module(sampler.__package__+'.symmetric_verifier_policy')
+    helper.require_report(m,audit,children[0])
    if fast and hasattr(fast,'THREEWAY_VERSION')and m.get('sampling_contract',{}).get('version')==fast.THREEWAY_VERSION:
     for outcome in audit.get('outcomes',[]):
      if outcome.get('failure_kind')=='numerical_ambiguous':

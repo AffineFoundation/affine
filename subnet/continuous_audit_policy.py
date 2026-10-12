@@ -139,7 +139,12 @@ def verifier_contract(manifest):
  """A change of source, sampler, numerics or runtime starts another cohort."""
  fields=('sampling_contract','sampling_source_hash','model_runtime_revision','backend_profile','numerical_policy','source_bundle')
  need(all(k in manifest for k in fields),'complete verifier execution contract')
- return digest({k:manifest[k]for k in fields})
+ contract={k:manifest[k]for k in fields}
+ # Absence keeps every historical contract byte-for-byte identical.
+ # Explicit opt-in belongs to a separate evidence cohort even under one source.
+ if 'sampling_verification_policy' in manifest:
+  contract['sampling_verification_policy']=manifest['sampling_verification_policy']
+ return digest(contract)
 
 class BackendEvidenceNotAdmitted(ValueError):
  """Authenticated report has no prospective authorization for its backend claim."""

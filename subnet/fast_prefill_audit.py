@@ -31,6 +31,9 @@ def calibration(value):
  return dict(value)
 
 def bind(manifest,harness):
+ if "sampling_verification_policy" in manifest:
+  from .symmetric_verifier_policy import for_manifest
+  for_manifest(manifest)
  from .harness import normalize
  p=calibration(manifest['sampling_contract']['calibration']);h=normalize(harness)
  if p['checkpoint']!=manifest['checkpoint']['id']or p['model_runtime_revision']!=manifest['model_runtime_revision']or p['backend_profile_sha256']!=digest(manifest['backend_profile'])or p['harness_sha256']!=digest(h):raise CalibrationRequired('executed calibration checkpoint/profile/harness mismatch')
@@ -99,6 +102,9 @@ def verify_threeway_intervals(logprobs,tokens,uniforms,temperature,top_p,error):
 
 
 def verify_sampling(runtime,rollout,turn_index,prompt,output,logprobs):
+ if "sampling_verification_policy" in getattr(runtime,"fast_sampling_manifest",{}):
+  from .symmetric_verifier_policy import verify_sampling as symmetric_verify
+  return symmetric_verify(runtime,rollout,turn_index,prompt,output,logprobs)
  from .forced_sampling import uniform
  from .audit_policy import InvalidSample
  context=runtime.sampling_context;config=runtime.harness;p=runtime.fast_sampling_calibration

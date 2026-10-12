@@ -116,7 +116,7 @@ class Controller:
         if existing(legacy_key) is None:self.bucket.json(legacy_key,self.signed(descriptor))
         return checkpoint
 
-    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None,persistent_publication_policy=None,reward_publication_policy=None,optimizer_state_export_policy=None,artifact_compression_policy=None,proof_copy_policy=None,training_input_policy=None,continuous_reward_activation_document=None,continuous_reward_registration_snapshot=None,training_runtime=None,independent_state_readback_budget=None,optimizer_state_local_cache=None,probability_artifact_policy=None,token_artifact_policy=None,native_source_validation_policy=None,learner_capture_policy=None,K=1,L=1,training_task_capacity=None,training_representative_policy=None):
+    def open(self,epoch,checkpoint,miners,duration=600,environment=None,runtime_profile=None,harness=None,environments=None,audit_policy=None,evaluation=None,source_bundle=None,model_runtime_revision=None,numerical_policy=None,backend_profile=None,model_id=None,sample_harness_registry=None,training_policy=None,artifact_policy=None,task_assets=None,live_reward_anchor_document=None,live_reward_registration_snapshot=None,sampling_policy=None,trainer_state_binding=None,submission_transport_policy=None,commitment_max_batches=3,hourly_execution_policy=None,optimizer_state_transport=None,persistent_publication_policy=None,reward_publication_policy=None,optimizer_state_export_policy=None,artifact_compression_policy=None,proof_copy_policy=None,training_input_policy=None,continuous_reward_activation_document=None,continuous_reward_registration_snapshot=None,training_runtime=None,independent_state_readback_budget=None,optimizer_state_local_cache=None,probability_artifact_policy=None,token_artifact_policy=None,native_source_validation_policy=None,learner_capture_policy=None,K=1,L=1,training_task_capacity=None,training_representative_policy=None,sampling_verification_policy=None):
         if learner_capture_policy is not None:
             from .training_documents import capture_policy
             learner_capture_policy=capture_policy(learner_capture_policy)
@@ -285,6 +285,10 @@ class Controller:
         from .runtime_factory import validate_backend
         validate_backend(manifest)
         if source_bundle is not None:manifest['source_bundle']=dict(source_bundle)
+        if sampling_verification_policy is not None:
+            manifest['sampling_verification_policy']=sampling_verification_policy
+            from .symmetric_verifier_policy import for_manifest
+            for_manifest(manifest)
         if evaluation is not None:
             manifest['evaluation']=dict(evaluation,harness=harness_policy.normalize(evaluation.get('harness')))
         if live_reward_anchor_document is not None:
