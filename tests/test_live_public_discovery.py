@@ -124,6 +124,40 @@ class PublicDiscoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'config drift'):
                 discovery.actual_selector(self.authority, proc=proc, inspect_unit=inspect)
 
+    def test_composed_entry_binds_both_sources_and_physical_script(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = root/'entry.py'; entry.write_text('# physical entry\n')
+            runner = root/'composition.py'; runner.write_text('# imported controller\n')
+            config = root/'config.json'; config.write_text(json.dumps(self.config))
+            ref = lambda path: dict(path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+            payload = dict(version='prior12-and-optimizer16-composed-controller-v1', kind='learner',
+                           execute_allowed=True, source_sha256='a'*64,
+                           entry=ref(entry), runner=ref(runner), config=ref(config))
+            policy = root/'policy.json'
+            proc = root/'proc'; process = proc/'42'; process.mkdir(parents=True)
+            argv = ['python', '-I', '-B', str(entry), '--policy', str(policy)]
+            (process/'cmdline').write_bytes(b'\0'.join(arg.encode() for arg in argv)+b'\0')
+            (process/'stat').write_text('42 (python) '+' '.join(['S']+['0']*18+['991']+['0']*10))
+            inspect = lambda: f'MainPID=42\nActiveState=active\nExecStart=python -I -B {entry} --policy {policy} ; ignore\n'
+            def select(value):
+                policy.write_text(json.dumps(self.envelope(value)))
+                return discovery.actual_selector(self.authority, proc=proc, inspect_unit=inspect)
+            self.assertEqual(select(payload)[0], self.config)
+            for field in ('entry', 'runner'):
+                bad = copy.deepcopy(payload); bad[field]['sha256'] = '0'*64
+                with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'source mismatch'):
+                    select(bad)
+            bad = copy.deepcopy(payload); bad['entry'] = ref(runner)
+            with self.assertRaisesRegex(ValueError, 'physical composed'):
+                select(bad)
+            bad = copy.deepcopy(payload); bad['version'] = 'unknown-composition'
+            with self.assertRaisesRegex(ValueError, 'unknown learner'):
+                select(bad)
+            bad = copy.deepcopy(payload); bad['runner'] = {'path':str(runner)}
+            with self.assertRaisesRegex(ValueError, 'reference required'):
+                select(bad)
+
 
 if __name__ == '__main__':
     unittest.main()

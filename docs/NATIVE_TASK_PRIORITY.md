@@ -83,6 +83,10 @@ answers, or issue production signatures.
 
 Before activation, qualify the actual coordinator/preparation/CPU-peer/backend
 route against the admitted source. Preserve in-flight epochs and optimizer state.
+After the controller handover, check the public `/mining.json` against the signed
+current manifest as well as checking service health. Its publisher must recognize
+the composed policy and authenticate both the physical entry and imported runner.
+A running discovery service alone does not establish working miner discovery.
 After activation, compare actual trained-task novelty, native rejection rates,
 external submission yield, optimizer and full-epoch duration, and held-out
 performance. Broader task coverage and faster optimization are hypotheses to

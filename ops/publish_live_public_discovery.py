@@ -54,6 +54,22 @@ def actual_selector(authority, unit=LEARNER_UNIT, *, proc=Path('/proc'), inspect
         scripts = [Path(arg) for arg in argv[1:argv.index('--policy')] if arg.endswith('.py')]
         if len(scripts) != 1 or hashlib.sha256(scripts[0].read_bytes()).hexdigest() != runner_hash:
             raise ValueError('physical learner runner mismatch')
+    elif policy.get('version') == 'prior12-and-optimizer16-composed-controller-v1' and policy.get('kind') == 'learner':
+        # This signed composition distinguishes its physical entry from the
+        # imported controller. Authenticate both; do not relax legacy bindings.
+        references = {}
+        for name in ('entry', 'runner'):
+            ref = policy.get(name)
+            if not isinstance(ref, dict) or set(ref) != {'path', 'sha256'}:
+                raise ValueError('explicit composed learner reference required')
+            path = Path(ref['path'])
+            if (not path.is_absolute() or path.resolve() != path or path.is_symlink()
+                    or hashlib.sha256(path.read_bytes()).hexdigest() != ref['sha256']):
+                raise ValueError('composed learner source mismatch')
+            references[name] = path
+        scripts = [Path(arg) for arg in argv[1:argv.index('--policy')] if arg.endswith('.py')]
+        if scripts != [references['entry']]:
+            raise ValueError('physical composed learner entry mismatch')
     elif 'ops.durable_learner_service' not in argv:
         raise ValueError('unknown learner entry point')
     stat = (proc/str(pid)/'stat').read_text().rsplit(')', 1)[1].split()
