@@ -211,7 +211,8 @@
       node.append(svg('text',{x:plot.left-10,y,'text-anchor':'end','dominant-baseline':'middle'},performance?percent(fraction):number(high*fraction)));
     }
   }
-  function evaluationValue(row){return evaluationView==='results'?row.successes/row.count:row.mean_reward;}
+  function evaluationMetric(row){return window.AffinePerformanceSeries.metric(row);}
+  function evaluationValue(row){const metric=evaluationMetric(row);return evaluationView==='results'?metric.successes/metric.count:metric.mean_reward;}
   function evaluationPhase(row){
     if(row.original_epoch_id)return 'Checkpoint baseline';
     const phase=String(row.run_id||'').match(/-eval-(before|after)-/)?.[1];
@@ -220,12 +221,12 @@
   function evaluationDetails(row) {
     const phase=evaluationPhase(row).replace('Checkpoint baseline','Baseline');
     if(row.evaluation_split==='train'){
+      const metric=evaluationMetric(row);
       const exposed=count(row.actual_trained_task_count)?`${number(row.actual_trained_task_count)} tasks previously trained`:'Training exposure unavailable';
       const groups=row.exposure_groups||{};
       const groupLines=[['trained','Previously trained'],['untrained','Not yet trained'],['unknown','Exposure unknown']].filter(([key])=>groups[key]?.count>0).map(([key,label])=>`${label}: ${number(groups[key].solved)} / ${number(groups[key].count)} solved`).join('\n');
       const fixed=row.fixed_initial_trained;
-      const fixedLine=fixed?.count?`\nFixed initially trained subset: ${number(fixed.solved)} / ${number(fixed.count)} solved`:'';
-      return `${epochName({id:row.epoch_id})} · Training split\n${percent(evaluationValue(row))} · ${number(row.count)} tasks\n${number(row.successes)} solved · ${number(row.count-row.successes)} not solved\n${row.phase==='baseline'?'Original 7B reference · ':''}Fresh generations · ${number(row.completed_count)} / ${number(row.requested_count)} complete\n${exposed}\n${groupLines}${fixedLine}\nExposure groups are descriptive; membership can change\n${number(row.output_token_budget)} output-token cap · checkpoint ${row.checkpoint.slice(0,12)}\n${utc(row.timestamp)} UTC`;
+      return `${epochName({id:row.epoch_id})} · Training fit — fixed previously trained tasks\n${percent(evaluationValue(row))} · ${number(metric.count)} tasks\n${number(metric.successes)} solved · ${number(metric.count-metric.successes)} not solved\nSame subset at every point; trained by optimizer step ${number(fixed.optimizer_step)}\n${row.phase==='baseline'?'Original 7B reference; not actual run genesis\n':''}Fresh generations · ${number(row.completed_count)} / ${number(row.requested_count)} complete\nFull TRAIN cohort: ${number(row.successes)} / ${number(row.count)} solved\n${exposed}\n${groupLines}\nCurrent exposure groups are descriptive; membership can change\n${number(row.output_token_budget)} output-token cap · checkpoint ${row.checkpoint.slice(0,12)}\n${utc(row.timestamp)} UTC`;
     }
     return `${epochName({id:row.epoch_id})}\n${percent(evaluationValue(row))} · ${number(row.count)} tasks\n${number(row.successes)} solved · ${number(row.count-row.successes)} not solved\n${phase}${row.setup_changed?' · Setup changed':''}\n${utc(row.timestamp)} UTC`;
   }
@@ -285,7 +286,8 @@
     legend.hidden=!rows.length;
     if(!rows.length)return;
     if(evaluationView==='results'&&row){
-      for(const [label,value,className] of [['Solved',row.successes,'accepted'],['Not solved',row.count-row.successes,'unchecked']]){
+      const metric=evaluationMetric(row);
+      for(const [label,value,className] of [['Solved',metric.successes,'accepted'],['Not solved',metric.count-metric.successes,'unchecked']]){
         const item=document.createElement('span'),swatch=document.createElement('i');swatch.className=`swatch ${className}`;
         const countLabel=document.createElement('b');countLabel.className='legend-value';countLabel.dataset.zero=String(value===0);countLabel.textContent=number(value);
         item.dataset.outcome=className;item.append(swatch,`${label} `,countLabel);legend.append(item);
@@ -317,7 +319,7 @@
     slider.style.setProperty('--progress',`${rows.length>1?100*index/(rows.length-1):0}%`);
     const label=row?kind==='evaluation'?`${epochName({id:row.epoch_id})} · ${evaluationPhase(row).toLowerCase()}`:`${epochName(row)} · ${batchPhase(row).toLowerCase()}`:'No records available';
     $(kind+'-slider-label').textContent=row?epochName(kind==='evaluation'?{id:row.epoch_id}:row):label;
-    slider.setAttribute('aria-valuetext',row?kind==='evaluation'?`${label}, ${percent(evaluationValue(row))}, ${number(row.successes)} of ${number(row.count)} solved`:`${label}, ${batchAvailable(row)?number(row.batches)+' submitted batches':'batch counts pending audit'}`:label);
+    slider.setAttribute('aria-valuetext',row?kind==='evaluation'?`${label}, ${percent(evaluationValue(row))}, ${number(evaluationMetric(row).successes)} of ${number(evaluationMetric(row).count)} solved`:`${label}, ${batchAvailable(row)?number(row.batches)+' submitted batches':'batch counts pending audit'}`:label);
     setReading($(kind+'-value'),row?kind==='evaluation'?percent(evaluationValue(row)):batchAvailable(row)?number(row.batches):'—':'—');
     if(kind==='evaluation'){
       const chart=$(kind+'-chart');
@@ -489,10 +491,10 @@
             const point=coordinates[index];
             const barWidth=Math.max(.5,epochWidth-Math.min(2,epochWidth*.08));
             const x=Math.max(plot.left,Math.min(plot.left+plot.width-barWidth,point.x-barWidth/2));
-            const solved=plot.height*row.successes/row.count;
+            const metric=evaluationMetric(row),solved=plot.height*metric.successes/metric.count;
             const stack=svg('g',{class:'bar-stack evaluation-stack','data-epoch':recordKey(row)});
-            stack.append(svg('rect',{x,y:base-solved,width:barWidth,height:solved,fill:colors.performance,'data-outcome':'solved','data-count':row.successes}));
-            stack.append(svg('rect',{x,y:plot.top,width:barWidth,height:plot.height-solved,fill:colors.unchecked,'data-outcome':'not-solved','data-count':row.count-row.successes}));
+            stack.append(svg('rect',{x,y:base-solved,width:barWidth,height:solved,fill:colors.performance,'data-outcome':'solved','data-count':metric.successes}));
+            stack.append(svg('rect',{x,y:plot.top,width:barWidth,height:plot.height-solved,fill:colors.unchecked,'data-outcome':'not-solved','data-count':metric.count-metric.successes}));
             node.append(stack);
           });
         }
@@ -1119,9 +1121,9 @@
     window.dispatchEvent(new CustomEvent('affine:snapshot',{detail:data}));
     const history=window.AffinePerformanceSeries.history(data,epochs,evaluationSplit);
     for(const split of ['heldout','train'])$('evaluation-set-'+split).setAttribute('aria-pressed',String(split===evaluationSplit));
-    $('evaluation-set-label').textContent=evaluationSplit==='train'?'Training set — fresh generations':'Held-out set — fresh generations';
+    $('evaluation-set-label').textContent=evaluationSplit==='train'?'Training fit — fixed previously trained tasks':'Held-out set — fresh generations';
     const latest=history.at(-1);
-    $('evaluation-profile-label').textContent=latest?`${number(latest.count)} tasks · ${latest.output_token_budget?number(latest.output_token_budget)+' output tokens':'pinned output budget'} · cohorts compared separately`:'No completed measurements for this set';
+    $('evaluation-profile-label').textContent=latest?`${number(evaluationMetric(latest).count)} ${evaluationSplit==='train'?'fixed tasks':'tasks'} · ${latest.output_token_budget?number(latest.output_token_budget)+' output tokens':'pinned output budget'} · cohorts compared separately`:'No completed measurements for this set';
     drawIncentive();drawChart('evaluation',history);drawChart('batch',matchMedia('(min-width:1000px)').matches?epochs:epochs.slice(-12));drawMiners(epochs);status();
   }
   for(const split of ['heldout','train'])$('evaluation-set-'+split).addEventListener('click',()=>{

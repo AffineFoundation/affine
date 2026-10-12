@@ -8,6 +8,8 @@ function row(n, split='heldout', extra={}) {
     comparability_passed:true,
     count:128,requested_count:128,completed_count:128,successes:80,
     error_count:0,mean_reward:80/128,dataset_id:'fixed128',seed:'fixed-seeds',
+    fixed_initial_trained:{count:55,solved:33,wrong:20,unresolved:2,errors:0,
+      mask_sha256:'a'.repeat(64),checkpoint:'b'.repeat(64),optimizer_step:67},
     training_run_id:'current-run',runtime_profile_sha256:'same-runtime',...extra};
 }
 test('same-epoch TRAIN never replaces heldout and absent TRAIN is empty',()=>{
@@ -44,4 +46,50 @@ test('same-epoch original-base and current TRAIN points are both retained in che
   assert.deepEqual(values.map(r=>r.checkpoint),['base','current']);
   assert.deepEqual(api.segments(values,[1,2]),[[1,2]]);
   assert.equal(api.history({evaluations:[row(1),row(1,'heldout',{timestamp:9})]},epochs,'heldout').length,1);
+});
+
+test('TRAIN fit uses fixed55 while stored full128 values remain intact',()=>{
+  const original=row(1,'train');
+  const rows=api.history({training_evaluations:[original]},epochs,'train');
+  assert.equal(rows[0].count,128);assert.equal(rows[0].successes,80);
+  assert.deepEqual(api.metric(rows[0]),{count:55,successes:33,mean_reward:33/55});
+  assert.equal(original.count,128);assert.equal(original.mean_reward,80/128);
+  assert.deepEqual(api.metric(row(1)),{count:128,successes:80,mean_reward:80/128});
+});
+test('missing invalid or errored fixed subset is unavailable without full-pool fallback',()=>{
+  const base=row(1,'train');
+  const invalid=[null,{}, {...base.fixed_initial_trained,count:0},
+    {...base.fixed_initial_trained,mask_sha256:'not-a-hash'},
+    {...base.fixed_initial_trained,solved:34},
+    {...base.fixed_initial_trained,wrong:19,errors:1},
+    {...base.fixed_initial_trained,optimizer_step:-1}];
+  for(const fixed of invalid){
+    const bad={...base,fixed_initial_trained:fixed};
+    assert.equal(api.metric(bad),null);assert.equal(api.measured(bad),false);
+    const values=api.history({training_evaluations:[base,{...bad,epoch_id:'epoch-2'},row(3,'train')]},epochs,'train');
+    assert.deepEqual(api.segments(values,[1,3]),[[1],[3]]);
+  }
+});
+test('fixed mask checkpoint step and denominator are separate longitudinal series',()=>{
+  const base=row(1,'train');
+  for(const change of [{mask_sha256:'c'.repeat(64)}, {checkpoint:'c'.repeat(64)},
+    {optimizer_step:68}, {count:54,wrong:19}]){
+    const next=row(2,'train',{fixed_initial_trained:{...base.fixed_initial_trained,...change}});
+    assert.equal(api.measured(next),true);
+    const rows=api.history({training_evaluations:[base,next]},epochs,'train');
+    assert.deepEqual(api.segments(rows,[1,2]),[[1],[2]]);
+  }
+});
+test('changing current exposure groups cannot change the fixed metric or curve key',()=>{
+  const before=row(1,'train',{actual_trained_task_count:55});
+  const after=row(2,'train',{actual_trained_task_count:90});
+  assert.deepEqual(api.metric(before),api.metric(after));
+  assert.equal(api.cohortKey(before),api.cohortKey(after));
+});
+test('all128 completion and errors remain mandatory even if fixed55 is clean',()=>{
+  for(const change of [{error_count:1},{completed_count:127},{comparability_passed:false},{status:'partial'}]){
+    const value=row(1,'train',change);
+    assert.notEqual(api.metric(value),null);
+    assert.equal(api.history({training_evaluations:[value]},epochs,'train').length,0);
+  }
 });

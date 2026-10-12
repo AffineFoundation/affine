@@ -392,17 +392,29 @@ https://github.com/AffineFoundation/affine/blob/main/docs/BOUNDED_WEIGHT_EVIDENC
 
 Training-data diagnostic (prospective; unavailable until authenticated results exist)
 --------------------------------------------------------------------------------
-The Performance chart separates Held-out from Training. "Training set -- fresh
-generations" measures new operator-generated answers on a fixed 128-task cohort
-from the mining TRAIN pool. It does not use the submitted four-success/four-failure
-labels, which are selected by construction and cannot measure model accuracy.
+The Performance chart separates Held-out from Training. "Training fit -- fixed
+previously trained tasks" plots fresh-answer accuracy on the same 55 tasks at
+every point. These are the members of the fixed 128-task mining TRAIN cohort
+already used in actual training by optimizer step 67 (checkpoint5d1903). The mask
+was frozen from closed training records before generated answers were inspected.
+The reference point evaluates the identical 55 questions. This is a fixed
+training-fit diagnostic, not a representative estimate for all trained tasks.
+
+Every evaluation still generates and stores all 128 tasks. The public API keeps
+its full-cohort mean_reward and counts; the tooltip retains that broader TRAIN-pool
+score and the descriptive currently-trained/not-yet-trained/unknown groups.
+Changing exposure groups do not define the plotted curve. A missing fixed subset
+is unavailable, and a changed mask breaks the line. All 128 tasks must finish
+without infrastructure errors and pass comparison checks before a 55-task point
+is displayed. No task or answer is removed from the stored result. Submitted
+four-success/four-failure labels cannot measure model accuracy.
 
 The diagnostic is scheduled independently every four finalized optimizer updates,
 with the original 7B reference (checkpoint2173) and current committed checkpoint
 evaluated using the
 same cohort, task seeds, native grader and runtime profile. The reference is not
 the actual training-run genesis (checkpoint6493); exposure follows the actual
-training-run ancestry. The proposed TRAIN
+training-run ancestry. The TRAIN
 profile allows 2048 output tokens; the historical fixed32 held-out curve uses
 1024. They remain separate series and do not form one interchangeable trend.
 

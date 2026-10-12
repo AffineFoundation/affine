@@ -22,7 +22,12 @@ The initial authenticated exposure record through production step 67 contains
 55 of the 128 tasks with at least one attributed update, with 73 not yet trained
 in this run. Overall128 is TRAIN-split performance, not performance exclusively
 on already-trained tasks. The fixed initial55 subset stays identical for the
-reference and later checkpoints; changing exposure groups are descriptive.
+reference and later checkpoints and is the primary training-fit curve. The public
+API retains all128 counts and mean_reward; its broader score remains in the
+tooltip. The chart requires complete, comparable, error-free all128 results,
+uses the same55 mask at every checkpoint, and never falls back to all128 if the
+mask is absent. A changed mask starts a separate series. Changing current exposure
+groups remain descriptive.
 Later checkpoints use their own closed training history. Missing or incompatible
 attribution produces `unknown` exposure, never an assertion that a task was
 untrained. Attribution
@@ -40,7 +45,7 @@ per task, paired seeds, FP32 cached generation, temperature 0.7, top-p 1, and a
 2,048-token output cap. Comparisons check actual prompt token IDs, task identity,
 seeds, source and runtime profile. Caps, EOS and exposure groups are reported
 separately. The already-trained subset can help measure fit; neither it nor the
-overall TRAIN curve establishes unseen-task generalization.
+overall TRAIN-pool score establishes unseen-task generalization.
 
 ## Operator entry point
 
