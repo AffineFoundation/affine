@@ -43,6 +43,9 @@ and native unresolved counts are distinct measurements.
 
 This is not explained solely by insufficient output length. It also does not
 identify the cause of the shorter answers or justify accusing miners of fraud.
+The [historical coverage and subject/level breakdown](LIVE_STEP60_STRATA.md)
+also finds declines in well-represented groups; the causes remain unresolved.
+
 The production training lineage is separate from the isolated
 [positive-only SFT32 experiment](POSITIVE_SFT32_RESULTS.md), whose capped
 responses decreased sharply. Their length patterns should not be conflated.

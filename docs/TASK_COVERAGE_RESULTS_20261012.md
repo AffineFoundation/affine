@@ -1,4 +1,10 @@
-# Closed-epoch task coverage: epochs 142–153
+# Closed-epoch task coverage: through epoch 156
+
+**Latest status, October 12 at 05:00 UTC:** the fixed 154–156 cooldown trial is
+complete. A trainer-side priority for tasks absent from the previous twelve
+training epochs is scheduled from epoch 158. It has not yet completed a live
+training update. The earlier sections below preserve the evidence and decisions
+available at each stage; the final section contains the completed trial results.
 
 The network is repeatedly training on a restricted portion of the available
 MATH tasks. This is a plausible contributor to weak generalization, not proof
@@ -216,3 +222,63 @@ Additional evidence SHA256:
 - Original 112-task grading receipt: `9a1cb3878128b8e92ce9cb3d94ee0286502ae73b1e2700aa5bb8f5ed7bd1f83f`
 - Original diagnostic capture: `085c73a41cee0548c1b2f90ec1c53cc2d29e94b2e7dae6dafa3d846922505e62`
 - Coverage-only counterfactual: `8a12be0ab9edfd476e9c406f95f36f6a63b03fd936e6a54c3d8e0b662032116f`
+
+## Completed 154–156 trial and the next selection test
+
+Epoch 156 completed in **58 minutes 41 seconds**, with 251 external submitting
+identities, 2,170 committed batches, 1,603 committed task indices and 1,184
+captured task indices. Training used 512 tasks, including 66 absent from the
+previous twelve training epochs and 28 never previously trained in this run.
+Epochs 155 and 156 both finished within an hour; epoch 154 took 61 minutes.
+
+Across the three trial epochs, distinct task counts were:
+
+| Stage | Distinct tasks | Not trained during epochs 91–153 |
+| --- | ---: | ---: |
+| Committed | 2,400 | 197 |
+| Captured | 2,173 | 163 |
+| Native-checked and trained | 1,276 | 93 |
+
+The 1,536 task-update exposures covered 1,276 distinct tasks. Cumulative coverage
+through epoch 156 is **2,982 of 6,746 tasks (44.2%)**. Of the 3,764 still untrained
+tasks, 3,660 had no commitment during this three-epoch trial. Only 70 were
+captured but remained untrained; their eligibility is not established by these
+counts. A different learner order can use neglected submitted data, but cannot
+recover tasks absent from the submitted population.
+
+Coverage is uneven by dataset label. Level 1 accounts for 7.6% of the mining
+universe but 2.9% of distinct trained tasks in this trial; Level 5 accounts for
+30.5% and 37.1%, respectively. Of all Level 1 tasks, 80% remain untrained in the
+current run, compared with 46.5% of Level 5 tasks. Algebra and Prealgebra account
+for 991 and 704 remaining untrained tasks. These labels do not measure difficulty
+for the current model. The omitted population cannot simply be called the
+hardest problems, and selected K4/L4 batches cannot estimate task success rates.
+
+Recent-window novelty also overstates first-time coverage: the 209 trained tasks
+absent from their preceding twelve epochs comprise 93 first-time tasks and 116
+older returners. Report both quantities when judging the next change.
+
+The scheduled epoch-158 selector checks captured tasks absent from the prior
+twelve training epochs before recent repeats, with the same native eligibility
+checks, 512-task cap and 600-second eligibility budget. It retains the broad
+6,490-task pool, 256-task cooldown, K4/L4, nine-batch cap per UID and reward rules.
+Existing miners do not need an upgrade. The fixed follow-up covers epochs
+158–160, including any partial or fallback epoch rather than replacing it with a
+more favorable result. Measure actual selection, first-time coverage, supply,
+participation and time before deciding whether stronger rotation is warranted.
+
+A separate optimizer CPU-thread improvement is scheduled at the same boundary.
+Consequently this follow-up is descriptive operational evidence, not a controlled
+estimate of either change's effect on model quality. The original released
+step-60 regression predates the cooldown trial and cannot be attributed to it.
+Controlled learning-method studies remain separate; broader coverage is not
+evidence that held-out performance has improved.
+
+Evidence SHA256:
+
+- Fixed three-epoch aggregate: `a1d202c57e4ea6dc56fb7a65ffb1da4c5b55266fc2290009018ac03ad2a88eed`
+- Original cached stage census: `36f95b4f6fa7204bacc6959e27568fc5aba9d06e22cccc3e6ad502f80029b2d7`
+- Independently reproduced stage unions: `2734ff55474fae3649f381db20004c34f47b7781faa6e13c60f0e9b9b59f097f`
+- Independent union review: `9869e5c486beb6b090bf00459e940c6e26ffa9c494e2cc0d607ce9324e2ec0ff`
+- Subject/level coverage analysis: `99649dcb60d3826433ef3893bfb544dcb817981e292af1f8948b3984e573e80a`
+- First-time versus older-returner decomposition: `5e02ec85481db0cc545aa33dcfdd4f39da036e04b0a965ece3249275b13bfc15`
