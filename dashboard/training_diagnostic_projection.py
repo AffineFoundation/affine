@@ -126,6 +126,25 @@ def project(document, authority=AUTHORITY):
     if type(value.get('comparability_passed')) is not bool:
         raise ValueError('actual prompt task and seed comparability required')
     complete = value['errors'] == 0 and value['comparability_passed']
+    reference_kind = value.get('reference_kind', 'unspecified')
+    if reference_kind not in ('original-upstream-comparison', 'actual-run-genesis-comparison', 'unspecified'):
+        raise ValueError('explicit supported TRAIN reference role')
+    actual_genesis = value.get('actual_run_genesis_checkpoint')
+    if actual_genesis is not None and not sha(actual_genesis):
+        raise ValueError('actual run genesis identity')
+    if reference_kind == 'actual-run-genesis-comparison':
+        if (value['phase'] != 'baseline' or value['optimizer_step'] != 0 or
+                actual_genesis != value['checkpoint'] or not sha(value.get('genesis_admission_sha256')) or
+                value.get('reference_is_original_upstream') is not False):
+            raise ValueError('authenticated actual run genesis, not upstream label')
+        if (trained != 0 or untrained != requested or unknown != 0 or
+                exposure.get('task_exposures') != 0):
+            raise ValueError('actual run genesis has zero new training exposure in this run')
+    reference_label = None
+    if value['phase'] == 'baseline':
+        reference_label = ('Actual run genesis — optimizer step 0 of this run; earlier training retained' if reference_kind == 'actual-run-genesis-comparison'
+                           else 'Original 7B upstream reference; not actual run genesis' if reference_kind == 'original-upstream-comparison'
+                           else 'Checkpoint reference — provenance unspecified')
     # Explicit allowlist: no raw text, object capabilities, paths or error traces.
     return dict(run_id='training-fresh-' + digest(identity), experiment_id=value['run_id'],
         training_run_id=value['training_run_id'], epoch_id=value['epoch'], checkpoint=value['checkpoint'],
@@ -144,7 +163,8 @@ def project(document, authority=AUTHORITY):
         exposure_groups=groups, fixed_initial_trained=fixed, exposure_subsets_descriptive=True,
         original_report_sha256=durable['sha256'], aggregate_sha256=digest(value),
         comparability_passed=value['comparability_passed'],
-        phase=value['phase'], native_graded=True, proof_verification_performed=False)
+        phase=value['phase'], reference_kind=reference_kind, reference_label=reference_label,
+        actual_run_genesis_checkpoint=actual_genesis, native_graded=True, proof_verification_performed=False)
 
 
 def rows(directory, authority=AUTHORITY):

@@ -222,11 +222,11 @@
     const phase=evaluationPhase(row).replace('Checkpoint baseline','Baseline');
     if(row.evaluation_split==='train'){
       const metric=evaluationMetric(row);
-      const exposed=count(row.actual_trained_task_count)?`${number(row.actual_trained_task_count)} tasks previously trained`:'Training exposure unavailable';
+      const exposed=count(row.actual_trained_task_count)?`${number(row.actual_trained_task_count)} tasks trained in this run`:'Training exposure unavailable';
       const groups=row.exposure_groups||{};
-      const groupLines=[['trained','Previously trained'],['untrained','Not yet trained'],['unknown','Exposure unknown']].filter(([key])=>groups[key]?.count>0).map(([key,label])=>`${label}: ${number(groups[key].solved)} / ${number(groups[key].count)} solved`).join('\n');
+      const groupLines=[['trained','Trained in this run'],['untrained','Not yet trained in this run'],['unknown','Exposure unknown for this run']].filter(([key])=>groups[key]?.count>0).map(([key,label])=>`${label}: ${number(groups[key].solved)} / ${number(groups[key].count)} solved`).join('\n');
       const fixed=row.fixed_initial_trained;
-      return `${epochName({id:row.epoch_id})} · Training fit — fixed previously trained tasks\n${percent(evaluationValue(row))} · ${number(metric.count)} tasks\n${number(metric.successes)} solved · ${number(metric.count-metric.successes)} not solved\nSame subset at every point; trained by optimizer step ${number(fixed.optimizer_step)}\n${row.phase==='baseline'?'Original 7B reference; not actual run genesis\n':''}Fresh generations · ${number(row.completed_count)} / ${number(row.requested_count)} complete\nFull TRAIN cohort: ${number(row.successes)} / ${number(row.count)} solved\n${exposed}\n${groupLines}\nCurrent exposure groups are descriptive; membership can change\n${number(row.output_token_budget)} output-token cap · checkpoint ${row.checkpoint.slice(0,12)}\n${utc(row.timestamp)} UTC`;
+      return `${epochName({id:row.epoch_id})} · Training fit — fixed previously trained tasks\n${percent(evaluationValue(row))} · ${number(metric.count)} tasks\n${number(metric.successes)} solved · ${number(metric.count-metric.successes)} not solved\nSame subset at every point; trained by optimizer step ${number(fixed.optimizer_step)} in this run\n${row.phase==='baseline'?`${row.reference_label||'Checkpoint reference — provenance unspecified'}\n`:''}Fresh generations · ${number(row.completed_count)} / ${number(row.requested_count)} complete\nFull TRAIN cohort: ${number(row.successes)} / ${number(row.count)} solved\n${exposed}\n${groupLines}\nCurrent-run exposure groups are descriptive; membership can change\n${number(row.output_token_budget)} output-token cap · checkpoint ${row.checkpoint.slice(0,12)}\n${utc(row.timestamp)} UTC`;
     }
     return `${epochName({id:row.epoch_id})}\n${percent(evaluationValue(row))} · ${number(row.count)} tasks\n${number(row.successes)} solved · ${number(row.count-row.successes)} not solved\n${phase}${row.setup_changed?' · Setup changed':''}\n${utc(row.timestamp)} UTC`;
   }
@@ -328,7 +328,7 @@
     }
     if(kind==='batch')$(kind+'-chart').querySelectorAll('.epoch-tick').forEach(tick=>tick.classList.toggle('is-current',Boolean(row&&tick.dataset.record===recordKey(row))));
     $(kind+'-value').setAttribute('aria-label',row?kind==='evaluation'?`${label}, performance ${percent(evaluationValue(row))}`:`${label}, ${batchAvailable(row)?number(row.batches)+' submitted batches':'batch counts pending audit'}`:'Measurement unavailable');
-    const previous=kind==='evaluation'?(rows[index-1]&&!row.measurement_gap&&cohortKey(rows[index-1])===cohortKey(row)?rows[index-1]:null):row?.finalized?rows.slice(0,index).findLast(item=>item.finalized):null;
+    const previous=kind==='evaluation'?(window.AffinePerformanceSeries.comparableTransition(rows[index-1],row)?rows[index-1]:null):row?.finalized?rows.slice(0,index).findLast(item=>item.finalized):null;
     const delta=row&&previous&&(kind!=='batch'||batchAvailable(row))?kind==='evaluation'?100*(evaluationValue(row)-evaluationValue(previous)):row.batches-previous.batches:null;
     setChange(kind,delta,kind==='evaluation'?'percentage points':'batches',previous?kind==='evaluation'?`the previous comparable evaluation (${utc(previous.timestamp)} UTC)`:epochName(previous):'');
     if(kind==='evaluation')syncEvaluationLegend(rows,row);else syncBatchLegend(row);

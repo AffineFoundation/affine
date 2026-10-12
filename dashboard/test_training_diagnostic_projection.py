@@ -51,6 +51,55 @@ class TrainingProjectionTests(unittest.TestCase):
         self.assertNotIn('private/diagnostic', public)
         self.assertFalse(row['proof_verification_performed'])
 
+    def genesis(self):
+        value = copy.deepcopy(self.value)
+        value.update(phase='baseline', optimizer_step=0,
+            reference_kind='actual-run-genesis-comparison',
+            actual_run_genesis_checkpoint=value['checkpoint'],
+            genesis_admission_sha256='f' * 64, reference_is_original_upstream=False)
+        value['exposure'].update(trained_tasks=0, untrained_tasks=128,
+            unknown_tasks=0, task_exposures=0)
+        value['exposure_groups'] = dict(
+            trained=dict(count=0, solved=0, wrong=0, unresolved=0, errors=0),
+            untrained=dict(count=128, solved=81, wrong=40, unresolved=7, errors=0),
+            unknown=dict(count=0, solved=0, wrong=0, unresolved=0, errors=0))
+        return value
+
+    def test_reference_roles_preserve_current_run_exposure_meaning(self):
+        value = self.genesis()
+        row = project(self.signed(value), self.authority)
+        self.assertEqual(row['training_steps'], 0)
+        self.assertEqual(row['actual_trained_task_count'], 0)
+        self.assertEqual(row['actual_training_exposures'], 0)
+        self.assertIn('of this run; earlier training retained', row['reference_label'])
+        self.assertNotIn('optimizer_step', row)
+        upstream = copy.deepcopy(value)
+        upstream.update(reference_kind='original-upstream-comparison',
+            checkpoint='a' * 64, reference_is_original_upstream=True)
+        row = project(self.signed(upstream), self.authority)
+        self.assertIn('not actual run genesis', row['reference_label'])
+        self.assertEqual(row['actual_run_genesis_checkpoint'], value['checkpoint'])
+
+    def test_genesis_requires_correct_identity_and_no_new_exposures(self):
+        for change in ({'optimizer_step': 68}, {'checkpoint': 'a' * 64},
+                       {'phase': 'latest'}, {'reference_is_original_upstream': True}):
+            value = self.genesis(); value.update(change)
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                project(self.signed(value), self.authority)
+        for mode in ('trained', 'unknown', 'exposure_count'):
+            value = self.genesis()
+            if mode == 'exposure_count':
+                value['exposure']['task_exposures'] = 1
+            else:
+                value['exposure'].update(trained_tasks=128 if mode == 'trained' else 0,
+                    untrained_tasks=0, unknown_tasks=128 if mode == 'unknown' else 0,
+                    task_exposures=128 if mode == 'trained' else 0)
+                value['exposure_groups'][mode] = value['exposure_groups']['untrained']
+                value['exposure_groups']['untrained'] = dict(
+                    count=0, solved=0, wrong=0, unresolved=0, errors=0)
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, 'zero new training exposure'):
+                project(self.signed(value), self.authority)
+
     def test_infra_errors_remain_unavailable_not_zero_or_reduced_denominator(self):
         self.value.update(completed=127, errors=1, wrong=39, terminal_eos=120)
         self.value['exposure_groups']['untrained'].update(wrong=14,errors=1)

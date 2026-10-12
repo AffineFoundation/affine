@@ -36,6 +36,11 @@
          row.count === row.requested_count && row.error_count === 0 &&
          row.mean_reward === row.successes / row.count && metric(row) !== null));
   }
+  function comparableTransition(previous, current) {
+    return Boolean(previous && current && !current.measurement_gap &&
+      !(previous.phase === 'baseline' && current.phase === 'baseline') &&
+      cohortKey(previous) === cohortKey(current));
+  }
   function history(snapshot, epochs, split) {
     const order = new Map(epochs.map((row, index) => [row.id, index]));
     const supplied = split === 'train' ? snapshot.training_evaluations : snapshot.evaluations;
@@ -70,12 +75,13 @@
   function segments(rows, coordinates) {
     const groups = [];
     rows.forEach((row, index) => {
-      if (!index || row.measurement_gap || cohortKey(row) !== cohortKey(rows[index - 1])) groups.push([]);
+      // Two reference checkpoints at step zero are not a learning transition.
+      if (!comparableTransition(rows[index - 1], row)) groups.push([]);
       groups[groups.length - 1].push(coordinates[index]);
     });
     return groups;
   }
-  const api = {cohortKey, measured, history, segments, metric};
+  const api = {cohortKey, measured, history, segments, metric, comparableTransition};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.AffinePerformanceSeries = api;
 })(typeof globalThis === 'undefined' ? this : globalThis);

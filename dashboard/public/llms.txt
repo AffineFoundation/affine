@@ -412,9 +412,17 @@ four-success/four-failure labels cannot measure model accuracy.
 The diagnostic is scheduled independently every four finalized optimizer updates,
 with the original 7B reference (checkpoint2173) and current committed checkpoint
 evaluated using the
-same cohort, task seeds, native grader and runtime profile. The reference is not
-the actual training-run genesis (checkpoint6493); exposure follows the actual
-training-run ancestry. The TRAIN
+same cohort, task seeds, native grader and runtime profile. The original upstream
+reference (checkpoint2173) and actual training-run genesis (checkpoint6493) have
+separate identities. The genesis retains earlier-run training; its step zero and
+zero training exposure mean no new optimizer updates or task exposure in this
+run, not untouched pretrained weights. Exposure follows this run's ancestry.
+When both authenticated baseline results are available, the chart retains both
+but does not draw a learning segment or show a "vs prior" gain between them.
+Genesis-to-current comparisons require the same cohort, fixed55 mask, seeds and
+runtime profile, with no missing measurement between them. A baseline result is
+unavailable until original completion, comparison and durable readback pass.
+The TRAIN
 profile allows 2048 output tokens; the historical fixed32 held-out curve uses
 1024. They remain separate series and do not form one interchangeable trend.
 

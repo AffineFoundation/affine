@@ -43,7 +43,22 @@ proof that physical execution occurred. Upstream pretraining is unknown.
 The original upstream comparison checkpoint begins `2173b3e0`. It is distinct
 from the current production run's actual genesis, which begins `6493a901`.
 The reference's zero-update coordinate means zero updates in this diagnostic
-comparison; it does not rename the production genesis.
+comparison; it does not rename the production genesis. The actual genesis
+retains training from an earlier run. Its optimizer step zero means no new
+updates in the current run, and its exposure record must show zero tasks trained
+and zero training exposures in this run, with all cohort tasks accounted for as
+not yet trained in this run. This does not claim they were absent from earlier
+training. Public labels make that scope explicit.
+
+Both authenticated reference points can coexist, using the unchanged fixed55
+mask. The chart does not connect the upstream reference to actual genesis as a
+learning transition or display a "vs prior" gain between those baselines. The
+line and change badge use the same comparison rule: genesis-to-current points
+must have the same scientific cohort, seeds and runtime profile, without an
+intervening unavailable measurement. Every historical point remains present.
+A genesis result is not publishable until its original all128 execution, actual
+prompt comparison and durable full-result readback pass. This projection support
+does not assert that a pending evaluation has completed or establish a score.
 
 Each checkpoint retains all 128 original cases, including wrong answers,
 unresolved answers and infrastructure errors. The fixed profile uses one draw
