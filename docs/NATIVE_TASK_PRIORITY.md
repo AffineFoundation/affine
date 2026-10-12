@@ -113,9 +113,35 @@ ROOT-signed v3 policy from epoch158. It does not rewrite the issued manifest. Th
 complete composed startup path was checked to the first operational-client
 boundary, with network, signing and mutation disabled, before activation.
 
-A separately authorized replacement job began at07:04 UTC with the same signed
-manifest, all512 selected input descriptors, checkpoint and optimizer parent.
+A separately authorized replacement job began at 07:04 UTC with the same signed
+manifest, all 512 selected input descriptors, checkpoint and optimizer parent.
 Its initialization receipt confirms 96/96→2/2. Original failure evidence and the
-epoch start time remain intact; epoch158 has missed the one-hour target. This
-record does not claim a completed replacement update or improved model quality.
+epoch start time remain intact; epoch 158 has missed the one-hour target.
 No miner upgrade, sampling-contract change, or website redesign is required.
+
+## Report interpretation correction (October 12)
+
+The replacement completed its original training step at 07:25 UTC, from Adam step 67
+to 68 on 512 tasks and 2,048 preference pairs. Its report records steady 2/2,
+optimizer 16/2 and restored 2/2. The CPU optimizer took 49.44 seconds, compared
+with 176.38 seconds in epoch 157. These epochs used different batches; this is
+an operational timing comparison, not a controlled learning comparison.
+
+The CPU report interpreter still omitted the v6 execution declaration from its
+authorized-learning-rate table. It therefore fell back to the historical rate
+and rejected the correctly reported, signed 5e-7 rate. The interpreter now
+recognizes v5 and v6's shared objective method, while preserving authentication,
+parent/checkpoint, counter, hyperparameter and thread-evidence checks. The
+original successful report passed the complete actual admission path, and
+mutations of its rate, counter, thread profile and output checkpoint were rejected.
+
+An operational wrapper initially omitted the real entrypoint's three-argument
+loader interface. The corrected wrapper was exercised through the entrypoint's
+activation branch and actual service startup with side effects intercepted.
+The controller then resumed publication of the same completed result. It did
+not repeat training or rewrite the original job, report, epoch clock or optimizer.
+Epoch 158 finalized at 07:43:37 UTC, and the trainer authenticated the step 68
+acknowledgement with no pending candidate. Epoch 159 then began opening from the
+published checkpoint. The original epoch lasted 107 minutes 51 seconds, including
+the operational failures and recovery; its clock was not reset. These records
+establish completed training and publication, not a held-out improvement.

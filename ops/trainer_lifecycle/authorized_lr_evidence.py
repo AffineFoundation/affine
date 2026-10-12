@@ -7,6 +7,8 @@ import types
 VERSIONS={
  'unaudited-training-execution-amendment-v2-effective-lr':'fp32-task-gradient-effective-lr-v1',
  'unaudited-training-execution-amendment-v3-effective-lr-genesis':'fp32-task-gradient-effective-lr-genesis-v1',
+ 'unaudited-training-execution-amendment-v5-objective-horizon':'fp32-task-gradient-effective-lr-objective-horizon-v1',
+ 'unaudited-training-execution-amendment-v6-optimizer-cpu16':'fp32-task-gradient-effective-lr-objective-horizon-v1',
 }
 
 def expected_hyperparameters(report,job,manifest,authority):
