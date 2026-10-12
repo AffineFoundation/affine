@@ -1,5 +1,5 @@
 """Fresh generations on approved TRAIN tasks; not independent confirmation or miner evidence."""
-import argparse, base64, fcntl, hashlib, importlib.metadata, json, math, os
+import argparse, base64, fcntl, hashlib, importlib.metadata, importlib.util, json, math, os
 from pathlib import Path
 import signal, subprocess, sys, time
 
@@ -40,7 +40,6 @@ def run(plan_path,check_only=False):
  if digest(p['checkpoint']['files'])!=p['checkpoint']['id']or set(x.name for x in model.iterdir())!=set(p['checkpoint']['files']):raise ValueError('checkpoint inventory')
  for name,h in p['checkpoint']['files'].items():
   if Path(name).name!=name or (model/name).is_symlink()or file_hash(model/name)!=h:raise ValueError('checkpoint full SHA')
- import importlib.util
  helper=root/'train_contract.py'
  if file_hash(helper)!=p['contract_sha256']:raise ValueError('exact separate TRAIN policy helper')
  module_spec=importlib.util.spec_from_file_location('train_contract',helper);contract=importlib.util.module_from_spec(module_spec);module_spec.loader.exec_module(contract)

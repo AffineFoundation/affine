@@ -6,8 +6,10 @@ evaluates the latest durable production checkpoint. Subsequent checkpoints need
 at least four additional finalized optimizer updates. It coalesces a backlog to
 the latest checkpoint and runs one checkpoint at a time on a dedicated
 evaluation GPU. Production training does not wait for it.
-At publication on October 12, 2026, the original reference job had started;
-its first measurement and the first production-checkpoint measurement were pending.
+The first reference attempt on October 12, 2026 stopped before model execution
+because a local Python import shadowed an earlier runtime-version lookup. Its
+failure evidence was retained. This revision fixes that import placement and
+tests the actual entry path; first measurements remain pending.
 
 These are training-split diagnostics, not held-out confirmation, miner proof
 verification, or a promotion rule. The cohort was selected without outcomes
@@ -92,9 +94,10 @@ storage readback within the actual rental lifetime.
 `train_archive.py` validates the full 128-case inventory, downloads and checks
 every uploaded original artifact in full, then publishes the signed aggregate.
 Owned checkpoint-cache retirement requires its corresponding durable evidence.
-The successful reference cache is retained in the normal completion path;
-failed-original cleanup may retire its complete local cache after preserving
-failure evidence. Original durable models and evidence remain preserved.
+The successful reference cache is retained in the normal completion path.
+Failure holds also preserve complete model caches for their working lifetime;
+the retirement helper explicitly refuses removal of the complete upstream
+reference cache. Original durable models and evidence remain preserved.
 Repeating an archive readback does not repeat numerical evaluation.
 
 Any failed or abandoned original, infrastructure error, or comparability failure
@@ -114,11 +117,13 @@ From this directory, with PyNaCl installed:
 
 ```sh
 python -B -m unittest -v \
-  test_training_eval test_training_lifecycle test_training_exposure
+  test_training_eval test_training_lifecycle test_training_exposure \
+  test_preflight_import
 ```
 
-The 26 synthetic controls cover complete denominators, prompt and seed mismatch,
+The 27 CPU controls cover complete denominators, prompt and seed mismatch,
 native unresolved classification, exposure uncertainty, four-update coalescing,
 single-flight dispatch, crash intent, lease refusal, full-GET-before-publication,
-protected reference retention and failure holds. They make no model or network
-calls. The signing key in the fixtures is explicitly synthetic.
+protected reference retention and failure holds. The actual evaluator entry
+test reaches the runtime-version check without importing a model. Tests make no
+model or network calls. The signing key in the fixtures is explicitly synthetic.

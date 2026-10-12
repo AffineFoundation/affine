@@ -250,7 +250,7 @@ print(json.dumps(dict(phase=phase,lease_free=True,files=files)));os.close(fd)
         exhausted = assignment['attempt'] >= self.config['max_attempts']
         body = dict(version='failed-training128-cache-retirement-v1', root=self.remote,
                     assignment=assignment_envelope, read_plan=json.loads((local / 'read-plan.json').read_bytes()),
-                    failure_archive=receipt, remove_complete_model=exhausted,
+                    failure_archive=receipt, remove_complete_model=False,
                     cleanup_helper_sha256=file_hash(self.config['failed_cleanup_program']))
         name = 'failed-retire-' + job + '.json'
         self.stage(self.remote, {name: canonical(self.sign(body))})

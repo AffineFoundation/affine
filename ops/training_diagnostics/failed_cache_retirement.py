@@ -36,6 +36,8 @@ def retire_failed(root, grant_path, authority):
     read = signed(grant['read_plan'], authority)
     archive = signed(grant['failure_archive'], authority)
     job, cp = assignment['job_id'], assignment['checkpoint']
+    if cp == '2173b3e0119380ab813c9588bedff6b3edd5d3dcb01565490fa33ac67b2debf6' and grant.get('remove_complete_model') is True:
+        raise ValueError('original upstream reference complete cache remains protected')
     plan_hash = digest(canonical(grant['read_plan']))
     if (assignment['version'] != 'serial-training128-assignment-v1' or assignment['root'] != str(root)
             or Path(job).name != job or not job.startswith('step-') or not re.fullmatch('[0-9a-f]{64}', cp)

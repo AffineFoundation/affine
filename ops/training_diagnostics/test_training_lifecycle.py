@@ -145,11 +145,14 @@ class LifecycleTests(unittest.TestCase):
             worker.save(local/'read-plan.json',{})
             monitor=Monitor.__new__(Monitor);monitor.root=root;monitor.remote='/synthetic';monitor.authority=AUTH
             monitor.config=dict(max_attempts=1,failed_cleanup_program=__file__)
-            monitor.sign=sign;monitor.stage=lambda *a:None;monitor.worker=lambda *a,**kw:dict(phase='complete')
+            signed_payloads=[]
+            def capture_sign(value):signed_payloads.append(value);return sign(value)
+            monitor.sign=capture_sign;monitor.stage=lambda *a:None;monitor.worker=lambda *a,**kw:dict(phase='complete')
             monitor.archive_failure=lambda job:sign(dict(full_readback_verified=True))
             state=dict(active='step-67-test',completed_step=None,completed=[])
             monitor.recover_failed(state,'step-67-test')
             self.assertTrue(state['queue_failed']);self.assertIsNone(state['active'])
+            self.assertIs(signed_payloads[-1]['remove_complete_model'],False)
 
 
 if __name__=='__main__':unittest.main()
