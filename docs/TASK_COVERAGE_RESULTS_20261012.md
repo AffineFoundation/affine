@@ -113,7 +113,8 @@ The first observation shows miners moving away from the most repeatedly trained
 tasks without an observed shortage of eligible training data. The increase in
 training novelty is modest, and most selected tasks still appeared in the recent
 window. Among captured tasks, 182 were new to that window; 112 of them were not
-selected for native grading or training. Their native eligibility is unknown.
+selected for native grading or training. Their native eligibility was unknown
+at this first review; the separate closed-epoch follow-up below checks it.
 Giving such candidates priority is a separate trainer-side option that would
 not require a miner update; it is not active in this trial.
 
@@ -124,7 +125,7 @@ collision rate. It remains part of the tradeoff to monitor.
 
 These are descriptive results from one of the three prespecified epochs, not
 evidence of improved held-out performance or a causal effect of cooling. Epochs
-155 and 156 remain in the fixed trial. The analysis reads finalized records only.
+155 and 156 also belong to the fixed trial. The analysis reads finalized records only.
 
 First completed trial analysis SHA256:
 `b4b48acc00cfca85d9830a45d8dfdf12b0aa7f673baea1ca5a4023cc3a94ea4b`.
@@ -151,8 +152,8 @@ The distinction matters:
 
 The first cooling epoch mostly brought back older tasks rather than increasing
 the count of entirely new captured tasks. It also supplied 47 never-trained
-tasks that the current training selection did not examine. Their eligibility
-remains unknown; they cannot be counted as 47 ready-to-train examples.
+tasks that the current training selection did not examine. The census alone
+does not establish their eligibility; the follow-up below checks those examples.
 
 A separate, inactive candidate prioritizes captured tasks absent from the
 preceding twelve training epochs before repeated tasks, retaining native grading,
@@ -172,3 +173,46 @@ Additional evidence SHA256:
 
 - All-run coverage: `1546c3f5fdc63100bfb307896117e80b5f1f1a2cce682e49ac65424803daca74`
 - Recent versus all-run novelty: `7b22f54e2804ce975ddb0ab24f80fe74b855fbf1ead8545c0956a1620a9fbbb6`
+
+## Second completed trial epoch and the skipped-data check
+
+Epoch 155 finished in **56 minutes 43 seconds** and epoch 156 opened automatically.
+There were 249 external submitting identities, 2,155 committed batches covering
+1,596 tasks, and 1,201 captured tasks. Training used 512 tasks, including 73 absent
+from the previous twelve epochs. Only 31 were entirely new to this run, even
+though the captured data included 68 never-trained tasks. That leaves 37
+never-trained candidates unexamined in this epoch. Their eligibility has not
+been tested. Cumulative training coverage reached 2,954 of 6,746 tasks.
+
+Separately, we checked all 112 previously unused, prior-window-new task batches
+from **closed epoch 154**, preserving their original checkpoint, prompts,
+tokenizer, inputs and grading rules. This was one fixed diagnostic, without
+resampling or selecting a favorable subset. All 112 batches passed native
+grading: 448 pairs and 896 responses matched their claimed outcomes. That
+includes all 47 never-trained tasks and all 65 older returning tasks. No
+indeterminate grades occurred. The filter took about 150 seconds on four CPU
+cores; no model inference or optimizer update was performed.
+
+Combining these results with epoch 154's original selected-batch grading gives
+182 known eligible tasks absent from the previous twelve epochs, including 81
+never previously trained in this run. A rule that prioritizes those tasks would
+put all 182 ahead of recent repeats within the 512-task cap, leaving 330 slots.
+The actual historical selection used 70 such tasks, including 34 never-trained
+tasks. This is retrospective coverage arithmetic, not a replayed 512-task
+training update or a prediction of the next epoch's supply and timing.
+
+Passing native grading checks answer labels and the required batch composition.
+It does **not** verify prescribed token sampling, honest historical execution or
+the mathematical soundness of every reasoning step. This diagnostic changes no
+historical rewards or model weights. It supports prioritizing underused eligible
+data, while leaving the learning-method question open. The priority candidate
+remains inactive pending the fixed trial and deployment review; existing miner
+clients do not need an upgrade for that server-side selection change.
+
+Additional evidence SHA256:
+
+- Finalized 155 trial analysis: `356d25a7abfadee80c68eb7a3da27febdee8f3948855dcaecf74c06f46aab934`
+- Finalized 155 all-run delta: `a99a28683387793ade533f1177ac93ff3ab1b257e294bad0c5764c983228236d`
+- Original 112-task grading receipt: `9a1cb3878128b8e92ce9cb3d94ee0286502ae73b1e2700aa5bb8f5ed7bd1f83f`
+- Original diagnostic capture: `085c73a41cee0548c1b2f90ec1c53cc2d29e94b2e7dae6dafa3d846922505e62`
+- Coverage-only counterfactual: `8a12be0ab9edfd476e9c406f95f36f6a63b03fd936e6a54c3d8e0b662032116f`
