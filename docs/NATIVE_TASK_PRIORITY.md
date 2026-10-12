@@ -1,8 +1,9 @@
 # Prospective native task priority and optimizer threading
 
-These changes are prepared in code, not activated by this document. A future
-signed manifest, execution release, and matching operator deployment must enable
-them together. Existing signed epochs keep their original policies. Neither
+The controller update was installed on October 12, 2026 at 04:27 UTC, scheduled
+from epoch 158. Epoch 157 retains its original contract; first-epoch results are
+still pending. The signed manifest and execution release determine activation.
+Existing signed epochs keep their original policies. Neither
 change requires a miner client upgrade or changes the public sampling contract.
 
 ## Prefer tasks missing from recent training

@@ -38,10 +38,12 @@ nonce range 0–999, proofs and reward rules are unchanged. This tests broader t
 coverage; it is not evidence of cheating or proven learning improvement.
 Details: https://github.com/AffineFoundation/affine/blob/main/docs/TASK_COVERAGE.md
 
-## Prepared changes: native task priority and optimizer CPU threads
+## Scheduled changes: native task priority and optimizer CPU threads
 
-Two server-side changes are prospective, not active merely because this code is
-published. A new signed manifest and execution release must opt in. Miners keep
+The controller update was installed on October 12 at 04:27 UTC, scheduled from
+epoch 158. Epoch 157 retains its original contract. The signed manifest and
+execution release determine activation; first-epoch results are still pending.
+Miners keep
 the same client, checkpoint discovery, sampling/proof contract, K4/L4 quota,
 nine-batch limit and nonce range 0–999.
 
