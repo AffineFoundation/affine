@@ -1,6 +1,6 @@
 # Affine: current miner protocol and operating guide
 
-Updated October 11, 2026. Network: Bittensor Finney, subnet 120.
+Updated October 12, 2026. Network: Bittensor Finney, subnet 120.
 Code: https://github.com/AffineFoundation/affine
 Availability: https://affine.io/mining.json
 Dashboard: https://affine.io/
@@ -16,13 +16,27 @@ missing historical fields are not zero measurements. GET-only links expire
 and are refreshed. Open-epoch submissions and credentials are never included.
 This evidence export does not change the miner contract or training behavior.
 
-## Coordinator capture capacity (prospective)
+## Coordinator capture capacity
 
-A prepared coordinator-only v3 capture policy supports 64 bounded token-document
-workers within the existing 60-second total freeze budget. It becomes active only
-when an unopened epoch is signed with that policy. Mining proofs, quotas, nonces
-and submission deadlines are unchanged; no miner update is needed for this change.
+Epoch 152 activated the coordinator-only v3 capture policy with 64 bounded
+token-document workers within the existing 60-second total freeze budget. Mining
+proofs, quotas, nonces and submission deadlines are unchanged; no miner update is needed for this change.
 Details: https://github.com/AffineFoundation/affine/blob/main/docs/CAPTURE_CAPACITY.md
+
+## Prospective task-coverage trial — epoch 154 onward
+
+The coordinator is configured for a broad task cooldown from epoch 154 onward. The signed opening manifest remains authoritative: each new epoch may omit
+up to 256 of the most-used training tasks in the previous 12 completed epochs,
+leaving 6,490 of the original 6,746 mining tasks available. The list is frozen for
+that epoch and rotates at later openings. Missing or ambiguous training history
+keeps the full original pool. Held-out tasks remain excluded.
+
+The existing public miner reads `environments[].indices` automatically each epoch;
+no script or proof-format update is required. Remove stale fixed `--indices`
+overrides or select only from the current manifest. K4/L4, nine batches per UID,
+nonce range 0–999, proofs and reward rules are unchanged. This tests broader task
+coverage; it is not evidence of cheating or proven learning improvement.
+Details: https://github.com/AffineFoundation/affine/blob/main/docs/TASK_COVERAGE.md
 
 ## Current availability
 
@@ -59,7 +73,8 @@ contain research code that the signed source has not activated.
 ## Task, model and batch rules
 
 - Environment: `affine_math`, `prime-v1-2-completed-math`.
-- Taskset: 7,496 usable MATH problems; 6,746 available for mining and 750 held out.
+- Taskset: 7,496 usable MATH problems; original mining pool 6,746, with 750 held out.
+  Prospective task cooling can reduce the current allowed list; see the signed opening.
   Use only task indices advertised for mining in the signed opening.
 - Source model: `Qwen/Qwen2.5-Math-7B-Instruct`, pinned upstream revision
   `ef9926d75ab1d54532f6a30dd5e760355eb9aa4d`.

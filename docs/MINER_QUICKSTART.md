@@ -138,3 +138,12 @@ See [COMMITTED_UNAUDITED_LEARNER.md](COMMITTED_UNAUDITED_LEARNER.md),
 The live public guide distinguishes deployed contracts from prospective trials.
 [Earlier quickstart text](miner-quickstart-history-before-2026-10-06.md) is
 archived for historical epochs and does not authorize the current mechanism.
+
+## Follow the current task list
+
+The coordinator's prospective task-coverage trial can temporarily omit up to 256
+recently overused tasks from each new epoch. Standard miners follow the signed
+`environments[].indices` automatically; no script or proof update is required.
+Remove stale fixed `--indices` overrides or choose only current allowed indices.
+The broad pool, quotas and scoring rules are described in [Task coverage](TASK_COVERAGE.md).
+The signed manifest, not a cached task list, determines eligibility.
