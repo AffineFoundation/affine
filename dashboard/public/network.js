@@ -25,13 +25,10 @@
   const percent = value => `${Number((100 * value).toFixed(1))}%`;
   const day = time => new Date(time * 1000).toLocaleDateString('en-GB',{day:'numeric',month:'short',timeZone:'UTC'});
   const utc = time => new Date(time * 1000).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',timeZone:'UTC',hour12:false});
-  const epochNumber = row => {
-    const epoch = row.display_epoch != null ? row : data?.epochs?.find(e => e.id === (row.epoch_id || row.id));
-    return epoch?.display_epoch != null ? String(epoch.display_epoch) : String(row.epoch_id || row.id).match(/-(\d+)$/)?.[1] || String(row.id);
-  };
+  const epochNumber = row => String(row.id).match(/-(\d+)$/)?.[1] || String(row.id);
   const epochName = row => `Epoch ${epochNumber(row)}`;
   // Checkpoints change, but tasks, runtime and sampling must stay comparable.
-  const cohortKey = e => JSON.stringify([e.dataset_id,e.taskset_hash,e.fixed_task_ids,e.seed,e.count,e.requested_count,e.harness,e.environment_version,e.model,e.model_runtime_revision,e.output_token_budget,e.policy_kind,e.sampling_policy,e.experiment_id]);
+  const cohortKey = window.AffinePerformanceSeries.cohortKey;
   let data = null, fingerprint = '', unavailable = false;
   let selectedMinerEpoch = null, minerEpochs = [];
   let minerInitialized=false;
@@ -39,12 +36,12 @@
   let incentiveUnit=['tao','usd'].includes(requestedView.get('incentive_unit'))?requestedView.get('incentive_unit'):'alpha';
   let incentiveView=requestedView.get('incentive_view')==='bars'?'bars':'grid';
   let evaluationView=requestedView.get('performance_view')==='results'?'results':'trend';
+  let evaluationSplit=requestedView.get('performance_set')==='train'?'train':'heldout';
   let batchView=requestedView.get('batch_view')==='trend'?'trend':'bars';
   const controllers = new Map(), entered = new Set();
   const chartStates = new Map();
   const recordKey = row => String(row.run_id||row.id);
   function syncViewLink() {
-    if(matchMedia('(min-width:1000px)').matches){window.dispatchEvent(new Event('affine:copy-desktop-view'));return;}
     const url=new URL(location.href);
     const miner=minerEpochs.find(row=>row.id===selectedMinerEpoch);
     const performance=chartStates.get('evaluation'),batches=chartStates.get('batch');
@@ -58,6 +55,7 @@
     if(incentiveUnit!=='alpha')url.searchParams.set('incentive_unit',incentiveUnit);else url.searchParams.delete('incentive_unit');
     if(incentiveView==='bars')url.searchParams.set('incentive_view','bars');else url.searchParams.delete('incentive_view');
     if(evaluationView==='results')url.searchParams.set('performance_view','results');else url.searchParams.delete('performance_view');
+    if(evaluationSplit==='train')url.searchParams.set('performance_set','train');else url.searchParams.delete('performance_set');
     if(batchView==='trend')url.searchParams.set('batch_view','trend');else url.searchParams.delete('batch_view');
     if(minerView==='bars')url.searchParams.set('miners','bars');else url.searchParams.delete('miners');
     if(url.href!==location.href)history.replaceState(null,'',url);
@@ -221,6 +219,14 @@
   }
   function evaluationDetails(row) {
     const phase=evaluationPhase(row).replace('Checkpoint baseline','Baseline');
+    if(row.evaluation_split==='train'){
+      const exposed=count(row.actual_trained_task_count)?`${number(row.actual_trained_task_count)} tasks previously trained`:'Training exposure unavailable';
+      const groups=row.exposure_groups||{};
+      const groupLines=[['trained','Previously trained'],['untrained','Not yet trained'],['unknown','Exposure unknown']].filter(([key])=>groups[key]?.count>0).map(([key,label])=>`${label}: ${number(groups[key].solved)} / ${number(groups[key].count)} solved`).join('\n');
+      const fixed=row.fixed_initial_trained;
+      const fixedLine=fixed?.count?`\nFixed initially trained subset: ${number(fixed.solved)} / ${number(fixed.count)} solved`:'';
+      return `${epochName({id:row.epoch_id})} · Training split\n${percent(evaluationValue(row))} · ${number(row.count)} tasks\n${number(row.successes)} solved · ${number(row.count-row.successes)} not solved\n${row.phase==='baseline'?'Original 7B reference · ':''}Fresh generations · ${number(row.completed_count)} / ${number(row.requested_count)} complete\n${exposed}\n${groupLines}${fixedLine}\nExposure groups are descriptive; membership can change\n${number(row.output_token_budget)} output-token cap · checkpoint ${row.checkpoint.slice(0,12)}\n${utc(row.timestamp)} UTC`;
+    }
     return `${epochName({id:row.epoch_id})}\n${percent(evaluationValue(row))} · ${number(row.count)} tasks\n${number(row.successes)} solved · ${number(row.count-row.successes)} not solved\n${phase}${row.setup_changed?' · Setup changed':''}\n${utc(row.timestamp)} UTC`;
   }
   function validOutcomes(row) {
@@ -320,7 +326,7 @@
     }
     if(kind==='batch')$(kind+'-chart').querySelectorAll('.epoch-tick').forEach(tick=>tick.classList.toggle('is-current',Boolean(row&&tick.dataset.record===recordKey(row))));
     $(kind+'-value').setAttribute('aria-label',row?kind==='evaluation'?`${label}, performance ${percent(evaluationValue(row))}`:`${label}, ${batchAvailable(row)?number(row.batches)+' submitted batches':'batch counts pending audit'}`:'Measurement unavailable');
-    const previous=kind==='evaluation'?(rows[index-1]&&cohortKey(rows[index-1])===cohortKey(row)?rows[index-1]:null):row?.finalized?rows.slice(0,index).findLast(item=>item.finalized):null;
+    const previous=kind==='evaluation'?(rows[index-1]&&!row.measurement_gap&&cohortKey(rows[index-1])===cohortKey(row)?rows[index-1]:null):row?.finalized?rows.slice(0,index).findLast(item=>item.finalized):null;
     const delta=row&&previous&&(kind!=='batch'||batchAvailable(row))?kind==='evaluation'?100*(evaluationValue(row)-evaluationValue(previous)):row.batches-previous.batches:null;
     setChange(kind,delta,kind==='evaluation'?'percentage points':'batches',previous?kind==='evaluation'?`the previous comparable evaluation (${utc(previous.timestamp)} UTC)`:epochName(previous):'');
     if(kind==='evaluation')syncEvaluationLegend(rows,row);else syncBatchLegend(row);
@@ -445,7 +451,7 @@
     const high=performance?1:niceCeiling(Math.max(0,...rows.map(row=>row.batches)));
     axis(node,plot,high,performance);
     $(kind+'-empty').hidden=rows.length>0;
-    $(kind+'-empty').textContent=performance?'No completed evaluations yet.':'No epoch records yet.';
+    $(kind+'-empty').textContent=performance?(evaluationSplit==='train'?'No completed training-set evaluations yet.':'No completed held-out evaluations yet.'):'No epoch records yet.';
     node.setAttribute('aria-label',`${performance?(evaluationView==='results'?'Solved and not solved results by epoch':'Performance by epoch, with markers when the evaluation setup changes'):batchView==='trend'?'Submitted, training-included and excluded batches by epoch':'Batch outcomes by epoch'}, ${rows.length} records. Use left and right arrow keys to inspect.`);
     const coordinates=[];
     if(performance) {
@@ -469,9 +475,10 @@
           const defs=svg('defs'),gradient=svg('linearGradient',{id:'performance-fill',x1:0,y1:0,x2:0,y2:1});
           gradient.append(svg('stop',{offset:'0%','stop-color':colors.performance,'stop-opacity':.2}),svg('stop',{offset:'100%','stop-color':colors.performance,'stop-opacity':.025}));
           defs.append(gradient);node.append(defs);
-          if(coordinates.length>1){
-            node.append(svg('polygon',{points:[`${coordinates[0].x},${base}`,...coordinates.map(point=>`${point.x},${point.y}`),`${coordinates.at(-1).x},${base}`].join(' '),fill:'url(#performance-fill)',class:'plot-area'}));
-            node.append(svg('polyline',{points:coordinates.map(point=>`${point.x},${point.y}`).join(' '),class:'plot-line',pathLength:1}));
+          for(const segment of window.AffinePerformanceSeries.segments(rows,coordinates)){
+            if(segment.length<2)continue;
+            node.append(svg('polygon',{points:[`${segment[0].x},${base}`,...segment.map(point=>`${point.x},${point.y}`),`${segment.at(-1).x},${base}`].join(' '),fill:'url(#performance-fill)',class:'plot-area'}));
+            node.append(svg('polyline',{points:segment.map(point=>`${point.x},${point.y}`).join(' '),class:'plot-line',pathLength:1}));
           }
           rows.forEach((row,index)=>{
             if(row.setup_changed){const x=(coordinates[index-1].x+coordinates[index].x)/2;node.append(svg('line',{x1:x,x2:x,y1:plot.top,y2:base,stroke:themeColor('guide'),'stroke-dasharray':'3 5',class:'setup-boundary'}));}
@@ -491,7 +498,7 @@
         }
         const tickStride=Math.max(1,Math.ceil(groups.length/Math.max(1,Math.floor(plot.width/40))));
         groups.forEach((group,index)=>{
-          if(index%tickStride===0||index===groups.length-1)node.append(svg('text',{x:group.x,y:base+25,'text-anchor':'middle',class:'epoch-tick','data-epoch':group.epoch},group.epoch));
+          if((index%tickStride===0||index===groups.length-1)&&!(matchMedia('(min-width:1000px)').matches&&index!==0&&index!==groups.length-1&&groups.at(-1).x-group.x<32))node.append(svg('text',{x:group.x,y:base+25,'text-anchor':'middle',class:'epoch-tick','data-epoch':group.epoch},group.epoch));
         });
         node.append(svg('text',{x:plot.left+plot.width/2,y:base+42,'text-anchor':'middle',class:'time-tick'},'Epoch'));
       }
@@ -520,7 +527,9 @@
           const marker=svg('circle',{cx:x,cy:base,r:3,fill:themeColor('bg'),stroke:themeColor('muted'),'stroke-width':1.5,class:'pending-marker'});
           marker.append(svg('title',{},`Epoch ${epochNumber(row)}: batch count pending`));node.append(marker);
         }
-        if(rows.length<=8||width>650||index%2===0||index===rows.length-1) node.append(svg('text',{x,y:base+28,'text-anchor':'middle',class:'epoch-tick','data-record':recordKey(row)},epochNumber(row)));
+        const desktop=matchMedia('(min-width:1000px)').matches,stride=Math.max(1,Math.ceil(rows.length/Math.max(1,Math.floor(plot.width/40))));
+        const showTick=desktop?(index===0||index===rows.length-1||(index%stride===0&&(rows.length-1-index)*step>=32)):(rows.length<=8||width>650||index%2===0||index===rows.length-1);
+        if(showTick) node.append(svg('text',{x,y:base+28,'text-anchor':'middle',class:'epoch-tick','data-record':recordKey(row)},epochNumber(row)));
       });
     }
     if(!performance&&rows.length)node.append(svg('text',{x:plot.left+plot.width/2,y:plot.top+plot.height+44,'text-anchor':'middle',class:'time-tick'},'Epoch'));
@@ -1078,23 +1087,53 @@
   }
   window.addEventListener('pagehide',stopBatchReplay);
   document.addEventListener('visibilitychange',()=>{if(document.hidden)stopBatchReplay();});
+  let sharedEpoch=null,sharedRows=[],sharedInitialized=false;
+  function syncSharedEpoch(epochs){
+    sharedRows=epochs;
+    if(!sharedInitialized){sharedEpoch=epochs.find(row=>epochNumber(row)===requestedView.get('epoch'))?.id||null;sharedInitialized=true;}
+    const selected=epochs.findIndex(row=>row.id===sharedEpoch),index=selected>=0?selected:epochs.length-1;
+    const slider=$('desktop-epoch-slider');slider.max=Math.max(0,epochs.length-1);slider.value=Math.max(0,index);slider.disabled=epochs.length<2;
+    $('desktop-epoch-label').textContent=index>=0?epochName(epochs[index]):'Epoch —';
+    slider.style.setProperty('--progress',`${epochs.length>1?100*index/(epochs.length-1):0}%`);
+    $('desktop-epoch-previous').disabled=index<=0;$('desktop-epoch-next').disabled=index>=epochs.length-1;
+  }
+  function selectSharedEpoch(index){
+    const epoch=sharedRows[index];if(!epoch)return;
+    sharedEpoch=epoch.id;selectedMinerEpoch=epoch.id;
+    for(const kind of ['evaluation','batch']){
+      const state=chartStates.get(kind);if(!state)continue;
+      const row=kind==='batch'?state.rows.find(row=>row.id===epoch.id):state.rows.findLast(row=>sharedRows.findIndex(item=>item.id===row.epoch_id)<=index);
+      state.selected=row?recordKey(row):null;
+    }
+    const emission=chartStates.get('incentive');
+    if(emission){const row=emission.rows.findLast(row=>row.timestamp<=epoch.start)||emission.rows[0];emission.selected=row?recordKey(row):null;stopIncentiveIntro();}
+    render();syncViewLink();
+  }
+  $('desktop-epoch-slider').addEventListener('input',event=>selectSharedEpoch(Number(event.target.value)));
+  for(const [direction,step] of [['previous',-1],['next',1]])$('desktop-epoch-'+direction).addEventListener('click',()=>selectSharedEpoch(Number($('desktop-epoch-slider').value)+step));
   function render() {
     if(!data)return;
     const epochs=data.epochs.filter(row=>row.source==='live-reward-math'&&finite(row.start)&&count(row.batches)).sort((a,b)=>a.start-b.start);
+    syncSharedEpoch(epochs);
     renderBatchTotal(epochs);
     window.dispatchEvent(new CustomEvent('affine:snapshot',{detail:data}));
-    if(window.matchMedia('(min-width:1000px)').matches){status();return;}
-    const ids=new Set(epochs.map(row=>row.id)),epochOrder=new Map(epochs.map((row,index)=>[row.id,index]));
-    const evaluations=data.evaluations.filter(row=>ids.has(row.epoch_id)&&row.env_id==='affine_math'&&row.status==='complete'&&finite(row.timestamp)&&finite(row.mean_reward)&&row.mean_reward>=0&&row.mean_reward<=1&&count(row.count)&&row.count>0&&count(row.successes)&&row.successes<=row.count).sort((a,b)=>epochOrder.get(a.epoch_id)-epochOrder.get(b.epoch_id)||a.timestamp-b.timestamp);
-    const latestByEpoch=new Map();
-    for(const row of evaluations)latestByEpoch.set(row.epoch_id,row);
-    const epochResults=[...latestByEpoch.values()],setups=new Map();
-    const history=epochResults.map((row,index)=>{
-      const key=cohortKey(row);if(!setups.has(key))setups.set(key,setups.size+1);
-      return {...row,display_setup:setups.get(key),setup_changed:index>0&&key!==cohortKey(epochResults[index-1])};
-    });
-    drawIncentive();drawChart('evaluation',history);drawChart('batch',epochs.slice(-12));drawMiners(epochs);status();
+    const history=window.AffinePerformanceSeries.history(data,epochs,evaluationSplit);
+    for(const split of ['heldout','train'])$('evaluation-set-'+split).setAttribute('aria-pressed',String(split===evaluationSplit));
+    $('evaluation-set-label').textContent=evaluationSplit==='train'?'Training set — fresh generations':'Held-out set — fresh generations';
+    const latest=history.at(-1);
+    $('evaluation-profile-label').textContent=latest?`${number(latest.count)} tasks · ${latest.output_token_budget?number(latest.output_token_budget)+' output tokens':'pinned output budget'} · cohorts compared separately`:'No completed measurements for this set';
+    drawIncentive();drawChart('evaluation',history);drawChart('batch',matchMedia('(min-width:1000px)').matches?epochs:epochs.slice(-12));drawMiners(epochs);status();
   }
+  for(const split of ['heldout','train'])$('evaluation-set-'+split).addEventListener('click',()=>{
+    if(evaluationSplit===split)return;
+    evaluationSplit=split;chartStates.delete('evaluation');controllers.get('evaluation')?.hide();
+    delete $('evaluation-chart').dataset.drawKey;render();syncViewLink();
+  });
+  window.addEventListener('affine:theme',()=>{
+    minerLayoutKey='';incentiveKey='';
+    for(const kind of ['evaluation','batch'])delete $(kind+'-chart').dataset.drawKey;
+    if(data)render();
+  });
   document.addEventListener('pointerdown',event=>{
     for(const [kind,controller] of controllers) {
       const container=kind==='miner'?$('miner-grid').parentElement:$(kind+'-wrap');
@@ -1146,11 +1185,7 @@
       if(!response.ok)throw Error('Snapshot unavailable');
       const next=await response.json();
       if(!next||!Array.isArray(next.epochs)||!Array.isArray(next.evaluations)||[...next.epochs,...next.evaluations].some(row=>!row||typeof row!=='object'||Array.isArray(row)))throw Error('Invalid snapshot');
-      const nextFingerprint=JSON.stringify([next.training_run,next.epochs,next.evaluations,next.incentive,next.incentive_history,next.incentive_prices]);
-      if(data?.training_run?.run_id !== next.training_run?.run_id){
-        chartStates.delete('evaluation');chartStates.delete('batch');selectedMinerEpoch=null;minerInitialized=false;
-        for(const key of ['epoch','miner_epoch','performance_epoch','batch_epoch','performance_run'])requestedView.delete(key);
-      }
+      const nextFingerprint=JSON.stringify([next.training_run,next.epochs,next.evaluations,next.training_evaluations,next.incentive,next.incentive_history,next.incentive_prices]);
       data=next;unavailable=false;
       $('main').dataset.state='ready';$('main').setAttribute('aria-busy','false');
       if(nextFingerprint!==fingerprint){fingerprint=nextFingerprint;render();}else{drawIncentive();status();}

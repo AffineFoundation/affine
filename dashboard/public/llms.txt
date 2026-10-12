@@ -388,3 +388,29 @@ Historical guide (not current instructions):
 https://github.com/AffineFoundation/affine/blob/main/docs/history/llms-before-recovery-consolidation-2026-10-09.md
 Operator weight evidence (no miner protocol change):
 https://github.com/AffineFoundation/affine/blob/main/docs/BOUNDED_WEIGHT_EVIDENCE.md
+
+
+Training-data diagnostic (prospective; unavailable until authenticated results exist)
+--------------------------------------------------------------------------------
+The Performance chart separates Held-out from Training. "Training set -- fresh
+generations" measures new operator-generated answers on a fixed 128-task cohort
+from the mining TRAIN pool. It does not use the submitted four-success/four-failure
+labels, which are selected by construction and cannot measure model accuracy.
+
+The diagnostic is scheduled independently every four finalized optimizer updates,
+with the original 7B reference (checkpoint2173) and current committed checkpoint
+evaluated using the
+same cohort, task seeds, native grader and runtime profile. The reference is not
+the actual training-run genesis (checkpoint6493); exposure follows the actual
+training-run ancestry. The proposed TRAIN
+profile allows 2048 output tokens; the historical fixed32 held-out curve uses
+1024. They remain separate series and do not form one interchangeable trend.
+
+Public rows identify cohort, checkpoint, optimizer step, runtime profile, requested
+and completed task counts, stopping counts, and actual training exposure when
+known. Results are admitted only after signed original execution evidence and
+durable full-result readback. Infrastructure errors or prompt/seed mismatch are
+unavailable measurements, never zero. A TRAIN gain can show fitting or retention;
+it does not establish held-out generalization. Missing results show an empty
+state. This is a monitoring addition; mining, quotas, verification and rewards
+remain unchanged.

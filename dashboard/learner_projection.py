@@ -88,7 +88,17 @@ def project(document,manifest,identity_uids,authority=AUTHORITY,*,manifest_envel
    selection=population['training_selection']
    if (selection['version']!='bounded-postfreeze-learner-selection-v1'or selection['eligible_count']!=len(eligible)or selection['training_count']!=len(selected)or selection['unselected_count']!=len(eligible)-len(selected)or type(selection['cap'])is not int or selection['cap']!=cap or len(selected)>cap or selection['eligible_inventory_sha256']!=digest(population['eligible_inventory'])or selection['selected_inventory_sha256']!=digest(inventory)):raise ValueError('bounded training selection inventory')
   elif len(selected)!=len(eligible):raise ValueError('historical unbounded projection requires complete admitted inventory')
-  return dict(submitted=len(committed),learner_training_selected=len(selected),learner_eligible=len(eligible),learner_excluded=len(committed)-len(eligible),submitted_grid=grid,eligible_grid=eligible_grid,unassigned=outside,submitting_identities=len({key[0]for key in committed}),eligible_identities=len({key[0]for key in eligible}),input_assurance='unaudited',proof_verification_claimed=False,source='authenticated-committed-learner-population',provenance_sha256=digest(document))
+  task_counts=None
+  environments={e['env_id']:e for e in manifest.get('environments',[]) if isinstance(e,dict) and 'env_id'in e}
+  if environments:
+   counts={};complete=True
+   for key,(_,child) in committed.items():
+    env=child.get('env_id');index=child.get('index');definition=environments.get(env)
+    if not definition or type(index)is not int or index not in definition.get('indices',[]):complete=False;break
+    task=counts.setdefault((env,index),dict(environment=env,index=index,submitted=0,included=0))
+    task['submitted']+=1;task['included']+=int(key in eligible)
+   if complete:task_counts=sorted(counts.values(),key=lambda t:(t['environment'],t['index']))
+  return dict(task_counts=task_counts,submitted=len(committed),learner_training_selected=len(selected),learner_eligible=len(eligible),learner_excluded=len(committed)-len(eligible),submitted_grid=grid,eligible_grid=eligible_grid,unassigned=outside,submitting_identities=len({key[0]for key in committed}),eligible_identities=len({key[0]for key in eligible}),input_assurance='unaudited',proof_verification_claimed=False,source='authenticated-committed-learner-population',provenance_sha256=digest(document))
  except Exception:
   # Public state never contains the submitted documents, capabilities, or traces.
   # Invalid projection is unavailable; never silently invent a zero population.
