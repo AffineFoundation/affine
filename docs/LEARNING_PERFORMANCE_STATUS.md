@@ -1,6 +1,19 @@
 # Measured learning and transport status
 
-## Current assessment — 2026-10-11, 22:24 UTC
+## Current assessment — 2026-10-12, 01:38 UTC
+
+The fixed production step 60 checkpoint failed independent confirmation against
+the genuine upstream base: 335/512 correct versus 406/512, with 29 paired gains
+and 100 losses. The difference was −13.87 percentage points, with a prespecified
+paired 95% interval of −20.17 to −7.35. Typical responses became shorter while
+budget caps doubled, a mixed pattern distinct from the isolated positive-SFT32
+experiment below. Both initial infrastructure failures and the explicitly
+authorized, complete resource-only replacement evaluations are preserved.
+See the [full result, stopping analysis and limitations](LIVE_STEP60_RESULTS.md).
+This measures step 60, not a later live checkpoint; it makes no production
+reset, objective change or miner-fraud claim.
+
+## Earlier assessment — 2026-10-11, 22:24 UTC
 
 The isolated 32-update positive-only SFT comparison is complete and failed its
 primary learning gate. Base solved 405/512 independent problems; training on
