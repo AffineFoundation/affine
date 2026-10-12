@@ -91,3 +91,31 @@ After activation, compare actual trained-task novelty, native rejection rates,
 external submission yield, optimizer and full-epoch duration, and held-out
 performance. Broader task coverage and faster optimization are hypotheses to
 measure, not proof that the model has improved.
+
+## Worker startup correction (October 12)
+
+The first epoch158 attempt stopped before optimizer construction: the worker set
+intra-op threads to two but left inter-op threads at the runtime default (96 on
+that host). The signed CPU16 release correctly refused this 2/96 entry profile.
+The parent optimizer remained at step67; there was no completed numerical update.
+
+The peer now initializes the admitted steady 2/2 profile after authenticating the
+job and peer grant, before importing the backend or doing inter-op work. Its
+initialization receipt records both thread counts. Historical jobs without the
+explicit threading declaration retain their behavior. A reused interpreter that
+cannot set inter-op threads still fails; the worker must start in a fresh process.
+The optimizer's existing 2→16→2 checks and per-update report requirements remain.
+
+Restart also exposed an older controller startup guard that only recognized the
+prior v2 task-selection policy. The operational successor keeps that guard's code
+and historical behavior, while binding its prospective comparison to the exact
+ROOT-signed v3 policy from epoch158. It does not rewrite the issued manifest. The
+complete composed startup path was checked to the first operational-client
+boundary, with network, signing and mutation disabled, before activation.
+
+A separately authorized replacement job began at07:04 UTC with the same signed
+manifest, all512 selected input descriptors, checkpoint and optimizer parent.
+Its initialization receipt confirms 96/96→2/2. Original failure evidence and the
+epoch start time remain intact; epoch158 has missed the one-hour target. This
+record does not claim a completed replacement update or improved model quality.
+No miner upgrade, sampling-contract change, or website redesign is required.

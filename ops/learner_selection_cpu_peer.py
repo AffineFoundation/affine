@@ -83,12 +83,41 @@ def bind_backend(grant,operator_root,scientific_root):
     return backend
 
 
+def initialize_optimizer_threads(document, grant, *, torch_module=None):
+    """Initialize the signed opt-in's steady profile before backend imports/work.
+
+    Called only after prepare() authenticates job, declaration and peer grant.
+    Older jobs without this declaration preserve their original runtime path.
+    This does not relax any scientific optimizer/report thread guard.
+    """
+    declaration=document['payload'].get('unaudited_training_execution',{}).get('payload',{})
+    if 'optimizer_threading'not in declaration:return None
+    policy=declaration['optimizer_threading']
+    expected=dict(version='optimizer-only-cpu-threads-v1',steady_intraop=2,optimizer_intraop=16,interop=2)
+    if (grant.get('version')!='cpu-selection-peer-basic-eligibility-optimizer-cpu16-authorization-v11' or
+            type(policy)is not dict or set(policy)!=set(expected)or
+            any(type(policy[k])is not type(v)or policy[k]!=v for k,v in expected.items())):
+        raise ValueError('authenticated exact optimizer-only CPU16 initialization scope')
+    if torch_module is None:
+        import torch as torch_module
+    before=dict(intraop=torch_module.get_num_threads(),interop=torch_module.get_num_interop_threads())
+    torch_module.set_num_threads(2)
+    if torch_module.get_num_interop_threads()!=2:
+        torch_module.set_num_interop_threads(2)
+    after=dict(intraop=torch_module.get_num_threads(),interop=torch_module.get_num_interop_threads())
+    if after!={'intraop':2,'interop':2}:raise ValueError('steady optimizer threading initialization failed')
+    return dict(version='authenticated-optimizer-steady-initialization-v1',before=before,after=after,
+                declared_policy=policy,called_before_backend_import=True,scientific_guards_unchanged=True)
+
+
 def main():
     p=argparse.ArgumentParser();p.add_argument('--job',required=True);p.add_argument('--authority',required=True);p.add_argument('--operator-root',required=True);p.add_argument('--scientific-root',required=True);p.add_argument('--execute-backend',action='store_true');p.add_argument('--workspace');p.add_argument('--checkpoint-cache');a=p.parse_args()
     document=json.loads(Path(a.job).read_bytes());receipt,grant,_=prepare(document,a.authority,a.operator_root,a.scientific_root)
     if a.execute_backend:
         if not grant['backend_execution_allowed']or not a.workspace:raise ValueError('explicit separately signed backend execution required')
         if os.environ.get('CUBLAS_WORKSPACE_CONFIG')!=':4096:8':raise ValueError('original CUBLAS profile required')
+        initialization=initialize_optimizer_threads(document,grant)
+        if initialization is not None:print(json.dumps({'optimizer_steady_initialization':initialization},sort_keys=True),flush=True)
         backend=bind_backend(grant,a.operator_root,a.scientific_root)
         result=backend.execute(document,a.authority,a.workspace,a.checkpoint_cache)
         receipt['scientific_operation_started']=True;receipt['backend_result']=dict(success=result['success'],job_id=result['job_id'])
