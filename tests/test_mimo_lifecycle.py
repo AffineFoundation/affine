@@ -156,6 +156,66 @@ class LifecycleTests(unittest.TestCase):
         self.committed=[];self.lifecycle.tick(now=self.now+123)
         self.assertEqual(self.discovery_value['payload']['checkpoint']['id'],output['id'])
 
+    def _report_clock_fixture(self):
+        # Real worker report binding/deadline validation, with only GPU result
+        # contents stubbed. Queue receipt occurs after a deliberately old tick.
+        from subnet.mimo_worker import VERSION as WORKER_VERSION
+        def full_job(opening,dispatch,step,namespace):
+            job=self.make_job(opening,dispatch,step,namespace)['payload']
+            job.update(source_files={},runtime_versions={},created_at=self.now,
+                       expires_at=self.now+2000)
+            return sign(self.authority,job)
+        lifecycle=self.make(replace(self.services,make_training_job=full_job))
+        lifecycle.tick(now=self.now);self.upload()
+        with patch('subnet.mimo_training_worker.validate_job'):
+            lifecycle.tick(now=self.now+120)
+        job=next(iter(self.jobs.values()))['payload'];manifest=job['manifest']['payload']
+        output={'files':dict(self.base['files'],**{'model.safetensors':'d'*64})}
+        output['id']=digest(output['files'])
+        report=dict(job_id=job['job_id'],job_sha256=digest(job),operator=self.authority.id,
+            worker_policy=WORKER_VERSION,role='train',epoch=manifest['epoch'],
+            checkpoint=manifest['checkpoint']['id'],source_files={},runtime_versions={},
+            backend_profile=manifest['backend_profile'],numerical_policy=manifest['sampling_contract']['calibration'],
+            chain_transactions=False,success=True,completed_at=self.now+131,
+            training=dict(status='updated',optimizer_step=1),
+            publication_receipt=sign(self.publisher,dict(descriptor=output)))
+        return lifecycle,job,report,output
+
+    def test_report_completed_during_slow_tick_uses_receipt_time(self):
+        lifecycle,job,report,output=self._report_clock_fixture()
+        self.result=sign(self.worker,dict(action='report',job_id=job['job_id'],report=report))
+        with (patch('subnet.mimo_training_worker.validate_job'),
+              patch('subnet.mimo_training_worker.validate_result'),
+              patch('subnet.mimo_lifecycle.time.time',return_value=self.now+132)):
+            result=lifecycle.tick(now=self.now+121)
+        self.assertEqual(result['status'],'finalized')
+        self.assertEqual(result['checkpoint'],output['id'])
+        self.assertEqual(len(self.jobs),1)
+
+    def test_fresh_receipt_clock_still_rejects_future_completion(self):
+        lifecycle,job,report,_=self._report_clock_fixture()
+        report['completed_at']=self.now+138
+        self.result=sign(self.worker,dict(action='report',job_id=job['job_id'],report=report))
+        with (patch('subnet.mimo_training_worker.validate_job'),
+              patch('subnet.mimo_training_worker.validate_result') as training_validation,
+              patch('subnet.mimo_lifecycle.time.time',return_value=self.now+132)):
+            with self.assertRaisesRegex(ValueError,'report signed deadline'):
+                lifecycle.tick(now=self.now+121)
+        training_validation.assert_not_called()
+        self.assertEqual(self.readbacks,0)
+
+    def test_fresh_receipt_clock_preserves_original_job_expiry(self):
+        lifecycle,job,report,_=self._report_clock_fixture()
+        report['completed_at']=job['expires_at']
+        self.result=sign(self.worker,dict(action='report',job_id=job['job_id'],report=report))
+        with (patch('subnet.mimo_training_worker.validate_job'),
+              patch('subnet.mimo_training_worker.validate_result') as training_validation,
+              patch('subnet.mimo_lifecycle.time.time',return_value=job['expires_at']+1)):
+            with self.assertRaisesRegex(ValueError,'report signed deadline'):
+                lifecycle.tick(now=self.now+121)
+        training_validation.assert_not_called()
+        self.assertEqual(self.readbacks,0)
+
     def test_terminal_training_failure_is_recovery_required_and_preserves_checkpoint(self):
         self.lifecycle.tick(now=self.now);self.upload()
         def failed(envelope):raise TrainingRecoveryRequired(envelope['payload']['job_id'],'failed')

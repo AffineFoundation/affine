@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import time
 
 from .backend_jobs import signed
 from .controller import save_manifest
@@ -223,7 +224,10 @@ class Lifecycle:
              'original authorized trainer report request')
         report=request['report']
         from .mimo_worker import validate_report
-        validate_report(report,job,m,self.identity.id,digest(job),now)
+        # Fetching and authenticating a queued result can outlast the tick's
+        # starting timestamp. Judge its completion time when we receive it;
+        # the original signed job deadline still bounds allowed completion.
+        validate_report(report,job,m,self.identity.id,digest(job),time.time())
         need(report['training']['status']=='updated', 'nonempty dispatch requires a real trainer update')
         receipt=report['publication_receipt']; published=signed(receipt,job['training']['publisher_id'])
         actual=descriptor(self.services.readback_publication(published))
