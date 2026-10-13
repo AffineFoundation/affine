@@ -1,7 +1,7 @@
 import base64,copy,json,tempfile,unittest
 from pathlib import Path
 from nacl.signing import SigningKey
-from dashboard.mimo_live_projection import Projection,canonical,digest
+from dashboard.mimo_live_projection import Projection,canonical,digest,evidence_availability
 
 class Policy:
     run_id='new-mimo';policy_sha256='a'*64
@@ -80,6 +80,31 @@ class ProjectionTests(unittest.TestCase):
         row=self.p.project(self.prior,25)['epochs'][0];self.assertEqual(row['display_epoch'],1)
     def test_missing_training_metrics_stay_null(self):
         self.seal();d=self.p.project(self.prior,25);self.assertIsNone(d['epochs'][0]['training'])
+    def evidence_history(self,**changes):
+        entry=dict(version='mimo-finalized-evidence-v1',run_id='new-mimo',first_round=189,
+            epoch_count=1,last_finalized_round=189,created_at=24,catalog={'method':'GET','expires_at':40})
+        entry.update(changes)
+        return self.sign({'mimo_finalized_epoch_evidence':entry})
+    def test_published_status_requires_signed_matching_closed_epoch_catalog(self):
+        self.trained();snap=self.p.project(self.prior,25)
+        result=evidence_availability(snap,self.evidence_history(),self.authority_id,25)
+        self.assertEqual(result['summary']['evidence_status'],'mimo-finalized-artifacts-available')
+        self.assertEqual(result['summary']['published_evidence_epochs'],1)
+        self.assertEqual(snap['summary']['evidence_status'],'mimo-finalized-artifacts-not-yet-published')
+    def test_published_open_or_wrong_run_catalog_rejected(self):
+        snap=self.p.project(self.prior,15)
+        result=evidence_availability(snap,self.evidence_history(),self.authority_id,25)
+        self.assertEqual(result['summary']['evidence_status'],'mimo-finalized-evidence-unavailable')
+        self.trained();snap=self.p.project(self.prior,25)
+        result=evidence_availability(snap,self.evidence_history(run_id='old-run'),self.authority_id,25)
+        self.assertEqual(result['summary']['evidence_status'],'mimo-finalized-evidence-unavailable')
+    def test_expired_and_bad_signature_links_not_advertised_available(self):
+        self.trained();snap=self.p.project(self.prior,25)
+        result=evidence_availability(snap,self.evidence_history(),self.authority_id,41)
+        self.assertEqual(result['summary']['evidence_status'],'mimo-finalized-artifact-links-expired')
+        forged=self.evidence_history();forged['payload']['mimo_finalized_epoch_evidence']['epoch_count']=0
+        result=evidence_availability(snap,forged,self.authority_id,25)
+        self.assertEqual(result['summary']['evidence_status'],'mimo-finalized-evidence-unavailable')
 
 if __name__=='__main__':unittest.main()
 

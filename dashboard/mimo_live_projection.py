@@ -5,6 +5,7 @@ import json
 import math
 from pathlib import Path
 from nacl.signing import VerifyKey
+from nacl.exceptions import BadSignatureError
 
 
 def canonical(value):
@@ -32,6 +33,39 @@ def read(path):
 
 def finite(value):
     return value if type(value) in (int, float) and math.isfinite(value) else None
+
+
+def evidence_availability(snapshot, history, authority, now):
+    """Project the signed publisher's availability, never infer it from training."""
+    result = dict(snapshot, summary=dict(snapshot['summary']))
+    summary = result['summary']
+    if history is None:
+        return result
+    try:
+        payload = signed(history, authority)
+        entry = payload.get('mimo_finalized_epoch_evidence')
+        if entry is None:
+            return result
+        run = snapshot['training_run']
+        finalized = [e for e in snapshot['epochs'] if e['finalized']]
+        count = entry['epoch_count']
+        if (entry['version'] != 'mimo-finalized-evidence-v1'
+                or entry['run_id'] != run['run_id']
+                or entry['first_round'] != run['first_round']
+                or type(count) is not int or not 0 <= count <= len(finalized)
+                or entry['last_finalized_round'] != (run['first_round'] + count - 1 if count else None)
+                or entry['catalog']['method'] != 'GET'
+                or entry['created_at'] > now):
+            raise ValueError('dashboard finalized evidence catalog binding')
+        if entry['catalog']['expires_at'] <= now:
+            summary['evidence_status'] = 'mimo-finalized-artifact-links-expired'
+        elif count:
+            summary['evidence_status'] = 'mimo-finalized-artifacts-available'
+        summary['published_evidence_epochs'] = count
+    except (KeyError, TypeError, ValueError, BadSignatureError):
+        # A stale/invalid optional publication must not hide operational data.
+        summary['evidence_status'] = 'mimo-finalized-evidence-unavailable'
+    return result
 
 
 class Projection:

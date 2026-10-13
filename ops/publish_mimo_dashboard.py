@@ -14,7 +14,7 @@ import time
 sys.dont_write_bytecode=True
 
 
-def database_view(original,projection):
+def database_view(original,projection,history_path=None,authority=None):
     class MiMoDatabase(original):
         def refresh(self):
             # The old learner is closed. Preserve its historical SQLite rows;
@@ -22,7 +22,14 @@ def database_view(original,projection):
             return None
         def snapshot(self,current_only=False):
             prior=super().snapshot(current_only=False)
-            return projection.project(prior,time.time()) if current_only else prior
+            if not current_only:return prior
+            now=time.time();result=projection.project(prior,now)
+            if history_path is not None:
+                from dashboard.mimo_live_projection import read,evidence_availability
+                try:history=read(history_path)
+                except (OSError,ValueError):history=None
+                result=evidence_availability(result,history,authority,now)
+            return result
     return MiMoDatabase
 
 
@@ -56,7 +63,8 @@ def main(argv=None):
         first_round=lifecycle['lifecycle']['first_round'],started_at=cfg['started_at'],model=cfg['model'])
     # Explicit path arguments preserve original database/source/static assets when
     # operator stages these modules in a separate immutable source closure.
-    server.Database=database_view(server.Database,projection)
+    server.Database=database_view(server.Database,projection,
+        cfg.get('history_export_path'),cfg['authority'])
     if args.preview:
         prior=json.loads(Path(cfg['prior_snapshot']).read_bytes())
         print(json.dumps(projection.project(prior,time.time()),allow_nan=False));return
