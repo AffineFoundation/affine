@@ -59,8 +59,10 @@ rollback after a new-policy job has been issued.
 * Persistent hold/resume in the host lifecycle and supervised entrypoint,
   including the old host wrapper. It must survive crashes before trainer ACK;
   a lock alone does not persist a hold after process exit.
-* Resolve historical audit, evaluation, finalized-history and dashboard records
-  through the registry rather than the single active policy. Preserve original
+* Wire historical audit, evaluation, finalized-history and dashboard records
+  through the registry rather than the single active policy. The evaluation
+  scheduler now has opt-in registry support, with a regression covering an old
+  pending report and a new-source job; operator wiring remains outstanding. Preserve original
   evaluation scheduler checkpoints and job IDs. Emit each receipt under its
   original policy; choose job metadata using that original source profile.
 * Operator configuration/API wiring for the queue's registry and worker-profile
