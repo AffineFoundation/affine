@@ -76,6 +76,16 @@ the previous all-FP32 Qwen2.5 generation path. Initial qualification is for the
 explicitly admitted H200/SM90 runtime; another GPU or kernel stack requires its
 own qualification.
 
+Generate through the released `cached_sample` / `MimoRuntime` path, with a fresh
+cache for each trajectory. The qualified path executes one sequence per model
+forward pass. Independent replicas may run in parallel; combining trajectories
+into a different tensor batch or substituting another inference engine is not
+covered by that qualification. Full-prefill logits used for proof construction
+are not interchangeable with the prescribed cached generation distribution.
+Do not override attention, recurrent precision or global numerical settings.
+When reporting a rejection, include epoch/task/nonce, client release, GPU,
+driver, PyTorch distribution/build, and any generation-path changes; no keys.
+
 The new manifest uses:
 - Runtime: `qwen3_5-mimo-v1`.
 - Sampling: `forced-inverse-cdf-complete-group-mimo-v1`.
