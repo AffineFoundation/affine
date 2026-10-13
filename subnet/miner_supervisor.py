@@ -66,9 +66,14 @@ def opening(discovery_url, authority, *, now=None, get=requests.get, fetch=boots
     url = bootstrap.r2_url(pointer['manifest_url'])
     manifest = bootstrap.signed(fetch(url, bootstrap.JSON_LIMIT), authority)
     if (pointer.get('transport_policy') != 'direct-r2-v1' or manifest.get('transport_policy') != 'direct-r2-v1'
-            or pointer.get('epoch') != manifest.get('epoch') or hint.get('epoch') != manifest.get('epoch')
+            or pointer.get('epoch') != manifest.get('epoch')
             or not re.fullmatch('[A-Za-z0-9_-]{1,200}', manifest.get('epoch', ''))):
         raise ValueError('signed opening scope')
+    if hint.get('epoch') != manifest['epoch']:
+        # The unsigned website hint and signed R2 pointer publish separately.
+        # A normal rollover can expose the old hint with the new current record.
+        # Retry discovery; never reinterpret or weaken the two signed records.
+        return None
     now = time.time() if now is None else now
     start, deadline = manifest.get('start'), manifest.get('deadline')
     if (type(start) not in (int, float) or type(deadline) not in (int, float)

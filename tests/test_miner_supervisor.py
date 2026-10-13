@@ -35,6 +35,26 @@ class Session:
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_unsigned_hint_rollover_retries_then_admits_new_signed_opening(self):
+        self.fixture();key=SigningKey.generate();authority=key.verify_key.encode().hex()
+        def signed(value):
+            return s.bootstrap.canonical(dict(payload=value,signer=authority,
+                signature=base64.b64encode(key.sign(s.bootstrap.canonical(value)).signature).decode()))
+        pointer=dict(transport_policy='direct-r2-v1',epoch='test-2',manifest_url=self.observed['manifest_url'])
+        manifest=copy.deepcopy(self.manifest);manifest['epoch']='test-2'
+        hint=dict(authority=authority,accepting_submissions=True,epoch='test-1',current_url=self.observed['manifest_url'])
+        def read(*args,**kwargs):return Response(json.dumps(hint).encode(),status=200)
+        responses=iter([signed(pointer),signed(manifest)])
+        self.assertIsNone(s.opening(self.args.discovery_url,authority,get=read,fetch=lambda *a:next(responses)))
+        hint['epoch']='test-2';responses=iter([signed(pointer),signed(manifest)])
+        self.assertEqual(s.opening(self.args.discovery_url,authority,get=read,fetch=lambda *a:next(responses))['manifest'],manifest)
+        # A signed-current/signed-manifest disagreement remains fatal even if
+        # the unsigned hint is stale at the same time.
+        pointer['epoch']='different';hint['epoch']='test-1'
+        responses=iter([signed(pointer),signed(manifest)])
+        with self.assertRaisesRegex(ValueError,'signed opening scope'):
+            s.opening(self.args.discovery_url,authority,get=read,fetch=lambda *a:next(responses))
+
     def fixture(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=Path(self.tmp.name)
         self.data={'config.json':b'{}','model.safetensors':b'0123456789abcdef'}
