@@ -311,7 +311,7 @@ def population_source(epoch,closure,bucket,directory,authority,now):
 
 def prepare_cycle(*, state, source_root, bucket, workdir, authority=AUTHORITY,
                   history_key=HISTORY_KEY, now=None, training_projector=None, evaluation_collector=None,
-                  trainer_log_directory=None):
+                  trainer_log_directory=None,mimo=None):
     """Only GETs and owned local staging; never signs or writes public objects."""
     now = time.time() if now is None else now
     if history_key != HISTORY_KEY:
@@ -465,15 +465,22 @@ def prepare_cycle(*, state, source_root, bucket, workdir, authority=AUTHORITY,
         evidence_routes_expire_at=now+GET_TTL,
         catalog=dict(key=key,sha256=h,size=len(raw),url=bucket.presign(key,operation='get_object',expires=GET_TTL),
                      method='GET',expires_at=now+GET_TTL))
-    return dict(version=VERSION,history_key=history_key,authority=authority,
+    plan=dict(version=VERSION,history_key=history_key,authority=authority,
         source_state=str(state),workdir=str(workdir),prepared_at=now,
         previous_history_sha256=digest(previous['data']),previous_history_etag=previous['etag'],
         history_payload=payload,artifacts=list(artifacts.values()),finalized_epochs=len(rows),
         private_rejected_finalizations=rejected,private_projection_errors=projection_errors)
+    if mimo is not None:
+        from ops.mimo_finalized_evidence import extend_plan
+        extend_plan(plan,mimo,bucket)
+    return plan
 
 
 def validate_prepared(plan,identity,bucket=None):
     """Recheck closure, finalized proofs and the full sanitization boundary before PUT."""
+    if 'mimo_extension' in plan:
+        from ops.mimo_finalized_evidence import validate_extension
+        plan=validate_extension(plan,bucket)
     if plan.get('version')!=VERSION:raise ValueError('reviewed publisher version')
     now=plan['prepared_at']
     if type(now) not in (int,float) or not math.isfinite(now):raise ValueError('prepared timestamp')
@@ -568,6 +575,8 @@ def publish_prepared(plan, *, bucket, identity, history_export_path=None):
     old=copy.deepcopy(authenticated(json.loads(previous['data']),identity.id))
     proposed=copy.deepcopy(plan['history_payload'])
     old.pop('finalized_epoch_evidence',None);proposed.pop('finalized_epoch_evidence',None)
+    if 'mimo_extension' in plan:
+        old.pop('mimo_finalized_epoch_evidence',None);proposed.pop('mimo_finalized_epoch_evidence',None)
     if canonical(old)!=canonical(proposed):raise ValueError('preserve every legacy history field')
     validate_prepared(plan,identity,bucket)
     verified_path=Path(plan['workdir'])/'durable-readbacks.private.json'
@@ -688,7 +697,7 @@ def main():
     with (workdir/'publisher.lock').open('a+b') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         plan=prepare_cycle(state=config['state'],source_root=config['source_root'],bucket=bucket,workdir=workdir,
-                           trainer_log_directory=config.get('trainer_log_directory'))
+                           trainer_log_directory=config.get('trainer_log_directory'),mimo=config.get('mimo'))
         name='prepared-'+str(time.time_ns())+'.private.json'
         with (workdir/name).open('xb') as stream:os.fchmod(stream.fileno(),0o600);stream.write(canonical(plan))
         if args.publish:
