@@ -80,6 +80,12 @@ this is an explicit training budget, not a change to the miner contract of
 eight prescribed trajectories and nine groups per UID. Measure the complete
 epoch before claiming an hourly service level.
 
+The audit job lifetime is initially 7,200 seconds. The real original eight-rollout
+audit took about 46 minutes because every trajectory needed cached-reference
+adjudication. A 900-second expiry would abandon valid work. This is a separate
+audit deadline, not the epoch duration; the learner does not wait for these jobs.
+Size audit concurrency to the admitted workers and observe queue age and coverage.
+
 ## Readiness evidence
 
 The authority may enable the public release only with real scoped receipts for

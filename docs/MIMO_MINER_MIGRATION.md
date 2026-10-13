@@ -75,10 +75,13 @@ the private diagnostic is a paid network epoch.
 
 ## Prepared launch procedure
 
-Install the exact published dependency lock and rebuilt TOPLOC wheel into a new
-runtime using `ops/bootstrap_mimo_runtime.py`; the final release will publish
-both files with their SHA256 values. Use that runtime's Python to start the
-updated supervisor. On a qualified H200 with enough free memory, four independent
+The [prepared runtime inventory](https://affine.io/releases/mimo-runtime-20261013/ARTIFACTS.json)
+now provides permanent public downloads for the exact dependency lock and rebuilt
+TOPLOC wheel. Follow the [download, SHA256 verification and installation steps](MIMO_LIFECYCLE.md#reproducible-worker-installation)
+to install a new runtime with `ops/bootstrap_mimo_runtime.py`. These artifacts are
+marked prepared; wait for the authenticated MiMo opening before starting mining.
+Use that runtime's Python to start the updated supervisor. On a qualified H200
+with enough free memory, four independent
 B1 replicas can generate the fixed attempts in parallel:
 
 ```sh

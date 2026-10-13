@@ -44,7 +44,7 @@
     "directory": "/operator/state/mimo-qualified-run/auditor",
     "max_inflight": 8,
     "budget_per_tick": 8,
-    "job_seconds": 900,
+    "job_seconds": 7200,
     "max_execution_retries": 3
   }
 }

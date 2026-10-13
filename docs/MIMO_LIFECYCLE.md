@@ -40,23 +40,42 @@ cannot authorize payable or public-named epochs.
 
 ## Reproducible worker installation
 
-Use CPython 3.12 on an NVIDIA H200 host with an appropriate CUDA 13 driver. Stage
-the authenticated source release and the operator-delivered runtime lock and
-rebuilt TOPLOC wheel. These are public dependency artifacts, distributed with
-GET-only URLs and SHA256 hashes; neither requires publishing bucket credentials.
+Use CPython 3.12 and `uv` on an NVIDIA H200 host with an appropriate CUDA 13 driver. Stage
+the authenticated source release and the pinned runtime lock and rebuilt TOPLOC
+wheel. The [prepared runtime inventory](https://affine.io/releases/mimo-runtime-20261013/ARTIFACTS.json)
+provides permanent public, hash-addressed downloads. These files require no
+bucket credentials and do not activate the new mining contract.
 The native wheel must match the qualified torch installation. The older PyPI
 TOPLOC binary failed its ABI import against this torch build.
 
 The captured runtime lock and rebuilt wheel used in the private qualification
-have these hashes. The operator must include the same artifacts in the release
-distribution or publish and requalify a replacement; the paths below are local
-staging paths, not existing public download URLs.
+are published as `mimo-runtime-20261013`, marked **prepared, not active**, with
+reviewed installer code at GitHub revision `96016dd0`. Download and verify them:
+
+```sh
+mkdir -p /operator/releases/runtime
+MIMO_ARTIFACT_BASE=https://affine.io/releases/mimo-runtime-20261013
+curl --fail --location --retry 3 --proto '=https' \
+  "$MIMO_ARTIFACT_BASE/57442fdd51cf165c00ce4c531100aff3fc9f8a0a6ae43f4bf1868d5d0f912875/requirements.lock.txt" \
+  --output /operator/releases/runtime/requirements.lock.txt
+curl --fail --location --retry 3 --proto '=https' \
+  "$MIMO_ARTIFACT_BASE/84c8db262fd302d21eb52c151ab039071948d0002f3848b09cea53c750934205/toploc-0.1.6-cp312-cp312-linux_x86_64.whl" \
+  --output /operator/releases/runtime/toploc-0.1.6-cp312-cp312-linux_x86_64.whl
+sha256sum --check <<'SHA256'
+57442fdd51cf165c00ce4c531100aff3fc9f8a0a6ae43f4bf1868d5d0f912875  /operator/releases/runtime/requirements.lock.txt
+84c8db262fd302d21eb52c151ab039071948d0002f3848b09cea53c750934205  /operator/releases/runtime/toploc-0.1.6-cp312-cp312-linux_x86_64.whl
+SHA256
+```
+
+The lock contains exact package versions, including `torch==2.14.0` and
+`transformers==5.14.1`. Do not substitute the separate `2.14.0+cu130` distribution:
+its package fingerprint differs. Then install into a new directory:
 
 ```sh
 python3 /operator/releases/mimo/ops/bootstrap_mimo_runtime.py \
   --destination /operator/runtimes/mimo-candidate \
   --source-root /operator/releases/mimo \
-  --requirements /operator/releases/runtime/requirements.txt \
+  --requirements /operator/releases/runtime/requirements.lock.txt \
   --requirements-sha256 57442fdd51cf165c00ce4c531100aff3fc9f8a0a6ae43f4bf1868d5d0f912875 \
   --toploc-wheel /operator/releases/runtime/toploc-0.1.6-cp312-cp312-linux_x86_64.whl \
   --toploc-wheel-sha256 84c8db262fd302d21eb52c151ab039071948d0002f3848b09cea53c750934205 \
