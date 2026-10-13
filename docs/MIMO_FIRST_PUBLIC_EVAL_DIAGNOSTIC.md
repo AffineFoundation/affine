@@ -20,6 +20,16 @@ this matched narrow-format sensitivity, despite the official 18→19 difference.
 A single update and 32 tasks do not establish a learning trend either way.
 Do not compare updated relaxed scores with the original strict baseline.
 
+The second public update subsequently scored **21/32** under the original v1
+rules (two completed wrong, nine unresolved, no infrastructure errors). Applying
+the same narrow prospective parser to all 96 original token sequences gives
+**22/32 → 22/32 → 22/32**, while the original signed scores remain
+**18/32 → 19/32 → 21/32**. This is still a formatting-sensitive small diagnostic,
+not evidence of a sustained gain in math performance. The new original report is
+`64b7506a9585ddb194f76790112f5a7bfbdba1ea2b23a9ff917d8c1faf331ae6`.
+All three share the authenticated tasks, prompts, common draws, source, runtime
+and grader. The separate 128-task comparison is running on the original v1 rules.
+
 ## Evidence and difficult cases
 
 Baseline neutral EOS answers:

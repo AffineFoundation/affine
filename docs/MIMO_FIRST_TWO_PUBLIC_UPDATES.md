@@ -43,9 +43,10 @@ grading change requires its own qualified, versioned cutover and matched baselin
 
 ## What we know about learning
 
-The matched public fixed32 result after the first update is officially 18 to 19
-correct. Applying the same narrow formatting diagnostic to both checkpoints gives
-22 to 22. Neither result establishes a trend; see the
+The matched public fixed32 results are officially 18, 19 and 21 correct for the
+base, first update and second update. Applying the same narrow formatting
+diagnostic to all three checkpoints gives 22, 22 and 22. Neither sequence
+establishes a trend in math performance; see the
 [matched evaluation diagnostic](MIMO_FIRST_PUBLIC_EVAL_DIAGNOSTIC.md).
 
 The current objective centers rewards across all eight attempts, then masks
@@ -64,7 +65,7 @@ runtime and data-quality investigation, but does not establish miner intent or
 the rejection rate of unaudited groups. Training from eligible unaudited groups
 remains the published contract.
 
-Next measurements are the next matched fixed32 result and a private comparison
+Next measurements are further matched fixed32 results and a private comparison
 on 128 preselected held-out tasks disjoint from mining and fixed32. That larger
 comparison uses the original grading/runtime on both checkpoints; no relaxed
 updated score is compared with a strict baseline. Results will be reported when

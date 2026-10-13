@@ -371,6 +371,13 @@ period and correctly attached math wrappers. This is not the live grading rule;
 original scores and signed evidence remain unchanged. Units, repeated boxes,
 truncated answers and reasoning correctness were not silently accepted. The
 diagnostic shows that formatting contributes to apparent gains and losses.
+The second public checkpoint6e02820b scored21/32 correct,2 wrong,9 unresolved
+and0 errors on the same fixed32 suite. Report SHA256:
+64b7506a9585ddb194f76790112f5a7bfbdba1ea2b23a9ff917d8c1faf331ae6.
+The matched narrow-format diagnostic across all96 original outputs remains
+22/32 ->22/32 ->22/32, versus official18/32 ->19/32 ->21/32. This still does
+not demonstrate a sustained improvement in math performance. A separate matched
+128-task comparison is running with the original v1 grading on both checkpoints.
 The first two public updates trained63 distinct tasks across64 task slots.
 Their data-quality and objective review, including incomplete-output masking
 and later audit findings, is published at:
