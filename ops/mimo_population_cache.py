@@ -29,7 +29,7 @@ class AuthenticatedPopulationCache:
         else:self.hits+=1
         return deepcopy(self.entries[key])
 
-def wrap_source(source, *, statistics=None):
+def wrap_source(source, *, statistics=None, derivations=None):
     call=type(source).__call__;evidence=call.__globals__['evidence']
     admit=evidence.__globals__['admit_queue_reports'];authenticate=evidence.__globals__['authenticate_population']
     for fn,pin in ((call,ASSESSMENT_SHA256),(evidence,ASSESSMENT_SHA256),(admit,AUDIT_SHA256),(authenticate,AUDIT_SHA256)):
@@ -37,6 +37,8 @@ def wrap_source(source, *, statistics=None):
             raise ValueError('exact MiMo evidence authentication source required')
     if admit.__globals__['authenticate_population']is not authenticate:
         raise ValueError('same original population authentication required')
+    if derivations is not None:
+        authenticate=derivations.wrap_authenticate(authenticate,type(source.release))
     def load(**kwargs):
         cached=AuthenticatedPopulationCache(authenticate)
         admitted=_copy(admit,dict(admit.__globals__,authenticate_population=cached))

@@ -29,3 +29,28 @@ The version-2 host composition adds the source-pinned no-eviction adapter above.
 A cache miss still incurs full original validation. Further growth in new records or MiMo history can consume the remaining time margin; this repair is not an unlimited-throughput guarantee. Historical hourly assessments and already-submitted chain transactions must not be rewritten to make a repair appear retroactive.
 
 The production-equivalent 19:00-cutoff qualification used the original authorized cache producer, with 10,000 hits, 92 misses, zero evictions and zero writes at capacity. Complete evidence processing took 444.00 seconds, with calculation and validation taking another 0.17 seconds. All 171 scientific snapshots, per-miner estimates and points matched the read-only reference exactly. Queue changes between reads affected only explicitly reviewed metadata and post-cutoff diagnostics. This tests the real write-capable path, not merely a read-only approximation. The next scheduled live hour must still confirm fresh assessment and submission after activation.
+
+
+## Population derivation reuse
+
+The v3 host composition also pins `population_derivations.py`. After admission
+of the original source inventory, this helper reuses the manifest digest and
+cohort derivation within one population reconstruction. It retains the original
+signatures, release guard, commitment and native-grade checks, and canonical
+reconstruction comparison. An isolated copy of the opening prevents caller
+aliases; unexpected guard types use the original path. No authenticated result
+is cached across invocations.
+
+Six actual signed populations reconstructed identically in 50.38 seconds versus
+74.75 seconds originally. This measures population reconstruction only, not the
+whole hourly assessment. The signed host policy must opt into the new helper;
+committing this code does not activate it. The same 480-second evidence budget,
+720-second outer bound, admission-cache limits, scoring, current registrations,
+transaction cursor and last-valid-assessment fallback remain in force.
+
+The composed MiMo reader was also compared against its predecessor on the same
+19:00 UTC cutoff and six original population documents: 110.22 seconds versus
+84.24 seconds, with byte-identical whole evidence output. The unchanged legacy
+reader was not rerun in that comparison. An actual natural hourly assessment
+and chain submission remain the operational check; these timings do not promise
+unbounded history growth within a fixed deadline.

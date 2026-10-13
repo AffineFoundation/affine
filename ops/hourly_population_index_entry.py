@@ -12,7 +12,7 @@ import stat
 import types
 from nacl.signing import VerifyKey
 
-VERSION='hourly-population-index-host-composition-v2'
+VERSION='hourly-population-index-host-composition-v3'
 
 def canonical(value):
     return json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
@@ -46,7 +46,7 @@ def module(name,ref):
 
 def prepare(document,authority):
     p=authenticate(document,authority)
-    need(type(p)is dict and set(p)=={'version','execute_enabled','entry','parent_entry','parent_composition','index_module','mimo_module','cache_module','evidence_module','maximum_seconds'},'exact host composition')
+    need(type(p)is dict and set(p)=={'version','execute_enabled','entry','parent_entry','parent_composition','index_module','mimo_module','cache_module','derivation_module','evidence_module','maximum_seconds'},'exact host composition')
     need(p['version']==VERSION and type(p['execute_enabled'])is bool and p['maximum_seconds']==720,'unchanged writer bound')
     pinned(p['entry']);need(Path(p['entry']['path'])==Path(__file__).resolve(),'exact host entry')
     parent_doc=json.loads(pinned(p['parent_composition']));parent_p=authenticate(parent_doc,authority)
@@ -64,7 +64,8 @@ def prepare(document,authority):
         copied.__kwdefaults__=old.__kwdefaults__;isolated[name]=copied
     mimo_cache=module('_mimo_population_authentication_cache',p['mimo_module'])
     optimized_legacy=isolated['load_evidence']
-    optimized_mimo=mimo_cache.wrap_source(context['evidence_source'])
+    derivations=module('_isolated_population_derivations',p['derivation_module'])
+    optimized_mimo=mimo_cache.wrap_source(context['evidence_source'],derivations=derivations)
     cache_mode=module('_bounded_no_eviction_cache',p['cache_module'])
     combined=loader.__globals__['compose_loader'](
         optimized_legacy,optimized_mimo,transition_policy=closure['transition_policy'])
