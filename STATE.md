@@ -1,3 +1,21 @@
+MiMo first public update completed, 2026-10-13 14:23 UTC:
+Global epoch189 finalized in70m16s. External miners submitted42 task groups;
+32 distinct task groups/256 trajectories entered the GRPO update, with207
+completed trajectories trained and49 unresolved trajectories masked. Published
+checkpoint b756440a2d1831dbb6b2b7f15b081ad5430133977ddd82f9eb00eed71dcb12b0.
+Only model files went toR2; optimizer remained local. Epoch190 is collecting
+against that checkpoint and its fixed32 evaluation is running. Public base
+score18/32; post-update improvement is not established.14h weights submitted
+for252 currentUIDs at block9274816. Original hourly writer/cursor/6hEMA retained.
+
+At14:30UTC the coordinator received host-only import-path housekeeping through
+ops/mimo_host_path_launcher.py. Frozenv7 scientific code and issued manifests
+are unchanged. Exact native grading parity passed on2 authentic groups;
+spawned workers keep distinct import roots rather than accumulating duplicates.
+This is an explicitly recorded host execution change, not a sampler change.
+Several sampling-boundary audit rejections are under independent investigation;
+these are not established evidence of intentional manipulation.
+
 MiMo MAINNET ACTIVE, 2026-10-13 13:12:53 UTC:
 Global epoch189 / affine-mimo9b-grpo-20261013-e000000 is collecting against
 base87de8304… and approved source69ae058b… (code c770e351). Public signed
