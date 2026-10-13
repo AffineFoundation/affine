@@ -1,3 +1,12 @@
+MiMo matched public evaluation, 2026-10-13 15:20 UTC:
+The first public update's exact matched fixed32 result is19/32 correct versus
+18/32 at the base. Five tasks became correct; four previously correct became
+unresolved. Both original worker-signed reports were authenticated, with identical
+tasks, prompt hashes, common random draws, harness, runtime and source. This is
+a small first observation, not convergence evidence. Updated reportd8313445…,
+public baselinece16a508…. Second update has finished computation and is publishing
+candidate6e02820b…; authoritative adoption is still pending.
+
 MiMo continued operation, 2026-10-13 15:17 UTC:
 Epoch190 captured95 groups from68 external miners and selected32 distinct tasks
 for its second GRPO update. Native admission took124.39seconds versus528.39

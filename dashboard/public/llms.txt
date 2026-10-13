@@ -14,7 +14,7 @@ Authenticated activation:
 - Exact runtime qualification scope: H200/SM90 pinned runtime; release scope 51c37e28aaa34e12a69f869e242fda28657d86b836b2915a63d299038e43e2ba
 - First-opening manifest digest: 83f59a82af25ce576f344c3e707bbf0168ce314530b4a3e1da04eb5fecb55fa9
 - Final task-split confirmation: 8361365558b9e6cfac6ef60ae6a9bba78edacf7117a87abae915888ff7a009ba
-- Matched evaluation baseline: Original base fixed32:18/32 correct (56.25%),3 completed wrong,11 unresolved,0 infrastructure errors; report SHA256 faed31885f214f1d2de6d858ac5f419b7be7bdac8bdd62ba305759b3a6ca0507
+- Pre-activation rehearsal baseline: Original base fixed32:18/32 correct (56.25%),3 completed wrong,11 unresolved,0 infrastructure errors; report SHA256 faed31885f214f1d2de6d858ac5f419b7be7bdac8bdd62ba305759b3a6ca0507
 
 Network: Bittensor Finney, subnet 120.
 Code: https://github.com/AffineFoundation/affine
@@ -344,11 +344,22 @@ two task groups, checkpoint037cf62a solved18/32 again, with1 completed wrong
 and13 unresolved outputs (report77c256970f839bbf19938620dc8d39e2ee935694fe239e3fdef9aceddeeddeb5).
 This shows no accuracy gain and is too small to establish a learning trend.
 The public run starts from the original base, not that private checkpoint.
+The first public update trained32 distinct task groups and published checkpoint
+b756440a2d1831dbb6b2b7f15b081ad5430133977ddd82f9eb00eed71dcb12b0.
+Its matched public fixed32 evaluation scored19/32 correct,1 completed wrong,
+12 unresolved and0 errors, versus the public base's18/32,3 wrong,11 unresolved.
+The exact tasks, prompts, common random draws, grader and runtime match.
+Five tasks became correct while four previously correct tasks became unresolved.
+This one-task net gain on32 tasks is an early observation, not an established trend.
+Public base report SHA256:
+ce16a508f8743afe2799446660a548768e4bd425811ffd75af61d2cd71904439.
+Post-update report SHA256:
+d83134457b93ac970e404a62aa6ead35305bf6fe3003b97c3ca56f60c66a5e3b.
 The historical22/32 result used a different task-definition fingerprint and
 cannot replace this matched baseline.
 Fresh training-fit diagnostics are also separate from held-out generalization.
 Neither a completed update, a lower training loss nor miner success quotas prove
-learning. No convergence or performance-improvement claim is made by this release.
+learning. No convergence or sustained-improvement claim is made by this release.
 
 Finalized evidence is published through the existing signed history format:
 https://github.com/AffineFoundation/affine/blob/main/docs/FINALIZED_EPOCH_EVIDENCE.md
