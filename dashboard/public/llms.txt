@@ -395,9 +395,27 @@ Continuous verifiers sample current and historical immutable groups independentl
 of the trainer. Rewards use native-eligible unique task contributions, accumulated
 authenticated audit evidence and configured penalties. Groups excluded only by
 the learner's compute budget can still contribute to rewards. The existing
-cross-miner task-collision rule remains: colliding task submissions receive zero
-uniqueness contribution. Cumulative retries never add credit. All eight outcomes
+cross-miner task-collision rule remains: submissions from multiple miners for the
+same environment/task within an epoch receive zero uniqueness contribution. Cumulative retries never add credit. All eight outcomes
 remain one task group for accounting.
+
+The current global audit estimate counts authenticated invalid observations in
+an eight-epoch window: an observation is recent when its global epoch is less
+than eight rounds behind the latest admitted epoch. One recent invalid applies
+an invalid-sample reward multiplier of 0.1; two or more apply zero. The signed
+field is named `zero_epoch_after=2`, but this global estimator applies it across
+the recent eight epochs, not only within one epoch. Three or more recent invalids
+also activate the blacklist while the latest bad epoch is fewer than four rounds
+old. The separate two-invalid zero rule can outlast that blacklist condition.
+New submissions do not instantly erase these penalties. They are applied after
+contribution smoothing, and historical overlap retains stricter admitted factors.
+
+A fast prefill disagreement alone is not an invalid-sample penalty: the prescribed
+cached adjudication checks the sampling path. Infrastructure failures do not
+count as invalid samples. Numerically unresolved evidence is not proof of fraud;
+where admitted as numerical ambiguity, it affects resolution coverage rather
+than the invalid counter. An invalid-contract verdict does not establish intent
+or prove that a miner deliberately manufactured a trajectory.
 
 Individual disputed audit reports may be temporarily deferred under an explicit,
 expiring ROOT-signed diagnostic record tied to the original job, report, worker,
@@ -409,6 +427,8 @@ assessment rather than silently declaring the disputed sample fraudulent.
 
 The sole validator writer continues submitting the best authenticated assessment
 each hour, with six-hour contribution half-life and current hotkey-to-UID mapping.
+Inactive miners can retain decaying credit for earlier eligible contributions;
+this does not award new contribution for epochs in which they submitted nothing.
 Training failure, an unfinished epoch or unavailable fresh evidence must not stop
 it. It retains the last valid assessment and confirmed penalties. A new model
 run does not reset historical reward evidence or its transaction cursor. Burn
