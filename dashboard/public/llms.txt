@@ -121,7 +121,8 @@ not invented negative examples.
 
 Subnet 120 now uses Null consensus, and proof-of-work (PoW) registration is
 enabled. Both changes are finalized on Finney. Burned registration remains
-available; the subnet capacity remains 256 UIDs.
+available. The subnet capacity was subsequently increased to 1,000 UIDs;
+this is a registration capacity, not a claim that all slots are occupied.
 
 PoW difficulty was reset to 100,000,000, with a minimum of 100,000,000.
 This is computational difficulty, not a TAO fee. Difficulty is dynamic: the
@@ -153,6 +154,7 @@ Finalized chain receipts:
 - PoW enabled: https://taomarketcap.com/extrinsics/9276978-0026
 - Minimum difficulty 100,000,000: https://taomarketcap.com/extrinsics/9276987-0005
 - Difficulty reset to 100,000,000: https://taomarketcap.com/extrinsics/9276991-0003
+- UID capacity increased to 1,000: https://taomarketcap.com/extrinsics/9277005-0008
 
 The live runtime accepted both difficulty changes through the subnet owner's
 Owner proxy. Older guidance describing them as root-only is not accurate for

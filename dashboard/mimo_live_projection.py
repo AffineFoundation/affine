@@ -68,6 +68,33 @@ def evidence_availability(snapshot, history, authority, now):
     return result
 
 
+def contribution_grid(registration_document, captures, manifest, authority):
+    """Use the epoch's signed fixed-block registrations, never guess UID order."""
+    total = sum(c['total_groups'] for c in captures)
+    try:
+        if type(registration_document) is not dict:
+            raise ValueError('registration evidence unavailable')
+        registry = signed(registration_document, authority)
+        if registry['epoch'] != manifest['epoch'] or type(registry['snapshot_block']) is not int:
+            raise ValueError('epoch registration binding')
+        identities = {}; uids = set()
+        for row in registry['registrations'].values():
+            uid = row['uid']; identity = row['public_key']
+            if (type(uid) is not int or not 0 <= uid < 1000 or uid in uids
+                    or identity in identities or row['snapshot_block'] != registry['snapshot_block']):
+                raise ValueError('unique fixed-block registration')
+            identities[identity] = uid; uids.add(uid)
+        grid = [0]*max(256, max(uids, default=-1)+1)
+        outside = 0
+        for capture in captures:
+            uid = identities.get(capture['miner'])
+            if uid is None: outside += capture['total_groups']
+            else: grid[uid] += capture['total_groups']
+        return grid, outside
+    except (KeyError, TypeError, ValueError, BadSignatureError):
+        return None, total  # Missing mapping is unavailable, not zero miners.
+
+
 class Projection:
     def __init__(self, root, policy, authority, workers, validate_report, *, first_round, started_at, model, source_registry=None, audit_projection=None):
         self.audit_projection = audit_projection
@@ -144,7 +171,11 @@ class Projection:
                 if any(c['epoch']!=eid or c['manifest_sha256']!=digest(m) or c['miner']not in m['capabilities'] or type(c['total_groups']) is not int or not 0<=c['total_groups']<=m['max_batches'] for c in captures) or len({c['miner']for c in captures})!=len(captures):
                     raise ValueError('dashboard frozen group count')
                 total=sum(c['total_groups'] for c in captures)
-                row.update(batches=total,batches_available=True,unchecked=total,unassigned_batches=total,
+                plan_path=directory/'PLAN.json'
+                try: registration_document=read(plan_path)['registrations']
+                except (OSError, ValueError, KeyError, TypeError): registration_document=None
+                grid,outside=contribution_grid(registration_document,captures,m,self.authority)
+                row.update(batches=total,batches_available=True,unchecked=total,grid=grid,unassigned_batches=outside,
                     submissions=len(captures),phase='training',batch_count_source='signed-mimo-frozen-population',
                     learner_provenance_sha256=digest(dispatch_envelope),learner_eligible=dispatch['selected_task_count'])
             final_path=directory/'FINALIZED.json'

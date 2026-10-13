@@ -116,11 +116,11 @@ class Lifecycle:
              and type(snapshot['snapshot_block']) is int and snapshot['snapshot_block'] >= 0
              and type(snapshot['registrations']) is dict, 'complete current registration snapshot')
         rows = snapshot['registrations']; keys=[]; uids=set()
-        need(len(rows) <= 256, 'bounded network registration set')
+        need(len(rows) <= 1000, 'bounded network registration set')
         for hotkey, row in rows.items():
             need(type(hotkey) is str and hotkey and type(row) is dict and
                  set(row) == {'uid','public_key','snapshot_block'} and type(row['uid']) is int
-                 and 0 <= row['uid'] < 256 and row['uid'] not in uids
+                 and 0 <= row['uid'] < 1000 and row['uid'] not in uids
                  and row['snapshot_block'] == snapshot['snapshot_block'], 'unique current UID snapshot')
             key=row['public_key']
             need(type(key) is str and len(key) == 64 and all(c in '0123456789abcdef' for c in key)

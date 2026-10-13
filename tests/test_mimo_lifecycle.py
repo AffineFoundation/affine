@@ -48,6 +48,21 @@ class LifecycleTests(unittest.TestCase):
         self.lifecycle=self.make()
 
     def registrations(self):return dict(snapshot_block=123,registrations={'registered-miner':dict(uid=85,public_key=self.miner.id,snapshot_block=123)})
+    def test_null_capacity_opens_complete_thousand_uid_snapshot(self):
+        rows={str(i):dict(uid=i,public_key=Identity(i.to_bytes(32,'big')).id,snapshot_block=123)
+              for i in range(1000)}
+        self.lifecycle=self.make(replace(self.services,registrations=lambda:dict(snapshot_block=123,registrations=rows)))
+        result=self.lifecycle.tick(now=self.now)
+        self.assertEqual(result['status'],'collecting')
+        self.assertEqual(len(self.discovery_value['payload']['capabilities']),1000)
+        self.assertIn(rows['999']['public_key'],self.discovery_value['payload']['capabilities'])
+
+    def test_null_capacity_rejects_uid_outside_authorized_range(self):
+        self.lifecycle=self.make(replace(self.services,registrations=lambda:dict(snapshot_block=123,registrations={
+            'invalid':dict(uid=1000,public_key=self.miner.id,snapshot_block=123)})))
+        with self.assertRaises(ValueError):self.lifecycle.tick(now=self.now)
+        self.assertIsNone(self.discovery_value)
+
     def discovery(self,opening,previous):
         actual=None if self.discovery_value is None else digest(self.discovery_value)
         if actual!=digest(opening):self.assertEqual(actual,previous)
