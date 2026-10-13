@@ -180,6 +180,95 @@ miner before handing its state to an upgraded launcher.
 
 ## Install the new runtime and client
 
+### Starting with zero TAO: register by PoW, then activate
+
+You can start with zero TAO in both the coldkey and hotkey. The current Finney
+runtime provides fee-free `pow_register`; Affine activation also has zero fees
+and zero deposits. GPU rental, electricity and bandwidth still cost money.
+PoW registration does not guarantee rewards: you must then submit eligible
+complete task groups under the current epoch contract.
+
+Use a separate registration environment. The approved MiMo mining runtime's
+Bittensor 11.0.2 does not implement this new PoW route. Do not upgrade that
+mining runtime in place. The following public SDK source was built and used
+on a fresh Ubuntu 24.04 H200 machine with Python 3.12, `uv`, GCC and pkg-config:
+
+```sh
+umask 077
+mkdir -p pow-sdk
+curl --fail --location --proto '=https' \
+  https://github.com/RaoFoundation/subtensor/archive/24e6b4daf911de4f300f3254f153db8ed274788d.tar.gz \
+  --output pow-sdk/source.tar.gz
+printf '%s  %s\n' \
+  46482755edab0da685fe51e1e9fe2276e3856448713b8a8ee3dfcdb3440e312d \
+  pow-sdk/source.tar.gz | sha256sum --check
+tar -xzf pow-sdk/source.tar.gz -C pow-sdk --strip-components=1
+uv venv --python 3.12 pow-env
+uv pip install --python pow-env/bin/python ./pow-sdk/sdk/python
+pow-env/bin/python -c 'import bittensor_core; print(bittensor_core.pow_gpu_devices())'
+```
+
+The matching native core builds from the pinned source. GPU PoW needs a working
+NVIDIA OpenCL driver/ICD; CUDA availability alone does not establish that.
+`--pow-backend auto` can use a supported GPU or fall back to CPU. A search timeout
+means no proof was found within that attempt; it does not mean TAO is required.
+
+Clone the canonical Affine repository, or update an existing checkout while
+preserving private state. Replace `/absolute/affine` below with that checkout.
+The registration helper is in current GitHub main; the approved mining worker
+still comes from the immutable source archive identified above.
+Create a fresh wallet with an Ed25519 hotkey and matching private mining seed:
+
+```sh
+mkdir -p private
+pow-env/bin/python /absolute/affine/ops/create_ed25519_miner_wallet.py \
+  --directory "$PWD/private/affine-wallet"
+```
+
+The helper refuses to overwrite an existing directory. It prints only public
+identity information and paths; recovery phrases, wallet keys and `miner.seed`
+stay in owner-only files. Back up that directory privately before terminating
+the machine. Never publish it or copy its contents into logs or support messages.
+
+Register the fresh hotkey on subnet 120 using PoW:
+
+```sh
+pow-env/bin/btcli subnets register \
+  --netuid 120 --pow --pow-backend auto --pow-workers 8 --pow-timeout 900 \
+  --network finney --wallet affine-pow --wallet-hotkey miner \
+  --wallet-path "$PWD/private/affine-wallet/wallets" --yes --json
+```
+
+Keep `--pow`: the burned-registration route spends TAO. Use `--wallet-hotkey`
+for the wallet's hotkey name in this CLI. A finalized registration supplies a
+UID; it does not yet activate Affine mining. Activate the same identity:
+
+```sh
+PYTHONPATH=/absolute/affine pow-env/bin/python -m subnet.register \
+  --wallet affine-pow --hotkey miner \
+  --wallet-path "$PWD/private/affine-wallet/wallets" \
+  --network finney --netuid 120 --execute
+```
+
+Allow roughly three minutes for the activation commitment to reveal, then wait
+for the next signed epoch roster to include the new identity. An already-open
+epoch does not acquire new capabilities retroactively. Continue with the
+separate approved MiMo runtime installation and mining command below, using
+`--key /absolute/private/affine-wallet/miner.seed` adjusted to your actual path.
+The supervisor follows signed public discovery and model handovers; miners do
+not need an operator whitelist entry or private bucket credentials.
+
+Qualification on October 13, 2026: a fresh rented H200 and unfunded wallet
+registered as UID 256, then activated successfully. Both coldkey and hotkey
+remained at zero free/reserved TAO. Registration and activation each paid zero
+fees: https://taomarketcap.com/extrinsics/9277113-0013 and
+https://taomarketcap.com/extrinsics/9277117-0008. The test used the pinned SDK's
+PoW and commitment calls with transaction journaling. Its first mining batch
+is still awaiting admission in the next public epoch; registration success
+alone is not evidence of an accepted rollout or earned reward.
+
+### Approved mining runtime
+
 Use the reviewed release commit above from https://github.com/AffineFoundation/affine.
 Preserve local work and private state when updating. The source approved by the
 signed opening controls the actual child miner; arbitrary GitHub main contents
