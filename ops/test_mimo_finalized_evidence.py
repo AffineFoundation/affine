@@ -11,13 +11,16 @@ class EvidenceTests(unittest.TestCase):
         self.f=ProjectionTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
         self.legacy=PublisherTests();self.legacy.setUp();self.addCleanup(self.legacy.tearDown)
         self.bucket=self.legacy.bucket
+        self.f.manifest['group_contract']['group_size']=8
+        self.f.opening=self.f.sign(self.f.manifest);self.f.write('coordinator/OPENING.json',self.f.opening)
     def trained(self):
         f=self.f;final=f.trained();path=f.epoch/'coordinator/DISPATCH.json';d=json.loads(path.read_bytes())['payload']
-        doc=dict(version='complete-group-training-document-v1',epoch=f.manifest['epoch'],checkpoint='b'*64,batch=dict(env_id='math',index=1,task_hash='a'*64,rollouts=[dict(seed=0,classification='positive',turns=[dict(prompt=[1,2],output=[3,4],stop_reason='eos',logprobs=[-1],full_vocab_logprobs=['NO'])])]))
+        doc=dict(version='complete-group-training-document-v1',epoch=f.manifest['epoch'],checkpoint='b'*64,miner='d'*64,slot=0,batch=dict(env_id='math',index=1,task_hash='a'*64,rollouts=[dict(seed=0,classification='positive',turns=[dict(prompt=[1,2],output=[3,4],stop_reason='eos',logprobs=[-1],full_vocab_logprobs=['NO'])])]))
+        doc['batch']['rollouts']=[dict(doc['batch']['rollouts'][0],seed=i)for i in range(8)]
         raw=p.canonical(doc);self.bucket.objects['private/doc']=raw
-        d.update(selected=[dict(miner='d'*64,document={'key':'private/doc','sha256':p.digest(raw)},batch_sha256=m.digest(doc['batch']))],excluded=[])
+        d.update(selected=[dict(miner='d'*64,env_id='math',index=1,document={'key':'private/doc','sha256':p.digest(raw),'slot':0},batch_sha256=m.digest(doc['batch']))],excluded=[],selected_rollout_count=8)
         f.write('coordinator/DISPATCH.json',f.sign(d));final['dispatch_sha256']=m.digest(f.sign(d))
-        job=json.loads((f.epoch/'TRAINING-JOB.json').read_bytes())['payload'];job['training']['dispatch']={'sha256':final['dispatch_sha256']};f.write('TRAINING-JOB.json',f.sign(job))
+        job=json.loads((f.epoch/'TRAINING-JOB.json').read_bytes())['payload'];job['training']['dispatch']={'sha256':final['dispatch_sha256']};job['training']['documents']={p.digest(raw):{'size':len(raw),'url':'https://private.invalid/do-not-publish'}};f.write('TRAINING-JOB.json',f.sign(job))
         report=json.loads((f.epoch/'TRAINING-RESULT.json').read_bytes())['payload'];report['report']['job_sha256']=m.digest(job);f.write('TRAINING-RESULT.json',f.sign(report,f.worker));f.write('FINALIZED.json',f.sign(final));return final
     def test_open_never_reads_inputs_or_corrupt_opening(self):
         self.f.write('coordinator/OPENING.json',{'bad':True});self.assertEqual(m.collect(self.f.p,self.bucket,25),[]);self.assertEqual(self.bucket.reads,[])
@@ -64,3 +67,42 @@ class EvidenceTests(unittest.TestCase):
         payload=p.authenticated(json.loads(self.bucket.objects[p.EVIDENCE_HISTORY_KEY]),self.legacy.authority)
         self.assertEqual(payload['epochs'],old['epochs'])
         self.assertIn(m.FIELD,payload);self.assertIn('finalized_epoch_evidence',payload)
+
+    def rewrite(self,dispatch=None,documents=None):
+        f=self.f
+        d=dispatch or json.loads((f.epoch/'coordinator/DISPATCH.json').read_bytes())['payload']
+        f.write('coordinator/DISPATCH.json',f.sign(d))
+        final=json.loads((f.epoch/'FINALIZED.json').read_bytes())['payload'];final['dispatch_sha256']=m.digest(f.sign(d));f.write('FINALIZED.json',f.sign(final))
+        job=json.loads((f.epoch/'TRAINING-JOB.json').read_bytes())['payload'];job['training']['dispatch']['sha256']=final['dispatch_sha256']
+        if documents is not None:job['training']['documents']=documents
+        f.write('TRAINING-JOB.json',f.sign(job))
+        report=json.loads((f.epoch/'TRAINING-RESULT.json').read_bytes())['payload'];report['report']['job_sha256']=m.digest(job);f.write('TRAINING-RESULT.json',f.sign(report,f.worker))
+    def test_extra_or_missing_signed_job_document_rejected(self):
+        self.trained();job=json.loads((self.f.epoch/'TRAINING-JOB.json').read_bytes())['payload']
+        for documents in ({},dict(job['training']['documents'],**{'f'*64:{'size':1}})):
+            self.rewrite(documents=documents)
+            with self.assertRaisesRegex(ValueError,'document set'):m.collect(self.f.p,self.bucket,25)
+    def test_duplicate_selected_task_or_document_rejected(self):
+        self.trained();original=json.loads((self.f.epoch/'coordinator/DISPATCH.json').read_bytes())['payload']
+        for field in ('task','document','slot'):
+            d=copy.deepcopy(original);second=copy.deepcopy(d['selected'][0]);second.update(index=2)
+            second['document'].update(key='private/other',sha256='f'*64,slot=1)
+            if field=='task':second['index']=1
+            elif field=='document':second['document']['key']='private/doc'
+            else:second['document']['slot']=0
+            d['selected'].append(second);d.update(selected_task_count=2,selected_rollout_count=16);self.rewrite(d)
+            with self.assertRaisesRegex(ValueError,'unique selected'):m.collect(self.f.p,self.bucket,25)
+    def test_signed_document_row_identity_mismatch_rejected(self):
+        self.trained();original=json.loads(self.bucket.objects['private/doc'])
+        for field,value in [('miner','e'*64),('slot',1),('env_id','other'),('index',99)]:
+            doc=copy.deepcopy(original)
+            if field in ('env_id','index'):doc['batch'][field]=value
+            else:doc[field]=value
+            raw=p.canonical(doc);self.bucket.objects['private/doc']=raw
+            d=json.loads((self.f.epoch/'coordinator/DISPATCH.json').read_bytes())['payload'];d['selected'][0]['document']['sha256']=p.digest(raw);d['selected'][0]['batch_sha256']=m.digest(doc['batch'])
+            self.rewrite(d,{p.digest(raw):{'size':len(raw)}})
+            with self.assertRaisesRegex(ValueError,'document binding'):m.collect(self.f.p,self.bucket,25)
+    def test_multiple_tasks_from_one_identity_remain_allowed(self):
+        self.trained();d=json.loads((self.f.epoch/'coordinator/DISPATCH.json').read_bytes())['payload'];second=copy.deepcopy(d['selected'][0]);second['index']=2;second['document'].update(key='private/other',sha256='f'*64,slot=1)
+        d['selected'].append(second);d.update(selected_task_count=2,selected_rollout_count=16)
+        self.assertEqual(len(m.selection_closure(d,self.f.manifest)),2)

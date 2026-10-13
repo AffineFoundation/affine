@@ -35,6 +35,26 @@ def compact(document):
     return p.safe_projection(result)
 
 
+def selection_closure(dispatch, manifest, job=None):
+    rows=dispatch['selected'];n=manifest['group_contract']['group_size']
+    if (type(rows)is not list or dispatch['selected_task_count']!=len(rows)
+            or dispatch['selected_rollout_count']!=len(rows)*n):
+        raise ValueError('MiMo selected task/rollout counts')
+    identities=[];tasks=[];keys=[];hashes=[];slots=[]
+    for row in rows:
+        item=row['document'];miner=row['miner'];task=(row['env_id'],row['index'])
+        if (miner not in manifest['capabilities'] or type(item['slot'])is not int
+                or not 0<=item['slot']<manifest['max_batches']
+                or not p.DIGEST.fullmatch(item['sha256']) or not p.DIGEST.fullmatch(row['batch_sha256'])):
+            raise ValueError('MiMo selected registered identity and document')
+        identities.append((miner,*task));tasks.append(task);keys.append(item['key']);hashes.append(item['sha256']);slots.append((miner,item['slot']))
+    for values in (identities,tasks,keys,hashes,slots):
+        if len(values)!=len(set(values)):raise ValueError('MiMo unique selected task/document/identity-slot')
+    if job is not None and set(job['training']['documents'])!=set(hashes):
+        raise ValueError('MiMo exact selected learner document set')
+    return set(hashes)
+
+
 def collect(view,bucket,now):
     rows=[]
     for directory in sorted((view.root/'epochs').iterdir(),key=lambda x:int(x.name)):
@@ -52,9 +72,11 @@ def collect(view,bucket,now):
             or d['population_sha256']!=digest(population) or population['epoch']!=m['epoch']
             or population['manifest_sha256']!=digest(m) or not m['deadline']<=population['sealed_at']<=now):
             raise ValueError('finalized MiMo evidence binding')
+        selection_closure(d,m)
         result=final['result'];training=None
         if result['status']=='updated':
             job,report=view.worker_report(read(directory/'TRAINING-JOB.json'),read(directory/'TRAINING-RESULT.json'),'train',opening,now)
+            selection_closure(d,m,job)
             if job['training'].get('dispatch',{}).get('sha256')!=digest(dispatch_envelope):raise ValueError('MiMo exact learner dispatch')
             receipt=report['publication_receipt'];published=signed(receipt,job['training']['publisher_id']);training=report['training']
             if (digest(receipt)!=result['publication_receipt_sha256'] or published['descriptor']!=result['checkpoint']
@@ -66,9 +88,12 @@ def collect(view,bucket,now):
         if training is not None:
             for row in d['selected']:
                 item=row['document'];raw=p.read_object(bucket,item['key'],maximum=p.MAX_DOCUMENT_BYTES)['data']
-                if p.digest(raw)!=item['sha256']:raise ValueError('MiMo original learner document digest')
+                if p.digest(raw)!=item['sha256'] or len(raw)!=job['training']['documents'][item['sha256']]['size']:raise ValueError('MiMo original learner document digest/size')
                 doc=json.loads(raw)
-                if doc['epoch']!=m['epoch'] or doc['checkpoint']!=m['checkpoint']['id'] or digest(doc['batch'])!=row['batch_sha256']:
+                if (doc['version']!='complete-group-training-document-v1' or doc['epoch']!=m['epoch']
+                    or doc['checkpoint']!=m['checkpoint']['id'] or doc['miner']!=row['miner']
+                    or doc['slot']!=item['slot'] or doc['batch']['env_id']!=row['env_id'] or doc['batch']['index']!=row['index']
+                    or digest(doc['batch'])!=row['batch_sha256']):
                     raise ValueError('MiMo learner document binding')
                 inputs.append(dict(miner=row['miner'],document_sha256=item['sha256'],batch_sha256=row['batch_sha256'],document=compact(doc)))
         metric_keys=('version','status','objective_loss','preclip_gradient_norm','optimizer','config','optimizer_step','optimizer_step_before','input_checkpoint','output_checkpoint','group_count','rollout_count','trained_rollouts','masked_rollouts','trained_tokens','sampled_tokens','outcome_counts','update_seconds','optimizer_seconds','preparation_seconds','maximum_old_actor_logprob_drift','data_sha256','input_documents_sha256','training_requires_sampling_audit','trajectories','admitted_groups')
