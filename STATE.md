@@ -1,3 +1,23 @@
+MiMo continued operation, 2026-10-13 15:17 UTC:
+Epoch190 captured95 groups from68 external miners and selected32 distinct tasks
+for its second GRPO update. Native admission took124.39seconds versus528.39
+seconds in epoch189 after the host import-path fix. The second update retains
+the original trainer and optimizer lineage. Its predecessor's matched held-out
+evaluation is still running; no public learning gain is established yet.
+The15:00 hourly assessment submitted for254 currentUIDs at block9275119 with
+the original cursor and six-hour EMA, and the next tick correctly skipped it.
+
+At15:16:47UTC a separately ROOT-admitted host capture wrapper was activated.
+It reuses exact unchanged commitments already captured by the same process,
+preserving the final complete listing, cutoff, ledger and original validation
+for changed inputs.29 cache/launcher tests and real two-group data parity passed;
+34 public tests include the existing import-path controls. Frozenv7 worker science,
+issued manifests and remote workers are unchanged. Original active leases renewed
+after the coordinator restart, and CURRENT retained the same bytes. Production
+capture-speed improvement must still be measured in the next collection window.
+See docs/MIMO_HOST_CAPTURE.md. Five sampler rejections remain under diagnosis;
+the existing narrowly scoped four-report diagnostic deferral is not acceptance.
+
 MiMo first public update completed, 2026-10-13 14:23 UTC:
 Global epoch189 finalized in70m16s. External miners submitted42 task groups;
 32 distinct task groups/256 trajectories entered the GRPO update, with207
