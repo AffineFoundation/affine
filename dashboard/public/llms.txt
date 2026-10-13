@@ -117,6 +117,47 @@ not invented negative examples.
 
 ## Registration and key safety
 
+### Null consensus and PoW registration — October 13, 2026
+
+Subnet 120 now uses Null consensus, and proof-of-work (PoW) registration is
+enabled. Both changes are finalized on Finney. Burned registration remains
+available; the subnet capacity remains 256 UIDs.
+
+PoW difficulty was reset to 100,000,000, with a minimum of 100,000,000.
+This is computational difficulty, not a TAO fee. Difficulty is dynamic: the
+existing demand adjustment raises it after PoW registrations and decays it
+toward the minimum. The current controls are a 1.5x increase multiplier and
+a 720-block half-life. Read live chain values before mining a registration
+proof; do not assume difficulty stays at its initial 100-million value.
+
+Use a current Bittensor CLI with PoW support and your intended wallet/hotkey:
+
+```sh
+btcli subnets register --netuid 120 --pow
+```
+
+PoW obtains a subnet UID; it does not replace Affine activation below. Use an
+Ed25519 mining hotkey compatible with Affine. Registration still follows the
+chain's capacity, pruning and immunity rules; solving PoW does not reserve a
+free slot or guarantee permanent registration.
+
+Under Null consensus, only the highest-stake registered validator holds the
+weight-setting permit. At activation this is Affine's existing UID 0 writer.
+The hourly best-assessment writer continues to distribute miner weights;
+the complete eight-trajectory batch contract and GRPO training recipe remain
+unchanged. No miner client upgrade is required solely for this consensus change;
+PoW registration itself requires a CLI supporting that registration route.
+
+Finalized chain receipts:
+- Null consensus: https://taomarketcap.com/extrinsics/9276975-0011
+- PoW enabled: https://taomarketcap.com/extrinsics/9276978-0026
+- Minimum difficulty 100,000,000: https://taomarketcap.com/extrinsics/9276987-0005
+- Difficulty reset to 100,000,000: https://taomarketcap.com/extrinsics/9276991-0003
+
+The live runtime accepted both difficulty changes through the subnet owner's
+Owner proxy. Older guidance describing them as root-only is not accurate for
+these finalized changes.
+
 There is no operator whitelist. A miner needs a current subnet 120 UID, an
 Ed25519 hotkey and a valid Affine activation. New openings snapshot eligible
 identities; registration or activation during an epoch may take effect in the
