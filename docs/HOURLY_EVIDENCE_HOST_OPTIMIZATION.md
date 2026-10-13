@@ -54,3 +54,32 @@ The composed MiMo reader was also compared against its predecessor on the same
 reader was not rerun in that comparison. An actual natural hourly assessment
 and chain submission remain the operational check; these timings do not promise
 unbounded history growth within a fixed deadline.
+
+## Reuse commitment derivations within one population
+
+The v4 host composition adds `ops/commitment_derivations.py`, admitted by an
+explicit `commitment_module` path and SHA256. It reuses the original sampling
+context and scope once per miner, and the original environment entry once per
+environment, while reconstructing one closed population. The existing wrapper
+first isolates the signed opening with a private copy. Cached values never
+persist to another population or reader invocation.
+
+Original miner signatures, registration checks, commitment digests, every claim's
+slot/index/harness checks, byte limits, native grades and canonical population
+comparison remain in force. Only the exact pinned release guard and source are
+eligible; malformed environment IDs retain original behavior. No miner upgrade,
+sampling-contract change, scoring change or timeout increase is involved.
+
+In a private comparison using eight original closed populations and one captured
+read-only queue snapshot, the complete MiMo evidence reader took 121.3 seconds
+before and 72.6 seconds after this change. Its entire evidence output was identical,
+including snapshots, hashes, refusals and deferrals. Population reconstruction
+alone fell from 75.6 to 27.3 seconds. These are measured diagnostic results, not a
+promise for future history sizes: all historical populations are still read, and
+new reports add work. A subsequent complete historical-plus-MiMo dry run
+reconstructed 174 snapshots and calculated and validated a fresh assessment in
+447.9 seconds under the original 480-second evidence budget, leaving 32.1 seconds.
+It made no chain transaction or writer-state change. That margin is limited;
+continued history growth can exhaust it, so natural hourly freshness still needs
+monitoring. Activation requires a separately signed host composition. Public
+source availability does not itself activate the wrapper.
