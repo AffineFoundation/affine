@@ -371,6 +371,10 @@ period and correctly attached math wrappers. This is not the live grading rule;
 original scores and signed evidence remain unchanged. Units, repeated boxes,
 truncated answers and reasoning correctness were not silently accepted. The
 diagnostic shows that formatting contributes to apparent gains and losses.
+The first two public updates trained63 distinct tasks across64 task slots.
+Their data-quality and objective review, including incomplete-output masking
+and later audit findings, is published at:
+https://github.com/AffineFoundation/affine/blob/main/docs/MIMO_FIRST_TWO_PUBLIC_UPDATES.md
 Current GitHub also contains prospective optimizer-hash reuse and a report
 receipt-clock fix. These do not replace the approved source archive above;
 source migration and qualification precede activation.
