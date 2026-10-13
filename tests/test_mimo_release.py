@@ -4,7 +4,7 @@ import tarfile
 
 import pytest
 
-from subnet.mimo_release import MODEL_ID, MODEL_REVISION, VERL_REVISION, build, verify
+from subnet.mimo_release import MODEL_ID, MODEL_REVISION, VERL_REVISION, build, verify, source_bundle
 
 
 def fixture(tmp_path):
@@ -26,6 +26,25 @@ def test_reproducible_archive_excludes_private_state(tmp_path):
     assert a == b == verify(tmp_path / 'a')
     assert set(a['source']) == {'subnet/core.py', 'vendor/mimo_verl_pinned/LICENSE'}
     assert not (tmp_path / 'worktree/current.json').exists()
+
+
+def test_miner_download_descriptor_hashes_archive_not_file_inventory(tmp_path):
+    import hashlib
+    from subnet.source_bootstrap import admitted_files, TASK_ASSET
+    root, settings = fixture(tmp_path)
+    (root/'subnet/__init__.py').write_text('')
+    (root/'subnet/cli.py').write_text('# fixture miner entry\n')
+    asset=root/TASK_ASSET;asset.parent.mkdir();asset.write_bytes(b'{"tasks":[]}')
+    settings['task_assets']={TASK_ASSET:dict(sha256=hashlib.sha256(asset.read_bytes()).hexdigest(),bytes=asset.stat().st_size)}
+    release = build(root, tmp_path/'release', settings=settings)
+    verified = verify(tmp_path/'release')
+    descriptor = source_bundle(verified)
+    archive = (tmp_path/'release/source.tar.gz').read_bytes()
+    assert descriptor == {'sha256':release['archive_sha256'], 'size':release['archive_bytes']}
+    assert descriptor['sha256'] != release['source_sha256']
+    assert set(admitted_files(archive, descriptor)) == set(release['source'])
+    with pytest.raises(ValueError):
+        admitted_files(archive, dict(descriptor, sha256=release['source_sha256']))
 
 
 @pytest.mark.parametrize('extra', ['state/authority.seed', '../outside.py', '/etc/passwd', 'subnet/a.private.json'])

@@ -26,10 +26,18 @@
     "job_seconds": 1800
   },
   "lifecycle": {
-    "collection_seconds": 1200,
-    "max_tasks": 512,
+    "collection_seconds": 1800,
+    "max_tasks": 32,
     "first_round": 0,
     "previous_discovery_sha256": null
+  },
+  "evaluation_scheduler": {
+    "enabled": true,
+    "directory": "/operator/state/mimo-qualified-run/evaluator",
+    "workers": ["REPLACE_REGISTERED_EVALUATOR_PUBLIC_KEY"],
+    "set_name": "fixed32",
+    "job_seconds": 14400,
+    "max_retries": 2
   },
   "audit_scheduler": {
     "enabled": true,

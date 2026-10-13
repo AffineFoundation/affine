@@ -73,6 +73,35 @@ source/runtime artifacts, manifest URL and cutover boundary. This preparation
 document deliberately does not invent working public endpoints or claim that
 the private diagnostic is a paid network epoch.
 
+## Prepared launch procedure
+
+Install the exact published dependency lock and rebuilt TOPLOC wheel into a new
+runtime using `ops/bootstrap_mimo_runtime.py`; the final release will publish
+both files with their SHA256 values. Use that runtime's Python to start the
+updated supervisor. On a qualified H200 with enough free memory, four independent
+B1 replicas can generate the fixed attempts in parallel:
+
+```sh
+CUBLAS_WORKSPACE_CONFIG=:4096:8 /absolute/mimo-runtime/venv/bin/python -B -m subnet.miner_supervisor \
+  --discovery-url https://affine.io/mining.json \
+  --authority 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd \
+  --source-cache /absolute/private/mimo-approved-source \
+  --key /absolute/private/miner.seed \
+  --state /absolute/private/mimo-miner-state \
+  --env-id affine_math --mimo-replicas 4
+```
+
+This is a prepared procedure for the future signed MiMo opening, not an instruction
+to run the new runtime against an old Qwen epoch. The final activation notice and
+current `llms.txt` will supply the actual release pins and qualification scope.
+The local replica setting does not change N, nonces, seeds, quota, or submission
+order. Default is one replica; two are also supported. All replicas must fit the
+qualified GPU memory budget. A fresh model download can consume much of the first
+collection window; downloads retain partial files and verify every complete hash.
+MiMo checkpoint files download with up to four independent transfers. Completed
+new checkpoint admission retires only obsolete checkpoints owned by this launcher.
+Do not point a new runtime at another active launcher's state directory.
+
 ## Learning and rewards
 
 The trainer uses the pinned MiMo reference GRPO loss with complete task groups,

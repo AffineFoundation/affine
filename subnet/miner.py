@@ -198,9 +198,21 @@ class Miner:
             return
         # The adapter needs the still-open journal to retire terminal spools.
         # Its children must also be stopped before another epoch loads a model.
-        runtime = getattr(self, 'runtime', None)
-        if getattr(self, '_mimo_replicas', 1) != 1 and runtime is not None:
-            runtime.close()
+        owner = getattr(self, 'runtime', None)
+        # Borrowed views must release their model aliases before the owning
+        # backend closes and returns its inactive CUDA allocations.
+        runtimes = [runtime for runtime in getattr(self, 'runtimes', {}).values()
+                    if runtime is not owner] + [owner]
+        seen = set()
+        for runtime in runtimes:
+            if runtime is None or id(runtime) in seen:
+                continue
+            seen.add(id(runtime))
+            close_runtime = getattr(runtime, 'close', None)
+            if callable(close_runtime):
+                close_runtime()
+        self.runtime = None
+        self.runtimes = {}
         group_journal = getattr(self, '_group_journal', None)
         if group_journal is not None:
             group_journal.close()

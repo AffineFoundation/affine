@@ -1,3 +1,39 @@
+MiMo preparation, 2026-10-13 11:03 UTC:
+The authorized mainnet cutover has NOT happened. Prepared implementation is on
+feat/mimo-fixed-group-grpo. The current learner and sole hourly best-assessment
+writer remain active; the latest independently checked 10h submission covered
+254 current UIDs. Keep its cursor, six-hour EMA and last-valid fallback intact.
+
+Actual private H200 qualification has completed a GRPO optimizer update,
+18.84GB model publication with full R2 GET hashing, and an exact cold retry that
+did not repeat the update. This historical first update used the explicitly
+recorded all-parameter decay policy. A new real leased-queue job now tests the
+reference bias/one-dimensional parameter decay exclusions on two fresh groups.
+Its completion and successor checkpoint handover are still pending.
+
+The opening-first 8192-token mining test produced two native-eligible complete
+nonce groups (16 rollouts), without changing their original signed artifacts.
+The earlier independent N8 audit passed all trajectories, but each required
+cached-reference adjudication: about46minutes for the whole group. Do not claim
+fast-prefill acceptance or numerical portability from that result. Independent
+audits of the fresh groups and the external miner startup path are running.
+The original model fixed32 baseline finished22/32 with no evaluator errors;
+this is a baseline, not learning improvement.
+
+Integration checks passed154 tests and27 subtests. Frozen source-integration-v5
+inventory19ee83d9e09f8abee43145b91c04b412971535c18121a18e6bb1a6c194d9e3cc
+and archive688cd46e93af41c48294f827a80096b260f068ffdee7a8b284c68c02a0467e26
+include replica lifecycle fixes, bounded CDF checks, parallel model transfers,
+and external-launcher archive validation. Earlier source-integration-v2 remains
+unqualified and must not be deployed. Three existing verifier runtimes are
+staged side by side; do not replace active legacy jobs during qualification.
+Dashboard layout is unchanged; the new data projection and independent evaluator
+are prepared. Active llms.txt still describes the running old contract until
+an authenticated cutover. Original unsuccessful experiments remain preserved.
+Operational evidence: /home/const/subnet120-rewrite/state/root-audits/20261013-mimo-cutover-v1
+
+Earlier snapshots below are historical, not current operational authority.
+
 Verified first fresh opening, 2026-10-08, 21:40 UTC:
 Global epoch78 is now collecting with its original signed public manifest.
 ROOT fully read back and authenticated source74f132, base checkpoint6493a901,

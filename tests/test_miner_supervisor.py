@@ -62,6 +62,50 @@ class SupervisorTests(unittest.TestCase):
         self.assertFalse((Path(self.args.state)/m['checkpoint']['id']/'model.safetensors').exists())
         self.assertEqual((stage/'model.safetensors.partial').read_bytes(),b'x'*16)
 
+    def test_mimo_scoped_checkpoint_transport_and_local_parallel_option(self):
+        m=self.fixture();m['model_runtime_revision']='qwen3_5-mimo-v1'
+        cp=m['checkpoint'];cp['read_urls']={name:url.replace('/public/checkpoints/',
+            '/private/mimo-run/checkpoints/').replace('/'+name+'?', '/model/'+name+'?')
+            for name,url in cp['read_urls'].items()}
+        self.assertEqual(s.checkpoint_inventory(m),cp)
+        self.args.mimo_replicas=4
+        args=s.launch_arguments(self.args,m,self.observed['manifest_url'])
+        self.assertEqual(args[args.index('--mimo-replicas')+1],'4')
+        dest=s.prefetch_checkpoint(m,self.args.state,session=Session(self.data))
+        for name,body in self.data.items():self.assertEqual((dest/name).read_bytes(),body)
+        m.pop('model_runtime_revision')
+        with self.assertRaises(ValueError):s.checkpoint_inventory(m)
+        self.assertNotIn('--mimo-replicas',s.launch_arguments(self.args,m,self.observed['manifest_url']))
+
+    def test_mimo_transport_rejects_wrong_checkpoint_or_file(self):
+        m=self.fixture();m['model_runtime_revision']='qwen3_5-mimo-v1';cp=m['checkpoint']
+        original=cp['read_urls']['config.json']
+        for bad in (original,original.replace(cp['id'],'f'*64).replace('/config.json','/model/config.json'),
+                    original.replace('/config.json','/model/../config.json')):
+            cp['read_urls']['config.json']=bad
+            with self.subTest(url=bad),self.assertRaises(ValueError):s.checkpoint_inventory(m)
+
+    def test_parallel_model_transfers_keep_per_file_hash_and_original_range_logic(self):
+        import threading
+        m=self.fixture();gate=threading.Barrier(2);sessions=[]
+        def make_session():
+            result=Session(self.data);sessions.append(result);return result
+        def transfer(*args,**kwargs):
+            gate.wait(timeout=5)
+            return s.hydration.download(*args,**kwargs)
+        dest=s.prefetch_checkpoint(m,self.args.state,session_factory=make_session,
+                                  download_workers=2,download=transfer)
+        self.assertEqual(len(sessions),3)
+        for name,body in self.data.items():self.assertEqual((dest/name).read_bytes(),body)
+
+    def test_parallel_transfer_reserves_total_remaining_capacity(self):
+        m=self.fixture();fetch=Mock()
+        # Each tiny file fits independently, while their sum does not.
+        with patch.object(s.shutil,'disk_usage',return_value=SimpleNamespace(free=1024**3+16)):
+            with self.assertRaisesRegex(OSError,'aggregate'):
+                s.prefetch_checkpoint(m,self.args.state,session=Session(self.data),download=fetch,download_workers=2)
+        fetch.assert_not_called()
+
     def test_deadline_during_download_never_launches(self):
         self.fixture();launcher=Mock()
         def deadline(*args):

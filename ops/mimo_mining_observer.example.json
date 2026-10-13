@@ -1,0 +1,15 @@
+{
+  "enabled": false,
+  "authority": "REPLACE_WITH_EXISTING_NETWORK_AUTHORITY",
+  "lifecycle_unit": "affine-mimo-lifecycle.service",
+  "lifecycle_entry": {
+    "path": "/operator/releases/mimo/ops/mimo_lifecycle.py",
+    "sha256": "REPLACE_WITH_AUTHENTICATED_ENTRY_SHA256"
+  },
+  "lifecycle_config": {
+    "path": "/operator/private/mimo-lifecycle.json",
+    "sha256": "REPLACE_WITH_EXACT_ENABLED_CONFIG_SHA256"
+  },
+  "source_sha256": "REPLACE_WITH_QUALIFIED_SOURCE_SHA256",
+  "target": "/home/const/subnet120/affine/website/mining.json"
+}

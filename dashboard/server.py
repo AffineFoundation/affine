@@ -25,9 +25,10 @@ def read(path, default=None):
 
 
 class Database:
-    def __init__(self, path, source=ROOT/'state', training_receipts=None):
+    def __init__(self, path, source=ROOT/'state', training_receipts=None, mimo_projection=None):
         self.path, self.source = Path(path), Path(source)
         self.training_receipts = Path(training_receipts) if training_receipts is not None else None
+        self.mimo_projection = Path(mimo_projection) if mimo_projection is not None else None
         self.continuous_audits = ContinuousAuditProjection()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
@@ -380,13 +381,17 @@ class Database:
         incentive=read(self.source/'dashboard-incentive.json', {})
         if not isinstance(incentive,dict):
             incentive={}
-        return dict(summary=summary, training_run=training_run,
+        result = dict(summary=summary, training_run=training_run,
                     incentive=normalize_incentive(incentive),
                     incentive_history=normalize_history(incentive.get('epochs', [])),
                     incentive_prices=normalize_prices(incentive.get('prices')),
                     epochs=sorted(epochs, key=lambda x:x['start'], reverse=True),
                     training_evaluations=sorted(training_evaluations,key=lambda x:x['timestamp']),
                     evaluations=sorted(evaluations,key=lambda x:x['timestamp']))
+        if self.mimo_projection is not None:
+            from dashboard.mimo_projection import from_selector
+            result = from_selector(result, self.mimo_projection)
+        return result
 
 
 def serve(db, host, port):
@@ -450,9 +455,10 @@ def main():
     p.add_argument('--port', type=int, default=8794)
     p.add_argument('--snapshot', action='store_true')
     p.add_argument('--training-receipts', help='Read-only cache of original ROOT-signed finalized training receipts')
+    p.add_argument('--mimo-projection', help='Explicit ROOT-signed MiMo run data selector; no page redesign')
     p.add_argument('--export', help='Atomically publish the public SQLite snapshot as JSON')
     args=p.parse_args()
-    db=Database(args.db,args.source,args.training_receipts)
+    db=Database(args.db,args.source,args.training_receipts,args.mimo_projection)
     db.refresh()
     def export():
         if args.export:

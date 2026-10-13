@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import time
 
@@ -21,7 +22,7 @@ class R2Services:
     def __init__(self, bucket, identity, policy, queue, chain, *, discovery_key,
                  initial_checkpoint_keys, source_bundle_key, source_files, runtime_versions,
                  trainer_worker, publisher_id, trainer_role_config_file,
-                 trainer_config, job_seconds=1800, readback_state):
+                 trainer_config, job_seconds=1800, readback_state, readback_concurrency=4):
         from .mimo_grpo.publication import _namespace
         self.bucket,self.identity,self.policy,self.queue,self.chain=bucket,identity,policy,queue,chain
         self.discovery_key=_namespace(discovery_key)
@@ -40,6 +41,9 @@ class R2Services:
         self.trainer_worker,self.publisher_id=trainer_worker,publisher_id
         self.role_config,self.trainer_config=trainer_role_config_file,trainer_config
         self.job_seconds=job_seconds
+        need(type(readback_concurrency)is int and 1 <= readback_concurrency <=8,
+             'bounded independent model readback concurrency')
+        self.readback_concurrency=readback_concurrency
         self.readback_state=Path(readback_state).absolute()
         need(self.readback_state.resolve()==self.readback_state,'ordinary model readback state')
         self.readback_state.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -97,7 +101,8 @@ class R2Services:
             finally:body.close()
             original=signed(json.loads(existing),self.identity.id)
             if original.get('manifest_sha256')==expected and original.get('epoch')==m['epoch']:
-                return dict(sha256=expected,discovery_sha256=hashlib.sha256(existing).hexdigest(),key=self.discovery_key)
+                return dict(sha256=expected,discovery_sha256=hashlib.sha256(existing).hexdigest(),
+                            key=self.discovery_key,document=json.loads(existing))
             need(hashlib.sha256(existing).hexdigest()==previous_sha256,'discovery changed from the expected predecessor')
             need(type(response.get('ETag'))is str and response['ETag'],'discovery conditional ETag required')
             conditions['IfMatch']=response['ETag']
@@ -116,7 +121,8 @@ class R2Services:
             Body=raw,ContentType='application/json',**conditions)
         observed,_=_get(self.bucket,self.discovery_key,len(raw))
         need(observed==raw,'public discovery full readback differs')
-        return dict(sha256=expected,discovery_sha256=digest(published),key=self.discovery_key)
+        return dict(sha256=expected,discovery_sha256=digest(published),key=self.discovery_key,
+                    document=published)
 
     def checkpoint_urls(self,checkpoint):
         cp=descriptor(checkpoint)
@@ -182,7 +188,8 @@ class R2Services:
                  'same completed immutable model readback')
             return cp
         # Bounded streaming, no checkpoint download/cache on the validator host.
-        for name,checksum in cp['files'].items():
+        def read_file(item):
+            name,checksum=item
             expected=objects[name]
             need(expected['key']==self.policy.namespace()+'/checkpoints/'+cp['id']+'/model/'+name
                  and expected['sha256']==checksum and type(expected['size'])is int
@@ -198,6 +205,10 @@ class R2Services:
                     checksum_state.update(chunk)
                 need(count==expected['size'] and checksum_state.hexdigest()==checksum,'full model readback hash')
             finally:body.close()
+        with ThreadPoolExecutor(max_workers=self.readback_concurrency)as executor:
+            # Consume every future before recording the receipt. One corrupt or
+            # failed shard prevents this immutable readback from being cached.
+            list(executor.map(read_file,sorted(cp['files'].items())))
         from .controller import save_manifest
         save_manifest(path,dict(receipt_sha256=receipt,checkpoint=cp))
         return cp

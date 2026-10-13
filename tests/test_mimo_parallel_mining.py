@@ -19,6 +19,49 @@ from test_complete_group_mimo import mimo_manifest, MimoCollectionRuntime
 from test_complete_group_transport import FakeBucket, FakeHTTP
 
 
+def test_replica_admission_uses_actual_facade_backend(tmp_path,monkeypatch):
+    import torch
+    import subnet.mimo_parallel_mining as parallel
+    from subnet.complete_group_runtime import MimoGroupRuntime
+    facade=object.__new__(MimoGroupRuntime)
+    guarded=[];devices=[]
+    facade.backend=SimpleNamespace(trainable=False,device='cuda:1',
+        model=torch.nn.Linear(3,2),guard=lambda:guarded.append(True))
+    facade.harness={'max_output_tokens':8192}
+    actor=SimpleNamespace(state_path=tmp_path/'miner.json')
+    monkeypatch.setattr(torch.cuda,'mem_get_info',lambda device:(devices.append(device)or(140*1024**3,140*1024**3)))
+    monkeypatch.setattr(parallel,'_Replicas',lambda *args:SimpleNamespace(close=lambda:None))
+    wrapped=parallel.wrap_runtime(facade,actor=actor,replicas=4)
+    assert wrapped._base is facade and guarded==[True] and devices==['cuda:1']
+    monkeypatch.setattr(torch.cuda,'mem_get_info',lambda device:(1,140*1024**3))
+    with pytest.raises(RuntimeError,match='insufficient GPU room'):
+        parallel.wrap_runtime(facade,actor=actor,replicas=4)
+
+
+def test_proof_temporary_buffers_released_inside_shared_memory_gate(monkeypatch):
+    import subnet.mimo_parallel_mining as parallel
+    events=[]
+    class Gate:
+        held=False
+        def acquire(self,timeout):self.held=True;events.append('acquire');return True
+        def release(self):events.append('release');self.held=False
+    gate=Gate()
+    class Backend:
+        complete_group_sample_evidence={'attempt':0}
+        def for_environment(self,*args):return self
+        def next_token_logits(self,*args):return 'unchanged-logits'
+        def compute(self,*args):events.append('compute');return 'original-proof-bytes'
+        def rollout(self,index,nonce):return {'proof':self.compute()},[]
+    def release():
+        assert gate.held
+        events.append('empty-inactive-cache')
+    monkeypatch.setattr(parallel,'_release_cuda_temporaries',release)
+    monkeypatch.setattr(parallel,'_rollout_from_runtime',lambda facade,row,nonce:row)
+    row,arrays,witness=parallel._generate(Backend(),{'deadline':time.time()+10},gate,{}, {},0,0)
+    assert row=={'proof':'original-proof-bytes'} and arrays==[] and witness=={'attempt':0}
+    assert events==['acquire','empty-inactive-cache','compute','empty-inactive-cache','release']
+
+
 class Facade(MimoCollectionRuntime):
     def __init__(self,manifest,*args,**kwargs):
         super().__init__(manifest,*args,**kwargs)
@@ -76,6 +119,38 @@ def test_complete_all_correct_group_remains_filtered_without_replacement(tmp_pat
         with pytest.raises(GroupFiltered):actor.search(0,max_attempts=8)
         assert not actor.batches
     finally:wrapper.close();actor._group_journal.close()
+
+
+def test_native_error_retires_pool_but_next_distinct_task_can_run(tmp_path,monkeypatch):
+    import subnet.mimo_parallel_mining as parallel
+    from subnet.complete_group_mining import GroupIndeterminate, task_key
+    from verifiers.v1.errors import TaskError
+    actor,wrapper,service=setup_actor(tmp_path,monkeypatch)
+    old_gate=service.gate
+    original=parallel._child_generate
+    calls=[]
+    def fail_first(environment,harness,index,nonce):
+        calls.append((index,nonce))
+        if index==0 and nonce==0:
+            old_gate.acquire()  # Simulate termination while owning proof gate.
+            raise TaskError('native grading unavailable')
+        return original(environment,harness,index,nonce)
+    monkeypatch.setattr(parallel,'_child_generate',fail_first)
+    try:
+        with pytest.raises(GroupIndeterminate):actor.search(0,max_attempts=8)
+        assert not service.closed and service.processes is None
+        assert actor._group_journal.status(task_key(actor,wrapper.spec.id,0))=='native_error'
+        before=list(calls)
+        with pytest.raises(GroupIndeterminate):actor.search(0,max_attempts=8)
+        assert calls==before  # The failed original group cannot be replaced.
+        batch=actor.search(1,max_attempts=8)
+        assert batch['index']==1 and [r['seed']for r in batch['rollouts']]==list(range(8))
+        assert len(actor.batches)==1 and service.processes is not None
+        assert service.gate is not old_gate and service.gate.acquire(timeout=.1)
+        service.gate.release()
+        assert sorted(nonce for index,nonce in calls if index==1)==list(range(8))
+    finally:wrapper.close();actor._group_journal.close()
+    assert service.actor is None and service.base is None and wrapper._base is None
 
 
 def blocked_original_attempt(started):

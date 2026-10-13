@@ -8,6 +8,7 @@ closed rather than falling back to an overwrite.
 import base64
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 
 from botocore.exceptions import ClientError
@@ -42,17 +43,20 @@ def _namespace(value):
 class R2ModelPublisher:
     def __init__(self, bucket, signer, *, namespace, source_closure_sha256,
                  assert_trainer_lease, part_bytes=64 * 1024**2,
-                 multipart_threshold=64 * 1024**2, read_chunk_bytes=4 * 1024**2):
+                 multipart_threshold=64 * 1024**2, read_chunk_bytes=4 * 1024**2,
+                 shard_concurrency=4):
         if (not sha(source_closure_sha256) or not callable(assert_trainer_lease) or
                 type(part_bytes) is not int or not 5 * 1024**2 <= part_bytes <= 256 * 1024**2 or
                 type(multipart_threshold) is not int or not 1 <= multipart_threshold <= 5 * 1024**3 or
-                type(read_chunk_bytes) is not int or not 1 <= read_chunk_bytes <= 8 * 1024**2):
+                type(read_chunk_bytes) is not int or not 1 <= read_chunk_bytes <= 8 * 1024**2 or
+                type(shard_concurrency) is not int or not 1 <= shard_concurrency <= 8):
             raise ValueError('authenticated source and bounded streaming configuration')
         self.bucket, self.signer = bucket, signer
         self.namespace = _namespace(namespace)
         self.source = source_closure_sha256
         self.guard = assert_trainer_lease
         self.part_bytes, self.threshold, self.read_chunk_bytes = part_bytes, multipart_threshold, read_chunk_bytes
+        self.shard_concurrency = shard_concurrency
         self.last_receipt = None
 
     def _verify(self, key, expected, *, missing_ok=False):
@@ -171,8 +175,8 @@ class R2ModelPublisher:
         if set(p.name for p in directory.iterdir()) != set(files):
             raise ValueError('exact local model-only physical inventory')
         prefix = self.namespace + '/checkpoints/' + descriptor['id']
-        objects = {}
-        for name, expected in sorted(files.items()):
+        def publish_file(item):
+            name, expected = item
             path = directory/name
             if path.is_symlink() or path.stat().st_size != expected['size'] or file_hash(path) != expected['sha256']:
                 raise ValueError('original local model file changed: ' + name)
@@ -180,7 +184,12 @@ class R2ModelPublisher:
             if not self._verify(key, expected, missing_ok=True):
                 self._upload(path, key, expected['size'])
                 self._verify(key, expected)
-            objects[name] = dict(key=key, **expected)
+            return name, dict(key=key, **expected)
+        # Each worker owns one independent immutable object and bounded stream.
+        # All workers finish or fail before a descriptor/receipt can be written;
+        # cancellation and lease checks never turn a partial upload into proof.
+        with ThreadPoolExecutor(max_workers=self.shard_concurrency) as executor:
+            objects = dict(executor.map(publish_file, sorted(files.items())))
         self._immutable_json(prefix + '/descriptor.json', descriptor)
         payload = dict(version=VERSION, job_id=request['job_id'], epoch=request['epoch'],
             input_checkpoint=request['input_checkpoint'], output_checkpoint=descriptor['id'],

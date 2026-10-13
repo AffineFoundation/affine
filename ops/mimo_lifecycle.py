@@ -80,7 +80,7 @@ def run(args):
         raise ValueError('explicit loopback queue API address required')
     from subnet.mimo_release_policy import sign
     import threading
-    stopped=threading.Event();audit_thread=None
+    stopped=threading.Event();audit_thread=None;eval_thread=None
     audit_config=dict(config.get('audit_scheduler',{}))
     audit_enabled=audit_config.pop('enabled',False)
     if type(audit_enabled)is not bool or(policy.mode=='public'and not audit_enabled):
@@ -105,11 +105,34 @@ def run(args):
                     print(json.dumps(dict(component='auditor',status='retrying',error_type=type(error).__name__)),flush=True)
                 stopped.wait(args.interval)
         audit_thread=threading.Thread(target=audit_loop,name='mimo-audit-scheduler',daemon=True)
+    eval_config=dict(config.get('evaluation_scheduler',{}))
+    eval_enabled=eval_config.pop('enabled',False)
+    if type(eval_enabled)is not bool or(policy.mode=='public'and not eval_enabled):
+        raise ValueError('public lifecycle requires its independent evaluator scheduler')
+    if eval_enabled:
+        from subnet.mimo_evaluation_scheduler import EvaluationScheduler
+        evaluator=EvaluationScheduler(bucket=bucket,queue=queue,identity=actor,policy=policy,
+            metadata=lambda m:dict(source_files=adapter.source_files,runtime_versions=adapter.runtime_versions,
+                checkpoint_read_urls=adapter.checkpoint_urls(m['checkpoint'])),**eval_config)
+        def evaluation_loop():
+            while not stopped.is_set():
+                try:
+                    openings=[]
+                    for path in sorted((state/'epochs').glob('*/coordinator/OPENING.json')):
+                        if path.is_symlink()or not 0<path.stat().st_size<=32*1024**2:
+                            raise ValueError('bounded original evaluation opening')
+                        openings.append(json.loads(path.read_bytes()))
+                    evaluator.tick(openings)
+                except Exception as error:
+                    print(json.dumps(dict(component='evaluator',status='retrying',error_type=type(error).__name__)),flush=True)
+                stopped.wait(args.interval)
+        eval_thread=threading.Thread(target=evaluation_loop,name='mimo-evaluation-scheduler',daemon=True)
     server=CoordinatorServer((server_config['host'],server_config['port']),queue,
                              lambda payload:sign(actor,payload))
     thread=threading.Thread(target=server.serve_forever,name='mimo-role-queue',daemon=True)
     thread.start()
     if audit_thread is not None:audit_thread.start()
+    if eval_thread is not None:eval_thread.start()
     try:
         while True:
             try:
@@ -124,6 +147,7 @@ def run(args):
     finally:
         stopped.set()
         if audit_thread is not None:audit_thread.join(timeout=5)
+        if eval_thread is not None:eval_thread.join(timeout=5)
         server.shutdown();server.server_close();thread.join(timeout=5)
 
 

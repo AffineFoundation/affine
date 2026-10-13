@@ -199,6 +199,7 @@ def main(argv=None):
     p.add_argument('--gateway',default='https://unused.invalid');p.add_argument('--once',action='store_true');p.add_argument('--max-batches',type=int)
     p.add_argument('--compression-level',type=int,choices=range(10),help='assert signed epoch compression level')
     p.add_argument('--env-id');p.add_argument('--indices',nargs='+',type=int);p.add_argument('--search-budget',type=int)
+    p.add_argument('--mimo-replicas',type=int,choices=(1,2,4),default=None)
     a=p.parse_args(argv)
     credential_flag='--cap-file' if a.cap_file else '--key'
     credential_path=Path(os.path.abspath(a.cap_file or a.key));state=Path(os.path.abspath(a.state));cache=Path(os.path.abspath(a.source_cache))
@@ -216,6 +217,7 @@ def main(argv=None):
     if a.env_id is not None:arguments+=['--env-id',a.env_id]
     if a.indices is not None:arguments+=['--indices',*[str(i) for i in a.indices]]
     if a.search_budget is not None:arguments+=['--search-budget',str(a.search_budget)]
+    if a.mimo_replicas is not None:arguments+=['--mimo-replicas',str(a.mimo_replicas)]
     execute(source,arguments)
 
 if __name__=='__main__':main()

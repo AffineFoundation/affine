@@ -109,6 +109,24 @@ class AdapterTests(unittest.TestCase):
         p=self.published();p['objects']['config.json']['key']='another-run/model/config.json'
         with self.assertRaisesRegex(ValueError,'scoped bounded'):self.a.readback_publication(p)
 
+    def test_four_independent_readbacks_overlap_before_receipt_cache(self):
+        import threading
+        bodies={f'model-{i}.safetensors':bytes([i])*100 for i in range(4)};bodies['config.json']=b'{}'
+        cp={'files':{n:hashlib.sha256(b).hexdigest()for n,b in bodies.items()}};cp['id']=digest(cp['files'])
+        objects={}
+        for name,body in bodies.items():
+            key=self.a.policy.namespace()+'/checkpoints/'+cp['id']+'/model/'+name
+            objects[name]=dict(key=key,sha256=cp['files'][name],size=len(body));self.f.bucket.store(key,body)
+        barrier=threading.Barrier(4);original=self.bucket.get_object
+        def simultaneous(**kwargs):
+            self.assertEqual(list(self.a.readback_state.iterdir()),[])
+            if kwargs['Key'].endswith('.safetensors'):barrier.wait(timeout=5)
+            return original(**kwargs)
+        with patch.object(self.bucket,'get_object',side_effect=simultaneous):
+            self.assertEqual(self.a.readback_publication(dict(descriptor=cp,output_checkpoint=cp['id'],objects=objects)),cp)
+        self.assertEqual(self.bucket.reads,5)
+        self.assertEqual(len(list(self.a.readback_state.iterdir())),1)
+
     def test_disabled_cli_never_opens_credentials_or_remote_services(self):
         from ops.mimo_lifecycle import run
         path=self.f.root/'disabled.json';path.write_text('{"enabled":false}');path.chmod(0o600)

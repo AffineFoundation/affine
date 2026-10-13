@@ -15,7 +15,7 @@ import signal
 import subprocess
 import sys
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote, parse_qs
 
 import requests
 from . import source_bootstrap as bootstrap
@@ -86,8 +86,23 @@ def checkpoint_inventory(manifest):
         if (not re.fullmatch('[A-Za-z0-9_-][A-Za-z0-9_.-]*', name)
                 or not re.fullmatch('[0-9a-f]{64}', str(digest))):
             raise ValueError('checkpoint file name/hash')
-        hydration.read_url(checkpoint['read_urls'][name], identifier, name)
+        checkpoint_url(manifest, name)
     return checkpoint
+
+
+def checkpoint_url(manifest, name):
+    checkpoint=manifest['checkpoint'];url=checkpoint['read_urls'][name]
+    if manifest.get('model_runtime_revision') != 'qwen3_5-mimo-v1':
+        return hydration.read_url(url,checkpoint['id'],name)
+    # The authority-signed MiMo manifest grants an exact model object under a
+    # versioned run namespace. Content hashes still admit every downloaded byte.
+    bootstrap.r2_url(url);parsed=urlparse(url);query=parse_qs(parsed.query)
+    path=unquote(parsed.path)
+    if ('..' in path.split('/') or '\\' in path
+            or not path.endswith('/checkpoints/'+checkpoint['id']+'/model/'+name)
+            or not re.fullmatch('[0-9a-f]{64}',query['X-Amz-Signature'][0])):
+        raise ValueError('MiMo read URL exact checkpoint/model/file')
+    return url
 
 
 def object_size(session, url):
@@ -101,7 +116,8 @@ def object_size(session, url):
         return int(match[1])
 
 
-def prefetch_checkpoint(manifest, state, *, session=None, clock=time.time, download=hydration.download):
+def prefetch_checkpoint(manifest, state, *, session=None, clock=time.time, download=hydration.download,
+                        session_factory=requests.Session, download_workers=None):
     checkpoint = checkpoint_inventory(manifest); identifier = checkpoint['id']
     state = Path(state).absolute(); bootstrap.check_parents(state)
     destination = state / identifier; stage = state / '.checkpoint-downloads' / identifier
@@ -112,24 +128,46 @@ def prefetch_checkpoint(manifest, state, *, session=None, clock=time.time, downl
         save(owner, dict(checkpoint=identifier, files=checkpoint['files']))
     destination.mkdir(parents=True, exist_ok=True, mode=0o700)
     stage.mkdir(parents=True, exist_ok=True, mode=0o700)
-    session = CheckpointSession(session or requests.Session())
+    if download_workers is None:
+        download_workers=4 if session is None and manifest.get('model_runtime_revision')=='qwen3_5-mimo-v1' else 1
+    if type(download_workers) is not int or not 1<=download_workers<=4:
+        raise ValueError('bounded checkpoint download concurrency')
+    session = CheckpointSession(session or session_factory())
     try:
         sizes = {name:object_size(session, checkpoint['read_urls'][name]) for name in checkpoint['files']}
         if sum(sizes.values()) > hydration.MAX_TOTAL: raise ValueError('total model size bound')
-        for name, digest in checkpoint['files'].items():
+        def one(name, digest, transport):
             if clock() >= manifest['deadline']: raise ValueError('epoch closed during checkpoint preparation')
             final = destination / name; partial = stage / (name + '.partial')
             if final.is_symlink() or partial.is_symlink(): raise ValueError('model cache symlink')
             if final.exists():
                 if not final.is_file() or final.stat().st_size != sizes[name] or hydration.sha(final) != digest:
                     raise ValueError('preserve mismatching cached checkpoint')
-                continue
+                return
             remaining = sizes[name] - (partial.stat().st_size if partial.exists() else 0)
             if shutil.disk_usage(state).free < remaining + 1024**3:
                 raise OSError('insufficient checkpoint disk capacity; partial retained')
-            download(session, checkpoint['read_urls'][name], partial, sizes[name], digest, manifest['deadline'], clock=clock)
+            download(transport, checkpoint['read_urls'][name], partial, sizes[name], digest, manifest['deadline'], clock=clock)
             if hydration.sha(partial) != digest: raise ValueError('model checksum before admission')
             os.replace(partial, final)
+        required=0
+        for name in checkpoint['files']:
+            final=destination/name;partial=stage/(name+'.partial')
+            if final.is_symlink() or partial.is_symlink():raise ValueError('model cache symlink')
+            if not final.exists():required+=max(0,sizes[name]-(partial.stat().st_size if partial.exists() else 0))
+        if shutil.disk_usage(state).free < required+1024**3:
+            raise OSError('insufficient aggregate checkpoint disk capacity; partials retained')
+        if download_workers==1:
+            for name,digest in checkpoint['files'].items():one(name,digest,session)
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+            def independent(item):
+                transport=CheckpointSession(session_factory())
+                try:one(*item,transport)
+                finally:transport.close()
+            with ThreadPoolExecutor(max_workers=download_workers,thread_name_prefix='checkpoint-transfer') as pool:
+                futures=[pool.submit(independent,item) for item in checkpoint['files'].items()]
+                for future in futures:future.result()
         retire_owned_checkpoints(state, identifier)
         return destination
     finally:
@@ -169,6 +207,11 @@ def launch_arguments(args, manifest, manifest_url):
     for flag in ('env_id','max_batches','search_budget'):
         value = getattr(args, flag, None)
         if value is not None: result += ['--'+flag.replace('_','-'),str(value)]
+    replicas=getattr(args,'mimo_replicas',1)
+    if type(replicas) is not int or replicas not in (1,2,4):
+        raise ValueError('bounded MiMo replicas')
+    if manifest.get('model_runtime_revision')=='qwen3_5-mimo-v1':
+        result += ['--mimo-replicas',str(replicas)]
     return result
 
 
@@ -256,6 +299,8 @@ def main(argv=None):
     parser.add_argument('--state',required=True);parser.add_argument('--source-cache',required=True)
     parser.add_argument('--env-id',default='affine_math');parser.add_argument('--max-batches',type=int,default=None)
     parser.add_argument('--search-budget',type=int,default=32);parser.add_argument('--poll-seconds',type=int,default=10)
+    parser.add_argument('--mimo-replicas',type=int,choices=(1,2,4),default=1,
+                        help='independent B1 replicas for MiMo epochs only')
     args=parser.parse_args(argv)
     if not re.fullmatch('[0-9a-f]{64}',args.authority) or not 1<=args.poll_seconds<=300:
         raise ValueError('known authority and bounded poll interval')

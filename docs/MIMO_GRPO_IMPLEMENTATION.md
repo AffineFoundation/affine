@@ -294,8 +294,40 @@ separate signed admission rule: shipping the dataset does not authorize mining
 held-out indices. Task assets contain no miner submissions or private credentials.
 Historical frozen releases remain unchanged; they retain their original hashes.
 
+### Trainer local storage admission
+
+Run `python ops/prepare_mimo_worker_storage.py` during fresh worker bootstrap.
+Its default root is `/workspace/affine-mimo-trainer`, on a local block-backed
+filesystem. The helper rejects FUSE, network filesystems and tmpfs and checks
+capacity for the committed optimizer/model generation, one in-flight generation,
+a checkpoint cache and a reserve before creating owner-only role directories.
+It does not delete or relocate any existing model, optimizer or experiment.
+
+For the 9B text trainer, one local FP32 Adam state is approximately 107.45 GB and
+one model export is 18.84 GB. Two generations plus the configured cache/reserve
+require approximately 280.2 GB free at fresh bootstrap. Per-update admission
+still measures actual parameters and free capacity. Keep `--trainer-state-root`
+stable across job attempts; only model exports are published to R2. The original
+MiMo rehearsal exposed very slow encrypted FUSE writes, so this path selection
+is an operational requirement, not a reason to remove recoverable optimizer
+state or repeatedly delete active checkpoints.
+
 ### Prospective qualified public release
 
 Public trainer execution is disabled by default. The generic worker must pass its local `allow_public_mimo` setting through `mimo_worker` as `allow_public=True`; no submitted job field enables this. The manifest must also carry an enabled, authority-signed `mimo_release_policy` with all required qualification receipts. Training validates that policy again and requires its exact publication namespace (`mimo/<run_id>` for public releases, `private/mimo/<run_id>` for policy-bound private rehearsals).
 
 Local trainer `CURRENT.json` records the policy hash and execution mode. Initialization and checkpoint handover bind the original epoch, input checkpoint, and run to that authenticated policy, and check the full output model inventory stays within its namespace. A successor manifest requires the authority's checkpoint authorization. Legacy isolated rehearsals remain supported without a release policy only for explicitly nonpayable private/test epochs. These hooks are prepared code; their existence does not activate public discovery or authorize deployment of an unqualified checkpoint.
+
+
+### Model publication throughput
+
+Model publication uploads and fully reads back up to four independent checkpoint files concurrently (`R2ModelPublisher.shard_concurrency`, range 1–8). Each file still uses bounded multipart buffers, conditional immutable writes, and a complete GET SHA256 check. Descriptor and signed receipt publication waits for every file to pass. The coordinator independently streams up to four files concurrently (`R2Services.readback_concurrency`, range 1–8), writing its small readback record only after all exact hashes match. Optimizer state remains local; no hash, lease or receipt requirement is removed. Historical sequential qualification runs retain their original source and timings.
+
+
+### Parallel proof memory lifetime
+
+Independent B1 replicas share a semaphore around full proof prefill. Each replica releases inactive CUDA allocator buffers before and after that phase, while still holding the semaphore. The model parameters remain resident. This is needed because serializing compute alone does not release another process's reserved proof buffers; four persistent allocator caches can otherwise exhaust an H200 on 8192-token inputs. The original 8192 qualification exposed this OOM and remains recorded as a failure. Longer-sequence memory and exact-output qualification is required before enabling the new profile; the 4096 exact replay alone does not qualify 8192 capacity.
+
+Miner shutdown releases borrowed task views before their owning backend, clears strong model aliases, and then closes journals. A persistent verifier factory remains the owner of its borrowed backend. Replica cancellation terminates only owned children and preserves completed original nonce bytes; a native task error leaves that task terminal but allows a new process pool and proof semaphore for the next task. It never substitutes another nonce into the failed group. These lifecycle controls are tested across repeated epoch changes without depending on garbage collection.
+
+The additional H200 memory control retained four maximum-length KV caches and five model copies while checking original 4467-token proof parity and synthetic 8192-token tensor geometry. That control passed; it is not evidence of a newly sampled, complete 8192-token group. Full opening-first mining qualification remains a separate acceptance check.

@@ -22,6 +22,18 @@ _CHILD = None
 _PROOF_GATE = None
 
 
+def _release_cuda_temporaries():
+    """Return inactive proof buffers, while preserving every live model tensor.
+
+    Each process has its own CUDA allocator. Without this release, serialized
+    proof calls still leave one large reserved full-vocabulary buffer per
+    replica, eventually defeating the shared peak-memory bound.
+    """
+    import torch
+    if torch.cuda.is_initialized():
+        torch.cuda.empty_cache()
+
+
 def _deadline(manifest):
     if time.time() >= manifest['deadline']:
         from .miner import EpochClosed
@@ -49,8 +61,11 @@ def _generate(base, manifest, proof_gate, environment, harness, index, nonce):
         while not proof_gate.acquire(timeout=.5): _deadline(manifest)
         try:
             _deadline(manifest)
+            _release_cuda_temporaries()
             return compute(*args, **kwargs)
-        finally: proof_gate.release()
+        finally:
+            try:_release_cuda_temporaries()
+            finally:proof_gate.release()
     facade.next_token_logits, facade.compute = checked_forward, bounded_compute
     row, arrays = facade.rollout(index, nonce)
     _deadline(manifest)
@@ -72,10 +87,27 @@ class _Replicas:
         self.lock = threading.Lock(); self.closed = False; self.tasks = set()
         self.bound = limits(actor.manifest)
         self.mp = multiprocessing.get_context('spawn')
-        self.gate = self.mp.Semaphore(1)
-        self.processes = ProcessPoolExecutor(max_workers=replicas, mp_context=self.mp,
-            initializer=_initialize_child, initargs=(str(actor.checkpoint), actor.manifest,
-                actor.identity.id, base.env_config, base.harness, self.gate))
+        self._initargs = (str(actor.checkpoint), actor.manifest,
+            actor.identity.id, base.env_config, base.harness)
+        self.gate = None
+        self.processes = None
+        self._ensure_pool()
+    def _ensure_pool(self):
+        if self.closed: raise ValueError('replica runtime already closed')
+        _deadline(self.actor.manifest)
+        if self.processes is None:
+            # A terminated child may have held the old proof semaphore. New
+            # workers must never inherit that abandoned locked gate.
+            self.gate = self.mp.Semaphore(1)
+            self.processes = ProcessPoolExecutor(max_workers=self.n, mp_context=self.mp,
+                initializer=_initialize_child, initargs=(*self._initargs,self.gate))
+    def _abort_pool(self):
+        # A native task error ends that original group, not the entire miner.
+        # Kill its in-flight attempts; the ordinary journal marks this task
+        # terminal before the worker may create a new pool for a different task.
+        # Partial bytes remain bound to their original task/nonce spool.
+        pool, self.processes = self.processes, None
+        if pool is not None: stop_process_pool(pool)
     def _retire(self):
         for key in tuple(self.tasks):
             if self.actor._group_journal.status(key) in ('accepted','filtered','native_error'):
@@ -89,8 +121,10 @@ class _Replicas:
         if not self.closed:
             self.closed = True
             try:
-                stop_process_pool(self.processes)
-            finally: self._retire()
+                self._abort_pool()
+            finally:
+                try: self._retire()
+                finally: self.actor = self.base = self._initargs = None
     def _encode(self, nonce, result):
         row, arrays, witness = result
         if row.get('seed') != nonce or witness.get('attempt') != nonce:
@@ -107,7 +141,7 @@ class _Replicas:
             raise ValueError('one original group coordinator per replica set')
         spool = None
         try:
-            _deadline(self.actor.manifest); self._retire()
+            _deadline(self.actor.manifest); self._retire(); self._ensure_pool()
             key=task_key(self.actor,facade.spec.id,index);self.tasks.add(key)
             binding=dict(task_key=key,manifest_sha256=digest(self.actor.manifest),
                          miner=self.actor.identity.id,epoch=self.actor.manifest['epoch'])
@@ -128,7 +162,7 @@ class _Replicas:
             def submit(nonce):
                 return self.processes.submit(_child_generate,facade.env_config,facade.harness,index,nonce)
             raw=collect(spool,submit,self._encode,workers=self.n,deadline=self.actor.manifest['deadline'],
-                        abort=self.close,cancelled=lambda:self.closed)
+                        abort=self._abort_pool,cancelled=lambda:self.closed)
             return [self._decode(value)for value in raw]
         finally:
             if spool is not None:spool.close()
@@ -152,7 +186,15 @@ class ParallelMimoGroupRuntime:
         row,arrays,witness=self._completed[nonce]
         self.complete_group_sample_evidence=deepcopy(witness)
         return deepcopy(row),[a.copy()for a in arrays]
-    def close(self):self._replicas.close()
+    def close(self):
+        base = self._base
+        try:self._replicas.close()
+        finally:
+            try:
+                close = getattr(base, 'close', None)
+                if callable(close):close()
+            finally:
+                self._base = self._completed = self.complete_group_sample_evidence = None
 
 
 def wrap_runtime(runtime, *, actor, replicas=1, state_root=None, admit=True):
@@ -172,8 +214,10 @@ def wrap_runtime(runtime, *, actor, replicas=1, state_root=None, admit=True):
     runtime.backend.guard()
     if admit:
         import torch
-        free,_=torch.cuda.mem_get_info(runtime.device)
-        model_bytes=sum(p.numel()*p.element_size()for p in runtime.model.parameters())
+        # The Miner owns a task/session facade. Device and model memory belong
+        # to its authenticated compute backend, not the facade itself.
+        free,_=torch.cuda.mem_get_info(runtime.backend.device)
+        model_bytes=sum(p.numel()*p.element_size()for p in runtime.backend.model.parameters())
         required=replicas*model_bytes+32*1024**3+replicas*2*1024**3
         if free<required:raise RuntimeError('insufficient GPU room for bounded B1 replicas plus serialized proof prefill')
     if state_root is None:

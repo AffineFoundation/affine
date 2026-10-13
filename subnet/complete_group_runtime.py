@@ -50,6 +50,8 @@ class MimoGroupRuntime:
         self.manifest = copy.deepcopy(manifest)
         spec = validate_runtime_spec(manifest['mimo_runtime'])
         descriptor = {k: manifest['checkpoint'][k] for k in ('id', 'files')}
+        self._owns_backend = backend is None
+        self._closed = False
         if backend is None:
             backend = MimoRuntime.load(checkpoint, descriptor, spec,
                                       device=manifest['backend_profile']['device'], trainable=False)
@@ -82,9 +84,25 @@ class MimoGroupRuntime:
         return self
 
     def for_environment(self, environment, harness=None):
+        need(not self._closed, 'open MiMo task facade required')
         result = copy.copy(self).configure(environment, harness)
+        # Task views borrow the original facade's model, just as verifier
+        # facades borrow their persistent factory's backend.
+        result._owns_backend = False
         from .forced_sampling import bind_runtime
         return bind_runtime(result, self.manifest, self.sampling_context['miner'])
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        backend, self.backend = self.backend, None
+        # Drop the facade's model alias before the owner releases CUDA storage.
+        self.model = None
+        self.tokenizer = None
+        if self._owns_backend:
+            self._owns_backend = False
+            backend.close()
 
     def next_token_logits(self, *args, **kwargs):
         return self.backend.next_token_logits(*args, **kwargs)

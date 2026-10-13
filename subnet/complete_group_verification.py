@@ -47,17 +47,27 @@ def sampling_check(runtime, rollout, prompt, output, full_logprobs):
     draw = prepare_draws(runtime.sampling_context, runtime.spec.id, rollout['task_hash'],
                          rollout['index'], rollout['seed'], 0, prompt)
     start = time.monotonic()
+    replay_seconds = 0.
     try:
         result = verify_intervals(full_logprobs[:, :runtime.sampling_context['token_geometry']['vocab_size']],
             output, [draw(i) for i in range(len(output))], runtime.harness,
-            runtime.fast_sampling_calibration['cdf_abs_error'])
+            runtime.fast_sampling_calibration['cdf_abs_error'], exact_fallback_on_disagreement=True)
         result['cached_reference_adjudication'] = False
+        result['prefill_checked_positions'] = len(output)
+        interval_seconds = time.monotonic() - start
     except (NumericalAmbiguity, InvalidSample) as error:
         # MiMo's hybrid cached/prefill numerical agreement must be measured.
         # A failed fast CDF check is never by itself a confirmed forged path:
         # replay the original cached sampler before assigning an invalid result.
+        interval_seconds = time.monotonic() - start
+        replay_started = time.monotonic()
         result = exact_replay(runtime, prompt, output, rollout['seed'], rollout['index'], rollout['task_hash'])
+        replay_seconds = time.monotonic() - replay_started
         result['fast_disagreement'] = type(error).__name__
+        result['prefill_checked_positions'] = getattr(error, 'checked_positions', len(output))
+    result['prefill_interval_seconds'] = interval_seconds
+    result['cached_replay_seconds'] = replay_seconds
+    result['interval_implementation'] = 'bounded-exact-support-cpu-v1'
     result['sampling_seconds'] = time.monotonic() - start
     return result
 
@@ -111,6 +121,7 @@ def verify_rollout(runtime, rollout, arrays):
     if rollout.get('sampling') != receipt(runtime.sampling_context, rollout.get('seed')):
         raise InvalidSample('group sampling attempt binding')
     projected = native_projection(runtime, rollout)
+    native_seconds = time.monotonic() - start
     turn = rollout['turns'][0]; output = projected['output']; prompt = projected['prompt']
     if any(turn.get(k) != projected[k] for k in ('classification','reward','stop_reason','done','observations')):
         raise InvalidSample('native outcome or stopping claim')
@@ -119,7 +130,10 @@ def verify_rollout(runtime, rollout, arrays):
     if projected['stop_reason'] == 'budget' and any(row.get('native_classification') != projected['native_classification']
                                                   for row in (turn, rollout)):
         raise InvalidSample('original capped native classification claim')
+    prefill_started = time.monotonic()
     acts, full = runtime.compute(prompt, output)
+    prefill_seconds = time.monotonic() - prefill_started
+    selected_started = time.monotonic()
     values = np.asarray(full)
     if values.ndim != 2 or values.shape[0] != len(output) or not np.isfinite(values).all():
         raise RuntimeError('invalid recomputed model distributions')
@@ -129,6 +143,8 @@ def verify_rollout(runtime, rollout, arrays):
             or not np.isfinite(arrays[0]).all() or not np.allclose(arrays[0], selected, atol=p['logprob_atol'], rtol=0)):
         raise InvalidSample('selected T1 probabilities')
     count = 1+math.ceil(len(output)/16)
+    selected_seconds = time.monotonic() - selected_started
+    toploc_started = time.monotonic()
     try:
         validate_framing(turn['proofs'], count, 128)
     except ValueError as exc:
@@ -137,7 +153,12 @@ def verify_rollout(runtime, rollout, arrays):
     if len(results) != count or any(r.exp_mismatches > p['toploc_exp_mismatches']
         or r.mant_err_mean > p['toploc_mant_err_mean'] or r.mant_err_median > p['toploc_mant_err_median'] for r in results):
         raise InvalidSample('TOPLOC mismatch')
+    sampling_started = time.monotonic()
     result = sampling_check(runtime, rollout, prompt, output, values)
+    result['native_seconds'] = native_seconds
+    result['prefill_seconds'] = prefill_seconds
+    result['selected_probability_seconds'] = selected_seconds
+    result['toploc_seconds'] = sampling_started - toploc_started
     result['full_verify_seconds'] = time.monotonic() - start
     return result
 

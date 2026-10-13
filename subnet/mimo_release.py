@@ -37,6 +37,27 @@ def digest(value):
     return hashlib.sha256(canonical(value)).hexdigest()
 
 
+def source_bundle(record, *, url=None):
+    """Return the miner-download identity, which hashes ARCHIVE bytes.
+
+    ``source_sha256`` separately identifies the uncompressed file inventory.
+    It must never be used as the download SHA: the signed-source launcher
+    authenticates the gzip archive before extraction.
+    """
+    expected = record.get('archive_sha256')
+    size = record.get('archive_bytes')
+    if (record.get('version') != VERSION or type(expected) is not str
+            or len(expected) != 64 or not set(expected) <= set('0123456789abcdef')
+            or type(size) is not int or not 0 < size <= 32*1024**2
+            or digest(record.get('source')) != record.get('source_sha256')):
+        raise ValueError('verified release archive/inventory identities required')
+    result = dict(sha256=expected, size=size)
+    if url is not None:
+        from .backend_jobs import r2_url
+        result['url'] = r2_url(url, 'GET')
+    return result
+
+
 def _path(name):
     path = PurePosixPath(name)
     if (not isinstance(name, str) or not name or path.is_absolute()

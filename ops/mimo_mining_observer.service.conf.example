@@ -1,0 +1,9 @@
+# Prepared drop-in for the EXISTING affine-mining-discovery.service only.
+# Do not install until the new public lifecycle is qualified and running.
+# The observer config is disabled by default and must pin that exact process.
+[Service]
+ExecStart=
+ExecStart=/operator/runtimes/mimo-host/venv/bin/python -B /operator/releases/mimo/ops/publish_mimo_public_discovery.py --config /operator/private/mimo-mining-observer.json --watch
+WorkingDirectory=/operator/releases/mimo
+Restart=always
+RestartSec=5

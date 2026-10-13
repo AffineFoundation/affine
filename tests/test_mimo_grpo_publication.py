@@ -6,6 +6,7 @@ payloads; trainer handover cases use actual small PyTorch optimizer updates.
 from dataclasses import replace
 import io
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -137,6 +138,33 @@ def test_existing_wrong_model_bytes_are_never_overwritten(tmp_path):
         publish(original)
     assert client.objects[key] == b'corrupt-object'
     assert not any('/publications/' in name for name in client.objects)
+
+
+def test_independent_shards_overlap_and_receipt_waits_for_every_readback(tmp_path):
+    class ConcurrentS3(S3):
+        def __init__(self):
+            super().__init__();self.barrier=threading.Barrier(4);self.lock=threading.Lock()
+            self.active=0;self.peak=0;self.completed=set()
+        def put_object(self,**kwargs):
+            if kwargs['Key'].endswith('.safetensors'):
+                with self.lock:self.active+=1;self.peak=max(self.peak,self.active)
+                self.barrier.wait(timeout=5)
+                result=super().put_object(**kwargs)
+                with self.lock:self.active-=1;self.completed.add(kwargs['Key'])
+                return result
+            if '/publications/'in kwargs['Key']:
+                assert len(self.completed)==4
+            return super().put_object(**kwargs)
+    client=ConcurrentS3();publish=publisher(client)
+    original=request(tmp_path/'model');root=Path(original['model_directory'])
+    (root/'model.safetensors').unlink()
+    for n in range(4):(root/f'model-{n}.safetensors').write_bytes(bytes([n])*1000)
+    files={p.name:dict(size=p.stat().st_size,sha256=file_hash(p))for p in root.iterdir()}
+    original.update(model_files=files,output_checkpoint=digest({n:r['sha256']for n,r in files.items()}))
+    result=publish(original)
+    assert client.peak==4 and result['model_full_get_verified']is True
+    assert len(publish.last_receipt['payload']['objects'])==5
+    assert client.closed_bodies>=7
 
 
 def test_two_private_epochs_signed_r2_handover_and_checkpoint_lifetime_retention(tmp_path):

@@ -17,8 +17,68 @@ from ops.live_reward_exporter import atomic
 from ops.mining_discovery import process_live
 from subnet.live_reward_bridge import signed
 from subnet.source_bootstrap import r2_url
+from subnet.storage import canonical
 
 LEARNER_UNIT = "affine-ordinary-v3-native-eligibility-durable-learner-v1.service"
+
+
+def _pinned_reference(ref):
+    if not isinstance(ref, dict) or set(ref) != {'path', 'sha256'}:
+        raise ValueError('explicit composed learner reference required')
+    path = Path(ref['path'])
+    if (not path.is_absolute() or path.resolve() != path or path.is_symlink()
+            or hashlib.sha256(path.read_bytes()).hexdigest() != ref['sha256']):
+        raise ValueError('composed learner source mismatch')
+    return path
+
+
+def _verifier_only_parent(policy, authority, scripts):
+    """Read the signed generation config through the verifier-only wrapper.
+
+    Never import or execute the service's constructors: this observer merely
+    authenticates the physical entry and its explicit parent/config bindings.
+    A verifier-source change cannot silently select a different mining source.
+    """
+    fields = {'version', 'kind', 'execute_allowed', 'entry', 'route_module',
+              'parent_policy', 'parent_preparer', 'route_policy', 'sampling_registry',
+              'candidate_root', 'opening_source', 'consumer_files'}
+    if set(policy) != fields or policy['kind'] != 'learner':
+        raise ValueError('exact verifier-only learner composition required')
+    refs = {name: _pinned_reference(policy[name]) for name in
+            ('entry', 'route_module', 'parent_policy', 'parent_preparer',
+             'route_policy', 'sampling_registry', 'opening_source')}
+    if scripts != [refs['entry']]:
+        raise ValueError('physical verifier-only learner entry mismatch')
+    if not isinstance(policy['consumer_files'], dict):
+        raise ValueError('explicit verifier-only consumer inventory required')
+    for ref in policy['consumer_files'].values():
+        _pinned_reference(ref)
+    parent = signed(json.loads(refs['parent_policy'].read_bytes()), authority)
+    if (parent.get('version') != 'prior12-and-optimizer16-composed-controller-v1'
+            or parent.get('kind') != 'learner' or parent.get('execute_allowed') is not True
+            or policy['parent_preparer'] != parent.get('runner')):
+        raise ValueError('verifier-only learner parent mismatch')
+    for name in ('entry', 'runner'):
+        _pinned_reference(parent[name])
+    route = signed(json.loads(refs['route_policy'].read_bytes()), authority)
+    registry_document = json.loads(refs['sampling_registry'].read_bytes())
+    registry = signed(registry_document, authority)
+    if (route.get('version') != 'prospective-verifier-only-source-route-v1'
+            or route.get('generation_source_sha256') != parent.get('source_sha256')
+            or route.get('verifier_source_sha256') == parent.get('source_sha256')
+            or route.get('epoch_prefix') != parent.get('epoch_prefix')
+            or type(route.get('first_round')) is not int
+            or route['first_round'] < parent.get('first_round', 0)
+            or hashlib.sha256(canonical(registry_document)).hexdigest()
+            != route.get('sampling_registry_sha256')):
+        raise ValueError('verifier-only generation source or registry mismatch')
+    expected_registry = dict(version='source-specific-sampling-api-admission-v1',
+        sources={parent['source_sha256']: dict(runtime_files=route['runtime_files'],
+            runtime_versions=route['runtime_versions'],
+            sampling_versions=[route['verification_policy']['sampling_contract']])})
+    if registry != expected_registry:
+        raise ValueError('verifier-only sampling registry mismatch')
+    return parent
 
 
 def base_document(authority, now):
@@ -54,19 +114,15 @@ def actual_selector(authority, unit=LEARNER_UNIT, *, proc=Path('/proc'), inspect
         scripts = [Path(arg) for arg in argv[1:argv.index('--policy')] if arg.endswith('.py')]
         if len(scripts) != 1 or hashlib.sha256(scripts[0].read_bytes()).hexdigest() != runner_hash:
             raise ValueError('physical learner runner mismatch')
+    elif policy.get('version') == 'explicit-verifier-only-service-composition-v1':
+        scripts = [Path(arg) for arg in argv[1:argv.index('--policy')] if arg.endswith('.py')]
+        policy = _verifier_only_parent(policy, authority, scripts)
     elif policy.get('version') == 'prior12-and-optimizer16-composed-controller-v1' and policy.get('kind') == 'learner':
         # This signed composition distinguishes its physical entry from the
         # imported controller. Authenticate both; do not relax legacy bindings.
         references = {}
         for name in ('entry', 'runner'):
-            ref = policy.get(name)
-            if not isinstance(ref, dict) or set(ref) != {'path', 'sha256'}:
-                raise ValueError('explicit composed learner reference required')
-            path = Path(ref['path'])
-            if (not path.is_absolute() or path.resolve() != path or path.is_symlink()
-                    or hashlib.sha256(path.read_bytes()).hexdigest() != ref['sha256']):
-                raise ValueError('composed learner source mismatch')
-            references[name] = path
+            references[name] = _pinned_reference(policy.get(name))
         scripts = [Path(arg) for arg in argv[1:argv.index('--policy')] if arg.endswith('.py')]
         if scripts != [references['entry']]:
             raise ValueError('physical composed learner entry mismatch')
