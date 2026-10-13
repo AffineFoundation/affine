@@ -98,3 +98,44 @@ This changes the reward/completion grammar, so it needs a new qualified source,
 signed release scope and epoch boundary, coordinated miner/native/audit/eval
 rollout, and separately labeled matched evaluation baseline. It must not rewrite
 old scores, reports or training inputs. No patch is deployed by this diagnostic.
+
+
+## Third public update: matched fixed32 result
+
+Checkpoint `26887685dad237e7fafd86cf543e5294398e6b841cf33c96bde05864fffd4ee6`
+scored **22/32 correct**, two completed wrong, eight unresolved and zero
+infrastructure errors. Twenty-seven outputs ended with EOS; five hit the output
+budget. Original worker-signed report SHA256:
+`784ed0ce752569f8944c94f16427eac4ffe23d32c982332de75585b860746179`.
+
+All four original reports were independently authenticated against their signed
+jobs/manifests and exact source inventory. Task indices, prompt hashes, task
+hashes, common draws, runtime, harness and evaluation dataset identity match.
+The diagnostic reruns the same prospective parser on the original tokens and
+uses the original native grader only where that parser newly admits a completed
+answer. Previously complete answers retain identical grading text. No historical
+report, reward, training input or live grading policy was changed.
+
+| Checkpoint | Official correct /32 | Same narrow-format diagnostic /32 |
+| --- | ---: | ---: |
+| Base | 18 | 22 |
+| Step 1 | 19 | 22 |
+| Step 2 | 21 | 22 |
+| Step 3 | 22 | 25 |
+
+Base-to-step3 official outcomes contain eight gains and four losses. The
+formatting diagnostic contains four gains and one loss. Two-sided exact paired
+binomial tests on the discordant outcomes give approximately0.388 and0.375,
+respectively. These exploratory32-task comparisons do not establish a reliable
+or sustained learning gain; repeated checkpoint comparisons add selection risk.
+
+The four diagnostic gains are tasks5601,1849,6925 and3574. Inspection of the
+original outputs distinguishes the changes:5601 previously omitted8 from the
+possible units digits of a multiple of4;1849 already contained a correct final
+answer but had invalid thinking markers;6925 and3574 previously exhausted the
+8192-token budget and now finish with correct answers. The third checkpoint's
+3574 final derivation also checks its radical solution exactly. These examples
+support improved completed-task outcomes, not a blanket claim that all reasoning
+is sound or that every gain measures mathematical capability rather than output
+control. The independent128-task run remains a separate BASE-versus-STEP2
+comparison and cannot be presented as validation of step3.

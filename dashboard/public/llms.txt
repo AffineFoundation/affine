@@ -378,6 +378,16 @@ The matched narrow-format diagnostic across all96 original outputs remains
 22/32 ->22/32 ->22/32, versus official18/32 ->19/32 ->21/32. This still does
 not demonstrate a sustained improvement in math performance. A separate matched
 128-task comparison is running with the original v1 grading on both checkpoints.
+The third public checkpoint26887685 scored22/32 correct,2 wrong,8 unresolved
+and0 errors;27 responses ended with EOS and5 reached the token budget. Report:
+784ed0ce752569f8944c94f16427eac4ffe23d32c982332de75585b860746179.
+The same offline narrow-format diagnostic now scores22/32 ->22/32 ->22/32
+->25/32 across base and three updates. Relative to base, official outcomes have
+8 gains and4 losses; the diagnostic has4 gains and1 loss. This is encouraging
+small-sample evidence, not statistically established or sustained improvement.
+Two former budget-capped outputs now complete correctly; another previously
+wrong divisibility answer is correct. The larger independent128 comparison
+remains pending and compares BASE with STEP2, not this third checkpoint.
 The first two public updates trained63 distinct tasks across64 task slots.
 Their data-quality and objective review, including incomplete-output masking
 and later audit findings, is published at:
