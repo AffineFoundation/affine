@@ -119,12 +119,22 @@ class Coordinator:
     BEGIN IMMEDIATE serializes selection and lease replacement across processes.
     Workers possess an individual signing seed, never an operator or bucket key.
     """
-    def __init__(self, path, authority, workers, lease_seconds=300, max_attempts=3, clock=time.time, *, allow_public_mimo=False):
+    def __init__(self, path, authority, workers, lease_seconds=300, max_attempts=3, clock=time.time, *, allow_public_mimo=False, source_registry=None, worker_execution=None):
         if not 10 <= lease_seconds <= 86400 or not 1 <= max_attempts <= 10:
             raise ValueError('lease bounds')
         self.path = str(path); self.authority = authority; self.workers = workers
         if type(allow_public_mimo) is not bool: raise ValueError('explicit local MiMo public execution flag')
         self.allow_public_mimo = allow_public_mimo
+        self.source_registry = source_registry
+        self.worker_execution = worker_execution
+        if source_registry is not None:
+            from .mimo_source_migration import SourceReleaseRegistry
+            if (not isinstance(source_registry, SourceReleaseRegistry) or source_registry.authority != authority
+                    or type(worker_execution) is not dict or set(worker_execution) != set(workers)
+                    or any(profile not in source_registry.payload['execution'] for profile in worker_execution.values())):
+                raise ValueError('explicit admitted source profile for every registered worker')
+        elif worker_execution is not None:
+            raise ValueError('worker source routing requires signed release registry')
         self.lease_seconds = lease_seconds; self.max_attempts = max_attempts; self.clock = clock
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._queue_inode = None
@@ -208,6 +218,8 @@ class Coordinator:
         is_mimo = mimo_selected(job,manifest)
         now = self.clock()
         if is_mimo:
+            if self.source_registry is not None:
+                self.source_registry.validate_job_execution(job)
             from .mimo_worker import validate as validate_mimo
             validate_mimo(envelope,self.authority,job.get("created_at",now),allow_public=self.allow_public_mimo)
         else:
@@ -253,7 +265,23 @@ class Coordinator:
                 if role not in self.workers[worker] or role not in ('verify','train','evaluate'): raise ValueError('worker role')
                 db.execute("UPDATE jobs SET status='expired' WHERE status IN ('queued','leased') AND expires<=?", (now,))
                 db.execute("UPDATE jobs SET status='failed' WHERE status='leased' AND lease<=? AND attempt>=?", (now,self.max_attempts))
-                if role == 'train':
+                if self.source_registry is not None:
+                    # An old queued job must execute its original source even
+                    # after the active policy changes. Never consume an attempt
+                    # on a worker installed from another admitted archive.
+                    rows = db.execute("SELECT * FROM jobs WHERE role=? AND expires>? AND attempt<? AND (status='queued' OR (status='leased' AND lease<=?)) ORDER BY rowid", (role,now,self.max_attempts,now)).fetchall()
+                    row = None
+                    for candidate in rows:
+                        original = authenticate(json.loads(candidate['envelope']),self.authority)
+                        self.source_registry.validate_job_execution(original)
+                        opening = authenticate(original['manifest'],self.authority)
+                        if opening['source_bundle']['sha256'] != self.worker_execution[worker]:
+                            continue
+                        if role == 'train' and original.get('trainer_worker') != worker:
+                            continue
+                        row = candidate
+                        break
+                elif role == 'train':
                     # Local optimizer lineage belongs to this named trainer.
                     # A second machine cannot reclaim it with empty local state.
                     rows = db.execute("SELECT * FROM jobs WHERE role=? AND expires>? AND attempt<? AND (status='queued' OR (status='leased' AND lease<=?)) ORDER BY rowid", (role,now,self.max_attempts,now)).fetchall()
