@@ -45,13 +45,14 @@ class Coordinator:
     A signed dispatch records assurance honestly as unaudited. Future auditors
     must use the exact captured commitment/document hashes.
     """
-    def __init__(self, root, bucket, identity, *, resolve_task, grade_batch, release_policy=None):
+    def __init__(self, root, bucket, identity, *, resolve_task, grade_batch, release_policy=None, grade_batches=None):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         _need(not self.root.is_symlink(), 'ordinary private coordinator state')
         self.bucket, self.identity = bucket, identity
         self.resolve_task, self.grade_batch = resolve_task, grade_batch
         self.release_policy = release_policy
+        self.grade_batches = grade_batches
 
     def _namespace(self, manifest):
         if self.release_policy is not None:
@@ -181,27 +182,40 @@ class Coordinator:
                 policy = dict(seed=secrets.token_hex(32), max_tasks=max_tasks)
                 save_manifest(selection, policy)
             candidates, excluded = [], []
-            for envelope in population['captures']:
-                captured = signed(envelope, self.identity.id)
-                _need(captured['epoch'] == manifest['epoch'] and
-                      captured['manifest_sha256'] == sha(canonical(manifest)), 'capture opening mismatch')
-                miner = captured['miner']
-                for item in captured['documents']:
-                    from .complete_group_codec import limits, loads
-                    data, _ = _get(self.bucket, item['key'], limits(manifest).metadata_bytes)
-                    _need(sha(data) == item['sha256'], 'captured training input changed')
-                    doc = loads(data, limits(manifest).metadata_bytes)
-                    batch = doc['batch']
-                    # Native grading may defer on infrastructure failure. Let it
-                    # raise rather than label unexecuted grades as wrong/fraud.
-                    from .audit_policy import InvalidSample
+            # Fetch/authenticate only a bounded number of documents ahead when
+            # the host supplies its process pool. The pool yields original input
+            # order, so concurrency cannot change exclusions or seeded selection.
+            def inputs():
+                for envelope in population['captures']:
+                    captured = signed(envelope, self.identity.id)
+                    _need(captured['epoch'] == manifest['epoch'] and
+                          captured['manifest_sha256'] == sha(canonical(manifest)), 'capture opening mismatch')
+                    miner = captured['miner']
+                    for item in captured['documents']:
+                        from .complete_group_codec import limits, loads
+                        data, _ = _get(self.bucket, item['key'], limits(manifest).metadata_bytes)
+                        _need(sha(data) == item['sha256'], 'captured training input changed')
+                        doc = loads(data, limits(manifest).metadata_bytes)
+                        yield miner, item, doc['batch']
+            from .audit_policy import InvalidSample
+            def serial(requests, opening):
+                for request in requests:
+                    miner, _, batch = request
                     try:
-                        grades = self.grade_batch(batch, manifest, miner=miner)
+                        grades = self.grade_batch(batch, opening, miner=miner)
                     except InvalidSample as error:
+                        grades = error
+                    yield request, grades
+            graded = (self.grade_batches or serial)(inputs(), manifest)
+            try:
+                for (miner, item, batch), grades in graded:
+                    # Only explicit InvalidSample excludes a claim. All worker,
+                    # transport and native-infrastructure exceptions defer seal.
+                    if isinstance(grades, InvalidSample):
                         excluded.append(dict(miner=miner, env_id=batch['env_id'], index=batch['index'],
                             document=item, batch_sha256=sha(canonical(batch)), native_grades=None,
                             assurance='native-claim-rejected-sampling-unaudited',
-                            reason='native-claim-invalid', detail=str(error)))
+                            reason='native-claim-invalid', detail=str(grades)))
                         continue
                     _need(grades['batch_sha256'] == sha(canonical(batch)) and
                           grades['miner'] == miner and grades['sampling_verified'] is False and
@@ -231,6 +245,11 @@ class Coordinator:
                         excluded.append(dict(row, reason=reason))
                     else:
                         candidates.append(row)
+            finally:
+                # On validation failure do not leave an unfinished generator and
+                # native subprocesses alive while the lifecycle retries.
+                if hasattr(graded, 'close'):
+                    graded.close()
             counts = Counter((r['env_id'], r['index']) for r in candidates)
             unique = []
             for row in candidates:

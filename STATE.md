@@ -1,3 +1,30 @@
+MiMo qualification, 2026-10-13 12:38 UTC:
+Mainnet activation is still pending. The legacy network completed epoch187 in
+57.46 minutes and opened188; the12:00 hourly assessment submitted for253 current
+UIDs at block9274215. Preserve the sole writer, cursor and six-hour EMA.
+
+Both original N8 groups passed independent sampling audits (16 rollouts), with
+cached replay required for all16. Fresh final-v6 controls accepted the same two
+honest artifacts on two H200 hosts and rejected three token mutations with fresh
+proofs. Strict prefill differs from cached sampling on426/39131 tested tokens;
+zero acceptance thresholds do not imply zero measured numerical error.
+
+The final-v6 external supervisor adopted the genuine trained checkpoint,
+committed one eligible group and exited cleanly in1252.46seconds. The matched
+final-suite base/updated fixed32 evaluation is still running; no learning gain is
+claimed. The production trainer reproduced the private update's model bytes and
+full model-only publication. Experimental optimizer state is separate from the
+empty new production state.
+
+Prospective v7 adds bounded parallel native grading (eight warm jobs8.47seconds
+versus64.17seconds serial, identical results) and removes duplicate same-owner
+transaction hashing. Cold recovery still hashes all bytes. This hashing memo
+trusts the private directory and exclusive owner; filesystem timestamps are not
+proof against malicious concurrent same-UID writes. These are operational
+changes; the scientific model, sampler, grader and GRPO objective are unchanged.
+Frozen qualification sources and original records remain intact. Public docs
+and services must switch together only at the reviewed epoch boundary.
+
 MiMo qualification, 2026-10-13 11:35 UTC:
 Public activation has NOT happened. The current learner is collecting global
 epoch187; the sole hourly writer successfully submitted the11:00 assessment for

@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import stat as file_stat
 import tempfile
 
 VERSION = 'affine-mimo-grpo-update-transaction-v1'
@@ -103,21 +104,62 @@ def _file(root, name):
     return path
 
 
-def _hash_file(path):
-    h = hashlib.sha256()
-    with path.open('rb') as f:
-        stat = os.fstat(f.fileno())
-        need(stat.st_size <= MAX_ARTIFACT_BYTES, 'bounded artifact bytes')
+def _stamp(value):
+    return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+
+
+def _ordinary_stamp(path):
+    # Check every ancestor too: O_NOFOLLOW only protects the final component.
+    need(path.resolve() == path, 'ordinary local staged file ancestry')
+    value = path.lstat()
+    need(file_stat.S_ISREG(value.st_mode), 'ordinary local staged file')
+    return _stamp(value)
+
+
+def _hash_file(path, *, memo=None):
+    """Hash durable bytes, optionally reusing this uninterrupted owner's digest.
+
+    The caller keeps this memo only inside one exclusive transaction.run call.
+    It is never serialized or retained across publication failure/recovery. A
+    fresh descriptor and full inode stamp are checked even on cache hits;
+    changed ctime catches same-size writes whose mtime was restored. Changed
+    stamps force a full read and comparison against the original expected hash.
+
+    This is an exclusive-owner coherence optimization, not a defense against a
+    concurrent malicious same-UID writer. Filesystem timestamps can share a
+    clock tick, so metadata cannot prove that hostile writes never occurred.
+    The private staging directory and held owner lock exclude legitimate
+    concurrent writers; all cold/recovery checks read every artifact again.
+    """
+    before_path = _ordinary_stamp(path)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'rb') as f:
+        before = os.fstat(f.fileno())
+        need(file_stat.S_ISREG(before.st_mode) and _stamp(before) == before_path,
+             'staged artifact changed before hashing')
+        need(before.st_size <= MAX_ARTIFACT_BYTES, 'bounded artifact bytes')
+        cached = None if memo is None else memo.get(path)
+        if cached is not None and cached[0] == _stamp(before):
+            os.fsync(f.fileno())
+            need(_stamp(os.fstat(f.fileno())) == before_path == _ordinary_stamp(path),
+                 'staged artifact changed during digest reuse')
+            return dict(cached[1])
+        h = hashlib.sha256()
         total = 0
         for chunk in iter(lambda: f.read(8 * 1024**2), b''):
             total += len(chunk)
-            need(total <= stat.st_size, 'staged artifact grew during hashing')
+            need(total <= before.st_size, 'staged artifact grew during hashing')
             h.update(chunk)
         after = os.fstat(f.fileno())
-        need(total == stat.st_size and (stat.st_ino, stat.st_size, stat.st_mtime_ns) ==
-             (after.st_ino, after.st_size, after.st_mtime_ns), 'staged artifact changed during hashing')
+        need(total == before.st_size and _stamp(before) == _stamp(after),
+             'staged artifact changed during hashing')
         os.fsync(f.fileno())
-    return dict(sha256=h.hexdigest(), size=total)
+        need(_stamp(os.fstat(f.fileno())) == before_path == _ordinary_stamp(path),
+             'staged artifact changed after hashing')
+    result = dict(sha256=h.hexdigest(), size=total)
+    if memo is not None:
+        memo[path] = (before_path, dict(result))
+    return result
 
 
 def _checkpoint(artifacts):
@@ -146,7 +188,7 @@ def _receipt(job, checkpoint, value):
          and sha(value['receipt_sha256']), 'publication must confirm original model, never optimizer upload')
 
 
-def _inventory(root, names):
+def _inventory(root, names, *, hash_memo=None):
     need(type(names) is list and 2 <= len(names) <= MAX_FILES and all(type(n) is str for n in names)
          and len(names) == len(set(names)), 'explicit unique bounded model and optimizer files')
     paths = {name: _file(root, name) for name in sorted(names)}
@@ -157,7 +199,7 @@ def _inventory(root, names):
          and all(re.fullmatch(r'[A-Za-z0-9_.-]+', n) and not n.startswith('.')
                  and Path(n).suffix in {'.json','.safetensors','.txt','.model','.jinja','.tiktoken'}
                  for n in model_names), 'actual checkpoint file allowlist')
-    result = {name: _hash_file(path) for name, path in paths.items()}
+    result = {name: _hash_file(path, memo=hash_memo) for name, path in paths.items()}
     need(any(n.startswith('model/') for n in result) and any(n.startswith('optimizer/') for n in result),
          'stage model and local optimizer together')
     need(sum(r['size'] for r in result.values()) <= MAX_ARTIFACT_BYTES, 'total staged artifact cap')
@@ -234,6 +276,9 @@ class Transaction:
         excludes concurrent executions of this job, not unrelated job directories.
         """
         with self.exclusive():
+            # No object-level or persistent memo: even a retry on this same
+            # Transaction object starts with cold artifact verification.
+            hash_memo = {}
             value = self._read()
             if value is None:
                 value = dict(version=VERSION, job=_json_copy(asdict(self.job)), state='prepared')
@@ -257,12 +302,13 @@ class Transaction:
                 report = _json_copy(update())
                 _validate_report(self.job, report)
                 names = stage(report, self.root)
-                inventory = _inventory(self.root, names)
+                inventory = _inventory(self.root, names, hash_memo=hash_memo)
                 value.update(state='staged', report=report, report_sha256=digest(report), artifacts=inventory)
                 _write(self.path, value)
             need(value['report_sha256'] == digest(value['report']), 'staged report integrity')
             _validate_report(self.job, value['report'])
-            need(_inventory(self.root, list(value['artifacts'])) == value['artifacts'], 'staged artifact integrity')
+            need(_inventory(self.root, list(value['artifacts']), hash_memo=hash_memo) == value['artifacts'],
+                 'staged artifact integrity')
             checkpoint, models = _checkpoint(value['artifacts'])
             request = dict(version=VERSION, job_id=self.job.job_id, epoch=self.job.epoch,
                 input_checkpoint=self.job.input_checkpoint, output_checkpoint=checkpoint,

@@ -56,7 +56,7 @@ class Services:
 class Lifecycle:
     def __init__(self, root, bucket, identity, policy, services, *, resolve_task, grade_batch,
                  allow_public=False, collection_seconds=1200, max_tasks=512, first_round=0,
-                 previous_discovery_sha256=None):
+                 previous_discovery_sha256=None, grade_batches=None):
         self.root = Path(root).absolute()
         need(self.root.resolve() == self.root, 'ordinary lifecycle state ancestry')
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -73,6 +73,7 @@ class Lifecycle:
              'public lifecycle needs renewable exact source capabilities')
         self.bucket, self.identity, self.services = bucket, identity, services
         self.resolve_task, self.grade_batch = resolve_task, grade_batch
+        self.grade_batches = grade_batches
         self.collection_seconds, self.max_tasks, self.first_round = collection_seconds, max_tasks, first_round
         self.allow_public = allow_public
         from .mimo_release_policy import _hash
@@ -100,7 +101,8 @@ class Lifecycle:
 
     def _coordinator(self, directory):
         return Coordinator(directory / 'coordinator', self.bucket, self.identity,
-            resolve_task=self.resolve_task, grade_batch=self.grade_batch, release_policy=self.policy)
+            resolve_task=self.resolve_task, grade_batch=self.grade_batch, release_policy=self.policy,
+            grade_batches=self.grade_batches)
 
     def _plan(self, current, directory, now):
         path = directory / 'PLAN.json'

@@ -14,6 +14,7 @@
   "workers": {},
   "chain": {"network": "finney", "netuid": 120},
   "trainer_config": {},
+  "native_grading": {"workers": 8},
   "adapters": {
     "discovery_key": "private/mimo/REPLACE_RUN/current.json",
     "initial_checkpoint_keys": {},

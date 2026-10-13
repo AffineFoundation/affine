@@ -10,6 +10,15 @@ The example configuration at `ops/mimo_lifecycle.example.json` is deliberately
 disabled and contains no credentials or usable release policy. Nothing in this
 implementation installs a service or changes a discovery pointer by itself.
 
+The host performs native outcome grading in eight isolated CPU spawn processes
+by default (`native_grading.workers`, bounded to 1–32). Each worker authenticates
+and loads the tokenizer once for that seal and uses the same immutable epoch
+manifest. At most one input per worker is in flight; results are consumed in
+original population order. Every candidate is still graded before collision
+handling and deterministic whole-task selection. An infrastructure failure
+defers sealing rather than labeling a submission invalid. This scheduling does
+not change native grades, the mining contract, or the independent audit loop.
+
 ## Release admission
 
 Create the exact source archive with `subnet.mimo_release.build`, including its

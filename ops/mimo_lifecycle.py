@@ -36,8 +36,8 @@ def run(args):
     from subnet.mimo_lifecycle import Lifecycle
     from subnet.mimo_lifecycle_adapters import R2Services
     from subnet.complete_group_native import resolve_task,grade_batch
+    from subnet.mimo_native_pool import NativeGradingPool,authenticated_tokenizer
     from subnet.mimo_runtime import file_hash
-    from transformers import AutoTokenizer
     from subnet.mimo_grpo import TrainerConfig
     from subnet.mimo_worker import source_inventory
     if source_inventory()!=config['adapters']['source_files']:
@@ -53,15 +53,11 @@ def run(args):
     # Tokenizer only: validator never loads GPU model weights or optimizer state.
     tokenizer_root=Path(config['tokenizer_directory']).absolute()
     files=policy.scope['initial_checkpoint']['files']
-    if tokenizer_root.resolve()!=tokenizer_root:raise ValueError('ordinary tokenizer directory required')
-    for path in tokenizer_root.iterdir():
-        if not path.is_file() or path.is_symlink() or path.name not in files or file_hash(path)!=files[path.name]:
-            raise ValueError('tokenizer assets differ from qualified checkpoint')
-        if path.name.endswith('.safetensors'):raise ValueError('validator tokenizer directory must not contain model weights')
-    tokenizer=AutoTokenizer.from_pretrained(tokenizer_root,local_files_only=True,trust_remote_code=False)
-    import hashlib
-    if hashlib.sha256(tokenizer.chat_template.encode()).hexdigest()!=policy.scope['immutable_manifest']['mimo_runtime']['chat_template_sha256']:
-        raise ValueError('qualified tokenizer template differs')
+    tokenizer=authenticated_tokenizer(tokenizer_root,files,
+        policy.scope['immutable_manifest']['mimo_runtime']['chat_template_sha256'])
+    native_pool=NativeGradingPool(tokenizer_root,files,
+        policy.scope['immutable_manifest']['mimo_runtime']['chat_template_sha256'],
+        policy.scope['task_assets'],**config.get('native_grading',{}))
     bucket=Bucket(config['bucket'])
     queue=Queue(config['queue_database'],actor.id,config['workers'],allow_public_mimo=args.allow_public_mimo)
     chain=ChainAdapter(state/'registration-observations',**config.get('chain',{}))
@@ -71,6 +67,7 @@ def run(args):
     lifecycle=Lifecycle(state,bucket,actor,config['release_policy'],adapter.services(),
         resolve_task=lambda m,e,i:resolve_task(m,e,i,tokenizer),
         grade_batch=lambda b,m,miner:grade_batch(b,m,tokenizer,miner=miner),
+        grade_batches=native_pool,
         allow_public=args.allow_public_mimo,**config.get('lifecycle',{}))
     # This runner owns one explicit loopback API for this exact DB/roster. The
     # operator supplies its private authenticated tunnel; no public bind occurs.
