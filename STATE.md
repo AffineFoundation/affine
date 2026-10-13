@@ -1,3 +1,23 @@
+MiMo second public update completed, 2026-10-13 15:31 UTC:
+Epoch190 finalized in68m14s with68 external miners submitting95 groups.
+The32-task update trained210 completed trajectories and masked46 unresolved
+ones, advancing the original optimizer tostep2 and checkpoint6e02820b….
+Epoch191 opened15:31:42 with deadline16:01:42. External miners are submitting;
+unchanged-commitment capture reuse is observed live (11 reused,0 reprocessed
+on one poll). Model-only publication and original hourly best-assessment weights
+continue. The15:00 chain update included254 currentUIDs at block9275119.
+
+A transient finalization ValueError recovered automatically without repeating
+training. A separate regression reproduces stale tick-time rejection of a valid
+later-arriving report; a fresh receipt-clock correction is prepared in source.
+Transaction-scoped optimizer hash reuse also removes two redundant full reads
+of roughly107GB local state. Both are prospective, require a qualified source
+migration and are NOT in the currently advertised frozen69ae058b archive.
+Source-only upgrades must preserve original checkpoints, optimizer lineage,
+policy-specific historical evidence and uninterrupted hourly weight setting.
+Public first matched result remains18/32→19/32; formatting sensitivity is under
+investigation and no convergence or sustained learning improvement is claimed.
+
 MiMo matched public evaluation, 2026-10-13 15:20 UTC:
 The first public update's exact matched fixed32 result is19/32 correct versus
 18/32 at the base. Five tasks became correct; four previously correct became

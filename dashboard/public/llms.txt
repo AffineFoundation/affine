@@ -355,6 +355,15 @@ Public base report SHA256:
 ce16a508f8743afe2799446660a548768e4bd425811ffd75af61d2cd71904439.
 Post-update report SHA256:
 d83134457b93ac970e404a62aa6ead35305bf6fe3003b97c3ca56f60c66a5e3b.
+An offline matched formatting diagnostic on these same64 original outputs
+scores22/32 for BOTH checkpoints when single final boxes permit a terminal
+period and correctly attached math wrappers. This is not the live grading rule;
+original scores and signed evidence remain unchanged. Units, repeated boxes,
+truncated answers and reasoning correctness were not silently accepted. The
+diagnostic shows that formatting contributes to apparent gains and losses.
+Current GitHub also contains prospective optimizer-hash reuse and a report
+receipt-clock fix. These do not replace the approved source archive above;
+source migration and qualification precede activation.
 The historical22/32 result used a different task-definition fingerprint and
 cannot replace this matched baseline.
 Fresh training-fit diagnostics are also separate from held-out generalization.
