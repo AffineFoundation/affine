@@ -69,7 +69,8 @@ def evidence_availability(snapshot, history, authority, now):
 
 
 class Projection:
-    def __init__(self, root, policy, authority, workers, validate_report, *, first_round, started_at, model):
+    def __init__(self, root, policy, authority, workers, validate_report, *, first_round, started_at, model, audit_projection=None):
+        self.audit_projection = audit_projection
         self.root, self.policy, self.authority = Path(root), policy, authority
         self.workers, self.validate_report = workers, validate_report
         self.first_round, self.started_at, self.model = first_round, started_at, model
@@ -183,4 +184,4 @@ class Projection:
             accepted=0,rejected=0,unchecked=sum(e['unchecked']for e in epochs),training_steps=sum((e['training']or{}).get('steps',0)for e in epochs)),
             training_run=boundary,epochs=sorted(epochs,key=lambda e:e['start'],reverse=True),evaluations=sorted(evaluations,key=lambda e:e['timestamp']),training_evaluations=[])
         for key in ('incentive','incentive_history','incentive_prices'):result[key]=previous.get(key)
-        return result
+        return self.audit_projection(result, openings, now) if self.audit_projection is not None else result

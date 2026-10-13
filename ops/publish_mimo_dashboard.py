@@ -5,6 +5,7 @@ No HTML/CSS changes; old database rows and signed history remain intact.
 The standard server keeps its routes and canonical guide export; closed legacy
 records are read from the existing database without rescanning every artifact.
 """
+import copy
 import argparse
 import hashlib
 import json
@@ -17,19 +18,21 @@ sys.dont_write_bytecode=True
 def database_view(original,projection,history_path=None,authority=None):
     class MiMoDatabase(original):
         def refresh(self):
-            # The old learner is closed. Preserve its historical SQLite rows;
-            # current MiMo evidence and incentive files are read per snapshot.
-            return None
-        def snapshot(self,current_only=False):
+            # The existing server calls this at startup and in its poll thread.
+            # Do not rescan legacy artifacts or verify audit reports in HTTP handlers.
             prior=super().snapshot(current_only=False)
-            if not current_only:return prior
             now=time.time();result=projection.project(prior,now)
             if history_path is not None:
                 from dashboard.mimo_live_projection import read,evidence_availability
                 try:history=read(history_path)
                 except (OSError,ValueError):history=None
                 result=evidence_availability(result,history,authority,now)
-            return result
+            self._mimo_snapshot=result  # atomically replace only a complete projection
+        def snapshot(self,current_only=False):
+            if not current_only:return super().snapshot(current_only=False)
+            result=getattr(self,'_mimo_snapshot',None)
+            if result is None:raise RuntimeError('MiMo dashboard refresh has not completed')
+            return copy.deepcopy(result)
     return MiMoDatabase
 
 
@@ -51,6 +54,7 @@ def main(argv=None):
     from subnet.mimo_release_policy import ReleasePolicy
     from subnet.mimo_worker import validate_report
     from dashboard.mimo_live_projection import Projection
+    from dashboard.mimo_audit_projection import AuditProjection
     from dashboard import server
     if Path(server.__file__).resolve()!=legacy:
         raise ValueError('dashboard actual legacy module source differs')
@@ -60,7 +64,11 @@ def main(argv=None):
     policy=ReleasePolicy(lifecycle['release_policy'],cfg['authority'],allow_public=True)
     if policy.mode!='public':raise ValueError('public dashboard requires public release')
     projection=Projection(lifecycle['state_root'],policy,cfg['authority'],lifecycle['workers'],validate_report,
-        first_round=lifecycle['lifecycle']['first_round'],started_at=cfg['started_at'],model=cfg['model'])
+        first_round=lifecycle['lifecycle']['first_round'],started_at=cfg['started_at'],model=cfg['model'],
+        audit_projection=AuditProjection(lifecycle['state_root'],lifecycle['queue_database'],cfg['authority'],
+            lifecycle['workers'],policy.validate_manifest,
+            {policy.scope['immutable_manifest']['source_bundle']['sha256']:
+                {k:lifecycle['adapters'][k] for k in ('source_files','runtime_versions')}}))
     # Explicit path arguments preserve original database/source/static assets when
     # operator stages these modules in a separate immutable source closure.
     server.Database=database_view(server.Database,projection,
