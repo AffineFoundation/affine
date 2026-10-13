@@ -28,6 +28,7 @@ MAX_FILES = 20000
 ROOT_FILES = {'AGENTS.md', 'GOAL.md', 'IMPLEMENTATION_PLAN.md', 'README.md', 'STATE.md', 'pyproject.toml', '.gitignore', 'LICENSE', 'LIVE_LAUNCH_PLAN.md', 'configs/bounded-audit-policy.json'}
 PUBLIC_NAMESPACES = {'subnet', 'ops', 'tests', 'docs', 'dashboard', 'examples', 'prototype', 'systemd'}
 TASK_ASSET = 'assets/original-math7496.tasks.json'
+PINNED_VENDOR_ROOT = ('vendor', 'mimo_verl_pinned')
 
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
@@ -96,7 +97,8 @@ def public_path(name):
     lowered=[x.lower() for x in p.parts]
     if any(x.startswith('.') and x != '.gitignore' for x in lowered) or any(x in {'state','wallets','hotkeys','coldkeys','__pycache__','credentials','node_modules'} or x.endswith(('.seed','.pem','.key','.pyc')) or x.startswith('.env') for x in lowered):
         raise ValueError('private archive path')
-    if name not in ROOT_FILES and name != TASK_ASSET and p.parts[0] not in PUBLIC_NAMESPACES: raise ValueError('unapproved source path')
+    pinned_vendor = len(p.parts) > 2 and p.parts[:2] == PINNED_VENDOR_ROOT
+    if name not in ROOT_FILES and name != TASK_ASSET and p.parts[0] not in PUBLIC_NAMESPACES and not pinned_vendor: raise ValueError('unapproved source path')
     return name
 
 def admitted_files(body, descriptor):

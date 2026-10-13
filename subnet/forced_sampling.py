@@ -8,6 +8,9 @@ from pathlib import Path
 VERSION = 'forced-inverse-cdf-replay-v1'
 MINER_VERSION = 'forced-inverse-cdf-prefill-miner-bound-v5'
 FIELDS = {'version', 'randomness', 'max_attempts', 'verification', 'generation'}
+COMPLETE_GROUP_VERSION = 'forced-inverse-cdf-complete-group-v1'
+MIMO_GROUP_VERSION = 'forced-inverse-cdf-complete-group-mimo-v1'
+GROUP_VERSIONS = (COMPLETE_GROUP_VERSION, MIMO_GROUP_VERSION)
 
 
 def canonical(value):
@@ -19,6 +22,9 @@ def source_hash():
 
 
 def validate(value):
+    if isinstance(value, dict) and value.get('version') in GROUP_VERSIONS:
+        from .complete_group_sampling import validate_sampling
+        return validate_sampling(value)
     from .fast_prefill_audit import VERSION as FAST,SUPPORT_VERSION as SUPPORT,THREEWAY_VERSION as THREEWAY,calibration
     expected=(FIELDS|{'calibration','uncertainty_adjudication'}if isinstance(value,dict)and value.get('version')==THREEWAY else FIELDS|{'calibration','support_adjudication'}if isinstance(value,dict)and value.get('version')in(SUPPORT,MINER_VERSION) else FIELDS|{'calibration'}if isinstance(value,dict)and value.get('version')==FAST else FIELDS)
     if not isinstance(value, dict) or set(value) != expected:
@@ -53,6 +59,14 @@ def new_contract(config):
 def validate_harness(config,contract=None):
     from .harness import normalize
     c = normalize(config)
+    if c['version'] == 'text-tools-mimo-complete-group-v1':
+        if not isinstance(contract, dict) or contract.get('version') != MIMO_GROUP_VERSION:
+            raise ValueError('MiMo harness requires MiMo complete-group sampler')
+        return c
+    if c['version'] == 'text-tools-complete-group-long-v1':
+        from .complete_group_harness import require_sampler
+        require_sampler(c, contract)
+        return c
     if c['policy'] != 'autoregressive' or c.get('turn_overrides'):
         raise ValueError('forced sampling requires unmodified autoregressive policy')
     # Cached generation is deliberately not an alternative sampler in v1.
@@ -63,6 +77,11 @@ def validate_harness(config,contract=None):
 
 def binding(manifest, miner=None):
     value = manifest.get('sampling_contract')
+    if isinstance(value, dict) and value.get('version') in GROUP_VERSIONS:
+        from .complete_group_sampling import binding as group_binding
+        return group_binding(manifest, miner, expected_source_hash=source_hash())
+    if 'group_contract' in manifest:
+        raise ValueError('complete-group contract requires its explicit sampler')
     if value is None:
         if 'sampling_source_hash' in manifest:
             raise ValueError('sampling contract missing')
@@ -89,6 +108,14 @@ def binding(manifest, miner=None):
 
 def bind_runtime(runtime, manifest, miner=None):
     context = binding(manifest,miner)
+    if context is not None and context['contract']['version'] in GROUP_VERSIONS:
+        from .complete_group_sampling import validate_runtime
+        from .fast_prefill_audit import bind
+        runtime.sampling_context = context
+        validate_runtime(runtime, context)
+        runtime.fast_sampling_calibration = bind(manifest, runtime.harness)
+        runtime.fast_sampling_manifest = manifest
+        return runtime
     if context is not None and context['contract']['version']==MINER_VERSION and 'miner'not in context:raise ValueError('v5 runtime needs authenticated miner identity')
     if context is not None:
         validate_harness(runtime.harness)
@@ -107,12 +134,18 @@ def receipt(context, attempt):
 
 
 def validate_attempt(context, attempt):
+    if context['contract']['version'] in GROUP_VERSIONS:
+        from .complete_group_sampling import validate_attempt as validate_group_attempt
+        return validate_group_attempt(context, attempt)
     if context['contract']['version']==MINER_VERSION and 'miner'not in context:raise ValueError('v5 attempt requires authenticated miner identity')
     if type(attempt) is not int or not 0 <= attempt < context['contract']['max_attempts']:
         raise ValueError('forced sampling attempt out of range')
 
 
-def uniform(context, env_id, task_hash, index, attempt, turn, position):
+def uniform(context, env_id, task_hash, index, attempt, turn, position, *, prompt=None):
+    if context['contract']['version'] in GROUP_VERSIONS:
+        from .complete_group_sampling import prepare_draws
+        return prepare_draws(context, env_id, task_hash, index, attempt, turn, prompt)(position)
     validate_attempt(context, attempt)
     if any(type(i) is not int or i < 0 for i in (index, turn, position)):
         raise ValueError('forced sampling position')
@@ -148,6 +181,9 @@ def pick(logits, u, temperature, top_p):
 def sample(runtime, prompt, attempt, turn, index, task_hash):
     import torch
     context = runtime.sampling_context
+    if context['contract']['version'] in GROUP_VERSIONS:
+        from .complete_group_sampling import cached_sample
+        return cached_sample(runtime, prompt, attempt, turn, index, task_hash)
     if context['contract']['version']!=VERSION:
         from .fast_prefill_audit import cached_sample
         return cached_sample(runtime,prompt,attempt,turn,index,task_hash)
@@ -172,8 +208,8 @@ def sample(runtime, prompt, attempt, turn, index, task_hash):
     return output
 
 
-def assurance(manifest):
-    context = binding(manifest)
+def assurance(manifest, miner=None):
+    context = binding(manifest, miner)
     if context is None:
         return {'sampling_required': False, 'scope': 'model-computation-and-environment-only'}
     return {'sampling_required': True, 'scope': 'fully-audited-rollouts-only',
@@ -187,12 +223,17 @@ def require_report(manifest, report):
     This checks the authenticated worker's assertion, not a second inference
     proof. Legacy epochs retain their original signed audit contract.
     """
-    context = binding(manifest,report.get('sampling_miner'))
+    is_group = manifest.get('sampling_contract', {}).get('version') in GROUP_VERSIONS
+    miner = report.get('miner') if is_group else report.get('sampling_miner')
+    context = binding(manifest,miner)
     if context is None:
         return
     if context['contract']['version']==MINER_VERSION and 'miner'not in context and report.get('accepted'):raise ValueError('v5 accepted report requires authenticated miner identity')
-    if report.get('sampling_assurance') != assurance(manifest):
+    if report.get('sampling_assurance') != assurance(manifest, miner if is_group else None):
         raise ValueError('audit sampling assurance missing or mismatched')
+    if is_group:
+        from .complete_group_sampling import validate_report_batches
+        validate_report_batches(context, report.get('accepted', []))
     for batch in report.get('accepted', []):
         if context['contract']['version']==MINER_VERSION:
             from .sampling_uniqueness import validate_batch

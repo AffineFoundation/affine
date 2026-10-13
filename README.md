@@ -6,6 +6,9 @@ next checkpoint. Blockchain-free mock and live chain adapters share the same cor
 
 - [Miner pilot instructions](docs/MINER_QUICKSTART.md)
 - [Architecture and runtime](docs/ARCHITECTURE.md)
+- [Prepared MiMo fixed-nonce GRPO cutover (not active)](docs/MIMO_FIXED_NONCE_GRPO_CUTOVER_PLAN.md)
+- [MiMo miner migration and runtime requirements](docs/MIMO_MINER_MIGRATION.md)
+- [MiMo operator lifecycle and independent audit loop](docs/MIMO_LIFECYCLE.md)
 - [Experimental retained-Adam NLL objective (inactive)](docs/EXPERIMENTAL_RETAINED_NLL.md)
 - [Live registration, payouts and rollback](docs/LIVE_SUBNET.md)
 - [Implementation plan](IMPLEMENTATION_PLAN.md)

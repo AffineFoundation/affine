@@ -119,10 +119,12 @@ class Coordinator:
     BEGIN IMMEDIATE serializes selection and lease replacement across processes.
     Workers possess an individual signing seed, never an operator or bucket key.
     """
-    def __init__(self, path, authority, workers, lease_seconds=300, max_attempts=3, clock=time.time):
+    def __init__(self, path, authority, workers, lease_seconds=300, max_attempts=3, clock=time.time, *, allow_public_mimo=False):
         if not 10 <= lease_seconds <= 86400 or not 1 <= max_attempts <= 10:
             raise ValueError('lease bounds')
         self.path = str(path); self.authority = authority; self.workers = workers
+        if type(allow_public_mimo) is not bool: raise ValueError('explicit local MiMo public execution flag')
+        self.allow_public_mimo = allow_public_mimo
         self.lease_seconds = lease_seconds; self.max_attempts = max_attempts; self.clock = clock
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._queue_inode = None
@@ -202,18 +204,27 @@ class Coordinator:
     def enqueue(self, envelope):
         job = authenticate(envelope, self.authority)
         manifest = authenticate(job['manifest'], self.authority)
-        from .backend_profiles import resolve
-        resolve(manifest)
+        from .mimo_worker import selected as mimo_selected
+        is_mimo = mimo_selected(job,manifest)
         now = self.clock()
-        if manifest.get('payable') is not False or not str(manifest['epoch']).startswith('nonpayable-'):
+        if is_mimo:
+            from .mimo_worker import validate as validate_mimo
+            validate_mimo(envelope,self.authority,job.get("created_at",now),allow_public=self.allow_public_mimo)
+        else:
+            from .backend_profiles import resolve
+            resolve(manifest)
+        if not is_mimo and (manifest.get('payable') is not False or not str(manifest['epoch']).startswith('nonpayable-')):
             raise ValueError('nonpayable queue only')
-        if job.get('schema') != 1 or job.get('role') != 'verify' or not str(job['job_id']).replace('-','').replace('_','').isalnum():
+        allowed_roles=('verify','train','evaluate') if is_mimo else ('verify',)
+        if job.get('schema') != 1 or job.get('role') not in allowed_roles or not str(job['job_id']).replace('-','').replace('_','').isalnum():
             raise ValueError('queue role/job')
         if any(type(job.get(k)) not in (int,float) or not math.isfinite(job[k]) for k in ('created_at','expires_at')) or not 0 < job['expires_at']-job['created_at'] <= 86400:
             raise ValueError('signed job lifetime')
+        if is_mimo and job['role']=='train' and 'train' not in self.workers.get(job['trainer_worker'],[]):
+            raise ValueError('authorized trainer worker is not registered for training')
         submissions = job.get('submissions', [])
         frozen = manifest.get('audit_frozen_receipts', {})
-        validate_frozen_submissions(manifest,submissions)
+        if not is_mimo: validate_frozen_submissions(manifest,submissions)
         with self.transaction() as db:
             old = db.execute('SELECT digest FROM jobs WHERE id=?', (job['job_id'],)).fetchone()
             if old:
@@ -239,11 +250,25 @@ class Coordinator:
             action = request.get('action')
             if action == 'claim':
                 role = request.get('role')
-                if role not in self.workers[worker] or role != 'verify': raise ValueError('worker role')
+                if role not in self.workers[worker] or role not in ('verify','train','evaluate'): raise ValueError('worker role')
                 db.execute("UPDATE jobs SET status='expired' WHERE status IN ('queued','leased') AND expires<=?", (now,))
                 db.execute("UPDATE jobs SET status='failed' WHERE status='leased' AND lease<=? AND attempt>=?", (now,self.max_attempts))
-                row = db.execute("SELECT * FROM jobs WHERE role=? AND expires>? AND attempt<? AND (status='queued' OR (status='leased' AND lease<=?)) ORDER BY rowid LIMIT 1", (role,now,self.max_attempts,now)).fetchone()
+                if role == 'train':
+                    # Local optimizer lineage belongs to this named trainer.
+                    # A second machine cannot reclaim it with empty local state.
+                    rows = db.execute("SELECT * FROM jobs WHERE role=? AND expires>? AND attempt<? AND (status='queued' OR (status='leased' AND lease<=?)) ORDER BY rowid", (role,now,self.max_attempts,now)).fetchall()
+                    row = next((r for r in rows if json.loads(r['envelope'])['payload'].get('trainer_worker')==worker),None)
+                else:
+                    row = db.execute("SELECT * FROM jobs WHERE role=? AND expires>? AND attempt<? AND (status='queued' OR (status='leased' AND lease<=?)) ORDER BY rowid LIMIT 1", (role,now,self.max_attempts,now)).fetchone()
                 if not row: return {'claim':None}
+                # A reopened queue must honor this host's current release
+                # opt-in, including jobs enqueued before the restart.
+                original=authenticate(json.loads(row['envelope']),self.authority)
+                opening=authenticate(original['manifest'],self.authority)
+                from .mimo_worker import selected as mimo_selected
+                if mimo_selected(original,opening):
+                    from .mimo_release_policy import policy_for_manifest
+                    policy_for_manifest(opening,self.authority,allow_public=self.allow_public_mimo)
                 token = secrets.token_hex(32); lease = min(now+self.lease_seconds,row['expires'])
                 db.execute("UPDATE jobs SET status='leased',worker=?,token=?,lease=?,attempt=attempt+1 WHERE id=?", (worker,token,lease,row['id']))
                 self.event(db,row['id'],'claimed',worker=worker,attempt=row['attempt']+1,lease_until=lease)
@@ -274,6 +299,12 @@ class Coordinator:
             return {'accepted':True,'duplicate':False}
 
     def validate_report(self, report, job, manifest, job_digest):
+        from .mimo_worker import selected as mimo_selected
+        if mimo_selected(job,manifest):
+            from .mimo_release_policy import policy_for_manifest
+            policy_for_manifest(manifest,self.authority,allow_public=self.allow_public_mimo)
+            from .mimo_worker import validate_report as validate_mimo_report
+            return validate_mimo_report(report,job,manifest,self.authority,job_digest,self.clock())
         expected = dict(job_id=job['job_id'],job_sha256=job_digest,operator=self.authority,
                         role=job['role'],epoch=manifest['epoch'],checkpoint=manifest['checkpoint']['id'],
                         source_files=job['source_files'],runtime_versions=job['runtime_versions'],

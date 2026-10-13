@@ -12,7 +12,14 @@ def validate_backend(manifest):
   from .token_only_protocol import for_manifest as token_policy
   token_policy(manifest)
  revision=manifest.get('model_runtime_revision',CPU_REVISION)
- if revision==CPU_REVISION:
+ if revision=='qwen3_5-mimo-v1':
+  from .mimo_runtime import validate_runtime_spec
+  from .batch_contract import for_manifest, CompleteGroupContract, REQUIRED_CLIENT_FEATURES
+  validate_runtime_spec(manifest.get('mimo_runtime'))
+  contract=for_manifest(manifest,supported_features=REQUIRED_CLIENT_FEATURES)
+  if not isinstance(contract,CompleteGroupContract) or contract.sampling_version!='forced-inverse-cdf-complete-group-mimo-v1':
+   raise ValueError('MiMo runtime requires its complete-group sampling contract')
+ elif revision==CPU_REVISION:
   if manifest.get('backend_profile') not in (None,{'device':'cpu','dtype':'float32','attention':'eager'}):raise ValueError('CPU backend profile mismatch')
   if manifest.get('numerical_policy','cpu-float32-eager-exact-toploc-logprob-atol1e-5')!='cpu-float32-eager-exact-toploc-logprob-atol1e-5':raise ValueError('CPU numerical policy mismatch')
  elif revision in (GPU_REVISION,'cuda-bf16-eager-sm90-v1','cuda-fp32-eager-sm90-v1'):
@@ -26,6 +33,11 @@ def runtime(checkpoint,manifest,environment,harness=None,*,miner=None):
  from .forced_sampling import bind_runtime
  from .probability_artifacts import bind_runtime as bind_artifacts
  revision=validate_backend(manifest)
+ if revision=='qwen3_5-mimo-v1':
+  if not isinstance(miner,str) or len(miner)!=64 or any(c not in '0123456789abcdef'for c in miner):
+   raise ValueError('authenticated miner identity required for MiMo sampling')
+  from .complete_group_runtime import MimoGroupRuntime
+  return MimoGroupRuntime(checkpoint,manifest,environment,harness,miner=miner)
  if revision==CPU_REVISION:
   from .model import Runtime
   selected=bind_artifacts(bind_runtime(Runtime(checkpoint,manifest['checkpoint']['files'],environment=environment,harness=harness),manifest,miner),manifest)

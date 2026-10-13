@@ -322,17 +322,21 @@ def mine_cumulative(runtime,manifest,job,upload,clock=None,allow_empty=False,pro
     if data is None and not allow_empty:raise ValueError('GPU bounded search found no complete batch before epoch window closed')
     return data,dict(batches=len(batches),search=search,cumulative_uploads=uploads,search_stopped_at_deadline=stopped,search_stopped_at_capacity=capacity_reached,mining_status='complete_batches_uploaded' if data is not None else 'no_complete_KL_batch')
 
-def validate(envelope, authority, now=None):
+def validate(envelope, authority, now=None, *, allow_public_mimo=False):
     """Strict authorization/policy admission, including signed subset semantics."""
-    return _validate(envelope,authority,now,resolve_source=True)
+    return _validate(envelope,authority,now,resolve_source=True,allow_public_mimo=allow_public_mimo)
 
-def _validate(envelope, authority, now=None, *, resolve_source, required_source_files=None):
+def _validate(envelope, authority, now=None, *, resolve_source, required_source_files=None, allow_public_mimo=False):
     """Workers defer source-dependent semantics until pinned imports are installed."""
     job=signed(envelope,authority);now=time.time() if now is None else now
     if job.get('schema')!=1 or job.get('role') not in ROLES:raise ValueError('job role/schema')
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',job.get('job_id','')):raise ValueError('job ID')
     if any(type(job.get(k)) not in (int,float) for k in ('created_at','expires_at')) or not job['created_at']<=now<job['expires_at'] or job['expires_at']-job['created_at']>86400:raise ValueError('job expired/time budget')
     manifest=signed(job['manifest'],authority)
+    from .mimo_worker import selected as mimo_selected
+    if mimo_selected(job,manifest):
+        from .mimo_worker import validate as validate_mimo
+        return validate_mimo(envelope,authority,now,allow_public=allow_public_mimo)
     from .unaudited_training_execution import admission as execution_admission
     execution_admission(envelope,authority,now=now)
     if resolve_source and ('token_artifact_policy'in manifest or manifest.get('submission_transport_policy')=='small-commitment-token-pairs-v3'):
@@ -993,9 +997,15 @@ def measured_phase(timings,name,operation,*args,**kwargs):
     row['seconds']+=time.monotonic()-started;row['calls']+=1
     return result
 
-def execute(envelope, authority, workspace, cache=None, runtime_factory=None):
+def execute(envelope, authority, workspace, cache=None, runtime_factory=None, *, assert_lease=None, trainer_state_root=None, training_context=None, allow_public_mimo=False, mimo_replicas=1):
     startup_timings={}
-    job,manifest=measured_phase(startup_timings,'job_validation',_validate,envelope,authority,resolve_source=False)
+    job,manifest=measured_phase(startup_timings,'job_validation',_validate,envelope,authority,resolve_source=False,allow_public_mimo=allow_public_mimo)
+    from .mimo_worker import selected as mimo_selected
+    if mimo_selected(job,manifest):
+        from .mimo_worker import execute as execute_mimo
+        return execute_mimo(envelope,authority,workspace,cache,runtime_factory,assert_lease=assert_lease,
+                            trainer_state_root=trainer_state_root,training_context=training_context,
+                            allow_public=allow_public_mimo,mimo_replicas=mimo_replicas)
     source_started=time.monotonic()
     root=Path(__file__).resolve().parent.parent
     if job.get('role')=='train' and job.get('training_policy')==PERSISTENT_POLICY and (root/'subnet/fp32_gradient_accumulation.py').exists() and 'unaudited_training_execution'not in job:
@@ -1346,8 +1356,9 @@ def load_job_envelope(path,authority):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('job');parser.add_argument('--authority',required=True);parser.add_argument('--workspace',required=True);parser.add_argument('--checkpoint-cache')
+    parser.add_argument('--allow-public-mimo',action='store_true',help='Run only explicitly signed and qualified public MiMo releases')
     args=parser.parse_args();envelope=load_job_envelope(args.job,args.authority)
-    report=execute(envelope,args.authority,args.workspace,args.checkpoint_cache)
+    report=execute(envelope,args.authority,args.workspace,args.checkpoint_cache,allow_public_mimo=args.allow_public_mimo)
     print(json.dumps(dict(job_id=report['job_id'],role=report['role'],success=True,checkpoint=report.get('new_checkpoint',{}).get('id',report['checkpoint']))))
 if __name__=='__main__':
     # -m executes this file as __main__; worker/protocol imports use the

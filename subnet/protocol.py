@@ -12,8 +12,8 @@ def entries(manifest):
         for definition in values:
             raw=definition['harness']
             if isinstance(raw,dict) and raw.get('version')==INDEXED_VERSION:
-                for row in raw['by_index'].values():validate_harness(row)
-            else:validate_harness(raw)
+                for row in raw['by_index'].values():validate_harness(row,context['contract'])
+            else:validate_harness(raw,context['contract'])
     return values
 
 

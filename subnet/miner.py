@@ -70,7 +70,24 @@ class MinerProgress:
             pass
 
 class Miner:
-    def __init__(self, identity, manifest, checkpoint, capability=None, state_path=None, progress_path=None, search_state_path=None, retire_previous_search=False):
+    def __init__(self, identity, manifest, checkpoint, capability=None, state_path=None, progress_path=None, search_state_path=None, retire_previous_search=False, *, complete_group_transport=None, mimo_replicas=1):
+        if type(mimo_replicas) is not int or mimo_replicas not in (1, 2, 4):
+            raise ValueError('local MiMo replicas must be one, two or four')
+        if mimo_replicas != 1:
+            from .forced_sampling import MIMO_GROUP_VERSION
+            if manifest.get('sampling_contract', {}).get('version') != MIMO_GROUP_VERSION:
+                raise ValueError('parallel replicas require the MiMo complete-group protocol')
+        self._mimo_replicas = mimo_replicas
+        if 'group_contract' in manifest:
+            from .batch_contract import for_manifest as group_contract, CompleteGroupContract
+            from .complete_group_transport import CompleteGroupTransport
+            transport = complete_group_transport or CompleteGroupTransport()
+            self.batch_contract = group_contract(manifest, supported_features=transport.features)
+            if not isinstance(self.batch_contract, CompleteGroupContract):
+                raise ValueError('complete-group manifest required')
+            from .complete_group_mining import initialize
+            initialize(self, identity, manifest, checkpoint, capability, state_path, progress_path, transport)
+            return
         from .batches import compression_for_manifest
         compression_for_manifest(manifest)
         check_runtime_profile(manifest)
@@ -177,15 +194,31 @@ class Miner:
         if observer is not None: observer.record(event, batches=len(self.batches), **fields)
 
     def close(self):
+        if getattr(self, '_closed', False):
+            return
+        # The adapter needs the still-open journal to retire terminal spools.
+        # Its children must also be stopped before another epoch loads a model.
+        runtime = getattr(self, 'runtime', None)
+        if getattr(self, '_mimo_replicas', 1) != 1 and runtime is not None:
+            runtime.close()
+        group_journal = getattr(self, '_group_journal', None)
+        if group_journal is not None:
+            group_journal.close()
+            self._group_journal = None
         journal = getattr(self, 'search_state', None)
         if journal is not None:
             journal.close()
             self.search_state = None
         self._closed = True
 
-    def search(self, index, seed=0, max_attempts=100, env_id=None):
+    def search(self, index, seed=0, max_attempts=None, env_id=None):
         if getattr(self, '_closed', False):
             raise ValueError('miner is closed')
+        if hasattr(self, '_group_transport'):
+            from .complete_group_mining import search
+            return search(self, index, seed=seed, max_attempts=max_attempts, env_id=env_id)
+        if max_attempts is None:
+            max_attempts = 100
         journal = getattr(self, 'search_state', None)
         if journal is None:
             return self._legacy_search(index, seed=seed, max_attempts=max_attempts, env_id=env_id)
@@ -373,6 +406,9 @@ class Miner:
     def upload(self):
         if getattr(self, '_closed', False):
             raise ValueError('miner is closed')
+        if hasattr(self, '_group_transport'):
+            from .complete_group_mining import upload
+            return upload(self)
         journal = getattr(self, 'search_state', None)
         if journal is None:
             return self._upload()

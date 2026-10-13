@@ -60,7 +60,8 @@ def validate_search_budget(value, manifest=None):
 def main():
     p=argparse.ArgumentParser();p.add_argument('--gateway',required=True);p.add_argument('--authority',required=True)
     p.add_argument('--source-bundle-sha256');p.add_argument('--manifest-url');p.add_argument('--current-url');p.add_argument('--key');p.add_argument('--cap-file');p.add_argument('--state',default='state/miner');p.add_argument('--once',action='store_true');p.add_argument('--max-batches',type=int)
-    p.add_argument('--env-id');p.add_argument('--indices',nargs='+',type=int);p.add_argument('--search-budget',type=int,default=50)
+    p.add_argument('--env-id');p.add_argument('--indices',nargs='+',type=int);p.add_argument('--search-budget',type=int,default=None)
+    p.add_argument('--mimo-replicas',type=int,choices=(1,2,4),default=1,help='local opt-in independent B1 MiMo replicas; canonical nonce count is unchanged')
     p.add_argument('--compression-level',type=int,choices=range(10),help='assert the signed manifest DEFLATE level; omitted follows manifest (historical default 6)')
     a=p.parse_args()
     if a.manifest_url and a.current_url:p.error('--manifest-url and --current-url are mutually exclusive')
@@ -80,8 +81,12 @@ def run(a):
             resources['miner'].close()
 
 def _run(a, resources):
-    budget=getattr(a,'search_budget',50)
-    validate_search_budget(budget)
+    replicas=getattr(a,'mimo_replicas',1)
+    if type(replicas) is not int or replicas not in (1,2,4):
+        raise ValueError('local MiMo replicas must be one, two or four')
+    requested_budget=getattr(a,'search_budget',None)
+    if requested_budget is not None:
+        validate_search_budget(requested_budget)
     delegated=json.loads(Path(a.cap_file).read_text()) if a.cap_file else None
     if not a.key and not delegated: raise ValueError('--key or --cap-file is required')
     key=SimpleNamespace(id=delegated['identity']) if delegated else identity(a.key)
@@ -103,18 +108,34 @@ def _run(a, resources):
             if current.get('transport_policy')=='direct-r2-v1' and manifest.get('transport_policy')!='direct-r2-v1':raise ValueError('direct R2 transport downgrade')
             expected_source=getattr(a,'source_bundle_sha256',None)
             if expected_source and manifest.get('source_bundle',{}).get('sha256')!=expected_source:raise ValueError('source changed; rerun signed-source bootstrap')
+            if manifest.get('model_runtime_revision') == 'qwen3_5-mimo-v1':
+                from .mimo_release_policy import policy_for_manifest
+                policy_for_manifest(manifest,a.authority,allow_public=True)
+            from .batch_contract import for_manifest, CompleteGroupContract, REQUIRED_CLIENT_FEATURES
+            contract=for_manifest(manifest,supported_features=REQUIRED_CLIENT_FEATURES)
+            if replicas != 1:
+                from .forced_sampling import MIMO_GROUP_VERSION
+                if manifest.get('sampling_contract',{}).get('version') != MIMO_GROUP_VERSION:
+                    raise ValueError('parallel replicas require the MiMo complete-group protocol')
+            if isinstance(contract,CompleteGroupContract):
+                if requested_budget is not None and requested_budget<contract.group_size:
+                    raise ValueError('search budget cannot be smaller than signed N')
+                budget=contract.group_size
+                if delegated:raise ValueError('complete groups require the signing miner key')
+            else:
+                budget=50 if requested_budget is None else requested_budget
             from .batches import compression_for_manifest
             level=compression_for_manifest(manifest)
             requested=getattr(a,'compression_level',None)
             if requested is not None and (type(requested)is not int or requested!=level):raise ValueError('CLI compression level must match signed manifest')
-            validate_search_budget(budget,manifest)
+            if not isinstance(contract,CompleteGroupContract):validate_search_budget(budget,manifest)
             plan=selected_tasks(manifest,getattr(a,'env_id',None),getattr(a,'indices',None))
             check_runtime_profile(manifest)
             if key.id not in manifest['capabilities']:raise ValueError('identity not registered for epoch')
             capability=delegated_capability(manifest,delegated) if delegated else None
             checkpoint=checkpoint_download(manifest,Path(a.state)/manifest['checkpoint']['id'])
             if miner is not None:miner.close()
-            miner=Miner(key,manifest,checkpoint,capability=capability,state_path=Path(a.state)/f"{manifest['epoch']}-{key.id}.zip", progress_path=Path(a.state)/f"{manifest['epoch']}-{key.id}.progress.json", search_state_path=Path(a.state)/f"{key.id}.search.sqlite3", retire_previous_search=True)
+            miner=Miner(key,manifest,checkpoint,capability=capability,state_path=Path(a.state)/f"{manifest['epoch']}-{key.id}.zip", progress_path=Path(a.state)/f"{manifest['epoch']}-{key.id}.progress.json", search_state_path=Path(a.state)/f"{key.id}.search.sqlite3", retire_previous_search=True, mimo_replicas=replicas)
             resources['miner']=miner
             if miner.batches and time.time()<manifest['deadline']:
                 try:miner.upload()
