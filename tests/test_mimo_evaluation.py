@@ -145,6 +145,32 @@ class EvaluationTests(unittest.TestCase):
         with self.assertRaises(ValueError):evaluation.validate_job(job,self.m)
         m=deepcopy(self.m);m['environments'][0]['harness']['top_k']=0
         with self.assertRaises(ValueError):evaluation.validate_sets(m)
+    def test_source_only_archive_and_policy_change_preserves_matched_eval(self):
+        original=self.execute()
+        before=evaluation.validate_sets(self.m)['fixed4']
+        self.m['source_bundle']={'sha256':'c'*64,'size':1234}
+        self.m['mimo_release_policy']={'fixture':'new source-only policy'}
+        self.m['epoch']='nonpayable-new-source-epoch'
+        updated=self.execute()
+        after=evaluation.validate_sets(self.m)['fixed4']
+        self.assertEqual(before['dataset_id'],after['dataset_id'])
+        for index in before['suite']['indices']:
+            for position in (0,1,31,63):
+                self.assertEqual(evaluation.draw(before['dataset_id'],318,index,0,position),
+                                 evaluation.draw(after['dataset_id'],318,index,0,position))
+        for old,new in zip(original['rows'],updated['rows']):
+            for key in ('index','repeat','task_hash','prompt_sha256','output','stop_reason','classification'):
+                self.assertEqual(old[key],new[key],key)
+        self.assertNotEqual(original['manifest_sha256'],updated['manifest_sha256'])
+        self.assertEqual(original['runtime_sha256'],updated['runtime_sha256'])
+
+    def test_runtime_fingerprint_change_requires_distinct_eval_series(self):
+        before=evaluation.validate_sets(self.m)['fixed4']['dataset_id']
+        self.m['mimo_runtime']['runtime_fingerprint']['sources']={'changed_native.py':'e'*64}
+        after=evaluation.validate_sets(self.m)['fixed4']['dataset_id']
+        self.assertNotEqual(before,after)
+        self.assertNotEqual(evaluation.draw(before,318,4,0,0),evaluation.draw(after,318,4,0,0))
+
     def test_eval_rng_common_across_checkpoints_but_suite_changes_are_distinct(self):
         a=evaluation.validate_sets(self.m)['fixed4']['dataset_id']
         m=deepcopy(self.m);m['checkpoint']['id']='b'*64;m['epoch']='different-epoch'

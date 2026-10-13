@@ -85,3 +85,27 @@ training contract, input checkpoint and counter progression, prove model-only
 publication/retry, and verify historical reports still authenticate. Exact
 new-policy GPU qualification receipts and worker installed-source guards remain
 mandatory. This migration does not authorize v2 precision or grading changes.
+
+## Evaluation identity across this source-only change
+
+The current evaluation `dataset_id` hashes the suite (including seed/repeats),
+native environment definition, harness, complete MiMo runtime fingerprint,
+answer projection and draw-policy version. It deliberately does not hash the
+source archive, release policy, epoch or checkpoint. Each draw hashes that
+`dataset_id`, suite seed, task index, repeat and token position. Therefore a
+source-only optimizer/journal change with identical actual sampling, runtime
+and task code retains the same task prompts and draws. The CPU evaluation
+regression checks actual task/prompt hashes and trajectories under archive,
+policy and epoch changes, as well as equal draws at multiple positions.
+
+A different runtime fingerprint changes `dataset_id` and the draws even if the
+suite name is still `fixed32`. That must start a distinct chart series with a
+fresh matched baseline. Similarly, changed sampler, task, tokenizer/template or
+grader code cannot be admitted as this narrow source-only migration. Before
+connecting points on the same learning chart, authenticate both original
+reports and check identical dataset, suite, draw policy, runtime, harness,
+projection, per-task identities and prompt hashes. Different report source
+inventories are expected for this optimizer-only release, but their exact
+changed-file set must be the signed, qualified source-only set; do not ignore
+source differences generically. A changed scientific configuration requires a
+separate baseline even when its name and task count match.
