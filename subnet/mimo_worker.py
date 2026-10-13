@@ -18,12 +18,13 @@ from urllib.parse import urlparse, unquote
 
 VERSION = 'mimo-complete-group-worker-v1'
 REVISION = 'qwen3_5-mimo-v1'
+from .mimo_runtime import SUPPORTED_VERSIONS
 REPORT_POLICY = 'mimo-compact-group-audit-v1'
 GROUP_REFERENCE = 'mimo-audited-group-reference-v1'
 
 
 def selected(job, manifest):
-    return (job.get('worker_policy') == VERSION or manifest.get('model_runtime_revision') == REVISION
+    return (job.get('worker_policy') == VERSION or manifest.get('model_runtime_revision') in SUPPORTED_VERSIONS
             or manifest.get('sampling_contract', {}).get('version') == 'forced-inverse-cdf-complete-group-mimo-v1')
 
 
@@ -141,7 +142,7 @@ def validate(envelope, authority, now=None, *, allow_public=False):
     from .mimo_release_policy import policy_for_manifest
     need(type(allow_public) is bool, 'explicit local MiMo public execution flag')
     policy_for_manifest(manifest, authority, allow_public=allow_public)
-    need(manifest.get('model_runtime_revision') == REVISION, 'MiMo worker runtime version')
+    need(manifest.get('model_runtime_revision') in SUPPORTED_VERSIONS, 'MiMo worker runtime version')
     validate_backend(manifest)
     contract = for_manifest(manifest, supported_features=REQUIRED_CLIENT_FEATURES)
     limits(manifest)
@@ -199,6 +200,14 @@ def validate_report(report, job, manifest, authority, job_digest, now):
         backend_profile=manifest['backend_profile'], numerical_policy=manifest['sampling_contract']['calibration'],
         chain_transactions=False, success=True)
     need(all(canonical(report.get(k)) == canonical(v) for k,v in expected.items()), 'MiMo report job/source/runtime binding')
+    from .mimo_runtime import PRECISION_VERSION
+    if manifest['mimo_runtime']['version'] == PRECISION_VERSION:
+        from .mimo_precision import validate_provenance
+        observed = validate_provenance(report.get('execution_provenance'),
+            manifest['mimo_runtime']['precision_profile'], device=manifest['backend_profile']['device'])
+        need(observed['build']['torch'] == job['runtime_versions']['torch'], 'observed worker Torch build')
+    else:
+        need('execution_provenance' not in report, 'legacy report cannot claim precision-v2 provenance')
     completed = report.get('completed_at')
     need(type(completed) in (int,float) and math.isfinite(completed)
          and job['created_at'] <= completed < job['expires_at'] and completed <= now+5, 'report signed deadline')
@@ -453,6 +462,15 @@ def execute(envelope, authority, workspace, cache=None, runtime_factory=None, *,
             if backend is not None and callable(getattr(backend, "close", None)): backend.close()
     guard()
     source_guard(job)
+    from .mimo_runtime import PRECISION_VERSION
+    if manifest['mimo_runtime']['version'] == PRECISION_VERSION:
+        import torch
+        from .mimo_precision import provenance
+        # Captured locally, never copied from miner submissions. The ordinary
+        # worker signs this entire report; the host checks it after signature
+        # authentication. This observes the worker process, not external miners.
+        report['execution_provenance'] = provenance(torch,
+            manifest['mimo_runtime']['precision_profile'], device=manifest['backend_profile']['device'])
     report.update(success=True, completed_at=time.time())
     need(report['completed_at'] < job['expires_at'], 'job expired before report')
     encoded=canonical(report)

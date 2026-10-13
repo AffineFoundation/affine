@@ -25,6 +25,8 @@ import threading
 import uuid
 
 VERSION = "qwen3_5-mimo-v1"
+PRECISION_VERSION = "qwen3_5-mimo-precision-v2"
+SUPPORTED_VERSIONS = (VERSION, PRECISION_VERSION)
 MODEL_ID = "XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B"
 EOS_TOKEN_IDS = (248046, 248044)
 
@@ -143,10 +145,13 @@ class MimoRuntimeSpec:
     parameter_dtype: str = "bfloat16"
     recurrent_state_dtype: str = "float32"
     scope: str = "unqualified_cuda"
+    precision_profile: dict | None = None
 
     def to_dict(self):
         result = asdict(self)
         result["eos_token_ids"] = list(self.eos_token_ids)
+        if self.version == VERSION and self.precision_profile is None:
+            del result["precision_profile"]  # Preserve original v1 signed bytes.
         return result
 
     @property
@@ -158,8 +163,13 @@ def validate_runtime_spec(value, *, allow_fixture=False):
     if isinstance(value, MimoRuntimeSpec):
         value = value.to_dict()
     expected = set(MimoRuntimeSpec.__dataclass_fields__)
+    if type(value) is dict and value.get("version") == VERSION:
+        expected.remove("precision_profile")
     _need(type(value) is dict and set(value) == expected, "exact MiMo runtime profile")
-    _need(value["version"] == VERSION and value["model_id"] == MODEL_ID, "MiMo model/runtime identity")
+    _need(value["version"] in SUPPORTED_VERSIONS and value["model_id"] == MODEL_ID, "MiMo model/runtime identity")
+    if value["version"] == PRECISION_VERSION:
+        from .mimo_precision import validate_profile
+        validate_profile(value["precision_profile"])
     _need(type(value["runtime_fingerprint"]) is dict and
           set(value["runtime_fingerprint"]) == {"versions", "sources"}, "pinned runtime fingerprint")
     _need(_sha(value["chat_template_sha256"]) and type(value["enable_thinking"]) is bool,
@@ -182,13 +192,15 @@ def validate_runtime_spec(value, *, allow_fixture=False):
 
 
 def make_runtime_spec(*, chat_template, enable_thinking, max_context_tokens,
-                      attention="eager", scope="unqualified_cuda", eos_token_ids=EOS_TOKEN_IDS):
+                      attention="eager", scope="unqualified_cuda", eos_token_ids=EOS_TOKEN_IDS,
+                      precision_profile=None):
     """Prepare a candidate profile; caller must separately qualify and sign it."""
     _need(type(chat_template) is str and chat_template, "one explicit chat template")
-    result = MimoRuntimeSpec(VERSION, MODEL_ID, runtime_fingerprint(),
+    result = MimoRuntimeSpec(PRECISION_VERSION if precision_profile is not None else VERSION, MODEL_ID, runtime_fingerprint(),
         hashlib.sha256(chat_template.encode()).hexdigest(), enable_thinking,
         max_context_tokens, tuple(eos_token_ids), attention=attention,
-        parameter_dtype="float32" if scope == "cpu_fixture" else "bfloat16", scope=scope)
+        parameter_dtype="float32" if scope == "cpu_fixture" else "bfloat16", scope=scope,
+        precision_profile=precision_profile)
     return validate_runtime_spec(result, allow_fixture=scope == "cpu_fixture")
 
 
@@ -202,6 +214,9 @@ class MimoRuntime:
         spec = validate_runtime_spec(spec, allow_fixture=allow_fixture)
         _need((device == "cpu") == (spec.scope == "cpu_fixture"), "runtime device/scope pairing")
         _need(runtime_fingerprint() == spec.runtime_fingerprint, "executed runtime differs from profile")
+        if spec.precision_profile is not None:
+            from .mimo_precision import configure_before_model_load, validate_profile
+            configure_before_model_load(torch, validate_profile(spec.precision_profile))
         guard = CheckpointGuard(checkpoint_directory, checkpoint_descriptor)
         dtype = getattr(torch, spec.parameter_dtype)
         tokenizer = AutoTokenizer.from_pretrained(checkpoint_directory, local_files_only=True, trust_remote_code=False)
@@ -269,11 +284,19 @@ class MimoRuntime:
             original = layer.forward
             def make_forward(original):
                 def forward(*args, **kwargs):
+                    self._precision_guard()
                     if torch.is_grad_enabled():
                         _need(not kwargs.get("use_cache") and kwargs.get("past_key_values") is None,
                               "training block checkpoint cannot share a generation cache")
-                        return checkpoint(original, *args, use_reentrant=False, **kwargs)
-                    return original(*args, **kwargs)
+                        def recompute(*args, **kwargs):
+                            self._precision_guard()
+                            result = original(*args, **kwargs)
+                            self._precision_guard()
+                            return result
+                        return checkpoint(recompute, *args, use_reentrant=False, **kwargs)
+                    result = original(*args, **kwargs)
+                    self._precision_guard()
+                    return result
                 return forward
             layer.forward = make_forward(original)
             self.gradient_checkpointing_layers += 1
@@ -283,6 +306,7 @@ class MimoRuntime:
         return self.model.get_input_embeddings().weight.device
 
     def guard(self):
+        self._precision_guard()
         _need(not self.closed and id(self.model) == self._model_id, "original open runtime model")
         _need(self.spec.sha256 == self._spec_digest, "runtime profile changed")
         self._checkpoint_guard()
@@ -294,6 +318,20 @@ class MimoRuntime:
               "runtime chat template changed")
         _need(self.model.get_input_embeddings().weight.dtype == self._expected_dtype and
               self.model.lm_head.weight.dtype == self._expected_dtype, "runtime parameter dtype changed")
+
+    def _precision_guard(self):
+        if self.spec.precision_profile is not None:
+            import torch
+            from .mimo_precision import guard, validate_profile
+            guard(torch, validate_profile(self.spec.precision_profile))
+
+    def execution_provenance(self):
+        self.guard()
+        if self.spec.precision_profile is None:
+            return None
+        import torch
+        from .mimo_precision import provenance
+        return provenance(torch, self.spec.precision_profile, device=str(self.device))
 
     def _tokens(self, ids):
         _need(isinstance(ids, (tuple, list)) and ids and len(ids) <= self.max_context_tokens and
@@ -317,6 +355,7 @@ class MimoRuntime:
         with torch.inference_mode():
             result = self.model(torch.tensor([ids], device=self.device), use_cache=use_cache,
                 past_key_values=past_key_values, logits_to_keep=1)
+        self._precision_guard()
         cache = result.past_key_values
         if cache is not None:
             self.check_recurrent_state(cache)
@@ -347,9 +386,12 @@ class MimoRuntime:
         with torch.set_grad_enabled(gradients):
             hidden = self.model.model(torch.tensor([prompt + output], device=self.device),
                                       use_cache=False).last_hidden_state[0, len(prompt)-1:-1]
+            self._precision_guard()
             targets = torch.tensor(output, device=self.device)
             def selected(states, tokens):
+                self._precision_guard()
                 logits = self.model.lm_head(states).float()
+                self._precision_guard()
                 return logits.gather(-1, tokens[:, None]).squeeze(-1) - torch.logsumexp(logits, dim=-1)
             chunks = []
             for start in range(0, len(output), token_chunk_size):
@@ -372,6 +414,7 @@ class MimoRuntime:
         with torch.inference_mode():
             result = self.model(torch.tensor([prompt+output], device=self.device),
                                 output_hidden_states=True, use_cache=False)
+            self._precision_guard()
             hidden = result.hidden_states[-1][0].to(dtype=torch.bfloat16, device="cpu").contiguous()
             logits = result.logits[0, len(prompt)-1:len(prompt)+len(output)-1]
             log_probs = torch.log_softmax(logits.float(), -1).cpu().numpy()

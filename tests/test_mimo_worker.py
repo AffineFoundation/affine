@@ -86,6 +86,43 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(result['audits'][0]['accepted'][0]['rollout_count'],8)
         self.assertNotIn('rollouts',result['audits'][0]['accepted'][0])
         mimo_worker.validate_report(result,self.job,self.m,self.authority,digest(self.job),time.time())
+    def test_precision_compatibility_error_never_becomes_invalid_sample(self):
+        from subnet.mimo_precision import PrecisionMismatch
+        self.factory=object()
+        with patch('subnet.backend_jobs.get_object',side_effect=self.fetch), \
+             patch('subnet.complete_group_verification.verify',side_effect=PrecisionMismatch('changed execution flags')), \
+             patch('subnet.mimo_worker._invalid',side_effect=AssertionError('must not penalize miner')):
+            with self.assertRaises(PrecisionMismatch):
+                backend_jobs.execute(self.envelope(),self.authority,self.root/'compatibility',runtime_factory=self.factory)
+        self.assertFalse((self.root/'compatibility'/'jobs'/self.job['job_id']/'report.json').exists())
+    def test_v2_report_requires_worker_observed_provenance_bound_to_profile(self):
+        from subnet.mimo_runtime import PRECISION_VERSION
+        from subnet.mimo_precision import profile_dict,profile_digest
+        report=self.execute('provenance-fixture')
+        m=deepcopy(self.m);m['mimo_runtime'].update(version=PRECISION_VERSION,precision_profile=profile_dict())
+        m['model_runtime_revision']=PRECISION_VERSION
+        job=deepcopy(self.job)
+        commitment=json.loads(signed_commitment(self.identity,m,self.actor._group_prepared))
+        job['manifest']=sign(self.operator,m)
+        job['group_commitments']={self.identity.id:commitment}
+        job['submissions']=[mimo_worker.submission_reference(m,self.identity.id,commitment,0,self.url)]
+        report['audits'][0]['accepted'][0]['group_id']=job['submissions'][0]['commitment_ref']['group_id']
+        report['job_sha256']=digest(job)
+        # Pure host report-validator test; no claim that the old fixture was
+        # generated under v2. The report is constructed as a candidate to check
+        # exact provenance validation after the normal signed-job binding.
+        with self.assertRaises(ValueError):
+            mimo_worker.validate_report(report,job,m,self.authority,digest(job),time.time())
+        report['execution_provenance']=dict(version='mimo-worker-runtime-provenance-v1',
+            scope='worker-process-observation',precision_profile_sha256=profile_digest(profile_dict()),
+            observed_precision=profile_dict(),autocast=dict(cpu=False,cuda=False),device=m['backend_profile']['device'],
+            hardware=None if m['backend_profile']['device']=='cpu' else dict(name='NVIDIA H200',capability=[9,0],total_memory=140*1024**3,uuid='fixture-worker',driver='fixture'),
+            build=dict(torch=self.job['runtime_versions']['torch'],cuda='13.0',cudnn=91000),
+            launch=dict(cpu_threads=4,interop_threads=4,cublas_workspace_config=':4096:8',deterministic_warn_only=False))
+        mimo_worker.validate_report(report,job,m,self.authority,digest(job),time.time())
+        report['execution_provenance']['observed_precision']['matmul_tf32']=True
+        with self.assertRaises(ValueError):
+            mimo_worker.validate_report(report,job,m,self.authority,digest(job),time.time())
     def test_missing_policy_unknown_runtime_or_missing_source_fail_before_read(self):
         for key,value in [('worker_policy','unknown'),('source_files',{}),('role','train')]:
             job=deepcopy(self.job);job[key]=value

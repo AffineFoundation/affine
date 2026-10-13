@@ -97,7 +97,7 @@ def checkpoint_inventory(manifest):
 
 def checkpoint_url(manifest, name):
     checkpoint=manifest['checkpoint'];url=checkpoint['read_urls'][name]
-    if manifest.get('model_runtime_revision') != 'qwen3_5-mimo-v1':
+    if manifest.get('model_runtime_revision') not in ('qwen3_5-mimo-v1','qwen3_5-mimo-precision-v2'):
         return hydration.read_url(url,checkpoint['id'],name)
     # The authority-signed MiMo manifest grants an exact model object under a
     # versioned run namespace. Content hashes still admit every downloaded byte.
@@ -134,7 +134,7 @@ def prefetch_checkpoint(manifest, state, *, session=None, clock=time.time, downl
     destination.mkdir(parents=True, exist_ok=True, mode=0o700)
     stage.mkdir(parents=True, exist_ok=True, mode=0o700)
     if download_workers is None:
-        download_workers=4 if session is None and manifest.get('model_runtime_revision')=='qwen3_5-mimo-v1' else 1
+        download_workers=4 if session is None and manifest.get('model_runtime_revision') in ('qwen3_5-mimo-v1','qwen3_5-mimo-precision-v2') else 1
     if type(download_workers) is not int or not 1<=download_workers<=4:
         raise ValueError('bounded checkpoint download concurrency')
     session = CheckpointSession(session or session_factory())
@@ -215,7 +215,7 @@ def launch_arguments(args, manifest, manifest_url):
     replicas=getattr(args,'mimo_replicas',1)
     if type(replicas) is not int or replicas not in (1,2,4):
         raise ValueError('bounded MiMo replicas')
-    if manifest.get('model_runtime_revision')=='qwen3_5-mimo-v1':
+    if manifest.get('model_runtime_revision') in ('qwen3_5-mimo-v1','qwen3_5-mimo-precision-v2'):
         result += ['--mimo-replicas',str(replicas)]
     return result
 

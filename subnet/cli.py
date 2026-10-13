@@ -108,7 +108,7 @@ def _run(a, resources):
             if current.get('transport_policy')=='direct-r2-v1' and manifest.get('transport_policy')!='direct-r2-v1':raise ValueError('direct R2 transport downgrade')
             expected_source=getattr(a,'source_bundle_sha256',None)
             if expected_source and manifest.get('source_bundle',{}).get('sha256')!=expected_source:raise ValueError('source changed; rerun signed-source bootstrap')
-            if manifest.get('model_runtime_revision') == 'qwen3_5-mimo-v1':
+            if manifest.get('model_runtime_revision') in ('qwen3_5-mimo-v1','qwen3_5-mimo-precision-v2'):
                 from .mimo_release_policy import policy_for_manifest
                 policy_for_manifest(manifest,a.authority,allow_public=True)
             from .batch_contract import for_manifest, CompleteGroupContract, REQUIRED_CLIENT_FEATURES
