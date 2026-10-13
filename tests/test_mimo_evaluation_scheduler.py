@@ -57,6 +57,46 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(report['evaluation']['mean_reward'],1.)
         self.assertFalse(report['chain_transactions'])
 
+    def test_source_registry_preserves_old_pending_report_and_routes_new_job(self):
+        from subnet.mimo_source_migration import SourceReleaseRegistry, REGISTRY
+        from subnet.mimo_release_policy import digest, CHECKPOINT_KEY
+        self.m['source_bundle']={'sha256':'a'*64}
+        assets=self.policy.scope['task_assets']
+        old=build_policy(self.identity,self.m,task_assets=assets,enabled=True)
+        self.m[POLICY_KEY]=old;self.policy=ReleasePolicy(old,self.identity.id)
+        self.opening=sign(self.identity,self.m)
+        metadata=self.scheduler.metadata
+        self.scheduler=EvaluationScheduler(self.f.root/'eval',self.bucket,self.queue,self.identity,
+            policy=self.policy,metadata=metadata,workers=[self.worker.id],set_name='fixed4',job_seconds=120)
+        first=self.scheduler.tick([self.opening],now=self.now)
+        self.run_worker(Runtime(self.m))
+        m=deepcopy(self.m);m['source_bundle']['sha256']='b'*64
+        new=build_policy(self.identity,m,task_assets=assets,enabled=True);m[POLICY_KEY]=new
+        new_policy=ReleasePolicy(new,self.identity.id)
+        before=metadata(self.m);after=deepcopy(before)
+        after['source_files']['subnet/mimo_grpo/transaction.py']='e'*64
+        registry=SourceReleaseRegistry(sign(self.identity,dict(version=REGISTRY,policies=[old,new],
+            active_policy_sha256=digest(new),execution={'a'*64:before,'b'*64:after},
+            source_changes=['subnet/mimo_grpo/transaction.py'],trainer_config={'fixture':'unchanged'},
+            trainer_identity=self.worker.id)),self.identity.id)
+        self.scheduler=EvaluationScheduler(self.f.root/'eval',self.bucket,self.queue,self.identity,
+            policy=new_policy,metadata=metadata,workers=[self.worker.id],set_name='fixed4',source_registry=registry)
+        self.assertEqual(self.scheduler.tick([self.opening],now=time.time())['status'],'caught-up')
+        receipt=json.loads((self.scheduler.root/(first['job_id']+'.receipt.json')).read_bytes())['payload']
+        self.assertEqual(receipt['policy_sha256'],self.policy.policy_sha256)
+        self.assertEqual(receipt['job']['payload']['source_files'],before['source_files'])
+        m['checkpoint']={'files':dict(m['checkpoint']['files'],**{'config.json':'f'*64})};m['checkpoint']['id']=digest(m['checkpoint']['files'])
+        m['sampling_contract']['calibration']['checkpoint']=m['checkpoint']['id']
+        m[CHECKPOINT_KEY]=new_policy.authorize_checkpoint(m['checkpoint'],input_checkpoint=self.m['checkpoint']['id'],
+            optimizer_step=1,publication_receipt_sha256='f'*64,identity=self.identity)
+        m['epoch']='nonpayable-new-source';m['start']+=1;m['deadline']+=1
+        self.now=time.time()
+        result=self.scheduler.tick([self.opening,sign(self.identity,m)],now=self.now)
+        self.assertEqual(result['status'],'enqueued')
+        job=json.loads((self.scheduler.root/(result['job_id']+'.job.json')).read_bytes())['payload']
+        self.assertEqual(job['source_files'],after['source_files'])
+        self.assertEqual(job['manifest']['payload'][POLICY_KEY],new)
+
     def test_enqueue_lost_ack_keeps_exact_original_job(self):
         enqueue=self.queue.enqueue
         def lose(envelope):enqueue(envelope);raise OSError('lost acknowledgement')
