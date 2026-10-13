@@ -36,6 +36,21 @@ class ProjectionTests(unittest.TestCase):
         result=dict(job_sha256=digest(job),completed_at=22,evaluation=dict(suite={'env_id':'math','seed':7},harness={'max_output_tokens':8192,'temperature':1,'top_p':.95,'top_k':20},dataset_id='e'*64,count=32,successes=18,mean_reward=18/32,status='complete',requested_count=32,rows=[{'output':'SECRET'}]))
         receipt=self.sign(dict(policy_sha256='a'*64,job=self.sign(job),worker_report=self.sign(dict(action='report',job_id='eval-1',report=result),self.worker)))
         path=self.root/'evaluator/eval-1.receipt.json';path.write_bytes(canonical(receipt));return path,receipt
+    def test_source_only_registry_preserves_original_final_and_eval_policy(self):
+        self.trained();self.evaluation()
+        from types import SimpleNamespace
+        old=self.p.policy
+        new=SimpleNamespace(run_id=old.run_id,policy_sha256='f'*64,scope=old.scope)
+        checked=[]
+        registry=SimpleNamespace(authority=self.authority_id,active=new,
+            resolve=lambda manifest:old,validate_job_execution=lambda job:checked.append(job['job_id']))
+        p=Projection(self.root,new,self.authority_id,self.p.workers,self.p.validate_report,
+            first_round=189,started_at=10,model='MiMo9B',source_registry=registry)
+        result=p.project(self.prior,25)
+        self.assertTrue(result['epochs'][0]['finalized'])
+        self.assertEqual(result['evaluations'][0]['successes'],18)
+        self.assertEqual(set(checked),{'train-1','eval-1'})
+
     def test_new_run_pending_never_stitches_old_curve(self):
         d=self.p.project(self.prior,15);self.assertEqual(d['evaluations'],[]);self.assertEqual(d['training_run']['first_round'],189);self.assertEqual(d['epochs'][0]['display_epoch'],1);self.assertIsNone(d['epochs'][0]['training'])
         self.assertNotIn('SECRET',json.dumps(d));self.assertNotIn('NEVER-PUBLISH',json.dumps(d))

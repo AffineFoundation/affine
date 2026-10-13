@@ -63,11 +63,13 @@ def main(argv=None):
     server.export_snapshot=lambda snapshot,destination:original_export(snapshot,destination,public=server.PUBLIC)
     policy=ReleasePolicy(lifecycle['release_policy'],cfg['authority'],allow_public=True)
     if policy.mode!='public':raise ValueError('public dashboard requires public release')
+    from subnet.mimo_source_migration import SourceReleaseRegistry
+    registry=SourceReleaseRegistry(lifecycle['source_release_registry'],cfg['authority'],allow_public=True) if 'source_release_registry' in lifecycle else None
     projection=Projection(lifecycle['state_root'],policy,cfg['authority'],lifecycle['workers'],validate_report,
-        first_round=lifecycle['lifecycle']['first_round'],started_at=cfg['started_at'],model=cfg['model'],
+        first_round=lifecycle['lifecycle']['first_round'],started_at=cfg['started_at'],model=cfg['model'],source_registry=registry,
         audit_projection=AuditProjection(lifecycle['state_root'],lifecycle['queue_database'],cfg['authority'],
-            lifecycle['workers'],policy.validate_manifest,
-            {policy.scope['immutable_manifest']['source_bundle']['sha256']:
+            lifecycle['workers'],registry.resolve if registry else policy.validate_manifest,
+            registry.payload['execution'] if registry else {policy.scope['immutable_manifest']['source_bundle']['sha256']:
                 {k:lifecycle['adapters'][k] for k in ('source_files','runtime_versions')}}))
     # Explicit path arguments preserve original database/source/static assets when
     # operator stages these modules in a separate immutable source closure.

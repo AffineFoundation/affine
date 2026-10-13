@@ -268,6 +268,29 @@ class AuditBridgeTests(unittest.TestCase):
         self.assertAlmostEqual(got['snapshots'][0]['miners'][f.identity.id]['validity_probability'],.4)
         self.assertAlmostEqual(got['snapshots'][0]['miners'][f.identity.id]['reward_multiplier'],.1)
         self.assertEqual(got['evidence_hashes']['mimo_reader_policy_sha256'],digest(config))
+        # Admit a source-only successor without rewriting original populations
+        # or old queue jobs; the sole writer keeps the same historical credit.
+        from subnet.mimo_release_policy import build_policy
+        from subnet.mimo_source_migration import SourceReleaseRegistry,REGISTRY
+        newer=deepcopy(f.m);newer['source_bundle']['sha256']='9'*64
+        new=build_policy(Identity(f.operator.encode()),newer,task_assets=self.release.scope['task_assets'],enabled=True)
+        profiles=deepcopy(self.execution);changed=deepcopy(next(iter(profiles.values())))
+        changed['source_files']['subnet/mimo_grpo/transaction.py']='e'*64;profiles['9'*64]=changed
+        old_files=next(iter(self.execution.values()))['source_files']
+        changes=[k for k in set(old_files)|set(changed['source_files']) if old_files.get(k)!=changed['source_files'].get(k)]
+        registry=sign(f.operator,dict(version=REGISTRY,policies=[self.release.envelope,new],active_policy_sha256=digest(new),
+            execution=profiles,source_changes=changes,trainer_config={'fixture':'same'},trainer_identity=f.identity.id))
+        cfg=dict(config['payload'],release_policy=new,source_release_registry=registry,approved_execution=profiles)
+        migrated=EvidenceSource(sign(f.operator,cfg),f.authority,snapshot=snapshot,current_estimates=global_reducer,observation_reader=observations)
+        recovered=migrated(authority=f.authority,cutoff=cutoff,verifiers=list(self.verifiers))
+        self.assertEqual(recovered['snapshots'],got['snapshots'])
+        self.assertEqual(recovered['committed_at_by_epoch'],got['committed_at_by_epoch'])
+        self.assertEqual(recovered['evidence_hashes']['mimo_admitted_jobs'],got['evidence_hashes']['mimo_admitted_jobs'])
+        # Missing original source execution is rejected before the reader can
+        # hand an empty or reset assessment to the existing hourly writer.
+        cfg['approved_execution']={'9'*64:changed}
+        with self.assertRaisesRegex(ValueError,'exact admitted source registry'):
+            EvidenceSource(sign(f.operator,cfg),f.authority,snapshot=snapshot,current_estimates=global_reducer,observation_reader=observations)
         path=next(directory.glob('*.population.json'));path.write_text('{}')
         with self.assertRaisesRegex(ValueError,'population file digest'):
             source(authority=f.authority,cutoff=cutoff,verifiers=list(self.verifiers))

@@ -273,3 +273,194 @@ def apply_role_current(registry, transition, role, planned, *, path, journal_dir
         else:
             _write(ack_path, ack)
         return ack
+
+HOLD = 'mimo-source-boundary-hold-v1'
+
+
+def boundary_gate(root, policy, identity, *, now):
+    """Called under lifecycle.lock before PLAN creation, including after restart.
+
+    The signed request may be armed one epoch ahead. A timeout alerts the
+    operator but NEVER releases a partially migrated optimizer automatically.
+    Old executables must first receive this host-only hook before arming it.
+    """
+    root=Path(root);path=root/'SOURCE-MIGRATION-HOLD.json'
+    if not path.exists():return None
+    need(not path.is_symlink() and 0<path.stat().st_size<32*1024**2,'bounded ordinary hold request')
+    envelope=json.loads(path.read_bytes());request=signed(envelope,identity.id)
+    need(set(request)=={'version','registry','from_policy_sha256','epoch_index','created_at','deadline'}
+         and request['version']==HOLD,'exact signed boundary hold')
+    registry=SourceReleaseRegistry(request['registry'],identity.id,allow_public=policy.mode=='public')
+    need(request['from_policy_sha256'] in registry.policies
+         and request['from_policy_sha256']!=registry.active.policy_sha256
+         and type(request['epoch_index'])is int and request['epoch_index']>0
+         and type(request['created_at'])is int and type(request['deadline'])is int
+         and 1<=request['deadline']-request['created_at']<=7200,'bounded source migration hold')
+    current_path=root/'CURRENT.json'
+    need(current_path.is_file() and not current_path.is_symlink(),'existing current for boundary hold')
+    raw=current_path.read_bytes();current=json.loads(raw);target=request['epoch_index']
+    need(policy.policy_sha256 in (request['from_policy_sha256'],registry.active.policy_sha256),
+         'hold admits only exact before and after policy')
+    if current['epoch_index']<target:
+        need(current['epoch_index']==target-1 and current['policy_sha256']==request['from_policy_sha256'],
+             'hold must target next exact boundary')
+        return None
+    journal=root/'source-migrations'/digest(envelope)
+    complete=journal/'COMPLETED.json'
+    if complete.exists():
+        need(not complete.is_symlink(),'ordinary completed migration')
+        completed=signed(json.loads(complete.read_bytes()),identity.id)
+        need(set(completed)=={'hold_sha256','transition','trainer_ack','host_ack'}
+             and completed['hold_sha256']==digest(envelope),'completed exact hold')
+        transition=completed['transition'];t=validate_transition(registry,transition)
+        need(json.loads(_decode(t['original_host_bytes']))['epoch_index']==target
+             and t['from_policy_sha256']==request['from_policy_sha256'],'same held boundary transition')
+        for role in ('trainer','host'):
+            planned=planned_current(registry,transition,role,identity=identity)
+            validate_ack(registry,transition,completed[role+'_ack'],role,planned)
+        need(current['epoch_index']>=target and current['policy_sha256']==registry.active.policy_sha256,
+             'completed migration current policy')
+        if policy.policy_sha256!=registry.active.policy_sha256:
+            return dict(status='source-migration-held',reason='new-executable-required',epoch_index=target)
+        if current['epoch_index']==target:
+            need(current==planned_current(registry,transition,'host',identity=identity),'exact migrated boundary current')
+        return None
+    need(current['epoch_index']==target,'cannot arm hold after boundary has passed')
+    directory=root/'epochs'/str(target)
+    need(not(directory/'PLAN.json').exists() and not(directory/'coordinator/OPENING.json').exists(),
+         'source hold cannot interrupt an issued successor')
+    journal.mkdir(parents=True,exist_ok=True,mode=0o700)
+    captured=journal/'BOUNDARY.json'
+    if not captured.exists():
+        need(current['policy_sha256']==request['from_policy_sha256'],'original policy before boundary capture')
+        prior=root/'epochs'/str(target-1)/'FINALIZED.json'
+        need(prior.is_file() and not prior.is_symlink(),'original finalized predecessor required')
+        final_envelope=json.loads(prior.read_bytes());final=signed(final_envelope,identity.id)
+        need(final['policy_sha256']==request['from_policy_sha256'] and final['round']+1==current['round']
+             and final['result']['checkpoint']==current['checkpoint']
+             and final['result']['optimizer_step']==current['optimizer_step'],'finalized predecessor matches current')
+        _write(captured,sign(identity,dict(hold_sha256=digest(envelope),original_current_bytes=base64.b64encode(raw).decode(),
+                                         finalized=final_envelope,captured_at=now)))
+    else:
+        snapshot=signed(json.loads(captured.read_bytes()),identity.id)
+        need(snapshot['hold_sha256']==digest(envelope),'original captured boundary')
+        # CURRENT may already be migrated during a crash before COMPLETED; hold
+        # remains in force and the operator resumes its existing signed journal.
+        need(current['checkpoint']==json.loads(_decode(snapshot['original_current_bytes']))['checkpoint'],
+             'no model update during source hold')
+    return dict(status='source-migration-held',reason='operator-deadline-exceeded' if now>request['deadline'] else 'awaiting-role-acknowledgements',epoch_index=target)
+
+
+def arm_boundary_hold(root, request, policy, identity, *, now):
+    """Persist one ROOT-approved next-boundary hold under the real host lock."""
+    import os,fcntl
+    root=Path(root).absolute();need(root.resolve()==root,'ordinary lifecycle root')
+    fd=os.open(root/'lifecycle.lock',os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
+    try:
+        fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        p=signed(request,identity.id);current=json.loads((root/'CURRENT.json').read_bytes())
+        need(p['from_policy_sha256']==policy.policy_sha256==current['policy_sha256']
+             and p['created_at']<=now<p['deadline'],'current qualified unexpired hold')
+        target=p['epoch_index'];need(target in (current['epoch_index'],current['epoch_index']+1),'next exact epoch boundary')
+        directory=root/'epochs'/str(target)
+        need(not(directory/'PLAN.json').exists() and not(directory/'coordinator/OPENING.json').exists(),
+             'cannot hold an issued epoch')
+        # Validate the complete envelope before persisting, including registry.
+        reg=SourceReleaseRegistry(p['registry'],identity.id,allow_public=policy.mode=='public')
+        need(set(p)=={'version','registry','from_policy_sha256','epoch_index','created_at','deadline'}
+             and p['version']==HOLD and type(target)is int and target>0
+             and 1<=p['deadline']-p['created_at']<=7200
+             and p['from_policy_sha256'] in reg.policies and reg.active.policy_sha256!=policy.policy_sha256,
+             'explicit bounded source-only hold request')
+        path=root/'SOURCE-MIGRATION-HOLD.json'
+        if path.exists():need(not path.is_symlink() and json.loads(path.read_bytes())==request,'original hold cannot be replaced')
+        else:_write(path,request)
+        return boundary_gate(root,policy,identity,now=now)
+    finally:os.close(fd)
+
+
+def complete_boundary_hold(root, registry, transition, trainer_ack, host_ack, identity, *, now):
+    """Release only after original captured state and both exact ACKs authenticate."""
+    import os,fcntl
+    root=Path(root).absolute();need(root.resolve()==root,'ordinary lifecycle root')
+    fd=os.open(root/'lifecycle.lock',os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
+    try:
+        fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        request=json.loads((root/'SOURCE-MIGRATION-HOLD.json').read_bytes());p=signed(request,identity.id)
+        need(p['registry']==registry.envelope,'original held registry')
+        journal=root/'source-migrations'/digest(request)
+        snapshot=signed(json.loads((journal/'BOUNDARY.json').read_bytes()),identity.id)
+        t=validate_transition(registry,transition)
+        need(snapshot['hold_sha256']==digest(request)
+             and snapshot['original_current_bytes']==t['original_host_bytes']
+             and snapshot['finalized']==t['finalized'],'transition uses captured original boundary bytes')
+        for role,ack in (('trainer',trainer_ack),('host',host_ack)):
+            target=planned_current(registry,transition,role,identity=identity)
+            validate_ack(registry,transition,ack,role,target)
+        need(json.loads((root/'CURRENT.json').read_bytes())==target,'original host acknowledgement applied')
+        record=sign(identity,dict(hold_sha256=digest(request),transition=transition,trainer_ack=trainer_ack,host_ack=host_ack))
+        path=journal/'COMPLETED.json'
+        if path.exists():need(not path.is_symlink() and json.loads(path.read_bytes())==record,'same original completed migration')
+        else:_write(path,record)
+        need(boundary_gate(root,registry.active,identity,now=now)is None,'completed hold permits new release only')
+        return record
+    finally:os.close(fd)
+
+
+def _role_lock(root, name):
+    from contextlib import contextmanager
+    import os,fcntl
+    @contextmanager
+    def locked():
+        fd=os.open(Path(root)/name,os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
+        try:
+            fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            yield
+        finally:os.close(fd)
+    return locked
+
+
+def migrate_trainer_current(root, registry, transition, planned, identity):
+    """Locked one-time cold inventory admission; no model loading or update."""
+    from .mimo_grpo.transaction import _inventory
+    root=Path(root).absolute();need(root.resolve()==root,'ordinary original trainer run root')
+    value=validate_transition(registry,transition);original=value['original_transaction']
+    checked=False
+    def quiescent():
+        nonlocal checked
+        if checked:return
+        matches=[]
+        for path in (root/'history').glob('*/TRANSACTION.json'):
+            need(not path.is_symlink(),'ordinary original transaction')
+            row=json.loads(path.read_bytes())
+            need(row['state']=='published','unfinished trainer transaction forbids source migration')
+            if row['job']['job_id']==original['job']['job_id']:matches.append((path.parent,row))
+        need(len(matches)==1 and matches[0][1]==original,'exact original published optimizer transaction')
+        folder,row=matches[0]
+        need(_inventory(folder,list(row['artifacts']))==row['artifacts'],
+             'cold original model and optimizer inventory authentication')
+        descriptor=json.loads((folder/'optimizer/descriptor.json').read_bytes())
+        need(descriptor['optimizer_step']==row['job']['optimizer_step_before']+1,
+             'original optimizer generation')
+        checked=True
+    return apply_role_current(registry,transition,'trainer',planned,path=root/'CURRENT.json',
+        journal_directory=root/'source-migrations'/digest(transition),identity=identity,
+        assert_quiescent=quiescent,locked=_role_lock(root,'.trainer.lock'))
+
+
+def migrate_host_current(root, registry, transition, planned, trainer_ack, identity, *, now):
+    """Require the persisted captured boundary under the real lifecycle lock."""
+    root=Path(root).absolute();need(root.resolve()==root,'ordinary original lifecycle root')
+    t=validate_transition(registry,transition)
+    def quiescent():
+        request=json.loads((root/'SOURCE-MIGRATION-HOLD.json').read_bytes())
+        r=signed(request,identity.id)
+        need(r['registry']==registry.envelope,'same held source registry')
+        held=boundary_gate(root,registry.policies[t['from_policy_sha256']],identity,now=now)
+        need(held is not None and held['status']=='source-migration-held','persistent host boundary required')
+        snapshot=signed(json.loads((root/'source-migrations'/digest(request)/'BOUNDARY.json').read_bytes()),identity.id)
+        need(snapshot['original_current_bytes']==t['original_host_bytes'] and snapshot['finalized']==t['finalized'],
+             'exact held predecessor and original host bytes')
+    return apply_role_current(registry,transition,'host',planned,path=root/'CURRENT.json',
+        journal_directory=root/'source-migrations'/digest(transition),identity=identity,
+        assert_quiescent=quiescent,locked=_role_lock(root,'lifecycle.lock'),trainer_ack=trainer_ack)

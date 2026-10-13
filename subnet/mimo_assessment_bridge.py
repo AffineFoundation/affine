@@ -147,7 +147,7 @@ class EvidenceSource:
         from pathlib import Path
         from .mimo_release_policy import ReleasePolicy
         p=signed(document,authority)
-        need(type(p)is dict and set(p)=={'version','directory','queue_path','release_policy',
+        need(type(p)is dict and set(p)-{'source_release_registry'}=={'version','directory','queue_path','release_policy',
             'approved_execution','audit_policy','verifiers','transition_policy'} and
             p['version']==VERSION and p['transition_policy']==TRANSITION,'explicit evidence reader policy')
         need(type(p['verifiers'])is list and p['verifiers'] and len(set(p['verifiers']))==len(p['verifiers']),
@@ -155,6 +155,13 @@ class EvidenceSource:
         for field in ('directory','queue_path'):
             path=Path(p[field]);need(path.is_absolute() and path.resolve()==path,'ordinary exact evidence source path')
         self.release=ReleasePolicy(p['release_policy'],authority,allow_public=allow_public)
+        self.registry=None
+        if 'source_release_registry' in p:
+            from .mimo_source_migration import SourceReleaseRegistry
+            self.registry=SourceReleaseRegistry(p['source_release_registry'],authority,allow_public=allow_public)
+            need(self.registry.active.policy_sha256==self.release.policy_sha256
+                 and p['approved_execution']==self.registry.payload['execution'],
+                 'writer exact admitted source registry and active release')
         need(callable(current_estimates) and callable(observation_reader), 'pinned deployed global assessment reducers')
         self.current_estimates,self.observation_reader=current_estimates,observation_reader
         self.policy,self.authority,self.snapshot=p,authority,snapshot
@@ -210,7 +217,7 @@ class EvidenceSource:
         finally:db.close()
         value=evidence(populations,rows,authority=authority,cutoff=cutoff,
             verifiers={key:['verify'] for key in self.policy['verifiers']},
-            approved_execution=self.policy['approved_execution'],manifest_guard=self.release.validate_manifest,
+            approved_execution=self.policy['approved_execution'],manifest_guard=self.registry.resolve if self.registry else self.release.validate_manifest,
             snapshot=self.snapshot,audit_policy=self.policy['audit_policy'],release_policy_sha256=self.release.policy_sha256,
             current_estimates=self.current_estimates,observation_reader=self.observation_reader)
         value['evidence_hashes']['mimo_reader_policy_sha256']=self.config_sha256

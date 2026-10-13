@@ -73,6 +73,39 @@ class SourceMigrationTests(unittest.TestCase):
                   assert_quiescent=lambda:None,locked=nullcontext);args.update(kw)
         return apply_role_current(self.registry,self.transition,role,planned,**args)
 
+    def test_persistent_boundary_hold_old_process_and_crash_after_current(self):
+        from subnet.mimo_source_migration import HOLD,arm_boundary_hold,boundary_gate,complete_boundary_hold,migrate_host_current
+        root=self.root/'lifecycle';root.mkdir();(root/'CURRENT.json').write_bytes(self.host_bytes)
+        prior=root/'epochs/1';prior.mkdir(parents=True);(prior/'FINALIZED.json').write_bytes(canonical(self.final))
+        request=sign(self.operator,dict(version=HOLD,registry=self.registry.envelope,
+            from_policy_sha256=self.old.policy_sha256,epoch_index=2,created_at=100,deadline=200))
+        result=arm_boundary_hold(root,request,self.old,self.operator,now=100)
+        self.assertEqual(result['status'],'source-migration-held')
+        self.assertEqual(boundary_gate(root,self.old,self.operator,now=201)['reason'],'operator-deadline-exceeded')
+        trainer_ack=self.role('trainer')
+        target=planned_current(self.registry,self.transition,'host',identity=self.operator)
+        planned=sign(self.operator,dict(transition_sha256=digest(self.transition),role='host',current=target))
+        host_ack=migrate_host_current(root,self.registry,self.transition,planned,trainer_ack,self.operator,now=150)
+        # A crash after both CURRENT writes still cannot open a successor.
+        self.assertEqual(boundary_gate(root,self.old,self.operator,now=202)['status'],'source-migration-held')
+        record=complete_boundary_hold(root,self.registry,self.transition,trainer_ack,host_ack,self.operator,now=202)
+        self.assertEqual(boundary_gate(root,self.old,self.operator,now=202)['reason'],'new-executable-required')
+        self.assertIsNone(boundary_gate(root,self.registry.active,self.operator,now=202))
+        self.assertEqual(complete_boundary_hold(root,self.registry,self.transition,trainer_ack,host_ack,self.operator,now=203),record)
+        current=json.loads((root/'CURRENT.json').read_bytes());current['epoch_index']+=1
+        (root/'CURRENT.json').write_bytes(canonical(current))
+        self.assertIsNone(boundary_gate(root,self.registry.active,self.operator,now=500))
+
+    def test_hold_does_not_interrupt_existing_epoch_and_cannot_arm_issued_successor(self):
+        from subnet.mimo_source_migration import HOLD,arm_boundary_hold,boundary_gate
+        root=self.root/'lifecycle';root.mkdir();(root/'CURRENT.json').write_bytes(self.host_bytes)
+        request=sign(self.operator,dict(version=HOLD,registry=self.registry.envelope,
+            from_policy_sha256=self.old.policy_sha256,epoch_index=3,created_at=100,deadline=200))
+        self.assertIsNone(arm_boundary_hold(root,request,self.old,self.operator,now=100))
+        self.assertIsNone(boundary_gate(root,self.old,self.operator,now=150))
+        target=root/'epochs/3';target.mkdir(parents=True);(target/'PLAN.json').write_text('{}')
+        with self.assertRaisesRegex(ValueError,'issued epoch'):arm_boundary_hold(root,request,self.old,self.operator,now=150)
+
     def test_exact_old_and_new_execution_profiles_retained(self):
         for manifest in (self.f.m,self.m):
             profile=self.registry.execution_for(manifest)

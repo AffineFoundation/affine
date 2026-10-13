@@ -249,6 +249,9 @@ class Lifecycle:
         fd=os.open(self.root/'lifecycle.lock',os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
         try:
             fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            from .mimo_source_migration import boundary_gate
+            held=boundary_gate(self.root,self.policy,self.identity,now=now)
+            if held is not None:return held
             current=self._current(); directory=self.root/'epochs'/str(current['epoch_index'])
             directory.mkdir(parents=True,exist_ok=True)
             plan=self._plan(current,directory,now)

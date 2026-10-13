@@ -46,41 +46,61 @@ worker cannot switch code in place; its existing source guard remains intact.
    host ACK and resume opening under the new active policy/source. Preserve the
    previous discovery digest and next global round.
 
-The supplied role mutation helper requires the caller's existing exclusive-lock
-and quiescence callbacks. It is not a standalone operator command and must not
-be invoked until the persistent boundary hold and consumers below are wired.
-A crash after PREPARED, CURRENT, or ACK resumes idempotently: the signed journal
-permits only original bytes or the exact admitted target; stale state rejects.
-The host cannot migrate before a valid trainer ACK. There is no automatic
-rollback after a new-policy job has been issued.
+The lifecycle now checks a persistent ROOT-signed hold before any successor
+PLAN is created. `arm_boundary_hold` takes `lifecycle.lock` and can target the
+next boundary without interrupting the current epoch. At that boundary it
+captures the original CURRENT bytes and finalized predecessor. The bounded
+operator deadline is an alert, never an automatic release of half-migrated
+state. A restarted old executable stays held even after the CURRENT migration;
+only the new qualified active executable can resume after both signed ACKs.
 
-## Integration still required before activation
+`ops/mimo_source_migration.py` is an explicit owner-private command with `arm`,
+`trainer`, `host`, and `complete` actions. It has no live path defaults, performs
+no deployment, and does not write chain weights. The trainer action takes the
+real `.trainer.lock`, rejects unfinished transactions, authenticates the entire
+original model/optimizer inventory once, then uses the signed role journal.
+The host action takes the real `lifecycle.lock` and requires the captured hold
+plus trainer ACK. Completion binds the exact captured bytes and both ACKs.
+Crashes after PREPARED, CURRENT or ACK resume the same transaction, never another
+optimizer update. This initial operator path admits one persisted source
+transition per run; replacing its completed hold needs a separately reviewed
+subsequent migration rather than deleting its journal.
 
-* Persistent hold/resume in the host lifecycle and supervised entrypoint,
-  including the old host wrapper. It must survive crashes before trainer ACK;
-  a lock alone does not persist a hold after process exit.
-* Wire historical audit, evaluation, finalized-history and dashboard records
-  through the registry rather than the single active policy. The evaluation
-  scheduler now has opt-in registry support, with a regression covering an old
-  pending report and a new-source job; operator wiring remains outstanding. Preserve original
-  evaluation scheduler checkpoints and job IDs. Emit each receipt under its
-  original policy; choose job metadata using that original source profile.
-* Operator configuration/API wiring for the queue's registry and worker-profile
-  map. Keep workers for unfinished old-source evaluation and audit jobs, or
-  explicitly finish them before retiring those executables. Never reset leases.
-* Preserve the sole hourly writer's original queue, cursor and six-hour EMA.
-  Append qualified report execution profiles to its existing evidence allowlist;
-  never start another writer or introduce a burn fallback.
-* A reviewed boundary command that verifies actual original finalization,
-  publication, trainer transaction and optimizer inventory, obtains the exact
-  locks, persists the host hold, performs both role acknowledgements, verifies
-  cold restoration and only then releases the next opening.
+Historical audit/evaluation, finalized-history, dashboard and hourly-writer
+readers now support the explicit registry. Original jobs retain original
+policies and execution profiles. The host runner accepts an opt-in registry
+and worker/source map; every worker remains on one actual installed profile.
+The sole writer's composition needs its separately ROOT-signed reader config
+updated to the full old/new execution registry; cursor, EMA and chain code are
+unchanged. The dashboard changes are data admission only, not presentation.
+
+## Deployment qualification still required
+
+* Install the reviewed host-only hold hook on the running old host before
+  arming a hold. Frozen v7 does not know this marker; a file alone cannot stop it.
+* Qualify and archive the exact prospective source, immutable public policy and
+  full changed-file allowlist. Prepare matching client archives and workers.
+* Keep old-source verifier/evaluator workers for queued historical work; add
+  new identities/profiles for new-source jobs. Drain the sole trainer's original
+  completed job and stop its old claiming loop before the locked handover.
+* Prepare the signed transition and plans from the actual boundary originals,
+  not an earlier optimizer snapshot. Retain the stable trainer state root.
+* Stage the historical readers and original hourly writer's signed composition
+  before opening a new-policy epoch. Never replace the writer or its cursor.
+* Qualify an isolated real GPU cold restore and one successor update before
+  activation; verify model-only publication, original optimizer continuation,
+  and historical report authentication. All production activation remains the
+  root operator's responsibility; no command here has been run on live state.
 
 ## Qualification
 
 CPU tests cover old/new exact profile routing, policy/source pin rejection,
 changed model/sampler/grader/runtime/objective rejection, stale CURRENT/ACK,
-quiescence and crashes after each durable trainer migration write. Existing
+quiescence and crashes after each durable trainer migration write. The actual tiny
+trainer additionally completes a source-only migration, cold-restores the
+original model and Adam moments, advances step 1 to 2, and retries without
+advancing again. The writer regression reconstructs the same signed historical
+population/report and preserves identical miner credit after registry admission. Existing
 queue tests must remain passing. Before production: run an isolated copied-state
 cold restore and one next update with the new source; compare the unchanged
 training contract, input checkpoint and counter progression, prove model-only

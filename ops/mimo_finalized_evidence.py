@@ -18,8 +18,10 @@ def collector(config,authority):
     from subnet.mimo_worker import validate_report
     policy=ReleasePolicy(cfg['release_policy'],authority,allow_public=True)
     if policy.mode!='public':raise ValueError('public MiMo evidence release')
+    from subnet.mimo_source_migration import SourceReleaseRegistry
+    registry=SourceReleaseRegistry(cfg['source_release_registry'],authority,allow_public=True) if 'source_release_registry' in cfg else None
     return Projection(cfg['state_root'],policy,authority,cfg['workers'],validate_report,
-        first_round=cfg['lifecycle']['first_round'],started_at=0,model='MiMo9B')
+        first_round=cfg['lifecycle']['first_round'],started_at=0,model='MiMo9B',source_registry=registry)
 
 
 def compact(document):
@@ -65,7 +67,7 @@ def collect(view,bucket,now):
         final_envelope=read(directory/'FINALIZED.json');final=signed(final_envelope,view.authority)
         dispatch_envelope=read(directory/'coordinator/DISPATCH.json');d=signed(dispatch_envelope,view.authority)
         population_envelope=read(directory/'coordinator/POPULATION.json');population=signed(population_envelope,view.authority)
-        if (final['policy_sha256']!=view.policy.policy_sha256 or final['epoch']!=m['epoch']
+        if (final['policy_sha256']!=view.policy_for(m).policy_sha256 or final['epoch']!=m['epoch']
             or final['opening_sha256']!=digest(opening) or final['dispatch_sha256']!=digest(dispatch_envelope)
             or final['input_checkpoint']!=m['checkpoint']['id'] or final['round']!=view.first_round+len(rows)
             or d['epoch']!=m['epoch'] or d['checkpoint']!=m['checkpoint']['id'] or d['manifest_sha256']!=digest(m)
@@ -102,8 +104,8 @@ def collect(view,bucket,now):
         evaluations=[]
         for path in sorted((view.root/'evaluator').glob('*.receipt.json')):
             e=signed(read(path),view.authority)
-            if e['policy_sha256']!=view.policy.policy_sha256:raise ValueError('MiMo eval release')
             j=signed(e['job'],view.authority)
+            if e['policy_sha256']!=view.policy_for(view.opening(j['manifest'])).policy_sha256:raise ValueError('MiMo eval release')
             if j['manifest']!=opening:continue
             _,report=view.worker_report(e['job'],e['worker_report'],'evaluate',opening,now)
             evaluations.append(dict(original_report_sha256=digest(report),evaluation=report['evaluation']))
