@@ -1,481 +1,367 @@
-# Affine: current miner protocol and operating guide
+# Affine: MiMo complete-group mining and GRPO operating guide
 
-Updated October 12, 2026. Network: Bittensor Finney, subnet 120.
+ACTIVE PUBLIC CONTRACT — October 13, 2026.
+The signed MiMo opening is live from global epoch 189. This guide describes
+the new model run; older contracts apply only to their historical epochs.
+
+Authenticated activation:
+- Activation UTC: 2026-10-13T13:12:53+00:00
+- Public run ID and first epoch: affine-mimo9b-grpo-20261013 / affine-mimo9b-grpo-20261013-e000000 (global epoch 189)
+- Reviewed GitHub commit: c770e351
+- Approved source archive SHA256 and bytes: 69ae058be865ab47ccf7f4decbe855c4826bc87c96d87aa1173d69ef6fbab2f9 / 6405644
+- Immutable source archive URL: https://affine.io/releases/mimo-source-20261013/69ae058be865ab47ccf7f4decbe855c4826bc87c96d87aa1173d69ef6fbab2f9/source.tar.gz
+- Signed qualification/release-policy file SHA256: df2d2b808ccb516ad3b5751567ea0716eff8fd012cfe5b808ed2b56f1aee6bd4
+- Exact runtime qualification scope: H200/SM90 pinned runtime; release scope 51c37e28aaa34e12a69f869e242fda28657d86b836b2915a63d299038e43e2ba
+- First-opening manifest digest: 83f59a82af25ce576f344c3e707bbf0168ce314530b4a3e1da04eb5fecb55fa9
+- Final task-split confirmation: 8361365558b9e6cfac6ef60ae6a9bba78edacf7117a87abae915888ff7a009ba
+- Matched evaluation baseline: Original base fixed32:18/32 correct (56.25%),3 completed wrong,11 unresolved,0 infrastructure errors; report SHA256 faed31885f214f1d2de6d858ac5f419b7be7bdac8bdd62ba305759b3a6ca0507
+
+Network: Bittensor Finney, subnet 120.
 Code: https://github.com/AffineFoundation/affine
 Availability: https://affine.io/mining.json
 Dashboard: https://affine.io/
 Finalized learning evidence: https://affine.io/history.json
-Evidence format: https://github.com/AffineFoundation/affine/blob/main/docs/FINALIZED_EPOCH_EVIDENCE.md
+Expected coordinator authority public key:
+3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd
 
-The signed history's `finalized_epoch_evidence` extension links compact actual
-training inputs, update metrics, retained exclusion decisions, and per-task
-fixed32/heldout128 evaluation records for finalized epochs from 14 onward.
-Verify the ROOT signature and each artifact's SHA-256 before use. Gzip artifact
-hashes cover compressed bytes. Availability and provenance are explicit;
-missing historical fields are not zero measurements. GET-only links expire
-and are refreshed. Open-epoch submissions and credentials are never included.
-This evidence export does not change the miner contract or training behavior.
+## What changes at this cutover
 
-## Coordinator capture capacity
+This is a new model run and a new miner contract. Upgrade the canonical client
+and install the exact MiMo runtime before joining it. An old Qwen2.5-Math client
+does not become compatible merely because a manifest changes. Custom miners
+must implement the complete new contract and pass the same checks.
 
-Epoch 152 activated the coordinator-only v3 capture policy with 64 bounded
-token-document workers within the existing 60-second total freeze budget. Mining
-proofs, quotas, nonces and submission deadlines are unchanged; no miner update is needed for this change.
-Details: https://github.com/AffineFoundation/affine/blob/main/docs/CAPTURE_CAPACITY.md
+The new starting model is XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B, upstream revision
+2367e865d009c13ac81713a2878291d33ab28177. Its authenticated original checkpoint is
+87de8304e9d33dde39b81a41fdbbf306426ea6fd993b7d85332e6a48e8a4bbae
+(18,849,863,399 model-file bytes). Start this run with a fresh optimizer. Earlier
+Qwen-model histories remain archived and are not a continuation of this run.
+After each update miners use the new signed checkpoint, not the upstream base
+again. A previously trained private rehearsal checkpoint is not the run genesis.
 
-## Prospective task-coverage trial — epoch 154 onward
+The activated task split is the existing 7,496 usable MATH problems, with
+6,746 mining tasks and 750 reserved held-out tasks. The authenticated split
+digest is recorded above. Only `environments[].indices` in the current signed
+opening authorizes mining. Old task cooldowns are not implicitly carried into
+this fresh run. Held-out tasks never become miner tasks or training inputs.
 
-The coordinator is configured for a broad task cooldown from epoch 154 onward. The signed opening manifest remains authoritative: each new epoch may omit
-up to 256 of the most-used training tasks in the previous 12 completed epochs,
-leaving 6,490 of the original 6,746 mining tasks available. The list is frozen for
-that epoch and rotates at later openings. Missing or ambiguous training history
-keeps the full original pool. Held-out tasks remain excluded.
+One task batch now contains the entire canonical group of eight attempts:
 
-The existing public miner reads `environments[].indices` automatically each epoch;
-no script or proof-format update is required. Remove stale fixed `--indices`
-overrides or select only from the current manifest. K4/L4, nine batches per UID,
-nonce range 0–999, proofs and reward rules are unchanged. This tests broader task
-coverage; it is not evidence of cheating or proven learning improvement.
-Details: https://github.com/AffineFoundation/affine/blob/main/docs/TASK_COVERAGE.md
+- Generate exactly nonces 0, 1, 2, 3, 4, 5, 6, 7 and submit them in that order.
+- At least one attempt must be completed and correct, and at least one must be
+  completed and wrong. There is no four-correct/four-wrong quota.
+- Retain all eight original outcomes, including unresolved attempts. Do not
+  replace an unfavorable attempt, omit a cap, add a nonce offset, try nonce 8,
+  or generate a larger group and select eight members from it.
+- If the whole group fails the two outcome minima, search another approved
+  task. All-correct, all-wrong, and correct-plus-unresolved-only groups do not
+  qualify. Native grader or infrastructure errors do not supply a wrong answer.
+- Different prescribed attempts may legitimately produce identical output
+  tokens. Preserve them with their distinct bound nonce identities. Repeating
+  a nonce or claiming the same committed group twice is not allowed.
+- The initial cap remains nine eligible task batches per registered UID per
+  epoch. One group is one task contribution, not eight separate contributions.
 
-## Scheduled changes: native task priority and optimizer CPU threads
+Parallel execution of attempts is allowed. Ordered nonces describe the required
+sampling challenges and submitted group, not provable wall-clock execution order.
+Task search and mixed-group admission still condition the training distribution;
+they do not establish unbiased coverage of every task.
 
-The controller update was installed on October 12 at 04:27 UTC, scheduled from
-epoch 158. Epoch 157 retains its original contract. The signed manifest and
-execution release determine activation; first-epoch results are still pending.
-Miners keep
-the same client, checkpoint discovery, sampling/proof contract, K4/L4 quota,
-nine-batch limit and nonce range 0–999.
+## Runtime, sampling and completed answers
 
-Native admission can prioritize submitted task indices absent from the preceding
-12 finalized training epochs, then process recently trained tasks. Original
-within-task candidate order, native grading and limits remain. History is frozen
-before current grading; missing history records an original-order fallback.
-This changes training admission priority, not miner scoring or rewards.
+Use the exact approved source, checkpoint files, tokenizer, chat template,
+runtime fingerprint and signed numerical profile. The architecture is Qwen3.5
+hybrid attention, with BF16 model parameters and FP32 recurrent state. It is not
+the previous all-FP32 Qwen2.5 generation path. Initial qualification is for the
+explicitly admitted H200/SM90 runtime; another GPU or kernel stack requires its
+own qualification.
 
-The trainer can separately use 16 CPU intra-op threads only for its existing
-optimizer step, restoring two immediately afterward. Forward/backward, objective,
-learning rate and optimizer math are unchanged. Historical jobs keep their
-original behavior. The execution release and per-update report must explicitly
-bind this policy; miner metadata cannot enable it.
+The new manifest uses:
+- Runtime: `qwen3_5-mimo-v1`.
+- Sampling: `forced-inverse-cdf-complete-group-mimo-v1`.
+- Harness: `text-tools-mimo-complete-group-v1`.
+- Temperature1, top-p 0.95, top-k 20, thinking enabled, eager attention.
+- Approved stop-token IDs `[248046, 248044]`; stop at the first approved EOS.
+- Up to 8,192 generated tokens and 12,288 total context tokens initially.
+  The signed opening is authoritative; a prompt plus its full output horizon
+  must fit. Do not silently truncate prompts or change generation limits.
 
-Neither change establishes learning improvement or cheating. Current authenticated
-manifests remain authoritative. Technical details and qualification limits:
-https://github.com/AffineFoundation/affine/blob/main/docs/NATIVE_TASK_PRIORITY.md
+Draws bind run, epoch randomness, checkpoint content, miner identity, native task,
+canonical prompt, group size, nonce, turn and token position, along with the
+versioned sampler/runtime settings. Download URLs are refreshable capabilities;
+they are excluded from checkpoint content identity and do not change the draws.
+An old proof cannot establish validity under a new checkpoint or challenge.
 
-## Current availability
+The final-answer policy is `mimo-final-channel-math-v1`. With thinking enabled,
+a properly framed `<think>...</think>` channel precedes the final channel. The
+native math grader evaluates the completed boxed answer in that final channel.
+A box inside reasoning does not supply the final answer. The full original
+reasoning and final token sequence remains in the proof and training document.
+A correct final answer does not prove that every reasoning step is correct.
 
-Live epoch identity, checkpoint, collection window and eligible identity count
-come from https://affine.io/mining.json and its authenticated signed opening.
-This guide does not announce an open window. Mining is available only when
-`accepting_submissions` is true and the signed deadline has not passed. Between
-updates discovery may report `between_epochs` or `epoch_closed`; a binding fault
-reports `discovery_binding_error`. The continuous launcher waits for an opening.
-Always follow the manifest's actual start and deadline; do not hardcode a duration.
-The schedule beginning with epoch 93 allocates 20 minutes to collection. Epoch 92 retains its original 30-minute window. The remaining hourly budget covers capture, training, publication and reserve; this allocation is not a measured total epoch runtime.
+Budget-capped outputs are unresolved, including outputs containing an earlier
+box. EOS outputs without a gradeable final answer, missing/empty/unbalanced final
+boxes, or invalid final-channel framing are also unresolved. They satisfy neither
+outcome minimum. Native grader failures are indeterminate infrastructure outcomes,
+not invented negative examples.
 
-Historical qualification evidence, October 9, 2026: epoch 86 completed an update
-from 200 accepted task batches. Epoch 88's 05:47:08–06:07:08 UTC collection received
-400 signed batches from 175 external registered identities. These are recorded
-observations, not the current epoch, registration count or a future mining window.
-An interrupted multi-gigabyte checkpoint transfer was also reproduced; the
-launcher below provides resumable transfers with complete-file hash checks.
+## Registration and key safety
 
-The protocol-regression openings 79–85 are retired and archived. They do not
-count as completed training updates, and their retirement is not miner fraud.
-The hourly miner weight writer is enabled. It uses the latest authenticated miner
-assessment, with a six-hour contribution half-life and current hotkey-to-UID
-mapping. Training failures and unfinished epochs do not gate weight setting.
-Owner-only weights and burn fallbacks are prohibited. If new evidence is
-unavailable, the last valid assessment is retained with its original cutoff and
-current known penalties. Commit-reveal can delay visibility of a submitted update.
+There is no operator whitelist. A miner needs a current subnet 120 UID, an
+Ed25519 hotkey and a valid Affine activation. New openings snapshot eligible
+identities; registration or activation during an epoch may take effect in the
+next opening. A new model run does not itself require a new mining identity.
 
-The authoritative inputs are the signed current pointer, signed epoch manifest,
-and exact approved source archive. This guide describes the restored contract;
-it cannot extend a deadline or override a signed opening. GitHub main can also
-contain research code that the signed source has not activated.
-
-## Task, model and batch rules
-
-- Environment: `affine_math`, `prime-v1-2-completed-math`.
-- Taskset: 7,496 usable MATH problems; original mining pool 6,746, with 750 held out.
-  Prospective task cooling can reduce the current allowed list; see the signed opening.
-  Use only task indices advertised for mining in the signed opening.
-- Source model: `Qwen/Qwen2.5-Math-7B-Instruct`, pinned upstream revision
-  `ef9926d75ab1d54532f6a30dd5e760355eb9aa4d`.
-  Its untouched checkpoint is `2173b3e0119380ab813c9588bedff6b3edd5d3dcb01565490fa33ac67b2debf6`.
-  The current restart began from previously trained checkpoint
-  `6493a901bd009f0800d5eed97d19aee78947cc586afeb27abfb2c72032ad1924`
-  (old run epoch 21 output, optimizer step 12), with a fresh optimizer; it was not
-  an untouched upstream model reset. See `docs/COMPLETED_MATH_RESTART.md` for provenance.
-  After each update, download the checkpoint in the new manifest, not the base
-  again and not a previous epoch's learned checkpoint.
-- Each batch covers one task under one epoch/checkpoint and contains exactly
-  eight distinct rollouts: four completed correct answers and four completed
-  incorrect answers (K=4, L=4).
-- Maximum: the signed manifest's `max_batches` task batches per registered UID
-  per epoch. Extra rollouts on
-  the same task do not earn more points. Duplicate task indices across miners
-  in the same epoch receive zero contribution points under the uniqueness rule.
-- Output budget: 2048 tokens. The signed harness sets the actual limit.
-- Sampling: temperature 0.8, top-p 1, prescribed miner-bound v5 draws.
-- Allowed attempt nonces: integers 0 through 999, per miner/task/epoch.
-  All eight rollouts require distinct nonces and distinct generated content.
-
-The completed-answer rule requires a nonempty balanced final `\boxed{...}`.
-Missing, empty or unfinished final boxes are unresolved. They fill neither the
-success nor failure quota and are excluded from training. Hitting the token cap
-is not itself a wrong answer; a completed box is graded normally by the native
-math grader. Grader/runtime errors are not negative examples.
-
-## Proof and upload contract
-
-The current source archive SHA256 is:
-`f5287f57bdae344e5a3d073309e5c830073f603838b4b52a189f5ec0a269cb24`.
-Always authenticate the actual opening; a future source upgrade changes this pin.
-
-Sampling version: `forced-inverse-cdf-prefill-miner-bound-v5`.
-Random draws bind epoch randomness, checkpoint, authenticated miner identity,
-task, nonce, turn and token position. Miners may search the allowed nonces and
-select qualifying outcomes. Different nonces do not guarantee different text;
-content deduplication still applies. Reusing a proof from another epoch or
-checkpoint does not establish validity for the new one.
-
-Upload generated tokens, selected-token log probabilities, TOPLOC fingerprints
-and native outcome metadata through the approved client. Do not upload full
-vocabulary probability arrays. The verifier independently recomputes the full
-distribution and checks the prescribed sampling draws, TOPLOC and environment
-outcome. TOPLOC alone does not establish sampling consistency. Calibrated
-prefill checks use exact cached replay to adjudicate ambiguous cases.
-
-Batch transport: `small-commitment-pairs-v2`, with
-`selected-token-logprobs-v1` and lossless compression. The client uploads bounded
-per-batch proofs and small training documents, then their signed commitment.
-Capabilities are encrypted to registered miner identities. Miners need no
-permanent R2 credentials and cannot read other miners' private current uploads.
-`direct-r2-v1` on the outer discovery pointer describes storage access; it does
-not mean full-vocabulary batch transport.
-
-Token-only and three-way research verification profiles are not activated.
-
-## Prospective verifier-only rollout check
-
-This change is prepared for epoch 170 or a later unopened epoch. It is **not active** merely because this document or candidate code exists. The ROOT-signed epoch manifest is authoritative.
-
-For an epoch carrying `sampling_verification_policy.version = symmetric-prefill-source-preserving-v1`, validators execute the separately authorized verifier runtime. The public generation source remains `f5287f57bdae344e5a3d073309e5c830073f603838b4b52a189f5ec0a269cb24`; the candidate verifier archive is `149e540f5eb7ec40d98331ce8e82956b87b2fd057cc2011164d25524081be4ef`. The manifest keeps the generation source in `source_bundle`; the separate signed verifier route binds the complete verifier execution inventory and policy fingerprint.
-
-Existing miners using that admitted generation source do **not** need a bootstrap refresh for this verifier-only change. Keep following the manifest's checkpoint, task, sampler, nonce, token-budget and outcome quotas. The generation algorithm, per-miner random draw recipe, upload format, task grading, trainer source and optimizer do not change. The extra field selects the audit method; it is not permission to choose a different sampler or construct arbitrary answer tokens.
-
-The new verifier performs the qualified symmetric prefill check and uses the prescribed reference adjudication when required. Numeric ambiguity and infrastructure failures remain distinct from confirmed invalid samples. Full verification event evidence is required in the authenticated worker report. This is evidence of computation and sampling consistency, not proof of a unique historical execution, original authorship, or correct intermediate reasoning.
-
-An epoch without this field continues under its original verifier contract. Existing signed manifests, jobs, reports and reward cohorts are never relabeled. Future audit populations include the verifier policy in their cohort fingerprint. The hourly weight writer retains its current UID mapping, moving assessment, last-best fallback, and never-burn behavior.
-
-The exact qualified verifier archive, separate from the miner generation bundle:
-https://affine.io/sources/149e540f5eb7ec40d98331ce8e82956b87b2fd057cc2011164d25524081be4ef/source.tar.gz
-SHA256: `149e540f5eb7ec40d98331ce8e82956b87b2fd057cc2011164d25524081be4ef`; 7,242,107 bytes.
-Authenticate the full download before using it. GitHub main includes later
-compatible changes and is not claimed to hash to this immutable archive.
-Details: https://github.com/AffineFoundation/affine/blob/main/docs/VERIFIER_ONLY_POLICY.md
-
-## Registration and runtime
-
-There is no operator whitelist. A miner needs a current subnet-120 UID, an
-Ed25519 hotkey and a valid Affine activation. The next epoch snapshots eligible
-identities; registration/activation during an epoch may appear in the next one.
-
-For an already registered Ed25519 hotkey, preview activation:
+For an already registered Ed25519 hotkey, preview activation from the canonical
+repository:
 
 ```sh
 python -m subnet.register --wallet YOUR_WALLET --hotkey YOUR_ED25519_HOTKEY
 ```
 
-Add `--execute` when you intend to submit the activation commitment. This command
-does not buy/register a subnet UID. The mining key file contains that activated
-32-byte Ed25519 seed as hexadecimal, mode 0600. Never share it or a coldkey.
+Add `--execute` only when submitting the activation commitment. This command
+does not buy or register a subnet UID. The mining key file contains the activated
+32-byte Ed25519 seed as hexadecimal and must have mode 0600. Never disclose that
+seed or a coldkey. Use one supervisor per identity/state directory; stop the old
+miner before handing its state to an upgraded launcher.
 
-Qualified inference/audit hardware is H200/SM90. Use CUDA FP32 eager attention,
-TF32 disabled and `CUBLAS_WORKSPACE_CONFIG=:4096:8`. Qualified core package pins
-are torch 2.14.0, transformers 5.14.1 and toploc 0.1.6. Package versions alone do
-not establish compatibility with different hardware or numerical settings.
-Install the repository and native environment dependencies, then obey the
-manifest's exact runtime profile. Training has its own signed runtime.
+## Install the new runtime and client
 
-## Start mining
+Use the reviewed release commit above from https://github.com/AffineFoundation/affine.
+Preserve local work and private state when updating. The source approved by the
+signed opening controls the actual child miner; arbitrary GitHub main contents
+do not override it.
 
-Clone https://github.com/AffineFoundation/affine and update with
-`git pull --ff-only` before starting. The public bootstrap now accepts signed
-source descriptors using either `read_url` or `url`; both must match if present.
-Older bootstrap clients fail on the completed-answer `read_url` descriptor.
-The fix retains signature, HTTPS, archive size, SHA256 and membership checks.
-
-Use the expected authority public key below; the launcher reads public discovery
-and authenticates the signed opening itself. No storage account credentials are
-needed. Stop an older miner process before using its private state with this
-launcher. Run one launcher for an identity/state directory:
+Permanent runtime artifact inventory:
+https://affine.io/releases/mimo-runtime-20261013/ARTIFACTS.json
+These artifacts were published as prepared assets; their availability alone
+does not activate the new contract or replace the signed qualification scope.
 
 ```sh
-CUBLAS_WORKSPACE_CONFIG=:4096:8 python -B -m subnet.miner_supervisor \
-  --discovery-url https://affine.io/mining.json \
-  --authority 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd \
-  --source-cache /absolute/private/affine-approved-source \
-  --key /absolute/private/miner.seed \
-  --state /absolute/private/affine-miner-state \
-  --env-id affine_math --search-budget 32
+mkdir -p /absolute/mimo-artifacts
+MIMO_ARTIFACT_BASE=https://affine.io/releases/mimo-runtime-20261013
+curl --fail --location --retry 3 --proto '=https' \
+  "$MIMO_ARTIFACT_BASE/57442fdd51cf165c00ce4c531100aff3fc9f8a0a6ae43f4bf1868d5d0f912875/requirements.lock.txt" \
+  --output /absolute/mimo-artifacts/requirements.lock.txt
+curl --fail --location --retry 3 --proto '=https' \
+  "$MIMO_ARTIFACT_BASE/84c8db262fd302d21eb52c151ab039071948d0002f3848b09cea53c750934205/toploc-0.1.6-cp312-cp312-linux_x86_64.whl" \
+  --output /absolute/mimo-artifacts/toploc-0.1.6-cp312-cp312-linux_x86_64.whl
+sha256sum --check <<'SHA256'
+57442fdd51cf165c00ce4c531100aff3fc9f8a0a6ae43f4bf1868d5d0f912875  /absolute/mimo-artifacts/requirements.lock.txt
+84c8db262fd302d21eb52c151ab039071948d0002f3848b09cea53c750934205  /absolute/mimo-artifacts/toploc-0.1.6-cp312-cp312-linux_x86_64.whl
+SHA256
+python3 /absolute/affine/ops/bootstrap_mimo_runtime.py \
+  --destination /absolute/mimo-runtime \
+  --source-root /absolute/affine \
+  --requirements /absolute/mimo-artifacts/requirements.lock.txt \
+  --requirements-sha256 57442fdd51cf165c00ce4c531100aff3fc9f8a0a6ae43f4bf1868d5d0f912875 \
+  --toploc-wheel /absolute/mimo-artifacts/toploc-0.1.6-cp312-cp312-linux_x86_64.whl \
+  --toploc-wheel-sha256 84c8db262fd302d21eb52c151ab039071948d0002f3848b09cea53c750934205 \
+  --python 3.12 --max-jobs 2
 ```
 
-Batch-cap update activated by signed epoch `nonpayable-live-reward-math-v1--1791602071-110`: up to nine task
-batches per UID and up to 512 distinct training tasks per epoch, with the same
-four-correct/four-wrong contents. The actual signed opening controls capacity.
-Update and restart the transport supervisor once, omitting `--max-batches` to
-follow each signed cap. An explicit `--max-batches 3` remains valid and limits
-that client to three batches. Extra capacity is optional and does not extend
-the upload deadline or earn duplicate-task contribution points. The training
-cap is a maximum, not a guarantee that every submitted batch will be selected.
+The runtime destination must be new. The installer checks the exact dependency
+lock and native TOPLOC round trip; inspect `BOOTSTRAP.json`, `runtime-probe.json`
+and `install.log`. The lock includes torch 2.14.0, transformers 5.14.1 and the rebuilt
+TOPLOC 0.1.6 wheel. Do not substitute the separate `2.14.0+cu130` distribution or
+an arbitrary PyPI TOPLOC binary. Do not add optional attention/recurrent kernels
+or change numerical settings outside the admitted profile. Package versions
+alone do not establish numerical compatibility.
 
-Learner-only update activated by signed epoch `nonpayable-live-reward-math-v1--1791622696-116`
-(starting 2026-10-10 at 09:02:08 UTC): the opening includes
-`training_representative_policy` with version
-`first-native-valid-distinct-task-v2-bounded-waves`. This selects at most one
-fully native-valid batch per distinct task, including tasks submitted by multiple
-miners, within the signed training capacity and native-grading time budget.
-Duplicate-task reward points remain zero for every colliding submission. The
-eligible committed proof population, including collisions, remains available for
-continuous audit. The added field does not
-change the public miner source, sampling draws, upload format or 4+4 quota;
-compatible clients need no extra action. Earlier signed openings without this
-field retain their historical singleton-only training selection. The 512-task cap
-is a maximum; actual selected and trained counts come from each epoch report.
-See docs/COMMITTED_UNAUDITED_LEARNER.md on GitHub for the full intake policy.
+## Start and continue mining
 
-Client update status (2026-10-10): active signed source f5287f57bdae344e5a3d073309e5c830073f603838b4b52a189f5ec0a269cb24
-does not persist unfinished search groups and caps --search-budget at 128.
-Resumable search is implemented in the public GitHub code but is pending
-activation in a successor signed source. Earlier documentation incorrectly
-described it as activated. Authenticate the actual manifest and source archive;
-updating GitHub does not change the approved client the supervisor launches.
-The supervisor passes --once, making one task-roster pass per epoch, rather
-than repeatedly sweeping exhausted tasks. Direct CLI loops or explicit restarts
-of the active client can repeat initial nonces and discard unfinished groups.
-Completed upload artifacts have their separate existing resume mechanism.
+After the authenticated MiMo opening is active, run the upgraded supervisor using
+the new runtime's Python from the reviewed repository. The command below uses
+four independent B1 replicas on an admitted H200 with sufficient free memory:
 
-32 remains the supervisor's default per-call search budget (standalone CLI: 50).
-After activation, the resumable v5 CLI accepts an explicit budget from 1 through the signed
-max_attempts, currently 1000. The total allowed nonce range remains 0–999 per
-miner/task/epoch. Repeated calls and explicit same-state restarts use fresh
-remaining nonces and retain partial K/L groups; only complete groups upload.
-Old signed source bundles retain their original client behavior and limits.
-The prospective private journal binds the exact manifest and miner, reserves nonces before
-generation, and refuses stale/corrupt restores. The published resumable client
-holds the same local lock through search and the complete cumulative upload.
-A stale in-memory client refuses to overwrite newer saved batches; close and
-reopen it with the same state directory to recover retained progress. Complete
-artifacts and their containing directories are synchronized to disk before
-partial proofs are retired; a failed durability barrier keeps proofs for recovery.
-These protections are pending signed-source activation; active f5287f57 remains
-unchanged. The lock coordinates the same local cache, not different machines.
-Up to 256 partial groups
-and 64 MiB of compressed partial proofs are cached (SQLite database capped at
-96 MiB, plus its bounded rollback journal). Evicted partial examples are lost,
-but their nonce cursors never rewind. Epoch handover retires partials and reclaims
-pages; exiting closes the database and lock. Existing one-launch-per-epoch
-supervision and task ordering are unchanged.
+```sh
+CUBLAS_WORKSPACE_CONFIG=:4096:8 /absolute/mimo-runtime/venv/bin/python -B -m subnet.miner_supervisor \
+  --discovery-url https://affine.io/mining.json \
+  --authority 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd \
+  --source-cache /absolute/private/mimo-approved-source \
+  --key /absolute/private/miner.seed \
+  --state /absolute/private/mimo-miner-state \
+  --env-id affine_math --mimo-replicas 4
+```
 
-The continuous supervisor authenticates the pointer, manifest, task snapshot and
-approved source. It downloads the exact checkpoint with bounded 64 MiB HTTP
-ranges, retains interrupted partial transfers, and checks each complete file's
-SHA256 before inference. It launches the untouched approved source once for that
-epoch, then follows future epochs and source upgrades automatically. An internal
-one-shot child does not make the outer command a single-epoch command.
+One replica is the default; two are also supported. Replica count is a local
+compute setting and does not change group size, seeds, nonce order, deadlines
+or reward limits. Runtime admission includes the memory required by the parent
+and independent replicas. Do not point another active launcher at this state.
 
-A single-state process lock survives a supervisor crash in its active child,
-preventing overlapping workers. Expired known children are terminated using
-their recorded process identity. Only model caches created by this supervisor
-are removed automatically, after a successor checkpoint has been fully verified
-and the previous child has exited. Unknown pre-existing state is preserved;
-allow disk space for the active and incoming checkpoints. Source and runtime
-changes are authenticated independently; signed source is not a security sandbox.
+Omit `--max-batches` to follow the signed cap. An explicit smaller value is a
+local limit. `--search-budget` is a local ceiling, not a nonce range: the legacy
+value 32 permits a canonical N8 group but still generates exactly eight attempts.
+A ceiling below N fails before generation; it does not produce partial groups.
 
-For manual single-epoch diagnostics, `subnet.source_bootstrap ... --once` remains
-available. It does not provide the outer launcher's resumable checkpoint transfer
-or continuous source-upgrade handling. Do not run multiple processes sharing the
-same identity/epoch state or reset the upload journal to claim duplicate batches.
+The supervisor reads `accepting_submissions` and authenticates the signed current
+pointer, opening, source and task assets against the fixed authority. It checks
+HTTPS, archive membership/size and complete-file hashes, then launches the exact
+approved child source once per epoch. Source URLs may use `url` or `read_url`;
+both must agree if present. A website hint cannot authorize a different signed
+epoch, extend a deadline or choose an unapproved checkpoint.
 
-## Learning, auditing and monitoring
+Checkpoint downloads are resumable and use up to four bounded transfers. Each
+file must pass SHA256 before inference. Leave space for current and incoming
+models. After a successor is admitted and the previous child has exited, the
+supervisor retires only obsolete model caches it owns. Unknown pre-existing
+files are preserved. No routine manual cache clearing is required for that path.
 
-The learner captures committed training documents, checks identity, task,
-checkpoint, structure and native completed-answer outcomes, then selects bounded
-eligible inputs for training. Expensive proof audits run continuously and do not
-gate the training update. Unaudited inputs remain explicitly labelled unaudited.
-The trainer preserves its local optimizer state and uploads the successor model
-and reports; miners then follow the new checkpoint. Checkpoint publication does
-not wait for full vocabulary arrays or a complete network audit.
+After this client/runtime upgrade, ordinary checkpoint changes are automatic:
+the supervisor follows the next authenticated opening and starts a new child.
+A future incompatible dependency or protocol change may still require an
+explicit client/runtime upgrade. Signed source is not a security sandbox.
 
-As deployed on October 12, training uses pairwise preference learning on the
-mean generated-token log probability of each correct and incorrect rollout.
-Pair losses are averaged within each task, then across tasks. Reference scores
-come from that epoch's input checkpoint, before its one accumulated optimizer
-update; the reference resets each epoch. Preference scale beta=0.1 is not a KL
-coefficient. This is not GRPO: it has no group-relative advantages, clipped
-policy-ratio objective or explicit fixed-base KL penalty. The positive-NLL study
-below has completed its horizon, so that term's current coefficient is zero.
-Matching initial policy and reference scores give a pre-update preference loss
-near ln(2) each epoch. That initial value alone does not measure learning; compare
-post-update fit and fresh task accuracy, keeping training diagnostics separate
-from held-out performance. This describes the deployed objective without changing
-the mining contract or training behavior.
+The complete-group journal preserves original attempts across interruption.
+Keep its state and cumulative upload journal; do not reset them to seek a fresh
+nonce window or duplicate credit. The supervisor does not blindly rerun an
+already issued epoch after a child failure. Its inherited local lock prevents
+overlapping children across a supervisor restart; it does not coordinate an
+independent machine using the same identity.
 
-A logging-only source successor adds per-pair positive and negative mean/total
-output log probabilities before and after training, with token counts and the
-original task/pair identities. These detached scalars use existing forwards;
-they do not change the objective or require a miner update. A larger preference
-margin alone does not establish improved positive likelihood or held-out accuracy.
-The authenticated logging-only handover is active for training jobs from epoch
-166, retaining the current model and Adam state at step 75. Its first completed
-component-bearing report had not yet been observed at activation. Original
-finalized reports retain these fields through the existing history publication;
-open-epoch submissions remain private. Details:
-https://github.com/AffineFoundation/affine/blob/main/docs/SEQUENCE_COMPONENT_DIAGNOSTICS.md
+## Proofs, uploads and rewards
 
-A bounded trainer-only experiment was activated on October 10 at 11:17:52 UTC,
-prospectively for epoch 117. It retains the acknowledged model and Adam state at
-successful optimizer counter 26 and learning rate 5e-7. For 16 successful updates,
-the existing task-normalized preference loss gains a coefficient-1 positive-answer
-NLL term: the negative mean generated-token log probability of a correct rollout.
-It applies at input counters 26–41; at counter 42 onward the coefficient returns
-to zero, preserving the model and optimizer. Failed attempts do not consume an
-update. The sampler, 4-correct/4-wrong quota, nine-batch UID cap and 512-task
-training cap remain unchanged; miners continue following the signed opening.
-The fixed evaluation compares counters 26 and 42 on two already-exposed 128-task
-monitoring cohorts. Historical review found 49 questions from the former 512-task
-reservation in earlier MATH-500 benchmarks. A later candidate chosen from
-question identities without model results also has 33 matches in the conservative
-historical exclusion set. Both are ineligible for independent confirmation.
-Neither candidate has been evaluated as independent confirmation. A separate
-512-task DeepMath transfer cohort remains reserved pending runtime qualification
-and the complete training-exposure record; it is not a MATH test cohort.
-Epoch 132 completed all 16 study updates, publishing fixed checkpoint 563b7ad3
-at optimizer step 42. Its original endpoint evaluation completed at October 11,
-04:24:54 UTC. The original128 diagnostic changed from 78 to 84 correct out of
-128 (12 gains, 6 losses; +4.69 percentage points, conservative paired 95% interval
-−6.28 to +15.30). The separately reported exposed_test128 changed from 91 to 92
-correct (7 gains, 6 losses; +0.78 points, interval −8.82 to +10.32).
-Both intervals include zero. These compare the step-26 checkpoint to step 42,
-not the genuine upstream base, and both cohorts have already been exposed.
-It trained on 512 tasks / 2,048 pairs / 4,096 rollouts from 190 external identities.
-Epochs 125–131 completed within one hour; epoch 132 took 60 minutes 20 seconds.
-Epoch 133 completed in 56 minutes 10.5 seconds with the predeclared preference-only
-continuation, the same retained optimizer and learning rate, and 512 tasks /
-2,048 pairs. As of October 11, 04:42 UTC, improvement
-over the genuine upstream base remains unproven. See the training guide below for the exact horizon and
-evaluation limitations.
+Group transport is `complete-group-commitment-v1`, using compact bounded group
+artifacts and `selected-token-logprobs-v1`. Upload the original tokens, selected
+probabilities, sampler witness, TOPLOC fingerprints and native outcome metadata.
+Do not upload full-vocabulary probability arrays. Full-vocabulary distributions
+are recomputed by the verifier.
 
-From epoch 136, opening a mining epoch does not wait for a fresh hourly reward
-assessment. Training uses the existing basic authenticated, structural eligibility
-checks and can consume unaudited submissions. The optional reward-derived
-training blacklist snapshot is no longer required for these new openings.
-Continuous audits and reward penalties remain independent; historical signed
-manifests retain their original rules. The hourly writer retains the last valid
-assessment if fresh evidence processing fails and maps rewards to current
-registrations. There is no burn or owner-only fallback. This operator change
-requires no miner update and changes no quota, sampler, objective or optimizer.
-Epoch 136 retains its original opening time, including the delay before this fix.
+The client uploads immutable per-slot group/proof objects and compact training
+documents, then updates a small signed cumulative commitment. Conditional writes
+protect the original objects; an acknowledged group cannot be rewritten. Retry
+the same bytes and preserve local prepared state. Encrypted per-miner capabilities
+grant scoped upload/read rights; miners need no permanent R2 credentials and
+cannot read other miners' private current submissions. `direct-r2-v1` on the
+outer pointer describes storage access, not the inner proof format.
 
-An operator-only change activated during epoch 121 allows future trainer-side
-calibration jobs to omit one redundant checkpoint hash pass, retaining full file
-authentication and the independent GPU-loader hash. Existing jobs and training
-settings are preserved. Its time-bounded optimization falls back to the original
-launcher for new jobs outside the authorized interval. This requires no miner
-update, and a production timing gain has not yet been measured.
+Sampling audits check the bound token path, TOPLOC and native outcomes. Fast
+prefill disagreements receive the prescribed exact cached adjudication; numerical
+ambiguity and infrastructure failure remain distinct from confirmed invalidity.
+TOPLOC alone is not sampling verification. Passing token-path checks does not
+prove original authorship, unique historical execution or correct reasoning.
 
-Independent verifiers sample current and historical immutable commitments and
-publish authenticated findings. Reward estimates combine eligible unique task
-contributions, accumulated audit evidence and configured penalties. Numerical
-ambiguity or infrastructure failure must not be labelled confirmed fraud.
-The validator submits the best available authenticated assessment each hour,
-independently of training. Signed current-hour assessments can be reused without
-recomputing the same audit history. A failed or empty evidence refresh falls back
-to valid prior contributions, preserving confirmed penalties. No owner burn or
-fabricated recipients are allowed. The writer records each transaction before
-sending and reconciles lost responses against finalized chain evidence. Failed
-or proven-expired attempts can be retried using the current hour's assessment;
-uncertain transactions are never blindly replayed. Writer upgrades preserve the
-exact approved current-hour assessment and the single submission cursor. The
-transaction check accepts the SDK’s canonical finalized-block anchor while its
-64-block validity window remains live. See
-docs/HOURLY_CURRENT_ASSESSMENT.md on GitHub.
+The numerical profile uses strict zero acceptance thresholds; these are checking
+limits, not a claim that cached and prefill outputs always agree. Its measured
+calibration evidence is pinned by SHA256
+e57c0f986cc56da6779d8e4c8a14266b0aae5964544dde2d2e3118ab35686b58.
+The tested prefill disagreements required cached adjudication. Selected-logprob
+and TOPLOC comparisons remain separate strict checks. Qualification covers the
+admitted tested runtime, not every GPU implementation or possible exploit.
 
-A completed optimizer update is not proof of learning. Independent held-out
-scores track model performance; assess matched checkpoints on the same cohort.
-The target is continuous sub-hour epochs. An opening, a submitted batch, an
-accepted training input, a completed proof audit and a published update are
-separate states and should be reported separately.
+Continuous verifiers sample current and historical immutable groups independently
+of the trainer. Rewards use native-eligible unique task contributions, accumulated
+authenticated audit evidence and configured penalties. Groups excluded only by
+the learner's compute budget can still contribute to rewards. The existing
+cross-miner task-collision rule remains: colliding task submissions receive zero
+uniqueness contribution. Cumulative retries never add credit. All eight outcomes
+remain one task group for accounting.
 
-## Troubleshooting and references
+The sole validator writer continues submitting the best authenticated assessment
+each hour, with six-hour contribution half-life and current hotkey-to-UID mapping.
+Training failure, an unfinished epoch or unavailable fresh evidence must not stop
+it. It retains the last valid assessment and confirmed penalties. A new model
+run does not reset historical reward evidence or its transaction cursor. Burn
+and owner-only fallbacks are prohibited. Commit-reveal may delay on-chain
+visibility; uncertain transactions are reconciled rather than blindly replayed.
 
-- Closed discovery: wait for the next authenticated opening; never bypass it.
-- Missing capability: confirm registration and Ed25519 activation, then wait
-  for a new identity snapshot.
-- Source URL failure on `read_url`: update the public bootstrap with `git pull`.
-- Source/hash/runtime mismatch: use the advertised archive and exact profile;
-  never edit a signed manifest or reuse a different checkpoint.
-- No completed batch: inspect native outcomes, unresolved answers, remaining
-  time and per-task search budget. Four distinct answers of each class are needed.
-- Upload failure after deadline: preserve local evidence and continue next epoch;
-  a late submission is not accepted merely because generation began earlier.
+## Learning rule and initial capacity
 
-Setup: https://github.com/AffineFoundation/affine/blob/main/docs/MINER_QUICKSTART.md
-Bootstrap: https://github.com/AffineFoundation/affine/blob/main/docs/MATH_MINER_BOOTSTRAP.md
-Completed answers: https://github.com/AffineFoundation/affine/blob/main/docs/COMPLETED_MATH_RESTART.md
-Sampling: https://github.com/AffineFoundation/affine/blob/main/docs/FOUR_SAMPLE_MINER_BOUND_CUTOVER.md
-Learner: https://github.com/AffineFoundation/affine/blob/main/docs/COMMITTED_UNAUDITED_LEARNER.md
-Training: https://github.com/AffineFoundation/affine/blob/main/docs/CONSERVATIVE_FP32_TRAINING.md
-Historical guide (not current instructions):
-https://github.com/AffineFoundation/affine/blob/main/docs/history/llms-before-recovery-consolidation-2026-10-09.md
-Operator weight evidence (no miner protocol change):
-https://github.com/AffineFoundation/affine/blob/main/docs/BOUNDED_WEIGHT_EVIDENCE.md
+The trainer admits authenticated, structurally complete groups after regenerating
+their native prompts and grading their outcomes. It can train on unaudited
+eligible groups; full sampling audits do not gate the epoch. Inputs stay labelled
+unaudited until the corresponding audit completes. Grader/infrastructure errors
+defer sealing rather than manufacturing failures.
 
+The GRPO objective reuses pinned XiaomiMiMo/verl reference functions from commit
+`a2ad9f6160b03ff2d47e59832bfb6b289f37c917`, with explicit Affine adaptations:
 
-Training-data diagnostic (prospective; unavailable until authenticated results exist)
---------------------------------------------------------------------------------
-The Performance chart separates Held-out from Training. "Training fit -- fixed
-previously trained tasks" plots fresh-answer accuracy on the same 55 tasks at
-every point. These are the members of the fixed 128-task mining TRAIN cohort
-already used in actual training by optimizer step 67 (checkpoint5d1903). The mask
-was frozen from closed training records before generated answers were inspected.
-The reference point evaluates the identical 55 questions. This is a fixed
-training-fit diagnostic, not a representative estimate for all trained tasks.
+| Setting | Initial operational value |
+| --- | --- |
+| Attempts per task | 8 canonical attempts; reference recipe uses 16 |
+| Optimizer batch | Up to 32 distinct eligible tasks, at most 256 trajectories |
+| Reference batch comparison | Released recipe uses 64 tasks x16 =1,024 trajectories |
+| Group rewards | Correct 1; completed wrong 0; unresolved 0 |
+| Advantage | Reward minus mean reward over all 8; no standard-deviation division |
+| Loss weighting | Active-token mean within each task group, then equal task-group mean |
+| PPO objective | Ratio clip 0.8–1.2; negative-advantage dual clip 3.0 |
+| PPO epochs / optimizer updates | One epoch and one accumulated update per selected epoch batch |
+| OLD probabilities | Trusted frozen-input trainer prefill; never miner-supplied denominators |
+| Training probability convention | Raw temperature 1 model log probabilities; no top-k/top-p renormalization |
+| Explicit KL / entropy coefficients | 0 / 0, matching the released reference configuration |
+| Optimizer | PyTorch AdamW, CPU FP32 masters/moments, FP32 gradient accumulation |
+| Learning rate | Constant 1e-6, no warmup |
+| Adam betas / epsilon | 0.9,0.999 / 1e-8 |
+| Weight decay | 0.01 for ordinary weights; zero for biases and one-dimensional tensors |
+| Global gradient norm clip | 1.0, once after accumulation |
 
-Every evaluation still generates and stores all 128 tasks. The public API keeps
-its full-cohort mean_reward and counts; the tooltip retains that broader TRAIN-pool
-score and the descriptive currently-trained/not-yet-trained/unknown groups.
-Changing exposure groups do not define the plotted curve. A missing fixed subset
-is unavailable, and a changed mask breaks the line. All 128 tasks must finish
-without infrastructure errors and pass comparison checks before a 55-task point
-is displayed. No task or answer is removed from the stored result. Submitted
-four-success/four-failure labels cannot measure model accuracy.
+The initial 32-task ceiling is an operational setting pending measured long-output
+training and publication timing. The implementation's 512-task ceiling is not a
+claim that the first epoch trains 512 tasks. It is also not a set of successive
+64-task updates. Microbatching reduces execution memory while preserving the
+globally defined task weights and one optimizer step.
 
-The diagnostic is scheduled independently every four finalized optimizer updates,
-with the original 7B reference (checkpoint2173) and current committed checkpoint
-evaluated using the
-same cohort, task seeds, native grader and runtime profile. The original upstream
-reference (checkpoint2173) and actual training-run genesis (checkpoint6493) have
-separate identities. The genesis retains earlier-run training; its step zero and
-zero training exposure mean no new optimizer updates or task exposure in this
-run, not untouched pretrained weights. Exposure follows this run's ancestry.
-When both authenticated baseline results are available, the chart retains both
-but does not draw a learning segment or show a "vs prior" gain between them.
-Genesis-to-current comparisons require the same cohort, fixed55 mask, seeds and
-runtime profile, with no missing measurement between them. A baseline result is
-unavailable until original completion, comparison and durable readback pass.
-The TRAIN
-profile allows 2048 output tokens; the historical fixed32 held-out curve uses
-1024. They remain separate series and do not form one interchangeable trend.
+Unresolved attempts retain reward 0 in the all-N group mean, but all their policy
+tokens are masked under `affine-unresolved-zero-reward-mask-all-v1`. They remain
+in the stored inputs and cannot meet the wrong-answer minimum. This is an
+explicit Affine adaptation, not a claim about an undocumented upstream grader.
+Both positive and completed-wrong trajectories carry policy gradients. This is
+GRPO, not the old pairwise preference loss or positive-only SFT.
 
-Public rows identify cohort, checkpoint, optimizer step, runtime profile, requested
-and completed task counts, stopping counts, and actual training exposure when
-known. Results are admitted only after signed original execution evidence and
-durable full-result readback. Infrastructure errors or prompt/seed mismatch are
-unavailable measurements, never zero. A TRAIN gain can show fitting or retention;
-it does not establish held-out generalization. Missing results show an empty
-state. This is a monitoring addition; mining, quotas, verification and rewards
-remain unchanged.
+The actor remains unchanged while OLD values and gradients are accumulated.
+The ratio remains differentiable even when its initial numerical value is one.
+The trainer checks numerical consistency and records loss/ratio/gradient metrics.
+Its optimizer state stays durable locally; publication uploads the new model
+and reports, not the optimizer. A retry after publication recovers the original
+transaction instead of applying the same gradient update again.
+
+Collection initially targets 30 minutes; the target is a complete epoch in under
+one hour. Actual signed start/deadline and measured stage times are authoritative,
+not a service-level guarantee in this guide. Audits have independent deadlines
+and must not hold back training or checkpoint publication. A fresh model download
+can consume part of the first collection window; the nine-group cap does not
+promise that a new miner can finish nine groups in that window.
+
+## Evaluation, evidence and troubleshooting
+
+Track matched base and trained checkpoints on a fixed held-out suite using the
+same native source, runtime, task list, seed, sampler and length policy. Changing
+any of those can change the evaluator's dataset identity and draws. The previous
+7B curves and private baselines under different grader sources remain separate.
+The fresh base on this fixed32 suite solved18/32 (56.25%), with3 completed wrong
+and11 unresolved outputs and no infrastructure errors. The original report is
+faed31885f214f1d2de6d858ac5f419b7be7bdac8bdd62ba305759b3a6ca0507.
+This is a32-task starting baseline, not a post-training improvement. A matched
+trained-checkpoint comparison is still pending; the historical22/32 result used
+a different task-definition fingerprint and cannot replace this baseline.
+Fresh training-fit diagnostics are also separate from held-out generalization.
+Neither a completed update, a lower training loss nor miner success quotas prove
+learning. No convergence or performance-improvement claim is made by this release.
+
+Finalized evidence is published through the existing signed history format:
+https://github.com/AffineFoundation/affine/blob/main/docs/FINALIZED_EPOCH_EVIDENCE.md
+It can link compact actual training inputs, exclusions, update metrics and
+per-task evaluations. Verify the ROOT signature and artifact SHA256; gzip hashes
+cover compressed bytes. GET-only links expire and are renewed. Missing evidence
+is unavailable, not zero. Never publish open-epoch submissions or credentials.
+
+- Closed discovery: wait for a valid signed opening. Do not bypass the deadline.
+- Missing capability: check current UID, Ed25519 activation and next-epoch snapshot.
+- Runtime/source/hash mismatch: install the advertised runtime and source; never
+  edit the signed manifest or substitute a similarly named wheel/checkpoint.
+- No eligible group: inspect all-N outcomes. At least one completed correct and
+  one completed wrong are required; capped/missing-final attempts do not count.
+- Local budget below N: raise the local ceiling; keep actual nonces exactly 0..7.
+- Failed upload: retain the original prepared bytes/state and retry within the
+  signed deadline. Generation before the deadline does not authorize a late upload.
+- Child failure: retain logs/state and the original commitment; do not reset the
+  journal or launch overlapping workers to duplicate an issued epoch.
+
+Migration: https://github.com/AffineFoundation/affine/blob/main/docs/MIMO_MINER_MIGRATION.md
+Runtime installation: https://github.com/AffineFoundation/affine/blob/main/docs/MIMO_LIFECYCLE.md
+Training: https://github.com/AffineFoundation/affine/blob/main/docs/MIMO_GRPO_IMPLEMENTATION.md
+Evaluation: https://github.com/AffineFoundation/affine/blob/main/docs/MIMO_EVALUATION_WORKER.md
+Audits: https://github.com/AffineFoundation/affine/blob/main/docs/MIMO_AUDIT_BRIDGE.md
+Hourly weights: https://github.com/AffineFoundation/affine/blob/main/docs/HOURLY_CURRENT_ASSESSMENT.md
+Prior guides describe their historical signed epochs and do not authorize the
+new sampler, outcomes, proof transport or runtime.

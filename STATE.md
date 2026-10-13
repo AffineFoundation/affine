@@ -1,3 +1,17 @@
+MiMo MAINNET ACTIVE, 2026-10-13 13:12:53 UTC:
+Global epoch189 / affine-mimo9b-grpo-20261013-e000000 is collecting against
+base87de8304… and approved source69ae058b… (code c770e351). Public signed
+opening83f59a82… was independently fetched and authenticated.254 activated
+identities have capabilities. N8 nonces0–7, at least1correct/1completedwrong,
+nine groups/UID,8192output. One trainer,three verifiers andone evaluator are
+started with detached reconnect-safe remote ownership. Initial32-task update
+ceiling and30-minute collection; timing/learning improvement remain unproven.
+Old188 completed naturally at13:11:39 with checkpoint6da07b81…; no old189
+was opened. Sole original timer/cursor/6hEMA/currentUID semantics preserved;
+13h weights submitted block9274515 to253UIDs. New evidence-reader composition
+now feeds the existing writer. Mainnet adaptation/first training are being
+monitored. Site appearance unchanged; public llms.txt updated.
+
 MiMo qualification, 2026-10-13 12:38 UTC:
 Mainnet activation is still pending. The legacy network completed epoch187 in
 57.46 minutes and opened188; the12:00 hourly assessment submitted for253 current
