@@ -124,7 +124,7 @@ class ProjectionTests(unittest.TestCase):
 if __name__=='__main__':unittest.main()
 
 class WrapperTests(unittest.TestCase):
-    def test_legacy_refresh_bypassed_and_dynamic_snapshot_retained(self):
+    def test_legacy_refresh_bypassed_and_snapshot_updates_on_background_refresh(self):
         from ops.publish_mimo_dashboard import database_view
         class Original:
             def refresh(self):raise AssertionError('closed legacy rescan must not run')
@@ -133,7 +133,8 @@ class WrapperTests(unittest.TestCase):
             def project(self,prior,now):return dict(prior,projected=True)
         db=database_view(Original,View())();db.latest=1;db.refresh()
         self.assertEqual(db.snapshot()['incentive'],1)
-        db.latest=2;self.assertEqual(db.snapshot(True),{'incentive':2,'projected':True})
+        db.latest=2;self.assertEqual(db.snapshot(True),{'incentive':1,'projected':True})
+        db.refresh();self.assertEqual(db.snapshot(True),{'incentive':2,'projected':True})
     def test_legacy_projection_public_exports_preserved(self):
         from dashboard.mimo_projection import project,from_selector
         self.assertTrue(callable(project));self.assertTrue(callable(from_selector))
