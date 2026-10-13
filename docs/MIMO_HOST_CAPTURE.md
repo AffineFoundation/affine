@@ -98,3 +98,27 @@ local work, not end-to-end production speedup or R2 latency.
 This change does not remove the separate synchronous audit-population construction
 before trainer enqueue. Improving that path requires preserving durable audit
 reconstruction/retry rather than launching an untracked background thread.
+
+
+## Public discovery and the physical host launcher
+
+The mining observer must recognize the physical coordinator command line after
+host capture scheduling is enabled. Python changes to `sys.argv` do not change
+`/proc/<pid>/cmdline`. An observer expecting the original lifecycle entry alone
+therefore reports `discovery_binding_error` even while the coordinator is healthy.
+
+The optional `host_capture_config` is an exact path/SHA256 reference to the
+existing ROOT-signed host capture configuration. The observer verifies that
+signature, every named launcher/helper file, and the wrapped original lifecycle
+entry, config, source root and explicit public opt-in. It then requires the exact
+physical wrapper arguments. It does not import or execute the wrapper. Original
+source inventory, process lifetime, signed opening, checkpoint, capability expiry
+and upload deadline checks remain mandatory. Unadmitted or modified wrappers
+still fail closed.
+
+When running a separately staged observer file, explicitly set `PYTHONPATH` to
+the frozen approved source so dependencies cannot resolve from an older checkout.
+Restart only the existing discovery observer, not the coordinator or workers.
+A closed collection window must report `epoch_closed`; verify `mining` at the
+next authenticated opening. This is a host-only discovery repair, not a sampler,
+training, reward or website appearance change.

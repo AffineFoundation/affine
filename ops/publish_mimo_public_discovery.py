@@ -54,6 +54,43 @@ def atomic(path, value):
     os.replace(temporary, path)
 
 
+def host_capture_execution(observer, argv, entry, config_path):
+    """Recognize only the exact signed host wrapper over this original lifecycle.
+
+    Never import or execute wrapper code in the observer. Authenticating its
+    original operator admission and all named bytes preserves the scientific
+    source guard while accounting for the physical process command line.
+    """
+    ref = observer.get('host_capture_config')
+    if ref is None:
+        return False
+    operator_path = _pinned_reference(ref)
+    operator = private_json(operator_path)
+    version = 'affine-host-capture-cache-launcher-v1'
+    if operator.get('version') != version:
+        raise ValueError('exact admitted host capture launcher required')
+    proposal = {k: v for k, v in operator.items() if k != 'admission'}
+    expected = dict(version=version, configuration_sha256=digest(proposal),
+        source_unchanged=True, scope='host-capture-scheduling-only')
+    if signed(operator['admission'], observer['authority']) != expected:
+        raise ValueError('host capture operator admission differs')
+    base = operator['base']
+    if (base.get('version') != 'affine-host-import-path-housekeeping-v1'
+            or base.get('entry') != observer['lifecycle_entry']
+            or base.get('lifecycle_config') != observer['lifecycle_config']
+            or base.get('source_root') != str(entry.parent.parent)
+            or base.get('argv') != ['--config', str(config_path), '--allow-public-mimo']):
+        raise ValueError('host capture wraps a different original lifecycle')
+    names = {'mimo_host_capture_launcher.py', 'mimo_host_capture_cache.py',
+             'mimo_host_path_launcher.py'}
+    if set(operator['host_files']) != names:
+        raise ValueError('exact host capture file inventory required')
+    for name, checksum in operator['host_files'].items():
+        _pinned_reference(dict(path=str(operator_path.parent/name), sha256=checksum))
+    launcher = operator_path.parent/'mimo_host_capture_launcher.py'
+    return argv[1:] == ['-B', str(launcher), '--operator-config', str(operator_path)]
+
+
 def selector(observer, *, proc=Path('/proc'), inspect_unit=None):
     if observer.get('enabled') is not True:
         raise ValueError('MiMo discovery observer is disabled')
@@ -79,9 +116,11 @@ def selector(observer, *, proc=Path('/proc'), inspect_unit=None):
         raise ValueError('activated MiMo lifecycle is not running')
     argv = [part.decode() for part in (proc/str(pid)/'cmdline').read_bytes().split(b'\0') if part]
     scripts = [Path(arg) for arg in argv[1:] if arg.endswith('.py')]
-    if (scripts != [entry] or argv.count('--config') != 1 or
-            argv[argv.index('--config')+1] != str(config_path) or
-            argv.count('--allow-public-mimo') != 1):
+    direct = (scripts == [entry] and argv.count('--config') == 1
+        and argv.index('--config') + 1 < len(argv)
+        and argv[argv.index('--config')+1] == str(config_path)
+        and argv.count('--allow-public-mimo') == 1)
+    if not direct and not host_capture_execution(observer, argv, entry, config_path):
         raise ValueError('physical MiMo lifecycle config/entry/activation differs')
     stat = (proc/str(pid)/'stat').read_text().rsplit(')', 1)[1].split()
     record = dict(child_pid=pid, child_ticks=stat[19])

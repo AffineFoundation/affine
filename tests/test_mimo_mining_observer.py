@@ -90,6 +90,45 @@ class ObserverTests(unittest.TestCase):
         (p/'stat').write_text('42 (python) '+' '.join(['S']+['0']*18+['12345']+['0']*10))
         inspect=lambda:'MainPID=42\nActiveState=active\n'
         self.assertEqual(observer.selector(selection,proc=proc,inspect_unit=inspect)[2]['child_ticks'],'12345')
+        # An operator-admitted host wrapper retains the exact original source,
+        # lifecycle config and opt-in, but /proc still names the wrapper.
+        wrapper=self.root/'wrapper';wrapper.mkdir()
+        names=('mimo_host_capture_launcher.py','mimo_host_capture_cache.py','mimo_host_path_launcher.py')
+        for name in names:(wrapper/name).write_text('# pinned fixture '+name)
+        op=dict(version='affine-host-capture-cache-launcher-v1',
+            host_files={name:ref(wrapper/name)['sha256']for name in names},
+            base=dict(version='affine-host-import-path-housekeeping-v1',
+                entry=ref(entry),lifecycle_config=ref(config_path),source_root=str(source),
+                argv=['--config',str(config_path),'--allow-public-mimo']))
+        admission=dict(version=op['version'],configuration_sha256=digest(op),
+            source_unchanged=True,scope='host-capture-scheduling-only')
+        op['admission']=sign(self.fixture.operator,admission)
+        op_path=wrapper/'operator.json';op_path.write_bytes(canonical(op));op_path.chmod(0o600)
+        wrapped=['python','-B',str(wrapper/names[0]),'--operator-config',str(op_path)]
+        (p/'cmdline').write_bytes(b'\0'.join(v.encode()for v in wrapped)+b'\0')
+        with self.assertRaisesRegex(ValueError,'physical MiMo'):
+            observer.selector(selection,proc=proc,inspect_unit=inspect)
+        selection['host_capture_config']=ref(op_path)
+        self.assertEqual(observer.selector(selection,proc=proc,inspect_unit=inspect)[2]['child_ticks'],'12345')
+        for bad in (wrapped+['--check'],wrapped[:-1]+['/different/operator.json']):
+            (p/'cmdline').write_bytes(b'\0'.join(v.encode()for v in bad)+b'\0')
+            with self.assertRaises(ValueError):observer.selector(selection,proc=proc,inspect_unit=inspect)
+        (p/'cmdline').write_bytes(b'\0'.join(v.encode()for v in wrapped)+b'\0')
+        (wrapper/names[1]).write_text('# tampered capture')
+        with self.assertRaisesRegex(ValueError,'pinned observer'):
+            observer.selector(selection,proc=proc,inspect_unit=inspect)
+        (wrapper/names[1]).write_text('# pinned fixture '+names[1])
+        original=deepcopy(op)
+        op['base']['argv']=[]
+        op_path.write_bytes(canonical(op));selection['host_capture_config']=ref(op_path)
+        with self.assertRaisesRegex(ValueError,'operator admission'):
+            observer.selector(selection,proc=proc,inspect_unit=inspect)
+        op['admission']=sign(self.fixture.operator,dict(admission,
+            configuration_sha256=digest({k:v for k,v in op.items()if k!='admission'})))
+        op_path.write_bytes(canonical(op));selection['host_capture_config']=ref(op_path)
+        with self.assertRaisesRegex(ValueError,'different original lifecycle'):
+            observer.selector(selection,proc=proc,inspect_unit=inspect)
+        del selection['host_capture_config']
         (p/'cmdline').write_bytes(b'\0'.join(v.encode()for v in argv[:-1])+b'\0')
         with self.assertRaisesRegex(ValueError,'physical MiMo'):observer.selector(selection,proc=proc,inspect_unit=inspect)
         (p/'cmdline').write_bytes(b'\0'.join(v.encode()for v in argv)+b'\0')
