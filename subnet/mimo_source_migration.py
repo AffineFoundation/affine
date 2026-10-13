@@ -397,11 +397,12 @@ def complete_boundary_hold(root, registry, transition, trainer_ack, host_ack, id
         for role,ack in (('trainer',trainer_ack),('host',host_ack)):
             target=planned_current(registry,transition,role,identity=identity)
             validate_ack(registry,transition,ack,role,target)
-        need(json.loads((root/'CURRENT.json').read_bytes())==target,'original host acknowledgement applied')
         record=sign(identity,dict(hold_sha256=digest(request),transition=transition,trainer_ack=trainer_ack,host_ack=host_ack))
         path=journal/'COMPLETED.json'
         if path.exists():need(not path.is_symlink() and json.loads(path.read_bytes())==record,'same original completed migration')
-        else:_write(path,record)
+        else:
+            need(json.loads((root/'CURRENT.json').read_bytes())==target,'original host acknowledgement applied')
+            _write(path,record)
         need(boundary_gate(root,registry.active,identity,now=now)is None,'completed hold permits new release only')
         return record
     finally:os.close(fd)

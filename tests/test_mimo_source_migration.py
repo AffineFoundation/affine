@@ -81,6 +81,10 @@ class SourceMigrationTests(unittest.TestCase):
             from_policy_sha256=self.old.policy_sha256,epoch_index=2,created_at=100,deadline=200))
         result=arm_boundary_hold(root,request,self.old,self.operator,now=100)
         self.assertEqual(result['status'],'source-migration-held')
+        from subnet.mimo_lifecycle import Lifecycle
+        host=Lifecycle.__new__(Lifecycle);host.root=root;host.policy=self.old;host.identity=self.operator
+        self.assertEqual(host.tick(now=110)['status'],'source-migration-held')
+        self.assertFalse((root/'epochs/2/PLAN.json').exists())
         self.assertEqual(boundary_gate(root,self.old,self.operator,now=201)['reason'],'operator-deadline-exceeded')
         trainer_ack=self.role('trainer')
         target=planned_current(self.registry,self.transition,'host',identity=self.operator)
@@ -95,6 +99,7 @@ class SourceMigrationTests(unittest.TestCase):
         current=json.loads((root/'CURRENT.json').read_bytes());current['epoch_index']+=1
         (root/'CURRENT.json').write_bytes(canonical(current))
         self.assertIsNone(boundary_gate(root,self.registry.active,self.operator,now=500))
+        self.assertEqual(complete_boundary_hold(root,self.registry,self.transition,trainer_ack,host_ack,self.operator,now=500),record)
 
     def test_hold_does_not_interrupt_existing_epoch_and_cannot_arm_issued_successor(self):
         from subnet.mimo_source_migration import HOLD,arm_boundary_hold,boundary_gate
