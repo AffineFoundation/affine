@@ -295,4 +295,32 @@ class AssessmentTransitionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'global epoch order'):merge(old,self.data('new',1,1.,1.))
 
 
+class PopulationMembershipIndexTests(unittest.TestCase):
+    def test_index_preserves_whole_job_membership_and_avoids_repeated_population_scan(self):
+        from subnet.mimo_assessment_bridge import _admissions_for_population
+        reads=[]
+        class Row(dict):
+            def __getitem__(self,key):
+                reads.append(key)
+                return super().__getitem__(key)
+        records=[Row(epoch='epoch-'+str(i//100),miner='miner-'+str(i%100),batch_sha256=str(i))
+                 for i in range(2000)]
+        def observation(i):return dict(records[i])
+        admissions={str(i):dict(observations=[observation(i),observation(i+1)])for i in range(1000)}
+        admissions['future']=dict(observations=[observation(0),dict(epoch='future',miner='miner-0',batch_sha256='0')])
+        admissions['other-miner']=dict(observations=[dict(observation(0),miner='unknown-miner')])
+        admissions['other-batch']=dict(observations=[dict(observation(0),batch_sha256='not-committed')])
+        # Compare exact prior semantics, including rejecting a whole job when
+        # just one observation lies outside this original population.
+        plain=[dict(row)for row in records]
+        expected={k:v for k,v in admissions.items() if all(any(
+            all(row[f]==o[f]for f in ('epoch','miner','batch_sha256'))for row in plain)
+            for o in v['observations'])}
+        reads.clear();actual=_admissions_for_population(admissions,records)
+        self.assertEqual(actual,expected)
+        self.assertEqual(set(actual),{str(i)for i in range(1000)})
+        self.assertEqual(len(reads),3*len(records))
+        self.assertTrue(all(actual[k]is admissions[k]for k in actual))
+
+
 if __name__=='__main__':unittest.main()

@@ -119,6 +119,8 @@ appear at the next hourly cutoff because the current hour's authenticated
 assessment may already be cached. Preserve the last valid assessment while
 new evidence is unavailable. Retain every old population and signed report.
 
+The public mining projection leaves `chain_writer_enabled` and `chain_weight_submission` as `null`: its authenticated manifest establishes reward eligibility, while the independent writer monitor establishes configuration and transaction status. An unavailable mining endpoint does not imply that hourly rewards stopped.
+
 ## Controlled cutover
 
 1. Snapshot read-only service commands, signed policy hashes, last completed

@@ -14,6 +14,13 @@ VERSION = 'mimo-current-assessment-evidence-bridge-v1'
 TRANSITION = 'conservative-overlap-minimum-factors-v1'
 
 
+def _admissions_for_population(admissions, records):
+    """Exact original membership, indexed once instead of rescanning every row."""
+    keys={(r['epoch'],r['miner'],r['batch_sha256']) for r in records}
+    return {key:value for key,value in admissions.items() if all(
+        (o['epoch'],o['miner'],o['batch_sha256']) in keys for o in value['observations'])}
+
+
 def evidence(populations, queue_rows, *, authority, cutoff, verifiers, approved_execution,
              manifest_guard, snapshot, audit_policy, release_policy_sha256,
              current_estimates=None, observation_reader=None):
@@ -40,9 +47,7 @@ def evidence(populations, queue_rows, *, authority, cutoff, verifiers, approved_
         # immutable identities. The reducer deduplicates repeated job reports.
         preceding=[row for row in records if row['round']<=p['round']]
         allowed_ids={digest(row) for row in preceding}
-        subset={key:value for key,value in admissions.items() if all(
-            any(row['epoch']==o['epoch'] and row['miner']==o['miner'] and row['batch_sha256']==o['batch_sha256']
-                for row in preceding) for o in value['observations'])}
+        subset=_admissions_for_population(admissions,preceding)
         snap=snapshot(preceding,[r for r in pointers if r['admitted_queue_job_sha256'] in subset],verifiers,
             epoch=m['epoch'],round=p['round'],checkpoint=m['checkpoint']['id'],cutoff=cutoff,
             audit_policy=audit_policy,admitted_jobs=subset,eligible_evidence_ids=eligible,authority=authority)

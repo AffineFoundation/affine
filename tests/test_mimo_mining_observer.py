@@ -50,7 +50,11 @@ class ObserverTests(unittest.TestCase):
         self.assertEqual(result['max_batches'],9)
         self.assertNotIn('capabilities',result)
         self.assertNotIn('read_urls',result)
-        self.assertFalse(result['chain_weight_submission'])
+        self.assertTrue(result['payable'])
+        # A signed payable opening establishes eligibility, not the separate
+        # writer's configuration or a successful on-chain transaction.
+        self.assertIsNone(result['chain_weight_submission'])
+        self.assertIsNone(result['chain_writer_enabled'])
         self.assertEqual(self.project(now=self.opening['payload']['deadline'])['status'],'epoch_closed')
         self.assertEqual(self.project(live=False)['status'],'controller_unavailable')
         self.assertEqual(self.project(opening=None)['status'],'between_epochs')
@@ -101,6 +105,8 @@ class ObserverTests(unittest.TestCase):
         self.assertEqual(result['status'],'discovery_binding_error')
         saved=json.loads(target.read_bytes());self.assertNotIn('current_url',saved)
         self.assertFalse(saved['accepting_submissions'])
+        self.assertIsNone(saved['payable'])
+        self.assertIsNone(saved['chain_writer_enabled'])
         self.assertEqual(target.stat().st_mode&0o777,0o644)
 
 

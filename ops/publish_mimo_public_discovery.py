@@ -23,7 +23,7 @@ from subnet.mimo_release_policy import ReleasePolicy, descriptor, digest
 
 def base_document(authority, now):
     return dict(schema=2, authority=authority, network='Finney', netuid=120,
-        payable=False, chain_weight_submission=False, chain_writer_enabled=False,
+        payable=None, chain_weight_submission=None, chain_writer_enabled=None,
         accepting_submissions=False, status='discovery_binding_error', status_updated_at=now,
         notice='Mining availability could not be authenticated. Watch for the next signed opening.')
 
@@ -122,6 +122,7 @@ def project(policy, current, opening, receipt, *, authority, live, now):
     group = manifest['group_contract']
     accepting = start <= now < deadline
     result.update(status='mining' if accepting else 'epoch_closed', accepting_submissions=accepting,
+        payable=manifest.get('payable') is True,
         run_id=manifest['run_id'], epoch=manifest['epoch'], epoch_id=manifest['epoch'],
         checkpoint=manifest['checkpoint']['id'], source_bundle_sha256=manifest['source_bundle']['sha256'],
         current_url=current_url, expires_at=expires, start=start, deadline=deadline,
