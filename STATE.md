@@ -1,4 +1,32 @@
-MiMo preparation, 2026-10-13 11:03 UTC:
+MiMo qualification, 2026-10-13 11:35 UTC:
+Public activation has NOT happened. The current learner is collecting global
+epoch187; the sole hourly writer successfully submitted the11:00 assessment for
+253 current UIDs. Preserve that writer, its transaction cursor and six-hour EMA.
+
+An actual leased-queue GRPO job trained two original N8 groups with the reference
+bias/one-dimensional weight-decay exclusions:16 trajectories,11 trained and five
+unresolved masks. Compute took109.21seconds; the signed queue report and publisher
+receipt authenticate checkpoint037cf62afbb4e9493cd848e712dd3ef3759fafa1569767e1ebc78b99e16a75db.
+All18.84GB of model files were published and fully read back; optimizer state
+remained local. Training did not wait for inference audits. This is execution
+qualification, not evidence of learning improvement.
+
+The external supervisor rehearsal committed one complete eligible group, then
+adopted that genuine successor checkpoint without restarting. It hash-verified
+the new files, automatically retired its obsolete owned checkpoint and began
+new mining. A post-commit replica cleanup failure in the first child remains
+recorded. The prospective fix uses bounded process-exit sentinels rather than
+racing the executor manager's process reaping; CPU regression and real H200
+two-process graceful shutdown controls pass. Final release includes this fix.
+
+The fresh short N8 group passed independent sampling/native audits; all eight
+trajectories required cached-reference adjudication. The longer group is still
+being audited. A dedicated production trainer is qualifying the same original
+two groups separately. Active llms.txt remains the previous contract until the
+signed public handover. Runtime installer downloads are public and explicitly
+prepared-not-active. No website appearance change has been made.
+
+Earlier preparation snapshot, 2026-10-13 11:03 UTC:
 The authorized mainnet cutover has NOT happened. Prepared implementation is on
 feat/mimo-fixed-group-grpo. The current learner and sole hourly best-assessment
 writer remain active; the latest independently checked 10h submission covered

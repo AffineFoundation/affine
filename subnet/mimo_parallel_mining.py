@@ -107,7 +107,12 @@ class _Replicas:
         # terminal before the worker may create a new pool for a different task.
         # Partial bytes remain bound to their original task/nonce spool.
         pool, self.processes = self.processes, None
-        if pool is not None: stop_process_pool(pool)
+        if pool is not None:
+            try: stop_process_pool(pool)
+            except BaseException:
+                # An unconfirmed shutdown must never free a GPU worker slot.
+                self.closed = True
+                raise
     def _retire(self):
         for key in tuple(self.tasks):
             if self.actor._group_journal.status(key) in ('accepted','filtered','native_error'):
@@ -226,22 +231,39 @@ def wrap_runtime(runtime, *, actor, replicas=1, state_root=None, admit=True):
     return ParallelMimoGroupRuntime(runtime,_Replicas(runtime,actor,replicas,state_root))
 
 
-def stop_process_pool(pool, *, grace_seconds=2.):
+def stop_process_pool(pool, *, grace_seconds=5.):
     """Bounded owner cancellation, including an in-flight CUDA call.
 
-    Python 3.12 has no public terminate_workers API. Snapshot the executor's own
-    children before shutdown, then terminate/kill only those process objects.
+    Python 3.12 has no public terminate_workers API. Its manager thread owns
+    reaping the children. Concurrent Process.join()/is_alive() calls can race
+    that waitpid and incorrectly report an already exited process as alive.
+    Use exit sentinels, then let the manager finish its own resource cleanup.
     Completed bytes were persisted by the sole coordinator before this call.
     """
+    from multiprocessing.connection import wait
+    if not isinstance(grace_seconds, (int, float)) or not 0 < grace_seconds <= 30:
+        raise ValueError('bounded positive replica shutdown grace')
     processes=tuple((getattr(pool,'_processes',None) or {}).values())
+    manager=getattr(pool,'_executor_manager_thread',None)
+    remaining={process.sentinel:process for process in processes}
     pool.shutdown(wait=False,cancel_futures=True)
-    for process in processes:
-        if process.is_alive(): process.terminate()
-    deadline=time.monotonic()+grace_seconds
-    for process in processes: process.join(max(0.,deadline-time.monotonic()))
-    for process in processes:
-        if process.is_alive(): process.kill()
-    deadline=time.monotonic()+grace_seconds
-    for process in processes: process.join(max(0.,deadline-time.monotonic()))
-    if any(process.is_alive()for process in processes):
+
+    def wait_for_exit():
+        deadline=time.monotonic()+grace_seconds
+        while remaining:
+            ready=wait(list(remaining), timeout=max(0.,deadline-time.monotonic()))
+            for sentinel in ready: remaining.pop(sentinel)
+            if not ready or time.monotonic() >= deadline: break
+
+    # Completed idle replicas normally leave cleanly without being signalled.
+    wait_for_exit()
+    for process in remaining.values(): process.terminate()
+    wait_for_exit()
+    for process in remaining.values(): process.kill()
+    wait_for_exit()
+    if remaining:
         raise RuntimeError('replica termination failed; refuse to reuse its worker slot')
+    if manager is not None:
+        manager.join(timeout=grace_seconds)
+        if manager.is_alive():
+            raise RuntimeError('replica executor cleanup failed; refuse to reuse its worker slot')

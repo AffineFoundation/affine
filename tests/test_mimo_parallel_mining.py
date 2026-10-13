@@ -196,3 +196,61 @@ def test_close_cancels_real_inference_process_and_is_bounded():
         stop_process_pool(pool,grace_seconds=.5)
         assert time.monotonic()-start<2
         assert all(not p.is_alive()for p in processes)
+
+
+def test_completed_pool_shuts_down_cleanly_without_signalling_children():
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+    from subnet.mimo_parallel_mining import stop_process_pool
+    pool=ProcessPoolExecutor(2,mp_context=multiprocessing.get_context('spawn'))
+    try:
+        assert [f.result(timeout=15)for f in(pool.submit(abs,-7),pool.submit(abs,-8))]==[7,8]
+        processes=tuple(pool._processes.values())
+        manager=pool._executor_manager_thread
+        stop_process_pool(pool,grace_seconds=1)
+        assert all(process.exitcode==0 for process in processes)
+        assert not manager.is_alive()
+        stop_process_pool(pool,grace_seconds=1)  # Already closed is harmless.
+    finally:
+        stop_process_pool(pool,grace_seconds=1)
+
+
+def test_ready_exit_sentinel_wins_over_racing_process_liveness():
+    """The executor manager may have reaped an idle child before poll updates."""
+    import os
+    from subnet.mimo_parallel_mining import stop_process_pool
+    reader,writer=os.pipe()
+    os.close(writer)  # Real OS exit readiness, independently of Process state.
+    calls=[]
+    class ReapingChild:
+        sentinel=reader
+        def is_alive(self):raise AssertionError('do not race the manager waitpid')
+        def join(self,*a,**k):raise AssertionError('manager owns child reaping')
+        def terminate(self):raise AssertionError('exited child must not be signalled')
+        def kill(self):raise AssertionError('exited child must not be signalled')
+    manager=SimpleNamespace(join=lambda **kw:calls.append('manager-cleanup'),is_alive=lambda:False)
+    pool=SimpleNamespace(_processes={17:ReapingChild()},_executor_manager_thread=manager,
+        shutdown=lambda **kw:calls.append(('shutdown',kw)))
+    try:
+        stop_process_pool(pool,grace_seconds=.01)
+        assert calls==[('shutdown',{'wait':False,'cancel_futures':True}),'manager-cleanup']
+    finally:os.close(reader)
+
+
+def test_unconfirmed_exit_does_not_free_replica_slot(monkeypatch):
+    import os
+    import subnet.mimo_parallel_mining as parallel
+    reader,writer=os.pipe()  # An unresponsive child never signals completion.
+    signals=[]
+    child=SimpleNamespace(sentinel=reader,terminate=lambda:signals.append('term'),
+                          kill=lambda:signals.append('kill'))
+    pool=SimpleNamespace(_processes={17:child},shutdown=lambda **kw:None)
+    replicas=object.__new__(_Replicas);replicas.processes=pool;replicas.closed=False
+    original=parallel.stop_process_pool
+    monkeypatch.setattr(parallel,'stop_process_pool',lambda pool:original(pool,grace_seconds=.01))
+    try:
+        with pytest.raises(RuntimeError,match='termination failed'):
+            replicas._abort_pool()
+        assert signals==['term','kill'] and replicas.closed
+        with pytest.raises(ValueError,match='already closed'):replicas._ensure_pool()
+    finally:os.close(reader);os.close(writer)
