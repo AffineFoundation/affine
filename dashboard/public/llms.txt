@@ -331,9 +331,13 @@ any of those can change the evaluator's dataset identity and draws. The previous
 The fresh base on this fixed32 suite solved18/32 (56.25%), with3 completed wrong
 and11 unresolved outputs and no infrastructure errors. The original report is
 faed31885f214f1d2de6d858ac5f419b7be7bdac8bdd62ba305759b3a6ca0507.
-This is a32-task starting baseline, not a post-training improvement. A matched
-trained-checkpoint comparison is still pending; the historical22/32 result used
-a different task-definition fingerprint and cannot replace this baseline.
+The matched private comparison has now completed: after one GRPO update on
+two task groups, checkpoint037cf62a solved18/32 again, with1 completed wrong
+and13 unresolved outputs (report77c256970f839bbf19938620dc8d39e2ee935694fe239e3fdef9aceddeeddeb5).
+This shows no accuracy gain and is too small to establish a learning trend.
+The public run starts from the original base, not that private checkpoint.
+The historical22/32 result used a different task-definition fingerprint and
+cannot replace this matched baseline.
 Fresh training-fit diagnostics are also separate from held-out generalization.
 Neither a completed update, a lower training loss nor miner success quotas prove
 learning. No convergence or performance-improvement claim is made by this release.
