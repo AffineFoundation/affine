@@ -205,7 +205,7 @@ def validate_report(report, job, manifest, authority, job_digest, now):
         from .mimo_precision import validate_provenance
         observed = validate_provenance(report.get('execution_provenance'),
             manifest['mimo_runtime']['precision_profile'], device=manifest['backend_profile']['device'])
-        need(observed['build']['torch'] == job['runtime_versions']['torch'], 'observed worker Torch build')
+        need(observed['build']['torch_distribution'] == job['runtime_versions']['torch'], 'observed worker Torch distribution')
     else:
         need('execution_provenance' not in report, 'legacy report cannot claim precision-v2 provenance')
     completed = report.get('completed_at')

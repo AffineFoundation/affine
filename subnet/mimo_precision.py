@@ -5,6 +5,8 @@ external miner ran a particular device. Historical runtime-v1 does not use it.
 """
 from dataclasses import asdict, dataclass
 import hashlib
+import importlib.metadata
+import re
 import json
 import os
 import subprocess
@@ -60,7 +62,13 @@ def require_no_autocast(torch):
         raise PrecisionMismatch("ambient autocast is outside the precision profile")
 
 
+def require_launch_profile():
+    if os.environ.get("CUBLAS_WORKSPACE_CONFIG") != ":4096:8":
+        raise PrecisionMismatch("CUBLAS workspace must be pinned before model/cache creation")
+
+
 def guard(torch, expected=PrecisionProfile()):
+    require_launch_profile()
     require_no_autocast(torch)
     if expected != PrecisionProfile():
         raise PrecisionMismatch("unqualified prospective precision profile")
@@ -75,6 +83,7 @@ def configure_before_model_load(torch, expected=PrecisionProfile()):
     This intentionally sets the signed execution policy. Forward calls only
     check; they never silently reset flags after state has been created.
     """
+    require_launch_profile()
     require_no_autocast(torch)
     if expected != PrecisionProfile():
         raise PrecisionMismatch("unqualified prospective precision profile")
@@ -103,9 +112,10 @@ def provenance(torch, profile, *, device="cuda"):
         props = torch.cuda.get_device_properties(device)
         uuid = str(getattr(props, "uuid", "unavailable"))
         driver = None
+        query_uuid = "GPU-" + uuid if re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", uuid) else uuid
         try:
             result = subprocess.run(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader",
-                                     "--id=" + uuid], capture_output=True, text=True, timeout=5, check=True)
+                                     "--id=" + query_uuid], capture_output=True, text=True, timeout=5, check=True)
             lines = result.stdout.strip().splitlines()
             if len(lines) == 1 and 0 < len(lines[0]) <= 128:
                 driver = lines[0]
@@ -117,7 +127,7 @@ def provenance(torch, profile, *, device="cuda"):
     return dict(version="mimo-worker-runtime-provenance-v1", scope="worker-process-observation",
         precision_profile_sha256=profile_digest(profile), observed_precision=asdict(observed(torch)),
         autocast=dict(cpu=False, cuda=False), device=str(device), hardware=hardware,
-        build=dict(torch=str(torch.__version__), cuda=torch.version.cuda,
+        build=dict(torch=str(torch.__version__), torch_distribution=importlib.metadata.version("torch"), cuda=torch.version.cuda,
                    cudnn=torch.backends.cudnn.version()),
         launch=dict(cpu_threads=torch.get_num_threads(), interop_threads=torch.get_num_interop_threads(),
                     cublas_workspace_config=os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
@@ -149,8 +159,8 @@ def validate_provenance(value, profile, *, device="cuda"):
     elif device != "cpu" or h is not None:
         raise ValueError("worker provenance device")
     b, launch = value["build"], value["launch"]
-    if (type(b) is not dict or set(b) != {"torch", "cuda", "cudnn"}
-            or type(b["torch"]) is not str or not 1 <= len(b["torch"]) <= 128
+    if (type(b) is not dict or set(b) != {"torch", "torch_distribution", "cuda", "cudnn"}
+            or any(type(b[k]) is not str or not 1 <= len(b[k]) <= 128 for k in ("torch", "torch_distribution"))
             or b["cuda"] is not None and (type(b["cuda"]) is not str or not 1 <= len(b["cuda"]) <= 128)
             or b["cudnn"] is not None and (type(b["cudnn"]) is not int or not 0 <= b["cudnn"] < 10**9)
             or type(launch) is not dict or set(launch) != {"cpu_threads", "interop_threads", "cublas_workspace_config", "deterministic_warn_only"}

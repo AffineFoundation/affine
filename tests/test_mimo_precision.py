@@ -1,4 +1,6 @@
 import unittest
+import os
+from unittest.mock import patch
 from types import SimpleNamespace as NS
 from dataclasses import replace
 from subnet.mimo_precision import PrecisionProfile, PrecisionMismatch, observed, guard, configure_before_model_load, guarded_forward
@@ -22,6 +24,17 @@ class TorchFixture:
 
 
 class Tests(unittest.TestCase):
+    def setUp(self):
+        scope=patch.dict(os.environ,{"CUBLAS_WORKSPACE_CONFIG":":4096:8"});scope.start();self.addCleanup(scope.stop)
+    def test_workspace_missing_or_changed_blocks_before_mutation_or_execution(self):
+        for value in (None,":16:8",""):
+            with patch.dict(os.environ,clear=True):
+                if value is not None:os.environ["CUBLAS_WORKSPACE_CONFIG"]=value
+                t=TorchFixture();t.precision="medium";executed=[]
+                with self.assertRaises(PrecisionMismatch):configure_before_model_load(t)
+                self.assertEqual(t.precision,"medium")
+                with self.assertRaises(PrecisionMismatch):guarded_forward(t,lambda:executed.append(True))
+                self.assertEqual(executed,[])
     def test_baseline(self):
         t = TorchFixture(); guard(t); self.assertEqual(observed(t), PrecisionProfile())
     def test_configure_before_load_restores_ambient_flags(self):
@@ -104,6 +117,7 @@ class RealHybridPrecisionTests(unittest.TestCase):
     def tearDownClass(cls):cls.temp.cleanup()
     def setUp(self):
         import torch
+        scope=patch.dict(os.environ,{"CUBLAS_WORKSPACE_CONFIG":":4096:8"});scope.start();self.addCleanup(scope.stop)
         self.old=observed(torch)
     def tearDown(self):
         import torch
@@ -173,7 +187,7 @@ class RealHybridPrecisionTests(unittest.TestCase):
         from unittest.mock import patch
         from subnet.mimo_precision import provenance,validate_provenance
         configure_before_model_load(torch)
-        props=NS(name="NVIDIA H200",total_memory=140*1024**3,uuid="GPU-fixture")
+        props=NS(name="NVIDIA H200",total_memory=140*1024**3,uuid="91272d85-4ced-010b-a415-7222d2d64269")
         with patch.dict(os.environ,{"CUBLAS_WORKSPACE_CONFIG":":4096:8"}), \
              patch.object(torch.cuda,"get_device_properties",return_value=props), \
              patch.object(torch.cuda,"get_device_capability",return_value=(9,0)), \
@@ -181,7 +195,7 @@ class RealHybridPrecisionTests(unittest.TestCase):
             row=provenance(torch,self.spec.precision_profile,device="cuda:0")
         self.assertEqual(row['device'],'cuda');self.assertEqual(row['hardware']['driver'],'580.126.16')
         validate_provenance(row,self.spec.precision_profile,device="cuda")
-        self.assertEqual(query.call_args.args[0][-1],'--id=GPU-fixture')
+        self.assertEqual(query.call_args.args[0][-1],'--id=GPU-91272d85-4ced-010b-a415-7222d2d64269')
         row['hardware']['total_memory']=True
         with self.assertRaises(ValueError):validate_provenance(row,self.spec.precision_profile,device="cuda")
 

@@ -33,3 +33,11 @@ Use a fresh ROOT-signed nonpayable private candidate release/job binding this ex
 Unit tests cover strict profile schema, byte-preserved v1, each numeric flag, both autocast devices, pre/post-forward guards and bounded provenance. Real tiny HF hybrid CPU tests cover cached decode, prefill, gradient-checkpointed training and rejection when flags change before backward. Worker integration tests ensure compatibility errors do not become invalid-sample reports and v2 report provenance is required and bound. These tests do not substitute for the full GPU qualification above.
 
 Selected regression suite: **81 tests and 18 subtests passed** (precision, runtime, worker, GRPO worker, miner supervisor). No GPU v2 qualification has run yet. The retained spare and old trainer pod share a Lium executor and cannot establish cross-host compatibility; a distinct idle executor must be used for that stage.
+
+## Follow-up findings from private GPU controls
+
+The frozen `4575755b` candidate remains separate. Its actual GPU provenance exposed that `torch.__version__` is `2.14.0+cu130`, whereas the installed distribution and signed job pin are `2.14.0`. Those identifiers must be recorded separately; report admission compares the observed **distribution** version against the signed package pin, retaining the runtime build suffix as diagnostic evidence. An honest report must not fail because these different version namespaces were conflated.
+
+The subsequent prospective follow-up also checks `CUBLAS_WORKSPACE_CONFIG=:4096:8` before profile configuration/model creation and every guarded forward; it never sets this startup variable after CUDA initialization. The worker job already checked it at entry, but direct runtime callers and later environment mutation need the same fail-fast rule. GPU UUIDs returned by Torch omit `GPU-`; the driver observation normalizes that query identifier without altering the recorded GPU identity.
+
+These report/precondition corrections require a new reviewed source binding before release. They do not rewrite the signed private candidate or historical reports, and the running private tests continue under their original source.

@@ -117,9 +117,11 @@ class WorkerIntegrationTests(unittest.TestCase):
             scope='worker-process-observation',precision_profile_sha256=profile_digest(profile_dict()),
             observed_precision=profile_dict(),autocast=dict(cpu=False,cuda=False),device=m['backend_profile']['device'],
             hardware=None if m['backend_profile']['device']=='cpu' else dict(name='NVIDIA H200',capability=[9,0],total_memory=140*1024**3,uuid='fixture-worker',driver='fixture'),
-            build=dict(torch=self.job['runtime_versions']['torch'],cuda='13.0',cudnn=91000),
+            build=dict(torch=self.job['runtime_versions']['torch']+'+cu130',torch_distribution=self.job['runtime_versions']['torch'],cuda='13.0',cudnn=91000),
             launch=dict(cpu_threads=4,interop_threads=4,cublas_workspace_config=':4096:8',deterministic_warn_only=False))
         mimo_worker.validate_report(report,job,m,self.authority,digest(job),time.time())
+        bad=deepcopy(report);bad['execution_provenance']['build']['torch_distribution']='wrong-distribution'
+        with self.assertRaisesRegex(ValueError,'Torch distribution'):mimo_worker.validate_report(bad,job,m,self.authority,digest(job),time.time())
         report['execution_provenance']['observed_precision']['matmul_tf32']=True
         with self.assertRaises(ValueError):
             mimo_worker.validate_report(report,job,m,self.authority,digest(job),time.time())
