@@ -1,4 +1,4 @@
-"""Signed host-only eligible-pair indexing; delegates unchanged sole hourly writer."""
+"""Signed bounded evidence optimization; delegates the existing sole hourly writer."""
 import argparse
 import base64
 import hashlib
@@ -12,7 +12,7 @@ import stat
 import types
 from nacl.signing import VerifyKey
 
-VERSION='hourly-population-index-host-composition-v1'
+VERSION='hourly-population-index-host-composition-v2'
 
 def canonical(value):
     return json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
@@ -46,7 +46,7 @@ def module(name,ref):
 
 def prepare(document,authority):
     p=authenticate(document,authority)
-    need(type(p)is dict and set(p)=={'version','execute_enabled','entry','parent_entry','parent_composition','index_module','mimo_module','evidence_module','maximum_seconds'},'exact host composition')
+    need(type(p)is dict and set(p)=={'version','execute_enabled','entry','parent_entry','parent_composition','index_module','mimo_module','cache_module','evidence_module','maximum_seconds'},'exact host composition')
     need(p['version']==VERSION and type(p['execute_enabled'])is bool and p['maximum_seconds']==720,'unchanged writer bound')
     pinned(p['entry']);need(Path(p['entry']['path'])==Path(__file__).resolve(),'exact host entry')
     parent_doc=json.loads(pinned(p['parent_composition']));parent_p=authenticate(parent_doc,authority)
@@ -65,8 +65,10 @@ def prepare(document,authority):
     mimo_cache=module('_mimo_population_authentication_cache',p['mimo_module'])
     optimized_legacy=isolated['load_evidence']
     optimized_mimo=mimo_cache.wrap_source(context['evidence_source'])
-    context=dict(context,evidence_loader=loader.__globals__['compose_loader'](
-        optimized_legacy,optimized_mimo,transition_policy=closure['transition_policy']))
+    cache_mode=module('_bounded_no_eviction_cache',p['cache_module'])
+    combined=loader.__globals__['compose_loader'](
+        optimized_legacy,optimized_mimo,transition_policy=closure['transition_policy'])
+    context=dict(context,evidence_loader=cache_mode.wrap_loader(combined))
     need(legacy.__globals__['register_population']is original,'original evidence namespace unchanged')
     return p,parent,context
 

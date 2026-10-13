@@ -11,7 +11,8 @@ import os
 from pathlib import Path
 import stat
 from nacl.signing import SigningKey
-from ops.current_assessment_admission_cache import AdmissionCache, authenticate, need, valid_digest
+from ops.current_assessment_admission_cache import authenticate, need, valid_digest
+from ops.current_assessment_cache_storage import RetainingAdmissionCache as AdmissionCache
 
 VERSION = 'hourly-authenticated-admission-cache-binding-v1'
 
