@@ -109,16 +109,17 @@ def execute_transaction(workspace, runtime, optimizer, groups, binding, *,
                     runtime_context=dict(manifest_sha256=manifest_sha256,
                                          source_closure_sha256=source_closure_sha256))
 
-    def stage(report, directory):
+    def stage(report, directory, hash_artifact):
         assert_trainer_lease()
-        staged = stage_for_publication(runtime, optimizer, report, directory, shard_bytes=shard_bytes)
+        staged = stage_for_publication(runtime, optimizer, report, directory, shard_bytes=shard_bytes,
+                                       artifact_hasher=hash_artifact)
         return list(staged['publish_files']) + list(staged['local_state_files'])
 
     def publish(request):
         assert_trainer_lease()
         return publish_model(request)
 
-    result = transaction.run(update=update, stage=stage, publish_model=publish)
+    result = transaction.run(update=update, stage_with_hasher=stage, publish_model=publish)
     assert_trainer_lease()
     output = result['output_checkpoint']
     if optimizer.global_step != result['report']['optimizer_step']:

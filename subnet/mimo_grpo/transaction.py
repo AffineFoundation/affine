@@ -16,6 +16,7 @@ from pathlib import Path, PurePosixPath
 import re
 import stat as file_stat
 import tempfile
+import threading
 
 VERSION = 'affine-mimo-grpo-update-transaction-v1'
 TRAINER = 'affine-mimo-grpo-update-v1'
@@ -262,12 +263,17 @@ class Transaction:
         need(value.get('state') in ('prepared', 'updating', 'staged', 'published'), 'known transaction stage')
         return value
 
-    def run(self, *, update, stage, publish_model):
+    def run(self, *, update, stage=None, publish_model, stage_with_hasher=None):
         """Run original update or resume model publication from complete staging.
 
         update() invokes the trusted trainer exactly once and returns its report.
         stage(report, root) must export/fsync both model and local optimizer state,
         returning all relative file names. Never overwrite a prior job directory.
+        Alternatively stage_with_hasher(report, root, hash_artifact) may reuse
+        guarded full reads performed while writing artifacts. The callback can
+        request an actual hash, never seed a digest from a descriptor. It is
+        confined to this process/thread and the active exclusive staging call.
+        Every invocation/recovery starts with an empty in-memory receipt set.
         publish_model(request) uses immutable model objects and idempotent metadata;
         after lost acknowledgement it must reconcile original bytes, not retrain.
         It receives no optimizer file paths or bytes. Returned receipt is checked.
@@ -275,6 +281,8 @@ class Transaction:
         The caller separately holds the sole trainer/optimizer lease; this lock
         excludes concurrent executions of this job, not unrelated job directories.
         """
+        need((callable(stage) and stage_with_hasher is None) or
+             (stage is None and callable(stage_with_hasher)), 'one explicit staging callback protocol')
         with self.exclusive():
             # No object-level or persistent memo: even a retry on this same
             # Transaction object starts with cold artifact verification.
@@ -301,8 +309,34 @@ class Transaction:
                 _write(self.path, value)
                 report = _json_copy(update())
                 _validate_report(self.job, report)
-                names = stage(report, self.root)
+                stage_hashes = {}
+                if stage_with_hasher is None:
+                    names = stage(report, self.root)
+                else:
+                    owner = (os.getpid(), threading.get_ident())
+                    active = True
+                    def hash_artifact(path):
+                        need(active and owner == (os.getpid(), threading.get_ident()),
+                             'artifact hasher requires its active staging owner')
+                        path = Path(path)
+                        need(path.is_absolute() and self.root in path.parents,
+                             'artifact hasher stays within its original transaction')
+                        relative = path.relative_to(self.root).as_posix()
+                        path = _file(self.root, relative)
+                        row = _hash_file(path, memo=hash_memo)
+                        need(path not in stage_hashes or stage_hashes[path] == row,
+                             'artifact changed after original staging hash')
+                        stage_hashes[path] = dict(row)
+                        return dict(row)
+                    try:
+                        names = stage_with_hasher(report, self.root, hash_artifact)
+                    finally:
+                        active = False
                 inventory = _inventory(self.root, names, hash_memo=hash_memo)
+                need(all(row == inventory[path.relative_to(self.root).as_posix()]
+                         for path, row in stage_hashes.items()
+                         if path.relative_to(self.root).as_posix() in inventory),
+                     'staged artifact integrity differs from original write hash')
                 value.update(state='staged', report=report, report_sha256=digest(report), artifacts=inventory)
                 _write(self.path, value)
             need(value['report_sha256'] == digest(value['report']), 'staged report integrity')

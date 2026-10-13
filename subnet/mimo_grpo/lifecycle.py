@@ -12,7 +12,7 @@ from .data import digest
 from .optimizer import _hash_file, _write_json
 
 
-def stage_for_publication(runtime, optimizer, report, directory, *, shard_bytes=256 * 1024**2):
+def stage_for_publication(runtime, optimizer, report, directory, *, shard_bytes=256 * 1024**2, artifact_hasher=None):
     """Export model bytes for R2 and local-only optimizer recovery shards.
 
     Returns explicit disjoint inventories. Only `publish_files` are sent to the
@@ -20,6 +20,13 @@ def stage_for_publication(runtime, optimizer, report, directory, *, shard_bytes=
     retention keeps one current committed optimizer generation plus the new
     in-flight generation, at most two total, until publication is acknowledged.
     """
+    if artifact_hasher is not None and not callable(artifact_hasher):
+        raise ValueError('original transaction artifact hasher required')
+    def artifact(path):
+        if artifact_hasher is None:
+            return dict(sha256=_hash_file(path), bytes=path.stat().st_size)
+        row = artifact_hasher(path)
+        return dict(sha256=row['sha256'], bytes=row['size'])
     root = Path(directory)
     if report.get('status') != 'updated' or report['optimizer_step'] != optimizer.global_step:
         raise ValueError('only a completed original optimizer update can be staged')
@@ -41,14 +48,14 @@ def stage_for_publication(runtime, optimizer, report, directory, *, shard_bytes=
             raise ValueError('model-only safetensors/config/tokenizer publication')
         with path.open('rb') as stream:
             os.fsync(stream.fileno())
-        files[relative] = dict(sha256=_hash_file(path), bytes=path.stat().st_size)
+        files[relative] = artifact(path)
     if not files or not any(name.endswith('.safetensors') for name in files):
         raise ValueError('actual exported model tensor files required')
     checkpoint_files = {name: row['sha256'] for name, row in files.items()}
     output_checkpoint = digest(checkpoint_files)
     descriptor = optimizer.save_local(root / 'optimizer', output_checkpoint=output_checkpoint,
-                                      shard_bytes=shard_bytes)
-    state_files = {path.relative_to(root).as_posix(): dict(sha256=_hash_file(path), bytes=path.stat().st_size)
+                                      shard_bytes=shard_bytes, artifact_hasher=artifact_hasher)
+    state_files = {path.relative_to(root).as_posix(): artifact(path)
                    for path in sorted((root / 'optimizer').iterdir()) if path.is_file()}
     staged = dict(version='affine-mimo-model-only-stage-v1', input_checkpoint=report['input_checkpoint'],
         output_checkpoint=output_checkpoint, checkpoint_files=checkpoint_files,

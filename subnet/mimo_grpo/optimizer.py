@@ -160,10 +160,12 @@ class CPUAdamW:
             no_decay_parameter_count=sum(row['weight_decay'] == 0 for row in self.decay_inventory),
             gradient_accumulation_dtype='float32', projected_changed_elements=changed)
 
-    def save_local(self, directory, *, output_checkpoint, shard_bytes=256 * 1024**2):
+    def save_local(self, directory, *, output_checkpoint, shard_bytes=256 * 1024**2, artifact_hasher=None):
         """Write a new locally durable generation without a full state replica."""
         if self.failed or not sha(output_checkpoint) or shard_bytes < 4096:
             raise ValueError('valid committed candidate and bounded shard size')
+        if artifact_hasher is not None and not callable(artifact_hasher):
+            raise ValueError('original transaction artifact hasher required')
         root = Path(directory)
         root.mkdir(parents=True, exist_ok=False)
         chunks = []
@@ -187,7 +189,8 @@ class CPUAdamW:
                         os.fsync(stream.fileno())
                     chunks.append(dict(file=filename, parameter=name, slot=slot, offset=start,
                         elements=value.numel(), bytes=(root / filename).stat().st_size,
-                        sha256=_hash_file(root / filename)))
+                        sha256=(_hash_file(root / filename) if artifact_hasher is None
+                                else artifact_hasher(root / filename)['sha256'])))
         descriptor = dict(version='affine-mimo-local-adamw-v1', optimizer_step=self.global_step,
             input_checkpoint=self.input_checkpoint, checkpoint=output_checkpoint,
             inventory=self.inventory, config=self.config.document(), chunks=chunks)
