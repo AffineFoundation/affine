@@ -257,6 +257,14 @@ cross-miner task-collision rule remains: colliding task submissions receive zero
 uniqueness contribution. Cumulative retries never add credit. All eight outcomes
 remain one task group for accounting.
 
+Individual disputed audit reports may be temporarily deferred under an explicit,
+expiring ROOT-signed diagnostic record tied to the original job, report, worker,
+miner, checkpoint and diagnostic digest. Their original verdicts remain intact;
+deferral neither marks them verified nor applies an invalid-sample penalty. It
+does not widen sampling tolerances. All other evidence and reward rules continue
+unchanged. An expired unresolved disposition falls back to the last authenticated
+assessment rather than silently declaring the disputed sample fraudulent.
+
 The sole validator writer continues submitting the best authenticated assessment
 each hour, with six-hour contribution half-life and current hotkey-to-UID mapping.
 Training failure, an unfinished epoch or unavailable fresh evidence must not stop
