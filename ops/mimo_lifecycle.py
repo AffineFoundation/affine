@@ -30,6 +30,10 @@ def run(args):
     actor=identity(config['authority_seed_file'])
     from subnet.mimo_release_policy import ReleasePolicy
     policy=ReleasePolicy(config['release_policy'],actor.id,allow_public=args.allow_public_mimo)
+    from subnet.mimo_source_migration import SourceReleaseRegistry
+    registry=SourceReleaseRegistry(config['source_release_registry'],actor.id,allow_public=args.allow_public_mimo) if 'source_release_registry' in config else None
+    if registry is not None and (registry.active.policy_sha256!=policy.policy_sha256):
+        raise ValueError('exact source-only active policy and trainer configuration')
     from subnet.storage import Bucket
     from subnet.distributed_roles import Coordinator as Queue,CoordinatorServer
     from subnet.chain import ChainAdapter
@@ -59,11 +63,17 @@ def run(args):
         policy.scope['immutable_manifest']['mimo_runtime']['chat_template_sha256'],
         policy.scope['task_assets'],**config.get('native_grading',{}))
     bucket=Bucket(config['bucket'])
-    queue=Queue(config['queue_database'],actor.id,config['workers'],allow_public_mimo=args.allow_public_mimo)
+    queue=Queue(config['queue_database'],actor.id,config['workers'],allow_public_mimo=args.allow_public_mimo,
+        source_registry=registry,worker_execution=config.get('worker_execution'))
     chain=ChainAdapter(state/'registration-observations',**config.get('chain',{}))
     training=TrainerConfig(**config['trainer_config']).validate().document()
+    if registry is not None and registry.payload['trainer_config']!=training:raise ValueError('unchanged exact trainer objective configuration')
     adapter=R2Services(bucket,actor,policy,queue,chain,**config['adapters'],trainer_config=training,
         readback_state=state/'model-readbacks')
+    def execution(m):
+        return registry.execution_for(m) if registry else dict(source_files=adapter.source_files,runtime_versions=adapter.runtime_versions)
+    if registry is not None and registry.payload['execution'][policy.scope['immutable_manifest']['source_bundle']['sha256']] != dict(source_files=adapter.source_files,runtime_versions=adapter.runtime_versions):
+        raise ValueError('active source execution profile')
     lifecycle=Lifecycle(state,bucket,actor,config['release_policy'],adapter.services(),
         resolve_task=lambda m,e,i:resolve_task(m,e,i,tokenizer),
         grade_batch=lambda b,m,miner:grade_batch(b,m,tokenizer,miner=miner),
@@ -85,8 +95,8 @@ def run(args):
     if audit_enabled:
         from subnet.mimo_audit_scheduler import AuditScheduler
         scheduler=AuditScheduler(bucket=bucket,queue=queue,identity=actor,
-            manifest_guard=policy.validate_manifest,metadata=lambda m:dict(
-                source_files=adapter.source_files,runtime_versions=adapter.runtime_versions,
+            manifest_guard=registry.resolve if registry else policy.validate_manifest,metadata=lambda m:dict(
+                **execution(m),
                 checkpoint_read_urls=adapter.checkpoint_urls(m['checkpoint'])),**audit_config)
         def audit_loop():
             admitted=set()
@@ -109,8 +119,8 @@ def run(args):
     if eval_enabled:
         from subnet.mimo_evaluation_scheduler import EvaluationScheduler
         evaluator=EvaluationScheduler(bucket=bucket,queue=queue,identity=actor,policy=policy,
-            metadata=lambda m:dict(source_files=adapter.source_files,runtime_versions=adapter.runtime_versions,
-                checkpoint_read_urls=adapter.checkpoint_urls(m['checkpoint'])),**eval_config)
+            metadata=lambda m:dict(**execution(m),
+                checkpoint_read_urls=adapter.checkpoint_urls(m['checkpoint'])),source_registry=registry,**eval_config)
         def evaluation_loop():
             while not stopped.is_set():
                 try:

@@ -331,3 +331,54 @@ def test_public_training_requires_qualified_policy_and_local_opt_in(tmp_path, mo
     with pytest.raises(ValueError, match='differs from qualified'):
         initialize_private_current(tmp_path/'other-current.json', binding,
             source_closure_sha256='d' * 64, release_policy=policy, manifest=wrong)
+
+
+def test_source_only_migration_cold_restores_original_optimizer_and_advances_once(tmp_path, monkeypatch):
+    from copy import deepcopy
+    from contextlib import nullcontext
+    from subnet.mimo_release_policy import ReleasePolicy,build_policy,POLICY_KEY,CHECKPOINT_KEY
+    from subnet.mimo_source_migration import SourceReleaseRegistry,REGISTRY,prepare_transition,planned_current,apply_role_current,migrate_trainer_current
+    h=Harness(tmp_path,monkeypatch)
+    one,m1=h.job('old-source',0,h.checkpoint,release=True)
+    first=h.execute(one,m1)
+    root=h.root/'mimo-training/fixture-run';path=root/'CURRENT.json'
+    original_bytes=path.read_bytes();current=json.loads(original_bytes)
+    transaction=next(json.loads(p.read_bytes()) for p in (root/'history').glob('*/TRANSACTION.json') if json.loads(p.read_bytes())['job']['job_id']==current['job_id'])
+    original_transaction=deepcopy(transaction)
+    old=ReleasePolicy(m1[POLICY_KEY],h.authority.id)
+    proposed=deepcopy(m1);proposed['source_bundle']['sha256']='b'*64
+    new=build_policy(h.authority,proposed,task_assets=old.scope['task_assets'],enabled=True)
+    new_policy=ReleasePolicy(new,h.authority.id)
+    profile=lambda files:dict(source_files=files,runtime_versions={'torch':'fixture'})
+    changed={'subnet/test-only-fixture.py':'b'*64}
+    registry=SourceReleaseRegistry(sign(h.authority,dict(version=REGISTRY,policies=[old.envelope,new],active_policy_sha256=digest(new),
+        execution={m1['source_bundle']['sha256']:profile(one['source_files']),'b'*64:profile(changed)},
+        source_changes=list(changed),trainer_config=one['training']['config'],trainer_identity=h.signer.id)),h.authority.id)
+    cp=first['publication_receipt']['payload']['descriptor'];receipt=digest(first['publication_receipt'])
+    cert=old.authorize_checkpoint(cp,input_checkpoint=m1['checkpoint']['id'],optimizer_step=1,publication_receipt_sha256=receipt,identity=h.authority)
+    final=sign(h.authority,dict(epoch=m1['epoch'],round=100,policy_sha256=old.policy_sha256,opening_sha256=digest(one['manifest']),
+        input_checkpoint=m1['checkpoint']['id'],result=dict(status='updated',checkpoint=cp,optimizer_step=1,checkpoint_authorization=cert,publication_receipt_sha256=receipt)))
+    host=dict(policy_sha256=old.policy_sha256,checkpoint=cp,checkpoint_authorization=cert,optimizer_step=1,round=101,epoch_index=1)
+    transition=prepare_transition(registry,one['manifest'],final,host_bytes=canonical(host),trainer_bytes=original_bytes,original_transaction=transaction,identity=h.authority)
+    target=planned_current(registry,transition,'trainer',identity=h.authority)
+    planned=sign(h.authority,dict(transition_sha256=digest(transition),role='trainer',current=target))
+    migrate_trainer_current(root,registry,transition,planned,h.signer)
+    # Retry returns the same acknowledgement without changing the optimizer.
+    migrate_trainer_current(root,registry,transition,planned,h.signer)
+    two,m2=h.job('new-source',1,cp)
+    m2['source_bundle']=deepcopy(proposed['source_bundle']);m2[POLICY_KEY]=new
+    m2['sampling_contract']['calibration']['checkpoint']=cp['id']
+    m2[CHECKPOINT_KEY]=new_policy.authorize_checkpoint(cp,input_checkpoint=m1['checkpoint']['id'],optimizer_step=1,publication_receipt_sha256=receipt,identity=h.authority)
+    two['manifest']=sign(h.authority,m2);two['source_files']=changed;two['training']['publication_namespace']=new_policy.namespace(m2)
+    dispatch=json.loads(h.blobs[two['training']['dispatch']['url']])['payload'];dispatch['manifest_sha256']=digest(m2)
+    for row in dispatch['selected']:row['native_grades']['manifest_sha256']=digest(m2)
+    two['training']['dispatch']=h.capability(sign(h.authority,dispatch))
+    # No warm context: restore the original old-source model AND Adam moments.
+    second=h.execute(two,m2)
+    assert second['training']['optimizer_step_before']==1 and second['training']['optimizer_step']==2
+    validate_result(second,two,m2)
+    assert json.loads(path.read_bytes())['release_policy_sha256']==new_policy.policy_sha256
+    assert json.loads(path.read_bytes())['source_closure_sha256']==digest(changed)
+    assert original_transaction==transaction
+    assert h.execute(two,m2)['output_checkpoint']==second['output_checkpoint']
+    assert json.loads(path.read_bytes())['optimizer_step']==2

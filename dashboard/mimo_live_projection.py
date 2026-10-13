@@ -69,22 +69,31 @@ def evidence_availability(snapshot, history, authority, now):
 
 
 class Projection:
-    def __init__(self, root, policy, authority, workers, validate_report, *, first_round, started_at, model):
+    def __init__(self, root, policy, authority, workers, validate_report, *, first_round, started_at, model, source_registry=None):
         self.root, self.policy, self.authority = Path(root), policy, authority
+        self.source_registry=source_registry
+        if source_registry is not None and (source_registry.authority!=authority or source_registry.active.policy_sha256!=policy.policy_sha256):
+            raise ValueError("dashboard exact active source registry")
         self.workers, self.validate_report = workers, validate_report
         self.first_round, self.started_at, self.model = first_round, started_at, model
         if type(first_round) is not int or first_round < 0 or finite(started_at) is None:
             raise ValueError("dashboard explicit run boundary")
 
+    def policy_for(self, manifest):
+        if self.source_registry is not None:return self.source_registry.resolve(manifest)
+        self.policy.validate_manifest(manifest)
+        return self.policy
+
     def opening(self, envelope):
         value = signed(envelope, self.authority)
-        self.policy.validate_manifest(value)
+        self.policy_for(value)
         if value['run_id'] != self.policy.run_id:
             raise ValueError('dashboard run binding')
         return value
 
     def worker_report(self, envelope, request, role, opening, now):
         job = signed(envelope, self.authority)
+        if self.source_registry is not None:self.source_registry.validate_job_execution(job)
         if job['role'] != role or job['manifest'] != opening:
             raise ValueError('dashboard original job/opening binding')
         worker = request.get('signer')
@@ -140,7 +149,7 @@ class Projection:
             final_path=directory/'FINALIZED.json'
             if final_path.exists():
                 final_envelope=read(final_path);final=signed(final_envelope,self.authority)
-                if (dispatch is None or final['policy_sha256']!=self.policy.policy_sha256 or final['epoch']!=eid
+                if (dispatch is None or final['policy_sha256']!=self.policy_for(m).policy_sha256 or final['epoch']!=eid
                         or final['opening_sha256']!=digest(opening) or final['dispatch_sha256']!=digest(dispatch_envelope)
                         or final['input_checkpoint']!=m['checkpoint']['id'] or final['round']!=first_round+display_epoch-1):
                     raise ValueError('dashboard finalized epoch binding')
@@ -160,9 +169,9 @@ class Projection:
         evaluations=[]
         for path in sorted((self.root/'evaluator').glob('*.receipt.json')):
             receipt=signed(read(path),self.authority)
-            if receipt['policy_sha256']!=self.policy.policy_sha256:
-                raise ValueError('dashboard evaluation release')
             envelope=receipt['job'];opening=signed(envelope,self.authority)['manifest'];m=self.opening(opening)
+            if receipt['policy_sha256']!=self.policy_for(m).policy_sha256:
+                raise ValueError('dashboard evaluation release')
             if m['epoch'] not in openings or openings[m['epoch']]!=opening:
                 raise ValueError('dashboard evaluation original opening')
             job,report=self.worker_report(envelope,receipt['worker_report'],'evaluate',opening,now)

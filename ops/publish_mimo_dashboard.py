@@ -59,8 +59,10 @@ def main(argv=None):
     server.export_snapshot=lambda snapshot,destination:original_export(snapshot,destination,public=server.PUBLIC)
     policy=ReleasePolicy(lifecycle['release_policy'],cfg['authority'],allow_public=True)
     if policy.mode!='public':raise ValueError('public dashboard requires public release')
+    from subnet.mimo_source_migration import SourceReleaseRegistry
+    registry=SourceReleaseRegistry(lifecycle['source_release_registry'],cfg['authority'],allow_public=True) if 'source_release_registry' in lifecycle else None
     projection=Projection(lifecycle['state_root'],policy,cfg['authority'],lifecycle['workers'],validate_report,
-        first_round=lifecycle['lifecycle']['first_round'],started_at=cfg['started_at'],model=cfg['model'])
+        first_round=lifecycle['lifecycle']['first_round'],started_at=cfg['started_at'],model=cfg['model'],source_registry=registry)
     # Explicit path arguments preserve original database/source/static assets when
     # operator stages these modules in a separate immutable source closure.
     server.Database=database_view(server.Database,projection,
