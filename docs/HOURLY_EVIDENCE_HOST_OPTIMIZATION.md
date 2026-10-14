@@ -169,3 +169,19 @@ assessment from the natural timer and its original on-chain commitment. Report
 commit inclusion separately from effective weights when timelocked reveal is
 pending. Historical scanning still grows; this repair does not establish a
 permanent bound on evidence-processing cost.
+
+Current-history v6 qualification completed in 504.3 seconds, including validated
+assessment construction: 186 snapshots and all 20 MiMo populations available at
+the 14:00 cutoff. The natural 15:00 production assessment subsequently included
+21 MiMo populations/187 snapshots and had matching assessment/evidence cutoffs.
+Its original commitment finalized at block 9,282,353, extrinsic 13, for 270
+positive integer weights. Current-registration mapping matched and owner weight
+was zero. At the independent read at block 9,282,355, timelocked reveal was still
+pending; commitment success is not a claim that the new vector was effective yet.
+
+`ops/check_weight_freshness.py` provides a separate read-only check of the signed
+last-valid assessment and local submission receipt, with a twenty-minute hourly
+grace. The deployed monitor runs every five minutes and reports stale evidence
+even if submissions continue successfully. It does not load a wallet, invoke a
+writer, or claim independent on-chain confirmation. Freshness/receipt checks and
+finalized-chain/reveal checks remain distinct.
