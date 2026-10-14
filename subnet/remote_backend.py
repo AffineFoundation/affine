@@ -889,7 +889,7 @@ class RemoteController(Controller):
             audit_manifest=expanded
             save(self.state/(epoch+'-audit-manifest.json'),audit_manifest)
             self.bucket.json('public/'+epoch+'/audit-plan.json',self.signed(dict(allocations=allocations,escalations=additions,policy=policy,population_basis='actual-committed-pair-count'if manifest.get('submission_transport_policy')else'signed-per-miner-upper-bound')))
-        result=score(reports,policy['penalties'] if bounded else None);result.update(payable=False,epoch_id=epoch,finalized_at=time.time(),receipts=receipts,checkpoint=manifest['checkpoint']['id'])
+        result=score(reports,policy['penalties'] if bounded else None,receipts=receipts);result.update(payable=False,epoch_id=epoch,finalized_at=time.time(),receipts=receipts,checkpoint=manifest['checkpoint']['id'])
         if manifest.get('audit_exclusion_snapshot')is not None:
             from .audit_exclusion import confirmed
             history_path=self.state/'confirmed-invalid-history.json'
