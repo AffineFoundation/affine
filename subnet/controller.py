@@ -343,7 +343,7 @@ class Controller:
                 report=dict(accepted=[],valid=False,reason='missing or wrong report binding',submission_sha256=receipt['sha256'])
             reports[miner]=report
             self.bucket.json(f'public/{epoch}/audits/{miner}.json',self.signed(report))
-        result=score(reports)
+        result=score(reports,receipts=receipts)
         result.update(payable=manifest.get('payable',False),epoch_id=epoch,finalized_at=time.time(),receipts=receipts,checkpoint=manifest['checkpoint']['id'])
         (self.state/f'{epoch}-scores.json').write_bytes(canonical(result))
         self.bucket.json(f'public/{epoch}/scores.json',self.signed(result))

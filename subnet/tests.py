@@ -226,4 +226,70 @@ class ProofFramingTests(unittest.TestCase):
             with self.assertRaises(ValueError):validate_framing([base64.b64encode(raw).decode()],1)
         with self.assertRaises(ValueError):validate_framing(['not base64!'],1)
 
+
+class FirstClaimWinsTests(unittest.TestCase):
+    """Contested tasks go to the earliest Cloudflare R2 arrival."""
+    batch=dict(env_id='math',index=7,sample_index=7,checkpoint='c')
+
+    @staticmethod
+    def receipt(batch,when=None,commitment=None):
+        import json
+        digest=hashlib.sha256(json.dumps(batch,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+        artifact=dict(slot=0,batch_sha256=digest)
+        if when is not None:artifact['received_at']=when
+        receipt=dict(artifacts=[artifact])
+        if commitment is not None:receipt['received_at']=commitment
+        return receipt
+
+    def test_earliest_wins(self):
+        reports={'a':{'accepted':[self.batch]},'b':{'accepted':[self.batch]}}
+        receipts={'a':self.receipt(self.batch,1005.0),'b':self.receipt(self.batch,1000.0)}
+        result=score(reports,receipts=receipts)
+        self.assertEqual(result['points'],{'a':0,'b':1})
+        self.assertEqual(result['weights'],{'a':0.0,'b':1.0})
+        self.assertEqual(result['claim_order_rule'],'earliest-r2-received_at-v1')
+        self.assertEqual(result['contested_claims'],[dict(key=['math',7,'c'],winner='b',received_at=1000.0,claimants=2)])
+
+    def test_any_claim_on_same_task_contests(self):
+        other=dict(self.batch,rollouts=['different'])
+        reports={'a':{'accepted':[self.batch]},'b':{'accepted':[other]}}
+        receipts={'a':self.receipt(self.batch,10.0),'b':self.receipt(other,20.0)}
+        self.assertEqual(score(reports,receipts=receipts)['points'],{'a':1,'b':0})
+
+    def test_commitment_time_fallback(self):
+        reports={'a':{'accepted':[self.batch]},'b':{'accepted':[self.batch]}}
+        receipts={'a':self.receipt(self.batch,None,commitment=50.0),'b':self.receipt(self.batch,60.0)}
+        self.assertEqual(score(reports,receipts=receipts)['points'],{'a':1,'b':0})
+
+    def test_same_second_tie_break(self):
+        from .scoring import tie_break
+        from .protocol import sample_key
+        miners=['m1','m2','m3']
+        reports={m:{'accepted':[self.batch]} for m in miners}
+        receipts={m:self.receipt(self.batch,100.0) for m in miners}
+        expected=min(miners,key=lambda m:tie_break(m,sample_key(self.batch)))
+        points=score(reports,receipts=receipts)['points']
+        self.assertEqual(points,{m:int(m==expected) for m in miners})
+        reversed_reports=dict(reversed(list(reports.items())))
+        self.assertEqual(score(reversed_reports,receipts=receipts)['points'],points)
+
+    def test_timestamped_beats_untimestamped(self):
+        reports={'a':{'accepted':[self.batch]},'b':{'accepted':[self.batch]}}
+        receipts={'a':self.receipt(self.batch),'b':self.receipt(self.batch,9e9)}
+        self.assertEqual(score(reports,receipts=receipts)['points'],{'a':0,'b':1})
+
+    def test_no_timestamps_keeps_zero_for_all(self):
+        reports={'a':{'accepted':[self.batch]},'b':{'accepted':[self.batch]}}
+        receipts={'a':self.receipt(self.batch),'b':{}}
+        result=score(reports,receipts=receipts)
+        self.assertEqual(result['points'],{'a':0,'b':0})
+        self.assertEqual(result['contested_claims'][0]['winner'],None)
+
+    def test_legacy_score_without_receipts_unchanged(self):
+        reports={'a':{'accepted':[self.batch]},'b':{'accepted':[self.batch]}}
+        result=score(reports)
+        self.assertEqual(result['points'],{'a':0,'b':0})
+        self.assertNotIn('claim_order_rule',result)
+        self.assertNotIn('contested_claims',result)
+
 if __name__=='__main__':unittest.main()

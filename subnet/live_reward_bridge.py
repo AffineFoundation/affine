@@ -93,11 +93,16 @@ recompute and no R2 GET. Never accept caller-miner report assertions instead.
    key=sample_key(b);need(key not in seen,'duplicate accepted task');seen.add(key)
   need(len(accepted)<=m['max_batches'],'signed quota')
   reports[miner]=r
- recomputed=score(reports,c['penalties'])
- fields=('points','adjusted_points','total','weights','penalty_policy','penalties','provisional','score_basis','unchecked_duplicate_claims_unresolved','duplicate_coverage')
+ # First-claim-wins only for score documents that were produced under it;
+ # historical documents keep the original zero-for-all duplicate rule.
+ from subnet.scoring import RULE as CLAIM_RULE
+ claim_receipts=receipts if s.get('claim_order_rule')==CLAIM_RULE else None
+ need(s.get('claim_order_rule') in (None,CLAIM_RULE),'known duplicate claim rule')
+ recomputed=score(reports,c['penalties'],claim_receipts)
+ fields=('points','adjusted_points','total','weights','penalty_policy','penalties','provisional','score_basis','unchecked_duplicate_claims_unresolved','duplicate_coverage')+(('claim_order_rule','contested_claims')if claim_receipts is not None else())
  for field in fields:need(field in s and canonical(s[field])==canonical(recomputed[field]),'recomputed score/penalty '+field)
  earned={};identities={};raw={}
- raw_points,adjusted,_=adjusted_point_fractions(reports,c['penalties'])
+ raw_points,adjusted,_=adjusted_point_fractions(reports,c['penalties'],claim_receipts)
  need(raw_points==recomputed['points'],'shared pure score identity')
  for miner,points in raw_points.items():
   value=adjusted[miner]
