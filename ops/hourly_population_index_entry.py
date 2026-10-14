@@ -12,7 +12,7 @@ import stat
 import types
 from nacl.signing import VerifyKey
 
-VERSION='hourly-population-index-host-composition-v4'
+VERSION='hourly-population-index-host-composition-v5'
 
 def canonical(value):
     return json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
@@ -46,7 +46,7 @@ def module(name,ref):
 
 def prepare(document,authority):
     p=authenticate(document,authority)
-    need(type(p)is dict and set(p)=={'version','execute_enabled','entry','parent_entry','parent_composition','index_module','mimo_module','cache_module','derivation_module','commitment_module','evidence_module','maximum_seconds'},'exact host composition')
+    need(type(p)is dict and set(p)=={'version','execute_enabled','entry','parent_entry','parent_composition','index_module','mimo_module','cache_module','derivation_module','commitment_module','evidence_module','parallel_module','maximum_seconds'},'exact host composition')
     need(p['version']==VERSION and type(p['execute_enabled'])is bool and p['maximum_seconds']==720,'unchanged writer bound')
     pinned(p['entry']);need(Path(p['entry']['path'])==Path(__file__).resolve(),'exact host entry')
     parent_doc=json.loads(pinned(p['parent_composition']));parent_p=authenticate(parent_doc,authority)
@@ -68,8 +68,10 @@ def prepare(document,authority):
     commitments=module('_isolated_commitment_derivations',p['commitment_module'])
     optimized_mimo=mimo_cache.wrap_source(context['evidence_source'],derivations=commitments.Derivations(derivations))
     cache_mode=module('_bounded_no_eviction_cache',p['cache_module'])
-    combined=loader.__globals__['compose_loader'](
-        optimized_legacy,optimized_mimo,transition_policy=closure['transition_policy'])
+    parallel=module('_parallel_authenticated_evidence_readers',p['parallel_module'])
+    combined=parallel.compose_loader(
+        optimized_legacy,optimized_mimo,merge=loader.__globals__['merge'],
+        transition_policy=closure['transition_policy'])
     context=dict(context,evidence_loader=cache_mode.wrap_loader(combined))
     need(legacy.__globals__['register_population']is original,'original evidence namespace unchanged')
     return p,parent,context

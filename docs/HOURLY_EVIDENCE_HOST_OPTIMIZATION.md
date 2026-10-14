@@ -83,3 +83,89 @@ It made no chain transaction or writer-state change. That margin is limited;
 continued history growth can exhaust it, so natural hourly freshness still needs
 monitoring. Activation requires a separately signed host composition. Public
 source availability does not itself activate the wrapper.
+
+## Read independent histories concurrently
+
+The v5 host composition pins `ops/parallel_evidence_readers.py`. The original
+historical reader and the original MiMo reader run in separate Linux child
+processes, and the original merger receives both complete results in its
+original order. Every original source, signature, admission, population,
+cutoff, penalty and current-assessment check still runs. No old assessment is
+silently substituted as fresh, and no history is dropped.
+
+The legacy admission-cache factory is opened only inside its reader child.
+No child executes the weight writer or makes a chain transaction. The sole
+writer, hourly cursor, last-valid fallback and current registration mapping
+remain unchanged. The original 480-second evidence and 720-second outer limits
+remain. Child responses are bounded JSON over private inherited pipes; partial,
+malformed or failed responses cannot reach the merger. Parent timeout or an
+exception terminates and joins both children. Linux parent-death signals also
+stop children if the parent is killed. Multithreaded or non-Linux hosts retain
+the original sequential behavior instead of attempting an unsafe fork.
+
+This removes addition of independent reader runtimes, not the cost of reading
+history. More historical audits can still require further optimization. The
+host change requires separately signed source pins and an observed natural
+hourly assessment after activation; publishing the helper alone does not deploy
+it. Tests cover overlapping work, exact argument/output transport, original
+error ordering, admission-cache ownership, large and oversized responses,
+child failure, deadline cancellation, orphan cleanup and fallback behavior.
+
+At the 2026-10-14 01:00 UTC cutoff, the original sequential readers took
+394.7 seconds for historical evidence and 95.2 seconds for MiMo evidence,
+plus merging and assessment calculation. The parallel read completed in
+395.6 seconds (397.2 including assessment) with the final single-thread host
+environment, and validated all 176 snapshots within the unchanged deadline.
+All snapshots and reward fields matched, including per-miner estimates, EMA,
+points, normalized weights, epochs and cutoff. Live reads differed only in
+explicitly enumerated registry/queue hashes and post-cutoff or incomplete-job
+diagnostics. Feeding the same frozen original reader outputs through the final
+parallel helper and original merger also produced byte-identical full evidence.
+Eighteen focused tests passed, including parent SIGKILL orphan cleanup,
+native-thread fallback, and preservation of dictionary insertion order and
+floating-point reductions across transport. The same frozen outputs also
+produced a byte-identical complete validated reward assessment.
+
+The historical scan still took almost 395 seconds, including 227 seconds spent
+reconstructing cumulative snapshots. It still reads all history and the optional
+cache still has 10,000 entries; 403 cache misses used original admission. This
+change restores measured headroom rather than claiming bounded growth or a
+permanent throughput guarantee. The next natural hourly writer execution must
+confirm production freshness after a separately reviewed deployment.
+
+Before forking, the helper checks both Python threads and Linux native tasks.
+The deployed host imports can start BLAS and Arrow allocator background threads;
+`threading.active_count()` alone does not detect them. The writer host must start
+with `OPENBLAS_NUM_THREADS=1`, `OMP_NUM_THREADS=1`, `MKL_NUM_THREADS=1`,
+`NUMEXPR_NUM_THREADS=1`, and `JE_ARROW_MALLOC_CONF=background_thread:false`.
+Qualification confirmed one Python thread and one native task after full signed
+composition preparation. These settings belong only to the CPU evidence-writer
+service, not miners, verifiers, the trainer, or their scientific runtime. If a
+future dependency still creates native threads, the helper falls back to the
+original sequential reader rather than forking that process.
+
+## Current-history deadline repair, October 14
+
+The 14:00 UTC investigation found successful hourly chain commitments but stale
+assessments since 01:00: every new evidence read timed out and retained the
+00:00 assessment. Eleven subsequent closed MiMo populations were missing from
+those assessments. Successful submission alone therefore does not establish
+reward freshness.
+
+The v5 parallel reader was retested on the full 14:00 history and also exceeded
+480 seconds. `ops/hourly_population_index_entry_v6.py` introduces a signed
+600-second evidence allowance alongside the parallel readers. The original
+720-second outer process deadline remains, reserving approximately two minutes
+for submission. The override uses a private copy of `run_once`'s global namespace;
+the original writer module, its source files, and its other functions stay intact.
+Its existing evidence-budget context still honors and restores the enclosing
+deadline. No signature, cutoff, eligibility, penalty, UID mapping, or assessment
+validation is skipped. Same-hour transaction deduplication and the last-valid
+fallback remain unchanged.
+
+Qualification must use current full history, rather than assuming the earlier
+395-second measurement still applies. After activation, verify a fresh signed
+assessment from the natural timer and its original on-chain commitment. Report
+commit inclusion separately from effective weights when timelocked reveal is
+pending. Historical scanning still grows; this repair does not establish a
+permanent bound on evidence-processing cost.
