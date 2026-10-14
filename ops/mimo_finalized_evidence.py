@@ -57,14 +57,44 @@ def selection_closure(dispatch, manifest, job=None):
     return set(hashes)
 
 
-def collect(view,bucket,now):
-    rows=[]
+def snapshot(view):
+    """Freeze publication membership before slow legacy history retrieval.
+
+    Finalizations and evaluations arriving later belong to the next cycle. Hashes
+    bind this inventory to original evidence; normal signatures and signed job
+    deadlines are still checked by collect on preparation and publication.
+    """
+    epochs={}
     for directory in sorted((view.root/'epochs').iterdir(),key=lambda x:int(x.name)):
-        # No reading of opening, captures, documents or evaluation for an open epoch.
-        if not(directory/'FINALIZED.json').is_file():continue
+        path=directory/'FINALIZED.json'
+        if not path.is_file():continue
+        envelope=read(path);signed(envelope,view.authority)
+        epochs[directory.name]=digest(envelope)
+    evaluations={}
+    for path in sorted((view.root/'evaluator').glob('*.receipt.json')):
+        envelope=read(path);signed(envelope,view.authority)
+        evaluations[path.name]=digest(envelope)
+    return dict(epochs=epochs,evaluations=evaluations)
+
+
+def collect(view,bucket,now,inventory=None):
+    inventory=snapshot(view) if inventory is None else inventory
+    if set(inventory)!={'epochs','evaluations'}:raise ValueError('MiMo publication inventory')
+    for name,h in inventory['epochs'].items():
+        if not name.isdecimal() or str(int(name))!=name or not p.DIGEST.fullmatch(h):
+            raise ValueError('MiMo publication epoch inventory')
+    for name,h in inventory['evaluations'].items():
+        if Path(name).name!=name or not name.endswith('.receipt.json') or not p.DIGEST.fullmatch(h):
+            raise ValueError('MiMo publication evaluation inventory')
+    rows=[]
+    for name in sorted(inventory['epochs'],key=int):
+        directory=view.root/'epochs'/name
+        # Never include an epoch which finalized after the inventory was frozen.
+        final_envelope=read(directory/'FINALIZED.json')
+        if digest(final_envelope)!=inventory['epochs'][name]:raise ValueError('MiMo frozen finalization changed')
         opening=read(directory/'coordinator/OPENING.json');m=view.opening(opening)
         if m['deadline']>now:raise ValueError('cannot publish open MiMo epoch')
-        final_envelope=read(directory/'FINALIZED.json');final=signed(final_envelope,view.authority)
+        final=signed(final_envelope,view.authority)
         dispatch_envelope=read(directory/'coordinator/DISPATCH.json');d=signed(dispatch_envelope,view.authority)
         population_envelope=read(directory/'coordinator/POPULATION.json');population=signed(population_envelope,view.authority)
         if (final['policy_sha256']!=view.policy_for(m).policy_sha256 or final['epoch']!=m['epoch']
@@ -102,8 +132,10 @@ def collect(view,bucket,now):
         metrics={k:training[k] for k in metric_keys if k in training} if training else None
         exclusions=[{k:r[k] for k in ('miner','env_id','index','batch_sha256','reason','assurance') if k in r} for r in d['excluded']]
         evaluations=[]
-        for path in sorted((view.root/'evaluator').glob('*.receipt.json')):
-            e=signed(read(path),view.authority)
+        for name in sorted(inventory['evaluations']):
+            envelope=read(view.root/'evaluator'/name)
+            if digest(envelope)!=inventory['evaluations'][name]:raise ValueError('MiMo frozen evaluation changed')
+            e=signed(envelope,view.authority)
             j=signed(e['job'],view.authority)
             if e['policy_sha256']!=view.policy_for(view.opening(j['manifest'])).policy_sha256:raise ValueError('MiMo eval release')
             if j['manifest']!=opening:continue
@@ -120,8 +152,10 @@ def collect(view,bucket,now):
     return rows
 
 
-def extend_plan(plan,config,bucket,*,view=None):
-    view=view or collector(config,plan['authority']);rows=collect(view,bucket,plan['prepared_at'])
+def extend_plan(plan,config,bucket,*,view=None,inventory=None):
+    view=view or collector(config,plan['authority'])
+    inventory=snapshot(view) if inventory is None else inventory
+    rows=collect(view,bucket,plan['prepared_at'],inventory)
     artifacts=[];catalogrows=[];objects=Path(plan['workdir'])/'objects';now=plan['prepared_at']
     for row in rows:
         projected={k:v for k,v in row.items() if k!='categories'};projected['artifacts']={}
@@ -136,7 +170,7 @@ def extend_plan(plan,config,bucket,*,view=None):
     item=dict(key=key,sha256=h,size=len(raw),local_path=str(path));artifacts.append(item)
     extension=dict(version=VERSION,run_id=view.policy.run_id,epoch_count=len(rows),first_round=view.first_round,last_finalized_round=max((r['round']for r in rows),default=None),catalog=p._descriptor(bucket,item,now,'available'),created_at=now)
     plan['history_payload'][FIELD]=extension;plan['artifacts'].extend(artifacts)
-    plan['mimo_extension']=dict(config=config,artifact_keys=[x['key']for x in artifacts])
+    plan['mimo_extension']=dict(config=config,inventory=inventory,artifact_keys=[x['key']for x in artifacts])
     return plan
 
 
@@ -146,7 +180,7 @@ def validate_extension(plan,bucket):
     stripped=copy.deepcopy(plan);meta=stripped.pop('mimo_extension');keys=set(meta['artifact_keys'])
     stripped['artifacts']=[x for x in stripped['artifacts']if x['key']not in keys]
     extension=stripped['history_payload'].pop(FIELD)
-    view=collector(meta['config'],plan['authority']);rows=collect(view,bucket,plan['prepared_at'])
+    view=collector(meta['config'],plan['authority']);rows=collect(view,bucket,plan['prepared_at'],meta['inventory'])
     items={x['key']:x for x in plan['artifacts']if x['key']in keys};seen=set()
     def content(ref):
         item=items[ref['key']];raw=p.read_regular(item['local_path'])
