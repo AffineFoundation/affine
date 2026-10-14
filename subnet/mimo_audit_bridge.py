@@ -74,6 +74,8 @@ def build_population(opening, captures, commitments, dispatch, registrations, *,
     need(d.get('population_sha256') == digest(dict(version='mimo-complete-group-coordinator-v1',
         epoch=m['epoch'],manifest_sha256=digest(m),captures=[captures[k] for k in sorted(captures)],
         sealed_at=committed_at)), 'dispatch binds original sealed capture population')
+    from .claim_order import enabled, resolve, contested
+    ordered = enabled(m); arrivals = {}
     rows = []; lookup = {}; documents = {}
     for miner in sorted(captures):
         c = signed(captures[miner], authority)
@@ -87,8 +89,10 @@ def build_population(opening, captures, commitments, dispatch, registrations, *,
         need(c.get('commitment_sha256') == parent_sha and c.get('snapshot') == prefix and
              c.get('total_groups') == len(claims) and len(c.get('documents', [])) == len(claims),
              'exact immutable captured commitment')
+        if ordered:
+            arrivals[miner] = c.get('received_at')
         for claim, doc in zip(claims, c['documents'], strict=True):
-            need(type(doc) is dict and set(doc) == {'slot','sha256','key'} and
+            need(type(doc) is dict and set(doc) == ({'slot','sha256','key','received_at'} if ordered else {'slot','sha256','key'}) and
                  doc['slot'] == claim['slot'] and doc['sha256'] == claim['document_sha256'] and
                  doc['key'] == prefix+f'/training/{claim["slot"]}.json', 'original compact document slot')
             row = dict(epoch=m['epoch'], round=round, checkpoint=m['checkpoint']['id'], miner=miner,
@@ -122,11 +126,28 @@ def build_population(opening, captures, commitments, dispatch, registrations, *,
         if passes: mixed.append(row)
         if reason in (None, 'training-task-budget'): eligible.append(digest(row))
     task_counts = Counter((r['env_id'],r['index']) for r in mixed)
-    eligible = [digest(r) for r in rows if digest(r) in eligible and task_counts[(r['env_id'],r['index'])] == 1]
+    claim_fields = {}
+    if ordered:
+        resolved = resolve((r['miner'], (r['env_id'], r['index']),
+                            documents[(r['miner'], r['batch_sha256'])].get('received_at', arrivals.get(r['miner'])))
+                           for r in mixed)
+        won = lambda r: resolved[(r['env_id'], r['index'])][0] == r['miner']
+        need(all((item.get('reason') == 'cross-miner-task-collision') == (not won(lookup[(item['miner'], item['batch_sha256'])]))
+                 for item in native_rows if lookup[(item['miner'], item['batch_sha256'])] in mixed),
+             'dispatch collisions follow first-claim-wins')
+        need(dispatch_claims(d) == contested(resolved), 'dispatch contested claims')
+        eligible = [digest(r) for r in rows if digest(r) in eligible and won(r)]
+        claim_fields = dict(claim_order_rule=m['claim_order_rule'], contested_claims=contested(resolved))
+    else:
+        eligible = [digest(r) for r in rows if digest(r) in eligible and task_counts[(r['env_id'],r['index'])] == 1]
     return dict(version=VERSION, round=round, committed_at=committed_at, manifest_document=deepcopy(opening),
         captures=deepcopy(captures), commitments=deepcopy(commitments), dispatch_document=deepcopy(dispatch),
         registrations_document=deepcopy(registrations), records=population(rows, ordered=True),
-        eligible_evidence_ids=sorted(eligible), training_requires_sampling_audit=False)
+        eligible_evidence_ids=sorted(eligible), training_requires_sampling_audit=False, **claim_fields)
+
+
+def dispatch_claims(dispatch):
+    return dispatch.get('contested_claims')
 
 
 def authenticate_population(document, authority, *, manifest_guard):

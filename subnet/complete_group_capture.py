@@ -145,7 +145,7 @@ def capture(bucket,ledger,manifest,miner,*,registered_miners,resolve_task,now=No
     _submitted(manifest['start']<=received<manifest['deadline'] and received<=observed,'commitment upload outside signed epoch window')
     envelope=_submitted_validation(validate_commitment,data,manifest,miner,registered_miners=registered_miners)
     prefix=f'private/{manifest["epoch"]}/complete-group-snapshots/{miner}/{sha(data)}'
-    documents=[];assessments=[]
+    documents=[];assessments=[];arrivals=[]
     for claim in envelope['payload']['groups']:
         proof_key,document_key=paths(manifest,miner,claim['slot'])
         body,at=_submission_get(bucket,document_key,bound.metadata_bytes)
@@ -158,7 +158,7 @@ def capture(bucket,ledger,manifest,miner,*,registered_miners,resolve_task,now=No
         when=metadata['LastModified'].timestamp()
         _submitted(metadata['ContentLength']==claim['artifact_size'] and manifest['start']<=when<manifest['deadline']
              and when<=received,'declared proof presence/size/upload window')
-        documents.append((claim['slot'],body));assessments.append(assessment)
+        documents.append((claim['slot'],body));assessments.append(assessment);arrivals.append(when)
     # No eligibility accounting until every compact input is authenticated and
     # written to a private, immutable snapshot. Repeating publication is safe.
     for slot,body in documents:_immutable(bucket,prefix+f'/training/{slot}.json',body)
@@ -166,4 +166,9 @@ def capture(bucket,ledger,manifest,miner,*,registered_miners,resolve_task,now=No
     result=_submitted_validation(ledger.admit,manifest,miner,envelope,prefix,assessments)
     result['proof_status']='declared-not-fully-downloaded-or-verified'
     result['documents']=[dict(slot=i,sha256=sha(body),key=prefix+f'/training/{i}.json') for i,body in documents]
+    from .claim_order import enabled
+    if enabled(manifest):
+        # Cloudflare R2 LastModified of each proof artifact (first-claim-wins).
+        result['received_at']=received
+        for row,when in zip(result['documents'],arrivals,strict=True):row['received_at']=when
     return result

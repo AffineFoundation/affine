@@ -50,7 +50,8 @@ def evidence(populations, queue_rows, *, authority, cutoff, verifiers, approved_
         subset=_admissions_for_population(admissions,preceding)
         snap=snapshot(preceding,[r for r in pointers if r['admitted_queue_job_sha256'] in subset],verifiers,
             epoch=m['epoch'],round=p['round'],checkpoint=m['checkpoint']['id'],cutoff=cutoff,
-            audit_policy=audit_policy,admitted_jobs=subset,eligible_evidence_ids=eligible,authority=authority)
+            audit_policy=audit_policy,admitted_jobs=subset,eligible_evidence_ids=eligible,authority=authority,
+            **({'claim_order':{k:p[k] for k in ('claim_order_rule','contested_claims')}} if 'claim_order_rule' in p else {}))
         need(set(eligible)<=allowed_ids and snap['training_waits_for_audits'] is False,
              'actual native eligible groups and independent training')
         result.append(snap);timings.append(dict(epoch=m['epoch'],round=p['round'],checkpoint=m['checkpoint']['id'],
