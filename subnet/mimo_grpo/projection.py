@@ -7,7 +7,7 @@ from .data import TaskGroup, Trajectory, digest
 
 
 def project_document(document, *, expected_document_sha256, binding, trusted_prompt,
-                     native_results, vocab_size, eos_token_ids, group_size=8):
+                     native_results, vocab_size, eos_token_ids, group_size=8, unresolved_failures=False):
     binding.validate()
     if digest(document) != expected_document_sha256:
         raise ValueError('original committed document content required')
@@ -60,5 +60,6 @@ def project_document(document, *, expected_document_sha256, binding, trusted_pro
                   index=batch['index'], task_hash=batch['task_hash']))
     task_id = digest({k: receipt['task'][k] for k in ('env_id', 'environment_version', 'task_hash')})
     group = TaskGroup(task_id, tuple(trusted_prompt), tuple(result), digest(receipt))
-    group.validate(group_size, vocab_size=vocab_size, eos_token_ids=set(eos_token_ids))
+    group.validate(group_size, vocab_size=vocab_size, eos_token_ids=set(eos_token_ids),
+                   unresolved_failures=unresolved_failures)
     return group, receipt

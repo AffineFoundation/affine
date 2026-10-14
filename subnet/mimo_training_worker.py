@@ -132,7 +132,13 @@ class TrainingContext:
         self.optimizer = None
         self.run = None
         self.source = None
+        self.reference = None
     def close(self):
+        if self.reference is not None:
+            close = getattr(self.reference, 'close', None)
+            if callable(close):
+                close()
+            self.reference = None
         if self.runtime is not None:
             close = getattr(self.runtime, 'close', None)
             if callable(close):
@@ -178,7 +184,7 @@ def execute(job, manifest, authority, workspace, out, report, *, cache=None,
             runtime_factory=None, context=None, bucket=None, signer=None,
             load_runtime=None, download=None, resource_admission=None,
             initial_checkpoint_directory=None, assert_lease=None, trainer_state_root=None,
-            allow_public=False):
+            allow_public=False, load_reference_runtime=None):
     """Execute a validated job, returning fields for the common signed report.
 
     Injection arguments support isolated integration tests and a warm worker.
@@ -348,6 +354,24 @@ def execute(job, manifest, authority, workspace, out, report, *, cache=None,
              'trainer scoring vocabulary differs from the actual pinned model head')
         if not restore_original:
             admit_staging(runtime, root)
+        reference_runtime = None
+        if config.kl_coefficient > 0:
+            # Frozen KL anchor: the cutover base checkpoint named in the signed
+            # config. Its bytes must be pre-staged at <run>/kl-reference/<id>;
+            # the descriptor is rebuilt from file hashes and must match the id.
+            if context.reference is None or context.reference.checkpoint_id != config.kl_reference_checkpoint:
+                if context.reference is not None:
+                    context.reference.close()
+                    context.reference = None
+                directory = root/'kl-reference'/config.kl_reference_checkpoint
+                need(directory.is_dir() and not directory.is_symlink(), 'pre-staged KL reference checkpoint')
+                from .mimo_runtime import file_hash
+                files = {p.name: file_hash(p) for p in sorted(directory.iterdir()) if p.is_file()}
+                need(digest(files) == config.kl_reference_checkpoint, 'KL reference bytes match signed id')
+                loader = load_reference_runtime or (lambda path, desc: MimoRuntime.load(path, desc,
+                    manifest['mimo_runtime'], device='cuda', trainable=False))
+                context.reference = loader(directory, dict(id=config.kl_reference_checkpoint, files=files))
+            reference_runtime = context.reference
         event_path = out/'training-events.jsonl'
         with event_path.open('a') as events:
             def record(row):
@@ -358,7 +382,7 @@ def execute(job, manifest, authority, workspace, out, report, *, cache=None,
                 source_closure_sha256=source, assert_trainer_lease=guard, publish_model=publisher,
                 commit_current=private_current_callback(current_path, publisher, run=binding.run,
                     assert_trainer_lease=guard, release_policy=release_policy, manifest=manifest),
-                retire_published_models=True, record=record)
+                retire_published_models=True, record=record, reference_runtime=reference_runtime)
         # An initial download owned by this run is obsolete only after CURRENT
         # points to a fully read-back export and runtime guard references it.
         initial_root = root/'initial-checkpoint'

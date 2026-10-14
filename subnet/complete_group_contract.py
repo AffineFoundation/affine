@@ -15,7 +15,35 @@ GROUP_VERSION = 'complete-canonical-group-v1'
 COMPLETE_GROUP_SAMPLING_VERSION = 'forced-inverse-cdf-complete-group-v1'
 MIMO_SAMPLING_VERSION = 'forced-inverse-cdf-complete-group-mimo-v1'
 COMPLETE_GROUP_SAMPLING_VERSIONS = frozenset({COMPLETE_GROUP_SAMPLING_VERSION, MIMO_SAMPLING_VERSION})
-OUTCOME_POLICY = 'completed-eos-math-unresolved-masked-v1'
+# v1: only completed wrong answers ('negative') satisfy min_completed_failure;
+# unresolved/runaway rollouts ('neutral') are retained but never count.
+LEGACY_OUTCOME_POLICY = 'completed-eos-math-unresolved-masked-v1'
+# v2: unresolved (budget-capped or EOS without a gradable answer) rollouts are
+# trained with reward 0 and count as failures for group admission, so a group
+# of 4 correct + 4 runaways is admitted. Zero-variance groups (no success or
+# no failure of either kind) are still rejected by the two minima.
+UNRESOLVED_FAILURE_POLICY = 'completed-eos-math-unresolved-failure-v2'
+OUTCOME_POLICIES = frozenset({LEGACY_OUTCOME_POLICY, UNRESOLVED_FAILURE_POLICY})
+OUTCOME_POLICY = UNRESOLVED_FAILURE_POLICY
+
+
+def failure_count(counts, policy):
+    """Failures that satisfy min_completed_failure under the signed policy.
+
+    counts maps native classification -> count (Counter/dict; missing = 0).
+    """
+    if policy == LEGACY_OUTCOME_POLICY:
+        return counts.get('negative', 0)
+    if policy == UNRESOLVED_FAILURE_POLICY:
+        return counts.get('negative', 0) + counts.get('neutral', 0)
+    raise ValueError('unknown completed/unresolved outcome policy')
+
+
+def meets_minima(counts, group):
+    """Mixed-outcome admission for a signed group_contract dict or contract."""
+    get = (lambda k: group[k]) if isinstance(group, dict) else (lambda k: getattr(group, k))
+    return (counts.get('positive', 0) >= get('min_success') and
+            failure_count(counts, get('outcome_policy')) >= get('min_completed_failure'))
 LEGACY_SAMPLING_VERSIONS = frozenset({
     'forced-inverse-cdf-replay-v1',
     'forced-inverse-cdf-prefill-v2',
@@ -171,7 +199,7 @@ def for_manifest(
     good = _integer(group['min_success'], 1, n, 'min_success')
     wrong = _integer(group['min_completed_failure'], 1, n, 'min_completed_failure')
     _need(good + wrong <= n, 'independent outcome minima exceed group size')
-    _need(group['outcome_policy'] == OUTCOME_POLICY, 'unknown completed/unresolved outcome policy')
+    _need(group['outcome_policy'] in OUTCOME_POLICIES, 'unknown completed/unresolved outcome policy')
     _need(type(sampling) is dict and set(sampling) == NEW_SAMPLING_FIELDS,
           'exact group sampling fields required; derive nonce range from group_size only')
     _need(version in COMPLETE_GROUP_SAMPLING_VERSIONS,
@@ -190,4 +218,5 @@ def for_manifest(
     _need(isinstance(supported_features, Collection) and not isinstance(supported_features, (str, bytes))
           and all(type(f) is str for f in supported_features), 'supported features must be a string collection')
     _need(set(features) <= set(supported_features), 'unsupported required client feature; upgrade required')
-    return CompleteGroupContract(n, good, wrong, limit, tuple(sorted(features)), sampling_version=version)
+    return CompleteGroupContract(n, good, wrong, limit, tuple(sorted(features)), sampling_version=version,
+                                 outcome_policy=group['outcome_policy'])

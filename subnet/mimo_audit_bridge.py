@@ -12,6 +12,7 @@ from .backend_jobs import signed
 from .storage import canonical, sha
 from .complete_group_admission import validate_commitment
 from .complete_group_native_receipts import _validate as validate_native, COMPACT
+from .complete_group_contract import meets_minima
 from .continuous_audit_policy import population, digest, finite, integer
 from .mimo_worker import submission_reference, validate_submissions, validate_report, VERSION as WORKER
 
@@ -116,7 +117,7 @@ def build_population(opening, captures, commitments, dispatch, registrations, *,
              grade['manifest_sha256'] == digest(m) and
              len(grade['results']) == m['group_contract']['group_size'], 'complete original native grade binding')
         counts = Counter(g['classification'] for g in grade['results'])
-        passes = counts['positive'] >= m['group_contract']['min_success'] and counts['negative'] >= m['group_contract']['min_completed_failure']
+        passes = meets_minima(counts, m['group_contract'])
         need(passes == (reason != 'native-outcome-minima-not-met'), 'native outcome minima disposition')
         if passes: mixed.append(row)
         if reason in (None, 'training-task-budget'): eligible.append(digest(row))
@@ -210,8 +211,7 @@ def admit_queue_reports(queue_rows, populations, *, authority, verifiers, approv
                          all(type(r.get('positions'))is int and r['positions']>0 and r.get('all_intervals_verified')is True
                              for r in outcome['rollouts']), 'all nonce token positions verified')
                     summary=audit['accepted'][0];counts=summary['outcome_counts']
-                    need(counts['positive']>=m['group_contract']['min_success'] and
-                         counts['negative']>=m['group_contract']['min_completed_failure'] and
+                    need(meets_minima(counts, m['group_contract']) and
                          summary['generated_tokens']==sum(r['positions'] for r in outcome['rollouts']),
                          'audited native minima and exact total token coverage')
                     result='verified_valid'

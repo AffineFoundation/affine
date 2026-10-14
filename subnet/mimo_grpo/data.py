@@ -47,15 +47,19 @@ class TaskGroup:
     # Native admission content receipt, not a miner signature on outcome claims.
     admission_sha256: str
 
-    def validate(self, size, *, vocab_size, eos_token_ids):
+    def validate(self, size, *, vocab_size, eos_token_ids, unresolved_failures=False):
+        """unresolved_failures: the signed outcome policy counts unresolved
+        (runaway) rollouts as failures and the trainer trains them (reward 0)."""
         if type(self.task_id) is not str or not self.task_id or not sha(self.admission_sha256) or not self.prompt:
             raise ValueError('trusted task, prompt and admission receipt required')
         if (len(self.trajectories) != size or any(type(r.nonce) is not int for r in self.trajectories)
                 or [r.nonce for r in self.trajectories] != list(range(size))):
             raise ValueError('exact ordered nonce set 0 through N-1')
         outcomes = [r.outcome for r in self.trajectories]
-        if 'correct' not in outcomes or 'wrong' not in outcomes:
-            raise ValueError('one completed correct and one completed wrong required')
+        if 'correct' not in outcomes or not ('wrong' in outcomes or
+                                             (unresolved_failures and 'unresolved' in outcomes)):
+            raise ValueError('one completed correct and one completed wrong required'
+                             + (' (or unresolved failure)' if unresolved_failures else ''))
         for token in self.prompt:
             if type(token) is not int or not 0 <= token < vocab_size:
                 raise ValueError('valid trusted prompt tokens')

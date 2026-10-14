@@ -50,14 +50,35 @@ def reference():
     functional = dict(torch=torch)
     _load(root / 'verl/utils/torch_functional.py', FUNCTIONAL_SHA, ('masked_sum', 'masked_mean'), functional)
     namespace['verl_F'] = SimpleNamespace(**{k: functional[k] for k in ('masked_sum', 'masked_mean')})
-    names = ('compute_grpo_outcome_advantage', 'compute_prompt_loss_weights', 'agg_loss', 'compute_policy_loss_vanilla')
+    names = ('compute_grpo_outcome_advantage', 'compute_prompt_loss_weights', 'agg_loss',
+             'compute_policy_loss_vanilla', 'kl_penalty_forward')
     _load(root / 'verl/trainer/ppo/core_algos.py', CORE_SHA, names, namespace)
     return SimpleNamespace(**{name: namespace[name] for name in names})
 
 
-def policy_loss(old, current, advantages, mask, prompt_weights, config):
+def batch_info(config, prompt_weights=None, global_batch_size=None):
+    """Global (not microbatch-local) normalizers for the pinned agg_loss."""
+    if config.loss_agg_mode == 'prompt-mean':
+        return dict(prompt_loss_weights=prompt_weights, dp_size=1)
+    if type(global_batch_size) is not int or global_batch_size < 1:
+        raise ValueError('constant normalization needs the global active rollout count')
+    return dict(global_batch_size=global_batch_size, loss_scale_factor=config.loss_scale_factor, dp_size=1)
+
+
+def policy_loss(old, current, advantages, mask, prompt_weights, config, *, global_batch_size=None):
     actor = ActorConfig(clip_ratio=config.clip_ratio, clip_ratio_low=config.clip_ratio,
         clip_ratio_high=config.clip_ratio, clip_ratio_c=config.dual_clip,
-        global_batch_info=dict(prompt_loss_weights=prompt_weights, dp_size=1))
+        global_batch_info=batch_info(config, prompt_weights, global_batch_size))
     return reference().compute_policy_loss_vanilla(old, current, advantages, mask,
-        loss_agg_mode='prompt-mean', config=actor)
+        loss_agg_mode=config.loss_agg_mode, config=actor)
+
+
+def aggregate(loss_mat, mask, prompt_weights, config, *, global_batch_size=None):
+    """Same pinned aggregation as the policy loss, for KL/corrected terms."""
+    return reference().agg_loss(loss_mat=loss_mat, loss_mask=mask, loss_agg_mode=config.loss_agg_mode,
+                                **batch_info(config, prompt_weights, global_batch_size))
+
+
+def k3_kl(current, reference_logprob):
+    """Pinned upstream k3 estimator: exp(ref-cur) - (ref-cur) - 1, clamped."""
+    return reference().kl_penalty_forward(current, reference_logprob, 'low_var_kl')

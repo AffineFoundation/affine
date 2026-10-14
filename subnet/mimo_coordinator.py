@@ -23,6 +23,7 @@ from .complete_group_capture import AdmissionLedger, capture, _get, _immutable
 from .complete_group_transport import capability
 from .complete_group_admission import TaskAuthority
 from .complete_group_native_receipts import compact_native_grades
+from .complete_group_contract import meets_minima
 from .batch_contract import for_manifest, REQUIRED_CLIENT_FEATURES, CompleteGroupContract
 
 VERSION = 'mimo-complete-group-coordinator-v1'
@@ -235,7 +236,7 @@ class Coordinator:
                     outcomes = Counter(row['classification'] for row in grades['results'])
                     group = manifest['group_contract']
                     reason = None
-                    if outcomes['positive'] < group['min_success'] or outcomes['negative'] < group['min_completed_failure']:
+                    if not meets_minima(outcomes, group):
                         reason = 'native-outcome-minima-not-met'
                     row = dict(miner=miner, env_id=batch['env_id'], index=batch['index'],
                         document=item, batch_sha256=grades['batch_sha256'],

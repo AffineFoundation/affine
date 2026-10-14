@@ -64,9 +64,12 @@ def prepare_signed_dispatch(opening, dispatch, *, authority, documents_root,
                 row.get('assurance') != 'natively-graded-sampling-unaudited' or
                 row['env_id'] != batch['env_id'] or row['index'] != batch['index']):
             raise ValueError('host native grading must bind committed original task and batch')
+        from ..complete_group_contract import UNRESOLVED_FAILURE_POLICY
+        unresolved_failures = manifest['group_contract'].get('outcome_policy') == UNRESOLVED_FAILURE_POLICY
         group, receipt = project_document(document, expected_document_sha256=checksum,
             binding=binding, trusted_prompt=grade['prompt'], native_results=grade['results'],
-            vocab_size=runtime.vocab_size, eos_token_ids=runtime.eos_token_ids, group_size=group_size)
+            vocab_size=runtime.vocab_size, eos_token_ids=runtime.eos_token_ids, group_size=group_size,
+            unresolved_failures=unresolved_failures)
         groups.append(group)
         receipts.append(receipt)
     if len({g.task_id for g in groups}) != len(groups):

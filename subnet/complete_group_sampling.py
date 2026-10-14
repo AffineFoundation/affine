@@ -56,13 +56,13 @@ def validate_sampling(value):
 
 
 def _group(value):
-    from .complete_group_contract import GROUP_FIELDS, GROUP_VERSION, OUTCOME_POLICY
+    from .complete_group_contract import GROUP_FIELDS, GROUP_VERSION, OUTCOME_POLICIES
     need(type(value) is dict and set(value) == GROUP_FIELDS and value['version'] == GROUP_VERSION,
          'exact complete group contract')
     n = integer(value['group_size'], 2, 128, 'group_size')
     good = integer(value['min_success'], 1, n, 'min_success')
     wrong = integer(value['min_completed_failure'], 1, n, 'min_completed_failure')
-    need(good + wrong <= n and value['outcome_policy'] == OUTCOME_POLICY, 'complete group outcome minima/policy')
+    need(good + wrong <= n and value['outcome_policy'] in OUTCOME_POLICIES, 'complete group outcome minima/policy')
     return n
 
 

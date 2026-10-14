@@ -360,6 +360,56 @@ class MimoRuntime:
     def score(self, prompt, output, *, gradients=False):
         return self.response_log_probs(prompt, output, gradients=gradients)
 
+    def score_support(self, prompt_ids, output_ids, *, top_k, top_p, token_chunk_size=128):
+        """OLD selected log-probs plus the replayed sampler support (no grad).
+
+        Used only when the trainer's sampler_correction flag is enabled. The
+        support is recomputed from trusted prefill logits, never miner claims.
+        """
+        import torch
+        from .mimo_grpo.sampler_correction import replay_support
+        self.guard()
+        prompt, output = self._tokens(prompt_ids), self._tokens(output_ids)
+        _need(len(prompt) + len(output) <= self.max_context_tokens, "response context limit")
+        with torch.no_grad():
+            hidden = self.model.model(torch.tensor([prompt + output], device=self.device),
+                                      use_cache=False).last_hidden_state[0, len(prompt)-1:-1]
+            targets = torch.tensor(output, device=self.device)
+            selected, indices, qs = [], [], []
+            for start in range(0, len(output), token_chunk_size):
+                logits = self.model.lm_head(hidden[start:start+token_chunk_size]).float()
+                ts = targets[start:start+token_chunk_size]
+                selected.append(logits.gather(-1, ts[:, None]).squeeze(-1) - torch.logsumexp(logits, dim=-1))
+                index, q = replay_support(logits, top_k, top_p)
+                indices.append(index); qs.append(q)
+            return torch.cat(selected), torch.cat(indices), torch.cat(qs)
+
+    def score_candidates(self, prompt_ids, output_ids, indices, *, gradients=True, token_chunk_size=128):
+        """Selected raw log-probs and logits restricted to replayed candidates."""
+        import torch
+        from torch.utils.checkpoint import checkpoint
+        self.guard()
+        prompt, output = self._tokens(prompt_ids), self._tokens(output_ids)
+        _need(len(prompt) + len(output) <= self.max_context_tokens, "response context limit")
+        _need(not gradients or self.trainable, "inference runtime cannot train")
+        indices = torch.as_tensor(indices, device=self.device)
+        _need(indices.ndim == 2 and indices.shape[0] == len(output), "candidate ids for every position")
+        with torch.set_grad_enabled(gradients):
+            hidden = self.model.model(torch.tensor([prompt + output], device=self.device),
+                                      use_cache=False).last_hidden_state[0, len(prompt)-1:-1]
+            targets = torch.tensor(output, device=self.device)
+            def both(states, tokens, ids):
+                logits = self.model.lm_head(states).float()
+                return torch.cat([(logits.gather(-1, tokens[:, None]) -
+                                   torch.logsumexp(logits, dim=-1, keepdim=True)), logits.gather(-1, ids)], -1)
+            chunks = []
+            for start in range(0, len(output), token_chunk_size):
+                args = (hidden[start:start+token_chunk_size], targets[start:start+token_chunk_size],
+                        indices[start:start+token_chunk_size])
+                chunks.append(checkpoint(both, *args, use_reentrant=False) if gradients else both(*args))
+            values = torch.cat(chunks)
+            return values[:, 0], values[:, 1:]
+
     def prefill_log_probs(self, prompt, output):
         return self.response_log_probs(prompt, output, gradients=False)
 

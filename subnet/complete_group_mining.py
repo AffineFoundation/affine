@@ -4,6 +4,7 @@ The version-dispatched R2 transport adapter validates new wire semantics,
 restores/prepares/persists complete groups and uploads the exact prepared bytes.
 The local attempt journal preserves a task's original nonce prefix separately.
 """
+from collections import Counter
 from copy import deepcopy
 import hashlib
 import math
@@ -15,6 +16,7 @@ from verifiers.v1.errors import TaskError
 from .storage import canonical
 from .batch_contract import CompleteGroupContract, REQUIRED_CLIENT_FEATURES
 from .complete_group_state import AttemptJournal
+from .complete_group_contract import meets_minima
 
 BATCH_VERSION = 'complete-canonical-group-batch-v1'
 BEHAVIOR_VERSION = 'sampler-selected-behavior-logprobs-v1'
@@ -209,8 +211,7 @@ def validate_group(batch, manifest, contract, context, miner):
         _validate_witness(turn.get('behavior_sampling'), prompt, output, nonce, context, stop)
     # No generated-content hash uniqueness requirement: distinct assigned
     # attempts may legitimately produce the same tokens.
-    need(sum(r['classification'] == 'positive' for r in rows) >= contract.min_success
-         and sum(r['classification'] == 'negative' for r in rows) >= contract.min_completed_failure,
+    need(meets_minima(Counter(r['classification'] for r in rows), contract),
          'complete original group does not satisfy mixed-outcome minima')
 
 
@@ -285,8 +286,7 @@ def search(actor, index, *, seed=0, max_attempts=None, env_id=None):
         actor._progress('attempt_end', env_id=env_id, index=index, attempt=nonce,
                         outcome=row['classification'], elapsed=time.monotonic()-started)
     rows, arrays = [x[0] for x in records], [x[1] for x in records]
-    if (sum(r['classification'] == 'positive' for r in rows) < contract.min_success
-            or sum(r['classification'] == 'negative' for r in rows) < contract.min_completed_failure):
+    if not meets_minima(Counter(r['classification'] for r in rows), contract):
         actor._group_journal.finish(key, 'filtered')
         actor._progress('task_exhausted', env_id=env_id, index=index)
         raise GroupFiltered('complete original group lacks required mixed outcomes')

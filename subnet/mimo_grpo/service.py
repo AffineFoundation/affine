@@ -73,7 +73,7 @@ def execute_transaction(workspace, runtime, optimizer, groups, binding, *,
                         manifest_sha256, source_closure_sha256, assert_trainer_lease,
                         publish_model, config=TrainerConfig(), record=lambda row: None,
                         microbatch_rollouts=1, shard_bytes=256 * 1024**2,
-                        commit_current=None, retire_published_models=False):
+                        commit_current=None, retire_published_models=False, reference_runtime=None):
     """One original update or publication recovery, never automatic retraining.
 
     publish_model(request) must perform immutable/idempotent R2 publication and
@@ -89,7 +89,8 @@ def execute_transaction(workspace, runtime, optimizer, groups, binding, *,
     groups = tuple(groups)
     if not groups:
         report = train_update(runtime, optimizer, groups, binding, config=config,
-            guard=assert_trainer_lease, record=record, microbatch_rollouts=microbatch_rollouts)
+            guard=assert_trainer_lease, record=record, microbatch_rollouts=microbatch_rollouts,
+            reference_runtime=reference_runtime)
         return dict(state='no-update', output_checkpoint=binding.checkpoint,
                     report=report, publication=None)
     job = training_job(groups, binding, config, manifest_sha256=manifest_sha256,
@@ -104,7 +105,8 @@ def execute_transaction(workspace, runtime, optimizer, groups, binding, *,
     def update():
         assert_trainer_lease()
         report = train_update(runtime, optimizer, groups, binding, config=config,
-            guard=assert_trainer_lease, record=record, microbatch_rollouts=microbatch_rollouts)
+            guard=assert_trainer_lease, record=record, microbatch_rollouts=microbatch_rollouts,
+            reference_runtime=reference_runtime)
         return dict(report, input_documents_sha256=list(documents),
                     runtime_context=dict(manifest_sha256=manifest_sha256,
                                          source_closure_sha256=source_closure_sha256))

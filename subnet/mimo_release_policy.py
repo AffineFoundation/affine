@@ -132,7 +132,7 @@ class ReleasePolicy:
     @staticmethod
     def _validate_public_protocol(scope):
         from .complete_group_distribution import MIMO_VERSION
-        from .complete_group_contract import GROUP_VERSION, OUTCOME_POLICY
+        from .complete_group_contract import GROUP_VERSION, OUTCOME_POLICIES
         from .mimo_runtime import validate_runtime_spec
         from .mimo_answer_projection import POLICY, POLICY_KEY as ANSWER_KEY
         m = scope['immutable_manifest']
@@ -144,8 +144,9 @@ class ReleasePolicy:
                  for k in ('torch','transformers','toploc')) and bool(fingerprint['sources'])
              and all(_hash(v) for v in fingerprint['sources'].values()),
              'concrete dependency versions and native/source fingerprints required')
-        need(m.get('group_contract') == dict(version=GROUP_VERSION, group_size=8,
-             min_success=1, min_completed_failure=1, outcome_policy=OUTCOME_POLICY)
+        need(type(m.get('group_contract')) is dict and m['group_contract'].get('outcome_policy') in OUTCOME_POLICIES
+             and m['group_contract'] == dict(version=GROUP_VERSION, group_size=8,
+             min_success=1, min_completed_failure=1, outcome_policy=m['group_contract']['outcome_policy'])
              and m.get('max_batches') == 9, 'qualified N8 mixed complete groups and nine-group cap')
         need(m['sampling_contract'].get('version') == MIMO_VERSION and m.get(ANSWER_KEY) == POLICY,
              'qualified sampler and final-channel grading projection')
