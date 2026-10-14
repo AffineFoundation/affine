@@ -47,26 +47,3 @@ The conservative transition takes the stricter legacy/MiMo confidence and
 penalty factors during overlap. This is an explicit temporary transition policy,
 not a mathematically pooled posterior. Its retirement must be reviewed so a
 frozen historical factor cannot constrain new cohorts indefinitely.
-
-
-## Temporary diagnostic deferrals
-
-`ops/mimo_quarantine_writer.py` can wrap the existing sole writer under an
-explicit ROOT-signed composition. It authenticates the original MiMo evidence
-first, then defers only individually named reports bound to their original job,
-report, signed request, worker, miner, epoch, checkpoint and diagnostic digest.
-The original verifier verdict and signed artifacts remain unchanged.
-
-This is an evidence dispute mechanism, not a new sampling acceptance rule.
-Deferred reports neither count as verified successes nor impose invalid-sample
-penalties or numerical-resolution penalties. All other observations, eligible
-batch counts and the existing confidence estimator continue unchanged. The
-public contract's sampling tolerances are not widened.
-
-Each disposition has a prospective hourly cutoff, explicit reason and bounded
-expiry. The writer records the disposition in its deferred evidence. Expiration
-requires resolution or a newly reviewed disposition; it does not silently turn
-an unresolved diagnostic into fraud. If the evidence reader cannot proceed, the
-original hourly writer retains its authenticated last-best assessment. Its
-transaction cursor, six-hour EMA, current UID mapping and no-burn behavior are
-unchanged. Never start a second writer to apply a disposition.
