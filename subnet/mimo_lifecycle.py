@@ -107,24 +107,44 @@ class Lifecycle:
 
     def _adopt_succession(self, path, current):
         """Atomically re-stamp a CURRENT governed by a predecessor release onto
-        the active succession member, once, when the cursor sits exactly at the
-        active release's initial (cutover) checkpoint. Fail-closed: without a
-        signed chain, or any mismatch, the release/config check below rejects the
-        predecessor cursor exactly as before.
+        the active succession member, once. The cursor may sit at any checkpoint
+        the predecessor legitimately reached: at the active release's pinned
+        initial checkpoint no handover is needed, otherwise the existing
+        predecessor handover certificate is re-attested under the active release,
+        binding the exact same input checkpoint, optimizer step and publication
+        receipt. Fail-closed: without a signed chain, a non-successor predecessor,
+        or any mismatch, the release/config check below rejects the cursor as
+        before.
         """
         if (self.chain is None or current.get('version') != VERSION
                 or current.get('policy_sha256') == self.policy.policy_sha256):
             return current
-        if not self.chain.succeeds(current.get('policy_sha256'), self.policy.policy_sha256):
+        bound = current.get('policy_sha256')
+        if not self.chain.succeeds(bound, self.policy.policy_sha256):
             return current
-        need(current.get('checkpoint') == self.policy.scope['initial_checkpoint'],
-             'release succession must continue from the active initial checkpoint')
         need(type(current.get('round')) is int and type(current.get('epoch_index')) is int
              and type(current.get('optimizer_step')) is int,
              'predecessor cursor must carry its durable epoch lineage')
+        checkpoint = descriptor(current['checkpoint'])
+        if current['checkpoint'] == self.policy.scope['initial_checkpoint']:
+            authorization = None
+        else:
+            prior = current.get('checkpoint_authorization')
+            need(prior is not None,
+                 'a successor from a trained checkpoint needs the predecessor handover')
+            attested = signed(prior, self.identity.id)
+            need(attested.get('policy_sha256') == bound
+                 and attested.get('run_id') == self.policy.run_id
+                 and attested.get('checkpoint') == checkpoint,
+                 'predecessor handover must bind this cursor checkpoint under the predecessor release')
+            authorization = self.policy.authorize_checkpoint(current['checkpoint'],
+                input_checkpoint=attested['input_checkpoint'],
+                optimizer_step=attested['optimizer_step'],
+                publication_receipt_sha256=attested['publication_receipt_sha256'],
+                identity=self.identity)
         adopted = dict(current, policy_sha256=self.policy.policy_sha256,
                        collection_seconds=self.collection_seconds, max_tasks=self.max_tasks,
-                       checkpoint_authorization=None)
+                       checkpoint_authorization=authorization)
         save_manifest(path, adopted)
         return adopted
 

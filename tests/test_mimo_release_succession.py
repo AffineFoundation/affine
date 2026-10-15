@@ -16,6 +16,9 @@ from subnet.storage import Identity
 from subnet.mimo_release_policy import (ReleasePolicy, build_policy, policy_scope,
     sign, digest, POLICY_KEY, QUALIFICATIONS, QUALIFICATION_VERSION)
 from subnet.mimo_release_succession import ReleaseChain, load_release, SUCCESSION_VERSION
+from subnet.mimo_release_policy import descriptor
+from subnet.mimo_lifecycle import VERSION as LC_VERSION
+from subnet.backend_jobs import signed
 import subnet.mimo_training_worker as training_worker
 
 
@@ -183,6 +186,33 @@ class LifecycleSuccessionTests(LifecycleTests):
                          (current['round'], current['epoch_index']))   # lineage preserved
         on_disk = json.loads((self.root/'run/CURRENT.json').read_bytes())
         self.assertEqual(on_disk['policy_sha256'], digest(v2))
+
+
+    def test_switch_from_trained_checkpoint_reattests_handover(self):
+        # The cursor sits on a trained checkpoint reached under v1, carrying a v1
+        # handover certificate; adoption must re-attest that handover under v2 so
+        # the first v2 epoch opens from the live trained checkpoint, not a rewind.
+        self.lifecycle._current()                       # create run dir + base CURRENT
+        trained_files = dict(self.base['files']); trained_files[sorted(trained_files)[0]] = 'f'*64
+        trained = descriptor({'id': digest(trained_files), 'files': trained_files})
+        pol = ReleasePolicy(self.policy, self.authority.id, allow_public=True)
+        cert = pol.authorize_checkpoint(trained, input_checkpoint=self.base['id'],
+            optimizer_step=5, publication_receipt_sha256='d'*64, identity=self.authority)
+        current = dict(version=LC_VERSION, policy_sha256=digest(self.policy), epoch_index=3,
+            round=203, optimizer_step=5, checkpoint=trained, checkpoint_authorization=cert,
+            collection_seconds=120, max_tasks=1)
+        (self.root/'run/CURRENT.json').write_bytes(json.dumps(current).encode())
+        _, v2 = self._successor(); chain_env = self._chain(v2)
+        adopted = self._v2_lifecycle(v2, chain_env)._current()
+        self.assertEqual(adopted['policy_sha256'], digest(v2))
+        self.assertEqual(adopted['checkpoint'], trained)       # no rewind to initial
+        newcert = signed(adopted['checkpoint_authorization'], self.authority.id)
+        self.assertEqual(newcert['policy_sha256'], digest(v2))
+        self.assertEqual(newcert['checkpoint'], trained)
+        self.assertEqual(newcert['input_checkpoint'], self.base['id'])
+        self.assertEqual(newcert['optimizer_step'], 5)
+        self.assertEqual(newcert['publication_receipt_sha256'], 'd'*64)
+        self.assertEqual((adopted['round'], adopted['epoch_index']), (203, 3))
 
     def test_new_epoch_after_switch_plans_under_the_active_member(self):
         self.lifecycle._current()
