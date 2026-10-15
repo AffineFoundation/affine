@@ -47,8 +47,11 @@ class EvaluationScheduler:
         need(not path.is_symlink() and path.stat().st_size <= 32*1024**2,
              'bounded original evaluator state')
         state = json.loads(path.read_bytes())
+        member = getattr(self.policy, 'member', None)
+        same_release = (state['policy_sha256'] == self.policy.policy_sha256
+                        or (callable(member) and member(state['policy_sha256']) is not None))
         need(state['version'] == 'mimo-evaluation-scheduler-v1'
-             and state['policy_sha256'] == self.policy.policy_sha256
+             and same_release
              and state['set_name'] == self.set_name, 'same evaluator release and suite')
         return state
 
@@ -114,7 +117,8 @@ class EvaluationScheduler:
             if active: return dict(status='evaluating', jobs=active)
             pending = [(k, r) for k, r in state['checkpoints'].items() if r['status'] in ('pending', 'skipped')]
             if not pending: return dict(status='caught-up')
-            baseline = self.policy.scope['initial_checkpoint']['id']
+            baseline = (getattr(self.policy, 'baseline_checkpoint_id', None)
+                        or self.policy.scope['initial_checkpoint']['id'])
             first = [pair for pair in pending if pair[1]['checkpoint'] == baseline]
             key, row = min(first, key=lambda p:p[1]['first_seen']) if first else max(pending, key=lambda p:p[1]['first_seen'])
             for other_key, other in pending:

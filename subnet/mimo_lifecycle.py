@@ -56,11 +56,17 @@ class Services:
 class Lifecycle:
     def __init__(self, root, bucket, identity, policy, services, *, resolve_task, grade_batch,
                  allow_public=False, collection_seconds=1200, max_tasks=512, first_round=0,
-                 previous_discovery_sha256=None, grade_batches=None):
+                 previous_discovery_sha256=None, release_succession=None, grade_batches=None):
         self.root = Path(root).absolute()
         need(self.root.resolve() == self.root, 'ordinary lifecycle state ancestry')
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.policy = ReleasePolicy(policy, identity.id, allow_public=allow_public)
+        self.chain = None
+        if release_succession is not None:
+            from .mimo_release_succession import ReleaseChain
+            self.chain = ReleaseChain(release_succession, identity.id, allow_public=allow_public)
+            need(self.chain.active.policy_sha256 == self.policy.policy_sha256,
+                 'lifecycle release policy must be the active succession member')
         need(type(collection_seconds) is int and 1 <= collection_seconds <= 3600
              and type(max_tasks) is int and 1 <= max_tasks <= 512
              and type(first_round) is int and first_round >= 0, 'bounded explicit lifecycle limits')
@@ -92,12 +98,35 @@ class Lifecycle:
                 epoch_index=0, round=self.first_round, checkpoint=self.policy.scope['initial_checkpoint'],
                 optimizer_step=0, checkpoint_authorization=None, previous_discovery_sha256=self.previous_discovery_sha256,
                 collection_seconds=self.collection_seconds, max_tasks=self.max_tasks))
-        current = self._load(path)
+        current = self._adopt_succession(path, self._load(path))
         need(current.get('version') == VERSION and current.get('policy_sha256') == self.policy.policy_sha256
              and current.get('collection_seconds') == self.collection_seconds
              and current.get('max_tasks') == self.max_tasks, 'same original lifecycle release/configuration')
         descriptor(current['checkpoint'])
         return current
+
+    def _adopt_succession(self, path, current):
+        """Atomically re-stamp a CURRENT governed by a predecessor release onto
+        the active succession member, once, when the cursor sits exactly at the
+        active release's initial (cutover) checkpoint. Fail-closed: without a
+        signed chain, or any mismatch, the release/config check below rejects the
+        predecessor cursor exactly as before.
+        """
+        if (self.chain is None or current.get('version') != VERSION
+                or current.get('policy_sha256') == self.policy.policy_sha256):
+            return current
+        if not self.chain.succeeds(current.get('policy_sha256'), self.policy.policy_sha256):
+            return current
+        need(current.get('checkpoint') == self.policy.scope['initial_checkpoint'],
+             'release succession must continue from the active initial checkpoint')
+        need(type(current.get('round')) is int and type(current.get('epoch_index')) is int
+             and type(current.get('optimizer_step')) is int,
+             'predecessor cursor must carry its durable epoch lineage')
+        adopted = dict(current, policy_sha256=self.policy.policy_sha256,
+                       collection_seconds=self.collection_seconds, max_tasks=self.max_tasks,
+                       checkpoint_authorization=None)
+        save_manifest(path, adopted)
+        return adopted
 
     def _coordinator(self, directory):
         return Coordinator(directory / 'coordinator', self.bucket, self.identity,

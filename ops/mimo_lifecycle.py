@@ -30,6 +30,15 @@ def run(args):
     actor=identity(config['authority_seed_file'])
     from subnet.mimo_release_policy import ReleasePolicy
     policy=ReleasePolicy(config['release_policy'],actor.id,allow_public=args.allow_public_mimo)
+    release_succession=config.get('release_succession')
+    release_chain=None
+    if release_succession is not None:
+        from subnet.mimo_release_succession import ReleaseChain
+        release_chain=ReleaseChain(release_succession,actor.id,allow_public=args.allow_public_mimo)
+        if release_chain.active.policy_sha256!=policy.policy_sha256:
+            raise ValueError('configured release policy must be the active succession member')
+    release=release_chain if release_chain is not None else policy
+    release_guard=release.validate_manifest
     from subnet.storage import Bucket
     from subnet.distributed_roles import Coordinator as Queue,CoordinatorServer
     from subnet.chain import ChainAdapter
@@ -67,7 +76,7 @@ def run(args):
     lifecycle=Lifecycle(state,bucket,actor,config['release_policy'],adapter.services(),
         resolve_task=lambda m,e,i:resolve_task(m,e,i,tokenizer),
         grade_batch=lambda b,m,miner:grade_batch(b,m,tokenizer,miner=miner),
-        grade_batches=native_pool,
+        grade_batches=native_pool,release_succession=release_succession,
         allow_public=args.allow_public_mimo,**config.get('lifecycle',{}))
     # This runner owns one explicit loopback API for this exact DB/roster. The
     # operator supplies its private authenticated tunnel; no public bind occurs.
@@ -85,7 +94,7 @@ def run(args):
     if audit_enabled:
         from subnet.mimo_audit_scheduler import AuditScheduler
         scheduler=AuditScheduler(bucket=bucket,queue=queue,identity=actor,
-            manifest_guard=policy.validate_manifest,metadata=lambda m:dict(
+            manifest_guard=release_guard,metadata=lambda m:dict(
                 source_files=adapter.source_files,runtime_versions=adapter.runtime_versions,
                 checkpoint_read_urls=adapter.checkpoint_urls(m['checkpoint'])),**audit_config)
         def audit_loop():
@@ -108,7 +117,7 @@ def run(args):
         raise ValueError('public lifecycle requires its independent evaluator scheduler')
     if eval_enabled:
         from subnet.mimo_evaluation_scheduler import EvaluationScheduler
-        evaluator=EvaluationScheduler(bucket=bucket,queue=queue,identity=actor,policy=policy,
+        evaluator=EvaluationScheduler(bucket=bucket,queue=queue,identity=actor,policy=release,
             metadata=lambda m:dict(source_files=adapter.source_files,runtime_versions=adapter.runtime_versions,
                 checkpoint_read_urls=adapter.checkpoint_urls(m['checkpoint'])),**eval_config)
         def evaluation_loop():

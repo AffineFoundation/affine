@@ -146,7 +146,7 @@ class EvidenceSource:
     """
     def __init__(self, document, authority, *, snapshot, current_estimates, observation_reader, allow_public=False):
         from pathlib import Path
-        from .mimo_release_policy import ReleasePolicy
+        from .mimo_release_succession import load_release
         p=signed(document,authority)
         need(type(p)is dict and set(p)=={'version','directory','queue_path','release_policy',
             'approved_execution','audit_policy','verifiers','transition_policy'} and
@@ -155,7 +155,7 @@ class EvidenceSource:
              'explicit admitted verifier roster')
         for field in ('directory','queue_path'):
             path=Path(p[field]);need(path.is_absolute() and path.resolve()==path,'ordinary exact evidence source path')
-        self.release=ReleasePolicy(p['release_policy'],authority,allow_public=allow_public)
+        self.release=load_release(p['release_policy'],authority,allow_public=allow_public)
         need(callable(current_estimates) and callable(observation_reader), 'pinned deployed global assessment reducers')
         self.current_estimates,self.observation_reader=current_estimates,observation_reader
         self.policy,self.authority,self.snapshot=p,authority,snapshot

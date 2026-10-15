@@ -158,7 +158,8 @@ def _private_json(path):
 def _role_configuration(job):
     from .storage import Bucket, Identity
     value = _private_json(job['training']['role_config_file'])
-    need(set(value) <= {'bucket','publisher_identity_file','initial_checkpoint_directory'} and
+    need(set(value) <= {'bucket','publisher_identity_file','initial_checkpoint_directory',
+         'release_succession'} and
          {'bucket','publisher_identity_file'} <= set(value), 'trainer role configuration fields')
     key = Path(value['publisher_identity_file'])
     need(key.is_absolute() and not key.is_symlink() and stat.S_ISREG(key.stat().st_mode) and
@@ -178,6 +179,42 @@ def _journal_job(value):
 def _input_binding(job, manifest):
     return InputBinding(job['training']['run_id'], manifest['epoch'], manifest['checkpoint']['id'],
         digest(manifest['group_contract']), job['training']['optimizer_step'])
+
+
+def _release_succession(job, authority, *, allow_public=False):
+    value = _private_json(job['training']['role_config_file'])
+    envelope = value.get('release_succession')
+    if envelope is None:
+        return None
+    from .mimo_release_succession import ReleaseChain
+    return ReleaseChain(envelope, authority, allow_public=allow_public)
+
+
+def _adopt_release_succession(current_path, current, job, authority, release_policy,
+                             source, binding, *, allow_public=False):
+    """Re-stamp a trainer private CURRENT governed by a predecessor release onto
+    the active successor, preserving the optimizer/model lineage, when an
+    operator-signed release chain in the private role config authorizes the switch
+    and the cursor sits exactly at this job's input checkpoint/step. Fail-closed:
+    without a chain, or any mismatch, the lineage checks reject exactly as before.
+    """
+    bound = current.get('release_policy_sha256')
+    active = release_policy.policy_sha256 if release_policy is not None else None
+    if bound == active:
+        return current
+    need(release_policy is not None, 'successor release requires a qualified release policy')
+    chain = _release_succession(job, authority, allow_public=allow_public)
+    need(chain is not None, 'release switch requires a signed release succession in the role config')
+    need(chain.run_id == binding.run, 'release succession run differs from trainer job')
+    need(chain.succeeds(bound, active),
+         'trainer state release does not precede the active release in the chain')
+    need(current.get('run') == binding.run and current.get('checkpoint') == binding.checkpoint
+         and current.get('optimizer_step') == binding.optimizer_step,
+         'release succession must extend the durable current optimizer/model lineage')
+    adopted = dict(current, release_policy_sha256=active,
+                   source_closure_sha256=source, execution_mode=release_policy.mode)
+    _write(current_path, adopted)
+    return json.loads(current_path.read_bytes())
 
 
 def execute(job, manifest, authority, workspace, out, report, *, cache=None,
@@ -260,6 +297,8 @@ def execute(job, manifest, authority, workspace, out, report, *, cache=None,
             initialize_private_current(current_path, binding, source_closure_sha256=source,
                                        release_policy=release_policy, manifest=manifest)
         current = json.loads(current_path.read_bytes())
+        current = _adopt_release_succession(current_path, current, job, authority,
+                                            release_policy, source, binding, allow_public=allow_public)
         need(current.get('release_policy_sha256') ==
              (release_policy.policy_sha256 if release_policy is not None else None),
              'trainer state belongs to a different qualified release')
