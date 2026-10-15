@@ -22,7 +22,8 @@ EXTENSION_DEFAULTS = dict(
     loss_agg_mode=PROMPT_MEAN, loss_scale_factor=0,
     derail_mask=False, derail_window=32, derail_threshold=-3., derail_tail=64,
     kl_reference_checkpoint='', kl_type=K3,
-    sampler_correction=NO_SAMPLER_CORRECTION, sampler_ratio_lower=.2, sampler_ratio_upper=5.)
+    sampler_correction=NO_SAMPLER_CORRECTION, sampler_ratio_lower=.2, sampler_ratio_upper=5.,
+    overlong_soft_start=0, overlong_max_tokens=0, overlong_penalty=0.)
 
 
 def _sha(value):
@@ -72,6 +73,14 @@ class TrainerConfig:
     sampler_correction: str = NO_SAMPLER_CORRECTION
     sampler_ratio_lower: float = .2
     sampler_ratio_upper: float = 5.
+    # Soft overlong penalty (DAPO-style length shaping, OFF by default). The
+    # training reward of every rollout becomes
+    #   float(correct) - overlong_penalty * clip((len - soft_start) / (max_tokens - soft_start), 0, 1)
+    # so lengths past soft_start are discouraged linearly up to the sampling
+    # hard cap (max_tokens). Group advantages are computed from these rewards.
+    overlong_soft_start: int = 0
+    overlong_max_tokens: int = 0
+    overlong_penalty: float = 0.
 
     @property
     def extended(self):
@@ -121,6 +130,15 @@ class TrainerConfig:
         if not (math.isfinite(self.sampler_ratio_lower) and math.isfinite(self.sampler_ratio_upper)
                 and 0 < self.sampler_ratio_lower < 1 < self.sampler_ratio_upper):
             raise ValueError('ordered sampler importance ratio bounds')
+        if type(self.overlong_penalty) not in (int, float) or not math.isfinite(self.overlong_penalty):
+            raise ValueError('finite overlong penalty')
+        if self.overlong_penalty == 0:
+            if self.overlong_soft_start != 0 or self.overlong_max_tokens != 0:
+                raise ValueError('overlong window without an overlong penalty')
+        elif (not 0 < self.overlong_penalty <= 1 or type(self.overlong_soft_start) is not int
+                or type(self.overlong_max_tokens) is not int
+                or not 1 <= self.overlong_soft_start < self.overlong_max_tokens <= 1 << 20):
+            raise ValueError('bounded overlong penalty in (0, 1] with 1 <= soft_start < max_tokens')
         for name in ('learning_rate', 'adam_epsilon', 'max_gradient_norm', 'temperature'):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
                 raise ValueError('positive finite ' + name)
@@ -131,6 +149,14 @@ class TrainerConfig:
                 math.isfinite(self.old_actor_logprob_tolerance) and self.old_actor_logprob_tolerance >= 0):
             raise ValueError('invalid resolved trainer hyperparameters')
         return self
+
+    def reward(self, outcome, length):
+        """Training reward: 1 for correct else 0, minus the soft overlong penalty."""
+        value = float(outcome == 'correct')
+        if self.overlong_penalty:
+            span = self.overlong_max_tokens - self.overlong_soft_start
+            value -= self.overlong_penalty * min(1., max(0., (length - self.overlong_soft_start) / span))
+        return value
 
     def document(self):
         self.validate()
@@ -148,6 +174,8 @@ class TrainerConfig:
             objective += '-derail-masked'
         if self.kl_coefficient:
             objective += '-k3-kl-reference'
+        if self.overlong_penalty:
+            objective += '-overlong-soft-penalty'
         return dict(version='affine-mimo-reference-grpo-v2', upstream_revision=UPSTREAM_REVISION,
             objective=objective, old_source='trusted-training-engine-prefill',
             rollout_correction_bypass_mode=False, optimizer='torch.optim.AdamW-cpu-fp32-masters',

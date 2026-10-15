@@ -59,14 +59,16 @@ def _layout(groups, config):
     """
     rows = []
     for group in groups:
-        rewards = torch.tensor([[float(r.outcome == 'correct')] for r in group.trajectories])
+        rewards = torch.tensor([[config.reward(r.outcome, len(r.tokens))] for r in group.trajectories],
+                               dtype=torch.float32)
         advantages, _ = reference().compute_grpo_outcome_advantage(rewards,
             torch.ones_like(rewards), np.array([group.task_id] * config.group_size),
             norm_adv_by_std_in_grpo=False)
         for rollout, advantage in zip(group.trajectories, advantages[:, 0], strict=True):
             active = not (rollout.outcome == 'unresolved' and config.cap_policy == MASK_UNRESOLVED)
             rows.append(dict(group=group, rollout=rollout, advantage=float(advantage), active=active,
-                             keep=len(rollout.tokens), derail_index=None))
+                             keep=len(rollout.tokens), derail_index=None,
+                             reward=config.reward(rollout.outcome, len(rollout.tokens))))
     _prompt_weights(rows)
     return rows
 
@@ -198,7 +200,7 @@ def train_update(runtime, optimizer, groups, binding: InputBinding, *,
             rollout, group = row['rollout'], row['group']
             if not row['active']:
                 record(dict(stage='masked-unresolved', task_id=group.task_id, nonce=rollout.nonce,
-                    tokens=len(rollout.tokens), reward=0., advantage=row['advantage']))
+                    tokens=len(rollout.tokens), reward=row['reward'], advantage=row['advantage']))
                 continue
             if _versions(runtime.model) != versions:
                 raise ValueError('actor mutated before the single optimizer boundary')
@@ -241,7 +243,7 @@ def train_update(runtime, optimizer, groups, binding: InputBinding, *,
             if not torch.isfinite(loss):
                 raise ValueError('finite upstream PPO loss required')
             detail = dict(task_id=group.task_id, nonce=rollout.nonce, tokens=len(rollout.tokens),
-                outcome=rollout.outcome, stop=rollout.stop, reward=float(rollout.outcome == 'correct'),
+                outcome=rollout.outcome, stop=rollout.stop, reward=row['reward'],
                 advantage=row['advantage'], prompt_weight=row['prompt_weight'],
                 loss=float(loss.detach()), old_logprob_mean=float(old.mean()),
                 actor_logprob_mean=float(current.detach().mean()), old_actor_max_abs_drift=drift,
