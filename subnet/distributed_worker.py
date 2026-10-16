@@ -466,7 +466,7 @@ class Worker:
                             training_context=self.training_context,allow_public=self.allow_public_mimo)
                 except Exception as error:
                     # Infrastructure failures are retries, not negative miner evidence.
-                    (attempt/'worker-error.json').write_bytes(canonical({'error_type':type(error).__name__}))
+                    (attempt/'worker-error.json').write_bytes(canonical({'error_type':type(error).__name__,'error':str(error)[:2048]}))
                     if lost.is_set() or time.time()>=claim['lease_until']:
                         raise expired('backend_failure') from error
                     self.request('fail',job_id=job['job_id'],token=claim['token']);return True

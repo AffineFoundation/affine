@@ -73,6 +73,38 @@ class FP32Accumulator:
         return float(total)
 
 
+# Settings that determine AdamW update arithmetic and stored state (moments,
+# step counter, per-parameter decay groups). A recorded optimizer generation is
+# restorable under another objective only if every one of these is identical.
+ADAM_SETTINGS = ('learning_rate', 'beta1', 'beta2', 'adam_epsilon', 'weight_decay', 'weight_decay_policy')
+
+
+def restorable_config(recorded, config: TrainerConfig):
+    """True if an optimizer generation recorded under ``recorded`` (a config
+    document) may be restored and then continue under ``config``.
+
+    Identical documents always qualify. A different recorded objective (for
+    example a predecessor release's v1 document before a qualified release
+    succession) qualifies only when it validates as a TrainerConfig document,
+    names the same optimizer implementation, and every Adam setting is
+    exactly equal (value and type). Anything else fails closed.
+    """
+    current = config.document()
+    if recorded == current:
+        return True
+    if (type(recorded) is not dict or type(recorded.get('settings')) is not dict
+            or recorded.get('optimizer') != current['optimizer']
+            or recorded.get('version') not in ('affine-mimo-reference-grpo-v1', 'affine-mimo-reference-grpo-v2')):
+        return False
+    try:
+        TrainerConfig(**recorded['settings']).validate()
+    except (TypeError, ValueError):
+        return False
+    old, new = recorded['settings'], current['settings']
+    return all(name in old and type(old[name]) is type(new[name]) and old[name] == new[name]
+               for name in ADAM_SETTINGS)
+
+
 class CPUAdamW:
     def __init__(self, named_parameters, config: TrainerConfig, *, input_checkpoint: str):
         config.validate()
@@ -216,7 +248,7 @@ class CPUAdamW:
         root = Path(directory)
         descriptor = json.loads((root / 'descriptor.json').read_text())
         if (digest(descriptor) != descriptor_sha256 or descriptor['checkpoint'] != checkpoint or
-                descriptor['inventory'] != self.inventory or descriptor['config'] != self.config.document() or
+                descriptor['inventory'] != self.inventory or not restorable_config(descriptor['config'], self.config) or
                 descriptor['version'] != 'affine-mimo-local-adamw-v1'):
             raise ValueError('authenticated checkpoint/config/state inventory mismatch')
         step = descriptor['optimizer_step']

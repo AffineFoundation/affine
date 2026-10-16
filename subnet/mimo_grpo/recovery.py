@@ -3,7 +3,7 @@ import json
 
 from .config import TrainerConfig
 from .data import digest
-from .optimizer import CPUAdamW
+from .optimizer import CPUAdamW, restorable_config
 from .transaction import (Job, Transaction, RecoveryRequired, _checkpoint,
                           _inventory, _validate_report, _receipt)
 
@@ -30,7 +30,10 @@ def restore_transaction_state(workspace, *, expected_job, load_runtime,
         if value.get('report_sha256') != digest(value.get('report')):
             raise ValueError('original recovery report integrity')
         _validate_report(expected_job, value['report'])
-        if value['report']['config'] != config.document():
+        # The original generation is authenticated against its own recorded
+        # objective (report, receipt, objective_sha256 above). It continues under
+        # the caller's config only if every Adam setting is exactly identical.
+        if not restorable_config(value['report']['config'], config):
             raise ValueError('original recovery optimizer/objective settings')
         if _inventory(transaction.root, list(value['artifacts'])) != value['artifacts']:
             raise ValueError('original staged model and optimizer content required')
