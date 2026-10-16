@@ -22,6 +22,47 @@ def private_json(path):
     return json.loads(path.read_bytes())
 
 
+def archive_execution_resolver(release, archive_execution, live):
+    """Per-epoch worker execution metadata for audit/evaluation jobs.
+
+    manifest -> its signed release(-chain) member -> that member's qualified source
+    archive -> the ROOT-approved runtime inventory for that archive. A job for an
+    epoch produced under an earlier chain member must carry that member's inventory
+    (workers route by archive and refuse any other inventory), never the live
+    deployment's. The active member's archive always maps to the live closure.
+    """
+    import copy
+    def exact(entry):
+        return (type(entry) is dict and set(entry) == {'source_files', 'runtime_versions'}
+                and type(entry['source_files']) is dict and entry['source_files']
+                and type(entry['runtime_versions']) is dict)
+    if not exact(live):
+        raise ValueError('exact live worker execution metadata')
+    members = [policy for _, policy in getattr(release, 'members', [(None, release)])]
+    archives = {m.policy_sha256: m.scope['immutable_manifest']['source_bundle']['sha256'] for m in members}
+    active = archives[release.policy_sha256]
+    table = {} if archive_execution is None else archive_execution
+    if type(table) is not dict or not all(type(k) is str and exact(v) for k, v in table.items()):
+        raise ValueError('exact per-archive execution metadata')
+    if not set(table) <= set(archives.values()):
+        raise ValueError('archive execution limited to signed release chain archives')
+    if hasattr(release, 'members') and set(table) != set(archives.values()):
+        raise ValueError('every signed release chain archive needs ROOT-approved execution metadata')
+    if active in table and table[active] != live:
+        raise ValueError('active archive execution must equal the deployed worker closure')
+    table = copy.deepcopy(table); table[active] = copy.deepcopy(live)
+    def resolve(manifest):
+        if hasattr(release, 'policy_for_manifest'):
+            policy = release.policy_for_manifest(manifest)
+        else:
+            release.validate_manifest(manifest); policy = release
+        archive = archives[policy.policy_sha256]
+        if (manifest.get('source_bundle') or {}).get('sha256') != archive:
+            raise ValueError('manifest source archive differs from its signed release member')
+        return copy.deepcopy(table[archive])
+    return resolve
+
+
 def run(args):
     config=private_json(args.config)
     if config.get('enabled')is not True:
@@ -86,6 +127,9 @@ def run(args):
         raise ValueError('explicit loopback queue API address required')
     from subnet.mimo_release_policy import sign
     import threading
+    # Audit/evaluation jobs carry the inventory of their own epoch's archive.
+    execution=archive_execution_resolver(release,config.get('archive_execution'),
+        dict(source_files=adapter.source_files,runtime_versions=adapter.runtime_versions))
     stopped=threading.Event();audit_thread=None;eval_thread=None
     audit_config=dict(config.get('audit_scheduler',{}))
     audit_enabled=audit_config.pop('enabled',False)
@@ -94,8 +138,7 @@ def run(args):
     if audit_enabled:
         from subnet.mimo_audit_scheduler import AuditScheduler
         scheduler=AuditScheduler(bucket=bucket,queue=queue,identity=actor,
-            manifest_guard=release_guard,metadata=lambda m:dict(
-                source_files=adapter.source_files,runtime_versions=adapter.runtime_versions,
+            manifest_guard=release_guard,metadata=lambda m:dict(execution(m),
                 checkpoint_read_urls=adapter.checkpoint_urls(m['checkpoint'])),**audit_config)
         def audit_loop():
             admitted=set()
@@ -118,7 +161,7 @@ def run(args):
     if eval_enabled:
         from subnet.mimo_evaluation_scheduler import EvaluationScheduler
         evaluator=EvaluationScheduler(bucket=bucket,queue=queue,identity=actor,policy=release,
-            metadata=lambda m:dict(source_files=adapter.source_files,runtime_versions=adapter.runtime_versions,
+            metadata=lambda m:dict(execution(m),
                 checkpoint_read_urls=adapter.checkpoint_urls(m['checkpoint'])),**eval_config)
         def evaluation_loop():
             while not stopped.is_set():
