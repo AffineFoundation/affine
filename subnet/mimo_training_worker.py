@@ -159,7 +159,7 @@ def _role_configuration(job):
     from .storage import Bucket, Identity
     value = _private_json(job['training']['role_config_file'])
     need(set(value) <= {'bucket','publisher_identity_file','initial_checkpoint_directory',
-         'release_succession'} and
+         'release_succession','source_succession'} and
          {'bucket','publisher_identity_file'} <= set(value), 'trainer role configuration fields')
     key = Path(value['publisher_identity_file'])
     need(key.is_absolute() and not key.is_symlink() and stat.S_ISREG(key.stat().st_mode) and
@@ -190,6 +190,46 @@ def _release_succession(job, authority, *, allow_public=False):
     return ReleaseChain(envelope, authority, allow_public=allow_public)
 
 
+SOURCE_SUCCESSION_VERSION = 'mimo-trainer-source-succession-v1'
+SOURCE_SUCCESSION_FIELDS = {'version', 'run_id', 'release_policy_sha256', 'from_source_closure_sha256',
+                            'to_source_closure_sha256', 'checkpoint', 'optimizer_step'}
+
+
+def _source_succession(job, authority):
+    value = _private_json(job['training']['role_config_file'])
+    envelope = value.get('source_succession')
+    if envelope is None:
+        return None
+    from .backend_jobs import signed
+    document = signed(envelope, authority)
+    need(type(document) is dict and set(document) == SOURCE_SUCCESSION_FIELDS and
+         document['version'] == SOURCE_SUCCESSION_VERSION, 'exact signed trainer source succession')
+    return document
+
+
+def _adopt_source_succession(current_path, current, job, authority, active, source, binding):
+    """Within one release, re-stamp only the trainer source closure when an
+    operator-signed source succession in the private role config names this
+    exact run, release, old/new closure and the job's input checkpoint/step.
+    Fail-closed: without it, or on any mismatch, lineage checks reject as before.
+    """
+    if current.get('source_closure_sha256') == source:
+        return current
+    succession = _source_succession(job, authority)
+    if succession is None:
+        return current
+    need(succession['run_id'] == binding.run and succession['release_policy_sha256'] == active and
+         succession['from_source_closure_sha256'] == current.get('source_closure_sha256') and
+         succession['to_source_closure_sha256'] == source and
+         succession['checkpoint'] == binding.checkpoint and
+         succession['optimizer_step'] == binding.optimizer_step and
+         current.get('run') == binding.run and current.get('checkpoint') == binding.checkpoint and
+         current.get('optimizer_step') == binding.optimizer_step,
+         'signed source succession must bind this exact trainer lineage')
+    _write(current_path, dict(current, source_closure_sha256=source))
+    return json.loads(current_path.read_bytes())
+
+
 def _adopt_release_succession(current_path, current, job, authority, release_policy,
                              source, binding, *, allow_public=False):
     """Re-stamp a trainer private CURRENT governed by a predecessor release onto
@@ -201,7 +241,7 @@ def _adopt_release_succession(current_path, current, job, authority, release_pol
     bound = current.get('release_policy_sha256')
     active = release_policy.policy_sha256 if release_policy is not None else None
     if bound == active:
-        return current
+        return _adopt_source_succession(current_path, current, job, authority, active, source, binding)
     need(release_policy is not None, 'successor release requires a qualified release policy')
     chain = _release_succession(job, authority, allow_public=allow_public)
     need(chain is not None, 'release switch requires a signed release succession in the role config')

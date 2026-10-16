@@ -332,5 +332,58 @@ class TrainerSuccessionTests(unittest.TestCase):
                 self.operator.id, release, '2'*64, self._binding(self.cp, 5))
 
 
+class TrainerSourceSuccessionTests(TrainerSuccessionTests):
+    def _source_role(self, **overrides):
+        doc = dict(version=training_worker.SOURCE_SUCCESSION_VERSION, run_id='trainer-fixture',
+                   release_policy_sha256=digest(self.v2), from_source_closure_sha256='1'*64,
+                   to_source_closure_sha256='3'*64, checkpoint=self.cp, optimizer_step=5)
+        doc.update(overrides)
+        key = self.root/'publisher.key'; key.write_text('d'*64); os.chmod(key, 0o600)
+        value = dict(bucket='b', publisher_identity_file=str(key), source_succession=sign(self.operator, doc))
+        path = self.root/'role-source.json'; path.write_text(json.dumps(value)); os.chmod(path, 0o600)
+        return path
+
+    def _adopt(self, role, *, source='3'*64, step=5, current_source='1'*64):
+        path, current = self._current_file(bound=digest(self.v2), checkpoint=self.cp, step=5, source=current_source)
+        release = ReleasePolicy(self.v2, self.operator.id)
+        return path, current, training_worker._adopt_release_succession(path, current, self._job(role),
+            self.operator.id, release, source, self._binding(self.cp, step))
+
+    def test_signed_source_succession_restamps_only_source(self):
+        path, current, adopted = self._adopt(self._source_role())
+        self.assertEqual(adopted, dict(current, source_closure_sha256='3'*64))
+        self.assertEqual(json.loads(path.read_bytes())['source_closure_sha256'], '3'*64)
+
+    def test_no_source_succession_leaves_cursor_for_lineage_rejection(self):
+        path, current, adopted = self._adopt(self._role_config(succession=None))
+        self.assertEqual(adopted, current)
+
+    def test_source_succession_mismatch_fails_closed(self):
+        for overrides in (dict(from_source_closure_sha256='9'*64), dict(to_source_closure_sha256='9'*64),
+                          dict(optimizer_step=6), dict(checkpoint='e'*64), dict(run_id='other'),
+                          dict(release_policy_sha256=digest(self.v1))):
+            with self.subTest(overrides=overrides):
+                with self.assertRaisesRegex(ValueError, 'exact trainer lineage'):
+                    self._adopt(self._source_role(**overrides))
+        with self.assertRaisesRegex(ValueError, 'exact trainer lineage'):
+            self._adopt(self._source_role(), step=6)
+
+    def test_source_succession_requires_authority_signature_and_exact_fields(self):
+        other = Identity(bytes([9])*32)
+        key = self.root/'publisher.key'; key.write_text('d'*64); os.chmod(key, 0o600)
+        doc = dict(version=training_worker.SOURCE_SUCCESSION_VERSION, run_id='trainer-fixture',
+                   release_policy_sha256=digest(self.v2), from_source_closure_sha256='1'*64,
+                   to_source_closure_sha256='3'*64, checkpoint=self.cp, optimizer_step=5)
+        for envelope in (sign(other, doc), sign(self.operator, dict(doc, extra=1))):
+            value = dict(bucket='b', publisher_identity_file=str(key), source_succession=envelope)
+            path = self.root/'role-bad.json'; path.write_text(json.dumps(value)); os.chmod(path, 0o600)
+            with self.assertRaises(Exception):
+                self._adopt(path)
+
+    def test_same_source_is_noop(self):
+        path, current, adopted = self._adopt(self._source_role(), current_source='3'*64)
+        self.assertEqual(adopted, current)
+
+
 if __name__ == '__main__':
     unittest.main()
