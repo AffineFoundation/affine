@@ -103,8 +103,20 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(rep['auditable_archives'], sorted([V821, V822]))
 
     def test_load_save_round_trip_keeps_parked_draws(self):
-        st = self.s._load(); self.assertEqual(set(st['draws']), set()); self.assertEqual(set(st['_parked_unauditable']), set(self.old))
-        self.s._save(st); self.assertEqual(self.raw_state()['draws'], self.old); self.assertNotIn('_parked_unauditable', self.raw_state())
+        self.s.__dict__['_parking'] = True
+        try:
+            st = self.s._load(); self.assertEqual(set(st['draws']), set()); self.assertEqual(set(st['_parked_unauditable']), set(self.old))
+            self.s._save(st)
+        finally: self.s.__dict__['_parking'] = False
+        self.assertEqual(self.raw_state()['draws'], self.old); self.assertNotIn('_parked_unauditable', self.raw_state())
+
+    def test_readers_outside_tick_see_full_history(self):
+        self.s.tick(now=1000)
+        self.assertTrue(set(self.old) <= set(self.s._load()['draws']))
+        ids = {r['id'] for r in self.s.completed_queue_rows()}
+        self.assertIn('mimo-audit-old-ok', ids)   # completed v7 audit evidence still reported
+        doc = population('e42', V822, 4); self.s.admit(doc)
+        st = self.raw_state(); self.assertIn('e42', st['populations']); self.assertTrue(set(self.old) <= set(st['draws']))
 
     def test_requires_explicit_auditable_set(self):
         with self.assertRaises(ValueError): archive_scoped_audit_scheduler(mas.AuditScheduler, set())

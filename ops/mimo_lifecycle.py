@@ -104,9 +104,17 @@ def archive_scoped_audit_scheduler(base, auditable_archives, *, report_name='UNA
                 if facts['archive'] not in auditable: out[epoch] = facts
             return out
 
+        def tick(self, now=None):
+            # Parking applies only to the selection/renewal pass. admit(), completed_queue_rows()
+            # and any other base reader keep seeing the complete original draw history.
+            self.__dict__['_parking'] = True
+            try: return super().tick(now)
+            finally: self.__dict__['_parking'] = False
+
         def _load(self):
             state = super()._load()
             mas.need(PARK not in state, 'parked draws never persisted under their own key')
+            if not self.__dict__.get('_parking'): return state
             excluded = self._excluded(state)
             parked = {k: d for k, d in state['draws'].items() if d['row']['epoch'] in excluded}
             state['draws'] = {k: d for k, d in state['draws'].items() if k not in parked}
