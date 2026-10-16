@@ -51,6 +51,7 @@ def archive_execution_resolver(release, archive_execution, live):
     if active in table and table[active] != live:
         raise ValueError('active archive execution must equal the deployed worker closure')
     table = copy.deepcopy(table); table[active] = copy.deepcopy(live)
+    auditable = frozenset(a for a, e in table.items() if e == live)
     def resolve(manifest):
         if hasattr(release, 'policy_for_manifest'):
             policy = release.policy_for_manifest(manifest)
@@ -60,8 +61,94 @@ def archive_execution_resolver(release, archive_execution, live):
         if (manifest.get('source_bundle') or {}).get('sha256') != archive:
             raise ValueError('manifest source archive differs from its signed release member')
         return copy.deepcopy(table[archive])
+    # Archives whose ROOT-approved inventory equals the closure the warm workers run:
+    # only these can pass both source_for_job and mimo_worker.source_guard.
+    resolve.auditable_archives = auditable
     return resolve
 
+
+
+def archive_scoped_audit_scheduler(base, auditable_archives, *, report_name='UNAUDITABLE-BY-DESIGN.json'):
+    """Audit scheduler that only selects, renews and dispatches rows whose epoch archive the
+    running workers can execute (registry inventory == warm worker closure).
+
+    Draws of other epochs are parked: hidden from the base scheduler on load (never renewed or
+    dispatched) and written back byte-for-byte on save (history kept). Their populations are not
+    re-authenticated per tick. Excluded epochs are reported, never silently dropped.
+    """
+    import json
+    import time
+    from subnet import mimo_audit_scheduler as mas
+    auditable = frozenset(auditable_archives)
+    if not auditable or not all(type(a) is str and len(a) == 64 for a in auditable):
+        raise ValueError('explicit auditable archive set')
+    PARK = '_parked_unauditable'
+
+    class ArchiveScopedAuditScheduler(base):
+        def _population_facts(self, checksum):
+            cache = self.__dict__.setdefault('_facts', {})
+            if checksum not in cache:
+                path = self.root/(checksum+'.population.json')
+                mas.need(not path.is_symlink() and path.stat().st_size <= 256*1024**2, 'original audit population file')
+                doc = json.loads(path.read_bytes())
+                mas.need(mas.digest(doc) == checksum, 'immutable population hash')
+                payload = doc['payload']
+                cache[checksum] = dict(archive=payload['manifest_document']['payload']['source_bundle']['sha256'],
+                                       records=len(payload['records']))
+            return cache[checksum]
+
+        def _excluded(self, state):
+            out = {}
+            for epoch, checksum in state['populations'].items():
+                facts = self._population_facts(checksum)
+                if facts['archive'] not in auditable: out[epoch] = facts
+            return out
+
+        def _load(self):
+            state = super()._load()
+            mas.need(PARK not in state, 'parked draws never persisted under their own key')
+            excluded = self._excluded(state)
+            parked = {k: d for k, d in state['draws'].items() if d['row']['epoch'] in excluded}
+            state['draws'] = {k: d for k, d in state['draws'].items() if k not in parked}
+            state[PARK] = parked
+            return state
+
+        def _save(self, state):
+            value = dict(state); parked = value.pop(PARK, {})
+            mas.need(not set(parked) & set(value['draws']), 'parked and active draws disjoint')
+            value['draws'] = dict(value['draws'], **parked)
+            super()._save(value)
+
+        def populations(self):
+            state = super()._load(); result = []
+            for epoch, checksum in sorted(state['populations'].items()):
+                if self._population_facts(checksum)['archive'] not in auditable: continue
+                path = self.root/(checksum+'.population.json')
+                doc = json.loads(path.read_bytes()); mas.need(mas.digest(doc) == checksum, 'immutable population hash')
+                p = mas.authenticate_population(doc, self.identity.id, manifest_guard=self.guard)
+                mas.need(p['manifest_document']['payload']['epoch'] == epoch, 'population epoch directory binding')
+                result.append(doc)
+            self._report(state)
+            return result
+
+        def _report(self, state):
+            excluded = self._excluded(state); epochs = {}
+            for epoch, facts in sorted(excluded.items()):
+                draws = [d for d in state['draws'].values() if d['row']['epoch'] == epoch]
+                epochs[epoch] = dict(archive=facts['archive'], records=facts['records'], draws_parked=len(draws),
+                                     draws_with_job=sum(1 for d in draws if d.get('job_id')))
+            value = dict(version='mimo-audit-unauditable-by-design-v1', auditable_archives=sorted(auditable),
+                reason=('MiMo verify jobs run in the warm worker; source_for_job requires the archive registry inventory and '
+                        'mimo_worker.source_guard requires the worker running closure. Rows of other archives cannot pass both '
+                        'on the running workers, so they are never selected, renewed or dispatched.'),
+                excluded_epochs=epochs, excluded_records=sum(e['records'] for e in epochs.values()),
+                excluded_draws_parked=sum(e['draws_parked'] for e in epochs.values()))
+            path = self.root/report_name
+            old = json.loads(path.read_bytes()) if path.exists() else None
+            if old is None or {k: v for k, v in old.items() if k != 'updated_at'} != value:
+                mas.atomic(path, dict(value, updated_at=time.time()))
+
+    return ArchiveScopedAuditScheduler
 
 def run(args):
     config=private_json(args.config)
@@ -137,6 +224,7 @@ def run(args):
         raise ValueError('public lifecycle requires its independent audit scheduler')
     if audit_enabled:
         from subnet.mimo_audit_scheduler import AuditScheduler
+        AuditScheduler=archive_scoped_audit_scheduler(AuditScheduler,execution.auditable_archives)
         scheduler=AuditScheduler(bucket=bucket,queue=queue,identity=actor,
             manifest_guard=release_guard,metadata=lambda m:dict(execution(m),
                 checkpoint_read_urls=adapter.checkpoint_urls(m['checkpoint'])),**audit_config)
