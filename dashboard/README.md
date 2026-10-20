@@ -3,7 +3,7 @@
 https://affine.io shows exactly two charts: completed held-out math performance
 over time, and frozen submitted batches per finalized epoch. Haffer and DM Mono,
 monochrome Affine branding, restrained grid lines and responsive spacing keep the
-measurements prominent. The header links to `/llms.txt` and GitHub; the footer
+measurements prominent. The header links to Affine Video (`https://video.affine.io/`), `/llms.txt` and GitHub; the footer
 also links to the mechanism. There are no UID grids, metric toggles, environment
 selectors, historical-series selectors or network/test-scope switches.
 
