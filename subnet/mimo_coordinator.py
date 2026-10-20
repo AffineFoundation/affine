@@ -251,9 +251,21 @@ class Coordinator:
                 if hasattr(graded, 'close'):
                     graded.close()
             counts = Counter((r['env_id'], r['index']) for r in candidates)
+            from .claim_order import enabled, resolve, contested
+            claim_winners = None
+            if enabled(manifest):
+                arrivals = {signed(e, self.identity.id)['miner']: signed(e, self.identity.id).get('received_at')
+                            for e in population['captures']}
+                resolved = resolve((r['miner'], (r['env_id'], r['index']),
+                                    r['document'].get('received_at', arrivals.get(r['miner']))) for r in candidates)
+                claim_winners = {k: v[0] for k, v in resolved.items()}
             unique = []
             for row in candidates:
-                if counts[(row['env_id'], row['index'])] > 1:
+                if claim_winners is not None:
+                    lost = claim_winners[(row['env_id'], row['index'])] != row['miner']
+                else:
+                    lost = counts[(row['env_id'], row['index'])] > 1
+                if lost:
                     excluded.append(dict(row, reason='cross-miner-task-collision'))
                 else:
                     unique.append(row)
@@ -265,6 +277,8 @@ class Coordinator:
                 population_sha256=sha(canonical(population)),
                 selection=policy, selected=selected, excluded=excluded,
                 training_requires_sampling_audit=False, selected_task_count=len(selected),
+                **(dict(claim_order_rule=manifest['claim_order_rule'], contested_claims=contested(resolved))
+                   if claim_winners is not None else {}),
                 selected_rollout_count=len(selected) * manifest['group_contract']['group_size'])
             result = _signed(self.identity, payload)
             _need(len(canonical(result)) <= 256 * 1024**2, 'bounded compact native dispatch')
