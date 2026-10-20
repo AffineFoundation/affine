@@ -20,9 +20,9 @@ function expected(snapshot){
  return {evaluations:latest?evaluations.filter(e=>cohort(e)===cohort(latest)):[],epochs:epochs.filter(e=>e.finalized&&count(e.batches))};
 }
 async function structure(page){
- const actual=await page.evaluate(()=>({charts:document.querySelectorAll('main .chart-wrap>svg').length,sections:document.querySelectorAll('main>section').length,removed_controls:!!document.querySelector('#grid,#metric,#environment,#evaluation,#batch-source,[data-scope]'),llms_links:document.querySelectorAll('a[href="/llms.txt"]').length,github_links:document.querySelectorAll('a[href="https://github.com/AffineFoundation/affine"]').length,overflow:document.documentElement.scrollWidth>innerWidth}));
+ const actual=await page.evaluate(()=>({charts:document.querySelectorAll('main .chart-wrap>svg').length,sections:document.querySelectorAll('main>section').length,removed_controls:!!document.querySelector('#grid,#metric,#environment,#evaluation,#batch-source,[data-scope]'),llms_links:document.querySelectorAll('a[href="/llms.txt"]').length,sub1_links:document.querySelectorAll('nav a[href="/sub-1/"]').length,github_links:document.querySelectorAll('a[href="https://github.com/AffineFoundation/affine"]').length,overflow:document.documentElement.scrollWidth>innerWidth}));
  assert(actual.charts===2&&actual.sections===2&&!actual.removed_controls,'Current two-chart structure mismatch');
- assert(actual.llms_links>0&&actual.github_links>0&&!actual.overflow,'Document links or viewport layout mismatch');return actual;
+ assert(actual.llms_links>0&&actual.github_links>0&&!actual.overflow,'Document links or viewport layout mismatch');assert(actual.sub1_links===1,'Sub-1 header entry missing or duplicated');return actual;
 }
 async function plotted(page,kind){return page.locator(`#${kind}-chart .chart-point`).evaluateAll(nodes=>nodes.map(n=>({value:Number(n.dataset.value),record:n.dataset.record})));}
 async function compare(page,snapshot){

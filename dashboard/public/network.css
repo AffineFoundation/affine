@@ -371,7 +371,7 @@ nav a:focus-visible{color:var(--ink)}
 
 .tip-outcome[data-outcome="verified"] .tip-outcome-label::before,.tip-outcome[data-outcome="accepted"] .tip-outcome-label::before{background:var(--accepted)}
 
-@media(hover:hover){nav a[href="/llms.txt"]:hover .link-arrow{transform:translateX(1.5px)}}
+@media(hover:hover){nav a[href="/llms.txt"]:hover .link-arrow,nav a[href="/sub-1/"]:hover .link-arrow{transform:translateX(1.5px)}}
 
 /* Five small refinements to labels and touch controls. */
 .legend-value{font:inherit;color:var(--ink)}
