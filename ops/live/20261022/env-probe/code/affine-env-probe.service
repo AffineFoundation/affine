@@ -1,0 +1,21 @@
+# SN120 env probe daemon (v10 candidate). Read-only on lifecycle/chain/R2; writes only affine.io/probe/ + its audit state.
+[Unit]
+Description=Affine SN120 env probe (per-checkpoint per-env pass rates; publishes affine.io/probe/; no chain writes)
+After=network-online.target
+StartLimitIntervalSec=0
+[Service]
+Type=simple
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -u -B /home/const/subnet120-rewrite/state/root-audits/20261022-env-probe/code/probe_daemon.py --config /home/const/subnet120-rewrite/state/root-audits/20261022-env-probe/code/config.json
+Restart=on-failure
+RestartSec=30
+Nice=19
+IOSchedulingClass=idle
+CPUWeight=10
+CPUQuota=50%
+MemoryMax=3G
+TimeoutStopSec=20
+UMask=0022
+StandardOutput=append:/home/const/subnet120-rewrite/state/root-audits/20261022-env-probe/state/daemon.log
+StandardError=append:/home/const/subnet120-rewrite/state/root-audits/20261022-env-probe/state/daemon.log
+[Install]
+WantedBy=default.target

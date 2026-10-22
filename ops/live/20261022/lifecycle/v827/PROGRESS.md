@@ -1,0 +1,12 @@
+# v8.2.7 progress (UTC)
+- 19:49 signed: release-v827-signed (SIGNING-RESULT checks_passed true; manifest OK)
+- 19:59 e76 replay + compare: 228/228 identical except new_groups; selection identical df2b0913...
+- 20:01 adversarial e77: all_identical true (also e76 earlier)
+- 20:23 e77 compare: 199/199; selection identical cf594d8f... (live DISPATCH 20:19:44Z)
+- 20:13 activate_v827.sh --arm started (pid 1488052): waits round>266, then e78 OPENING, 0 e78 captures, e77 FINALIZED, then installs drop-in + restarts
+- 20:33 removed my /tmp/v826-* and /tmp/v827-* scratch copies
+- 21:03 lifecycle still v8.2.6 (pid 988653); e77 training running (TRAINING-JOB 20:29:01Z)
+- 21:05 eval parse-cache test on 6 live openings: no mutation by signed/validate_sets/digest, hits return identical objects, other threads use stdlib (replay/evalcache_test.py)
+- 21:07:24 first --arm exited silently after e78 OPENING (bug: ls of missing captured/ dir under set -o pipefail). NOTHING installed; lifecycle stayed v8.2.6. e77->e78 boundary missed (e78 first capture 21:09:42).
+- 21:16 fixed script (ls||true; no pipes into grep -q after restart); backups activate_v827.sh.orig-a67f01fe, .pre-pipefail-fix. Target now e78->e79.
+- 21:15 re-armed (pid 1879090, script b5f974d5...); waits e78 FINALIZED -> e79 OPENING -> 0 captures -> install+restart. e78 runs on v8.2.6 (baseline); v8.2.7 verification moves to e79.
