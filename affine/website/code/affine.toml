@@ -1321,6 +1321,9 @@ targon_resource = "h200-large"
 targon_image = "vllm/vllm-openai:latest"
 
 [chat_machine]
+# Operator shutdown 2026-09-30: prevents automatic re-rental after removal.
+# Set true and restart affine-validator to restore public chat.
+enabled = false
 # Always-on public chat pod (AFFINE_ROLE=chat): serves the CURRENT KING via
 # vLLM behind the website's /api/v1/chat proxy. Ops-only — never part of
 # scoring. ONE big-VRAM GPU: a 141GB H200 fits the ≤90GB king at TP=1 with

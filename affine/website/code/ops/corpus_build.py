@@ -309,6 +309,125 @@ def decontaminated(env: dict) -> str | None:
 def is_backfill(env: dict, chunk_key: str = "") -> bool:
     pid = str((env.get("policy") or {}).get("id") or "")
     return pid.startswith(BACKFILL_POLICY_PREFIX) or str(chunk_key).startswith(BACKFILL_CHUNK_PREFIX)
+
+
+# -- bench_fail: the benchsuite's failed king trials as their own group ----------
+# Jacob 2026-09-24 17:53/17:56 UTC ("add the failure runs from the benchmarks
+# into the dataset ... upsampling the runs where we are doing badly"; mode (a)
+# DIRECT approved: "a fair backward pass at this point in the training").
+# ops/bench_fail/ingest.py publishes king-failed / teacher-passed benchmark
+# trials as envelopes with source `bench_<suite>` and policy `bench_<harness>`
+# into the SEPARATE prefix traces-bench/ (own manifest). The fold reads that
+# manifest only when `[decontamination].allow_bench_groups` names the group
+# and `[bench_fail].mode = "direct"`; every record of a `bench_*` source is
+# routed here (group bench_fail, stratum bench_fail:<suite>:NNNN with the
+# per-suite bucket share weighted toward the suites the sitting king does
+# worst on), and the corpus manifest stamps `trained_on[<suite>]` from the
+# first epoch that admitted rows -- the kingboard shows those columns as
+# "trained on since <epoch>". Knob off (default) = fail-closed: a `bench_*`
+# record that reaches the fold by any other path is dropped
+# (`bench_not_allowed`). Mode "variants" is the alternative (teacher-
+# synthesised variants of the failed tasks, like scicomp / terminal_gen):
+# direct rows are then refused and the variants enter through their own
+# generated source with [GEN:] uids -- not built yet, the knob exists so the
+# switch is one line.
+BENCH_SOURCE_PREFIX = "bench_"
+BENCH_FAIL: dict = {}
+
+
+def load_bench_fail() -> dict:
+    raw = tomllib.loads(SOURCES_TOML.read_text())
+    cfg = raw.get("bench_fail") or {}
+    allow = [str(g) for g in ((raw.get("decontamination") or {}).get("allow_bench_groups") or [])]
+    group = str(cfg.get("group") or "bench_fail")
+    return {
+        "group": group,
+        "enabled": bool(cfg.get("enabled", True)) and group in allow,
+        "mode": str(cfg.get("mode") or "direct"),
+        "traces_prefix": str(cfg.get("traces_prefix") or "traces-bench/"),
+        "strata_buckets": int(cfg.get("strata_buckets") or 0),
+        "min_reign": int(cfg.get("min_reign") or 0),
+        "suite_weights": cfg.get("suite_weights") or "auto",
+        "min_suite_buckets": int(cfg.get("min_suite_buckets") or 20),
+        "kingboard_matrix": str(cfg.get("kingboard_matrix") or "https://kings.affine.io/api/matrix.json"),
+        # Outcomes the router admits. The ingest already keeps only graded-0,
+        # non-infra trials; the fold's generic rollout_outcome files a
+        # harness end state it does not know (BFCL "done" / "user_closed",
+        # tau2 "user_completed" / "tau2_too_many_errors", a mini-swe trial
+        # that hit ContextWindowExceeded) under `errored`. Those are king
+        # failures, so "errored" is admitted by default -- 7,778 of the
+        # first 13,846 routed trials (2026-09-25).
+        "accept_outcomes": frozenset(str(x) for x in (cfg.get("accept_outcomes") or ["failed", "errored"])),
+    }
+
+
+def bench_suite_weights(cfg: dict, suites: list[str]) -> dict[str, float]:
+    """Share of the group's buckets per suite. "auto" = proportional to
+    (1 - sitting king's score / 100) on that benchmark column (upsample where
+    the king does worst; a suite without a cell gets the mean weight); a
+    table {suite: w} is used as given. Normalised to sum 1."""
+    w: dict[str, float] = {}
+    sw = cfg.get("suite_weights")
+    if isinstance(sw, dict):
+        w = {str(k): float(v) for k, v in sw.items() if str(k) in suites}
+    else:
+        scores: dict[str, float] = {}
+        try:
+            import httpx
+            m = httpx.get(cfg["kingboard_matrix"], headers={"User-Agent": "affine-fold-bench-fail/0.1"}, timeout=30).json()
+            row = next((r for r in m.get("rows", []) if r.get("kind") == "king" and r.get("current")), None)
+            cols = {c["key"]: c for c in m.get("columns", []) if c.get("kind") == "bench"}
+            for key, c in cols.items():
+                v = ((row or {}).get("cells") or {}).get(key) or {}
+                if isinstance(v.get("score"), (int, float)):
+                    scores[str(c.get("env") or key.split(":", 1)[-1]).replace("-", "_")] = float(v["score"])
+        except Exception as e:  # noqa: BLE001
+            log(f"bench_fail: kingboard matrix unreachable ({e!r}); equal suite weights")
+        mean_gap = (sum(1 - x / 100.0 for x in scores.values()) / len(scores)) if scores else 0.5
+        for s0 in suites:
+            slug = s0.removeprefix(BENCH_SOURCE_PREFIX)
+            w[s0] = max(0.05, 1 - scores[slug] / 100.0) if slug in scores else max(0.05, mean_gap)
+    tot = sum(w.values()) or 1.0
+    return {k: v / tot for k, v in w.items()}
+
+
+def route_bench_fail(records: list[dict], cfg: dict, drops: dict[str, int]) -> list[dict]:
+    """Records of `bench_*` sources -> group bench_fail with a per-suite
+    bucketed stratum; everything else passes through. Fail-closed when the
+    knob is off or the mode is not direct."""
+    bench = [r for r in records if str(r.get("source") or "").startswith(BENCH_SOURCE_PREFIX)]
+    if not bench:
+        return records
+    out = [r for r in records if not str(r.get("source") or "").startswith(BENCH_SOURCE_PREFIX)]
+    if not cfg.get("enabled") or cfg.get("mode") != "direct" or cfg["strata_buckets"] <= 0:
+        drops["bench_not_allowed"] = drops.get("bench_not_allowed", 0) + len(bench)
+        return out
+    suites = sorted({str(r["source"]) for r in bench})
+    weights = bench_suite_weights(cfg, suites)
+    buckets = {s0: max(cfg["min_suite_buckets"], int(round(cfg["strata_buckets"] * weights.get(s0, 0.0)))) for s0 in suites}
+    log(f"bench_fail: suites {suites}, weights { {k: round(v, 3) for k, v in weights.items()} }, buckets {buckets}")
+    by_stop: dict[str, int] = {}
+    for rec in bench:
+        oc = rec.get("outcome") or "unscored"
+        if oc not in cfg["accept_outcomes"]:
+            drops["bench_not_failed"] = drops.get("bench_not_failed", 0) + 1
+            continue
+        if oc != "failed":
+            k = f"{oc}/{rec.get('stop_condition') or '-'}"
+            by_stop[k] = by_stop.get(k, 0) + 1
+        reign = (rec.get("task") or {}).get("reign") if isinstance(rec.get("task"), dict) else None
+        if cfg["min_reign"] and isinstance(reign, int) and reign < cfg["min_reign"]:
+            drops["bench_old_reign"] = drops.get("bench_old_reign", 0) + 1
+            continue
+        src = str(rec["source"])
+        key = str(rec.get("instance_id") or rec.get("traj_id"))
+        h = int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:8], 16)
+        rec["stratum"] = f"{cfg['group']}:{src.removeprefix(BENCH_SOURCE_PREFIX)}:{h % buckets[src]:04d}"
+        rec["fold_group"] = cfg["group"]
+        out.append(rec)
+    if by_stop:
+        log(f"bench_fail: non-`failed` outcomes admitted by stop condition {by_stop}")
+    return out
 KING_GROUPS = ("king_fail", KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_DIVERGENCE_GROUP,
                KING_TOOLUSE_GROUP, KING_PIVOT_GROUP, KING_LOOP_GROUP, COMPLETION_PRE_GROUP,
                KING_COACHED_GROUP)
@@ -713,7 +832,7 @@ def king_loop_candidate(env: dict, cfg: dict) -> bool:
     next tool call is near-deterministic there, so centered R is ~0 and a
     loop prefix carries no signal (wvk-11 findings)."""
     return (_policy_ok(env, cfg) and king_multi_turn(env, cfg)
-            and rollout_outcome(env["trace"]) == "failed")
+            and fold_outcome(env) == "failed")
 
 
 def king_done_candidate(env: dict, cfg: dict) -> bool:
@@ -722,7 +841,7 @@ def king_done_candidate(env: dict, cfg: dict) -> bool:
     tool harness 2026-09-14: 49/90 loop-guard stops graded solved). Errored
     / unscored rollouts stay out."""
     return (_policy_ok(env, cfg) and king_multi_turn(env, cfg)
-            and rollout_outcome(env["trace"]) in ("failed", "solved"))
+            and fold_outcome(env) in ("failed", "solved"))
 
 
 def side_table_turns(env: dict, cfg: dict) -> dict[int, dict]:
@@ -732,7 +851,7 @@ def side_table_turns(env: dict, cfg: dict) -> dict[int, dict]:
     if not cfg or not _policy_ok(env, cfg) or not king_multi_turn(env, cfg):
         return {}
     rows = cfg["table"].get(str(env.get("rollout_id") or ""))
-    if not rows or rollout_outcome(env["trace"]) != "failed":
+    if not rows or fold_outcome(env) != "failed":
         return {}
     return dict(rows)
 
@@ -856,7 +975,7 @@ def completion_candidate(env: dict, cfg: dict) -> bool:
     least `min_replies` replies."""
     if not (_policy_ok(env, cfg)
             and env["trace"].get("stop_condition") == "agent_completed"
-            and rollout_outcome(env["trace"]) == "solved"):
+            and fold_outcome(env) == "solved"):
         return False
     n_replies = sum(1 for nd in env["trace"].get("nodes") or []
                     if nd.get("sampled")
@@ -1248,12 +1367,19 @@ def yield_report(after: dict[str, int], mix: dict[str, float], group_turns: dict
                         "top_drops": [{"reason": k, "n": v} for k, v in top]}
     subl = {k[len("king_divergence_sublabel_"):]: v for k, v in (NOTES_GLOBAL or {}).items()
             if k.startswith("king_divergence_sublabel_")}
+    upstream_fetch_turns = sum(y["drops"].get("upstream_fetch", 0) for y in YIELD.values())
     return {"groups": groups, "sources": sources, "by_king": dict(YIELD_BY_KING),
             # tau2-airline read (2026-09-18): "acted with a schema example value
             # where the teacher asked", per fold and per king digest, so the
             # rate can be tracked reign over reign.
             "divergence_sublabels": subl,
-            "interactive_prose_turns": int((NOTES_GLOBAL or {}).get("interactive_prose_turns", 0))}
+            "interactive_prose_turns": int((NOTES_GLOBAL or {}).get("interactive_prose_turns", 0)),
+            # Turns whose prefix already held a successful GitHub / upstream
+            # fetch (affine.corpus.upstream). New derivations drop them.
+            "upstream_fetch_turns": upstream_fetch_turns,
+            # Records of sources not listed in [source.*]: held, never admitted.
+            "unknown_source_turns": int((NOTES_GLOBAL or {}).get("unknown_source_turns", 0)),
+            "unknown_sources": (NOTES_GLOBAL or {}).get("unknown_sources") or {}}
 
 
 def write_fold_stats(epoch: int, after: dict[str, int], turns_by_group: dict[str, int],
@@ -1741,6 +1867,12 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             _count(drops, _dc)
             _count(drops, f"{_dc}_{env.get('source')}")
             continue
+        _ti = no_task_instruction(env)
+        if _ti:
+            _count(drops, _ti)
+            _count(drops, f"{_ti}_{env.get('source')}")
+            _count(notes, "no_task_instruction_rollouts")
+            continue
         _src = str(env.get("source") or "")
         YIELD.setdefault(_src, {"seen": 0, "accepted_turns": 0, "records": 0, "drops": {}})["seen"] += 1
         _pid = str((env.get("policy") or {}).get("id") or "")
@@ -1757,10 +1889,10 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         kind = (env.get("policy") or {}).get("action_kind") or "bash"
         want_loop = bool(king_loop) and king_loop_candidate(env, king_loop)
         want_done_onset = (bool(king_done) and king_done.get("solved_onset") and _policy_ok(env, king_done)
-                           and king_multi_turn(env, king_done) and rollout_outcome(env["trace"]) == "solved")
+                           and king_multi_turn(env, king_done) and fold_outcome(env) == "solved")
         want_bad_finish = (bool(king_done) and str(env.get("source") or "") in king_done.get("final_output_sources", ())
                            and _policy_ok(env, king_done) and king_multi_turn(env, king_done)
-                           and rollout_outcome(env["trace"]) == "failed"
+                           and fold_outcome(env) == "failed"
                            and env["trace"].get("stop_condition") == "agent_completed")
         pivots = side_table_turns(env, king_pivot) if king_pivot else {}
         recoverable = side_table_turns(env, king_recoverable) if king_recoverable else {}
@@ -1779,9 +1911,9 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         want_pre = (bool(completion_pre) and _policy_ok(env, completion_pre)
                     and king_multi_turn(env, completion_pre)
                     and env["trace"].get("stop_condition") == "agent_completed"
-                    and rollout_outcome(env["trace"]) == "failed")
+                    and fold_outcome(env) == "failed")
         is_king_fail = (bool(king_fail_cfg) and _policy_ok(env, king_fail_cfg)
-                        and rollout_outcome(env["trace"]) == "failed")
+                        and fold_outcome(env) == "failed")
         one_reply_king = (is_king_fail and not king_multi_turn(env, king_fail_cfg))
         escapes: set[int] = set()
         want_completion = bool(completion) and completion_candidate(env, completion)
@@ -2006,11 +2138,29 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         text_replies = frozenset(i for i, k in kind_stamp.items() if k == dialects.TEXT_KIND) | frozenset(divergence_waive)
         for i in divergence_waive:
             kind_stamp[i] = kind           # slicer admits via text; meta reverts to the policy dialect
+        # bench_fail chat suites (2026-09-25, PR #72 stamps): the benchsuite
+        # prompt states the answer format in the first USER turn
+        # (`task.mandate_ok`, `mandate_role = "user"`) -> the first-system-
+        # message marker check is skipped; a reasoning-only failure
+        # (`task.reply_visible_empty`: thinks until the cap, never answers)
+        # is recorded for its PREFIX like a king_divergence row -- the duel
+        # samples fresh teacher refs and the miner's reply, the stored one
+        # is never scored.
+        _task0 = env.get("task") if isinstance(env.get("task"), dict) else {}
+        bench_rec = str(env.get("source") or "").startswith(BENCH_SOURCE_PREFIX)
+        bench_mandate = bool(bench_rec and _task0.get("mandate_ok"))
+        bench_waived = frozenset(range(10_000)) if bench_rec and _task0.get("reply_visible_empty") else frozenset()
+        if bench_mandate:
+            _count(notes, "bench_mandate_exempt")
+        if bench_waived:
+            _count(notes, "bench_reasoning_only")
+            _count(notes, f"bench_reasoning_only_{env.get('source')}")
         try:
             rec = build_view_record(env, baker=baker,
                                     generated_at=env.get("stored_at"),
                                     convs=convs, leak_exempt=leak_exempt,
-                                    text_replies=text_replies)
+                                    text_replies=text_replies,
+                                    waived_replies=bench_waived)
         except (ToolParityError, TraceShapeError) as e:
             _count(drops, type(e).__name__)
             continue
@@ -2019,6 +2169,11 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                 _count_leaked(route, convs, kind, leak_exempt, notes)
             _count(drops, "no_scorable_turn")
             continue
+        if quarantined(env):
+            rec["outcome"] = "unscored"
+            rec["outcome_quarantined"] = True
+            _count(notes, "outcome_quarantined_rollouts")
+            _count(notes, f"outcome_quarantined_{env.get('source')}_{(env.get('task') or {}).get('language')}")
         _pid0 = str((env.get("policy") or {}).get("id") or "")
         if _pid0.startswith("king_"):
             # Served king digest (policy.model `king/king-<digest12>`) on the
@@ -2057,7 +2212,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         if n_later:
             _count(drops, "king_later_onset", n_later)
         kept, d = validate_turns(rest, panel=panel, allowed_kinds=allowed_kinds,
-                                 leak_check=not leak_exempt_all)
+                                 leak_check=not leak_exempt_all,
+                                 mandate_exempt=bench_mandate, reference_waived=bool(bench_waived))
         for k, v in d.items():
             _count(drops, k, v)
         kept_routed: list[dict] = []
@@ -2066,7 +2222,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             if not gturns:
                 continue
             kg, d = validate_turns(gturns, panel=panel, allowed_kinds=allowed_kinds,
-                                   leak_check=not cfgs[g]["leak_exempt"])
+                                   leak_check=not cfgs[g]["leak_exempt"],
+                                   mandate_exempt=bench_mandate, reference_waived=bool(bench_waived))
             kept_routed += kg
             for k, v in d.items():
                 _count(drops, k, v)
@@ -2111,6 +2268,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             _count(drops, "king_fail_cap", len(keep_idx) - len(capped))
             keep_idx = capped
         metas = rec["turns"]
+        if bench_waived:
+            metas = [{**m, "bench": {"reasoning_only": True}} for m in metas]
         rec["turns"] = [m for m in metas if m["turn_idx"] in keep_idx]
         if is_king_fail:
             rec["n_replies"] = len(main)
@@ -2277,7 +2436,7 @@ def math_keep_set(pub: PublicCorpus, traces_manifest: dict, cfg: dict
                 continue
             sid = str((env.get("task") or {}).get("sid") or "")
             pid = str((env.get("policy") or {}).get("id") or "")
-            outcome = rollout_outcome(env["trace"])
+            outcome = fold_outcome(env)
             row = per.setdefault(sid, {"answers": set(), "teacher_failed": False,
                                        "king_failed": False, "n_teacher": 0, "n_king": 0,
                                        "n_boxed_in_cap": 0})
@@ -2474,7 +2633,7 @@ def coached_decisive(env: dict, cfg: dict) -> bool:
         return False
     if cfg["envelope_ids"] is not None and str(env.get("rollout_id")) not in cfg["envelope_ids"]:
         return False
-    if rollout_outcome(env["trace"]) != "solved":
+    if fold_outcome(env) != "solved":
         return False
     if cfg["rule"] == "plain_0_of_n":
         if int(o.get("coached_n_solved") or 0) < cfg["min_coached_solved"]:
@@ -2499,7 +2658,7 @@ def coached_decisive(env: dict, cfg: dict) -> bool:
             return False
         if int(o.get("plain_n_solved") or 0) > cfg["max_plain_solved"] or int(o.get("plain_n") or 0) < 2:
             return False
-    return rollout_outcome(env["trace"]) == "solved"
+    return fold_outcome(env) == "solved"
 
 
 def coached_retire_ids(cfg: dict, pub: PublicCorpus, live: dict | None) -> tuple[list[str], set[str]]:
@@ -2620,6 +2779,135 @@ NOTES_GLOBAL: dict[str, int] = {}   # the fold's `notes` counters, for the yield
 # rule, so existing records do not change.
 INTERACTIVE_SOURCES: frozenset[str] = frozenset()
 
+# -- task-instruction gate (2026-09-27, datagen seat-error audit) -----------------
+# 80 % of SWE-smith-go and 22 % of -py catalog rows ship an EMPTY
+# problem_statement (lm_modify / func_pm_* / combine_* instances). Nobody
+# can solve a task that is never stated: the prompt-embedding harnesses (pi,
+# claude_code, terminus, hermes) ran the agent blind and its "failure" (and
+# the odd lucky "success") entered D -- 355 swesmith rollouts / 5,120 rows at
+# epoch 85. Two rules, both drops (a task with no instruction never becomes
+# valid, so nothing is deferred): (a) `[task_instruction].empty_sids`: a
+# JSON {source: [sid, ...]} of tasks known to have no instruction (built
+# from the catalog datasets by ops/task_instruction/swesmith_empty.py); (b)
+# generic: the conversation has no user message, or its first user message
+# is empty / whitespace. Reasons `no_task_instruction_listed` /
+# `no_task_instruction_empty_user`, counted per source.
+TASK_INSTRUCTION: dict = {"empty": {}, "generic": True}
+
+# -- outcome quarantine (2026-09-27, second swesmith grader bug) -------------------
+# The research-environments swesmith grader ran an unconditional `git
+# checkout HEAD~1`; on the 2-commit cpp / ts instance branches that steps
+# back to the PRE-BUG base, so a rollout that left the buggy file alone
+# passed the tests without fixing anything (false "resolved") and one that
+# edited it errored. Fixed on the pods 2026-09-27 12:10 UTC (PR #77). Every
+# grade of a matching rollout stored before the fix is unreliable, so the
+# fold treats it as `unscored`: it is neither a teacher solve nor a king
+# solve for the band, routes to no outcome-keyed group (completion,
+# king_fail, ...), and rows whose task has no other graded attempt retire.
+# [[outcome_quarantine]] rules: source, languages (empty = all), before
+# (ISO instant, exclusive), reason.
+OUTCOME_QUARANTINE: list[dict] = []
+
+
+def load_outcome_quarantine() -> list[dict]:
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("outcome_quarantine") or []
+    out = []
+    for r in raw:
+        if not isinstance(r, dict) or not r.get("source"):
+            continue
+        before = r.get("before")
+        try:
+            before_dt = datetime.fromisoformat(str(before)) if before else None
+        except ValueError:
+            before_dt = None
+        if before_dt is not None and before_dt.tzinfo is None:
+            before_dt = before_dt.replace(tzinfo=timezone.utc)
+        out.append({"source": str(r["source"]),
+                    "languages": frozenset(str(x).lower() for x in (r.get("languages") or [])),
+                    "before": before_dt, "reason": str(r.get("reason") or "")})
+    return out
+
+
+def quarantine_signature() -> str:
+    return ";".join(f"{r['source']}:{','.join(sorted(r['languages']))}<{r['before'].isoformat() if r['before'] else '*'}"
+                    for r in OUTCOME_QUARANTINE)
+
+
+def quarantined(env: dict) -> bool:
+    """True when the envelope's grade falls under an [[outcome_quarantine]] rule."""
+    if not OUTCOME_QUARANTINE:
+        return False
+    src = str(env.get("source") or "")
+    task = env.get("task") if isinstance(env.get("task"), dict) else {}
+    lang = str(task.get("language") or "").lower()
+    stored = env.get("stored_at") or (env.get("trace") or {}).get("info", {}).get("generated_at") or ""
+    try:
+        stored_dt = datetime.fromisoformat(str(stored)) if stored else None
+    except ValueError:
+        stored_dt = None
+    if stored_dt is not None and stored_dt.tzinfo is None:
+        stored_dt = stored_dt.replace(tzinfo=timezone.utc)
+    for r in OUTCOME_QUARANTINE:
+        if r["source"] != src:
+            continue
+        if r["languages"] and lang not in r["languages"]:
+            continue
+        if r["before"] is not None and stored_dt is not None and stored_dt >= r["before"]:
+            continue
+        return True
+    return False
+
+
+def fold_outcome(env: dict) -> str:
+    """rollout_outcome, or `unscored` for a quarantined grade."""
+    if quarantined(env):
+        return "unscored"
+    return rollout_outcome(env["trace"])
+
+
+def load_task_instruction() -> dict:
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("task_instruction") or {}
+    out = {"empty": {}, "generic": bool(raw.get("generic_empty_user", True)), "path": None}
+    rel = str(raw.get("empty_sids") or "").strip()
+    if rel:
+        path = REPO / rel
+        out["path"] = str(path)
+        if path.exists():
+            try:
+                data = json.loads(path.read_text())
+                out["empty"] = {str(src): frozenset(str(x) for x in ids) for src, ids in (data.get("sids") or data).items()
+                                if isinstance(ids, list)}
+            except (OSError, ValueError) as e:
+                log(f"task_instruction: {path} unreadable ({e}); listed rule off")
+        else:
+            log(f"task_instruction: {path} missing; listed rule off (generic rule {'on' if out['generic'] else 'off'})")
+    return out
+
+
+def no_task_instruction(env: dict) -> str | None:
+    """Drop reason when the rollout's task carries no instruction, else None."""
+    src = str(env.get("source") or "")
+    sid = str((env.get("task") or {}).get("sid") or "")
+    listed = TASK_INSTRUCTION.get("empty") or {}
+    if sid and sid in listed.get(src, ()):
+        return "no_task_instruction_listed"
+    if TASK_INSTRUCTION.get("generic"):
+        nodes = (env.get("trace") or {}).get("nodes") or []
+        first_user = None
+        for n in nodes:
+            m = n.get("message") if isinstance(n.get("message"), dict) else n
+            if m.get("role") == "user":
+                first_user = m
+                break
+        if first_user is None:
+            return "no_task_instruction_no_user"
+        c = first_user.get("content")
+        if isinstance(c, list):
+            c = "".join(str(x.get("text", "")) for x in c if isinstance(x, dict))
+        if not str(c or "").strip():
+            return "no_task_instruction_empty_user"
+    return None
+
 
 def load_interactive_sources() -> frozenset[str]:
     raw = tomllib.loads(SOURCES_TOML.read_text())
@@ -2703,7 +2991,7 @@ def teacher_solved_tasks(pub: PublicCorpus, traces_manifest: dict,
             if not sid:
                 continue
             seen.add(sid)
-            if rollout_outcome(env["trace"]) == "solved":
+            if fold_outcome(env) == "solved":
                 solved.add(sid)
     TEACHER_SOLVED_CACHE.parent.mkdir(parents=True, exist_ok=True)
     TEACHER_SOLVED_CACHE.write_text(json.dumps({"key": key, "solved": sorted(solved), "seen": sorted(seen)}))
@@ -2900,8 +3188,107 @@ def load_band_filters() -> dict[str, dict]:
     return out
 
 
+def load_band_backfill() -> dict:
+    """[band_filter.defaults] backfill_outcomes = "<key under the public
+    base>" (+ backfill_seats, backfill_kings = "all" | "current"): the env
+    backfill's per-task outcome table (datagen worker, internal/king-seat-
+    replay-band-coverage.md: one row per (source, sid, seat model) with n /
+    n_solved / n_errored). Its king rows merge into the seat counts k_n /
+    k_s -- more coverage for the "king did not solve it" side without
+    waiting for the seat replay. Only drops can come of it (no backfill
+    turn enters D). Empty key = off."""
+    d = (tomllib.loads(SOURCES_TOML.read_text()).get("band_filter") or {}).get("defaults") or {}
+    key = str(d.get("backfill_outcomes") or "").strip("/")
+    return {"key": key,
+            "seats": frozenset(str(x) for x in (d.get("backfill_seats") or ["king"])),
+            "kings": str(d.get("backfill_kings") or "all"),
+            "current_digest": None}
+
+
+def current_king_digest() -> str | None:
+    """The validator's current king (affine/state/state.json revision[:12]),
+    for backfill_kings = "current"."""
+    try:
+        k = json.loads((REPO / "affine" / "state" / "state.json").read_text()).get("king") or {}
+        rev = str(k.get("revision") or "")
+        return rev[:12] or None
+    except (OSError, ValueError):
+        return None
+
+
+def merge_band_backfill(pub: PublicCorpus, stats: dict[str, list[int]], cfg: dict,
+                        current_digest: str | None = None) -> dict:
+    """Add the backfill table's rows to k_n / k_s in place. Returns a report
+    (rows merged, tasks touched, sha) or {"error": ...}; a sha mismatch with
+    the meta file (hourly republish race) skips the merge for this fold."""
+    if not cfg.get("key"):
+        return {}
+    try:
+        raw = pub.get(cfg["key"])
+        meta = json.loads(pub.get(cfg["key"].rsplit(".", 1)[0] + ".meta.json").decode())
+    except Exception as ex:  # noqa: BLE001 -- network / 404: the band runs on the seat alone
+        log(f"band filter: backfill outcomes unavailable ({type(ex).__name__}: {ex}); seat counts only")
+        return {"error": f"{type(ex).__name__}: {ex}"}
+    sha = hashlib.sha256(raw).hexdigest()
+    if meta.get("sha256") and meta["sha256"] != sha:
+        log(f"band filter: backfill outcomes sha {sha[:12]} != meta {str(meta.get('sha256'))[:12]} (republish race?); seat counts only")
+        return {"error": "sha_mismatch", "sha256": sha}
+    rows = 0
+    touched: set[str] = set()
+    new_tasks = 0
+    by_src: dict[str, int] = {}
+    for line in raw.decode().splitlines():
+        if not line.strip():
+            continue
+        r = json.loads(line)
+        if str(r.get("seat") or "") not in cfg["seats"]:
+            continue
+        if cfg["kings"] == "current" and current_digest and str(r.get("king_digest") or "") != current_digest:
+            continue
+        n, ns = int(r.get("n") or 0), int(r.get("n_solved") or 0)
+        if n <= 0:
+            continue
+        key = f"{r.get('source') or ''}\t{r.get('sid') or ''}"
+        st = stats.get(key)
+        if st is None:
+            st = stats[key] = [0, 0, 0, 0]
+            new_tasks += 1
+        st[2] += n
+        st[3] += ns
+        rows += 1
+        touched.add(key)
+        by_src[key.split("\t", 1)[0]] = by_src.get(key.split("\t", 1)[0], 0) + 1
+    rep = {"key": cfg["key"], "sha256": sha, "generated_at": meta.get("generated_at"),
+           "traces_backfill_manifest_sha256": meta.get("traces_backfill_manifest_sha256"),
+           "seats": sorted(cfg["seats"]), "kings": cfg["kings"], "rows_merged": rows,
+           "tasks_touched": len(touched), "tasks_new": new_tasks, "rows_by_source": by_src}
+    log(f"band filter: merged {rows} backfill outcome rows ({len(touched)} tasks, {new_tasks} not in the traces) "
+        f"from {cfg['key']} sha {sha[:12]} (generated {meta.get('generated_at')})")
+    return rep
+
+
+def band_coverage(stats: dict[str, list[int]], bands: dict[str, dict]) -> dict[str, dict]:
+    """Per source: teacher-covered tasks, share with >= 1 king attempt, share
+    the king side would drop -- for the seat-only vs merged comparison."""
+    out: dict[str, dict] = {}
+    per: dict[str, list] = {}
+    for k, v in stats.items():
+        src = k.split("\t", 1)[0]
+        if src not in bands or v[0] <= 0:
+            continue
+        p = per.setdefault(src, [0, 0, 0])
+        p[0] += 1
+        p[1] += v[2] > 0
+        p[2] += band_verdict(v, bands[src]) == "king_solved"
+    for src, (n, cov, ks) in per.items():
+        out[src] = {"teacher_tasks": n, "king_covered": round(cov / n, 3), "king_solved_share": round(ks / n, 3)}
+    return out
+
+
 def _band_scan_chunk(path: Path) -> dict[str, list[int]]:
-    """{source\\tsid: [t_n, t_s, k_n, k_s]} for one trace chunk."""
+    """{source\\tsid: [t_n, t_s, k_n, k_s, q_n]} for one trace chunk; q_n =
+    graded attempts (either side) whose grade is quarantined and therefore
+    counted nowhere (2026-09-27 swesmith cpp / ts grader bug)."""
     stats: dict[str, list[int]] = {}
     for env in iter_jsonl_gz(path):
         if is_backfill(env):
@@ -2910,11 +3297,17 @@ def _band_scan_chunk(path: Path) -> dict[str, list[int]]:
         side = 0 if pid.startswith(("teacher_", "glm_")) else (2 if pid.startswith("king_") else None)
         if side is None:
             continue
-        outcome = rollout_outcome(env["trace"])
+        key = f"{env.get('source') or ''}\t{(env.get('task') or {}).get('sid') or ''}"
+        if quarantined(env) and rollout_outcome(env["trace"]) in ("solved", "failed"):
+            st = stats.setdefault(key, [0, 0, 0, 0, 0])
+            while len(st) < 5:
+                st.append(0)
+            st[4] += 1
+            continue
+        outcome = fold_outcome(env)
         if outcome not in ("solved", "failed"):
             continue
-        key = f"{env.get('source') or ''}\t{(env.get('task') or {}).get('sid') or ''}"
-        st = stats.setdefault(key, [0, 0, 0, 0])
+        st = stats.setdefault(key, [0, 0, 0, 0, 0])
         st[side] += 1
         st[side + 1] += int(outcome == "solved")
     return stats
@@ -2924,12 +3317,18 @@ def task_attempts(pub: PublicCorpus, traces_manifest: dict, sources: frozenset[s
     """{source\\tsid: [t_n, t_s, k_n, k_s]} over every graded teacher_* /
     king_* rollout in the traces. Per-chunk cache; only unseen chunks are
     scanned (a process pool: the work is gzip + json)."""
+    rule = quarantine_signature()
+    # The per-chunk cache is only valid for the grading rule it was scanned
+    # under; a changed [[outcome_quarantine]] list re-scans (rows tagged
+    # with another rule are ignored and rewritten).
     cached: dict[str, dict[str, list[int]]] = {}
     if BAND_CACHE.exists():
         with BAND_CACHE.open() as fh:
             for line in fh:
                 try:
                     row = json.loads(line)
+                    if str(row.get("rule") or "") != rule:
+                        continue
                     cached[row["key"]] = row["stats"]
                 except (ValueError, KeyError):
                     continue
@@ -2940,7 +3339,7 @@ def task_attempts(pub: PublicCorpus, traces_manifest: dict, sources: frozenset[s
         with ProcessPoolExecutor(max_workers=8) as ex, BAND_CACHE.open("a") as fh:
             for key, st in zip(paths, ex.map(_band_scan_chunk, paths.values())):
                 cached[key] = st
-                fh.write(json.dumps({"key": key, "stats": st}) + "\n")
+                fh.write(json.dumps({"key": key, "rule": rule, "stats": st}) + "\n")
         log(f"band filter: scanned {len(want)} new trace chunk(s) ({len(cached)} cached)")
     live_keys = {c["key"] for c in traces_manifest["chunks"]}
     stats: dict[str, list[int]] = {}
@@ -2950,15 +3349,15 @@ def task_attempts(pub: PublicCorpus, traces_manifest: dict, sources: frozenset[s
         for k, v in st.items():
             if k.split("\t", 1)[0] not in sources:
                 continue
-            a = stats.setdefault(k, [0, 0, 0, 0])
-            for i in range(4):
+            a = stats.setdefault(k, [0, 0, 0, 0, 0])
+            for i in range(min(len(v), 5)):
                 a[i] += v[i]
     return stats
 
 
 def band_verdict(st: list[int] | None, cfg: dict) -> str:
     """admit | hold | teacher_unsolved | teacher_saturated | king_solved"""
-    t_n, t_s, k_n, k_s = st or (0, 0, 0, 0)
+    t_n, t_s, k_n, k_s = (list(st) + [0, 0, 0, 0])[:4] if st else (0, 0, 0, 0)
     if t_n < cfg["teacher_min_attempts"]:
         return "hold"
     if t_s < cfg["teacher_min_solved"]:
@@ -3035,9 +3434,14 @@ def band_published_retire(pub: PublicCorpus, live: dict | None, bands: dict[str,
             continue
         m = sha8.get(src) or {}
         key = next((m[p] for p in str(traj).split(".") if p in m), None)
-        v = band_verdict(stats.get(key) if key else None, bands[src])
+        st_row = stats.get(key) if key else None
+        v = band_verdict(st_row, bands[src])
+        if v == "hold" and st_row is not None and len(st_row) > 4 and st_row[4] > 0 and st_row[0] == 0:
+            # the task's only graded teacher attempts are quarantined: the
+            # admission rested on a grade the fold no longer trusts
+            v = "quarantined_solve"
         b = by_src.setdefault(src, {"kept": 0, "retired": 0})
-        if v in ("teacher_unsolved", "teacher_saturated", "king_solved"):
+        if v in ("teacher_unsolved", "teacher_saturated", "king_solved", "quarantined_solve"):
             out.setdefault(g, []).append(str(tid))
             b["retired"] += 1
             b[f"retired_{v}"] = b.get(f"retired_{v}", 0) + 1
@@ -3316,6 +3720,18 @@ def publish_pending(state: dict, publisher: CorpusPublisher,
         extra["yield"] = {"groups": pending["yield_groups"],
                           "sources": {k: {kk: vv for kk, vv in v.items() if kk != "top_drops"} | {
                               "top_drops": v["top_drops"]} for k, v in (pending.get("yield_sources") or {}).items()}}
+    if pending.get("yield_extra") and isinstance(extra.get("yield"), dict):
+        # divergence sublabels, interactive prose, upstream_fetch_turns,
+        # unknown_source_turns / unknown_sources, by_king -- the announce
+        # already carried them; the manifest now does too (2026-09-25).
+        extra["yield"]["extra"] = pending["yield_extra"]
+    if pending.get("trained_on") is not None:
+        # Benchmark suites whose failed trials enter D directly (bench_fail):
+        # {suite: {since_epoch, since, group, mode}}. The kingboard renders
+        # "trained on since epoch N" from THIS block; it was missing from the
+        # manifest at epoch 82 (only fold_stats.json and the state had it).
+        extra["trained_on"] = pending["trained_on"]
+        extra["bench_traces_manifest_sha256"] = pending.get("bench_traces_manifest_sha256")
     if pending.get("admission_gate"):
         ag = pending["admission_gate"]
         extra["admission_gate"] = {"apply_groups": ag.get("apply_groups"), "retired": ag.get("retired"),
@@ -3328,6 +3744,7 @@ def publish_pending(state: dict, publisher: CorpusPublisher,
         extra["band_filter"] = {"per_source": bf.get("per_source"), "retired": bf.get("retired"),
                                 "retired_by_source": bf.get("retired_by_source"),
                                 "tally": bf.get("tally"), "rules": bf.get("rules"), "held_turns": bf.get("held_turns"),
+                                "backfill": bf.get("backfill"), "coverage": bf.get("coverage"),
                                 "rule": "teacher-side turns of a task fold iff the teacher solved it (>= k of n attempts) and the king seat did not (> m of n seat solves drop; attempts from the traces); rows outside the band retire"}
     if pending.get("curriculum_block"):
         # Adaptive curriculum stamp (plan §2.3 / §3.4; evalsrv reads it into
@@ -3438,6 +3855,15 @@ def yield_line(info: dict) -> str:
         "; full per-source table in corpus/fold_stats.json.\n"
 
 
+def upstream_line(info: dict) -> str:
+    extra = info.get("yield_extra") or {}
+    if "upstream_fetch_turns" not in extra:
+        return ""
+    n = int(extra.get("upstream_fetch_turns") or 0)
+    return (f"Upstream fetch: {n} new turns dropped because the prefix already "
+            "held a GitHub fetch, an upstream clone, or a package download.\n")
+
+
 def sublabel_line(info: dict) -> str:
     y = info.get("yield_extra") or {}
     subl = y.get("divergence_sublabels") or {}
@@ -3494,7 +3920,7 @@ def announce(state: dict, public_base: str) -> None:
            if info.get("n_backfill_excluded") else "")
         + budget_note(info)
         + (f"{info['curriculum_line']}\n" if info.get("curriculum_line") else "")
-        + floors_line(info) + yield_line(info) + gate_line(info) + sublabel_line(info)
+        + floors_line(info) + yield_line(info) + upstream_line(info) + gate_line(info) + sublabel_line(info)
         + "\n"
         f"- corpus_epoch: **{epoch}**\n"
         f"- schema_version: **3** (view `{VIEW_SPEC}`: one record per rollout "
@@ -3558,6 +3984,11 @@ def main() -> None:
                          "admit enter. Used once at the wvk 13 flip (2026-09-09) "
                          "to back-fill the `text` turns of trajectories folded "
                          "under wvk 11/12.")
+    ap.add_argument("--retire-turn-ids", default=None, metavar="FILE",
+                    help="one-off index-only retire: JSON {\"turn_ids\": [...]} or one id per line. "
+                         "The rows leave the index in this revision (chunks and old manifests "
+                         "untouched, old verdicts replay); group strata are recounted. Used "
+                         "2026-09-27 for the instruction-less swesmith rows.")
     ap.add_argument("--rederive-since", default=None, metavar="ISO8601",
                     help="like --rederive, but only for published chunks "
                          "created at or after this time (plus the unfolded "
@@ -3612,6 +4043,21 @@ def main() -> None:
     state = load_state()
 
     traces_manifest, traces_sha = pub.manifest(cfg.dataset.traces_manifest_key)
+    BENCH_FAIL.clear(); BENCH_FAIL.update(load_bench_fail())
+    bench_sha = None
+    if BENCH_FAIL.get("enabled") and BENCH_FAIL.get("mode") == "direct":
+        try:
+            bench_manifest, bench_sha = pub.manifest(BENCH_FAIL["traces_prefix"] + "manifest.json")
+            extra_chunks = [c for c in bench_manifest.get("chunks", [])
+                            if c["key"] not in {x["key"] for x in traces_manifest["chunks"]}]
+            traces_manifest["chunks"] = list(traces_manifest["chunks"]) + extra_chunks
+            log(f"bench_fail: direct mode ON -- {len(bench_manifest.get('chunks', []))} bench trace chunk(s) "
+                f"({bench_manifest.get('n_rollouts')} rollouts) from {BENCH_FAIL['traces_prefix']} joined the fold "
+                f"(manifest {str(bench_sha)[:12]})")
+        except Exception as e:  # noqa: BLE001
+            log(f"bench_fail: {BENCH_FAIL['traces_prefix']}manifest.json unreadable ({e!r}); no bench rows this fold")
+    else:
+        log(f"bench_fail: off (allow_bench_groups={'on' if BENCH_FAIL.get('enabled') else 'off'}, mode={BENCH_FAIL.get('mode')})")
     legacy_manifest, legacy_sha = pub.manifest("turns/manifest.json")
 
     if state["pending"]:
@@ -3713,6 +4159,12 @@ def main() -> None:
     mix, src2grp, lang_mix, buckets = load_mix(ignore_fold_mix=args.ignore_fold_mix)
     global INTERACTIVE_SOURCES
     INTERACTIVE_SOURCES = load_interactive_sources()      # before any derive_chunk call
+    TASK_INSTRUCTION.clear(); TASK_INSTRUCTION.update(load_task_instruction())
+    OUTCOME_QUARANTINE[:] = load_outcome_quarantine()
+    if OUTCOME_QUARANTINE:
+        log(f"outcome quarantine: {[(r['source'], sorted(r['languages']), r['before'].isoformat() if r['before'] else '*', r['reason']) for r in OUTCOME_QUARANTINE]}")
+    log(f"task_instruction gate: listed sids {sum(len(v) for v in TASK_INSTRUCTION['empty'].values())} "
+        f"over {sorted(TASK_INSTRUCTION['empty'])}; generic empty-user rule {'on' if TASK_INSTRUCTION['generic'] else 'off'}")
     DECONTAM.clear(); DECONTAM.update(load_decontamination())
     if DECONTAM:
         log("decontamination: " + "; ".join(f"{src} bench ids {sum(len(v) for v in c['bench'].values())} "
@@ -3979,6 +4431,41 @@ def main() -> None:
     for k, v in king_drops.items():
         drops[k] = drops.get(k, 0) + v
     n_before = len(candidates)
+    bench_drops: dict[str, int] = {}
+    candidates = route_bench_fail(candidates, BENCH_FAIL, bench_drops)
+    n_bench = sum(1 for r in candidates if r.get("fold_group") == BENCH_FAIL.get("group"))
+    if n_bench or bench_drops:
+        log(f"bench_fail: {n_bench} failed benchmark trials -> {BENCH_FAIL.get('group')} "
+            f"({sum(len(r['turns']) for r in candidates if r.get('fold_group') == BENCH_FAIL.get('group'))} turns), "
+            f"dropped {n_before - len(candidates)} {bench_drops or ''}")
+    for k, v in bench_drops.items():
+        drops[k] = drops.get(k, 0) + v
+    n_before = len(candidates)
+    # Unknown-source gate (2026-09-24, hygiene hole found by the datagen
+    # worker): a record whose source is not a [source.*] entry -- and is not
+    # a bench_* record the bench_fail router just claimed -- used to fall into
+    # DEFAULT_GROUP (coding) as a teacher-side row. It is now HELD (deferred,
+    # re-enters when the toml lists the source) and logged per source; it is
+    # never admitted.
+    known_sources = set(src2grp)
+    unknown_held: list[dict] = []
+    kept_known: list[dict] = []
+    unknown_by_src: dict[str, int] = {}
+    for rec in candidates:
+        src0 = str(rec.get("source") or "")
+        bench_ok = (rec.get("fold_group") == BENCH_FAIL.get("group") and src0.startswith(BENCH_SOURCE_PREFIX)
+                    and BENCH_FAIL.get("enabled"))
+        if src0 in known_sources or bench_ok:
+            kept_known.append(rec)
+        else:
+            unknown_held.append(rec)
+            unknown_by_src[src0] = unknown_by_src.get(src0, 0) + len(rec.get("turns") or [])
+    if unknown_held:
+        log(f"unknown source: {len(unknown_held)} records held, never admitted (turns by source {unknown_by_src}); "
+            f"list the source in [source.*] to admit it")
+        NOTES_GLOBAL["unknown_source_turns"] = sum(unknown_by_src.values())
+        NOTES_GLOBAL["unknown_sources"] = unknown_by_src  # type: ignore[assignment]
+    candidates = kept_known
     candidates = drop_excluded_routed(candidates, routed, drops)
     if len(candidates) != n_before:
         log(f"routed groups: dropped {n_before - len(candidates)} carryover records "
@@ -4016,6 +4503,26 @@ def main() -> None:
                 f"-> they stay where they are")
         log(f"{g}: retiring {sum(len([t for t in ids if t in readmitted]) for ids in plan.values())} "
             f"index rows, readmitted as {g}")
+    if args.retire_turn_ids:
+        # One-off index-only retire from a file, keyed to groups through the
+        # live index so the strata accounting sees it (2026-09-27: the
+        # instruction-less swesmith rows; the same path serves the
+        # upstream-fetch retire when Jacob calls it).
+        raw_ids = Path(args.retire_turn_ids).read_text()
+        try:
+            wanted = set(str(x) for x in (json.loads(raw_ids).get("turn_ids") or []))
+        except ValueError:
+            wanted = {l.strip() for l in raw_ids.split("\n") if l.strip()}
+        rt = index_table(pub, live, ["turn_id", "stratum_src", "source"])
+        by_g: dict[str, int] = {}
+        if rt is not None:
+            for tid, st, src in zip(*(rt.column(c).to_pylist() for c in ("turn_id", "stratum_src", "source"))):
+                if str(tid) in wanted:
+                    g0 = group_from_row(str(st), str(src), src2grp)
+                    extra_retire.setdefault(g0, set()).add(str(tid))
+                    by_g[g0] = by_g.get(g0, 0) + 1
+        log(f"--retire-turn-ids: {sum(by_g.values())} of {len(wanted)} listed rows are in the live index; "
+            f"retiring by group {by_g}")
     retire_surviving: dict[str, set[str]] = {}
     for src_g, ids in extra_retire.items():
         if ids:
@@ -4078,8 +4585,17 @@ def main() -> None:
             old_raw = old_sig.get("raw", old_sig) if isinstance(old_sig, dict) else None
             rename_only = (old_raw is not None and old_raw == new_sig.get("raw")
                            and (old_sig.get("m") if isinstance(old_sig, dict) else None) == new_sig.get("m"))
+            # The curriculum rule's `m` (sub-strata it RAISES) moves with
+            # its published vector; a change there is the rule doing its
+            # job, not an operator re-key -- 2026-09-27 00:00 and 06:00 UTC
+            # folds both died on this guard when the rule first raised
+            # bench_fail to 2 (D stale 10 h). Re-key without the operator
+            # guard; the per-group 5-point composition guard below still
+            # applies to the resulting move.
+            m_only = (old_raw is not None and old_raw == new_sig.get("raw") and not rename_only)
         except (ValueError, TypeError):
             rename_only = False
+            m_only = False
         # First fold under this budget: re-key the mix state from the live
         # index (the deliberate composition shift; --allow-shift required).
         live_rows = live_rows_for_budget(pub, live)
@@ -4104,7 +4620,10 @@ def main() -> None:
             budget_migrated = not rename_only
             if rename_only:
                 log("strata budget: naming-version change only (shares unchanged); re-keyed without a guard")
-            if not args.allow_shift and not rename_only:
+            if m_only:
+                log(f"strata budget: curriculum sub-strata change only ({(old_sig or {}).get('m')} -> {new_sig.get('m')}); "
+                    "re-keyed without the operator guard (the composition guard still applies)")
+            if not args.allow_shift and not rename_only and not m_only:
                 msg = "strata budget re-keys the live index (deliberate composition shift); rerun with --allow-shift"
                 if args.no_publish:
                     log(f"GUARD (dry run): {msg}")
@@ -4115,6 +4634,13 @@ def main() -> None:
     band_held: list[dict] = []
     if bands:
         band_stats = task_attempts(pub, traces_manifest, frozenset(bands))
+        backfill_cfg = load_band_backfill()
+        coverage_seat = band_coverage(band_stats, bands)
+        backfill_rep = {}
+        if backfill_cfg.get("key"):
+            backfill_rep = merge_band_backfill(pub, band_stats, backfill_cfg,
+                                               current_digest=current_king_digest())
+        coverage_merged = band_coverage(band_stats, bands)
         candidates, band_held, band_tally = band_filter_records(candidates, bands, band_stats, drops)
         band_retire, band_pub = band_published_retire(pub, live, bands, band_stats, src2grp)
         for g, ids in band_retire.items():
@@ -4130,7 +4656,21 @@ def main() -> None:
                        "retired_by_source": {s0: v.get("retired", 0) for s0, v in band_pub.items() if v.get("retired")},
                        "per_source": per_src,
                        "rules": [{"sources": sorted(v), **json.loads(k)} for k, v in rules.items()],
-                       "held_turns": sum(len(r.get("turns") or []) for r in band_held)}
+                       "held_turns": sum(len(r.get("turns") or []) for r in band_held),
+                       "backfill": backfill_rep or None,
+                       "coverage": {src: {"teacher_tasks": m["teacher_tasks"],
+                                          "king_covered_seat": coverage_seat.get(src, {}).get("king_covered"),
+                                          "king_covered": m["king_covered"],
+                                          "king_solved_share_seat": coverage_seat.get(src, {}).get("king_solved_share"),
+                                          "king_solved_share": m["king_solved_share"]}
+                                    for src, m in coverage_merged.items()}}
+        if backfill_rep and not backfill_rep.get("error"):
+            moved = sorted(((src, c["king_covered_seat"], c["king_covered"], c["king_solved_share_seat"], c["king_solved_share"])
+                            for src, c in band_report["coverage"].items()
+                            if c["king_covered_seat"] is not None and c["king_covered"] != c["king_covered_seat"]),
+                           key=lambda x: -(x[2] - x[1]))
+            log("band filter: king coverage seat -> merged (king_solved share seat -> merged): " + ", ".join(
+                f"{src} {a:.2f}->{b:.2f} ({c:.2f}->{d:.2f})" for src, a, b, c, d in moved[:25]))
         log(f"band filter: retired by group {band_report['retired']}; held {band_report['held_turns']} turns; "
             f"by source: " + ", ".join(
                 f"{s0} kept {v['published'].get('kept', 0)}/retired {v['published'].get('retired', 0)}"
@@ -4310,7 +4850,7 @@ def main() -> None:
     selected, deferred, group_added = cap_fill(
         candidates, lambda r: group_of(r, src2grp, mix), have_groups, mix,
         anchor_min_target=ANCHOR_MIN_TARGET, max_new=budgets)
-    deferred += lang_deferred + probe_held + gate_held + band_held
+    deferred += lang_deferred + probe_held + gate_held + band_held + unknown_held
     log(f"mix: selected {len(selected)} rollouts (+{ {g: len(v) for g, v in group_added.items()} } "
         f"strata), deferred {len(deferred)}")
     # Language strata credited only for coding rollouts that made it through
@@ -4413,6 +4953,27 @@ def main() -> None:
         log("yield (accepted turns this fold / strata over target): " + ", ".join(
             f"{g} {v['accepted_turns_this_fold']}/{v['strata_over_target']}" for g, v in yrep["groups"].items()
             if v["accepted_turns_this_fold"] or (v["strata_over_target"] or 0) < 1))
+        # trained_on: a bench_* suite flips when the fold PUBLISHES its rows
+        # (records in `selected`, i.e. past cap_fill), not when derive_chunk
+        # accepts them -- a suite whose records the mix stage deferred is not
+        # trained on yet. Once flipped, the first epoch stays.
+        epoch_next = (int(live["corpus_epoch"]) if live else 0) + 1
+        bench_selected: dict[str, int] = {}
+        for r in selected:
+            if r.get("fold_group") == BENCH_FAIL.get("group") and str(r.get("source") or "").startswith(BENCH_SOURCE_PREFIX):
+                bench_selected[str(r["source"])] = bench_selected.get(str(r["source"]), 0) + len(r["turns"])
+        if bench_selected:
+            log(f"bench_fail: published this fold by suite (turns) {dict(sorted(bench_selected.items()))}")
+        if BENCH_FAIL.get("enabled"):
+            tr = dict(state.get("trained_on") or {})
+            for src0, n0 in bench_selected.items():
+                if n0 > 0:
+                    suite = str(src0).removeprefix(BENCH_SOURCE_PREFIX)
+                    tr.setdefault(suite, {"since_epoch": epoch_next, "since": datetime.now(timezone.utc).date().isoformat(),
+                                          "group": BENCH_FAIL.get("group"), "mode": BENCH_FAIL.get("mode")})
+            if tr != (state.get("trained_on") or {}):
+                log(f"trained_on: {sorted(set(tr) - set(state.get('trained_on') or {}))} flip this fold")
+            state["trained_on"] = tr
         write_fold_stats((int(live["corpus_epoch"]) if live else 0) + 1, after, turns_by_group, recurrence,
                          curriculum, mix, sum(turns_by_group.values()), None if args.no_publish else publisher,
                          sim_rows=sim_rows_src, src2grp=src2grp,
@@ -4420,7 +4981,8 @@ def main() -> None:
                                 "yield": {**yrep, "gate_state": (gate_report or {}).get("gate_state"),
                                           "gate_reason": (gate_report or {}).get("gate_reason")},
                                 "admission_gate": gate_report or None,
-                                "band_filter": band_report or None})
+                                "band_filter": band_report or None,
+                                "trained_on": state.get("trained_on") or {}})
 
     n_new = sum(len(r["turns"]) for r in selected)
     stale = False
@@ -4468,10 +5030,18 @@ def main() -> None:
         "yield_groups": yrep["groups"] if STRATA_BUDGET else None,
         "yield_extra": {"divergence_sublabels": yrep.get("divergence_sublabels"),
                         "interactive_prose_turns": yrep.get("interactive_prose_turns"),
-                        "by_king": yrep.get("by_king")} if STRATA_BUDGET else None,
+                        "by_king": yrep.get("by_king"),
+                        "upstream_fetch_turns": yrep.get("upstream_fetch_turns", 0),
+                        "unknown_source_turns": yrep.get("unknown_source_turns", 0),
+                        "unknown_sources": yrep.get("unknown_sources") or {}} if STRATA_BUDGET else None,
         "yield_sources": yrep["sources"] if STRATA_BUDGET else None,
         "admission_gate": gate_report or None,
         "band_filter": band_report or None,
+        # Benchmark columns whose failed trials enter D directly (bench_fail):
+        # {suite: {since_epoch, since, group, mode}} -- persists from the first
+        # admitting fold on; the kingboard renders "trained on since <epoch>".
+        "trained_on": state.get("trained_on") or {},
+        "bench_traces_manifest_sha256": bench_sha,
         "gate_enforced": sorted(gate["apply_groups"]) if gate else None,
         "budget_signature": budget_cfg.get("signature") if budget_cfg else None,
         "budget_migrated": budget_migrated,

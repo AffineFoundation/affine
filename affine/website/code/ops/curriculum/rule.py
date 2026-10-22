@@ -225,7 +225,7 @@ def constrained_fill(target: dict[str, float], lo: dict[str, float], hi: dict[st
 
 def group_vector(raw: dict[str, float], static: dict[str, float], current: dict[str, float],
                  *, floor_frac: float, floor_ct: float, cap: float, max_shift: float,
-                 ct_groups: tuple[str, str] = ("coding", "terminal"),
+                 ct_groups: tuple[str, ...] = ("coding", "terminal", "bench_fail"),   # bench_fail = SWE / terminal benchmark trials (2026-09-24), part of the block
                  block_floors: dict[str, tuple[tuple[str, ...], float]] | None = None) -> dict:
     """raw -> after_floor -> after_clamp, with a reason code per group.
 
