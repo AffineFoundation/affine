@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh Affine website metrics every two minutes
+
+[Timer]
+OnCalendar=*:0/2:20
+AccuracySec=5s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

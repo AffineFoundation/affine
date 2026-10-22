@@ -1,0 +1,11 @@
+[Unit]
+Description=Affine website current-run metrics (site-metrics.json, read-only projection)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/const/subnet120-rewrite
+ExecStart=/usr/bin/python3 -I -B /home/const/subnet120-rewrite/dashboard/site_metrics.py --repo /home/const/subnet120-rewrite --website /home/const/subnet120/affine/website
+Nice=10
+TimeoutStartSec=300
+NoNewPrivileges=true
