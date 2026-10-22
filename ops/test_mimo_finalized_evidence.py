@@ -24,6 +24,75 @@ class EvidenceTests(unittest.TestCase):
         report=json.loads((f.epoch/'TRAINING-RESULT.json').read_bytes())['payload'];report['report']['job_sha256']=m.digest(job);f.write('TRAINING-RESULT.json',f.sign(report,f.worker));f.write('FINALIZED.json',f.sign(final));return final
     def test_open_never_reads_inputs_or_corrupt_opening(self):
         self.f.write('coordinator/OPENING.json',{'bad':True});self.assertEqual(m.collect(self.f.p,self.bucket,25),[]);self.assertEqual(self.bucket.reads,[])
+    def test_finalization_arriving_after_snapshot_waits_until_next_cycle(self):
+        inventory=m.snapshot(self.f.p)
+        self.trained()
+        self.assertEqual(m.collect(self.f.p,self.bucket,25,inventory),[])
+        self.assertEqual(self.bucket.reads,[])
+        self.assertEqual(len(m.collect(self.f.p,self.bucket,25)),1)
+
+    def test_evaluation_arriving_after_snapshot_waits_until_next_cycle(self):
+        self.trained();inventory=m.snapshot(self.f.p);self.f.evaluation()
+        rows=m.collect(self.f.p,self.bucket,25,inventory)
+        self.assertEqual(rows[0]['categories']['evaluations']['status'],'pending')
+        self.assertEqual(len(m.collect(self.f.p,self.bucket,25)[0]['categories']['evaluations']['reports']),1)
+
+    def test_frozen_finalization_and_eval_hashes_cannot_change(self):
+        self.trained();path,evaluation=self.f.evaluation();inventory=m.snapshot(self.f.p)
+        evaluation['payload']['unexpected']='changed'
+        path.write_bytes(p.canonical(self.f.sign(evaluation['payload'])))
+        with self.assertRaisesRegex(ValueError,'frozen evaluation changed'):
+            m.collect(self.f.p,self.bucket,25,inventory)
+        inventory=m.snapshot(self.f.p)
+        final=json.loads((self.f.epoch/'FINALIZED.json').read_bytes())['payload']
+        final['round']=999;self.f.write('FINALIZED.json',self.f.sign(final))
+        with self.assertRaisesRegex(ValueError,'frozen finalization changed'):
+            m.collect(self.f.p,self.bucket,25,inventory)
+
+    def test_arrival_during_preput_revalidation_does_not_change_plan(self):
+        self.trained();plan=self.legacy.prepare()
+        with patch.object(m,'collector',return_value=self.f.p):
+            m.extend_plan(plan,{},self.bucket)
+            self.f.evaluation()
+            m.validate_extension(plan,self.bucket)
+        self.assertEqual(plan['mimo_extension']['inventory']['evaluations'],{})
+
+    def test_prepare_freezes_inventory_before_legacy_network_reads(self):
+        original=p.read_object
+        started=[]
+        def arrive(bucket,key,**kwargs):
+            if key==p.HISTORY_KEY and not started:
+                started.append(True);self.trained()
+            return original(bucket,key,**kwargs)
+        with patch.object(m,'collector',return_value=self.f.p),patch.object(p,'read_object',side_effect=arrive):
+            plan=self.legacy.prepare(mimo={})
+        self.assertTrue(started)
+        self.assertEqual(plan['history_payload'][m.FIELD]['epoch_count'],0)
+        self.assertEqual(plan['mimo_extension']['inventory']['epochs'],{})
+
+    def test_default_cutoff_is_captured_after_inventory_scan(self):
+        events=[];original=m.snapshot
+        def inventory(view):
+            events.append('snapshot');self.trained();return original(view)
+        def clock():
+            events.append('clock');return self.legacy.now
+        with patch.object(m,'collector',return_value=self.f.p),patch.object(m,'snapshot',side_effect=inventory),patch.object(p.time,'time',side_effect=clock):
+            plan=self.legacy.prepare(mimo={},now=None)
+        self.assertEqual(events[:2],['snapshot','clock'])
+        self.assertEqual(plan['history_payload'][m.FIELD]['epoch_count'],1)
+
+    def test_original_report_validator_still_receives_original_cutoff(self):
+        self.trained();original=self.f.p.validate_report
+        calls=[]
+        def reject_future(report,job,manifest,authority,jobhash,now):
+            calls.append(now)
+            original(report,job,manifest,authority,jobhash,now)
+            raise ValueError('report signed deadline')
+        self.f.p.validate_report=reject_future
+        with self.assertRaisesRegex(ValueError,'report signed deadline'):
+            m.collect(self.f.p,self.bucket,25)
+        self.assertEqual(calls,[25])
+
     def test_full_tokens_without_vocab_or_credentials(self):
         self.trained();rows=m.collect(self.f.p,self.bucket,25);text=json.dumps(rows)
         self.assertNotIn('logprobs',text);self.assertNotIn('private/doc',text);self.assertNotIn('NEVER-PUBLISH',text)

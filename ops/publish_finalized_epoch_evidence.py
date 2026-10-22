@@ -313,6 +313,13 @@ def prepare_cycle(*, state, source_root, bucket, workdir, authority=AUTHORITY,
                   history_key=HISTORY_KEY, now=None, training_projector=None, evaluation_collector=None,
                   trainer_log_directory=None,mimo=None):
     """Only GETs and owned local staging; never signs or writes public objects."""
+    mimo_view=mimo_inventory=None
+    if mimo is not None:
+        from ops.mimo_finalized_evidence import collector, snapshot
+        mimo_view=collector(mimo,authority);mimo_inventory=snapshot(mimo_view)
+    # The cutoff follows the frozen inventory, so finalizations observed during
+    # its scan are not compared with a clock captured before they completed.
+    # Explicit historical cutoffs remain strict and fail closed on future data.
     now = time.time() if now is None else now
     if history_key != HISTORY_KEY:
         raise ValueError('fixed reviewed public history key')
@@ -472,7 +479,7 @@ def prepare_cycle(*, state, source_root, bucket, workdir, authority=AUTHORITY,
         private_rejected_finalizations=rejected,private_projection_errors=projection_errors)
     if mimo is not None:
         from ops.mimo_finalized_evidence import extend_plan
-        extend_plan(plan,mimo,bucket)
+        extend_plan(plan,mimo,bucket,view=mimo_view,inventory=mimo_inventory)
     return plan
 
 

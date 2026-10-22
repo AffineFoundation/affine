@@ -11,7 +11,6 @@ from pathlib import Path
 from nacl.exceptions import BadSignatureError
 from dashboard.learner_projection import project as project_learner
 from dashboard.continuous_audit_projection import Projection as ContinuousAuditProjection
-from dashboard.incentive import normalize as normalize_incentive, normalize_history, normalize_prices
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = Path(__file__).parent / 'public'
@@ -25,10 +24,8 @@ def read(path, default=None):
 
 
 class Database:
-    def __init__(self, path, source=ROOT/'state', training_receipts=None, mimo_projection=None):
+    def __init__(self, path, source=ROOT/'state'):
         self.path, self.source = Path(path), Path(source)
-        self.training_receipts = Path(training_receipts) if training_receipts is not None else None
-        self.mimo_projection = Path(mimo_projection) if mimo_projection is not None else None
         self.continuous_audits = ContinuousAuditProjection()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
@@ -37,7 +34,6 @@ class Database:
                 CREATE TABLE IF NOT EXISTS epochs(id TEXT PRIMARY KEY, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS snapshots(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS evaluations(id TEXT PRIMARY KEY, data TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS training_evaluations(id TEXT PRIMARY KEY, data TEXT NOT NULL);
             ''')
 
     def connect(self):
@@ -110,20 +106,12 @@ class Database:
                 if trial.get('uid') is not None and len(verified) == 1:
                     identity_uids.setdefault(next(iter(verified)), trial['uid'])
                 grid = [0]*256
-                grid_outcomes={key:[0]*256 for key in ("verified","rejected","unchecked")}
-                outcome_breakdown_valid=True
                 outside = 0
                 for identity, audit in verified.items():
                     uid = identity_uids.get(identity)
                     count = len(audit.get('outcomes', []))
                     if type(uid) is int and 0 <= uid < 256:
                         grid[uid] += count
-                        passed=len(audit.get('accepted',[]))
-                        pending=sum(o.get('valid','missing') is None and not o.get('fully_audited',False) for o in audit.get('outcomes',[]) if isinstance(o,dict))
-                        failed=count-passed-pending
-                        if failed<0:outcome_breakdown_valid=False
-                        else:
-                            for key,value in (('verified',passed),('rejected',failed),('unchecked',pending)):grid_outcomes[key][uid]+=value
                     else:
                         outside += count
                 points = scores.get('points', {})
@@ -145,8 +133,7 @@ class Database:
                            participants=len(doc.get('capabilities', {})), submissions=len(reports),
                            accepted=accepted_batches, rejected=batches-accepted_batches-unchecked_batches,
                            unchecked=unchecked_batches, points=sum(points.values()),
-                           batches=batches, batches_available=bool(reports) or scorepath.exists(), grid=grid,
-                           grid_outcomes=grid_outcomes if outcome_breakdown_valid else None, unassigned_batches=outside,
+                           batches=batches, grid=grid, unassigned_batches=outside,
                            miners=[dict(identity=identity, points=value, weight=scores.get('weights', {}).get(identity, 0))
                                    for identity, value in points.items()], training=None,
                            audit_policy=doc.get('audit_policy', ''), source=source_name)
@@ -214,35 +201,9 @@ class Database:
                             and type(abort.get('steps')) is int and abort['steps'] == 0):
                         row['phase'] = ('training admission rejected' if abort['status']=='aborted_training_admission'
                                         else 'aborted evaluation')
-            # Modern decoupled epochs finalize through a signed learner closure,
-            # independently of legacy reward-score files. Only signed closed
-            # receipts can populate the current nested training metrics.
-            from dashboard.training_projection import project as project_training
-            for eid, row in epochs.items():
-                if row['source'] != source_name:
-                    continue
-                completion = read(folder/f'{eid}-signed-learner-completion.json')
-                if completion is None:
-                    continue
-                try:
-                    manifest_document = read(folder/f'{eid}-first-signed-manifest.json')
-                    if not isinstance(manifest_document, dict) or manifest_document.get('payload', {}).get('epoch') != eid:
-                        raise ValueError('signed finalization row identity')
-                    closed = project_training(manifest_document, completion)
-                    row.update(closed)
-                    if self.training_receipts is not None:
-                        receipt_path = self.training_receipts/f'{eid}.signed.json'
-                        receipt = read(receipt_path) if not receipt_path.is_symlink() else None
-                        if receipt is not None:
-                            try:
-                                row.update(project_training(manifest_document, completion, receipt))
-                            except (BadSignatureError, ValueError, KeyError, TypeError):
-                                row['training_evidence_status'] = 'unavailable'
-                except (BadSignatureError, ValueError, KeyError, TypeError):
-                    pass  # No invalid/open epoch is finalized by projection.
             report = read(folder/'report.json', {})
             eid = report.get('epoch')
-            if eid in epochs and report.get('training') and epochs[eid].get('training_evidence_source') != 'authenticated-finalized-training-receipt':
+            if eid in epochs and report.get('training'):
                 training = report['training']
                 epochs[eid]['training'] = {key: training.get(key) for key in ('steps', 'losses', 'weights_changed', 'checkpoint', 'objective', 'input_pairs')}
                 epochs[eid]['phase'] = 'trained' if training.get('weights_changed') else epochs[eid]['phase']
@@ -322,8 +283,6 @@ class Database:
                     continue
             # Never export free-text errors, paths, token traces, or credentials.
             evaluations[row['run_id']] = row
-        from dashboard.training_diagnostic_projection import rows as training_diagnostic_rows
-        training_evaluations = training_diagnostic_rows(self.source/'training-evaluations')
         inventory = read(self.source/'live-chain/registration-inventory.json', {})
         registration_count = len(inventory) if isinstance(inventory, dict) else len(inventory or [])
         readiness = read(self.source/'live/readiness.json', {})
@@ -348,16 +307,12 @@ class Database:
             db.executemany('INSERT INTO epochs VALUES(?,?)', [(k, json.dumps(v, allow_nan=False)) for k,v in epochs.items()])
             db.execute('INSERT OR REPLACE INTO snapshots VALUES(1,?)', (json.dumps(summary),))
             db.executemany('INSERT OR REPLACE INTO evaluations VALUES(?,?)',[(k,json.dumps(v,allow_nan=False)) for k,v in evaluations.items()])
-            db.execute('DELETE FROM training_evaluations')
-            db.executemany('INSERT INTO training_evaluations VALUES(?,?)',
-                [(row['run_id'],json.dumps(row,allow_nan=False)) for row in training_evaluations])
 
     def snapshot(self, current_only=False):
         with self.connect() as db:
             summary = db.execute('SELECT data FROM snapshots WHERE id=1').fetchone()
             epochs = [json.loads(r[0]) for r in db.execute('SELECT data FROM epochs')]
             evaluations = [json.loads(r[0]) for r in db.execute('SELECT data FROM evaluations')]
-            training_evaluations = [json.loads(r[0]) for r in db.execute('SELECT data FROM training_evaluations')]
         summary=json.loads(summary[0]) if summary else {}
         training_run = None
         if current_only:
@@ -368,30 +323,14 @@ class Database:
             evaluations=[row for row in evaluations if row.get('epoch_id') in epoch_ids]
             retired = read_retirements(self.source/'dashboard/retirements', training_run)
             epochs, evaluations = project(epochs, evaluations, training_run, retired)
-            public_epoch_ids = {row['id'] for row in epochs}
-            training_evaluations = [row for row in training_evaluations
-                if row['epoch_id'] in public_epoch_ids and training_run is not None
-                and row['training_run_id'] == training_run['run_id']]
             summary=dict(updated_at=summary.get('updated_at'),network='Finney',netuid=120,
                 current_source='live-reward-math',epochs=len(epochs),
                 accepted=sum(row['accepted'] for row in epochs),
                 rejected=sum(row['rejected'] for row in epochs),
                 unchecked=sum(row['unchecked'] for row in epochs),
                 training_steps=sum((row.get('training') or {}).get('steps',0) or 0 for row in epochs))
-        incentive=read(self.source/'dashboard-incentive.json', {})
-        if not isinstance(incentive,dict):
-            incentive={}
-        result = dict(summary=summary, training_run=training_run,
-                    incentive=normalize_incentive(incentive),
-                    incentive_history=normalize_history(incentive.get('epochs', [])),
-                    incentive_prices=normalize_prices(incentive.get('prices')),
-                    epochs=sorted(epochs, key=lambda x:x['start'], reverse=True),
-                    training_evaluations=sorted(training_evaluations,key=lambda x:x['timestamp']),
+        return dict(summary=summary, training_run=training_run, epochs=sorted(epochs, key=lambda x:x['start'], reverse=True),
                     evaluations=sorted(evaluations,key=lambda x:x['timestamp']))
-        if self.mimo_projection is not None:
-            from dashboard.mimo_projection import from_selector
-            result = from_selector(result, self.mimo_projection)
-        return result
 
 
 def serve(db, host, port):
@@ -403,7 +342,6 @@ def serve(db, host, port):
                 kind = 'application/json'
             else:
                 files = {'/':'index.html', '/index.html':'index.html', '/llms.txt':'llms.txt', '/reward-policy.json':'reward-policy.json', '/network.js':'network.js', '/network.css':'network.css', '/network-favicon.svg':'network-favicon.svg', '/network-haffer.ttf':'network-haffer.ttf', '/network-mono.ttf':'network-mono.ttf'}
-                files['/performance-series.js'] = 'performance-series.js'
                 if path not in files:
                     self.send_error(404)
                     return
@@ -454,11 +392,9 @@ def main():
     p.add_argument('--host', default='127.0.0.1')
     p.add_argument('--port', type=int, default=8794)
     p.add_argument('--snapshot', action='store_true')
-    p.add_argument('--training-receipts', help='Read-only cache of original ROOT-signed finalized training receipts')
-    p.add_argument('--mimo-projection', help='Explicit ROOT-signed MiMo run data selector; no page redesign')
     p.add_argument('--export', help='Atomically publish the public SQLite snapshot as JSON')
     args=p.parse_args()
-    db=Database(args.db,args.source,args.training_receipts,args.mimo_projection)
+    db=Database(args.db,args.source)
     db.refresh()
     def export():
         if args.export:
