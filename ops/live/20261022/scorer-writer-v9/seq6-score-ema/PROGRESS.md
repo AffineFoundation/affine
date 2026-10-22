@@ -1,0 +1,12 @@
+# v9 score EMA — progress (CR = UTC-6)
+- 18:56 CR Jacob: "a bit more of a moving average to the scoring so that over epochs miners stabilize their incentive".
+- Step 1 DONE: live = softmax(z/T=1) over top-10 positive pooled Stouffer z of the NEWEST signed score only; the scorer's 4-epoch rectangular window is the only memory. No cross-epoch EMA.
+- Parent 18:59: affine.io/mining.json auth failure since 12:57 CR -> e78-e80 abnormal.
+- Steps 2-3 DONE: replay_v1.py / replay_v2.py (outputs *.private.*). Chosen: share-EMA h=4, lookback 12, min_share 1%, eligible-in-newest gate.
+- Step 4 DONE 19:02 CR: installed + signed LIVE-CONFIG seq3 (dbe5cc52), HOST (04c46d03), RELEASE seq6 (2bda0f0f), weights_v9.py adabc1ee. 41 offline tests OK; offline replay == model (diff 0), legacy cfg == seq5 (diff 0). --check: seq3, 23 paid, burn 0.
+- Step 5: first smoothed window = 02:00Z (20:00 CR). Verify with verify_onchain_v9.py 1792634400.
+- 19:49 CR resume: state check = seq6 already signed+active, no changes needed. Publisher (affine-finalized-evidence-publication) failing "MiMo eval release" since <=06:03 CR: pre-existing, lifecycle-side, NOT ours, untouched.
+- Pinned-checker audit: freshness monitor (check_weight_freshness_v9.py, pinned in RELEASE, unchanged) healthy after change. tools/verify_weights_fresh.py read the dead never-burn dir -> fixed ADIR to v9 dir (49f02100, backup in backup/). Not pinned by anything.
+- 20:01 CR first smoothed submission: window 02:00Z, 21 UIDs, no UID 0, max 0.266, commit included block 9335906 (intended_sha ebc34cbf4f). Awaiting reveal.
+- 20:40 CR resume: share-ema-v1 in assessments = OUR seq6 (not pre-existing). 2582f24fd0 = the 19:00 CR UNSMOOTHED vector (commit 9335606). 20:00 CR smoothed commit 9335906 intended ebc34cbf4f, reveal pending (~300 blocks lag).
+- 21:08 CR VERIFIED: 20:00 CR smoothed vector ebc34cbf4f revealed (21 UIDs, UID0 0) by block ~9336238; 21:00 CR window submitted (18 UIDs, max 0.278, e80). Done.

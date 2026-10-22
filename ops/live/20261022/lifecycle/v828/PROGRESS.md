@@ -1,0 +1,23 @@
+# v8.2.8 progress (UTC)  audit off the epoch critical path + native grading parallelism; built on v8.2.7
+- 21:37 started. v8.2.7 armed (pid 1879090) for e78->e79: NOT touched. Lifecycle runs v8.2.6 (pid 988653).
+- 21:50 profile grading (replay/prof_grade-e77.log): 1714 docs/e77, 10.8 s/doc in one worker (6.5 s asyncio/subprocess wait in env reset+grade, 3.1 s _source_hash, 1 s structural); R2 doc GET 0.09 s. 8 workers -> ~34 min.
+- 22:03 profile tick (replay/PROFILE-TICK-e77.json): audit population BUILD 236 s (byte-identical to live), re-authentication 111 s on EVERY later tick (=> 4.3 min ticks during training, finalize latency), make_training_job HEADs 15 s, validate_job 0.02 s.
+- FINDING: v9 scorer fetch_epoch.py READS epochs/E/AUDIT-POPULATION.json (registrations + native grades) for FINALIZED epochs; dashboard projection reads it too. So the file must still be written (before FINALIZED). Plan: build it in a background thread (original code), dispatch training first, gate FINALIZED on it; audit scheduler stubbed (no audits scheduled).
+- (times above approximate; box clock UTC) 21:59 e77 seal replay W=32: 657 s vs live 2040 s; DISPATCH byte-identical (sha b3647896...), R2 PUT 412 + readback compare OK (replay/SEAL-REPLAY-e77-w32.json)
+- 22:08 off-path behaviour test on e77 (replay/TEST-OFFPATH-e77.json): tick call 0.0 s, file byte-identical to live, finalize waits, failure->refuse->restart->identical
+- 22:10 signed release-v828-signed (sign_v828.py): operator 56e57851..., launcher e086046d..., checks_passed true
+- 22:12 end-to-end composition+spawn test under the signed launcher as __main__ (replay/TEST-COMPOSE-SPAWN-e77.json): 96/96 native grades identical, pool 32
+- 22:13 e78 DISPATCH live 22:09:58 (seal 23.3 min); e78 seal replay W=32 started
+- 22:16 activate_v828.sh --arm started (waits v8.2.7 ACTIVATED -> e79 finalized clean + GO file E79-VERIFIED.ok -> e80 boundary)
+- 22:21 e78 seal replay W=32: 411.5 s vs live 1400 s; DISPATCH byte-identical (sha 3f9bc8b9...), R2 412+compare OK (replay/SEAL-REPLAY-e78-w32.json). e78 live: DISPATCH 22:09:58, AUDIT-POP 22:13:11, TRAINING-JOB 22:16:34
+- 22:28 resumed after interruption: both arms alive (1879090, 2378363); e78 off-path test (signed launcher) all checks pass, byte-identical; e78 training since 22:16:34
+- 22:55 e78 FINALIZED 22:52:03 (TRAINING-JOB 22:16:34). v8.2.7 ACTIVATED 22:54:23 (pid 2676875) at e78->e79 boundary; v8.2.8 arm advanced: waiting for e79 to finalize. e79 deadline 23:22:13. Jacob (16:31 CR) approved deleting the 3 verifier pods after v8.2.8 verifies on e80.
+- 23:22 resumed (2nd interruption): v828 arm alive (2378363, waiting e79 finalize); v827 arm exited after ACTIVATED; e79 at deadline 23:22:13: 93 miners listed, last pre-deadline pass 330.6 s (61 full collects), 0 rejected, no retrying
+- 23:53 E79-VERIFIED.ok written (e79 clean through training dispatch)
+- 00:13 resumed (3rd interruption): arm 2378363 alive, waiting e79 finalize; e79 training since 23:46:31, pid 2676875; GO file already present (23:53), arm itself gates on FINALIZED status=updated + 0 retrying
+- 00:29 e79 FINALIZED 00:26:33 (updated, ckpt acbe2378..). v8.2.8 ACTIVATED 00:29:13 pid 3354066 at e80 OPENING 00:28:27; e80 deadline 00:56:43. Backup backup-lifecycle-20261022T002832Z. Next: verify e80, then units stop + pod delete
+- 00:34 e79 stages: deadline 23:22:13, POP 23:26:06, DISPATCH 23:42:00, AUDIT 23:43:59, JOB 23:46:31, FINAL 00:26:33. weights ok (already_submitted hr 00:00). score-e79 pending (v9 lags ~80-90 min). e80 collecting on v8.2.8
+- 01:03 e80: deadline 00:56:43, POP 00:57:08, DISPATCH 01:01:24, JOB 01:01:44, audit offpath started 01:01:24, training ticks ~12s. pid 3354066
+- 01:10 e80 audit offpath done 144.7s no error (AUDIT-POP 01:02:49), DISPATCH schema/signer = e79, 256 tasks, 132 captures; weights 01:00 hr written (23 recipients). Waiting e80 FINALIZED before unit stop/pod delete
+- 01:38 e80 FINALIZED 01:35:00 updated (ckpt 3932cc06..), e81 OPENING 01:36:10, 0 retrying/tracebacks, pid 3354066 unchanged. v8.2.8 VERIFIED. Next: stop verifier units, delete 3 pods
+- 01:37 stopped 6 verifier units (supervised show failed=exit on SIGTERM, still enabled). lium rm 3 pods OK: brave-matrix-b5 $2132.10, brave-wolf-e3 $2282.69, lunar-lion-21 $2282.69; lium ps: 13 active, none of the 3
