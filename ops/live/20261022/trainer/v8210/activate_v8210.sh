@@ -67,7 +67,7 @@ NEW_SHA=$(sha256sum "$A/pod/owned-worker-v8210s.json" | cut -c1-64); SYNC_SHA=$(
 OW8210=(P "$POD/runtime-exact/venv/bin/python -I -B $POD/owned-worker-v7.py --config $POD/owned-worker-v8210s.json --sha256 $NEW_SHA")
 ULIVE="$UNITS/affine-mimo-trainer-supervised.service.d/$LIVE_DROPIN"
 grep -q "owned-worker-v825s.json --sha256 $V825_SHA" "$ULIVE" || die "live trainer drop-in is not v825s"
-grep -q "150.136.210.177" "$ULIVE" || die "live trainer drop-in is not eager-fox-7b"
+grep -q "<TRAINER_HOST>" "$ULIVE" || die "live trainer drop-in is not eager-fox-7b"
 if [[ ! -e "$A/trainer/$TC" ]]; then
   line=$(grep '^ExecStart="/usr/bin/ssh"' "$ULIVE"); new=${line//owned-worker-v825s.json --sha256 $V825_SHA/owned-worker-v8210s.json --sha256 $NEW_SHA}
   [[ "$new" != "$line" ]] || die "ExecStart rewrite"

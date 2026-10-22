@@ -32,7 +32,7 @@ Check: ~/subnet120-rewrite/.venv/bin/python -I -B hourly_entry_v9.py --policy HO
 ## FULL rollback to seq6 code (writer + pod)
 cd $N && cp -p $B/weights_v9.py $B/hourly_entry_v9.py $B/sign_v9.py $B/test_weights_v9.py . \
  && cp -p $B/HOST-COMPOSITION.v9-live.ROOT-SIGNED.private.json $B/LIVE-CONFIG-v9.ACTIVE.signed.json $B/RELEASE-v9.signed.json .
-scp -P 40298 $B/pod/v9agg.py $B/pod/test_v9agg.py root@159.13.40.8:/root/sn120-scorer-v9/
+scp -P <SCORER_SSH_PORT> $B/pod/v9agg.py $B/pod/test_v9agg.py root@<SCORER_HOST>:/root/sn120-scorer-v9/
 (the three signed docs are the seq6 originals, so pins match the restored code; RELEASE seq6 pins the original pod files)
 Then the --check above. Optionally rm public_scores_v9.py and ~/subnet120/affine/website/scores.json ~/subnet120/affine/website/scores/
 Leave LIVE-CONFIG-v9.seq4 / RELEASE-v9.seq7 in place as history (move aside before the next sign_v9.py run: O_EXCL).

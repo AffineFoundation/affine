@@ -7,7 +7,7 @@
 set -euo pipefail
 D=/home/const/subnet120-rewrite/state/root-audits/20261017-v824; U=/home/const/.config/systemd/user
 STATE=/home/const/subnet120-rewrite/state/mimo-mainnet-v1; PY=/home/const/subnet120-rewrite/.venv/bin/python
-POD_SSH=(ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o UserKnownHostsFile=/home/const/.lium/known_hosts/0a7aba3d-9443-445b-9601-c78ac0d14b1c -p 40301 root@89.169.120.92)
+POD_SSH=(ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o UserKnownHostsFile=/home/const/.lium/known_hosts/0a7aba3d-9443-445b-9601-c78ac0d14b1c -p <TRAINER_SSH_PORT> root@<TRAINER_HOST>)
 POD=/workspace/affine-mimo-trainer-prod
 log(){ echo "$(date -u +%FT%TZ) $*" | tee -a $D/ROLLBACK.log; }
 cur(){ "$PY" -c "import json;print(json.load(open('$STATE/CURRENT.json'))['$1'])"; }

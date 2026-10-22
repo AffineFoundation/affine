@@ -1,6 +1,6 @@
 # Rollback: MiMo trainer host v8.2.10 optimizer_persistence=none (2026-10-22, authorized by Jacob)
 
-Changed: ONLY the trainer host layer on the trainer pod eager-fox-7b (150.136.210.177:20301). v8.2.5 host layer +
+Changed: ONLY the trainer host layer on the trainer pod eager-fox-7b (<TRAINER_HOST>:<TRAINER_SSH_PORT>). v8.2.5 host layer +
 `engine.optimizer_persistence` ('none' = the optimizer state stays in trainer memory; each epoch stages the model exactly
 as before plus a small marker optimizer/NOT-PERSISTED.json instead of ~107 GB / 1,372 optimizer shards; cold recovery
 rebuilds fresh AdamW moments with the step kept when no state was persisted). New files: host-v8210/

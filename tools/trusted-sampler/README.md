@@ -58,7 +58,7 @@ The only shared state between instances is:
 
 ## Launch
 ```bash
-# on the sampler pod (root@159.13.40.8 -p 40298), code in /root/trusted-sampler, venv /root/sampler-venv
+# on the sampler pod (root@<SCORER_HOST> -p <SCORER_SSH_PORT>), code in /root/trusted-sampler, venv /root/sampler-venv
 ./launch.sh 8 --watch --chain --engine swap -K 256 -m 8   # recommended live config (one instance per GPU)
 ./launch.sh 8                                   # plain default: --watch -K 256 -m 8 (reload engine, no chain)
 ./launch.sh 4 --backfill 6 --chain -K 256 -m 8  # backfill the 6 newest pairs on GPUs 0-3
@@ -79,8 +79,8 @@ a new host, add another `--push` target to the exporter on Arbos.
 The index exporter runs on Arbos as a detached process (`nice 19`, read-only):
 ```bash
 cd ~/subnet120-rewrite/tools/trusted-sampler && setsid nohup nice -n 19 python3 export_checkpoints.py --out index.json \
-  --watch 120 --push root@159.13.40.8:/root/trusted-sampler/data/index.json \
-  --ssh-opts "-o BatchMode=yes -o UserKnownHostsFile=$HOME/.lium/known_hosts/21eefe00-39e9-4fb3-88fc-2f565eb0f5eb -P 40298" > export.log 2>&1 &
+  --watch 120 --push root@<SCORER_HOST>:/root/trusted-sampler/data/index.json \
+  --ssh-opts "-o BatchMode=yes -o UserKnownHostsFile=$HOME/.lium/known_hosts/21eefe00-39e9-4fb3-88fc-2f565eb0f5eb -P <SCORER_SSH_PORT>" > export.log 2>&1 &
 ```
 
 ## Caveats

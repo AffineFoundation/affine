@@ -7,8 +7,8 @@ R=~/subnet120-rewrite/state/root-audits/20261022-env-probe
 systemctl --user disable --now affine-env-probe.service
 rm ~/.config/systemd/user/affine-env-probe.service && systemctl --user daemon-reload
 
-## Stop the pod side (evaluator pod 38.255.28.20:20092; frees the probe GPU memory, evaluator unaffected)
-POD="ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/home/const/.lium/known_hosts/6e469697-f3a7-4a6a-a1ae-40dde7120581 -p 20092 root@38.255.28.20"
+## Stop the pod side (evaluator pod <EVALUATOR_HOST>:<EVALUATOR_SSH_PORT>; frees the probe GPU memory, evaluator unaffected)
+POD="ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/home/const/.lium/known_hosts/6e469697-f3a7-4a6a-a1ae-40dde7120581 -p <EVALUATOR_SSH_PORT> root@<EVALUATOR_HOST>"
 $POD "python3 /root/affine-env-probe-20261022/podctl.py pause; for d in /root/affine-env-probe-20261022/runs/*; do python3 /root/affine-env-probe-20261022/podctl.py abort-run \$(basename \$d); done; python3 /root/affine-env-probe-20261022/podctl.py stop-serve"
 Optional full removal (~40 GB: own venv, own checkpoint copies, env snapshots): $POD "rm -rf /root/affine-env-probe-20261022"
 The evaluator dirs (/root/affine-mimo-20261013, /root/affine-mimo-public-evaluator-20261013) were only READ

@@ -19,7 +19,7 @@ PY=/home/const/subnet120-rewrite/.venv/bin/python
 POL=dfe0cbf78bcf59c4b8ee2162bbd9f573a2e45d22b757c87d820ad7549a4b3eba
 PRE_ROUND=240; TARGET_ROUND=241; POST_EI=52
 LC="zzzz~~~~~~~~~v824-release.conf"; OC="zzzz~~~~mimo-observer-v824.conf"; TC="zzzz~~~~~v824s-owned-worker.conf"
-POD_SSH=(ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o UserKnownHostsFile=/home/const/.lium/known_hosts/0a7aba3d-9443-445b-9601-c78ac0d14b1c -p 40301 root@89.169.120.92)
+POD_SSH=(ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o UserKnownHostsFile=/home/const/.lium/known_hosts/0a7aba3d-9443-445b-9601-c78ac0d14b1c -p <TRAINER_SSH_PORT> root@<TRAINER_HOST>)
 POD=/workspace/affine-mimo-trainer-prod
 MODE=preflight; TAG=""
 case "${1:-}" in --arm-lifecycle) MODE=arm; TAG=v8.2.4-t128;; --lifecycle) MODE=now; TAG="${2:?tag}";; --trainer) MODE=trainer;; --trainer-restart) MODE=trestart;; "") ;; *) echo "bad args"; exit 2;; esac

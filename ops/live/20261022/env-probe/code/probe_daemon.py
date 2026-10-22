@@ -13,7 +13,7 @@ SITE = Path('/home/const/subnet120/affine/website'); PUB = SITE / 'probe'
 R = Path('/home/const/subnet120-rewrite/state/root-audits/20261022-env-probe'); ST = R / 'state'
 OWNER = '5HmYnmUYT6qe3yFMg1Ad8WLLqDvnwtjYakXBpDvoRW1Qqzb8'
 POD = ['ssh', '-n', '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15',
-       '-o', 'UserKnownHostsFile=/home/const/.lium/known_hosts/6e469697-f3a7-4a6a-a1ae-40dde7120581', '-p', '20092', 'root@38.255.28.20']
+       '-o', 'UserKnownHostsFile=/home/const/.lium/known_hosts/6e469697-f3a7-4a6a-a1ae-40dde7120581', '-p', '<EVALUATOR_SSH_PORT>', 'root@<EVALUATOR_HOST>']
 def cr(ts): return time.strftime('%Y-%m-%d %H:%M:%S CR (UTC-6)', time.gmtime(ts - 6 * 3600)) if ts else None
 def log(**kw):
     kw['at'] = time.time(); kw['at_cr'] = cr(kw['at']); print(json.dumps(kw, default=str), flush=True)

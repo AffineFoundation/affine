@@ -3,7 +3,7 @@ Times UTC (CR = UTC-6). Sources: nvidia-smi every 3 s (nvsmi-e81.csv), host /pro
 training-events.jsonl observed_at, report.json. Samplers stopped 02:39 UTC.
 
 ## Machine
-gentle-raven-de 89.169.120.92:40301: **1x NVIDIA H200 (141 GB HBM)**, 16 vCPU, 196 GB RAM. One GPU only; 139.6 GB
+gentle-raven-de <TRAINER_HOST>:<TRAINER_SSH_PORT>: **1x NVIDIA H200 (141 GB HBM)**, 16 vCPU, 196 GB RAM. One GPU only; 139.6 GB
 held all the time (actor bf16 + frozen KL reference + caching allocator, resident between jobs). torch 2.14 cu130,
 transformers 5.14.1. **No flash_attn, no fla, no causal-conv1d** (transformers warns "fast path is not available ...
 falling back to torch implementation"); attention=eager; engine=padded, token_budget 16384, max_rows 64.

@@ -3,7 +3,7 @@ N=~/subnet120-rewrite/state/root-audits/20261020-measured-impact-v9
 R=~/subnet120-rewrite/state/root-audits/20261022-v9-window-credit-seq7
 TS=$(date -u +%Y%m%dT%H%M%SZ); B=$R/backup/pre-seq7-$TS; mkdir -p $B/pod
 U=~/.config/systemd/user
-POD="ssh -n -o BatchMode=yes -o ConnectTimeout=20 -p 40298 root@159.13.40.8"
+POD="ssh -n -o BatchMode=yes -o ConnectTimeout=20 -p <SCORER_SSH_PORT> root@<SCORER_HOST>"
 # 0. no submission in flight
 python3 -c "import json,sys;s=json.load(open('$HOME/subnet120-rewrite/state/live-math-launch-preparation-v1/reward-state-v1/current-assessment-v1/submission.json'))['status'];print('submission status',s);sys.exit(1 if s=='submitting' else 0)"
 # 1. backup
@@ -14,7 +14,7 @@ $POD "cat /root/sn120-scorer-v9/test_v9agg.py" > $B/pod/test_v9agg.py
 (cd $B && sha256sum *.py *.json pod/* > SHA256SUMS)
 echo backup $B
 # 2. pod scorer fix (-inf)
-scp -q -o BatchMode=yes -P 40298 $R/staged/v9agg.py $R/staged/test_v9agg.py root@159.13.40.8:/root/sn120-scorer-v9/
+scp -q -o BatchMode=yes -P <SCORER_SSH_PORT> $R/staged/v9agg.py $R/staged/test_v9agg.py root@<SCORER_HOST>:/root/sn120-scorer-v9/
 $POD "cd /root/sn120-scorer-v9 && /root/sampler-venv/bin/python test_v9agg.py | tail -1"
 # 3. writer code
 cp $R/staged/weights_v9.py $R/staged/hourly_entry_v9.py $R/staged/sign_v9.py $R/staged/test_weights_v9.py $R/staged/public_scores_v9.py $N/

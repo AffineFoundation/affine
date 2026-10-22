@@ -14,7 +14,7 @@ TXN=update-6e817cba004e43b08e354fa42c713b3b2e017e271bddb7a89447fc2460a4f438
 OW="$B/runtime-exact/venv/bin/python -I -B $B/owned-worker-v7.py --config $B/owned-worker-v822s.json --sha256 ad96c27dd7a440d497a92747c0222547098b5ef3f4f16ce56ebebaf4c744be26"
 TS=$(date -u +%Y%m%dT%H%M%SZ); BK=$D/recovery-e46-$TS; mkdir -m 700 "$BK"; LOG=$BK/RECOVERY.log
 log(){ echo "$(date -u +%FT%TZ) $*" | tee -a "$LOG"; }; die(){ log "ABORT: $*"; exit 1; }
-rssh(){ ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o UserKnownHostsFile=/home/const/.lium/known_hosts/0a7aba3d-9443-445b-9601-c78ac0d14b1c -p 40301 root@89.169.120.92 "$@"; }
+rssh(){ ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o UserKnownHostsFile=/home/const/.lium/known_hosts/0a7aba3d-9443-445b-9601-c78ac0d14b1c -p <TRAINER_SSH_PORT> root@<TRAINER_HOST> "$@"; }
 E=$STATE/epochs/46
 [[ -f $E/TRAINING-JOB.json && -f $E/RECOVERY-REQUIRED.json && ! -e $E/TRAINING-RESULT.json ]] || die "e46 recovery files not as expected"
 "$PY" -c "import json;r=json.load(open('$E/RECOVERY-REQUIRED.json'));assert r['job_id']=='$JOB' and r['queue_status']=='failed',r" || die "recovery-required mismatch"

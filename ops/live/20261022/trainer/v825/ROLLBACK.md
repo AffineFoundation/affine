@@ -1,6 +1,6 @@
 # Rollback: MiMo v8.2.5 trainer drop_unresolved (2026-10-21, authorized by Jacob 11:29 CR)
 
-Changed: ONLY the trainer host layer on the pod (89.169.120.92:40301). v8.2.4 host layer + `engine.drop_unresolved=true`
+Changed: ONLY the trainer host layer on the pod (<TRAINER_HOST>:<TRAINER_SSH_PORT>). v8.2.4 host layer + `engine.drop_unresolved=true`
 (new files host-v825/mimo_host_trainer_v825.py, host-v825/v825_batched.py; all other host files byte-identical to v8.2.4).
 Lifecycle, trainer_config (learning rate etc.), policy dfe0cbf7, source closure, writer, v9 scorer, chain: UNCHANGED.
 Nothing on the pod or Arbos was overwritten (new dir host-v825, new owned-worker-v825s*.json, new drop-in).
@@ -22,7 +22,7 @@ TRAINING-RESULT.json). Wait for the TRAINING-RESULT, then do one of:
     then drain-restart (step C).
 
 ## C. Drain-restart (same as activate_v824.sh --trainer-restart)
-    P=ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o UserKnownHostsFile=/home/const/.lium/known_hosts/0a7aba3d-9443-445b-9601-c78ac0d14b1c -p 40301 root@89.169.120.92
+    P=ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o UserKnownHostsFile=/home/const/.lium/known_hosts/0a7aba3d-9443-445b-9601-c78ac0d14b1c -p <TRAINER_SSH_PORT> root@<TRAINER_HOST>
     systemctl --user stop affine-mimo-trainer-supervised.service
     $P "/workspace/affine-mimo-trainer-prod/runtime-exact/venv/bin/python -I -B /workspace/affine-mimo-trainer-prod/owned-worker-v7.py \
         --config /workspace/affine-mimo-trainer-prod/owned-worker-v825s.json --sha256 8d796a925cb71981c4339b0cef710885b3925060ed7023cb639a2bd1670484a9 --stop-owned-after-drain"

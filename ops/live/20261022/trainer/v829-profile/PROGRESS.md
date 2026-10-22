@@ -1,5 +1,5 @@
 # v829 trainer speed
-- 01:42 UTC Step1 start. Pod gentle-raven-de 89.169.120.92:40301 = 1x H200 141GB, 16 cpu, 196GB RAM. nvidia-smi sampler (3s) -> nvsmi-e81.csv, timeout 100 min
+- 01:42 UTC Step1 start. Pod gentle-raven-de <TRAINER_HOST>:<TRAINER_SSH_PORT> = 1x H200 141GB, 16 cpu, 196GB RAM. nvidia-smi sampler (3s) -> nvsmi-e81.csv, timeout 100 min
 - 01:47 e80 job phases (training-events observed_at): pickup 01:01:52, stage->01:03:52 (120s), KL-ref 193s, 181 grad microbatches 1148s (~6.4s each), opt 36.5s, publish ~300s, report 01:31:59, FINALIZED 01:35:00. No fla/causal-conv1d/flash_attn installed; attention=eager; model qwen3_5_text 32L (24 linear GDN + 8 full). Waiting e81 job for nvidia-smi samples
 - 02:11 e81 TRAINING-JOB 02:10:51; samplers running (nvsmi-e81.csv, host-e81.txt; to ~03:20)
 - 02:31 resumed after interruption: both samplers alive, e81 still training

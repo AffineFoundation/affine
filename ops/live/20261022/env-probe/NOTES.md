@@ -7,7 +7,7 @@ Scope guard: trainer pod, weights, hyperparameters, v9 writer/scorer (seq7), Tob
 - Checkpoint publication: lifecycle writes ~/subnet120-rewrite/state/mimo-mainnet-v1/CURRENT.json (checkpoint id+file sha256s,
   epoch_index, optimizer_step, signed checkpoint_authorization) when the trainer publishes; evaluator jobs
   (mimo-mainnet-v1/evaluator/mimo-eval-*.job.json) carry 24h presigned R2 GET URLs for those files.
-- Evaluator: Lium H200 pod 38.255.28.20:20092 (143 GB), worker = subnet.distributed_worker (HF transformers, eager attention,
+- Evaluator: Lium H200 pod <EVALUATOR_HOST>:<EVALUATOR_SSH_PORT> (143 GB), worker = subnet.distributed_worker (HF transformers, eager attention,
   single stream, its own sampler). Uses ~21 GB GPU. Per checkpoint: fixed32 affine_math, ~66 min, ~28 tok/s, then idle.
   Epoch cadence observed e79-e90: ~70-90 min (not 40). e90 (10:32 CR) is the last; trainer e91 stalled (other worker on it).
 - Live mechanism has ONE env in the signed manifest: affine_math (7496-task snapshot, completed-boxed-math outcome,

@@ -12,7 +12,7 @@ STATE=/home/const/subnet120-rewrite/state/mimo-mainnet-v1
 UNITS=/home/const/.config/systemd/user
 PY=/home/const/subnet120-rewrite/.venv/bin/python
 TC="zzzz~~~~~~v825s-owned-worker.conf"
-POD_SSH=(ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o UserKnownHostsFile=/home/const/.lium/known_hosts/0a7aba3d-9443-445b-9601-c78ac0d14b1c -p 40301 root@89.169.120.92)
+POD_SSH=(ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o UserKnownHostsFile=/home/const/.lium/known_hosts/0a7aba3d-9443-445b-9601-c78ac0d14b1c -p <TRAINER_SSH_PORT> root@<TRAINER_HOST>)
 POD=/workspace/affine-mimo-trainer-prod
 V824_SHA=b8ba9dca9687f7c4f7b3bc83d8be563af63ff1a74e7259f45791418a690357a4
 MODE=${1:---preflight}
