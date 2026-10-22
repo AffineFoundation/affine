@@ -810,6 +810,12 @@ class MachineManager:
     def ensure(self) -> bool:
         """Health-check / (re)provision. Non-blocking; returns True only when
         the eval server is reachable and healthy right now."""
+        # Operator shutdown of public chat is independent of scoring. Keep
+        # the rental disabled across restarts until explicitly re-enabled.
+        if self.role == "chat" and not self.cfg.raw.get("chat_machine", {}).get("enabled", True):
+            self._last_check_ok = False
+            self.tunnel.stop()
+            return False
         if self._provisioning():
             return False
 

@@ -18,7 +18,7 @@ prefixes = ["affine-*", "bench-king-*", "king-dg-*", "swarm-t-*"]
 interval_s = 900
 # `false` = compute + page but never call `lium rm` (also: a file named
 # DRY_RUN in ops/pods/state/ has the same effect).
-enforce = true
+enforce = false
 # an unregistered pod of ours: page after this many minutes since the reaper
 # first saw it, release after `unregistered_release_min`
 unregistered_page_min = 30
@@ -176,3 +176,19 @@ expected_hours = 48
 [heartbeat]
 driver_pointer = "../../affine/state/pods/backfill_driver.json"
 driver_fresh_min = 10
+
+# Hourly on-policy verifier capacity is explicitly retained by the operator.
+# Register replacements before the legacy reaper evaluates them.
+[[static]]
+glob = "affine-verifier-capacity-*"
+purpose = "hourly_on_policy_verifier"
+owner = "manual:hourly-on-policy-operator"
+expected_hours = 0
+note = "retained hourly verifier fleet; release only by explicit operator retirement"
+
+[[static]]
+glob = "affine-bandwidth-quota-single-H100-20261006"
+purpose = "owned_isolated_bandwidth_and_science_qualification"
+owner = "manual:explicit-retained-research-operator"
+expected_hours = 0
+note = "Explicit operator retention; release only through reviewed owner retirement, never unregistered timeout."

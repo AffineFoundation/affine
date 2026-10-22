@@ -7,6 +7,7 @@ requires-python = ">=3.12,<3.14"
 dependencies = [
     "bittensor>=11,<12",
     "httpx>=0.27",
+    "websockets>=13,<16",
     "huggingface_hub>=0.30",
     "boto3>=1.34",
     # Hot-path dash-api on the root machine (also used by evalsrv on pods).
@@ -20,6 +21,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dashboard = ["markdown-it-py>=4,<5"]
 # Installed on the eval / bench GPU pods.
 eval = [
     "transformers>=4.51",
