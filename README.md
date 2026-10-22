@@ -4,6 +4,7 @@ Synchronous inference-verification training loop for Bittensor subnet120: publis
 checkpoint → private miner batches → freeze/public audit → verify/score → train →
 next checkpoint. Blockchain-free mock and live chain adapters share the same core.
 
+- **[Live miner scoring (v9 window-credit) and public per-UID scores](docs/V9_LIVE_SCORING.md)**: https://affine.io/scores.json
 - [Miner pilot instructions](docs/MINER_QUICKSTART.md)
 - [Architecture and runtime](docs/ARCHITECTURE.md)
 - [Prepared MiMo fixed-nonce GRPO cutover (not active)](docs/MIMO_FIXED_NONCE_GRPO_CUTOVER_PLAN.md)
