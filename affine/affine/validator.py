@@ -254,6 +254,10 @@ class Validator:
         self.state.inaccessible_hotkeys = gone
 
     async def _maybe_set_weights(self, force: bool = False) -> None:
+        # Operator transition policy owns payouts while legacy evaluation continues.
+        # Keep this guard until the operator explicitly resumes competition payouts.
+        if (Path.home() / '.local/state/affine-transition/active').exists():
+            return
         if not force and (time.monotonic() - self._last_weights
                           < self.cfg.validator.weight_interval_s):
             return

@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
+import time
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -120,7 +123,7 @@ def _as_float(v: Any) -> float | None:
     if v is None or v == "":
         return None
     try:
-        return float(v)
+        return float(v) if math.isfinite(float(v)) else None
     except (TypeError, ValueError):
         return None
 
@@ -154,6 +157,7 @@ def _normalize(netuid: int, payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "netuid": netuid,
         "price_tao": price,
+        "alpha_tao_at": time.time() if price is not None and price > 0 else None,
         "reg_cost_tao": reg,
         "miners_tao_per_day": miners_tao,
         "weights_committed_at": commit,
@@ -294,10 +298,13 @@ async def _apply(cfg: Config, netuid: int, payload: dict[str, Any]) -> None:
     global _market
     market = _normalize(netuid, payload)
     async with _lock:
+        if (_market and market.get("block_number") is not None
+                and market["block_number"] < (_market.get("block_number") or 0)):
+            return  # Never replace a newer REST quote with an older SSE snapshot.
         # Keep prior fields when a sparse delta omits them.
         if _market and _market.get("netuid") == netuid:
             for key in ("price_tao", "reg_cost_tao", "miners_tao_per_day",
-                        "tao_price_usd", "weights_committed_at",
+                        "tao_price_usd", "tao_usd_at", "alpha_tao_at", "weights_committed_at",
                         "block_number"):
                 if market.get(key) is None and _market.get(key) is not None:
                     market[key] = _market[key]
@@ -325,6 +332,11 @@ async def _refresh_tao_usd(cfg: Config, client: httpx.AsyncClient) -> None:
                         or data.get("current_price")
                         or (data.get("usd_quote") or {}).get("price"))
 
+    try:
+        tao_at = datetime.fromisoformat(str((data.get("usd_quote") or {}).get("last_updated", data.get("timestamp", ""))).replace("Z", "+00:00")).timestamp()
+    except (ValueError, OverflowError):
+        tao_at = None
+    block = None
     miners_tao = None
     sn = await client.get(
         f"{TMC_BASE}/public/v1/subnets/{cfg.netuid}/", headers=headers)
@@ -338,6 +350,7 @@ async def _refresh_tao_usd(cfg: Config, client: httpx.AsyncClient) -> None:
                                             body.get("miners_tao_per_day")))
             # Keep price/reg fresh too when SSE omitted them.
             price = _as_float(snap.get("price", body.get("price")))
+            block = _as_int(snap.get("block_number", body.get("block_number")))
         else:
             price = None
     else:
@@ -352,12 +365,17 @@ async def _refresh_tao_usd(cfg: Config, client: httpx.AsyncClient) -> None:
                 "updated_at": now_iso(),
             }
         patch: dict[str, Any] = {"updated_at": now_iso()}
-        if tao_usd is not None:
+        if (tao_usd is not None and tao_usd > 0 and tao_at is not None
+                and tao_at >= (_market.get("tao_usd_at") or 0)):
             patch["tao_price_usd"] = tao_usd
+            patch["tao_usd_at"] = tao_at
         if miners_tao is not None:
             patch["miners_tao_per_day"] = miners_tao
-        if price is not None:
+        if price is not None and price > 0 and (block is None or block >= (_market.get("block_number") or 0)):
             patch["price_tao"] = price
+            patch["alpha_tao_at"] = time.time()
+            if block is not None:
+                patch["block_number"] = block
         _market = {**_market, **patch}
         market = dict(_market)
     await _persist_market(cfg, market)

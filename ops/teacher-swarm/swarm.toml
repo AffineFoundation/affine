@@ -77,7 +77,7 @@ tp = 2
 replicas = 4
 # Stand-in for b200-8x (2026-09-17, see h200-8x): second box while B200 x8
 # is out of stock, released automatically when it is back.
-target = 1
+target = 0
 max_price = 15.0
 standin_for = "b200-8x"
 est_tps = 0.6               # measured duel-real c12 (2xTP4 layout)
@@ -110,7 +110,7 @@ match = "B200"
 gpu_count = 8
 tp = 1
 replicas = 8
-target = 1
+target = 0
 max_price = 48.0
 est_tps = 4.0                # prior: 8x the measured 0.5 of b200-1x
 # 0.80 -> 0.75 with the Qwen3.8 teacher: 0.85 died on the echo spike in the
@@ -145,7 +145,7 @@ replicas = 8
 # miner engines idle at 1-2 in-flight. Each echo re-prefills the full
 # prefix (vLLM disables prefix caching under prompt logprobs), so teacher
 # capacity is the bottleneck; expect near-linear scaling.
-target = 1
+target = 0
 max_price = 56.0
 est_tps = 4.0
 gpu_util = 0.75
@@ -184,7 +184,7 @@ replicas = 4
 # replica; released automatically once b200-8x has served for
 # standin_release_min. Operator directive: running duels matter more than
 # $10-15/h, but the swarm must never double.
-target = 1
+target = 0
 max_price = 27.0
 standin_for = "b200-8x"
 standin_max_price = 36.0
