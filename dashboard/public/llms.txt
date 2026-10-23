@@ -24,6 +24,72 @@ Finalized learning evidence: https://affine.io/history.json
 Expected coordinator authority public key:
 3301134b38401196d006a621ac4a772bb4b0e6afa15a7d34a0d1ae5f2c630bcd
 
+
+Scoring notice (2026-10-23): LIVE weights remain v9/seq7 (https://affine.io/scores.json). Flip-incentive scores are published in SHADOW only at https://affine.io/scores-shadow.json — see “Flip-incentive SHADOW scoring — October 23, 2026” below. The MiMo mining contract is unchanged.
+
+## Flip-incentive SHADOW scoring — October 23, 2026
+
+**Status: SHADOW ONLY.** LIVE on-chain weights are still **v9 window-credit seq7**.
+This section describes a parallel flip+surprise scorer that publishes what weights
+*would* be. It does **not** mean LIVE weights have flipped. The MiMo complete-group
+mining contract (8-nonce groups, nonces 0–7, mixed correct/wrong) is **unchanged**;
+no new miner client is required for this shadow path.
+
+### LIVE vs SHADOW
+
+| | LIVE (pays) | SHADOW (observe only) |
+| --- | --- | --- |
+| URL | https://affine.io/scores.json | https://affine.io/scores-shadow.json |
+| Rule | v9 window credit seq7 (`groups × (1 − p)`) | fail→pass flip + surprise |
+| On-chain / hourly writer | yes | **never** (`live_weights: false`) |
+| Refresh | after each hourly weight run | ~every 5 minutes |
+
+Eyeball: sort both files by `share_now` and compare top UIDs. Shadow miners also
+carry `flip_score`, `n_fail_to_pass`, and `n_pass_to_fail`.
+
+### Formula (shadow v1)
+
+For each published probe epoch pair `(E → E_next)` with private `per_task`:
+
+1. **Join** miner `DISPATCH.payload.selected[]` at epoch `E` (`miner`, `index`)
+   with probe `envs.affine_math.per_task[<index>]` at `E` and `E_next`.
+2. **Eligibility (hard_fail):** baseline status at `E` ∈
+   `{unresolved, wrong, error, mixed}` — credit only while the task was failing.
+3. **Credit:** fail→pass ⇒ `+ surprise(p̂)` where `w = −log(max(p̂, ε))`, `ε=1e-4`.
+4. **Debit (on in shadow):** pass→fail ⇒ `− surprise(1 − p̂)`.
+5. **p̂:** running EMA of prior probe pass rates (`α=0.3`), else bandit `ema_p`,
+   else raw pass at `E`, else `0.5`.
+6. **Shares:** `relu(flip_score) / sum` over miners. No authenticity guard in v1.
+
+Window: published probe epochs with `epoch ≥ 93` (full 7,496-task pool). Formula
+version field: `sn120-flip-incentive-shadow-v1`.
+
+### Env probe (inputs to the shadow scorer)
+
+- Continuous partial coverage + bounded bandit top-k sampling on `affine_math`.
+- Index / series: https://affine.io/probe/index.json · https://affine.io/probe/series.json
+- Real-time aggregates: https://affine.io/probe/c/
+- Lagged full per-task dumps (after 2 sealed probe epochs): https://affine.io/probe/tasks/
+- Flip scoring itself uses the private per-task stream immediately; the public
+  `/probe/tasks/` lag is for audit, not for the shadow join.
+
+### What miners should do now
+
+Keep submitting under the **October 13 MiMo complete-group contract** below.
+Shadow weights reward recovering **failing** tasks (fail→pass) with higher
+surprise on rare successes. Prefer frontier / currently-failing tasks; the
+submission format, nonces, runtime, and proof transport do not change for shadow.
+
+When LIVE eventually flips (not today), the only intended change is which score
+file the hourly writer consumes. Until then, treat `scores-shadow.json` as
+preview only.
+
+### Rollback (docs)
+
+Restore the previous `website/llms.txt` backup
+(`llms.txt.before-flip-shadow-20261023`) on ArbosLife; LIVE `scores.json` and
+the MiMo mining body of this file are untouched by the shadow docs patch.
+
 ## What changes at this cutover
 
 This is a new model run and a new miner contract. Upgrade the canonical client

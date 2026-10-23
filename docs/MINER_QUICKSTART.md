@@ -6,10 +6,17 @@ Hourly weights use the best current authenticated miner assessment, retaining
 the last valid assessment during evidence outages. Assessments and audits remain
 independent of training; follow the current signed policies.
 
-The current completed-answer contract requires eight distinct rollouts per task batch:
-four native-graded successes and four failures, up to the signed `max_batches`
-task batches per UID per epoch, and attempt nonces 0–999. Follow the signed OPEN manifest; historical
-openings retain their original quotas and attempt ceilings.
+Scoring notice (2026-10-23): LIVE weights remain v9/seq7
+(https://affine.io/scores.json). Flip-incentive scores are SHADOW only at
+https://affine.io/scores-shadow.json. See the matching section in `llms.txt`
+and [FLIP_INCENTIVE.md](FLIP_INCENTIVE.md). No new miner client is required;
+the MiMo complete-group contract is unchanged.
+
+The active MiMo completed-answer contract (see `llms.txt`) requires eight
+prescribed rollouts per task batch with nonces 0–7, at least one completed
+correct and one completed wrong, up to the signed `max_batches` task batches
+per UID per epoch. Follow the signed OPEN manifest; historical openings retain
+their original quotas and attempt ceilings.
 Upload selected-token log
 probabilities and TOPLOC, not full-vocabulary arrays. Audits check prescribed
 sampler consistency; TOPLOC alone is insufficient. Training uses cheap-eligible

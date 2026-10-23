@@ -5,6 +5,7 @@ checkpoint → private miner batches → freeze/public audit → verify/score �
 next checkpoint. Blockchain-free mock and live chain adapters share the same core.
 
 - [Miner pilot instructions](docs/MINER_QUICKSTART.md)
+- [Flip-incentive SHADOW scoring (not LIVE weights)](docs/FLIP_INCENTIVE.md)
 - [Architecture and runtime](docs/ARCHITECTURE.md)
 - [Prepared MiMo fixed-nonce GRPO cutover (not active)](docs/MIMO_FIXED_NONCE_GRPO_CUTOVER_PLAN.md)
 - [MiMo miner migration and runtime requirements](docs/MIMO_MINER_MIGRATION.md)
@@ -14,6 +15,7 @@ next checkpoint. Blockchain-free mock and live chain adapters share the same cor
 - [Implementation plan](IMPLEMENTATION_PLAN.md)
 - [Operational state and evidence](STATE.md)
 - [Original RCore common adapter and private terminal package](docs/NATIVE_RCORE_COMMON.md)
+- [Changelog](CHANGELOG.md)
 
 Run `.venv/bin/python -m subnet.mock` for a real model/R2/training smoke, or
 `.venv/bin/python -m subnet.tests` and `.venv/bin/python -m ops.new_subnet_checks`
