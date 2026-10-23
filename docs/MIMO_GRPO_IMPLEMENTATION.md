@@ -113,8 +113,11 @@ complete groups do not prove unbiased task selection or historical execution ord
 
 `complete_group_native.grade_batch` regenerates task prompts, decodes exact
 submitted tokens, runs the native grader and returns every authoritative native
-result. `mimo_coordinator.Coordinator.seal` signs the selection and those results.
-No model sampling audit is required before an eligible group can reach training.
+result. `mimo_coordinator.Coordinator.seal` signs the structural selection and
+those results (assurance may still be unaudited on the sealed dispatch).
+**GRPO packing requires sampling authenticity:** `mimo_training_authenticity`
+builds a train pack that keeps only `verified_valid` groups. Unaudited and
+verify-fail groups are excluded from training (verified-or-nothing).
 
 `prepare_signed_dispatch(opening, dispatch, authority=..., documents_root=...,
 runtime=..., optimizer_step=...)` verifies host signatures, manifest identity,

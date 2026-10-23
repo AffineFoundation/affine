@@ -1,8 +1,8 @@
-"""Read-only flip-incentive shadow audit helpers.
+"""Read-only flip-incentive LIVE audit helpers.
 
-Fetches public https://affine.io/scores-shadow.json and lagged probe per-task
-dumps. Never submits chain weights, never uploads miner batches, and never
-claims LIVE flip scoring is active.
+Fetches public https://affine.io/scores.json (and optional shadow mirror) plus
+lagged probe per-task dumps. Never submits chain weights, never uploads miner
+batches, and never claims a score file is safe to submit without the share floor.
 """
 import argparse
 import json
@@ -10,10 +10,11 @@ import sys
 import urllib.error
 import urllib.request
 
+DEFAULT_SCORES = 'https://affine.io/scores.json'
 DEFAULT_SHADOW = 'https://affine.io/scores-shadow.json'
 DEFAULT_PROBE_INDEX = 'https://affine.io/probe/index.json'
 FAIL_STATUSES = frozenset({'unresolved', 'wrong', 'error', 'mixed'})
-USER_AGENT = 'affine-flip-incentive-audit/1'
+USER_AGENT = 'affine-flip-incentive-audit/2'
 
 
 def fetch_json(url, *, timeout=60):
@@ -27,28 +28,42 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def summarize_shadow(document):
-    require(document.get('live_weights') is False, 'expected live_weights false on shadow')
-    require(document.get('mode') == 'shadow' or document.get('enabled') is True,
-            'expected shadow document')
+def summarize_scores(document, *, url):
+    from subnet.flip_share_floor import apply_share_floor, positive_mass
+
+    formula = document.get('formula') or {}
+    require(formula.get('version') == 'sn120-flip-incentive-live-v1' or
+            document.get('version') == 'sn120-flip-incentive-live-v1',
+            'expected live flip formula version')
+    require(formula.get('no_authenticity_guard') is True,
+            'no_authenticity_guard must stay true (no authenticity bonus)')
+    gate = formula.get('sampling_verify_gate') or {}
+    require(gate.get('fail_strips_credit') is True and gate.get('enabled') is True,
+            'sampling_verify_gate must strip credit on verify fail')
     miners = list(document.get('miners') or [])
+    shares = {str(row.get('uid')): float(row.get('share_now') or 0) for row in miners}
+    _, floor_meta = apply_share_floor(shares, shares if positive_mass(shares) else None)
     ranked = sorted(miners, key=lambda row: (-float(row.get('share_now') or 0),
                                              int(row.get('uid') or 0)))
-    formula = document.get('formula') or {}
     return dict(
-        url=DEFAULT_SHADOW,
+        url=url,
         live_weights=document.get('live_weights'),
         mode=document.get('mode'),
         formula_version=formula.get('version'),
+        no_authenticity_guard=formula.get('no_authenticity_guard'),
+        sampling_verify_gate=gate,
         generated_at_cr=document.get('generated_at_cr'),
-        compare_to_live=document.get('compare_to_live'),
         miner_count=len(miners),
+        positive_share_miners=sum(1 for value in shares.values() if value > 0),
+        share_floor=floor_meta,
+        never_all_zero_weights=True,
         top=[dict(uid=row.get('uid'), hotkey=row.get('hotkey'),
                   share_now=row.get('share_now'), flip_score=row.get('flip_score'),
                   n_fail_to_pass=row.get('n_fail_to_pass'),
                   n_pass_to_fail=row.get('n_pass_to_fail'))
              for row in ranked[:20]],
-        notice='SHADOW ONLY. LIVE remains https://affine.io/scores.json (v9/seq7).',
+        notice=('LIVE flip. Verify-fail/unverified ⇒ no credit and no GRPO pack. '
+                'Share floor must prevent all-zero weight submits.'),
     )
 
 
@@ -106,8 +121,9 @@ def suggest_indices(*, probe_index_url, env_id, limit):
     return dict(
         notice=('Optional local preference only. Indices must still appear in the '
                 'signed opening; this helper never expands the epoch. '
-                'Public /probe/tasks/ lags sealed aggregates; shadow scoring uses '
-                'private per_task immediately.'),
+                'Public /probe/tasks/ lags sealed aggregates; flip scoring uses '
+                'private per_task immediately. Authenticity fail still strips '
+                'credit and GRPO packing.'),
         env_id=env_id,
         probe_epoch_index=latest.get('epoch_index'),
         per_task_file=latest.get('per_task_file'),
@@ -124,8 +140,11 @@ def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
 
-    summary = sub.add_parser('summary', help='print top shadow shares')
-    summary.add_argument('--shadow-url', default=DEFAULT_SHADOW)
+    summary = sub.add_parser('summary', help='print top LIVE flip shares + gate checks')
+    summary.add_argument('--scores-url', default=DEFAULT_SCORES)
+    summary.add_argument('--shadow-url', default=DEFAULT_SHADOW,
+                         help='optional; ignored unless --prefer-shadow')
+    summary.add_argument('--prefer-shadow', action='store_true')
 
     suggest = sub.add_parser('suggest-indices',
                              help='list lagged failing probe task indices')
@@ -139,7 +158,8 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         if args.command == 'summary':
-            report = summarize_shadow(fetch_json(args.shadow_url))
+            url = args.shadow_url if args.prefer_shadow else args.scores_url
+            report = summarize_scores(fetch_json(url), url=url)
         elif args.command == 'suggest-indices':
             report = suggest_indices(probe_index_url=args.probe_index,
                                      env_id=args.env_id, limit=args.limit)

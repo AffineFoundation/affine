@@ -6,11 +6,12 @@ Hourly weights use the best current authenticated miner assessment, retaining
 the last valid assessment during evidence outages. Assessments and audits remain
 independent of training; follow the current signed policies.
 
-Scoring notice (2026-10-23): LIVE weights remain v9/seq7
-(https://affine.io/scores.json). Flip-incentive scores are SHADOW only at
-https://affine.io/scores-shadow.json. See the matching section in `llms.txt`
-and [FLIP_INCENTIVE.md](FLIP_INCENTIVE.md). No new miner client is required;
-the MiMo complete-group contract is unchanged.
+Scoring notice (2026-10-23): LIVE weights use flip-incentive scoring
+(https://affine.io/scores.json). TOPLOC/sampling verify **fail** or unverified
+batches earn no flip credit and are excluded from GRPO. No authenticity bonus.
+Weights never go all-zero (last-good floor). See `llms.txt` and
+[FLIP_INCENTIVE.md](FLIP_INCENTIVE.md). No new miner client is required; the
+MiMo complete-group contract is unchanged.
 
 The active MiMo completed-answer contract (see `llms.txt`) requires eight
 prescribed rollouts per task batch with nonces 0–7, at least one completed
@@ -19,9 +20,9 @@ per UID per epoch. Follow the signed OPEN manifest; historical openings retain
 their original quotas and attempt ceilings.
 Upload selected-token log
 probabilities and TOPLOC, not full-vocabulary arrays. Audits check prescribed
-sampler consistency; TOPLOC alone is insufficient. Training uses cheap-eligible
-unaudited submissions independently of the audit loop. Token-only and three-way
-research checks are not the active miner contract.
+sampler consistency; TOPLOC alone is insufficient. GRPO packing requires
+sampling verify pass: unaudited and verify-fail groups are not trained on.
+Token-only and three-way research checks are not the active miner contract.
 
 ## Identity and setup
 

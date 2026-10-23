@@ -1,8 +1,12 @@
-"""Prospective complete-group coordinator, independent of continuous audits.
+"""Prospective complete-group coordinator.
+
+Structural capture and native grading seal without waiting for sampling audits.
+The sealed dispatch is the credit/audit join surface. GRPO packing is separate:
+``mimo_training_authenticity`` strips unaudited and verify-fail groups so only
+sampling-verified batches enter training (verified-or-nothing).
 
 The host supplies its authenticated release, native tokenizer/taskset, bucket
 and authority. This module never sets chain weights or changes public discovery.
-Its private opening/dispatch records can be consumed by the normal role queue.
 """
 from __future__ import annotations
 
@@ -42,8 +46,10 @@ class Coordinator:
     """One epoch namespace, restartable from the same signed opening.
 
     Structural capture and native grading do not wait for any sampling audit.
-    A signed dispatch records assurance honestly as unaudited. Future auditors
-    must use the exact captured commitment/document hashes.
+    A signed dispatch records assurance honestly as unaudited for the sealed
+    join surface. Train packing must still require sampling verify pass via
+    ``mimo_training_authenticity`` before GRPO; unaudited/fail rows earn no
+    train use. Auditors must use the exact captured commitment/document hashes.
     """
     def __init__(self, root, bucket, identity, *, resolve_task, grade_batch, release_policy=None, grade_batches=None):
         self.root = Path(root)

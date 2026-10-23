@@ -39,8 +39,14 @@ def validate_job(job, manifest, authority, *, allow_public=False):
     from .mimo_release_policy import policy_for_manifest
     release_policy = policy_for_manifest(manifest, authority, allow_public=allow_public)
     t = job.get('training')
-    need(type(t) is dict and set(t) == {'run_id','optimizer_step','config','dispatch','documents',
-        'publication_namespace','publisher_id','role_config_file'}, 'explicit MiMo training job fields')
+    required = {'run_id','optimizer_step','config','dispatch','documents',
+                'publication_namespace','publisher_id','role_config_file'}
+    optional = {'sealed_dispatch_sha256','training_requires_sampling_audit',
+                'authenticity_gate','sampling_verify_stripped'}
+    need(type(t) is dict and required <= set(t) <= required|optional,
+         'explicit MiMo training job fields')
+    need(t.get('training_requires_sampling_audit') is True,
+         'trainer job must require sampling authenticity for GRPO pack')
     need(t['run_id'] == manifest.get('run_id') and type(t['run_id']) is str and
          re.fullmatch(r'[A-Za-z0-9_-]{1,100}', t['run_id']), 'safe authenticated trainer run')
     need(type(t['optimizer_step']) is int and t['optimizer_step'] >= 0, 'original optimizer step')
@@ -77,8 +83,8 @@ def validate_result(report, job, manifest):
     from .mimo_runtime import validate_descriptor
     t = job['training']
     training = report.get('training')
-    need(type(training) is dict and training.get('training_requires_sampling_audit') is False,
-         'explicit independent trainer report')
+    need(type(training) is dict and training.get('training_requires_sampling_audit') is True,
+         'trainer report must record sampling authenticity gate')
     if training.get('status') == 'no-update':
         need(training.get('reason') == 'no-eligible-complete-groups' and
              not t['documents'] and
@@ -277,7 +283,7 @@ def execute(job, manifest, authority, workspace, out, report, *, cache=None,
             return dict(report, full_model_finetune=True, training=dict(status='no-update',
                 reason='no-eligible-complete-groups', group_count=0, rollout_count=0,
                 input_checkpoint=binding.checkpoint, output_checkpoint=binding.checkpoint,
-                optimizer_step=binding.optimizer_step, training_requires_sampling_audit=False))
+                optimizer_step=binding.optimizer_step, training_requires_sampling_audit=True))
         if bucket is None or signer is None:
             need(bucket is None and signer is None, 'provide both scoped bucket and publisher identity')
             bucket, signer, configured_input = _role_configuration(job)
@@ -369,7 +375,7 @@ def execute(job, manifest, authority, workspace, out, report, *, cache=None,
         source_guard(job)
         return dict(report, full_model_finetune=True, execution_resources_enforced=True,
             training=dict(result['report'], output_checkpoint=result['output_checkpoint'],
-                training_requires_sampling_audit=False, model_only_publication=True),
+                training_requires_sampling_audit=True, model_only_publication=True),
             checkpoint=manifest['checkpoint']['id'], output_checkpoint=result['output_checkpoint'],
             publication_receipt=receipt, transaction_report_sha256=result['report_sha256'])
     finally:
