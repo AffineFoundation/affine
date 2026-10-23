@@ -5,7 +5,7 @@ checkpoint → private miner batches → freeze/public audit → verify/score �
 next checkpoint. Blockchain-free mock and live chain adapters share the same core.
 
 - [Miner pilot instructions](docs/MINER_QUICKSTART.md)
-- [Flip-incentive SHADOW scoring (not LIVE weights)](docs/FLIP_INCENTIVE.md)
+- [Flip-incentive LIVE scoring (2026-10-23)](docs/FLIP_INCENTIVE.md)
 - [Architecture and runtime](docs/ARCHITECTURE.md)
 - [Prepared MiMo fixed-nonce GRPO cutover (not active)](docs/MIMO_FIXED_NONCE_GRPO_CUTOVER_PLAN.md)
 - [MiMo miner migration and runtime requirements](docs/MIMO_MINER_MIGRATION.md)

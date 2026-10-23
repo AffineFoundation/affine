@@ -1,8 +1,7 @@
-"""Read-only flip-incentive shadow audit helpers.
+"""Read-only flip-incentive LIVE audit helpers.
 
-Fetches public https://affine.io/scores-shadow.json and lagged probe per-task
-dumps. Never submits chain weights, never uploads miner batches, and never
-claims LIVE flip scoring is active.
+Fetches public https://affine.io/scores.json and lagged probe per-task dumps.
+Never submits chain weights, never uploads miner batches.
 """
 import argparse
 import json
@@ -10,10 +9,10 @@ import sys
 import urllib.error
 import urllib.request
 
-DEFAULT_SHADOW = 'https://affine.io/scores-shadow.json'
+DEFAULT_SCORES = 'https://affine.io/scores.json'
 DEFAULT_PROBE_INDEX = 'https://affine.io/probe/index.json'
 FAIL_STATUSES = frozenset({'unresolved', 'wrong', 'error', 'mixed'})
-USER_AGENT = 'affine-flip-incentive-audit/1'
+USER_AGENT = 'affine-flip-incentive-audit/2'
 
 
 def fetch_json(url, *, timeout=60):
@@ -27,19 +26,23 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def summarize_shadow(document):
-    require(document.get('live_weights') is False, 'expected live_weights false on shadow')
-    require(document.get('mode') == 'shadow' or document.get('enabled') is True,
-            'expected shadow document')
+def summarize_scores(document, *, url):
+    require(document.get('live_weights') is True, 'expected live_weights true')
+    require(document.get('mode') == 'live' or document.get('enabled') is True,
+            'expected LIVE flip document')
+    formula = document.get('formula') or {}
+    version = document.get('version') or formula.get('version')
+    require(version == 'sn120-flip-incentive-live-v1' or
+            str(version or '').startswith('sn120-flip-incentive-live'),
+            f'unexpected formula version {version!r}')
     miners = list(document.get('miners') or [])
     ranked = sorted(miners, key=lambda row: (-float(row.get('share_now') or 0),
                                              int(row.get('uid') or 0)))
-    formula = document.get('formula') or {}
     return dict(
-        url=DEFAULT_SHADOW,
+        url=url,
         live_weights=document.get('live_weights'),
         mode=document.get('mode'),
-        formula_version=formula.get('version'),
+        formula_version=version,
         generated_at_cr=document.get('generated_at_cr'),
         compare_to_live=document.get('compare_to_live'),
         miner_count=len(miners),
@@ -48,7 +51,8 @@ def summarize_shadow(document):
                   n_fail_to_pass=row.get('n_fail_to_pass'),
                   n_pass_to_fail=row.get('n_pass_to_fail'))
              for row in ranked[:20]],
-        notice='SHADOW ONLY. LIVE remains https://affine.io/scores.json (v9/seq7).',
+        notice=('LIVE flip-incentive. On-chain mech-0 weights use these shares. '
+                'Miner client / MiMo 8-nonce contract unchanged.'),
     )
 
 
@@ -106,8 +110,8 @@ def suggest_indices(*, probe_index_url, env_id, limit):
     return dict(
         notice=('Optional local preference only. Indices must still appear in the '
                 'signed opening; this helper never expands the epoch. '
-                'Public /probe/tasks/ lags sealed aggregates; shadow scoring uses '
-                'private per_task immediately.'),
+                'Public /probe/tasks/ lags sealed aggregates; LIVE flip scoring '
+                'uses private per_task immediately.'),
         env_id=env_id,
         probe_epoch_index=latest.get('epoch_index'),
         per_task_file=latest.get('per_task_file'),
@@ -124,8 +128,8 @@ def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
 
-    summary = sub.add_parser('summary', help='print top shadow shares')
-    summary.add_argument('--shadow-url', default=DEFAULT_SHADOW)
+    summary = sub.add_parser('summary', help='print top LIVE flip shares')
+    summary.add_argument('--scores-url', default=DEFAULT_SCORES)
 
     suggest = sub.add_parser('suggest-indices',
                              help='list lagged failing probe task indices')
@@ -139,7 +143,8 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         if args.command == 'summary':
-            report = summarize_shadow(fetch_json(args.shadow_url))
+            report = summarize_scores(fetch_json(args.scores_url),
+                                      url=args.scores_url)
         elif args.command == 'suggest-indices':
             report = suggest_indices(probe_index_url=args.probe_index,
                                      env_id=args.env_id, limit=args.limit)
