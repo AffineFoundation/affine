@@ -241,13 +241,14 @@ class WorkerIntegrationTests(unittest.TestCase):
         job.update(role='train',job_id='mimo-train-queue',trainer_worker=worker_identity,training=dict(
             run_id=self.m['run_id'],optimizer_step=0,config=TrainerConfig().document(),
             dispatch={'url':self.url,'sha256':'a'*64,'size':100},documents={},
-            publication_namespace='private/worker-test',publisher_id=self.identity.id,role_config_file='/private/test-only.json'))
+            publication_namespace='private/worker-test',publisher_id=self.identity.id,role_config_file='/private/test-only.json',
+            training_requires_sampling_audit=True))
         return job
 
     def empty_training_report(self,report):
         return dict(report,training=dict(status='no-update',reason='no-eligible-complete-groups',group_count=0,
             rollout_count=0,input_checkpoint=self.m['checkpoint']['id'],output_checkpoint=self.m['checkpoint']['id'],
-            optimizer_step=0,training_requires_sampling_audit=False))
+            optimizer_step=0,training_requires_sampling_audit=True))
 
     def test_training_released_job_uses_same_stable_state_root_and_named_worker(self):
         key=SigningKey.generate();other=SigningKey.generate();kid=key.verify_key.encode().hex()

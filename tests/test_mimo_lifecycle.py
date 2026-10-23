@@ -71,10 +71,20 @@ class LifecycleTests(unittest.TestCase):
     def make(self,services=None):return Lifecycle(self.root/'run',self.bucket,self.authority,self.policy,
         services or self.services,resolve_task=lambda m,e,i:resolve_task(m,e,i,self.tokenizer),
         grade_batch=lambda b,m,miner:grade_batch(b,m,self.tokenizer,miner=miner),collection_seconds=120,first_round=200)
-    def make_job(self,opening,dispatch,step,namespace):
+    def make_job(self,opening,dispatch,step,namespace,**kwargs):
+        # Fixture treats sealed selected rows as verify-pass so authenticity
+        # gating does not empty the train pack under test stubs.
+        sealed=dispatch['payload'] if 'payload' in dispatch else dispatch
+        documents={row['document']['sha256']:dict(url='https://example.test/'+row['document']['sha256'],size=1)
+                   for row in sealed.get('selected',[])}
         return sign(self.authority,dict(role='train',job_id='fixture-job-'+opening['payload']['epoch'],
             manifest=opening,trainer_worker=self.worker.id,training=dict(optimizer_step=step,
-                publication_namespace=namespace,publisher_id=self.publisher.id,dispatch={'sha256':digest(dispatch)})))
+                publication_namespace=namespace,publisher_id=self.publisher.id,
+                dispatch={'sha256':digest(dispatch),'url':'https://example.test/train-pack','size':1},
+                sealed_dispatch_sha256=digest(dispatch),
+                documents=documents,training_requires_sampling_audit=True,
+                authenticity_gate='mimo-training-authenticity-gate-v1',
+                sampling_verify_stripped=0)))
     def enqueue(self,envelope):
         key=envelope['payload']['job_id']
         if key in self.jobs:self.assertEqual(self.jobs[key],envelope)

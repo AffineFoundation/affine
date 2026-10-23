@@ -1,49 +1,75 @@
-# Flip incentive (shadow → LIVE cutover)
+# Flip incentive (LIVE) + authenticity couple
 
-**Status: SHADOW ONLY.** LIVE on-chain weights remain v9 / formula sequence 7 at
-https://affine.io/scores.json. Parallel flip+surprise scores publish at
-https://affine.io/scores-shadow.json with `live_weights: false`. This package
-does not change on-chain submission and does not claim LIVE weights have flipped.
-
-Miner-facing contract text (exact copy of the live site section published
-2026-10-23) lives in `dashboard/public/llms.txt` under
-“Flip-incentive SHADOW scoring — October 23, 2026”, also served at
-https://affine.io/llms.txt. Keep that section byte-aligned with the site when
-editing either side.
+**Status: LIVE.** On-chain weights use `sn120-flip-incentive-live-v1` at
+https://affine.io/scores.json (`live_weights: true`). Miner-facing contract text
+lives in `dashboard/public/llms.txt` under “Flip-incentive LIVE scoring —
+October 23, 2026”, also served at https://affine.io/llms.txt.
 
 ## Client requirements
 
-**No miner client change is required** for the shadow path or for a later LIVE
-cutover that only swaps which score file the hourly writer consumes.
+**No miner client change is required** for flip pay or the authenticity couple.
 
 - Keep the October 13 MiMo complete-group contract: nonces 0–7, at least one
   completed correct and one completed wrong, same upload / TOPLOC / proof rules.
 - Stock task search may stay a random shuffle over signed `environments[].indices`.
 - Optional local preference of frontier / currently-failing tasks is strategy
-  only; use `--indices` with an authorized subset if desired. Preference never
-  expands the epoch or changes group size.
+  only; use `--indices` with an authorized subset if desired.
 
-## What the shadow scorer measures
+## Authenticity couple (credit + train)
 
-Shadow shares reward recovering **failing** tasks (fail→pass), weighted by
-surprise `w = −log(max(p̂, ε))`. Pass→fail is debited in the shadow formula.
-Eligibility is hard_fail on baseline probe status
-`{unresolved, wrong, error, mixed}`. Full numbered formula, LIVE vs SHADOW
-table, and probe URLs are in `llms.txt` (do not fork wording here).
+Jacob rule (2026-10-23):
 
-## LIVE cutover (operator only — not authorized by this doc)
+1. Keep requiring TOPLOC + sampling checks.
+2. If a batch/traj **fails** TOPLOC or sampling verification → **do not train
+   (GRPO)** and **do not award flip credit**.
+3. Unverified / unaudited / pending → same: **nothing** for credit and train.
+4. Flip formula has **no** authenticity bonus (`no_authenticity_guard=true`).
+5. Verify **all** batches that can earn flip credit or enter GRPO (not
+   spot-check-only for eligibility).
+6. Do **not** loosen TOPLOC tolerances.
+7. **Never produce / never submit all-zero weights.** Authenticity and
+   `unknown_policy` gates must retain last-good shares (or refuse submit and
+   keep on-chain). Never burn. Never owner-only.
 
-When signed off, **one** change:
+In-repo wiring:
 
-1. **Path swap (simplest):** point the LIVE weight reader / hourly submit from
-   `scores.json` to `scores-shadow.json`, **or**
-2. **Config flag:** set shadow `live_weights: true` **and** wire the hourly
-   entry to consume shadow shares instead of the v9 vector.
+| Piece | Role |
+| --- | --- |
+| `subnet/mimo_training_authenticity.py` | Filter sealed `selected[]` → train pack (`verified_valid` only) |
+| `subnet/mimo_lifecycle_adapters.make_training_job` | Publishes `mimo/train-pack.json`; strips unaudited/fail |
+| `subnet/mimo_grpo/prepared.py` | Trainer refuses packs without sampling authenticity |
+| `subnet/flip_share_floor.py` | Last-good share floor; refuses all-zero submit |
 
-Until then treat `scores-shadow.json` as preview only. Rollback restores the
-LIVE path to `scores.json` (LIVE seq7 needs no restore if never modified).
-Docs rollback for `llms.txt` is the ArbosLife backup
-`llms.txt.before-flip-shadow-20261023`.
+Sealed coordinator `dispatch.json` remains the credit/audit join surface and may
+still record native-graded unaudited assurance. GRPO consumes only the filtered
+train pack.
+
+## Live formula flags (ops)
+
+Public metadata on https://affine.io/scores.json:
+
+- `formula.version`: `sn120-flip-incentive-live-v1`
+- `formula.no_authenticity_guard`: **true** (no bonus; keep true)
+- `formula.sampling_verify_gate.enabled`: true
+- `formula.sampling_verify_gate.fail_strips_credit`: true
+- `formula.sampling_verify_gate.credit_requires_verify_pass`: true
+- `formula.sampling_verify_gate.unknown_policy`: must keep a never-all-zero path
+  (`pass_through` / `strip_unverified` / `zero_unverified` + share floor)
+
+### ArbosLife ops flags to align after this PR
+
+1. **Keep** `no_authenticity_guard=true` (do not add an authenticity weight term).
+2. **Keep** `sampling_verify_gate.fail_strips_credit=true` and
+   `credit_requires_verify_pass=true`.
+3. **Enable** train-denylist / sampling-verify ledger feed into the MiMo
+   lifecycle (`Services.sampling_verify_ledger`, `Services.train_denylist`) so
+   GRPO packing strips fail + unverified (this PR wires the consumer).
+4. **Require full verify** for any batch that can earn flip credit or enter the
+   train pack (not spot-only eligibility).
+5. **Wire share floor** (`subnet/flip_share_floor.apply_share_floor`) in the flip
+   score → hourly writer path so authenticity/`unknown_policy` never submits
+   all-zero weights; on refuse, retain on-chain.
+6. **Never** enable burn or owner-only fallback writers.
 
 ## Optional read-only audit helper
 
@@ -52,13 +78,13 @@ Docs rollback for `llms.txt` is the ArbosLife backup
 .venv/bin/python ops/flip_incentive_audit.py suggest-indices --limit 64
 ```
 
-Fetches public shadow scores and lagged `/probe/tasks/` dumps. Does not write
-chain weights, change submissions, or alter the signed miner source.
+Fetches public scores and lagged `/probe/tasks/` dumps. Does not write chain
+weights or alter the signed miner source.
 
 ## Related URLs
 
 - https://affine.io/llms.txt
 - https://affine.io/mining.json
-- https://affine.io/scores.json (LIVE)
-- https://affine.io/scores-shadow.json (SHADOW)
+- https://affine.io/scores.json (LIVE flip)
+- https://affine.io/scores-shadow.json (optional mirror)
 - https://affine.io/probe/index.json · https://affine.io/probe/series.json

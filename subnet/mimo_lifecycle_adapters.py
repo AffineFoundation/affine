@@ -13,6 +13,8 @@ from pathlib import Path
 import time
 
 from .backend_jobs import signed
+from .complete_group_capture import _immutable
+from .mimo_training_authenticity import build_train_pack_payload, outcomes_from_ledger
 from .storage import canonical
 from .mimo_lifecycle import Services
 from .mimo_release_policy import descriptor, digest, need, sign
@@ -51,7 +53,9 @@ class R2Services:
     def services(self):
         return Services(self.registrations,self.committed_miners,self.discovery,
             self.checkpoint_urls,self.make_training_job,self.enqueue_training,
-            self.training_result,self.readback_publication,self.source_bundle)
+            self.training_result,self.readback_publication,self.source_bundle,
+            getattr(self,'sampling_verify_ledger',None),
+            getattr(self,'train_denylist',None))
 
     def source_bundle(self,source):
         expected=self.policy.scope['immutable_manifest']['source_bundle']
@@ -130,28 +134,54 @@ class R2Services:
         else:keys={name:self.policy.namespace()+'/checkpoints/'+cp['id']+'/model/'+name for name in cp['files']}
         return {name:self.bucket.presign(key,'get_object',86400)for name,key in keys.items()}
 
-    def make_training_job(self,opening,dispatch,optimizer_step,namespace):
+    def make_training_job(self,opening,dispatch,optimizer_step,namespace,*,
+                          sampling_verify_outcomes=None,train_denylist_keys=None):
+        """Build a trainer job from an authenticity-filtered train pack.
+
+        The sealed coordinator ``dispatch.json`` remains the credit/audit join
+        surface. GRPO packs only ``verified_valid`` groups: unaudited and
+        verify-fail rows are stripped here (see ``mimo_training_authenticity``).
+        """
         from .mimo_worker import VERSION as WORKER
         m=signed(opening,self.identity.id);self.policy.validate_manifest(m)
-        d=signed(dispatch,self.identity.id)
-        need(namespace==self.policy.namespace() and d['manifest_sha256']==digest(m),'original scoped training dispatch')
-        key=namespace+'/epochs/'+m['epoch']+'/mimo/dispatch.json'
+        sealed=signed(dispatch,self.identity.id)
+        need(namespace==self.policy.namespace() and sealed['manifest_sha256']==digest(m),
+             'original scoped training dispatch')
+        if sampling_verify_outcomes is None:
+            outcomes={}
+        elif type(sampling_verify_outcomes) is dict and (
+                'rows' in sampling_verify_outcomes or 'observations' in sampling_verify_outcomes
+                or 'entries' in sampling_verify_outcomes):
+            outcomes=outcomes_from_ledger(sampling_verify_outcomes)
+        elif type(sampling_verify_outcomes) is list:
+            outcomes=outcomes_from_ledger(sampling_verify_outcomes)
+        else:
+            need(type(sampling_verify_outcomes) is dict, 'sampling verify outcomes map')
+            outcomes=dict(sampling_verify_outcomes)
+        pack_payload=build_train_pack_payload(sealed,outcomes,denylist_keys=train_denylist_keys or ())
+        pack=sign(self.identity,pack_payload)
+        pack_key=namespace+'/epochs/'+m['epoch']+'/mimo/train-pack.json'
+        _immutable(self.bucket,pack_key,canonical(pack))
         documents={}
-        for row in d['selected']:
+        for row in pack_payload['selected']:
             doc=row['document']; response=self.bucket.client.head_object(Bucket=self.bucket.name,Key=doc['key'])
             need(type(response['ContentLength'])is int and 0 < response['ContentLength'] <=128*1024**2,
                  'bounded actual captured training document')
             documents[doc['sha256']]=dict(url=self.bucket.presign(doc['key'],'get_object',86400),size=response['ContentLength'])
-        need(len(documents)==len(d['selected']),'one original compact document per training group')
+        need(len(documents)==len(pack_payload['selected']),'one original compact document per verified train group')
         now=time.time()
-        value=dict(schema=1,worker_policy=WORKER,job_id='mimo-train-'+digest(dispatch)[:48],role='train',
+        value=dict(schema=1,worker_policy=WORKER,job_id='mimo-train-'+digest(pack)[:48],role='train',
             created_at=now,expires_at=now+self.job_seconds,manifest=opening,
             source_files=self.source_files,runtime_versions=self.runtime_versions,trainer_worker=self.trainer_worker,
             checkpoint_read_urls=self.checkpoint_urls(m['checkpoint']),training=dict(run_id=m['run_id'],
                 optimizer_step=optimizer_step,config=self.trainer_config,
-                dispatch=dict(url=self.bucket.presign(key,'get_object',86400),sha256=digest(dispatch),size=len(canonical(dispatch))),
+                dispatch=dict(url=self.bucket.presign(pack_key,'get_object',86400),sha256=digest(pack),size=len(canonical(pack))),
+                sealed_dispatch_sha256=digest(dispatch),
                 documents=documents,publication_namespace=namespace,publisher_id=self.publisher_id,
-                role_config_file=self.role_config))
+                role_config_file=self.role_config,
+                training_requires_sampling_audit=True,
+                authenticity_gate=pack_payload['authenticity_gate'],
+                sampling_verify_stripped=pack_payload['sampling_verify_stripped']))
         return sign(self.identity,value)
 
     def enqueue_training(self,envelope):
