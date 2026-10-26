@@ -201,6 +201,21 @@ def load_finalized_lineage(epochs_root: Path, lo: int, hi: int) -> dict[int, dic
     return out
 
 
+def rollback_parent_for_pair(e_from: int, e_to: int, ckpt_of: dict, lineage: dict,
+                             probed: set) -> tuple[int | None, int | None]:
+    """2026-10-26: after a rollback, the epoch that trained between probe(e_from) and probe(e_to) started
+    from an OLDER checkpoint (the rollback target), not from probe(e_from)'s. Find that epoch e (trained,
+    output == probe(e_to)'s checkpoint) and the published probe epoch of its input checkpoint.
+    -> (credit epoch, parent probe epoch) or (None, None). Lineage only; scoring math unchanged."""
+    ck_to = ckpt_of.get(e_to)
+    by_ckpt = {ck: e for e, ck in ckpt_of.items() if ck and e in probed and e < e_to}
+    for e in range(e_from, e_to):
+        f = lineage.get(e)
+        if f and f["trained"] and f["output"] == ck_to and f["input"] in by_ckpt:
+            return e, by_ckpt[f["input"]]
+    return None, None
+
+
 def credit_epoch_for_pair(e_from: int, e_to: int, ckpt_from: str | None, lineage: dict) -> tuple[int | None, str]:
     """Epoch whose training started from e_from's probe checkpoint (skip no-update/rollback epochs)."""
     have = [e for e in range(e_from, e_to) if e in lineage]
@@ -621,6 +636,7 @@ def compute(cfg: dict) -> dict:
         e_from = epochs_sorted[i]
         e_to = epochs_sorted[i + 1]
         pt_from = per_epoch_pt[e_from]
+        pt_parent = pt_from  # probe compared against pt_to (differs only after a rollback)
         pt_to = per_epoch_pt[e_to]
         # p_hat snapshot BEFORE updating with e_from outcomes? 
         # Probe at e_from measures model before training on e_from batches;
@@ -632,6 +648,13 @@ def compute(cfg: dict) -> dict:
         # TRAINED from probe(e_from)'s checkpoint; no-update / rollback epochs earn nothing.
         if credit_rule == "training_from_probe_checkpoint":
             e_credit, credit_reason = credit_epoch_for_pair(e_from, e_to, ckpt_of.get(e_from), lineage)
+            if e_credit is None:
+                # probe(e_from) was rolled back; credit the epoch that trained from the rollback target,
+                # comparing the target's own earlier probe with probe(e_to). EMA still ingests e_from below.
+                e_rb, e_parent = rollback_parent_for_pair(e_from, e_to, ckpt_of, lineage, set(per_epoch_pt))
+                if e_rb is not None:
+                    e_credit, credit_reason = e_rb, "trained_from_rollback_target_probe_e%d" % e_parent
+                    pt_parent = per_epoch_pt[e_parent]
         else:
             e_credit, credit_reason = e_from, "legacy_pair_first_epoch"
         disp = load_dispatch(Path(paths["epochs_root"]), e_credit) if e_credit is not None else []
@@ -655,7 +678,7 @@ def compute(cfg: dict) -> dict:
             miner = row["miner"]
             if row.get("mean_reward") is not None and row["mean_reward"] < reward_gate:
                 continue
-            cell_e = pt_from.get(idx)
+            cell_e = pt_parent.get(idx)
             cell_n = pt_to.get(idx)
             if cell_e is None or cell_n is None:
                 continue
