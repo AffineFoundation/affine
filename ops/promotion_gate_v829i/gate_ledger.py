@@ -78,8 +78,10 @@ def entry(e):
         z=ev.get('z'), candidate_cap_rate=ev.get('c_cap_rate'), n=ev.get('n'),
         head_pass=ev.get('h_pass'), candidate_pass=ev.get('c_pass'),
         batch_tasks_dropped=dec.get('batch_overlap'), reasons=dec.get('reasons'),
-        reason=('; '.join(dec.get('reasons') or []) or ('z > -1 and cap-hit < 0.20' if verdict == 'promoted' else None)),
-        thresholds=dict(z_min=-1.0, cap_max=0.20, min_tasks=200), red_credit=dec.get('red_credit'),
+        reason=('; '.join(dec.get('reasons') or []) or (('z %s %.1f and cap-hit < %.2f' % ('>=' if dec.get('z_inclusive') else '>', dec.get('z_min', -1.0), dec.get('cap_max', 0.20)))
+                if verdict == 'promoted' else None)),
+        thresholds=dict(z_min=dec.get('z_min', -1.0), z_inclusive=bool(dec.get('z_inclusive')), cap_max=dec.get('cap_max', 0.20),
+                        min_tasks=dec.get('min_tasks', 200)), red_credit=dec.get('red_credit'),
         commitment=dec.get('commitment'),
         timestamps=dict(gather_start=start, upload_deadline=deadline,
                         training_result=tl.get('result_mtime') or mtime(life / 'TRAINING-RESULT.json'),
@@ -150,7 +152,7 @@ def tick():
         if ent['decision'] == 'red' and (e, ent['candidate']) not in rseen:
             append(REJECTED, private_reject(e, ent), 0o600); rseen.add((e, ent['candidate']))
     doc = dict(version=VERSION, updated_at=time.time(), updated_at_cr=cr(time.time()),
-               rule='Candidate promoted only if paired z (candidate vs head, k=1) > -1 and candidate cap-hit rate < 0.20 on a private '
+               rule='Candidate promoted unless clearly worse: paired z (candidate vs head, k=1) >= -1.5 (from E154; > -1 for E152-E153) and candidate cap-hit rate < 0.20 on a private '
                     'sample of 1000 affine_math probe tasks minus the epoch batch (>= 200 tasks). RED = rejected: discarded, next '
                     'epoch mines from the head again, zero flip credit for that epoch. Append-only; sample task ids are never published.',
                counts=dict(total=len(ledger), promoted=sum(r['verdict'] == 'promoted' for r in ledger),

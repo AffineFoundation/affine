@@ -1,0 +1,60 @@
+--- monitor/flip_freeze.orig.py	2026-10-26 17:30:32.396238521 -0600
++++ monitor/flip_freeze.new.py	2026-10-26 17:30:44.240332479 -0600
+@@ -8,6 +8,41 @@
+ 
+ LIVE_LOG = '/home/const/subnet120-rewrite/state/root-audits/20261023-flip-live-cutover/live-log'
+ SCORES = '/home/const/subnet120/affine/website/scores.json'
++PROBE_RESULTS = '/home/const/subnet120-rewrite/state/root-audits/20261022-env-probe/state/results'
++GATE_LEDGER = '/home/const/subnet120/affine/website/gate.json'
++LIFE_EPOCHS = '/home/const/subnet120-rewrite/state/mimo-mainnet-v1/epochs'
++
++
++def no_new_evidence(since, until, probe_dir=PROBE_RESULTS, gate_path=GATE_LEDGER, epochs_dir=LIFE_EPOCHS):
++    """2026-10-26 (Jacob pt692u): a frozen flip digest is EXPECTED when no new env-probe result finished in
++    (since, until]: flip pairs only change when a new head checkpoint is probed, and a RED promotion-gate epoch
++    (or a no-update rollback) leaves the head unchanged. Returns (expected, detail)."""
++    new = []
++    for f in glob.glob(os.path.join(probe_dir, '*.private.json')):
++        try:
++            fa = json.load(open(f)).get('finished_at')
++        except Exception:
++            return False, dict(error='unreadable probe result %s' % os.path.basename(f)[:12])
++        if isinstance(fa, (int, float)) and since < fa <= until:
++            new.append(os.path.basename(f)[:12])
++    red, noupd = [], []
++    try:
++        for e in json.load(open(gate_path)).get('entries') or []:
++            if e.get('verdict') == 'rejected' and isinstance((e.get('timestamps') or {}).get('finalized'), (int, float)) \
++                    and (e['timestamps']['finalized'] <= until):
++                red.append(e['epoch'])
++    except Exception:
++        pass
++    for d in glob.glob(os.path.join(epochs_dir, '*', 'FINALIZED.json')):
++        try:
++            m = os.path.getmtime(d)
++            if since - 7200 < m <= until:
++                r = (json.load(open(d)).get('payload') or {}).get('result') or {}
++                if r.get('status') == 'no-update':
++                    noupd.append(int(d.split(os.sep)[-2]))
++        except Exception:
++            pass
++    return (not new), dict(new_probes=new, gate_red_epochs=sorted(red), no_update_epochs=sorted(noupd))
+ 
+ 
+ def _windows(log_dir=LIVE_LOG, n=4):
+@@ -58,7 +93,14 @@
+         problems.append('flip digest %s unchanged for the last %d window(s) to %d while score_sha256 changed AND scored epochs advanced'
+                         % (rows[-1]['digest'], frozen, rows[-1]['cutoff']))
+     elif frozen >= 2:
+-        problems.append('flip digest %s unchanged for the last %d windows while score_sha256 kept changing' % (rows[-1]['digest'], frozen))
++        since = rows[-1 - frozen]['cutoff']  # the last window whose digest changed already used probes finished up to its cutoff
++        ok, why = no_new_evidence(since, rows[-1]['cutoff'])
++        if ok and (why['gate_red_epochs'] or why['no_update_epochs']):
++            warnings.append('flip digest %s unchanged for %d windows: expected, no new head checkpoint probed (gate RED epochs %s, '
++                            'no-update epochs %s)' % (rows[-1]['digest'], frozen, why['gate_red_epochs'], why['no_update_epochs']))
++        else:
++            problems.append('flip digest %s unchanged for the last %d windows while score_sha256 kept changing%s'
++                            % (rows[-1]['digest'], frozen, (' (new probes %s)' % why.get('new_probes')) if why.get('new_probes') else ''))
+     elif frozen == 1:
+         warnings.append('flip digest %s unchanged vs previous window while score_sha256 changed (same epochs)' % rows[-1]['digest'])
+     sf = scores_floor(scores_path)

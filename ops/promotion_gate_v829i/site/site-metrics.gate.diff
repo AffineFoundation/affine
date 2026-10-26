@@ -1,5 +1,5 @@
 --- site/site-metrics.orig.js	2026-10-26 15:20:03.942138535 -0600
-+++ site/site-metrics.new.js	2026-10-26 16:15:45.128642776 -0600
++++ site/site-metrics.new.js	2026-10-26 17:28:24.407223232 -0600
 @@ -36,13 +36,14 @@
    rollouts:panel('rollouts','Rollouts per epoch','performance',['All','Last 20'],[]),
    grad:panel('grad','Gradient norm','incentive',['All','Last 20'],[['Pre-clip grad norm / step','--incentive']]),
@@ -17,7 +17,7 @@
   /* Large Env probe trend chart at bottom of homepage (multi-env ready; driven by miner env list). */
   main.append(P.probe.section);
   P.probe.section.classList.add('probe-hero');
-@@ -54,6 +55,15 @@
+@@ -54,6 +55,16 @@
   );P.probe.section.append(note);})();
  
   let data=null,selectedIndex=null;
@@ -28,12 +28,13 @@
 + const hm=t=>fin(t)?new Date(t*1000).toLocaleString('en-GB',{hour:'2-digit',minute:'2-digit',timeZone:'UTC',hour12:false}):'—';
 + const gateLines=g=>{if(!g)return [];const T=g.timestamps||{},pre=T.pre_probe,post=T.post_probe;return [
 +   'Gate: '+(g.verdict==='promoted'?'GREEN promoted':'RED rejected')+' · z '+fmt(g.z,2)+' · cap-hit '+pct(g.candidate_cap_rate,1)+' · n '+fmt(g.n,0),
++   g.thresholds?'Rule: pass unless clearly worse · z '+(g.thresholds.z_inclusive?'≥ ':'> ')+fmt(g.thresholds.z_min,1)+' · cap-hit < '+pct(g.thresholds.cap_max,0)+' · n ≥ '+fmt(g.thresholds.min_tasks,0):null,
 +   pre?'Pre-probe H '+String(g.head).slice(0,8)+(pre.reused?' (reused) ':' ')+hm(pre.started_at)+'–'+hm(pre.finished_at)+' UTC':null,
 +   post&&fin(post.start)?'Post-probe C '+String(g.candidate).slice(0,8)+' '+hm(post.start)+'–'+hm(post.end)+' UTC':null];};
   const epochsAll=()=>(data?.epochs||[]).filter(e=>fin(e.index));
   const windowed=(p,rows)=>p.view===1?rows.slice(-20):rows;
  
-@@ -326,7 +336,8 @@
+@@ -326,7 +337,8 @@
     const m=k=>e=>fin(e.timing[k])?e.timing[k]/60:null;
     const tot=e=>fin(e.timing.total_seconds)&&e.timing.total_seconds>0?e.timing.total_seconds/60:null,trn=e=>fin(e.timing.train_seconds)?e.timing.train_seconds/60:0;
     const gat=e=>tot(e)===null?null:Math.min(fin(e.timing.collect_seconds)?e.timing.collect_seconds/60:0,tot(e)),tr2=e=>tot(e)===null?null:Math.min(trn(e),tot(e)-gat(e));
@@ -43,7 +44,7 @@
   }
  
  
-@@ -417,7 +428,23 @@
+@@ -417,7 +429,23 @@
    drawProbeTrends(p,pts,names);
   }
  
@@ -54,7 +55,7 @@
 +  const curTxt=cur&&fin(cur.epoch)?'E'+cur.epoch+' '+(cur.stage||'')+(cur.candidate?' · C '+String(cur.candidate).slice(0,8):''):'';
 +  const r=ents.find(g=>g.index===selectedIndex)||ents[ents.length-1];
 +  setReading(p,r?(r.verdict==='promoted'?'GREEN':'RED'):'—',r?'E'+r.index+' · z '+fmt(r.z,2)+' · cap '+pct(r.candidate_cap_rate,1):'',(fin(c.total)?fmt(c.promoted,0)+' promoted · '+fmt(c.rejected,0)+' rejected':'')+(curTxt?' · now '+curTxt:''));
-+  if(!ents.length){p.svg.style.display='';p.svg.replaceChildren();empty(p,gateData?'No verdicts yet. Live from E152'+(curTxt?' · now '+curTxt:'')+'.':'Gate ledger unavailable.');return;}
++  if(!ents.length){p.svg.style.display='';p.svg.replaceChildren();empty(p,gateData?'No verdicts yet. Pass unless clearly worse (z ≥ −1.5, cap-hit < 20%). Live from E152'+(curTxt?' · now '+curTxt:'')+'.':'Gate ledger unavailable.');return;}
 +  /* Grid tiles hide view buttons: the expanded tile (chart-expand.js) shows the full verdict table. */
 +  if(p.view===1||p.section.classList.contains('cx-open')){p.svg.style.display='none';empty(p,null);
 +   const t=h('table','sp-table');t.innerHTML='<thead><tr><th>Epoch</th><th>Verdict</th><th>H → C</th><th>z</th><th>Cap-hit</th><th>n</th><th>Decided</th><th>Reason</th></tr></thead>';const tb=h('tbody');
@@ -68,7 +69,7 @@
  
   // Follow the shared desktop epoch slider (same rows as network.js).
   let sharedRows=[];
-@@ -444,5 +471,12 @@
+@@ -444,5 +472,12 @@
     probeData=next;if(key!==probeFingerprint){probeFingerprint=key;drawProbe();}
    }catch{if(!probeData){setReading(P.probe,'—','','Probe series unavailable');empty(P.probe,'Probe series unavailable.');}}
   }

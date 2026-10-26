@@ -31,7 +31,7 @@ loss on the same task now count the same. See "Flip-incentive LIVE scoring" belo
 The MiMo complete-group mining contract is unchanged.
 
 Gate notice (2026-10-26): from epoch 152 (3:04 PM CR) a trained checkpoint is promoted
-only if it is not worse than its parent on a private random probe sample; a RED epoch
+unless it is clearly worse than its parent (z ≥ −1.5 from epoch 154) on a private random probe sample; a RED epoch
 pays zero flip credit. Training parameters are published per epoch in the mining.json
 `training` block. See "Checkpoint promotion gate" below.
 
@@ -50,9 +50,12 @@ How it works, per epoch N mining on head H:
 3. After training, candidate C is probed on S **minus every task in epoch N's
    batch** (batch tasks are dropped from both sides, so training on a task
    cannot help C pass the gate).
-4. **GREEN** if the paired z-score of C vs H is above −1 **and** C's
-   max-token cap-hit rate is below 0.20 (at least 200 tasks evaluated). C is
-   promoted and the next epoch mines from C.
+4. **GREEN** unless C is clearly worse: the paired z-score of C vs H is
+   **at least −1.5** ("not significantly worse", about one-sided 93%) **and**
+   C's max-token cap-hit rate is below 0.20 (at least 200 tasks evaluated). A
+   candidate that stays the same or improves even slightly passes. C is
+   promoted and the next epoch mines from C. (Epochs 152–153 used z > −1; the
+   z ≥ −1.5 rule applies from epoch 154, updated October 26, 2026 5:27 PM CR.)
 5. **RED** otherwise. C is discarded, the epoch finalizes as no-update, and the
    next epoch mines from H again.
 
@@ -92,7 +95,7 @@ rest of mining.json.
 | `batch` | Up to 256 groups × 8 rollouts. One claim per task (earliest R2 `received_at`); admitted unique tasks are ordered by `sha256([seed, miner, env_id, index])` with a seed drawn after the deadline; the first 256 train |
 | `sampling` | temperature 1.0, top-k 20, top-p 0.95; `affine_math` max output 8192 tokens, context 12288 |
 | `collection_seconds` | Signed upload window length (1200 s from epoch 152) |
-| `promotion_gate` | sample 1000 of 7,496, z > −1, cap-hit < 0.20, min 200 tasks, RED = zero credit |
+| `promotion_gate` | sample 1000 of 7,496, z ≥ −1.5 (`z_min`, `z_inclusive`; from epoch 154), cap-hit < 0.20, min 200 tasks, RED = zero credit |
 | `sources` | sha256 of the signed lifecycle config and trainer host operator config used |
 
 No seeds, private task ids or the private gate sample are published.

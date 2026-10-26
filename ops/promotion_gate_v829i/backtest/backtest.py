@@ -5,6 +5,7 @@ D = json.load(open(os.path.join(os.path.dirname(__file__), '..', 'data', 'histor
 probes = {ck: {int(k): v for k, v in p['per_task'].items()} for ck, p in D['probes'].items()}
 pmeta = D['probes']
 EXPECT_RED = {128, 129, 140, 142, 144, 146, 148}
+ZMIN = float(os.environ.get('ZMIN', '-1.0')); ZINC = os.environ.get('ZINC') == '1'
 SEEDS = [("%064x" % (0xA11CE + i * 7919)) for i in range(int(sys.argv[1]) if len(sys.argv) > 1 else 20)]
 rows = []
 for e in range(125, 151):
@@ -15,7 +16,7 @@ for e in range(125, 151):
     if H not in probes or C not in probes:
         rows.append(dict(epoch=e, skip='missing probe H=%s C=%s' % (H in probes, C in probes))); continue
     h, c = probes[H], probes[C]; batch = r.get('batch') or []
-    decs = [G.decide(h, c, G.draw_sample(s, 7496, 1000), batch) for s in SEEDS]
+    decs = [G.decide(h, c, G.draw_sample(s, 7496, 1000), batch, z_min=ZMIN, z_inclusive=ZINC) for s in SEEDS]
     full = G.decide(h, c, list(range(7496)), batch, min_tasks=1)
     greens = sum(d['decision'] == 'green' for d in decs)
     rows.append(dict(epoch=e, H=H[:8], C=C[:8], h_partial=pmeta[H]['partial'], h_n=pmeta[H]['n'], c_partial=pmeta[C]['partial'], c_n=pmeta[C]['n'],
@@ -26,7 +27,7 @@ for e in range(125, 151):
                      full=dict(n=full['evaluated']['n'], delta=full['evaluated']['delta'], z=full['evaluated']['z'], cap=full['evaluated']['c_cap_rate'], decision=full['decision'], h=full['evaluated']['h_pass'], c=full['evaluated']['c_pass']),
                      batch=full['batch_pre_post'], batch_overlap=statistics.mean(d['batch_overlap'] for d in decs),
                      expected=('red' if e in EXPECT_RED else 'green'), reasons=decs[0]['reasons']))
-json.dump(rows, open(os.path.join(os.path.dirname(__file__), 'backtest_rows.json'), 'w'), indent=1)
+json.dump(rows, open(os.path.join(os.path.dirname(__file__), 'backtest_rows%s.json' % ('' if ZMIN == -1.0 else '_z%s' % ZMIN)), 'w'), indent=1)
 print("| ep | H→C | H n / C n | eval n (S\\batch) | z mean [min,max] | C cap | green/seeds | gate | expected | full-pool Δ, z, cap | batch pre→post (analysis) |")
 print("|---|---|---|---|---|---|---|---|---|---|---|")
 for r in rows:
@@ -43,3 +44,9 @@ fr = sum(1 - r['green_frac'] for r in healthy) / max(1, len(healthy))
 tr = sum(1 - r['green_frac'] for r in bad) / max(1, len(bad))
 print("\nhealthy steps: %d, per-seed false-reject rate %.3f; majority false rejects: %s" % (len(healthy), fr, [r['epoch'] for r in healthy if r['decision'] == 'red']))
 print("expected-bad steps: %d, per-seed reject rate %.3f; majority misses: %s" % (len(bad), tr, [r['epoch'] for r in bad if r['decision'] == 'green']))
+
+FLAT = [125, 132, 133, 138, 139, 141]
+fl = [r for r in ev if r['epoch'] in FLAT]
+print("flat/healthy full-probe steps %s: per-seed false-reject %.3f (%s)" % (FLAT, sum(1 - r['green_frac'] for r in fl) / len(fl), ', '.join('E%d %.2f' % (r['epoch'], 1 - r['green_frac']) for r in fl)))
+print("7 known collapses: per-seed reject %s" % ', '.join('E%d %.2f' % (r['epoch'], 1 - r['green_frac']) for r in bad))
+print("threshold: z %s %.2f, cap < 0.20, >= 200 tasks" % ('>=' if ZINC else '>', ZMIN))

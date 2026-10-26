@@ -62,6 +62,7 @@
  const hm=t=>fin(t)?new Date(t*1000).toLocaleString('en-GB',{hour:'2-digit',minute:'2-digit',timeZone:'UTC',hour12:false}):'—';
  const gateLines=g=>{if(!g)return [];const T=g.timestamps||{},pre=T.pre_probe,post=T.post_probe;return [
    'Gate: '+(g.verdict==='promoted'?'GREEN promoted':'RED rejected')+' · z '+fmt(g.z,2)+' · cap-hit '+pct(g.candidate_cap_rate,1)+' · n '+fmt(g.n,0),
+   g.thresholds?'Rule: pass unless clearly worse · z '+(g.thresholds.z_inclusive?'≥ ':'> ')+fmt(g.thresholds.z_min,1)+' · cap-hit < '+pct(g.thresholds.cap_max,0)+' · n ≥ '+fmt(g.thresholds.min_tasks,0):null,
    pre?'Pre-probe H '+String(g.head).slice(0,8)+(pre.reused?' (reused) ':' ')+hm(pre.started_at)+'–'+hm(pre.finished_at)+' UTC':null,
    post&&fin(post.start)?'Post-probe C '+String(g.candidate).slice(0,8)+' '+hm(post.start)+'–'+hm(post.end)+' UTC':null];};
  const epochsAll=()=>(data?.epochs||[]).filter(e=>fin(e.index));
@@ -434,7 +435,7 @@
   const curTxt=cur&&fin(cur.epoch)?'E'+cur.epoch+' '+(cur.stage||'')+(cur.candidate?' · C '+String(cur.candidate).slice(0,8):''):'';
   const r=ents.find(g=>g.index===selectedIndex)||ents[ents.length-1];
   setReading(p,r?(r.verdict==='promoted'?'GREEN':'RED'):'—',r?'E'+r.index+' · z '+fmt(r.z,2)+' · cap '+pct(r.candidate_cap_rate,1):'',(fin(c.total)?fmt(c.promoted,0)+' promoted · '+fmt(c.rejected,0)+' rejected':'')+(curTxt?' · now '+curTxt:''));
-  if(!ents.length){p.svg.style.display='';p.svg.replaceChildren();empty(p,gateData?'No verdicts yet. Live from E152'+(curTxt?' · now '+curTxt:'')+'.':'Gate ledger unavailable.');return;}
+  if(!ents.length){p.svg.style.display='';p.svg.replaceChildren();empty(p,gateData?'No verdicts yet. Pass unless clearly worse (z ≥ −1.5, cap-hit < 20%). Live from E152'+(curTxt?' · now '+curTxt:'')+'.':'Gate ledger unavailable.');return;}
   /* Grid tiles hide view buttons: the expanded tile (chart-expand.js) shows the full verdict table. */
   if(p.view===1||p.section.classList.contains('cx-open')){p.svg.style.display='none';empty(p,null);
    const t=h('table','sp-table');t.innerHTML='<thead><tr><th>Epoch</th><th>Verdict</th><th>H → C</th><th>z</th><th>Cap-hit</th><th>n</th><th>Decided</th><th>Reason</th></tr></thead>';const tb=h('tbody');

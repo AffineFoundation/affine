@@ -229,7 +229,8 @@ def process_epoch(e, f):
     tl['run_done'] = time.time()
     cpt = {int(k): v for k, v in (((res.get('envs') or {}).get(f['env']) or {}).get('per_task') or {}).items()}
     wj(d / 'C-PROBE.private.json', dict(candidate=C, per_task=cpt, wall=res.get('wall_seconds'), partial=res.get('partial')))
-    dec = G.decide(hpt, cpt, s['indices'], batch, z_min=float(f['z_min']), cap_max=float(f['cap_max']), min_tasks=int(f['min_tasks']))
+    dec = G.decide(hpt, cpt, s['indices'], batch, z_min=float(f['z_min']), cap_max=float(f['cap_max']), min_tasks=int(f['min_tasks']),
+                   z_inclusive=bool(f.get('z_inclusive')))
     dec.update(epoch=e, head=H, candidate=C, mode=mode(f), decided_at=time.time(), decided_at_cr=cr(),
                batch_tasks=len(batch), h_cover=cover,
                timing=dict(result_to_decision_s=round(time.time() - tl['result_mtime'], 1),
@@ -282,7 +283,7 @@ def publish(cur_epoch, lag=2):
         entries.append(ent)
     wj(SITE / 'index.json', dict(version=G.VERSION, updated_at_cr=cr(), sample_ids_published=False,
         rule=('Each epoch draws a private uniform sample of 1000 affine_math probe tasks; tasks in the epoch\'s training batch are '
-              'dropped. The candidate is promoted only if paired z (candidate vs head, k=1) > -1 and candidate cap-hit rate < 0.20. '
+              'dropped. The candidate is promoted unless it is clearly worse: paired z (candidate vs head, k=1) >= -1.5 (from e154; > -1 for e152-e153) and candidate cap-hit rate < 0.20. '
               'RED = candidate discarded, next epoch mines from the head again, zero flip credit for that epoch. Only a hash commitment '
               'of the sample is published; the sample task ids stay private. Full verdict ledger: https://affine.io/gate.json'), entries=entries[-200:]), 0o644)
 

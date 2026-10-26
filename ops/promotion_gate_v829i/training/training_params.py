@@ -136,8 +136,9 @@ def build():
         promotion_gate=dict(enabled=flag.get('enabled') is True, sample_size=flag.get('sample_size'),
                             sample_pool=flag.get('pool'), env=flag.get('env'), z_min=flag.get('z_min'),
                             cap_hit_max=flag.get('cap_max'), min_tasks=flag.get('min_tasks'),
+                            z_inclusive=flag.get('z_inclusive') is True, z_rule_from_epoch=flag.get('z_rule_from_epoch'),
                             red_credit=flag.get('red_credit'), first_gated_epoch=flag.get('first_gated_epoch'),
-                            rule='candidate promoted only if paired z (candidate vs head, k=1) > z_min and cap-hit rate < cap_hit_max on a '
+                            rule='candidate promoted unless clearly worse: paired z (candidate vs head, k=1) >= z_min (> z_min if not z_inclusive) and cap-hit rate < cap_hit_max on a '
                                  'private sample minus the epoch batch; RED = discarded, next epoch mines from the same head, '
                                  'RED epoch miners get zero flip credit',
                             decisions='https://affine.io/gate/index.json'),

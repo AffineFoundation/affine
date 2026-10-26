@@ -35,3 +35,12 @@ RED: candidate 8b9d5816 vs head 189de412, paired z -1.129, cap-hit 11.8%, n 965 
 no-update onto 189de412 (`promotion-gate-red-e152-8b9d5816-kept-189de412`), trainer pod restored in 30 s, e153 mines on 189de412.
 Fix shipped during e152: a vLLM replica died mid-run (inductor-cache race), so the gate now re-serves dead replicas and
 reruns partial candidate probes (`gate_reserve`, `gate_run_partial_retry`).
+
+## Threshold change (Jacob pt692u, 2026-10-26 5:26 PM CR): pass unless clearly worse
+From e154: GREEN iff paired z >= -1.5 (`z_min: -1.5`, `z_inclusive: true` in staged/PROMOTION-GATE.json, hot) and cap-hit < 0.20,
+>= 200 tasks. e152-e153 keep their z > -1 verdicts. Backtest (100 seeds, `ZMIN=-1.5 ZINC=1 backtest.py 100`): flat/healthy
+full-probe steps per-seed false-reject 6.3% (was 12.2% at z > -1); the 7 known collapses (128, 129, 140, 142, 144, 146, 148)
+are still rejected on 100/100 seeds.
+`monitor/flip_freeze.gate-red-expected.diff`: the weight-freshness monitor treats a frozen flip digest as expected (warning,
+not failure) only when no new env-probe result finished since the last digest change and the span contains a gate RED or
+no-update epoch.

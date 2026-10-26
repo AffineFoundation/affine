@@ -3,7 +3,7 @@
 Jacob pt682u 2026-10-26 14:25 CR. Epoch N mines on head H and trains candidate C.
   S  = fresh private uniform sample of `sample_size` task indices from the env-probe pool (secret seed).
   T  = S minus every task index in epoch N's training batch (dropped from BOTH sides).
-  GREEN iff paired z(C vs H on T) > z_min AND cap-hit rate of C on T < cap_max. Else RED.
+  GREEN iff paired z(C vs H on T) > z_min (>= when z_inclusive) AND cap-hit rate of C on T < cap_max. Else RED.
 Per-task cells are probe cells {n, c, b, ...} (n samples, c correct, b budget/cap hits).
 """
 from __future__ import annotations
@@ -61,7 +61,7 @@ def paired(h_pt: dict, c_pt: dict, tasks) -> dict:
 
 
 def decide(h_pt: dict, c_pt: dict, sample: list[int], batch_tasks, *, z_min=-1.0, cap_max=0.20,
-           min_tasks=200) -> dict:
+           min_tasks=200, z_inclusive=False) -> dict:
     batch = set(int(t) for t in batch_tasks)
     T = [t for t in sample if t not in batch]
     p = paired(h_pt, c_pt, T)
@@ -69,11 +69,13 @@ def decide(h_pt: dict, c_pt: dict, sample: list[int], batch_tasks, *, z_min=-1.0
     reasons = []
     if p["n"] < min_tasks:
         reasons.append("insufficient_paired_tasks(%d<%d)" % (p["n"], min_tasks))
-    if not p["z"] > z_min:
-        reasons.append("paired_z %.3f <= %.2f" % (p["z"], z_min))
+    # Jacob pt692u (2026-10-26 17:26 CR): pass unless clearly worse -> z >= z_min (inclusive) with z_min -1.5 from e154
+    z_ok = (p["z"] >= z_min) if z_inclusive else (p["z"] > z_min)
+    if not z_ok:
+        reasons.append("paired_z %.3f %s %.2f" % (p["z"], "<" if z_inclusive else "<=", z_min))
     if p["c_cap_rate"] is None or not p["c_cap_rate"] < cap_max:
         reasons.append("cap_rate %s >= %.2f" % (None if p["c_cap_rate"] is None else round(p["c_cap_rate"], 4), cap_max))
     return dict(version=VERSION, decision=("red" if reasons else "green"), reasons=reasons,
                 sample_size=len(sample), batch_overlap=len(sample) - len(T), evaluated=p,
                 batch_pre_post=dict(pre_post, note="analysis only (not gating)"),
-                z_min=z_min, cap_max=cap_max, min_tasks=min_tasks)
+                z_min=z_min, z_inclusive=bool(z_inclusive), cap_max=cap_max, min_tasks=min_tasks)
