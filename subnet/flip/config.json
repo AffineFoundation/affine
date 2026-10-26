@@ -1,0 +1,78 @@
+{
+ "dispatch_feed": {
+  "enabled": true,
+  "lookback_epochs": 2,
+  "merge": "union"
+ },
+ "enabled": true,
+ "env": "affine_math",
+ "formula": {
+  "credit_epoch_rule": "training_from_probe_checkpoint",
+  "credit_epoch_rule_note": "2026-10-25 pt616u: a probe pair's flips are credited to the DISPATCH of the epoch that trained FROM the first probe's checkpoint (FINALIZED authorization input == epoch input); no-update/rollback epochs earn nothing.",
+  "credit_fail_to_pass": true,
+  "credit_mode": "symmetric",
+  "credit_mode_effective": "2026-10-26 11:38 AM CR (UTC-6) scorer run; first mech-0 weight window 12:00 PM CR (during epoch 148); applies to the whole scoring window (credit epochs e93+), recomputed every 5-min run",
+  "credit_mode_note": "Jacob pt667u 2026-10-26 11:33 AM CR: symmetric net credit. fail->pass = +1, pass->fail = -1 (same magnitude); negative net carries in flip_score; clip >=0 only at share normalization; nonzero floor kept. REVERT: set credit_mode to surprise_asymmetric (old: gain -ln p_hat, loss -ln(1-p_hat)) and run affine-flip-shadow.service once.",
+  "credit_mode_previous": "surprise_asymmetric",
+  "debit_pass_to_fail": true,
+  "eligibility": "hard_fail",
+  "eligibility_note": "Credit only when baseline probe status at epoch E is fail (unresolved|wrong|error) AND sampling/TOPLOC verify has not failed; unverified earns nothing (formula.sampling_verify_gate). Soft alternative (not default): eligibility soft without hard fail gate.",
+  "ema_alpha": 0.3,
+  "eps": 0.0001,
+  "min_epoch": 93,
+  "no_authenticity_guard": true,
+  "p_hat_source": "running_ema_then_bandit",
+  "reward_gate_min": 0.0,
+  "sampling_verify_gate": {
+   "credit_requires_verify_pass": true,
+   "enabled": true,
+   "fail_strips_credit": true,
+   "ledger_path": "/home/const/subnet120-rewrite/state/root-audits/20261023-toploc-credit-train-gate/verify_ledger.json",
+   "nonzero_floor": true,
+   "nonzero_floor_choice": "last_good_scores_then_uniform_dispatch",
+   "note": "TOPLOC/sampling fail => no flip credit. Unverified earns nothing. No authenticity bonus. Do not loosen TOPLOC tolerances. Nonce/mixed-outcome unchanged.",
+   "uid_ban_path": "/home/const/subnet120-rewrite/state/mimo-mainnet-v1/ops/uid-ban.json",
+   "unknown_policy": "pass_through",
+   "unknown_policy_intended": "pass_through",
+   "unknown_policy_note": "v829c (Jacob 2026-10-23): cheap check only on main path; pending (not yet audited) earns, same as the GRPO train gate. confirmed_invalid / structural_reject strip; ops/uid-ban.json banned miners earn nothing. Nonzero floor kept.",
+   "unknown_policy_promoted_at_cr": "2026-10-23 06:05 PM CR (UTC-6)"
+  },
+  "share_mode": "relu_normalize",
+  "surprise": "neglog",
+  "surprise_alt": "inv",
+  "symmetric_weight": 1.0,
+  "version": "sn120-flip-incentive-live-v1",
+  "window_pairs": null
+ },
+ "live_weights": true,
+ "note": "LIVE 2026-10-23. TOPLOC gate ON + HARD nonzero weight/share floor (last good shares). Train denylist staged.",
+ "paths": {
+  "audit_out": "/home/const/subnet120-rewrite/state/root-audits/20261023-flip-incentive-shadow/out",
+  "bandit_db": "/home/const/subnet120-rewrite/state/root-audits/20261022-env-probe/state/bandit/arms.sqlite",
+  "dispatch_feed": "/home/const/subnet120-rewrite/state/root-audits/20261022-env-probe/state/dispatch/affine_math.json",
+  "epochs_root": "/home/const/subnet120-rewrite/state/mimo-mainnet-v1/epochs",
+  "live_scores": "/home/const/subnet120/affine/website/scores.json",
+  "probe_ledger": "/home/const/subnet120-rewrite/state/root-audits/20261022-env-probe/state/ledger.json",
+  "probe_results": "/home/const/subnet120-rewrite/state/root-audits/20261022-env-probe/state/results",
+  "probe_state": "/home/const/subnet120-rewrite/state/root-audits/20261022-env-probe/state",
+  "train_verify_fail_denylist": "/home/const/subnet120-rewrite/state/root-audits/20261023-toploc-credit-train-gate/train-verify-fail-denylist.json",
+  "verify_ledger": "/home/const/subnet120-rewrite/state/root-audits/20261023-toploc-credit-train-gate/verify_ledger.json",
+  "website": "/home/const/subnet120/affine/website"
+ },
+ "publish": {
+  "also_audit_copy": true,
+  "also_write_scores_json": true,
+  "filename": "scores-shadow.json",
+  "live_filename": "scores.json",
+  "per_epoch_dir": "scores-shadow",
+  "website_scores_shadow": true
+ },
+ "timer_seconds": 300,
+ "uid_map": {
+  "cache_path": "/home/const/subnet120-rewrite/state/root-audits/20261023-flip-incentive-shadow/out/chain-uid-map.json",
+  "netuid": 120,
+  "note": "2026-10-25 pt616u: hotkey->uid from chain SubtensorModule.Keys (read-only), not the scorer's own previous scores.json.",
+  "source": "chain",
+  "ttl_seconds": 600
+ }
+}
