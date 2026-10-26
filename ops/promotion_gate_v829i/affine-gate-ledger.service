@@ -1,0 +1,15 @@
+# SN120 promotion gate verdict ledger publisher (Jacob t690u 2026-10-26): append-only gate.json + private rejected ledger.
+[Unit]
+Description=Affine SN120 promotion gate verdict ledger (gate.json)
+After=network-online.target
+StartLimitIntervalSec=0
+[Service]
+Type=simple
+ExecStart=/home/const/subnet120-rewrite/.venv/bin/python -u -B /home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/code/gate_ledger.py --watch
+Restart=always
+RestartSec=20
+UMask=0077
+StandardOutput=append:/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/state/ledger.log
+StandardError=append:/home/const/subnet120-rewrite/state/root-audits/20261026-promotion-gate/state/ledger.log
+[Install]
+WantedBy=default.target

@@ -118,7 +118,7 @@ def ensure_sample(e, H, f):
     wj(sp, s, 0o600)
     wj(d / 'COMMIT.json', dict(version=G.VERSION, epoch=e, head=H, sample_size=len(idx), commitment=G.sample_commitment(seed, idx),
                                drawn_at=s['drawn_at'], drawn_at_cr=s['drawn_at_cr'],
-                               rule='commitment = sha256(version|seed|comma-joined sorted indices); seed+indices revealed after lag'), 0o644)
+                               rule='commitment = sha256(version|seed|comma-joined sorted indices); sample task ids are never published'), 0o644)
     log(event='sample_drawn', epoch=e, head=H[:12], n=len(idx))
     return s
 
@@ -261,15 +261,13 @@ def publish(cur_epoch, lag=2):
             ent.update(candidate=dec.get('candidate'), decision=dec.get('decision'), mode=dec.get('mode'), decided_at_cr=dec.get('decided_at_cr'),
                        paired_tasks=ev.get('n'), head_pass=ev.get('h_pass'), candidate_pass=ev.get('c_pass'), paired_z=ev.get('z'),
                        candidate_cap_rate=ev.get('c_cap_rate'), reasons=dec.get('reasons'), batch_tasks_dropped=dec.get('batch_overlap'))
-        if cur_epoch - e >= lag:
-            s = rj(d / 'SAMPLE.private.json')
-            if s: ent.update(revealed_seed=s['seed'], revealed_indices=s['indices'])
+        # Jacob t690u: the private sample task ids are never published (no lagged reveal); only the commitment.
         entries.append(ent)
-    wj(SITE / 'index.json', dict(version=G.VERSION, updated_at_cr=cr(), lag_reveal_epochs=lag,
+    wj(SITE / 'index.json', dict(version=G.VERSION, updated_at_cr=cr(), sample_ids_published=False,
         rule=('Each epoch draws a private uniform sample of 1000 affine_math probe tasks; tasks in the epoch\'s training batch are '
               'dropped. The candidate is promoted only if paired z (candidate vs head, k=1) > -1 and candidate cap-hit rate < 0.20. '
-              'RED = candidate discarded, next epoch mines from the head again, zero flip credit for that epoch. Commitment is published '
-              'at draw time; seed and indices are revealed after %d epochs.' % lag), entries=entries[-200:]), 0o644)
+              'RED = candidate discarded, next epoch mines from the head again, zero flip credit for that epoch. Only a hash commitment '
+              'of the sample is published; the sample task ids stay private. Full verdict ledger: https://affine.io/gate.json'), entries=entries[-200:]), 0o644)
 
 
 def tick():

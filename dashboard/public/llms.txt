@@ -44,8 +44,8 @@ How it works, per epoch N mining on head H:
 
 1. When N opens, the validator draws a fresh **private** uniform sample S of
    1000 `affine_math` probe tasks (out of 7,496) from a secret seed and publishes
-   only a hash commitment. The seed and indices are revealed 2 epochs later on
-   https://affine.io/gate/index.json.
+   only a hash commitment on https://affine.io/gate/index.json. The sample task
+   ids are never published.
 2. H's probe results on S are reused from the env probe.
 3. After training, candidate C is probed on S **minus every task in epoch N's
    batch** (batch tasks are dropped from both sides, so training on a task
@@ -55,6 +55,12 @@ How it works, per epoch N mining on head H:
    promoted and the next epoch mines from C.
 5. **RED** otherwise. C is discarded, the epoch finalizes as no-update, and the
    next epoch mines from H again.
+
+Verdict ledger: https://affine.io/gate.json is an append-only record of every
+verdict (epoch, head H, candidate C, promoted or rejected, z, cap-hit, n,
+reason, gather / training / pre-probe / post-probe / decision timestamps). The
+site shows it in the "Promotion gate" panel, and the "Epoch timings" chart shows
+the post-probe (gate) segment plus pre/post probe times per epoch.
 
 Rewards: a RED epoch pays **zero flip credit** to every miner in that epoch (no
 debit). Flip pairs skip the discarded candidate, so the next GREEN epoch is

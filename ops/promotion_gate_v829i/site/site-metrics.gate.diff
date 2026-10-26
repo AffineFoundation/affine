@@ -1,0 +1,83 @@
+--- site/site-metrics.orig.js	2026-10-26 15:20:03.942138535 -0600
++++ site/site-metrics.new.js	2026-10-26 15:20:35.538389171 -0600
+@@ -36,13 +36,14 @@
+   rollouts:panel('rollouts','Rollouts per epoch','performance',['All','Last 20'],[]),
+   grad:panel('grad','Gradient norm','incentive',['All','Last 20'],[['Pre-clip grad norm / step','--incentive']]),
+   loss:panel('loss','Training loss','rejected',['All','Last 20'],[['Loss / step','--rejected']]),
+-  timing:panel('timing','Epoch timings','unchecked',['Last 20','All'],[['Gather','--incentive'],['Train','--performance'],['Other','--unchecked']]),
++  timing:panel('timing','Epoch timings','unchecked',['Last 20','All'],[['Gather','--incentive'],['Train','--performance'],['Post-probe (gate)','--accepted'],['Other','--unchecked']]),
++  gate:panel('gate','Promotion gate','accepted',['Chart','Table'],[['Promoted · cap-hit','--performance'],['Rejected · cap-hit','--rejected']]),
+  };
+  place(P.weights,'#main>.incentive-section');
+  place(P.heldout,'#main>section[aria-labelledby="evaluation-title"]');
+  place(P.mining,'#panel-heldout');
+  place(P.groups,'#main>section[aria-labelledby="batch-title"]');
+- for(const k of ['miners','rollouts','grad','loss','timing'])main.append(P[k].section);
++ for(const k of ['miners','rollouts','grad','loss','timing','gate'])main.append(P[k].section);
+  /* Large Env probe trend chart at bottom of homepage (multi-env ready; driven by miner env list). */
+  main.append(P.probe.section);
+  P.probe.section.classList.add('probe-hero');
+@@ -54,6 +55,15 @@
+  );P.probe.section.append(note);})();
+ 
+  let data=null,selectedIndex=null;
++ /* Promotion gate (Jacob t690u): append-only verdict ledger from /gate.json; sample task ids are never published. */
++ let gateData=null;
++ const gateOf=i=>(gateData?.entries||[]).filter(g=>g.epoch===i).pop()||null;
++ const gspan=t=>t&&fin(t.start)&&fin(t.end)&&t.end>t.start?(t.end-t.start)/60:null;
++ const hm=t=>fin(t)?new Date(t*1000).toLocaleString('en-GB',{hour:'2-digit',minute:'2-digit',timeZone:'UTC',hour12:false}):'—';
++ const gateLines=g=>{if(!g)return [];const T=g.timestamps||{},pre=T.pre_probe,post=T.post_probe;return [
++   'Gate: '+(g.verdict==='promoted'?'GREEN promoted':'RED rejected')+' · z '+fmt(g.z,2)+' · cap-hit '+pct(g.candidate_cap_rate,1)+' · n '+fmt(g.n,0),
++   pre?'Pre-probe H '+String(g.head).slice(0,8)+(pre.reused?' (reused) ':' ')+hm(pre.started_at)+'–'+hm(pre.finished_at)+' UTC':null,
++   post&&fin(post.start)?'Post-probe C '+String(g.candidate).slice(0,8)+' '+hm(post.start)+'–'+hm(post.end)+' UTC':null];};
+  const epochsAll=()=>(data?.epochs||[]).filter(e=>fin(e.index));
+  const windowed=(p,rows)=>p.view===1?rows.slice(-20):rows;
+ 
+@@ -326,7 +336,8 @@
+    const m=k=>e=>fin(e.timing[k])?e.timing[k]/60:null;
+    const tot=e=>fin(e.timing.total_seconds)&&e.timing.total_seconds>0?e.timing.total_seconds/60:null,trn=e=>fin(e.timing.train_seconds)?e.timing.train_seconds/60:0;
+    const gat=e=>tot(e)===null?null:Math.min(fin(e.timing.collect_seconds)?e.timing.collect_seconds/60:0,tot(e)),tr2=e=>tot(e)===null?null:Math.min(trn(e),tot(e)-gat(e));
+-   chart(p,rows,[{label:'Gather',type:'bar',color:'--incentive',get:gat,fmt:v=>fmt(v,0)+' min'},{label:'Train',type:'bar',color:'--performance',get:tr2,fmt:v=>fmt(v,0)+' min'},{label:'Other',type:'bar',color:'--unchecked',get:e=>tot(e)===null?null:Math.max(0,tot(e)-gat(e)-tr2(e)),fmt:v=>fmt(v,0)+' min'}],{stacked:true,tick:v=>fmt(v,0)+'m',headline:e=>fin(e.timing.total_seconds)?mins(e.timing.total_seconds)+' min':e.phase,extra:e=>['Prepare '+fmt(m('seal_prepare_seconds')(e),0)+' · finalize '+fmt(m('finalize_seconds')(e),0)+' min',utc(e.start)+' start']});}
++   const gp=e=>{if(tot(e)===null)return null;const g=gateOf(e.index),d=g?gspan(g.timestamps?.post_probe):null;return d===null?0:Math.max(0,Math.min(d,tot(e)-gat(e)-tr2(e)));};
++   chart(p,rows,[{label:'Gather',type:'bar',color:'--incentive',get:gat,fmt:v=>fmt(v,0)+' min'},{label:'Train',type:'bar',color:'--performance',get:tr2,fmt:v=>fmt(v,0)+' min'},{label:'Post-probe (gate)',type:'bar',color:'--accepted',get:gp,fmt:v=>fmt(v,0)+' min'},{label:'Other',type:'bar',color:'--unchecked',get:e=>tot(e)===null?null:Math.max(0,tot(e)-gat(e)-tr2(e)-(gp(e)||0)),fmt:v=>fmt(v,0)+' min'}],{stacked:true,tick:v=>fmt(v,0)+'m',headline:e=>fin(e.timing.total_seconds)?mins(e.timing.total_seconds)+' min':e.phase,extra:e=>['Prepare '+fmt(m('seal_prepare_seconds')(e),0)+' · finalize '+fmt(m('finalize_seconds')(e),0)+' min',utc(e.start)+' start',...gateLines(gateOf(e.index))]});}
+  }
+ 
+ 
+@@ -417,7 +428,22 @@
+   drawProbeTrends(p,pts,names);
+  }
+ 
+- function render(){if(data){for(const f of [drawWeights,drawHeldout,drawMining,drawEpochCharts]){try{f();}catch(error){console.error('site-metrics',error);}}}try{drawProbe();}catch(error){console.error('site-metrics probe',error);}}
++ function drawGate(){
++  const p=P.gate,plot=p.section.querySelector('.sp-plot');plot.querySelector('.sp-table')?.remove();
++  const ents=(gateData?.entries||[]).map(g=>Object.assign({index:g.epoch},g)),cur=gateData?.current,c=gateData?.counts||{};
++  const curTxt=cur&&fin(cur.epoch)?'E'+cur.epoch+' '+(cur.stage||'')+(cur.candidate?' · C '+String(cur.candidate).slice(0,8):''):'';
++  const r=ents.find(g=>g.index===selectedIndex)||ents[ents.length-1];
++  setReading(p,r?(r.verdict==='promoted'?'GREEN':'RED'):'—',r?'E'+r.index+' · z '+fmt(r.z,2)+' · cap '+pct(r.candidate_cap_rate,1):'',(fin(c.total)?fmt(c.promoted,0)+' promoted · '+fmt(c.rejected,0)+' rejected':'')+(curTxt?' · now '+curTxt:''));
++  if(!ents.length){p.svg.style.display='';p.svg.replaceChildren();empty(p,gateData?'No verdicts yet. Live from E152'+(curTxt?' · now '+curTxt:'')+'.':'Gate ledger unavailable.');return;}
++  if(p.view===1){p.svg.style.display='none';empty(p,null);
++   const t=h('table','sp-table');t.innerHTML='<thead><tr><th>Epoch</th><th>Verdict</th><th>H → C</th><th>z</th><th>Cap-hit</th><th>n</th><th>Decided</th><th>Reason</th></tr></thead>';const tb=h('tbody');
++   for(const g of ents.slice().reverse()){const tr=h('tr');['E'+g.epoch,g.verdict==='promoted'?'GREEN promoted':'RED rejected',String(g.head).slice(0,8)+' → '+String(g.candidate).slice(0,8),fmt(g.z,2),pct(g.candidate_cap_rate,1),fmt(g.n,0),utc(g.timestamps?.decided_at),g.reason||'—'].forEach(v=>tr.append(h('td','',v)));tb.append(tr);}
++   t.append(tb);plot.append(t);return;}
++  p.svg.style.display='';
++  chart(p,ents,[{label:'Promoted · cap-hit',type:'bar',color:'--performance',get:g=>g.verdict==='promoted'?g.candidate_cap_rate:null,fmt:v=>fin(v)?pct(v,1):'—'},{label:'Rejected · cap-hit',type:'bar',color:'--rejected',get:g=>g.verdict==='rejected'?g.candidate_cap_rate:null,fmt:v=>fin(v)?pct(v,1):'—'}],{min:0,tick:v=>pct(v,0),headline:g=>g.verdict==='promoted'?'GREEN promoted':'RED rejected',extra:g=>[...gateLines(g),g.reason?'Reason: '+g.reason:null]});
++ }
++
++ function render(){try{drawGate();}catch(error){console.error('site-metrics gate',error);}if(data){for(const f of [drawWeights,drawHeldout,drawMining,drawEpochCharts]){try{f();}catch(error){console.error('site-metrics',error);}}}try{drawProbe();}catch(error){console.error('site-metrics probe',error);}}
+ 
+  // Follow the shared desktop epoch slider (same rows as network.js).
+  let sharedRows=[];
+@@ -444,5 +470,12 @@
+    probeData=next;if(key!==probeFingerprint){probeFingerprint=key;drawProbe();}
+   }catch{if(!probeData){setReading(P.probe,'—','','Probe series unavailable');empty(P.probe,'Probe series unavailable.');}}
+  }
+- refresh();refreshProbe();setInterval(refresh,30000);setInterval(refreshProbe,60000);
++ let gateFingerprint='';
++ async function refreshGate(){
++  try{const r=await fetch('/gate.json',{cache:'no-store',signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error('unavailable');
++   const next=await r.json();const key=JSON.stringify([next.entries?.length,next.entries?.slice(-1),next.current]);
++   gateData=next;if(key!==gateFingerprint){gateFingerprint=key;render();}
++  }catch{if(!gateData){try{drawGate();}catch{}}}
++ }
++ refresh();refreshProbe();refreshGate();setInterval(refresh,30000);setInterval(refreshProbe,60000);setInterval(refreshGate,30000);
+ })();

@@ -21,3 +21,11 @@ Approved by Jacob 2026-10-26 (pt682u design, t684u go-live, t685u training param
 Revert: set `enabled: false` in `staged/PROMOTION-GATE.json` (instant, old behaviour); full revert
 `REVERT=1 FROM_EPOCH=<N> activate_v829i.sh` (back to release-v829h-collect1200-signed).
 Excluded: seeds, private samples, signed private operator configs, keys.
+
+## Verdict ledger and site (Jacob t690u)
+* `gate_ledger.py` (`affine-gate-ledger.service`): append-only `state/LEDGER.public.jsonl` -> https://affine.io/gate.json
+  (epoch, H, C, promoted/rejected, z, cap-hit, n, reason, gather/train/pre-probe/post-probe/decision timestamps) and a
+  private `REJECTED.private.jsonl` (rejected candidate id, TRAINING-RESULT/DISPATCH/JOB sha256, descriptor, R2 prefix).
+* `site/site-metrics.js` (+ `site-metrics.gate.diff`): "Post-probe (gate)" segment and pre/post probe times + verdict in the
+  Epoch timings chart; new "Promotion gate" panel (chart and table views, expand button).
+* `gate_service.py` no longer reveals the sample seed or indices; only the commitment is published.
